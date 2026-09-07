@@ -202,10 +202,16 @@ let run (req : Sol_cli_command_request.up_request) =
                  ~pod_expectation ~ns:namespace ~service_name:spec.source_name
                  ~k8s_name ()
              in
-             let headline = Printf.sprintf "rollout failed: %s/%s" namespace k8s_name in
+             (* diagnose_service_live's Some case already renders its own
+                "<service> rollout failed" headline (format_service_diagnosis/
+                format_cronjob_diagnosis/etc, see sol_cli_rollout_diagnosis.ml)
+                -- the same string sol status prints bare. Prepending another
+                "rollout failed: ns/name" headline on top doubled it. Only
+                fall back to our own bare headline when there's no diagnosis
+                to show at all. *)
              raise (Deploy_failed (match diagnosis with
-               | Some d -> headline ^ "\n" ^ d
-               | None   -> headline))
+               | Some d -> d
+               | None   -> Printf.sprintf "rollout failed: %s/%s" namespace k8s_name))
            end
          | Sol_cli_deployment_plan.Fn -> ());
         (match spec.primitive with
