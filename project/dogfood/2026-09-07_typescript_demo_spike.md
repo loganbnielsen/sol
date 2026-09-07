@@ -57,8 +57,10 @@ Postgres, Loki, Tempo, Prometheus, Pushgateway):
   - Consumer-level: published a raw malformed message directly to the
     topic (valid wire header, JSON missing `quantity`); the worker logged
     `rejected message: Error: quantity is required and must be an
-    integer`, incremented `sol_worker_messages_total{status="decode_error"}`,
-    did **not** write a row to Postgres, and kept running — no crash.
+    integer`, incremented `sol_worker_decode_errors_total`, did **not**
+    write a row to Postgres, and kept running — no crash. (This run
+    predates the round-1 adversarial-review fixes below, which split
+    decode failures onto their own counter — see that section for why.)
 - Graceful shutdown: `SIGTERM` to `order_svc` closed Fastify and exited
   immediately; `SIGTERM` to `fulfillment_worker` took ~2–3s (kafkajs
   consumer-group leave protocol) before exiting cleanly.
@@ -75,32 +77,44 @@ was not visually confirmed.
 
 ## Line/file count by concern
 
+Counts as of the final commit (`5f38e2d9`), after the round-1
+adversarial-review fixes below — regenerated via `wc -l` rather than left
+at the pre-fix snapshot, since those fixes added real convention/wiring
+code (error handling, drain timeout, an extra counter, AJV schema) that
+this table exists to measure:
+
 ```
-fulfillment_worker/src/db.ts          30   Postgres (ecosystem: pg)
-fulfillment_worker/src/index.ts      107   wiring/orchestration
+fulfillment_worker/src/db.ts          37   Postgres (ecosystem: pg)
+fulfillment_worker/src/index.ts      142   wiring/orchestration
 fulfillment_worker/src/loki.ts        35   Sol convention: log push shape
-fulfillment_worker/src/metrics.ts     21   Sol convention: metric naming
-fulfillment_worker/src/tracing.ts     47   Sol convention: trace propagation
-fulfillment_worker/src/wire.ts        45   Sol convention: wire format + decode validation
-order_svc/src/index.ts               126   wiring/orchestration
+fulfillment_worker/src/metrics.ts     34   Sol convention: metric naming
+fulfillment_worker/src/tracing.ts     51   Sol convention: trace propagation
+fulfillment_worker/src/wire.ts        51   Sol convention: wire format + decode validation
+order_svc/src/index.ts               206   wiring/orchestration
 order_svc/src/loki.ts                 37   Sol convention: log push shape
 order_svc/src/metrics.ts              23   Sol convention: metric naming
-order_svc/src/schemaRegistry.ts       81   Sol convention: schema registry protocol
-order_svc/src/tracing.ts              49   Sol convention: trace propagation
+order_svc/src/schemaRegistry.ts       73   Sol convention: schema registry protocol
+order_svc/src/tracing.ts              40   Sol convention: trace propagation
                                       ---
-                                      601   total
+                                      729   total
 ```
 
 Grouping the "Sol convention" files (schema registry + wire/decode +
 tracing + metrics naming + logging, excluding pure wiring/orchestration in
-each `index.ts`): **~338 of 601 lines (56%)** exist purely to reproduce
-conventions that an OCaml `sol-svc`/`sol-worker` app gets from a handful of
-framework calls (`Kafka_service.register`, `Sol_obs.of_env`,
-`Sol_obs.with_span`, `Worker.Make`). For comparison, `examples/local-demo`
-(`demo.ml` + `events.ml`, which additionally includes the HTTP test client
-and assertion runner this TS port doesn't have) is 566 lines total — same
-order of magnitude, but the OCaml side spends almost none of it on these
-five concerns because the framework absorbs them.
+each `index.ts` and the ecosystem `db.ts`): **344 of 729 lines (~47%)**
+exist purely to reproduce conventions that an OCaml `sol-svc`/`sol-worker`
+app gets from a handful of framework calls (`Kafka_service.register`,
+`Sol_obs.of_env`, `Sol_obs.with_span`, `Worker.Make`). The `index.ts`
+wiring/orchestration lines aren't pure business logic either — some of
+the round-1 fixes (the AJV body schema, the drain-timeout race, the
+`onResponse` metrics hook, the schema-registry call-order fix) are
+Sol-convention correctness living inline in those files, so 47% is a
+floor on the convention share, not a precise split. For comparison,
+`examples/local-demo` (`demo.ml` + `events.ml`, which additionally
+includes the HTTP test client and assertion runner this TS port doesn't
+have) is 566 lines total — same order of magnitude, but the OCaml side
+spends almost none of it on these five concerns because the framework
+absorbs them.
 
 ## Self-review findings (fixed before handoff)
 
