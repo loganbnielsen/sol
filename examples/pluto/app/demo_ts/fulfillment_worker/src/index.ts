@@ -18,7 +18,7 @@ const POSTGRES_URL = process.env.POSTGRES_URL;
 
 const log = makeLokiPusher(LOKI_URL, "fulfillment-worker-ts");
 const { tracer, shutdown: shutdownTracing } = initTracing("fulfillment-worker-ts", TEMPO_URL);
-const { register: metricsRegister, messagesTotal, messageDuration } = makeWorkerMetrics();
+const { register: metricsRegister, messagesTotal, decodeErrorsTotal, messageDuration } = makeWorkerMetrics();
 
 async function main() {
   const db = POSTGRES_URL ? await makeDb(POSTGRES_URL) : undefined;
@@ -74,10 +74,14 @@ async function main() {
           order = decodeOrderPlaced(json);
         } catch (err) {
           // Sol convention: decode/validation failure is a rejection, not a
-          // crash — mirrors kafka_service_retry_topics.ml's decode-error path.
+          // crash, and is NOT a messages_total status — real worker.ml never
+          // routes a decode failure through its handler at all
+          // (kafka_service_intf.ml's wrap_on_decode_error intercepts it
+          // earlier), so it gets its own counter instead of an invented
+          // status label value.
           console.error(`[worker] rejected message: ${String(err)}`);
           log("error", "rejected message", { error: String(err) });
-          messagesTotal.inc({ status: "decode_error" });
+          decodeErrorsTotal.inc();
           return;
         }
 
@@ -90,7 +94,11 @@ async function main() {
         try {
           if (db) await db.insertFulfilled(order);
         } catch (err) {
-          messagesTotal.inc({ status: "db_error" });
+          // "error" is worker.ml's real vocabulary for "handler failed on an
+          // otherwise-valid message" (W.handle returning Error, worker.ml:121-124)
+          // — decode/validation failures are the only thing split out
+          // separately (see decodeErrorsTotal above).
+          messagesTotal.inc({ status: "error" });
           throw err;
         }
 
@@ -112,7 +120,10 @@ async function main() {
       }, 3000)
     : undefined;
 
+  let shuttingDown = false;
   const shutdown = async () => {
+    if (shuttingDown) return; // SIGTERM/SIGINT can both fire; don't drain twice concurrently
+    shuttingDown = true;
     console.log("[fulfillment-worker-ts] draining...");
     if (pushInterval) clearInterval(pushInterval);
     await consumer.disconnect();

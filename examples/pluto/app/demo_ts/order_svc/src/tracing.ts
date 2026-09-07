@@ -33,7 +33,8 @@ export function initTracing(serviceName: string, tempoUrl: string | undefined) {
 /** Sol convention: format a span's context as a W3C traceparent header value. */
 export function traceparentOf(span: Span): string {
   const ctx = span.spanContext();
-  return `00-${ctx.traceId}-${ctx.spanId}-01`;
+  const flags = ctx.traceFlags.toString(16).padStart(2, "0");
+  return `00-${ctx.traceId}-${ctx.spanId}-${flags}`;
 }
 
 export { SpanKind };

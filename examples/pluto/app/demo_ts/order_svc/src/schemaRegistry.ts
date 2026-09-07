@@ -27,7 +27,14 @@ async function registryRequest(
   return { status: resp.status, body: await resp.text() };
 }
 
-/** Mirrors kafka_service_schema.ml's set_subject_compatibility. */
+/**
+ * Mirrors kafka_service_schema.ml's set_subject_compatibility exactly — a
+ * plain PUT, nothing else. Note: in the real runtime path
+ * (Kafka_service.register, kafka_service.ml:172-177) a failure here is
+ * NON-FATAL — logged as a warning and ignored, registration proceeds
+ * without it. Callers must replicate that: catch and warn, don't let this
+ * throw propagate.
+ */
 export async function setSubjectCompatibility(registryUrl: string, topicName: string): Promise<void> {
   const subject = `${topicName}-value`;
   const { status, body } = await registryRequest(registryUrl, "PUT", `/config/${subject}`, {
@@ -38,29 +45,22 @@ export async function setSubjectCompatibility(registryUrl: string, topicName: st
   }
 }
 
-/** Mirrors kafka_service_schema.ml's Schema.check — compatibility-check-then-register. */
+/**
+ * Mirrors kafka_service_schema.ml's register_schema exactly: a plain POST
+ * to /subjects/{subject}/versions, nothing composed with it. There is no
+ * compatibility-check-then-register flow in the OCaml runtime path — that
+ * would be `Schema.check`, which exists only as a standalone CI gate
+ * (the generated test_schemas.ml script) and is never called from
+ * Kafka_service.register. In the real runtime path this call's failure
+ * IS fatal (Kafka_service.register propagates it as an Error) — callers
+ * should let it throw.
+ */
 export async function registerSchema(
   registryUrl: string,
   topicName: string,
   schema: string
 ): Promise<number> {
   const subject = `${topicName}-value`;
-
-  const compat = await registryRequest(
-    registryUrl,
-    "POST",
-    `/compatibility/subjects/${subject}/versions/latest`,
-    { schemaType: "JSON", schema }
-  );
-  if (compat.status === 200) {
-    const parsed = JSON.parse(compat.body) as { is_compatible: boolean };
-    if (!parsed.is_compatible) {
-      throw new Error(`schema for topic '${topicName}' is not compatible with the registered version`);
-    }
-  } else if (compat.status !== 404) {
-    throw new Error(`schema registry HTTP ${compat.status}: ${compat.body}`);
-  }
-
   const reg = await registryRequest(registryUrl, "POST", `/subjects/${subject}/versions`, {
     schemaType: "JSON",
     schema,

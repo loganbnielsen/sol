@@ -34,7 +34,11 @@ export function parseTraceparent(value: string | undefined): SpanContext | undef
   if (parts.length !== 4) return undefined;
   const [, traceId, spanId, flags] = parts;
   if (traceId.length !== 32 || spanId.length !== 16) return undefined;
-  return { traceId, spanId, traceFlags: parseInt(flags, 16) || 1, isRemote: true };
+  // `parseInt(flags, 16) || 1` would incorrectly treat a legitimate
+  // unsampled trace (flags "00" -> 0) as sampled, since 0 is falsy in JS.
+  // Only fall back to sampled when the field genuinely failed to parse.
+  const parsedFlags = parseInt(flags, 16);
+  return { traceId, spanId, traceFlags: Number.isNaN(parsedFlags) ? 1 : parsedFlags, isRemote: true };
 }
 
 export function startChildSpan(

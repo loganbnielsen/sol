@@ -29,6 +29,12 @@ export function decodeOrderPlaced(json: unknown): OrderPlaced {
     if (typeof v !== "string") throw new Error(`${name} is required and must be a string`);
     return v;
   };
+  // ponytail: JSON.parse collapses "5.0" to the integer 5, so this accepts
+  // a payload OCaml's Yojson would reject (`Float 5.0` there, not `Int 5`).
+  // Fixing that needs a custom JSON parser preserving numeric literal
+  // formatting — not worth it for a spike; a real @sol/kafka package
+  // would need to actually decide this, since it's genuine cross-language
+  // schema-strictness divergence, not a bug in either side alone.
   const requiredInt = (name: string): number => {
     const v = j[name];
     if (typeof v !== "number" || !Number.isInteger(v)) {

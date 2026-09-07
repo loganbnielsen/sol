@@ -7,6 +7,13 @@ import pg from "pg";
 
 export async function makeDb(postgresUrl: string) {
   const pool = new pg.Pool({ connectionString: postgresUrl });
+  // pg emits 'error' on an idle client that dies underneath it (Postgres
+  // restart, failover, network blip) — with no listener, that's an
+  // unhandled event and Node crashes the whole process even with no query
+  // in flight. Log and let the pool reconnect on next use.
+  pool.on("error", (err) => {
+    console.error(`[fulfillment-worker-ts] idle pg client error: ${String(err)}`);
+  });
   await pool.query(`
     CREATE TABLE IF NOT EXISTS fulfilled_orders_ts (
       order_id       TEXT        PRIMARY KEY,

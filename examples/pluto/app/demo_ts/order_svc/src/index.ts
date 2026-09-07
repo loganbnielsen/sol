@@ -34,9 +34,17 @@ const { register: metricsRegister, requestsTotal, requestDuration } = makeSvcMet
 async function main() {
   console.log(`[order-svc-ts] brokers=${KAFKA_BROKERS} registry=${SCHEMA_REGISTRY_URL} topic=${TOPIC_NAME}`);
 
-  await setSubjectCompatibility(SCHEMA_REGISTRY_URL, TOPIC_NAME);
+  // Order matches Kafka_service.register (kafka_service.ml:167-177) exactly:
+  // register_schema is fatal (let it throw, unguarded); set_subject_compatibility
+  // is best-effort and must never block startup on a registry that doesn't
+  // support it.
   const schemaId = await registerSchema(SCHEMA_REGISTRY_URL, TOPIC_NAME, ORDER_PLACED_SCHEMA);
   console.log(`[order-svc-ts] schema registered, id=${schemaId}`);
+  try {
+    await setSubjectCompatibility(SCHEMA_REGISTRY_URL, TOPIC_NAME);
+  } catch (err) {
+    console.warn(`[order-svc-ts] warn: could not set schema compatibility for ${TOPIC_NAME}: ${String(err)}`);
+  }
 
   const kafka = new Kafka({ clientId: "order-svc-ts", brokers: KAFKA_BROKERS });
   const producer = kafka.producer();
@@ -51,10 +59,28 @@ async function main() {
   // recording inline in the handler (an earlier version of this file did)
   // silently drops metrics for any request that throws.
   app.addHook("onResponse", async (req, reply) => {
-    const route = req.routeOptions?.url ?? req.url;
+    // sol-svc's dispatcher (service.ml:113-114) uses a fixed "unmatched"
+    // label for any request that never matched a route — an unbounded,
+    // caller-controlled path as a label value is a Prometheus cardinality
+    // bomb under real internet traffic (scanners, retries with varying
+    // paths). routeOptions is only set once Fastify has matched a route.
+    const route = req.routeOptions?.url ?? "unmatched";
     const statusClass = `${Math.floor(reply.statusCode / 100)}xx`;
     requestsTotal.inc({ method: req.method, route, status_class: statusClass });
     requestDuration.observe({ method: req.method, route }, reply.elapsedTime / 1000);
+  });
+
+  // Internal error details (a Kafka publish failure, a stack trace) must
+  // never reach an external caller verbatim — Fastify's default handler
+  // serializes error.message straight into the response body otherwise.
+  app.setErrorHandler((err, _req, reply) => {
+    console.error(`[order-svc-ts] request error: ${String(err)}`);
+    const status = (err as { statusCode?: number }).statusCode ?? 500;
+    if (status >= 500) {
+      reply.code(status).send({ error: "internal server error" });
+    } else {
+      reply.code(status).send({ error: (err as Error).message });
+    }
   });
 
   app.get("/healthz", async () => ({ status: "ok" }));
@@ -63,28 +89,47 @@ async function main() {
     return metricsRegister.metrics();
   });
 
-  app.post("/orders", async (req, reply) => {
-    const body = req.body as { order_id?: string; item?: string; quantity?: number };
+  app.post(
+    "/orders",
+    {
+      // Fastify's built-in AJV validation (ecosystem-covered, not a Sol
+      // convention) — a malformed body (missing/wrong-typed fields) is
+      // rejected with 400 before the handler ever runs, instead of being
+      // silently coerced via `?? ""`/`?? 0` and published anyway.
+      schema: {
+        body: {
+          type: "object",
+          required: ["order_id", "item", "quantity"],
+          properties: {
+            order_id: { type: "string", minLength: 1 },
+            item: { type: "string", minLength: 1 },
+            quantity: { type: "integer" },
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+    const body = req.body as { order_id: string; item: string; quantity: number };
     const correlationId =
       (req.headers["x-correlation-id"] as string | undefined) ?? randomBytes(4).toString("hex");
 
     const span = tracer.startSpan("receive_order", { kind: SpanKind.PRODUCER });
     try {
-      span.setAttribute("order_id", body.order_id ?? "");
-      span.setAttribute("item", body.item ?? "");
+      span.setAttribute("order_id", body.order_id);
+      span.setAttribute("item", body.item);
 
       const traceparent = traceparentOf(span);
       log("info", "order received", {
-        order_id: body.order_id ?? "",
-        item: body.item ?? "",
+        order_id: body.order_id,
+        item: body.item,
         correlation_id: correlationId,
         trace_id: span.spanContext().traceId,
       });
 
       const message = {
-        order_id: body.order_id ?? "",
-        item: body.item ?? "",
-        quantity: body.quantity ?? 0,
+        order_id: body.order_id,
+        item: body.item,
+        quantity: body.quantity,
         correlation_id: correlationId,
       };
       const wire = encodeWire(schemaId, message);
@@ -108,7 +153,8 @@ async function main() {
     } finally {
       span.end();
     }
-  });
+    }
+  );
 
   await app.listen({ port: PORT, host: "0.0.0.0" });
   console.log(`[order-svc-ts] listening on :${PORT}`);
@@ -128,10 +174,24 @@ async function main() {
       }, 3000)
     : undefined;
 
+  const DRAIN_TIMEOUT_MS = 30_000; // matches sol-svc's default drain_timeout_s (service.ml)
+  let shuttingDown = false;
   const shutdown = async () => {
+    if (shuttingDown) return; // SIGTERM/SIGINT can both fire; don't drain twice concurrently
+    shuttingDown = true;
     console.log("[order-svc-ts] draining...");
     if (pushInterval) clearInterval(pushInterval);
-    await app.close();
+    // sol-svc races the drain against drain_timeout_s and force-cancels
+    // (Drain_timeout, service.ml:290-303) rather than hanging forever on a
+    // client holding a connection open — app.close() alone has no such bound.
+    const drainTimeout = new Promise<void>((resolve) => {
+      const t = setTimeout(() => {
+        console.error("[order-svc-ts] drain timeout reached, forcing shutdown");
+        resolve();
+      }, DRAIN_TIMEOUT_MS);
+      t.unref();
+    });
+    await Promise.race([app.close(), drainTimeout]);
     await producer.disconnect();
     await shutdownTracing();
     process.exit(0);

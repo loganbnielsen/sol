@@ -149,6 +149,95 @@ hand is genuinely easy to get wrong, and is exactly the kind of thing
 not the full forward-retry/DLQ machinery, which is correctly out of scope
 here but is real, non-trivial future work if `@sol/kafka` gets built.
 
+## Adversarial review round 1 (fresh external reviewer, fixed)
+
+The fork that built this spike ran a self-review substitute instead of
+`/pr`'s real adversarial loop (spawning a fresh subagent from inside a
+fork is blocked). The parent session then ran an actual fresh,
+zero-context reviewer agent against the diff. It found 10 real issues a
+self-review missed, all fixed:
+
+1. **Docker builds weren't reproducible.** Neither `Dockerfile` copied
+   `package-lock.json` into the build context, and both used `npm install`
+   instead of `npm ci` — every image rebuild re-resolved the dependency
+   tree from `^`-ranged `package.json` ranges. Fixed: both stages of both
+   Dockerfiles now `COPY package-lock.json` and run `npm ci`.
+2. **`pg.Pool` had no `error` listener.** An idle pooled client dying
+   underneath it (Postgres restart, failover) would emit an unhandled
+   `'error'` event and crash the whole process even with no query in
+   flight. Fixed: `pool.on("error", ...)` logs and lets the pool recover.
+3. **Schema-registry call order/fatality didn't match the OCaml runtime
+   path.** `Kafka_service.register` (`kafka_service.ml:167-177`) calls
+   `register_schema` first (fatal on failure) then
+   `set_subject_compatibility` second (non-fatal, warn-and-continue) — the
+   TS port had the compatibility call first and unguarded, so a registry
+   that didn't support that call would kill startup for the wrong reason.
+   Fixed: reordered to match, and fixed `registerSchema`'s doc comment,
+   which incorrectly claimed to mirror a nonexistent
+   compatibility-check-then-register flow (`Schema.check` is a standalone
+   CI-gate function in the OCaml code, never composed with registration
+   at runtime — verified by reading `kafka_service_schema.ml` directly).
+4. **No request-body validation on `POST /orders`.** Malformed bodies
+   (wrong types, missing fields) were silently coerced via `?? ""`/`?? 0`
+   and published anyway, with the only feedback being a silent drop at the
+   worker's decode step — the caller who got a 202 never finds out. Fixed
+   using Fastify's built-in JSON-schema (AJV) route validation — an
+   ecosystem feature, not new code — returning 400 before the handler runs.
+5. **Internal error messages leaked to HTTP callers.** No error handler was
+   registered, so Fastify's default serialized `error.message` (e.g. a raw
+   Kafka client error) straight into 500 responses. Fixed with a
+   `setErrorHandler` that logs the real error server-side and returns a
+   generic message for 5xx.
+6. **No bounded drain timeout on `order_svc` shutdown.** `sol-svc`'s real
+   contract (`service.ml:290-303`) races the drain against
+   `drain_timeout_s` (default 30s) and force-cancels rather than hanging
+   forever on a client holding a connection open; the TS port awaited
+   `app.close()` unconditionally. Fixed with the same race pattern.
+7. **Unbounded Prometheus label cardinality on unmatched routes.** A 404
+   put the raw, caller-controlled request path into the `route` label —
+   under real traffic (scanners, retries with varying paths) that's a
+   cardinality bomb. Fixed to use a fixed `"unmatched"` label, matching
+   `service.ml:113-114` exactly.
+8. **Metric status vocabulary didn't match the real convention.** The real
+   worker (`worker.ml:99-163`) uses exactly `{ok, error, retry, ack_failed}`
+   on `sol_worker_messages_total` — decode/validation failures never reach
+   that counter at all; they're intercepted earlier
+   (`kafka_service_intf.ml`'s `wrap_on_decode_error`) and counted on a
+   separate `sol_worker_decode_errors_total`. The TS port had invented
+   `status="decode_error"`/`status="db_error"` values that would make a
+   cross-language Grafana panel disagree between an OCaml and a TS worker.
+   Fixed: added a matching `sol_worker_decode_errors_total` counter, and
+   relabeled the DB-failure path to `status="error"`.
+9. **`traceparent` flags field wasn't W3C-spec-correct.** The producer
+   hardcoded the sampled flag to `"01"` regardless of actual sampling
+   state; the consumer's parser used `parseInt(flags, 16) || 1`, which
+   incorrectly treats a legitimate unsampled trace (`flags=0`) as sampled
+   due to JS falsy-zero coercion. Neither manifested in this demo (default
+   sampler is always-on), but both are latent spec violations. Fixed both.
+10. Noted, not fixed: a JSON payload like `"quantity": 5.0` parses to the
+    integer `5` in TS (`JSON.parse` collapses it) but would be rejected by
+    OCaml's Yojson-based decoder as `` `Float 5.0 ``, not `` `Int 5 `` — a
+    genuine cross-language schema-strictness gap, not a bug in either side
+    alone. Documented as a `ponytail:` comment in `wire.ts` rather than
+    built around, since fixing it needs a custom JSON parser preserving
+    numeric literal formatting — real work a `@sol/kafka` package would
+    need to actually decide on, not worth it for a spike.
+
+All fixes verified live against the same real local infra used in the
+initial pass (Kafka/Redpanda, Postgres, schema registry) — re-ran the
+happy path, two malformed-body cases (400, not 202), a garbage Kafka
+message (rejected, counted on `sol_worker_decode_errors_total`, worker
+stays alive), the unmatched-route label, and a double-SIGTERM (drains
+exactly once, exits cleanly) — all as expected after the fixes.
+
+This review round is itself further evidence for the recommendation
+below: an OCaml-native reviewer (or the framework itself) catches classes
+of bug — retry/crash semantics, metric-label conventions, propagation
+correctness — that are invisible to someone writing idiomatic TypeScript
+without cross-referencing the OCaml source line-by-line, which is exactly
+the kind of knowledge a `@sol/kafka`/`@sol/obs` package would need to
+encode so app authors don't have to rediscover it.
+
 ## Friction log
 
 **Schema registry protocol.** Nothing in `kafkajs` or the wider npm
