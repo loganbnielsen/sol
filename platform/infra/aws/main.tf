@@ -197,7 +197,7 @@ resource "aws_db_instance" "postgres" {
   count             = var.create_rds ? 1 : 0
   identifier        = "${var.cluster_name}-postgres"
   engine            = "postgres"
-  engine_version    = "16.2"
+  engine_version    = "16.15"
   instance_class    = var.rds_instance_class
   allocated_storage = var.rds_storage_gb
   storage_encrypted = true

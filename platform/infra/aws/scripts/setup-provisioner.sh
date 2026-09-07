@@ -14,6 +14,15 @@
 #
 # Not idempotent — re-running against an already-existing user/policy will
 # fail; run teardown-provisioner.sh first if you need to recreate it.
+#
+# smoke-test-iam-policy.json is minified with terse Sids on purpose: AWS
+# managed policies have a hard 6144-byte document limit, and this policy
+# (covering VPC/EKS/RDS/ECR/KMS/IAM-for-IRSA end to end) sits close enough
+# to that ceiling that pretty-printing alone would exceed it. Don't
+# reformat it "for readability" without checking the resulting byte count
+# (`python3 -c "import json;print(len(open('smoke-test-iam-policy.json').read()))"`)
+# — verified against a real DOGFOOD-011 apply+destroy cycle at this size;
+# see project/dogfood/ for the run that shaped every statement in it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

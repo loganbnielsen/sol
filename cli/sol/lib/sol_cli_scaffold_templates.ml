@@ -252,7 +252,12 @@ jobs:
             dir=$(dirname "$dockerfile")
             svc=$(basename "$dir" | tr '_' '-')
             image="${REGISTRY}/{{name}}/${svc}:${SHORT_SHA}"
-            docker build -t "$image" -f "$dockerfile" .
+            # --provenance=false --sbom=false: without these, BuildKit attaches
+            # a provenance/SBOM attestation sub-manifest to the image index,
+            # which EKS's containerd fails to pull with a bare "not found" on
+            # the tag even though the image is really in the registry --
+            # confirmed live (DOGFOOD-011). Local k3d tolerates it either way.
+            docker build --provenance=false --sbom=false -t "$image" -f "$dockerfile" .
             docker push "$image"
           done
 
@@ -408,7 +413,12 @@ jobs:
             dir=$(dirname "$dockerfile")
             svc=$(basename "$dir" | tr '_' '-')
             image="${REGISTRY}/{{name}}/${svc}:${SHORT_SHA}"
-            docker build -t "$image" -f "$dockerfile" .
+            # --provenance=false --sbom=false: without these, BuildKit attaches
+            # a provenance/SBOM attestation sub-manifest to the image index,
+            # which EKS's containerd fails to pull with a bare "not found" on
+            # the tag even though the image is really in the registry --
+            # confirmed live (DOGFOOD-011). Local k3d tolerates it either way.
+            docker build --provenance=false --sbom=false -t "$image" -f "$dockerfile" .
             docker push "$image"
           done
 
