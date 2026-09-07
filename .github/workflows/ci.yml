@@ -53,3 +53,88 @@ jobs:
 
       - name: Platform-component drift guardrail (ADR 0001 / CODE_LAYER-005)
         run: tools/ci/check_platform_component_drift.sh
+
+  # FRIC-009: nothing above exercises the actual golden path against live
+  # infra, so a regression that breaks every generated service on a fresh
+  # substrate (FRIC-007 — a pinned Redpanda version that silently couldn't
+  # register a JSON schema) reproduced deterministically and was invisible
+  # to CI. This job is the smallest check that would have caught it:
+  # sol new workspace -> sol dev up -> sol up -> one curl /health. It is
+  # NOT full golden-path coverage (no migrate/status/Kafka round-trip —
+  # that's what periodic /dogfood runs are for) and it is NOT a general CI
+  # overhaul. Separate job (not folded into `test`) so its extra ~2-5min
+  # of real cluster bootstrap doesn't slow down the fast unit-test signal.
+  golden-path-smoke:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y librdkafka-dev libpq-dev libpq5
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.4.1
+
+      - name: Pin extracted opam packages
+        run: |
+          opam pin add https-eio https://github.com/loganbnielsen/https-eio.git#main -y
+          opam pin add kafka-eio https://github.com/loganbnielsen/kafka-eio.git#main -y
+          opam pin add obs-eio https://github.com/loganbnielsen/obs-eio.git#main -y
+          opam pin add obs-loki-eio https://github.com/loganbnielsen/obs-loki-eio.git#main -y
+          opam pin add obs-prometheus-eio https://github.com/loganbnielsen/obs-prometheus-eio.git#main -y
+          opam pin add obs-tempo-eio https://github.com/loganbnielsen/obs-tempo-eio.git#main -y
+          opam pin add pg-eio https://github.com/loganbnielsen/pg-eio.git#main -y
+          opam pin add aws-eio https://github.com/loganbnielsen/aws-eio.git#main -y
+          opam pin add s3-eio https://github.com/loganbnielsen/s3-eio.git#main -y
+          opam pin add dynamodb-eio https://github.com/loganbnielsen/dynamodb-eio.git#main -y
+          opam pin add lambda-eio https://github.com/loganbnielsen/lambda-eio.git#main -y
+
+      - name: Install OCaml dependencies
+        run: opam install . --deps-only --with-test -y
+
+      - name: Build sol CLI
+        run: opam exec -- dune build cli/sol/bin/main.exe
+
+      - name: Install k3d/kubectl/helm (pinned versions — docs/dogfood/DOGFOOD.md)
+        run: |
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=v5.6.0 bash
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | DESIRED_VERSION=v3.21.0 bash
+          curl -LO "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+
+      - name: Golden-path smoke test
+        timeout-minutes: 15
+        run: |
+          set -eo pipefail
+          export SOL_HOME="$GITHUB_WORKSPACE"
+          mkdir -p "$SOL_HOME/.ci-bin"
+          ln -sf "$SOL_HOME/_build/default/cli/sol/bin/main.exe" "$SOL_HOME/.ci-bin/sol"
+          export PATH="$SOL_HOME/.ci-bin:$PATH"
+          hash -r
+
+          sol new workspace ci_smoke
+          cd ci_smoke
+          eval $(opam env)
+          dune build
+
+          sol dev up
+          sol up
+
+          ok=""
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/health > /tmp/health.out; then
+              ok=1
+              break
+            fi
+            sleep 2
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::golden-path smoke test: /health never became reachable"
+            sol status || true
+            kubectl get pods -A || true
+            exit 1
+          fi
+          echo "health check OK: $(cat /tmp/health.out)"
