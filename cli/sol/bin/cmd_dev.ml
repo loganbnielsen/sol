@@ -198,8 +198,8 @@ let dev_up () =
     helm_install ~label:"Redpanda" "redpanda" "redpanda/redpanda" ~namespace:"redpanda"
       (* FRIC-007: 5.8.12 (image v24.1.8) predates JSON Schema Registry
          support, which landed in Redpanda 24.2
-         (redpanda-data/redpanda#6220, confirmed via the maintainer's own
-         closing comment) -- every generated Sol service's unconditional
+         (redpanda-data/redpanda#6220, confirmed via a Redpanda team
+         member's closing comment) -- every generated Sol service's unconditional
          `schemaType: "JSON"` registration call got HTTP 422 "Invalid
          schema type JSON" against this version, permanently
          crash-looping every -svc/-worker on a fresh substrate. 5.9.15
