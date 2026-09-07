@@ -1,20 +1,20 @@
 # Live/Dev Deploy Roadmap
 
-Goal: make Sun feel like a simple software factory for local dev and live
+Goal: make Sol feel like a simple software factory for local dev and live
 deploys without hiding cost, state, or rollback risk.
 
 ## Current Reality
 
-- `sun dev up` creates the local substrate.
-- `sun up` builds every discovered Dockerfile-backed service and applies
+- `sol dev up` creates the local substrate.
+- `sol up` builds every discovered Dockerfile-backed service and applies
   Kubernetes manifests.
-- `sun cloud plan/apply` creates customer-cloud substrate with Terraform.
-- `sun cloud destroy` tears that substrate down with Terraform.
-- `sun deploy` applies pre-built image tags or emits GitOps manifests.
+- `sol cloud plan/apply` creates customer-cloud substrate with Terraform.
+- `sol cloud destroy` tears that substrate down with Terraform.
+- `sol deploy` applies pre-built image tags or emits GitOps manifests.
 - Changed-service detection is manual today: pass a service path, or all
   services are deployed.
 - `-fn` deploys as Kubernetes `CronJob`; Lambda deployment is not wired into
-  Sun's deploy path.
+  Sol's deploy path.
 
 ## Project 1: Safe Cloud Dogfood
 
@@ -22,8 +22,8 @@ Prove the live AWS path without surprise spend.
 
 Completion criteria:
 
-- `sun cloud plan dev/aws/us-east-1` shows a reviewable plan.
-- `sun cloud apply dev/aws/us-east-1` provisions the low-cost dev stack.
+- `sol cloud plan dev/aws/us-east-1` shows a reviewable plan.
+- `sol cloud apply dev/aws/us-east-1` provisions the low-cost dev stack.
 - Printed outputs are enough to configure kubectl and registry login.
 - Base platform components install successfully on the live cluster:
   ingress-nginx, cert-manager, Redpanda, Loki/Grafana, Prometheus, and
@@ -33,8 +33,8 @@ Completion criteria:
 - Read-only checks prove observability is functional:
   Loki responds to `/ready`, Prometheus responds to `/-/ready`, and Grafana
   responds to `/api/health`.
-- `sun cloud destroy dev/aws/us-east-1 --plan` previews teardown.
-- `sun cloud destroy dev/aws/us-east-1 --apply` completes.
+- `sol cloud destroy dev/aws/us-east-1 --plan` previews teardown.
+- `sol cloud destroy dev/aws/us-east-1 --apply` completes.
 - A read-only AWS CLI verification step confirms EKS, RDS, and ECR resources are gone.
 - A dated dogfood report records commands, failures, fixes, and rough cost.
 
@@ -52,13 +52,13 @@ Deploy only what changed unless the user asks for everything.
 
 Completion criteria:
 
-- `sun build --changed --base <ref>` prints and builds impacted services.
-- `sun deploy --changed --base <ref>` deploys only impacted services.
+- `sol build --changed --base <ref>` prints and builds impacted services.
+- `sol deploy --changed --base <ref>` deploys only impacted services.
 - Changes under shared framework/runtime paths trigger all services.
 - Changes under `events/` trigger affected workers, or all workers until topic
   ownership is explicit enough to narrow safely.
 - Manual service path filtering keeps working.
-- Default `sun up` behavior stays simple and predictable.
+- Default `sol up` behavior stays simple and predictable.
 
 Tests:
 
@@ -74,9 +74,9 @@ target files whose paths carry env/provider/region.
 
 Target model:
 
-- `sun.yml` is the source of truth for project, services, resources,
+- `sol.yml` is the source of truth for project, services, resources,
   resource-specific shape, and service/resource bindings.
-- `sun/<env>/<provider>/<region>.yml` is the deploy target file.
+- `sol/<env>/<provider>/<region>.yml` is the deploy target file.
 - Target identity is derived from the path, for example
   `prod/aws/us-east-1`; provider and region are not repeated inside the YAML.
 - A target file owns its regional instance set. A resource named `app_db` in
@@ -97,49 +97,49 @@ Target model:
 Target CLI:
 
 ```sh
-sun plan dev/aws/us-east-1
-sun deploy dev/aws/us-east-1
+sol plan dev/aws/us-east-1
+sol deploy dev/aws/us-east-1
 
-sun cloud plan prod/aws/us-east-1
-sun cloud apply prod/aws/us-east-1
-sun cloud destroy prod/aws/us-east-1
+sol cloud plan prod/aws/us-east-1
+sol cloud apply prod/aws/us-east-1
+sol cloud destroy prod/aws/us-east-1
 ```
 
 Completion criteria:
 
-- `sun.yml` can define services, resources, and service `uses` bindings.
+- `sol.yml` can define services, resources, and service `uses` bindings.
 - DynamoDB resources require declared keys and indexes; they are never inferred
   from code.
-- `sun/<env>/<provider>/<region>.yml` can override registry, base domain,
+- `sol/<env>/<provider>/<region>.yml` can override registry, base domain,
   resource sizing, and service scale.
-- `sun plan <env>/<provider>/<region>` prints the merged app/resource/service
+- `sol plan <env>/<provider>/<region>` prints the merged app/resource/service
   plan before Terraform or kubectl runs.
-- `sun cloud plan <env>/<provider>/<region>` resolves provider, region, and
-  Terraform variables from the merged Sun config.
-- `sun deploy <env>/<provider>/<region> --image-tag <tag>` resolves registry and target
-  metadata from the merged Sun config.
+- `sol cloud plan <env>/<provider>/<region>` resolves provider, region, and
+  Terraform variables from the merged Sol config.
+- `sol deploy <env>/<provider>/<region> --image-tag <tag>` resolves registry and target
+  metadata from the merged Sol config.
 - CLI flags still override target file values.
 - Missing required target values fail before Terraform or kubectl runs.
 
 Tests:
 
-- Parser tests for valid and invalid `sun.yml` and override files.
-- Merge tests for base config plus `sun/<env>/<provider>/<region>.yml`.
+- Parser tests for valid and invalid `sol.yml` and override files.
+- Merge tests for base config plus `sol/<env>/<provider>/<region>.yml`.
 - Command request tests for target file plus CLI override precedence.
 - Dry-run tests prove resolved regions, resources, indexes, registry, and
   base-domain land in the plan.
 
 Config rules:
 
-- File path carries placement. `sun/prod/aws/us-east-1.yml` means
+- File path carries placement. `sol/prod/aws/us-east-1.yml` means
   `env=prod`, `provider=aws`, `region=us-east-1`.
 - YAML carries topology and overrides: resources, services, bindings, scale,
   sizing, public exposure, durability, and provider-specific knobs.
 - Provider-specific fields stay boxed under `aws:` or `gcp:`. Promote a field
-  to generic Sun language only when it has stable meaning across providers.
+  to generic Sol language only when it has stable meaning across providers.
 - Local `uses` refs address resources in the selected target. Absolute refs
   use `/<region>/<resource>` and address resources in another region of the
-  same env/provider. `sun plan` must print them as cross-region access.
+  same env/provider. `sol plan` must print them as cross-region access.
 - Refs containing an env segment, such as `/prod/aws/us-east-1/db`, are invalid;
   cross-env sharing is not supported.
 - Refs containing a provider segment, such as `/gcp/us-central1/db`, are
@@ -170,13 +170,13 @@ Tests:
 
 ## Project 5: Release/Upgrade Loop
 
-Make deploy, inspect, rollback, and upgrade understandable from Sun commands.
+Make deploy, inspect, rollback, and upgrade understandable from Sol commands.
 
 Completion criteria:
 
 - Every deploy writes a local or remote release record with service image refs.
-- `sun status` shows desired tag, live tag, rollout state, and age.
-- `sun rollback <service>` works for Deployments and Rollouts.
+- `sol status` shows desired tag, live tag, rollout state, and age.
+- `sol rollback <service>` works for Deployments and Rollouts.
 - CronJobs report as non-rollout workloads instead of pretending rollback works.
 - Reusing a fixed tag forces a rollout restart or is rejected with a clear fix.
 
@@ -190,7 +190,7 @@ Tests:
 
 - Active-active multi-region.
 - Automatic cross-region Kafka failover.
-- Lambda deploys from Sun.
+- Lambda deploys from Sol.
 - A hosted control plane.
 
 Add these when the single-region Kubernetes path is proven live and boring.

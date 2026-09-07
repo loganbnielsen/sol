@@ -1,5 +1,43 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: FEAT-032 — sun -> sol rename (2026-09-06)
+
+Renamed the project from Sun to Sol across code, CLI, config conventions,
+and build/release tooling, completing the docs-only rebrand started in
+PR #136. The GitHub repo was renamed first (`loganbnielsen/sun` ->
+`loganbnielsen/sol`); this ticket did the rest:
+
+- Directories: `cli/sun` -> `cli/sol`, `framework/sun-{svc,worker,fn,obs,env}`
+  -> `framework/sol-*`, `tools/sundev` -> `tools/soldev`,
+  `tools/sun_process` -> `tools/sol_process`.
+- OCaml modules: `Sun_cli_*` -> `Sol_cli_*`, `Sun_obs`/`Sun_env`/`Sun_process`
+  -> `Sol_obs`/`Sol_env`/`Sol_process`, `Sundev_*` -> `Soldev_*`, the
+  `Sun_hosted` deployment-mode variant -> `Sol_hosted`, plus every dune
+  library name and consuming `(libraries ...)` stanza.
+- Config/env conventions the CLI reads from disk: `sun.toml` -> `sol.toml`,
+  `sun.yml` -> `sol.yml`, the `sun/<env>/<provider>/<region>.yml`
+  target-file directory -> `sol/...`, `SUN_HOME`/`SUN_TARGET`/
+  `SUN_LOKI_USERNAME`/`SUN_LOKI_PASSWORD`/`SUN_API_KEY(_FILE)`/
+  `SUN_SKIP_HOOKS`/`SUN_SKIP_PERF_HOOK` -> `SOL_*`. Scaffold templates
+  now emit the new names into every freshly generated workspace
+  (including the generated CI workflow, `sol-ci.yml`), and both bundled
+  example workspaces (`examples/pluto/`, `examples/venus/`) were updated
+  to match for real, not just in docs.
+- `.github/workflows/release.yml`: bundle/binary naming (`sol-vX.Y.Z-...`,
+  `bin/sol`). `sun.opam` regenerated as `sol.opam` from `dune-project`'s
+  renamed package.
+- Prometheus alert names `SunHighErrorRate`/`SunPodRestartLoop` ->
+  `SolHighErrorRate`/`SolPodRestartLoop` in
+  `platform/infra/base/main.tf` and docs.
+- Every living doc (README, TUTORIAL, ROADMAP, PRODUCT_ARCHITECTURE,
+  devops-pipeline, escape-hatches, this repo's own `.claude/` context and
+  skills) updated throughout. Dated/historical records — past tickets,
+  `project/audits/`, `project/dogfood/`, `docs/audits/`, and the
+  root-level `*-audit.md` investigation docs — were deliberately left
+  saying "Sun", since they describe what was true at the time.
+- `dune build` and the full test suite (unit + kafka + e2e) pass clean
+  from a fresh `_build/`.
+
 ## Latest: CODE_LAYER-011 — perf gate stops crying wolf; automatic revert unblocked (2026-09-06)
 
 Picked up from `project/tickets/IN_PROGRESS/CODE_LAYER-011.md`. The

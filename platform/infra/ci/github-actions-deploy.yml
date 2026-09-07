@@ -1,4 +1,4 @@
-# GitHub Actions workflow for Sun workspaces — direct deploy mode.
+# GitHub Actions workflow for Sol workspaces — direct deploy mode.
 #
 # Copy this file to your workspace repo at .github/workflows/deploy.yml
 # and set the repository secrets listed below.
@@ -15,11 +15,11 @@
 #
 # Required repo variable (Settings → Secrets and variables → Actions → Variables —
 # not a secret, this is just a path):
-#   SUN_TARGET                — deployment target, <env>/<provider>/<region>, e.g.
+#   SOL_TARGET                — deployment target, <env>/<provider>/<region>, e.g.
 #                                prod/aws/us-east-1. Requires a matching
-#                                sun/<env>/<provider>/<region>.yml file committed in
+#                                sol/<env>/<provider>/<region>.yml file committed in
 #                                this repo -- create one before the first deploy, even
-#                                empty: mkdir -p sun/prod/aws && touch sun/prod/aws/us-east-1.yml
+#                                empty: mkdir -p sol/prod/aws && touch sol/prod/aws/us-east-1.yml
 #
 # For GitOps mode (Argo CD), see github-actions-gitops.yml instead.
 
@@ -88,19 +88,19 @@ jobs:
           mkdir -p ~/.kube
           echo "${{ secrets.KUBECONFIG_B64 }}" | base64 -d > ~/.kube/config
 
-      - name: sun deploy
+      - name: sol deploy
         env:
           SHA:        ${{ github.sha }}
           REGISTRY:   ${{ secrets.ECR_REGISTRY }}
-          SUN_TARGET: ${{ vars.SUN_TARGET }}
+          SOL_TARGET: ${{ vars.SOL_TARGET }}
         run: |
           eval $(opam env)
           SHORT_SHA=${SHA::7}
-          sun deploy "$SUN_TARGET" \
+          sol deploy "$SOL_TARGET" \
             --image-tag "$SHORT_SHA" \
             --registry  "$REGISTRY"
 
-      - name: sun status
+      - name: sol status
         run: |
           eval $(opam env)
-          sun status
+          sol status

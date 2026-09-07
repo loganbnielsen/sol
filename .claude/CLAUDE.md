@@ -1,8 +1,8 @@
-# Sun — Claude Context
+# Sol — Claude Context
 
 ## Development phase: pre-alpha, no backwards compatibility
 
-Sun and every support library it pins (see `~/Code/CLAUDE.md`, one level
+Sol and every support library it pins (see `~/Code/CLAUDE.md`, one level
 up) are pre-alpha: no customers, no external users, nothing depending on
 current API shape. Backwards compatibility is not a constraint anywhere
 in this repo — don't add compat shims, deprecated aliases, or version
@@ -11,9 +11,9 @@ and update call sites in the same pass. Full policy: `~/Code/CLAUDE.md`.
 
 ## Current development focus
 
-**Phase 7 core deliverables complete.** `sun deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sun plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sun.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sun up` and `sun deploy`. Terraform modules live at `platform/infra/base/`, `platform/infra/aws/`, and `platform/infra/gcp/`. Remaining hosted-product work is tracked in `project/tickets/`. See `docs/planning/WORK_SUMMARY.md` for full details.
+**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform modules live at `platform/infra/base/`, `platform/infra/aws/`, and `platform/infra/gcp/`. Remaining hosted-product work is tracked in `project/tickets/`. See `docs/planning/WORK_SUMMARY.md` for full details.
 
-Package: `cli/sun/` — binary at `_build/default/cli/sun/bin/main.exe`.
+Package: `cli/sol/` — binary at `_build/default/cli/sol/bin/main.exe`.
 
 ## Ticket system
 
@@ -31,11 +31,11 @@ project/tickets/
 ```
 
 **State machine:** `READY_FOR_ENGINEERING` → `IN_PROGRESS` → `REVIEW` → `READY_TO_MERGE` → `DONE`  
-`IN_PROGRESS` → `REVIEW` happens via `sundev pipeline submit <ticket-id>`, which pushes the ticket's branch and opens a real GitHub PR (recorded in the ticket's `pr:` field) — `REVIEW` means "a PR is open," not just "a worktree exists."  
+`IN_PROGRESS` → `REVIEW` happens via `soldev pipeline submit <ticket-id>`, which pushes the ticket's branch and opens a real GitHub PR (recorded in the ticket's `pr:` field) — `REVIEW` means "a PR is open," not just "a worktree exists."  
 If `/review-worktree` finds issues: back to `READY_FOR_ENGINEERING` (with inline notes; `branch`/`worktree` fields preserved).  
-`READY_TO_MERGE` → `DONE` happens via `sundev pipeline merge`, which merges the PR (`gh pr merge --squash --delete-branch`) — real GitHub branch protection and required checks gate the merge, not local logic.
+`READY_TO_MERGE` → `DONE` happens via `soldev pipeline merge`, which merges the PR (`gh pr merge --squash --delete-branch`) — real GitHub branch protection and required checks gate the merge, not local logic.
 
-**Ticket frontmatter fields:** `id`, `type` (ux-finding | audit-finding | feature | bug), `severity`, `source`, `branch`, `worktree`, `pr` (set by `sundev pipeline submit`, once a PR exists).  
+**Ticket frontmatter fields:** `id`, `type` (ux-finding | audit-finding | feature | bug), `severity`, `source`, `branch`, `worktree`, `pr` (set by `soldev pipeline submit`, once a PR exists).  
 Do not add a `status:` field — the directory encodes status.
 
 **Human-judgment gates:** Tickets in `BACKLOG/` may contain `## Open Questions`, `## Decision Required`, or `## Blocked On` sections. Tickets in `READY_FOR_ENGINEERING/` are treated as actionable, so `/work` must stop before creating a worktree if any unresolved decision section or marker remains. Resolve the decision in the ticket body or keep the ticket in `BACKLOG/` until the Remediation is unambiguous.
@@ -43,8 +43,8 @@ Do not add a `status:` field — the directory encodes status.
 **Ticket dependencies:** Use a body line near the top of each ticket: `**Depends on:** None.` or `**Depends on:** FEAT-003, EXP-008.` `/work` must verify dependencies before creating a worktree. A `READY_FOR_ENGINEERING` ticket with dependencies not yet in `project/tickets/DONE/` stays blocked.
 
 **Skills that interact with tickets:**
-- `/work` — unified entry point; dispatches by state: creates worktrees for `READY_FOR_ENGINEERING`, resumes `IN_PROGRESS`, runs review agent on `REVIEW`. Submits `IN_PROGRESS` → `REVIEW` via `sundev pipeline submit` (push + open PR)
-- `/review-worktree` — standalone review gate (called internally by `/work review`); subagents emit JSON, `sundev pipeline review` handles file moves
+- `/work` — unified entry point; dispatches by state: creates worktrees for `READY_FOR_ENGINEERING`, resumes `IN_PROGRESS`, runs review agent on `REVIEW`. Submits `IN_PROGRESS` → `REVIEW` via `soldev pipeline submit` (push + open PR)
+- `/review-worktree` — standalone review gate (called internally by `/work review`); subagents emit JSON, `soldev pipeline review` handles file moves
 - `/audit` and `/ux-audit` — materialise new findings into `READY_FOR_ENGINEERING/` (idempotent)
 
 **Performance baseline conflict:** `tools/perf/perf_baseline.json` is set to `merge=ours` in `.gitattributes`. On merge, main's baseline wins; a post-merge perf run determines whether the ticket stays merged or moves to `BLOCKED_BY_PERFORMANCE`.
@@ -53,16 +53,16 @@ Do not add a `status:` field — the directory encodes status.
 
 **Security on Day 1.** `Kafka_security.t` is a first-class field in every producer, consumer, and service config. `config_of_env()` reads `KAFKA_SECURITY_PROTOCOL`, `KAFKA_SSL_CA_LOCATION`, `KAFKA_SASL_*` from the environment. Dev defaults to `Plaintext`; the type forces all other environments to state their security posture explicitly. Do not add Kafka config anywhere that lacks a `security` field.
 
-**Dev mirrors prod exactly.** `sun dev up` runs the same Helm charts as production at single-replica scale. Port-forwards expose every service at the same address the service code expects. If there's a divergence between dev and prod addressing or configuration, that divergence is a bug.
+**Dev mirrors prod exactly.** `sol dev up` runs the same Helm charts as production at single-replica scale. Port-forwards expose every service at the same address the service code expects. If there's a divergence between dev and prod addressing or configuration, that divergence is a bug.
 
 ## What this repo is
 
-Sun is an opinionated OCaml 5 production platform for startups. Kafka layer, observability backends, all three service primitives (`-svc`, `-worker`, `-fn`), storage (PostgreSQL), and CLI scaffold commands are complete.
+Sol is an opinionated OCaml 5 production platform for startups. Kafka layer, observability backends, all three service primitives (`-svc`, `-worker`, `-fn`), storage (PostgreSQL), and CLI scaffold commands are complete.
 
 ## Repo layout
 
 ```
-sun/
+sol/
   integrations/kafka/                        ← Kafka service layer (merged into root dune project)
     kafka-eio-service/lib/      ← schema registry + service orchestration, depends on `kafka-eio.*`
     kafka-eio-service/test/
@@ -82,7 +82,7 @@ sun/
   # `obs-eio`, `obs-loki-eio`, `obs-prometheus-eio`. Public modules: `Obs_eio`
   # (+ `Obs_trace`), `Obs_loki`, `Obs_prometheus`. No `integrations/observability/`
   # directory remains in this repo.
-  # pg-eio (Postgres pool, migrations, Table.Make functor — formerly `sun-storage`)
+  # pg-eio (Postgres pool, migrations, Table.Make functor — formerly `sol-storage`)
   # moved out to a standalone opam package at ~/Code/pg-eio, opam-pinned into this
   # switch. Edit there, then `opam pin add pg-eio ~/Code/pg-eio` to pick up changes.
   # Findlib name: `pg-eio`. Public modules unchanged: `Storage_error`, `Db`,
@@ -94,12 +94,12 @@ sun/
   # real usage) — see aws-audit.md (repo root) for the layer plan. Edit there, then
   # `opam pin add aws-eio ~/Code/aws-eio` to pick up changes. Findlib name:
   # `aws-eio`. No `integrations/aws/` directory remains in this repo yet — nothing
-  # in Sun consumes this package today.
-  framework/                   ← Sun service primitives
-    sun-svc/lib/                ← REST API service (routes, auth, metrics)
-    sun-worker/lib/             ← Kafka consumer (schema registration, per-message metrics)
-    sun-fn/lib/                 ← Scheduled function (Pushgateway push, invocation metrics)
-    sun-*/sun-*.md              ← per-package spec docs
+  # in Sol consumes this package today.
+  framework/                   ← Sol service primitives
+    sol-svc/lib/                ← REST API service (routes, auth, metrics)
+    sol-worker/lib/             ← Kafka consumer (schema registration, per-message metrics)
+    sol-fn/lib/                 ← Scheduled function (Pushgateway push, invocation metrics)
+    sol-*/sol-*.md              ← per-package spec docs
   examples/local-demo/                         ← full-stack showcase demo (svc → Kafka → worker)
     lib/                        ← shared event contracts for demo
     bin/demo.ml                 ← orchestrated demo binary
@@ -172,7 +172,7 @@ Eio types to know: `Eio.Promise.u` (resolver), `_ Eio.Time.clock`, `Eio_unix.Std
 ## Local Kafka broker
 
 Redpanda (native Linux, no Docker). Start: `rpk redpanda start --overprovisioned --smp 1 --memory 512M`  
-Topics: `sun-demo`, `sun-producer-test`, `sun-consumer-test`  
+Topics: `sol-demo`, `sol-producer-test`, `sol-consumer-test`  
 Default broker address: `localhost:9092`
 
 ## Documentation Protocol

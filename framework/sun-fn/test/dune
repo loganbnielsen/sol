@@ -1,3 +1,0 @@
-(test
- (name test_fn)
- (libraries sun_fn eio eio_main alcotest))

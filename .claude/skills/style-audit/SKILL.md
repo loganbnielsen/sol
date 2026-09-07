@@ -4,7 +4,7 @@ description: Run an OCaml type-safety and readability style audit. Finds boolean
 
 # /style-audit - OCaml Type Safety and API Design Audit
 
-Find refactoring opportunities where Sun code relies on caller memory, raw
+Find refactoring opportunities where Sol code relies on caller memory, raw
 strings, defensive runtime checks, or deeply nested control flow instead of
 OCaml types and readable pipelines.
 
@@ -64,8 +64,8 @@ Walk these folders even if grep finds enough tickets early:
 
 - `framework/`
 - `integrations/kafka/`
-- `cli/sun/lib/`
-- `cli/sun/bin/`
+- `cli/sol/lib/`
+- `cli/sol/bin/`
 - `examples/`
 - `tools/`
 - tests and scaffold templates that teach users patterns
@@ -129,8 +129,8 @@ Recommended partitions:
 
 - Agent 1: `framework/`
 - Agent 2: `integrations/kafka/`
-- Agent 3: `cli/sun/lib/`
-- Agent 4: `cli/sun/bin/`
+- Agent 3: `cli/sol/lib/`
+- Agent 4: `cli/sol/bin/`
 - Agent 5: `examples/` plus scaffold templates
 - Agent 6: `tools/` plus tests
 
@@ -204,5 +204,5 @@ At the end, report:
 - Validation command, usually:
 
 ```bash
-dune exec tools/sundev/bin/main.exe -- pipeline ls | rg 'CODEX_STYLE_AUDIT'
+dune exec tools/soldev/bin/main.exe -- pipeline ls | rg 'CODEX_STYLE_AUDIT'
 ```

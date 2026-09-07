@@ -1,6 +1,6 @@
 # Hosted Account and Environment Model
 
-This model is the experimental ownership boundary for Sun-hosted deployment. It
+This model is the experimental ownership boundary for Sol-hosted deployment. It
 exists so hosted releases, secrets, diagnostics, and early billing all point at
 the same customer-scoped runtime identity.
 
@@ -22,7 +22,7 @@ provisioning are intentionally outside this model.
 | Object | Purpose |
 |---|---|
 | `account` | Customer ownership and early billing readiness. |
-| `project` | Hosted product record for a Sun workspace. |
+| `project` | Hosted product record for a Sol workspace. |
 | `environment` | Named deploy target such as `production` or `staging`. |
 | `runtime_substrate` | Customer-scoped runtime target, initially Kubernetes. |
 | `secret_scope` | Environment-scoped target for secret keys and values. |
@@ -66,24 +66,24 @@ environment without implementing fine-grained per-service metering.
 
 ## Early Cost-Plus Billing
 
-For private early adopters, Sun can aggregate provider costs for a billing
+For private early adopters, Sol can aggregate provider costs for a billing
 period and create an `early_cost_plus_billing_record`. The record stores provider
 cost, markup in basis points, computed charge amount, currency, and review
 status.
 
-This is explicitly an early-adopter cost-plus model, not final Sun pricing. It
+This is explicitly an early-adopter cost-plus model, not final Sol pricing. It
 keeps early hosted billing understandable while real cost drivers are learned.
 Polished invoices, automatic provider-cost ingestion, tiered pricing, and
 payment-provider integration remain deferred.
 
 ## Deployment Plans
 
-Hosted release submission should attach a `Sun_cli_deployment_plan.t` to a
+Hosted release submission should attach a `Sol_cli_deployment_plan.t` to a
 `release_target`. The target check enforces:
 
 - project workspace equals the deployment plan workspace
 - hosted environment name equals the deployment plan environment name
-- plan mode is `sun_hosted`
+- plan mode is `sol_hosted`
 - account, project, environment, and runtime links are internally consistent
 
 Deployment plans still contain application intent. The hosted model contains
@@ -91,14 +91,14 @@ ownership and runtime context.
 
 ## Hosted Executor Spike
 
-`Sun_cli_hosted_executor` is an experimental boundary for future Sun-hosted
+`Sol_cli_hosted_executor` is an experimental boundary for future Sol-hosted
 release submission. It accepts a hosted `release_target`, the deployment plan,
 the serialized deployment-plan JSON artifact, and immutable image refs supplied
 by customer CI.
 
 The current implementation is a mock submission path only. It validates that
-the plan is `sun_hosted`, that the serialized plan matches the request plan,
-and that each service has an image ref. It returns Sun release-shaped data:
+the plan is `sol_hosted`, that the serialized plan matches the request plan,
+and that each service has an image ref. It returns Sol release-shaped data:
 release id, environment id/name, mock status, service summaries, and a
 read-only release inspection summary. See `docs/hosted/hosted-release-inspection.md`
 for the release and diagnostics model.

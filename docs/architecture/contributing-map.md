@@ -1,6 +1,6 @@
 # Contributor Map
 
-This map points contributors to the source of truth for common changes. Sun is
+This map points contributors to the source of truth for common changes. Sol is
 a framework: intent should enter through typed models, commands, templates, or
 docs, then flow to generated artifacts. Generated YAML, shell calls, and
 workflow outputs are not ownership boundaries.
@@ -22,13 +22,13 @@ For audit-oriented work, use these workflows as the entry points:
 
 ## Command Changes
 
-Command parsing and user-facing CLI behavior live in `cli/sun/bin/`. Shared
-command implementation belongs in `cli/sun/lib/`, especially when more than one
-command needs the same behavior. `tools/sundev/` is for internal repository and
-ticket workflow tooling, not customer-facing `sun` commands.
+Command parsing and user-facing CLI behavior live in `cli/sol/bin/`. Shared
+command implementation belongs in `cli/sol/lib/`, especially when more than one
+command needs the same behavior. `tools/soldev/` is for internal repository and
+ticket workflow tooling, not customer-facing `sol` commands.
 
 Extend commands by adding typed options, shared library functions, and tests in
-`cli/sun/test/`. Keep command modules thin enough that behavior can be tested
+`cli/sol/test/`. Keep command modules thin enough that behavior can be tested
 without invoking a full terminal workflow.
 
 Do not add raw shell commands through `Sys.command`, ad hoc `Unix.system`, or
@@ -44,8 +44,8 @@ Deployment intent belongs in the typed deployment pipeline:
 workspace scan -> environment resolution -> deployment plan -> executor
 ```
 
-The main owners are `Sun_cli_workspace_scan`, `Sun_cli_env_target`,
-`Sun_cli_deployment_plan`, and `Sun_cli_executor`. Hosted behavior belongs behind `Sun_cli_hosted_executor` and
+The main owners are `Sol_cli_workspace_scan`, `Sol_cli_env_target`,
+`Sol_cli_deployment_plan`, and `Sol_cli_executor`. Hosted behavior belongs behind `Sol_cli_hosted_executor` and
 the hosted model/control-plane modules. The architecture direction is documented
 in `docs/architecture/PRODUCT_ARCHITECTURE.md`.
 
@@ -58,31 +58,31 @@ need the same intent, put it in the plan instead of only in one executor.
 
 ## Manifest Rendering
 
-Kubernetes manifest rendering is owned by `cli/sun/lib/sun_cli_manifest.ml`,
-`cli/sun/lib/sun_cli_manifest_yaml.ml`, and deployment rendering modules that
+Kubernetes manifest rendering is owned by `cli/sol/lib/sol_cli_manifest.ml`,
+`cli/sol/lib/sol_cli_manifest_yaml.ml`, and deployment rendering modules that
 consume the deployment plan. Manifests are generated artifacts derived from the
-workspace structure, environment target, images, secrets policy, and `sun.toml`
+workspace structure, environment target, images, secrets policy, and `sol.toml`
 overrides.
 
 Extend manifest behavior by changing the typed manifest/rendering layer and
-covering the output in `cli/sun/test/test_manifest_render.ml` or an adjacent
+covering the output in `cli/sol/test/test_manifest_render.ml` or an adjacent
 deployment-render test.
 
 Do not edit generated YAML paths directly, commit per-service Kubernetes YAML as
 normal source, or patch emitted files as the primary implementation. If a user
-needs a new override, model it in `sun.toml`, the deployment plan, or a documented
+needs a new override, model it in `sol.toml`, the deployment plan, or a documented
 escape hatch.
 
 ## Scaffold Templates
 
-Scaffold commands are owned by `cli/sun/lib/sun_cli_cmd_new.ml`,
-`cli/sun/lib/sun_cli_scaffold.ml`, and
-`cli/sun/lib/sun_cli_scaffold_templates.ml`. The generated workspace contract is
+Scaffold commands are owned by `cli/sol/lib/sol_cli_cmd_new.ml`,
+`cli/sol/lib/sol_cli_scaffold.ml`, and
+`cli/sol/lib/sol_cli_scaffold_templates.ml`. The generated workspace contract is
 validated by `docs/audits/SCAFFOLD_AUDIT.md` and tests in
-`cli/sun/test/test_scaffold.ml`.
+`cli/sol/test/test_scaffold.ml`.
 
 Extend scaffolds by updating the template source, generated file list, and tests
-together. Generated READMEs and workflows should teach current `sun` commands
+together. Generated READMEs and workflows should teach current `sol` commands
 first, with raw platform commands only as advanced or fallback paths.
 
 Do not hand-edit examples or generated output as the only fix for scaffold
@@ -92,8 +92,8 @@ contract when they are refreshed.
 ## Integrations
 
 Reusable capability packages live under `integrations/`: Kafka, observability,
-and storage. Framework primitives in `framework/sun-svc`, `framework/sun-worker`,
-and `framework/sun-fn` compose those integrations into service lifecycles.
+and storage. Framework primitives in `framework/sol-svc`, `framework/sol-worker`,
+and `framework/sol-fn` compose those integrations into service lifecycles.
 
 Extend integrations inside the relevant package with a small public interface,
 package-local tests, and package docs. Keep customer service code using the
@@ -107,7 +107,7 @@ lowest package that owns the concept.
 ## Tests
 
 Unit and package tests live beside their owner package in `test/` directories.
-CLI behavior is covered in `cli/sun/test/`. End-to-end behavior is represented
+CLI behavior is covered in `cli/sol/test/`. End-to-end behavior is represented
 by `examples/local-demo/test/test_e2e.ml` and the `/e2e` workflow. Audit
 checklists in `docs/audits/` define manual verification expectations.
 

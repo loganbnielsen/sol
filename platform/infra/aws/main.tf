@@ -1,4 +1,4 @@
-# platform/infra/aws — AWS cluster provisioning for Sun workspaces
+# platform/infra/aws — AWS cluster provisioning for Sol workspaces
 #
 # Provisions:
 #   VPC            — public + private subnets across 3 AZs, NAT gateway
@@ -34,7 +34,7 @@ terraform {
   # Uncomment to store state in S3 (recommended for teams):
   # backend "s3" {
   #   bucket = "my-terraform-state"
-  #   key    = "sun/prod/terraform.tfstate"
+  #   key    = "sol/prod/terraform.tfstate"
   #   region = "us-east-1"
   # }
 }
@@ -91,7 +91,7 @@ module "eks" {
   cluster_endpoint_public_access = true
 
   # The default vpc-cni addon does not enforce Kubernetes NetworkPolicy
-  # resources — sun's generated NetworkPolicies (see BUG-012) are a no-op
+  # resources — sol's generated NetworkPolicies (see BUG-012) are a no-op
   # without this. most_recent pulls a CNI version new enough to ship the
   # network-policy-agent (v1.14+).
   cluster_addons = {
@@ -133,7 +133,7 @@ module "eks" {
 }
 
 # ── ECR repositories ──────────────────────────────────────────────────────── #
-# One repository per service. Images are pushed here by CI; sun deploy reads
+# One repository per service. Images are pushed here by CI; sol deploy reads
 # from here using the workspace/service naming convention.
 
 resource "aws_ecr_repository" "services" {

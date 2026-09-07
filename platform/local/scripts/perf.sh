@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sun performance baseline tool.
+# Sol performance baseline tool.
 #
 # Usage:
 #   platform/local/scripts/perf.sh status                  # all suites at a glance

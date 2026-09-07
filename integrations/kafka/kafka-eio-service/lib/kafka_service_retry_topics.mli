@@ -12,7 +12,7 @@ type retry_action =
 val parse_retry_metadata
   :  (string * string option) list
   -> (int * float, string) result
-(** Read and validate the [X-Sun-Attempt]/[X-Sun-Retry-At] headers off a
+(** Read and validate the [X-Sol-Attempt]/[X-Sol-Retry-At] headers off a
     message forwarded to a retry topic. *)
 
 val execute_action

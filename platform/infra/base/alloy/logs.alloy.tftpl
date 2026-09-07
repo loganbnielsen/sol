@@ -5,8 +5,8 @@
 //
 // discovery.kubernetes finds every pod on the cluster; discovery.relabel
 // promotes standard Kubernetes metadata (namespace/pod/container) plus
-// Sun's taxonomy label set (render_taxonomy_labels in
-// Sun_cli_manifest_yaml) from pod labels into log stream labels;
+// Sol's taxonomy label set (render_taxonomy_labels in
+// Sol_cli_manifest_yaml) from pod labels into log stream labels;
 // loki.source.kubernetes tails each pod's logs via the Kubernetes API (no
 // hostPath mount, no extra RBAC beyond this chart's default ClusterRole);
 // loki.write ships the result to Loki.

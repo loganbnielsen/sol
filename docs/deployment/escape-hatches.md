@@ -1,59 +1,59 @@
-# Sun Escape Hatches
+# Sol Escape Hatches
 
-Sun is opinionated by default. Every generated Deployment enforces non-root
+Sol is opinionated by default. Every generated Deployment enforces non-root
 containers, read-only root filesystems, and ClusterIP-only services. These
 invariants are not negotiable at any escape-hatch level.
 
 When those defaults are correct but specific deployment parameters need tuning,
-Sun provides a four-level escape-hatch hierarchy. Use the lowest level that
+Sol provides a four-level escape-hatch hierarchy. Use the lowest level that
 solves your problem.
 
 ---
 
 ## The four-level hierarchy
 
-### Level 1 — `sun.toml` high-level overrides (recommended)
+### Level 1 — `sol.toml` high-level overrides (recommended)
 
-For common per-service customisation. Validated by `sun` at plan time; invalid
+For common per-service customisation. Validated by `sol` at plan time; invalid
 values are rejected with a clear error before anything is applied. Values stay
 in version control alongside the service source code.
 
-See the [Supported `sun.toml` overrides](#supported-suntoml-overrides) table
+See the [Supported `sol.toml` overrides](#supported-soltoml-overrides) table
 below.
 
 ### Level 2 — Environment target inputs
 
 For substrate-specific values that differ between environments (e.g. ECR
 registry URL, Kubernetes cluster name, base domain). Passed through
-`Sun_cli_env_target.t` when building a deployment plan. These are not
+`Sol_cli_env_target.t` when building a deployment plan. These are not
 per-service — they apply to the entire workspace for a given environment.
 
-Use `sun deploy <env>/<provider>/<region> --registry <url> --image-tag <tag>`
+Use `sol deploy <env>/<provider>/<region> --registry <url> --image-tag <tag>`
 or the equivalent environment target configuration
-(`sun/<env>/<provider>/<region>.yml`'s own `registry`, used as the default
+(`sol/<env>/<provider>/<region>.yml`'s own `registry`, used as the default
 when `--registry` is omitted).
 
-### Level 3 — GitOps emit (`sun deploy --emit-to`)
+### Level 3 — GitOps emit (`sol deploy --emit-to`)
 
-For advanced manifest patching outside Sun's model. `--emit-to <dir>` writes
+For advanced manifest patching outside Sol's model. `--emit-to <dir>` writes
 the complete generated YAML to a directory; a GitOps tool (Argo CD, Flux) or
 Kustomize overlay can then patch it before application.
 
-Sun owns the base manifests. Your overlays own the delta. Changes made via
-overlays are not visible to `sun inspect` or `sun plan` — treat them as a
+Sol owns the base manifests. Your overlays own the delta. Changes made via
+overlays are not visible to `sol inspect` or `sol plan` — treat them as a
 seam, not a primary workflow.
 
 ### Level 4 — Raw Kubernetes / Terraform (self-managed)
 
-For teams that have outgrown Sun's model entirely. Write your own Deployments,
-Services, and Terraform modules. Sun does not generate or manage these
+For teams that have outgrown Sol's model entirely. Write your own Deployments,
+Services, and Terraform modules. Sol does not generate or manage these
 resources. You retain full control and full responsibility.
 
 ---
 
-## Supported `sun.toml` overrides
+## Supported `sol.toml` overrides
 
-All overrides live under sections in the per-service `sun.toml` file.
+All overrides live under sections in the per-service `sol.toml` file.
 
 ### `[infra.scale]`
 
@@ -69,9 +69,9 @@ All overrides live under sections in the per-service `sun.toml` file.
 |----------|---------------|---------|--------------------------------------------------|
 | `config` | inline table  | `{}`    | Extra ConfigMap entries: `{ KEY = "value", ... }` |
 
-Keys in `config` are added to the service ConfigMap alongside Sun's built-in
+Keys in `config` are added to the service ConfigMap alongside Sol's built-in
 cluster defaults (Kafka brokers, Loki URL, etc.). They must not override
-Sun's reserved keys (`KAFKA_BROKERS`, `SCHEMA_REGISTRY_URL`, `LOKI_URL`,
+Sol's reserved keys (`KAFKA_BROKERS`, `SCHEMA_REGISTRY_URL`, `LOKI_URL`,
 `PUSHGATEWAY_URL`).
 
 ### `[infra.deploy]`
@@ -86,7 +86,7 @@ Sun's reserved keys (`KAFKA_BROKERS`, `SCHEMA_REGISTRY_URL`, `LOKI_URL`,
 plan time:
 
 ```
-sun.toml: unsupported rollout_strategy "Blue/Green" — valid values are "Recreate" and "RollingUpdate"
+sol.toml: unsupported rollout_strategy "Blue/Green" — valid values are "Recreate" and "RollingUpdate"
 ```
 
 `ingress_host` and `ingress_path` only affect `-svc` primitives. Workers and
@@ -101,26 +101,26 @@ functions do not produce an Ingress resource.
 Extra labels are added to the pod template's `metadata.labels` block alongside
 the required `app: <name>` label.
 
-**Guardrail:** Keys starting with `sun.dev/` are reserved for Sun internals.
+**Guardrail:** Keys starting with `sol.dev/` are reserved for Sol internals.
 Attempting to set them raises an error:
 
 ```
-sun.toml: extra_labels key "sun.dev/owner" is reserved — keys may not start with "sun.dev/"
+sol.toml: extra_labels key "sol.dev/owner" is reserved — keys may not start with "sol.dev/"
 ```
 
 ### `[infra.rollout]` — Progressive delivery (Argo Rollouts)
 
 > **Requires Argo Rollouts installed in the cluster.**
 > Without it, `kubectl apply` will fail because the `argoproj.io/v1alpha1` CRD
-> does not exist. Sun validates the configuration at plan time but cannot verify
+> does not exist. Sol validates the configuration at plan time but cannot verify
 > cluster readiness.
 
 This section opts a service into progressive delivery using
-[Argo Rollouts](https://argoproj.github.io/argo-rollouts/). Sun renders an Argo
+[Argo Rollouts](https://argoproj.github.io/argo-rollouts/). Sol renders an Argo
 `Rollout` resource instead of a standard `Deployment`. All other resources
 (ConfigMap, Secret, ServiceAccount, NetworkPolicy) are unchanged.
 
-This is a **typed high-level escape hatch**, not raw Argo YAML. Sun supports two
+This is a **typed high-level escape hatch**, not raw Argo YAML. Sol supports two
 strategies with a fixed, validated parameter set. For anything beyond what is
 described here, use Level 3 (GitOps overlay) to patch the generated `Rollout`
 manifest.
@@ -132,7 +132,7 @@ manifest.
 
 #### Canary strategy
 
-Sun renders a canary `Rollout` with the steps you define. Each step is an inline
+Sol renders a canary `Rollout` with the steps you define. Each step is an inline
 table with exactly one key:
 
 | Step form                     | Argo equivalent              | Description                                                 |
@@ -161,7 +161,7 @@ A canary `Rollout` for a `-svc` primitive still emits a single ClusterIP
 
 #### Blue-green strategy
 
-Sun renders a blue-green `Rollout` with `autoPromotionEnabled: false`, meaning
+Sol renders a blue-green `Rollout` with `autoPromotionEnabled: false`, meaning
 the preview version must be manually promoted. No steps are needed.
 
 ```toml
@@ -179,7 +179,7 @@ pod-selector swap on promotion.
 
 #### Out of scope
 
-The following Argo Rollouts features are not supported through `sun.toml` and
+The following Argo Rollouts features are not supported through `sol.toml` and
 require a Level 3 GitOps overlay if needed:
 
 - Traffic-manager integrations (Istio, NGINX, ALB, Traefik weight annotations).
@@ -204,11 +204,11 @@ overridden through any escape hatch:
 | Secrets via SecretRef, not values| Secrets are emitted as `Secret` objects, never inline env |
 
 If you need to relax any of these, use Level 3 (GitOps overlay) or Level 4
-(raw Kubernetes). Be aware that relaxing them voids Sun's security baseline.
+(raw Kubernetes). Be aware that relaxing them voids Sol's security baseline.
 
 ---
 
-## Example `sun.toml`
+## Example `sol.toml`
 
 Standard deployment with common overrides:
 
@@ -266,4 +266,4 @@ strategy = "blue-green"
 | Add sidecar containers                                 | 3     |
 | Use a custom StorageClass or PodDisruptionBudget       | 3     |
 | Manage your own Helm charts                            | 4     |
-| Write Terraform modules outside Sun's platform/infra/           | 4     |
+| Write Terraform modules outside Sol's platform/infra/           | 4     |

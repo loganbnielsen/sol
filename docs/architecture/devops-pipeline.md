@@ -1,13 +1,13 @@
-# Sun Factory Pipeline — Architecture Guide
+# Sol Factory Pipeline — Architecture Guide
 
-**Audience:** Contributors adding or modifying deployment behavior in Sun.  
+**Audience:** Contributors adding or modifying deployment behavior in Sol.  
 **Scope:** CLI commands, OCaml modules, pipeline phases, state management, and where to add tests.
 
 ---
 
 ## Overview
 
-Sun is a software factory. The CLI is the control panel; this pipeline is the
+Sol is a software factory. The CLI is the control panel; this pipeline is the
 factory machinery that turns a workspace directory scan and CLI flags into a
 typed deployment plan, Kubernetes/GitOps artifacts, release state, and live
 cluster changes.
@@ -30,7 +30,7 @@ escape hatches do not become public API.
 CLI flags
     │
     ▼
-[Plan]  Sun_cli_deployment_plan.of_services_result
+[Plan]  Sol_cli_deployment_plan.of_services_result
     │   Inputs:  workspace name, env_config, list of discovered services
     │   Output:  plan : t
     │              ├─ services    : service_spec list
@@ -40,7 +40,7 @@ CLI flags
     │              └─ consumer_groups
     │
     ▼
-[Render]  Sun_cli_deployment_render.render_spec
+[Render]  Sol_cli_deployment_render.render_spec
     │   Inputs:  service_spec, secret_backend variant
     │   Output:  (namespace_yaml * workload_yaml) result
     │              Workload shape: Render_svc | Render_worker | Render_fn
@@ -48,20 +48,20 @@ CLI flags
     │                              External_secrets
     │
     ▼
-[Change Set]  Sun_cli_change_set.build + execute  (sun deploy only)
+[Change Set]  Sol_cli_change_set.build + execute  (sol deploy only)
     │   Inputs:  plan, execution_mode (Dry_run | Emit_to dir | Apply)
     │   Output:  change_set : { plan; artifacts; mode }
     │   Execute: iterates artifacts, dispatches to kubectl apply / file write
     │
     ▼
-[Execute]  Sun_cli_executor  (sun up uses executor directly)
+[Execute]  Sol_cli_executor  (sol up uses executor directly)
     │   local  : render + kubectl apply (local k3d)
     │   direct : render + kubectl apply (live cluster, no build step)
     │   gitops : render + emit_to_dir   (write YAML files, no cluster touch)
     │
     ▼
-[State]  Sun_cli_deployment_state
-         Reads/writes a ConfigMap "sun-deploy-state-<workspace>" in the default
+[State]  Sol_cli_deployment_state
+         Reads/writes a ConfigMap "sol-deploy-state-<workspace>" in the default
          namespace.  Currently tracks deployed consumer group IDs so that the
          next deploy can warn when groups are removed.
 ```
@@ -70,63 +70,63 @@ CLI flags
 
 ## Command map
 
-### `sun dev up`
+### `sol dev up`
 
-**Module:** `cli/sun/bin/cmd_dev.ml` → `dev_up`
+**Module:** `cli/sol/bin/cmd_dev.ml` → `dev_up`
 
 Provisions a local k3d cluster and installs the local factory substrate via
 Helm. Does **not** run the Plan/Render/Execute pipeline. Steps:
 
 1. Check required tools (k3d, helm, kubectl).
-2. Create k3d cluster `sun-local` with a local registry on port 5000 (idempotent).
-3. Scan the workspace with `Sun_cli_workspace.scan` to discover which infra components
+2. Create k3d cluster `sol-local` with a local registry on port 5000 (idempotent).
+3. Scan the workspace with `Sol_cli_workspace.scan` to discover which infra components
    are needed (Kafka, PostgreSQL, Loki, Prometheus).
 4. Install required Helm charts: Redpanda, PostgreSQL (bitnami), Loki, Prometheus.
-5. Start background port-forwards via `Sun_cli_port_forward.start` so localhost
+5. Start background port-forwards via `Sol_cli_port_forward.start` so localhost
    addresses match in-cluster addresses.
 
-**Key modules:** `Sun_cli_workspace`, `Sun_cli_helm`, `Sun_cli_port_forward`, `Sun_cli_state`
+**Key modules:** `Sol_cli_workspace`, `Sol_cli_helm`, `Sol_cli_port_forward`, `Sol_cli_state`
 
 **No deployment plan is constructed** — this command manages the local substrate
 the rest of the factory targets.
 
 ---
 
-### `sun dev run`
+### `sol dev run`
 
-**Module:** `cli/sun/bin/cmd_dev.ml` → `dev_run`
+**Module:** `cli/sol/bin/cmd_dev.ml` → `dev_run`
 
 Builds all workspace services with `dune build` and runs each executable directly
 on the host (not inside k3d). Injects dev environment variables
 (`KAFKA_BROKERS=localhost:9092`, `POSTGRES_URL=...`, etc.) that match the
-port-forwards started by `sun dev up`. Prefixes each service's stdout/stderr with
+port-forwards started by `sol dev up`. Prefixes each service's stdout/stderr with
 `[domain/name]`. Stops all children on Ctrl-C (SIGTERM → SIGKILL).
 
 **No Plan/Render/Execute pipeline** — services run as native processes.
 
 ---
 
-### `sun up`
+### `sol up`
 
-**Module:** `cli/sun/bin/cmd_up.ml` → `run`
+**Module:** `cli/sol/bin/cmd_up.ml` → `run`
 
 Full local deploy: builds Docker images, synthesizes manifests, applies to k3d.
 This is the self-contained factory path for local smoke tests.
 
 Pipeline:
 
-1. Discover services (`Sun_cli_manifest.discover_services`).
+1. Discover services (`Sol_cli_manifest.discover_services`).
 2. Pre-flight: validate `POSTGRES_URL` (injected from in-cluster value if against k3d).
-3. Construct env_target with `Sun_cli_env_target.local_defaults`.
-4. **Plan:** `Sun_cli_deployment_plan.of_services_result` → `plan`.
-5. Consumer group removal guard: compare `Sun_cli_deployment_state.load_deployed_groups`
+3. Construct env_target with `Sol_cli_env_target.local_defaults`.
+4. **Plan:** `Sol_cli_deployment_plan.of_services_result` → `plan`.
+5. Consumer group removal guard: compare `Sol_cli_deployment_state.load_deployed_groups`
    with plan's groups; abort if removed groups found (unless `--confirm-group-change`).
 6. Copy workspace to a temp Docker context dir (rsync, resolving symlinks).
-7. For each service: `Sun_cli_docker.build`, `Sun_cli_docker.push`,
-   then `Sun_cli_executor.local ~dry_run`.
-8. Wait for rollout (`Sun_cli_kubectl.rollout_status`) for Svc and Worker primitives.
+7. For each service: `Sol_cli_docker.build`, `Sol_cli_docker.push`,
+   then `Sol_cli_executor.local ~dry_run`.
+8. Wait for rollout (`Sol_cli_kubectl.rollout_status`) for Svc and Worker primitives.
 9. Start/refresh port-forward for Svc services.
-10. **State:** `Sun_cli_deployment_state.record_outcome` writes the applied consumer
+10. **State:** `Sol_cli_deployment_state.record_outcome` writes the applied consumer
     groups to the cluster ConfigMap.
 
 **Flags:** `--dry-run` (prints YAML, skips build/push/apply), `--tag TAG`,
@@ -134,31 +134,31 @@ Pipeline:
 
 ---
 
-### `sun deploy`
+### `sol deploy`
 
-**Module:** `cli/sun/bin/cmd_deploy.ml` → `run`
+**Module:** `cli/sol/bin/cmd_deploy.ml` → `run`
 
 CI/CD deploy: skips image build. Images must already be in the registry. This is
-the customer-cloud factory path: Sun owns deployment intent and artifact
-synthesis; customer CI or a future `sun build` owns image production.
+the customer-cloud factory path: Sol owns deployment intent and artifact
+synthesis; customer CI or a future `sol build` owns image production.
 
 Pipeline:
 
 1. Discover services.
 2. Pre-flight: validate `POSTGRES_URL` (skipped for `--dry-run` and `--emit-to`).
-3. Construct env_target with `Sun_cli_env_target.customer_cloud_defaults` (requires
+3. Construct env_target with `Sol_cli_env_target.customer_cloud_defaults` (requires
    `--registry`).
 4. Guard: `Customer_gitops` mode is incompatible with `Kubernetes_live` secret backend
    (would write plaintext secrets into the GitOps repo).
-5. **Plan:** `Sun_cli_deployment_plan.of_services_result` → `plan`.
+5. **Plan:** `Sol_cli_deployment_plan.of_services_result` → `plan`.
 6. Optionally emit the plan as JSON (`--emit-plan-to`).
 7. Select execution mode:
    - `--dry-run` → `Dry_run`
    - `--emit-to DIR` → `Emit_to dir`
    - neither → `Apply`
-8. **Change Set:** `Sun_cli_change_set.build` renders all artifacts for the whole plan
+8. **Change Set:** `Sol_cli_change_set.build` renders all artifacts for the whole plan
    in a single pass (collecting any render errors before touching the cluster), then
-   `Sun_cli_change_set.execute` applies or emits them.
+   `Sol_cli_change_set.execute` applies or emits them.
 9. **State:** `record_outcome` (skipped in GitOps/dry-run modes).
 
 **Flags:**
@@ -172,42 +172,42 @@ Pipeline:
 
 ---
 
-### `sun status`
+### `sol status`
 
-**Module:** `cli/sun/bin/cmd_status.ml` → `run`
+**Module:** `cli/sol/bin/cmd_status.ml` → `run`
 
 Reads live cluster state. No plan construction.
 
 1. Discover domains from `app/` directory.
 2. For each domain, derive the Kubernetes namespace via
-   `Sun_cli_deployment_plan.namespace_result`.
+   `Sol_cli_deployment_plan.namespace_result`.
 3. Call `kubectl get pods -n <ns>` and print output.
 4. Query ClusterIP services in the namespace; print a port-forward hint for HTTP
    services (port 80).
 
-**Reads:** live cluster via `Sun_cli_kubectl.get_raw`. **Writes:** nothing.
+**Reads:** live cluster via `Sol_cli_kubectl.get_raw`. **Writes:** nothing.
 
 ---
 
-### `sun logs`
+### `sol logs`
 
-**Module:** `cli/sun/bin/cmd_logs.ml`
+**Module:** `cli/sol/bin/cmd_logs.ml`
 
 Derives the Kubernetes namespace and service name from a `domain/name` argument
 (or scans `app/` for a bare name). Checks whether the deployment exists, then
 emits one or both of:
 
 - A `kubectl logs -n <ns> -l app=<name> --follow` command/stream.
-- A Grafana Explore URL built by `Sun_cli_logs.grafana_explore_url` using LogQL
+- A Grafana Explore URL built by `Sol_cli_logs.grafana_explore_url` using LogQL
   `{namespace="<ns>",app="<name>"}`.
 
 **Reads:** live cluster via kubectl. **Writes:** nothing.
 
 ---
 
-### `sun migrate`
+### `sol migrate`
 
-**Module:** `cli/sun/bin/cmd_migrate.ml`
+**Module:** `cli/sol/bin/cmd_migrate.ml`
 
 Runs database schema migrations. No Kubernetes manifest pipeline.
 
@@ -222,24 +222,24 @@ Subcommands: `apply` (default), `status`, `rollback`.
 4. `status`: call `Migration.status` and print a table of applied/pending files.
 5. `rollback` (within migrate): call `Migration.rollback` to undo the last applied file.
 
-The migration tracking table defaults to `sun_<workspace>_schema_migrations`,
+The migration tracking table defaults to `sol_<workspace>_schema_migrations`,
 derived from the workspace directory name. Override with `--table`.
 
 ---
 
-### `sun rollback`
+### `sol rollback`
 
-**Module:** `cli/sun/bin/cmd_rollback.ml` → `run`  
-**Library:** `cli/sun/lib/sun_cli_rollback.ml`
+**Module:** `cli/sol/bin/cmd_rollback.ml` → `run`  
+**Library:** `cli/sol/lib/sol_cli_rollback.ml`
 
 Rolls back the last Kubernetes deployment for one or all services. No manifest
 re-render; operates entirely through kubectl.
 
 1. Discover services from `app/`.
-2. Load `sun.toml` for each service (to read `rollout_strategy` / `progressive_delivery`).
+2. Load `sol.toml` for each service (to read `rollout_strategy` / `progressive_delivery`).
 3. Build a `service_spec` with minimal fields (no image, no config — only name,
    namespace, primitive, progressive_delivery).
-4. `Sun_cli_rollback.rollback_target_of_service` selects the rollback strategy:
+4. `Sol_cli_rollback.rollback_target_of_service` selects the rollback strategy:
    - `Fn` → `No_op` (CronJobs have no rollout history)
    - `Svc` / `Worker` with `progressive_delivery` → `Argo_rollout`
    - `Svc` / `Worker` without → `Standard_deployment`
@@ -250,8 +250,8 @@ re-render; operates entirely through kubectl.
      `kubectl argo rollouts undo <name> -n <ns>`, then wait for status.
    - `No_op`: skip with a message.
 
-**State:** does **not** update `Sun_cli_deployment_state` after rollback. The
-consumer group guard on the next `sun up`/`sun deploy` will re-read the cluster
+**State:** does **not** update `Sol_cli_deployment_state` after rollback. The
+consumer group guard on the next `sol up`/`sol deploy` will re-read the cluster
 state.
 
 ---
@@ -261,41 +261,41 @@ state.
 ```
 CLI flags + workspace directory
           │
-          │  Sun_cli_manifest.discover_services
-          │  Sun_cli_workspace_scan.*
+          │  Sol_cli_manifest.discover_services
+          │  Sol_cli_workspace_scan.*
           ▼
-Sun_cli_deployment_plan.of_services_result
+Sol_cli_deployment_plan.of_services_result
           │  plan.t:
           │    services       : service_spec list
           │    topics, migrations, schema_subjects, consumer_groups
           │
-          │  [sun up: also builds + pushes Docker images here]
+          │  [sol up: also builds + pushes Docker images here]
           ▼
-Sun_cli_deployment_render.render_spec  (per service)
+Sol_cli_deployment_render.render_spec  (per service)
           │  (namespace_yaml, workload_yaml) result
           │
           │  Secret backend switch:
-          │    Kubernetes_live        → real env var values  (sun up / sun deploy Apply)
+          │    Kubernetes_live        → real env var values  (sol up / sol deploy Apply)
           │    Kubernetes_placeholder → empty stringData     (GitOps default)
           │    External_secrets       → ExternalSecret CRD   (--secret-backend=external-secrets)
           │
           ▼
-Sun_cli_change_set.build  [sun deploy path]
+Sol_cli_change_set.build  [sol deploy path]
           │  change_set.t:  { plan; artifacts; mode }
           │  mode: Dry_run | Emit_to dir | Apply
           │
           ▼
-Sun_cli_change_set.execute  /  Sun_cli_executor.local
+Sol_cli_change_set.execute  /  Sol_cli_executor.local
           │
-          ├─ Dry_run   → Sun_cli_manifest.apply ~dry_run:true  (prints YAML)
-          ├─ Emit_to   → Sun_cli_manifest.emit_to_dir         (write files)
-          └─ Apply     → Sun_cli_manifest.apply ~dry_run:false (kubectl apply)
+          ├─ Dry_run   → Sol_cli_manifest.apply ~dry_run:true  (prints YAML)
+          ├─ Emit_to   → Sol_cli_manifest.emit_to_dir         (write files)
+          └─ Apply     → Sol_cli_manifest.apply ~dry_run:false (kubectl apply)
                               │
-                              ▼ kubectl rollout status  [sun up: wait per service]
+                              ▼ kubectl rollout status  [sol up: wait per service]
           │
           ▼
-Sun_cli_deployment_state.record_outcome
-          └─ Applied → kubectl apply ConfigMap "sun-deploy-state-<workspace>"
+Sol_cli_deployment_state.record_outcome
+          └─ Applied → kubectl apply ConfigMap "sol-deploy-state-<workspace>"
                         data.consumer_groups = newline-separated group IDs
 ```
 
@@ -303,18 +303,18 @@ Sun_cli_deployment_state.record_outcome
 
 ## Where to add tests
 
-All test files live in `cli/sun/test/`. Each file covers one pipeline layer:
+All test files live in `cli/sol/test/`. Each file covers one pipeline layer:
 
 | What you're changing | Test file |
 |---|---|
 | Plan construction (`of_services_result`, `service_spec` fields, workspace scan) | `test_deployment_plan.ml` |
 | Manifest rendering (`render_spec`, YAML shape, secret backends) | `test_manifest_render.ml` |
-| Change set build and execute logic (`Sun_cli_change_set`) | `test_change_set.ml` |
+| Change set build and execute logic (`Sol_cli_change_set`) | `test_change_set.ml` |
 | Full deploy sequence (plan → render → execute ordering) | `test_deployment_phases.ml` |
 | Rollback target selection and `execute_rollback` paths | `test_rollback.ml` |
 | Deployment state ConfigMap read/write | `test_deployment_state.ml` |
 | Executor functions (`local`, `direct`, `gitops`) | `test_executor.ml` |
-| Logs URL generation (`Sun_cli_logs`) | `test_logs.ml` |
+| Logs URL generation (`Sol_cli_logs`) | `test_logs.ml` |
 
 **Guidance for new contributors:**
 
@@ -333,35 +333,35 @@ All test files live in `cli/sun/test/`. Each file covers one pipeline layer:
 - **Changing rollback behavior** (e.g. supporting a new progressive delivery
   strategy): extend `test_rollback.ml` with a case for the new target type.
 
-- **Any new deployment behavior in `sun up` or `sun deploy`** that is not already
+- **Any new deployment behavior in `sol up` or `sol deploy`** that is not already
   covered by the above should get an integration-level test in
   `test_deployment_phases.ml`, which exercises the full plan → change-set →
   execute sequence using a dry-run or stubbed executor to avoid cluster access.
 
-Tests run without a cluster: `eval $(opam env) && dune test cli/sun/test/`.
+Tests run without a cluster: `eval $(opam env) && dune test cli/sol/test/`.
 
 ---
 
 ## CI Workflow Contract
 
-Generated CI workflows (`.github/workflows/sun-ci.yml`) are a thin wrapper around
-Sun's typed factory contract. The contract divides CI into two explicit phases.
+Generated CI workflows (`.github/workflows/sol-ci.yml`) are a thin wrapper around
+Sol's typed factory contract. The contract divides CI into two explicit phases.
 
 **Phase 1 — Build (user-owned)**
 
 The CI template compiles the OCaml project and builds Docker images. This step is
-intentionally outside Sun's core pipeline because image build tooling varies (ECR,
-GCP Artifact Registry, Docker Hub, GHCR). A future `sun build` command will replace
-the manual `docker build/push` loop; the template contains a `TODO(sun-build)` marker
+intentionally outside Sol's core pipeline because image build tooling varies (ECR,
+GCP Artifact Registry, Docker Hub, GHCR). A future `sol build` command will replace
+the manual `docker build/push` loop; the template contains a `TODO(sol-build)` marker
 at that step.
 
-**Phase 2 — Deploy (Sun-owned factory work)**
+**Phase 2 — Deploy (Sol-owned factory work)**
 
-The deploy job uses two stable `sun deploy` invocations:
+The deploy job uses two stable `sol deploy` invocations:
 
 ```
-sun deploy prod/aws/us-east-1 --emit-plan-to plan.json --dry-run    # capture typed deployment intent
-sun deploy prod/aws/us-east-1 --emit-to manifests/ --image-tag $SHA # render K8s YAML for GitOps
+sol deploy prod/aws/us-east-1 --emit-plan-to plan.json --dry-run    # capture typed deployment intent
+sol deploy prod/aws/us-east-1 --emit-to manifests/ --image-tag $SHA # render K8s YAML for GitOps
 ```
 
 The `--emit-plan-to` step records the full deployment intent (images, namespaces,
@@ -371,17 +371,17 @@ watching that directory reconciles the change automatically. No `KUBECONFIG` or
 cluster credentials are required in CI.
 
 **Adding new CI behavior:** Do not add deployment logic to the CI workflow template.
-Add it to `sun_cli_deployment_plan.ml` (plan phase) or `sun_cli_executor.ml`
+Add it to `sol_cli_deployment_plan.ml` (plan phase) or `sol_cli_executor.ml`
 (execute phase), and the CI template will pick it up automatically through
-`sun deploy`.
+`sol deploy`.
 
 ---
 
 ## Generated Kubernetes Artifact Invariants
 
-Every resource emitted by `sun up`, `sun deploy`, and `sun dev up` must satisfy
+Every resource emitted by `sol up`, `sol deploy`, and `sol dev up` must satisfy
 these invariants. The security context invariants are enforced in
-`cli/sun/test/test_manifest_render.ml` via the `assert_k8s_invariants` helper
+`cli/sol/test/test_manifest_render.ml` via the `assert_k8s_invariants` helper
 and the `artifact_invariants` test suite.
 
 | Invariant | Kubernetes field | Status | Notes |
@@ -390,8 +390,8 @@ and the `artifact_invariants` test suite.
 | No privilege escalation | `containers[].securityContext.allowPrivilegeEscalation: false` | Enforced | Container-level; all primitives |
 | Read-only root filesystem | `containers[].securityContext.readOnlyRootFilesystem: true` | Enforced | Container-level; all primitives |
 | GitOps secret redaction | `Secret.stringData` values are empty strings | Enforced | `Kubernetes_placeholder` mode only |
-| Taxonomy labels | `metadata.labels["workspace"\|"domain"\|"service"\|"primitive"\|"release"]` | Enforced | Pod-template labels, unprefixed (not `sun.dev/*` — see `docs/architecture/observability-design.md`); shipped in OBS-008 |
-| `env` taxonomy label | `metadata.labels["env"]` | Done | Emitted by `sun deploy <env>/<provider>/<region>` (FEAT-026); `sun up` stays local-only and omits it — see `observability-design.md`'s Identity section |
+| Taxonomy labels | `metadata.labels["workspace"\|"domain"\|"service"\|"primitive"\|"release"]` | Enforced | Pod-template labels, unprefixed (not `sol.dev/*` — see `docs/architecture/observability-design.md`); shipped in OBS-008 |
+| `env` taxonomy label | `metadata.labels["env"]` | Done | Emitted by `sol deploy <env>/<provider>/<region>` (FEAT-026); `sol up` stays local-only and omits it — see `observability-design.md`'s Identity section |
 
 ### What is covered by `assert_k8s_invariants`
 
@@ -408,8 +408,8 @@ before the YAML is written to disk.
 
 1. Add the security context blocks (`runAsNonRoot`, `allowPrivilegeEscalation`,
    `readOnlyRootFilesystem`) to the new YAML template in
-   `cli/sun/lib/sun_cli_manifest_yaml.ml`.
+   `cli/sol/lib/sol_cli_manifest_yaml.ml`.
 2. Add a corresponding test case to the `artifact_invariants` suite in
-   `cli/sun/test/test_manifest_render.ml` that calls `assert_k8s_invariants` on
+   `cli/sol/test/test_manifest_render.ml` that calls `assert_k8s_invariants` on
    the rendered output.
 3. Update this table if the new resource changes the invariant surface.

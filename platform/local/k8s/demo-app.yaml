@@ -1,19 +1,19 @@
 ---
-# Sun demo app deployment.
-# Build the image first: docker build -t sun-demo:local -f platform/local/Dockerfile .
+# Sol demo app deployment.
+# Build the image first: docker build -t sol-demo:local -f platform/local/Dockerfile .
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: sun-demo
-  namespace: sun
+  name: sol-demo
+  namespace: sol
   labels:
-    app: sun-demo
-    app.kubernetes.io/part-of: sun
+    app: sol-demo
+    app.kubernetes.io/part-of: sol
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: sun-demo
+      app: sol-demo
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -22,7 +22,7 @@ spec:
   template:
     metadata:
       labels:
-        app: sun-demo
+        app: sol-demo
     spec:
       initContainers:
         # Wait for Redpanda to accept Kafka connections before starting the app.
@@ -46,14 +46,14 @@ spec:
               until wget -q -O /dev/null http://redpanda:8081/subjects; do sleep 2; done
               echo "Schema registry ready."
       containers:
-        - name: sun-demo
-          image: sun-demo:local
+        - name: sol-demo
+          image: sol-demo:local
           imagePullPolicy: Never   # use local image in k3s
           env:
             - name: KAFKA_BROKERS
-              value: "redpanda.sun.svc.cluster.local:9092"
+              value: "redpanda.sol.svc.cluster.local:9092"
             - name: SCHEMA_REGISTRY_URL
-              value: "http://redpanda.sun.svc.cluster.local:8081"
+              value: "http://redpanda.sol.svc.cluster.local:8081"
           resources:
             requests:
               cpu: "100m"

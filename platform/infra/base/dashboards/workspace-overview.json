@@ -1,11 +1,11 @@
 {
-  "title": "Sun Workspace Overview",
-  "uid": "sun-workspace-overview",
+  "title": "Sol Workspace Overview",
+  "uid": "sol-workspace-overview",
   "schemaVersion": 39,
   "version": 1,
   "editable": true,
   "time": { "from": "now-6h", "to": "now" },
-  "tags": ["sun"],
+  "tags": ["sol"],
   "templating": {
     "list": [
       {
@@ -27,7 +27,7 @@
       "datasource": "Prometheus",
       "targets": [
         {
-          "expr": "sum(rate(sun_svc_requests_total{workspace=\"$workspace\"}[5m])) by (domain)",
+          "expr": "sum(rate(sol_svc_requests_total{workspace=\"$workspace\"}[5m])) by (domain)",
           "legendFormat": "{{domain}}"
         }
       ]
@@ -40,7 +40,7 @@
       "datasource": "Prometheus",
       "targets": [
         {
-          "expr": "sum(rate(sun_svc_requests_total{workspace=\"$workspace\", status_class=\"5xx\"}[5m])) by (domain)",
+          "expr": "sum(rate(sol_svc_requests_total{workspace=\"$workspace\", status_class=\"5xx\"}[5m])) by (domain)",
           "legendFormat": "{{domain}}"
         }
       ]

@@ -3,7 +3,7 @@ set -euo pipefail
 
 OTLP_PORT=4318
 QUERY_PORT=3200
-NETWORK=sun-obs
+NETWORK=sol-obs
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/../config/tempo.yaml"
 source "${SCRIPT_DIR}/lib/port-preflight.sh"

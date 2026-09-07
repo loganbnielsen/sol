@@ -1,4 +1,4 @@
-# platform/infra/gcp — GCP cluster provisioning for Sun workspaces
+# platform/infra/gcp — GCP cluster provisioning for Sol workspaces
 #
 # Provisions:
 #   VPC                — custom VPC with secondary ranges for GKE pods/services
@@ -35,7 +35,7 @@ terraform {
   # Uncomment to store state in GCS (recommended for teams):
   # backend "gcs" {
   #   bucket = "my-terraform-state"
-  #   prefix = "sun/prod"
+  #   prefix = "sol/prod"
   # }
 }
 
@@ -118,7 +118,7 @@ resource "google_artifact_registry_repository" "images" {
   location      = var.region
   repository_id = var.cluster_name
   format        = "DOCKER"
-  description   = "Container images for ${var.cluster_name} Sun workspace"
+  description   = "Container images for ${var.cluster_name} Sol workspace"
 }
 
 # Grant GKE SA read access to pull images
@@ -194,5 +194,5 @@ resource "google_dns_managed_zone" "main" {
   count       = var.create_dns_zone ? 1 : 0
   name        = replace(var.base_domain, ".", "-")
   dns_name    = "${var.base_domain}."
-  description = "Sun workspace zone for ${var.cluster_name}"
+  description = "Sol workspace zone for ${var.cluster_name}"
 }

@@ -3,9 +3,9 @@
  (libraries
   demo_events
   eio eio_main eio.unix
-  sun_obs obs-prometheus-eio
+  sol_obs obs-prometheus-eio
   kafka_eio_service
-  sun_svc sun_worker
+  sol_svc sol_worker
   pg-eio
   caqti caqti-eio caqti-eio.unix caqti-driver-postgresql
   unix

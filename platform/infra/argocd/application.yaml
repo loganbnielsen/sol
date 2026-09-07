@@ -4,7 +4,7 @@
 #   kubectl apply -f platform/infra/argocd/application.yaml
 #
 # After this, Argo CD watches the GitOps repo and reconciles the cluster
-# whenever `sun deploy --emit-to` pushes new manifests.
+# whenever `sol deploy --emit-to` pushes new manifests.
 
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -24,7 +24,7 @@ spec:
 
   destination:
     server: https://kubernetes.default.svc
-    # sun deploy writes per-namespace manifests; Argo CD applies them cluster-wide
+    # sol deploy writes per-namespace manifests; Argo CD applies them cluster-wide
     namespace: default
 
   syncPolicy:

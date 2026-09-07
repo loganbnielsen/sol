@@ -5,7 +5,7 @@ let () = Eio_main.run @@ fun env ->
     | Error e   -> failwith ("kafka config: " ^ Kafka_service.error_to_string e)
   in
   let obs =
-    Sun_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+    Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
       ~service:"venus-logistics-fulfillment-worker" ()
   in
   let module W = Worker.Make(Fulfillment_worker) in

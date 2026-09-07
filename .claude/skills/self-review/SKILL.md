@@ -1,5 +1,5 @@
 ---
-description: Self-review checklist to run against your own diff before pushing or updating a PR, so an external reviewer finds fewer (ideally zero) issues. Use before `sundev pipeline submit`, before pushing a follow-up commit to an open PR, or whenever asked to review your own work.
+description: Self-review checklist to run against your own diff before pushing or updating a PR, so an external reviewer finds fewer (ideally zero) issues. Use before `soldev pipeline submit`, before pushing a follow-up commit to an open PR, or whenever asked to review your own work.
 ---
 
 # /self-review - Catch your own bugs before a reviewer does

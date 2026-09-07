@@ -99,7 +99,7 @@ let wrap_on_decode_error ~ot ~topic_name user_on_decode_error =
     | None -> None
     | Some o ->
       Some (Obs_eio.register_counter o
-        ~name:"sun_worker_decode_errors_total"
+        ~name:"sol_worker_decode_errors_total"
         ~help:"Total Kafka messages dropped due to decode errors"
         ~label_names:[])
   in
@@ -112,5 +112,5 @@ let wrap_on_decode_error ~ot ~topic_name user_on_decode_error =
          ~fields:[("error", e);
                   ("raw_bytes_len", string_of_int (Option.fold ~none:0 ~some:Bytes.length raw_bytes));
                   ("topic", topic_name)]
-         "sun-worker: decode error, skipping message");
+         "sol-worker: decode error, skipping message");
     user_on_decode_error e ~raw_bytes ~ack

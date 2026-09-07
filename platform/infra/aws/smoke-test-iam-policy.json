@@ -146,7 +146,7 @@
         "logs:ListTagsForResource",
         "logs:ListTagsLogGroup"
       ],
-      "Resource": "arn:aws:logs:us-east-1:*:log-group:/aws/eks/sun-smoke-test*",
+      "Resource": "arn:aws:logs:us-east-1:*:log-group:/aws/eks/sol-smoke-test*",
       "Condition": {
         "StringEquals": {
           "aws:RequestedRegion": "us-east-1"
@@ -204,7 +204,7 @@
         "ecr:TagResource",
         "ecr:ListTagsForResource"
       ],
-      "Resource": "arn:aws:ecr:us-east-1:*:repository/sun-smoke-test*",
+      "Resource": "arn:aws:ecr:us-east-1:*:repository/sol-smoke-test*",
       "Condition": {
         "StringEquals": {
           "aws:RequestedRegion": "us-east-1"
@@ -245,16 +245,16 @@
         "iam:TagInstanceProfile"
       ],
       "Resource": [
-        "arn:aws:iam::*:role/sun-smoke-test*",
-        "arn:aws:iam::*:policy/sun-smoke-test*",
-        "arn:aws:iam::*:instance-profile/sun-smoke-test*"
+        "arn:aws:iam::*:role/sol-smoke-test*",
+        "arn:aws:iam::*:policy/sol-smoke-test*",
+        "arn:aws:iam::*:instance-profile/sol-smoke-test*"
       ]
     },
     {
       "Sid": "IamPassRoleScoped",
       "Effect": "Allow",
       "Action": "iam:PassRole",
-      "Resource": "arn:aws:iam::*:role/sun-smoke-test*",
+      "Resource": "arn:aws:iam::*:role/sol-smoke-test*",
       "Condition": {
         "StringEquals": {
           "iam:PassedToService": [

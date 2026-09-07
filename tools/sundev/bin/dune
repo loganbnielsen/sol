@@ -1,4 +1,0 @@
-(executable
- (name main)
- (libraries cmdliner yojson sundev_lib)
- (modules main cmd_pipeline))

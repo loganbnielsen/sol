@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-NETWORK=sun-obs
+NETWORK=sol-obs
 PROMETHEUS_PORT=9090
 GRAFANA_PORT=3000
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

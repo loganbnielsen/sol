@@ -36,7 +36,7 @@ If no args given — list all tickets across `READY_FOR_ENGINEERING/`, `IN_PROGR
 Use deterministic pipeline tooling for ticket status whenever possible:
 
 ```bash
-sundev pipeline ls
+soldev pipeline ls
 ```
 
 This command prints ticket state, dependency status, human-decision blockers, and actionable status. Do not reconstruct dependency graphs by interpretation when this command is available.
@@ -48,7 +48,7 @@ This command prints ticket state, dependency status, human-decision blockers, an
 Before creating a worktree, run the deterministic ticket preflight:
 
 ```bash
-sundev pipeline check <ticket-id>
+soldev pipeline check <ticket-id>
 ```
 
 Only create a worktree if the command exits 0 and prints `status: actionable`.
@@ -62,14 +62,14 @@ If it reports `blocked-for-human-decision`, `blocked-by-dependency`, `unknown ti
 1. Determine branch slug from ticket title (lowercase, hyphens).
 2. Create worktree:
    ```bash
-   git worktree add -b ticket-id/short-slug ../sun-ticket-id-short-slug main
+   git worktree add -b ticket-id/short-slug ../sol-ticket-id-short-slug main
    ```
 3. Update ticket frontmatter with `branch:` and `worktree:`, move file to `IN_PROGRESS/`.
 4. Commit the ticket state change in the main checkout.
 5. Implement the ticket in the worktree — read the ticket's **Remediation** as the specification.
 6. When done, from the main checkout:
    ```bash
-   sundev pipeline submit <ticket-id>
+   soldev pipeline submit <ticket-id>
    ```
    Pushes the branch, opens a PR (or reuses an existing one for that branch), records the PR URL in the ticket's `pr:` frontmatter field, moves the ticket to `REVIEW/`, and commits the move. `REVIEW` now corresponds to a real, reviewable GitHub PR, not just a local worktree — do not push the branch or open the PR by hand.
 
@@ -78,7 +78,7 @@ If it reports `blocked-for-human-decision`, `blocked-by-dependency`, `unknown ti
 1. Read `worktree:` from frontmatter. If the path exists — resume there. If gone — create a fresh worktree from main.
 2. Print `resuming <worktree-path>`.
 3. Implement the remaining work in the worktree.
-4. When done, from the main checkout: `sundev pipeline submit <ticket-id>` (see above).
+4. When done, from the main checkout: `soldev pipeline submit <ticket-id>` (see above).
 
 ### REVIEW → run review agent + process result
 
@@ -120,27 +120,27 @@ Read each changed file. Verify:
 - New CLI commands registered in `main.ml` and listed in `bin/dune`
 - New commands follow the existing `Cmdliner` pattern
 
-#### D. Sun conventions
+#### D. Sol conventions
 - No `wrapped true` libraries
-- Generated README templates use `sun` commands only
+- Generated README templates use `sol` commands only
 - Security fields present on any new Kafka config
 
 #### E. Docs
 - Ticket-required doc changes are present
-- New `sun <command>` appears in at least one user-facing doc
+- New `sol <command>` appears in at least one user-facing doc
 
 After collecting each result, write it to a temp file and call:
 
 ```bash
-sundev pipeline review <ticket-id> --result-file /tmp/<ticket-id>-result.json
+soldev pipeline review <ticket-id> --result-file /tmp/<ticket-id>-result.json
 ```
 
-`sundev pipeline review` handles all ticket file moves. Do not move ticket files directly.
+`soldev pipeline review` handles all ticket file moves. Do not move ticket files directly.
 
 ## Step 3 — Report
 
 ```
-FEAT-002  IN_PROGRESS  → resumed ../sun-FEAT-002-perf-baseline-merge
+FEAT-002  IN_PROGRESS  → resumed ../sol-FEAT-002-perf-baseline-merge
 EXP-005   REVIEW       → READY_TO_MERGE   build ✓  diff scoped
 EXP-007   REVIEW       → READY_FOR_ENGINEERING   cmd_dev.ml:142 — Sys.command rc unchecked
 EXP-008   REVIEW       → READY_TO_MERGE   build ✓  all checks passed
@@ -148,4 +148,4 @@ FEAT-001  READY_TO_MERGE  skipped (already past review)
 ```
 
 Human next steps for tickets that reached READY_TO_MERGE:
-- Run `sundev pipeline merge` (optionally with a ticket ID, or `--dry-run` first). This merges each ticket's PR via `gh pr merge --squash --delete-branch` — real GitHub branch protection and required checks gate the merge, so a ticket with a red/pending check or missing approval is left in `READY_TO_MERGE` with an error, not force-merged. On success it fast-forwards local `main`, runs the perf suite, and moves the ticket to `DONE` (or `BLOCKED_BY_PERFORMANCE` on a regression, reverting the squash commit). It does **not** push `main` — push it yourself once you're happy with the resulting local commits.
+- Run `soldev pipeline merge` (optionally with a ticket ID, or `--dry-run` first). This merges each ticket's PR via `gh pr merge --squash --delete-branch` — real GitHub branch protection and required checks gate the merge, so a ticket with a red/pending check or missing approval is left in `READY_TO_MERGE` with an error, not force-merged. On success it fast-forwards local `main`, runs the perf suite, and moves the ticket to `DONE` (or `BLOCKED_BY_PERFORMANCE` on a regression, reverting the squash commit). It does **not** push `main` — push it yourself once you're happy with the resulting local commits.

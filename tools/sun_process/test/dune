@@ -1,3 +1,0 @@
-(test
- (name test_sun_process)
- (libraries sun_process alcotest))

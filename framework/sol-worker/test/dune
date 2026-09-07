@@ -1,0 +1,4 @@
+(tests
+ (names test_worker)
+ (libraries sol_worker eio eio_main alcotest sol_obs
+            kafka_eio_service kafka-eio cohttp-eio http uri))

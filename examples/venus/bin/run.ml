@@ -1,21 +1,21 @@
-(** Venus — Sun reference workspace
+(** Venus — Sol reference workspace
     ─────────────────────────────────────────────────────────────────────────
     Two autonomous domain teams collaborating through typed Kafka events:
 
       HTTP client
           │  POST /charges  { amount_cents, customer_id, currency }
           ▼
-      payments / charge-svc  (sun-svc)
+      payments / charge-svc  (sol-svc)
           │  Loki span: "receive_charge"
-          │  Prometheus: sun_svc_requests_total, sun_svc_request_duration_seconds
+          │  Prometheus: sol_svc_requests_total, sol_svc_request_duration_seconds
           │  publishes Charged event with W3C traceparent header
           ▼
       Kafka  venus-payments-charges
           │
           ▼
-      comms / notify-worker  (sun-worker)
+      comms / notify-worker  (sol-worker)
           │  Loki span: "record_notification"  (linked to charge-svc span via trace)
-          │  Prometheus: sun_worker_messages_total, sun_worker_message_duration_seconds
+          │  Prometheus: sol_worker_messages_total, sol_worker_message_duration_seconds
           │  records notification in PostgreSQL  (pg-eio)
           ▼
       Loki · Prometheus · PostgreSQL
@@ -27,7 +27,7 @@
       bash platform/local/scripts/ensure-grafana.sh        # optional
 
       KAFKA_BROKERS=localhost:9092 \
-      POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sun_dev \
+      POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
       LOKI_URL=http://localhost:3100 \
         dune exec examples/venus/bin/run.exe
 *)
@@ -113,7 +113,7 @@ let http_post env ~sw ~port ~path ?(headers=[]) ~body () =
 let () =
   Random.self_init ();
   Printf.printf "\n%s\n" sep;
-  Printf.printf "  Venus — Sun Reference Workspace\n";
+  Printf.printf "  Venus — Sol Reference Workspace\n";
   Printf.printf "%s\n" sep;
   Printf.printf "  Teams:           payments (charge-svc)  ·  comms (notify-worker)\n";
   Printf.printf "  Kafka brokers:   %s\n" (String.concat "," kafka_config.brokers);
@@ -129,19 +129,19 @@ let () =
    | None -> Printf.printf "\n  Note: LOKI_URL not set — logs go to stdout.\n%!"
    | Some url -> Printf.printf "\n  Logs -> Loki at %s\n%!" url);
   let svc_obs =
-    Sun_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+    Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
       ~service:"charge-svc" ~context:[("team", "payments")] ()
   in
   let worker_obs =
-    Sun_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+    Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
       ~service:"notify-worker" ~context:[("team", "comms")] ()
   in
   (* charge-svc and notify-worker each carry their own Prometheus registry
      (like two real, separately-scraped services) — this demo's own
      snapshot/push stitches both together. *)
-  let render () = Sun_obs.metrics_renderer svc_obs () ^ Sun_obs.metrics_renderer worker_obs () in
-  let svc_ot    = Sun_obs.obs_eio svc_obs in
-  let worker_ot = Sun_obs.obs_eio worker_obs in
+  let render () = Sol_obs.metrics_renderer svc_obs () ^ Sol_obs.metrics_renderer worker_obs () in
+  let svc_ot    = Sol_obs.obs_eio svc_obs in
+  let worker_ot = Sol_obs.obs_eio worker_obs in
 
   Eio.Switch.run @@ fun sw ->
 
@@ -305,5 +305,5 @@ let () =
   Printf.printf "  Done.\n";
   Printf.printf "  Grafana:  http://localhost:3000\n";
   Printf.printf "    Logs:    Explore > Loki > {service=~\".*\"} | logfmt\n";
-  Printf.printf "    Metrics: Explore > Prometheus > sun_svc_requests_total\n";
+  Printf.printf "    Metrics: Explore > Prometheus > sol_svc_requests_total\n";
   Printf.printf "%s\n%!" sep

@@ -3,7 +3,7 @@
 # No Docker required — installs the native Redpanda binary via apt.
 set -euo pipefail
 
-echo "=== Sun local dev setup ==="
+echo "=== Sol local dev setup ==="
 
 # ---- librdkafka (OCaml FFI dependency) ----
 if ! dpkg -l librdkafka-dev &>/dev/null; then

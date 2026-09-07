@@ -14,7 +14,7 @@ output "kubeconfig_command" {
 }
 
 output "ecr_registry" {
-  description = "ECR registry URL — pass as --registry to sun deploy"
+  description = "ECR registry URL — pass as --registry to sol deploy"
   value       = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.region}.amazonaws.com"
 }
 
@@ -30,7 +30,7 @@ output "postgres_endpoint" {
 }
 
 output "postgres_url" {
-  description = "POSTGRES_URL for Sun services — set this in your CI secrets and sun.toml [infra.env]"
+  description = "POSTGRES_URL for Sol services — set this in your CI secrets and sol.toml [infra.env]"
   value       = var.create_rds ? "postgresql://postgres:${var.db_password}@${aws_db_instance.postgres[0].endpoint}/app" : null
   sensitive   = true
 }
