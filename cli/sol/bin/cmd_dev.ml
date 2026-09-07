@@ -77,6 +77,31 @@ let dev_up () =
   if cluster_exists then
     Printf.printf "  cluster %s already exists, skipping\n%!" cluster_name
   else begin
+    (* FRIC-008: a pre-Sun->Sol-rename 'sun-local' cluster's registry binds
+       the same host port this cluster's registry needs, causing a silent
+       k3d port-bind conflict with no indication of the real cause. This is
+       a one-time migration check -- safe to delete once nobody plausibly
+       still has a 'sun-local' cluster lying around. *)
+    let pre_rename_cluster_exists =
+      match Sol_cli_process.run
+          (Sol_cli_process.cmd ["k3d"; "cluster"; "get"; "sun-local"]) with
+      | Ok r -> r.Sol_cli_process.exit_code = 0
+      | Error _ -> false
+    in
+    if pre_rename_cluster_exists then begin
+      Printf.eprintf
+        "error: found a pre-rename 'sun-local' k3d cluster still running.\n";
+      Printf.eprintf
+        "  Sol's local cluster is now named '%s', and its registry needs the\n"
+        cluster_name;
+      Printf.eprintf
+        "  same host port (%d) 'sun-local'/'sun-registry' already holds.\n"
+        registry_port;
+      Printf.eprintf "  Remove the old cluster first:\n";
+      Printf.eprintf "    k3d cluster delete sun-local\n";
+      Printf.eprintf "  (rename or keep it yourself first if you still need it for something else)\n";
+      exit 1
+    end;
     let rc =
       match Sol_cli_process.run ~echo:true
           (Sol_cli_process.cmd
