@@ -3,6 +3,9 @@ id: FEAT-033
 type: feature
 severity: medium
 source: architecture discussion 2026-09-07 — verified Sol's CLI/deploy layer (discovery, docker build, k8s manifest render) is already language-neutral; expanded from an svc-only spike to full parity with examples/local-demo after deciding the interesting question is cross-service wiring (schema registry, tracing, metrics), not just "can a TS container deploy"
+branch: feat-033/typescript-demo-parity-spike
+worktree: ../sol-feat-033-typescript-demo-parity-spike
+pr: https://github.com/loganbnielsen/sol/pull/138
 ---
 
 **Depends on:** None.
