@@ -78,7 +78,7 @@ Tested versions — other versions may work but are not validated:
 |------|---------|
 | Docker | 29.x |
 | k3d | **v5.6.0** |
-| kubectl | 1.29+ |
+| kubectl | **v1.29.0** |
 | helm | **v3.21.0** |
 
 ```bash
@@ -91,6 +91,10 @@ curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | DESIR
 k3d v5.6.0 is pinned because `sol dev up` passes chart values tuned against
 that version (Redpanda CPU/replica settings, node-exporter disable flag). Older
 k3d versions may reject those values or install different chart defaults.
+
+These three versions are also hardcoded in `.github/workflows/ci.yml`'s
+`golden-path-smoke` job (FRIC-009). No automated check keeps the two in
+sync — update both by hand on any bump.
 
 ### Required on `PATH`
 
