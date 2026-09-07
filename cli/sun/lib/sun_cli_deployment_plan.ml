@@ -276,7 +276,24 @@ let primitive_of_manifest = function
   | Sun_cli_manifest.Worker -> Worker
   | Sun_cli_manifest.Fn     -> Fn
 
-let of_services_result ~workspace ~env services =
+(* sun.yml scale (a min/max range) and sun.toml's replicas (a fixed count)
+   aren't the same shape -- no HorizontalPodAutoscaler is emitted anywhere
+   today, so scale_max (falling back to scale_min) stands in as the interim
+   fixed count. See BUG-004. *)
+let sun_yml_replicas_override ~resolved_config ~service_name =
+  match resolved_config with
+  | None -> None
+  | Some cfg ->
+    match
+      List.find_opt
+        (fun (s : Sun_cli_config.service) -> s.Sun_cli_config.name = service_name)
+        cfg.Sun_cli_config.services
+    with
+    | None -> None
+    | Some { Sun_cli_config.scale_max = Some _ as scale_max; _ } -> scale_max
+    | Some { Sun_cli_config.scale_min; _ } -> scale_min
+
+let of_services_result ~workspace ~env ?resolved_config services =
   let to_spec svc =
     let* k8s_name  = k8s_name_result svc.Sun_cli_manifest.name in
     let* namespace = namespace_result ~workspace ~domain:svc.Sun_cli_manifest.domain in
@@ -302,7 +319,10 @@ let of_services_result ~workspace ~env services =
     ; config                = toml.Sun_cli_toml.env_config
     ; secrets               = List.map (fun key -> (key, "")) toml.Sun_cli_toml.secret_keys
     ; schedule
-    ; replicas              = Option.value toml.Sun_cli_toml.replicas ~default:1
+    ; replicas              =
+        (match sun_yml_replicas_override ~resolved_config ~service_name:svc.Sun_cli_manifest.name with
+         | Some replicas -> replicas
+         | None -> Option.value toml.Sun_cli_toml.replicas ~default:1)
     ; cpu                   = Option.value toml.Sun_cli_toml.cpu      ~default:default_cpu
     ; memory                = Option.value toml.Sun_cli_toml.memory   ~default:default_memory
     ; rollout_strategy      = toml.Sun_cli_toml.rollout_strategy
@@ -328,7 +348,7 @@ let of_services_result ~workspace ~env services =
      ; consumer_groups = derive_consumer_groups workspace resolved_services
      }
 
-let of_services ~workspace ~env services =
-  match of_services_result ~workspace ~env services with
+let of_services ~workspace ~env ?resolved_config services =
+  match of_services_result ~workspace ~env ?resolved_config services with
   | Ok plan -> plan
   | Error err -> failwith (plan_error_to_string err)

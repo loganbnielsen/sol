@@ -779,6 +779,96 @@ let test_of_services_result_surfaces_toml_parse_error () =
     | Error (Sun_cli_deployment_plan.Invalid_kubernetes_name _) ->
       Alcotest.fail "expected TOML error, got Kubernetes name error")
 
+(* ── BUG-004: sun.yml scale overrides sun.toml replicas ──────────────────── *)
+
+let deploy_env : Sun_cli_deployment_plan.env_config = {
+  name = "local";
+  mode = Sun_cli_deployment_plan.Local;
+  registry = "sun-registry:5000";
+  image_tag = "dev";
+  env = None;
+  region = None;
+  base_domain = None;
+  secret_backend = Sun_cli_manifest.Kubernetes_live;
+}
+
+let charge_svc_service : Sun_cli_manifest.service = {
+  domain = "payments";
+  name = "charge_svc";
+  primitive = Sun_cli_manifest.Svc;
+  dir = "app/payments/charge_svc";
+}
+
+let resolved_config_with_scale ~name ~scale_min ~scale_max : Sun_cli_config.t = {
+  project = None;
+  target = None;
+  resources = [];
+  services = [ { name; typ = None; path = None; uses = []; scale_min; scale_max; omit = false } ];
+}
+
+let replicas_of_sole_service plan =
+  match plan.Sun_cli_deployment_plan.services with
+  | [ s ] -> s.Sun_cli_deployment_plan.replicas
+  | _ -> Alcotest.fail "expected exactly one service in plan"
+
+let test_sun_yml_scale_overrides_toml_replicas_on_resolved_target () =
+  let tmp = Filename.temp_dir "sun_test_plan_scale_override" "" in
+  with_cwd tmp (fun () ->
+    mkdirs "app/payments/charge_svc";
+    write_file "app/payments/charge_svc/sun.toml"
+      "[infra.scale]\nreplicas = 2\n";
+    let resolved_config =
+      resolved_config_with_scale ~name:"charge_svc" ~scale_min:None ~scale_max:(Some 5)
+    in
+    match Sun_cli_deployment_plan.of_services_result
+            ~workspace:"myworkspace" ~env:deploy_env ~resolved_config
+            [ charge_svc_service ] with
+    | Ok plan -> Alcotest.(check int) "sun.yml scale_max wins" 5 (replicas_of_sole_service plan)
+    | Error err -> Alcotest.fail (Sun_cli_deployment_plan.plan_error_to_string err))
+
+let test_sun_yml_scale_falls_back_to_scale_min_when_no_max () =
+  let tmp = Filename.temp_dir "sun_test_plan_scale_min" "" in
+  with_cwd tmp (fun () ->
+    mkdirs "app/payments/charge_svc";
+    write_file "app/payments/charge_svc/sun.toml"
+      "[infra.scale]\nreplicas = 2\n";
+    let resolved_config =
+      resolved_config_with_scale ~name:"charge_svc" ~scale_min:(Some 3) ~scale_max:None
+    in
+    match Sun_cli_deployment_plan.of_services_result
+            ~workspace:"myworkspace" ~env:deploy_env ~resolved_config
+            [ charge_svc_service ] with
+    | Ok plan -> Alcotest.(check int) "sun.yml scale_min used when no scale_max" 3 (replicas_of_sole_service plan)
+    | Error err -> Alcotest.fail (Sun_cli_deployment_plan.plan_error_to_string err))
+
+let test_no_resolved_config_uses_toml_replicas () =
+  let tmp = Filename.temp_dir "sun_test_plan_no_resolved_config" "" in
+  with_cwd tmp (fun () ->
+    mkdirs "app/payments/charge_svc";
+    write_file "app/payments/charge_svc/sun.toml"
+      "[infra.scale]\nreplicas = 2\n";
+    (* Simulates `sun up`, which never has a resolved target/sun.yml. *)
+    match Sun_cli_deployment_plan.of_services_result
+            ~workspace:"myworkspace" ~env:deploy_env
+            [ charge_svc_service ] with
+    | Ok plan -> Alcotest.(check int) "sun.toml replicas unchanged" 2 (replicas_of_sole_service plan)
+    | Error err -> Alcotest.fail (Sun_cli_deployment_plan.plan_error_to_string err))
+
+let test_no_matching_sun_yml_service_uses_toml_replicas () =
+  let tmp = Filename.temp_dir "sun_test_plan_no_matching_service" "" in
+  with_cwd tmp (fun () ->
+    mkdirs "app/payments/charge_svc";
+    write_file "app/payments/charge_svc/sun.toml"
+      "[infra.scale]\nreplicas = 2\n";
+    let resolved_config =
+      resolved_config_with_scale ~name:"other_svc" ~scale_min:None ~scale_max:(Some 9)
+    in
+    match Sun_cli_deployment_plan.of_services_result
+            ~workspace:"myworkspace" ~env:deploy_env ~resolved_config
+            [ charge_svc_service ] with
+    | Ok plan -> Alcotest.(check int) "no matching sun.yml service falls back to sun.toml" 2 (replicas_of_sole_service plan)
+    | Error err -> Alcotest.fail (Sun_cli_deployment_plan.plan_error_to_string err))
+
 (* ── plan_ids newtype unit tests ────────────────────────────────────────── *)
 
 let test_topic_name_valid () =
@@ -928,6 +1018,10 @@ let () =
       ]
     ; "of_services", [
         Alcotest.test_case "returns typed TOML parse error" `Quick test_of_services_result_surfaces_toml_parse_error
+      ; Alcotest.test_case "sun.yml scale_max overrides sun.toml replicas" `Quick test_sun_yml_scale_overrides_toml_replicas_on_resolved_target
+      ; Alcotest.test_case "sun.yml scale_min used when no scale_max" `Quick test_sun_yml_scale_falls_back_to_scale_min_when_no_max
+      ; Alcotest.test_case "no resolved config keeps sun.toml replicas" `Quick test_no_resolved_config_uses_toml_replicas
+      ; Alcotest.test_case "no matching sun.yml service keeps sun.toml replicas" `Quick test_no_matching_sun_yml_service_uses_toml_replicas
       ]
     ; "plan_ids", [
         Alcotest.test_case "Topic_name valid"              `Quick test_topic_name_valid
