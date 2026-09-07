@@ -2993,6 +2993,32 @@
           "date": "2026-09-07",
           "commit": "13cf1cba",
           "duration_s": 3.109
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "33a3d686",
+          "duration_s": 3.120
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "33a3d686",
+          "duration_s": 3.048,
+          "baseline": true
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "655c78b2",
+          "duration_s": 3.647
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "71f4cce3",
+          "duration_s": 3.384
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "6476f6a3",
+          "duration_s": 3.054
         }
       ]
     },
@@ -5329,6 +5355,32 @@
           "date": "2026-09-07",
           "commit": "13cf1cba",
           "duration_s": 1.117
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "33a3d686",
+          "duration_s": 1.133
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "33a3d686",
+          "duration_s": 1.090,
+          "baseline": true
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "655c78b2",
+          "duration_s": 1.096
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "71f4cce3",
+          "duration_s": 1.108
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "6476f6a3",
+          "duration_s": 1.092
         }
       ]
     },
@@ -7478,6 +7530,32 @@
           "date": "2026-09-07",
           "commit": "13cf1cba",
           "duration_s": 1.242
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "33a3d686",
+          "duration_s": 1.236
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "33a3d686",
+          "duration_s": 1.203,
+          "baseline": true
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "655c78b2",
+          "duration_s": 1.204
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "71f4cce3",
+          "duration_s": 1.234
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "6476f6a3",
+          "duration_s": 1.197
         }
       ]
     }
