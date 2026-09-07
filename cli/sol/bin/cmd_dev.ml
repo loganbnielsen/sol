@@ -77,28 +77,33 @@ let dev_up () =
   if cluster_exists then
     Printf.printf "  cluster %s already exists, skipping\n%!" cluster_name
   else begin
-    (* FRIC-008: a pre-Sun->Sol-rename 'sun-local' cluster's registry binds
-       the same host port this cluster's registry needs, causing a silent
-       k3d port-bind conflict with no indication of the real cause. This is
-       a one-time migration check -- safe to delete once nobody plausibly
-       still has a 'sun-local' cluster lying around. *)
+    (* ponytail: FRIC-008, one-time Sun->Sol migration check -- delete this
+       block once nobody plausibly still has a 'sun-local' cluster around.
+       A pre-rename 'sun-local' cluster's inline registry binds the same
+       host port this cluster's registry needs, causing a silent k3d
+       port-bind conflict with no indication of the real cause. Blocks
+       unconditionally on 'sun-local' existing at all (not just on a
+       verified port-5000 conflict) -- deliberately simple for a shim
+       meant to be deleted, not a permanent feature worth the extra
+       port-probe logic to narrow. *)
+    let pre_rename_cluster_name = "sun-local" in
     let pre_rename_cluster_exists =
       match Sol_cli_process.run
-          (Sol_cli_process.cmd ["k3d"; "cluster"; "get"; "sun-local"]) with
+          (Sol_cli_process.cmd ["k3d"; "cluster"; "get"; pre_rename_cluster_name]) with
       | Ok r -> r.Sol_cli_process.exit_code = 0
       | Error _ -> false
     in
     if pre_rename_cluster_exists then begin
       Printf.eprintf
-        "error: found a pre-rename 'sun-local' k3d cluster still running.\n";
+        "error: found a pre-rename '%s' k3d cluster.\n" pre_rename_cluster_name;
       Printf.eprintf
         "  Sol's local cluster is now named '%s', and its registry needs the\n"
         cluster_name;
       Printf.eprintf
-        "  same host port (%d) 'sun-local'/'sun-registry' already holds.\n"
-        registry_port;
+        "  same host port (%d) '%s'/'sun-registry' already holds.\n"
+        registry_port pre_rename_cluster_name;
       Printf.eprintf "  Remove the old cluster first:\n";
-      Printf.eprintf "    k3d cluster delete sun-local\n";
+      Printf.eprintf "    k3d cluster delete %s\n" pre_rename_cluster_name;
       Printf.eprintf "  (rename or keep it yourself first if you still need it for something else)\n";
       exit 1
     end;
