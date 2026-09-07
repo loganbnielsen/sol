@@ -3,6 +3,9 @@ id: FRIC-008
 type: dogfood-finding
 severity: high
 source: project/dogfood/RUN_2026-09-07.md
+branch: fric-008/detect-pre-rename-substrate
+worktree: ../sol-fric-008-detect-pre-rename-substrate
+pr: https://github.com/loganbnielsen/sol/pull/139
 ---
 
 **Depends on:** None.
