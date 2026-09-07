@@ -1,0 +1,30 @@
+name: Pin opam packages
+description: >
+  Pin every extracted -eio/https-eio support package to #main. Single
+  source of truth for both CI jobs that need a full build (test and
+  golden-path-smoke) so the pin list and its ordering constraint never
+  drift out of sync between them.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        # Tracking #main on every support package during active parallel
+        # development across all of them — sol should build against their
+        # latest code, not a tag that's fallen behind. Revert to tagged
+        # pins once these settle and cut real releases.
+        # https-eio first: obs-loki-eio/obs-prometheus-eio/aws-eio all
+        # depend on it, and each -y pin below installs immediately --
+        # pinning it after them let their own install step pull in the
+        # published opam-repository https-eio before this pin ever ran.
+        opam pin add https-eio https://github.com/loganbnielsen/https-eio.git#main -y
+        opam pin add kafka-eio https://github.com/loganbnielsen/kafka-eio.git#main -y
+        opam pin add obs-eio https://github.com/loganbnielsen/obs-eio.git#main -y
+        opam pin add obs-loki-eio https://github.com/loganbnielsen/obs-loki-eio.git#main -y
+        opam pin add obs-prometheus-eio https://github.com/loganbnielsen/obs-prometheus-eio.git#main -y
+        opam pin add obs-tempo-eio https://github.com/loganbnielsen/obs-tempo-eio.git#main -y
+        opam pin add pg-eio https://github.com/loganbnielsen/pg-eio.git#main -y
+        opam pin add aws-eio https://github.com/loganbnielsen/aws-eio.git#main -y
+        opam pin add s3-eio https://github.com/loganbnielsen/s3-eio.git#main -y
+        opam pin add dynamodb-eio https://github.com/loganbnielsen/dynamodb-eio.git#main -y
+        opam pin add lambda-eio https://github.com/loganbnielsen/lambda-eio.git#main -y
