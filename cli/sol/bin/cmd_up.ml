@@ -142,16 +142,26 @@ let run (req : Sol_cli_command_request.up_request) =
          Dockerfile path so the plan output shows a real path. *)
       let build_ctx  = if req.dry_run then repo_root else ctx_dir in
       let dockerfile = Printf.sprintf "%s/%s/Dockerfile" build_ctx repo_dir in
+      (* Sol_cli_deployment_plan.primitive -> Sol_cli_manifest.primitive;
+         needed by both primitive_label below and pod_expectation_of_primitive
+         further down, so compute it once per service instead of twice. *)
+      let to_manifest_primitive = function
+        | Sol_cli_deployment_plan.Svc    -> Svc
+        | Sol_cli_deployment_plan.Worker -> Worker
+        | Sol_cli_deployment_plan.Fn     -> Fn
+      in
 
-      Printf.printf "[%s] %s/%s\n%!" (primitive_label
-        (match spec.primitive with
-         | Sol_cli_deployment_plan.Svc    -> Svc
-         | Sol_cli_deployment_plan.Worker -> Worker
-         | Sol_cli_deployment_plan.Fn     -> Fn))
+      Printf.printf "[%s] %s/%s\n%!"
+        (primitive_label (to_manifest_primitive spec.primitive))
         spec.domain spec.source_name;
 
       if not req.dry_run then begin
         Printf.printf "  packaging %s...\n%!" push_image;
+        (* Docker build/push failures dump their raw captured stderr
+           verbatim (can be a full build log) -- deliberately unlike the
+           rollout-wait site below, which has a purpose-built curated
+           diagnosis available instead. No equivalent curation exists for
+           a build/push failure, so raw output is the right call here. *)
         (match Sol_cli_docker.build ~tag:push_image ~dockerfile ~context:ctx_dir with
          | Error e ->
            raise (Deploy_failed (Printf.sprintf "docker build failed: %s\n%s"
@@ -184,11 +194,8 @@ let run (req : Sol_cli_command_request.up_request) =
                 probe, etc. Reuse the exact pod/event diagnosis 'sol
                 status' already shows (Sol_cli_rollout_diagnosis) instead
                 of leaving the user to run kubectl by hand to find out. *)
-             let pod_expectation = Sol_cli_status.pod_expectation_of_primitive
-               (match spec.primitive with
-                | Sol_cli_deployment_plan.Svc    -> Svc
-                | Sol_cli_deployment_plan.Worker -> Worker
-                | Sol_cli_deployment_plan.Fn     -> Fn)
+             let pod_expectation =
+               Sol_cli_status.pod_expectation_of_primitive (to_manifest_primitive spec.primitive)
              in
              let diagnosis =
                Sol_cli_rollout_diagnosis.diagnose_service_live
