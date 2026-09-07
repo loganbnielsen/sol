@@ -208,7 +208,9 @@ let dev_up () =
          bump that provably has the fix (verified directly: a standalone
          v24.2.7 broker accepts the identical registration call with
          HTTP 200) rather than jumping straight to the newest available
-         chart. CODE_LAYER-008: matches platform/infra/base/main.tf's pin. *)
+         chart -- see FRIC-010 for a deliberate modernization pass with
+         its own full live-verification, not bundled into this crash-loop
+         fix. CODE_LAYER-008: matches platform/infra/base/main.tf's pin. *)
       ~version:"5.9.15"
       ~values:[
         ("storage.persistentVolume.size", Str "1Gi");
