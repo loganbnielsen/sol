@@ -97,10 +97,10 @@ let dev_up () =
       Printf.eprintf
         "error: found a pre-rename '%s' k3d cluster.\n" pre_rename_cluster_name;
       Printf.eprintf
-        "  Sol's local cluster is now named '%s', and its registry needs the\n"
+        "  Sol's local cluster is now named '%s', and its registry would try\n"
         cluster_name;
       Printf.eprintf
-        "  same host port (%d) '%s'/'sun-registry' already holds.\n"
+        "  to bind the same host port (%d) that '%s'/'sun-registry' would also use.\n"
         registry_port pre_rename_cluster_name;
       Printf.eprintf "  Remove the old cluster first:\n";
       Printf.eprintf "    k3d cluster delete %s\n" pre_rename_cluster_name;
