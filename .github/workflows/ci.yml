@@ -112,7 +112,16 @@ jobs:
           sudo mv kubectl /usr/local/bin/kubectl
 
       - name: Golden-path smoke test
-        timeout-minutes: 12
+        # Measured across the first 3 real runs on this branch: 11m43s,
+        # 8m20s, 10m59s -- a ~40% swing with no code change touching this
+        # step's actual work (cluster boot, chart install, health-wait,
+        # notably including the exact Redpanda/schema-registry startup
+        # FRIC-007 was about). 12min left as little as 17s-1min margin
+        # twice out of three runs -- real measured flake risk, not
+        # hypothetical. 18min gives comfortable headroom while still
+        # failing well inside the 45min job-level net; a genuine
+        # crash-loop still gets caught, just not shaved as close.
+        timeout-minutes: 18
         run: |
           set -eo pipefail
           export SOL_HOME="$GITHUB_WORKSPACE"
