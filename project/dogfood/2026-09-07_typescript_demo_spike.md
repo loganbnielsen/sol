@@ -305,9 +305,13 @@ confirming the two-round structure earns its cost, not just theater:
    claim is now stated as "roughly two-thirds of convention-code lines"
    (372 total convention lines; the schema-registry+wire+tracing cluster
    is ~243 of those), which the numbers actually support, plus a note
-   that 5 of the 7 total bugs found across both review rounds landed in
-   that same cluster — a second, independent line of evidence for the
-   same conclusion, not just a corrected percentage.
+   that 5 of the 13 total bugs fixed across both review rounds (9 in
+   round 1, 4 in round 2) landed in the wider `@sol/kafka` cluster
+   (schema registry, topic provisioning, tracing, retry/crash semantics)
+   — a second, independent line of evidence for the same conclusion, not
+   just a corrected percentage. (This aside itself had a stale "5 of 7"
+   count in an earlier draft, caught on round 2's re-check of this same
+   fix — corrected to the actual total of 13.)
 
 All fixes re-verified live: deleted-then-recreated topic provisioning
 (explicit `rpk topic describe` check before/after), happy path with the
@@ -400,8 +404,10 @@ Build, in this order, if/when a real TS user justifies it:
    together — these showed up as one coherent cluster in this spike, not
    several separate concerns: roughly two-thirds of all convention-code
    lines — 372 of 797 total across both services — and, going by review
-   findings alone, five of the seven real bugs found across both
-   adversarial review rounds landed somewhere in this cluster). This is
+   findings alone, five of the thirteen real bugs found across both
+   adversarial review rounds (9 fixed in round 1, 4 fixed in round 2,
+   excluding the two items each round explicitly left as an accepted
+   non-fix or doc-only note) landed somewhere in this cluster). This is
    where an OCaml-only convention is genuinely undiscoverable from
    TypeScript-land without reading OCaml source — and, per round 2's
    finding, easy to silently omit a whole piece of (topic provisioning)
