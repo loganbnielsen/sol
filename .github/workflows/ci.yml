@@ -77,7 +77,16 @@ jobs:
 
       - name: Install OCaml dependencies
         timeout-minutes: 10
-        run: opam install . --deps-only -y
+        # --with-test IS needed here despite this job never running `dune
+        # test` directly: the generated ci_smoke workspace's `dune build`
+        # (inside the smoke-test step below) also compiles test
+        # executables under vendor/framework/*/test and
+        # vendor/integrations/*/test (symlinked into this monorepo) as
+        # part of dune's default alias -- those need alcotest etc. as a
+        # BUILD dependency, not just to run. Confirmed by removing this
+        # flag and watching golden-path-smoke fail with "Library
+        # alcotest not found" on a real CI run.
+        run: opam install . --deps-only --with-test -y
 
       - name: Build sol CLI
         timeout-minutes: 5
