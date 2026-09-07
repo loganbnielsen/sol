@@ -3007,18 +3007,34 @@
         },
         {
           "date": "2026-09-07",
-          "commit": "655c78b2",
-          "duration_s": 3.647
+          "commit": "3e25862e",
+          "duration_s": 3.274
         },
         {
           "date": "2026-09-07",
-          "commit": "71f4cce3",
-          "duration_s": 3.384
+          "commit": "3e25862e",
+          "duration_s": 3.044,
+          "baseline": true
         },
         {
           "date": "2026-09-07",
-          "commit": "6476f6a3",
-          "duration_s": 3.054
+          "commit": "77eb1a17",
+          "duration_s": 4.194
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "947711c3",
+          "duration_s": 4.215
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "2cc94a55",
+          "duration_s": 4.171
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "9d5a195b",
+          "duration_s": 3.983
         }
       ]
     },
@@ -5369,18 +5385,34 @@
         },
         {
           "date": "2026-09-07",
-          "commit": "655c78b2",
-          "duration_s": 1.096
+          "commit": "3e25862e",
+          "duration_s": 1.104
         },
         {
           "date": "2026-09-07",
-          "commit": "71f4cce3",
-          "duration_s": 1.108
+          "commit": "3e25862e",
+          "duration_s": 1.117,
+          "baseline": true
         },
         {
           "date": "2026-09-07",
-          "commit": "6476f6a3",
-          "duration_s": 1.092
+          "commit": "77eb1a17",
+          "duration_s": 1.132
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "947711c3",
+          "duration_s": 1.547
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "2cc94a55",
+          "duration_s": 1.192
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "9d5a195b",
+          "duration_s": 1.220
         }
       ]
     },
@@ -7544,18 +7576,34 @@
         },
         {
           "date": "2026-09-07",
-          "commit": "655c78b2",
-          "duration_s": 1.204
+          "commit": "3e25862e",
+          "duration_s": 1.211
         },
         {
           "date": "2026-09-07",
-          "commit": "71f4cce3",
-          "duration_s": 1.234
+          "commit": "3e25862e",
+          "duration_s": 1.202,
+          "baseline": true
         },
         {
           "date": "2026-09-07",
-          "commit": "6476f6a3",
-          "duration_s": 1.197
+          "commit": "77eb1a17",
+          "duration_s": 1.251
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "947711c3",
+          "duration_s": 1.289
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "2cc94a55",
+          "duration_s": 1.390
+        },
+        {
+          "date": "2026-09-07",
+          "commit": "9d5a195b",
+          "duration_s": 1.323
         }
       ]
     }

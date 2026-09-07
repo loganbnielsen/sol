@@ -3,6 +3,9 @@ id: FRIC-006
 type: dogfood-finding
 severity: blocker
 source: project/dogfood/RUN_2026-09-07.md
+branch: fric-006/surface-subprocess-errors
+worktree: ../sol-fric-006-surface-subprocess-errors
+pr: https://github.com/loganbnielsen/sol/pull/140
 ---
 
 **Depends on:** None.
