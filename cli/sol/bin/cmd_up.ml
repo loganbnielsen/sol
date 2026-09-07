@@ -153,11 +153,15 @@ let run (req : Sol_cli_command_request.up_request) =
       if not req.dry_run then begin
         Printf.printf "  packaging %s...\n%!" push_image;
         (match Sol_cli_docker.build ~tag:push_image ~dockerfile ~context:ctx_dir with
-         | Error _ -> raise (Deploy_failed (Printf.sprintf "docker build failed: %s" spec.source_dir))
+         | Error e ->
+           raise (Deploy_failed (Printf.sprintf "docker build failed: %s\n%s"
+             spec.source_dir (Sol_cli_process.error_to_string e)))
          | Ok () -> ());
         Printf.printf "  pushing...\n%!";
         (match Sol_cli_docker.push ~image_ref:push_image with
-         | Error _ -> raise (Deploy_failed (Printf.sprintf "docker push failed: %s" push_image))
+         | Error e ->
+           raise (Deploy_failed (Printf.sprintf "docker push failed: %s\n%s"
+             push_image (Sol_cli_process.error_to_string e)))
          | Ok () -> ())
       end;
 
@@ -174,8 +178,28 @@ let run (req : Sol_cli_command_request.up_request) =
          | Sol_cli_deployment_plan.Svc
          | Sol_cli_deployment_plan.Worker ->
            Printf.printf "  waiting for rollout...\n%!";
-           if wait_for_rollout ~namespace ~name:k8s_name <> 0 then
-             raise (Deploy_failed (Printf.sprintf "rollout failed: %s/%s" namespace k8s_name))
+           if wait_for_rollout ~namespace ~name:k8s_name <> 0 then begin
+             (* FRIC-006: "rollout failed" alone doesn't say whether it's
+                CrashLoopBackOff, ImagePullBackOff, a failing readiness
+                probe, etc. Reuse the exact pod/event diagnosis 'sol
+                status' already shows (Sol_cli_rollout_diagnosis) instead
+                of leaving the user to run kubectl by hand to find out. *)
+             let pod_expectation = Sol_cli_status.pod_expectation_of_primitive
+               (match spec.primitive with
+                | Sol_cli_deployment_plan.Svc    -> Svc
+                | Sol_cli_deployment_plan.Worker -> Worker
+                | Sol_cli_deployment_plan.Fn     -> Fn)
+             in
+             let diagnosis =
+               Sol_cli_rollout_diagnosis.diagnose_service_live
+                 ~pod_expectation ~ns:namespace ~service_name:spec.source_name
+                 ~k8s_name ()
+             in
+             let headline = Printf.sprintf "rollout failed: %s/%s" namespace k8s_name in
+             raise (Deploy_failed (match diagnosis with
+               | Some d -> headline ^ "\n" ^ d
+               | None   -> headline))
+           end
          | Sol_cli_deployment_plan.Fn -> ());
         (match spec.primitive with
          | Sol_cli_deployment_plan.Svc ->

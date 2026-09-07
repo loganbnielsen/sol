@@ -107,15 +107,31 @@ let dev_up () =
       Printf.eprintf "  (rename or keep it yourself first if you still need it for something else)\n";
       exit 1
     end;
+    let create_result =
+      Sol_cli_process.run ~echo:true
+        (Sol_cli_process.cmd
+           ["k3d"; "cluster"; "create"; cluster_name;
+            "--registry-create"; Printf.sprintf "sol-registry:%d" registry_port])
+    in
     let rc =
-      match Sol_cli_process.run ~echo:true
-          (Sol_cli_process.cmd
-             ["k3d"; "cluster"; "create"; cluster_name;
-              "--registry-create"; Printf.sprintf "sol-registry:%d" registry_port]) with
+      match create_result with
       | Ok r -> r.Sol_cli_process.exit_code
       | Error _ -> 1
     in
-    if rc <> 0 then (Printf.eprintf "error: cluster creation failed\n"; exit 1)
+    if rc <> 0 then begin
+      Printf.eprintf "error: cluster creation failed\n";
+      (* FRIC-006: k3d's own stderr is the actual diagnosis (e.g. "port is
+         already allocated") -- surface it instead of leaving the user to
+         re-run k3d by hand to find out why. *)
+      (match create_result with
+       | Ok r when r.Sol_cli_process.stderr <> "" ->
+         Printf.eprintf "%s\n" r.Sol_cli_process.stderr
+       | Ok r when r.Sol_cli_process.stdout <> "" ->
+         Printf.eprintf "%s\n" r.Sol_cli_process.stdout
+       | Ok _ -> ()
+       | Error e -> Printf.eprintf "%s\n" (Sol_cli_process.error_to_string e));
+      exit 1
+    end
   end;
 
   (* 2. Scan *)
