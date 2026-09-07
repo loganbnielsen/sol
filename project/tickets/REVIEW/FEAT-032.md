@@ -3,6 +3,9 @@ id: FEAT-032
 type: feature
 severity: high
 source: user request, 2026-09-06 — full sun -> sol rename, following the docs-only rebrand in PR #136
+branch: feat-032/sun-to-sol-rename
+worktree: ../sol-feat-032-sun-to-sol-rename
+pr: https://github.com/loganbnielsen/sol/pull/137
 ---
 
 **Depends on:** None.
