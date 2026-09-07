@@ -3,6 +3,9 @@ id: FRIC-009
 type: dogfood-finding
 severity: medium
 source: FRIC-007's remediation item 3 (project/tickets/DONE/FRIC-007.md) — split out rather than bundled into that fix, since CI/CD pipeline changes warrant their own dedicated review
+branch: fric-009/golden-path-ci-smoke-test
+worktree: ../sol-fric-009-golden-path-ci-smoke-test
+pr: https://github.com/loganbnielsen/sol/pull/142
 ---
 
 **Depends on:** None.
