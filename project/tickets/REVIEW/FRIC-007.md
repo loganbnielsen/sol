@@ -3,6 +3,9 @@ id: FRIC-007
 type: dogfood-finding
 severity: blocker
 source: project/dogfood/RUN_2026-09-07.md
+branch: fric-007/redpanda-json-schema-registry-support
+worktree: ../sol-fric-007-redpanda-json-schema-registry-support
+pr: https://github.com/loganbnielsen/sol/pull/141
 ---
 
 **Depends on:** None.
