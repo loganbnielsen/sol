@@ -90,3 +90,6 @@ Nothing user-facing or internal should still say "sun" when this ticket is done,
 - `grep -rI 'Sun_\|sun\.toml\|sun\.yml\|SUN_HOME' --include='*.ml' --include='*.mli' --include=dune .` (excluding the explicitly-historical paths above) returns nothing.
 - A freshly scaffolded workspace (`sol new workspace <name>` after rename) generates a workspace with no `Sun_`/`sun.toml`/`sun.yml`/`sun-ci.yml` references anywhere in it.
 - README's Quickstart runs end-to-end with the renamed binary/commands.
+
+## Review — automated checks passed
+Two independent adversarial review rounds: round 1 found two real leftover 'sun'-named artifacts (a dashboard JSON filename, an orphaned superseded logo), both fixed and re-confirmed clean; round 2 (fresh reviewer, no prior context) verified build, full test suite (unit/kafka/e2e), CLI --help output across multiple subcommands, Terraform/Prometheus naming consistency, a from-scratch scaffold test, and confirmed project/tickets/ untouched by the branch -- zero violations.
