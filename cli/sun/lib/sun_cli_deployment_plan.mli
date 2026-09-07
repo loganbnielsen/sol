@@ -128,6 +128,7 @@ val image_ref : registry:string -> workspace:string -> k8s_name:k8s_name -> tag:
 val of_services :
   workspace:string ->
   env:env_config ->
+  ?resolved_config:Sun_cli_config.t ->
   Sun_cli_manifest.service list ->
   t
 (** Compatibility wrapper around [of_services_result]. Raises [Failure] if a
@@ -136,8 +137,15 @@ val of_services :
 val of_services_result :
   workspace:string ->
   env:env_config ->
+  ?resolved_config:Sun_cli_config.t ->
   Sun_cli_manifest.service list ->
   (t, plan_error) result
 (** Build a deployment plan from a discovered service list and an environment
     config. Returns a typed error when a Kubernetes artifact name is invalid or
-    a service [sun.toml] cannot be parsed or validated. *)
+    a service [sun.toml] cannot be parsed or validated.
+
+    [resolved_config], when given (the [sun deploy]/target-resolved path; [sun
+    up] never has one), overrides a service's [sun.toml] [replicas] with its
+    [sun.yml] entry's [scale_max] (falling back to [scale_min]) when a service
+    of the same name sets either. A service with no matching [sun.yml] entry,
+    or no [resolved_config] at all, keeps [sun.toml]'s [replicas] unchanged. *)

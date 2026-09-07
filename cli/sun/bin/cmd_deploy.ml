@@ -18,7 +18,7 @@ let run (req : Sun_cli_command_request.deploy_request) =
   let sha       = req.image_tag in
   let services  = discover_services ~filter_path:req.filter_path in
 
-  let target_cfg =
+  let resolved_config, target_cfg =
     match Sun_cli_config.load_for_target ~target:req.target with
     | Error e ->
       Printf.eprintf "error: %s\n" (Sun_cli_config.error_to_string e);
@@ -28,7 +28,7 @@ let run (req : Sun_cli_command_request.deploy_request) =
       | None ->
         Printf.eprintf "error: target %S not found\n" req.target;
         exit 1
-      | Some target -> target
+      | Some target -> cfg, target
   in
   (* sun deploy always mutates a real cluster, so unlike sun plan
      (genuinely read-only, Sun_cli_config.load_for_target's own
@@ -119,7 +119,7 @@ let run (req : Sun_cli_command_request.deploy_request) =
                Sun_cli_deployment_plan.secret_backend = req.secret_backend;
                env = Some target_cfg.Sun_cli_config.env } in
   let plan =
-    match Sun_cli_deployment_plan.of_services_result ~workspace ~env services with
+    match Sun_cli_deployment_plan.of_services_result ~workspace ~env ~resolved_config services with
     | Ok plan -> plan
     | Error err ->
       Printf.eprintf "error: %s\n" (Sun_cli_deployment_plan.plan_error_to_string err);
