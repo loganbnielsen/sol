@@ -196,7 +196,20 @@ let dev_up () =
        node-exporter.enabled precedent for content that stays local-only
        precisely because nothing shields it on the Terraform side. *)
     helm_install ~label:"Redpanda" "redpanda" "redpanda/redpanda" ~namespace:"redpanda"
-      ~version:"5.8.12"  (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin *)
+      (* FRIC-007: 5.8.12 (image v24.1.8) predates JSON Schema Registry
+         support, which landed in Redpanda 24.2
+         (redpanda-data/redpanda#6220, confirmed via the maintainer's own
+         closing comment) -- every generated Sol service's unconditional
+         `schemaType: "JSON"` registration call got HTTP 422 "Invalid
+         schema type JSON" against this version, permanently
+         crash-looping every -svc/-worker on a fresh substrate. 5.9.15
+         (image v24.2.7) is the last chart pinned to a 24.2.x image before
+         the chart line moves to 24.3 -- picked as the smallest version
+         bump that provably has the fix (verified directly: a standalone
+         v24.2.7 broker accepts the identical registration call with
+         HTTP 200) rather than jumping straight to the newest available
+         chart. CODE_LAYER-008: matches platform/infra/base/main.tf's pin. *)
+      ~version:"5.9.15"
       ~values:[
         ("storage.persistentVolume.size", Str "1Gi");
         (* Advertise localhost:9092 so librdkafka reconnects to the port-forward

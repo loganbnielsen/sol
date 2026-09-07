@@ -199,9 +199,16 @@ resource "helm_release" "redpanda" {
   name       = "redpanda"
   repository = "https://charts.redpanda.com"
   chart      = "redpanda"
-  version    = "5.8.12"
-  namespace  = kubernetes_namespace.redpanda.metadata[0].name
-  timeout    = 600
+  # FRIC-007: 5.8.12 (image v24.1.8) predates JSON Schema Registry support
+  # (landed in Redpanda 24.2, redpanda-data/redpanda#6220) -- every real
+  # Sol service registers its schema with `schemaType: "JSON"`
+  # unconditionally, which this version rejects outright with HTTP 422.
+  # 5.9.15 (image v24.2.7) is the smallest bump onto a 24.2.x image that
+  # provably has the fix -- see cmd_dev.ml's own Redpanda install for the
+  # full verification. Keep this in sync with that pin (CODE_LAYER-008).
+  version   = "5.9.15"
+  namespace = kubernetes_namespace.redpanda.metadata[0].name
+  timeout   = 600
 
   # CODE_LAYER-010: tls.enabled/config.cluster.auto_create_topics_enabled
   # now live in platform/components/redpanda/values-common.json (ADR 0001),
