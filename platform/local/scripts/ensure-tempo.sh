@@ -6,6 +6,10 @@ QUERY_PORT=3200
 NETWORK=sun-obs
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/../config/tempo.yaml"
+source "${SCRIPT_DIR}/lib/port-preflight.sh"
+
+check_port_forward_conflict "$OTLP_PORT" tempo
+check_port_forward_conflict "$QUERY_PORT" tempo
 
 if ! docker network inspect "$NETWORK" > /dev/null 2>&1; then
   echo "Creating Docker network: $NETWORK"
