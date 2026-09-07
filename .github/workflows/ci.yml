@@ -21,26 +21,7 @@ jobs:
           ocaml-compiler: 5.4.1
 
       - name: Pin extracted opam packages
-        run: |
-          # Tracking #main on every support package during active parallel
-          # development across all of them — sol should build against their
-          # latest code, not a tag that's fallen behind. Revert to tagged
-          # pins once these settle and cut real releases.
-          # https-eio first: obs-loki-eio/obs-prometheus-eio/aws-eio all
-          # depend on it, and each -y pin below installs immediately --
-          # pinning it after them let their own install step pull in the
-          # published opam-repository https-eio before this pin ever ran.
-          opam pin add https-eio https://github.com/loganbnielsen/https-eio.git#main -y
-          opam pin add kafka-eio https://github.com/loganbnielsen/kafka-eio.git#main -y
-          opam pin add obs-eio https://github.com/loganbnielsen/obs-eio.git#main -y
-          opam pin add obs-loki-eio https://github.com/loganbnielsen/obs-loki-eio.git#main -y
-          opam pin add obs-prometheus-eio https://github.com/loganbnielsen/obs-prometheus-eio.git#main -y
-          opam pin add obs-tempo-eio https://github.com/loganbnielsen/obs-tempo-eio.git#main -y
-          opam pin add pg-eio https://github.com/loganbnielsen/pg-eio.git#main -y
-          opam pin add aws-eio https://github.com/loganbnielsen/aws-eio.git#main -y
-          opam pin add s3-eio https://github.com/loganbnielsen/s3-eio.git#main -y
-          opam pin add dynamodb-eio https://github.com/loganbnielsen/dynamodb-eio.git#main -y
-          opam pin add lambda-eio https://github.com/loganbnielsen/lambda-eio.git#main -y
+        uses: ./.github/actions/pin-opam-packages
 
       - name: Install OCaml dependencies
         run: opam install . --deps-only --with-test -y
@@ -54,16 +35,23 @@ jobs:
       - name: Platform-component drift guardrail (ADR 0001 / CODE_LAYER-005)
         run: tools/ci/check_platform_component_drift.sh
 
-  # FRIC-009: nothing above exercises the actual golden path against live
-  # infra, so a regression that breaks every generated service on a fresh
-  # substrate (FRIC-007 — a pinned Redpanda version that silently couldn't
-  # register a JSON schema) reproduced deterministically and was invisible
-  # to CI. This job is the smallest check that would have caught it:
-  # sol new workspace -> sol dev up -> sol up -> one curl /health. It is
-  # NOT full golden-path coverage (no migrate/status/Kafka round-trip —
-  # that's what periodic /dogfood runs are for) and it is NOT a general CI
-  # overhaul. Separate job (not folded into `test`) so its extra ~2-5min
-  # of real cluster bootstrap doesn't slow down the fast unit-test signal.
+  # FRIC-009: smallest check that would have caught a regression like
+  # FRIC-007 (every generated service permanently broken on a fresh
+  # substrate) — nothing above exercises the golden path against live
+  # infra. Deliberately narrow: no migrate/status/Kafka round-trip, that's
+  # periodic /dogfood's job. Separate job (not folded into `test`) so its
+  # cluster-bootstrap time doesn't slow the fast unit-test signal.
+  #
+  # Docker/k3d availability: `ubuntu-22.04` is a GitHub-hosted runner with
+  # Docker Engine preinstalled — no availability gate needed today. If
+  # `runs-on` ever changes to a self-hosted label, re-check this before
+  # assuming Docker is still there.
+  #
+  # Version pins (k3d/helm/kubectl below) must stay in sync with
+  # docs/dogfood/DOGFOOD.md's "Kubernetes toolchain" table — that doc
+  # explains *why* k3d is pinned to this exact version (chart-value
+  # compatibility). No automated drift check between the two files exists
+  # yet; update both by hand on any bump.
   golden-path-smoke:
     runs-on: ubuntu-22.04
     steps:
@@ -78,18 +66,7 @@ jobs:
           ocaml-compiler: 5.4.1
 
       - name: Pin extracted opam packages
-        run: |
-          opam pin add https-eio https://github.com/loganbnielsen/https-eio.git#main -y
-          opam pin add kafka-eio https://github.com/loganbnielsen/kafka-eio.git#main -y
-          opam pin add obs-eio https://github.com/loganbnielsen/obs-eio.git#main -y
-          opam pin add obs-loki-eio https://github.com/loganbnielsen/obs-loki-eio.git#main -y
-          opam pin add obs-prometheus-eio https://github.com/loganbnielsen/obs-prometheus-eio.git#main -y
-          opam pin add obs-tempo-eio https://github.com/loganbnielsen/obs-tempo-eio.git#main -y
-          opam pin add pg-eio https://github.com/loganbnielsen/pg-eio.git#main -y
-          opam pin add aws-eio https://github.com/loganbnielsen/aws-eio.git#main -y
-          opam pin add s3-eio https://github.com/loganbnielsen/s3-eio.git#main -y
-          opam pin add dynamodb-eio https://github.com/loganbnielsen/dynamodb-eio.git#main -y
-          opam pin add lambda-eio https://github.com/loganbnielsen/lambda-eio.git#main -y
+        uses: ./.github/actions/pin-opam-packages
 
       - name: Install OCaml dependencies
         run: opam install . --deps-only --with-test -y
@@ -99,14 +76,24 @@ jobs:
 
       - name: Install k3d/kubectl/helm (pinned versions — docs/dogfood/DOGFOOD.md)
         run: |
-          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=v5.6.0 bash
-          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | DESIRED_VERSION=v3.21.0 bash
-          curl -LO "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
+          # Direct pinned-release binary downloads, not `curl | bash` —
+          # k3d's/helm's own install scripts live on their mutable default
+          # branch, so piping them to a shell would trust unreviewed,
+          # unpinned script content on every CI run even though the
+          # *installed tool version* is pinned via TAG/DESIRED_VERSION.
+          curl -fsSL -o k3d "https://github.com/k3d-io/k3d/releases/download/v5.6.0/k3d-linux-amd64"
+          chmod +x k3d
+          sudo mv k3d /usr/local/bin/k3d
+
+          curl -fsSL "https://get.helm.sh/helm-v3.21.0-linux-amd64.tar.gz" | tar -xz -C /tmp
+          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
+
+          curl -fsSL -o kubectl "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/kubectl
 
       - name: Golden-path smoke test
-        timeout-minutes: 15
+        timeout-minutes: 12
         run: |
           set -eo pipefail
           export SOL_HOME="$GITHUB_WORKSPACE"
@@ -123,18 +110,43 @@ jobs:
           sol dev up
           sol up
 
-          ok=""
           for i in $(seq 1 30); do
             if curl -sf http://localhost:8080/health > /tmp/health.out; then
-              ok=1
-              break
+              echo "health check OK: $(cat /tmp/health.out)"
+              exit 0
             fi
             sleep 2
           done
-          if [ -z "$ok" ]; then
-            echo "::error::golden-path smoke test: /health never became reachable"
-            sol status || true
-            kubectl get pods -A || true
-            exit 1
-          fi
-          echo "health check OK: $(cat /tmp/health.out)"
+          echo "::error::golden-path smoke test: /health never became reachable"
+          exit 1
+
+      # `sol up` blocks on an un-timed-out `kubectl rollout status`
+      # internally, so a crash-looping pod (this job's whole reason to
+      # exist — see FRIC-007) makes the step above hang until GitHub
+      # Actions kills it at its own timeout-minutes, bypassing any
+      # in-step diagnostic logic entirely. This step is job-level
+      # `if: always()` specifically so it still runs after that kind of
+      # external kill, not just after a clean nonzero exit.
+      - name: Dump cluster diagnostics on failure
+        if: always()
+        run: |
+          echo "=== k3d clusters ==="
+          k3d cluster list || true
+          echo "=== all pods ==="
+          kubectl get pods -A -o wide || true
+          echo "=== recent events ==="
+          kubectl get events -A --sort-by=.lastTimestamp || true
+          for ns in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+            for pod in $(kubectl get pods -n "$ns" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+              phase=$(kubectl get pod "$pod" -n "$ns" -o jsonpath='{.status.phase}' 2>/dev/null)
+              ready=$(kubectl get pod "$pod" -n "$ns" -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null)
+              if [ "$phase" != "Running" ] || [ "$ready" != "true" ]; then
+                echo "=== describe $ns/$pod ==="
+                kubectl describe pod "$pod" -n "$ns" || true
+                echo "=== logs $ns/$pod (current) ==="
+                kubectl logs "$pod" -n "$ns" --all-containers || true
+                echo "=== logs $ns/$pod (previous, if crash-looped) ==="
+                kubectl logs "$pod" -n "$ns" --all-containers --previous || true
+              fi
+            done
+          done
