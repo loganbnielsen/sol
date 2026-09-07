@@ -24,8 +24,9 @@ let routes pool = [
 ```
 
 ```ocaml
-(* bin/main.ml — the entrypoint *)
+(* bin/main.ml — the entrypoint, trimmed: env/observability/db-pool setup omitted *)
 let () = Eio_main.run @@ fun env ->
+  (* ... build `obs` (observability handle) and `pool` (DB pool) here ... *)
   Service.run (Handler.routes pool) ~env ~ot:obs ()
   |> Result.map_error Service.run_error_to_string
   |> function Ok () -> () | Error e -> failwith e
@@ -73,10 +74,10 @@ You write domain logic. Sol handles the factory work: scaffold, build, package, 
 
 ## Application model
 
-A Sol workspace organizes services by domain team, with typed events as the only contract between them:
+A Sol workspace organizes services by domain team, with typed events as the only contract between them. `sun new workspace` scaffolds an `-svc` and a `-worker`; `sun new fn`/`sun new worker`/`sun new svc` add more as a workspace grows:
 
 ```
-pluto/
+myapp/
   events/payments/charged.ml     ← event contract, owned by the publishing team
   app/
     payments/charge_svc/         ← REST API service   (-svc)
