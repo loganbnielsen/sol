@@ -1,7 +1,7 @@
 let backoff_s n = Float.min (1.0 *. (2. ** Float.of_int n)) 600.0
 
-let hdr_attempt  = "X-Sun-Attempt"
-let hdr_retry_at = "X-Sun-Retry-At"
+let hdr_attempt  = "X-Sol-Attempt"
+let hdr_retry_at = "X-Sol-Retry-At"
 
 let parse_int_hdr key headers =
   match Option.join (List.assoc_opt key headers) with
@@ -27,7 +27,7 @@ let parse_retry_metadata headers =
     | Error e -> Error e
     | Ok retry_at -> Ok (attempt, retry_at))
 
-let strip_sun_hdrs headers =
+let strip_sol_hdrs headers =
   List.filter (fun (k, _) -> k <> hdr_attempt && k <> hdr_retry_at) headers
 
 (** Typed outcome for a single retry-routing decision. *)
@@ -103,7 +103,7 @@ let consume (svc : Kafka_service_intf.t) (topic : 'a Kafka_service_intf.topic)
     let new_headers =
       (hdr_attempt,  Some (string_of_int   attempt)) ::
       (hdr_retry_at, Some (string_of_float retry_at)) ::
-      strip_sun_hdrs headers
+      strip_sol_hdrs headers
     in
     match Eio.Promise.await (
       Kafka.Producer.produce_await svc.producer
@@ -113,7 +113,7 @@ let consume (svc : Kafka_service_intf.t) (topic : 'a Kafka_service_intf.topic)
     | Ok ()  -> Ok ()
     | Error e ->
       Printf.eprintf
-        "sun-worker: PUBLISH_FAILED target=%s attempt=%d error=%s — not acking\n%!"
+        "sol-worker: PUBLISH_FAILED target=%s attempt=%d error=%s — not acking\n%!"
         (topic_name_to_string target_topic)
         attempt (Kafka.Error.to_string e);
       Error e
@@ -132,7 +132,7 @@ let consume (svc : Kafka_service_intf.t) (topic : 'a Kafka_service_intf.topic)
   | Ok consumer ->
     let retry_consumer_cfg : Kafka.Consumer.config = {
       brokers      = svc.brokers;
-      group_id     = group_id ^ "-sun-retry";
+      group_id     = group_id ^ "-sol-retry";
       topics       = [topic_name_to_string retry_topic_name];
       offset_reset = Kafka.Consumer.Earliest;
       auto_commit  = false;

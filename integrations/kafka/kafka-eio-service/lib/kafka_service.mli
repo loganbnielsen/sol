@@ -91,7 +91,7 @@ module Retry_topics : sig
   val parse_retry_metadata
     :  (string * string option) list
     -> (int * float, string) result
-  (** Read and validate the [X-Sun-Attempt]/[X-Sun-Retry-At] headers off a
+  (** Read and validate the [X-Sol-Attempt]/[X-Sol-Retry-At] headers off a
       message forwarded to a retry topic. *)
 
   val execute_action
@@ -249,10 +249,10 @@ val consume
       Vulnerable to rebalance preempting the sleep window.
 
     - [Retry_topics { max_attempts }] — on failure the raw message bytes are
-      published to [<topic>-retry] with [X-Sun-Attempt] / [X-Sun-Retry-At]
+      published to [<topic>-retry] with [X-Sol-Attempt] / [X-Sol-Retry-At]
       headers, and the original offset is immediately committed.  A background
-      retry consumer (group [<group_id>-sun-retry]) subscribes to [<topic>-retry],
-      waits until [X-Sun-Retry-At], then re-runs the handler.  After
+      retry consumer (group [<group_id>-sol-retry]) subscribes to [<topic>-retry],
+      waits until [X-Sol-Retry-At], then re-runs the handler.  After
       [max_attempts] total failures the message is routed to [<topic>-dlq].
       [max_attempts] must be at least 1. Both topics are auto-provisioned
       before consumption starts; provisioning or retry-consumer startup

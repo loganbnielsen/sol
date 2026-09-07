@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Create the topics used by sun tests and demo.
+# Create the topics used by sol tests and demo.
 set -euo pipefail
 
 BROKERS="${KAFKA_BROKERS:-localhost:9092}"
 
 topics=(
-  "sun-demo"
-  "sun-producer-test"
-  "sun-consumer-test"
+  "sol-demo"
+  "sol-producer-test"
+  "sol-consumer-test"
 )
 
 for topic in "${topics[@]}"; do

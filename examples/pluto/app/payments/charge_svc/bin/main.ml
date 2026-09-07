@@ -17,7 +17,7 @@ let () =
   let postgres_url = env_nonempty "POSTGRES_URL" in
   Eio_main.run @@ fun env ->
   let obs =
-    Sun_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+    Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
       ~service:"pluto-charge-svc" ~context:[("team", "payments")] ()
   in
   Eio.Switch.run @@ fun sw ->

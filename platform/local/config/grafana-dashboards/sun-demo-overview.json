@@ -1,8 +1,8 @@
 {
   "id": null,
-  "uid": "sun-demo-overview",
-  "title": "Sun Demo Overview",
-  "tags": ["sun", "demo"],
+  "uid": "sol-demo-overview",
+  "title": "Sol Demo Overview",
+  "tags": ["sol", "demo"],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
@@ -18,7 +18,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(sun_svc_requests_total)",
+          "expr": "sum(sol_svc_requests_total)",
           "legendFormat": "requests"
         }
       ]
@@ -32,7 +32,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(sun_worker_messages_total)",
+          "expr": "sum(sol_worker_messages_total)",
           "legendFormat": "messages"
         }
       ]
@@ -57,7 +57,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(sun_worker_decode_errors_total)",
+          "expr": "sum(sol_worker_decode_errors_total)",
           "legendFormat": "decode errors"
         }
       ]
@@ -81,12 +81,12 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.5, sum(sun_svc_request_duration_seconds_bucket) by (le))",
+          "expr": "histogram_quantile(0.5, sum(sol_svc_request_duration_seconds_bucket) by (le))",
           "legendFormat": "p50"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.95, sum(sun_svc_request_duration_seconds_bucket) by (le))",
+          "expr": "histogram_quantile(0.95, sum(sol_svc_request_duration_seconds_bucket) by (le))",
           "legendFormat": "p95"
         }
       ],
@@ -101,12 +101,12 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.5, sum(sun_worker_message_duration_seconds_bucket) by (le))",
+          "expr": "histogram_quantile(0.5, sum(sol_worker_message_duration_seconds_bucket) by (le))",
           "legendFormat": "p50"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.95, sum(sun_worker_message_duration_seconds_bucket) by (le))",
+          "expr": "histogram_quantile(0.95, sum(sol_worker_message_duration_seconds_bucket) by (le))",
           "legendFormat": "p95"
         }
       ],

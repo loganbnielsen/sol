@@ -1,0 +1,42 @@
+(library
+ (name sol_cli)
+ (wrapped false)
+ (libraries unix yojson cmdliner otoml sol_process ptime)
+ (modules
+  Sol_cli_process
+  Sol_cli_scaffold
+  Sol_cli_scaffold_templates
+  Sol_cli_workspace
+  Sol_cli_manifest_yaml
+  Sol_cli_manifest
+  Sol_cli_config
+  Sol_cli_toml
+  Sol_cli_plan_ids
+  Sol_cli_workspace_scan
+  Sol_cli_kubernetes_name
+  Sol_cli_deployment_plan
+  Sol_cli_deployment_render
+  Sol_cli_env_target
+  Sol_cli_executor
+  Sol_cli_release_inspection
+  Sol_cli_secret
+  Sol_cli_cmd_new
+  Sol_cli_logs
+  Sol_cli_deployment_state
+  Sol_cli_deploy_event
+  Sol_cli_dev_observability
+  Sol_cli_state
+  Sol_cli_port_forward
+  Sol_cli_command_request
+  Sol_cli_kubectl
+  Sol_cli_rollout_diagnosis
+  Sol_cli_loki
+  Sol_cli_run_log
+  Sol_cli_observability_url
+  Sol_cli_open
+  Sol_cli_status
+  Sol_cli_rollback
+  Sol_cli_docker
+  Sol_cli_helm
+  Sol_cli_platform_component
+  Sol_cli_terraform))

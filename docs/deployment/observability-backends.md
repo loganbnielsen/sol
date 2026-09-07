@@ -1,8 +1,8 @@
 # Observability Backends
 
 `platform/infra/base`'s `observability_backend` variable selects where Loki
-(logs) and Prometheus (metrics) data lives. Sun ships a self-hosted durable
-path so production users are not forced into Sun-hosted observability.
+(logs) and Prometheus (metrics) data lives. Sol ships a self-hosted durable
+path so production users are not forced into Sol-hosted observability.
 The product design is documented in
 [`docs/architecture/observability-design.md`](../architecture/observability-design.md).
 
@@ -17,10 +17,10 @@ Log shipping is [Grafana Alloy](https://grafana.com/docs/alloy/latest/)
 itself reached end-of-life in March 2026. A cluster-wide DaemonSet tails
 every pod's stdout/stderr via the Kubernetes API
 (`loki.source.kubernetes`, no hostPath mount required) and relabels
-standard Kubernetes metadata plus Sun's taxonomy labels
+standard Kubernetes metadata plus Sol's taxonomy labels
 (`workspace`/`domain`/`service`/`primitive`/`release`) onto each log
 stream, the same taxonomy `render_taxonomy_labels` already applies to pod
-labels. Alloy's scope in Sun today is log shipping only — its
+labels. Alloy's scope in Sol today is log shipping only — its
 metrics/traces collection capability is unused, tracked separately for
 `OBS-041`'s tracing work.
 
@@ -28,7 +28,7 @@ metrics/traces collection capability is unused, tracked separately for
 
 Points Alloy's log-shipping target and Prometheus's `remote_write` at
 infrastructure you already run or already pay for (a hosted Loki/Prometheus
-service, your own observability stack elsewhere, etc.). Sun's Grafana +
+service, your own observability stack elsewhere, etc.). Sol's Grafana +
 local Loki are skipped since there's nothing local left to browse; Prometheus
 itself keeps running because it's the thing doing the scraping, just with a
 couple hours of local retention instead of the usual 15 days.
@@ -44,21 +44,21 @@ external_prometheus_password         = "<api key>"
 ```
 
 For read-side log snapshots, pass a Loki query URL and credentials to
-`sun logs --no-follow`:
+`sol logs --no-follow`:
 
 ```bash
-export SUN_LOKI_USERNAME="123456"
-export SUN_LOKI_PASSWORD="<api key>"
+export SOL_LOKI_USERNAME="123456"
+export SOL_LOKI_PASSWORD="<api key>"
 
-sun logs payments/charge_svc \
+sol logs payments/charge_svc \
   --no-follow \
   --observability-backend external \
   --loki-base-url https://logs-prod-000.grafana.net
 ```
 
 `--loki-username`/`--loki-password` are also supported for one-off use, and
-flags win over `SUN_LOKI_USERNAME`/`SUN_LOKI_PASSWORD` when both are set. Prefer
-`SUN_LOKI_PASSWORD` on shared hosts because command-line flags can be visible in
+flags win over `SOL_LOKI_USERNAME`/`SOL_LOKI_PASSWORD` when both are set. Prefer
+`SOL_LOKI_PASSWORD` on shared hosts because command-line flags can be visible in
 shell history and process listings.
 
 ## `self_hosted_durable` (AWS only)
@@ -132,7 +132,7 @@ To intentionally delete them, remove that lifecycle guard and empty/delete the
 buckets explicitly.
 
 **Why Thanos over Mimir (OBS-007):** the write path bolts onto the Prometheus
-deployment Sun already runs, and the read path only needs Query,
+deployment Sol already runs, and the read path only needs Query,
 storegateway, and compactor. Mimir can come later if ingestion scale demands
 it.
 
@@ -142,7 +142,7 @@ AWS deploy before depending on it in production.
 
 ## Alerting (OBS-040)
 
-All three profiles ship the same starter Alertmanager + rule set — Sun uses
+All three profiles ship the same starter Alertmanager + rule set — Sol uses
 the plain `prometheus-community/prometheus` chart (`server` +
 `alertmanager` subcharts), not the Prometheus Operator, so there is no
 `PrometheusRule` CRD here. Rules and Alertmanager routing are both plumbed
@@ -161,41 +161,41 @@ today:
 
 ### Starter rules
 
-Both rules use Sun's label taxonomy
+Both rules use Sol's label taxonomy
 (`workspace`/`env`/`domain`/`service`/`primitive`) or standard
 kube-state-metrics labels — never a hardcoded domain/service — so they
 apply workspace-wide to every deployed service by default.
 
 | Alert | Signal | Threshold |
 |---|---|---|
-| `SunHighErrorRate` | `sun_svc_requests_total{status_class="5xx"}` vs total, from `-svc`'s auto-metrics (same metric as the "5xx error rate by service" dashboard panel) | 5xx ratio > 5%, sustained 5 minutes, grouped by `workspace, env, domain, service` |
-| `SunPodRestartLoop` | `kube_pod_container_status_restarts_total` (kube-state-metrics, bundled and scraped by this chart by default) | more than 3 restarts in 15 minutes, sustained 5 minutes, per `namespace, pod, container` |
+| `SolHighErrorRate` | `sol_svc_requests_total{status_class="5xx"}` vs total, from `-svc`'s auto-metrics (same metric as the "5xx error rate by service" dashboard panel) | 5xx ratio > 5%, sustained 5 minutes, grouped by `workspace, env, domain, service` |
+| `SolPodRestartLoop` | `kube_pod_container_status_restarts_total` (kube-state-metrics, bundled and scraped by this chart by default) | more than 3 restarts in 15 minutes, sustained 5 minutes, per `namespace, pod, container` |
 
-`SunPodRestartLoop` alerts on kube-state-metrics' own `namespace`/`pod`/
-`container` labels rather than Sun's taxonomy labels directly — those live
-on the *monitored* pod, not on kube-state-metrics' own pod. Sun namespaces
-are named `<workspace>-<domain>` (`Sun_cli_kubernetes_name.namespace_of_parts`),
+`SolPodRestartLoop` alerts on kube-state-metrics' own `namespace`/`pod`/
+`container` labels rather than Sol's taxonomy labels directly — those live
+on the *monitored* pod, not on kube-state-metrics' own pod. Sol namespaces
+are named `<workspace>-<domain>` (`Sol_cli_kubernetes_name.namespace_of_parts`),
 so the alert is still workspace/domain-identifiable from `namespace` alone.
 For an exact `service`/`primitive` breakdown, join with the
 `kube_pod_labels` metric (requires enabling kube-state-metrics'
 `metricLabelsAllowlist` for pod labels — not configured by default, since
 it isn't needed for the alert itself).
 
-**Deploy-failure alert: skipped for v1.** `OBS-037` added `sun deploy`'s
+**Deploy-failure alert: skipped for v1.** `OBS-037` added `sol deploy`'s
 release-event line, but it's a *Loki log line*
-(`cli/sun/lib/sun_cli_deploy_event.ml`), not a Prometheus metric —
+(`cli/sol/lib/sol_cli_deploy_event.ml`), not a Prometheus metric —
 Prometheus alerting rules can't query Loki. There is currently no metric
 derived from deploy events (no Pushgateway push, no counter), so there's
 no Prometheus-queryable signal to alert on yet. Revisit once a deploy
-health metric exists (e.g. a Pushgateway push from `sun deploy` on
-rollout success/failure); until then, use `sun logs` or a Grafana Loki
+health metric exists (e.g. a Pushgateway push from `sol deploy` on
+rollout success/failure); until then, use `sol logs` or a Grafana Loki
 panel to check deploy outcomes manually.
 
 ### No receiver configured by default
 
 Alertmanager ships with a `null` receiver and no `route.receiver` pointing
 anywhere real — alerts fire and are visible in Alertmanager's own UI/API,
-but nothing is notified. This is deliberate: Sun doesn't know your Slack
+but nothing is notified. This is deliberate: Sol doesn't know your Slack
 webhook, PagerDuty key, or on-call email, so it doesn't guess one.
 
 To wire up a real receiver, override `alertmanager.config` in
@@ -233,7 +233,7 @@ integration (see OBS-040's ticket non-goals).
 Add more alerting rules the same way: extend
 `local.prometheus_alerting_rules.groups[0].rules` (or add another group)
 in `platform/infra/base/main.tf`. Multi-window burn-rate alerting and
-SLO-based rules are a deliberate non-goal for this starter set — Sun has
+SLO-based rules are a deliberate non-goal for this starter set — Sol has
 no per-service SLO target concept today: revisit only if the simple
 threshold rules above prove insufficient in practice.
 
@@ -247,18 +247,18 @@ the standalone `grafana` chart's sidecar ConfigMap-loading
   across every domain at once.
 - **Service template** — one dashboard parameterized by `$domain`/`$service`
   Grafana template variables (populated live from Prometheus label values,
-  not a list Sun maintains). Selecting values re-scopes every panel,
+  not a list Sol maintains). Selecting values re-scopes every panel,
   including a Loki logs panel filtered to that domain/service.
 - **Domain overview** (OBS-036) — one dashboard parameterized by `$domain`
   only (no `$service`), showing the same request rate / 5xx rate /
   scrape-target health signals broken down per service within that domain,
   plus a Loki logs panel filtered to that domain. Fills the gap between the
   workspace-wide and single-service views for a domain-level incident.
-- **Release timeline** (OBS-038) — a Loki logs panel showing `sun deploy`'s
+- **Release timeline** (OBS-038) — a Loki logs panel showing `sol deploy`'s
   `event=deploy` log lines (OBS-037), filtered by the same `$workspace`/
   `$domain`/`$service` template variables as the other dashboards. Those
-  deploy-event lines are pushed directly by the `sun` CLI rather than
-  tailed from a pod (`cli/sun/bin/cmd_deploy_event.ml`), but carry real
+  deploy-event lines are pushed directly by the `sol` CLI rather than
+  tailed from a pod (`cli/sol/bin/cmd_deploy_event.ml`), but carry real
   Loki stream labels the same way an application pod's own logs do:
   `service` is the deployed service's real name (`Obs_eio.create`'s
   built-in stream label), and `workspace`/`domain`/`primitive`/`release`
@@ -285,7 +285,7 @@ this ticket.
 - **Not verified against a live Grafana instance.** This pass validated the
   dashboard JSON is well-formed and the Terraform/Helm wiring
   (`terraform validate`, chart values checked against `helm show values`),
-  but did not run a real `sun dev up` and confirm the panels/variables
+  but did not run a real `sol dev up` and confirm the panels/variables
   actually render and populate. Flagged explicitly — do this before trusting
   the dashboards in a real review.
 
@@ -297,17 +297,17 @@ Grafana: `helm_release.tempo` (`grafana-community/tempo`, gated by
 no local Tempo to receive spans from when there's no local Grafana to
 browse them in either) plus a Grafana datasource ConfigMap
 (`kubernetes_config_map.grafana_tempo_datasource`) loaded through the same
-sidecar convention as the others. `sun dev up` mirrors this exactly via
+sidecar convention as the others. `sol dev up` mirrors this exactly via
 direct `helm`/`kubectl` calls in `cmd_dev.ml` and
-`Sun_cli_dev_observability.ml`, so local dev and Terraform-provisioned
+`Sol_cli_dev_observability.ml`, so local dev and Terraform-provisioned
 clusters both get tracing the same way ("Dev mirrors prod exactly").
 
-**Wired for `-svc`, `-worker`, and `-fn` alike, through `Sun_obs`.**
-`obs-tempo-eio` (OBS-041) is composed in by `Sun_obs.of_env`
-(`framework/sun-obs`, CODE_LAYER-003) whenever `TEMPO_URL` — an optional
+**Wired for `-svc`, `-worker`, and `-fn` alike, through `Sol_obs`.**
+`obs-tempo-eio` (OBS-041) is composed in by `Sol_obs.of_env`
+(`framework/sol-obs`, CODE_LAYER-003) whenever `TEMPO_URL` — an optional
 environment variable following the same pattern as `LOKI_URL` — is set;
 absent means no traces, not a startup failure. Since every scaffolded
-primitive now bootstraps its `Obs_eio.t` through the same `Sun_obs.of_env`
+primitive now bootstraps its `Obs_eio.t` through the same `Sol_obs.of_env`
 call rather than composing providers by hand per template, Tempo wiring is
 no longer `-svc`-specific: `-worker` and `-fn` scaffolds pick it up
 automatically too, closing the gap `OBS-035`'s one-primitive-at-a-time
@@ -316,11 +316,11 @@ precedent had left open.
 **Two ports, two purposes.** Spans push to Tempo's OTLP/HTTP receiver on
 port 4318 (`TEMPO_URL`, what `-svc` and `examples/local-demo`'s order-svc
 push to); Grafana's Tempo datasource reads from Tempo's own query API on
-port 3200. `sun dev up` port-forwards both (`tempo` and `tempo-query`).
+port 3200. `sol dev up` port-forwards both (`tempo` and `tempo-query`).
 
 **Trace-lookup link.** The Loki datasource (both
 `kubernetes_config_map.grafana_loki_datasource` in Terraform and
-`Sun_cli_dev_observability.loki_datasource_yaml` in `sun dev up`) carries a
+`Sol_cli_dev_observability.loki_datasource_yaml` in `sol dev up`) carries a
 `derivedFields` entry matching `obs-loki-eio`'s real `trace_id=` logfmt
 output (an unquoted 32-hex-char field), so a `trace_id` in any Loki log
 line is clickable through to its Tempo waterfall. A dedicated

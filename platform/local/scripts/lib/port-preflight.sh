@@ -5,7 +5,7 @@
 # Fails loudly, naming the conflicting process, if a `kubectl port-forward`
 # is already bound to PORT. On Linux, a listener on 127.0.0.1:PORT wins over
 # one on 0.0.0.0:PORT for localhost/127.0.0.1 traffic, so a leftover
-# port-forward from `sun dev up` (which forwards these same conventional
+# port-forward from `sol dev up` (which forwards these same conventional
 # ports to the real k3d cluster) silently shadows the ensure-*.sh container
 # this script is about to start: the container starts fine, but every local
 # curl/test talks to the real cluster instead and produces confusing

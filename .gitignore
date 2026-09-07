@@ -1,5 +1,5 @@
 **/_build/
-.sun/
+.sol/
 .dogfood-bin/
 *.install
 .merlin

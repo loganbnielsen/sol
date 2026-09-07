@@ -8,7 +8,7 @@ output "kubeconfig_command" {
 }
 
 output "artifact_registry" {
-  description = "Artifact Registry URL — pass as --registry to sun deploy"
+  description = "Artifact Registry URL — pass as --registry to sol deploy"
   value       = "${var.region}-docker.pkg.dev/${var.project_id}/${var.cluster_name}"
 }
 
@@ -24,7 +24,7 @@ output "postgres_private_ip" {
 }
 
 output "postgres_url" {
-  description = "POSTGRES_URL for Sun services"
+  description = "POSTGRES_URL for Sol services"
   value       = "postgresql://postgres:${var.db_password}@${google_sql_database_instance.postgres.private_ip_address}/app"
   sensitive   = true
 }

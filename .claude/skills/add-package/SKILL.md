@@ -1,16 +1,16 @@
 ---
-description: Use when adding a new library or package to the sun monorepo. Do not create package directory structures, dune files, or design docs manually without following this skill.
+description: Use when adding a new library or package to the sol monorepo. Do not create package directory structures, dune files, or design docs manually without following this skill.
 ---
 
-# /add-package — Add a new Sun package
+# /add-package — Add a new Sol package
 
-Use this when adding a new library to the sun monorepo (e.g. `http`, `dynamo`, `lambda`).
+Use this when adding a new library to the sol monorepo (e.g. `http`, `dynamo`, `lambda`).
 
 ## Steps
 
 1. Create the directory structure:
 ```
-sun/
+sol/
   <name>/
     lib/
       <module>.ml
@@ -21,7 +21,7 @@ sun/
       dune
 ```
 
-2. Write the `dune` file (use `(wrapped false)` for consistency with the rest of sun):
+2. Write the `dune` file (use `(wrapped false)` for consistency with the rest of sol):
 ```
 (library
  (name <name>)

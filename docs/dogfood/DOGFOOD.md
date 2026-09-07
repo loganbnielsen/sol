@@ -1,13 +1,13 @@
-# Sun Dogfood Runbook
+# Sol Dogfood Runbook
 
-This runbook is for engineers validating Sun as a first-time user would: create
+This runbook is for engineers validating Sol as a first-time user would: create
 a fresh workspace, deploy it to the local substrate, hit the running service,
 and record every point of friction.
 
 The goal is not to prove that individual components work. The goal is to prove
 the product claim:
 
-> From a prepared Sun substrate, a developer can create, deploy, and reach a new
+> From a prepared Sol substrate, a developer can create, deploy, and reach a new
 > service in minutes without writing Kubernetes, Helm, Terraform, or CI glue.
 
 Run reports live in `project/dogfood/`. Each run produces one dated file there.
@@ -42,9 +42,9 @@ sudo apt-get install -y \
 ```
 
 `librdkafka-dev` and `libpq-dev` are needed at build time because the generated
-workspace links Sun framework source (including C FFI stubs) via `vendor/`.
-`libpq5` is a runtime dependency of the `sun` binary itself — install it before
-running any `sun` command, not just before `dune build`.
+workspace links Sol framework source (including C FFI stubs) via `vendor/`.
+`libpq5` is a runtime dependency of the `sol` binary itself — install it before
+running any `sol` command, not just before `dune build`.
 
 ### OCaml toolchain
 
@@ -88,23 +88,23 @@ curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=v5.6.
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | DESIRED_VERSION=v3.21.0 bash
 ```
 
-k3d v5.6.0 is pinned because `sun dev up` passes chart values tuned against
+k3d v5.6.0 is pinned because `sol dev up` passes chart values tuned against
 that version (Redpanda CPU/replica settings, node-exporter disable flag). Older
 k3d versions may reject those values or install different chart defaults.
 
 ### Required on `PATH`
 
 ```
-sun  dune  docker  kubectl  k3d  helm
+sol  dune  docker  kubectl  k3d  helm
 ```
 
-### Sun checkout
+### Sol checkout
 
-`sun new workspace` infers the Sun checkout from the binary path via
+`sol new workspace` infers the Sol checkout from the binary path via
 `/proc/self/exe`. If inference fails, set:
 
 ```bash
-export SUN_HOME=/path/to/sun/checkout
+export SOL_HOME=/path/to/sol/checkout
 ```
 
 ---
@@ -114,31 +114,31 @@ export SUN_HOME=/path/to/sun/checkout
 Build the current CLI and put it first on PATH:
 
 ```bash
-cd <your-sun-checkout>
+cd <your-sol-checkout>
 eval $(opam env)
-dune build cli/sun/bin/main.exe
-export SUN_HOME=$(pwd)
-mkdir -p "$SUN_HOME/.dogfood-bin"
-ln -sf "$SUN_HOME/_build/default/cli/sun/bin/main.exe" "$SUN_HOME/.dogfood-bin/sun"
-export PATH="$SUN_HOME/.dogfood-bin:$PATH"
+dune build cli/sol/bin/main.exe
+export SOL_HOME=$(pwd)
+mkdir -p "$SOL_HOME/.dogfood-bin"
+ln -sf "$SOL_HOME/_build/default/cli/sol/bin/main.exe" "$SOL_HOME/.dogfood-bin/sol"
+export PATH="$SOL_HOME/.dogfood-bin:$PATH"
 hash -r
-which sun   # must point at the freshly built binary
+which sol   # must point at the freshly built binary
 ```
 
-Do not dogfood an older installed `sun` from `~/.local/bin` or another checkout.
+Do not dogfood an older installed `sol` from `~/.local/bin` or another checkout.
 
 Create a fresh dogfood area:
 
 ```bash
-mkdir -p ~/sun-dogfood
-cd ~/sun-dogfood
+mkdir -p ~/sol-dogfood
+cd ~/sol-dogfood
 rm -rf <workspace-name>
 ```
 
 Generate a workspace:
 
 ```bash
-/usr/bin/time -f 'elapsed=%E' sun new workspace <workspace-name>
+/usr/bin/time -f 'elapsed=%E' sol new workspace <workspace-name>
 cd <workspace-name>
 ```
 
@@ -151,25 +151,25 @@ Verify the generated workspace builds:
 Provision or reconcile local substrate:
 
 ```bash
-/usr/bin/time -f 'elapsed=%E' sun dev up
+/usr/bin/time -f 'elapsed=%E' sol dev up
 ```
 
 Deploy services:
 
 ```bash
-/usr/bin/time -f 'elapsed=%E' sun up
+/usr/bin/time -f 'elapsed=%E' sol up
 ```
 
 Apply migrations:
 
 ```bash
-/usr/bin/time -f 'elapsed=%E' sun migrate --table <workspace-name>_migrations
+/usr/bin/time -f 'elapsed=%E' sol migrate --table <workspace-name>_migrations
 ```
 
 Check status:
 
 ```bash
-sun status
+sol status
 ```
 
 Exercise the service:
@@ -227,7 +227,7 @@ Port-forward state:
 
 ```bash
 ps -eo pid,sid,cmd | grep 'kubectl port-forward'
-cat /tmp/sun-pf-charge-svc.log 2>/dev/null || true
+cat /tmp/sol-pf-charge-svc.log 2>/dev/null || true
 ```
 
 ---
@@ -241,7 +241,7 @@ Copy this into a new file `project/dogfood/RUN_<YYYY-MM-DD>.md` for each run.
 
 Engineer:
 Machine/OS:
-Sun commit:
+Sol commit:
 
 ## Tool versions
 
@@ -256,12 +256,12 @@ OCaml:
 
 | Step | Elapsed |
 |------|---------|
-| sun new workspace | |
+| sol new workspace | |
 | dune build | |
-| sun dev up, fresh cluster | |
-| sun dev up, existing cluster | |
-| sun up | |
-| sun migrate | |
+| sol dev up, fresh cluster | |
+| sol dev up, existing cluster | |
+| sol up | |
+| sol migrate | |
 | first successful curl | |
 
 Did the flow complete without manual intervention? yes/no
@@ -293,11 +293,11 @@ _(links or IDs of any tickets created from friction/findings above)_
 
 ## Current Known Gaps
 
-- The local dogfood path uses source links into a Sun checkout under
+- The local dogfood path uses source links into a Sol checkout under
   `vendor/framework` and `vendor/integrations`. This unblocks dogfood, but it is
   not the final distribution model. The long-term answer is opam packages or an
-  explicit `sun sdk vendor` command.
-- `sun dev up` is substrate bootstrap/reconcile work. It should not be counted as
+  explicit `sol sdk vendor` command.
+- `sol dev up` is substrate bootstrap/reconcile work. It should not be counted as
   everyday deploy latency once a substrate exists.
 
 ---
@@ -309,9 +309,9 @@ and reach all of these without editing generated files:
 
 - generated workspace builds
 - local substrate is healthy
-- `sun up` deploys all generated services
-- `sun migrate` applies migrations
-- `sun status` shows ready pods and a reachable URL
+- `sol up` deploys all generated services
+- `sol migrate` applies migrations
+- `sol status` shows ready pods and a reachable URL
 - `curl /health` succeeds
 - `POST /charges` publishes a `Charged` Kafka event
 - `notify_worker` consumes the event and writes the notification row

@@ -1,4 +1,4 @@
-(** Sun retry-topics demo
+(** Sol retry-topics demo
     ─────────────────────────────────────────────────────────────────────────
     Scenario:
       5 jobs are produced.  Three are reliable (always succeed).
@@ -7,20 +7,20 @@
 
         1. Main consumer: handler returns Error _ for a flakey job.
            kafka_service intercepts it, publishes the raw bytes to
-             sun-demo-jobs-retry
+             sol-demo-jobs-retry
            with headers
-             X-Sun-Attempt:  1
-             X-Sun-Retry-At: <now + 2 s>
+             X-Sol-Attempt:  1
+             X-Sol-Retry-At: <now + 2 s>
            and commits the original offset immediately.
            The main partition keeps flowing — reliable jobs are never delayed.
 
-        2. Background retry consumer (group "sun-demo-retry-worker-sun-retry")
-           subscribes to sun-demo-jobs-retry.
+        2. Background retry consumer (group "sol-demo-retry-worker-sol-retry")
+           subscribes to sol-demo-jobs-retry.
            When the scheduled time arrives it pauses the partition, sleeps,
            resumes, then re-runs the handler.  The second attempt succeeds.
 
         3. After max_attempts total failures a message would go to
-           sun-demo-jobs-dlq.  This demo stays well within the limit.
+           sol-demo-jobs-dlq.  This demo stays well within the limit.
 
     Run:
       bash platform/local/scripts/ensure-broker.sh
@@ -32,7 +32,7 @@
 module Job = struct
   type t = { id : string; payload : string }
 
-  let topic_name = Kafka_service.topic_name_exn "sun-demo-jobs"
+  let topic_name = Kafka_service.topic_name_exn "sol-demo-jobs"
 
   let schema = {|{
     "type": "object",
@@ -96,7 +96,7 @@ let () =
   let t0            = ref (stamp ()) in
 
   Printf.printf "\n%s\n" sep;
-  Printf.printf "  Sun Retry-Topics Demo\n";
+  Printf.printf "  Sol Retry-Topics Demo\n";
   Printf.printf "  strategy: Retry_topics { max_attempts = 3 }\n";
   Printf.printf "  jobs: %d total (%d flakey, fail once then recover)\n"
     total_jobs (List.length flakey_jobs);
@@ -124,7 +124,7 @@ let () =
 
   let module W = struct
     module Message = Job
-    let group_id = "sun-demo-retry-worker"
+    let group_id = "sol-demo-retry-worker"
 
     let handle msg ~trace_ctx:_ =
       let call_n = record_call msg.Message.id in
@@ -201,7 +201,7 @@ let () =
      Printf.printf "\n%s\n" sep;
      say "all %d/%d jobs completed in %.1fs." (Atomic.get completed) total_jobs elapsed;
      Printf.printf "  reliable jobs: processed immediately on main consumer\n";
-     Printf.printf "  flakey  jobs:  acked on main, retried via sun-demo-jobs-retry\n";
+     Printf.printf "  flakey  jobs:  acked on main, retried via sol-demo-jobs-retry\n";
      Printf.printf "%s\n%!" sep);
 
   (* Give the worker a moment to flush its last log line before exit. *)

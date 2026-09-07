@@ -1,6 +1,6 @@
 # platform/infra/base — cluster-agnostic platform bootstrap
 #
-# Installs all Sun platform components onto an existing Kubernetes cluster
+# Installs all Sol platform components onto an existing Kubernetes cluster
 # using Helm. Run this once per cluster after provisioning (platform/infra/aws or
 # platform/infra/gcp). The cluster kubeconfig must be active before applying.
 #
@@ -310,7 +310,7 @@ locals {
 
   # ADR 0001 / CODE_LAYER-005: platform/components/<name>/ is now the shared
   # source of truth for Helm values that used to be independently
-  # hand-duplicated here and in cmd_dev.ml (sun dev up). "local" is the same
+  # hand-duplicated here and in cmd_dev.ml (sol dev up). "local" is the same
   # profile cmd_dev.ml uses for its k3d cluster; "durable" is the
   # self_hosted_durable, S3-backed profile. Each component's values-common
   # + values-<profile>.json are read via jsondecode(file(...)) -- per the
@@ -375,7 +375,7 @@ locals {
   loki_push_basic_auth_username = var.observability_backend == "external" ? var.external_loki_username : ""
   loki_push_basic_auth_password = var.observability_backend == "external" ? var.external_loki_password : ""
 
-  # OBS-008: promote the label taxonomy (Sun_cli_manifest_yaml's
+  # OBS-008: promote the label taxonomy (Sol_cli_manifest_yaml's
   # render_taxonomy_labels) from pod labels into Loki stream labels via
   # Alloy's discovery.relabel component -- see alloy/logs.alloy.tftpl.
   observability_taxonomy_labels = ["workspace", "domain", "service", "primitive", "release"]
@@ -435,7 +435,7 @@ resource "helm_release" "loki" {
   # storage/schema) now lives in
   # platform/components/loki/{values-common,values-local,values-durable}.json
   # (ADR 0001 / CODE_LAYER-005) -- the same "local" profile file cmd_dev.ml's
-  # `sun dev up` reads for its own Loki install, so this no longer needs a
+  # `sol dev up` reads for its own Loki install, so this no longer needs a
   # parallel, independently-maintained copy (that's the exact gap BUG-016
   # found). See that directory's files for the current values and git blame
   # on this resource for the per-value history that used to live here.
@@ -529,7 +529,7 @@ resource "helm_release" "alloy" {
 
 # Tempo -- distributed tracing (OBS-042). Wired in for -svc only today
 # (obs-tempo-eio composed into the scaffold's `-svc` backend, see
-# cli/sun/lib/sun_cli_scaffold_templates.ml); -worker/-fn are a deliberate
+# cli/sol/lib/sol_cli_scaffold_templates.ml); -worker/-fn are a deliberate
 # non-goal, matching OBS-035's own precedent of landing observability
 # primitives service-by-service. Gated the same as Loki/Grafana -- no local
 # Tempo to receive spans from when there's no local Grafana to browse them
@@ -677,14 +677,14 @@ resource "kubernetes_config_map" "grafana_tempo_datasource" {
 
 # OBS-011: the lazy version -- two dashboards total (workspace overview,
 # one $domain/$service-templated service dashboard), not one generated file
-# per domain/service. Adding a new service requires zero Sun-side dashboard
+# per domain/service. Adding a new service requires zero Sol-side dashboard
 # changes; Grafana's own template variables (populated from live Prometheus/
-# Loki label values, not a static list Sun maintains) do the scoping.
+# Loki label values, not a static list Sol maintains) do the scoping.
 # OBS-036 adds a third, $domain-only dashboard for the gap between
 # workspace-wide and single-service views: per-service breakdowns within
 # one domain, using the same live-label-driven templating.
 # OBS-038 adds a fourth: a deploy/release timeline sourced from OBS-037's
-# `event=deploy` Loki log lines (pushed by `sun deploy` itself, not tailed
+# `event=deploy` Loki log lines (pushed by `sol deploy` itself, not tailed
 # from a pod -- those lines carry real stream labels the same way
 # application pod logs do, via cmd_deploy_event.ml's own Obs_eio/Obs_loki
 # wiring, matching Alloy's taxonomy-label promotion below).
@@ -692,7 +692,7 @@ resource "kubernetes_config_map" "grafana_dashboards" {
   count = local.loki_install_local ? 1 : 0
 
   metadata {
-    name      = "sun-grafana-dashboards"
+    name      = "sol-grafana-dashboards"
     namespace = kubernetes_namespace.monitoring.metadata[0].name
     labels    = { grafana_dashboard = "1" }
   }
@@ -831,26 +831,26 @@ locals {
 #     already uses for `kube-state-metrics.enabled` below), shaped as
 #     `alertmanager` 1.10.0's own `config.route`/`config.receivers` block.
 locals {
-  # Both rules use Sun's own label taxonomy (docs/architecture/
+  # Both rules use Sol's own label taxonomy (docs/architecture/
   # observability-design.md) rather than a hardcoded domain/service, so
   # they apply workspace-wide to every deployed service by default.
   prometheus_alerting_rules = {
     groups = [
       {
-        name = "sun-starter-alerts"
+        name = "sol-starter-alerts"
         rules = [
           {
-            # sun_svc_requests_total / status_class come from sun-svc's own
-            # auto-metrics (framework/sun-svc/lib/service.ml) and carry the
+            # sol_svc_requests_total / status_class come from sol-svc's own
+            # auto-metrics (framework/sol-svc/lib/service.ml) and carry the
             # workspace/env/domain/service taxonomy labels via pod-label
-            # scraping (Sun_cli_manifest_yaml.render_taxonomy_labels) --
+            # scraping (Sol_cli_manifest_yaml.render_taxonomy_labels) --
             # same metric and label set as the "5xx error rate by service"
             # panel in dashboards/domain-overview.json.
-            alert = "SunHighErrorRate"
+            alert = "SolHighErrorRate"
             expr = join(" ", [
-              "(sum by (workspace, env, domain, service) (rate(sun_svc_requests_total{status_class=\"5xx\"}[5m]))",
+              "(sum by (workspace, env, domain, service) (rate(sol_svc_requests_total{status_class=\"5xx\"}[5m]))",
               "/",
-              "sum by (workspace, env, domain, service) (rate(sun_svc_requests_total[5m]))) > 0.05"
+              "sum by (workspace, env, domain, service) (rate(sol_svc_requests_total[5m]))) > 0.05"
             ])
             for = "5m"
             labels = {
@@ -869,15 +869,15 @@ locals {
             # anywhere in this file) and reachable via the chart's default
             # `kubernetes-service-endpoints` scrape job. This metric
             # carries kube-state-metrics' own namespace/pod/container
-            # labels, not Sun's taxonomy labels directly (those live on
-            # the monitored pod, not on kube-state-metrics' pod) -- Sun
+            # labels, not Sol's taxonomy labels directly (those live on
+            # the monitored pod, not on kube-state-metrics' pod) -- Sol
             # namespaces are named `<workspace>-<domain>` (see
-            # Sun_cli_kubernetes_name.namespace_of_parts), so the alert is
+            # Sol_cli_kubernetes_name.namespace_of_parts), so the alert is
             # still workspace/domain-identifiable via namespace/pod
             # without a hardcoded value. No `by (...)` grouping needed:
             # the source metric is already per-pod/per-container, not an
             # aggregate.
-            alert = "SunPodRestartLoop"
+            alert = "SolPodRestartLoop"
             expr  = "increase(kube_pod_container_status_restarts_total[15m]) > 3"
             for   = "5m"
             labels = {

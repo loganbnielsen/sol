@@ -1,0 +1,4 @@
+(library
+ (name sol_process)
+ (wrapped false)
+ (libraries unix))

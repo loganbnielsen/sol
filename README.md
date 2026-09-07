@@ -6,8 +6,6 @@
 
 Sol is an open-source OCaml software factory for backend systems. Write direct-style OCaml domain logic; Sol scaffolds, builds, packages, observes, and deploys it — no hand-written Dockerfiles, Kubernetes YAML, CI glue, or infrastructure wiring. Its conventions are regular enough that AI coding agents produce correct output without touching Kubernetes internals, and OCaml's type system (no null, errors as values, exhaustive pattern matching, Eio's structured concurrency) catches entire classes of bugs before they ship.
 
-> **Rebrand in progress:** this project was called Sun. The CLI binary, config files, code, GitHub repo, and release URLs below still use that name (`sun`, `sun.toml`, `SUN_HOME`, `github.com/loganbnielsen/sun`) — you'll see both names until the rest of the rename lands.
-
 ---
 
 ## What it looks like
@@ -42,15 +40,15 @@ Sol owns the server lifecycle, graceful shutdown, structured logging, metrics, t
 
 ```bash
 # Install (Linux x86_64) — replace vX.Y.Z with the latest release:
-# https://github.com/loganbnielsen/sun/releases
-curl -L https://github.com/loganbnielsen/sun/releases/latest/download/sun-vX.Y.Z-linux-x86_64.tar.gz | tar xz
-export PATH="$PWD/sun-vX.Y.Z-linux-x86_64/bin:$PATH"
+# https://github.com/loganbnielsen/sol/releases
+curl -L https://github.com/loganbnielsen/sol/releases/latest/download/sol-vX.Y.Z-linux-x86_64.tar.gz | tar xz
+export PATH="$PWD/sol-vX.Y.Z-linux-x86_64/bin:$PATH"
 
-sun dev up              # local cluster: Redpanda, PostgreSQL, Loki, Prometheus, Grafana
-sun new workspace pluto
+sol dev up              # local cluster: Redpanda, PostgreSQL, Loki, Prometheus, Grafana
+sol new workspace pluto
 cd pluto
-sun up                  # build + deploy
-sun status
+sol up                  # build + deploy
+sol status
 
 curl localhost:8080/health
 # ok
@@ -74,7 +72,7 @@ You write domain logic. Sol handles the factory work: scaffold, build, package, 
 
 ## Application model
 
-A Sol workspace organizes services by domain team, with typed events as the only contract between them. `sun new workspace` scaffolds an `-svc` and a `-worker`; `sun new fn`/`sun new worker`/`sun new svc` add more as a workspace grows:
+A Sol workspace organizes services by domain team, with typed events as the only contract between them. `sol new workspace` scaffolds an `-svc` and a `-worker`; `sol new fn`/`sol new worker`/`sol new svc` add more as a workspace grows:
 
 ```
 myapp/
@@ -95,9 +93,9 @@ See [Product Architecture](docs/architecture/PRODUCT_ARCHITECTURE.md) for the fu
 
 ## Deployment
 
-Sol targets Kubernetes. Run locally against a k3d cluster with `sun up`, or ship to your own AWS/GCP infrastructure with `sun deploy` (direct or GitOps) — the same application model compiles to Kubernetes manifests and Terraform either way. `sun cloud plan/apply` provisions the underlying cluster, registry, and database in your own cloud account; Sol never owns your infrastructure.
+Sol targets Kubernetes. Run locally against a k3d cluster with `sol up`, or ship to your own AWS/GCP infrastructure with `sol deploy` (direct or GitOps) — the same application model compiles to Kubernetes manifests and Terraform either way. `sol cloud plan/apply` provisions the underlying cluster, registry, and database in your own cloud account; Sol never owns your infrastructure.
 
-See the [Tutorial](docs/guides/TUTORIAL.md), [Factory Pipeline](docs/architecture/devops-pipeline.md), and [deployment escape hatches](docs/deployment/escape-hatches.md) (per-service `sun.toml` overrides) for details.
+See the [Tutorial](docs/guides/TUTORIAL.md), [Factory Pipeline](docs/architecture/devops-pipeline.md), and [deployment escape hatches](docs/deployment/escape-hatches.md) (per-service `sol.toml` overrides) for details.
 
 ---
 
@@ -113,8 +111,8 @@ See [ROADMAP.md](docs/planning/ROADMAP.md) for the current implementation status
 
 - [Tutorial](docs/guides/TUTORIAL.md) — full walkthrough, start to finish
 - [Product Architecture](docs/architecture/PRODUCT_ARCHITECTURE.md) — factory model, design principles, ownership lanes
-- [Factory Pipeline](docs/architecture/devops-pipeline.md) — what each `sun` command does
-- [Deployment escape hatches](docs/deployment/escape-hatches.md) — `sun.toml` reference
+- [Factory Pipeline](docs/architecture/devops-pipeline.md) — what each `sol` command does
+- [Deployment escape hatches](docs/deployment/escape-hatches.md) — `sol.toml` reference
 - [Roadmap](docs/planning/ROADMAP.md) — current status and what's next
 - [Contributor map](docs/architecture/contributing-map.md) — where to make common changes
 - Build-from-source, running tests, and the full repo layout: [`.claude/CLAUDE.md`](.claude/CLAUDE.md)

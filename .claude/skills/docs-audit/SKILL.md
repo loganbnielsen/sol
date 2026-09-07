@@ -1,5 +1,5 @@
 ---
-description: Run a documentation truth audit of Sun. Verifies README, tutorial, roadmap, generated docs, package specs, and documented CLI commands against implementation reality. Produces a dated report in project/audits/ and materialises open findings as ticket files in project/tickets/READY_FOR_ENGINEERING/.
+description: Run a documentation truth audit of Sol. Verifies README, tutorial, roadmap, generated docs, package specs, and documented CLI commands against implementation reality. Produces a dated report in project/audits/ and materialises open findings as ticket files in project/tickets/READY_FOR_ENGINEERING/.
 ---
 
 # /docs-audit — Documentation Truth Audit
@@ -31,16 +31,16 @@ Read the most recent `project/audits/*_docs_audit.md` report if one exists. Chec
 
 ### 4. Verify documented commands
 
-- Read `cli/sun/bin/main.ml` and `cli/sun/bin/cmd_*.ml`
+- Read `cli/sol/bin/main.ml` and `cli/sol/bin/cmd_*.ml`
 - Build a list of registered commands and flags
-- Compare against every documented `sun ...` command in root docs and generated README templates
+- Compare against every documented `sol ...` command in root docs and generated README templates
 - Verify documented output promises by reading implementation or running commands where practical
 
 ### 5. Verify quickstart and generated docs
 
-- Read generated README templates in `cli/sun/bin/cmd_new.ml`
+- Read generated README templates in `cli/sol/bin/cmd_new.ml`
 - Check quickstart commands, ports, health paths, curl examples, Grafana queries, and working directories
-- Confirm normal workflows use Sun commands first and do not require repo-local bash scripts
+- Confirm normal workflows use Sol commands first and do not require repo-local bash scripts
 
 ### 6. Verify package specs
 

@@ -1,0 +1,4 @@
+(library
+ (name sol_fn)
+ (wrapped false)
+ (libraries eio eio.unix obs-eio obs-prometheus-eio lambda-eio sol_env sol_obs))

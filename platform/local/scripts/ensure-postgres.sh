@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONTAINER="sun-postgres"
+CONTAINER="sol-postgres"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-dev}"
-POSTGRES_DB="${POSTGRES_DB:-sun_dev}"
+POSTGRES_DB="${POSTGRES_DB:-sol_dev}"
 PORT="${POSTGRES_PORT:-5432}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/wait-port.sh"

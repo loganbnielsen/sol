@@ -1,10 +1,10 @@
 ---
-description: Review completed worktrees and decide if they're ready to merge. Fans out one subagent per worktree, checks the diff and build against ticket intent. Subagents emit structured JSON; sundev pipeline review handles all ticket file moves.
+description: Review completed worktrees and decide if they're ready to merge. Fans out one subagent per worktree, checks the diff and build against ticket intent. Subagents emit structured JSON; soldev pipeline review handles all ticket file moves.
 ---
 
 # /review-worktree — Review worktrees for merge readiness
 
-Automated review gate. Reads tickets from `project/tickets/REVIEW/`, fans out one subagent per worktree, collects structured JSON results, and delegates all ticket state transitions to `sundev pipeline review`.
+Automated review gate. Reads tickets from `project/tickets/REVIEW/`, fans out one subagent per worktree, collects structured JSON results, and delegates all ticket state transitions to `soldev pipeline review`.
 
 ## Usage
 
@@ -68,24 +68,24 @@ Read each changed file in full. Verify:
 - New CLI commands registered in `main.ml` and listed in `bin/dune`
 - New commands follow the existing `Cmdliner` pattern (term → cmd → group)
 
-#### D. Sun conventions
+#### D. Sol conventions
 - No `wrapped true` libraries introduced
-- Generated README templates use `sun` commands only — no `dune exec` or `bash` scripts
+- Generated README templates use `sol` commands only — no `dune exec` or `bash` scripts
 - Security fields present on any new Kafka config
 
 #### E. Docs
 - If the ticket requires a doc change, verify README or TUTORIAL was updated
-- If a new `sun <command>` was added, it appears in at least one user-facing doc
+- If a new `sol <command>` was added, it appears in at least one user-facing doc
 
-### 3. Process results via sundev pipeline review
+### 3. Process results via soldev pipeline review
 
 For each subagent result, write the JSON to a temp file and call:
 
 ```bash
-sundev pipeline review <ticket-id> --result-file /tmp/<ticket-id>-result.json
+soldev pipeline review <ticket-id> --result-file /tmp/<ticket-id>-result.json
 ```
 
-`sundev pipeline review` handles all ticket file moves and appends notes. Do **not** move ticket files or append to them directly.
+`soldev pipeline review` handles all ticket file moves and appends notes. Do **not** move ticket files or append to them directly.
 
 ### 4. Summarise
 
@@ -96,5 +96,5 @@ EXP-005  → READY_TO_MERGE          build ✓  ClusterIP fix verified
 ```
 
 Human next steps:
-- `project/tickets/READY_TO_MERGE/` — run `sundev pipeline merge` to merge all branches automatically
+- `project/tickets/READY_TO_MERGE/` — run `soldev pipeline merge` to merge all branches automatically
 - `project/tickets/READY_FOR_ENGINEERING/` — pick up with `/work <ticket-id>` to resume in the existing worktree

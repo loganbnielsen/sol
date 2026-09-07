@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Sun test runner — executes all test suites, enforces per-suite timeouts,
+# Sol test runner — executes all test suites, enforces per-suite timeouts,
 # and fails on performance regressions against a committed baseline.
 #
 # Usage:
 #   ./platform/local/scripts/run_tests.sh                    # full run
 #   ./platform/local/scripts/run_tests.sh --update-baseline  # run and record timings as new baseline
 #   ./platform/local/scripts/run_tests.sh --no-infra         # skip infra setup (already running)
-#   ./platform/local/scripts/run_tests.sh --reset-infra      # recreate Sun-owned local infra first
+#   ./platform/local/scripts/run_tests.sh --reset-infra      # recreate Sol-owned local infra first
 #   ./platform/local/scripts/run_tests.sh unit kafka         # run specific suites only
 #
 # Exit codes:
@@ -121,7 +121,7 @@ report_regression() {
 run_unit() {
   info "Primitives unit tests (no infrastructure required)"
   eval $(opam env)
-  dune test --root "$REPO_ROOT" framework/ cli/sun/test/ --force 2>&1
+  dune test --root "$REPO_ROOT" framework/ cli/sol/test/ --force 2>&1
 }
 
 run_kafka() {
@@ -135,7 +135,7 @@ run_e2e() {
   eval $(opam env)
   KAFKA_BROKERS=localhost:9092 \
   LOKI_URL=http://localhost:3100 \
-  POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sun_dev \
+  POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
     dune test --root "$REPO_ROOT" examples/local-demo/test/ --force 2>&1
 }
 
@@ -157,15 +157,15 @@ ensure_infra() {
 
 reset_infra() {
   header "Reset infrastructure"
-  for container in redpanda sun-postgres loki prometheus pushgateway sun-registry; do
+  for container in redpanda sol-postgres loki prometheus pushgateway sol-registry; do
     if docker ps -a --format '{{.Names}}' | grep -q "^${container}$"; then
       info "Removing container: ${container}"
       docker rm -f "${container}" >/dev/null
     fi
   done
-  if command -v k3d >/dev/null 2>&1 && k3d cluster list 2>/dev/null | awk 'NR > 1 {print $1}' | grep -q '^sun-local$'; then
-    info "Deleting k3d cluster: sun-local"
-    k3d cluster delete sun-local >/dev/null
+  if command -v k3d >/dev/null 2>&1 && k3d cluster list 2>/dev/null | awk 'NR > 1 {print $1}' | grep -q '^sol-local$'; then
+    info "Deleting k3d cluster: sol-local"
+    k3d cluster delete sol-local >/dev/null
   fi
 }
 
@@ -174,7 +174,7 @@ declare -A RESULTS   # suite → pass|fail|timeout
 declare -A TIMINGS   # suite → elapsed seconds
 REGRESSION_FAIL=0
 
-echo -e "\n${BOLD}Sun test runner${NC}"
+echo -e "\n${BOLD}Sol test runner${NC}"
 echo "Suites: ${SUITES[*]}"
 [ $UPDATE_BASELINE -eq 1 ] && echo "Mode: --update-baseline"
 [ $HAS_JQ -eq 0 ] && echo -e "${DIM}jq not found — regression checks disabled${NC}"

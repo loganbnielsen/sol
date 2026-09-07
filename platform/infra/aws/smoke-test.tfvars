@@ -4,12 +4,12 @@
 # flat hourly charge still applies regardless of node sizing.
 #
 # Usage:
-#   sun cloud apply dev/aws/us-east-1 \
-#     --var cluster_name=sun-smoke-<you>
+#   sol cloud apply dev/aws/us-east-1 \
+#     --var cluster_name=sol-smoke-<you>
 #
 # cluster_name is deliberately not set here — pick a unique cluster_name per
-# run. When using `sun cloud plan dev/aws/us-east-1`, Sun derives
-# create_rds=false from the merged Sun config because that target omits the
+# run. When using `sol cloud plan dev/aws/us-east-1`, Sol derives
+# create_rds=false from the merged Sol config because that target omits the
 # Postgres resource.
 
 # Required by variables.tf but unused: create_route53_zone is false below, so

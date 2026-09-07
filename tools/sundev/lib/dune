@@ -1,5 +1,0 @@
-(library
- (name sundev_lib)
- (wrapped false)
- (libraries sun_process yojson)
- (modules Sundev_shell Sundev_ticket Sundev_merge))

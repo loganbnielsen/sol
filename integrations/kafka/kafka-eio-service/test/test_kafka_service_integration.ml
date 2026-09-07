@@ -24,7 +24,7 @@ module PaymentEvent = struct
   type t = { payment_id : string; amount_cents : int }
 
   let topic_name =
-    Kafka_service.topic_name_exn (Printf.sprintf "sun-svc-payment-%05d" run_id)
+    Kafka_service.topic_name_exn (Printf.sprintf "sol-svc-payment-%05d" run_id)
 
   let schema = {|{
     "type": "object",
@@ -86,7 +86,7 @@ module RawTestEvent = struct
   type t = { id : string }
 
   let topic_name =
-    Kafka_service.topic_name_exn (Printf.sprintf "sun-svc-raw-%05d" run_id)
+    Kafka_service.topic_name_exn (Printf.sprintf "sol-svc-raw-%05d" run_id)
 
   let schema = {|{
     "type": "object",
@@ -128,7 +128,7 @@ let test_schema_check_new_topic () =
     let module Fresh = struct
       type t = unit
       let topic_name =
-        Kafka_service.topic_name_exn (Printf.sprintf "sun-svc-fresh-%05d" fresh_id)
+        Kafka_service.topic_name_exn (Printf.sprintf "sol-svc-fresh-%05d" fresh_id)
       let schema = {|{"type":"object","properties":{"x":{"type":"string"}}}|}
       let encode () = `Assoc []
       let decode _ = Ok ()
@@ -199,7 +199,7 @@ let test_publish_consume_roundtrip () =
         match Kafka_service.register svc ~net:env#net ~clock:env#clock (module PaymentEvent) with
         | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
         | Ok topic ->
-          let group_id = Printf.sprintf "sun-test-roundtrip-%d-%d"
+          let group_id = Printf.sprintf "sol-test-roundtrip-%d-%d"
             (Unix.getpid ()) (Random.int 9999) in
           let (received_p, received_r) = Eio.Promise.create () in
           let (consumer_ready_p, consumer_ready_r) = Eio.Promise.create () in
@@ -244,7 +244,7 @@ module PartitionFailEvent = struct
   type t = { n : int }
 
   let topic_name =
-    Kafka_service.topic_name_exn (Printf.sprintf "sun-svc-partfail-%05d" run_id)
+    Kafka_service.topic_name_exn (Printf.sprintf "sol-svc-partfail-%05d" run_id)
 
   let schema = {|{
     "type": "object",
@@ -281,7 +281,7 @@ let test_consume_partitioned_reports_partition_error () =
                    (Kafka_service.publish svc topic PartitionFailEvent.{ n = 1 }) with
            | Error e -> Alcotest.failf "publish failed: %s" (Kafka.Error.to_string e)
            | Ok () -> ());
-          let group_id = Printf.sprintf "sun-test-partfail-%d-%d"
+          let group_id = Printf.sprintf "sol-test-partfail-%d-%d"
             (Unix.getpid ()) (Random.int 9999) in
           let retry_strategy =
             Kafka_service.In_memory { base_delay_s = 0.0; max_delay_s = 0.0; max_attempts = 1 }
@@ -320,7 +320,7 @@ let test_decode_error_callback () =
         match Kafka_service.register svc ~net:env#net ~clock:env#clock (module RawTestEvent) with
         | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
         | Ok topic ->
-          let group_id = Printf.sprintf "sun-test-decode-err-%d-%d"
+          let group_id = Printf.sprintf "sol-test-decode-err-%d-%d"
             (Unix.getpid ()) (Random.int 9999) in
           let error_stream = Eio.Stream.create 1 in
           let (consumer_ready_p, consumer_ready_r) = Eio.Promise.create () in

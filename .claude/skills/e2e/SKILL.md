@@ -37,7 +37,7 @@ bash platform/local/scripts/perf.sh clear [suite|all]   # wipe history for a sui
 
 ```bash
 bash platform/local/scripts/install-hooks.sh   # one-time setup
-# Skip once: SUN_SKIP_PERF_HOOK=1 git commit ...
+# Skip once: SOL_SKIP_PERF_HOOK=1 git commit ...
 ```
 
 If netcat checks fail: `sudo apt-get install -y netcat-openbsd`
@@ -61,21 +61,21 @@ eval $(opam env) && KAFKA_BROKERS=localhost:9092 dune test integrations/kafka/ -
 they moved to standalone packages (`~/Code/obs-eio`, `~/Code/obs-loki-eio`,
 `~/Code/obs-prometheus-eio`); run their tests there.
 
-`pg-eio` (formerly `sun-storage`) likewise no longer has a test suite in this repo —
+`pg-eio` (formerly `sol-storage`) likewise no longer has a test suite in this repo —
 it moved to `~/Code/pg-eio`; run its tests there. Storage-touching code that stays in
-Sun (the example apps) is covered by the e2e suite below instead.
+Sol (the example apps) is covered by the e2e suite below instead.
 
 ### Venus reference workspace (primary demo)
 Two-team showcase: payments/charge-svc → Kafka → comms/notify-worker → PostgreSQL, with Loki + Prometheus:
 ```bash
 bash platform/local/scripts/ensure-broker.sh && bash platform/local/scripts/ensure-postgres.sh && bash platform/local/scripts/ensure-loki.sh && bash platform/local/scripts/ensure-grafana.sh
-eval $(opam env) && KAFKA_BROKERS=localhost:9092 POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sun_dev LOKI_URL=http://localhost:3100 dune exec examples/venus/bin/run.exe 2>&1
+eval $(opam env) && KAFKA_BROKERS=localhost:9092 POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev LOKI_URL=http://localhost:3100 dune exec examples/venus/bin/run.exe 2>&1
 ```
 
 ### Demo sandbox (legacy single-team demo)
 ```bash
 bash platform/local/scripts/ensure-broker.sh && bash platform/local/scripts/ensure-postgres.sh
-eval $(opam env) && KAFKA_BROKERS=localhost:9092 POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sun_dev dune exec examples/local-demo/bin/demo.exe 2>&1
+eval $(opam env) && KAFKA_BROKERS=localhost:9092 POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev dune exec examples/local-demo/bin/demo.exe 2>&1
 ```
 
 All backend env vars (`POSTGRES_URL`, `LOKI_URL`) are optional — both demo binaries degrade gracefully to stdout logs and skip DB if not set. Kafka is required.
@@ -94,10 +94,10 @@ After `ensure-grafana.sh` runs, logs are browsable at:
 | Redpanda   | `platform/local/scripts/ensure-broker.sh`      | localhost:9092 (Kafka)                                   |
 | Loki       | `platform/local/scripts/ensure-loki.sh`        | localhost:3100 (API)                                     |
 | Grafana    | `platform/local/scripts/ensure-grafana.sh`     | localhost:3000 (UI)                                      |
-| PostgreSQL | `platform/local/scripts/ensure-postgres.sh`    | `postgresql://postgres:dev@localhost:5432/sun_dev`       |
+| PostgreSQL | `platform/local/scripts/ensure-postgres.sh`    | `postgresql://postgres:dev@localhost:5432/sol_dev`       |
 
 Redpanda, Loki, Grafana, and PostgreSQL all run as named Docker containers. Loki and Grafana share
-the `sun-obs` Docker network so Grafana can reach Loki at `http://loki:3100`.
+the `sol-obs` Docker network so Grafana can reach Loki at `http://loki:3100`.
 
 Storage integration tests require `POSTGRES_URL` to be set; without it they print `[skip]` and pass.
 
@@ -106,8 +106,8 @@ Storage integration tests require `POSTGRES_URL` to be set; without it they prin
 - **Unbound Eio modules** — Eio 1.3 requires `Eio_unix.Stdenv.base`; capture clocks via `env#clock : _ Eio.Time.clock`.
 - **Consumer hang** — if offsets are at `Latest` and the consumer is stuck, reset with:
   ```bash
-  docker exec redpanda rpk topic delete sun-demo && bash platform/local/scripts/ensure-broker.sh
+  docker exec redpanda rpk topic delete sol-demo && bash platform/local/scripts/ensure-broker.sh
   ```
 - **Loki live tests skipped** — they require `LOKI_URL` to be set; run via the full matrix command above.
-- **Grafana can't reach Loki** — verify both containers are on `sun-obs`: `docker network inspect sun-obs`
+- **Grafana can't reach Loki** — verify both containers are on `sol-obs`: `docker network inspect sol-obs`
 - **Verification targets** — `ffi_smoke` must print `"OK: all stubs passed"`; integration tests must log pass/fail counts.

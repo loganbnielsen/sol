@@ -1,6 +1,6 @@
 # Hosted Release Inspection and Diagnostics
 
-Sun-hosted release inspection is a Sun-native view over a hosted release. It
+Sol-hosted release inspection is a Sol-native view over a hosted release. It
 shows application-level facts first and keeps infrastructure details behind a
 read-only diagnostics surface.
 
@@ -10,7 +10,7 @@ without operating the hosted control plane.
 
 ## Default Release View
 
-The default view is `Sun_cli_release_inspection.release_summary`. It contains:
+The default view is `Sol_cli_release_inspection.release_summary`. It contains:
 
 - release id
 - environment id and name
@@ -32,7 +32,7 @@ carry secret keys and references only.
 ## Advanced Diagnostics
 
 The advanced diagnostics view is
-`Sun_cli_release_inspection.diagnostics`. It can include:
+`Sol_cli_release_inspection.diagnostics`. It can include:
 
 - rendered manifests
 - reconciliation events
@@ -46,7 +46,7 @@ operations.
 
 ## Hosted Executor Integration
 
-`Sun_cli_hosted_executor.submit_mock` now returns a release with an embedded
+`Sol_cli_hosted_executor.submit_mock` now returns a release with an embedded
 inspection summary. The mock still performs no network I/O and does not deploy
 anything. It validates the hosted request, confirms image refs for every
 service, and returns release-shaped data that can be inspected by a future
@@ -55,9 +55,9 @@ hosted API.
 ## Customer-Cloud Path
 
 Customer-cloud users can still inspect generated manifests through GitOps emit
-paths. `Sun_cli_release_inspection.rendered_manifests_of_plan` provides the same
+paths. `Sol_cli_release_inspection.rendered_manifests_of_plan` provides the same
 read-only manifest facts from a deployment plan, so customer-cloud tooling can
-show what Sun emitted without requiring hosted control-plane concepts.
+show what Sol emitted without requiring hosted control-plane concepts.
 
 ## Non-Goals
 

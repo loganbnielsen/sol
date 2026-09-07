@@ -22,14 +22,14 @@ let () =
   let kafka_config = Kafka_service.config_of_env () |> require_kafka "kafka config" in
   Eio_main.run @@ fun env ->
   let obs =
-    Sun_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+    Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
       ~service:"pluto-notify-worker" ~context:[("team", "comms")] ()
   in
   Eio.Switch.run @@ fun sw ->
   let pool = require_db_pool ~sw ~stdenv:(env :> Caqti_eio.stdenv) postgres_url in
   let module W = Notify_worker.Make(struct
     let pool = pool
-    let ot   = Sun_obs.obs_eio obs
+    let ot   = Sol_obs.obs_eio obs
   end) in
   let module WR = Worker.Make(W) in
   WR.run ~env ~config:kafka_config ~ot:obs ()

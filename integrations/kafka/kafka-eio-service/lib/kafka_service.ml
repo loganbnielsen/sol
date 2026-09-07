@@ -194,7 +194,7 @@ type retry_strategy =
 let default_retry_strategy = In_memory Kafka.Consumer.default_retry
 
 let default_on_decode_error e ~raw_bytes:_ ~ack =
-  Printf.eprintf "sun-worker: DECODE_ERROR skip=true error=%S\n%!" e;
+  Printf.eprintf "sol-worker: DECODE_ERROR skip=true error=%S\n%!" e;
   ignore (ack ());
   Kafka.Consumer.Continue
 

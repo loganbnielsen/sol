@@ -1,22 +1,22 @@
-(** Sun end-to-end demo
+(** Sol end-to-end demo
     ─────────────────────────────────────────────────────────────────────────
     Full stack in one binary. Both services get logs/metrics/traces through
-    the same `Sun_obs.t` facade (framework/sun-obs, CODE_LAYER-003) — the
+    the same `Sol_obs.t` facade (framework/sol-obs, CODE_LAYER-003) — the
     app-facing observability object generated scaffolds use, not raw
     Obs_eio/Obs_loki/Obs_prometheus/Obs_tempo composition:
 
       HTTP client
           │  POST /orders  {order_id, item, quantity}  +  X-Correlation-Id
           ▼
-      order-svc  (sun-svc, Sun_obs)
+      order-svc  (sol-svc, Sol_obs)
           │  Loki span: "receive_order"  ·  Prometheus: svc request metrics
           │  Tempo trace: "receive_order"
           │  publishes OrderPlaced event with W3C traceparent header
           ▼
-      Kafka  sun-demo-orders-<run-id>
+      Kafka  sol-demo-orders-<run-id>
           │
           ▼
-      fulfillment-worker  (sun-worker, Sun_obs)
+      fulfillment-worker  (sol-worker, Sol_obs)
           │  Loki span: "fulfill_order"  ·  Prometheus: worker message metrics
           │  Tempo trace: "fulfill_order", child of "receive_order"
           │  records fulfilled order in PostgreSQL  (pg-eio)
@@ -31,19 +31,19 @@
       bash platform/local/scripts/ensure-tempo.sh          # optional — traces skipped if absent
       bash platform/local/scripts/ensure-pushgateway.sh    # optional — metrics only printed if absent
       bash platform/local/scripts/ensure-prometheus.sh     # optional — needs Pushgateway to see metrics
-      bash platform/local/scripts/ensure-grafana.sh        # optional — provisions the "Sun Demo Overview"
+      bash platform/local/scripts/ensure-grafana.sh        # optional — provisions the "Sol Demo Overview"
                                                             # dashboard (logs, metrics, and a Tempo pointer)
                                                             # once the above are up
 
       KAFKA_BROKERS=localhost:9092 \
-      POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sun_dev \
+      POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
       LOKI_URL=http://localhost:3100 \
       TEMPO_URL=http://localhost:4318 \
       PUSHGATEWAY_URL=http://localhost:9091 \
         dune exec examples/local-demo/bin/demo.exe
 
       Then open http://localhost:3000 (no login — anonymous admin) and
-      look for the "Sun Demo Overview" dashboard.
+      look for the "Sol Demo Overview" dashboard.
 *)
 
 (* ── Config from environment ────────────────────────────────────────────── *)
@@ -173,7 +173,7 @@ module FulfilledOrders = Pg_table.Make(FulfilledOrderSchema)
 let () =
   Random.self_init ();
   Printf.printf "\n%s\n" sep;
-  Printf.printf "  Sun End-to-End Demo\n";
+  Printf.printf "  Sol End-to-End Demo\n";
   Printf.printf "%s\n" sep;
   Printf.printf "  Kafka brokers:   %s\n" (String.concat "," kafka_config.brokers);
   Printf.printf "  Schema registry: %s\n" kafka_config.schema_registry_url;
@@ -186,7 +186,7 @@ let () =
   Eio_main.run @@ fun env ->
 
   (* ── Observability ─────────────────────────────────────────────────────── *)
-  (* Sun_obs.of_env reads LOKI_URL/TEMPO_URL itself and composes whichever
+  (* Sol_obs.of_env reads LOKI_URL/TEMPO_URL itself and composes whichever
      backends are configured (Prometheus always on) — both services get the
      same logs/metrics/traces wiring generated scaffolds get, for free. *)
   (match loki_url with
@@ -196,24 +196,24 @@ let () =
    | None -> Printf.printf "\n  Note: TEMPO_URL not set — traces disabled.\n%!"
    | Some url -> Printf.printf "\n  Traces -> Tempo at %s\n%!" url);
   let svc_obs =
-    Sun_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+    Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
       ~service:"order-svc" ()
   in
   let worker_obs =
-    Sun_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+    Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
       ~service:"fulfillment-worker" ()
   in
   (* order-svc and fulfillment-worker each carry their own Prometheus
      registry (like two real, separately-scraped services) — the demo's
      own snapshot/assertions render both and stitch them together. *)
-  let render () = Sun_obs.metrics_renderer svc_obs () ^ Sun_obs.metrics_renderer worker_obs () in
+  let render () = Sol_obs.metrics_renderer svc_obs () ^ Sol_obs.metrics_renderer worker_obs () in
 
   Eio.Switch.run @@ fun sw ->
 
   let run_id = Printf.sprintf "%06x" (Random.int 0xFFFFFF) in
   let module Demo_order = struct
     include Events.OrderPlaced
-    let topic_name = Kafka_service.topic_name_exn ("sun-demo-orders-" ^ run_id)
+    let topic_name = Kafka_service.topic_name_exn ("sol-demo-orders-" ^ run_id)
   end in
   let orders = [
     ("order-" ^ run_id ^ "-001", "Mechanical Keyboard",  1);
@@ -262,11 +262,11 @@ let () =
 
   let module W = struct
     module Message = Demo_order
-    let group_id = "sun-demo-fulfillment-worker"
+    let group_id = "sol-demo-fulfillment-worker"
 
     let handle msg ~trace_ctx =
-      Sun_obs.with_span worker_obs ?parent:trace_ctx "fulfill_order" (fun span ->
-        Sun_obs.log span Sun_obs.Info
+      Sol_obs.with_span worker_obs ?parent:trace_ctx "fulfill_order" (fun span ->
+        Sol_obs.log span Sol_obs.Info
           ~fields:[("order_id", msg.Message.order_id);
                    ("item",     msg.Message.item);
                    ("quantity", string_of_int msg.Message.quantity)]
@@ -327,14 +327,14 @@ let () =
       order_id = s "order_id"; item = s "item"; quantity = i "quantity";
       correlation_id = corr_id;
     } in
-    let span_obs = Sun_obs.with_context svc_obs [("correlation_id", corr_id)] in
-    let trace_ctx = Sun_obs.with_span span_obs "receive_order" (fun span ->
-      Sun_obs.log span Sun_obs.Info
+    let span_obs = Sol_obs.with_context svc_obs [("correlation_id", corr_id)] in
+    let trace_ctx = Sol_obs.with_span span_obs "receive_order" (fun span ->
+      Sol_obs.log span Sol_obs.Info
         ~fields:[("order_id", msg.order_id); ("item", msg.item)]
         "order received";
-      Sun_obs.current_trace_context span
+      Sol_obs.current_trace_context span
     ) in
-    trace_ids := Sun_obs.trace_id_string trace_ctx :: !trace_ids;
+    trace_ids := Sol_obs.trace_id_string trace_ctx :: !trace_ids;
     Printf.printf "[svc]    received    order=%-12s item=%-22s corr=%s\n%!"
       msg.order_id msg.item corr_id;
     (match Eio.Promise.await (Kafka_service.publish svc topic msg ~trace_ctx) with
@@ -418,7 +418,7 @@ let () =
    | None -> ()
    | Some url ->
      (match Obs_prometheus.push ~net:env#net ~clock:env#clock
-              ~url ~job:"sun-demo" render with
+              ~url ~job:"sol-demo" render with
       | Ok ()   -> say "metrics pushed to %s" url
       | Error e -> Printf.eprintf "[demo] push failed: %s\n%!" (Obs_prometheus.push_error_to_string e)));
 
@@ -441,10 +441,10 @@ let () =
     ("got [" ^ String.concat "; " (List.map string_of_int http_statuses) ^ "]");
 
   let metrics_text = render () in
-  check "Prometheus: sun_svc_requests_total > 0"
-    (metric_nonzero metrics_text "sun_svc_requests_total") "metric absent or zero";
-  check "Prometheus: sun_worker_messages_total > 0"
-    (metric_nonzero metrics_text "sun_worker_messages_total") "metric absent or zero";
+  check "Prometheus: sol_svc_requests_total > 0"
+    (metric_nonzero metrics_text "sol_svc_requests_total") "metric absent or zero";
+  check "Prometheus: sol_worker_messages_total > 0"
+    (metric_nonzero metrics_text "sol_worker_messages_total") "metric absent or zero";
 
   (match loki_url with
    | None -> ()
@@ -502,7 +502,7 @@ let () =
   Printf.printf "  Done.\n";
   Printf.printf "  Grafana:  http://localhost:3000\n";
   Printf.printf "    Logs:    Explore > Loki > {service=~\".*\"}\n";
-  Printf.printf "    Metrics: Explore > Prometheus > sun_svc_requests_total\n";
+  Printf.printf "    Metrics: Explore > Prometheus > sol_svc_requests_total\n";
   (match !trace_ids with
    | trace_id :: _ ->
      Printf.printf "    Trace:   Explore > Tempo > %s\n" trace_id;

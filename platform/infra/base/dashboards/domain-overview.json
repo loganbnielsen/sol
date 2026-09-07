@@ -1,11 +1,11 @@
 {
-  "title": "Sun Domain Overview",
-  "uid": "sun-domain-overview",
+  "title": "Sol Domain Overview",
+  "uid": "sol-domain-overview",
   "schemaVersion": 39,
   "version": 1,
   "editable": true,
   "time": { "from": "now-6h", "to": "now" },
-  "tags": ["sun"],
+  "tags": ["sol"],
   "templating": {
     "list": [
       {
@@ -35,7 +35,7 @@
       "datasource": "Prometheus",
       "targets": [
         {
-          "expr": "sum(rate(sun_svc_requests_total{workspace=\"$workspace\", domain=\"$domain\"}[5m])) by (service)",
+          "expr": "sum(rate(sol_svc_requests_total{workspace=\"$workspace\", domain=\"$domain\"}[5m])) by (service)",
           "legendFormat": "{{service}}"
         }
       ]
@@ -48,7 +48,7 @@
       "datasource": "Prometheus",
       "targets": [
         {
-          "expr": "sum(rate(sun_svc_requests_total{workspace=\"$workspace\", domain=\"$domain\", status_class=\"5xx\"}[5m])) by (service)",
+          "expr": "sum(rate(sol_svc_requests_total{workspace=\"$workspace\", domain=\"$domain\", status_class=\"5xx\"}[5m])) by (service)",
           "legendFormat": "{{service}}"
         }
       ]

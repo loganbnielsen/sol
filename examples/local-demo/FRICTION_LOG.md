@@ -1,4 +1,4 @@
-# Sun Demo — Friction Log
+# Sol Demo — Friction Log
 
 Observations from writing the e2e demo. Each item is a real moment where the
 framework slowed us down or required a workaround. These are the next highest-ROI
@@ -40,11 +40,11 @@ runs briefly beyond the "done" point and requires understanding Eio switch cance
 
 ---
 
-## 3. `sun_svc` is `(wrapped true)`, `sun_worker`/`sun_fn` are `(wrapped false)`  ★ low priority
+## 3. `sol_svc` is `(wrapped true)`, `sol_worker`/`sol_fn` are `(wrapped false)`  ★ low priority
 
-**What happened:** Demo file needed `open Sun_svc` to access `Route`, `Request`,
+**What happened:** Demo file needed `open Sol_svc` to access `Route`, `Request`,
 `Response`, `Service`. But `Worker.Make` is accessed directly (no namespace).
-Inconsistency creates confusion: is the pattern `Sun_svc.Route.get` or `Route.get`?
+Inconsistency creates confusion: is the pattern `Sol_svc.Route.get` or `Route.get`?
 
 **Fix:** Standardise all three primitives to `(wrapped false)`. The modules become
 `Route`, `Request`, `Response`, `Service`, `Worker`, `Fn` — globally accessible like

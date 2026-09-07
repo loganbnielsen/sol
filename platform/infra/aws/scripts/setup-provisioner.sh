@@ -18,8 +18,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PROFILE="${PROFILE:?Set PROFILE to an AWS CLI profile with IAM admin rights}"
-USER_NAME="${USER_NAME:-sun-smoke-test-infra-provisioner}"
-POLICY_NAME="${POLICY_NAME:-sun-smoke-test-infra}"
+USER_NAME="${USER_NAME:-sol-smoke-test-infra-provisioner}"
+POLICY_NAME="${POLICY_NAME:-sol-smoke-test-infra}"
 
 echo "==> Creating IAM policy ${POLICY_NAME}..."
 POLICY_ARN="$(aws iam create-policy \

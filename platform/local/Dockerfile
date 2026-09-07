@@ -1,4 +1,4 @@
-# Multi-stage build for sun-demo.
+# Multi-stage build for sol-demo.
 # Stage 1: build the OCaml binary
 FROM ocaml/opam:ubuntu-24.04-ocaml-5.2 AS builder
 
@@ -19,6 +19,6 @@ FROM ubuntu:24.04 AS runtime
 
 RUN apt-get update && apt-get install -y librdkafka1 && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/_build/default/examples/demo/bin/demo.exe /usr/local/bin/sun-demo
+COPY --from=builder /app/_build/default/examples/demo/bin/demo.exe /usr/local/bin/sol-demo
 
-ENTRYPOINT ["/usr/local/bin/sun-demo"]
+ENTRYPOINT ["/usr/local/bin/sol-demo"]

@@ -1,4 +1,0 @@
-(library
- (name sun_obs)
- (wrapped false)
- (libraries eio obs-eio obs-loki-eio obs-prometheus-eio obs-tempo-eio))

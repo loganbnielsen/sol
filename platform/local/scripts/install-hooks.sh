@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs Sun git hooks into .git/hooks/ as symlinks.
+# Installs Sol git hooks into .git/hooks/ as symlinks.
 # Re-running is safe — existing symlinks are updated, existing non-symlink hooks
 # are backed up first.
 #
@@ -31,7 +31,7 @@ install_hook() {
 }
 
 echo ""
-echo "Installing Sun git hooks..."
+echo "Installing Sol git hooks..."
 echo ""
 
 for hook in "$HOOKS_SRC"/*; do
@@ -45,5 +45,5 @@ git -C "$REPO_ROOT" config merge.ours.driver true
 echo -e "${GREEN}✓${NC} merge.ours (perf_baseline.json always keeps main's version)"
 
 echo ""
-echo "Done. To skip all Sun hooks once: SUN_SKIP_HOOKS=1 git commit ..."
+echo "Done. To skip all Sol hooks once: SOL_SKIP_HOOKS=1 git commit ..."
 echo ""

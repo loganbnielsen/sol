@@ -36,7 +36,7 @@ let () =
   Eio_main.run @@ fun env ->
 
   let obs =
-    Sun_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+    Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
       ~service:"notify-worker" ~context:[("team", "comms")] ()
   in
 
@@ -49,7 +49,7 @@ let () =
 
   let module W = Notify_worker.Make(struct
     let pool = db_pool
-    let ot   = Sun_obs.obs_eio obs
+    let ot   = Sol_obs.obs_eio obs
   end) in
   let module WR = Worker.Make(W) in
   WR.run ~env ~config:kafka_config ~ot:obs ()

@@ -1,11 +1,11 @@
 {
-  "title": "Sun Release Timeline",
-  "uid": "sun-release-timeline",
+  "title": "Sol Release Timeline",
+  "uid": "sol-release-timeline",
   "schemaVersion": 39,
   "version": 1,
   "editable": true,
   "time": { "from": "now-24h", "to": "now" },
-  "tags": ["sun"],
+  "tags": ["sol"],
   "templating": {
     "list": [
       {

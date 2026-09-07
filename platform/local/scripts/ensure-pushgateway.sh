@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-NETWORK=sun-obs
+NETWORK=sol-obs
 PUSHGATEWAY_PORT=9091
 
 if ! docker network inspect "$NETWORK" > /dev/null 2>&1; then

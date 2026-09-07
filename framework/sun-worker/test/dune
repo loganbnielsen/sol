@@ -1,4 +1,0 @@
-(tests
- (names test_worker)
- (libraries sun_worker eio eio_main alcotest sun_obs
-            kafka_eio_service kafka-eio cohttp-eio http uri))
