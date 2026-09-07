@@ -22,10 +22,25 @@ let registry_port = 5000
 
 (* ── Helm helpers ────────────────────────────────────────────────────────── *)
 
-let helm_install release chart ~namespace ?version ?(values = []) ?values_yaml () =
+(* FRIC-006: same discard-on-failure bug as the cluster-creation/docker/
+   rollout sites this ticket already fixed -- upgrade_install's captured
+   result/error was being collapsed to a bare exit code at all 7 call
+   sites below, each printing only a generic "X install failed" with no
+   indication of why (bad values, chart not found, timeout, etc). Centralized
+   here instead of fixed at each site: every helm_install caller gets the
+   real diagnostic for free. *)
+let helm_install ~label release chart ~namespace ?version ?(values = []) ?values_yaml () =
   match upgrade_install ~release ~chart ~namespace ?version ~values ?values_yaml () with
-  | Ok r -> r.Sol_cli_process.exit_code
-  | Error _ -> 1
+  | Ok r when r.Sol_cli_process.exit_code = 0 -> ()
+  | Ok r ->
+    Printf.eprintf "error: %s install failed\n" label;
+    if r.Sol_cli_process.stderr <> "" then Printf.eprintf "%s\n" r.Sol_cli_process.stderr
+    else if r.Sol_cli_process.stdout <> "" then Printf.eprintf "%s\n" r.Sol_cli_process.stdout;
+    exit 1
+  | Error e ->
+    Printf.eprintf "error: %s install failed\n" label;
+    Printf.eprintf "%s\n" (Sol_cli_process.error_to_string e);
+    exit 1
 
 let apply_yaml yaml =
   let tmp = Sol_cli_manifest.write_tmp yaml in
@@ -107,15 +122,31 @@ let dev_up () =
       Printf.eprintf "  (rename or keep it yourself first if you still need it for something else)\n";
       exit 1
     end;
+    let create_result =
+      Sol_cli_process.run ~echo:true
+        (Sol_cli_process.cmd
+           ["k3d"; "cluster"; "create"; cluster_name;
+            "--registry-create"; Printf.sprintf "sol-registry:%d" registry_port])
+    in
     let rc =
-      match Sol_cli_process.run ~echo:true
-          (Sol_cli_process.cmd
-             ["k3d"; "cluster"; "create"; cluster_name;
-              "--registry-create"; Printf.sprintf "sol-registry:%d" registry_port]) with
+      match create_result with
       | Ok r -> r.Sol_cli_process.exit_code
       | Error _ -> 1
     in
-    if rc <> 0 then (Printf.eprintf "error: cluster creation failed\n"; exit 1)
+    if rc <> 0 then begin
+      Printf.eprintf "error: cluster creation failed\n";
+      (* FRIC-006: k3d's own stderr is the actual diagnosis (e.g. "port is
+         already allocated") -- surface it instead of leaving the user to
+         re-run k3d by hand to find out why. *)
+      (match create_result with
+       | Ok r when r.Sol_cli_process.stderr <> "" ->
+         Printf.eprintf "%s\n" r.Sol_cli_process.stderr
+       | Ok r when r.Sol_cli_process.stdout <> "" ->
+         Printf.eprintf "%s\n" r.Sol_cli_process.stdout
+       | Ok _ -> ()
+       | Error e -> Printf.eprintf "%s\n" (Sol_cli_process.error_to_string e));
+      exit 1
+    end
   end;
 
   (* 2. Scan *)
@@ -164,7 +195,7 @@ let dev_up () =
        all), matching Grafana's adminPassword/Prometheus's
        node-exporter.enabled precedent for content that stays local-only
        precisely because nothing shields it on the Terraform side. *)
-    let rc = helm_install "redpanda" "redpanda/redpanda" ~namespace:"redpanda"
+    helm_install ~label:"Redpanda" "redpanda" "redpanda/redpanda" ~namespace:"redpanda"
       ~version:"5.8.12"  (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin *)
       ~values:[
         ("storage.persistentVolume.size", Str "1Gi");
@@ -177,13 +208,11 @@ let dev_up () =
       ]
       ~values_yaml:(Sol_cli_platform_component.merged_values_yaml
                       ~component:"redpanda" ~profile:"local") ()
-    in
-    if rc <> 0 then (Printf.eprintf "error: Redpanda install failed\n"; exit 1)
   end;
 
   if req.postgres then begin
     Printf.printf "\n  Installing PostgreSQL...\n%!";
-    let rc = helm_install "postgresql" "bitnami/postgresql" ~namespace:"postgresql"
+    helm_install ~label:"PostgreSQL" "postgresql" "bitnami/postgresql" ~namespace:"postgresql"
       (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin. Not
          15.5.1 -- confirmed live that version's default image tag
          (bitnami/postgresql:16.3.0-debian-12-r12) no longer exists on
@@ -204,8 +233,6 @@ let dev_up () =
          local profile, neither with a value cmd_dev.ml should share). *)
       ~values_yaml:(Sol_cli_platform_component.merged_values_yaml
                       ~component:"postgresql" ~profile:"local") ()
-    in
-    if rc <> 0 then (Printf.eprintf "error: PostgreSQL install failed\n"; exit 1)
   end;
 
   let need_grafana = req.loki || req.prometheus || req.tempo in
@@ -223,12 +250,10 @@ let dev_up () =
        observability_backend branch, so a fix like BUG-013's
        replication_factor lands here automatically instead of requiring a
        second, independently-maintained edit (BUG-016). *)
-    let rc = helm_install "loki" "grafana-community/loki" ~namespace:"monitoring"
+    helm_install ~label:"Loki" "loki" "grafana-community/loki" ~namespace:"monitoring"
       ~version:"18.12.1"  (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin *)
       ~values_yaml:(Sol_cli_platform_component.merged_values_yaml
-                      ~component:"loki" ~profile:"local") ()
-    in
-    if rc <> 0 then (Printf.eprintf "error: Loki install failed\n"; exit 1);
+                      ~component:"loki" ~profile:"local") ();
 
     Printf.printf "\n  Installing Grafana...\n%!";
     (* Values come from platform/components/grafana/{values-common,values-local}.json
@@ -237,7 +262,7 @@ let dev_up () =
        standalone chart's own top-level sidecar.* -- both now need an
        explicit value since this chart (unlike loki-stack) defaults
        sidecar.datasources.enabled to false. *)
-    let rc = helm_install "grafana" "grafana-community/grafana" ~namespace:"monitoring"
+    helm_install ~label:"Grafana" "grafana" "grafana-community/grafana" ~namespace:"monitoring"
       ~version:"13.2.1"  (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin *)
       (* CODE_LAYER-008: base/main.tf sets adminPassword explicitly
          (var.grafana_admin_password); left at the chart's own default here
@@ -246,9 +271,7 @@ let dev_up () =
          PostgreSQL's hardcoded "dev" password convention above. *)
       ~values:[("adminPassword", Str "dev")]
       ~values_yaml:(Sol_cli_platform_component.merged_values_yaml
-                      ~component:"grafana" ~profile:"local") ()
-    in
-    if rc <> 0 then (Printf.eprintf "error: Grafana install failed\n"; exit 1);
+                      ~component:"grafana" ~profile:"local") ();
 
     Printf.printf "\n  Installing Alloy...\n%!";
     (* Cluster-wide pod stdout/stderr scraping via DaemonSet -- same role
@@ -258,11 +281,9 @@ let dev_up () =
        platform/infra/base/alloy/logs.alloy.tftpl -- the single source,
        shared with platform/infra/base/main.tf's own templatefile() call
        for the same file -- instead of a second, hand-synced OCaml copy. *)
-    let rc = helm_install "alloy" "grafana/alloy" ~namespace:"monitoring"
+    helm_install ~label:"Alloy" "alloy" "grafana/alloy" ~namespace:"monitoring"
       ~version:"1.12.1"  (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin *)
       ~values_yaml:(Sol_cli_dev_observability.alloy_values_yaml ()) ()
-    in
-    if rc <> 0 then (Printf.eprintf "error: Alloy install failed\n"; exit 1)
   end;
 
   if req.tempo then begin
@@ -282,12 +303,10 @@ let dev_up () =
        already agree by relying on the chart's own defaults) -- wiring it up
        anyway locks in the source of truth so the CI guardrail can catch the
        next Tempo value that would otherwise drift, see ADR 0001. *)
-    let rc = helm_install "tempo" "grafana-community/tempo" ~namespace:"monitoring"
+    helm_install ~label:"Tempo" "tempo" "grafana-community/tempo" ~namespace:"monitoring"
       ~version:"2.3.0"  (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin *)
       ~values_yaml:(Sol_cli_platform_component.merged_values_yaml
                       ~component:"tempo" ~profile:"local") ()
-    in
-    if rc <> 0 then (Printf.eprintf "error: Tempo install failed\n"; exit 1)
   end;
 
   if req.prometheus then begin
@@ -304,14 +323,12 @@ let dev_up () =
        to move from this ~values literal into the shared JSON, the literal
        here must be deleted in the same change -- leaving both would let
        this ~values entry silently and permanently win. *)
-    let rc = helm_install "prometheus" "prometheus-community/prometheus"
+    helm_install ~label:"Prometheus" "prometheus" "prometheus-community/prometheus"
       ~namespace:"monitoring"
       ~version:"25.20.1"  (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin *)
       ~values:[("prometheus-node-exporter.enabled", Bool false)]
       ~values_yaml:(Sol_cli_platform_component.merged_values_yaml
                       ~component:"prometheus" ~profile:"local") ()
-    in
-    if rc <> 0 then (Printf.eprintf "error: Prometheus install failed\n"; exit 1)
   end;
 
   if need_grafana then
