@@ -24,6 +24,26 @@ detailed control-plane API before the factory contract is stable.
 
 ---
 
+## Design Principles
+
+**Errors are values.** Every operation that can fail returns a `Result`. No exceptions for control flow. The type system enforces that failure is handled.
+
+**One way to do things.** Sun picks conventions and enforces them. Module structure, error handling, configuration, observability — these are not decisions each service makes independently. Deviation is explicit.
+
+**Explicit over implicit.** No magic. No hidden control flow. If something happens, there is a function call you can find. This applies especially to security: auth is always declared explicitly on each route. Sun does not infer auth strategy from path conventions or other signals. The developer states intent; the framework enforces it.
+
+**DevOps expertise, not engineering judgment.** Sun productizes the repeatable parts of platform engineering and DevOps. It removes the need to know Terraform, Helm, Kubernetes, image wiring, and CI deployment glue to ship a production service. It does not remove the need to make sound engineering decisions. Security design, data modeling, and business logic stay in the developer's hands and stay readable in the code.
+
+**Security on Day 1.** Sun's framework types carry security configuration as a first-class concern — transport encryption, SASL authentication, and TLS are all part of the data model from the beginning, defaulting to plaintext only in dev and reading from environment variables in all other environments. You can't accidentally ship a production service with no security configuration because the type forces the field.
+
+**Dev mirrors prod exactly.** `sun dev up` provisions a local k3d cluster with the same Helm charts used in production — Redpanda, PostgreSQL, Loki, Prometheus, Grafana. The only difference is scale (single replica, no persistent volume). Port-forwards make all services reachable at the same addresses your services expect. Surprises at deploy time are a symptom of divergent environments; Sun eliminates that divergence.
+
+**FOSS infrastructure.** The full stack runs on open source primitives — Kubernetes, Strimzi, Argo CD, Prometheus, Loki, Grafana, Terraform. No vendor lock-in. Cloud providers are an infrastructure detail.
+
+**Cloud-agnostic Kubernetes.** Sun services deploy to any Kubernetes cluster. The target is k8s, not a specific cloud provider. StorageClass abstraction, Strimzi for Kafka, and Terraform modules make the stack portable across AWS, GCP, Azure, or bare metal.
+
+---
+
 ## Source of Truth
 
 The **user workspace repo is always the source of truth** for application structure:

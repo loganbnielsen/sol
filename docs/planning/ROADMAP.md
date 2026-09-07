@@ -33,6 +33,33 @@ Every roadmap item should strengthen one of these goals. A feature that increase
 
 ---
 
+## Current Status
+
+| Layer | Status |
+|---|---|
+| Kafka (core, producer, consumer, service) | Complete |
+| Observability core (`obs-eio` — tracing, logging, metrics API) | Complete |
+| Observability backends (Loki, Prometheus) | Complete |
+| HTTP service layer (`-svc`) | Complete |
+| Function layer (`-fn`, cron) | Complete |
+| Worker layer (`-worker`, Kafka consumer) | Complete |
+| Observability auto-wiring (`-svc`, `-fn`, `-worker`) | Complete |
+| Observability app facade (`framework/sun-obs` — `Sun_obs.t`) | Complete — scaffold templates and app handler examples use it instead of composing Loki/Prometheus/Tempo providers directly |
+| Storage (PostgreSQL) | Complete |
+| Sun CLI — scaffold (`sun new workspace/svc/worker/fn/event`) | Complete |
+| Sun CLI — local infra (`sun dev up/down/status/run`) | Complete |
+| Sun CLI — deploy (`sun up`, `sun status`, `sun migrate`) | Complete |
+| Sun CLI — secrets (`sun secret set/list/delete`) | Complete |
+| Production deployment pipeline (`sun deploy`, Terraform, Argo CD) | Complete |
+| Progressive delivery (`[infra.rollout]`, Argo Rollouts) | Complete |
+| Cloud infrastructure (`sun cloud plan/apply/destroy`) | Provisions AWS EKS+ECR or GCP GKE+Artifact Registry via Terraform — experimental, live plan tested against AWS |
+| AWS application-level integration (`aws-eio`: credentials + SigV4 + HTTP transport) | Complete — proven against a live AWS endpoint (see `aws-audit.md`) |
+| AWS S3 client (`s3-eio`) | Extracted to a [standalone package](https://github.com/loganbnielsen/s3-eio) — v1 scope (put/get/delete/head_object) built, local tests passing; live smoke test written, not yet run against a real bucket |
+| AWS DynamoDB client (`dynamodb-eio`) | Extracted to a [standalone package](https://github.com/loganbnielsen/dynamodb-eio) — v1 scope (Client + typed Index/Entity layer) built, local tests passing; live smoke test written, not yet run against a real table |
+| AWS Lambda integration (`lambda-eio`) | Extracted to a [standalone package](https://github.com/loganbnielsen/lambda-eio) — local tests passing (protocol tested end to end against a local mock server and AWS's Runtime Interface Emulator); container-image deployment path proven via `examples/echo-lambda/`, not yet run in a real Lambda execution environment on AWS itself. `sun-fn`'s `FN.trigger` variant (`Cron`/`Lambda`) wired in |
+
+---
+
 Sun is built in layers, each one making the factory more complete. The Kafka
 layer is the proof-of-concept. Each subsequent phase adds machinery that a team
 would otherwise have to build, wire, document, and operate themselves.
