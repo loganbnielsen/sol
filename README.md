@@ -6,17 +6,20 @@
 
 Sol is an open-source OCaml software factory for backend systems. Write direct-style OCaml domain logic; Sol scaffolds, builds, packages, observes, and deploys it — no hand-written Dockerfiles, Kubernetes YAML, CI glue, or infrastructure wiring. Its conventions are regular enough that AI coding agents produce correct output without touching Kubernetes internals, and OCaml's type system (no null, errors as values, exhaustive pattern matching, Eio's structured concurrency) catches entire classes of bugs before they ship.
 
-> **Rebrand in progress:** this project was called Sun. The CLI binary, config files, and code still use that name (`sun`, `sun.toml`, `SUN_HOME`) — you'll see both names until the rest of the rename lands.
+> **Rebrand in progress:** this project was called Sun. The CLI binary, config files, code, GitHub repo, and release URLs below still use that name (`sun`, `sun.toml`, `SUN_HOME`, `github.com/loganbnielsen/sun`) — you'll see both names until the rest of the rename lands.
 
 ---
 
 ## What it looks like
 
 ```ocaml
-(* app/payments/charge_svc/lib/handler.ml *)
-let routes pool ~publish_charged ~ot = [
-  Route.get  "/health"  ~auth:`Public (fun _req -> Response.ok "ok");
-  Route.post "/charges" ~auth:`Public (fun req -> create_charge pool ~publish_charged req);
+(* app/payments/charge_svc/lib/handler.ml — routes, trimmed *)
+let routes pool = [
+  Route.get "/health" ~auth:`Public (fun _req -> Response.ok "ok");
+  Route.post "/charges" ~auth:`Public (fun req -> (* validate req.body, then: *)
+    match Notification.insert pool ~charge_id ~customer_id ~amount_cents ~currency with
+    | Ok ()   -> Response.json ~status:202 (Printf.sprintf {|{"id":"%s","accepted":true}|} charge_id)
+    | Error e -> Response.internal_error ("db insert failed: " ^ Pg_error.to_string e));
 ]
 ```
 
