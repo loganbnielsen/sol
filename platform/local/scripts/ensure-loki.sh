@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/port-preflight.sh"
+
+check_port_forward_conflict 3100 loki
+
 if docker ps --format '{{.Names}}' | grep -q '^loki$'; then
   echo "Loki already running"
 else

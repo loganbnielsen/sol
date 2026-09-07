@@ -8,6 +8,9 @@ GRAFANA_PORT=3000
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DASHBOARD_PROVIDER_FILE="$SCRIPT_DIR/../config/grafana-dashboards.yml"
 DASHBOARD_DIR="$SCRIPT_DIR/../config/grafana-dashboards"
+source "${SCRIPT_DIR}/lib/port-preflight.sh"
+
+check_port_forward_conflict "$GRAFANA_PORT" grafana
 
 # ------------------------------------------------------------------ #
 # Shared Docker network                                               #
