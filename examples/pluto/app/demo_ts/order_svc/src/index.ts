@@ -9,7 +9,17 @@ import { makeLokiPusher } from "./loki.js";
 import { initTracing, traceparentOf, SpanKind } from "./tracing.js";
 import { makeSvcMetrics } from "./metrics.js";
 
-const PORT = Number(process.env.PORT ?? 8080);
+// service.ml:208-212 (the contract this ticket names by name) falls back
+// to the default on a malformed PORT rather than crashing at .listen() —
+// Number(undefined-ish-string) would silently become NaN otherwise.
+function intEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+const PORT = intEnv("PORT", 8080);
 const KAFKA_BROKERS = (process.env.KAFKA_BROKERS ?? "localhost:9092").split(",");
 const SCHEMA_REGISTRY_URL = process.env.SCHEMA_REGISTRY_URL ?? "http://localhost:8081";
 const LOKI_URL = process.env.LOKI_URL;
@@ -31,8 +41,26 @@ const log = makeLokiPusher(LOKI_URL, "order-svc-ts");
 const { tracer, shutdown: shutdownTracing } = initTracing("order-svc-ts", TEMPO_URL);
 const { register: metricsRegister, requestsTotal, requestDuration } = makeSvcMetrics();
 
+const TOPIC_PARTITIONS = 1; // matches Kafka_service_config's default (kafka_service_config.ml:16)
+
 async function main() {
   console.log(`[order-svc-ts] brokers=${KAFKA_BROKERS} registry=${SCHEMA_REGISTRY_URL} topic=${TOPIC_NAME}`);
+
+  const kafka = new Kafka({ clientId: "order-svc-ts", brokers: KAFKA_BROKERS });
+
+  // Kafka_service.register (kafka_service.ml:148-165) explicitly provisions
+  // the topic (ensure_topic -> Kafka.Producer.create_topic) BEFORE touching
+  // the schema registry — relying on broker auto-create-on-produce (the
+  // default on this repo's local Redpanda) silently drops this on any
+  // cluster with auto.create.topics.enable=false. createTopics resolves
+  // `false` (not an error) if the topic already exists — same idempotent
+  // shape as ensure_topic.
+  const admin = kafka.admin();
+  await admin.connect();
+  await admin.createTopics({
+    topics: [{ topic: TOPIC_NAME, numPartitions: TOPIC_PARTITIONS, replicationFactor: 1 }],
+  });
+  await admin.disconnect();
 
   // Order matches Kafka_service.register (kafka_service.ml:167-177) exactly:
   // register_schema is fatal (let it throw, unguarded); set_subject_compatibility
@@ -46,7 +74,6 @@ async function main() {
     console.warn(`[order-svc-ts] warn: could not set schema compatibility for ${TOPIC_NAME}: ${String(err)}`);
   }
 
-  const kafka = new Kafka({ clientId: "order-svc-ts", brokers: KAFKA_BROKERS });
   const producer = kafka.producer();
   await producer.connect();
 

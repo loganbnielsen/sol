@@ -11,7 +11,17 @@ import { makeDb } from "./db.js";
 const KAFKA_BROKERS = (process.env.KAFKA_BROKERS ?? "localhost:9092").split(",");
 const TOPIC_NAME = process.env.ORDERS_TOPIC ?? "sol-demo-ts-orders";
 const GROUP_ID = "sol-demo-ts-fulfillment-worker";
-const METRICS_PORT = Number(process.env.METRICS_PORT ?? 9090);
+// Same defensive fallback as order_svc/src/index.ts's intEnv — a malformed
+// value should fall back to the default, not silently become NaN and
+// crash the metrics server's .listen() at startup.
+function intEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+const METRICS_PORT = intEnv("METRICS_PORT", 9090);
 const LOKI_URL = process.env.LOKI_URL;
 const TEMPO_URL = process.env.TEMPO_URL;
 const POSTGRES_URL = process.env.POSTGRES_URL;
@@ -26,14 +36,17 @@ async function main() {
 
   const kafka = new Kafka({ clientId: "fulfillment-worker-ts", brokers: KAFKA_BROKERS });
   const consumer = kafka.consumer({ groupId: GROUP_ID });
-  // Without this, an eachMessage error that exhausts kafkajs's internal
-  // retries stops the consumer silently — no crash, no exit, just a worker
-  // that quietly stops making progress. Fail loudly instead so an operator
-  // (or k8s) notices and restarts the pod, rather than a zombie process
-  // that still passes /healthz-equivalent liveness checks.
+  // KafkaJS's own crash handling (node_modules/kafkajs/src/consumer/index.js)
+  // already self-heals from retriable errors: it sets payload.restart=true
+  // and reschedules `start()` itself after a backoff. Without any listener
+  // at all, an error that ISN'T retriable stops the consumer silently — no
+  // crash, no exit, a worker that quietly stops making progress. But
+  // unconditionally exiting here (as an earlier version of this file did)
+  // is worse: it kills the process on crashes KafkaJS was already about to
+  // recover from on its own. Only exit when KafkaJS itself has given up.
   consumer.on(consumer.events.CRASH, ({ payload }) => {
     console.error(`[fulfillment-worker-ts] consumer crashed: ${String(payload.error)}`);
-    process.exit(1);
+    if (!payload.restart) process.exit(1);
   });
   await consumer.connect();
   await consumer.subscribe({ topic: TOPIC_NAME, fromBeginning: false });

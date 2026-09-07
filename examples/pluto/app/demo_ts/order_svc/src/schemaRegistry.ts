@@ -5,6 +5,33 @@
 
 const MAGIC_BYTE = 0x00;
 
+// Matches Kafka_service_http.http_do (kafka_service_http.ml:14-29), the
+// OCaml original every call here is ported from — same 10s timeout, same
+// 4MB response cap. Plain fetch() has neither by default: Node/undici's
+// default timeout is measured in minutes, and there's no body-size limit
+// at all, so a slow/hung/malicious registry can block startup indefinitely
+// or exhaust memory buffering an unbounded response.
+const REQUEST_TIMEOUT_MS = 10_000;
+const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+
+async function readBounded(resp: Response): Promise<string> {
+  const reader = resp.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new Error(`schema registry response exceeded ${MAX_RESPONSE_BYTES} bytes`);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 export function encodeWire(schemaId: number, json: unknown): Buffer {
   const payload = Buffer.from(JSON.stringify(json), "utf8");
   const header = Buffer.alloc(5);
@@ -23,8 +50,9 @@ async function registryRequest(
     method,
     headers: { "content-type": "application/vnd.schemaregistry.v1+json" },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  return { status: resp.status, body: await resp.text() };
+  return { status: resp.status, body: await readBounded(resp) };
 }
 
 /**
