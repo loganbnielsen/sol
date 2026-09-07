@@ -26,6 +26,15 @@ async function main() {
 
   const kafka = new Kafka({ clientId: "fulfillment-worker-ts", brokers: KAFKA_BROKERS });
   const consumer = kafka.consumer({ groupId: GROUP_ID });
+  // Without this, an eachMessage error that exhausts kafkajs's internal
+  // retries stops the consumer silently — no crash, no exit, just a worker
+  // that quietly stops making progress. Fail loudly instead so an operator
+  // (or k8s) notices and restarts the pod, rather than a zombie process
+  // that still passes /healthz-equivalent liveness checks.
+  consumer.on(consumer.events.CRASH, ({ payload }) => {
+    console.error(`[fulfillment-worker-ts] consumer crashed: ${String(payload.error)}`);
+    process.exit(1);
+  });
   await consumer.connect();
   await consumer.subscribe({ topic: TOPIC_NAME, fromBeginning: false });
 
@@ -52,9 +61,25 @@ async function main() {
       const span = startChildSpan(tracer, "fulfill_order", parent);
 
       try {
-        if (!message.value) throw new Error("tombstone (message has no value)");
-        const { json } = decodeWire(message.value);
-        const order = decodeOrderPlaced(json);
+        // Decode/validation failure vs. downstream (DB) failure are
+        // different failure classes and must not share a status label or
+        // a swallow-vs-retry policy: a malformed message should never be
+        // retried (it will never become valid), but a transient Postgres
+        // error on an otherwise-valid message should be retried by kafkajs
+        // rather than silently treated as "rejected" and offset-committed.
+        let order;
+        try {
+          if (!message.value) throw new Error("tombstone (message has no value)");
+          const { json } = decodeWire(message.value);
+          order = decodeOrderPlaced(json);
+        } catch (err) {
+          // Sol convention: decode/validation failure is a rejection, not a
+          // crash — mirrors kafka_service_retry_topics.ml's decode-error path.
+          console.error(`[worker] rejected message: ${String(err)}`);
+          log("error", "rejected message", { error: String(err) });
+          messagesTotal.inc({ status: "decode_error" });
+          return;
+        }
 
         log("info", "fulfilling order", {
           order_id: order.order_id,
@@ -62,16 +87,15 @@ async function main() {
           quantity: String(order.quantity),
         });
 
-        if (db) await db.insertFulfilled(order);
+        try {
+          if (db) await db.insertFulfilled(order);
+        } catch (err) {
+          messagesTotal.inc({ status: "db_error" });
+          throw err;
+        }
 
         console.log(`[worker] fulfilled  order=${order.order_id}  item=${order.item}`);
         messagesTotal.inc({ status: "ok" });
-      } catch (err) {
-        // Sol convention: decode/validation failure is a rejection, not a
-        // crash — mirrors kafka_service_retry_topics.ml's decode-error path.
-        console.error(`[worker] rejected message: ${String(err)}`);
-        log("error", "rejected message", { error: String(err) });
-        messagesTotal.inc({ status: "decode_error" });
       } finally {
         span.end();
         messageDuration.observe(Number(process.hrtime.bigint() - start) / 1e9);

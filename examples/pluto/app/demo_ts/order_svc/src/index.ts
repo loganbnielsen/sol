@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { Kafka } from "kafkajs";
 import { Pushgateway } from "prom-client";
+import { SpanStatusCode } from "@opentelemetry/api";
 import { randomBytes } from "node:crypto";
 
 import { encodeWire, registerSchema, setSubjectCompatibility } from "./schemaRegistry.js";
@@ -43,6 +44,19 @@ async function main() {
 
   const app = Fastify({ logger: false });
 
+  // Sol convention: every request gets a metric, success or failure — mirrors
+  // framework/sol-svc/lib/service.ml's dispatch wrapper, which records
+  // metrics for every response generically rather than leaving it to each
+  // handler to remember. A hook is the correct place for this in Fastify;
+  // recording inline in the handler (an earlier version of this file did)
+  // silently drops metrics for any request that throws.
+  app.addHook("onResponse", async (req, reply) => {
+    const route = req.routeOptions?.url ?? req.url;
+    const statusClass = `${Math.floor(reply.statusCode / 100)}xx`;
+    requestsTotal.inc({ method: req.method, route, status_class: statusClass });
+    requestDuration.observe({ method: req.method, route }, reply.elapsedTime / 1000);
+  });
+
   app.get("/healthz", async () => ({ status: "ok" }));
   app.get("/metrics", async (_req, reply) => {
     reply.header("content-type", metricsRegister.contentType);
@@ -50,44 +64,50 @@ async function main() {
   });
 
   app.post("/orders", async (req, reply) => {
-    const start = process.hrtime.bigint();
     const body = req.body as { order_id?: string; item?: string; quantity?: number };
     const correlationId =
       (req.headers["x-correlation-id"] as string | undefined) ?? randomBytes(4).toString("hex");
 
     const span = tracer.startSpan("receive_order", { kind: SpanKind.PRODUCER });
-    span.setAttribute("order_id", body.order_id ?? "");
-    span.setAttribute("item", body.item ?? "");
+    try {
+      span.setAttribute("order_id", body.order_id ?? "");
+      span.setAttribute("item", body.item ?? "");
 
-    const traceparent = traceparentOf(span);
-    log("info", "order received", {
-      order_id: body.order_id ?? "",
-      item: body.item ?? "",
-      correlation_id: correlationId,
-      trace_id: span.spanContext().traceId,
-    });
+      const traceparent = traceparentOf(span);
+      log("info", "order received", {
+        order_id: body.order_id ?? "",
+        item: body.item ?? "",
+        correlation_id: correlationId,
+        trace_id: span.spanContext().traceId,
+      });
 
-    const message = {
-      order_id: body.order_id ?? "",
-      item: body.item ?? "",
-      quantity: body.quantity ?? 0,
-      correlation_id: correlationId,
-    };
-    const wire = encodeWire(schemaId, message);
+      const message = {
+        order_id: body.order_id ?? "",
+        item: body.item ?? "",
+        quantity: body.quantity ?? 0,
+        correlation_id: correlationId,
+      };
+      const wire = encodeWire(schemaId, message);
 
-    await producer.send({
-      topic: TOPIC_NAME,
-      messages: [{ value: wire, headers: { traceparent } }],
-    });
+      // Unlike examples/local-demo/bin/demo.ml (which logs a Kafka publish
+      // error but still returns 202), a publish failure here is allowed to
+      // propagate and return 500 — telling the client an order succeeded
+      // when the event never reached Kafka is a worse contract than the
+      // demo script's convenience shortcut.
+      await producer.send({
+        topic: TOPIC_NAME,
+        messages: [{ value: wire, headers: { traceparent } }],
+      });
 
-    span.end();
-
-    const durationS = Number(process.hrtime.bigint() - start) / 1e9;
-    requestsTotal.inc({ method: "POST", route: "/orders", status_class: "2xx" });
-    requestDuration.observe({ method: "POST", route: "/orders" }, durationS);
-
-    reply.code(202);
-    return { accepted: true };
+      reply.code(202);
+      return { accepted: true };
+    } catch (err) {
+      span.recordException(err as Error);
+      span.setStatus({ code: SpanStatusCode.ERROR });
+      throw err;
+    } finally {
+      span.end();
+    }
   });
 
   await app.listen({ port: PORT, host: "0.0.0.0" });

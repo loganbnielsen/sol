@@ -102,6 +102,53 @@ and assertion runner this TS port doesn't have) is 566 lines total — same
 order of magnitude, but the OCaml side spends almost none of it on these
 five concerns because the framework absorbs them.
 
+## Self-review findings (fixed before handoff)
+
+A single-pass build-it-and-run-it version of this spike had three real bugs
+that a skeptical re-read of the diff caught, all now fixed:
+
+1. **Metrics were only recorded on the happy path.** `order_svc`'s
+   `/orders` handler incremented `sol_svc_requests_total` inline at the end
+   of the handler body — a `producer.send()` failure meant the request was
+   never counted at all, not even as a 5xx. Fixed by moving metric
+   recording into a Fastify `onResponse` hook that fires for every
+   response regardless of outcome, which is also a more faithful port of
+   `sol-svc`'s actual behavior — `service.ml`'s dispatch wrapper records
+   metrics for every request generically, it isn't something each handler
+   opts into. This is itself a data point for the capability table below:
+   getting this right requires knowing to reach for a framework-level hook
+   rather than inline code, which isn't an obvious instinct.
+2. **A Kafka publish failure returned 202 anyway.** The initial port
+   mirrored `examples/local-demo/bin/demo.ml`'s handler exactly, which logs
+   a publish error to stderr but still returns 202 — a shortcut reasonable
+   in a one-shot demo script, not in a service with real callers. Changed
+   to let the error propagate (500), matching what `sol-svc`'s contract
+   should mean, not what the reference demo script happened to do.
+3. **A downstream DB failure was mislabeled and silently swallowed as a
+   decode error.** The worker's single catch block covered both "message
+   doesn't parse" and "Postgres insert failed" under the same
+   `status="decode_error"` metric and the same silent-continue behavior —
+   conflating a message that will *never* be valid with a transient infra
+   failure that should be retried. Split into two catch blocks
+   (`decode_error` vs. `db_error`) and let DB failures rethrow so kafkajs's
+   own retry/crash semantics apply. Also added a `consumer.on(CRASH, ...)`
+   handler — without it, a worker that exhausts kafkajs's internal retries
+   stops consuming *silently*, with no crash and no exit, which is worse
+   than either succeeding or dying loudly.
+
+Also removed two dead exports (`decodeWire` and `parseTraceparent` in
+`order_svc` — copy-pasted from the worker's equivalent file but never
+called, since `order_svc` only ever encodes/produces, never decodes/parses
+an inbound trace).
+
+Findings (3) in particular reinforces the recommendation below: getting
+Kafka failure-handling semantics (retry vs. reject vs. crash) right by
+hand is genuinely easy to get wrong, and is exactly the kind of thing
+`kafka_service_retry_topics.ml` exists to solve properly on the OCaml side
+— this spike does the bare minimum version of that (crash-on-exhaustion),
+not the full forward-retry/DLQ machinery, which is correctly out of scope
+here but is real, non-trivial future work if `@sol/kafka` gets built.
+
 ## Friction log
 
 **Schema registry protocol.** Nothing in `kafkajs` or the wider npm
@@ -168,6 +215,7 @@ choice for the general problem if the actual bottleneck is elsewhere.
 | Trace propagation (HTTP → Kafka → worker) | sol-obs | 96 lines hand-rolled OTel context bridging | **Likely** — second-highest value; genuinely easy to get subtly wrong (e.g. wrong span kind, malformed traceparent) |
 | Graceful drain (HTTP) | automatic | `fastify.close()`, ~2 lines | No |
 | Graceful drain (Kafka consumer) | automatic | `consumer.disconnect()`, but ~2-3s and order-dependent w.r.t. metrics/db/tracing shutdown | Maybe — small code, but easy to get the shutdown *order* wrong |
+| Kafka failure handling (decode-reject vs. infra-retry vs. crash) | sol-worker + kafka_service_retry_topics.ml | hand-rolled, and wrong in the first draft of this spike (see Self-review findings) | **Likely** — bundle with the schema/wire helper; getting retry vs. reject vs. crash semantics right by hand is genuinely error-prone, not busywork |
 | PostgreSQL | pg-eio | pg | No |
 | Structured logging (formatting) | sol-obs | plain console/fetch sufficed, pino added no value | No |
 | Loki push shape/labels | sol-obs | 35-37 lines hand-rolled push API + label convention | Maybe — smaller than schema/tracing, but same "undiscoverable convention" problem |

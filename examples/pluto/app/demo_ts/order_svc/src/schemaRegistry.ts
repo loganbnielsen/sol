@@ -13,14 +13,6 @@ export function encodeWire(schemaId: number, json: unknown): Buffer {
   return Buffer.concat([header, payload]);
 }
 
-export function decodeWire(bytes: Buffer): { schemaId: number; json: unknown } {
-  if (bytes.length < 5) throw new Error("wire format: message too short");
-  if (bytes.readUInt8(0) !== MAGIC_BYTE) throw new Error("wire format: invalid magic byte");
-  const schemaId = bytes.readUInt32BE(1);
-  const json = JSON.parse(bytes.subarray(5).toString("utf8"));
-  return { schemaId, json };
-}
-
 async function registryRequest(
   registryUrl: string,
   method: string,

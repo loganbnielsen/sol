@@ -36,14 +36,4 @@ export function traceparentOf(span: Span): string {
   return `00-${ctx.traceId}-${ctx.spanId}-01`;
 }
 
-/** Sol convention: parse an inbound traceparent header into an OTel-compatible remote context. */
-export function parseTraceparent(value: string | undefined) {
-  if (!value) return undefined;
-  const parts = value.split("-");
-  if (parts.length !== 4) return undefined;
-  const [, traceId, spanId] = parts;
-  if (traceId.length !== 32 || spanId.length !== 16) return undefined;
-  return { traceId, spanId, traceFlags: 1 };
-}
-
 export { SpanKind };
