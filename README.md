@@ -1,597 +1,120 @@
 <p align="center">
-  <img src="./assets/sun-logo.png" alt="Sun" width="300">
+  <img src="./assets/sol-logo.png" alt="Sol" width="300">
 </p>
 
-# Sun
+# Sol
 
-Sun is an open-source OCaml software factory for backend systems. Developers write direct-style OCaml domain logic; Sun provides the paved path that scaffolds, builds, packages, observes, and deploys it without hand-writing Dockerfiles, Kubernetes YAML, CI glue, or infrastructure wiring.
+Sol is an open-source OCaml software factory for backend systems. Write direct-style OCaml domain logic; Sol scaffolds, builds, packages, observes, and deploys it — no hand-written Dockerfiles, Kubernetes YAML, CI glue, or infrastructure wiring. Its conventions are regular enough that AI coding agents produce correct output without touching Kubernetes internals, and OCaml's type system (no null, errors as values, exhaustive pattern matching, Eio's structured concurrency) catches entire classes of bugs before they ship.
 
-**On OCaml:** OCaml's type system catches entire classes of bugs at compile time — no null, errors as values, exhaustive pattern matching. OCaml 5 adds structured concurrency via Eio. The result: services whose failure modes are explicit and typed rather than implicit and surprising. If you're used to Go or Rust, OCaml will feel familiar. If you're coming from Python or JavaScript, expect a learning curve — and a different relationship with production incidents.
-
-**The model:** the open-source factory is yours to run. Sun derives deployment artifacts from your code and can operate against local clusters, customer-owned cloud infrastructure, or a future hosted control plane. The same application model should work whether you run the factory yourself or pay Sun to run the factory floor for you.
+> **Rebrand in progress:** this project was called Sun. The CLI binary, config files, code, GitHub repo, and release URLs below still use that name (`sun`, `sun.toml`, `SUN_HOME`, `github.com/loganbnielsen/sun`) — you'll see both names until the rest of the rename lands.
 
 ---
 
-## The Factory Model
+## What it looks like
 
-A company adopting Sun creates a **workspace** that is the source of truth for the application. The factory reads that workspace, compiles it into a deployment plan, and produces the runtime artifacts needed to run it.
-
-```
-venus/
-  events/                     ← event contracts, owned by the publishing team
-    payments/
-      charged.ml              ← ChargeEvent : Kafka_service.MESSAGE
-      refunded.ml
-    comms/
-      notification_sent.ml
-  app/                        ← service code, organized by domain team
-    payments/                 ← payments team
-      charge-svc/             ← REST API service
-      fund-svc/               ← REST API service
-      deposit-fn/             ← scheduled function (cron)
-    comms/                    ← comms team
-      broadcast-svc/          ← REST API service
-      broadcast-worker/       ← Kafka consumer — imports events/payments/
-      target-svc/             ← REST API service
-  infra/                      ← optional global platform infrastructure
-    cluster.tf
-    kafka.tf
-    observability.tf
-    ingress.tf
-  dune-project
+```ocaml
+(* app/payments/charge_svc/lib/handler.ml — routes, trimmed *)
+let routes pool = [
+  Route.get "/health" ~auth:`Public (fun _req -> Response.ok "ok");
+  Route.post "/charges" ~auth:`Public (fun req -> (* validate req.body, then: *)
+    match Notification.insert pool ~charge_id ~customer_id ~amount_cents ~currency with
+    | Ok ()   -> Response.json ~status:202 (Printf.sprintf {|{"id":"%s","accepted":true}|} charge_id)
+    | Error e -> Response.internal_error ("db insert failed: " ^ Pg_error.to_string e));
+]
 ```
 
-**`events/<team>/`** — event contracts. The publishing team defines and owns these. Consumers import from here, never from the service that happens to produce the event.
-
-**`app/<team>/<name>-svc`** — a REST API service. Defines routes and handlers.  
-**`app/<team>/<name>-worker`** — a Kafka consumer. Processes event streams.  
-**`app/<team>/<name>-fn`** — a scheduled function. Runs on a cron schedule.
-
-**`infra/`** — optional global platform resources (cluster, networking, Kafka, observability) for self-managed deployments. Team-level infrastructure (namespaces, Kafka ACLs, network policies, service accounts) is derived automatically by Sun from the `app/` structure.
-
-Teams are autonomous at the domain level. They don't coordinate through shared code — they coordinate through **events**.
-
----
-
-## Cross-Domain Communication
-
-Services communicate by publishing typed Kafka events that other teams' workers subscribe to independently. The schema is the contract; nothing else is shared.
-
-```
-payments/charge-svc  →  publishes ChargeCompleted event
-                                  ↓
-comms/broadcast-worker  →  subscribes, sends push notification
-financials/ledger-worker  →  subscribes, records the transaction
+```ocaml
+(* bin/main.ml — the entrypoint, trimmed: env/observability/db-pool setup omitted *)
+let () = Eio_main.run @@ fun env ->
+  (* ... build `obs` (observability handle) and `pool` (DB pool) here ... *)
+  Service.run (Handler.routes pool) ~env ~ot:obs ()
+  |> Result.map_error Service.run_error_to_string
+  |> function Ok () -> () | Error e -> failwith e
 ```
 
-Each team consumes at their own pace with their own consumer group. Sun's schema registry integration enforces the contract at the wire level — a producer can't publish a message that breaks a registered schema.
-
----
-
-## What Sun Handles
-
-When you define a service in a Sun workspace, the factory owns the repeatable production machinery:
-
-- **Kafka** — topic provisioning, schema registration, Confluent wire format, producer and consumer lifecycle *(complete)*
-- **HTTP** — REST routing, middleware, request/response types *(complete)*
-- **Storage** — PostgreSQL via caqti, typed table functor, migrations *(complete)*
-- **Observability** — structured logs to Loki, metrics to Prometheus, Grafana dashboards — wired automatically, no instrumentation code required *(complete)*
-- **Deployment** — Kubernetes manifests, Terraform for cloud infrastructure, Argo CD for GitOps, CI workflow references *(complete)*
-
-You focus on domain logic. Sun handles the factory work: scaffold, build, package, deploy, observe, inspect, and roll back.
-
----
-
-## AI-Agent-First Factory
-
-Sun's conventions are regular enough that AI coding agents produce correct output without needing to understand Kubernetes internals. `sun new svc payments/charge-svc` generates a compilable service with routes, Kafka wiring, and observability already connected. The type checker validates every change before it runs.
-
-The intended workflow: describe what a service should do, let an AI agent scaffold and wire it, let the compiler catch what slips through, and let the factory synthesize the deployable system around it. Sun is designed to make this loop fast and reliable from day one.
-
----
-
-## Software Factory, Not Just Framework
-
-Sun includes framework libraries, but the product boundary is larger than a framework. It is a factory: a CLI control surface, a runtime contract layer, a deployment compiler, and a set of generated production artifacts that all agree on one application model.
-
-**Code layer — Inversion of Control.** You don't write a `main` that calls Sun. Sun's functors (`Sun.Service.Make`, `Sun.Worker.Make`, `Sun.Fn.Make`) own the application lifecycle — Eio fiber loops, signal handling, telemetry wiring, graceful shutdown. You provide routes, schedules, and handlers. Sun runs them.
-
-**Factory control layer — CLI operations.** `sun new`, `sun dev up`, `sun dev run`, `sun up`, `sun deploy`, `sun status`, `sun logs`, `sun rollback`, `sun migrate`, and `sun secret` are not unrelated utilities. They are factory controls over the same workspace model.
-
-**Infrastructure layer — Infrastructure Synthesis.** Sun derives Kubernetes manifests, Kafka ACLs, NetworkPolicies, image names, secret references, observability labels, and rollout behavior directly from the workspace structure plus high-level `sun.toml` overrides. Generated YAML is a build artifact, not a file you write or commit. See `docs/deployment/escape-hatches.md` for the full reference.
-
-The boundary: Sun owns the repeatable production machinery. Inside that machinery — business logic, data modeling, product behavior, and security decisions — developers still write ordinary typed OCaml.
-
----
-
-## Design Principles
-
-**Errors are values.** Every operation that can fail returns a `Result`. No exceptions for control flow. The type system enforces that failure is handled.
-
-**One way to do things.** Sun picks conventions and enforces them. Module structure, error handling, configuration, observability — these are not decisions each service makes independently. Deviation is explicit.
-
-**Explicit over implicit.** No magic. No hidden control flow. If something happens, there is a function call you can find. This applies especially to security: auth is always declared explicitly on each route. Sun does not infer auth strategy from path conventions or other signals. The developer states intent; the framework enforces it.
-
-**DevOps expertise, not engineering judgment.** Sun productizes the repeatable parts of platform engineering and DevOps. It removes the need to know Terraform, Helm, Kubernetes, image wiring, and CI deployment glue to ship a production service. It does not remove the need to make sound engineering decisions. Security design, data modeling, and business logic stay in the developer's hands and stay readable in the code.
-
-**Security on Day 1.** Sun's framework types carry security configuration as a first-class concern — transport encryption, SASL authentication, and TLS are all part of the data model from the beginning, defaulting to plaintext only in dev and reading from environment variables in all other environments. You can't accidentally ship a production service with no security configuration because the type forces the field.
-
-**Dev mirrors prod exactly.** `sun dev up` provisions a local k3d cluster with the same Helm charts used in production — Redpanda, PostgreSQL, Loki, Prometheus, Grafana. The only difference is scale (single replica, no persistent volume). Port-forwards make all services reachable at the same addresses your services expect. Surprises at deploy time are a symptom of divergent environments; Sun eliminates that divergence.
-
-**FOSS infrastructure.** The full stack runs on open source primitives — Kubernetes, Strimzi, Argo CD, Prometheus, Loki, Grafana, Terraform. No vendor lock-in. Cloud providers are an infrastructure detail.
-
-**Cloud-agnostic Kubernetes.** Sun services deploy to any Kubernetes cluster. The target is k8s, not a specific cloud provider. StorageClass abstraction, Strimzi for Kafka, and Terraform modules make the stack portable across AWS, GCP, Azure, or bare metal.
-
----
-
-## Scaling And Business Model
-
-Sun is designed to carry a startup from their first deployed service to hundreds of thousands of users before infrastructure complexity would require rethinking the platform. The teams that outgrow Sun will do so because they have strict requirements at significant scale — not because Sun's architecture is limiting at the stage where most teams actually are.
-
-The open-source project should remain a complete self-hostable factory blueprint. A future commercial Sun can charge for running the factory floor: hosted deployments, preview environments, managed secrets, release history, dashboards, RBAC, audit logs, and zero-config infrastructure operations.
-
----
-
-## Status
-
-Sun is under active development. The Kafka layer is the proof-of-concept — built using Sun's own conventions, with AI assistance, as validation that those conventions work.
-
-See [docs/guides/TUTORIAL.md](docs/guides/TUTORIAL.md) for a full walkthrough of how Sun works, [docs/architecture/PRODUCT_ARCHITECTURE.md](docs/architecture/PRODUCT_ARCHITECTURE.md) for how the framework, user workspaces, and future hosting plane fit together, and [docs/planning/ROADMAP.md](docs/planning/ROADMAP.md) for the phased plan.
-
-| Layer | Status |
-|---|---|
-| Kafka (core, producer, consumer, service) | Complete |
-| Observability core (`obs-eio` — tracing, logging, metrics API) | Complete |
-| Observability backends (Loki, Prometheus) | Complete |
-| HTTP service layer (`-svc`) | Complete |
-| Function layer (`-fn`, cron) | Complete |
-| Worker layer (`-worker`, Kafka consumer) | Complete |
-| Observability auto-wiring (`-svc`, `-fn`, `-worker`) | Complete |
-| Observability app facade (`framework/sun-obs` — `Sun_obs.t`) | Complete — scaffold templates and app handler examples use it instead of composing Loki/Prometheus/Tempo providers directly |
-| Storage (PostgreSQL) | Complete |
-| Sun CLI — scaffold (`sun new workspace/svc/worker/fn/event`) | Complete |
-| Sun CLI — local infra (`sun dev up/down/status/run`) | Complete |
-| Sun CLI — deploy (`sun up`, `sun status`, `sun migrate`) | Complete |
-| Sun CLI — secrets (`sun secret set/list/delete`) | Complete |
-| Production deployment pipeline (`sun deploy`, Terraform, Argo CD) | Complete |
-| Progressive delivery (`[infra.rollout]`, Argo Rollouts) | Complete |
-| Cloud infrastructure (`sun cloud plan/apply/destroy`) | Provisions AWS EKS+ECR or GCP GKE+Artifact Registry via Terraform — experimental, live plan tested against AWS |
-| AWS application-level integration (`aws-eio`: credentials + SigV4 + HTTP transport) | Complete — proven against a live AWS endpoint (see `aws-audit.md`) |
-| AWS S3 client (`s3-eio`) | Extracted to a [standalone package](https://github.com/loganbnielsen/s3-eio) — v1 scope (put/get/delete/head_object) built, local tests passing; live smoke test written, not yet run against a real bucket |
-| AWS DynamoDB client (`dynamodb-eio`) | Extracted to a [standalone package](https://github.com/loganbnielsen/dynamodb-eio) — v1 scope (Client + typed Index/Entity layer) built, local tests passing; live smoke test written, not yet run against a real table |
-| AWS Lambda integration (`lambda-eio`) | Extracted to a [standalone package](https://github.com/loganbnielsen/lambda-eio) — local tests passing (protocol tested end to end against a local mock server and AWS's Runtime Interface Emulator); container-image deployment path proven via `examples/echo-lambda/`, not yet run in a real Lambda execution environment on AWS itself. `sun-fn`'s `FN.trigger` variant (`Cron`/`Lambda`) wired in |
+Sol owns the server lifecycle, graceful shutdown, structured logging, metrics, tracing, packaging, and deployment. You write routes, handlers, and domain logic.
 
 ---
 
 ## Quickstart
 
-From zero to a running service with HTTP, Kafka, and PostgreSQL in under five minutes.
-
-**Prerequisites:** k3d, Helm, Docker, kubectl, and the `sun` and `sundev` binaries on your PATH.
-
-Install `sun` (Linux x86_64) — download the self-contained release bundle:
+**Prerequisites:** k3d, Helm, Docker, kubectl, and `librdkafka-dev`/`libpq-dev`/`libpq5`.
 
 ```bash
-# Replace vX.Y.Z with the latest version from https://github.com/loganbnielsen/sun/releases
-curl -L https://github.com/loganbnielsen/sun/releases/latest/download/sun-vX.Y.Z-linux-x86_64.tar.gz \
-  | tar xz
-export PATH="$PWD/sun-vX.Y.Z-linux-x86_64/bin:$PATH"   # add to ~/.bashrc or ~/.zshrc
-```
+# Install (Linux x86_64) — replace vX.Y.Z with the latest release:
+# https://github.com/loganbnielsen/sun/releases
+curl -L https://github.com/loganbnielsen/sun/releases/latest/download/sun-vX.Y.Z-linux-x86_64.tar.gz | tar xz
+export PATH="$PWD/sun-vX.Y.Z-linux-x86_64/bin:$PATH"
 
-The tarball includes the `sun` binary and the framework source trees (`framework/` and `integrations/`). No `SUN_HOME` or separate clone required — `sun new workspace` resolves the framework source automatically from the bundle layout.
-
-**Contributors / building from source:** Clone the repo and set `SUN_HOME` instead:
-
-```bash
-git clone https://github.com/loganbnielsen/sun.git ~/sun
-export SUN_HOME=~/sun   # add to ~/.bashrc or ~/.zshrc
-```
-
-`sundev` (internal pipeline/worktree tooling) is build-from-source only — see [Requirements](#requirements).
-
-```bash
-# 1. Provision the local cluster (Redpanda, PostgreSQL, Loki, Prometheus, Grafana)
-sun dev up
-
-# 1a. (Optional) Iterate fast on code changes — runs services as native binaries, no Docker rebuild
-sun dev run
-
-# 2. Scaffold a new workspace
+sun dev up              # local cluster: Redpanda, PostgreSQL, Loki, Prometheus, Grafana
 sun new workspace pluto
 cd pluto
-
-# 3. Build images and deploy to the cluster (final smoke test)
-sun up
-
-# 4. Run database migrations
-sun migrate
-
-# 5. See what's running
+sun up                  # build + deploy
 sun status
 
-# 6. Roll back if something goes wrong
-sun rollback                   # roll back all services
-sun rollback payments/charge_svc  # roll back one service
-```
-
-`sun up` starts port-forwards automatically. `sun status` shows the live URL:
-
-```
-Namespace: pluto-comms
-NAME                              READY   STATUS    RESTARTS   AGE
-notify-worker-77859bbfff-77vm6    1/1     Running   0          2m
-
-Namespace: pluto-payments
-NAME                           READY   STATUS    RESTARTS   AGE
-charge-svc-5464d77bd4-2lnb9    1/1     Running   0          2m
-  →  http://localhost:8080  (charge-svc)
-```
-
-```bash
-# 7. Try it
 curl localhost:8080/health
 # ok
-
-curl -X POST localhost:8080/charges \
-  -H 'Content-Type: application/json' \
-  -d '{"customer_id":"cus_123","amount_cents":4999,"currency":"usd"}'
-# {"id":"ch_042381","accepted":true}
-
-curl localhost:8080/notifications
-# [{"charge_id":"ch_042381","customer_id":"cus_123","amount_cents":4999,"currency":"usd"}]
 ```
 
-```bash
-# 8. View logs and metrics in Grafana
-open http://localhost:3000   # admin / dev
-```
-
-In Grafana Explore, query `{service=~"pluto-.*"} | logfmt` to see structured logs from both the charge service and the notify worker, with trace IDs linking HTTP spans to Kafka consumer spans.
-
-### What the scaffold generates
-
-`sun new workspace pluto` produces a fully-wired multi-service workspace:
-
-| Path | Description |
-|------|-------------|
-| `events/payments/charged.ml` | Typed `Charged` Kafka event contract |
-| `app/payments/charge_svc/` | HTTP service: `POST /charges`, `GET /notifications`, `GET /health` |
-| `app/comms/notify_worker/` | Kafka worker: consumes `Charged`, writes to DB |
-| `lib/notification.ml` | Shared `Notification` storage module (used by svc + worker) |
-| `db/migrations/0001_notifications.sql` | Initial schema |
-| `Dockerfile` (×2) | Container images for each service |
-| `.github/workflows/sun-ci.yml` | CI workflow: build/test, build images, deploy via GitOps |
-
-The service writes charges to PostgreSQL on `POST /charges` and reads them back on `GET /notifications`. The worker subscribes to the `charged` Kafka topic and logs each event with full observability context. Both services ship metrics to Prometheus and logs to Loki automatically — no instrumentation code required.
-
-### Adding a new domain
-
-```bash
-# Add a new event type
-sun new event billing/payment_confirmed
-
-# Add a worker that consumes it
-sun new worker logistics/fulfillment
-
-# Add a scheduled function
-sun new fn billing/invoice
-
-# Redeploy
-sun up
-```
-
-Each command generates files that compile immediately and integrate with the existing observability and deployment stack.
-
-### Shipping a Change
-
-```bash
-# Build, push, and deploy updated images
-sun up
-
-# Check pod health after deploy
-sun status
-
-# Something went wrong? Roll back to the previous revision
-sun rollback                        # all services in the workspace
-sun rollback payments/charge_svc    # one service only
-```
-
-`sun rollback` rolls back each matching service and waits for the previous
-revision to become healthy before reporting success. The namespace and
-deployment names are derived from the workspace and service path using the
-same conventions as `sun up` and `sun deploy`, so no extra flags are needed.
-
-For services using a standard `Deployment` (no `[infra.rollout]` in `sun.toml`),
-`sun rollback` calls `kubectl rollout undo deployment/<name>`. For services
-configured with `[infra.rollout]` (Argo Rollouts), it automatically calls
-`kubectl argo rollouts undo <name>` instead — this requires the
-[Argo Rollouts kubectl plugin](https://argoproj.github.io/argo-rollouts/installation/#kubectl-plugin)
-to be installed. If the plugin is not found, `sun rollback` prints an actionable
-error with the manual command and exits 1.
+That's a real HTTP service, backed by a Kafka worker and PostgreSQL, with logs and metrics already flowing. Continue with the **[Tutorial](docs/guides/TUTORIAL.md)** for the full walkthrough — publishing events, database migrations, Grafana dashboards, production deploys, and rollbacks.
 
 ---
 
-## Day-2 Operations
+## What Sol handles
 
-### Streaming logs
+- **Kafka** — topic provisioning, schema registration, Confluent wire format, producer/consumer lifecycle
+- **HTTP** — REST routing, middleware, request/response types
+- **Storage** — PostgreSQL via caqti, typed table functor, migrations
+- **Observability** — structured logs to Loki, metrics to Prometheus, Grafana dashboards, wired automatically
+- **Deployment** — Kubernetes manifests, Terraform for cloud infrastructure, Argo CD for GitOps, CI workflow references
 
-```bash
-# Stream logs from a service (follows by default)
-sun logs payments/charge_svc
-
-# Bare name works when unambiguous across domains
-sun logs charge_svc
-
-# Snapshot — last 200 lines, no follow
-sun logs payments/charge_svc --no-follow --tail=200
-
-# Only new lines, no history
-sun logs payments/charge_svc --tail=0
-```
-
-`sun logs` resolves `<workspace>-<domain>` as the Kubernetes namespace automatically, so you never need to remember Sun's naming convention. Underscores in service names are mapped to hyphens (Kubernetes convention).
-
-Before streaming, `sun logs` prints a copyable Grafana Explore URL with a pre-built LogQL query for that service. Open the URL to see Loki-routed application logs, trace IDs, and span details. Pass `--grafana-base-url` if your Grafana is not at `http://localhost:3000`:
-
-```bash
-sun logs payments/charge_svc --grafana-base-url http://grafana.internal:3000
-```
-
-**Note:** `sun logs` streams stdout/stderr from the container pod. Application-level logs (emitted via `Obs_eio.log_t`) are routed to Loki and appear in Grafana, not in the kubectl stream. Use the Grafana URL printed by `sun logs` to query Loki-routed logs for the same service.
-
-For historical log search — spanning multiple services, time ranges, or correlated by trace ID — open Grafana at http://localhost:3000 and use the Explore view with Loki as the data source. Query `{service=~"pluto-.*"} | logfmt` to search across all services in a workspace.
-
-### Checking pod health
-
-```bash
-sun status                 # all domains
-sun status payments        # single domain
-```
-
-### Database migrations
-
-```bash
-sun migrate                # apply pending migrations
-sun migrate status         # show applied / pending
-sun migrate rollback       # roll back the last applied migration
-```
-
-### Secrets
-
-```bash
-# Create or update an environment-scoped secret
-sun secret set DATABASE_URL --env production --value "$DATABASE_URL"
-
-# List keys only; values are never printed
-sun secret list --env production
-
-# Delete a key
-sun secret delete DATABASE_URL --env production
-```
-
-Local and customer-cloud environments materialize secrets as Kubernetes
-`Secret` objects. Hosted mode has a typed client boundary, but no production
-control-plane endpoint yet.
-
-**Note:** `sun secret set` updates the Kubernetes Secret immediately, but running pods are not automatically restarted. The new value takes effect the next time the pod restarts (after `sun up`, `sun deploy`, or a manual `kubectl rollout restart`).
+You write domain logic. Sol handles the factory work: scaffold, build, package, deploy, observe, inspect, roll back.
 
 ---
 
-## Deployment Modes
+## Application model
 
-Sun supports three deployment modes, covering local development through production.
+A Sol workspace organizes services by domain team, with typed events as the only contract between them. `sun new workspace` scaffolds an `-svc` and a `-worker`; `sun new fn`/`sun new worker`/`sun new svc` add more as a workspace grows:
 
-### Local — `sun up`
-
-Builds Docker images and deploys to the local k3d cluster provisioned by `sun dev up`. For development and smoke-testing only.
-
-```bash
-sun up              # build + deploy all services in the current workspace
-sun up --dry-run    # print generated YAML to stdout without applying
+```
+myapp/
+  events/payments/charged.ml     ← event contract, owned by the publishing team
+  app/
+    payments/charge_svc/         ← REST API service   (-svc)
+    comms/notify_worker/         ← Kafka consumer      (-worker)
+    billing/invoice_fn/          ← scheduled function  (-fn)
+  db/migrations/
+  dune-project
 ```
 
-### Customer-cloud direct — `sun deploy`
+`-svc` is a REST API service, `-worker` is a Kafka consumer, `-fn` is a scheduled function — the three primitives every domain team builds with. Teams don't share code across domains; they publish and subscribe to typed Kafka events, enforced at the wire level by Sol's schema registry integration.
 
-CI builds and pushes images to a production registry; `sun deploy <env>/<provider>/<region>` synthesizes manifests and applies them to a customer-managed Kubernetes cluster. Run after the Docker build step in CI. The target (e.g. `prod/aws/us-east-1`) resolves `sun.yml` + `sun/<env>/<provider>/<region>.yml` for defaults like `--registry` and the `env` manifest label — same convention as `sun plan`.
-
-**The target file must exist.** `sun new workspace` scaffolds a placeholder at `sun/prod/aws/us-east-1.yml` — rename it (`mkdir -p sun/<env>/<provider> && mv sun/prod/aws/us-east-1.yml sun/<env>/<provider>/<region>.yml`) to match your real target, or leave it as-is if you deploy to `prod/aws/us-east-1`. An empty file is enough (it just means every value comes from `--registry`/`--image-tag`/etc. instead) — add real defaults so CI doesn't need to pass `--registry` every time:
-
-```yaml
-# sun/prod/aws/us-east-1.yml
-target:
-  registry: 123456789.dkr.ecr.us-east-1.amazonaws.com
-```
-
-```bash
-sun deploy prod/aws/us-east-1 --image-tag $SHA --registry $REGISTRY
-sun deploy prod/aws/us-east-1 --image-tag $SHA --registry $REGISTRY --dry-run  # diff review in PRs
-```
-
-### Customer-cloud GitOps — `sun deploy --emit-to`
-
-`sun deploy <target> --emit-to <dir>` writes synthesized manifests to a directory instead of applying them. CI commits that directory to a separate GitOps repo; Argo CD reconciles the cluster automatically.
-
-```bash
-sun deploy prod/aws/us-east-1 --emit-to manifests/ --image-tag $SHA --registry $REGISTRY
-# CI commits manifests/ to the GitOps repo; Argo CD applies the change
-```
-
-> **Security:** By default, the generated YAML includes redacted `Secret` placeholders — values are replaced with `REDACTED` so the file is safe to inspect but not usable as-is. To emit `ExternalSecret` CRDs for the External Secrets Operator instead (production-ready GitOps), pass `--secret-backend external-secrets`:
->
-> ```bash
-> sun deploy prod/aws/us-east-1 --emit-to manifests/ --image-tag $SHA --registry $REGISTRY \
->   --secret-backend external-secrets \
->   --secret-store-ref my-cluster-store
-> ```
->
-> The `--secret-store-ref` flag names the `ClusterSecretStore` (or `SecretStore` with `--secret-store-kind SecretStore`) that ESO will use to resolve secret values at runtime. See the External Secrets Operator docs for store setup.
-
-### Plan inspection — `sun deploy --emit-plan-to`
-
-Writes the deployment plan as JSON for external tooling or debugging. The schema is experimental.
-
-```bash
-sun deploy prod/aws/us-east-1 --emit-plan-to plan.json --image-tag $SHA
-```
-
-### `sun.toml` — per-service overrides
-
-Each service may carry a `sun.toml` with high-level overrides. All sections are optional.
-
-```toml
-[infra.scale]
-replicas = 2
-cpu      = "500m"
-memory   = "512Mi"
-
-[infra.env]
-config = { LOG_LEVEL = "debug" }    # extra ConfigMap entries
-secrets = ["DATABASE_URL", "API_TOKEN"]
-
-[infra.deploy]
-rollout_strategy = "Recreate"       # or "RollingUpdate" (default)
-ingress_host     = "api.example.com"
-ingress_path     = "/v1"
-
-[infra.labels]
-extra_labels = { team = "payments" }
-
-[infra.rollout]
-strategy = "canary"
-steps = [{weight = 10}, {pause = {duration = 300}}, {weight = 50}, {pause = {}}, {weight = 100}]
-```
-
-`[infra.rollout]` renders Argo Rollouts resources instead of standard
-Deployments when configured. Canary and blue-green strategies are supported.
-See `docs/deployment/escape-hatches.md` for the complete field reference and the
-four-level escape-hatch hierarchy.
+See [Product Architecture](docs/architecture/PRODUCT_ARCHITECTURE.md) for the full factory model and design principles.
 
 ---
 
-## Cloud Infrastructure — `sun cloud plan/apply/destroy`
+## Deployment
 
-`sun cloud plan` previews production-grade infrastructure in **your own** AWS or GCP account using the Terraform modules in `platform/infra/`. `sun cloud apply` provisions it after review. Sun never owns your infrastructure — the provisioned cluster, registry, database, and network all live in your cloud account.
+Sol targets Kubernetes. Run locally against a k3d cluster with `sun up`, or ship to your own AWS/GCP infrastructure with `sun deploy` (direct or GitOps) — the same application model compiles to Kubernetes manifests and Terraform either way. `sun cloud plan/apply` provisions the underlying cluster, registry, and database in your own cloud account; Sol never owns your infrastructure.
 
-### Prerequisites
-
-- **`terraform` CLI** — [https://developer.hashicorp.com/terraform/install](https://developer.hashicorp.com/terraform/install)
-- **Cloud credentials in the environment:**
-  - AWS: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION` (or an active AWS profile)
-  - GCP: `GOOGLE_APPLICATION_CREDENTIALS` pointing to a service-account key file, or `gcloud auth application-default login`
-- **Terraform modules** — the release tarball bundles `platform/infra/`. For source checkouts, set `SUN_HOME` to the repo root.
-
-### Usage
-
-```bash
-# Inspect the merged app/resource/service plan
-sun plan prod/aws/us-east-1
-
-# Preview AWS infrastructure changes (EKS, ECR, RDS, Route53)
-sun cloud plan prod/aws/us-east-1
-
-# Provision AWS infrastructure after reviewing the plan
-sun cloud apply prod/aws/us-east-1
-
-# Provision GCP infrastructure (GKE, Artifact Registry, Cloud SQL)
-sun cloud apply prod/gcp/us-central1
-
-# Preview teardown, then destroy the same stack
-sun cloud destroy prod/aws/us-east-1 --plan
-sun cloud destroy prod/aws/us-east-1 --apply
-```
-
-On success the command prints the key provisioned endpoints:
-
-```
-  cluster_name                  sun-prod
-  cluster_endpoint              https://ABCDEF123456.gr7.us-east-1.eks.amazonaws.com
-  kubeconfig_command            aws eks update-kubeconfig --region us-east-1 --name sun-prod
-  ecr_registry                  123456789.dkr.ecr.us-east-1.amazonaws.com
-  ecr_login_command             aws ecr get-login-password ...
-```
-
-Sensitive outputs (database passwords, connection strings) are never printed; retrieve them with `terraform output -raw <name>` if needed.
-
-`sun cloud plan` is read-only. `sun cloud apply` and `sun cloud destroy --apply`
-create or remove billable cloud resources. Once infrastructure is provisioned,
-use `sun deploy` to deploy your services into it.
+See the [Tutorial](docs/guides/TUTORIAL.md), [Factory Pipeline](docs/architecture/devops-pipeline.md), and [deployment escape hatches](docs/deployment/escape-hatches.md) (per-service `sun.toml` overrides) for details.
 
 ---
 
-## Project Structure
+## Status
 
-```
-sun/
-  cli/
-    sun/                  # customer CLI: sun new / dev / up / deploy / migrate
-    sundev/               # internal repo workflow and ticket pipeline tooling
-  framework/
-    sun-obs/              # Sun_obs.t app-facing observability facade
-    sun-svc/              # REST routing, auth, graceful shutdown, metrics
-    sun-worker/           # Kafka consumer, schema registration, metrics
-    sun-fn/               # scheduled function, Pushgateway metrics push
-  integrations/kafka/
-    kafka-eio-service/    # high-level typed message + schema layer
-                          # (producer/consumer/FFI core moved to the
-                          # external `kafka-eio` opam package, ~/Code/kafka-eio)
-  # obs-eio / obs-loki-eio / obs-prometheus-eio (tracing, logging, metrics API +
-  # Loki/Prometheus backends) moved to standalone opam packages, ~/Code/obs-eio,
-  # ~/Code/obs-loki-eio, ~/Code/obs-prometheus-eio
-  # pg-eio (PostgreSQL pool, typed queries, migrations, Table.Make functor) moved to
-  # a standalone opam package, ~/Code/pg-eio
-  # aws-eio (SigV4 signing, credentials, HTTP transport — foundation for planned
-  # AWS integrations, no in-tree consumer yet) lives at ~/Code/aws-eio
-  platform/
-    deploy/               # local infra scripts, Dockerfile, k8s manifests, schemas
-    infra/                # Terraform, Argo CD, CI deployment references
-  examples/venus/         # reference workspace — two teams, typed events, storage
-    events/payments/      # Charged event contract (owned by payments team)
-    app/comms/            # notify-worker (comms team, consumes Charged)
-    db/migrations/        # notifications table
-    bin/run.ml            # orchestration runner
-  examples/local-demo/          # legacy single-team demo
-  docs/                   # architecture, guides, planning, audit checklists
-    architecture/contributing-map.md  # contributor ownership and extension map
-    planning/OPAM_FOUNDATION_TRACKER.md  # OPAM readiness and low-cost AWS smoke plan
-  project/
-    audits/               # dated audit outputs
-    test/                 # hooks and performance baselines
-    tickets/              # internal work tracking
-  dune-workspace          # unified build root
-```
+Sol is under active development and not yet production-stable. HTTP services, Kafka workers, scheduled functions, PostgreSQL, observability, local development, and Kubernetes deployment are implemented and dogfooded end-to-end. Cloud infrastructure provisioning and the AWS integration layer are further along than most other pieces but still experimental.
 
-Each package is independently usable. A worker that only needs Kafka does not pull in the HTTP layer.
+See [ROADMAP.md](docs/planning/ROADMAP.md) for the current implementation status, layer by layer, and what's planned next.
 
 ---
 
-## Requirements
+## Docs
 
-**Runtime (binary install):**
-
-- `librdkafka-dev`, `libpq-dev`, `libpq5` (`sudo apt-get install -y librdkafka-dev libpq-dev libpq5`)
-- Redpanda (native Linux): `rpk redpanda start --overprovisioned --smp 1 --memory 512M`
-
-**Build from source (contributors):**
-
-- OCaml 5.4.1, Eio 1.3, dune 3.23.1 (install via opam)
-- All runtime deps above
-
-```bash
-# Install sundev and build everything
-eval $(opam env)
-dune build
-ln -sf "$(pwd)/_build/default/cli/sun/bin/main.exe" ~/.local/bin/sun
-ln -sf "$(pwd)/_build/default/tools/sundev/bin/main.exe" ~/.local/bin/sundev
-```
-
-## Test
-
-```bash
-# Unit tests (no broker needed)
-dune test framework/ integrations/kafka/kafka-eio-service/test/
-
-# Full integration tests (requires Redpanda + Loki)
-bash platform/local/scripts/ensure-broker.sh
-bash platform/local/scripts/ensure-loki.sh
-KAFKA_BROKERS=localhost:9092 LOKI_URL=http://localhost:3100 dune test
-```
+- [Tutorial](docs/guides/TUTORIAL.md) — full walkthrough, start to finish
+- [Product Architecture](docs/architecture/PRODUCT_ARCHITECTURE.md) — factory model, design principles, ownership lanes
+- [Factory Pipeline](docs/architecture/devops-pipeline.md) — what each `sun` command does
+- [Deployment escape hatches](docs/deployment/escape-hatches.md) — `sun.toml` reference
+- [Roadmap](docs/planning/ROADMAP.md) — current status and what's next
+- [Contributor map](docs/architecture/contributing-map.md) — where to make common changes
+- Build-from-source, running tests, and the full repo layout: [`.claude/CLAUDE.md`](.claude/CLAUDE.md)
