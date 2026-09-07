@@ -54,6 +54,12 @@ jobs:
   # yet; update both by hand on any bump.
   golden-path-smoke:
     runs-on: ubuntu-22.04
+    # Outer safety net only — per-step timeouts below do the real fail-fast
+    # work. Generous on purpose: a job-level timeout cancels the whole job,
+    # which would also skip the `if: always()` diagnostics step below, so
+    # this must never fire under normal operation (worst observed run so
+    # far: ~17min).
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
 
@@ -66,15 +72,19 @@ jobs:
           ocaml-compiler: 5.4.1
 
       - name: Pin extracted opam packages
+        timeout-minutes: 10
         uses: ./.github/actions/pin-opam-packages
 
       - name: Install OCaml dependencies
-        run: opam install . --deps-only --with-test -y
+        timeout-minutes: 10
+        run: opam install . --deps-only -y
 
       - name: Build sol CLI
+        timeout-minutes: 5
         run: opam exec -- dune build cli/sol/bin/main.exe
 
       - name: Install k3d/kubectl/helm (pinned versions — docs/dogfood/DOGFOOD.md)
+        timeout-minutes: 5
         run: |
           # Direct pinned-release binary downloads, not `curl | bash` —
           # k3d's/helm's own install scripts live on their mutable default
@@ -124,10 +134,12 @@ jobs:
       # internally, so a crash-looping pod (this job's whole reason to
       # exist — see FRIC-007) makes the step above hang until GitHub
       # Actions kills it at its own timeout-minutes, bypassing any
-      # in-step diagnostic logic entirely. This step is job-level
-      # `if: always()` specifically so it still runs after that kind of
-      # external kill, not just after a clean nonzero exit.
-      - name: Dump cluster diagnostics on failure
+      # in-step diagnostic logic entirely. `if: always()` so this step
+      # still runs after that kind of external kill, not just after a
+      # clean nonzero exit — named for what it does, not when: per-pod
+      # describe/logs only fire for pods this loop finds unhealthy, so a
+      # green run still stays cheap (one cluster/pod/event summary).
+      - name: Dump cluster diagnostics
         if: always()
         run: |
           echo "=== k3d clusters ==="
@@ -138,9 +150,22 @@ jobs:
           kubectl get events -A --sort-by=.lastTimestamp || true
           for ns in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
             for pod in $(kubectl get pods -n "$ns" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-              phase=$(kubectl get pod "$pod" -n "$ns" -o jsonpath='{.status.phase}' 2>/dev/null)
-              ready=$(kubectl get pod "$pod" -n "$ns" -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null)
-              if [ "$phase" != "Running" ] || [ "$ready" != "true" ]; then
+              # || true on both: a pod can be deleted/replaced between the
+              # outer list above and these per-pod queries -- entirely
+              # realistic during actual pod churn (a crash-looping pod
+              # restarting), i.e. exactly the scenario this step exists to
+              # diagnose. Without || true, set -e would kill this whole
+              # loop on that race, possibly before ever reaching the pod
+              # that's actually broken.
+              phase=$(kubectl get pod "$pod" -n "$ns" -o jsonpath='{.status.phase}' 2>/dev/null) || true
+              # Pod-level Ready condition, not containerStatuses[0] -- a
+              # multi-container pod's first container isn't reliably the
+              # workload container (e.g. redpanda-0 here is
+              # [config-watcher, redpanda]; index 0 being ready says
+              # nothing about whether redpanda itself is). The Ready
+              # condition is True only when every container is ready.
+              ready=$(kubectl get pod "$pod" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null) || true
+              if [ "$phase" != "Running" ] || [ "$ready" != "True" ]; then
                 echo "=== describe $ns/$pod ==="
                 kubectl describe pod "$pod" -n "$ns" || true
                 echo "=== logs $ns/$pod (current) ==="
