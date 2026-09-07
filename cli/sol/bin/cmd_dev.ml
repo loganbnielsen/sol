@@ -199,9 +199,9 @@ let dev_up () =
       (* FRIC-007: 5.8.12 (image v24.1.8) predates JSON Schema Registry
          support, which landed in Redpanda 24.2
          (redpanda-data/redpanda#6220, confirmed via a Redpanda team
-         member's closing comment) -- every generated Sol service's unconditional
-         `schemaType: "JSON"` registration call got HTTP 422 "Invalid
-         schema type JSON" against this version, permanently
+         member's closing comment) -- every generated Sol service's
+         unconditional `schemaType: "JSON"` registration call got HTTP
+         422 "Invalid schema type JSON" against this version, permanently
          crash-looping every -svc/-worker on a fresh substrate. 5.9.15
          (image v24.2.7) is the last chart pinned to a 24.2.x image before
          the chart line moves to 24.3 -- picked as the smallest version
