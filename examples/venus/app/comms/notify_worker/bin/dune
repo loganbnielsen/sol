@@ -3,10 +3,10 @@
  (libraries
   venus_comms_notify
   kafka_eio_service
-  sun_worker
+  sol_worker
   pg-eio
   obs-eio
-  sun_obs
+  sol_obs
   caqti-eio
   caqti-eio.unix
   caqti-driver-postgresql

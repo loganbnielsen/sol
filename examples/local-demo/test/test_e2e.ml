@@ -106,7 +106,7 @@ let run_golden_path () =
     include Events.OrderPlaced
     let topic_name =
       Kafka_service.topic_name_exn
-        (Printf.sprintf "sun-demo-orders-e2e-%d" (Unix.getpid ()))
+        (Printf.sprintf "sol-demo-orders-e2e-%d" (Unix.getpid ()))
   end in
 
   let kafka_config : Kafka_service.config =
@@ -123,18 +123,18 @@ let run_golden_path () =
 
   (* Observability *)
   let svc_obs =
-    Sun_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+    Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
       ~service:"order-svc" ()
   in
   let worker_obs =
-    Sun_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+    Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
       ~service:"fulfillment-worker" ()
   in
   (* Each carries its own Prometheus registry (like two real, separately
      scraped services) — this test's own assertions render and stitch
      both together, same as examples/local-demo/bin/demo.ml. *)
-  let render () = Sun_obs.metrics_renderer svc_obs () ^ Sun_obs.metrics_renderer worker_obs () in
-  let svc_ot    = Sun_obs.obs_eio svc_obs in
+  let render () = Sol_obs.metrics_renderer svc_obs () ^ Sol_obs.metrics_renderer worker_obs () in
+  let svc_ot    = Sol_obs.obs_eio svc_obs in
 
   (* Storage *)
   let db_pool = match postgres_url with
@@ -167,7 +167,7 @@ let run_golden_path () =
 
   let module W = struct
     module Message = OrderPlaced
-    let group_id = "sun-e2e-test-worker"
+    let group_id = "sol-e2e-test-worker"
 
     let handle msg ~trace_ctx:_ =
       if msg.Message.order_id <> "order-e2e-stop" then
@@ -259,7 +259,7 @@ let run_golden_path () =
           try Some (http_get env ~sw ~port:worker_metrics_port ~path:"/metrics" ())
           with _ -> None
         with
-        | Some resp when metric_nonzero resp "sun_worker_messages_total" -> resp
+        | Some resp when metric_nonzero resp "sol_worker_messages_total" -> resp
         | _ -> Eio.Time.sleep env#clock 0.05; loop ()
       in
       Ok (loop ())) with
@@ -299,23 +299,23 @@ let run_golden_path () =
       in
       let body =
         Printf.sprintf
-          {|{"streams":[{"stream":{"namespace":"sun-e2e","app":"auth-read"},"values":[[%S,%S]]}]}|}
-          ts_ns "sun logs authenticated read e2e"
+          {|{"streams":[{"stream":{"namespace":"sol-e2e","app":"auth-read"},"values":[[%S,%S]]}]}|}
+          ts_ns "sol logs authenticated read e2e"
       in
       let pushed =
         http_post env ~sw ~port:p ~path:"/loki/api/v1/push" ~body () = 204
       in
       if not pushed then None else
         let credentials =
-          match Sun_cli_loki.resolve_credentials
+          match Sol_cli_loki.resolve_credentials
                   ~flag_username:None ~flag_password:None
-                  ~env_username:(Sys.getenv_opt "SUN_LOKI_USERNAME")
-                  ~env_password:(Sys.getenv_opt "SUN_LOKI_PASSWORD") with
+                  ~env_username:(Sys.getenv_opt "SOL_LOKI_USERNAME")
+                  ~env_password:(Sys.getenv_opt "SOL_LOKI_PASSWORD") with
           | Ok (Some c) -> Some c
-          | Ok None -> Some Sun_cli_loki.{ username = "sun-e2e"; password = "sun-e2e" }
+          | Ok None -> Some Sol_cli_loki.{ username = "sol-e2e"; password = "sol-e2e" }
           | Error msg -> failwith msg
         in
-        (match Sun_cli_loki.query ~base_url:url ~ns:"sun-e2e" ~k8s_name:"auth-read"
+        (match Sol_cli_loki.query ~base_url:url ~ns:"sol-e2e" ~k8s_name:"auth-read"
                  ?credentials ~limit:5 ~timeout_s:5.0 () with
          | Ok lines -> Some (List.length lines)
          | Error _ -> Some 0)
@@ -341,17 +341,17 @@ let () =
             (String.concat ", " (List.map string_of_int bad)));
     ];
     "metrics", [
-      Alcotest.test_case "sun_svc_requests_total > 0" `Quick (fun () ->
-        if not (metric_nonzero r.metrics_text "sun_svc_requests_total") then
+      Alcotest.test_case "sol_svc_requests_total > 0" `Quick (fun () ->
+        if not (metric_nonzero r.metrics_text "sol_svc_requests_total") then
           Alcotest.fail "metric absent or zero");
-      Alcotest.test_case "sun_worker_messages_total > 0" `Quick (fun () ->
-        if not (metric_nonzero r.metrics_text "sun_worker_messages_total") then
+      Alcotest.test_case "sol_worker_messages_total > 0" `Quick (fun () ->
+        if not (metric_nonzero r.metrics_text "sol_worker_messages_total") then
           Alcotest.fail "metric absent or zero");
       Alcotest.test_case "worker /metrics serves metrics" `Quick (fun () ->
         match r.worker_metrics_http with
         | None -> Alcotest.fail "worker /metrics was not reachable"
         | Some resp ->
-          if not (metric_nonzero resp "sun_worker_messages_total") then
+          if not (metric_nonzero resp "sol_worker_messages_total") then
             Alcotest.fail "worker /metrics did not include worker metrics");
     ];
     "loki", [
@@ -361,12 +361,12 @@ let () =
         | Some resp ->
           if not (str_contains resp {|"values":[[|}) then
             Alcotest.fail "no log streams in Loki response");
-      Alcotest.test_case "sun logs Loki query path reads pushed logs" `Quick (fun () ->
+      Alcotest.test_case "sol logs Loki query path reads pushed logs" `Quick (fun () ->
         match r.loki_cli_lines with
         | None -> ()  (* LOKI_URL not set — skip *)
         | Some n ->
           if n = 0 then
-            Alcotest.fail "Sun_cli_loki.query returned no pushed log lines");
+            Alcotest.fail "Sol_cli_loki.query returned no pushed log lines");
     ];
     "postgres", [
       Alcotest.test_case "fulfilled orders persisted" `Quick (fun () ->

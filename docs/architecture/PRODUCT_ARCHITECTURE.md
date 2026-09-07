@@ -1,6 +1,6 @@
-# Sun Product Architecture
+# Sol Product Architecture
 
-Sun is an open-source OCaml software factory for backend systems. It is not only
+Sol is an open-source OCaml software factory for backend systems. It is not only
 a runtime framework and not only a deployment CLI; it is the productized path
 from typed domain code to running production services.
 
@@ -8,13 +8,13 @@ The product has four layers:
 
 1. **User workspace repo** — the application source of truth: domain events,
    service code, workers, functions, migrations, and high-level service config.
-2. **Sun open-source factory** — the framework libraries, CLI control surface,
+2. **Sol open-source factory** — the framework libraries, CLI control surface,
    scaffold templates, deployment compiler, local dev tooling, and infrastructure
    modules.
 3. **Generated production artifacts** — Dune projects, Docker images, Kubernetes
    manifests, GitOps output, deployment plans, release metadata, and observability
    wiring.
-4. **Sun hosted factory floor** — the future managed service layer: projects,
+4. **Sol hosted factory floor** — the future managed service layer: projects,
    environments, builders, clusters, registries, secrets, deploy history, domains,
    logs, rollbacks, previews, RBAC, audit logs, and billing.
 
@@ -28,19 +28,19 @@ detailed control-plane API before the factory contract is stable.
 
 **Errors are values.** Every operation that can fail returns a `Result`. No exceptions for control flow. The type system enforces that failure is handled.
 
-**One way to do things.** Sun picks conventions and enforces them. Module structure, error handling, configuration, observability — these are not decisions each service makes independently. Deviation is explicit.
+**One way to do things.** Sol picks conventions and enforces them. Module structure, error handling, configuration, observability — these are not decisions each service makes independently. Deviation is explicit.
 
-**Explicit over implicit.** No magic. No hidden control flow. If something happens, there is a function call you can find. This applies especially to security: auth is always declared explicitly on each route. Sun does not infer auth strategy from path conventions or other signals. The developer states intent; the framework enforces it.
+**Explicit over implicit.** No magic. No hidden control flow. If something happens, there is a function call you can find. This applies especially to security: auth is always declared explicitly on each route. Sol does not infer auth strategy from path conventions or other signals. The developer states intent; the framework enforces it.
 
-**DevOps expertise, not engineering judgment.** Sun productizes the repeatable parts of platform engineering and DevOps. It removes the need to know Terraform, Helm, Kubernetes, image wiring, and CI deployment glue to ship a production service. It does not remove the need to make sound engineering decisions. Security design, data modeling, and business logic stay in the developer's hands and stay readable in the code.
+**DevOps expertise, not engineering judgment.** Sol productizes the repeatable parts of platform engineering and DevOps. It removes the need to know Terraform, Helm, Kubernetes, image wiring, and CI deployment glue to ship a production service. It does not remove the need to make sound engineering decisions. Security design, data modeling, and business logic stay in the developer's hands and stay readable in the code.
 
-**Security on Day 1.** Sun's framework types carry security configuration as a first-class concern — transport encryption, SASL authentication, and TLS are all part of the data model from the beginning, defaulting to plaintext only in dev and reading from environment variables in all other environments. You can't accidentally ship a production service with no security configuration because the type forces the field.
+**Security on Day 1.** Sol's framework types carry security configuration as a first-class concern — transport encryption, SASL authentication, and TLS are all part of the data model from the beginning, defaulting to plaintext only in dev and reading from environment variables in all other environments. You can't accidentally ship a production service with no security configuration because the type forces the field.
 
-**Dev mirrors prod exactly.** `sun dev up` provisions a local k3d cluster with the same Helm charts used in production — Redpanda, PostgreSQL, Loki, Prometheus, Grafana. The only difference is scale (single replica, no persistent volume). Port-forwards make all services reachable at the same addresses your services expect. Surprises at deploy time are a symptom of divergent environments; Sun eliminates that divergence.
+**Dev mirrors prod exactly.** `sol dev up` provisions a local k3d cluster with the same Helm charts used in production — Redpanda, PostgreSQL, Loki, Prometheus, Grafana. The only difference is scale (single replica, no persistent volume). Port-forwards make all services reachable at the same addresses your services expect. Surprises at deploy time are a symptom of divergent environments; Sol eliminates that divergence.
 
 **FOSS infrastructure.** The full stack runs on open source primitives — Kubernetes, Strimzi, Argo CD, Prometheus, Loki, Grafana, Terraform. No vendor lock-in. Cloud providers are an infrastructure detail.
 
-**Cloud-agnostic Kubernetes.** Sun services deploy to any Kubernetes cluster. The target is k8s, not a specific cloud provider. StorageClass abstraction, Strimzi for Kafka, and Terraform modules make the stack portable across AWS, GCP, Azure, or bare metal.
+**Cloud-agnostic Kubernetes.** Sol services deploy to any Kubernetes cluster. The target is k8s, not a specific cloud provider. StorageClass abstraction, Strimzi for Kafka, and Terraform modules make the stack portable across AWS, GCP, Azure, or bare metal.
 
 ---
 
@@ -52,10 +52,10 @@ The **user workspace repo is always the source of truth** for application struct
 events/<domain>/                 typed event contracts owned by publishing teams
 app/<domain>/<name>_<primitive>/ service, worker, and function code
 db/migrations/                   database migrations
-sun.toml                         high-level service overrides
+sol.toml                         high-level service overrides
 ```
 
-Sun compiles the workspace into runtime artifacts:
+Sol compiles the workspace into runtime artifacts:
 
 - Kubernetes namespaces, Deployments, Services, CronJobs, NetworkPolicies, and Secrets
 - Kafka topics, schema registrations, consumer groups, and ACL intent
@@ -71,10 +71,10 @@ normal workflows.
 
 ## Factory Responsibilities
 
-The Sun CLI is the control panel, not the whole factory. Each command triggers
+The Sol CLI is the control panel, not the whole factory. Each command triggers
 one part of a larger automated pipeline:
 
-| Factory stage | Sun responsibility |
+| Factory stage | Sol responsibility |
 |---|---|
 | Scaffold | Generate workspaces, services, workers, functions, events, tests, Dockerfiles, and CI templates |
 | Build | Compile OCaml via Dune and prepare container image inputs |
@@ -84,7 +84,7 @@ one part of a larger automated pipeline:
 | Execute | Apply locally, emit artifacts, or submit to a future hosted executor |
 | Operate | Status, logs, migrations, secrets, rollback, and release inspection |
 
-Framework libraries (`sun-svc`, `sun-worker`, `sun-fn`) are the runtime contract
+Framework libraries (`sol-svc`, `sol-worker`, `sol-fn`) are the runtime contract
 layer inside that factory. Supporting libraries (`*-eio`) are factory machinery:
 their public APIs should expose domain operations and explicit results, not raw
 transport handles, hidden parsers, or implementation escape hatches.
@@ -93,49 +93,49 @@ transport handles, hidden parsers, or implementation escape hatches.
 
 ## Ownership Lanes
 
-Sun should support three current ownership lanes plus one future hosted lane
+Sol should support three current ownership lanes plus one future hosted lane
 over the same application model.
 
 ### Local Dev
 
-The user runs Sun on their machine.
+The user runs Sol on their machine.
 
 ```bash
-sun dev up
-sun up
+sol dev up
+sol up
 ```
 
-Sun provisions or connects to a local k3d-backed platform, builds images, renders runtime artifacts, applies them locally, and starts port-forwards.
+Sol provisions or connects to a local k3d-backed platform, builds images, renders runtime artifacts, applies them locally, and starts port-forwards.
 
 ### Managed Customer Cloud
 
 The customer owns the cloud account and cluster.
 
-Sun may help provision infrastructure with Terraform wrappers or guides, but the
+Sol may help provision infrastructure with Terraform wrappers or guides, but the
 customer's account owns the cluster, registry, DNS, secrets backend, and cloud
-bill. Sun owns the standard substrate shape and release workflow.
+bill. Sol owns the standard substrate shape and release workflow.
 
 Deployments may be direct:
 
 ```bash
-sun deploy prod/aws/us-east-1
+sol deploy prod/aws/us-east-1
 ```
 
 ### Exported Self-Managed
 
-The customer owns apply, drift, overlays, and operations. Sun still compiles the
+The customer owns apply, drift, overlays, and operations. Sol still compiles the
 workspace into Terraform/manifests/GitOps artifacts, but those artifacts become
-handoff output rather than a Sun-operated release.
+handoff output rather than a Sol-operated release.
 
 ```bash
-sun deploy prod/aws/us-east-1 --emit-to <gitops-repo>
+sol deploy prod/aws/us-east-1 --emit-to <gitops-repo>
 ```
 
-### Sun Hosted Factory Floor
+### Sol Hosted Factory Floor
 
-Sun owns the hosting environment and operates the factory floor.
+Sol owns the hosting environment and operates the factory floor.
 
-The user's workspace repo still remains the source of truth, but Sun owns environment resolution, builds, registries, clusters, secrets, deploy execution, release records, logs, rollbacks, domains, and billing.
+The user's workspace repo still remains the source of truth, but Sol owns environment resolution, builds, registries, clusters, secrets, deploy execution, release records, logs, rollbacks, domains, and billing.
 
 The desired commercial product path is:
 
@@ -150,38 +150,38 @@ rollback
 
 The CLI should be able to interact with this mode, but the first architectural
 priority is making hosted deployment another executor over the same deployment
-plan. Hosted Sun should run the same factory contract, not become a second
+plan. Hosted Sol should run the same factory contract, not become a second
 application model.
 
 ---
 
 ## Ownership Matrix
 
-| Concern | Local Dev | Managed Customer Cloud | Exported Self-Managed | Future Sun Hosted |
+| Concern | Local Dev | Managed Customer Cloud | Exported Self-Managed | Future Sol Hosted |
 |---|---|---|---|---|
 | Application source | user workspace repo | user workspace repo | user workspace repo | user workspace repo |
-| Build execution | local CLI | customer CI or CLI | customer CI or CLI | Sun |
-| Deployment execution | local CLI | Sun CLI/CI in customer account | customer GitOps/apply path | Sun hosting plane |
-| Cluster | local k3d | customer | customer | Sun |
-| Registry | local k3d registry | customer | customer | Sun |
-| Kafka / schema registry | local Redpanda | customer-managed or Sun-installed in customer cluster | customer-managed | Sun-managed |
-| Postgres | local/in-cluster | customer RDS, Cloud SQL, or in-cluster | customer-managed | Sun-managed |
-| Secrets | local/dev placeholders | customer secret backend | generated references/placeholders | Sun secret backend |
-| Domains / TLS | localhost | customer DNS | customer DNS | Sun-managed DNS/TLS |
-| Observability | local Grafana/Loki/Prometheus | customer cluster | customer-managed | Sun-hosted views backed by managed telemetry |
-| Deploy history | local output | Sun release inspection over customer apply | emitted plan/artifact history | Sun release records |
-| Rollback | local CLI | Sun CLI/GitOps | customer operation | Sun hosting plane |
-| Billing | none | customer cloud bill | customer cloud bill | Sun |
+| Build execution | local CLI | customer CI or CLI | customer CI or CLI | Sol |
+| Deployment execution | local CLI | Sol CLI/CI in customer account | customer GitOps/apply path | Sol hosting plane |
+| Cluster | local k3d | customer | customer | Sol |
+| Registry | local k3d registry | customer | customer | Sol |
+| Kafka / schema registry | local Redpanda | customer-managed or Sol-installed in customer cluster | customer-managed | Sol-managed |
+| Postgres | local/in-cluster | customer RDS, Cloud SQL, or in-cluster | customer-managed | Sol-managed |
+| Secrets | local/dev placeholders | customer secret backend | generated references/placeholders | Sol secret backend |
+| Domains / TLS | localhost | customer DNS | customer DNS | Sol-managed DNS/TLS |
+| Observability | local Grafana/Loki/Prometheus | customer cluster | customer-managed | Sol-hosted views backed by managed telemetry |
+| Deploy history | local output | Sol release inspection over customer apply | emitted plan/artifact history | Sol release records |
+| Rollback | local CLI | Sol CLI/GitOps | customer operation | Sol hosting plane |
+| Billing | none | customer cloud bill | customer cloud bill | Sol |
 
 Observability is a shared workspace surface, not one dashboard per service. See
 [`observability-design.md`](observability-design.md) for the label model,
-backend modes, and `sun status` / `sun open` UX.
+backend modes, and `sol status` / `sol open` UX.
 
 ---
 
 ## Deployment Compiler
 
-Sun treats deployment as a compiler pipeline:
+Sol treats deployment as a compiler pipeline:
 
 ```text
 workspace scan
@@ -205,7 +205,7 @@ deployment plan.
 
 ## Deployment Plan
 
-A deployment plan represents what Sun intends to run for a workspace in a specific environment.
+A deployment plan represents what Sol intends to run for a workspace in a specific environment.
 
 It should be:
 
@@ -221,7 +221,7 @@ Minimum shape:
 type deployment_mode =
   | Local
   | Customer_cloud
-  | Sun_hosted
+  | Sol_hosted
 
 type environment = {
   name : string;
@@ -255,7 +255,7 @@ type deployment_plan = {
 }
 ```
 
-This is illustrative, not final API. The important point is that local deploy, GitOps deploy, customer-cloud deploy, and Sun-hosted deploy should consume the same plan.
+This is illustrative, not final API. The important point is that local deploy, GitOps deploy, customer-cloud deploy, and Sol-hosted deploy should consume the same plan.
 
 ---
 
@@ -268,7 +268,7 @@ Executors apply a deployment plan.
 | Local executor | deployment plan | applies manifests to local k3d cluster |
 | Direct Kubernetes executor | deployment plan | applies manifests to current kube context |
 | GitOps executor | deployment plan | writes manifests to a GitOps repo |
-| Future Sun hosted executor | deployment plan | submits or applies through Sun hosting plane |
+| Future Sol hosted executor | deployment plan | submits or applies through Sol hosting plane |
 
 Executor differences should be operational, not architectural. If two executors need different application models, the compiler pipeline is leaking.
 
@@ -284,7 +284,7 @@ Application-owned:
 - route definitions and auth intent
 - event contracts
 - migrations
-- high-level overrides in `sun.toml`
+- high-level overrides in `sol.toml`
 
 Environment-owned:
 
@@ -299,7 +299,7 @@ Environment-owned:
 - secret values
 - managed service placement
 
-For local and customer-cloud modes, environment config can live in local files or CI variables. For Sun-hosted mode, environment config comes from the hosting plane.
+For local and customer-cloud modes, environment config can live in local files or CI variables. For Sol-hosted mode, environment config comes from the hosting plane.
 
 ---
 
@@ -329,9 +329,9 @@ record.
 
 1. Add a typed `Deployment_plan` module.
 2. Refactor manifest rendering to consume a deployment plan instead of raw discovered services.
-3. Make `sun up` and `sun deploy --emit-to` use the same plan.
+3. Make `sol up` and `sol deploy --emit-to` use the same plan.
 4. Add an environment config model for local and customer-cloud deploys.
-5. Keep Sun-hosted deployment as a documented executor direction until the plan shape is stable.
+5. Keep Sol-hosted deployment as a documented executor direction until the plan shape is stable.
 
 ---
 
@@ -339,16 +339,16 @@ record.
 
 These are intentionally not settled yet:
 
-- Whether Sun-hosted builds pull directly from Git providers or receive artifacts from customer CI.
+- Whether Sol-hosted builds pull directly from Git providers or receive artifacts from customer CI.
 - Whether hosted runtime clusters are single-tenant, multi-tenant, or mixed by customer tier.
-- Which secrets backend Sun-hosted mode uses.
+- Which secrets backend Sol-hosted mode uses.
 - Whether customer-cloud mode is a first-class product path or an advanced/self-managed path.
-- How custom domains and TLS are provisioned in Sun-hosted mode.
+- How custom domains and TLS are provisioned in Sol-hosted mode.
 - How billing maps to projects, environments, services, usage, and managed resources.
 - Whether GitOps remains a core hosted mechanism or only a customer-cloud option.
 
 The current product bias is:
 
 - local dev should be excellent;
-- Sun-hosted should become the paid managed factory floor;
+- Sol-hosted should become the paid managed factory floor;
 - customer-cloud should remain possible, but should not complicate the default user experience.

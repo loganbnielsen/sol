@@ -6,21 +6,21 @@ Accepted.
 
 ## Context
 
-Sun's infrastructure generation splits into three layers with different
+Sol's infrastructure generation splits into three layers with different
 portability requirements:
 
 1. **Cluster/cloud provisioning** — `platform/infra/aws/`, `platform/infra/gcp/`,
    each an independent Terraform root module (VPC, EKS/GKE, ECR, RDS,
-   Route53, provider IAM). Local dev has no Terraform equivalent — `sun dev
+   Route53, provider IAM). Local dev has no Terraform equivalent — `sol dev
    up` shells `k3d cluster create` directly.
 2. **Platform components** — Helm-managed cluster infrastructure: Loki,
    Prometheus, Grafana, Tempo, cert-manager, Redpanda, PostgreSQL, Alloy.
    These are the same applications regardless of which Kubernetes they run
    on.
-3. **Application workloads** — sun-generated Kubernetes manifests for
+3. **Application workloads** — sol-generated Kubernetes manifests for
    `-svc`/`-worker`/`-fn`, Services, NetworkPolicies. One shared OCaml model
-   (`sun_cli_manifest.ml` → `sun_cli_manifest_yaml.ml` → `sun_cli_deployment_render.ml`)
-   renders these identically for `sun up` (local) and `sun deploy` (cloud).
+   (`sol_cli_manifest.ml` → `sol_cli_manifest_yaml.ml` → `sol_cli_deployment_render.ml`)
+   renders these identically for `sol up` (local) and `sol deploy` (cloud).
 
 Layers 1 and 3 are sound: Layer 1's providers are genuinely different
 infrastructure primitives with no meaningful shared desired state to
@@ -38,7 +38,7 @@ describes an intended invariant but enforces nothing.
 This stopped being theoretical when BUG-013 fixed Loki's
 `commonConfig.replication_factor` in `platform/infra/base/main.tf` and
 nobody thought to check `cmd_dev.ml`'s independent Loki config, which
-still lacks the fix (BUG-016): a fresh `sun dev up` today can hit the
+still lacks the fix (BUG-016): a fresh `sol dev up` today can hit the
 exact ring-quorum failure BUG-013 already fixed in production. The
 follow-up code-layer audit (`project/audits/2026-09-06_code_layer_audit.md`)
 found three more instances of the same failure mode (Alloy River config,
@@ -61,7 +61,7 @@ platform/components/loki/
 ```
 
 **Format: JSON, not YAML.** The OCaml side has no YAML dependency today
-(`cli/sun/lib/dune` pulls `yojson`+`otoml`, no `yaml`); Terraform's
+(`cli/sol/lib/dune` pulls `yojson`+`otoml`, no `yaml`); Terraform's
 built-in `jsondecode()` needs no provider. JSON is valid input everywhere
 YAML is accepted (Helm's `-f`, Terraform's `helm_release.values`), so this
 gets both execution paths reading the same files with zero new
@@ -134,7 +134,7 @@ become the new dumping ground defeats the point.
   `values-staging-gcp.json`, ...). Deployment profile (`local`/`durable`)
   and infrastructure binding (which cloud, which account) stay independent
   dimensions — a profile file never encodes a provider.
-- **No Sun Cloud / managed-platform abstraction** ahead of that becoming
+- **No Sol Cloud / managed-platform abstraction** ahead of that becoming
   an active workstream. A `managed` profile is a plausible future addition
   to this same structure, not a reason to build more now.
 - **No elaborate lint tooling.** The CI guardrail is a structural grep for

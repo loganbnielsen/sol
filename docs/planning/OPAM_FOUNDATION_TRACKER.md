@@ -6,7 +6,7 @@ Last updated: 2026-08-27
 
 ## Goal
 
-Make the packages broken out of Sun OPAM-ready, then prove Sun builds on them end-to-end.
+Make the packages broken out of Sol OPAM-ready, then prove Sol builds on them end-to-end.
 
 This tracker is not a replacement for package READMEs. Each package README remains the source of truth for what the package does, how to use it, and what it intentionally leaves to callers or upstream libraries.
 
@@ -21,7 +21,7 @@ This tracker is not a replacement for package READMEs. Each package README remai
 | `pg-eio` | `~/Code/pg-eio` | Caqti/Postgres helpers, migrations, table functor | Clean-switch install/build/test pass | Cross-package pin test with Kafka/AWS once ready |
 | `kafka-eio` | `~/Code/kafka-eio` | Eio Kafka producer/consumer/core over librdkafka | Local lint/build pass; OPAM PR open with metadata fixes | Track opam-repository PR #30557 |
 | `aws-eio` | `~/Code/aws-eio` | SigV4, credentials, minimal AWS HTTP transport | `awskit` comparison done (keep as-is, see below); CI added; README fix merged (PR #1, `ada1811`) | Clean-switch check, then submit to opam-repository |
-| `kafka-eio-service` | `sun/integrations/kafka/kafka-eio-service` | Sun-level typed message/schema service layer | In Sun; uses `https-eio` | Decide whether it remains Sun-specific after foundation packages settle |
+| `kafka-eio-service` | `sol/integrations/kafka/kafka-eio-service` | Sol-level typed message/schema service layer | In Sol; uses `https-eio` | Decide whether it remains Sol-specific after foundation packages settle |
 
 ## Submission Cadence
 
@@ -36,7 +36,7 @@ to later packages before multiplying the same pattern.
 | 3 | `obs-loki-eio`, `https-eio` | Rounds out observability and the shared HTTPS transport. | Submit after batch 2 review/CI feedback is incorporated. |
 | 4 | `aws-eio`, `s3-eio` | AWS base plus the simplest concrete AWS client; useful live-smoke pairing. | Submit after `aws-eio` live STS/S3 smoke evidence exists. |
 | 5 | `dynamodb-eio`, `lambda-eio` | Heavier AWS clients; keep separate from the base AWS review. | Submit after AWS base package is accepted. |
-| 6 | `sun` | The framework should enter opam only after its extracted dependency stack is accepted. | Submit after all required foundation packages are published. |
+| 6 | `sol` | The framework should enter opam only after its extracted dependency stack is accepted. | Submit after all required foundation packages are published. |
 
 Default batch size: two packages. Break that rule only for a dependency that
 must land alone, like `kafka-eio`, or for a trivial metadata follow-up requested
@@ -48,11 +48,11 @@ Checked 2026-08-26:
 
 | Package | `opam lint` | Local `dune build @install @runtest` | Clean-switch proof | Notes |
 |---|---|---|---|---|
-| `https-eio` | pass | pass | pass in `sun-foundation-core` | Uses `ca-certs`; no private CA path scan found. |
-| `obs-eio` | pass | pass | pass in `sun-foundation-core` | 49 tests ran locally. |
-| `obs-loki-eio` | pass | pass | pass in `sun-foundation-core` | Uses `Https_eio.https_for_uri`; no private TLS wrapper found. |
-| `obs-prometheus-eio` | pass | pass | pass in `sun-foundation-core` | Uses `Https_eio.https_for_uri`; no private TLS wrapper found. |
-| `pg-eio` | pass | pass | pass in `sun-foundation-core` | Postgres integration tests ran locally. |
+| `https-eio` | pass | pass | pass in `sol-foundation-core` | Uses `ca-certs`; no private CA path scan found. |
+| `obs-eio` | pass | pass | pass in `sol-foundation-core` | 49 tests ran locally. |
+| `obs-loki-eio` | pass | pass | pass in `sol-foundation-core` | Uses `Https_eio.https_for_uri`; no private TLS wrapper found. |
+| `obs-prometheus-eio` | pass | pass | pass in `sol-foundation-core` | Uses `Https_eio.https_for_uri`; no private TLS wrapper found. |
+| `pg-eio` | pass | pass | pass in `sol-foundation-core` | Postgres integration tests ran locally. |
 | `kafka-eio` | pass | pass | pending active OPAM metadata work | Local unit/stub tests ran; live Redpanda coverage remains environment-gated. |
 
 External status:
@@ -62,7 +62,7 @@ External status:
 - Existing published AWS packages to account for before publishing `aws-eio`: `awskit` 0.2.0 covers SigV4 signing, credentials, endpoints, core types, and a runtime interface; `awskit-eio` 0.2.0 is the Eio/Cohttp adapter; `awskit-s3-eio` 0.2.0 is the Eio S3 adapter. Sources checked: `https://opam.ocaml.org/packages/awskit/awskit.0.1.0/`, `https://opam.ocaml.org/packages/awskit-eio/awskit-eio.0.1.0/`, `https://opam.ocaml.org/packages/awskit-s3-eio/`.
 - `aws-eio` OPAM-readiness work is currently owned by another engineer; this tracker should not duplicate that implementation work.
 - **`awskit` comparison completed 2026-08-26 (resolves the Phase 1 gate below).** Decision: keep `aws-eio`, do not redirect to `awskit`. Two concrete, verified reasons:
-  1. `awskit`'s own `SUPPORT.md` (`https://github.com/abdufelsayed/awskit`) explicitly lists "Web identity ... assume-role profiles" as **unsupported, pending additional implementation**. That is EKS IRSA (`AssumeRoleWithWebIdentity` via a projected Kubernetes service-account token) — Sun's actual production credential source (`platform/infra/aws/main.tf` provisions EKS with IRSA already). `aws-eio`'s `Aws_credentials.Web_identity` covers exactly this gap.
+  1. `awskit`'s own `SUPPORT.md` (`https://github.com/abdufelsayed/awskit`) explicitly lists "Web identity ... assume-role profiles" as **unsupported, pending additional implementation**. That is EKS IRSA (`AssumeRoleWithWebIdentity` via a projected Kubernetes service-account token) — Sol's actual production credential source (`platform/infra/aws/main.tf` provisions EKS with IRSA already). `aws-eio`'s `Aws_credentials.Web_identity` covers exactly this gap.
   2. `awskit-eio`'s HTTP transport (`packages/awskit/eio/runtime.ml`, `do_with_response`) builds the request URI via `Uri.of_string` on a raw path+query string and passes it straight into `Cohttp_eio.Client.call`. That is the same code shape `aws-eio`'s own design notes warn about: `Cohttp_eio.Client`'s internals re-derive the wire path via `Uri.path_and_query`, which un-escapes characters (`! * ' ( ) : @ $ , +`) that SigV4's `UriEncode()` requires percent-escaped — a request signed one way and sent another fails AWS's signature check. Not empirically proven broken (would need a live request with those characters in a query value to confirm), but a real, plausible risk, not a settled non-issue — `aws-eio`'s custom `Aws_http` exists specifically to avoid this class of bug, validated against AWS's own SigV4 conformance suite (37/37 cases).
   - Not re-litigated: `Aws_sigv4`'s signing math itself may well be redundant with `awskit`'s (both are presumably conformant), but switching would mean depending on a single-maintainer third-party package for a security-critical signing implementation instead of this repo's own conformance-suite-validated one, for no functional gain. Not worth it absent a maintenance-burden reason to reconsider.
 
@@ -108,7 +108,7 @@ A package is OPAM-ready when:
 Goal: remove accidental private copies where an accepted package already exists.
 
 - [x] Adopt `ca-certs` in `https-eio`.
-- [x] Make `obs-loki-eio`, `obs-prometheus-eio`, `aws-eio`, and Sun's `kafka-eio-service` use `https-eio` in current local state.
+- [x] Make `obs-loki-eio`, `obs-prometheus-eio`, `aws-eio`, and Sol's `kafka-eio-service` use `https-eio` in current local state.
 - [ ] Keep `aws_http.ml` custom unless a replacement preserves SigV4 wire bytes exactly.
 - [x] Compare `aws-eio` against published `awskit`/`awskit-eio`/`awskit-s3-eio` before submitting any `aws-eio` OPAM PR; keep `aws-eio` only for behavior those packages do not cover or cannot preserve. Decision 2026-08-26: keep `aws-eio` as-is — see External status above (IRSA credential support `awskit` explicitly lacks; SigV4 wire-byte fidelity `awskit-eio`'s `Cohttp_eio.Client` usage puts at risk).
 - [ ] Keep package boundaries described in READMEs, not separate scope docs.
@@ -126,7 +126,7 @@ opam lint
 Then from a clean switch:
 
 ```sh
-opam switch create sun-foundation ocaml.5.4.0
+opam switch create sol-foundation ocaml.5.4.0
 opam install . --deps-only --with-test
 dune build @install @runtest
 ```
@@ -148,9 +148,9 @@ Packages to check:
 
 Clean-switch evidence:
 
-- Switch: `sun-foundation-core`, OCaml 5.4.0.
+- Switch: `sol-foundation-core`, OCaml 5.4.0.
 - Command: `opam install https-eio obs-eio obs-loki-eio obs-prometheus-eio pg-eio --with-test`.
-- Follow-up command: `dune build @install @runtest` in each of the five local checkouts under `OPAMSWITCH=sun-foundation-core`.
+- Follow-up command: `dune build @install @runtest` in each of the five local checkouts under `OPAMSWITCH=sol-foundation-core`.
 - Result: all five passed. OPAM pin sync ignored uncommitted README-only edits in `obs-loki-eio` and `obs-prometheus-eio`; the follow-up local checkout builds covered the current worktrees.
 - `https-eio` release tag: `v0.1.0` pushed to origin at commit `c0c9d1267885702f793703acd81b2a086cdbb809` after `opam lint` and `dune build @install @runtest` passed.
 - `https-eio` OPAM submission: PR #30570 created with `opam-publish --tag v0.1.0`; dry-run patch was one new package file under `packages/https-eio/https-eio.0.1.0/opam`.
@@ -160,7 +160,7 @@ Clean-switch evidence:
 Goal: prove the foundation installs together without hidden workspace assumptions.
 
 ```sh
-opam switch create sun-foundation-all ocaml.5.4.0
+opam switch create sol-foundation-all ocaml.5.4.0
 opam pin add https-eio ~/Code/https-eio -n
 opam pin add obs-eio ~/Code/obs-eio -n
 opam pin add obs-loki-eio ~/Code/obs-loki-eio -n
@@ -176,37 +176,37 @@ Acceptance:
 - [x] All packages resolve in one clean switch.
 - [x] No package relies on another repo being checked out beside it.
 - [x] No link-name clashes.
-- [x] Sun builds against the pinned packages.
+- [x] Sol builds against the pinned packages.
 
-Evidence (2026-08-26): Created switch `sun-foundation-all`, OCaml 5.4.0. Pinned all
+Evidence (2026-08-26): Created switch `sol-foundation-all`, OCaml 5.4.0. Pinned all
 seven packages (`https-eio`, `obs-eio`, `obs-loki-eio`, `obs-prometheus-eio`, `pg-eio`,
 `kafka-eio`, `aws-eio`) via `git+file://...#main`, then `opam install <all seven>
 --with-test -y` — exit 0, every package and its full transitive dependency tree
 installed, each package's own test suite ran and passed as part of `--with-test`, no
 install-time file conflicts (which is how a link-name clash would surface). Then
-`opam install . --deps-only --with-test` (in `sun`) and `dune build` under this same
+`opam install . --deps-only --with-test` (in `sol`) and `dune build` under this same
 switch — clean. `dune test framework/ integrations/kafka/kafka-eio-service/` — all
 suites passed, including `kafka_service_integration`'s real-local-broker roundtrip
 test, confirming `kafka-eio`'s C stubs/librdkafka linkage work correctly from this
 switch, not just from the pre-populated dev switch used for everything up to now.
 
-### Phase 4: Sun E2E On Local Substrate
+### Phase 4: Sol E2E On Local Substrate
 
-Goal: prove Sun still works with the package foundation.
+Goal: prove Sol still works with the package foundation.
 
 Run the release-user path, not only contributor tests:
 
 ```sh
 dune build @install @runtest
-sun new workspace foundation_smoke
+sol new workspace foundation_smoke
 cd foundation_smoke
 dune build
-sun dev up
-sun up
-sun status
-sun migrate
-sun deploy dev/aws/us-east-1 --dry-run  # requires sun/dev/aws/us-east-1.yml with a registry set
-sun rollback
+sol dev up
+sol up
+sol status
+sol migrate
+sol deploy dev/aws/us-east-1 --dry-run  # requires sol/dev/aws/us-east-1.yml with a registry set
+sol rollback
 ```
 
 Acceptance:
@@ -233,10 +233,10 @@ Rules:
 Order:
 
 - [ ] STS `GetCallerIdentity` signed request smoke.
-- [ ] S3 tiny-object smoke against one pre-created bucket and a `sun-live-test/` prefix: `PutObject`, `HeadObject`, `GetObject`, `DeleteObject`.
+- [ ] S3 tiny-object smoke against one pre-created bucket and a `sol-live-test/` prefix: `PutObject`, `HeadObject`, `GetObject`, `DeleteObject`.
 - [ ] S3 error-path smoke: `HeadObject` on a known-missing key.
 - [ ] Optional DynamoDB smoke only if/when `dynamodb-eio` exists.
-- [ ] Full `sun cloud init --aws` dogfood only after the above is boring.
+- [ ] Full `sol cloud init --aws` dogfood only after the above is boring.
 
 Minimal IAM shape for the first S3 lane:
 
@@ -248,16 +248,16 @@ Minimal IAM shape for the first S3 lane:
       "Sid": "S3LiveTestObjectsOnly",
       "Effect": "Allow",
       "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"],
-      "Resource": "arn:aws:s3:::SUN_LIVE_TEST_BUCKET/sun-live-test/*"
+      "Resource": "arn:aws:s3:::SOL_LIVE_TEST_BUCKET/sol-live-test/*"
     },
     {
       "Sid": "S3LiveTestListOnlyPrefix",
       "Effect": "Allow",
       "Action": "s3:ListBucket",
-      "Resource": "arn:aws:s3:::SUN_LIVE_TEST_BUCKET",
+      "Resource": "arn:aws:s3:::SOL_LIVE_TEST_BUCKET",
       "Condition": {
         "StringLike": {
-          "s3:prefix": "sun-live-test/*"
+          "s3:prefix": "sol-live-test/*"
         }
       }
     }
@@ -293,14 +293,14 @@ Tracking tickets:
 - 2026-08-26: Merged README fixes for `obs-loki-eio` and `obs-prometheus-eio` so docs now match the extracted `https-eio` TLS wrapper.
 - 2026-08-26: Submitted `https-eio.0.1.0` to opam-repository as PR #30570.
 - 2026-08-26: Found published `awskit`/`awskit-eio`/`awskit-s3-eio`; require explicit comparison before publishing `aws-eio`.
-- 2026-08-26: Completed the `awskit` comparison. Decision: keep `aws-eio`, do not redirect to `awskit` — it explicitly does not support EKS IRSA (Sun's real credential source), and its Eio HTTP adapter's use of `Cohttp_eio.Client` carries the same SigV4 wire-byte-encoding risk `aws-eio`'s custom transport was built to avoid.
+- 2026-08-26: Completed the `awskit` comparison. Decision: keep `aws-eio`, do not redirect to `awskit` — it explicitly does not support EKS IRSA (Sol's real credential source), and its Eio HTTP adapter's use of `Cohttp_eio.Client` carries the same SigV4 wire-byte-encoding risk `aws-eio`'s custom transport was built to avoid.
 - 2026-08-26: Locked down branch protection (`enforce_admins: true`, squash-only merge, no force-push) across all five `-eio` repos with CI. Rewrote `obs-loki-eio`/`obs-prometheus-eio` git history to squash the CI-red commits each had accumulated (including their tagged `v0.1.0` release commits) into clean, individually-green commits, and moved both `v0.1.0` tags accordingly.
 - 2026-08-26: Found and fixed a real bug in the `kafka-eio` opam-repository submission (PR #30557): it declared `depexts` directly (against opam-repository's lint convention, which reserves that for dedicated `conf-` packages) and that `depexts` only covered debian/ubuntu/alpine/homebrew — missing archlinux/centos/fedora/opensuse/freebsd, and even the alpine entry was wrong (`librdkafka` instead of `librdkafka-dev`, so headers were never installed). Fixed by adding a new `conf-librdkafka` package to the opam-repository fork, verified per-distro package names against real package indices.
 - 2026-08-26: Fixed `aws-eio/README.md`'s stale `Aws_tls` references (same class of doc-drift already fixed in `obs-loki-eio`/`obs-prometheus-eio`); merged as `aws-eio` PR #1 (`ada1811`).
 - 2026-08-26: Added the STS `GetCallerIdentity` live smoke test from `AWS-001` (gated by `AWS_EIO_LIVE=1`, skipped by default and in CI), merged as `aws-eio` PR #2 (`855dd51`). Ran it live against real AWS using a short-lived STS session token (`sts:GetSessionToken`-minted, ~15 min TTL, from an IAM user with no other permissions) — passed: real AWS accepted a request signed by `aws-eio`'s own SigV4 implementation. This is the strongest evidence yet that `aws-eio` is correct against the real service, not just internally consistent against its own conformance-suite vectors and mocks. `AWS-001`'s S3 tiny-object smoke (steps 3-4) remains undone.
-- 2026-08-26: Phase 3 cross-package pin test passed. Fresh switch `sun-foundation-all`, all seven packages installed together with `--with-test` (each package's own tests ran and passed), `sun` builds and its full test suite passes against the pinned foundation, including the real-broker Kafka integration test. No link-name clashes, no hidden cross-repo assumptions.
-- 2026-08-27: Ran `s3-eio`'s `scripts/test-e2e.sh` live against real AWS (account `876701109436`), completing `AWS-001`'s remaining S3 tiny-object smoke (steps 3-4). Provisioned bucket `sun-live-test-876701109436` + scoped inline policy via `sts-smoke-test-provisioner`, minted a 900s session token for `sts-smoke-test-user`, ran the put/head/get/delete round trip and the missing-key `Not_found` error-path test through `s3-eio`'s client (built on `aws-eio`'s SigV4) — both passed. Teardown (`scripts/teardown.sh`) ran automatically on exit; independently re-verified afterward with `aws s3api head-bucket` → 404 Not Found, confirming the bucket is actually gone rather than trusting the script's own exit code. Could not independently re-verify the inline IAM policy's removal — neither `sts-smoke-test-user` nor `sts-smoke-test-provisioner` has IAM read permissions on themselves (least-privilege by design); `delete-user-policy` in the teardown log completed without error, and even if it somehow lingered it is scoped to `arn:aws:s3:::sun-live-test-876701109436/sun-live-test/*`, inert against a bucket that no longer exists. `AWS-001` is now fully proven end to end.
+- 2026-08-26: Phase 3 cross-package pin test passed. Fresh switch `sol-foundation-all`, all seven packages installed together with `--with-test` (each package's own tests ran and passed), `sol` builds and its full test suite passes against the pinned foundation, including the real-broker Kafka integration test. No link-name clashes, no hidden cross-repo assumptions.
+- 2026-08-27: Ran `s3-eio`'s `scripts/test-e2e.sh` live against real AWS (account `876701109436`), completing `AWS-001`'s remaining S3 tiny-object smoke (steps 3-4). Provisioned bucket `sol-live-test-876701109436` + scoped inline policy via `sts-smoke-test-provisioner`, minted a 900s session token for `sts-smoke-test-user`, ran the put/head/get/delete round trip and the missing-key `Not_found` error-path test through `s3-eio`'s client (built on `aws-eio`'s SigV4) — both passed. Teardown (`scripts/teardown.sh`) ran automatically on exit; independently re-verified afterward with `aws s3api head-bucket` → 404 Not Found, confirming the bucket is actually gone rather than trusting the script's own exit code. Could not independently re-verify the inline IAM policy's removal — neither `sts-smoke-test-user` nor `sts-smoke-test-provisioner` has IAM read permissions on themselves (least-privilege by design); `delete-user-policy` in the teardown log completed without error, and even if it somehow lingered it is scoped to `arn:aws:s3:::sol-live-test-876701109436/sol-live-test/*`, inert against a bucket that no longer exists. `AWS-001` is now fully proven end to end.
 
 ## Next Action
 
-Track `https-eio` PR #30570 and `kafka-eio` PR #30557 through opam-repository CI/review (both green on linter/Windows; `opam-ci` distro matrix pending on both as of 2026-08-26, ~2h elapsed with no change — shared community CI, not a sign of a new problem). `aws-eio` has now cleared local lint/build, the cross-package clean-switch test (Phase 3), and real live-AWS STS + S3 smoke tests (`AWS-001` fully proven as of 2026-08-27) — it is ready to submit to opam-repository whenever that's wanted. Remaining before calling the foundation fully proven: Phase 4 (Sun end-to-end via `sun new workspace` / `sun dev up` / `sun deploy --dry-run` against the pinned foundation, not just `dune build`/`dune test`), and the `sun cloud init --aws` path against a real account.
+Track `https-eio` PR #30570 and `kafka-eio` PR #30557 through opam-repository CI/review (both green on linter/Windows; `opam-ci` distro matrix pending on both as of 2026-08-26, ~2h elapsed with no change — shared community CI, not a sign of a new problem). `aws-eio` has now cleared local lint/build, the cross-package clean-switch test (Phase 3), and real live-AWS STS + S3 smoke tests (`AWS-001` fully proven as of 2026-08-27) — it is ready to submit to opam-repository whenever that's wanted. Remaining before calling the foundation fully proven: Phase 4 (Sol end-to-end via `sol new workspace` / `sol dev up` / `sol deploy --dry-run` against the pinned foundation, not just `dune build`/`dune test`), and the `sol cloud init --aws` path against a real account.

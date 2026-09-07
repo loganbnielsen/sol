@@ -3,9 +3,9 @@
 # Runs unit tests always; other suites when their infra is up.
 #
 # Install: bash platform/local/scripts/install-hooks.sh
-# Skip once: SUN_SKIP_HOOKS=1 git commit ...
+# Skip once: SOL_SKIP_HOOKS=1 git commit ...
 
-[ "${SUN_SKIP_HOOKS:-0}" = "1" ] && exit 0
+[ "${SOL_SKIP_HOOKS:-0}" = "1" ] && exit 0
 
 # ── Worktree guard ─────────────────────────────────────────────────────────────
 # project/tickets/ is only ever modified in the main checkout — never inside a worktree
@@ -81,13 +81,13 @@ run_suite() {
   if [ $rc -eq 1 ]; then
     echo ""
     echo "✗ ${name} tests failed — commit blocked."
-    echo "  Skip once: SUN_SKIP_HOOKS=1 git commit ..."
+    echo "  Skip once: SOL_SKIP_HOOKS=1 git commit ..."
     exit 1
   elif [ $rc -eq 2 ]; then
     echo ""
     echo "✗ Performance regression in ${name} suite — commit blocked."
     echo "  If intentional: bash $RUNNER ${name} --update-baseline"
-    echo "  Skip once:      SUN_SKIP_HOOKS=1 git commit ..."
+    echo "  Skip once:      SOL_SKIP_HOOKS=1 git commit ..."
     exit 2
   fi
 }

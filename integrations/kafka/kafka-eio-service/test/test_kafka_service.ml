@@ -135,21 +135,21 @@ let test_retry_metadata_rejects_malformed_headers () =
     | Error _ -> ()
   in
   let valid =
-    [ "X-Sun-Attempt", Some "2";
-      "X-Sun-Retry-At", Some "123.5" ]
+    [ "X-Sol-Attempt", Some "2";
+      "X-Sol-Retry-At", Some "123.5" ]
   in
   Alcotest.(check (result (pair int (float 0.0001)) string))
     "valid retry metadata"
     (Ok (2, 123.5))
     (Kafka_service.Retry_topics.parse_retry_metadata valid);
-  check_error "missing attempt" [ "X-Sun-Retry-At", Some "123.5" ];
+  check_error "missing attempt" [ "X-Sol-Retry-At", Some "123.5" ];
   check_error "zero attempt"
-    [ "X-Sun-Attempt", Some "0"; "X-Sun-Retry-At", Some "123.5" ];
+    [ "X-Sol-Attempt", Some "0"; "X-Sol-Retry-At", Some "123.5" ];
   check_error "bad attempt"
-    [ "X-Sun-Attempt", Some "nan"; "X-Sun-Retry-At", Some "123.5" ];
-  check_error "missing retry_at" [ "X-Sun-Attempt", Some "1" ];
+    [ "X-Sol-Attempt", Some "nan"; "X-Sol-Retry-At", Some "123.5" ];
+  check_error "missing retry_at" [ "X-Sol-Attempt", Some "1" ];
   check_error "bad retry_at"
-    [ "X-Sun-Attempt", Some "1"; "X-Sun-Retry-At", Some "soon" ]
+    [ "X-Sol-Attempt", Some "1"; "X-Sol-Retry-At", Some "soon" ]
 
 let test_retry_publish_then_ack_failure_is_error () =
   let acked = ref 0 in
@@ -198,7 +198,7 @@ let test_topic_name_accepts_kafka_compatible_names () =
   in
   List.iter check [
     "orders";
-    "sun-demo-orders";
+    "sol-demo-orders";
     "payments.charges_v1";
     "__consumer_offsets";
   ]

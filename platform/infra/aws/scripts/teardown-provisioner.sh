@@ -8,8 +8,8 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 PROFILE="${PROFILE:?Set PROFILE to an AWS CLI profile with IAM admin rights}"
-USER_NAME="${USER_NAME:-sun-smoke-test-infra-provisioner}"
-POLICY_NAME="${POLICY_NAME:-sun-smoke-test-infra}"
+USER_NAME="${USER_NAME:-sol-smoke-test-infra-provisioner}"
+POLICY_NAME="${POLICY_NAME:-sol-smoke-test-infra}"
 ACCOUNT_ID="${ACCOUNT_ID:-$(aws sts get-caller-identity --profile "$PROFILE" --query Account --output text)}"
 POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${POLICY_NAME}"
 

@@ -1,5 +1,0 @@
-(library
- (name sun_env)
- (wrapped false)
- (modules_without_implementation sun_env)
- (libraries eio))

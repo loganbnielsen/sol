@@ -1,3 +1,0 @@
-(test
- (name test_sun_obs)
- (libraries sun_obs obs-eio eio eio_main alcotest cohttp-eio http unix))

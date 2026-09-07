@@ -1,11 +1,11 @@
 {
-  "title": "Sun Service",
-  "uid": "sun-service-template",
+  "title": "Sol Service",
+  "uid": "sol-service-template",
   "schemaVersion": 39,
   "version": 1,
   "editable": true,
   "time": { "from": "now-6h", "to": "now" },
-  "tags": ["sun"],
+  "tags": ["sol"],
   "templating": {
     "list": [
       {
@@ -43,7 +43,7 @@
       "datasource": "Prometheus",
       "targets": [
         {
-          "expr": "sum(rate(sun_svc_requests_total{workspace=\"$workspace\", domain=\"$domain\", service=\"$service\"}[5m])) by (route, method)",
+          "expr": "sum(rate(sol_svc_requests_total{workspace=\"$workspace\", domain=\"$domain\", service=\"$service\"}[5m])) by (route, method)",
           "legendFormat": "{{method}} {{route}}"
         }
       ]
@@ -56,7 +56,7 @@
       "datasource": "Prometheus",
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(sun_svc_request_duration_seconds_bucket{workspace=\"$workspace\", domain=\"$domain\", service=\"$service\"}[5m])) by (le, route))",
+          "expr": "histogram_quantile(0.95, sum(rate(sol_svc_request_duration_seconds_bucket{workspace=\"$workspace\", domain=\"$domain\", service=\"$service\"}[5m])) by (le, route))",
           "legendFormat": "{{route}}"
         }
       ]

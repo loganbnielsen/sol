@@ -23,7 +23,7 @@ jobs:
       - name: Pin extracted opam packages
         run: |
           # Tracking #main on every support package during active parallel
-          # development across all of them — sun should build against their
+          # development across all of them — sol should build against their
           # latest code, not a tag that's fallen behind. Revert to tagged
           # pins once these settle and cut real releases.
           # https-eio first: obs-loki-eio/obs-prometheus-eio/aws-eio all
@@ -49,7 +49,7 @@ jobs:
         run: opam exec -- dune build
 
       - name: Unit tests (no broker/Postgres/Loki required)
-        run: opam exec -- dune test framework/ cli/sun/test/
+        run: opam exec -- dune test framework/ cli/sol/test/
 
       - name: Platform-component drift guardrail (ADR 0001 / CODE_LAYER-005)
         run: tools/ci/check_platform_component_drift.sh

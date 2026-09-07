@@ -1,3 +1,0 @@
-(test
- (name test_ticket)
- (libraries sundev_lib alcotest))

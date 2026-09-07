@@ -1,10 +1,10 @@
 ---
-description: Run a developer dogfood pass of Sun. Executes the golden path from sun new workspace through curl against a live service, times each step, and logs every friction point. Produces a dated report in project/dogfood/ and materialises blocking findings as ticket files in project/tickets/READY_FOR_ENGINEERING/.
+description: Run a developer dogfood pass of Sol. Executes the golden path from sol new workspace through curl against a live service, times each step, and logs every friction point. Produces a dated report in project/dogfood/ and materialises blocking findings as ticket files in project/tickets/READY_FOR_ENGINEERING/.
 ---
 
 # /dogfood — Golden Path Dogfood Run
 
-Executes the full Sun developer golden path as a first-time user would, following
+Executes the full Sol developer golden path as a first-time user would, following
 the runbook at `docs/dogfood/DOGFOOD.md`. Times every step, records friction, and
 determines whether the two-minute deploy claim holds on a live local substrate.
 
@@ -42,16 +42,16 @@ re-materialised. If it exists in `DONE/`, mark it resolved in the report.
 
 ### 3. Prepare the binary
 
-Build the current CLI from the Sun checkout and place it first on PATH:
+Build the current CLI from the Sol checkout and place it first on PATH:
 
 ```bash
-cd <sun-checkout>
+cd <sol-checkout>
 eval $(opam env)
-dune build cli/sun/bin/main.exe
-export SUN_HOME=$(pwd)
-mkdir -p "$SUN_HOME/.dogfood-bin"
-ln -sf "$SUN_HOME/_build/default/cli/sun/bin/main.exe" "$SUN_HOME/.dogfood-bin/sun"
-export PATH="$SUN_HOME/.dogfood-bin:$PATH"
+dune build cli/sol/bin/main.exe
+export SOL_HOME=$(pwd)
+mkdir -p "$SOL_HOME/.dogfood-bin"
+ln -sf "$SOL_HOME/_build/default/cli/sol/bin/main.exe" "$SOL_HOME/.dogfood-bin/sol"
+export PATH="$SOL_HOME/.dogfood-bin:$PATH"
 hash -r
 ```
 
@@ -67,12 +67,12 @@ possible.
 
 **Steps to run:**
 
-1. `sun new workspace <name>` — scaffold
+1. `sol new workspace <name>` — scaffold
 2. `cd <name> && dune build` — build generated workspace
-3. `sun dev up` — provision or reconcile local substrate (k3d cluster)
-4. `sun up` — build Docker images, push, deploy
-5. `sun migrate --table <name>_migrations` — apply DB migrations
-6. `sun status` — check pods
+3. `sol dev up` — provision or reconcile local substrate (k3d cluster)
+4. `sol up` — build Docker images, push, deploy
+5. `sol migrate --table <name>_migrations` — apply DB migrations
+6. `sol status` — check pods
 7. `curl http://localhost:8080/health`
 8. `curl -X POST http://localhost:8080/charges -H 'Content-Type: application/json' -d '{"customer_id":"cus_dogfood","amount_cents":999,"currency":"usd"}'`
 9. Wait up to 10s for worker to consume, then `curl http://localhost:8080/notifications`
@@ -83,11 +83,11 @@ the Kafka path is proven.
 
 ### 5. Evaluate the two-minute claim
 
-After step 4 (`sun up`), measure the wall-clock time from `sun new workspace`
+After step 4 (`sol up`), measure the wall-clock time from `sol new workspace`
 through first successful `curl /health`. Does it stay under two minutes on an
 existing substrate?
 
-Note: `sun dev up` on a fresh cluster takes ~5 min and is substrate
+Note: `sol dev up` on a fresh cluster takes ~5 min and is substrate
 bootstrap — it does not count against the two-minute claim.
 
 ### 6. Write the report

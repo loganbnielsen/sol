@@ -1,20 +1,20 @@
-# Sun Tutorial
+# Sol Tutorial
 
-This tutorial walks through building and running a real multi-service application on Sun. By the end you will have two services deployed to a local Kubernetes cluster, talking to each other through Kafka, persisting data in PostgreSQL, and emitting structured logs and metrics visible in Grafana — without writing a single Kubernetes manifest or Helm chart.
+This tutorial walks through building and running a real multi-service application on Sol. By the end you will have two services deployed to a local Kubernetes cluster, talking to each other through Kafka, persisting data in PostgreSQL, and emitting structured logs and metrics visible in Grafana — without writing a single Kubernetes manifest or Helm chart.
 
 ---
 
-## What Sun is
+## What Sol is
 
-Sun is a production platform for OCaml services. It gives you three service primitives:
+Sol is a production platform for OCaml services. It gives you three service primitives:
 
 - **`-svc`** — a long-running HTTP service with routes, auth, and a `/healthz` endpoint
 - **`-worker`** — a Kafka consumer that processes a typed event stream
 - **`-fn`** — a scheduled function that runs on a cron expression
 
-These primitives share a common observability layer (Loki for logs, Prometheus for metrics) and a storage layer (PostgreSQL). Sun wires all of it together at startup. You write the handler; Sun runs it.
+These primitives share a common observability layer (Loki for logs, Prometheus for metrics) and a storage layer (PostgreSQL). Sol wires all of it together at startup. You write the handler; Sol runs it.
 
-The `sun` CLI scaffolds new services, manages the local development cluster, builds and deploys container images, and runs database migrations.
+The `sol` CLI scaffolds new services, manages the local development cluster, builds and deploys container images, and runs database migrations.
 
 ---
 
@@ -24,38 +24,38 @@ The `sun` CLI scaffolds new services, manages the local development cluster, bui
 - Docker, kubectl
 - `librdkafka-dev`, `libpq-dev`, `libpq5` (`sudo apt-get install -y librdkafka-dev libpq-dev libpq5`)
 
-Install `sun` (Linux x86_64) — download the self-contained release bundle:
+Install `sol` (Linux x86_64) — download the self-contained release bundle:
 
 ```bash
-# Replace vX.Y.Z with the latest version from https://github.com/loganbnielsen/sun/releases
-curl -L https://github.com/loganbnielsen/sun/releases/latest/download/sun-vX.Y.Z-linux-x86_64.tar.gz \
+# Replace vX.Y.Z with the latest version from https://github.com/loganbnielsen/sol/releases
+curl -L https://github.com/loganbnielsen/sol/releases/latest/download/sol-vX.Y.Z-linux-x86_64.tar.gz \
   | tar xz
-export PATH="$PWD/sun-vX.Y.Z-linux-x86_64/bin:$PATH"   # add to ~/.bashrc or ~/.zshrc
+export PATH="$PWD/sol-vX.Y.Z-linux-x86_64/bin:$PATH"   # add to ~/.bashrc or ~/.zshrc
 ```
 
-The tarball includes the `sun` binary and the framework source trees (`framework/` and `integrations/`). No `SUN_HOME` or separate clone required — `sun new workspace` resolves the framework source automatically from the bundle layout.
+The tarball includes the `sol` binary and the framework source trees (`framework/` and `integrations/`). No `SOL_HOME` or separate clone required — `sol new workspace` resolves the framework source automatically from the bundle layout.
 
-> **Build from source:** Contributors who need `sundev` or want to modify the framework should clone the repo and build:
+> **Build from source:** Contributors who need `soldev` or want to modify the framework should clone the repo and build:
 > ```bash
-> git clone https://github.com/loganbnielsen/sun.git ~/sun
-> export SUN_HOME=~/sun   # add to ~/.bashrc or ~/.zshrc
+> git clone https://github.com/loganbnielsen/sol.git ~/sol
+> export SOL_HOME=~/sol   # add to ~/.bashrc or ~/.zshrc
 > eval $(opam env)  # requires OCaml 5.4.1 + opam
 > dune build cli/
-> ln -sf "$(pwd)/_build/default/cli/sun/bin/main.exe" ~/.local/bin/sun
-> ln -sf "$(pwd)/_build/default/tools/sundev/bin/main.exe" ~/.local/bin/sundev
+> ln -sf "$(pwd)/_build/default/cli/sol/bin/main.exe" ~/.local/bin/sol
+> ln -sf "$(pwd)/_build/default/tools/soldev/bin/main.exe" ~/.local/bin/soldev
 > ```
 
 ---
 
 ## Part 1 — Local infrastructure
 
-Sun's local cluster mirrors production exactly: same Helm charts, same service DNS names, same security model. The only difference is scale (single replica, no persistent volumes).
+Sol's local cluster mirrors production exactly: same Helm charts, same service DNS names, same security model. The only difference is scale (single replica, no persistent volumes).
 
 ```bash
-sun dev up
+sol dev up
 ```
 
-This creates a k3d cluster named `sun-local` and installs:
+This creates a k3d cluster named `sol-local` and installs:
 
 | Component | What it does |
 |-----------|-------------|
@@ -75,37 +75,37 @@ Grafana         localhost:3000   (admin / dev)
 Pushgateway     localhost:9091
 ```
 
-These port-forwards are managed by Sun in the background (PIDs recorded in `~/.local/share/sun/`). `sun dev down` tears everything down. Running `sun dev up` again clears any stale port-forwards first, so repeat runs are safe.
+These port-forwards are managed by Sol in the background (PIDs recorded in `~/.local/share/sol/`). `sol dev down` tears everything down. Running `sol dev up` again clears any stale port-forwards first, so repeat runs are safe.
 
-### Local iteration with `sun dev run`
+### Local iteration with `sol dev run`
 
-Once the cluster is up and you have a workspace (see Part 2), use `sun dev run` for rapid code-change iteration:
+Once the cluster is up and you have a workspace (see Part 2), use `sol dev run` for rapid code-change iteration:
 
 ```bash
-sun dev run
+sol dev run
 ```
 
-`sun dev run` discovers every service in `app/<domain>/<name>/` that has a `Dockerfile`, runs a single `dune build` across all of them, then spawns each compiled binary as a **native process** — no Docker image rebuild required. Each service's stdout and stderr are prefixed with `[domain/name]` so you can follow multiple services in one terminal. Ctrl-C cleanly kills all child processes.
+`sol dev run` discovers every service in `app/<domain>/<name>/` that has a `Dockerfile`, runs a single `dune build` across all of them, then spawns each compiled binary as a **native process** — no Docker image rebuild required. Each service's stdout and stderr are prefixed with `[domain/name]` so you can follow multiple services in one terminal. Ctrl-C cleanly kills all child processes.
 
-The environment variables your services expect are inherited directly from the shell (set by `sun dev up`'s port-forwards):
+The environment variables your services expect are inherited directly from the shell (set by `sol dev up`'s port-forwards):
 
-| Variable | Value (set by `sun dev up`) |
+| Variable | Value (set by `sol dev up`) |
 |---|---|
 | `KAFKA_BROKERS` | `localhost:9092` |
 | `SCHEMA_REGISTRY_URL` | `http://localhost:8081` |
 | `POSTGRES_URL` | `postgresql://postgres:dev@localhost:5432/dev` |
 | `LOKI_URL` | `http://localhost:3100` |
 
-**When to use `sun dev run` vs `sun up`:**
+**When to use `sol dev run` vs `sol up`:**
 
-| | `sun dev run` | `sun up` |
+| | `sol dev run` | `sol up` |
 |---|---|---|
 | How services run | Native OCaml binaries | Docker containers in k3d |
 | On code change | `dune build` + re-run (~seconds) | `docker build` + redeploy (~minutes) |
-| Uses k3d infra | Yes (via port-forwards from `sun dev up`) | Yes |
+| Uses k3d infra | Yes (via port-forwards from `sol dev up`) | Yes |
 | Good for | Fast edit-compile-run loop | Final smoke test before CI |
 
-Both commands talk to the same Kafka broker, PostgreSQL, and Loki instance that `sun dev up` started. The difference is only in how the service processes themselves are launched.
+Both commands talk to the same Kafka broker, PostgreSQL, and Loki instance that `sol dev up` started. The difference is only in how the service processes themselves are launched.
 
 ---
 
@@ -114,21 +114,21 @@ Both commands talk to the same Kafka broker, PostgreSQL, and Loki instance that 
 A **workspace** is a directory that contains one or more domain teams, each with their own services. Teams communicate through typed Kafka events — never through shared code.
 
 ```bash
-sun new workspace pluto
+sol new workspace pluto
 cd pluto
 ```
 
-> **Vendor links:** `sun new workspace` creates `vendor/framework` and `vendor/integrations` as symlinks into the Sun source tree. These links are how the generated workspace finds Sun's library source at build time — `dune build` will fail with "Library not found: sun_svc" if they are missing.
+> **Vendor links:** `sol new workspace` creates `vendor/framework` and `vendor/integrations` as symlinks into the Sol source tree. These links are how the generated workspace finds Sol's library source at build time — `dune build` will fail with "Library not found: sol_svc" if they are missing.
 >
-> When using the **release tarball** (the install path above), the framework source is bundled inside the extracted directory. `sun new workspace` finds it automatically — no `SUN_HOME` needed.
+> When using the **release tarball** (the install path above), the framework source is bundled inside the extracted directory. `sol new workspace` finds it automatically — no `SOL_HOME` needed.
 >
-> When using a **source checkout**, set `SUN_HOME` before running `sun new workspace`:
+> When using a **source checkout**, set `SOL_HOME` before running `sol new workspace`:
 >
 > ```bash
-> export SUN_HOME=~/sun   # set once in ~/.bashrc or ~/.zshrc
+> export SOL_HOME=~/sol   # set once in ~/.bashrc or ~/.zshrc
 > ```
 >
-> The CLI uses `SUN_HOME` to locate the framework and create the vendor symlinks automatically.
+> The CLI uses `SOL_HOME` to locate the framework and create the vendor symlinks automatically.
 
 This generates 28 files. Here is what was created and why:
 
@@ -139,16 +139,16 @@ pluto/
   .dockerignore                   ← excludes _build/ and .git/ from Docker build context
   README.md                       ← workspace-level docs
 
-  sun/prod/aws/us-east-1.yml      ← placeholder deploy target — rename to your real target
+  sol/prod/aws/us-east-1.yml      ← placeholder deploy target — rename to your real target
 
   .github/workflows/
     deploy.yml                    ← CI deploy workflow
-    sun-ci.yml                    ← Full Sun CI pipeline
+    sol-ci.yml                    ← Full Sol CI pipeline
 
   events/payments/
     charged.ml                    ← the Charged event contract
     dune
-    sun.toml                      ← declares the Kafka topic name for auto-provisioning
+    sol.toml                      ← declares the Kafka topic name for auto-provisioning
 
   app/payments/charge_svc/
     lib/handler.ml                ← HTTP route handlers
@@ -156,7 +156,7 @@ pluto/
     bin/main.ml                   ← service entrypoint
     bin/dune
     Dockerfile
-    sun.toml
+    sol.toml
 
   app/comms/notify_worker/
     lib/notify_worker.ml          ← Kafka message handler
@@ -164,7 +164,7 @@ pluto/
     bin/main.ml                   ← worker entrypoint
     bin/dune
     Dockerfile
-    sun.toml
+    sol.toml
 
   lib/
     notification.ml               ← shared DB module (used by svc and worker)
@@ -172,7 +172,7 @@ pluto/
 
   db/migrations/
     0001_notifications.sql        ← initial schema
-    0001_notifications.down.sql   ← companion rollback migration (used by `sun migrate rollback`)
+    0001_notifications.down.sql   ← companion rollback migration (used by `sol migrate rollback`)
 
   test/
     test_schemas.ml               ← schema backward-compatibility CI gate
@@ -200,7 +200,7 @@ let topic  = "pluto-payments-charges"
 let schema = {|{"type":"record","name":"Charged",...}|}
 ```
 
-The `topic` and `schema` fields satisfy the `Kafka_service.MESSAGE` module type. Sun registers the Avro schema with the schema registry at worker startup. A producer cannot publish a message that breaks the registered schema.
+The `topic` and `schema` fields satisfy the `Kafka_service.MESSAGE` module type. Sol registers the Avro schema with the schema registry at worker startup. A producer cannot publish a message that breaks the registered schema.
 
 ### The HTTP service
 
@@ -243,9 +243,9 @@ end) = struct
 end
 ```
 
-`module Message = Charged` tells Sun which Kafka topic and schema this worker consumes. `group_id` is the Kafka consumer group name. `handle` is called once per message with the decoded payload — there's no `ack` to call; Sun commits the offset for you, only after `handle` returns `Ok ()`.
+`module Message = Charged` tells Sol which Kafka topic and schema this worker consumes. `group_id` is the Kafka consumer group name. `handle` is called once per message with the decoded payload — there's no `ack` to call; Sol commits the offset for you, only after `handle` returns `Ok ()`.
 
-The `Make(Config)` functor pattern lets you inject the database pool and observability handle without module-level mutable state. Sun's worker runtime (`Worker.Make(W).run`) manages the Kafka connection lifecycle, acknowledgement, graceful shutdown, and per-message metrics.
+The `Make(Config)` functor pattern lets you inject the database pool and observability handle without module-level mutable state. Sol's worker runtime (`Worker.Make(W).run`) manages the Kafka connection lifecycle, acknowledgement, graceful shutdown, and per-message metrics.
 
 ### The shared storage module
 
@@ -265,13 +265,13 @@ The `lib/dune` file publishes this as `pluto_storage`, a library both services d
 ## Part 3 — Deploy to the local cluster
 
 ```bash
-sun up
+sol up
 ```
 
-For each service that has a `Dockerfile`, Sun:
+For each service that has a `Dockerfile`, Sol:
 
 1. Builds the Docker image and tags it with the short git SHA
-2. Pushes it to the local registry (`sun-registry:5000`)
+2. Pushes it to the local registry (`sol-registry:5000`)
 3. Generates Kubernetes manifests (Namespace, Deployment, Service, ServiceAccount, ConfigMap)
 4. Validates them against the live API server (`kubectl apply --dry-run=server`)
 5. Applies them live
@@ -285,12 +285,12 @@ POSTGRES_URL        postgresql://postgres:dev@postgresql.postgresql.svc.cluster.
 LOKI_URL            http://loki.monitoring.svc.cluster.local:3100
 ```
 
-These names are deterministic from the Helm release names chosen by `sun dev up`.
+These names are deterministic from the Helm release names chosen by `sol dev up`.
 
-After `sun up` finishes, check what's running:
+After `sol up` finishes, check what's running:
 
 ```bash
-sun status
+sol status
 ```
 
 ```
@@ -309,10 +309,10 @@ charge-svc-5464d77bd4-2lnb9    1/1     Running   0          2m
 ## Part 4 — Run database migrations
 
 ```bash
-sun migrate
+sol migrate
 ```
 
-If `POSTGRES_URL` is not set, Sun detects the cluster postgres automatically and starts a background port-forward:
+If `POSTGRES_URL` is not set, Sol detects the cluster postgres automatically and starts a background port-forward:
 
 ```
 Forwarding postgresql (cluster) → localhost:15432 ...
@@ -320,14 +320,14 @@ Applying migrations from db/migrations...
 Done.
 ```
 
-The migration runner applies SQL files in numeric order and records each applied version in a `sun_<workspace>_schema_migrations` table (for example, `sun_pluto_schema_migrations` when your workspace directory is `pluto`). Re-running `sun migrate` is safe — already-applied versions are skipped.
+The migration runner applies SQL files in numeric order and records each applied version in a `sol_<workspace>_schema_migrations` table (for example, `sol_pluto_schema_migrations` when your workspace directory is `pluto`). Re-running `sol migrate` is safe — already-applied versions are skipped.
 
 The table name is derived from your workspace directory name. Use `--table <name>` to override the default if you need a custom tracking table.
 
 Check migration status at any time:
 
 ```bash
-sun migrate status
+sol migrate status
 ```
 
 ```
@@ -340,7 +340,7 @@ VER     NAME                            APPLIED AT
 
 ## Part 5 — Try the API
 
-`sun up` started the port-forward automatically — the service is already reachable at http://localhost:8080. If the port-forward was stopped, run `sun up` again to restart it (or run `kubectl port-forward svc/charge-svc -n pluto-payments 8080:80` directly).
+`sol up` started the port-forward automatically — the service is already reachable at http://localhost:8080. If the port-forward was stopped, run `sol up` again to restart it (or run `kubectl port-forward svc/charge-svc -n pluto-payments 8080:80` directly).
 
 ```bash
 # Health check
@@ -379,27 +379,27 @@ You will see structured log lines from both services. Each line includes `level`
 Go to **Explore → Prometheus** and query:
 
 ```
-sun_svc_requests_total
-sun_worker_messages_total
-sun_svc_request_duration_seconds_bucket
+sol_svc_requests_total
+sol_worker_messages_total
+sol_svc_request_duration_seconds_bucket
 ```
 
-Sun registers these metrics automatically when `?ot` is wired in the service entrypoint. No instrumentation code is needed in the handler.
+Sol registers these metrics automatically when `?ot` is wired in the service entrypoint. No instrumentation code is needed in the handler.
 
 ### Traces
 
-Unlike metrics, tracing isn't automatic — a handler opts in by wrapping its work in `Obs_eio.with_span`, as `POST /charges` does (Part 2). `sun dev up` provisions Tempo and wires `TEMPO_URL` in automatically, so any handler that calls `with_span` gets a real trace with no extra setup. Click a `charge-svc` log line in the Loki view above: next to `trace_id=...` Grafana shows a **Tempo** button (a derived-field link, no copy-pasting IDs) that jumps straight to that request's span waterfall in **Explore → Tempo**.
+Unlike metrics, tracing isn't automatic — a handler opts in by wrapping its work in `Obs_eio.with_span`, as `POST /charges` does (Part 2). `sol dev up` provisions Tempo and wires `TEMPO_URL` in automatically, so any handler that calls `with_span` gets a real trace with no extra setup. Click a `charge-svc` log line in the Loki view above: next to `trace_id=...` Grafana shows a **Tempo** button (a derived-field link, no copy-pasting IDs) that jumps straight to that request's span waterfall in **Explore → Tempo**.
 
 Tracing is `-svc`-only for now. `notify-worker` receives the same trace context and logs the matching `trace_id` for correlation, but doesn't wrap its work in a span, so it doesn't emit its own spans to Tempo yet.
 
 ### Alerting
 
-Sun ships two starter Prometheus alert rules by default, scoped to the same `workspace`/`domain`/`service` labels as everything above — no extra instrumentation needed:
+Sol ships two starter Prometheus alert rules by default, scoped to the same `workspace`/`domain`/`service` labels as everything above — no extra instrumentation needed:
 
 | Alert | Fires when |
 |---|---|
-| `SunHighErrorRate` | A service's 5xx rate exceeds 5% of requests, sustained 5 minutes |
-| `SunPodRestartLoop` | A pod's container restarts more than 3 times in 15 minutes |
+| `SolHighErrorRate` | A service's 5xx rate exceeds 5% of requests, sustained 5 minutes |
+| `SolPodRestartLoop` | A pod's container restarts more than 3 times in 15 minutes |
 
 View rule state at `http://localhost:9090/alerts` (`kubectl port-forward -n monitoring svc/prometheus-server 9090:80` if not already forwarded) — each rule shows `inactive`, `pending`, or `firing`. Once a rule fires it also shows up in Alertmanager's own UI (`kubectl port-forward -n monitoring svc/prometheus-alertmanager 9093:9093`, then `http://localhost:9093`).
 
@@ -414,7 +414,7 @@ Adding a new domain or service follows the same pattern.
 ### New event type
 
 ```bash
-sun new event billing/payment_confirmed
+sol new event billing/payment_confirmed
 ```
 
 Generates `events/billing/payment_confirmed.ml` with a stub `type t` and `schema`. Edit the type to match your payload; the compiler will find every place that needs updating.
@@ -425,24 +425,24 @@ Generates `events/billing/payment_confirmed.ml` with a stub `type t` and `schema
 SCHEMA_REGISTRY_URL=http://localhost:8081 dune test test/
 ```
 
-`test/test_schemas.ml` (generated by `sun new workspace`) calls `Kafka_service.Schema.check_all` against the schema registry. If the new schema is incompatible with the already-registered version, the test fails and the schema change is blocked before it reaches staging. If `SCHEMA_REGISTRY_URL` is not set, the test skips safely — it is a no-op in unit CI.
+`test/test_schemas.ml` (generated by `sol new workspace`) calls `Kafka_service.Schema.check_all` against the schema registry. If the new schema is incompatible with the already-registered version, the test fails and the schema change is blocked before it reaches staging. If `SCHEMA_REGISTRY_URL` is not set, the test skips safely — it is a no-op in unit CI.
 
 ### New worker
 
 ```bash
-sun new worker logistics/fulfillment
+sol new worker logistics/fulfillment
 ```
 
 Generates a minimal worker in `app/logistics/fulfillment_worker/`. Wire the event library into its `dune` file, set `module Message = Payment_confirmed`, implement `handle`, then redeploy:
 
 ```bash
-sun up
+sol up
 ```
 
 ### New service
 
 ```bash
-sun new svc ops/admin
+sol new svc ops/admin
 ```
 
 Generates `app/ops/admin_svc/` with a stub handler. Add routes and redeploy.
@@ -450,39 +450,39 @@ Generates `app/ops/admin_svc/` with a stub handler. Add routes and redeploy.
 ### New scheduled function
 
 ```bash
-sun new fn billing/invoice
+sol new fn billing/invoice
 ```
 
-Generates `app/billing/invoice_fn/` with a `schedule` field (default `"0 * * * *"`) and a `run` function. Sun reads the schedule literal from source and generates a Kubernetes `CronJob`.
+Generates `app/billing/invoice_fn/` with a `schedule` field (default `"0 * * * *"`) and a `run` function. Sol reads the schedule literal from source and generates a Kubernetes `CronJob`.
 
 ---
 
 ## How observability wiring works
 
-Every service entrypoint follows the same pattern, through `Sun_obs` — the
-app-facing observability facade (`framework/sun-obs`). Here is the
+Every service entrypoint follows the same pattern, through `Sol_obs` — the
+app-facing observability facade (`framework/sol-obs`). Here is the
 charge-svc `bin/main.ml`:
 
 ```ocaml
 Eio_main.run @@ fun env ->
 let obs =
-  Sun_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+  Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
     ~service:"pluto-charge-svc" ~context:[("team", "payments")] ()
 in
 ```
 
-`Sun_obs.of_env` reads `LOKI_URL`/`TEMPO_URL` from the environment, composes
+`Sol_obs.of_env` reads `LOKI_URL`/`TEMPO_URL` from the environment, composes
 whichever backends are configured (Prometheus is always included), and
 applies `~context` as ambient labels (`team = payments`) that appear on
 every log line, metric, and trace from this handle — without passing them
-explicitly to every call. Handlers use `Sun_obs.log_info`/`log_warn`/
-`with_span` instead of calling `Obs_eio` directly; `Sun_obs.obs_eio obs`
-and `Sun_obs.metrics_renderer obs` hand the lower-level pieces to
+explicitly to every call. Handlers use `Sol_obs.log_info`/`log_warn`/
+`with_span` instead of calling `Obs_eio` directly; `Sol_obs.obs_eio obs`
+and `Sol_obs.metrics_renderer obs` hand the lower-level pieces to
 `Service.run`'s `?ot`/`?metrics_renderer`.
 
 When `LOKI_URL`/`TEMPO_URL` are absent (local `dune exec` dev), logs go to
 stdout in logfmt format and no traces are emitted. In the cluster,
-`sun dev up` sets Loki/Tempo automatically. The code is identical either way.
+`sol dev up` sets Loki/Tempo automatically. The code is identical either way.
 Workers follow the same pattern, but only service handlers currently opt into
 application spans.
 
@@ -491,63 +491,63 @@ application spans.
 ## CLI reference
 
 ```
-sun new workspace <name>                          scaffold a new workspace
-sun new svc <domain>/<name>                       add an HTTP service
-sun new worker <domain>/<name>                    add a Kafka consumer
-sun new fn <domain>/<name>                        add a scheduled function
-sun new event <team>/<name>                       add a typed Kafka event
+sol new workspace <name>                          scaffold a new workspace
+sol new svc <domain>/<name>                       add an HTTP service
+sol new worker <domain>/<name>                    add a Kafka consumer
+sol new fn <domain>/<name>                        add a scheduled function
+sol new event <team>/<name>                       add a typed Kafka event
 
-sun dev up                                        provision local k3d cluster
-sun dev down                                      tear down the cluster
-sun dev status                                    show running infra endpoints
-sun dev run                                       run services as native processes (fast iteration)
+sol dev up                                        provision local k3d cluster
+sol dev down                                      tear down the cluster
+sol dev status                                    show running infra endpoints
+sol dev run                                       run services as native processes (fast iteration)
 
-sun plan TARGET                                   print merged app/resource/service plan
-sun up [path] [--dry-run] [--tag]                 build images and deploy to local cluster
-sun deploy TARGET [--image-tag TAG] [--registry URL]  deploy pre-built images (CI mode)
-sun deploy TARGET --emit-to DIR [--image-tag TAG] ...  write YAML for Argo CD (GitOps mode)
-sun status [domain]                               show running pods and port-forward hints
+sol plan TARGET                                   print merged app/resource/service plan
+sol up [path] [--dry-run] [--tag]                 build images and deploy to local cluster
+sol deploy TARGET [--image-tag TAG] [--registry URL]  deploy pre-built images (CI mode)
+sol deploy TARGET --emit-to DIR [--image-tag TAG] ...  write YAML for Argo CD (GitOps mode)
+sol status [domain]                               show running pods and port-forward hints
 
-sun migrate [apply]                               apply pending migrations
-sun migrate status                                show per-file applied/pending table
-sun migrate rollback                              roll back the last applied migration
+sol migrate [apply]                               apply pending migrations
+sol migrate status                                show per-file applied/pending table
+sol migrate rollback                              roll back the last applied migration
 
-sun rollback [domain/service]                     roll back last deploy for one or all services
-sun logs <service> [--no-follow] [--tail=N]       stream logs from a deployed service
+sol rollback [domain/service]                     roll back last deploy for one or all services
+sol logs <service> [--no-follow] [--tail=N]       stream logs from a deployed service
 
-sun secret set <KEY> --env <ENV> --value <VAL>    create or update a secret
-sun secret list --env <ENV>                       list secret keys (values never printed)
-sun secret delete <KEY> --env <ENV>               delete a secret
+sol secret set <KEY> --env <ENV> --value <VAL>    create or update a secret
+sol secret list --env <ENV>                       list secret keys (values never printed)
+sol secret delete <KEY> --env <ENV>               delete a secret
 
-sun cloud plan TARGET                             preview cloud infrastructure changes
-sun cloud apply TARGET                            apply cloud infrastructure changes
-sun cloud destroy TARGET [--plan|--apply]         destroy cloud infrastructure via Terraform
+sol cloud plan TARGET                             preview cloud infrastructure changes
+sol cloud apply TARGET                            apply cloud infrastructure changes
+sol cloud destroy TARGET [--plan|--apply]         destroy cloud infrastructure via Terraform
 ```
 
 ---
 
 ## Part 8 — Production deployment
 
-The `sun deploy` command is `sun up` without the build step. It is designed to run in CI after images have already been built and pushed to a production registry.
+The `sol deploy` command is `sol up` without the build step. It is designed to run in CI after images have already been built and pushed to a production registry.
 
-`sun deploy` takes a required `<env>/<provider>/<region>` target — same convention as `sun plan` — and the target file it resolves must exist first, even if empty. `sun new workspace` scaffolds a placeholder at `sun/prod/aws/us-east-1.yml`; rename it to match your real target if it isn't `prod/aws/us-east-1`.
+`sol deploy` takes a required `<env>/<provider>/<region>` target — same convention as `sol plan` — and the target file it resolves must exist first, even if empty. `sol new workspace` scaffolds a placeholder at `sol/prod/aws/us-east-1.yml`; rename it to match your real target if it isn't `prod/aws/us-east-1`.
 
 ### Direct deploy (CI pushes to the cluster)
 
 ```bash
 # In CI, after docker build && docker push:
-sun deploy prod/aws/us-east-1 \
+sol deploy prod/aws/us-east-1 \
   --image-tag "$GIT_SHA" \
   --registry  "123456789.dkr.ecr.us-east-1.amazonaws.com"
 ```
 
-Sun generates the same Kubernetes manifests as `sun up` but uses the provided registry and tag for the image reference. The cluster must be reachable (kubeconfig active).
+Sol generates the same Kubernetes manifests as `sol up` but uses the provided registry and tag for the image reference. The cluster must be reachable (kubeconfig active).
 
 ### GitOps deploy (Argo CD watches a manifest repo)
 
 ```bash
 # In CI:
-sun deploy prod/aws/us-east-1 \
+sol deploy prod/aws/us-east-1 \
   --emit-to   manifests/ \
   --image-tag "$GIT_SHA" \
   --registry  "123456789.dkr.ecr.us-east-1.amazonaws.com"
@@ -556,15 +556,15 @@ sun deploy prod/aws/us-east-1 \
 # → Argo CD detects the change and applies it
 ```
 
-The generated files contain the full manifest (Namespace, ServiceAccount, ConfigMap, Deployment/Service). If a service enables progressive delivery in `sun.toml`, Sun emits an Argo Rollouts `Rollout` instead of a Kubernetes `Deployment`. Argo CD applies these manifests with `ServerSideApply=true` and prunes resources that are removed.
+The generated files contain the full manifest (Namespace, ServiceAccount, ConfigMap, Deployment/Service). If a service enables progressive delivery in `sol.toml`, Sol emits an Argo Rollouts `Rollout` instead of a Kubernetes `Deployment`. Argo CD applies these manifests with `ServerSideApply=true` and prunes resources that are removed.
 
 ### Day-2 operations
 
-If a deploy introduces a regression, `sun rollback [domain/service]` rolls back one or all services and waits for the previous revision to become healthy — no kubectl knowledge required.
+If a deploy introduces a regression, `sol rollback [domain/service]` rolls back one or all services and waits for the previous revision to become healthy — no kubectl knowledge required.
 
-For services using a standard `Deployment` (no `[infra.rollout]` in `sun.toml`), this calls `kubectl rollout undo deployment/<name>`. For services configured with `[infra.rollout]` (Argo Rollouts), `sun rollback` automatically calls `kubectl argo rollouts undo <name>` instead. This requires the [Argo Rollouts kubectl plugin](https://argoproj.github.io/argo-rollouts/installation/#kubectl-plugin); if the plugin is not installed, `sun rollback` prints the manual command and exits 1.
+For services using a standard `Deployment` (no `[infra.rollout]` in `sol.toml`), this calls `kubectl rollout undo deployment/<name>`. For services configured with `[infra.rollout]` (Argo Rollouts), `sol rollback` automatically calls `kubectl argo rollouts undo <name>` instead. This requires the [Argo Rollouts kubectl plugin](https://argoproj.github.io/argo-rollouts/installation/#kubectl-plugin); if the plugin is not installed, `sol rollback` prints the manual command and exits 1.
 
-To inspect what a running service is doing, `sun logs <service>` streams live output directly from the cluster pod, following Sun's namespace convention automatically.
+To inspect what a running service is doing, `sol logs <service>` streams live output directly from the cluster pod, following Sol's namespace convention automatically.
 
 ### Progressive delivery with Argo Rollouts
 
@@ -583,45 +583,45 @@ Canary steps are weight percentages from 0 to 100. For blue-green deployments, u
 strategy = "blue-green"
 ```
 
-Blue-green emits active and preview `Service` resources and disables automatic promotion. This is not a raw Argo YAML escape hatch: Sun supports only the fields above, and arbitrary Argo Rollouts features such as analysis templates and traffic-manager integrations are deferred.
+Blue-green emits active and preview `Service` resources and disables automatic promotion. This is not a raw Argo YAML escape hatch: Sol supports only the fields above, and arbitrary Argo Rollouts features such as analysis templates and traffic-manager integrations are deferred.
 
 See `platform/infra/ci/` for complete GitHub Actions workflow examples for both modes.
 
 ### Provisioning a production cluster
 
-Use `sun cloud plan` and `sun cloud apply` to provision production infrastructure. These commands run Terraform against the modules bundled in `platform/infra/` and print the provisioned endpoints on completion.
+Use `sol cloud plan` and `sol cloud apply` to provision production infrastructure. These commands run Terraform against the modules bundled in `platform/infra/` and print the provisioned endpoints on completion.
 
 **AWS (EKS, ECR, RDS, Route53):**
 
 ```bash
-sun cloud plan prod/aws/us-east-1
-sun cloud apply prod/aws/us-east-1
+sol cloud plan prod/aws/us-east-1
+sol cloud apply prod/aws/us-east-1
 ```
 
 **GCP (GKE Autopilot, Artifact Registry, Cloud SQL):**
 
 ```bash
-sun cloud plan prod/gcp/us-central1
-sun cloud apply prod/gcp/us-central1
+sol cloud plan prod/gcp/us-central1
+sol cloud apply prod/gcp/us-central1
 ```
 
 **Plan (show terraform plan without creating resources):**
 
 ```bash
-sun cloud plan prod/aws/us-east-1
-sun cloud plan prod/gcp/us-central1
+sol cloud plan prod/aws/us-east-1
+sol cloud plan prod/gcp/us-central1
 ```
 
 **Pass a Terraform variables file:**
 
 ```bash
-sun cloud apply prod/aws/us-east-1 --var-file prod.tfvars
+sol cloud apply prod/aws/us-east-1 --var-file prod.tfvars
 ```
 
 **Pass one-off Terraform variables:**
 
 ```bash
-sun cloud apply prod/aws/us-east-1 --var cluster_name=acme-prod --var db_password=...
+sol cloud apply prod/aws/us-east-1 --var cluster_name=acme-prod --var db_password=...
 ```
 
 On success the command prints the key provisioned endpoints:
@@ -648,9 +648,9 @@ terraform apply \
   -var="install_postgresql=false"   # using RDS or Cloud SQL
 ```
 
-After `terraform apply`, the cluster is identical to `sun dev up` — same DNS names, same ConfigMap values, same Grafana dashboards.
+After `terraform apply`, the cluster is identical to `sol dev up` — same DNS names, same ConfigMap values, same Grafana dashboards.
 
-> **Advanced / manual override:** `sun cloud plan/apply` is a thin wrapper around Terraform. Engineers who need full Terraform control — custom variables, targeted applies, remote state configuration, or workspace management — can invoke Terraform directly against the same modules:
+> **Advanced / manual override:** `sol cloud plan/apply` is a thin wrapper around Terraform. Engineers who need full Terraform control — custom variables, targeted applies, remote state configuration, or workspace management — can invoke Terraform directly against the same modules:
 >
 > ```bash
 > # AWS example
@@ -680,4 +680,4 @@ After `terraform apply`, the cluster is identical to `sun dev up` — same DNS n
 kubectl apply -f platform/infra/argocd/application.yaml
 ```
 
-From this point, every `git push` to `main` in CI runs `sun deploy --emit-to`, commits the YAML to the GitOps repo, and Argo CD reconciles the cluster automatically.
+From this point, every `git push` to `main` in CI runs `sol deploy --emit-to`, commits the YAML to the GitOps repo, and Argo CD reconciles the cluster automatically.

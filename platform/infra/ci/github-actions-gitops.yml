@@ -1,8 +1,8 @@
-# GitHub Actions workflow for Sun workspaces — GitOps mode (Argo CD).
+# GitHub Actions workflow for Sol workspaces — GitOps mode (Argo CD).
 #
 # This workflow:
 #   1. Builds and pushes Docker images to ECR on every push to main
-#   2. Uses `sun deploy --emit-to` to generate Kubernetes manifests
+#   2. Uses `sol deploy --emit-to` to generate Kubernetes manifests
 #   3. Commits the manifests to a separate GitOps repo
 #   4. Argo CD watches that repo and reconciles the cluster
 #
@@ -16,11 +16,11 @@
 #
 # Required variables (application repo):
 #   GITOPS_REPO               — e.g. git@github.com:myorg/acme-gitops.git
-#   SUN_TARGET                — deployment target, <env>/<provider>/<region>, e.g.
+#   SOL_TARGET                — deployment target, <env>/<provider>/<region>, e.g.
 #                                prod/aws/us-east-1. Requires a matching
-#                                sun/<env>/<provider>/<region>.yml file committed in
+#                                sol/<env>/<provider>/<region>.yml file committed in
 #                                this repo -- create one before the first deploy, even
-#                                empty: mkdir -p sun/prod/aws && touch sun/prod/aws/us-east-1.yml
+#                                empty: mkdir -p sol/prod/aws && touch sol/prod/aws/us-east-1.yml
 #
 # Argo CD Application (create once in the cluster after platform/infra/base/ apply):
 #   kubectl apply -f platform/infra/argocd/application.yaml
@@ -81,11 +81,11 @@ jobs:
         env:
           SHA:        ${{ github.sha }}
           REGISTRY:   ${{ secrets.ECR_REGISTRY }}
-          SUN_TARGET: ${{ vars.SUN_TARGET }}
+          SOL_TARGET: ${{ vars.SOL_TARGET }}
         run: |
           eval $(opam env)
           SHORT_SHA=${SHA::7}
-          sun deploy "$SUN_TARGET" \
+          sol deploy "$SOL_TARGET" \
             --emit-to  manifests/ \
             --image-tag "$SHORT_SHA" \
             --registry  "$REGISTRY"
@@ -100,8 +100,8 @@ jobs:
           git clone "$GITOPS_REPO" gitops-repo
           cp manifests/*.yaml gitops-repo/
           cd gitops-repo
-          git config user.email "ci@sun-platform"
-          git config user.name  "Sun CI"
+          git config user.email "ci@sol-platform"
+          git config user.name  "Sol CI"
           git add -A
           git diff --cached --quiet || \
             git commit -m "deploy: ${SHA::7} from ${{ github.repository }}"

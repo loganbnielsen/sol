@@ -1,7 +1,7 @@
 # Observability Design
 
-Sun treats observability as a workspace-level capability, not a per-service
-add-on. A Sun workspace belongs to one company/product; domains (team-owned
+Sol treats observability as a workspace-level capability, not a per-service
+add-on. A Sol workspace belongs to one company/product; domains (team-owned
 verticals, e.g. `payments`, `comms`) inside it own the services, workers, and
 functions that emit into the same observability surface.
 
@@ -12,13 +12,13 @@ one workspace -> one logs backend, one metrics backend, one dashboard surface
 ```
 
 Individual domains and services are scoped views inside that surface,
-selected by stable labels — the same convention `sun status`/`sun logs`
+selected by stable labels — the same convention `sol status`/`sol logs`
 already use (`<domain>` or `<domain>/<service>`). A service can and should
 have its own dashboard; it should not have its own isolated observability
 stack.
 
 > Earlier drafts of this doc introduced a `project` layer above `domain`
-> (grouping multiple products/apps inside one workspace). Dropped: Sun's
+> (grouping multiple products/apps inside one workspace). Dropped: Sol's
 > existing `domain` concept already means "team-owned vertical composed of
 > services/workers/functions" (see `CLAUDE.md`'s "Teams own domains"), which
 > is what `project` was actually describing. No new layer — `workspace ->
@@ -29,8 +29,8 @@ stack.
 - A developer can open one dashboard and inspect the whole workspace.
 - A domain, service, worker, or function can be filtered without knowing
   Kubernetes names.
-- Self-hosted users get the same shape as future Sun-hosted users.
-- Sun commands point at the shared surface while opening scoped dashboards
+- Self-hosted users get the same shape as future Sol-hosted users.
+- Sol commands point at the shared surface while opening scoped dashboards
   for domains and services.
 
 ## Identity
@@ -48,11 +48,11 @@ must carry the same ownership identity:
 | `release` | Deployed image/release identity when known |
 
 > **Status:** all six labels, including `env`, are emitted (OBS-008,
-> `env` added by FEAT-026). `sun deploy <env>/<provider>/<region>` resolves
-> the target via `Sun_cli_config.load_for_target` — the same path `sun
-> plan`/`sun cloud tf` already used, and `sun status`/`sun logs`/`sun open`
+> `env` added by FEAT-026). `sol deploy <env>/<provider>/<region>` resolves
+> the target via `Sol_cli_config.load_for_target` — the same path `sol
+> plan`/`sol cloud tf` already used, and `sol status`/`sol logs`/`sol open`
 > use for `observability_backend`/`base_domain` (OBS-015) — and threads
-> `env = target.env` through to every generated manifest's labels. `sun
+> `env = target.env` through to every generated manifest's labels. `sol
 > up` stays local-only by design (no target, no `env` label — it's omitted
 > there, not defaulted to a fake value like `"local"`).
 
@@ -61,33 +61,33 @@ names, bucket names, and cloud resource names are implementation details.
 
 ## Backend Modes
 
-Sun supports three observability backend modes:
+Sol supports three observability backend modes:
 
 | Mode | Use |
 |---|---|
 | `local` | Dev and throwaway clusters. In-cluster Loki, Prometheus, and Grafana. No durability promise. |
 | `self_hosted_durable` | Production self-hosting in the user's cloud account. Durable logs and metrics with object storage. |
-| `external` | Bring-your-own observability provider. Sun ships logs/metrics to the configured endpoints. |
+| `external` | Bring-your-own observability provider. Sol ships logs/metrics to the configured endpoints. |
 
 The mode changes storage and transport. It should not change the product
-surface: `sun status`, `sun logs`, and `sun open` should keep using the same
+surface: `sol status`, `sol logs`, and `sol open` should keep using the same
 workspace/domain/service scopes.
 
 ## CLI Shape
 
-`sun status` is deterministic from any directory inside the workspace. The
+`sol status` is deterministic from any directory inside the workspace. The
 current working directory is only used to find the workspace root.
 
 ```bash
-sun status
-sun status payments
-sun status payments/charge-svc
+sol status
+sol status payments
+sol status payments/charge-svc
 ```
 
 At workspace scope, show an index:
 
 ```text
-sun workspace
+sol workspace
 
 Domains
   payments   healthy
@@ -100,9 +100,9 @@ Observability
   metrics  healthy
 
 Open
-  logs       sun open logs
-  metrics    sun open metrics
-  dashboard  sun open dashboard
+  logs       sol open logs
+  metrics    sol open metrics
+  dashboard  sol open dashboard
 ```
 
 At domain scope, show service health and the shared observability surface:
@@ -120,9 +120,9 @@ Observability
   dashboard  healthy
 
 Open
-  logs       sun open logs payments
-  metrics    sun open metrics payments
-  dashboard  sun open dashboard payments
+  logs       sol open logs payments
+  metrics    sol open metrics payments
+  dashboard  sol open dashboard payments
 ```
 
 At service scope, open the service-specific dashboard and logs view:
@@ -136,9 +136,9 @@ Observability
   dashboard  healthy
 
 Open
-  logs       sun open logs payments/charge-svc
-  metrics    sun open metrics payments/charge-svc
-  dashboard  sun open dashboard payments/charge-svc
+  logs       sol open logs payments/charge-svc
+  metrics    sol open metrics payments/charge-svc
+  dashboard  sol open dashboard payments/charge-svc
 ```
 
 `Open` entries are commands, not URLs. A `--links` flag can print raw URLs for
@@ -153,7 +153,7 @@ Links
 
 ## Dashboard Shape
 
-Grafana is the default self-hosted dashboard shell today. Sun should provision
+Grafana is the default self-hosted dashboard shell today. Sol should provision
 one workspace dashboard entrypoint plus scoped dashboards:
 
 - workspace overview
@@ -162,19 +162,19 @@ one workspace dashboard entrypoint plus scoped dashboards:
 - service logs view
 - deploy/release timeline when available
 
-The dashboard should filter by Sun labels, not by namespace/pod names. A
+The dashboard should filter by Sol labels, not by namespace/pod names. A
 single incident often crosses an HTTP service, Kafka worker, scheduled
 function, database, and deploy event — cross-domain search is the point.
 
 ## Hosted Path
 
-Future Sun-hosted observability should keep the same shape:
+Future Sol-hosted observability should keep the same shape:
 
 ```text
 workspace/domain/service
 ```
 
-Sun may operate the storage itself or broker a managed provider behind the
+Sol may operate the storage itself or broker a managed provider behind the
 scenes. Users should not have to learn that backend in the happy path. The
 self-hosted durable path exists to build trust and avoid lock-in; the hosted
 path exists to remove operations work.

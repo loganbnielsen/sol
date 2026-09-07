@@ -1,5 +1,5 @@
 ---
-description: Run a technical production-readiness audit of the Sun codebase. Checks security, runtime correctness, data integrity, and infrastructure synthesis against the principles in docs/audits/AUDIT.md. Produces a dated report in project/audits/ and materialises open findings as ticket files in project/tickets/READY_FOR_ENGINEERING/.
+description: Run a technical production-readiness audit of the Sol codebase. Checks security, runtime correctness, data integrity, and infrastructure synthesis against the principles in docs/audits/AUDIT.md. Produces a dated report in project/audits/ and materialises open findings as ticket files in project/tickets/READY_FOR_ENGINEERING/.
 ---
 
 # /audit — Production Readiness Audit
@@ -38,26 +38,26 @@ Check all `project/tickets/` subdirectories for existing AUDIT-* ticket files. A
 
 For each checklist item in `docs/audits/AUDIT.md`, read the relevant source files and determine whether the invariant passes or fails. Do not rely on memory or assumptions — read the code.
 
-**Section 1 — Local Developer Loop (`cli/sun/bin/`, `cli/sun/lib/sun_cli_scaffold.ml`):**
+**Section 1 — Local Developer Loop (`cli/sol/bin/`, `cli/sol/lib/sol_cli_scaffold.ml`):**
 - Read `cmd_new.ml` to verify generated workspaces compile cleanly and library names are workspace-namespaced
 - Check `cmd_up.ml` and `cmd_deploy.ml` for failure-path behaviour and rollback
 
-**Section 2 — Infrastructure Synthesis (`cli/sun/lib/sun_cli_manifest.ml`):**
-- Read `sun_cli_manifest.ml` in full
+**Section 2 — Infrastructure Synthesis (`cli/sol/lib/sol_cli_manifest.ml`):**
+- Read `sol_cli_manifest.ml` in full
 - Check `deployment_doc` and `cronjob_doc` for `runAsNonRoot`, `runAsUser`, `seccompProfile`, `readOnlyRootFilesystem`, `allowPrivilegeEscalation`
 - Check `service_doc` for `type: ClusterIP` (not `NodePort`)
 - Check `secret_doc` exists and `default_cluster_secrets` contains no plaintext passwords
 - Check `network_policy_doc` is included in `render`
 - Verify all `Sys.command` calls use `Filename.quote`
 
-**Section 3 — Core Runtime (`~/Code/kafka-eio/kafka-eio-core/lib/kafka_stubs.c`, `~/Code/kafka-eio/kafka-eio-consumer/lib/kafka_consumer.ml` — extracted to the standalone `kafka-eio` opam package, no longer in this repo; `framework/sun-worker/lib/worker.ml`, `cli/sun/bin/cmd_new.ml`):**
+**Section 3 — Core Runtime (`~/Code/kafka-eio/kafka-eio-core/lib/kafka_stubs.c`, `~/Code/kafka-eio/kafka-eio-consumer/lib/kafka_consumer.ml` — extracted to the standalone `kafka-eio` opam package, no longer in this repo; `framework/sol-worker/lib/worker.ml`, `cli/sol/bin/cmd_new.ml`):**
 - Read `kafka_stubs.c` — for every blocking librdkafka call, verify `caml_release_runtime_system()` before and `caml_acquire_runtime_system()` after
 - Check `pause_partition` and `resume_partition` for `CAMLparam`/`CAMLreturn`
 - Read `kafka_consumer.ml` — verify `acked` ref and warning in both `consume` and `consume_partitioned`
 - Read `cmd_new.ml` — verify `ack ()` placement in worker templates
 - Read `kafka_service.ml` — verify `produce_await` result is checked before `ack ()`
 
-**Section 4 — Observability (`integrations/kafka/kafka-eio-service/lib/kafka_service.ml`, `framework/sun-svc/lib/`):**
+**Section 4 — Observability (`integrations/kafka/kafka-eio-service/lib/kafka_service.ml`, `framework/sol-svc/lib/`):**
 - Read `parse_base_url` — verify `https://` is handled
 - Read `default_on_decode_error` — check for structured log line, Prometheus counter, dead-letter option
 
@@ -66,7 +66,7 @@ For each checklist item in `docs/audits/AUDIT.md`, read the relevant source file
 - Read `cmd_new.ml` scaffold templates and the reference workspaces under `examples/venus/` / `examples/pluto/`
 - Verify event contracts are owned under `events/<team>/` and consumers import contracts, not producer service internals
 - Verify generated names and labels preserve workspace/domain/service ownership
-- Verify `Sun.Service.Make`, `Sun.Worker.Make`, and `Sun.Fn.Make` own lifecycle concerns in generated apps
+- Verify `Sol.Service.Make`, `Sol.Worker.Make`, and `Sol.Fn.Make` own lifecycle concerns in generated apps
 - Verify package specs and user-facing docs do not claim commands or guarantees that are unavailable
 
 ### 5. Write the report

@@ -1,5 +1,5 @@
 ---
-# Template for a Sun Kafka service.
+# Template for a Sol Kafka service.
 # Copy this file, replace all occurrences of MY-SVC with your service name,
 # and set the image name.
 #
@@ -14,10 +14,10 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: MY-SVC
-  namespace: sun
+  namespace: sol
   labels:
     app: MY-SVC
-    app.kubernetes.io/part-of: sun
+    app.kubernetes.io/part-of: sol
 spec:
   replicas: 2   # at least 2 for rolling updates to make sense
   selector:
@@ -58,9 +58,9 @@ spec:
           imagePullPolicy: Always
           env:
             - name: KAFKA_BROKERS
-              value: "redpanda.sun.svc.cluster.local:9092"
+              value: "redpanda.sol.svc.cluster.local:9092"
             - name: SCHEMA_REGISTRY_URL
-              value: "http://redpanda.sun.svc.cluster.local:8081"
+              value: "http://redpanda.sol.svc.cluster.local:8081"
           resources:
             requests:
               cpu: "100m"

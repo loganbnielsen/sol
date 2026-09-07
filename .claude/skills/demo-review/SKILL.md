@@ -57,7 +57,7 @@ or `/pr` for that setup) — this skill only covers the review loop itself.
    personas and report whether it's satisfied. Iterate if it finds
    something new; this is the exit condition — stop once a fresh agent
    approves.
-7. Hand off per the ticket's normal path (`/pr`, `sundev pipeline submit`,
+7. Hand off per the ticket's normal path (`/pr`, `soldev pipeline submit`,
    etc.) — this skill only gates "is the demo actually good," not the
    ticket state machine itself.
 
@@ -110,7 +110,7 @@ like this in their own service:
 5. Scope check the other direction too: don't recommend an abstraction
    for something that only happens once, or that's inherently
    framework-internal wiring an app author never touches — a single
-   `Sun_obs.obs_eio obs` bridge call to satisfy a lower-level primitive's
+   `Sol_obs.obs_eio obs` bridge call to satisfy a lower-level primitive's
    signature is not boilerplate, it's an intentional seam.
 
 ## Output

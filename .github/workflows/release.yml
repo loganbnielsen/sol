@@ -25,10 +25,10 @@ jobs:
       - name: Pin extracted opam packages
         run: |
           # Tracking #main on every support package during active parallel
-          # development across all of them — sun should build against their
+          # development across all of them — sol should build against their
           # latest code, not a tag that's fallen behind. Revert to tagged
           # pins once these settle and cut real releases (re-running a past
-          # sun release build later can then pull in different dependency
+          # sol release build later can then pull in different dependency
           # code than what originally shipped — accepted tradeoff for now).
           # https-eio first: obs-loki-eio/obs-prometheus-eio/aws-eio all
           # depend on it, and each -y pin below installs immediately --
@@ -49,32 +49,32 @@ jobs:
       - name: Install OCaml dependencies
         run: opam install . --deps-only -y
 
-      - name: Build sun binary
-        run: opam exec -- dune build cli/sun/bin/main.exe
+      - name: Build sol binary
+        run: opam exec -- dune build cli/sol/bin/main.exe
 
       - name: Stage artifact
         run: |
           VERSION="${{ github.ref_name }}"
-          BUNDLE="sun-${VERSION}-linux-x86_64"
+          BUNDLE="sol-${VERSION}-linux-x86_64"
           mkdir -p dist/${BUNDLE}/bin
-          cp _build/default/cli/sun/bin/main.exe dist/${BUNDLE}/bin/sun
-          chmod +x dist/${BUNDLE}/bin/sun
+          cp _build/default/cli/sol/bin/main.exe dist/${BUNDLE}/bin/sol
+          chmod +x dist/${BUNDLE}/bin/sol
           cp -r framework dist/${BUNDLE}/framework
           cp -r integrations dist/${BUNDLE}/integrations
           cd dist
           tar czf ${BUNDLE}.tar.gz ${BUNDLE}
           # Also keep the standalone binary for scripted installs
-          cp ${BUNDLE}/bin/sun sun-linux-x86_64
+          cp ${BUNDLE}/bin/sol sol-linux-x86_64
 
       - name: Smoke test release bundle
         run: |
           set -e
           VERSION="${{ github.ref_name }}"
-          BUNDLE="dist/sun-${VERSION}-linux-x86_64"
+          BUNDLE="dist/sol-${VERSION}-linux-x86_64"
           # Binary should start and show help without framework resolution errors
-          ${BUNDLE}/bin/sun --help > /dev/null
+          ${BUNDLE}/bin/sol --help > /dev/null
           # Verify framework source exists at expected location in bundle
-          test -f ${BUNDLE}/framework/sun-svc/lib/dune
+          test -f ${BUNDLE}/framework/sol-svc/lib/dune
           test -f ${BUNDLE}/integrations/kafka/kafka-eio-service/lib/dune
           echo "Bundle structure verified"
 
@@ -82,6 +82,6 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            dist/sun-linux-x86_64
-            dist/sun-*-linux-x86_64.tar.gz
+            dist/sol-linux-x86_64
+            dist/sol-*-linux-x86_64.tar.gz
           generate_release_notes: true

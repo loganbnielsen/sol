@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-NETWORK=sun-obs
+NETWORK=sol-obs
 LOKI_URL=http://loki:3100
 TEMPO_URL=http://tempo:3200
 GRAFANA_PORT=3000
@@ -63,7 +63,7 @@ else
       -e GF_AUTH_ANONYMOUS_ENABLED=true \
       -e GF_AUTH_ANONYMOUS_ORG_ROLE=Admin \
       -e GF_AUTH_DISABLE_LOGIN_FORM=true \
-      -v "${DASHBOARD_PROVIDER_FILE}:/etc/grafana/provisioning/dashboards/sun-demo.yml:ro" \
+      -v "${DASHBOARD_PROVIDER_FILE}:/etc/grafana/provisioning/dashboards/sol-demo.yml:ro" \
       -v "${DASHBOARD_DIR}:/etc/grafana/dashboards:ro" \
       grafana/grafana:11.3.0
   fi

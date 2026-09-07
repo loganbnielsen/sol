@@ -24,7 +24,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cmd_dev="$repo_root/cli/sun/bin/cmd_dev.ml"
+cmd_dev="$repo_root/cli/sol/bin/cmd_dev.ml"
 main_tf="$repo_root/platform/infra/base/main.tf"
 
 # Keys CODE_LAYER-005 moved into platform/components/<name>/values-*.json,

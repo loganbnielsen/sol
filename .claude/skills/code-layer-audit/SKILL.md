@@ -1,5 +1,5 @@
 ---
-description: Audit code architecture by checking abstraction layers, dependency direction, file/module boundaries, and shared-code placement. Use when reviewing whether a codebase is organized at the right level of abstraction, especially Sun and the ~/Code/*-eio packages.
+description: Audit code architecture by checking abstraction layers, dependency direction, file/module boundaries, and shared-code placement. Use when reviewing whether a codebase is organized at the right level of abstraction, especially Sol and the ~/Code/*-eio packages.
 ---
 
 # /code-layer-audit - Abstraction and File Boundary Audit
@@ -9,13 +9,13 @@ of layers. A boundary is good only when it owns a real translation, policy, or
 state boundary.
 
 Use a cross-cutting mindset. Prefer one boundary-level fix over local patches in
-many callers. If the clean design requires a public API break in Sun or the
+many callers. If the clean design requires a public API break in Sol or the
 foundation packages under the user's control, recommend the break plainly
 instead of preserving a bad API shape for compatibility.
 
-Default scope for Sun work:
+Default scope for Sol work:
 
-- `/home/lbendtly/Code/sun`
+- `/home/lbendtly/Code/sol`
 - `/home/lbendtly/Code/*-eio` when the request mentions shared foundation,
   integrations, observability, package extraction, or cross-package shape.
 
@@ -93,7 +93,7 @@ for example:
 
 If the current shape is already lean, say so and list only residual risks.
 
-For a full audit of Sun, also write
+For a full audit of Sol, also write
 `project/audits/<YYYY-MM-DD>_code_layer_audit.md`. If actionable findings are
 open and `project/tickets/READY_FOR_ENGINEERING/` exists, materialize tickets
 as `CODE_LAYER-NNN`, continuing from the highest existing `CODE_LAYER-*` ID
