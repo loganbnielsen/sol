@@ -4,6 +4,11 @@ let check_int_opt = Alcotest.(check (option int))
 let check_bool = Alcotest.(check bool)
 let check_str_opt = Alcotest.(check (option string))
 
+let contains ~needle s =
+  let nlen = String.length needle and slen = String.length s in
+  let rec loop i = i + nlen <= slen && (String.sub s i nlen = needle || loop (i + 1)) in
+  nlen = 0 || loop 0
+
 let only_index indexes =
   match indexes with
   | [index] -> index
@@ -598,6 +603,49 @@ target:
         check_bool "aws var present" true (List.mem ("vpc_cidr", "10.42.0.0/16") vars);
         check_bool "gcp var absent" false (List.mem ("project_id", "pluto-dev") vars))
 
+let test_terraform_vars_workspace_name_and_ecr_repositories () =
+  with_temp_dir (fun () ->
+    write "sol.yml" {|
+target:
+  aws:
+    vpc_cidr: "10.42.0.0/16"
+|};
+    mkdir_p "app/payments/charge_svc";
+    write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
+    mkdir_p "app/comms/notify_worker";
+    write "app/comms/notify_worker/Dockerfile" "FROM scratch\n";
+    (* No Dockerfile here -- discover_services skips it, so it must not
+       appear in ecr_repositories either. *)
+    mkdir_p "app/comms/spike_fn";
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+      | Error msg -> Alcotest.fail msg
+      | Ok vars ->
+        check_str_opt "workspace_name" (Some "pluto") (List.assoc_opt "workspace_name" vars);
+        (match List.assoc_opt "ecr_repositories" vars with
+         | None -> Alcotest.fail "expected ecr_repositories var"
+         | Some ecr ->
+           check_bool "charge-svc present" true (contains ~needle:"\"charge-svc\"" ecr);
+           check_bool "notify-worker present" true (contains ~needle:"\"notify-worker\"" ecr);
+           check_bool "spike-fn absent (no Dockerfile)" false (contains ~needle:"spike-fn" ecr)))
+
+let test_terraform_vars_ecr_repositories_empty_without_app_dir () =
+  with_temp_dir (fun () ->
+    write "sol.yml" {|
+target:
+  aws:
+    vpc_cidr: "10.42.0.0/16"
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+      | Error msg -> Alcotest.fail msg
+      | Ok vars ->
+        check_str_opt "ecr_repositories" (Some "[]") (List.assoc_opt "ecr_repositories" vars))
+
 let test_example_pluto_prod_target_parses () =
   with_chdir (example_pluto_dir ()) (fun () ->
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
@@ -650,6 +698,8 @@ let () =
         Alcotest.test_case "provider box round trips" `Quick test_provider_box_round_trips;
         Alcotest.test_case "duplicate provider box fails" `Quick test_duplicate_provider_box_fails;
         Alcotest.test_case "provider fields feed terraform vars" `Quick test_provider_fields_feed_active_terraform_provider;
+        Alcotest.test_case "terraform vars: workspace_name + ecr_repositories" `Quick test_terraform_vars_workspace_name_and_ecr_repositories;
+        Alcotest.test_case "terraform vars: ecr_repositories empty without app/" `Quick test_terraform_vars_ecr_repositories_empty_without_app_dir;
         Alcotest.test_case "example pluto prod target parses" `Quick test_example_pluto_prod_target_parses;
       ]
     ]
