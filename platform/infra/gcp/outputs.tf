@@ -33,3 +33,23 @@ output "dns_nameservers" {
   description = "Nameservers to set at your domain registrar"
   value       = var.create_dns_zone ? google_dns_managed_zone.main[0].name_servers : null
 }
+
+output "loki_gcs_bucket" {
+  description = "GCS bucket for durable Loki storage — set in platform/infra/base as loki_gcs_bucket (INFRA-003, GCP counterpart to aws/'s loki_s3_bucket)"
+  value       = var.enable_durable_observability ? google_storage_bucket.loki[0].name : null
+}
+
+output "loki_workload_identity_sa_email" {
+  description = "GCP service account email for Loki's GCS access — set in platform/infra/base as loki_workload_identity_sa_email (INFRA-003, GCP counterpart to aws/'s loki_irsa_arn)"
+  value       = var.enable_durable_observability ? google_service_account.loki[0].email : null
+}
+
+output "thanos_gcs_bucket" {
+  description = "GCS bucket for durable Prometheus/Thanos storage — set in platform/infra/base as thanos_gcs_bucket (INFRA-003, GCP counterpart to aws/'s thanos_s3_bucket)"
+  value       = var.enable_durable_observability ? google_storage_bucket.thanos[0].name : null
+}
+
+output "thanos_workload_identity_sa_email" {
+  description = "GCP service account email for Thanos's GCS access — set in platform/infra/base as thanos_workload_identity_sa_email (INFRA-003, GCP counterpart to aws/'s thanos_irsa_arn)"
+  value       = var.enable_durable_observability ? google_service_account.thanos[0].email : null
+}

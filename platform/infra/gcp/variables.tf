@@ -77,3 +77,20 @@ variable "create_dns_zone" {
   type        = bool
   default     = true
 }
+
+# Durable observability (OBS-006/OBS-007, GCP side of the AWS S3+IRSA pair — INFRA-003)
+variable "enable_durable_observability" {
+  description = "Provision GCS buckets + Workload Identity service accounts for durable Loki (OBS-006) and Thanos-backed Prometheus (OBS-007) storage. Pair with platform/infra/base's observability_backend = \"self_hosted_durable\". Mirrors platform/infra/aws's enable_durable_observability."
+  type        = bool
+  default     = false
+}
+
+variable "loki_retention_days" {
+  description = "GCS lifecycle retention (days) for durable Loki logs."
+  type        = number
+  default     = 90
+  validation {
+    condition     = var.loki_retention_days >= 1 && floor(var.loki_retention_days) == var.loki_retention_days
+    error_message = "loki_retention_days must be a whole number of days >= 1."
+  }
+}
