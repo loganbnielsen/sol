@@ -22,3 +22,7 @@ This is explicitly a narrow validation spike, not the hosted control plane itsel
 - Any hardcoded single-cluster-per-account assumption found in `platform/infra/aws`/`platform/infra/base` is documented (and fixed, if small; filed as a follow-up ticket if not).
 - A short report records what worked, what didn't, and whether DEC-008's mechanism as decided is actually sound — this is the concrete evidence DEC-009's revisit trigger is waiting on.
 - Both clusters torn down and verified gone (AWS account checked directly afterward, matching the discipline established in AUDIT-064/DOGFOOD-011) before this ticket is considered done.
+
+## Autonomous-loop note (2026-09-08)
+
+Skipped in this pass of the autonomous ticket pipeline: this environment has no live AWS credentials (`aws sts get-caller-identity` → `NoCredentials`), and even with credentials, provisioning real billed AWS infrastructure (two EKS clusters) is a consequential, real-money action the user hasn't pre-authorized for autonomous execution — the session's merge authorization doesn't extend to cloud spend/provisioning. Left in `READY_FOR_ENGINEERING` for the user to pick up with real AWS access, or to explicitly direct otherwise.

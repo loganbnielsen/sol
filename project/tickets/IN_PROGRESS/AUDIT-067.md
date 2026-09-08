@@ -12,3 +12,9 @@ source: project/audits/2026-09-08_audit.md
 **Impact:** Low — cosmetic today, but a landmine for any future direct `pg-eio` consumer (or a new `sol` call site) that forgets to pass `~table` explicitly: they'd silently get a table named after a product that no longer exists, and it wouldn't be namespaced to their workspace either.
 
 **Remediation:** Rename `default_table` to `"sol_schema_migrations"` in `~/Code/pg-eio/lib/migration.ml`. No deprecated alias or migration path needed (pre-alpha, no backwards-compatibility constraint per `~/Code/CLAUDE.md`) — change the literal and re-pin `pg-eio` into `sol`'s opam switch.
+
+## Progress (2026-09-08)
+
+Fixed in `~/Code/pg-eio` — commit `9dcfb86` on branch `fix/default-table-sol-rename`, opened as pg-eio PR #20 (https://github.com/loganbnielsen/pg-eio/pull/20). Build + full pg-eio test suite pass locally. Did not merge that PR myself — it's a separate repo outside this session's merge authorization for `sol`'s own ticket pipeline. Left `sol`'s `pg-eio` opam pin untouched (still points at the pre-fix commit) since re-pinning to an unmerged feature branch is fragile; re-pin once PR #20 merges to `pg-eio`'s `main`, then move this ticket to DONE.
+
+Note: found and cleaned up an unrelated slip — my fix commit initially landed on `~/Code/pg-eio`'s pre-existing `codex/create-pool-of-env` branch (someone else's in-progress work, 2 commits ahead of `main` at the time) instead of a fresh branch off `main`. Caught it before pushing, reset that branch back to exactly match `origin/codex/create-pool-of-env`, and moved the fix to its own branch. No impact on that other work.
