@@ -666,7 +666,32 @@ let resources cfg =
 let services cfg =
   active_services cfg
 
-let terraform_vars cfg =
+(* Every service in the workspace gets an ECR repository, regardless of
+   which target is currently being planned/applied -- a service omitted
+   from one target may still be deployed to another and needs its own
+   repository either way.
+
+   discover_services requires an app/ directory and exits the process if
+   one isn't found -- appropriate for the top-level CLI commands it was
+   written for, but terraform_vars must stay callable (e.g. from tests, or
+   any future caller) without an app/ directory in cwd, so this degrades to
+   "no auto-detected repositories" instead of inheriting that exit. *)
+let ecr_repositories_var () =
+  let services =
+    if Sys.file_exists "app" && Sys.is_directory "app" then
+      Sol_cli_manifest.discover_services ~filter_path:None
+    else []
+  in
+  services
+  |> List.filter_map (fun (s : Sol_cli_manifest.service) ->
+      match Sol_cli_kubernetes_name.k8s_name_of_source s.Sol_cli_manifest.name with
+      | Ok name -> Some (Sol_cli_kubernetes_name.k8s_name_to_string name)
+      | Error _ -> None)
+  |> List.map (Printf.sprintf "%S")
+  |> String.concat ","
+  |> Printf.sprintf "[%s]"
+
+let terraform_vars ~workspace cfg =
   match cfg.target with
   | None -> Error "target missing"
   | Some target ->
@@ -676,6 +701,7 @@ let terraform_vars cfg =
       |> add_opt "region" (Some target.region)
       |> add_opt "cluster_name" target.cluster_name
       |> add_opt "base_domain" target.base_domain
+      |> add_opt "workspace_name" (Some workspace)
     in
     let vars =
       List.assoc_opt target.provider target.provider_fields
@@ -686,4 +712,6 @@ let terraform_vars cfg =
       resources cfg
       |> List.exists (fun (r : resource) -> r.typ = Some "postgres")
     in
-    Ok (("create_rds", string_of_bool has_postgres) :: vars)
+    Ok (("create_rds", string_of_bool has_postgres)
+        :: ("ecr_repositories", ecr_repositories_var ())
+        :: vars)

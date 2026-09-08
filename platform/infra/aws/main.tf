@@ -139,7 +139,11 @@ module "eks" {
 resource "aws_ecr_repository" "services" {
   for_each = toset(var.ecr_repositories)
 
-  name                 = "${var.cluster_name}/${each.value}"
+  # Keyed on workspace_name, not cluster_name: sol deploy constructs image
+  # references as "${registry}/${workspace}/${k8s_name}:${tag}"
+  # (Sol_cli_deployment_plan.image_ref), independent of which cluster the
+  # workspace happens to be deployed to. See FRIC-011.
+  name                 = "${var.workspace_name}/${each.value}"
   image_tag_mutability = "MUTABLE"
 
   image_scanning_configuration {
