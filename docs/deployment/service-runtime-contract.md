@@ -49,11 +49,15 @@ The generated Deployment (`sol_cli_manifest_yaml.ml`) declares:
 ports:
   - containerPort: 8080
 livenessProbe:
-  httpGet: { path: /healthz, port: 8080 }
+  httpGet:
+    path: /healthz
+    port: 8080
   initialDelaySeconds: 5
   periodSeconds: 10
 readinessProbe:
-  httpGet: { path: /healthz, port: 8080 }
+  httpGet:
+    path: /healthz
+    port: 8080
   initialDelaySeconds: 5
   periodSeconds: 10
 ```
@@ -87,21 +91,45 @@ wrong:
 
 ## Config and secret injection — the wiring is real, the naming is trusted
 
-Every generated Deployment gets `envFrom: secretRef: name: sol-secrets` (the
-fixed name `Sol_cli_manifest.runtime_secret_name` writes to and
-`sol secret set` populates). That wiring is real and mechanical. What is
-**not** checked: that your application code actually reads the environment
-variable by the name Sol/you expect (`POSTGRES_URL`, `KAFKA_BROKERS`,
-`SCHEMA_REGISTRY_URL`, etc.). Typo the name in your own code and nothing
-fails until the connection you expected to work doesn't, at runtime.
+There are two distinct Secret objects per namespace, easy to conflate:
+
+- A standard Kubernetes `Deployment` gets `envFrom: secretRef: name: <k8s-name>-secrets`
+  — a **per-service** Secret (`sol_cli_manifest_yaml.ml`'s `secret_doc`),
+  e.g. `charge-svc-secrets`.
+- A service using Argo Rollout-based progressive delivery instead reads from
+  a single shared, fixed-name Secret, `sol-secrets`
+  (`Sol_cli_manifest.runtime_secret_name`). FRIC-012's in-cluster migration
+  Job also mounts `sol-secrets` directly via `envFrom`.
+
+`sol secret set` (`sol_cli_secret.ml`) writes to **both** representations on
+every call, specifically so the update reaches a workload correctly no matter
+which rollout mechanism it uses: it patches the shared `sol-secrets` object,
+then patches every per-service `<name>-secrets` Secret it finds in the
+namespace (`patch_workload_secrets`), then triggers a rollout restart so a
+standard Deployment picks the change up immediately rather than waiting for
+its next natural restart.
+
+This is real, mechanical wiring in both directions — but what's **not**
+checked in either case is that your application code actually reads the
+environment variable by the name Sol/you expect (`POSTGRES_URL`,
+`KAFKA_BROKERS`, `SCHEMA_REGISTRY_URL`, etc.). Typo the name in your own code
+and nothing fails until the connection you expected to work doesn't, at
+runtime.
 
 ## Migration file convention — filenames only, SQL content unchecked
 
-`sol migrate` (`cmd_migrate.ml`) reads `db/migrations/*.sql`, sorted
-lexicographically, skipping `*.down.sql` files (the paired rollback
-convention). This is a pure filename-pattern scan. The SQL content itself is
-never validated by Sol — only by whatever the database driver accepts (or
-rejects) when it actually runs.
+`sol migrate --dry-run` (`cmd_migrate.ml`'s `print_pending_sql`) previews
+`db/migrations/*.sql` with a raw lexicographic filename sort, skipping
+`*.down.sql`. The path that actually determines applied order is different
+and more specific: `sol migrate apply` delegates to the external `pg-eio`
+package's `Migration` module, which parses each filename as
+`<integer version>_<name>.sql` and sorts numerically on the parsed integer —
+not on the filename string. These two orderings only coincide because
+migration filenames are conventionally zero-padded (`0001_...`, `0002_...`);
+a non-padded scheme could make the dry-run preview and the real applied order
+disagree. Either way, the SQL content itself is never validated by Sol or
+`pg-eio` — only by whatever the database driver accepts or rejects when it
+actually runs.
 
 ## What genuinely *is* compiler-enforced — and the real scope of that
 
