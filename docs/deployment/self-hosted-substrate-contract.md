@@ -5,6 +5,11 @@ contract a self-hosted environment must satisfy for `sol deploy` to work, and
 draws the boundary between what Sol generates and what cloud tooling (Terraform,
 Pulumi, cloud console) must provide.
 
+This covers the environment *around* your containers. See
+[`service-runtime-contract.md`](service-runtime-contract.md) for the other
+direction: what the code *inside* a container must actually do, and which of
+that Sol's tooling checks versus merely assumes.
+
 ## The Boundary
 
 Sol generates **application-layer Kubernetes objects**: namespaces, service
