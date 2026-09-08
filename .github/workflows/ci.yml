@@ -30,7 +30,9 @@ jobs:
         run: opam exec -- dune build
 
       - name: Unit tests (no broker/Postgres/Loki required)
-        run: opam exec -- dune test framework/ cli/sol/test/
+        # framework/kafka-eio-service/ excluded: its test/dune also builds a
+        # broker-requiring integration suite (see run_tests.sh's run_kafka()).
+        run: opam exec -- dune test framework/sol-env/ framework/sol-fn/ framework/sol-obs/ framework/sol-svc/ framework/sol-worker/ cli/sol/test/
 
       - name: Platform-component drift guardrail (ADR 0001 / CODE_LAYER-005)
         run: tools/ci/check_platform_component_drift.sh

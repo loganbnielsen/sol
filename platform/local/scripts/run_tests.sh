@@ -121,7 +121,10 @@ report_regression() {
 run_unit() {
   info "Primitives unit tests (no infrastructure required)"
   eval $(opam env)
-  dune test --root "$REPO_ROOT" framework/ cli/sol/test/ --force 2>&1
+  # framework/kafka-eio-service/ is excluded here — its test/dune also
+  # builds a broker-requiring integration suite; run_kafka() below covers
+  # it explicitly with KAFKA_BROKERS set.
+  dune test --root "$REPO_ROOT" framework/sol-env/ framework/sol-fn/ framework/sol-obs/ framework/sol-svc/ framework/sol-worker/ cli/sol/test/ --force 2>&1
 }
 
 run_kafka() {
