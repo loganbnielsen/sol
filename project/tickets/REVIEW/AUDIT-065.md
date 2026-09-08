@@ -3,6 +3,9 @@ id: AUDIT-065
 type: audit-finding
 severity: medium
 source: direct investigation, 2026-09-07 — root cause of the recurring "kubectl port-forward already bound to port 3100" false failure hit 3 times during this session's merge pipeline runs
+branch: AUDIT-065/pin-portforward-context
+worktree: ../sun-AUDIT-065-pin-portforward-context
+pr: https://github.com/loganbnielsen/sol/pull/148
 ---
 
 **Depends on:** None.
