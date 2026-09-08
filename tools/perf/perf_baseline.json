@@ -3153,8 +3153,8 @@
         },
         {
           "date": "2026-09-08",
-          "commit": "263e797a",
-          "duration_s": 3.081
+          "commit": "224e6e18",
+          "duration_s": 2.871
         }
       ]
     },
@@ -5640,8 +5640,8 @@
         },
         {
           "date": "2026-09-08",
-          "commit": "263e797a",
-          "duration_s": 1.133
+          "commit": "224e6e18",
+          "duration_s": 1.095
         }
       ]
     },
@@ -7940,8 +7940,8 @@
         },
         {
           "date": "2026-09-08",
-          "commit": "263e797a",
-          "duration_s": 1.217
+          "commit": "224e6e18",
+          "duration_s": 1.197
         }
       ]
     }

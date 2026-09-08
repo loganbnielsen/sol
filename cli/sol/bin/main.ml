@@ -7,7 +7,7 @@ let () =
   let cmd =
     Cmdliner.Cmd.group
       (Cmdliner.Cmd.info "sol"
-         ~version:"dev"
+         ~version:Version.v
          ~doc:"Sol platform CLI — scaffold, run, and deploy Sol services")
       [ Sol_cli_cmd_new.cmd
       ; Cmd_dev.cmd
