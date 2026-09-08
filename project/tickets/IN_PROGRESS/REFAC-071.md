@@ -3,6 +3,8 @@ id: REFAC-071
 type: refactor
 severity: medium
 source: architecture discussion with user, 2026-09-08
+branch: REFAC-071/kafka-eio-service-to-framework
+worktree: ../sol-REFAC-071-kafka-eio-service-to-framework
 ---
 
 **Depends on:** None.
