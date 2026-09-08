@@ -5,6 +5,7 @@ severity: high
 source: incident during REFAC-072/074's autonomous merges, 2026-09-08
 branch: REFAC-075/soldev-merge-race
 worktree: ../sol-REFAC-075-soldev-merge-race
+pr: https://github.com/loganbnielsen/sol/pull/164
 ---
 
 **Depends on:** None.
