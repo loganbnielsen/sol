@@ -158,15 +158,85 @@ let run_submit ticket_id =
       (Filename.quote (Printf.sprintf "pipeline: submit %s for review\n\nPR: %s" ticket_id pr_url))));
   Printf.printf "[%s] → REVIEW  (%s)\n%!" ticket_id pr_url
 
+(* ── pipeline merge-finish (internal — spawned by `merge`, never call directly) ──
+
+   Runs the post-merge test suite, updates the perf baseline, and moves the
+   ticket to DONE or BLOCKED_BY_PERFORMANCE. `merge` always invokes this as a
+   subprocess of a binary rebuilt *after* the PR's merge commit landed —
+   never inline in the resident pre-merge process. A merge that renames a
+   path this logic depends on (run_tests.sh's own location, say) would
+   otherwise be checked against the *old* compiled-in path by the
+   already-running binary, fail spuriously, and trigger an automatic revert
+   of a perfectly good merge — exactly what happened to REFAC-072 (left a
+   split ticket-state mess) and REFAC-074 (reverted an already-CI-green
+   116-file merge) before this fix. *)
+let run_merge_finish ticket_id merge_sha accept_performance_regression =
+  let ready_dir = ticket_dir Soldev_ticket.Ready_to_merge in
+  let filename = ticket_id ^ ".md" in
+  let src = Filename.concat ready_dir filename in
+  if not (Sys.file_exists src) then begin
+    Printf.eprintf "error: %s not found in READY_TO_MERGE\n" ticket_id; exit 1
+  end;
+  let perf_rc = Soldev_shell.run_cmd "./cli/platform/local/scripts/run_tests.sh" in
+  if perf_rc = 2 && accept_performance_regression then begin
+    Printf.eprintf "  perf regression explicitly accepted — recording new baseline\n%!";
+    ignore (Soldev_shell.run_cmd ~echo:false
+      "./cli/platform/local/scripts/run_tests.sh --update-baseline");
+    Sys.rename src (Filename.concat (ticket_dir Soldev_ticket.Done) filename);
+    ignore (Soldev_shell.run_cmd ~echo:false
+      (Printf.sprintf "git add pipeline/tickets/ devtools/perf/perf_baseline.json && git commit -m %s"
+        (Filename.quote
+          (Printf.sprintf "pipeline: move %s to DONE (perf regression accepted)" ticket_id))));
+    Printf.printf "  ✓  merged → DONE\n%!";
+    exit 0
+  end else if perf_rc >= 1 then begin
+    let label = if perf_rc = 2 then "perf regression" else "test failure" in
+    (* run_tests.sh always appends a non-baseline history entry to
+       devtools/perf/perf_baseline.json, even here, leaving it locally
+       modified. That made `git revert` below fail with "local changes
+       would be overwritten by merge" every time this path fired
+       (CODE_LAYER-011) — the entry was never meant to be committed on this
+       path, so discard it before reverting. *)
+    ignore (Soldev_shell.run_cmd ~echo:false
+      "git checkout -- devtools/perf/perf_baseline.json");
+    let revert_rc = Soldev_shell.run_cmd ~echo:false (Printf.sprintf
+      "SOL_SKIP_HOOKS=1 git revert %s --no-edit" (Filename.quote merge_sha)) in
+    let reverted = revert_rc = 0 in
+    Printf.eprintf "  %s detected — moving to BLOCKED_BY_PERFORMANCE\n%!" label;
+    Sys.rename src (Filename.concat (ticket_dir Soldev_ticket.Blocked_by_performance) filename);
+    ignore (Soldev_shell.run_cmd ~echo:false
+      (Printf.sprintf "git add pipeline/tickets/ && git commit -m %s"
+        (Filename.quote (Printf.sprintf "pipeline: %s blocked %s" label ticket_id))));
+    if not reverted then
+      Printf.eprintf "  warning: %s remains merged because automatic revert failed\n%!" ticket_id;
+    exit 1
+  end else begin
+    ignore (Soldev_shell.run_cmd ~echo:false
+      "./cli/platform/local/scripts/run_tests.sh --update-baseline");
+    Sys.rename src (Filename.concat (ticket_dir Soldev_ticket.Done) filename);
+    ignore (Soldev_shell.run_cmd ~echo:false
+      (Printf.sprintf "git add pipeline/tickets/ devtools/perf/perf_baseline.json && git commit -m %s"
+        (Filename.quote (Printf.sprintf "pipeline: move %s to DONE" ticket_id))));
+    Printf.printf "  ✓  merged → DONE\n%!";
+    exit 0
+  end
+
+(* Path to the binary `dune build` just refreshed. Invoked directly rather
+   than via the `soldev` name on PATH, so this doesn't depend on
+   ~/.local/bin/soldev being symlinked at all (a fresh checkout might never
+   have run an install step). *)
+let freshly_built_soldev = "_build/default/devtools/soldev/bin/main.exe"
+
 (* ── pipeline merge ──────────────────────────────────────────────────────── *)
 
 (* Merges via `gh pr merge` — GitHub branch protection and required checks
    gate the actual merge, not local logic. Local main is then fast-forwarded/
-   merged to pick up the result, a post-merge perf run decides whether the
-   ticket lands in DONE or BLOCKED_BY_PERFORMANCE (per CLAUDE.md's performance
-   baseline policy), and — since a squash merge is a single ordinary commit,
-   not a merge commit — a regression reverts with a plain `git revert`, no
-   `-m 1` needed. *)
+   merged to pick up the result, then rebuilt and handed to `merge-finish`
+   (see above) as a fresh subprocess for the post-merge test/baseline/DONE
+   step, which decides whether the ticket lands in DONE or
+   BLOCKED_BY_PERFORMANCE (per CLAUDE.md's performance baseline policy) —
+   and, since a squash merge is a single ordinary commit, not a merge
+   commit, a regression reverts with a plain `git revert`, no `-m 1` needed. *)
 
 let run_merge dry_run accept_performance_regression ticket_filter =
   let ready_dir = ticket_dir Soldev_ticket.Ready_to_merge in
@@ -248,64 +318,45 @@ let run_merge dry_run accept_performance_regression ticket_filter =
                 incr errors
               end else begin
                 let merge_sha = Sol_process.output_shell ~echo:false "git rev-parse origin/main" in
-                let perf_rc = Soldev_shell.run_cmd "./cli/platform/local/scripts/run_tests.sh" in
-                if perf_rc = 2 && accept_performance_regression then begin
-                  Printf.eprintf "  perf regression explicitly accepted — recording new baseline\n%!";
-                  ignore (Soldev_shell.run_cmd ~echo:false
-                    "./cli/platform/local/scripts/run_tests.sh --update-baseline");
-                  ignore (Soldev_shell.run_cmd ~echo:false
-                    (Printf.sprintf "git add devtools/perf/perf_baseline.json && git commit -m %s"
-                      (Filename.quote
-                        (Printf.sprintf "pipeline: accept perf regression baseline after %s" id))));
-                  Sys.rename src (Filename.concat (ticket_dir Soldev_ticket.Done) filename);
-                  Printf.printf "  ✓  merged → DONE\n%!";
-                  merged := id :: !merged
-                end else if perf_rc >= 1 then begin
-                  let label = if perf_rc = 2 then "perf regression" else "test failure" in
-                  (* run_tests.sh always appends a non-baseline history entry to
-                     devtools/perf/perf_baseline.json, even here, leaving it locally
-                     modified. That made `git revert` below fail with "local
-                     changes would be overwritten by merge" every time this path
-                     fired (CODE_LAYER-011) — the entry was never meant to be
-                     committed on this path, so discard it before reverting. *)
+                (* Rebuild BEFORE running any post-merge check against this
+                   ticket's own code — the merge we just synced may have
+                   changed a path this repo's own tooling depends on (see
+                   the comment on run_merge_finish). Then hand off to a
+                   subprocess of that freshly-built binary; never run the
+                   post-merge logic inline in this (necessarily pre-merge)
+                   process. *)
+                Printf.printf "  rebuilding before post-merge checks...\n%!";
+                let build_rc = Soldev_shell.run_cmd "dune build" in
+                if build_rc <> 0 then begin
+                  Printf.eprintf "  post-merge build failed — reverting %s\n%!" merge_sha;
                   ignore (Soldev_shell.run_cmd ~echo:false
                     "git checkout -- devtools/perf/perf_baseline.json");
                   let revert_rc = Soldev_shell.run_cmd ~echo:false (Printf.sprintf
                     "SOL_SKIP_HOOKS=1 git revert %s --no-edit" (Filename.quote merge_sha)) in
-                  let reverted = revert_rc = 0 in
-                  Printf.eprintf "  %s detected — moving to BLOCKED_BY_PERFORMANCE\n%!" label;
+                  if revert_rc <> 0 then
+                    Printf.eprintf
+                      "  warning: %s remains merged because automatic revert failed\n%!" id;
                   Sys.rename src
                     (Filename.concat (ticket_dir Soldev_ticket.Blocked_by_performance) filename);
                   ignore (Soldev_shell.run_cmd ~echo:false
                     (Printf.sprintf "git add pipeline/tickets/ && git commit -m %s"
-                      (Filename.quote (Printf.sprintf "pipeline: %s blocked %s" label id))));
-                  if not reverted then
-                    Printf.eprintf
-                      "  warning: %s remains merged because automatic revert failed\n%!" id;
+                      (Filename.quote (Printf.sprintf "pipeline: build failure blocked %s" id))));
                   incr errors
                 end else begin
-                  ignore (Soldev_shell.run_cmd ~echo:false
-                    "./cli/platform/local/scripts/run_tests.sh --update-baseline");
-                  ignore (Soldev_shell.run_cmd ~echo:false
-                    (Printf.sprintf "git add devtools/perf/perf_baseline.json && git commit -m %s"
-                      (Filename.quote
-                        (Printf.sprintf "pipeline: update perf baseline after %s" id))));
-                  Sys.rename src (Filename.concat (ticket_dir Soldev_ticket.Done) filename);
-                  Printf.printf "  ✓  merged → DONE\n%!";
-                  merged := id :: !merged
+                  let finish_rc = Soldev_shell.run_cmd (Printf.sprintf
+                    "%s pipeline merge-finish %s %s%s"
+                    (Filename.quote freshly_built_soldev) (Filename.quote id)
+                    (Filename.quote merge_sha)
+                    (if accept_performance_regression then " --accept-performance-regression" else ""))
+                  in
+                  if finish_rc = 0 then merged := id :: !merged else incr errors
                 end
               end
             end
           end
   ) files;
-  if (not dry_run) && !merged <> [] then begin
-    let ids = String.concat "\n" (List.map (fun id -> "- " ^ id) (List.rev !merged)) in
-    let msg = Printf.sprintf "pipeline: move %d ticket(s) to DONE\n\n%s"
-      (List.length !merged) ids in
-    let rc = Soldev_shell.run_cmd ~echo:false
-      (Printf.sprintf "git add pipeline/tickets/ && git commit -m %s" (Filename.quote msg)) in
-    if rc <> 0 then Printf.eprintf "warning: failed to commit ticket state changes\n"
-  end;
+  (* Each ticket already committed its own DONE (+ baseline) move inside
+     merge-finish — no trailing aggregate commit needed. *)
   if !errors > 0 then Printf.eprintf "\n%d ticket(s) had errors.\n" !errors;
   if (not dry_run) && !merged <> [] then
     Printf.printf "\nLocal main has new commits — remember to `git push origin main`.\n";
@@ -345,6 +396,9 @@ let format_violations vs =
     | None   -> Printf.sprintf "- `%s` — %s" v.vfile v.vmessage
   ) vs)
 
+(* Commits its own ticket-file move — a prior version left this to whoever
+   called `pipeline review` to remember, which repeatedly produced
+   uncommitted ticket-state moves in practice (see REFAC-075). *)
 let run_review ticket_id result_file =
   let src =
     Printf.sprintf "%s/%s.md" (ticket_dir Soldev_ticket.Review) ticket_id
@@ -370,6 +424,9 @@ let run_review ticket_id result_file =
      in
      write_file src (content ^ note);
      Sys.rename src dst;
+     ignore (Soldev_shell.run_cmd ~echo:false
+       (Printf.sprintf "git add pipeline/tickets/ && git commit -m %s"
+         (Filename.quote (Printf.sprintf "pipeline: %s review passed → READY_TO_MERGE" ticket_id))));
      Printf.printf "[%s] → %s\n" ticket_id (dir Soldev_ticket.Ready_to_merge)
    | Soldev_ticket.Fail ->
      let note = Printf.sprintf "\n## Review — returned for revision\n%s\n"
@@ -380,6 +437,9 @@ let run_review ticket_id result_file =
      in
      write_file src (content ^ note);
      Sys.rename src dst;
+     ignore (Soldev_shell.run_cmd ~echo:false
+       (Printf.sprintf "git add pipeline/tickets/ && git commit -m %s"
+         (Filename.quote (Printf.sprintf "pipeline: %s review returned for revision" ticket_id))));
      Printf.printf "[%s] → %s  (%d violation(s))\n"
        ticket_id (dir Soldev_ticket.Ready_for_engineering) (List.length violations))
 
