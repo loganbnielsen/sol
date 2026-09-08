@@ -3,6 +3,8 @@ id: FRIC-013
 type: dogfood-finding
 severity: medium
 source: project/dogfood/RUN_2026-09-07_AWS.md (DOGFOOD-011, first real AWS dogfood run)
+branch: FRIC-013/secret-path-filter
+worktree: ../sun-FRIC-013-secret-path-filter
 ---
 
 **Depends on:** None.
