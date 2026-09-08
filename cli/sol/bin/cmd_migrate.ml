@@ -216,9 +216,14 @@ let kubectl_apply_or_fatal ~what ?(on_fail = fun () -> ()) argv =
   | Ok r -> on_fail (); fatal_p "%s: %s" what r.Sol_cli_process.stderr
   | Error e -> on_fail (); fatal_p "%s: %s" what (Sol_cli_process.error_to_string e)
 
-(* A ConfigMap key must be a valid path-segment-ish name; migration
-   filenames (NNNN_description.sql, per pg-eio's own convention) already
-   satisfy this, but quote defensively rather than assume. *)
+(* Matches Sol_cli_secret's own yaml_quote exactly (that module can't be
+   reused directly here -- private to its own file -- but the escaping
+   rules for a YAML double-quoted scalar are the same regardless of what's
+   being embedded). Migration file *contents* are arbitrary SQL, not a
+   controlled value, so every C0 control character needs an escape, not
+   just the three most obvious ones -- an unescaped \r silently gets
+   YAML-folded into a space by the double-quoted-scalar line-folding rule,
+   corrupting CRLF-terminated SQL without so much as a parse error. *)
 let yaml_dq s =
   let b = Buffer.create (String.length s + 2) in
   Buffer.add_char b '"';
@@ -226,6 +231,9 @@ let yaml_dq s =
     | '"' -> Buffer.add_string b "\\\""
     | '\\' -> Buffer.add_string b "\\\\"
     | '\n' -> Buffer.add_string b "\\n"
+    | '\r' -> Buffer.add_string b "\\r"
+    | '\t' -> Buffer.add_string b "\\t"
+    | c when Char.code c < 0x20 -> Buffer.add_string b (Printf.sprintf "\\x%02X" (Char.code c))
     | c -> Buffer.add_char b c) s;
   Buffer.add_char b '"';
   Buffer.contents b
@@ -237,7 +245,7 @@ let yaml_dq s =
 let render_configmap ~name ~namespace files =
   let entries =
     files
-    |> List.map (fun (fname, content) -> Printf.sprintf "  %s: %s" fname (yaml_dq content))
+    |> List.map (fun (fname, content) -> Printf.sprintf "  %s: %s" (yaml_dq fname) (yaml_dq content))
     |> String.concat "\n"
   in
   Printf.sprintf {|apiVersion: v1
@@ -378,18 +386,28 @@ let run_apply_in_cluster ~target ~dir ~table ~registry_override =
 
         (* kubectl wait's own --for=condition=complete never returns on a
            failed (not completed) Job -- it would sit out the full timeout
-           on every failure. Poll both status fields directly instead, same
+           on every failure. Poll the status fields directly instead, same
            bounded-retry shape .github/workflows/ci.yml's own health check
-           already uses. *)
-        let job_status () =
+           already uses.
+
+           JobStatus's succeeded/failed fields are `omitempty`: a Job that
+           completed one way has only ONE of them present at all, so a
+           single "{.status.succeeded} {.status.failed}" jsonpath query
+           produces "1 " or " 1" -- and Sol_cli_process.run already trims
+           stdout before this code ever sees it, collapsing that down to a
+           single token that can't match a 2-element split. Query each
+           field with its own jsonpath instead, so an absent field just
+           trims to "" rather than corrupting the other field's parse. *)
+        let job_field field =
           match run_kubectl ~timeout_s:15.
                   ["get"; "job"; job_name; "-n"; namespace;
-                   "-o"; "jsonpath={.status.succeeded} {.status.failed}"] with
-          | Ok r ->
-            (match String.split_on_char ' ' (String.trim r.Sol_cli_process.stdout) with
-             | [s; f] -> (s = "1", f <> "" && f <> "0")
-             | _ -> (false, false))
-          | Error _ -> (false, false)
+                   "-o"; Printf.sprintf "jsonpath={.status.%s}" field] with
+          | Ok r -> String.trim r.Sol_cli_process.stdout
+          | Error _ -> ""
+        in
+        let job_status () =
+          (job_field "succeeded" = "1",
+           match job_field "failed" with "" | "0" -> false | _ -> true)
         in
         let rec wait_for_completion n =
           if n = 0 then `Timed_out
