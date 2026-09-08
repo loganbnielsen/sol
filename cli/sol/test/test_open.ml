@@ -33,6 +33,11 @@ let test_parse_scope_too_many_segments () =
   check_bool "extra slash -> Error" true
     (match O.parse_scope (Some "a/b/c") with Error _ -> true | Ok _ -> false)
 
+let test_parse_scope_resource () =
+  check_bool "resource/<type>/<name>" true
+    (O.parse_scope (Some "resource/rds/acme-prod-postgres")
+     = Ok (O.Resource ("rds", "acme-prod-postgres")))
+
 (* ── url: dashboard / metrics (share a target) ──────────────────────────── *)
 
 let base_url = "http://localhost:3000"
@@ -96,6 +101,45 @@ let test_dashboard_service_scope_invalid_name () =
   let result = O.url ~base_url ~workspace ~kind:O.Dashboard (O.Service ("payments", "")) in
   check_bool "empty service name -> Error" true (String.length (err_msg result) > 0)
 
+(* ── url: dashboard / metrics — managed resource scope (OBS-044) ─────────── *)
+
+let test_dashboard_resource_scope () =
+  let url = ok_url (O.url ~base_url ~workspace ~kind:O.Dashboard
+                       (O.Resource ("rds", "acme-prod-postgres"))) in
+  check_string "managed resource dashboard"
+    "http://localhost:3000/d/sol-managed-resource-rds?var-resource=acme-prod-postgres" url
+
+let test_dashboard_resource_scope_no_workspace_var () =
+  let url = ok_url (O.url ~base_url ~workspace ~kind:O.Dashboard
+                       (O.Resource ("rds", "acme-prod-postgres"))) in
+  check_bool "no var-workspace (account/cluster-scoped, not per-workspace)" false
+    (contains url "var-workspace")
+
+let test_dashboard_resource_scope_normalizes_type_and_name () =
+  let url = ok_url (O.url ~base_url ~workspace ~kind:O.Dashboard
+                       (O.Resource ("RDS", "Acme_Prod_Postgres"))) in
+  check_bool "resource_type normalized into the dashboard uid" true
+    (contains url "/d/sol-managed-resource-rds");
+  check_bool "resource_name normalized into var-resource" true
+    (contains url "var-resource=acme-prod-postgres")
+
+let test_metrics_matches_dashboard_for_resource_scope () =
+  let dashboard = ok_url (O.url ~base_url ~workspace ~kind:O.Dashboard (O.Resource ("rds", "postgres"))) in
+  let metrics   = ok_url (O.url ~base_url ~workspace ~kind:O.Metrics (O.Resource ("rds", "postgres"))) in
+  check_string "metrics == dashboard target" dashboard metrics
+
+let test_dashboard_resource_scope_empty_type () =
+  let result = O.url ~base_url ~workspace ~kind:O.Dashboard (O.Resource ("", "postgres")) in
+  check_bool "empty resource type -> Error" true (String.length (err_msg result) > 0)
+
+let test_dashboard_resource_scope_empty_name () =
+  let result = O.url ~base_url ~workspace ~kind:O.Dashboard (O.Resource ("rds", "")) in
+  check_bool "empty resource name -> Error" true (String.length (err_msg result) > 0)
+
+let test_logs_resource_scope_has_no_view () =
+  let result = O.url ~base_url ~workspace ~kind:O.Logs (O.Resource ("rds", "postgres")) in
+  check_bool "no logs view for managed resources -> Error" true (String.length (err_msg result) > 0)
+
 (* ── url: logs ───────────────────────────────────────────────────────────── *)
 
 let test_logs_workspace_scope () =
@@ -126,6 +170,7 @@ let () =
       Alcotest.test_case "domain only"           `Quick test_parse_scope_domain;
       Alcotest.test_case "domain/service"        `Quick test_parse_scope_domain_service;
       Alcotest.test_case "too many segments"     `Quick test_parse_scope_too_many_segments;
+      Alcotest.test_case "resource/<type>/<name>" `Quick test_parse_scope_resource;
     ];
     "url dashboard/metrics", [
       Alcotest.test_case "workspace scope"       `Quick test_dashboard_workspace_scope;
@@ -143,10 +188,19 @@ let () =
       Alcotest.test_case "invalid service name -> Error"
         `Quick test_dashboard_service_scope_invalid_name;
     ];
+    "url dashboard/metrics — resource scope (OBS-044)", [
+      Alcotest.test_case "resource scope"        `Quick test_dashboard_resource_scope;
+      Alcotest.test_case "no var-workspace"      `Quick test_dashboard_resource_scope_no_workspace_var;
+      Alcotest.test_case "normalizes type/name"  `Quick test_dashboard_resource_scope_normalizes_type_and_name;
+      Alcotest.test_case "metrics == dashboard"  `Quick test_metrics_matches_dashboard_for_resource_scope;
+      Alcotest.test_case "empty resource type -> Error" `Quick test_dashboard_resource_scope_empty_type;
+      Alcotest.test_case "empty resource name -> Error" `Quick test_dashboard_resource_scope_empty_name;
+    ];
     "url logs", [
       Alcotest.test_case "workspace scope"       `Quick test_logs_workspace_scope;
       Alcotest.test_case "domain scope"          `Quick test_logs_domain_scope;
       Alcotest.test_case "service scope"         `Quick test_logs_service_scope;
       Alcotest.test_case "invalid service name"  `Quick test_logs_service_scope_invalid_name;
+      Alcotest.test_case "resource scope has no logs view" `Quick test_logs_resource_scope_has_no_view;
     ];
   ]

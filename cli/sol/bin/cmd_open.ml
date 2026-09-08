@@ -46,7 +46,9 @@ let scope_arg =
   Arg.(value & pos 0 (some string) None &
        info [] ~docv:"SCOPE"
          ~doc:"Scope to open: omit for the workspace view, 'domain' for a \
-               domain, or 'domain/service' for a single service.")
+               domain, 'domain/service' for a single service, or \
+               'resource/<type>/<name>' for a managed infrastructure \
+               resource dashboard (OBS-044), e.g. 'resource/rds/acme-prod-postgres'.")
 
 let links_flag =
   Arg.(value & flag &
