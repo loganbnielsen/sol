@@ -210,7 +210,7 @@ let ticket_title content =
 let find_ticket ticket_id =
   List.find_map (fun state ->
     let dir  = state_to_dir state in
-    let path = Printf.sprintf "project/tickets/%s/%s.md" dir ticket_id in
+    let path = Printf.sprintf "pipeline/tickets/%s/%s.md" dir ticket_id in
     if Sys.file_exists path then Some (state, path) else None
   ) all_states
 

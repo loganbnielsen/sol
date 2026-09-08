@@ -94,8 +94,8 @@ for example:
 If the current shape is already lean, say so and list only residual risks.
 
 For a full audit of Sol, also write
-`project/audits/<YYYY-MM-DD>_code_layer_audit.md`. If actionable findings are
-open and `project/tickets/READY_FOR_ENGINEERING/` exists, materialize tickets
+`pipeline/audits/<YYYY-MM-DD>_code_layer_audit.md`. If actionable findings are
+open and `pipeline/tickets/READY_FOR_ENGINEERING/` exists, materialize tickets
 as `CODE_LAYER-NNN`, continuing from the highest existing `CODE_LAYER-*` ID
-across `project/audits/` and `project/tickets/`. Do not create ticket
+across `pipeline/audits/` and `pipeline/tickets/`. Do not create ticket
 directories in standalone packages just to satisfy this format.

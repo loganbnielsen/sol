@@ -40,7 +40,7 @@ This stopped being theoretical when BUG-013 fixed Loki's
 nobody thought to check `cmd_dev.ml`'s independent Loki config, which
 still lacks the fix (BUG-016): a fresh `sol dev up` today can hit the
 exact ring-quorum failure BUG-013 already fixed in production. The
-follow-up code-layer audit (`project/audits/2026-09-06_code_layer_audit.md`)
+follow-up code-layer audit (`pipeline/audits/2026-09-06_code_layer_audit.md`)
 found three more instances of the same failure mode (Alloy River config,
 Grafana dashboard JSON, missing chart-version pins). The problem isn't
 "someone forgot to update Loki twice" — it's that the architecture
@@ -174,5 +174,5 @@ become the new dumping ground defeats the point.
 - CODE_LAYER-008 — chart-version pins + immediate value-drift fixes;
   land first if faster, then fold the reconciled values into this
   structure so they stop drifting again.
-- `project/audits/2026-09-06_code_layer_audit.md` — the audit that
+- `pipeline/audits/2026-09-06_code_layer_audit.md` — the audit that
   surfaced all of the above.

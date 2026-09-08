@@ -1,17 +1,17 @@
 ---
-description: Run a technical production-readiness audit of the Sol codebase. Checks security, runtime correctness, data integrity, and infrastructure synthesis against the principles in docs/audits/AUDIT.md. Produces a dated report in project/audits/ and materialises open findings as ticket files in project/tickets/READY_FOR_ENGINEERING/.
+description: Run a technical production-readiness audit of the Sol codebase. Checks security, runtime correctness, data integrity, and infrastructure synthesis against the principles in docs/audits/AUDIT.md. Produces a dated report in pipeline/audits/ and materialises open findings as ticket files in pipeline/tickets/READY_FOR_ENGINEERING/.
 ---
 
 # /audit — Production Readiness Audit
 
-Works through every section of `docs/audits/AUDIT.md` by reading the actual source files and verifying each invariant holds. Writes a completed report to `project/audits/<YYYY-MM-DD>_audit.md` and materialises each open finding as a ticket in `project/tickets/READY_FOR_ENGINEERING/`.
+Works through every section of `docs/audits/AUDIT.md` by reading the actual source files and verifying each invariant holds. Writes a completed report to `pipeline/audits/<YYYY-MM-DD>_audit.md` and materialises each open finding as a ticket in `pipeline/tickets/READY_FOR_ENGINEERING/`.
 
 The audit must evaluate both operational readiness and mission alignment: autonomous domain teams, typed event contracts, generated infrastructure, explicit security, framework-owned lifecycles, and AI-agent-friendly conventions.
 
 ## Ticket directory structure
 
 ```
-project/tickets/
+pipeline/tickets/
   BACKLOG/                  ← captured but not yet ready to act on
   READY_FOR_ENGINEERING/    ← actionable; this is where new findings land
   IN_PROGRESS/              ← worktree exists, work underway
@@ -30,9 +30,9 @@ Read `docs/audits/AUDIT.md` in full before starting. This is the checklist you w
 Use the current date for the output filename in `YYYY-MM-DD` format.
 
 ### 3. Check previous findings
-Read the most recent report in `project/audits/` (highest date). Note which findings were already open — verify whether they are now resolved before logging them again.
+Read the most recent report in `pipeline/audits/` (highest date). Note which findings were already open — verify whether they are now resolved before logging them again.
 
-Check all `project/tickets/` subdirectories for existing AUDIT-* ticket files. A finding already tracked anywhere in `project/tickets/` should not be re-materialised. If a finding exists in `DONE/`, mark it resolved in the report — but verify the fix is still actually live in `main` before trusting that (see EXP-032: a `DONE` ticket's merge can be reverted after the fact and never refixed, leaving the ticket falsely marked resolved). Run `soldev pipeline check-reverts` and treat anything it flags as still-open, not resolved.
+Check all `pipeline/tickets/` subdirectories for existing AUDIT-* ticket files. A finding already tracked anywhere in `pipeline/tickets/` should not be re-materialised. If a finding exists in `DONE/`, mark it resolved in the report — but verify the fix is still actually live in `main` before trusting that (see EXP-032: a `DONE` ticket's merge can be reverted after the fact and never refixed, leaving the ticket falsely marked resolved). Run `soldev pipeline check-reverts` and treat anything it flags as still-open, not resolved.
 
 ### 4. Work through each section
 
@@ -71,13 +71,13 @@ For each checklist item in `docs/audits/AUDIT.md`, read the relevant source file
 
 ### 5. Write the report
 
-Create `project/audits/<YYYY-MM-DD>_audit.md` with:
+Create `pipeline/audits/<YYYY-MM-DD>_audit.md` with:
 - A header showing the date and which findings from the previous report changed status
 - Every checklist section with `[x]` / `[ ]` and finding IDs
 - A Findings section with `Status: Open` or `Status: Resolved`
 - A summary table
 
-Assign finding IDs continuing from the highest AUDIT-NNN across all existing `project/tickets/` files and previous reports.
+Assign finding IDs continuing from the highest AUDIT-NNN across all existing `pipeline/tickets/` files and previous reports.
 
 Do not copy resolved findings forward unless their status changed.
 
@@ -85,15 +85,15 @@ Do not copy resolved findings forward unless their status changed.
 
 For each finding with `Status: Open` in the report:
 
-1. Search all `project/tickets/` subdirectories for `<id>.md`. If found anywhere, skip.
-2. If not found, create `project/tickets/READY_FOR_ENGINEERING/<id>.md`:
+1. Search all `pipeline/tickets/` subdirectories for `<id>.md`. If found anywhere, skip.
+2. If not found, create `pipeline/tickets/READY_FOR_ENGINEERING/<id>.md`:
 
 ```markdown
 ---
 id: <AUDIT-NNN>
 type: audit-finding
 severity: <critical|high|medium|low>
-source: project/audits/<YYYY-MM-DD>_audit.md
+source: pipeline/audits/<YYYY-MM-DD>_audit.md
 ---
 
 <one-line title>

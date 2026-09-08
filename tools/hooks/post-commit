@@ -24,7 +24,7 @@ while IFS= read -r wt_path; do
   basename=$(basename "$wt_path")
   ticket_id=$(echo "$basename" | grep -oE '[A-Z]+-[0-9]+' | head -1)
   [ -z "$ticket_id" ] && continue
-  if [ -f "$REPO_ROOT/project/tickets/DONE/${ticket_id}.md" ]; then
+  if [ -f "$REPO_ROOT/pipeline/tickets/DONE/${ticket_id}.md" ]; then
     _orphans+=("$wt_path")
   fi
 done < <(git worktree list --porcelain | awk '/^worktree /{print $2}')

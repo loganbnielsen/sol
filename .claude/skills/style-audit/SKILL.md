@@ -1,5 +1,5 @@
 ---
-description: Run an OCaml type-safety and readability style audit. Finds boolean traps, positional debt, stringly-typed finite domains, and nested Option/Result pyramids across the whole repo. Requires manual folder walks beyond grep, supports multi-agent folder partitioning, and creates actionable tickets in project/tickets/READY_FOR_ENGINEERING/.
+description: Run an OCaml type-safety and readability style audit. Finds boolean traps, positional debt, stringly-typed finite domains, and nested Option/Result pyramids across the whole repo. Requires manual folder walks beyond grep, supports multi-agent folder partitioning, and creates actionable tickets in pipeline/tickets/READY_FOR_ENGINEERING/.
 ---
 
 # /style-audit - OCaml Type Safety and API Design Audit
@@ -16,14 +16,14 @@ source-of-truth checklist.
 Create actionable tickets in:
 
 ```text
-project/tickets/READY_FOR_ENGINEERING/
+pipeline/tickets/READY_FOR_ENGINEERING/
 ```
 
 Do not put actionable style findings in `BACKLOG/`.
 
 Use prefix `CODEX_STYLE_AUDIT-NNN` unless the user requests another prefix.
 Continue from the highest existing `CODEX_STYLE_AUDIT-*` ticket across all
-`project/tickets/` subdirectories.
+`pipeline/tickets/` subdirectories.
 
 ## Core Rule
 

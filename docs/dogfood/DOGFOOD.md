@@ -10,7 +10,7 @@ the product claim:
 > From a prepared Sol substrate, a developer can create, deploy, and reach a new
 > service in minutes without writing Kubernetes, Helm, Terraform, or CI glue.
 
-Run reports live in `project/dogfood/`. Each run produces one dated file there.
+Run reports live in `pipeline/dogfood/`. Each run produces one dated file there.
 
 ---
 
@@ -238,7 +238,7 @@ cat /tmp/sol-pf-charge-svc.log 2>/dev/null || true
 
 ## Run Report Template
 
-Copy this into a new file `project/dogfood/RUN_<YYYY-MM-DD>.md` for each run.
+Copy this into a new file `pipeline/dogfood/RUN_<YYYY-MM-DD>.md` for each run.
 
 ```markdown
 # Dogfood Run — <YYYY-MM-DD>

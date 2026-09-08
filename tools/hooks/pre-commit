@@ -8,18 +8,18 @@
 [ "${SOL_SKIP_HOOKS:-0}" = "1" ] && exit 0
 
 # ── Worktree guard ─────────────────────────────────────────────────────────────
-# project/tickets/ is only ever modified in the main checkout — never inside a worktree
+# pipeline/tickets/ is only ever modified in the main checkout — never inside a worktree
 # branch. Catching this at commit time prevents rename/rename merge conflicts.
 GIT_DIR_ABS="$(git rev-parse --absolute-git-dir 2>/dev/null)"
 if printf '%s\n' "$GIT_DIR_ABS" | grep -q "/worktrees/"; then
-  STAGED_TICKETS="$(git diff --cached --name-only | grep '^project/tickets/' || true)"
+  STAGED_TICKETS="$(git diff --cached --name-only | grep '^pipeline/tickets/' || true)"
   if [ -n "$STAGED_TICKETS" ]; then
     echo ""
-    echo "✗ Cannot commit project/tickets/ changes inside a worktree branch."
-    echo "  project/tickets/ is managed exclusively in the main checkout."
+    echo "✗ Cannot commit pipeline/tickets/ changes inside a worktree branch."
+    echo "  pipeline/tickets/ is managed exclusively in the main checkout."
     echo "  Staged paths:"
     printf '    %s\n' $STAGED_TICKETS
-    echo "  Fix: git restore --staged project/tickets/"
+    echo "  Fix: git restore --staged pipeline/tickets/"
     exit 1
   fi
 fi
@@ -38,7 +38,7 @@ fi
 # If every staged file is a ticket markdown, a doc, or the perf baseline,
 # there is no code change to verify.
 OTHER_FILES="$(git diff --cached --name-only \
-  | grep -v '^project/tickets/' \
+  | grep -v '^pipeline/tickets/' \
   | grep -v '\.md$' \
   | grep -v '^tools/perf/perf_baseline\.json$' \
   || true)"
