@@ -8,7 +8,7 @@ Ensures the local environment is consistent, spins up infrastructure, and runs t
 
 ## Preferred: use the test runner
 
-`platform/local/scripts/run_tests.sh` is the canonical way to run tests. It handles infrastructure setup, per-suite timeouts, and performance regression checks against `tools/perf/perf_baseline.json`.
+`platform/local/scripts/run_tests.sh` is the canonical way to run tests. It handles infrastructure setup, per-suite timeouts, and performance regression checks against `devtools/perf/perf_baseline.json`.
 
 ```bash
 # Full matrix (all suites, infra auto-provisioned)

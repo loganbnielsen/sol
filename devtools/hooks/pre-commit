@@ -40,7 +40,7 @@ fi
 OTHER_FILES="$(git diff --cached --name-only \
   | grep -v '^pipeline/tickets/' \
   | grep -v '\.md$' \
-  | grep -v '^tools/perf/perf_baseline\.json$' \
+  | grep -v '^devtools/perf/perf_baseline.json$' \
   || true)"
 if [ -z "$OTHER_FILES" ]; then
   echo ""
@@ -101,7 +101,7 @@ if [ $BROKER_UP -eq 1 ]; then
 else
   echo ""
   echo "  (Redpanda not running — kafka + e2e tests skipped)"
-  git -C "$REPO_ROOT" add tools/perf/perf_baseline.json 2>/dev/null || true
+  git -C "$REPO_ROOT" add devtools/perf/perf_baseline.json 2>/dev/null || true
   exit 0
 fi
 
@@ -114,5 +114,5 @@ else
   [ $POSTGRES_UP -eq 0 ] && echo "  (Postgres not running — e2e skipped)"
 fi
 
-git -C "$REPO_ROOT" add tools/perf/perf_baseline.json 2>/dev/null || true
+git -C "$REPO_ROOT" add devtools/perf/perf_baseline.json 2>/dev/null || true
 exit 0

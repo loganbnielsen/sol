@@ -254,7 +254,7 @@ let run_merge dry_run accept_performance_regression ticket_filter =
                   ignore (Soldev_shell.run_cmd ~echo:false
                     "./platform/local/scripts/run_tests.sh --update-baseline");
                   ignore (Soldev_shell.run_cmd ~echo:false
-                    (Printf.sprintf "git add tools/perf/perf_baseline.json && git commit -m %s"
+                    (Printf.sprintf "git add devtools/perf/perf_baseline.json && git commit -m %s"
                       (Filename.quote
                         (Printf.sprintf "pipeline: accept perf regression baseline after %s" id))));
                   Sys.rename src (Filename.concat (ticket_dir Soldev_ticket.Done) filename);
@@ -263,13 +263,13 @@ let run_merge dry_run accept_performance_regression ticket_filter =
                 end else if perf_rc >= 1 then begin
                   let label = if perf_rc = 2 then "perf regression" else "test failure" in
                   (* run_tests.sh always appends a non-baseline history entry to
-                     tools/perf/perf_baseline.json, even here, leaving it locally
+                     devtools/perf/perf_baseline.json, even here, leaving it locally
                      modified. That made `git revert` below fail with "local
                      changes would be overwritten by merge" every time this path
                      fired (CODE_LAYER-011) — the entry was never meant to be
                      committed on this path, so discard it before reverting. *)
                   ignore (Soldev_shell.run_cmd ~echo:false
-                    "git checkout -- tools/perf/perf_baseline.json");
+                    "git checkout -- devtools/perf/perf_baseline.json");
                   let revert_rc = Soldev_shell.run_cmd ~echo:false (Printf.sprintf
                     "SOL_SKIP_HOOKS=1 git revert %s --no-edit" (Filename.quote merge_sha)) in
                   let reverted = revert_rc = 0 in
@@ -287,7 +287,7 @@ let run_merge dry_run accept_performance_regression ticket_filter =
                   ignore (Soldev_shell.run_cmd ~echo:false
                     "./platform/local/scripts/run_tests.sh --update-baseline");
                   ignore (Soldev_shell.run_cmd ~echo:false
-                    (Printf.sprintf "git add tools/perf/perf_baseline.json && git commit -m %s"
+                    (Printf.sprintf "git add devtools/perf/perf_baseline.json && git commit -m %s"
                       (Filename.quote
                         (Printf.sprintf "pipeline: update perf baseline after %s" id))));
                   Sys.rename src (Filename.concat (ticket_dir Soldev_ticket.Done) filename);

@@ -67,7 +67,7 @@ Walk these folders even if grep finds enough tickets early:
 - `cli/sol/lib/`
 - `cli/sol/bin/`
 - `examples/`
-- `tools/`
+- `devtools/`
 - tests and scaffold templates that teach users patterns
 
 For each folder:
@@ -132,7 +132,7 @@ Recommended partitions:
 - Agent 3: `cli/sol/lib/`
 - Agent 4: `cli/sol/bin/`
 - Agent 5: `examples/` plus scaffold templates
-- Agent 6: `tools/` plus tests
+- Agent 6: `devtools/` plus tests
 
 Subagent instruction template:
 
@@ -204,5 +204,5 @@ At the end, report:
 - Validation command, usually:
 
 ```bash
-dune exec tools/soldev/bin/main.exe -- pipeline ls | rg 'CODEX_STYLE_AUDIT'
+dune exec devtools/soldev/bin/main.exe -- pipeline ls | rg 'CODEX_STYLE_AUDIT'
 ```

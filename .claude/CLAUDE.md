@@ -47,7 +47,7 @@ Do not add a `status:` field — the directory encodes status.
 - `/review-worktree` — standalone review gate (called internally by `/work review`); subagents emit JSON, `soldev pipeline review` handles file moves
 - `/audit` and `/ux-audit` — materialise new findings into `READY_FOR_ENGINEERING/` (idempotent)
 
-**Performance baseline conflict:** `tools/perf/perf_baseline.json` is set to `merge=ours` in `.gitattributes`. On merge, main's baseline wins; a post-merge perf run determines whether the ticket stays merged or moves to `BLOCKED_BY_PERFORMANCE`.
+**Performance baseline conflict:** `devtools/perf/perf_baseline.json` is set to `merge=ours` in `.gitattributes`. On merge, main's baseline wins; a post-merge perf run determines whether the ticket stays merged or moves to `BLOCKED_BY_PERFORMANCE`.
 
 ## Core design principles every engineer must know
 
