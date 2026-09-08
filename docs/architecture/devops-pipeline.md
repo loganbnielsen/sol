@@ -209,11 +209,9 @@ emits one or both of:
 
 **Module:** `cli/sol/bin/cmd_migrate.ml`
 
-Runs database schema migrations.
+Runs database schema migrations. No Kubernetes manifest pipeline.
 
 Subcommands: `apply` (default), `status`, `rollback`.
-
-**Local mode** (no `TARGET` given) — no Kubernetes manifest pipeline:
 
 1. Resolve `POSTGRES_URL` from the environment, or auto-detect the cluster PostgreSQL
    service and create a temporary port-forward to `localhost:15432`.
@@ -223,34 +221,6 @@ Subcommands: `apply` (default), `status`, `rollback`.
    without connecting.
 4. `status`: call `Migration.status` and print a table of applied/pending files.
 5. `rollback` (within migrate): call `Migration.rollback` to undo the last applied file.
-
-**In-cluster mode** (`sol migrate apply <env>/<provider>/<region>`, FRIC-012) —
-for any real deployment whose database isn't reachable from outside its own
-network by design (e.g. RDS with `publicly_accessible = false`), currently
-`apply` only:
-
-1. Build and push a small image containing just the `sol` CLI binary
-   (`cli/sol/bin/main.exe`, from the same `SOL_HOME` checkout), pushed under
-   the first discovered service's own image repository with a distinct
-   `sol-cli-migrate` tag rather than a version tag — ECR requires a
-   repository to already exist before a push succeeds, and FRIC-011
-   provisions exactly one repo per discovered app service, not a separate
-   one for this standalone tool image.
-2. Render a ConfigMap from every file in `db/migrations/` and a one-shot
-   `batch/v1` Job that mounts it at `/migrations`, uses that image, and runs
-   `sol migrate apply --dir /migrations --table <table>` inside the cluster
-   (`envFrom` the workspace's `sol-secrets` Secret, so `POSTGRES_URL`
-   resolves the same way a deployed service's does) — i.e. the Job re-enters
-   local mode from inside the network where the database is actually
-   reachable. Runs in the namespace of the first domain `discover_services`
-   finds; migrations aren't domain-scoped, and RDS reachability is enforced
-   at the VPC/security-group level, not per-namespace.
-3. Apply both, poll the Job's `status.succeeded`/`status.failed` fields
-   (`backoffLimit: 0`, no silent retry), stream its pod logs, and delete the
-   Job/ConfigMap afterward either way.
-4. Surface the Job's outcome as `sol migrate`'s own exit status.
-
-`status`/`rollback` do not yet accept a `TARGET` and remain local-mode only.
 
 The migration tracking table defaults to `sol_<workspace>_schema_migrations`,
 derived from the workspace directory name. Override with `--table`.
