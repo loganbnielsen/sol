@@ -20,7 +20,7 @@ Read `docs/audits/DOCS_AUDIT.md` in full before starting.
 
 ### 2. Check previous findings
 
-Read the most recent `project/audits/*_docs_audit.md` report if one exists. Check all `project/tickets/` subdirectories for existing `DOCS-*` ticket files. Do not re-materialise a finding already tracked anywhere.
+Read the most recent `project/audits/*_docs_audit.md` report if one exists. Check all `project/tickets/` subdirectories for existing `DOCS-*` ticket files. Do not re-materialise a finding already tracked anywhere — but before trusting a `DONE/` ticket, run `soldev pipeline check-reverts` and treat anything it flags as still-open (see EXP-032: a merge can be reverted after the fact and never refixed, leaving the ticket falsely marked resolved).
 
 ### 3. Verify source-of-truth docs
 

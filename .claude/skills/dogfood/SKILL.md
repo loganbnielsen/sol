@@ -38,7 +38,12 @@ them again.
 
 Check all `project/tickets/` subdirectories for existing `FRIC-*` ticket files.
 A finding already tracked anywhere in `project/tickets/` should not be
-re-materialised. If it exists in `DONE/`, mark it resolved in the report.
+re-materialised. If it exists in `DONE/`, mark it resolved in the report — but
+verify the fix is still actually live in `main` before trusting that (see
+EXP-032: a `DONE` ticket's merge can be reverted after the fact and never
+refixed, leaving the ticket falsely marked resolved). Run
+`soldev pipeline check-reverts` and treat anything it flags as still-open,
+not resolved.
 
 ### 3. Prepare the binary
 
