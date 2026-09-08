@@ -5,6 +5,7 @@ severity: low
 source: project/dogfood/RUN_2026-09-07_AWS.md (DOGFOOD-011, first real AWS dogfood run) — the same drift class this ticket guards against was found live during that run
 branch: FRIC-014/scaffold-example-drift-ci
 worktree: ../sun-FRIC-014-scaffold-example-drift-ci
+pr: https://github.com/loganbnielsen/sol/pull/145
 ---
 
 **Depends on:** None.
