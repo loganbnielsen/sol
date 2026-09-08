@@ -11,7 +11,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-BASELINE="$REPO_ROOT/tools/perf/perf_baseline.json"
+BASELINE="$REPO_ROOT/devtools/perf/perf_baseline.json"
 
 ALL_SUITES=(unit kafka observability storage e2e)
 

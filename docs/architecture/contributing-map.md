@@ -24,7 +24,7 @@ For audit-oriented work, use these workflows as the entry points:
 
 Command parsing and user-facing CLI behavior live in `cli/sol/bin/`. Shared
 command implementation belongs in `cli/sol/lib/`, especially when more than one
-command needs the same behavior. `tools/soldev/` is for internal repository and
+command needs the same behavior. `devtools/soldev/` is for internal repository and
 ticket workflow tooling, not customer-facing `sol` commands.
 
 Extend commands by adding typed options, shared library functions, and tests in

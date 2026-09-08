@@ -35,7 +35,7 @@ jobs:
         run: opam exec -- dune test framework/sol-env/ framework/sol-fn/ framework/sol-obs/ framework/sol-svc/ framework/sol-worker/ cli/sol/test/
 
       - name: Platform-component drift guardrail (ADR 0001 / CODE_LAYER-005)
-        run: tools/ci/check_platform_component_drift.sh
+        run: devtools/ci/check_platform_component_drift.sh
 
   # FRIC-009: smallest check that would have caught a regression like
   # FRIC-007 (every generated service permanently broken on a fresh
