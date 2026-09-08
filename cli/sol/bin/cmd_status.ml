@@ -157,6 +157,28 @@ let print_raw_diagnostics ~ns ~domain ~only_k8s_name =
     (match Sol_cli_kubectl.get_raw ~args:pod_args with
      | Ok r -> print_string r.Sol_cli_process.stdout; print_char '\n'
      | Error _ -> ());
+    (* EXP-029: which image tag is actually live, without kubectl knowledge.
+       Deployments rather than pods -- svc/worker are the only primitives
+       with a live image tag worth confirming (Fn is a CronJob with no
+       standing Deployment; this section is simply empty for it). *)
+    let deploy_args = match only_k8s_name with
+      | None -> ["get"; "deployments"; "-n"; ns]
+      | Some k8s_name -> ["get"; "deployments"; "-n"; ns; "-l"; "app=" ^ k8s_name]
+    in
+    let image_jsonpath =
+      "-o=jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}\
+       {.spec.template.spec.containers[0].image}{\"\\n\"}{end}"
+    in
+    (match Sol_cli_kubectl.get_raw ~args:(deploy_args @ [image_jsonpath]) with
+     | Ok r when r.Sol_cli_process.exit_code = 0 && String.trim r.Sol_cli_process.stdout <> "" ->
+       Printf.printf "Images\n";
+       String.split_on_char '\n' (String.trim r.Sol_cli_process.stdout)
+       |> List.iter (fun line ->
+            match String.split_on_char '\t' line with
+            | [name; image] -> Printf.printf "  %-20s %s\n" name image
+            | _ -> ());
+       print_char '\n'
+     | _ -> ());
     service_diagnoses_named ~ns ~domain
     |> List.iter (fun (k8s_name, diagnosis) ->
          match only_k8s_name with
