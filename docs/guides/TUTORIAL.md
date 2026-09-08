@@ -515,13 +515,9 @@ sol migrate rollback                              roll back the last applied mig
 sol rollback [domain/service]                     roll back last deploy for one or all services
 sol logs <service> [--no-follow] [--tail=N]       stream logs from a deployed service
 
-sol secret set <KEY> --env <ENV> --value <VAL> [PATH]   create or update a secret
-sol secret list --env <ENV> [PATH]                      list secret keys (values never printed)
-sol secret delete <KEY> --env <ENV> [PATH]              delete a secret
-
-# PATH scopes the command to one domain/service (e.g. `payments` or
-# `payments/charge-svc`) instead of every domain in the workspace --
-# useful when a domain hasn't been deployed yet and has no namespace.
+sol secret set <KEY> --env <ENV> --value <VAL>    create or update a secret
+sol secret list --env <ENV>                       list secret keys (values never printed)
+sol secret delete <KEY> --env <ENV>               delete a secret
 
 sol cloud plan TARGET                             preview cloud infrastructure changes
 sol cloud apply TARGET                            apply cloud infrastructure changes
