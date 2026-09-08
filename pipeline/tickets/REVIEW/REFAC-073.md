@@ -5,6 +5,7 @@ severity: low
 source: architecture discussion with user, 2026-09-08
 branch: REFAC-073/tools-to-devtools
 worktree: ../sol-REFAC-073-tools-to-devtools
+pr: https://github.com/loganbnielsen/sol/pull/162
 ---
 
 **Depends on:** REFAC-072.
