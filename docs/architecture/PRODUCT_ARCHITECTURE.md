@@ -195,8 +195,20 @@ Decided by DEC-008 and DEC-010:
   not convert `-svc`/`-worker`/`-fn` to Lambda/SQS — that breaks dev/prod
   parity and cloud-agnostic Kubernetes, and degrades the Kafka event model.
 
-Per-account tenant isolation and a dedicated hosted web UI remain open
-(see DEC-009).
+Per-account tenant isolation remains open (a future revisit, not blocking).
+
+**Hosted interaction model (DEC-009):** Sol Cloud's eventual primary
+interface is a thin first-party web control plane over service/deployment
+lifecycle, with specialized operational exploration (logs, metrics, traces)
+delegated to Grafana via contextual links rather than reimplemented. This is
+a direction, not a current implementation commitment — building it is
+explicitly deferred until DEC-008 has a working tenancy prototype and a real
+hosted-executor design exists. Until then, the CLI (`sol status`/`sol open`)
+plus Grafana dashboards (`OBS-044`) remain the actual product. Any future web
+control plane must invoke the same scaffold generator `sol new` uses (no
+parallel hosted-only template implementation), and any GitHub App capability
+granting repo write access or webhook events is its own separate
+security/trust-boundary decision.
 
 ---
 
