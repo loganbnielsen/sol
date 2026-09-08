@@ -6,7 +6,7 @@ type line = { ts_ns : string; text : string }
 
 (** Basic-auth credentials for a Loki query request, e.g. a Grafana Cloud
     stack's instance ID + API key -- the same shape as
-    platform/infra/base/main.tf's external_loki_username/password for the
+    cli/platform/infra/base/main.tf's external_loki_username/password for the
     write side. *)
 type credentials = { username : string; password : string }
 

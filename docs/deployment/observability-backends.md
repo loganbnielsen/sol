@@ -1,6 +1,6 @@
 # Observability Backends
 
-`platform/infra/base`'s `observability_backend` variable selects where Loki
+`cli/platform/infra/base`'s `observability_backend` variable selects where Loki
 (logs) and Prometheus (metrics) data lives. Sol ships a self-hosted durable
 path so production users are not forced into Sol-hosted observability.
 The product design is documented in
@@ -70,7 +70,7 @@ historical blocks from storegateway, with compactor managing object-store
 block growth. GCP is a deliberate gap, not an oversight: it uses AWS IRSA to
 grant Loki/Thanos access to S3, which has no meaning on a non-EKS cluster.
 
-`platform/infra/base`'s `cloud_provider` variable (default `"aws"`) makes
+`cli/platform/infra/base`'s `cloud_provider` variable (default `"aws"`) makes
 this explicit and enforced. Applying `self_hosted_durable` with
 `cloud_provider = "gcp"` fails fast at `terraform apply` with a clear
 `self_hosted_durable`-is-AWS-only error instead of silently installing a
@@ -85,12 +85,12 @@ always pass `cloud_provider = "gcp"` explicitly, regardless of which
 provider-specific one) actually applies to their cluster.
 
 This is two Terraform states with no automatic link between them (same as
-`cert_manager_irsa_role_arn` already works): apply `platform/infra/aws` with
+`cert_manager_irsa_role_arn` already works): apply `cli/platform/infra/aws` with
 durable observability enabled, read its outputs, then pass them into
-`platform/infra/base`.
+`cli/platform/infra/base`.
 
 ```bash
-# platform/infra/aws
+# cli/platform/infra/aws
 terraform apply \
   -var=enable_durable_observability=true \
   -var=loki_retention_days=90 \
@@ -103,7 +103,7 @@ terraform output thanos_irsa_arn     # -> thanos_irsa_role_arn
 ```
 
 ```hcl
-# platform/infra/base
+# cli/platform/infra/base
 observability_backend = "self_hosted_durable"
 cloud_provider        = "aws" # required to stay "aws" for this profile
 aws_region            = "us-east-1"
@@ -120,10 +120,10 @@ thanos_retention_1h_days      = 90
 **What it costs:** S3 storage plus the in-cluster Loki, Prometheus, Thanos
 Query, storegateway, and compactor pods. The Loki bucket has a 90-day
 expiration lifecycle rule by default; set `loki_retention_days` in
-`platform/infra/aws` to change log retention. Thanos metric retention is owned
+`cli/platform/infra/aws` to change log retention. Thanos metric retention is owned
 by the compactor, not an S3 lifecycle rule. Set
 `prometheus_raw_retention_days`, `thanos_retention_5m_days`, and
-`thanos_retention_1h_days` in `platform/infra/base` to change metric
+`thanos_retention_1h_days` in `cli/platform/infra/base` to change metric
 retention.
 
 **Teardown:** the Loki and Thanos S3 buckets use Terraform `prevent_destroy`
@@ -146,7 +146,7 @@ All three profiles ship the same starter Alertmanager + rule set — Sol uses
 the plain `prometheus-community/prometheus` chart (`server` +
 `alertmanager` subcharts), not the Prometheus Operator, so there is no
 `PrometheusRule` CRD here. Rules and Alertmanager routing are both plumbed
-in as chart `values` in `platform/infra/base/main.tf`'s
+in as chart `values` in `cli/platform/infra/base/main.tf`'s
 `helm_release.prometheus`, the same way `remoteWrite`/Thanos fields are
 today:
 
@@ -199,7 +199,7 @@ but nothing is notified. This is deliberate: Sol doesn't know your Slack
 webhook, PagerDuty key, or on-call email, so it doesn't guess one.
 
 To wire up a real receiver, override `alertmanager.config` in
-`platform/infra/base/main.tf`'s `local.prometheus_alertmanager_config` (or
+`cli/platform/infra/base/main.tf`'s `local.prometheus_alertmanager_config` (or
 pass an additional `helm_release.prometheus` `values` entry that
 deep-merges over it) with the shape the `alertmanager` chart expects — see
 `helm show values prometheus-community/alertmanager --version 1.10.0` for
@@ -232,7 +232,7 @@ integration (see OBS-040's ticket non-goals).
 
 Add more alerting rules the same way: extend
 `local.prometheus_alerting_rules.groups[0].rules` (or add another group)
-in `platform/infra/base/main.tf`. Multi-window burn-rate alerting and
+in `cli/platform/infra/base/main.tf`. Multi-window burn-rate alerting and
 SLO-based rules are a deliberate non-goal for this starter set — Sol has
 no per-service SLO target concept today: revisit only if the simple
 threshold rules above prove insufficient in practice.
@@ -329,7 +329,7 @@ minimal "log line to trace" link, not an APM-style trace search UI.
 
 **Verified live**, not just statically: `dune exec
 examples/local-demo/bin/demo.exe` with `TEMPO_URL` set produced real spans
-in a real local Tempo instance (`platform/local/scripts/ensure-tempo.sh`),
+in a real local Tempo instance (`cli/platform/local/scripts/ensure-tempo.sh`),
 confirmed via `curl`'s TraceQL search API
 (`/api/search?q={resource.service.name="order-svc"}`) — and the `trace_id`
 captured in the corresponding Loki log line matched a real Tempo trace ID

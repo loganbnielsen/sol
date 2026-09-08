@@ -21,10 +21,10 @@
       Loki · Prometheus · PostgreSQL
 
     Run (from repo root):
-      bash platform/local/scripts/ensure-broker.sh
-      bash platform/local/scripts/ensure-postgres.sh       # optional
-      bash platform/local/scripts/ensure-loki.sh           # optional — stdout fallback
-      bash platform/local/scripts/ensure-grafana.sh        # optional
+      bash cli/platform/local/scripts/ensure-broker.sh
+      bash cli/platform/local/scripts/ensure-postgres.sh       # optional
+      bash cli/platform/local/scripts/ensure-loki.sh           # optional — stdout fallback
+      bash cli/platform/local/scripts/ensure-grafana.sh        # optional
 
       KAFKA_BROKERS=localhost:9092 \
       POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \

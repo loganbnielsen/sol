@@ -248,11 +248,11 @@ let run_merge dry_run accept_performance_regression ticket_filter =
                 incr errors
               end else begin
                 let merge_sha = Sol_process.output_shell ~echo:false "git rev-parse origin/main" in
-                let perf_rc = Soldev_shell.run_cmd "./platform/local/scripts/run_tests.sh" in
+                let perf_rc = Soldev_shell.run_cmd "./cli/platform/local/scripts/run_tests.sh" in
                 if perf_rc = 2 && accept_performance_regression then begin
                   Printf.eprintf "  perf regression explicitly accepted — recording new baseline\n%!";
                   ignore (Soldev_shell.run_cmd ~echo:false
-                    "./platform/local/scripts/run_tests.sh --update-baseline");
+                    "./cli/platform/local/scripts/run_tests.sh --update-baseline");
                   ignore (Soldev_shell.run_cmd ~echo:false
                     (Printf.sprintf "git add devtools/perf/perf_baseline.json && git commit -m %s"
                       (Filename.quote
@@ -285,7 +285,7 @@ let run_merge dry_run accept_performance_regression ticket_filter =
                   incr errors
                 end else begin
                   ignore (Soldev_shell.run_cmd ~echo:false
-                    "./platform/local/scripts/run_tests.sh --update-baseline");
+                    "./cli/platform/local/scripts/run_tests.sh --update-baseline");
                   ignore (Soldev_shell.run_cmd ~echo:false
                     (Printf.sprintf "git add devtools/perf/perf_baseline.json && git commit -m %s"
                       (Filename.quote

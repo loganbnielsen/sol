@@ -68,7 +68,7 @@ let signal_flag = function
   | Loki -> "--loki-base-url"
   | Prometheus -> "--prometheus-base-url"
 
-(* Matches platform/infra/base/main.tf's monitoring namespace and the
+(* Matches cli/platform/infra/base/main.tf's monitoring namespace and the
    loki/prometheus-community chart service names (also mirrored by
    `sol dev up`'s local port-forwards in cmd_dev.ml). *)
 let signal_port_forward = function

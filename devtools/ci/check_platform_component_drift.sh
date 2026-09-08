@@ -2,10 +2,10 @@
 # Guardrail for docs/architecture/adr/0001-layer2-platform-component-source-of-truth.md
 # (CODE_LAYER-005).
 #
-# Once a Helm value moves into platform/components/<name>/values-*.json, it
+# Once a Helm value moves into cli/platform/components/<name>/values-*.json, it
 # must not creep back as an independently hand-maintained literal in either
 # execution layer -- that's exactly how BUG-013 (fixed in
-# platform/infra/base/main.tf only) turned into BUG-016 (cmd_dev.ml still
+# cli/platform/infra/base/main.tf only) turned into BUG-016 (cmd_dev.ml still
 # missing the fix). Deliberately a grep over a fixed key list, not an
 # OCaml/HCL AST linter -- see the ADR's "No elaborate lint tooling" rule.
 #
@@ -25,9 +25,9 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cmd_dev="$repo_root/cli/sol/bin/cmd_dev.ml"
-main_tf="$repo_root/platform/infra/base/main.tf"
+main_tf="$repo_root/cli/platform/infra/base/main.tf"
 
-# Keys CODE_LAYER-005 moved into platform/components/<name>/values-*.json,
+# Keys CODE_LAYER-005 moved into cli/platform/components/<name>/values-*.json,
 # checked against both files. Keys intentionally still set inline in main.tf
 # only (singleBinary.persistence.enabled, server.persistentVolume.enabled/
 # retention -- var-driven Terraform-only knobs; prometheus-node-exporter.
@@ -73,7 +73,7 @@ cmd_dev_only_keys=(
   #
   # storage.persistentVolume.size and cmd_dev.ml's external.*/
   # listeners.kafka.* block are deliberately NOT here or in any
-  # platform/components/redpanda/*.json file at all -- see cmd_dev.ml's
+  # cli/platform/components/redpanda/*.json file at all -- see cmd_dev.ml's
   # own comment on its Redpanda install (adversarial review on
   # CODE_LAYER-010 caught that putting them in the shared local.json
   # would have silently shipped dev-only values, a 1Gi PVC size and a
@@ -96,18 +96,18 @@ fail=0
 
 for key in "${migrated_keys[@]}"; do
   if grep -qF "\"${key}\"" "$cmd_dev"; then
-    echo "guardrail: $cmd_dev hardcodes \"${key}\" inline again -- this value belongs in platform/components/<name>/values-*.json (ADR 0001 / CODE_LAYER-005)." >&2
+    echo "guardrail: $cmd_dev hardcodes \"${key}\" inline again -- this value belongs in cli/platform/components/<name>/values-*.json (ADR 0001 / CODE_LAYER-005)." >&2
     fail=1
   fi
   if grep -qF "\"${key}\"" "$main_tf"; then
-    echo "guardrail: $main_tf hardcodes \"${key}\" inline again -- this value belongs in platform/components/<name>/values-*.json (ADR 0001 / CODE_LAYER-005)." >&2
+    echo "guardrail: $main_tf hardcodes \"${key}\" inline again -- this value belongs in cli/platform/components/<name>/values-*.json (ADR 0001 / CODE_LAYER-005)." >&2
     fail=1
   fi
 done
 
 for key in "${cmd_dev_only_keys[@]}"; do
   if grep -qF "\"${key}\"" "$cmd_dev"; then
-    echo "guardrail: $cmd_dev hardcodes \"${key}\" inline again -- this value now comes entirely from platform/components/<name>/values-local.json (ADR 0001 / CODE_LAYER-005); main.tf legitimately keeps its own var-driven \`set\` for this key, but cmd_dev.ml has no such var and must not duplicate it." >&2
+    echo "guardrail: $cmd_dev hardcodes \"${key}\" inline again -- this value now comes entirely from cli/platform/components/<name>/values-local.json (ADR 0001 / CODE_LAYER-005); main.tf legitimately keeps its own var-driven \`set\` for this key, but cmd_dev.ml has no such var and must not duplicate it." >&2
     fail=1
   fi
 done

@@ -35,7 +35,7 @@ let message t =
    target:
    - an explicit [--loki-push-url] always wins.
    - [Local]/[Self_hosted_durable] both have an in-cluster Loki
-     (platform/infra/base/main.tf's [loki_install_local]) that isn't
+     (cli/platform/infra/base/main.tf's [loki_install_local]) that isn't
      Ingress-exposed -- [Auto_detect] tells the caller it's safe to probe
      the live cluster for it (unlike Sol_cli_status's read-only reachability
      check, [sol deploy]'s direct-apply mode already has kubectl/cluster

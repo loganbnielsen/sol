@@ -1,5 +1,5 @@
 {
-  "note": "Performance history per suite. Each run appends an entry. Entries marked baseline:true are the reference points for regression checks. Set a new baseline with: ./platform/local/scripts/run_tests.sh --update-baseline",
+  "note": "Performance history per suite. Each run appends an entry. Entries marked baseline:true are the reference points for regression checks. Set a new baseline with: ./cli/platform/local/scripts/run_tests.sh --update-baseline",
   "suites": {
     "unit": {
       "history": [
@@ -3281,6 +3281,11 @@
           "commit": "c293293c",
           "duration_s": 2.992,
           "baseline": true
+        },
+        {
+          "date": "2026-09-08",
+          "commit": "ae0d1d35",
+          "duration_s": 3.024
         }
       ]
     },
@@ -5894,6 +5899,11 @@
           "commit": "c293293c",
           "duration_s": 1.095,
           "baseline": true
+        },
+        {
+          "date": "2026-09-08",
+          "commit": "ae0d1d35",
+          "duration_s": 1.093
         }
       ]
     },
@@ -8320,6 +8330,11 @@
           "commit": "c293293c",
           "duration_s": 1.206,
           "baseline": true
+        },
+        {
+          "date": "2026-09-08",
+          "commit": "ae0d1d35",
+          "duration_s": 1.209
         }
       ]
     }

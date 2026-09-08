@@ -13,8 +13,8 @@ dune build
 
 ```bash
 # Start Kafka (Redpanda) and Postgres
-bash <path-to-sol>/platform/local/scripts/ensure-broker.sh
-bash <path-to-sol>/platform/local/scripts/ensure-postgres.sh
+bash <path-to-sol>/cli/platform/local/scripts/ensure-broker.sh
+bash <path-to-sol>/cli/platform/local/scripts/ensure-postgres.sh
 
 # Run the worker (POSTGRES_URL is required — both services depend on Postgres)
 KAFKA_BROKERS=localhost:9092 POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \

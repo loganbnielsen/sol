@@ -2,7 +2,7 @@
 # Blocks the commit if tests fail or a performance regression is detected.
 # Runs unit tests always; other suites when their infra is up.
 #
-# Install: bash platform/local/scripts/install-hooks.sh
+# Install: bash cli/platform/local/scripts/install-hooks.sh
 # Skip once: SOL_SKIP_HOOKS=1 git commit ...
 
 [ "${SOL_SKIP_HOOKS:-0}" = "1" ] && exit 0
@@ -49,7 +49,7 @@ if [ -z "$OTHER_FILES" ]; then
 fi
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-RUNNER="$REPO_ROOT/platform/local/scripts/run_tests.sh"
+RUNNER="$REPO_ROOT/cli/platform/local/scripts/run_tests.sh"
 
 if [ ! -x "$RUNNER" ]; then
   echo "✗ Test runner not found or not executable: $RUNNER"

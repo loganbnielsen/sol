@@ -1,5 +1,5 @@
 (* Tests for Sol_cli_platform_component (ADR 0001 / CODE_LAYER-005): reads
-   platform/components/<name>/values-{common,<profile>}.json and deep-merges
+   cli/platform/components/<name>/values-{common,<profile>}.json and deep-merges
    them, profile winning over common. Fully hermetic -- builds a throwaway
    "Sol home" directory with fake marker files rather than depending on this
    repo's own layout, since a dune test's cwd is a build sandbox. *)
@@ -38,7 +38,7 @@ let with_fake_sol_home ~component ~files f =
     (fun () ->
       List.iter (fun marker -> write_file (Filename.concat root marker) "") sol_home_markers;
       List.iter (fun (name, content) ->
-        write_file (Filename.concat root (Printf.sprintf "platform/components/%s/%s" component name)) content
+        write_file (Filename.concat root (Printf.sprintf "cli/platform/components/%s/%s" component name)) content
       ) files;
       let prev = Sys.getenv_opt "SOL_HOME" in
       Unix.putenv "SOL_HOME" root;

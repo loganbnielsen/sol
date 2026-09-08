@@ -43,7 +43,7 @@ run() {
 cleanup() {
   local rc=$?
   say "cleanup: base destroy"
-  KUBE_CONFIG_PATH="$HOME/.kube/config" terraform -chdir="$ROOT/platform/infra/base" destroy -auto-approve "${base_vars[@]}" >"$LOG_DIR/base-destroy.log" 2>&1 || true
+  KUBE_CONFIG_PATH="$HOME/.kube/config" terraform -chdir="$ROOT/cli/platform/infra/base" destroy -auto-approve "${base_vars[@]}" >"$LOG_DIR/base-destroy.log" 2>&1 || true
   say "cleanup: aws destroy"
   (cd "$ROOT/examples/pluto" && AWS_PROFILE="$PROFILE" AWS_REGION="$REGION" "$SOL" cloud destroy "$TARGET" --apply) >"$LOG_DIR/aws-destroy.log" 2>&1 || true
   say "cleanup: verify"
@@ -61,9 +61,9 @@ trap cleanup EXIT
 run aws-apply bash -lc "cd '$ROOT/examples/pluto' && AWS_PROFILE='$PROFILE' AWS_REGION='$REGION' '$SOL' cloud apply '$TARGET'"
 run kubeconfig aws eks update-kubeconfig --region "$REGION" --name "$CLUSTER"
 run nodes kubectl get nodes -o wide
-run base-init terraform -chdir="$ROOT/platform/infra/base" init
-run cert-manager bash -lc "KUBE_CONFIG_PATH='$HOME/.kube/config' terraform -chdir='$ROOT/platform/infra/base' apply -auto-approve -target=kubernetes_namespace.cert_manager -target=helm_release.cert_manager ${base_vars[*]}"
-run base-apply bash -lc "KUBE_CONFIG_PATH='$HOME/.kube/config' terraform -chdir='$ROOT/platform/infra/base' apply -auto-approve ${base_vars[*]}"
+run base-init terraform -chdir="$ROOT/cli/platform/infra/base" init
+run cert-manager bash -lc "KUBE_CONFIG_PATH='$HOME/.kube/config' terraform -chdir='$ROOT/cli/platform/infra/base' apply -auto-approve -target=kubernetes_namespace.cert_manager -target=helm_release.cert_manager ${base_vars[*]}"
+run base-apply bash -lc "KUBE_CONFIG_PATH='$HOME/.kube/config' terraform -chdir='$ROOT/cli/platform/infra/base' apply -auto-approve ${base_vars[*]}"
 run pods kubectl get pods -A
 run loki-ready bash -lc "kubectl -n monitoring port-forward svc/loki 3100:3100 >/tmp/sol-loki-pf.log 2>&1 & pid=\$!; sleep 5; curl -fsS http://127.0.0.1:3100/ready; kill \$pid"
 # /ready only proves Loki itself is up, not that anything is being ingested.

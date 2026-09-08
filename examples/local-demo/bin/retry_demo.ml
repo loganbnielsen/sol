@@ -23,7 +23,7 @@
            sol-demo-jobs-dlq.  This demo stays well within the limit.
 
     Run:
-      bash platform/local/scripts/ensure-broker.sh
+      bash cli/platform/local/scripts/ensure-broker.sh
       KAFKA_BROKERS=localhost:9092 dune exec examples/local-demo/bin/retry_demo.exe
 *)
 

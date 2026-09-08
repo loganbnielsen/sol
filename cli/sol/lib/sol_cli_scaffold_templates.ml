@@ -351,7 +351,7 @@ let tpl_github_deploy = {tpl|# CI/CD — deploy to your Sol cluster on every pus
 # For ECR add AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION and
 # uncomment the ECR login step below.
 #
-# See platform/infra/ci/ in the Sol repo for the full GitOps (Argo CD) variant.
+# See cli/platform/infra/ci/ in the Sol repo for the full GitOps (Argo CD) variant.
 
 name: Deploy
 
