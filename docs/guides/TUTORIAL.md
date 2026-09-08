@@ -628,14 +628,19 @@ sol cloud apply prod/aws/us-east-1 --var-file prod.tfvars
 sol cloud apply prod/aws/us-east-1 --var cluster_name=acme-prod --var db_password=...
 ```
 
-On success the command prints the key provisioned endpoints:
+On success the command prints the key provisioned endpoints, then runs `kubeconfig_command` automatically so `kubectl` (and therefore `sol status`/`sol deploy`/`sol migrate`) can reach the new cluster right away — no separate manual step needed:
 
 ```
   cluster_name                  acme-prod
   cluster_endpoint              https://ABCDEF123456.gr7.us-east-1.eks.amazonaws.com
   kubeconfig_command            aws eks update-kubeconfig --region us-east-1 --name acme-prod
   ecr_registry                  123456789.dkr.ecr.us-east-1.amazonaws.com
+
+Configuring kubectl...
+  kubectl configured -- sol status/deploy/migrate can reach this cluster now.
 ```
+
+If kubectl auto-configuration fails (no local `aws`/`gcloud` CLI, no network reach, etc.), the command prints the `kubeconfig_command` line above as a warning with the fix — run it yourself before continuing.
 
 Sensitive outputs (database passwords, connection strings) are never printed; retrieve them with `terraform output -raw <name>` if needed.
 

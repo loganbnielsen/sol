@@ -54,6 +54,49 @@ let print_outputs infra_dir =
     with _ ->
       Printf.printf "  (error parsing terraform outputs)\n%!")
 
+(* Fetch a single non-sensitive string output by key, re-reading terraform's
+   output JSON. Used for kubeconfig_command below -- separate from
+   print_outputs since we need the raw value, not just to print it. *)
+let terraform_output_string infra_dir key =
+  match Sol_cli_terraform.output_json ~chdir:infra_dir with
+  | Error _ -> None
+  | Ok r when r.Sol_cli_process.exit_code <> 0 -> None
+  | Ok r ->
+    (try
+      match Yojson.Safe.from_string r.Sol_cli_process.stdout with
+      | `Assoc pairs ->
+        (match List.assoc_opt key pairs with
+         | Some (`Assoc fields) ->
+           let sensitive = match List.assoc_opt "sensitive" fields with
+             | Some (`Bool b) -> b
+             | _ -> true
+           in
+           if sensitive then None
+           else (match List.assoc_opt "value" fields with
+             | Some (`String v) -> Some v
+             | _ -> None)
+         | _ -> None)
+      | _ -> None
+    with _ -> None)
+
+(* EXP-028 (originally EXP-023, reverted 2026-06-13): a printed
+   kubeconfig_command line is easy to miss, leaving kubectl unconfigured and
+   every subsequent sol status/deploy/migrate failing with a cryptic
+   connection error. Run it automatically; on failure, fall back to printing
+   an explicit instruction rather than leaving the user to notice the
+   original output line on their own. *)
+let configure_kubectl infra_dir =
+  match terraform_output_string infra_dir "kubeconfig_command" with
+  | None -> ()
+  | Some kubeconfig_command ->
+    Printf.printf "\nConfiguring kubectl...\n%!";
+    (match Sol_cli_process.run_shell kubeconfig_command with
+     | Ok r when r.Sol_cli_process.exit_code = 0 ->
+       Printf.printf "  kubectl configured -- sol status/deploy/migrate can reach this cluster now.\n%!"
+     | _ ->
+       Printf.printf "  (could not auto-configure kubectl -- run this yourself before using \
+                       sol status/deploy/migrate:)\n  %s\n%!" kubeconfig_command)
+
 (* ── cloud apply/plan ───────────────────────────────────────────────────── *)
 
 type provider = Aws | Gcp
@@ -453,6 +496,7 @@ let cloud_init ~target ~var_file ~vars ~action () =
 
     Printf.printf "\nProvisioned endpoints:\n%!";
     print_outputs infra_dir;
+    configure_kubectl infra_dir;
     Printf.printf "\nDone.\n%!"
 
 let cloud_destroy ~target ~var_file ~vars ~action () =
