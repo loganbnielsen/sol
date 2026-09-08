@@ -32,7 +32,7 @@ Use the current date for the output filename in `YYYY-MM-DD` format.
 ### 3. Check previous findings
 Read the most recent report in `project/audits/` (highest date). Note which findings were already open — verify whether they are now resolved before logging them again.
 
-Check all `project/tickets/` subdirectories for existing AUDIT-* ticket files. A finding already tracked anywhere in `project/tickets/` should not be re-materialised. If a finding exists in `DONE/`, mark it resolved in the report.
+Check all `project/tickets/` subdirectories for existing AUDIT-* ticket files. A finding already tracked anywhere in `project/tickets/` should not be re-materialised. If a finding exists in `DONE/`, mark it resolved in the report — but verify the fix is still actually live in `main` before trusting that (see EXP-032: a `DONE` ticket's merge can be reverted after the fact and never refixed, leaving the ticket falsely marked resolved). Run `soldev pipeline check-reverts` and treat anything it flags as still-open, not resolved.
 
 ### 4. Work through each section
 

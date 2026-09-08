@@ -202,7 +202,7 @@ let component_scaffold kind ~ws ~domain ~name =
     | Service -> [
         ("lib/handler.ml", svc_handler_ml);
         ("lib/dune", subst v svc_lib_dune);
-        ("bin/main.ml", svc_bin_ml);
+        ("bin/main.ml", subst v svc_bin_ml);
         ("bin/dune", subst v svc_bin_dune);
         ("sol.toml", tpl_sol_toml);
         ("Dockerfile", subst v tpl_dockerfile);

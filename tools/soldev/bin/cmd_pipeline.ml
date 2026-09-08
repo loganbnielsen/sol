@@ -64,8 +64,16 @@ let check_cmd =
              gates and dependency status.")
     Term.(const Soldev_merge.run_check $ ticket_arg)
 
+let check_reverts_cmd =
+  Cmd.v
+    (Cmd.info "check-reverts"
+       ~doc:"Scan git history for a merge that was later reverted whose ticket \
+             still sits in DONE/ — catches a fix that broke, got reverted, and \
+             was never refixed. Exits 1 if any are found.")
+    Term.(const Soldev_merge.run_check_reverts $ const ())
+
 let cmd =
   Cmd.group
     (Cmd.info "pipeline"
        ~doc:"Deterministic pipeline operations: merge tickets, process review results, list status")
-    [ ls_cmd; check_cmd; submit_cmd; merge_cmd; review_cmd ]
+    [ ls_cmd; check_cmd; submit_cmd; merge_cmd; review_cmd; check_reverts_cmd ]
