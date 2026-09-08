@@ -26,3 +26,7 @@ Rename `tools/` to `devtools/`
 - Update `.claude/CLAUDE.md`, `README.md`, and any doc that names these paths.
 - Grep the whole repo for `tools/soldev`, `tools/perf`, `tools/ci`, `tools/hooks`, `tools/sol_process`, and bare `tools/`.
 - Run the full local test suite before submitting, and confirm the git hooks still fire correctly post-rename (make a throwaway commit in the worktree and check the hook output).
+
+## Review — real CI confirmed green (2026-09-08)
+
+Implementer proactively fixed `soldev_merge.ml`'s hardcoded `perf_baseline.json` path constants (same class of bug that broke REFAC-072's merge-time bookkeeping) and correctly identified two symlink risks to fix post-merge (`~/.local/bin/soldev`, `.git/hooks/*`) rather than pre-merge. Review confirmed diff correctness, found zero missed `tools/` references, found no third symlink risk, independently re-ran the full local suite (pass). PR #162's actual GitHub Actions run (34279818504) fully green: `test` passed (5m9s), all 4 dockerfile-smokes passed, `golden-path-smoke` passed (16m49s). Promoting on confirmed real-CI green. Merger must immediately rebuild+relink the `soldev` binary and re-run the hooks-install script after merging, per the two flagged symlink risks.
