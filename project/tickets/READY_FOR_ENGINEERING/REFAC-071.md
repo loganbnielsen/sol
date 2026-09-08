@@ -5,7 +5,9 @@ severity: medium
 source: architecture discussion with user, 2026-09-08
 ---
 
-**Depends on:** None. **Sequencing:** work this only after the current ticket queue (EXP-029, INFRA-003, INFRA-004, FRIC-010, OBS-043, AUDIT-067) is fully drained, and not concurrently with REFAC-072/073/074 — a repo-wide path move collides badly with any other open worktree branch and these four siblings touch overlapping shared docs. Work in the order 071 → 072 → 073 → 074.
+**Depends on:** None.
+
+**Sequencing note:** the earlier queue (EXP-029, INFRA-003, INFRA-004, FRIC-010, OBS-043, AUDIT-067) has already drained as of 2026-09-08 (INFRA-004 skipped for lack of AWS credentials, OBS-043 returned to BACKLOG for an unresolved decision gate — neither is a real dependency of this ticket). This is the first of four sequenced moves; REFAC-072/073/074 each declare a real `Depends on` pointing at the previous one in the chain, so the pipeline tooling enforces the order automatically. Do not work any of the four concurrently — each is a repo-wide path move touching overlapping shared docs.
 
 Move `integrations/kafka/kafka-eio-service/` into `framework/`
 
