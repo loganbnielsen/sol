@@ -15,3 +15,6 @@ pr: https://github.com/loganbnielsen/sol/pull/155
 **Impact:** Every future `/audit` run has to manually re-derive current paths before checking anything, costing time and risking a false PASS/FAIL if a path is guessed wrong instead of verified. This is exactly the class of gap Section 9 of the audit itself asks to catch ("Spec files match implementation reality") — the audit's own template fails its own invariant.
 
 **Remediation:** Update `docs/audits/AUDIT.md`'s source-location references and prose to the current layout: `cli/sol/bin/` · `cli/sol/lib/sol_cli_scaffold.ml` · `cli/sol/lib/sol_cli_manifest.ml` + `sol_cli_manifest_yaml.ml`; note Kafka core/consumer/producer now live in the external `~/Code/kafka-eio` package (flat `lib/kafka_stubs.c`, `lib/kafka_consumer.ml`); `framework/sol-worker/lib/worker.ml`; `Sol.Service.Make`/`Sol.Worker.Make`/`Sol.Fn.Make`; and replace `sun.toml` references with the current `sol.yml`/target-file model. Keep the file as a reusable template — just point it at what exists today.
+
+## Review — automated checks passed
+docs-only refresh of AUDIT.md's stale sun->sol paths; every claimed path/module/label/table-name spot-checked against real current source and confirmed correct; diff scoped to the single file, project/tickets/ untouched in the branch, build clean
