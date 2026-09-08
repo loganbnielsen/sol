@@ -3,6 +3,8 @@ id: INFRA-003
 type: feature
 severity: medium
 source: OBS-034 discussion 2026-09-03
+branch: INFRA-003/gcp-substrate-parity
+worktree: ../sol-INFRA-003-gcp-substrate-parity
 ---
 
 Provider-specific substrate adapters for cloud integrations (identity binding, object storage, ...)
