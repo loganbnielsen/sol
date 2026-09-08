@@ -7,7 +7,7 @@ workflow outputs are not ownership boundaries.
 
 For audit-oriented work, use these workflows as the entry points:
 
-- [`/style-audit`](../../project/tickets/)
+- [`/style-audit`](../../pipeline/tickets/)
   for repository style and consistency work. This worktree does not currently
   track `docs/audits/STYLE_AUDIT.md`; style-audit tickets identify that source
   when the checklist is present.
@@ -130,7 +130,7 @@ the full local workflow.
 User-facing docs live in `README.md`, `docs/guides/`, `docs/deployment/`, and
 `docs/hosted/`. Architecture and ownership docs live in `docs/architecture/`.
 Audit checklists live in `docs/audits/`; dated audit findings belong under
-`project/audits/`, not in reusable checklist files.
+`pipeline/audits/`, not in reusable checklist files.
 
 Extend docs where the reader is already making the relevant decision: quickstart
 behavior in `README.md`, walkthroughs in `docs/guides/`, deployment contracts in

@@ -22,7 +22,7 @@
 # reformat it "for readability" without checking the resulting byte count
 # (`python3 -c "import json;print(len(open('smoke-test-iam-policy.json').read()))"`)
 # — verified against a real DOGFOOD-011 apply+destroy cycle at this size;
-# see project/dogfood/ for the run that shaped every statement in it.
+# see pipeline/dogfood/ for the run that shaped every statement in it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

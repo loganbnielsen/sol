@@ -216,7 +216,7 @@ Acceptance:
 - [ ] App deploys and reports status.
 - [ ] Migrations run.
 - [ ] Logs/metrics path still works.
-- [ ] Any failure becomes a ticket under `project/tickets/READY_FOR_ENGINEERING/`.
+- [ ] Any failure becomes a ticket under `pipeline/tickets/READY_FOR_ENGINEERING/`.
 
 ### Phase 5: Low-Cost Live AWS Smoke
 
@@ -281,8 +281,8 @@ AWS source checks:
 
 Tracking tickets:
 
-- `project/tickets/READY_FOR_ENGINEERING/AWS-001.md` covers the low-cost `aws-eio` live smoke lane.
-- `project/tickets/BACKLOG/DOGFOOD-011.md` covers full AWS dogfood. Keep it blocked until the cheaper AWS smoke tests pass.
+- `pipeline/tickets/READY_FOR_ENGINEERING/AWS-001.md` covers the low-cost `aws-eio` live smoke lane.
+- `pipeline/tickets/BACKLOG/DOGFOOD-011.md` covers full AWS dogfood. Keep it blocked until the cheaper AWS smoke tests pass.
 
 ## Decision Log
 

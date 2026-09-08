@@ -74,7 +74,7 @@ infrastructure without learning OCaml internals, Kubernetes object shapes, Helm
 chart wiring, or Terraform module structure.
 
 **Completed:** DOGFOOD-001 through DOGFOOD-005, plus DOGFOOD-008 (Kafka
-external listener), DOGFOOD-009 (Loki 2.x compatibility). See `project/dogfood/`
+external listener), DOGFOOD-009 (Loki 2.x compatibility). See `pipeline/dogfood/`
 for full reports.
 
 ### What the dogfood found

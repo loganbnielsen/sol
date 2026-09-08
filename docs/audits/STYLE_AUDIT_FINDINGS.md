@@ -5,7 +5,7 @@ memory, raw strings, runtime validation, or deeply nested control flow instead
 of using OCaml's type system and local readability.
 
 The output is a set of actionable tickets in
-`project/tickets/READY_FOR_ENGINEERING/`.
+`pipeline/tickets/READY_FOR_ENGINEERING/`.
 
 ## Audit Principles
 
@@ -169,7 +169,7 @@ Each ticket must include:
 - Acceptance criteria.
 - `**Depends on:** none.` unless the work genuinely depends on another ticket.
 
-Use `project/tickets/READY_FOR_ENGINEERING/` for actionable findings.
+Use `pipeline/tickets/READY_FOR_ENGINEERING/` for actionable findings.
 
 Use a stable prefix for the run, for example `CODEX_STYLE_AUDIT-NNN` or
 `STYLE-NNN`, continuing from the highest existing ID with that prefix.
@@ -213,7 +213,7 @@ Avoid:
 
 - Filing one ticket per grep hit.
 - Filing vague "clean this file up" tickets.
-- Duplicating existing tickets in any `project/tickets/` state.
+- Duplicating existing tickets in any `pipeline/tickets/` state.
 - Putting actionable tickets in `BACKLOG/`.
 - Auditing only `cli/` because it has many obvious command booleans.
 - Ignoring tests/templates/examples; they often define the pattern users copy.

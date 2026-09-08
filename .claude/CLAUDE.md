@@ -11,16 +11,16 @@ and update call sites in the same pass. Full policy: `~/Code/CLAUDE.md`.
 
 ## Current development focus
 
-**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform modules live at `platform/infra/base/`, `platform/infra/aws/`, and `platform/infra/gcp/`. Remaining hosted-product work is tracked in `project/tickets/`. See `docs/planning/WORK_SUMMARY.md` for full details.
+**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform modules live at `platform/infra/base/`, `platform/infra/aws/`, and `platform/infra/gcp/`. Remaining hosted-product work is tracked in `pipeline/tickets/`. See `docs/planning/WORK_SUMMARY.md` for full details.
 
 Package: `cli/sol/` — binary at `_build/default/cli/sol/bin/main.exe`.
 
 ## Ticket system
 
-Work is tracked in `project/tickets/` using a directory-per-status layout. Each ticket is a markdown file with YAML frontmatter. **The `project/tickets/` directory is only ever modified in the `main` checkout — never inside a worktree branch.**
+Work is tracked in `pipeline/tickets/` using a directory-per-status layout. Each ticket is a markdown file with YAML frontmatter. **The `pipeline/tickets/` directory is only ever modified in the `main` checkout — never inside a worktree branch.**
 
 ```
-project/tickets/
+pipeline/tickets/
   BACKLOG/                  ← captured but not yet prioritised
   READY_FOR_ENGINEERING/    ← actionable; pick up with /start
   IN_PROGRESS/              ← worktree exists, work underway
@@ -40,7 +40,7 @@ Do not add a `status:` field — the directory encodes status.
 
 **Human-judgment gates:** Tickets in `BACKLOG/` may contain `## Open Questions`, `## Decision Required`, or `## Blocked On` sections. Tickets in `READY_FOR_ENGINEERING/` are treated as actionable, so `/work` must stop before creating a worktree if any unresolved decision section or marker remains. Resolve the decision in the ticket body or keep the ticket in `BACKLOG/` until the Remediation is unambiguous.
 
-**Ticket dependencies:** Use a body line near the top of each ticket: `**Depends on:** None.` or `**Depends on:** FEAT-003, EXP-008.` `/work` must verify dependencies before creating a worktree. A `READY_FOR_ENGINEERING` ticket with dependencies not yet in `project/tickets/DONE/` stays blocked.
+**Ticket dependencies:** Use a body line near the top of each ticket: `**Depends on:** None.` or `**Depends on:** FEAT-003, EXP-008.` `/work` must verify dependencies before creating a worktree. A `READY_FOR_ENGINEERING` ticket with dependencies not yet in `pipeline/tickets/DONE/` stays blocked.
 
 **Skills that interact with tickets:**
 - `/work` — unified entry point; dispatches by state: creates worktrees for `READY_FOR_ENGINEERING`, resumes `IN_PROGRESS`, runs review agent on `REVIEW`. Submits `IN_PROGRESS` → `REVIEW` via `soldev pipeline submit` (push + open PR)

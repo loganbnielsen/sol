@@ -2,7 +2,7 @@ let read_file  = Soldev_shell.read_file
 
 let dir state = Soldev_ticket.state_to_dir state
 
-let ticket_dir state = Filename.concat "project/tickets" (dir state)
+let ticket_dir state = Filename.concat "pipeline/tickets" (dir state)
 
 let write_file path content =
   let oc = open_out path in
@@ -140,7 +140,7 @@ let run_submit ticket_id =
       Printf.printf "[%s] opening PR...\n%!" ticket_id;
       let title = Printf.sprintf "%s: %s" ticket_id (Soldev_ticket.ticket_title content) in
       let body = Printf.sprintf
-        "Ticket: `%s`\n\nSee `project/tickets/REVIEW/%s.md` for the full spec.\n" ticket_id ticket_id in
+        "Ticket: `%s`\n\nSee `pipeline/tickets/REVIEW/%s.md` for the full spec.\n" ticket_id ticket_id in
       let r = Sol_process.run_shell ~echo:false (Printf.sprintf
         "gh pr create --base main --head %s --title %s --body %s"
         (Filename.quote branch) (Filename.quote title) (Filename.quote body)) in
@@ -154,7 +154,7 @@ let run_submit ticket_id =
   write_file src updated;
   Sys.rename src dst;
   ignore (Soldev_shell.run_cmd ~echo:false
-    (Printf.sprintf "git add project/tickets/ && git commit -m %s"
+    (Printf.sprintf "git add pipeline/tickets/ && git commit -m %s"
       (Filename.quote (Printf.sprintf "pipeline: submit %s for review\n\nPR: %s" ticket_id pr_url))));
   Printf.printf "[%s] → REVIEW  (%s)\n%!" ticket_id pr_url
 
@@ -277,7 +277,7 @@ let run_merge dry_run accept_performance_regression ticket_filter =
                   Sys.rename src
                     (Filename.concat (ticket_dir Soldev_ticket.Blocked_by_performance) filename);
                   ignore (Soldev_shell.run_cmd ~echo:false
-                    (Printf.sprintf "git add project/tickets/ && git commit -m %s"
+                    (Printf.sprintf "git add pipeline/tickets/ && git commit -m %s"
                       (Filename.quote (Printf.sprintf "pipeline: %s blocked %s" label id))));
                   if not reverted then
                     Printf.eprintf
@@ -303,7 +303,7 @@ let run_merge dry_run accept_performance_regression ticket_filter =
     let msg = Printf.sprintf "pipeline: move %d ticket(s) to DONE\n\n%s"
       (List.length !merged) ids in
     let rc = Soldev_shell.run_cmd ~echo:false
-      (Printf.sprintf "git add project/tickets/ && git commit -m %s" (Filename.quote msg)) in
+      (Printf.sprintf "git add pipeline/tickets/ && git commit -m %s" (Filename.quote msg)) in
     if rc <> 0 then Printf.eprintf "warning: failed to commit ticket state changes\n"
   end;
   if !errors > 0 then Printf.eprintf "\n%d ticket(s) had errors.\n" !errors;

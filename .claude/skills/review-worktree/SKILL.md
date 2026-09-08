@@ -4,7 +4,7 @@ description: Review completed worktrees and decide if they're ready to merge. Fa
 
 # /review-worktree — Review worktrees for merge readiness
 
-Automated review gate. Reads tickets from `project/tickets/REVIEW/`, fans out one subagent per worktree, collects structured JSON results, and delegates all ticket state transitions to `soldev pipeline review`.
+Automated review gate. Reads tickets from `pipeline/tickets/REVIEW/`, fans out one subagent per worktree, collects structured JSON results, and delegates all ticket state transitions to `soldev pipeline review`.
 
 ## Usage
 
@@ -18,7 +18,7 @@ Automated review gate. Reads tickets from `project/tickets/REVIEW/`, fans out on
 
 ### 1. Discover tickets to review
 
-Read `project/tickets/REVIEW/*.md`. Select those where a `worktree:` path is set and that path exists on disk. If specific IDs were passed, filter to those (error if a named ticket has no live worktree). `all` selects every ticket in `REVIEW/`.
+Read `pipeline/tickets/REVIEW/*.md`. Select those where a `worktree:` path is set and that path exists on disk. If specific IDs were passed, filter to those (error if a named ticket has no live worktree). `all` selects every ticket in `REVIEW/`.
 
 ### 2. Fan out one subagent per worktree
 
@@ -57,7 +57,7 @@ git diff main...<branch>
 Verify:
 - Changes are confined to files relevant to the ticket
 - No unrelated files modified (stray reformatting, debug lines, etc.)
-- `project/tickets/` was **not** touched in the worktree branch
+- `pipeline/tickets/` was **not** touched in the worktree branch
 
 #### C. Implementation correctness
 
@@ -96,5 +96,5 @@ EXP-005  → READY_TO_MERGE          build ✓  ClusterIP fix verified
 ```
 
 Human next steps:
-- `project/tickets/READY_TO_MERGE/` — run `soldev pipeline merge` to merge all branches automatically
-- `project/tickets/READY_FOR_ENGINEERING/` — pick up with `/work <ticket-id>` to resume in the existing worktree
+- `pipeline/tickets/READY_TO_MERGE/` — run `soldev pipeline merge` to merge all branches automatically
+- `pipeline/tickets/READY_FOR_ENGINEERING/` — pick up with `/work <ticket-id>` to resume in the existing worktree

@@ -110,7 +110,7 @@ Build failure → immediate **fail** with compiler error as violation.
 git diff main...<branch> --stat
 git diff main...<branch>
 ```
-Verify changes are confined to files relevant to the ticket. `project/tickets/` must not be touched in the worktree branch.
+Verify changes are confined to files relevant to the ticket. `pipeline/tickets/` must not be touched in the worktree branch.
 
 #### C. Implementation correctness
 Read each changed file. Verify:
