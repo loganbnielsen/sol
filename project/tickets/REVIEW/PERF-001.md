@@ -5,6 +5,7 @@ severity: high
 source: cross-cutting-design-review 2026-08-31
 branch: PERF-001/slow-test-infra-visibility
 worktree: /home/lbendtly/Code/sol-PERF-001-slow-test-infra-visibility
+pr: https://github.com/loganbnielsen/sol/pull/154
 ---
 
 Make slow tests and stale local infra visible by default
