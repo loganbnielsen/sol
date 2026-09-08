@@ -97,11 +97,10 @@ actually mounted by any generated workload:
 - Both a standard `Deployment` (`deployment_doc`) and an Argo Rollout
   (`rollout_doc`) get `envFrom: secretRef: name: <k8s-name>-secrets` — a
   **per-service** Secret (`sol_cli_manifest_yaml.ml`'s `secret_doc`), e.g.
-  `charge-svc-secrets`. Verified directly: `rollout_doc`'s `envFrom` block
-  references the same `%s-env`/`%s-secrets` per-service names as
-  `deployment_doc`'s (indentation differs only because it's nested one level
-  deeper inside the Rollout's pod template) — there is no behavioral
-  difference here between the two rollout strategies.
+  `charge-svc-secrets`. Verified by rendering both directly: `rollout_doc`'s
+  `envFrom` block is identical to `deployment_doc`'s, same per-service
+  `%s-env`/`%s-secrets` names, same indentation — there is no difference at
+  all between the two rollout strategies here.
 - A separate, fixed-name Secret, `sol-secrets`
   (`Sol_cli_manifest.runtime_secret_name`), currently has **no workload Pod
   consumer at all** in any generated manifest. Its only actual consumer today
