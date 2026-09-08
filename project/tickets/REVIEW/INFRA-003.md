@@ -5,6 +5,7 @@ severity: medium
 source: OBS-034 discussion 2026-09-03
 branch: INFRA-003/gcp-substrate-parity
 worktree: ../sol-INFRA-003-gcp-substrate-parity
+pr: https://github.com/loganbnielsen/sol/pull/159
 ---
 
 Provider-specific substrate adapters for cloud integrations (identity binding, object storage, ...)
