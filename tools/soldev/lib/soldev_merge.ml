@@ -22,6 +22,92 @@ let gh_pr_url_for_branch branch =
   | "" -> None
   | url -> Some url
 
+(* ── pipeline check-reverts ──────────────────────────────────────────────── *)
+
+(* `Revert "Merge branch 'EXP-023/cloud-init-kubeconfig'..."` -> "EXP-023" *)
+let ticket_id_from_branch branch =
+  match String.index_opt branch '/' with
+  | Some i -> String.sub branch 0 i
+  | None -> branch
+
+let extract_reverted_branch subject =
+  let marker = "Revert \"Merge branch '" in
+  let mlen = String.length marker in
+  let slen = String.length subject in
+  if slen >= mlen && String.sub subject 0 mlen = marker then
+    match String.index_from_opt subject mlen '\'' with
+    | Some close -> Some (String.sub subject mlen (close - mlen))
+    | None -> None
+  else None
+
+let is_id_char c =
+  (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+  || c = '_' || c = '-'
+
+(* Whole-token substring match: "AUDIT-023" must not match inside
+   "CODEX_STYLE_AUDIT-023" or "AUDIT-0231". *)
+let mentions_id ~id line =
+  let idlen = String.length id and linelen = String.length line in
+  let rec go p =
+    if p + idlen > linelen then false
+    else if String.sub line p idlen = id
+            && (p = 0 || not (is_id_char line.[p - 1]))
+            && (p + idlen = linelen || not (is_id_char line.[p + idlen]))
+    then true
+    else go (p + 1)
+  in
+  go 0
+
+(* This repo routinely reverts a merge on a test failure and then reapplies
+   the fix in a later "Reapply ..." commit (see FRIC-011, FRIC-012, FRIC-013,
+   and the CODEX_STYLE_AUDIT tickets) — that pattern is healthy and must not
+   be flagged. Only a revert with no later commit mentioning the ticket id
+   is a real "never refixed" case. *)
+let refixed_after ~id ~revert_hash =
+  Soldev_shell.run_cmd_lines
+    (Printf.sprintf "git log --oneline %s" (Filename.quote (revert_hash ^ "..HEAD")))
+  |> List.exists (mentions_id ~id)
+
+(* Lower-effort interim safeguard for EXP-032: a merge can be reverted after
+   its ticket already moved to DONE/, and nothing else in the pipeline
+   notices — the ticket file just sits there describing a fix that no longer
+   exists in main. Full automation (auto-move on revert) is out of scope
+   here; this only flags the mismatch for a human or the next audit run. *)
+let run_check_reverts () =
+  let lines =
+    Soldev_shell.run_cmd_lines
+      (Printf.sprintf "git log --oneline -E --grep=%s"
+         (Filename.quote "^Revert \"Merge branch"))
+  in
+  let flagged =
+    lines |> List.filter_map (fun line ->
+      match String.index_opt line ' ' with
+      | None -> None
+      | Some i ->
+        let hash = String.sub line 0 i in
+        let subject = String.sub line (i + 1) (String.length line - i - 1) in
+        match extract_reverted_branch subject with
+        | None -> None
+        | Some branch ->
+          let id = ticket_id_from_branch branch in
+          let done_path = Filename.concat (ticket_dir Soldev_ticket.Done) (id ^ ".md") in
+          if Sys.file_exists done_path && not (refixed_after ~id ~revert_hash:hash)
+          then Some (id, hash, done_path) else None)
+  in
+  if flagged = [] then
+    Printf.printf "check-reverts: clean — no DONE ticket has a matching revert commit.\n"
+  else begin
+    Printf.printf
+      "check-reverts: %d ticket(s) marked DONE have a merge that was later reverted:\n"
+      (List.length flagged);
+    List.iter (fun (id, hash, path) ->
+      Printf.printf
+        "  %-12s  revert %s  still in %s — verify the fix is actually live in main, or move it back to READY_FOR_ENGINEERING\n"
+        id hash path)
+      flagged;
+    exit 1
+  end
+
 (* ── pipeline submit ─────────────────────────────────────────────────────── *)
 
 (* Push the ticket's branch and open a PR (or reuse an existing one for that

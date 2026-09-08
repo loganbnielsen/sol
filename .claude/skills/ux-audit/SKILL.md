@@ -31,7 +31,7 @@ Read `docs/audits/UX_AUDIT.md` in full before starting.
 ### 2. Check previous findings
 Read the most recent `project/audits/*_ux_audit.md` report. Note which findings were already open — verify whether they are now resolved before logging them again.
 
-Check all `project/tickets/` subdirectories for existing EXP-* ticket files. A finding already tracked anywhere in `project/tickets/` (regardless of directory) should not be re-materialised. If a finding exists in `DONE/`, mark it resolved in the report.
+Check all `project/tickets/` subdirectories for existing EXP-* ticket files. A finding already tracked anywhere in `project/tickets/` (regardless of directory) should not be re-materialised. If a finding exists in `DONE/`, mark it resolved in the report — but verify the fix is still actually live in `main` before trusting that (see EXP-032: a `DONE` ticket's merge can be reverted after the fact and never refixed, leaving the ticket falsely marked resolved). Run `soldev pipeline check-reverts` and treat anything it flags as still-open, not resolved.
 
 ### 3. Work through each stage
 
