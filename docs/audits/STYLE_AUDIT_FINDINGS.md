@@ -125,13 +125,13 @@ For each folder, manually inspect:
 Cover the repository by ownership area:
 
 - `framework/` - public primitives and generated app lifecycle patterns.
-- `integrations/kafka/` - FFI boundaries, producer/consumer/service APIs,
+- `framework/kafka-eio-service/` - FFI boundaries, producer/consumer/service APIs,
   schema registry, retry and decode paths.
 - `cli/sun/lib/` - deployment planning, rendering, state, hosted model, secrets.
 - `cli/sun/bin/` - Cmdliner terms, command entrypoint shapes, string parsing.
 - `examples/` - user-facing patterns and generated-code quality.
 - `tools/` - workflow helpers, process execution, ticket tooling.
-- `cli/sun/test/`, `framework/*/test/`, `integrations/*/test/` - repeated
+- `cli/sun/test/`, `framework/*/test/`, `framework/*/test/` - repeated
   helper patterns and assertions that reveal awkward APIs.
 
 ## Multi-Agent Partitioning
@@ -147,7 +147,7 @@ agent:
 Recommended partitions:
 
 1. `framework/` and generated lifecycle expectations.
-2. `integrations/kafka/`.
+2. `framework/kafka-eio-service/`.
 3. `cli/sun/lib/`.
 4. `cli/sun/bin/`.
 5. `examples/` and scaffold templates.

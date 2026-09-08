@@ -63,10 +63,6 @@ Sol is an opinionated OCaml 5 production platform for startups. Kafka layer, obs
 
 ```
 sol/
-  integrations/kafka/                        ← Kafka service layer (merged into root dune project)
-    kafka-eio-service/lib/      ← schema registry + service orchestration, depends on `kafka-eio.*`
-    kafka-eio-service/test/
-    kafka-eio-service/kafka-eio-service.md    ← per-package spec doc
   # kafka-eio-core/producer/consumer + the produce-then-consume demo moved out to the
   # standalone `kafka-eio` opam package at ~/Code/kafka-eio (own git repo, opam-pinned
   # into this switch). Edit there, then `opam pin add kafka-eio ~/Code/kafka-eio` to
@@ -100,6 +96,14 @@ sol/
     sol-worker/lib/             ← Kafka consumer (schema registration, per-message metrics)
     sol-fn/lib/                 ← Scheduled function (Pushgateway push, invocation metrics)
     sol-*/sol-*.md              ← per-package spec docs
+    kafka-eio-service/lib/      ← schema registry + service orchestration, depends on `kafka-eio.*`
+    kafka-eio-service/test/
+    kafka-eio-service/kafka-eio-service.md    ← per-package spec doc
+  # No `integrations/` directory remains in this repo — kafka-eio-service moved into
+  # `framework/` (it's an app-linked library like sol-svc/sol-worker/sol-fn, just
+  # historically placed separately because it predates `framework/` as a concept);
+  # the other former `integrations/*` subdirs (storage, observability, aws) were
+  # already extracted to standalone opam packages, described below.
   examples/local-demo/                         ← full-stack showcase demo (svc → Kafka → worker)
     lib/                        ← shared event contracts for demo
     bin/demo.ml                 ← orchestrated demo binary
@@ -185,7 +189,7 @@ You must maintain and consult the project's source-of-truth markdown files:
 
 2. **When Writing Code**:
    - Refer to `README.md` for foundational architecture rules.
-   - Refer to the `*.md` spec file co-located with the package you are working in (e.g. `integrations/kafka/kafka-eio-service/kafka-eio-service.md`) for feature implementation guidelines. For `kafka-eio-core`/`producer`/`consumer`, the spec docs live in the external `~/Code/kafka-eio` repo. For `obs-eio`/`obs-loki-eio`/`obs-prometheus-eio`, the spec docs live in their respective external `~/Code/obs-*` repos. For `pg-eio`, the spec doc (`README.md`) lives in the external `~/Code/pg-eio` repo.
+   - Refer to the `*.md` spec file co-located with the package you are working in (e.g. `framework/kafka-eio-service/kafka-eio-service.md`) for feature implementation guidelines. For `kafka-eio-core`/`producer`/`consumer`, the spec docs live in the external `~/Code/kafka-eio` repo. For `obs-eio`/`obs-loki-eio`/`obs-prometheus-eio`, the spec docs live in their respective external `~/Code/obs-*` repos. For `pg-eio`, the spec doc (`README.md`) lives in the external `~/Code/pg-eio` repo.
 
 3. **At Task Completion / Session End**:
    - Update `docs/planning/WORK_SUMMARY.md` to accurately reflect what was accomplished, what is currently "In Progress", and any new implementation hurdles or blockers discovered.

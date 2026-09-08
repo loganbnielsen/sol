@@ -19,17 +19,16 @@ System packages required before building:
 sudo apt-get install -y librdkafka-dev libpq-dev libpq5
 ```
 
-`vendor/framework` and `vendor/integrations` are symlinks into the Sol source tree.
-`sol new workspace` creates them automatically.
+`vendor/framework` is a symlink into the Sol source tree.
+`sol new workspace` creates it automatically.
 
 - **Release tarball install:** The bundle includes framework source — no extra steps needed.
 - **Source checkout install:** Set `SOL_HOME` once (in `~/.bashrc` or `~/.zshrc`), then
-  `sol new workspace` creates the links automatically.
-  If you cloned the repo but the symlinks are missing:
+  `sol new workspace` creates the link automatically.
+  If you cloned the repo but the symlink is missing:
   ```bash
   export SOL_HOME=/path/to/sol
   ln -sf $SOL_HOME/framework vendor/framework
-  ln -sf $SOL_HOME/integrations vendor/integrations
   ```
 
 ## Build
@@ -448,7 +447,7 @@ RUN sudo apt-get update && sudo apt-get install -y \
 # obs-eio/obs-loki-eio/obs-prometheus-eio/obs-tempo-eio/pg-eio/https-eio/
 # lambda-eio are extracted opam packages (see ~/Code/CLAUDE.md's repo
 # layout notes),
-# not vendored into vendor/framework or vendor/integrations, and not yet
+# not vendored into vendor/framework, and not yet
 # published to the public opam-repository -- every generated service's
 # bin/dune depends on some subset of them, so the build stage needs the
 # same opam pin this repo's own .github/workflows/ci.yml uses.

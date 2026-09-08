@@ -57,7 +57,7 @@ For each checklist item in `docs/audits/AUDIT.md`, read the relevant source file
 - Read `cmd_new.ml` — verify `ack ()` placement in worker templates
 - Read `kafka_service.ml` — verify `produce_await` result is checked before `ack ()`
 
-**Section 4 — Observability (`integrations/kafka/kafka-eio-service/lib/kafka_service.ml`, `framework/sol-svc/lib/`):**
+**Section 4 — Observability (`framework/kafka-eio-service/lib/kafka_service.ml`, `framework/sol-svc/lib/`):**
 - Read `parse_base_url` — verify `https://` is handled
 - Read `default_on_decode_error` — check for structured log line, Prometheus counter, dead-letter option
 

@@ -1,4 +1,4 @@
-// Hand-rolled port of integrations/kafka/kafka-eio-service/lib/kafka_service_schema.ml.
+// Hand-rolled port of framework/kafka-eio-service/lib/kafka_service_schema.ml.
 // This is Sol's convention on top of the Confluent-compatible schema registry
 // Redpanda exposes on :8081 — kafkajs has no opinion on schema registries at all,
 // so every line here is glue a TS app author would have to write themselves.

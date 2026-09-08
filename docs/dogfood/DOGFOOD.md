@@ -297,8 +297,8 @@ _(links or IDs of any tickets created from friction/findings above)_
 
 ## Current Known Gaps
 
-- The local dogfood path uses source links into a Sol checkout under
-  `vendor/framework` and `vendor/integrations`. This unblocks dogfood, but it is
+- The local dogfood path uses a source link into a Sol checkout under
+  `vendor/framework`. This unblocks dogfood, but it is
   not the final distribution model. The long-term answer is opam packages or an
   explicit `sol sdk vendor` command.
 - `sol dev up` is substrate bootstrap/reconcile work. It should not be counted as

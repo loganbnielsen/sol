@@ -33,7 +33,7 @@ curl -L https://github.com/loganbnielsen/sol/releases/latest/download/sol-vX.Y.Z
 export PATH="$PWD/sol-vX.Y.Z-linux-x86_64/bin:$PATH"   # add to ~/.bashrc or ~/.zshrc
 ```
 
-The tarball includes the `sol` binary and the framework source trees (`framework/` and `integrations/`). No `SOL_HOME` or separate clone required — `sol new workspace` resolves the framework source automatically from the bundle layout.
+The tarball includes the `sol` binary and the framework source tree (`framework/`). No `SOL_HOME` or separate clone required — `sol new workspace` resolves the framework source automatically from the bundle layout.
 
 > **Build from source:** Contributors who need `soldev` or want to modify the framework should clone the repo and build:
 > ```bash
@@ -118,7 +118,7 @@ sol new workspace pluto
 cd pluto
 ```
 
-> **Vendor links:** `sol new workspace` creates `vendor/framework` and `vendor/integrations` as symlinks into the Sol source tree. These links are how the generated workspace finds Sol's library source at build time — `dune build` will fail with "Library not found: sol_svc" if they are missing.
+> **Vendor link:** `sol new workspace` creates `vendor/framework` as a symlink into the Sol source tree. This link is how the generated workspace finds Sol's library source at build time — `dune build` will fail with "Library not found: sol_svc" if it is missing.
 >
 > When using the **release tarball** (the install path above), the framework source is bundled inside the extracted directory. `sol new workspace` finds it automatically — no `SOL_HOME` needed.
 >

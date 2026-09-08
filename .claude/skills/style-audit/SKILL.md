@@ -63,7 +63,7 @@ Flag these three categories:
 Walk these folders even if grep finds enough tickets early:
 
 - `framework/`
-- `integrations/kafka/`
+- `framework/kafka-eio-service/`
 - `cli/sol/lib/`
 - `cli/sol/bin/`
 - `examples/`
@@ -128,7 +128,7 @@ per agent and ask for ticket-quality findings only.
 Recommended partitions:
 
 - Agent 1: `framework/`
-- Agent 2: `integrations/kafka/`
+- Agent 2: `framework/kafka-eio-service/`
 - Agent 3: `cli/sol/lib/`
 - Agent 4: `cli/sol/bin/`
 - Agent 5: `examples/` plus scaffold templates

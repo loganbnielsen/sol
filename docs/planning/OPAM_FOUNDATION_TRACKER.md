@@ -21,7 +21,7 @@ This tracker is not a replacement for package READMEs. Each package README remai
 | `pg-eio` | `~/Code/pg-eio` | Caqti/Postgres helpers, migrations, table functor | Clean-switch install/build/test pass | Cross-package pin test with Kafka/AWS once ready |
 | `kafka-eio` | `~/Code/kafka-eio` | Eio Kafka producer/consumer/core over librdkafka | Local lint/build pass; OPAM PR open with metadata fixes | Track opam-repository PR #30557 |
 | `aws-eio` | `~/Code/aws-eio` | SigV4, credentials, minimal AWS HTTP transport | `awskit` comparison done (keep as-is, see below); CI added; README fix merged (PR #1, `ada1811`) | Clean-switch check, then submit to opam-repository |
-| `kafka-eio-service` | `sol/integrations/kafka/kafka-eio-service` | Sol-level typed message/schema service layer | In Sol; uses `https-eio` | Decide whether it remains Sol-specific after foundation packages settle |
+| `kafka-eio-service` | `sol/framework/kafka-eio-service` | Sol-level typed message/schema service layer | In Sol; uses `https-eio` | Decide whether it remains Sol-specific after foundation packages settle |
 
 ## Submission Cadence
 

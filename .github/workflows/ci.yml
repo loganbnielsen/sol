@@ -30,7 +30,9 @@ jobs:
         run: opam exec -- dune build
 
       - name: Unit tests (no broker/Postgres/Loki required)
-        run: opam exec -- dune test framework/ cli/sol/test/
+        # framework/kafka-eio-service/ excluded: its test/dune also builds a
+        # broker-requiring integration suite (see run_tests.sh's run_kafka()).
+        run: opam exec -- dune test framework/sol-env/ framework/sol-fn/ framework/sol-obs/ framework/sol-svc/ framework/sol-worker/ cli/sol/test/
 
       - name: Platform-component drift guardrail (ADR 0001 / CODE_LAYER-005)
         run: tools/ci/check_platform_component_drift.sh
@@ -80,9 +82,8 @@ jobs:
         # --with-test IS needed here despite this job never running `dune
         # test` directly: the generated ci_smoke workspace's `dune build`
         # (inside the smoke-test step below) also compiles test
-        # executables under vendor/framework/*/test and
-        # vendor/integrations/*/test (symlinked into this monorepo) as
-        # part of dune's default alias -- those need alcotest etc. as a
+        # executables under vendor/framework/*/test (symlinked into this
+        # monorepo) as part of dune's default alias -- those need alcotest etc. as a
         # BUILD dependency, not just to run. Confirmed by removing this
         # flag and watching golden-path-smoke fail with "Library
         # alcotest not found" on a real CI run.
