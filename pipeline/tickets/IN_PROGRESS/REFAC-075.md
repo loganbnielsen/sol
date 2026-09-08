@@ -3,6 +3,8 @@ id: REFAC-075
 type: bug
 severity: high
 source: incident during REFAC-072/074's autonomous merges, 2026-09-08
+branch: REFAC-075/soldev-merge-race
+worktree: ../sol-REFAC-075-soldev-merge-race
 ---
 
 **Depends on:** None.
