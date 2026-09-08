@@ -207,6 +207,117 @@ let aws_no_ecr_repositories ~region ~workspace_name =
     Printf.eprintf "error: AWS ECR verification failed: aws CLI unavailable.\n";
     false
 
+let aws_no_load_balancers ~region ~cluster_name =
+  (* Works for both Classic ELB and ALB/NLB uniformly: the in-cluster AWS
+     cloud-controller tags every load balancer it creates for a Service
+     with kubernetes.io/cluster/<cluster-name>, regardless of LB type. *)
+  let tag_key = Printf.sprintf "kubernetes.io/cluster/%s" cluster_name in
+  match Sol_cli_process.run
+          (Sol_cli_process.cmd
+             ["aws"; "resourcegroupstaggingapi"; "get-resources";
+              "--resource-type-filters"; "elasticloadbalancing";
+              "--tag-filters"; Printf.sprintf "Key=%s" tag_key;
+              "--query"; "ResourceTagMappingList[].ResourceARN";
+              "--output"; "text"; "--region"; region])
+  with
+  | Ok r when r.Sol_cli_process.exit_code = 0 && String.trim r.Sol_cli_process.stdout = "" -> true
+  | Ok r when r.Sol_cli_process.exit_code = 0 ->
+    Printf.eprintf "error: AWS load balancer(s) still exist after destroy: %s\n"
+      r.Sol_cli_process.stdout;
+    false
+  | Ok r ->
+    Printf.eprintf "error: AWS load balancer verification failed: %s\n" r.Sol_cli_process.stderr;
+    false
+  | Error _ ->
+    Printf.eprintf "error: AWS load balancer verification failed: aws CLI unavailable.\n";
+    false
+
+(* AUDIT-064: a Kubernetes Service of type LoadBalancer (ingress-nginx's,
+   by default -- platform/infra/base/variables.tf's ingress_service_type)
+   causes the cluster's cloud-controller to provision a real AWS ELB/NLB
+   that Terraform's own state has no knowledge of. Deleting the Service
+   first, before terraform destroy tears down the VPC/subnets that load
+   balancer's ENIs live in, avoids both an orphaned billed resource and a
+   real EKS teardown gotcha (AWS can refuse to delete a subnet that still
+   has an orphaned load balancer's ENI attached).
+
+   Best-effort by design: any failure here (unreachable cluster, missing
+   EKS describe permission, etc.) is a warning, not a hard stop --
+   verify_aws_destroy's post-destroy check below is the hard gate that
+   actually fails the command if a load balancer is genuinely left behind. *)
+let delete_loadbalancer_services ~region ~cluster_name =
+  let previous_context =
+    match Sol_cli_process.run (Sol_cli_process.cmd ["kubectl"; "config"; "current-context"]) with
+    | Ok r when r.Sol_cli_process.exit_code = 0 -> Some (String.trim r.Sol_cli_process.stdout)
+    | _ -> None
+  in
+  let update_ok =
+    match Sol_cli_process.run
+            (Sol_cli_process.cmd ~timeout_s:30.
+               ["aws"; "eks"; "update-kubeconfig"; "--name"; cluster_name; "--region"; region])
+    with
+    | Ok r -> r.Sol_cli_process.exit_code = 0
+    | Error _ -> false
+  in
+  if not update_ok then
+    Printf.printf "  (could not reach cluster %s to remove LoadBalancer Services first -- \
+                    skipping; verifying no load balancer is left behind after destroy \
+                    instead)\n%!" cluster_name
+  else begin
+    (* aws eks update-kubeconfig (no --alias) names the context/cluster/user
+       entries identically to whatever it just printed as current-context --
+       capture that name so cleanup below removes exactly what this call
+       added, not anything the operator already had configured. *)
+    let temp_context =
+      match Sol_cli_process.run (Sol_cli_process.cmd ["kubectl"; "config"; "current-context"]) with
+      | Ok r when r.Sol_cli_process.exit_code = 0 -> Some (String.trim r.Sol_cli_process.stdout)
+      | _ -> None
+    in
+    (match temp_context with
+     | None -> ()
+     | Some context ->
+       (match Sol_cli_process.run ~echo:false
+                (Sol_cli_process.cmd ~timeout_s:20.
+                   ["kubectl"; "--context"; context; "get"; "svc"; "-A";
+                    "--field-selector"; "spec.type=LoadBalancer";
+                    "-o"; "jsonpath={range .items[*]}{.metadata.namespace} {.metadata.name}\n{end}"])
+        with
+        | Ok r when r.Sol_cli_process.exit_code = 0 ->
+          let services =
+            String.split_on_char '\n' r.Sol_cli_process.stdout
+            |> List.filter_map (fun line ->
+                 match String.split_on_char ' ' (String.trim line) with
+                 | [ns; name] when ns <> "" && name <> "" -> Some (ns, name)
+                 | _ -> None)
+          in
+          if services <> [] then begin
+            Printf.printf "  Deleting %d LoadBalancer Service(s) before terraform destroy \
+                            (AUDIT-064) -- their AWS load balancer isn't tracked by \
+                            Terraform and must be removed first:\n%!" (List.length services);
+            List.iter (fun (ns, name) ->
+              Printf.printf "    %s/%s\n%!" ns name;
+              ignore (Sol_cli_process.run
+                        (Sol_cli_process.cmd ~timeout_s:90.
+                           ["kubectl"; "--context"; context; "delete"; "svc"; name;
+                            "-n"; ns; "--wait=true"; "--timeout=60s"]))
+            ) services;
+            (* kubectl delete on a LoadBalancer Service returns once the k8s
+               object is gone, but AWS deprovisions the actual ELB/NLB
+               asynchronously -- give it a moment before terraform destroy
+               tries to tear down the VPC/subnets underneath it. *)
+            Unix.sleepf 30.
+          end
+        | _ ->
+          Printf.printf "  (could not list Services in cluster %s -- skipping \
+                          LoadBalancer cleanup)\n%!" cluster_name);
+       ignore (Sol_cli_process.run (Sol_cli_process.cmd ["kubectl"; "config"; "delete-context"; context]));
+       ignore (Sol_cli_process.run (Sol_cli_process.cmd ["kubectl"; "config"; "delete-cluster"; context]));
+       ignore (Sol_cli_process.run (Sol_cli_process.cmd ["kubectl"; "config"; "delete-user"; context])));
+    (match previous_context with
+     | Some ctx -> ignore (Sol_cli_process.run (Sol_cli_process.cmd ["kubectl"; "config"; "use-context"; ctx]))
+     | None -> ())
+  end
+
 let verify_aws_destroy ~var_files ~vars =
   match resolved_var "cluster_name" ~var_files ~vars ~default:None with
   | None ->
@@ -234,8 +345,9 @@ let verify_aws_destroy ~var_files ~vars =
         ~default:(workspace_name ())
     in
     let ecr_gone = aws_no_ecr_repositories ~region ~workspace_name in
-    if not (eks_gone && rds_gone && ecr_gone) then exit 1;
-    Printf.printf "  AWS verification passed: EKS/RDS/ECR not found.\n%!"
+    let elb_gone = aws_no_load_balancers ~region ~cluster_name in
+    if not (eks_gone && rds_gone && ecr_gone && elb_gone) then exit 1;
+    Printf.printf "  AWS verification passed: EKS/RDS/ECR/load-balancers not found.\n%!"
 
 let run_terraform_init run_log infra_dir =
   require_terraform_success
@@ -333,6 +445,17 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
          (fun () -> Sol_cli_terraform.plan_destroy ~chdir:infra_dir ~var_files ~vars));
     Printf.printf "\nDone. Re-run with --apply to destroy cloud resources.\n%!"
   | Apply ->
+    (match provider with
+     | Aws ->
+       (match resolved_var "cluster_name" ~var_files ~vars ~default:None with
+        | None -> ()
+        | Some cluster_name ->
+          let region = Option.value
+            (resolved_var "region" ~var_files ~vars ~default:(Some "us-east-1"))
+            ~default:"us-east-1"
+          in
+          delete_loadbalancer_services ~region ~cluster_name)
+     | Gcp -> ());
     require_terraform_success
       (Sol_cli_run_log.run_phase run_log ~name:"terraform-destroy"
          (fun () -> Sol_cli_terraform.destroy ~chdir:infra_dir ~var_files ~vars));

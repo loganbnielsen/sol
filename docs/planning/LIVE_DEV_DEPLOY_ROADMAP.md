@@ -35,7 +35,7 @@ Completion criteria:
   responds to `/api/health`.
 - `sol cloud destroy dev/aws/us-east-1 --plan` previews teardown.
 - `sol cloud destroy dev/aws/us-east-1 --apply` completes.
-- A read-only AWS CLI verification step confirms EKS, RDS, and ECR resources are gone.
+- A read-only AWS CLI verification step confirms EKS, RDS, ECR, and load balancer resources are gone. Before `terraform destroy` runs, any `LoadBalancer`-type Kubernetes Service (e.g. ingress-nginx's) is deleted first — its AWS ELB/NLB isn't tracked by Terraform's own state, so leaving it in place risks an orphaned billed resource or a blocked VPC/subnet deletion (AUDIT-064).
 - A dated dogfood report records commands, failures, fixes, and rough cost.
 
 Tests:
