@@ -183,10 +183,8 @@ let aws_absent ~region ~kind ~missing_marker ~argv =
     Printf.eprintf "error: AWS %s verification failed: aws CLI unavailable.\n" kind;
     false
 
-let workspace_name () = Filename.basename (Sys.getcwd ())
-
-let aws_no_ecr_repositories ~region ~workspace_name =
-  let prefix = workspace_name ^ "/" in
+let aws_no_ecr_repositories ~region ~cluster_name =
+  let prefix = cluster_name ^ "/" in
   let query =
     Printf.sprintf "repositories[?starts_with(repositoryName, `%s`)].repositoryName" prefix
   in
@@ -228,12 +226,7 @@ let verify_aws_destroy ~var_files ~vars =
         ~missing_marker:"DBInstanceNotFound"
         ~argv:["rds"; "describe-db-instances"; "--db-instance-identifier"; cluster_name ^ "-postgres"]
     in
-    let workspace_name =
-      Option.value
-        (resolved_var "workspace_name" ~var_files ~vars ~default:None)
-        ~default:(workspace_name ())
-    in
-    let ecr_gone = aws_no_ecr_repositories ~region ~workspace_name in
+    let ecr_gone = aws_no_ecr_repositories ~region ~cluster_name in
     if not (eks_gone && rds_gone && ecr_gone) then exit 1;
     Printf.printf "  AWS verification passed: EKS/RDS/ECR not found.\n%!"
 
@@ -272,7 +265,7 @@ let config_vars ~strict target =
             (Sol_cli_config.target_file resolved_target) target_path;
           exit 1
         end;
-        match Sol_cli_config.terraform_vars ~workspace:(workspace_name ()) cfg with
+        match Sol_cli_config.terraform_vars cfg with
         | Error msg ->
           Printf.eprintf "error: %s\n" msg;
           exit 1

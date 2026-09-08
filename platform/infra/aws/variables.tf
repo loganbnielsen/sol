@@ -9,11 +9,6 @@ variable "cluster_name" {
   type        = string
 }
 
-variable "workspace_name" {
-  description = "Sol workspace name (the app's checkout directory basename, e.g. acme). Used to key ECR repository names so they match sol deploy's image references, which are workspace-scoped rather than cluster-scoped."
-  type        = string
-}
-
 variable "base_domain" {
   description = "Base domain for the cluster (e.g. acme.com). Subdomains are managed via Route53."
   type        = string
