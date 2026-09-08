@@ -32,3 +32,6 @@ to reset and diagnose.
   for profiling/checking hangs.
 - The runner reports per-suite duration and regression status as it does today.
 - Add finer profiling only after a repeat offender needs per-test timing.
+
+## Review — automated checks passed
+Build clean; diff scoped to run_tests.sh (reset_infra container list) + expected perf_baseline.json append; grafana/tempo now match all 7 ensure-*.sh container names exactly plus sol-registry; independently verified the other two acceptance criteria (timeout -s KILL at run_tests.sh:189, duration/regression reporting via baseline_get/append/is_regression) already hold in current source, not just implementer's claim.

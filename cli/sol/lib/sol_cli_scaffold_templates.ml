@@ -897,7 +897,11 @@ let svc_bin_ml = {tpl|let fatal msg =
   exit 1
 
 let () = Eio_main.run @@ fun env ->
-  Service.run Handler.routes ~env ()
+  let obs =
+    Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+      ~service:"{{name}}-svc" ()
+  in
+  Service.run Handler.routes ~env ~ot:obs ()
   |> Result.map_error Service.run_error_to_string
   |> function Ok () -> () | Error e -> fatal e
 |tpl}
@@ -905,7 +909,7 @@ let () = Eio_main.run @@ fun env ->
 (* Generic svc: bin/dune *)
 let svc_bin_dune = {tpl|(executable
  (name main)
- (libraries {{lib}} sol_svc eio_main))
+ (libraries {{lib}} sol_svc sol_obs eio_main))
 |tpl}
 
 (* Generic worker: lib/<name>_worker.ml — satisfies Worker.WORKER; replace the
