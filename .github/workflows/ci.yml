@@ -193,3 +193,40 @@ jobs:
               fi
             done
           done
+
+  # FRIC-014: nothing else catches the checked-in example workspaces
+  # (examples/pluto, examples/venus) drifting out of sync with what `sol
+  # new`'s scaffold template (tpl_dockerfile in
+  # cli/sol/lib/sol_cli_scaffold_templates.ml) actually generates.
+  # DOGFOOD-011 found a real, live instance: a stale base image tag and a
+  # missing `opam install` step, invisible locally only because a stale
+  # Docker layer cache papered over it. --no-cache is deliberate for the
+  # same reason -- a cached layer is exactly what let this go unnoticed.
+  #
+  # Scoped to the OCaml example Dockerfiles only: those are the ones a Sol
+  # scaffold template actually generates. examples/pluto/app/demo_ts/ (the
+  # FEAT-033 TypeScript spike) is hand-maintained with no Sol template to
+  # drift from, so it's out of scope here.
+  #
+  # Build context is the monorepo root, not the example's own directory:
+  # each of these Dockerfiles' build stage runs `dune build
+  # examples/<workspace>/app/.../bin/main.exe`, a path relative to the
+  # monorepo root, matching how a real checkout of this repo would build
+  # them (these examples live inside sol itself, unlike a real user's
+  # scaffolded workspace, which is self-contained).
+  example-dockerfile-smoke:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile:
+          - examples/pluto/app/payments/charge_svc/Dockerfile
+          - examples/pluto/app/comms/notify_worker/Dockerfile
+          - examples/venus/app/comms/notify_worker/Dockerfile
+          - examples/venus/app/logistics/fulfillment_worker/Dockerfile
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build ${{ matrix.dockerfile }}
+        run: docker build --no-cache -f ${{ matrix.dockerfile }} .
