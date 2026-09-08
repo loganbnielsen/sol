@@ -13,11 +13,28 @@ source: project/dogfood/RUN_2026-09-07_AWS.md (DOGFOOD-011, first real AWS dogfo
 
 **Impact:** DOGFOOD-011's own acceptance criteria require `sol migrate` to complete as part of the ops loop, "without manual workarounds." As currently designed, this is only possible if RDS is made publicly accessible (a real security regression a user might be tempted to make just to unblock migrations) or if the operator independently sets up their own bastion/VPN/SSM bridge (undocumented, not part of Sol's story at all). Every real customer following the documented golden path to a secure production AWS deployment will hit this exact wall the first time they try to run a migration.
 
-**Not yet determined:** the right mechanism. Options, roughly in order of how AWS-idiomatic they are:
-1. **SSM Session Manager port-forwarding** through a small bastion instance (or a Fargate task) that Terraform provisions alongside RDS, with `sol migrate` (or a new `sol migrate --tunnel`/similar flag) wrapping `aws ssm start-session --document-name AWS-StartPortForwardingSessionToRemoteHost` transparently.
-2. **Run migrations from inside the cluster** — a one-shot Kubernetes Job (using the same image/`POSTGRES_URL` secret already deployed) that `sol migrate` triggers and streams logs from, rather than connecting directly from the operator's machine at all. This sidesteps the network problem entirely and may be the more idiomatic fit given Sol already manages the cluster.
-3. Document a bastion/VPN setup as a prerequisite and accept it as outside Sol's scope — weakest option, contradicts the "no manual workarounds" acceptance bar this ticket's parent (DOGFOOD-011) set for itself.
+**Decided mechanism:** run migrations from inside the cluster — a one-shot
+Kubernetes Job (`sol migrate` triggers it, using the same image and
+`POSTGRES_URL` secret already deployed, and streams its logs back) rather
+than connecting to RDS directly from the operator's or CI runner's machine.
 
-Whoever picks this up should evaluate these against how CI/CD is expected to run migrations too (a GitHub Actions runner has the exact same external-network problem a laptop does) — option 2 (in-cluster Job) likely generalizes better to that case than a bastion tunnel would, since CI environments can't easily hold an SSM session open either.
+This was chosen over an SSM Session Manager bastion tunnel and over
+documenting a bastion/VPN as an accepted prerequisite:
+- It sidesteps the network-reachability problem entirely instead of working
+  around it, so there's no new standing infrastructure (no bastion instance
+  to provision, patch, or pay for).
+- It generalizes to CI/CD for free: a GitHub Actions runner has the exact
+  same external-network problem a laptop does, and can't hold an SSM session
+  open the way an interactive operator could — a Job triggered via the k8s
+  API has no such constraint.
+- It reuses infrastructure Sol already owns and operates (the cluster, the
+  deployed image, the existing secret) rather than teaching Sol a second
+  standing-infra pattern just for migrations.
 
-**Remediation:** Design and implement one of the above (or a better option), then re-verify against a real AWS deployment (per DOGFOOD-011's own pattern) that `sol migrate` completes without any manual network setup.
+**Remediation:** Implement `sol migrate` as a Job-triggering command: render
+a one-shot `batch/v1` Job manifest reusing the target service's image and
+`POSTGRES_URL` secret reference, submit it via the k8s API, stream its pod
+logs back to the caller, and surface the Job's exit status as `sol migrate`'s
+own exit status. Re-verify against a real AWS deployment (per DOGFOOD-011's
+own pattern) that `sol migrate` completes without any manual network setup,
+from both an operator's machine and a CI runner.

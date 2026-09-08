@@ -179,6 +179,27 @@ backend modes, and `sol status` / `sol open` UX.
 
 ---
 
+## Hosted Infrastructure Model
+
+Decided by DEC-008 and DEC-010:
+
+- Hosted infrastructure lives in a single Sol-owned AWS account. Each
+  customer gets an isolated VPC/cluster (per-customer substrate, per
+  DEC-002), not a separate AWS account. Hosted provisioning runs through the
+  same `platform/infra/aws` Terraform module self-hosted `sol cloud apply`
+  uses, with per-customer Terraform state, so the Exported Self-Managed
+  escape hatch stays a literal state handoff.
+- Elasticity is delivered by autoscaling the existing Kubernetes primitives
+  (KEDA, HPA, Karpenter, Aurora Serverless v2), turned on by default for
+  Sol-hosted and available as an opt-in toggle for customer-cloud. Sol does
+  not convert `-svc`/`-worker`/`-fn` to Lambda/SQS — that breaks dev/prod
+  parity and cloud-agnostic Kubernetes, and degrades the Kafka event model.
+
+Per-account tenant isolation and a dedicated hosted web UI remain open
+(see DEC-009).
+
+---
+
 ## Deployment Compiler
 
 Sol treats deployment as a compiler pipeline:

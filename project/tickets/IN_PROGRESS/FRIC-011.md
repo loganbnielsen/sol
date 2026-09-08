@@ -3,6 +3,8 @@ id: FRIC-011
 type: dogfood-finding
 severity: blocker
 source: project/dogfood/RUN_2026-09-07_AWS.md (DOGFOOD-011, first real AWS dogfood run)
+branch: FRIC-011/ecr-workspace-naming
+worktree: ../sun-FRIC-011-ecr-workspace-naming
 ---
 
 **Depends on:** None.
