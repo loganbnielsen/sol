@@ -117,23 +117,84 @@ let is_running name =
       false
   end else false
 
+(* AUDIT-065: the wrapper script's retry loop must never let a later ambient
+   `kubectl config use-context` redirect an already-running port-forward.
+   [start] pins the context that is current *at creation time* into every
+   retry iteration via `--context`, so switching contexts elsewhere for
+   unrelated work can no longer silently repoint a live port-forward at a
+   different (possibly since-destroyed) cluster. *)
+
+(* Consecutive fast failures before the retry loop gives up rather than
+   spinning forever. A kubectl port-forward that exits in under
+   [quick_fail_threshold_s] seconds counts as a fast failure; anything that
+   ran longer (i.e. it was actually forwarding) resets the streak to 0. A
+   pod restart typically reconnects within a few seconds, so this stays well
+   clear of that case while still bounding a genuinely dead cluster. *)
+let max_fail_streak = 30
+let quick_fail_threshold_s = 5
+
+let current_kube_context () =
+  match Sol_cli_kubectl.config_current_context () with
+  | Ok r when r.Sol_cli_process.exit_code = 0 && String.trim r.Sol_cli_process.stdout <> "" ->
+    Some (String.trim r.Sol_cli_process.stdout)
+  | _ -> None
+
 (** Write a self-restarting wrapper script and background it in a new session.
     On pod rollout, kubectl exits; the loop restarts it within ~1 s so the
-    port-forward stays live across deploys without manual intervention. *)
+    port-forward stays live across deploys without manual intervention.
+    The kubectl context current at call time is captured and pinned into
+    every retry (see AUDIT-065); the loop gives up after
+    [max_fail_streak] consecutive fast failures instead of retrying
+    forever against a context/cluster that is gone. *)
 let start (pf : spec) =
   Sol_cli_state.ensure ();
   let sf = Sol_cli_state.script_file pf.name in
   let lf = Sol_cli_state.log_file pf.name in
   let pf_file = Sol_cli_state.pid_file pf.name in
-  let content = Printf.sprintf
-    "#!/bin/sh\necho $$ > %s\nwhile true; do\n  kubectl port-forward -n %s %s %d:%d </dev/null >> %s 2>&1\n  sleep 1\ndone\n"
-    (Filename.quote pf_file)
-    (Filename.quote pf.namespace) (Filename.quote pf.target)
-    pf.local_port pf.remote_port
-    (Filename.quote lf)
+  let context = current_kube_context () in
+  let kubectl_invocation =
+    match context with
+    | Some ctx ->
+      Printf.sprintf "kubectl --context %s port-forward -n %s %s %d:%d"
+        (Filename.quote ctx) (Filename.quote pf.namespace) (Filename.quote pf.target)
+        pf.local_port pf.remote_port
+    | None ->
+      Printf.sprintf "kubectl port-forward -n %s %s %d:%d"
+        (Filename.quote pf.namespace) (Filename.quote pf.target)
+        pf.local_port pf.remote_port
   in
+  let give_up_reason =
+    match context with
+    | Some ctx -> Printf.sprintf "pinned context %s unreachable or gone" ctx
+    | None -> "repeated fast failures; no kubectl context was available to pin at start"
+  in
+  let lines = [
+    "#!/bin/sh";
+    Printf.sprintf "echo $$ > %s" (Filename.quote pf_file);
+    "fails=0";
+    Printf.sprintf "max_fails=%d" max_fail_streak;
+    "while true; do";
+    "  t0=$(date +%s)";
+    Printf.sprintf "  %s </dev/null >> %s 2>&1" kubectl_invocation (Filename.quote lf);
+    "  t1=$(date +%s)";
+    Printf.sprintf "  if [ $((t1 - t0)) -lt %d ]; then" quick_fail_threshold_s;
+    "    fails=$((fails + 1))";
+    "  else";
+    "    fails=0";
+    "  fi";
+    "  if [ \"$fails\" -ge \"$max_fails\" ]; then";
+    Printf.sprintf
+      "    echo \"[sol port-forward] giving up after $max_fails consecutive failed attempts (%s)\" >> %s"
+      give_up_reason (Filename.quote lf);
+    Printf.sprintf "    rm -f %s" (Filename.quote pf_file);
+    "    exit 1";
+    "  fi";
+    "  sleep 1";
+    "done";
+    "";
+  ] in
   let oc = open_out sf in
-  output_string oc content;
+  output_string oc (String.concat "\n" lines);
   close_out oc;
   ignore (Sol_cli_process.run (Sol_cli_process.cmd ["chmod"; "+x"; sf]));
   ignore (Sol_cli_process.run_shell
