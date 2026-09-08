@@ -592,7 +592,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      match Sol_cli_config.terraform_vars cfg with
+      match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
       | Error msg -> Alcotest.fail msg
       | Ok vars ->
         check_bool "aws var present" true (List.mem ("vpc_cidr", "10.42.0.0/16") vars);
