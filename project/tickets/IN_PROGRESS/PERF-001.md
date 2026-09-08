@@ -3,6 +3,8 @@ id: PERF-001
 type: performance
 severity: high
 source: cross-cutting-design-review 2026-08-31
+branch: PERF-001/slow-test-infra-visibility
+worktree: /home/lbendtly/Code/sol-PERF-001-slow-test-infra-visibility
 ---
 
 Make slow tests and stale local infra visible by default
