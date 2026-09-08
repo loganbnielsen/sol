@@ -49,3 +49,7 @@ Separately, but touching the same code: **45% of this repo's 2334 commits (1046)
 ## Explicitly out of scope
 
 Squashing/rewriting this repo's existing git history. That's a separate, deliberate follow-up once this fix has landed and stopped generating the same noise — no point squashing twice.
+
+## Review — real CI confirmed green (2026-09-08)
+
+Mechanism verified by reading the actual code: `run_merge` builds after syncing local main and only on success spawns `merge-finish` via the literal fresh build-output path (never PATH-resolved `soldev`, never inline in the resident process); a post-merge build failure is itself now treated as a real regression. Regression test (`test_stale_binary_fails_after_rename`) fairly reproduces the failure shape in a toy project. Independently re-exercised `review`/`merge-finish` against a fresh scratch ticket: `review` → exactly 1 commit (the "forgot to commit" bug gone), `merge-finish` → exactly 1 commit touching both baseline and ticket move (the two-commit split gone); fully cleaned up, no scratch artifacts. Bootstrapping risk confirmed low — this PR renames nothing `soldev`/its current invocations depend on, so merging it with the pre-fix binary can't trigger the bug it fixes. Full suite independently re-run (pass). PR #164's actual GitHub Actions run (34287620356) fully green: `test` passed, all 4 dockerfile-smokes passed, `golden-path-smoke` passed (19m57s). Promoting on confirmed real-CI green.
