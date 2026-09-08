@@ -5,6 +5,7 @@ severity: medium
 source: architecture discussion with user, 2026-09-08
 branch: REFAC-072/project-to-pipeline
 worktree: ../sol-REFAC-072-project-to-pipeline
+pr: https://github.com/loganbnielsen/sol/pull/161
 ---
 
 **Depends on:** REFAC-071.
