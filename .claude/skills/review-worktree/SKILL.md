@@ -85,7 +85,7 @@ For each subagent result, write the JSON to a temp file and call:
 soldev pipeline review <ticket-id> --result-file /tmp/<ticket-id>-result.json
 ```
 
-`soldev pipeline review` handles all ticket file moves and appends notes. Do **not** move ticket files or append to them directly.
+`soldev pipeline review` handles all ticket file moves, appends notes, and commits the result itself. Do **not** move ticket files or append to them directly, and no separate commit is needed after calling it.
 
 ### 4. Summarise
 

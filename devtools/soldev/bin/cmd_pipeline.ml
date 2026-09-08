@@ -27,6 +27,20 @@ let ticket_arg =
   Arg.(required & pos 0 (some string) None &
        info [] ~docv:"TICKET-ID" ~doc:"e.g. EXP-005")
 
+let merge_sha_arg =
+  Arg.(required & pos 1 (some string) None &
+       info [] ~docv:"MERGE-SHA" ~doc:"The commit `merge` just synced to local main")
+
+let merge_finish_cmd =
+  Cmd.v
+    (Cmd.info "merge-finish"
+       ~doc:"Internal — spawned by `merge` as a subprocess of a binary rebuilt \
+             after the PR's merge commit landed, never invoke directly. Runs the \
+             post-merge test suite, updates the perf baseline, and moves the \
+             ticket to DONE or BLOCKED_BY_PERFORMANCE.")
+    Term.(const Soldev_merge.run_merge_finish
+          $ ticket_arg $ merge_sha_arg $ accept_performance_regression_flag)
+
 let submit_cmd =
   Cmd.v
     (Cmd.info "submit"
@@ -76,4 +90,4 @@ let cmd =
   Cmd.group
     (Cmd.info "pipeline"
        ~doc:"Deterministic pipeline operations: merge tickets, process review results, list status")
-    [ ls_cmd; check_cmd; submit_cmd; merge_cmd; review_cmd; check_reverts_cmd ]
+    [ ls_cmd; check_cmd; submit_cmd; merge_cmd; merge_finish_cmd; review_cmd; check_reverts_cmd ]

@@ -135,7 +135,7 @@ After collecting each result, write it to a temp file and call:
 soldev pipeline review <ticket-id> --result-file /tmp/<ticket-id>-result.json
 ```
 
-`soldev pipeline review` handles all ticket file moves. Do not move ticket files directly.
+`soldev pipeline review` handles all ticket file moves and commits them itself. Do not move ticket files directly, and no separate commit is needed after calling it.
 
 ## Step 3 — Report
 
