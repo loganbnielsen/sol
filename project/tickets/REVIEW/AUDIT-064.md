@@ -3,6 +3,9 @@ id: AUDIT-064
 type: audit-finding
 severity: high
 source: direct AWS account investigation, 2026-09-07 — prompted by a question about whether local port-forward leaks imply broader teardown gaps
+branch: AUDIT-064/lb-teardown-cleanup
+worktree: ../sun-AUDIT-064-lb-teardown-cleanup
+pr: https://github.com/loganbnielsen/sol/pull/147
 ---
 
 **Depends on:** None.
