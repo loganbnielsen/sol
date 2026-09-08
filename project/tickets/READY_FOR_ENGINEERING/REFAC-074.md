@@ -5,9 +5,11 @@ severity: medium
 source: architecture discussion with user, 2026-09-08
 ---
 
-**Depends on:** REFAC-073 (work in sequence, not concurrently — see REFAC-071 for the full sequencing note and the four-part decision this belongs to). This is the largest and riskiest of the four moves — do it last, with extra care.
+**Depends on:** REFAC-073.
 
 Fold `platform/` under `cli/`
+
+**Sequencing note:** work in sequence, not concurrently — see REFAC-071 for the full sequencing note and the four-part decision this belongs to. This is the largest and riskiest of the four moves — do it last, with extra care.
 
 ## Decision
 

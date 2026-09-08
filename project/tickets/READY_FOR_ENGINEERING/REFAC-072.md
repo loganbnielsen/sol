@@ -5,9 +5,11 @@ severity: medium
 source: architecture discussion with user, 2026-09-08
 ---
 
-**Depends on:** REFAC-071 (work in sequence, not concurrently — see its ticket for the full sequencing note and the four-part decision this belongs to).
+**Depends on:** REFAC-071.
 
 Rename `project/` to `pipeline/`
+
+**Sequencing note:** work in sequence, not concurrently, with REFAC-073/074 — see REFAC-071 for the full sequencing note and the four-part decision this belongs to.
 
 ## Decision
 

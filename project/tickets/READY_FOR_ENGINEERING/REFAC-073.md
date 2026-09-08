@@ -5,9 +5,11 @@ severity: low
 source: architecture discussion with user, 2026-09-08
 ---
 
-**Depends on:** REFAC-072 (work in sequence, not concurrently — see REFAC-071 for the full sequencing note and the four-part decision this belongs to).
+**Depends on:** REFAC-072.
 
 Rename `tools/` to `devtools/`
+
+**Sequencing note:** work in sequence, not concurrently — see REFAC-071 for the full sequencing note and the four-part decision this belongs to.
 
 ## Decision
 
