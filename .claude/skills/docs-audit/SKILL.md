@@ -44,7 +44,7 @@ Read the most recent `project/audits/*_docs_audit.md` report if one exists. Chec
 
 ### 6. Verify package specs
 
-- For each package-level `*.md` under `integrations/kafka/` and `framework/`, compare public API claims against nearby `.mli` files
+- for each package-level `*.md` under `framework/`, compare public API claims against nearby `.mli` files
 - Mark deferred or speculative claims as findings if they are not clearly labeled
 
 ### 7. Write the report

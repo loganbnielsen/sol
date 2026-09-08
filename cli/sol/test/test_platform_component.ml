@@ -10,7 +10,7 @@ let check_str = Alcotest.(check string)
    candidate SOL_HOME directory. *)
 let sol_home_markers = [
   "framework/sol-svc/lib/dune";
-  "integrations/kafka/kafka-eio-service/lib/dune";
+  "framework/kafka-eio-service/lib/dune";
 ]
 
 let write_file path content =

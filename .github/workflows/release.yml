@@ -60,7 +60,6 @@ jobs:
           cp _build/default/cli/sol/bin/main.exe dist/${BUNDLE}/bin/sol
           chmod +x dist/${BUNDLE}/bin/sol
           cp -r framework dist/${BUNDLE}/framework
-          cp -r integrations dist/${BUNDLE}/integrations
           cd dist
           tar czf ${BUNDLE}.tar.gz ${BUNDLE}
           # Also keep the standalone binary for scripted installs
@@ -75,7 +74,7 @@ jobs:
           ${BUNDLE}/bin/sol --help > /dev/null
           # Verify framework source exists at expected location in bundle
           test -f ${BUNDLE}/framework/sol-svc/lib/dune
-          test -f ${BUNDLE}/integrations/kafka/kafka-eio-service/lib/dune
+          test -f ${BUNDLE}/framework/kafka-eio-service/lib/dune
           echo "Bundle structure verified"
 
       - name: Create GitHub Release

@@ -63,7 +63,7 @@ High performance must not compromise correctness. Every blocking librdkafka call
 
 Startups rarely have dedicated SRE teams. The framework must surface failures with enough signal that a small team can debug production incidents without deep Kafka or OCaml expertise.
 
-**Source locations:** `integrations/kafka/kafka-eio-service/lib/kafka_service.ml` · `framework/sol-svc/lib/` · `framework/sol-fn/lib/`
+**Source locations:** `framework/kafka-eio-service/lib/kafka_service.ml` · `framework/sol-svc/lib/` · `framework/sol-fn/lib/`
 
 ### Checklist
 

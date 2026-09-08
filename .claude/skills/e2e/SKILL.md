@@ -54,7 +54,7 @@ eval $(opam env) && dune test framework/ 2>&1
 ### Kafka integration tests
 ```bash
 bash platform/local/scripts/ensure-broker.sh
-eval $(opam env) && KAFKA_BROKERS=localhost:9092 dune test integrations/kafka/ --force 2>&1
+eval $(opam env) && KAFKA_BROKERS=localhost:9092 dune test framework/kafka-eio-service/ --force 2>&1
 ```
 
 `obs-eio`/`obs-loki-eio`/`obs-prometheus-eio` no longer have a test suite in this repo —

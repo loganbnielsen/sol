@@ -9,7 +9,7 @@ let cap    = Sol_cli_scaffold.capitalize_name
 
 let is_sol_home dir =
   Sys.file_exists (Filename.concat dir "framework/sol-svc/lib/dune")
-  && Sys.file_exists (Filename.concat dir "integrations/kafka/kafka-eio-service/lib/dune")
+  && Sys.file_exists (Filename.concat dir "framework/kafka-eio-service/lib/dune")
 
 let rec realpath path =
   let path =
@@ -52,8 +52,6 @@ let link_sol_sources workspace =
   | Some sol_home ->
     link ~path:(workspace ^ "/vendor/framework")
       ~target:(Filename.concat sol_home "framework");
-    link ~path:(workspace ^ "/vendor/integrations")
-      ~target:(Filename.concat sol_home "integrations");
     true
 
 (* ── Command implementations ─────────────────────────────────────────────── *)
@@ -131,16 +129,15 @@ Done. 28 files generated.
 |} name;
   if not linked then
     Printf.printf {|
-NOTE: Sol framework source not found — vendor/ links were not created.
+NOTE: Sol framework source not found — vendor/ link was not created.
   Set SOL_HOME to your Sol checkout and re-run sol new workspace, or
-  create the links manually:
+  create the link manually:
 
     export SOL_HOME=/path/to/sol
     ln -sf $SOL_HOME/framework %s/vendor/framework
-    ln -sf $SOL_HOME/integrations %s/vendor/integrations
 
-  Without these links, dune build will fail with "Library not found".
-|} name name
+  Without this link, dune build will fail with "Library not found".
+|} name
 
 let parse_domain_name arg =
   match String.split_on_char '/' arg with

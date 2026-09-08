@@ -1,7 +1,7 @@
 (** Returns [true] if [dir] looks like a Sol home (source checkout or release bundle).
     Checks for the two sentinel files that must exist in any valid Sol root:
       - [framework/sol-svc/lib/dune]
-      - [integrations/kafka/kafka-eio-service/lib/dune] *)
+      - [framework/kafka-eio-service/lib/dune] *)
 val is_sol_home : string -> bool
 
 (** [find_ancestor pred dir] walks up the directory tree from [dir], returning

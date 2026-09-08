@@ -212,7 +212,6 @@ let test_existing_files_still_generated () =
     "testapp/dune-project";
     "testapp/README.md";
     "testapp/vendor/framework";
-    "testapp/vendor/integrations";
     "testapp/events/payments/charged.ml";
     "testapp/events/payments/dune";
     "testapp/lib/notification.ml";
@@ -285,8 +284,8 @@ let test_sol_sources_linked () =
   Sol_cli_cmd_new.new_workspace "testapp";
   check_bool "framework source linked" true
     (Sys.file_exists "testapp/vendor/framework/sol-svc/lib/dune");
-  check_bool "integrations source linked" true
-    (Sys.file_exists "testapp/vendor/integrations/kafka/kafka-eio-service/lib/dune")
+  check_bool "kafka-eio-service source linked" true
+    (Sys.file_exists "testapp/vendor/framework/kafka-eio-service/lib/dune")
 
 (* Regression test: the scaffold templates compiled to string literals in
    sol_cli_scaffold_templates.ml are never type-checked by this test suite
@@ -394,8 +393,8 @@ let test_parse_domain_name_rejects_malformed_names () =
 
 (* ── bundle source resolution tests ──────────────────────────────────────── *)
 
-(* infer_sol_home must resolve a release-bundle SOL_HOME: both the framework
-   and integrations sentinel dune files present, per is_sol_home. *)
+(* infer_sol_home must resolve a release-bundle SOL_HOME: both sentinel dune
+   files present, per is_sol_home. *)
 let test_bundle_layout_resolves_sol_home () =
   let tmpdir = Filename.temp_file "sol-bundle-test-" "" in
   Sys.remove tmpdir;
@@ -410,13 +409,13 @@ let test_bundle_layout_resolves_sol_home () =
       in
       mkdir_p (Filename.concat tmpdir "bin");
       mkdir_p (Filename.concat tmpdir "framework/sol-svc/lib");
-      mkdir_p (Filename.concat tmpdir "integrations/kafka/kafka-eio-service/lib");
+      mkdir_p (Filename.concat tmpdir "framework/kafka-eio-service/lib");
       (* Create the two sentinel dune files that is_sol_home checks *)
       let touch path =
         let oc = open_out path in close_out oc
       in
       touch (Filename.concat tmpdir "framework/sol-svc/lib/dune");
-      touch (Filename.concat tmpdir "integrations/kafka/kafka-eio-service/lib/dune");
+      touch (Filename.concat tmpdir "framework/kafka-eio-service/lib/dune");
       (* Point SOL_HOME at the bundle root — infer_sol_home should accept it *)
       let result =
         let saved = Sys.getenv_opt "SOL_HOME" in
@@ -445,11 +444,11 @@ let test_incomplete_bundle_rejected () =
       let mkdir_p path =
         ignore (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote path)))
       in
-      (* Only create the framework sentinel, not the integrations one *)
+      (* Only create the sol-svc sentinel, not the kafka-eio-service one *)
       mkdir_p (Filename.concat tmpdir "framework/sol-svc/lib");
       let touch path = let oc = open_out path in close_out oc in
       touch (Filename.concat tmpdir "framework/sol-svc/lib/dune");
-      (* SOL_HOME pointing here should be rejected — integrations sentinel missing *)
+      (* SOL_HOME pointing here should be rejected — kafka-eio-service sentinel missing *)
       let result =
         let saved = Sys.getenv_opt "SOL_HOME" in
         Unix.putenv "SOL_HOME" tmpdir;
@@ -478,12 +477,12 @@ let test_ancestor_walk_finds_bundle_root () =
         ignore (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote path)))
       in
       let touch path = let oc = open_out path in close_out oc in
-      (* Create the bundle layout: tmpdir/bin/, tmpdir/framework/..., tmpdir/integrations/... *)
+      (* Create the bundle layout: tmpdir/bin/, tmpdir/framework/... *)
       mkdir_p (Filename.concat tmpdir "bin");
       mkdir_p (Filename.concat tmpdir "framework/sol-svc/lib");
-      mkdir_p (Filename.concat tmpdir "integrations/kafka/kafka-eio-service/lib");
+      mkdir_p (Filename.concat tmpdir "framework/kafka-eio-service/lib");
       touch (Filename.concat tmpdir "framework/sol-svc/lib/dune");
-      touch (Filename.concat tmpdir "integrations/kafka/kafka-eio-service/lib/dune");
+      touch (Filename.concat tmpdir "framework/kafka-eio-service/lib/dune");
       (* is_sol_home should accept the bundle root *)
       check_bool "is_sol_home returns true for valid bundle root" true
         (Sol_cli_cmd_new.is_sol_home tmpdir);

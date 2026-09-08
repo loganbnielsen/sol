@@ -91,16 +91,21 @@ contract when they are refreshed.
 
 ## Integrations
 
-Reusable capability packages live under `integrations/`: Kafka, observability,
-and storage. Framework primitives in `framework/sol-svc`, `framework/sol-worker`,
-and `framework/sol-fn` compose those integrations into service lifecycles.
+There is no `integrations/` directory in this repo. Reusable capability
+packages are either in-tree under `framework/` (`kafka-eio-service` — Kafka
+schema registry + service orchestration, the same kind of app-linked library
+as `sol-svc`/`sol-worker`/`sol-fn`) or extracted to standalone opam packages
+pinned into this switch (`kafka-eio`, `obs-eio`, `obs-loki-eio`,
+`obs-prometheus-eio`, `pg-eio`, `aws-eio` — see `~/Code/CLAUDE.md`'s repo
+layout notes). Framework primitives in `framework/sol-svc`, `framework/sol-worker`,
+and `framework/sol-fn` compose these into service lifecycles.
 
-Extend integrations inside the relevant package with a small public interface,
+Extend an in-tree capability package with a small public interface,
 package-local tests, and package docs. Keep customer service code using the
 framework primitive rather than importing another service implementation or
 reaching across domains.
 
-Do not add cross-integration shortcuts that make one backend know about an
+Do not add cross-package shortcuts that make one backend know about an
 unrelated backend's implementation details. Shared contracts should live in the
 lowest package that owns the concept.
 

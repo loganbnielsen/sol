@@ -85,7 +85,7 @@ let test_tempo_datasource_configmap () =
    same pattern as test_platform_component.ml's with_fake_sol_home. *)
 let sol_home_markers = [
   "framework/sol-svc/lib/dune";
-  "integrations/kafka/kafka-eio-service/lib/dune";
+  "framework/kafka-eio-service/lib/dune";
 ]
 
 let write_file path content =

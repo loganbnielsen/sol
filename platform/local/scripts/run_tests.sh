@@ -127,7 +127,7 @@ run_unit() {
 run_kafka() {
   info "Kafka integration tests (requires broker at localhost:9092)"
   eval $(opam env)
-  KAFKA_BROKERS=localhost:9092 dune test --root "$REPO_ROOT" integrations/kafka/ --force 2>&1
+  KAFKA_BROKERS=localhost:9092 dune test --root "$REPO_ROOT" framework/kafka-eio-service/ --force 2>&1
 }
 
 run_e2e() {
