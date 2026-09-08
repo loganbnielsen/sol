@@ -13,6 +13,34 @@ let git_sha () =
     r.Sol_cli_process.stdout
   | _ -> "dev"
 
+(* EXP-029: after a real apply, print a port-forward hint for each HTTP
+   service so the engineer doesn't need a separate 'sol status' call to
+   discover the endpoint. Same ClusterIP+port-80 detection cmd_status.ml's
+   print_raw_diagnostics already uses -- only Svc-primitive services ever
+   get a Service resource (sol_cli_deployment_render.ml only emits
+   service_doc for Http_service shapes), so this naturally excludes
+   worker/fn services without needing to thread primitive info through. *)
+let print_service_urls (results : Sol_cli_executor.result list) =
+  let deployed_names = List.map (fun (r : Sol_cli_executor.result) -> r.Sol_cli_executor.name) results in
+  let namespaces =
+    List.sort_uniq compare (List.map (fun (r : Sol_cli_executor.result) -> r.Sol_cli_executor.namespace) results)
+  in
+  List.iter (fun ns ->
+    let jsonpath = "{.items[?(@.spec.type==\"ClusterIP\")].metadata.name}" in
+    match Sol_cli_kubectl.get_raw ~args:["get"; "svc"; "-n"; ns; "-o"; "jsonpath=" ^ jsonpath] with
+    | Ok r when r.Sol_cli_process.exit_code = 0 && r.Sol_cli_process.stdout <> "" ->
+      let port80_jsonpath = "{.spec.ports[?(@.port==80)].port}" in
+      String.split_on_char ' ' r.Sol_cli_process.stdout
+      |> List.filter (fun name -> List.mem name deployed_names)
+      |> List.iter (fun name ->
+           match Sol_cli_kubectl.get ~resource:"svc" ~name ~namespace:ns
+                   ~output:("jsonpath=" ^ port80_jsonpath) with
+           | Ok gr when gr.Sol_cli_process.exit_code = 0 && gr.Sol_cli_process.stdout <> "" ->
+             Printf.printf "  →  http://localhost:8080  (%s)\n%!" name
+           | _ -> ())
+    | _ -> ()
+  ) namespaces
+
 let run (req : Sol_cli_command_request.deploy_request) =
   let workspace = workspace_name () in
   let sha       = req.image_tag in
@@ -177,8 +205,8 @@ let run (req : Sol_cli_command_request.deploy_request) =
     spec.domain spec.source_name)
   plan.Sol_cli_deployment_plan.services;
 
-  (try
-    let results =
+  let results =
+    try
       match Sol_cli_executor.run_plan ~workspace ~env:target_cfg.Sol_cli_config.env
               ~mode ~secret_backend:req.secret_backend
               plan.Sol_cli_deployment_plan.services with
@@ -186,20 +214,20 @@ let run (req : Sol_cli_command_request.deploy_request) =
       | Error msg ->
         Printf.eprintf "\nerror: %s\n" msg;
         exit 1
-    in
-    List.iter (fun (r : Sol_cli_executor.result) ->
-      match mode with
-      | Sol_cli_executor.Emit_to dir ->
-        let path = Filename.concat dir
-          (Printf.sprintf "%s-%s.yaml" r.Sol_cli_executor.namespace r.Sol_cli_executor.name) in
-        Printf.printf "  ✓  %s\n%!" path
-      | Sol_cli_executor.Apply ->
-        Printf.printf "  ✓  namespace %s  image %s\n\n%!" r.Sol_cli_executor.namespace r.Sol_cli_executor.image
-      | Sol_cli_executor.Dry_run -> ())
-    results
-  with Deploy_failed msg ->
-    Printf.eprintf "\nerror: %s\n" msg;
-    exit 1);
+    with Deploy_failed msg ->
+      Printf.eprintf "\nerror: %s\n" msg;
+      exit 1
+  in
+  List.iter (fun (r : Sol_cli_executor.result) ->
+    match mode with
+    | Sol_cli_executor.Emit_to dir ->
+      let path = Filename.concat dir
+        (Printf.sprintf "%s-%s.yaml" r.Sol_cli_executor.namespace r.Sol_cli_executor.name) in
+      Printf.printf "  ✓  %s\n%!" path
+    | Sol_cli_executor.Apply ->
+      Printf.printf "  ✓  namespace %s  image %s\n\n%!" r.Sol_cli_executor.namespace r.Sol_cli_executor.image
+    | Sol_cli_executor.Dry_run -> ())
+  results;
 
   (match req.emit_to with
    | Some dir ->
@@ -207,6 +235,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
      Printf.printf "Commit and push to your GitOps repo, then Argo CD will apply them.\n"
    | None when not req.dry_run ->
      Printf.printf "\nDone. %d service(s) deployed.\n" (List.length services);
+     print_service_urls results;
      Printf.printf "Run 'sol status' to check pod health.\n";
      Sol_cli_deployment_state.record_outcome workspace
        (Sol_cli_deployment_state.Applied {
