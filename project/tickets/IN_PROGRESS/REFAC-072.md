@@ -3,6 +3,8 @@ id: REFAC-072
 type: refactor
 severity: medium
 source: architecture discussion with user, 2026-09-08
+branch: REFAC-072/project-to-pipeline
+worktree: ../sol-REFAC-072-project-to-pipeline
 ---
 
 **Depends on:** REFAC-071.
