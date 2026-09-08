@@ -3,6 +3,8 @@ id: FRIC-012
 type: dogfood-finding
 severity: high
 source: project/dogfood/RUN_2026-09-07_AWS.md (DOGFOOD-011, first real AWS dogfood run)
+branch: FRIC-012/migrate-in-cluster-job
+worktree: ../sun-FRIC-012-migrate-in-cluster-job
 ---
 
 **Depends on:** None.
