@@ -645,7 +645,7 @@ let test_golden_new_svc_files () =
     (Sol_cli_scaffold.subst v Sol_cli_scaffold_templates.svc_lib_dune);
   check_generated_file "svc bin main"
     "app/comms/notify_svc/bin/main.ml"
-    Sol_cli_scaffold_templates.svc_bin_ml;
+    (Sol_cli_scaffold.subst v Sol_cli_scaffold_templates.svc_bin_ml);
   check_generated_file "svc bin dune"
     "app/comms/notify_svc/bin/dune"
     (Sol_cli_scaffold.subst v Sol_cli_scaffold_templates.svc_bin_dune);
