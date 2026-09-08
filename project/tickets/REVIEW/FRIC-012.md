@@ -5,6 +5,7 @@ severity: high
 source: project/dogfood/RUN_2026-09-07_AWS.md (DOGFOOD-011, first real AWS dogfood run)
 branch: FRIC-012/migrate-in-cluster-job
 worktree: ../sun-FRIC-012-migrate-in-cluster-job
+pr: https://github.com/loganbnielsen/sol/pull/146
 ---
 
 **Depends on:** None.
