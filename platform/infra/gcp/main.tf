@@ -132,9 +132,9 @@ resource "google_artifact_registry_repository_iam_member" "gke_pull" {
 # ── Cloud SQL PostgreSQL ──────────────────────────────────────────────────── #
 
 resource "google_sql_database_instance" "postgres" {
-  name             = "${var.cluster_name}-postgres"
-  database_version = "POSTGRES_16"
-  region           = var.region
+  name                = "${var.cluster_name}-postgres"
+  database_version    = "POSTGRES_16"
+  region              = var.region
   deletion_protection = var.sql_deletion_protection
 
   settings {
@@ -195,4 +195,115 @@ resource "google_dns_managed_zone" "main" {
   name        = replace(var.base_domain, ".", "-")
   dns_name    = "${var.base_domain}."
   description = "Sol workspace zone for ${var.cluster_name}"
+}
+
+# ── Durable observability storage (OBS-006 logs, OBS-007 metrics) ─────────── #
+#
+# GCP side of platform/infra/aws's S3+IRSA pair (INFRA-003) -- GCS buckets +
+# Workload Identity service accounts, mirroring aws/'s shape and output
+# names 1:1 (loki_s3_bucket -> loki_gcs_bucket, loki_irsa_arn ->
+# loki_workload_identity_sa_email, etc.) so platform/infra/base can be wired
+# up to consume either provider's outputs through the same kind of plain
+# variables it already uses for AWS. GKE Autopilot clusters (module.main
+# above) have Workload Identity enabled by default -- no cluster-level
+# opt-in needed, unlike standard GKE.
+#
+# Layer 1 only: this module does not wire these outputs into
+# platform/infra/base, and does not lift base's `cloud_provider == "aws"`
+# gate on observability_backend = "self_hosted_durable" (see
+# platform/infra/base/main.tf's observability_backend_validation). That
+# gate also controls provider-specific Helm values baked into
+# platform/components/loki/values-durable.json (storage.type = "s3",
+# object_store = "s3") -- wiring GCS through there needs a live GCP cluster
+# to validate against and is real, separate follow-up scope, not bundled
+# into this ticket's Layer 1 module per its own "no abstraction ahead of a
+# concrete second implementation" scope note.
+
+resource "google_storage_bucket" "loki" {
+  count                       = var.enable_durable_observability ? 1 : 0
+  name                        = "${var.cluster_name}-loki-logs"
+  location                    = var.region
+  project                     = var.project_id
+  uniform_bucket_level_access = true
+  force_destroy               = false
+
+  lifecycle_rule {
+    condition {
+      age = var.loki_retention_days
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "google_service_account" "loki" {
+  count        = var.enable_durable_observability ? 1 : 0
+  project      = var.project_id
+  account_id   = "${var.cluster_name}-loki"
+  display_name = "Loki durable storage (Workload Identity) for ${var.cluster_name}"
+}
+
+resource "google_storage_bucket_iam_member" "loki" {
+  count  = var.enable_durable_observability ? 1 : 0
+  bucket = google_storage_bucket.loki[0].name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.loki[0].email}"
+}
+
+# Binds the GCP service account to the "monitoring/loki" Kubernetes service
+# account via Workload Identity -- same single namespace:service-account
+# pair as aws/'s module.loki_irsa oidc_providers binding.
+resource "google_service_account_iam_member" "loki_workload_identity" {
+  count              = var.enable_durable_observability ? 1 : 0
+  service_account_id = google_service_account.loki[0].name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[monitoring/loki]"
+}
+
+resource "google_storage_bucket" "thanos" {
+  count                       = var.enable_durable_observability ? 1 : 0
+  name                        = "${var.cluster_name}-thanos-metrics"
+  location                    = var.region
+  project                     = var.project_id
+  uniform_bucket_level_access = true
+  force_destroy               = false
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "google_service_account" "thanos" {
+  count        = var.enable_durable_observability ? 1 : 0
+  project      = var.project_id
+  account_id   = "${var.cluster_name}-thanos"
+  display_name = "Thanos durable storage (Workload Identity) for ${var.cluster_name}"
+}
+
+resource "google_storage_bucket_iam_member" "thanos" {
+  count  = var.enable_durable_observability ? 1 : 0
+  bucket = google_storage_bucket.thanos[0].name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.thanos[0].email}"
+}
+
+# aws/'s module.thanos_irsa binds one IAM role to three Kubernetes service
+# accounts in a single oidc_providers block; Workload Identity binds one
+# GCP SA to one Kubernetes SA per google_service_account_iam_member, so the
+# same three-way binding takes a for_each here instead.
+resource "google_service_account_iam_member" "thanos_workload_identity" {
+  for_each = var.enable_durable_observability ? toset([
+    "monitoring/prometheus-server",
+    "monitoring/thanos-storegateway",
+    "monitoring/thanos-compactor",
+  ]) : []
+
+  service_account_id = google_service_account.thanos[0].name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[${each.value}]"
 }
