@@ -1,5 +1,5 @@
 let component_dir sol_home component =
-  Filename.concat sol_home (Filename.concat "platform/components" component)
+  Filename.concat sol_home (Filename.concat "cli/platform/components" component)
 
 let read_json path =
   if not (Sys.file_exists path) then `Assoc []
@@ -33,7 +33,7 @@ let merged_values_yaml ~component ~profile =
     | Some dir -> dir
     | None ->
       Printf.eprintf
-        "error: cannot locate the Sol monorepo root to read platform/components/%s.\n"
+        "error: cannot locate the Sol monorepo root to read cli/platform/components/%s.\n"
         component;
       Printf.eprintf "  Set SOL_HOME to your Sol checkout and re-run:\n";
       Printf.eprintf "    export SOL_HOME=/path/to/sol\n";

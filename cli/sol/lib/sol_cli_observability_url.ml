@@ -34,7 +34,7 @@ type resolution =
     - [Local] defaults to ["http://localhost:3000"] (the standard dev
       port-forward address).
     - [Self_hosted_durable] resolves to ["https://grafana.<base_domain>"],
-      matching platform/infra/base's own Grafana Ingress
+      matching cli/platform/infra/base's own Grafana Ingress
       (kubernetes_ingress_v1.grafana) -- requires [base_domain].
     - [External] never guesses: Sol doesn't know the shape of an
       arbitrary vendor's dashboard URL (Grafana Cloud, Datadog, ...). *)

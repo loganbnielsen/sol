@@ -1,10 +1,10 @@
 (** Reads shared platform-component desired state from
-    [platform/components/<component>/] (ADR 0001 / CODE_LAYER-005) so
-    [sol dev up] and [platform/infra/base/main.tf]'s [helm_release] resources
+    [cli/platform/components/<component>/] (ADR 0001 / CODE_LAYER-005) so
+    [sol dev up] and [cli/platform/infra/base/main.tf]'s [helm_release] resources
     stop hand-duplicating the same Helm values. *)
 
 (** [merged_values_yaml ~component ~profile] reads
-    [platform/components/<component>/values-common.json] and
+    [cli/platform/components/<component>/values-common.json] and
     [values-<profile>.json], deep-merges the profile file over common
     (profile wins on key conflicts; nested objects merge recursively, other
     conflicts take the profile's value outright), and returns the merged

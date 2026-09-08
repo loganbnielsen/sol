@@ -182,12 +182,12 @@ A **managed resource dashboard** is a fourth tier, scoped by
 `resource/<type>/<name>` (e.g. `resource/rds/acme-prod-postgres`) rather
 than by `workspace/domain/service`:
 
-- `platform/infra/aws/main.tf` describes each managed resource generically
+- `cli/platform/infra/aws/main.tf` describes each managed resource generically
   (`local.managed_resources`: name -> `{resource_type,
   cloudwatch_namespace, dimension_name, dimension_value, metrics}`) and
   provisions a native CloudWatch dashboard per entry plus an IRSA role
   granting Grafana's own pod read access to CloudWatch metrics.
-- `platform/infra/base/main.tf` provisions one Grafana dashboard per
+- `cli/platform/infra/base/main.tf` provisions one Grafana dashboard per
   distinct `resource_type` (not per resource instance) from a single
   shared template (`dashboards/managed-resource.json.tftpl`), wired to a
   CloudWatch Grafana datasource. The dashboard's `resource` template

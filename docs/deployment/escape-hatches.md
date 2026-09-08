@@ -266,4 +266,4 @@ strategy = "blue-green"
 | Add sidecar containers                                 | 3     |
 | Use a custom StorageClass or PodDisruptionBudget       | 3     |
 | Manage your own Helm charts                            | 4     |
-| Write Terraform modules outside Sol's platform/infra/           | 4     |
+| Write Terraform modules outside Sol's cli/platform/infra/           | 4     |

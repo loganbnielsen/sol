@@ -589,11 +589,11 @@ strategy = "blue-green"
 
 Blue-green emits active and preview `Service` resources and disables automatic promotion. This is not a raw Argo YAML escape hatch: Sol supports only the fields above, and arbitrary Argo Rollouts features such as analysis templates and traffic-manager integrations are deferred.
 
-See `platform/infra/ci/` for complete GitHub Actions workflow examples for both modes.
+See `cli/platform/infra/ci/` for complete GitHub Actions workflow examples for both modes.
 
 ### Provisioning a production cluster
 
-Use `sol cloud plan` and `sol cloud apply` to provision production infrastructure. These commands run Terraform against the modules bundled in `platform/infra/` and print the provisioned endpoints on completion.
+Use `sol cloud plan` and `sol cloud apply` to provision production infrastructure. These commands run Terraform against the modules bundled in `cli/platform/infra/` and print the provisioned endpoints on completion.
 
 **AWS (EKS, ECR, RDS, Route53):**
 
@@ -649,7 +649,7 @@ Sensitive outputs (database passwords, connection strings) are never printed; re
 **Install platform components** (Argo CD, Redpanda, Loki, Prometheus, cert-manager):
 
 ```bash
-cd platform/infra/base
+cd cli/platform/infra/base
 terraform init
 terraform apply \
   -var="base_domain=acme.com" \
@@ -663,7 +663,7 @@ After `terraform apply`, the cluster is identical to `sol dev up` — same DNS n
 >
 > ```bash
 > # AWS example
-> cd platform/infra/aws
+> cd cli/platform/infra/aws
 > terraform init
 > terraform apply \
 >   -var="cluster_name=acme-prod" \
@@ -672,7 +672,7 @@ After `terraform apply`, the cluster is identical to `sol dev up` — same DNS n
 > aws eks update-kubeconfig --region us-east-1 --name acme-prod
 >
 > # GCP example
-> cd platform/infra/gcp
+> cd cli/platform/infra/gcp
 > terraform init
 > terraform apply \
 >   -var="project_id=my-project" \
@@ -685,8 +685,8 @@ After `terraform apply`, the cluster is identical to `sol dev up` — same DNS n
 **Set up Argo CD GitOps** (one-time per cluster):
 
 ```bash
-# Edit platform/infra/argocd/application.yaml — set GITOPS_REPO_URL and WORKSPACE_NAME
-kubectl apply -f platform/infra/argocd/application.yaml
+# Edit cli/platform/infra/argocd/application.yaml — set GITOPS_REPO_URL and WORKSPACE_NAME
+kubectl apply -f cli/platform/infra/argocd/application.yaml
 ```
 
 From this point, every `git push` to `main` in CI runs `sol deploy --emit-to`, commits the YAML to the GitOps repo, and Argo CD reconciles the cluster automatically.

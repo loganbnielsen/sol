@@ -187,7 +187,7 @@ async function main() {
   console.log(`[order-svc-ts] listening on :${PORT}`);
 
   // The local Prometheus container in this repo is configured to scrape
-  // Pushgateway only (see platform/local/config/prometheus.yml) — matching
+  // Pushgateway only (see cli/platform/local/config/prometheus.yml) — matching
   // examples/local-demo's own local-run model, not the k8s-native path
   // where prometheus.io/scrape annotations hit /metrics directly. Push
   // periodically since, unlike the OCaml demo, this is a long-running

@@ -25,13 +25,13 @@
       Grafana  http://localhost:3000
 
     Run:
-      bash platform/local/scripts/ensure-broker.sh
-      bash platform/local/scripts/ensure-postgres.sh       # optional — skipped if absent
-      bash platform/local/scripts/ensure-loki.sh           # optional — logs to stdout if absent
-      bash platform/local/scripts/ensure-tempo.sh          # optional — traces skipped if absent
-      bash platform/local/scripts/ensure-pushgateway.sh    # optional — metrics only printed if absent
-      bash platform/local/scripts/ensure-prometheus.sh     # optional — needs Pushgateway to see metrics
-      bash platform/local/scripts/ensure-grafana.sh        # optional — provisions the "Sol Demo Overview"
+      bash cli/platform/local/scripts/ensure-broker.sh
+      bash cli/platform/local/scripts/ensure-postgres.sh       # optional — skipped if absent
+      bash cli/platform/local/scripts/ensure-loki.sh           # optional — logs to stdout if absent
+      bash cli/platform/local/scripts/ensure-tempo.sh          # optional — traces skipped if absent
+      bash cli/platform/local/scripts/ensure-pushgateway.sh    # optional — metrics only printed if absent
+      bash cli/platform/local/scripts/ensure-prometheus.sh     # optional — needs Pushgateway to see metrics
+      bash cli/platform/local/scripts/ensure-grafana.sh        # optional — provisions the "Sol Demo Overview"
                                                             # dashboard (logs, metrics, and a Tempo pointer)
                                                             # once the above are up
 

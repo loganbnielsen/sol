@@ -8,7 +8,7 @@ type scope =
   (** [Resource (resource_type, resource_name)] -- a managed infrastructure
       resource dashboard (OBS-044), e.g. an RDS instance. Generic over
       [resource_type]: the CLI never validates it against a known list,
-      matching platform/infra's generic-by-resource-type Terraform shape. *)
+      matching cli/platform/infra's generic-by-resource-type Terraform shape. *)
 
 type kind = Logs | Metrics | Dashboard
 
@@ -29,7 +29,7 @@ val parse_scope : string option -> (scope, string) result
       $workspace/$domain/$service preset via query params once scoped;
       $workspace is always preset -- see OBS-020) -- except [Resource]
       scope, which deep-links into the OBS-044 managed-resource dashboard
-      (platform/infra/base's dashboards/managed-resource.json.tftpl,
+      (cli/platform/infra/base's dashboards/managed-resource.json.tftpl,
       keyed by [resource_type]) with a preset $resource query param.
     [Error _] means [scope]'s domain/service/resource name failed Sol's
     naming rules (see [Sol_cli_deployment_plan]), or (for [Logs] +

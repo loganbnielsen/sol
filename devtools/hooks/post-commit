@@ -2,13 +2,13 @@
 # Shows the performance status table after each commit.
 # Tests run (and gate) in pre-commit; this is informational only.
 #
-# Install: bash platform/local/scripts/install-hooks.sh
+# Install: bash cli/platform/local/scripts/install-hooks.sh
 # Skip once: SOL_SKIP_HOOKS=1 git commit ...
 
 [ "${SOL_SKIP_HOOKS:-0}" = "1" ] && exit 0
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-PERF="$REPO_ROOT/platform/local/scripts/perf.sh"
+PERF="$REPO_ROOT/cli/platform/local/scripts/perf.sh"
 
 [ -x "$PERF" ] || exit 0
 

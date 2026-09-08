@@ -144,7 +144,7 @@ Sol decides the default infrastructure shape:
 - release metadata
 - rollout/rollback mechanics
 
-`platform/infra/` is therefore not the primary user interface. It is an
+`cli/platform/infra/` is therefore not the primary user interface. It is an
 implementation of the substrate contract for customer-cloud and exported
 self-managed lanes, and should also inform Sol's future hosted substrate.
 
@@ -206,7 +206,7 @@ including two live round-trip tests against real Loki.
 - Stream labels: `service` always + whitelisted `label_names` from `Obs_eio.t` context
 - Unreachable Loki logs to stderr, never raises
 
-**Local infrastructure:** `platform/local/scripts/ensure-loki.sh` + `ensure-grafana.sh`
+**Local infrastructure:** `cli/platform/local/scripts/ensure-loki.sh` + `ensure-grafana.sh`
 (Grafana pre-wired with Loki datasource at `http://localhost:3000`)
 
 ### ~~obs-eio-prometheus~~ ✓ done
@@ -375,7 +375,7 @@ All operations return `(_, Sol.Storage.error) result`. No exceptions at public A
 - `Sol.Storage.Table.Make(Schema)` functor for typed table access
 - `Sol.Storage.Migration` — migration runner (`apply`, `status`, `rollback`)
 - `sol migrate` CLI command (wired in Phase 5)
-- `platform/local/scripts/ensure-postgres.sh` for local dev
+- `cli/platform/local/scripts/ensure-postgres.sh` for local dev
 - Unit tests against a real Postgres instance; gated on `POSTGRES_URL` env var (same pattern as Kafka and Loki integration tests)
 
 ---
@@ -616,8 +616,8 @@ Phase 5 built the synthesis pipeline and proved it against a local k3d cluster. 
 - `sol deploy --image-tag --dry-run --emit-to` flags ✓
 - `sol deploy --emit-plan-to FILE` — plan JSON serialization (experimental schema) ✓
 - `sol.toml` parsing — all supported fields are read from real user files ✓
-- `platform/infra/aws/` and `platform/infra/gcp/` Terraform modules ✓
-- `platform/infra/base/` cluster-agnostic Helm bootstrapping ✓
+- `cli/platform/infra/aws/` and `cli/platform/infra/gcp/` Terraform modules ✓
+- `cli/platform/infra/base/` cluster-agnostic Helm bootstrapping ✓
 - Argo CD `Application` manifest + GitOps emit mode ✓
 - `docs/deployment/self-hosted-substrate-contract.md` — what Sol generates vs what the user brings ✓
 - `docs/deployment/escape-hatches.md` — four-level escape hatch hierarchy ✓
@@ -676,13 +676,13 @@ strategy = "blue-green"            # or "canary" with steps
 `[infra.rollout]` canary/blue-green and `[infra.env].secrets` are implemented.
 `[infra.kafka]` extra topics remain future work.
 
-### `platform/infra/` — Cloud cluster provisioning
+### `cli/platform/infra/` — Cloud cluster provisioning
 
 Terraform modules for bootstrapping the cluster itself. Run once per environment by the platform team, not on every deploy.
 
-- `platform/infra/aws/` — EKS cluster, VPC, RDS Postgres, ECR, Route53
-- `platform/infra/gcp/` — GKE Autopilot cluster, VPC, Cloud SQL, Artifact Registry, Cloud DNS
-- `platform/infra/base/` — cluster-agnostic: Argo CD, kube-prometheus-stack, Loki, Redpanda, cert-manager, ingress-nginx
+- `cli/platform/infra/aws/` — EKS cluster, VPC, RDS Postgres, ECR, Route53
+- `cli/platform/infra/gcp/` — GKE Autopilot cluster, VPC, Cloud SQL, Artifact Registry, Cloud DNS
+- `cli/platform/infra/base/` — cluster-agnostic: Argo CD, kube-prometheus-stack, Loki, Redpanda, cert-manager, ingress-nginx
 
 After `terraform apply`, the cluster looks identical to `sol dev up` — same infra components, same Helm charts, same Sol-generated manifests.
 
@@ -763,7 +763,7 @@ cluster observable instead, with the right data source per layer:
 | Runtime logs | Loki — app logs, worker logs, platform pod logs once promtail/an agent scrapes pod stdout (not just app-pushed lines) | `sol logs <service>` prefers Loki, falls back to `kubectl logs` when a Loki *query* fails, not only when Loki is absent. |
 
 Follow-up work implied (not yet ticketed): install promtail (or equivalent)
-as part of `platform/infra/base/` scraping pod stdout directly, not just
+as part of `cli/platform/infra/base/` scraping pod stdout directly, not just
 app-pushed Loki lines; add `sol status`/`sol deploy status` summarizing
 rollout health from Kubernetes events/pod states; give `sol deploy` run IDs
 and local `.sol/runs/` logging.

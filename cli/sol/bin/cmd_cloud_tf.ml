@@ -5,7 +5,7 @@ open Cmdliner
 
 (* ── Sol home resolution ─────────────────────────────────────────────────── *)
 
-(* Resolve the Sol monorepo root so we can locate platform/infra/<provider>/. *)
+(* Resolve the Sol monorepo root so we can locate cli/platform/infra/<provider>/. *)
 let resolve_sol_home () =
   match Sol_cli_cmd_new.infer_sol_home () with
   | Some dir -> dir
@@ -125,7 +125,7 @@ let infra_dir provider =
   let pname = provider_name provider in
   let sol_home = resolve_sol_home () in
   let dir = Filename.concat sol_home
-    (Printf.sprintf "platform/infra/%s" pname) in
+    (Printf.sprintf "cli/platform/infra/%s" pname) in
   if not (Sys.file_exists dir) then begin
     Printf.eprintf "error: Terraform module not found: %s\n" dir;
     exit 1
@@ -256,7 +256,7 @@ let aws_no_ecr_repositories ~region ~workspace_name =
    covers that in-tree tagging convention -- a load balancer created by
    the standalone AWS Load Balancer Controller instead tags primarily with
    elbv2.k8s.aws/cluster, which this does not check. Not a gap today
-   (platform/infra/base/main.tf only installs ingress-nginx, which uses
+   (cli/platform/infra/base/main.tf only installs ingress-nginx, which uses
    the in-tree cloud-controller path), but would need extending if Sol
    ever supports the standalone LBC.
 
@@ -288,7 +288,7 @@ let aws_no_load_balancers ~region ~cluster_name =
     false
 
 (* AUDIT-064: a Kubernetes Service of type LoadBalancer (ingress-nginx's,
-   by default -- platform/infra/base/variables.tf's ingress_service_type)
+   by default -- cli/platform/infra/base/variables.tf's ingress_service_type)
    causes the cluster's cloud-controller to provision a real AWS ELB/NLB
    that Terraform's own state has no knowledge of. Deleting the Service
    first, before terraform destroy tears down the VPC/subnets that load

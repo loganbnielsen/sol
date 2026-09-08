@@ -11,7 +11,7 @@ and update call sites in the same pass. Full policy: `~/Code/CLAUDE.md`.
 
 ## Current development focus
 
-**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform modules live at `platform/infra/base/`, `platform/infra/aws/`, and `platform/infra/gcp/`. Remaining hosted-product work is tracked in `pipeline/tickets/`. See `docs/planning/WORK_SUMMARY.md` for full details.
+**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform modules live at `cli/platform/infra/base/`, `cli/platform/infra/aws/`, and `cli/platform/infra/gcp/`. Remaining hosted-product work is tracked in `pipeline/tickets/`. See `docs/planning/WORK_SUMMARY.md` for full details.
 
 Package: `cli/sol/` — binary at `_build/default/cli/sol/bin/main.exe`.
 
@@ -107,7 +107,7 @@ sol/
   examples/local-demo/                         ← full-stack showcase demo (svc → Kafka → worker)
     lib/                        ← shared event contracts for demo
     bin/demo.ml                 ← orchestrated demo binary
-  platform/local/
+  cli/platform/local/
     scripts/                    ← ensure-broker.sh, ensure-loki.sh, etc.
     k8s/                        ← Kubernetes manifests
   dune-project / dune-workspace ← unified root build
@@ -131,8 +131,8 @@ dune build
 eval $(opam env) && dune test framework/
 
 # Full integration tests (requires Redpanda + Loki running)
-bash platform/local/scripts/ensure-broker.sh
-bash platform/local/scripts/ensure-loki.sh
+bash cli/platform/local/scripts/ensure-broker.sh
+bash cli/platform/local/scripts/ensure-loki.sh
 KAFKA_BROKERS=localhost:9092 LOKI_URL=http://localhost:3100 dune test --force
 ```
 
@@ -140,10 +140,10 @@ KAFKA_BROKERS=localhost:9092 LOKI_URL=http://localhost:3100 dune test --force
 
 ```bash
 # Start infrastructure
-bash platform/local/scripts/ensure-broker.sh
-bash platform/local/scripts/ensure-loki.sh
-bash platform/local/scripts/ensure-grafana.sh
-bash platform/local/scripts/ensure-prometheus.sh
+bash cli/platform/local/scripts/ensure-broker.sh
+bash cli/platform/local/scripts/ensure-loki.sh
+bash cli/platform/local/scripts/ensure-grafana.sh
+bash cli/platform/local/scripts/ensure-prometheus.sh
 
 # Run the full-stack demo (svc → Kafka → worker, with Loki logs + Prometheus metrics)
 KAFKA_BROKERS=localhost:9092 LOKI_URL=http://localhost:3100 \

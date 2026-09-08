@@ -578,7 +578,7 @@ let active_services cfg =
 (* Matches the only providers sol.yml's target-provider box itself
    recognizes (`k = "aws" || k = "gcp"` above) — no third value invented
    here that nothing else in the codebase (cmd_cloud_tf.ml's `provider`
-   type, platform/infra/) can actually provision against. *)
+   type, cli/platform/infra/) can actually provision against. *)
 let known_provider s = s = "aws" || s = "gcp"
 
 let format_use_ref ref =

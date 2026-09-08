@@ -147,10 +147,10 @@ Sol deliberately does not provision:
 - **VPCs, subnets, security groups, firewall rules** — use Terraform, Pulumi,
   or your cloud console.
 - **IAM roles, service accounts (cloud), OIDC providers** — use your cloud
-  provider's IAM tooling or the Terraform modules in `platform/infra/aws/` and
-  `platform/infra/gcp/` as a starting point.
+  provider's IAM tooling or the Terraform modules in `cli/platform/infra/aws/` and
+  `cli/platform/infra/gcp/` as a starting point.
 - **Managed databases (RDS, Cloud SQL)** — use cloud-native managed services or
-  the Terraform modules in `platform/infra/base/`.
+  the Terraform modules in `cli/platform/infra/base/`.
 - **Managed Kafka clusters (MSK, Confluent Cloud, Redpanda Cloud)** — use the
   managed service directly. Point `KAFKA_BROKERS` at the bootstrap endpoint.
 - **DNS zones, A/CNAME records** — use Route 53, Cloud DNS, or your DNS
@@ -180,16 +180,16 @@ local development.
 
 ### Terraform Modules (Provided as a Starting Point)
 
-The `platform/infra/` directory contains Terraform modules that provision typical
+The `cli/platform/infra/` directory contains Terraform modules that provision typical
 production substrate:
 
 | Path | What it creates |
 |---|---|
-| `platform/infra/base/` | Generic Kubernetes substrate: namespaces, RBAC, cert-manager, ingress-nginx |
-| `platform/infra/aws/` | AWS: VPC, EKS cluster, ECR registry, RDS PostgreSQL, IAM OIDC |
-| `platform/infra/gcp/` | GCP: GKE Autopilot, Artifact Registry, Cloud SQL, Workload Identity |
-| `platform/infra/argocd/` | Argo CD `Application` manifest for GitOps mode |
-| `platform/infra/ci/` | GitHub Actions workflows for direct and GitOps CI modes |
+| `cli/platform/infra/base/` | Generic Kubernetes substrate: namespaces, RBAC, cert-manager, ingress-nginx |
+| `cli/platform/infra/aws/` | AWS: VPC, EKS cluster, ECR registry, RDS PostgreSQL, IAM OIDC |
+| `cli/platform/infra/gcp/` | GCP: GKE Autopilot, Artifact Registry, Cloud SQL, Workload Identity |
+| `cli/platform/infra/argocd/` | Argo CD `Application` manifest for GitOps mode |
+| `cli/platform/infra/ci/` | GitHub Actions workflows for direct and GitOps CI modes |
 
 These modules are **starting points**. They express Sol's opinion about a
 minimal, secure substrate. Modify them freely to match your organization's

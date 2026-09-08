@@ -42,9 +42,9 @@ datasources:
     url: http://prometheus-server.%s.svc.cluster.local:80
     isDefault: false|} namespace
 
-(* CODE_LAYER-007: platform/infra/base/dashboards/*.json is now the single
+(* CODE_LAYER-007: cli/platform/infra/base/dashboards/*.json is now the single
    source of Sol's four generic Grafana dashboards -- both `sol dev up`
-   (here) and platform/infra/base/main.tf's `kubernetes_config_map.grafana_dashboards`
+   (here) and cli/platform/infra/base/main.tf's `kubernetes_config_map.grafana_dashboards`
    (via Terraform's own `file(...)`) load from the same files, instead of
    a second, hand-synced OCaml copy per dashboard. Resolves SOL_HOME
    itself (same pattern as Sol_cli_platform_component.merged_values_yaml
@@ -58,7 +58,7 @@ datasources:
    cluster's existing ConfigMap). *)
 let read_dashboard_json ~sol_home name =
   let path = Filename.concat sol_home
-    (Filename.concat "platform/infra/base/dashboards" name) in
+    (Filename.concat "cli/platform/infra/base/dashboards" name) in
   let ic = open_in_bin path in
   Fun.protect ~finally:(fun () -> close_in_noerr ic)
     (fun () -> really_input_string ic (in_channel_length ic))
@@ -68,7 +68,7 @@ let dashboard_configmap_yaml ~namespace =
     | Some dir -> dir
     | None ->
       Printf.eprintf
-        "error: cannot locate the Sol monorepo root to read platform/infra/base/dashboards/*.json.\n";
+        "error: cannot locate the Sol monorepo root to read cli/platform/infra/base/dashboards/*.json.\n";
       Printf.eprintf "  Set SOL_HOME to your Sol checkout and re-run:\n";
       Printf.eprintf "    export SOL_HOME=/path/to/sol\n";
       exit 1
@@ -119,7 +119,7 @@ let tempo_datasource_configmap_yaml ~namespace =
    standalone `grafana` chart instead, that auto-provisioning is gone and
    must be replaced explicitly -- every dashboard above references a
    datasource named exactly "Loki". Matches
-   platform/infra/base's helm_release.grafana bundle:
+   cli/platform/infra/base's helm_release.grafana bundle:
    kubernetes_config_map.grafana_loki_datasource. *)
 (* OBS-042: derivedFields turns a trace_id in a Loki log line into a click-
    through to its Tempo waterfall. matcherRegex must match obs-loki-eio's
@@ -149,9 +149,9 @@ let loki_datasource_configmap_yaml ~namespace =
     ~labels:["grafana_datasource", "1"]
     ~data:["loki.yaml", loki_datasource_yaml]
 
-(* CODE_LAYER-006: platform/infra/base/alloy/logs.alloy.tftpl is now the
+(* CODE_LAYER-006: cli/platform/infra/base/alloy/logs.alloy.tftpl is now the
    single source of Alloy's River log-shipping config -- both `sol dev up`
-   (here) and platform/infra/base/main.tf's `helm_release.alloy` (via
+   (here) and cli/platform/infra/base/main.tf's `helm_release.alloy` (via
    Terraform's own `templatefile()`) render from that one file. This is a
    minimal, literal-substring templater for exactly the three constructs
    that file uses: `${var}` interpolation, one
@@ -218,7 +218,7 @@ let basic_auth_if_end = "%{ endif ~}\n"
 
 let render_alloy_config ~sol_home ~taxonomy_labels ~loki_push_url
     ~loki_push_basic_auth_username ~loki_push_basic_auth_password =
-  let path = Filename.concat sol_home "platform/infra/base/alloy/logs.alloy.tftpl" in
+  let path = Filename.concat sol_home "cli/platform/infra/base/alloy/logs.alloy.tftpl" in
   let ic = open_in_bin path in
   let content =
     Fun.protect ~finally:(fun () -> close_in_noerr ic)
@@ -247,7 +247,7 @@ let render_alloy_config ~sol_home ~taxonomy_labels ~loki_push_url
 
 (* `sol dev up`'s local profile: push straight to the in-cluster Loki, no
    basic auth (`sol dev up` has no "external backend" concept), the same
-   fixed taxonomy label set platform/infra/base/main.tf's
+   fixed taxonomy label set cli/platform/infra/base/main.tf's
    local.observability_taxonomy_labels passes for every profile.
    Resolves the Sol monorepo root itself (same resolution
    Sol_cli_platform_component.merged_values_yaml and `sol cloud`'s
@@ -258,7 +258,7 @@ let alloy_values_yaml () =
     | Some dir -> dir
     | None ->
       Printf.eprintf
-        "error: cannot locate the Sol monorepo root to read platform/infra/base/alloy/logs.alloy.tftpl.\n";
+        "error: cannot locate the Sol monorepo root to read cli/platform/infra/base/alloy/logs.alloy.tftpl.\n";
       Printf.eprintf "  Set SOL_HOME to your Sol checkout and re-run:\n";
       Printf.eprintf "    export SOL_HOME=/path/to/sol\n";
       exit 1
