@@ -84,13 +84,13 @@ sol/
   # Findlib name: `pg-eio`. Public modules unchanged: `Storage_error`, `Db`,
   # `Migration`, `Table`. No `integrations/storage/` directory remains in this repo.
   # aws-eio (SigV4 signing, credential resolution, HTTP transport — the foundation
-  # layer for planned AWS integrations) lives at a standalone opam package,
-  # ~/Code/aws-eio, opam-pinned into this switch. Extracted before any in-tree
-  # consumer existed (unlike kafka-eio/obs-eio/pg-eio, which were pulled out after
-  # real usage) — see aws-audit.md (repo root) for the layer plan. Edit there, then
-  # `opam pin add aws-eio ~/Code/aws-eio` to pick up changes. Findlib name:
-  # `aws-eio`. No `integrations/aws/` directory remains in this repo yet — nothing
-  # in Sol consumes this package today.
+  # layer for AWS integrations) lives at a standalone opam package, ~/Code/aws-eio,
+  # opam-pinned into this switch, alongside its s3-eio/dynamodb-eio/lambda-eio
+  # siblings (each its own standalone package, own repo). Extracted before any
+  # in-tree consumer existed (unlike kafka-eio/obs-eio/pg-eio, which were pulled
+  # out after real usage). Edit there, then `opam pin add aws-eio ~/Code/aws-eio`
+  # to pick up changes. Findlib name: `aws-eio`. No `integrations/aws/` directory
+  # remains in this repo yet — nothing in Sol consumes this package today.
   framework/                   ← Sol service primitives
     sol-svc/lib/                ← REST API service (routes, auth, metrics)
     sol-worker/lib/             ← Kafka consumer (schema registration, per-message metrics)

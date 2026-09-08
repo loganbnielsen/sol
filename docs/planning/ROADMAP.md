@@ -53,10 +53,10 @@ Every roadmap item should strengthen one of these goals. A feature that increase
 | Production deployment pipeline (`sol deploy`, Terraform, Argo CD) | Complete |
 | Progressive delivery (`[infra.rollout]`, Argo Rollouts) | Complete |
 | Cloud infrastructure (`sol cloud plan/apply/destroy`) | Provisions AWS EKS+ECR or GCP GKE+Artifact Registry via Terraform — experimental, live plan tested against AWS |
-| AWS application-level integration (`aws-eio`: credentials + SigV4 + HTTP transport) | Complete — proven against a live AWS endpoint (see `aws-audit.md`) |
-| AWS S3 client (`s3-eio`) | Extracted to a [standalone package](https://github.com/loganbnielsen/s3-eio) — v1 scope (put/get/delete/head_object) built, local tests passing; live smoke test written, not yet run against a real bucket |
-| AWS DynamoDB client (`dynamodb-eio`) | Extracted to a [standalone package](https://github.com/loganbnielsen/dynamodb-eio) — v1 scope (Client + typed Index/Entity layer) built, local tests passing; live smoke test written, not yet run against a real table |
-| AWS Lambda integration (`lambda-eio`) | Extracted to a [standalone package](https://github.com/loganbnielsen/lambda-eio) — local tests passing (protocol tested end to end against a local mock server and AWS's Runtime Interface Emulator); container-image deployment path proven via `examples/echo-lambda/`, not yet run in a real Lambda execution environment on AWS itself. `sol-fn`'s `FN.trigger` variant (`Cron`/`Lambda`) wired in |
+| AWS application-level integration (`aws-eio`: credentials + SigV4 + HTTP transport) | Complete — proven against a live AWS endpoint |
+| AWS S3 client (`s3-eio`) | Extracted to a [standalone package](https://github.com/loganbnielsen/s3-eio) — v1 scope (put/get/delete/head_object) built and live-tested against a real bucket (put/head/get/delete round trip + the 404 path) |
+| AWS DynamoDB client (`dynamodb-eio`) | Extracted to a [standalone package](https://github.com/loganbnielsen/dynamodb-eio) — v1 scope (Client + typed Index/Entity layer) built and live-tested against a real table (put/get/delete round trip + the missing-key path, plus CAS/create-iff-missing); newer `Remove`/`Add`/`Delete`/`And`/`Or`/`Not_equals` update-op coverage added but not yet run live |
+| AWS Lambda integration (`lambda-eio`) | Extracted to a [standalone package](https://github.com/loganbnielsen/lambda-eio) — protocol proven at three levels: local mock server, AWS's Runtime Interface Emulator, and a real deployed Lambda function (`examples/echo-lambda/test-e2e.sh` — builds, pushes to ECR, deploys, invokes twice for real, tears down with independently-confirmed teardown). `sol-fn`'s `FN.trigger` variant (`Cron`/`Lambda`) wired in |
 
 ---
 
