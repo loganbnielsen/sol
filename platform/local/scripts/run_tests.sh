@@ -157,7 +157,7 @@ ensure_infra() {
 
 reset_infra() {
   header "Reset infrastructure"
-  for container in redpanda sol-postgres loki prometheus pushgateway sol-registry; do
+  for container in redpanda sol-postgres loki prometheus pushgateway grafana tempo sol-registry; do
     if docker ps -a --format '{{.Names}}' | grep -q "^${container}$"; then
       info "Removing container: ${container}"
       docker rm -f "${container}" >/dev/null
