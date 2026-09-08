@@ -101,6 +101,26 @@ resource "terraform_data" "observability_backend_validation" {
   }
 }
 
+# OBS-044: managed-resource dashboards (RDS today) are CloudWatch-backed and
+# need Grafana's own pod to carry an IRSA role -- same "AWS/EKS only because
+# it uses IRSA" constraint as self_hosted_durable above, plus the IRSA role
+# ARN itself.
+resource "terraform_data" "managed_resource_dashboards_validation" {
+  input = var.managed_resource_dashboards
+
+  lifecycle {
+    precondition {
+      condition     = length(var.managed_resource_dashboards) == 0 || var.cloud_provider == "aws"
+      error_message = "managed_resource_dashboards is currently supported only on AWS/EKS (CloudWatch-backed, requires IRSA)."
+    }
+
+    precondition {
+      condition     = length(var.managed_resource_dashboards) == 0 || trimspace(var.grafana_irsa_role_arn) != ""
+      error_message = "managed_resource_dashboards requires grafana_irsa_role_arn (from platform/infra/aws's grafana_irsa_arn output) so Grafana's CloudWatch datasource can authenticate."
+    }
+  }
+}
+
 # ── cert-manager ──────────────────────────────────────────────────────────── #
 
 resource "helm_release" "cert_manager" {
@@ -324,6 +344,30 @@ locals {
   # instead of local disk.
   loki_install_local = var.observability_backend != "external"
 
+  # Managed resource dashboards (OBS-044) need a real local Grafana to
+  # provision into, a real CloudWatch to query, and Grafana's own IRSA role
+  # to authenticate -- gate on all three rather than letting the CloudWatch
+  # datasource/dashboard ConfigMaps silently no-op on a partial config.
+  managed_resource_dashboards_enabled = (
+    local.loki_install_local &&
+    var.cloud_provider == "aws" &&
+    length(var.managed_resource_dashboards) > 0
+  )
+
+  managed_resource_types = toset([for r in values(var.managed_resource_dashboards) : r.resource_type])
+
+  # One representative entry per resource_type -- the dashboard template is
+  # shaped by resource_type (which CloudWatch namespace/dimension/metric set
+  # it queries), not by the specific instance identifier. The instance
+  # identifier is resolved live via the dashboard's own "resource" template
+  # variable (a CloudWatch dimension_values() query) -- same live-label-
+  # driven templating philosophy as the domain/service dashboards' Loki/
+  # Prometheus label_values() variables (OBS-011) above.
+  managed_resource_by_type = {
+    for t in local.managed_resource_types :
+    t => [for r in values(var.managed_resource_dashboards) : r if r.resource_type == t][0]
+  }
+
   # ADR 0001 / CODE_LAYER-005: platform/components/<name>/ is now the shared
   # source of truth for Helm values that used to be independently
   # hand-duplicated here and in cmd_dev.ml (sol dev up). "local" is the same
@@ -498,9 +542,90 @@ resource "helm_release" "grafana" {
   # subchart did this implicitly; this standalone chart needs it explicit)
   # now lives in platform/components/grafana/values-common.json (ADR 0001 /
   # CODE_LAYER-005), shared with cmd_dev.ml's own Grafana install.
-  values = local.grafana_component_values
+  #
+  # OBS-044: serviceAccount.annotations is the chart's own documented IRSA
+  # example (`helm show values grafana-community/grafana --version 13.2.1`)
+  # -- only appended when a managed-resource dashboard actually needs
+  # Grafana's pod to authenticate to CloudWatch; every other environment
+  # gets the chart's own default (unannotated) ServiceAccount, unchanged.
+  values = concat(
+    local.grafana_component_values,
+    local.managed_resource_dashboards_enabled ? [yamlencode({
+      serviceAccount = {
+        annotations = {
+          "eks.amazonaws.com/role-arn" = var.grafana_irsa_role_arn
+        }
+      }
+    })] : []
+  )
 
-  depends_on = [terraform_data.observability_backend_validation]
+  depends_on = [
+    terraform_data.observability_backend_validation,
+    terraform_data.managed_resource_dashboards_validation,
+  ]
+}
+
+# CloudWatch datasource for Grafana (OBS-044) -- feeds the managed-resource
+# dashboard(s) below. authType "default" uses the AWS SDK's default
+# credential chain, which resolves via Grafana's own pod IRSA role
+# (helm_release.grafana's serviceAccount annotation above) rather than
+# static keys -- same no-static-credentials posture as Loki/Thanos's IRSA
+# roles.
+resource "kubernetes_config_map" "grafana_cloudwatch_datasource" {
+  count = local.managed_resource_dashboards_enabled ? 1 : 0
+
+  metadata {
+    name      = "grafana-cloudwatch-datasource"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+    labels    = { grafana_datasource = "1" }
+  }
+
+  data = {
+    "cloudwatch.yaml" = yamlencode({
+      apiVersion = 1
+      datasources = [{
+        name   = "CloudWatch"
+        type   = "cloudwatch"
+        access = "proxy"
+        jsonData = {
+          authType      = "default"
+          defaultRegion = var.aws_region
+        }
+      }]
+    })
+  }
+
+  depends_on = [helm_release.grafana, terraform_data.managed_resource_dashboards_validation]
+}
+
+# Managed resource dashboard(s) (OBS-044) -- one Grafana dashboard per
+# distinct resource_type in var.managed_resource_dashboards, rendered from
+# the single shared dashboards/managed-resource.json.tftpl template. RDS is
+# the only resource_type Sol provisions today (see
+# platform/infra/aws/main.tf's local.managed_resources); a future managed
+# datastore of a new resource_type gets a dashboard the moment it appears in
+# managed_resource_dashboards, with no new Terraform resource or template
+# needed here.
+resource "kubernetes_config_map" "grafana_managed_resource_dashboards" {
+  for_each = local.managed_resource_dashboards_enabled ? local.managed_resource_by_type : {}
+
+  metadata {
+    name      = "sol-grafana-dashboard-managed-resource-${each.key}"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+    labels    = { grafana_dashboard = "1" }
+  }
+
+  data = {
+    "managed-resource-${each.key}.json" = templatefile("${path.module}/dashboards/managed-resource.json.tftpl", {
+      resource_type        = each.key
+      cloudwatch_namespace = each.value.cloudwatch_namespace
+      dimension_name       = each.value.dimension_name
+      metrics              = each.value.metrics
+      region               = var.aws_region
+    })
+  }
+
+  depends_on = [helm_release.grafana, terraform_data.managed_resource_dashboards_validation]
 }
 
 # Alloy -- Promtail's official successor (Promtail itself reached

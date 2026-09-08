@@ -166,6 +166,44 @@ The dashboard should filter by Sol labels, not by namespace/pod names. A
 single incident often crosses an HTTP service, Kafka worker, scheduled
 function, database, and deploy event — cross-domain search is the point.
 
+### Managed resource dashboards (OBS-044)
+
+The tiers above cover application services (workspace/domain/service).
+They do not cover managed infrastructure resources Sol provisions directly
+on the user's behalf — RDS PostgreSQL today, and potentially other managed
+datastores in the future. Those resources emit their own operational
+signal (CPU, connections, storage, IOPS, ...) through the cloud provider's
+own metrics system (CloudWatch on AWS), not through Sol's Loki/Prometheus
+pipeline, but a user still shouldn't have to leave Sol for the raw provider
+console to see it — that cuts against the "you shouldn't need to learn
+AWS" positioning (`docs/architecture/PRODUCT_ARCHITECTURE.md`).
+
+A **managed resource dashboard** is a fourth tier, scoped by
+`resource/<type>/<name>` (e.g. `resource/rds/acme-prod-postgres`) rather
+than by `workspace/domain/service`:
+
+- `platform/infra/aws/main.tf` describes each managed resource generically
+  (`local.managed_resources`: name -> `{resource_type,
+  cloudwatch_namespace, dimension_name, dimension_value, metrics}`) and
+  provisions a native CloudWatch dashboard per entry plus an IRSA role
+  granting Grafana's own pod read access to CloudWatch metrics.
+- `platform/infra/base/main.tf` provisions one Grafana dashboard per
+  distinct `resource_type` (not per resource instance) from a single
+  shared template (`dashboards/managed-resource.json.tftpl`), wired to a
+  CloudWatch Grafana datasource. The dashboard's `resource` template
+  variable resolves live via a CloudWatch `dimension_values()` query — the
+  same live-label-driven templating philosophy the domain/service
+  dashboards already use for Loki/Prometheus label values.
+- `sol open dashboard resource/<type>/<name>` and `sol status` resolve and
+  print this dashboard the same way they resolve workspace/domain/service
+  scopes, via `Sol_cli_open`'s `Resource` scope variant.
+
+The mechanism is generic by resource type, not RDS-specific: RDS is the
+first (and, per OBS-044's scope, currently only) entry. A future managed
+datastore (e.g. DynamoDB, if Sol ever provisions it directly) plugs into
+the same map/template/CLI-scope pattern rather than requiring a second
+one-off dashboard implementation.
+
 ## Hosted Path
 
 Future Sol-hosted observability should keep the same shape:

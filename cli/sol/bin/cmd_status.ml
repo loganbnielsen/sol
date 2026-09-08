@@ -133,7 +133,17 @@ let print_open_block ~scope =
   Printf.printf "\nOpen\n";
   Printf.printf "  logs       sol open logs%s\n" suffix;
   Printf.printf "  metrics    sol open metrics%s\n" suffix;
-  Printf.printf "  dashboard  sol open dashboard%s\n%!" suffix
+  Printf.printf "  dashboard  sol open dashboard%s\n" suffix;
+  (* Managed resource dashboards (OBS-044, e.g. RDS) are workspace-wide
+     infrastructure, not domain/service-scoped -- only hinted at the
+     workspace view, and as a generic command form (sol has no manifest of
+     which managed resources are actually deployed to enumerate a real
+     one here). *)
+  if scope = "" then
+    Printf.printf
+      "  resource   sol open dashboard resource/<type>/<name>  \
+       (e.g. resource/rds/<db-identifier>)\n";
+  flush stdout
 
 (* ── Raw Kubernetes Diagnostics ─────────────────────────────────────────── *)
 
@@ -285,6 +295,17 @@ let run scope_str explicit_backend explicit_base_domain target
     in
     print_workspace_index ~workspace ~domains:all_domains ~backend
       ~explicit_loki_url ~explicit_prometheus_url
+  | Sol_cli_open.Resource (resource_type, resource_name) ->
+    (* Managed resources (OBS-044, e.g. RDS) have no Kubernetes namespace to
+       probe and sol has no AWS SDK dependency to query CloudWatch's own
+       health directly (aws-eio is pinned into this switch but nothing in
+       Sol consumes it yet) -- 'sol status resource/...' points at the
+       dashboard rather than fabricating a health rollup it can't actually
+       check. *)
+    Printf.printf "\n%s/%s  (managed resource)\n" resource_type resource_name;
+    Printf.printf "\nOpen\n";
+    Printf.printf "  dashboard  sol open dashboard resource/%s/%s\n%!"
+      resource_type resource_name
   | Sol_cli_open.Domain domain | Sol_cli_open.Service (domain, _) ->
     if not (List.mem domain all_domains) then begin
       Printf.eprintf "Domain '%s' not found in app/.\n" domain;
