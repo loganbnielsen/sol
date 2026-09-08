@@ -207,10 +207,20 @@ let aws_no_ecr_repositories ~region ~workspace_name =
     Printf.eprintf "error: AWS ECR verification failed: aws CLI unavailable.\n";
     false
 
-let aws_no_load_balancers ~region ~cluster_name =
-  (* Works for both Classic ELB and ALB/NLB uniformly: the in-cluster AWS
-     cloud-controller tags every load balancer it creates for a Service
-     with kubernetes.io/cluster/<cluster-name>, regardless of LB type. *)
+(* Works for both Classic ELB and ALB/NLB uniformly: the in-cluster AWS
+   cloud-controller tags every load balancer it creates for a Service with
+   kubernetes.io/cluster/<cluster-name>, regardless of LB type. Only
+   covers that in-tree tagging convention -- a load balancer created by
+   the standalone AWS Load Balancer Controller instead tags primarily with
+   elbv2.k8s.aws/cluster, which this does not check. Not a gap today
+   (platform/infra/base/main.tf only installs ingress-nginx, which uses
+   the in-tree cloud-controller path), but would need extending if Sol
+   ever supports the standalone LBC.
+
+   Returns None (not a bool) on a query failure so callers can tell "no
+   load balancers" apart from "couldn't check" -- the two calling sites
+   below need to react differently to each. *)
+let load_balancers_gone ~region ~cluster_name =
   let tag_key = Printf.sprintf "kubernetes.io/cluster/%s" cluster_name in
   match Sol_cli_process.run
           (Sol_cli_process.cmd
@@ -220,16 +230,18 @@ let aws_no_load_balancers ~region ~cluster_name =
               "--query"; "ResourceTagMappingList[].ResourceARN";
               "--output"; "text"; "--region"; region])
   with
-  | Ok r when r.Sol_cli_process.exit_code = 0 && String.trim r.Sol_cli_process.stdout = "" -> true
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    Printf.eprintf "error: AWS load balancer(s) still exist after destroy: %s\n"
-      r.Sol_cli_process.stdout;
+  | Ok r when r.Sol_cli_process.exit_code = 0 -> Some (String.trim r.Sol_cli_process.stdout = "")
+  | _ -> None
+
+let aws_no_load_balancers ~region ~cluster_name =
+  match load_balancers_gone ~region ~cluster_name with
+  | Some true -> true
+  | Some false ->
+    Printf.eprintf "error: AWS load balancer(s) still exist after destroy \
+                     (tag kubernetes.io/cluster/%s).\n" cluster_name;
     false
-  | Ok r ->
-    Printf.eprintf "error: AWS load balancer verification failed: %s\n" r.Sol_cli_process.stderr;
-    false
-  | Error _ ->
-    Printf.eprintf "error: AWS load balancer verification failed: aws CLI unavailable.\n";
+  | None ->
+    Printf.eprintf "error: AWS load balancer verification failed: aws CLI unavailable or errored.\n";
     false
 
 (* AUDIT-064: a Kubernetes Service of type LoadBalancer (ingress-nginx's,
@@ -276,11 +288,17 @@ let delete_loadbalancer_services ~region ~cluster_name =
     (match temp_context with
      | None -> ()
      | Some context ->
+       (* Kubernetes' field selectors on core/v1 Service only support
+          metadata.name/metadata.namespace -- "spec.type=LoadBalancer" is
+          rejected outright by every API server (confirmed live against a
+          real cluster; this is standard apiserver behavior, not
+          version-specific). Filter inside the jsonpath range expression
+          instead, which does support arbitrary field predicates. *)
        (match Sol_cli_process.run ~echo:false
                 (Sol_cli_process.cmd ~timeout_s:20.
                    ["kubectl"; "--context"; context; "get"; "svc"; "-A";
-                    "--field-selector"; "spec.type=LoadBalancer";
-                    "-o"; "jsonpath={range .items[*]}{.metadata.namespace} {.metadata.name}\n{end}"])
+                    "-o"; {|jsonpath={range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.namespace} {.metadata.name}
+{end}|}])
         with
         | Ok r when r.Sol_cli_process.exit_code = 0 ->
           let services =
@@ -303,9 +321,23 @@ let delete_loadbalancer_services ~region ~cluster_name =
             ) services;
             (* kubectl delete on a LoadBalancer Service returns once the k8s
                object is gone, but AWS deprovisions the actual ELB/NLB
-               asynchronously -- give it a moment before terraform destroy
-               tries to tear down the VPC/subnets underneath it. *)
-            Unix.sleepf 30.
+               asynchronously. Poll the same tag-based check
+               verify_aws_destroy uses (bounded, same shape as
+               cmd_migrate.ml's FRIC-012 Job-completion poll) rather than a
+               fixed sleep, which either wastes time or -- worse -- isn't
+               long enough under AWS API backpressure or a slow NLB
+               deprovision. *)
+            let rec wait_for_lbs_gone n =
+              if n = 0 then
+                Printf.printf "  (warning: load balancer(s) may still be deprovisioning \
+                                after ~2min -- proceeding to terraform destroy anyway; \
+                                the post-destroy check will catch it if one is still \
+                                there)\n%!"
+              else match load_balancers_gone ~region ~cluster_name with
+                | Some true -> ()
+                | Some false | None -> Unix.sleepf 5.; wait_for_lbs_gone (n - 1)
+            in
+            wait_for_lbs_gone 24 (* ~120s at 5s/poll *)
           end
         | _ ->
           Printf.printf "  (could not list Services in cluster %s -- skipping \
