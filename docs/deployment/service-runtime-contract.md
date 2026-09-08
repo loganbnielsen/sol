@@ -91,23 +91,33 @@ wrong:
 
 ## Config and secret injection — the wiring is real, the naming is trusted
 
-There are two distinct Secret objects per namespace, easy to conflate:
+There are two distinct Secret objects per namespace, and only one of them is
+actually mounted by any generated workload:
 
-- A standard Kubernetes `Deployment` gets `envFrom: secretRef: name: <k8s-name>-secrets`
-  — a **per-service** Secret (`sol_cli_manifest_yaml.ml`'s `secret_doc`),
-  e.g. `charge-svc-secrets`.
-- A service using Argo Rollout-based progressive delivery instead reads from
-  a single shared, fixed-name Secret, `sol-secrets`
-  (`Sol_cli_manifest.runtime_secret_name`). FRIC-012's in-cluster migration
-  Job also mounts `sol-secrets` directly via `envFrom`.
+- Both a standard `Deployment` (`deployment_doc`) and an Argo Rollout
+  (`rollout_doc`) get `envFrom: secretRef: name: <k8s-name>-secrets` — a
+  **per-service** Secret (`sol_cli_manifest_yaml.ml`'s `secret_doc`), e.g.
+  `charge-svc-secrets`. Verified directly: `rollout_doc`'s `envFrom` block
+  references the same `%s-env`/`%s-secrets` per-service names as
+  `deployment_doc`'s (indentation differs only because it's nested one level
+  deeper inside the Rollout's pod template) — there is no behavioral
+  difference here between the two rollout strategies.
+- A separate, fixed-name Secret, `sol-secrets`
+  (`Sol_cli_manifest.runtime_secret_name`), currently has **no workload Pod
+  consumer at all** in any generated manifest. Its only actual consumer today
+  is FRIC-012's in-cluster migration Job, which mounts it directly via
+  `envFrom`. A comment in `sol_cli_secret.ml` describes patching it as being
+  "for Argo Rollout workloads," but that doesn't match what `rollout_doc`
+  currently generates — the comment appears to describe an intent that isn't
+  (or isn't yet) wired up in the manifest-rendering code.
 
-`sol secret set` (`sol_cli_secret.ml`) writes to **both** representations on
-every call, specifically so the update reaches a workload correctly no matter
-which rollout mechanism it uses: it patches the shared `sol-secrets` object,
-then patches every per-service `<name>-secrets` Secret it finds in the
-namespace (`patch_workload_secrets`), then triggers a rollout restart so a
-standard Deployment picks the change up immediately rather than waiting for
-its next natural restart.
+`sol secret set` (`sol_cli_secret.ml`) still writes to **both** objects on
+every call: it patches the shared `sol-secrets` Secret, then patches every
+per-service `<name>-secrets` Secret it finds in the namespace
+(`patch_workload_secrets`), then triggers a rollout restart. Given the above,
+only the per-service patch currently has any effect on a running workload —
+the `sol-secrets` write updates an object nothing reads except the migration
+Job.
 
 This is real, mechanical wiring in both directions — but what's **not**
 checked in either case is that your application code actually reads the
