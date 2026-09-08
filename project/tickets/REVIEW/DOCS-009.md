@@ -3,6 +3,9 @@ id: DOCS-009
 type: feature
 severity: medium
 source: chat discussion 2026-09-07 — questioning whether "compiler-checked correctness" claims about Sol's orchestration were actually accurate
+branch: DOCS-009/service-runtime-contract
+worktree: ../sun-DOCS-009-service-runtime-contract
+pr: https://github.com/loganbnielsen/sol/pull/150
 ---
 
 **Depends on:** None.
