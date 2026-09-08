@@ -28,3 +28,7 @@ Rename `project/` to `pipeline/`
 - Update CI workflows or hooks (`tools/hooks/pre-commit`, `tools/hooks/post-commit`, `tools/ci/*`) if they reference `project/` paths.
 - Grep the whole repo for `project/tickets`, `project/audits`, `project/dogfood`, and bare `project/` to catch anything missed.
 - Run the full local test suite before submitting, and specifically exercise `soldev pipeline submit/review/merge` end-to-end against a scratch ticket to confirm the rename didn't break the pipeline CLI's own path handling.
+
+## Review — real CI confirmed green (2026-09-08)
+
+Implementer substituted a real submit/review/merge cycle (which would push branches and open/merge real GitHub PRs) with `soldev pipeline ls/check` against all ~190 real tickets. Review audited `tools/soldev/lib/soldev_merge.ml`/`soldev_ticket.ml` and confirmed a single shared `ticket_dir` function is the sole source of truth for all path construction, with no missed dynamic sites — so exercising `ls`/`check` genuinely validates the same code path `submit`/`merge` would use. Judged sufficient; no bounce. Independently re-ran the full local suite (pass) and re-confirmed no hidden `project/` references in CI workflows/hooks. PR #161's actual GitHub Actions run (34276047382) is fully green: `test` (the job that caught REFAC-071's regression) passed clean, all 4 dockerfile-smokes passed, `golden-path-smoke` passed (18m49s). Promoting on confirmed real-CI green.
