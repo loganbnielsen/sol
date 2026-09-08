@@ -48,3 +48,21 @@ A generic multi-cloud adapter interface or `cloud_provider`-branching helper
 library. Build the GCP-side module for whichever contract a real feature
 needs first, matching `aws/`'s existing shape; only generalize once a
 second concrete case shows what's actually shared.
+
+## Scope note (added at review)
+
+This ticket delivered Layer 1 only: `platform/infra/gcp` now has the GCS +
+Workload Identity module (`loki_gcs_bucket`, `loki_workload_identity_sa_email`,
+`thanos_gcs_bucket`, `thanos_workload_identity_sa_email` — 1:1 with `aws/`'s
+`loki_s3_bucket`/`loki_irsa_arn`/etc.), validated via `terraform fmt`/`validate`
+(no live GCP account available to go further). It does **not** wire these
+outputs into `platform/infra/base`, and does not touch
+`platform/components/loki/values-durable.json`'s hardcoded `storage.type =
+"s3"`/`object_store = "s3"` — doing that blind, without a live GCP cluster to
+validate the Helm chart's GCS mode against, risked regressing the
+currently-working AWS path. OBS-034's `cloud_provider` gate therefore still
+rejects `gcp` + `self_hosted_durable` after this ticket — that's expected,
+not a regression. The remaining wiring is tracked as [[INFRA-005]].
+
+## Review — automated checks passed
+GCS+Workload Identity module validated (terraform fmt/validate clean, no live GCP account needed for that), output shapes confirmed 1:1 with aws/'s S3+IRSA outputs; deliberate Layer-1-only scope now documented on the ticket, base-wiring follow-up filed as INFRA-005
