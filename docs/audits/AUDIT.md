@@ -1,32 +1,32 @@
-# Sun Framework: Production Readiness Audit
+# Sol Framework: Production Readiness Audit
 
 This is a reusable audit template. When performing an audit, copy this file (e.g., `AUDIT_FINDINGS_03.md`), work through the checklist and runbook sections, and record every finding in the Findings section of your copy using the format at the bottom. Do not record findings in this file — it is the blank exam, not the answer sheet.
 
-**What this audits:** Whether Sun is staying true to its core promise — that a startup using this framework gets security, reliability, and observability as defaults, not afterthoughts. Every section maps to a principle Sun holds. A passing audit means the principle holds in the current codebase.
+**What this audits:** Whether Sol is staying true to its core promise — that a startup using this framework gets security, reliability, and observability as defaults, not afterthoughts. Every section maps to a principle Sol holds. A passing audit means the principle holds in the current codebase.
 
-**Mission alignment lens:** Sun is a production platform for startups built around autonomous domain teams and typed event contracts. When a checklist item passes technically but weakens domain autonomy, typed event ownership, generated infrastructure, explicit security, or AI-agent-friendly conventions, record that as a finding. Operational correctness is necessary but not sufficient.
+**Mission alignment lens:** Sol is a production platform for startups built around autonomous domain teams and typed event contracts. When a checklist item passes technically but weakens domain autonomy, typed event ownership, generated infrastructure, explicit security, or AI-agent-friendly conventions, record that as a finding. Operational correctness is necessary but not sufficient.
 
 ---
 
 ## 1. Local Developer Loop & CLI Contracts
 
-Sun must eliminate "it works on my machine" syndrome. The local loop must mirror production architectures without introducing operational overhead.
+Sol must eliminate "it works on my machine" syndrome. The local loop must mirror production architectures without introducing operational overhead.
 
-**Source locations:** `cli/sun/bin/` · `cli/sun/lib/sun_cli_scaffold.ml`
+**Source locations:** `cli/sol/bin/` · `cli/sol/lib/sol_cli_scaffold.ml`
 
 ### Checklist
 
-* [ ] **Zero-Knowledge Onboarding:** `sun new workspace <name>` generates a fully compiling, zero-warnings codebase on the first try. Library names are workspace-namespaced to prevent collisions in multi-workspace monorepos.
-* [ ] **Atomic CLI Transactions:** If `sun up` or `sun deploy` fails mid-run (Docker build error, manifest validation failure), the CLI exits non-zero and leaves no partially-applied, orphaned resources in the cluster. There is no "half-deployed" state.
+* [ ] **Zero-Knowledge Onboarding:** `sol new workspace <name>` generates a fully compiling, zero-warnings codebase on the first try. Library names are workspace-namespaced to prevent collisions in multi-workspace monorepos.
+* [ ] **Atomic CLI Transactions:** If `sol up` or `sol deploy` fails mid-run (Docker build error, manifest validation failure), the CLI exits non-zero and leaves no partially-applied, orphaned resources in the cluster. There is no "half-deployed" state.
 * [ ] **Hermetic Test Harnesses:** The E2E test sequence does not rely on ambient `sleep N` timing, manual port-forwards, or host-level broker state. Infrastructure setup is fully scripted and idempotent.
 
 ---
 
 ## 2. Infrastructure Synthesis & Deployment Engine
 
-Sun generates Kubernetes and Kafka topologies from OCaml definitions. The synthesis engine must be deterministic and structurally secure by default — a startup should not need to understand Kubernetes security internals to ship a hardened deployment.
+Sol generates Kubernetes and Kafka topologies from OCaml definitions. The synthesis engine must be deterministic and structurally secure by default — a startup should not need to understand Kubernetes security internals to ship a hardened deployment.
 
-**Source locations:** `cli/sun/lib/sun_cli_manifest.ml`
+**Source locations:** `cli/sol/lib/sol_cli_manifest.ml` · `cli/sol/lib/sol_cli_manifest_yaml.ml`
 
 ### Checklist
 
@@ -36,8 +36,8 @@ Sun generates Kubernetes and Kafka topologies from OCaml definitions. The synthe
 * [ ] **Services use ClusterIP + Ingress, never NodePort:** Generated `Service` resources use `type: ClusterIP`. HTTP services generate an `Ingress` with TLS redirect.
 * [ ] **NetworkPolicy is generated for every workload:** Each workload gets a `NetworkPolicy` restricting ingress and egress to only what it needs (ingress-nginx, in-cluster pods, Redpanda, PostgreSQL, monitoring namespaces, DNS).
 * [ ] **`kubectl apply` paths are shell-injection safe:** Temp file paths passed to `Sys.command` are wrapped with `Filename.quote`.
-* [ ] **Escape hatches via `sun.toml`:** A startup needing custom annotations, non-default resource limits, or a progressive rollout strategy can inject it via `sun.toml` without forking the framework.
-* [ ] **Generated infrastructure is a build artifact:** Kubernetes, Kafka, and NetworkPolicy YAML are synthesized deterministically from workspace structure and `sun.toml`; service repos do not require hand-committed per-workload manifests to deploy.
+* [ ] **Escape hatches via `sol.yml`/target files:** A startup needing custom annotations, non-default resource limits, or a progressive rollout strategy can inject it via `sol.yml` or a `sol/<env>/<provider>/<region>.yml` target file without forking the framework.
+* [ ] **Generated infrastructure is a build artifact:** Kubernetes, Kafka, and NetworkPolicy YAML are synthesized deterministically from workspace structure, `sol.yml`, and the resolved target file; service repos do not require hand-committed per-workload manifests to deploy.
 * [ ] **Team boundaries are reflected in infrastructure:** Namespaces, service accounts, Kafka topics, ACLs, and NetworkPolicies are derived from `app/<team>/...` and `events/<team>/...`, so domain ownership is visible and enforceable at runtime.
 
 ---
@@ -46,7 +46,7 @@ Sun generates Kubernetes and Kafka topologies from OCaml definitions. The synthe
 
 High performance must not compromise correctness. Every blocking librdkafka call must release the OCaml domain lock so the Eio scheduler can continue running. Generated worker code must enforce at-least-once semantics.
 
-**Source locations:** `integrations/kafka/kafka-eio-core/lib/kafka_stubs.c` · `integrations/kafka/kafka-eio-consumer/lib/kafka_consumer.ml` · `framework/sun-worker/lib/worker.ml` · `cli/sun/bin/cmd_new.ml`
+**Source locations:** `~/Code/kafka-eio/lib/kafka_stubs.c` · `~/Code/kafka-eio/lib/kafka_consumer.ml` (standalone `kafka-eio` opam package, opam-pinned into this switch — not in this repo) · `framework/sol-worker/lib/worker.ml` · `cli/sol/lib/sol_cli_cmd_new.ml`
 
 ### Checklist
 
@@ -63,18 +63,18 @@ High performance must not compromise correctness. Every blocking librdkafka call
 
 Startups rarely have dedicated SRE teams. The framework must surface failures with enough signal that a small team can debug production incidents without deep Kafka or OCaml expertise.
 
-**Source locations:** `integrations/kafka/kafka-eio-service/lib/kafka_service.ml` · `framework/sun-svc/lib/` · `framework/sun-fn/lib/`
+**Source locations:** `integrations/kafka/kafka-eio-service/lib/kafka_service.ml` · `framework/sol-svc/lib/` · `framework/sol-fn/lib/`
 
 ### Checklist
 
 * [ ] **Decode errors are observable:** `default_on_decode_error` emits a structured log line. There is a Prometheus counter for decode errors. Users can supply a custom callback that receives the raw message bytes to forward to a dead-letter topic.
 * [ ] **Zero-configuration distributed tracing:** `traceparent` (W3C) is extracted from Kafka headers by the consumer and injected by HTTP producers. The developer never manually threads trace context through business logic.
-* [ ] **Prometheus label cardinality protection:** `sun_svc_requests_total` uses the declared route pattern (e.g., `/users/:id`) as the `route` label, not the raw runtime path (`/users/10283`).
+* [ ] **Prometheus label cardinality protection:** `sol_svc_requests_total` uses the declared route pattern (e.g., `/users/:id`) as the `route` label, not the raw runtime path (`/users/10283`).
 * [ ] **Schema registry HTTP client supports TLS:** The schema registry and admin API client handles `https://` URLs. Production schema registry endpoints (Confluent Cloud, MSK, Redpanda Cloud) all require HTTPS.
-* [ ] **Migration tracking is workspace-isolated:** Schema migrations tracked by `sun migrate` use a workspace-prefixed table so multiple workspaces sharing a local database never collide.
+* [ ] **Migration tracking is workspace-isolated:** Schema migrations tracked by `sol migrate` use a workspace-prefixed table (`sol_<workspace>_schema_migrations`) so multiple workspaces sharing a local database never collide.
 * [ ] **No naked exceptions from storage or Kafka layers:** All DB and Kafka calls return `(_, error) result`. Uncaught exceptions must not reach Eio supervisor fibers.
 * [ ] **Generated telemetry names preserve ownership:** Metrics, logs, traces, and labels include stable workspace, domain, service, and primitive identifiers without high-cardinality labels.
-* [ ] **Incident paths stay inside Sun:** The documented path from alert/log/metric to service status, logs, rollback, and migration state uses Sun commands first; requiring raw `kubectl`, `rpk`, `terraform`, or cloud-provider CLIs is a finding unless explicitly scoped as an advanced escape hatch.
+* [ ] **Incident paths stay inside Sol:** The documented path from alert/log/metric to service status, logs, rollback, and migration state uses Sol commands first; requiring raw `kubectl`, `rpk`, `terraform`, or cloud-provider CLIs is a finding unless explicitly scoped as an advanced escape hatch.
 
 ---
 
@@ -86,12 +86,12 @@ Each item below is a concrete command sequence. A checklist item in sections 1�
 
 ```bash
 # 1. Fresh workspace scaffold — must compile with zero warnings
-sun new workspace audit_test
+sol new workspace audit_test
 cd audit_test
 eval $(opam env) && dune build 2>&1 | grep -i warning  # must be empty
 
 # 2. Bring up local infrastructure
-sun dev up
+sol dev up
 # All port-forwards must appear before the command exits
 
 # 3. Verify each service address is reachable
@@ -104,8 +104,8 @@ KAFKA_BROKERS=localhost:9092 dune exec examples/local-demo/bin/demo.exe 2>&1 | g
 
 **Invariants:**
 * [ ] `dune build` produces zero warnings on a freshly scaffolded workspace
-* [ ] `sun dev up` is idempotent — running it twice must not error or duplicate resources
-* [ ] All health endpoints return `200` within 10 seconds of `sun dev up` completing
+* [ ] `sol dev up` is idempotent — running it twice must not error or duplicate resources
+* [ ] All health endpoints return `200` within 10 seconds of `sol dev up` completing
 * [ ] A message produced in the demo reaches the worker and is logged without decode errors
 
 ---
@@ -115,13 +115,13 @@ KAFKA_BROKERS=localhost:9092 dune exec examples/local-demo/bin/demo.exe 2>&1 | g
 ```bash
 # 1. Simulate a Docker build failure
 echo "RUN this_command_does_not_exist" >> app/payments/charge_svc/Dockerfile
-sun up
+sol up
 # Expected: non-zero exit; no partially-running containers
 
-docker ps --filter label=sun.workspace=audit_test  # must be empty
+kubectl get pods -l workspace=audit_test --all-namespaces  # must be empty
 
 # 2. Simulate a manifest validation failure
-sun deploy dev/aws/us-east-1 --image-tag "!invalid-ref" --dry-run
+sol deploy dev/aws/us-east-1 --image-tag "!invalid-ref" --dry-run
 # Expected: exits non-zero before any kubectl apply
 
 # 3. Restore
@@ -138,14 +138,15 @@ git checkout app/payments/charge_svc/Dockerfile
 ### 5.3 Observability Smoke Test
 
 ```bash
-# After sun dev up:
+# After sol dev up:
 
 # Prometheus: verify worker metrics are registered
 curl -s http://localhost:9090/api/v1/label/__name__/values \
-  | python3 -m json.tool | grep sun_worker
+  | python3 -m json.tool | grep sol_worker
 
-# Loki: verify structured log lines are indexed
-curl -s 'http://localhost:3100/loki/api/v1/query?query={job="sun"}' \
+# Loki: verify structured log lines are indexed ("service" is a reserved
+# Obs_loki stream label, always set to the running service's name)
+curl -s 'http://localhost:3100/loki/api/v1/query?query={service="charge_svc"}' \
   | python3 -m json.tool | head -40
 
 # Trace propagation: verify traceparent is forwarded through Kafka
@@ -154,7 +155,7 @@ KAFKA_BROKERS=localhost:9092 dune exec examples/local-demo/bin/demo.exe 2>&1 \
 ```
 
 **Invariants:**
-* [ ] `sun_worker_messages_total` and `sun_worker_message_duration_seconds` appear in Prometheus after at least one message is processed
+* [ ] `sol_worker_messages_total` and `sol_worker_message_duration_seconds` appear in Prometheus after at least one message is processed
 * [ ] Loki receives structured log lines from both the svc and worker
 * [ ] `traceparent` header is present in Kafka message headers and re-extracted by the consumer
 
@@ -163,16 +164,16 @@ KAFKA_BROKERS=localhost:9092 dune exec examples/local-demo/bin/demo.exe 2>&1 \
 ### 5.4 Generated Manifest Security Scan
 
 ```bash
-sun deploy dev/aws/us-east-1 --image-tag audit-01 --registry <registry> --dry-run 2>&1 \
-  | tee /tmp/sun-manifest.yaml
+sol deploy dev/aws/us-east-1 --image-tag audit-01 --registry <registry> --dry-run 2>&1 \
+  | tee /tmp/sol-manifest.yaml
 
-grep "type: NodePort"         /tmp/sun-manifest.yaml  # must be empty
-grep "POSTGRES_URL.*password" /tmp/sun-manifest.yaml  # must be empty
-grep "runAsNonRoot: true"     /tmp/sun-manifest.yaml  # must appear per container
-grep "readOnlyRootFilesystem" /tmp/sun-manifest.yaml  # must appear per container
-grep "seccompProfile"         /tmp/sun-manifest.yaml  # must appear per pod
-grep "kind: NetworkPolicy"    /tmp/sun-manifest.yaml  # must appear per workload
-grep "kind: Secret"           /tmp/sun-manifest.yaml  # must appear for credentials
+grep "type: NodePort"         /tmp/sol-manifest.yaml  # must be empty
+grep "POSTGRES_URL.*password" /tmp/sol-manifest.yaml  # must be empty
+grep "runAsNonRoot: true"     /tmp/sol-manifest.yaml  # must appear per container
+grep "readOnlyRootFilesystem" /tmp/sol-manifest.yaml  # must appear per container
+grep "seccompProfile"         /tmp/sol-manifest.yaml  # must appear per pod
+grep "kind: NetworkPolicy"    /tmp/sol-manifest.yaml  # must appear per workload
+grep "kind: Secret"           /tmp/sol-manifest.yaml  # must appear for credentials
 ```
 
 **Invariants:**
@@ -189,7 +190,7 @@ grep "kind: Secret"           /tmp/sun-manifest.yaml  # must appear for credenti
 rpk group describe <group_id> --brokers localhost:9092 | grep LAG
 
 # Trigger a rolling deploy
-sun deploy dev/aws/us-east-1 --image-tag audit-02 --registry <registry>
+sol deploy dev/aws/us-east-1 --image-tag audit-02 --registry <registry>
 
 # Poll consumer lag while rollout is in progress
 watch -n2 "rpk group describe <group_id> --brokers localhost:9092 | grep LAG"
@@ -214,20 +215,20 @@ CREATE UNIQUE INDEX idx_charges_idempotency ON charges(idempotency_key)
   WHERE idempotency_key IS NOT NULL;
 EOF
 
-sun migrate --env production 2>&1
+sol migrate --env production 2>&1
 
 # Verify migration tracking is workspace-prefixed
-# Replace <workspace> with the workspace directory name (e.g. sun_pluto_schema_migrations)
+# Replace <workspace> with the workspace directory name (e.g. sol_pluto_schema_migrations)
 psql $POSTGRES_URL -c \
-  "SELECT * FROM sun_<workspace>_schema_migrations ORDER BY applied_at DESC LIMIT 3;"
+  "SELECT * FROM sol_<workspace>_schema_migrations ORDER BY applied_at DESC LIMIT 3;"
 
 kubectl logs -n payments -l app=charge_worker --since=5m | grep -i error
 ```
 
 **Invariants:**
-* [ ] `sun migrate` is idempotent — running it twice produces no error
+* [ ] `sol migrate` is idempotent — running it twice produces no error
 * [ ] Migration tracking table is workspace-prefixed, never shared across workspaces
-* [ ] `sun migrate --dry-run` prints the SQL before touching the database
+* [ ] `sol migrate --dry-run` prints the SQL before touching the database
 * [ ] Zero application errors in worker logs immediately after migration
 
 ---
@@ -271,7 +272,7 @@ KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 \
 
 ### 7.2 Partition Count Reduction Is Blocked
 
-**Expected:** `sun` detects a partition count reduction and exits with an error naming the topic and both counts. A `--force` flag is required to override.
+**Expected:** `sol` detects a partition count reduction and exits with an error naming the topic and both counts. A `--force` flag is required to override.
 
 **Invariants:**
 * [ ] Partition count reduction is blocked without explicit override flag
@@ -282,7 +283,7 @@ KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 \
 
 ### 7.3 Consumer Group ID Change Surfaces a Warning
 
-**Expected:** `sun deploy` detects a `W.group_id` change and emits a prominent warning identifying the old and new IDs and the data-skip risk. A `--confirm-group-change` flag is required to proceed.
+**Expected:** `sol deploy` detects a `W.group_id` change and emits a prominent warning identifying the old and new IDs and the data-skip risk. A `--confirm-group-change` flag is required to proceed.
 
 **Invariants:**
 * [ ] Group ID change is surfaced before apply
@@ -292,9 +293,9 @@ KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 \
 
 ## 8. Domain Architecture & Event Contract Audit
 
-Sun's central architecture is autonomous domain teams coordinating through typed events. The framework should make that model easy to follow and deviations easy to spot.
+Sol's central architecture is autonomous domain teams coordinating through typed events. The framework should make that model easy to follow and deviations easy to spot.
 
-**Source locations:** `README.md` · `docs/guides/TUTORIAL.md` · `cli/sun/bin/cmd_new.ml` · `cli/sun/lib/sun_cli_workspace.ml` · workspace examples under `examples/venus/` and `examples/pluto/`
+**Source locations:** `README.md` · `docs/guides/TUTORIAL.md` · `cli/sol/lib/sol_cli_cmd_new.ml` · `cli/sol/lib/sol_cli_workspace.ml` · workspace examples under `examples/venus/` and `examples/pluto/`
 
 ### Checklist
 
@@ -302,25 +303,25 @@ Sun's central architecture is autonomous domain teams coordinating through typed
 * [ ] **Cross-domain shared code is narrow and intentional:** Shared libraries do not become a backdoor for business logic coupling between teams. Storage helpers or pure data helpers are acceptable only when the ownership and blast radius are obvious.
 * [ ] **Scaffolded examples teach the intended architecture:** The default workspace demonstrates one producer domain and one consumer domain connected by a typed event contract, with no hidden shared service internals.
 * [ ] **Naming conventions enforce ownership:** Topics, consumer groups, namespaces, deployments, metrics labels, and generated library names include workspace/domain/service identity consistently.
-* [ ] **Schema compatibility checks are available before deploy:** Breaking schema changes can be detected in CI or by a Sun command before a pod restart in staging or production.
+* [ ] **Schema compatibility checks are available before deploy:** Breaking schema changes can be detected in CI or by a Sol command before a pod restart in staging or production.
 * [ ] **Service primitives stay distinct:** `-svc`, `-worker`, and `-fn` lifecycles remain separate and explicit. A primitive should not need to know the internal lifecycle details of another primitive to interoperate.
 
 ---
 
 ## 9. Framework Boundary & AI-Agent-First Audit
 
-Sun is intentionally a framework at infrastructure and network boundaries, and a library inside business logic boundaries. It is also designed for AI-assisted development. The codebase should preserve predictable structure, explicit contracts, and one clear path for common tasks.
+Sol is intentionally a framework at infrastructure and network boundaries, and a library inside business logic boundaries. It is also designed for AI-assisted development. The codebase should preserve predictable structure, explicit contracts, and one clear path for common tasks.
 
-**Source locations:** `README.md` · `docs/planning/ROADMAP.md` · `docs/guides/TUTORIAL.md` · `cli/sun/bin/cmd_new.ml` · `framework/*/lib/` · package-level `*.md` specs
+**Source locations:** `README.md` · `docs/planning/ROADMAP.md` · `docs/guides/TUTORIAL.md` · `cli/sol/lib/sol_cli_cmd_new.ml` · `framework/*/lib/` · package-level `*.md` specs
 
 ### Checklist
 
-* [ ] **Sun owns application lifecycle at the boundary:** `Sun.Service.Make`, `Sun.Worker.Make`, and `Sun.Fn.Make` own startup, shutdown, telemetry wiring, and resource lifecycle. Scaffolded apps do not hand-roll these concerns.
+* [ ] **Sol owns application lifecycle at the boundary:** `Sol.Service.Make`, `Sol.Worker.Make`, and `Sol.Fn.Make` own startup, shutdown, telemetry wiring, and resource lifecycle. Scaffolded apps do not hand-roll these concerns.
 * [ ] **Business logic remains readable and local:** Handler modules contain business behavior and explicit dependencies, not hidden global state, implicit service discovery, or infrastructure manipulation.
-* [ ] **There is one recommended way to do common tasks:** Scaffolding, deployment, logs, migrations, rollback, schema checks, and local dev have a single documented Sun command path. Alternative low-level paths are clearly marked as advanced.
+* [ ] **There is one recommended way to do common tasks:** Scaffolding, deployment, logs, migrations, rollback, schema checks, and local dev have a single documented Sol command path. Alternative low-level paths are clearly marked as advanced.
 * [ ] **Templates are agent-friendly:** Generated files compile immediately, have predictable names, use stable module shapes, avoid surprising metaprogramming, and include enough local context for an AI agent to modify them without guessing.
 * [ ] **Spec files match implementation reality:** Package-level `*.md` specs, `README.md`, `docs/planning/ROADMAP.md`, and generated docs do not claim unavailable commands, incomplete guarantees, or obsolete workflows.
-* [ ] **Escape hatches are explicit deviations:** Any override that weakens a Sun default, such as security posture, rollout behavior, resource policy, or network access, is visible in `sun.toml` or command flags and can be audited.
+* [ ] **Escape hatches are explicit deviations:** Any override that weakens a Sol default, such as security posture, rollout behavior, resource policy, or network access, is visible in `sol.yml`/target files or command flags and can be audited.
 
 ---
 
