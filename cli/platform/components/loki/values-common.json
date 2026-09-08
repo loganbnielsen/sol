@@ -1,0 +1,4 @@
+{
+  "gateway": { "enabled": false },
+  "loki": { "auth_enabled": false }
+}

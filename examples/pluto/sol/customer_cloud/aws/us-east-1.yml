@@ -1,0 +1,4 @@
+target:
+  cluster_name: sol-smoke-test-0907
+  base_domain: smoke-test.invalid
+  terraform_var_file: ../../cli/platform/infra/aws/smoke-test.tfvars

@@ -1,0 +1,12 @@
+(executable
+ (name run)
+ (libraries
+  venus_payments_events
+  venus_comms_notify
+  eio eio_main eio.unix
+  obs-eio obs-prometheus-eio sol_obs
+  kafka_eio_service
+  sol_svc sol_worker
+  pg-eio
+  caqti caqti-eio caqti-eio.unix caqti-driver-postgresql
+  yojson))

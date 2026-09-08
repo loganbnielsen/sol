@@ -1,0 +1,12 @@
+(library
+ (name venus_comms_notify)
+ (wrapped false)
+ (modules Notification Notify_worker)
+ (libraries
+  venus_payments_events
+  pg-eio
+  obs-eio
+  caqti
+  caqti-eio
+  caqti-eio.unix
+  caqti-driver-postgresql))

@@ -1,0 +1,19 @@
+project: pluto
+
+resources:
+  app_db:
+    type: postgres
+
+  events:
+    type: kafka
+
+services:
+  charge_svc:
+    type: http
+    path: app/payments/charge_svc
+    uses: [app_db, events]
+
+  notify_worker:
+    type: worker
+    path: app/comms/notify_worker
+    uses: [app_db, events]

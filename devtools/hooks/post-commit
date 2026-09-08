@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Shows the performance status table after each commit.
+# Tests run (and gate) in pre-commit; this is informational only.
+#
+# Install: bash cli/platform/local/scripts/install-hooks.sh
+# Skip once: SOL_SKIP_HOOKS=1 git commit ...
+
+[ "${SOL_SKIP_HOOKS:-0}" = "1" ] && exit 0
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+PERF="$REPO_ROOT/cli/platform/local/scripts/perf.sh"
+
+[ -x "$PERF" ] || exit 0
+
+echo ""
+bash "$PERF" status
+
+# ── Orphaned worktree check ───────────────────────────────────────────────────
+# Warn if any git worktree corresponds to a ticket now in DONE/.
+_orphans=()
+while IFS= read -r wt_path; do
+  [ "$wt_path" = "$REPO_ROOT" ] && continue
+  # Extract ticket ID from worktree path (e.g. sol-AUDIT-007-some-name → AUDIT-007)
+  basename=$(basename "$wt_path")
+  ticket_id=$(echo "$basename" | grep -oE '[A-Z]+-[0-9]+' | head -1)
+  [ -z "$ticket_id" ] && continue
+  if [ -f "$REPO_ROOT/pipeline/tickets/DONE/${ticket_id}.md" ]; then
+    _orphans+=("$wt_path")
+  fi
+done < <(git worktree list --porcelain | awk '/^worktree /{print $2}')
+
+if [ ${#_orphans[@]} -gt 0 ]; then
+  echo ""
+  echo "  ⚠  Orphaned worktrees (ticket is DONE — run: git worktree remove <path> --force):"
+  for p in "${_orphans[@]}"; do
+    echo "       $p"
+  done
+  echo ""
+fi

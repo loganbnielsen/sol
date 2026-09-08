@@ -1,0 +1,215 @@
+# Sol CI - build, test, and deploy on every push to main.
+#
+# Required GitHub secrets (Settings -> Secrets and variables -> Actions):
+#   REGISTRY           container registry prefix, e.g.:
+#                        AWS ECR:   123456789.dkr.ecr.us-east-1.amazonaws.com
+#                        GCP AR:    us-central1-docker.pkg.dev/my-project/pluto
+#                        Docker Hub: docker.io/myorg
+#   REGISTRY_USER      registry username (or "AWS" for ECR)
+#   REGISTRY_PASSWORD  registry password / access token
+#
+# Required GitHub repo variable (Settings -> Secrets and variables -> Actions ->
+# Variables -- not a secret, this is just a path):
+#   SOL_TARGET         deployment target, <env>/<provider>/<region>, e.g.
+#                      prod/aws/us-east-1. Requires a matching
+#                      sol/<env>/<provider>/<region>.yml file committed in
+#                      this repo -- this workspace ships a placeholder at
+#                      sol/prod/aws/us-east-1.yml; rename it to match your
+#                      real target if it isn't prod/aws/us-east-1.
+#
+# Optional (GitOps push step):
+#   GITOPS_TOKEN       GitHub token with repo-write access to commit manifests/.
+#                      ${{ secrets.GITHUB_TOKEN }} works when pushing to the same repo.
+#
+# No KUBECONFIG or cluster credentials are needed for the build-and-test or
+# build-images jobs. The deploy job emits manifests for GitOps instead of
+# applying them directly to a cluster.
+#
+# ── Sol CI contract ──────────────────────────────────────────────────────────
+#
+# PHASE 1 — Build (user-owned, Sol-stable):
+#   Compile and test OCaml code using: eval $(opam env) && dune build && dune runtest
+#   Build and push Docker images using your registry's docker login + docker build/push.
+#   Sol does not own this step today; a future `sol build` command will replace it.
+#
+# PHASE 2 — Deploy (Sol-owned, typed contract):
+#   sol deploy <target> --emit-plan-to plan.json --dry-run   # capture typed deployment intent
+#   sol deploy <target> --emit-to manifests/ --image-tag $SHA  # render K8s YAML (GitOps)
+#
+# Never duplicate the plan/render/execute logic from sol deploy in CI.
+# All deployment decisions (image tags, namespaces, service discovery, secrets)
+# belong in the CLI pipeline. CI only provides inputs (--registry, --image-tag).
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Sol CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  REGISTRY:   ${{ secrets.REGISTRY }}
+  IMAGE_TAG:  ${{ github.sha }}
+  SOL_TARGET: ${{ vars.SOL_TARGET }}
+
+# ── Job 1: compile + unit tests ──────────────────────────────────────────── #
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.4.1"
+          opam-depext: false
+
+      - name: Install system deps
+        run: sudo apt-get install -y librdkafka-dev libpq-dev
+
+      - name: Install opam deps
+        run: opam install . --deps-only --with-test -y
+
+      - name: Build
+        run: eval $(opam env) && dune build
+
+      - name: Test
+        run: eval $(opam env) && dune runtest
+
+# ── Job 2: build and push service images ────────────────────────────────── #
+  build-images:
+    needs: build-and-test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.4.1"
+          opam-depext: false
+
+      - name: Install system deps
+        run: sudo apt-get install -y librdkafka-dev libpq-dev
+
+      - name: Install opam deps
+        run: opam install . --deps-only -y
+
+      - name: Build service binaries
+        run: eval $(opam env) && dune build
+
+      # Registry login — uncomment the block that matches your registry:
+
+      # AWS ECR:
+      # - uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      #     aws-region:            ${{ secrets.AWS_REGION }}
+      # - run: |
+      #     aws ecr get-login-password | \
+      #       docker login --username AWS --password-stdin ${{ secrets.REGISTRY }}
+
+      # GCP Artifact Registry:
+      # - uses: google-github-actions/auth@v2
+      #   with: { credentials_json: '${{ secrets.GCP_SA_KEY }}' }
+      # - run: gcloud auth configure-docker ${{ secrets.REGISTRY }}
+
+      # Generic (Docker Hub, GHCR, etc.):
+      - name: Log in to registry
+        run: |
+          echo "${{ secrets.REGISTRY_PASSWORD }}" | \
+            docker login "$REGISTRY" -u "${{ secrets.REGISTRY_USER }}" --password-stdin
+
+      - name: Build and push images
+        run: |
+          SHORT_SHA=${IMAGE_TAG::7}
+          # TODO(sol-build): This step will be replaced by `sol build --registry $REGISTRY`
+          # once Sol publishes a stable build command. Until then, build images explicitly.
+          # sol up discovers services from app/<domain>/<name>/Dockerfile.
+          # Build and push each image explicitly here:
+          find app -name Dockerfile | while read dockerfile; do
+            dir=$(dirname "$dockerfile")
+            svc=$(basename "$dir" | tr '_' '-')
+            image="${REGISTRY}/pluto/${svc}:${SHORT_SHA}"
+            # --provenance=false --sbom=false: without these, BuildKit attaches
+            # a provenance/SBOM attestation sub-manifest to the image index,
+            # which EKS's containerd fails to pull with a bare "not found" on
+            # the tag even though the image is really in the registry --
+            # confirmed live (DOGFOOD-011). Local k3d tolerates it either way.
+            docker build --provenance=false --sbom=false -t "$image" -f "$dockerfile" .
+            docker push "$image"
+          done
+
+# ── Job 3: emit deployment plan + GitOps manifests ──────────────────────── #
+# This job runs only on pushes to main (not on pull requests).
+# `sol deploy <target> --emit-plan-to plan.json` records the full deployment intent
+# (images, namespaces, config) without applying anything — useful for auditing.
+# `sol deploy <target> --emit-to manifests/` renders Kubernetes YAML to manifests/.
+# An Argo CD Application watching that directory reconciles the change
+# automatically; no KUBECONFIG or cluster credentials are required in CI.
+  deploy:
+    needs: build-images
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITOPS_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.4.1"
+          opam-depext: false
+
+      - name: Install system deps
+        run: sudo apt-get install -y librdkafka-dev libpq-dev
+
+      - name: Install opam deps
+        run: opam install . --deps-only -y
+
+      - name: Build sol binary
+        run: eval $(opam env) && dune build cli/sol/bin/main.exe
+        # TODO: replace with a pre-built binary download once Sol publishes releases.
+
+      - name: Export deployment plan
+        run: |
+          eval $(opam env)
+          # Equivalent Sol command: sol deploy <target> --emit-plan-to plan.json --dry-run
+          _build/default/cli/sol/bin/main.exe deploy "$SOL_TARGET" \
+            --registry  "$REGISTRY" \
+            --image-tag "${IMAGE_TAG::7}" \
+            --emit-plan-to plan.json \
+            --dry-run
+        # plan.json captures the full intent for this deploy (images, namespaces, config).
+
+      - name: Upload deployment plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-plan-${{ github.sha }}
+          path: plan.json
+
+      - name: Emit GitOps manifests
+        run: |
+          eval $(opam env)
+          # Equivalent Sol command: sol deploy <target> --emit-to manifests/
+          _build/default/cli/sol/bin/main.exe deploy "$SOL_TARGET" \
+            --registry  "$REGISTRY" \
+            --image-tag "${IMAGE_TAG::7}" \
+            --emit-to   manifests/
+        # Writes rendered Kubernetes YAML to manifests/.
+        # Argo CD (or Flux) watches this directory and reconciles automatically.
+
+      - name: Commit and push manifests
+        run: |
+          git config user.email "ci@sol.dev"
+          git config user.name  "Sol CI"
+          git add manifests/
+          git diff --cached --quiet && echo "no manifest changes" && exit 0
+          git commit -m "deploy: ${IMAGE_TAG::7}"
+          git push

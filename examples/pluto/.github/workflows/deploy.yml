@@ -1,0 +1,105 @@
+# CI/CD — deploy to your Sol cluster on every push to main.
+#
+# Required secrets (set in GitHub repo Settings → Secrets):
+#   KUBECONFIG_B64   base64-encoded kubeconfig: $(cat ~/.kube/config | base64)
+#   REGISTRY         container registry prefix, e.g.:
+#                      AWS ECR:  123456789.dkr.ecr.us-east-1.amazonaws.com
+#                      GCP AR:   us-central1-docker.pkg.dev/my-project/pluto
+#                      Docker Hub: docker.io/myorg
+#
+# Required repo variable (Settings → Secrets and variables → Actions → Variables —
+# not a secret, this is just a path):
+#   SOL_TARGET       deployment target, <env>/<provider>/<region>, e.g. prod/aws/us-east-1.
+#                    Requires a matching sol/<env>/<provider>/<region>.yml file
+#                    committed in this repo -- this workspace ships a placeholder
+#                    at sol/prod/aws/us-east-1.yml; rename it to match your real
+#                    target if it isn't prod/aws/us-east-1.
+#
+# For ECR add AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION and
+# uncomment the ECR login step below.
+#
+# See cli/platform/infra/ci/ in the Sol repo for the full GitOps (Argo CD) variant.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.4.1"
+          opam-depext: false
+
+      - name: Install system deps
+        run: sudo apt-get install -y librdkafka-dev libpq-dev
+
+      - name: Build
+        run: |
+          opam install . --deps-only -y
+          eval $(opam env) && dune build
+
+      # ── Registry login ───────────────────────────────────────────────── #
+      # Uncomment the block that matches your registry:
+
+      # AWS ECR:
+      # - uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      #     aws-region:            ${{ secrets.AWS_REGION }}
+      # - run: |
+      #     aws ecr get-login-password | \
+      #       docker login --username AWS --password-stdin ${{ secrets.REGISTRY }}
+
+      # GCP Artifact Registry:
+      # - uses: google-github-actions/auth@v2
+      #   with: { credentials_json: '${{ secrets.GCP_SA_KEY }}' }
+      # - run: gcloud auth configure-docker ${{ secrets.REGISTRY }}
+
+      # Docker Hub:
+      # - uses: docker/login-action@v3
+      #   with:
+      #     username: ${{ secrets.DOCKERHUB_USERNAME }}
+      #     password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push images
+        env:
+          REGISTRY: ${{ secrets.REGISTRY }}
+          SHA:      ${{ github.sha }}
+        run: |
+          SHORT_SHA=${SHA::7}
+          find app -name Dockerfile | while read dockerfile; do
+            dir=$(dirname "$dockerfile")
+            svc=$(basename "$dir" | tr '_' '-')
+            image="${REGISTRY}/pluto/${svc}:${SHORT_SHA}"
+            # --provenance=false --sbom=false: without these, BuildKit attaches
+            # a provenance/SBOM attestation sub-manifest to the image index,
+            # which EKS's containerd fails to pull with a bare "not found" on
+            # the tag even though the image is really in the registry --
+            # confirmed live (DOGFOOD-011). Local k3d tolerates it either way.
+            docker build --provenance=false --sbom=false -t "$image" -f "$dockerfile" .
+            docker push "$image"
+          done
+
+      - name: Deploy
+        env:
+          REGISTRY:   ${{ secrets.REGISTRY }}
+          SHA:        ${{ github.sha }}
+          SOL_TARGET: ${{ vars.SOL_TARGET }}
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_B64 }}" | base64 -d > ~/.kube/config
+          eval $(opam env)
+          sol deploy "$SOL_TARGET" \
+            --image-tag "${SHA::7}" \
+            --registry  "$REGISTRY"
+
+      - name: Status
+        run: eval $(opam env) && sol status

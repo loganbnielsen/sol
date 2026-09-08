@@ -1,0 +1,4 @@
+devtools/perf/perf_baseline.json merge=ours
+**/dune                 merge=union
+dune-project            merge=union
+dune-workspace          merge=union

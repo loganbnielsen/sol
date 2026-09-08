@@ -1,0 +1,51 @@
+{
+  "title": "Sol Release Timeline",
+  "uid": "sol-release-timeline",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": { "from": "now-24h", "to": "now" },
+  "tags": ["sol"],
+  "templating": {
+    "list": [
+      {
+        "name": "workspace",
+        "type": "query",
+        "datasource": "Loki",
+        "query": "label_values(workspace)",
+        "refresh": 2,
+        "includeAll": false
+      },
+      {
+        "name": "domain",
+        "type": "query",
+        "datasource": "Loki",
+        "query": "label_values({workspace=\"$workspace\"}, domain)",
+        "refresh": 2,
+        "includeAll": false
+      },
+      {
+        "name": "service",
+        "type": "query",
+        "datasource": "Loki",
+        "query": "label_values({workspace=\"$workspace\", domain=\"$domain\"}, service)",
+        "refresh": 2,
+        "includeAll": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Deploy / release events",
+      "type": "logs",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 0 },
+      "datasource": "Loki",
+      "targets": [
+        {
+          "expr": "{workspace=\"$workspace\", domain=\"$domain\", service=\"$service\"} | logfmt | event=\"deploy\""
+        }
+      ]
+    }
+  ]
+}

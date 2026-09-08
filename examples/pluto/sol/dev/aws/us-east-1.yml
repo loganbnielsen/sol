@@ -1,0 +1,18 @@
+target:
+  cluster_name: sol-dev-lbendtly
+  base_domain: smoke-test.invalid
+  terraform_var_file: ../../cli/platform/infra/aws/smoke-test.tfvars
+
+resources:
+  app_db:
+    omit: true
+
+  events:
+    omit: true
+
+services:
+  charge_svc:
+    omit: true
+
+  notify_worker:
+    omit: true

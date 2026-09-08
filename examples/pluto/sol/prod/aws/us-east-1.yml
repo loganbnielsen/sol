@@ -1,0 +1,18 @@
+target:
+  cluster_name: pluto-prod
+  base_domain: pluto.example.com
+
+resources:
+  app_db:
+    size: small
+
+services:
+  charge_svc:
+    scale:
+      min: 1
+      max: 2
+
+  notify_worker:
+    scale:
+      min: 1
+      max: 2

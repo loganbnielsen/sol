@@ -1,0 +1,7 @@
+(library
+ (name pluto_comms_notify)
+ (wrapped false)
+ (modules Notify_worker)
+ (libraries
+  pluto_storage pluto_payments_events
+  kafka_eio_service obs-eio pg-eio))

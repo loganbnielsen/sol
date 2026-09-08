@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "payment_id":    { "type": "string" },
+    "amount_cents":  { "type": "integer" },
+    "currency":      { "type": "string" }
+  },
+  "required": ["payment_id", "amount_cents", "currency"]
+}
