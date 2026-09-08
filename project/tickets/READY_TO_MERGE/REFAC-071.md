@@ -28,3 +28,6 @@ The repo's top-level directories should be organized by *who consumes the code*,
 - Update `.claude/CLAUDE.md`'s repo layout section, `README.md`, `docs/planning/ROADMAP.md`/`WORK_SUMMARY.md`, and any package spec doc (`kafka-eio-service.md`) that states the old path.
 - Grep the whole repo for `integrations/kafka` and `integrations/` to catch anything missed (CI workflows, scripts, other `.md` docs).
 - Run the full local test suite (`platform/local/scripts/run_tests.sh`) before submitting — this touches build-relevant paths for every worker-generating code path.
+
+## Review — automated checks passed
+Wide-blast-radius kafka-eio-service move verified thoroughly: build clean, integrations/ grep shows only historical/dated/excluded references, sol new workspace tested end-to-end (single vendor/framework symlink resolves correctly, generated workspace builds), release.yml bundle changes sound, deletion of integrations/Makefile confirmed unreferenced (platform/local/Dockerfile deletion left one dangling comment in an already-fully-dead orphaned demo subtree predating this ticket, not a regression), full local test suite independently re-run and passes including kafka-eio-service's own suite from its new location.
