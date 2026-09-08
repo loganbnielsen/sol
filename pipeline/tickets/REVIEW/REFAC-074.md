@@ -3,6 +3,9 @@ id: REFAC-074
 type: refactor
 severity: medium
 source: architecture discussion with user, 2026-09-08
+branch: REFAC-074/platform-under-cli
+worktree: ../sol-REFAC-074-platform-under-cli
+pr: https://github.com/loganbnielsen/sol/pull/163
 ---
 
 **Depends on:** REFAC-073.
