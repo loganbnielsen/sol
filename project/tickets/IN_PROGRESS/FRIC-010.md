@@ -3,6 +3,8 @@ id: FRIC-010
 type: dogfood-finding
 severity: low
 source: FRIC-007 round-1 adversarial review — the reviewer independently reproduced and confirmed the FRIC-007 fix but flagged the chosen Redpanda version as needlessly conservative
+branch: FRIC-010/redpanda-version-eval
+worktree: ../sol-FRIC-010-redpanda-version-eval
 ---
 
 **Depends on:** None.
