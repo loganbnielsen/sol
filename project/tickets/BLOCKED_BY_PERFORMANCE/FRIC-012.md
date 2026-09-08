@@ -41,3 +41,6 @@ logs back to the caller, and surface the Job's exit status as `sol migrate`'s
 own exit status. Re-verify against a real AWS deployment (per DOGFOOD-011's
 own pattern) that `sol migrate` completes without any manual network setup,
 from both an operator's machine and a CI runner.
+
+## Review — automated checks passed
+Two-round adversarial review. Round 1 found and this now fixes: Job-completion detection that could never actually detect success/failure (always timed out), and two YAML-escaping gaps that could silently corrupt migration SQL (CRLF folding, unquoted ConfigMap key). Round 2 independently verified all three fixes via manual state-machine tracing and real PyYAML round-trip tests. Build and full test suite pass; diff scope clean. Known, disclosed gap: the live kubectl apply/wait/logs path could not be end-to-end tested (target cluster unreachable in this environment) -- recommend validating against a real cluster before treating this as fully proven, matching DOGFOOD-011's own validation pattern.
