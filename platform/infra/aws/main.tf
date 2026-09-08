@@ -220,6 +220,117 @@ resource "aws_db_instance" "postgres" {
   tags = var.tags
 }
 
+# ── Managed resource dashboards (CloudWatch) — OBS-044 ───────────────────── #
+#
+# "Managed resource dashboard" tier (docs/architecture/observability-design.md,
+# "Dashboard Shape"): a CloudWatch-backed dashboard for AWS-managed
+# datastores Sol provisions directly (RDS today), so an operator never has
+# to leave Sol for the raw AWS console to see CPU/connections/storage/IOPS.
+#
+# Generic by resource type, not RDS-specific: local.managed_resources is a
+# name -> {resource_type, cloudwatch_namespace, dimension_name,
+# dimension_value, metrics} map. Adding a future managed datastore this
+# layer provisions (e.g. DynamoDB, if that's ever added -- it isn't today,
+# see OBS-044's acceptance criteria) means adding another entry to this map
+# and to the CloudWatch IAM policy's namespace coverage, not a second
+# one-off dashboard implementation. platform/infra/base reads the
+# managed_resource_dashboards output below (same manual cross-state `-var`
+# wiring already used for loki_s3_bucket/thanos_irsa_arn) to provision one
+# Grafana dashboard per resource_type from a single shared template
+# (dashboards/managed-resource.json.tftpl) plus a CloudWatch datasource.
+# `sol open dashboard resource/<type>/<name>` (cli/sol/lib/sol_cli_open.ml)
+# resolves the matching Grafana URL by that same resource_type value.
+locals {
+  managed_resources = var.create_rds ? {
+    postgres = {
+      resource_type        = "rds"
+      cloudwatch_namespace = "AWS/RDS"
+      dimension_name       = "DBInstanceIdentifier"
+      dimension_value      = aws_db_instance.postgres[0].identifier
+      metrics              = ["CPUUtilization", "DatabaseConnections", "FreeStorageSpace", "ReadIOPS", "WriteIOPS"]
+    }
+  } : {}
+}
+
+# Native CloudWatch dashboard per managed resource -- usable standalone (e.g.
+# straight from the AWS console during an incident) even though the primary
+# surface is the Grafana dashboard platform/infra/base provisions from the
+# same local.managed_resources data via the managed_resource_dashboards
+# output below.
+resource "aws_cloudwatch_dashboard" "managed_resource" {
+  for_each       = local.managed_resources
+  dashboard_name = "${var.cluster_name}-${each.key}"
+
+  dashboard_body = jsonencode({
+    widgets = [
+      for i, metric in each.value.metrics : {
+        type   = "metric"
+        x      = (i % 2) * 12
+        y      = floor(i / 2) * 6
+        width  = 12
+        height = 6
+        properties = {
+          title   = metric
+          region  = var.region
+          stat    = "Average"
+          period  = 300
+          metrics = [[each.value.cloudwatch_namespace, metric, each.value.dimension_name, each.value.dimension_value]]
+        }
+      }
+    ]
+  })
+}
+
+# Grafana's own pod needs read access to CloudWatch to run the managed-
+# resource dashboard's queries directly (unlike the Loki/Thanos IRSA roles
+# above, which are consumed by their own pods, not Grafana's). Scoped to
+# Grafana's documented minimal CloudWatch-datasource policy (metrics only --
+# no logs:* since nothing here uses CloudWatch Logs Insights); CloudWatch's
+# read APIs don't support resource-level ARN scoping, hence "*".
+data "aws_iam_policy_document" "grafana_cloudwatch" {
+  count = length(local.managed_resources) > 0 ? 1 : 0
+
+  statement {
+    actions = [
+      "cloudwatch:ListMetrics",
+      "cloudwatch:GetMetricData",
+      "cloudwatch:GetMetricStatistics",
+      "cloudwatch:DescribeAlarmsForMetric",
+      "tag:GetResources",
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_policy" "grafana_cloudwatch" {
+  count  = length(local.managed_resources) > 0 ? 1 : 0
+  name   = "${var.cluster_name}-grafana-cloudwatch"
+  policy = data.aws_iam_policy_document.grafana_cloudwatch[0].json
+}
+
+module "grafana_irsa" {
+  count   = length(local.managed_resources) > 0 ? 1 : 0
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.39"
+
+  role_name = "${var.cluster_name}-grafana"
+
+  oidc_providers = {
+    main = {
+      provider_arn = module.eks.oidc_provider_arn
+      # Chart default ServiceAccount name for helm_release.grafana in
+      # platform/infra/base -- "grafana" release name -> "grafana" SA,
+      # confirmed via `helm template grafana grafana-community/grafana
+      # --version 13.2.1`.
+      namespace_service_accounts = ["monitoring:grafana"]
+    }
+  }
+
+  role_policy_arns = {
+    grafana_cloudwatch = aws_iam_policy.grafana_cloudwatch[0].arn
+  }
+}
+
 # ── Route53 ───────────────────────────────────────────────────────────────── #
 
 resource "aws_route53_zone" "main" {

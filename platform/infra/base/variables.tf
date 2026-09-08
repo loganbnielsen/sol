@@ -218,3 +218,37 @@ variable "thanos_retention_1h_days" {
     error_message = "thanos_retention_1h_days must be a whole number of days >= 1."
   }
 }
+
+# ── Managed resource dashboards (AWS only) — OBS-044 ──────────────────────── #
+# From platform/infra/aws's outputs, same manual cross-state wiring pattern
+# as loki_s3_bucket/thanos_irsa_role_arn above -- no automatic remote-state
+# link between these two states.
+
+variable "grafana_irsa_role_arn" {
+  description = "IAM role ARN for Grafana's CloudWatch read access (managed-resource dashboards, OBS-044). From platform/infra/aws's grafana_irsa_arn output. Required when managed_resource_dashboards is non-empty and cloud_provider = \"aws\"."
+  type        = string
+  default     = ""
+}
+
+variable "managed_resource_dashboards" {
+  description = <<-EOT
+    Managed-resource dashboards to provision in Grafana (OBS-044): a map of
+    resource name -> {resource_type, cloudwatch_namespace, dimension_name,
+    dimension_value, metrics}. From platform/infra/aws's
+    managed_resource_dashboards output (e.g. {"postgres" = {resource_type =
+    "rds", cloudwatch_namespace = "AWS/RDS", dimension_name =
+    "DBInstanceIdentifier", dimension_value = "acme-prod-postgres", metrics =
+    ["CPUUtilization", "DatabaseConnections", ...]}}). One Grafana dashboard
+    is provisioned per distinct resource_type (not per entry) from a shared
+    template -- adding a future resource of an already-represented type
+    needs no new dashboard, only a new map entry.
+  EOT
+  type = map(object({
+    resource_type        = string
+    cloudwatch_namespace = string
+    dimension_name       = string
+    dimension_value      = string
+    metrics              = list(string)
+  }))
+  default = {}
+}

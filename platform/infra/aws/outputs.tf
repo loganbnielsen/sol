@@ -70,4 +70,14 @@ output "thanos_irsa_arn" {
   value       = var.enable_durable_observability ? module.thanos_irsa[0].iam_role_arn : null
 }
 
+output "grafana_irsa_arn" {
+  description = "IAM role ARN for Grafana's CloudWatch read access (managed-resource dashboards, OBS-044) — set in platform/infra/base as grafana_irsa_role_arn. Null when there are no managed-resource dashboards to show (e.g. create_rds = false)."
+  value       = length(local.managed_resources) > 0 ? module.grafana_irsa[0].iam_role_arn : null
+}
+
+output "managed_resource_dashboards" {
+  description = "Managed-resource dashboards provisioned in this layer (OBS-044): name -> {resource_type, cloudwatch_namespace, dimension_name, dimension_value, metrics}. Pass through to platform/infra/base as managed_resource_dashboards, e.g. via `terraform output -json managed_resource_dashboards | jq '{managed_resource_dashboards: .}' > managed-resources.auto.tfvars.json` (same manual cross-state wiring as loki_s3_bucket/thanos_irsa_arn above -- no automatic remote-state link between these two states)."
+  value       = local.managed_resources
+}
+
 data "aws_caller_identity" "current" {}

@@ -6,6 +6,14 @@ type scope =
   | Workspace
   | Domain of string
   | Service of string * string
+  | Resource of string * string
+  (** [Resource (resource_type, resource_name)] -- a managed infrastructure
+      resource dashboard (OBS-044), e.g. an RDS instance. Deliberately
+      generic over [resource_type] rather than a hardcoded "Rds" case: the
+      CLI never validates [resource_type] against a known list, matching
+      platform/infra's own generic-by-resource-type Terraform shape
+      (local.managed_resources in platform/infra/aws/main.tf) -- adding a
+      future managed datastore needs no CLI change here. *)
 
 type kind = Logs | Metrics | Dashboard
 
@@ -15,7 +23,9 @@ let parse_scope = function
     (match String.split_on_char '/' s with
      | [domain] -> Ok (Domain domain)
      | [domain; service] -> Ok (Service (domain, service))
-     | _ -> Error (Printf.sprintf "scope must be 'domain' or 'domain/service', got %S" s))
+     | ["resource"; resource_type; resource_name] -> Ok (Resource (resource_type, resource_name))
+     | _ -> Error (Printf.sprintf "scope must be 'domain', 'domain/service', or \
+                                    'resource/<type>/<name>', got %S" s))
 
 (* Deep-links into OBS-011's provisioned dashboards: the workspace overview
    at workspace scope, the service template (with $workspace/$domain/
@@ -52,6 +62,23 @@ let dashboard_url ~base_url ~workspace scope =
        let service = Sol_cli_deployment_plan.k8s_name_to_string k8s_name in
        Ok (Printf.sprintf "%s/d/sol-service-template?var-workspace=%s&var-domain=%s&var-service=%s"
              base_url workspace domain service))
+  | Resource (resource_type, resource_name) ->
+    (* No $workspace var here -- a managed resource dashboard (OBS-044) is
+       account/cluster-scoped in CloudWatch, not partitioned by Sol
+       workspace the way app-level Loki/Prometheus labels are. Dashboard
+       uid matches platform/infra/base's per-resource_type ConfigMap
+       (dashboards/managed-resource.json.tftpl's "sol-managed-resource-
+       ${resource_type}" uid); "resource" is that dashboard's own
+       CloudWatch dimension_values() template variable. *)
+    if String.trim resource_type = "" then
+      Error "resource type must not be empty (expected 'resource/<type>/<name>')"
+    else if String.trim resource_name = "" then
+      Error "resource name must not be empty (expected 'resource/<type>/<name>')"
+    else
+      let resource_type = Sol_cli_kubernetes_name.sanitize_label_value resource_type in
+      let resource_name = Sol_cli_kubernetes_name.sanitize_label_value resource_name in
+      Ok (Printf.sprintf "%s/d/sol-managed-resource-%s?var-resource=%s"
+            base_url resource_type resource_name)
 
 let logs_url ~base_url ~workspace scope =
   match scope with
@@ -72,6 +99,15 @@ let logs_url ~base_url ~workspace scope =
        let ns = Sol_cli_deployment_plan.namespace_to_string ns in
        let k8s_name = Sol_cli_deployment_plan.k8s_name_to_string k8s_name in
        Ok (Sol_cli_logs.grafana_explore_url ~base_url ~ns ~k8s_name))
+  | Resource (resource_type, _) ->
+    (* Managed resources don't ship through Sol's own Loki pipeline -- no
+       guessed logs view, matching Sol_cli_observability_url's philosophy
+       of returning an explanation instead of a broken/misleading link. *)
+    Error (Printf.sprintf
+             "no logs view for managed resource type %S -- managed \
+              resources don't ship through Sol's Loki pipeline; use \
+              'sol open dashboard' or check the provider's own console"
+             resource_type)
 
 let url ~base_url ~workspace ~kind scope =
   match kind with

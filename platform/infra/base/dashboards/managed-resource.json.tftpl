@@ -1,0 +1,41 @@
+{
+  "title": "Sol Managed Resource — ${resource_type}",
+  "uid": "sol-managed-resource-${resource_type}",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["sol", "managed-resource", "${resource_type}"],
+  "templating": {
+    "list": [
+      {
+        "name": "resource",
+        "type": "query",
+        "datasource": "CloudWatch",
+        "query": "dimension_values(${region},${cloudwatch_namespace},${metrics[0]},${dimension_name})",
+        "refresh": 2,
+        "includeAll": false
+      }
+    ]
+  },
+  "panels": [
+%{ for i, metric in metrics ~}
+    {
+      "id": ${i + 1},
+      "title": "${metric}",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": ${(i % 2) * 12}, "y": ${floor(i / 2) * 8} },
+      "datasource": "CloudWatch",
+      "targets": [
+        {
+          "namespace": "${cloudwatch_namespace}",
+          "metricName": "${metric}",
+          "dimensions": { "${dimension_name}": "$resource" },
+          "statistic": "Average",
+          "region": "${region}"
+        }
+      ]
+    }%{ if i < length(metrics) - 1 },%{ endif }
+%{ endfor ~}
+  ]
+}
