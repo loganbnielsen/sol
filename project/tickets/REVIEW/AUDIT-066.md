@@ -3,6 +3,9 @@ id: AUDIT-066
 type: audit-finding
 severity: medium
 source: project/audits/2026-09-08_audit.md
+branch: AUDIT-066/refresh-stale-paths
+worktree: /home/lbendtly/Code/sol-AUDIT-066-refresh-stale-paths
+pr: https://github.com/loganbnielsen/sol/pull/155
 ---
 
 `docs/audits/AUDIT.md` template still uses pre-rename `sun` naming throughout
