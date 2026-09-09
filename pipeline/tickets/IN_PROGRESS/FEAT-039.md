@@ -3,9 +3,11 @@ id: FEAT-039
 type: feature
 severity: low
 source: FEAT-038 review, 2026-09-08
+branch: FEAT-039/demo-ts-ci-check
+worktree: ../sol-FEAT-039-demo-ts-ci-check
 ---
 
-**Depends on:** FEAT-038 (in review at filing time).
+**Depends on:** FEAT-038 (done — merged).
 
 Add a dedicated CI build check for `examples/pluto/app/demo_ts`'s two Dockerfiles.
 
