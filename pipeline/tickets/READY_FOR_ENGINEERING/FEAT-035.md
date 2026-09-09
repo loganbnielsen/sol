@@ -9,9 +9,11 @@ source: FEAT-033 findings (project/dogfood/2026-09-07_typescript_demo_spike.md) 
 
 Build `@sol/obs`, a small TypeScript package encoding Sol's observability *naming and shape* conventions — metric names/labels, Loki push shape — once a real external TypeScript user needs cross-language dashboard/log consistency with Sol's OCaml services.
 
-## Blocked on
+## Unblocked (2026-09-08)
 
-Same demand signal as FEAT-034: **no real external TS user has hit the OCaml wall yet.** Not actionable now — see [[project_ocaml_only_risk]]. Move to `READY_FOR_ENGINEERING` only alongside real need, most likely triggered together with FEAT-034.
+Unblocked alongside FEAT-034 — see its ticket for the current rationale (the TS demo is now planned as a framework showcase, not gated on organic external adoption). Moved to `READY_FOR_ENGINEERING`.
+
+**Original blocking rationale (superseded, kept for context):** Same demand signal as FEAT-034 — no real external TS user had hit the OCaml wall yet. See [[project_ocaml_only_risk]].
 
 ## Why this is a separate package from `@sol/kafka`
 

@@ -9,9 +9,11 @@ source: FEAT-033 findings (project/dogfood/2026-09-07_typescript_demo_spike.md) 
 
 Build `@sol/kafka`, a TypeScript package encoding Sol's Kafka *policy* layer — not a new Kafka client, a thin layer of Sol-specific conventions on top of `kafkajs` — once a real external TypeScript user actually needs it.
 
-## Blocked on
+## Unblocked (2026-09-08)
 
-**No real external TS user has hit the OCaml wall yet.** This ticket captures scope so it's ready to pick up the moment that happens — it is explicitly not actionable now. See [[project_ocaml_only_risk]]: the decision was to validate demand before building any `@sol/*` package, and FEAT-033 was the evidence-gathering step, not permission to proceed. Move to `READY_FOR_ENGINEERING` only when a real TS-authored service on Sol needs this, not preemptively.
+Originally gated on real external TS demand (see history below) — the user has decided to unblock this now regardless, since `@sol/kafka`/`@sol/obs` are what the `examples/pluto/app/demo_ts/` TS demo (FEAT-033) will be used to show off the framework going forward, not something to wait on organic adoption for. Moved to `READY_FOR_ENGINEERING`.
+
+**Original blocking rationale (superseded, kept for context):** No real external TS user had hit the OCaml wall yet. This ticket captured scope so it was ready to pick up the moment that happened. See [[project_ocaml_only_risk]]: the decision was to validate demand before building any `@sol/*` package, and FEAT-033 was the evidence-gathering step, not permission to proceed.
 
 ## Why this, specifically (not a general "TS SDK" ticket)
 
