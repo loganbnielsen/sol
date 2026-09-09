@@ -26,3 +26,7 @@ Add a separate CI job (not folded into `example-dockerfile-smoke`, since that jo
 
 - A new CI job builds both `examples/pluto/app/demo_ts/{order_svc,fulfillment_worker}/Dockerfile` on every PR.
 - A deliberately broken workspace reference (e.g. a bad `@sol/kafka` version constraint) causes this job to fail, proving it actually catches real breakage.
+
+## Review — real CI confirmed green (2026-09-08)
+
+Diff confirmed clean and additive: new `demo-ts-dockerfile-smoke` job shares the workflow's existing triggers, doesn't touch `example-dockerfile-smoke`. Deliberate-break-then-revert left zero trace in any of the four `package.json` files. This was the new job's first-ever real run on GitHub Actions — both matrix entries passed (order_svc 25s, fulfillment_worker 29s), the actual proof it works, not just a local claim. Full local suite independently re-run (pass). PR #168's complete CI run (34304110759) fully green: `test`, both new `demo-ts-dockerfile-smoke` entries, all 4 `example-dockerfile-smoke` entries, and `golden-path-smoke` (17m35s) all passed. Promoting on confirmed real-CI green — last ticket of today's TS framework-parity effort.
