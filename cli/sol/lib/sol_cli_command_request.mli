@@ -13,6 +13,11 @@
 
 type execution_mode = Dry_run | Apply
 
+type deploy_action =
+  | Deploy_dry_run of { emit_to : string option }
+  | Deploy_emit_to of string
+  | Deploy_apply
+
 (** A validated request for [sol up]: build images and deploy to a local cluster. *)
 type up_request = {
   filter_path          : string option;
@@ -28,8 +33,7 @@ type deploy_request = {
       [Sol_cli_config.load_for_target]. Required: [sol deploy]'s positional
       target argument, matching [sol plan]'s existing convention. *)
   filter_path           : string option;
-  mode                  : execution_mode;
-  emit_to               : string option;
+  action                : deploy_action;
   emit_plan_to          : string option;
   image_tag             : string;
   registry              : string option;

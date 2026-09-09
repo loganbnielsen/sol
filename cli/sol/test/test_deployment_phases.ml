@@ -200,9 +200,15 @@ let test_deploy_request_local_mode_builds_request () =
     ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
     ~confirm_group_change:false ~loki_push_url:None ~git_sha:(fun () -> "")
   in
-  Alcotest.(check bool) "deploy request Ok" true (Result.is_ok r)
+  match r with
+  | Ok req ->
+    Alcotest.(check bool) "deploy apply" true
+      (match req.Sol_cli_command_request.action with
+       | Sol_cli_command_request.Deploy_apply -> true
+       | Deploy_dry_run _ | Deploy_emit_to _ -> false)
+  | Error msg -> Alcotest.fail msg
 
-let test_deploy_request_gitops_emit_to_stored () =
+let test_deploy_request_gitops_action () =
   let r = Sol_cli_command_request.make_deploy_request
     ~target:"dev/aws/us-east-1"
     ~filter_path:None ~dry_run:false ~emit_to:(Some "/tmp/gitops")
@@ -212,8 +218,26 @@ let test_deploy_request_gitops_emit_to_stored () =
   in
   match r with
   | Ok req ->
-    Alcotest.(check (option string)) "emit_to stored"
-      (Some "/tmp/gitops") req.Sol_cli_command_request.emit_to
+    Alcotest.(check bool) "gitops action" true
+      (match req.Sol_cli_command_request.action with
+       | Sol_cli_command_request.Deploy_emit_to "/tmp/gitops" -> true
+       | Deploy_apply | Deploy_dry_run _ | Deploy_emit_to _ -> false)
+  | Error msg -> Alcotest.fail msg
+
+let test_deploy_request_dry_run_action_preserves_emit_to () =
+  let r = Sol_cli_command_request.make_deploy_request
+    ~target:"dev/aws/us-east-1"
+    ~filter_path:None ~dry_run:true ~emit_to:(Some "/tmp/gitops")
+    ~emit_plan_to:None ~image_tag:(Some "tag")
+    ~registry:(Some "reg") ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
+    ~confirm_group_change:false ~loki_push_url:None ~git_sha:(fun () -> "")
+  in
+  match r with
+  | Ok req ->
+    Alcotest.(check bool) "dry-run action preserves emit_to" true
+      (match req.Sol_cli_command_request.action with
+       | Sol_cli_command_request.Deploy_dry_run { emit_to = Some "/tmp/gitops" } -> true
+       | Deploy_apply | Deploy_emit_to _ | Deploy_dry_run _ -> false)
   | Error msg -> Alcotest.fail msg
 
 (* FEAT-026: target is required — make_deploy_request rejects an empty one
@@ -583,7 +607,8 @@ let () =
       ; Alcotest.test_case "up: mode preserved"             `Quick test_up_request_preserves_mode
       ; Alcotest.test_case "deploy: explicit tag used"      `Quick test_deploy_request_uses_explicit_tag
       ; Alcotest.test_case "deploy: local mode Ok"          `Quick test_deploy_request_local_mode_builds_request
-      ; Alcotest.test_case "deploy: emit_to stored"         `Quick test_deploy_request_gitops_emit_to_stored
+      ; Alcotest.test_case "deploy: gitops action"          `Quick test_deploy_request_gitops_action
+      ; Alcotest.test_case "deploy: dry-run action preserves emit_to" `Quick test_deploy_request_dry_run_action_preserves_emit_to
       ; Alcotest.test_case "deploy: empty target rejected"  `Quick test_deploy_request_rejects_empty_target
       ; Alcotest.test_case "deploy: registry omitted stays None" `Quick test_deploy_request_registry_omitted_stays_none
       ]

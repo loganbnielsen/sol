@@ -1,5 +1,10 @@
 type execution_mode = Dry_run | Apply
 
+type deploy_action =
+  | Deploy_dry_run of { emit_to : string option }
+  | Deploy_emit_to of string
+  | Deploy_apply
+
 type up_request = {
   filter_path          : string option;
   mode                 : execution_mode;
@@ -10,8 +15,7 @@ type up_request = {
 type deploy_request = {
   target                : string;
   filter_path           : string option;
-  mode                  : execution_mode;
-  emit_to               : string option;
+  action                : deploy_action;
   emit_plan_to          : string option;
   image_tag             : string;
   registry              : string option;
@@ -31,6 +35,11 @@ let make_deploy_request ~target ~filter_path ~dry_run ~emit_to ~emit_plan_to
     Error "target must not be empty (expected <env>/<provider>/<region>)"
   else
     let image_tag = match image_tag with Some t -> t | None -> git_sha () in
-    let mode = if dry_run then Dry_run else Apply in
-    Ok { target; filter_path; mode; emit_to; emit_plan_to; image_tag; registry;
+    let action =
+      if dry_run then Deploy_dry_run { emit_to }
+      else match emit_to with
+      | Some dir -> Deploy_emit_to dir
+      | None -> Deploy_apply
+    in
+    Ok { target; filter_path; action; emit_plan_to; image_tag; registry;
          secret_backend; confirm_group_change; loki_push_url }
