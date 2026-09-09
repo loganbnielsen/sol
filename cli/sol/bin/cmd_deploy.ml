@@ -318,11 +318,11 @@ let run (req : Sol_cli_command_request.deploy_request) =
     services;
   } in
 
-  match req.mode, req.emit_to with
-  | Sol_cli_command_request.Dry_run, _ ->
-    run_dry_run ctx ~emit_to:req.emit_to
-  | Apply, Some dir -> run_emit ctx ~dir
-  | Apply, None ->
+  match req.action with
+  | Sol_cli_command_request.Deploy_dry_run { emit_to } ->
+    run_dry_run ctx ~emit_to
+  | Deploy_emit_to dir -> run_emit ctx ~dir
+  | Deploy_apply ->
     run_apply ctx ~filter_path:req.filter_path
       ~confirm_group_change:req.confirm_group_change ~loki_push_url:req.loki_push_url
 
