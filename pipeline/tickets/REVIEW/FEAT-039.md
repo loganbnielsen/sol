@@ -5,6 +5,7 @@ severity: low
 source: FEAT-038 review, 2026-09-08
 branch: FEAT-039/demo-ts-ci-check
 worktree: ../sol-FEAT-039-demo-ts-ci-check
+pr: https://github.com/loganbnielsen/sol/pull/168
 ---
 
 **Depends on:** FEAT-038 (done — merged).
