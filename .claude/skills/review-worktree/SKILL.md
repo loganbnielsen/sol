@@ -4,7 +4,7 @@ description: Review open ticket PRs and decide if they're ready to merge. Fans o
 
 # /review-worktree — Review ticket PRs for merge readiness
 
-Automated review gate. Discovers tickets in `READY_FOR_ENGINEERING/` that already have an open PR (via `soldev pipeline ls`), fans out one subagent per worktree, collects structured JSON results, and delegates the verdict to `soldev pipeline review` — which leaves it on the PR (a real GitHub approval on pass, a comment on fail), not on any ticket file.
+Automated review gate. Discovers tickets in `READY_FOR_ENGINEERING/` that already have an open PR (via `soldev pipeline ls`), fans out one subagent per worktree, collects structured JSON results, and delegates the verdict to `soldev pipeline review` — which leaves it on the PR as a plain comment either way (marked `SOLDEV-REVIEW: PASS` on pass, an ordinary violations comment on fail — a formal GitHub approval isn't possible since `gh` always runs as the PR's own author here), not on any ticket file.
 
 ## Usage
 
@@ -85,7 +85,7 @@ For each subagent result, write the JSON to a temp file and call:
 soldev pipeline review <ticket-id> --result-file /tmp/<ticket-id>-result.json
 ```
 
-On pass, this leaves a real GitHub review approval on the PR (which `soldev pipeline merge` checks for before it will act). On fail, it leaves a plain PR comment with the violations — the branch just needs another commit, the same open PR, no ticket-directory round trip. Do **not** move or edit ticket files yourself; there is nothing on `main` for this step to touch.
+On pass, this leaves a PR comment marked `SOLDEV-REVIEW: PASS` (which `soldev pipeline merge` checks for before it will act) — not a formal GitHub review, since `gh` always runs as the PR's own author here and GitHub refuses self-approval. On fail, it leaves a plain PR comment with the violations — the branch just needs another commit, the same open PR, no ticket-directory round trip. Do **not** move or edit ticket files yourself; there is nothing on `main` for this step to touch.
 
 ### 4. Summarise
 

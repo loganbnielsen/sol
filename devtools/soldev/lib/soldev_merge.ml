@@ -56,11 +56,28 @@ let pr_checks_green pr_url =
   Sol_process.run_shell_rc ~echo:false
     (Printf.sprintf "gh pr checks %s >/dev/null 2>&1" (Filename.quote pr_url)) = 0
 
+(* This is a solo-owned repo: the `gh` identity running review/merge is
+   always the PR's own author, and GitHub refuses to let an author formally
+   approve their own PR (`gh pr review --approve` fails with "Can not
+   approve your own pull request"). So review readiness can't be GitHub's
+   own reviewDecision — it's a plain PR comment carrying this marker,
+   posted by `run_review` on pass and checked for here. Branch protection's
+   1-approval requirement is separately satisfied at merge time via
+   `gh pr merge --admin`, same as before. *)
+let review_pass_marker = "SOLDEV-REVIEW: PASS"
+
 let pr_review_approved pr_url =
-  Sol_process.output_shell ~echo:false
-    (Printf.sprintf "gh pr view %s --json reviewDecision -q .reviewDecision"
-       (Filename.quote pr_url))
-  = "APPROVED"
+  let comments =
+    Sol_process.output_shell ~echo:false
+      (Printf.sprintf "gh pr view %s --json comments -q '.comments[].body'"
+         (Filename.quote pr_url))
+  in
+  let contains_marker line =
+    let nl = String.length review_pass_marker and ll = String.length line in
+    let rec go i = i + nl <= ll && (String.sub line i nl = review_pass_marker || go (i + 1)) in
+    go 0
+  in
+  String.split_on_char '\n' comments |> List.exists contains_marker
 
 (* ── pipeline check-reverts ──────────────────────────────────────────────── *)
 
@@ -223,12 +240,13 @@ let format_violations vs =
     | None   -> Printf.sprintf "- `%s` — %s" v.vfile v.vmessage
   ) vs)
 
-(* Review now leaves its verdict on the PR itself — a real GitHub review
-   approval on pass (which `merge` checks before it will act), a plain
-   comment on fail — instead of moving any ticket file. There is nothing to
-   move: the ticket's DONE move already happened on the branch when it was
-   implemented, and a bounce just means the same open PR gets another commit
-   (this repo's established convention), not a ticket-directory round trip. *)
+(* Review leaves its verdict on the PR itself as a plain comment — not a
+   formal GitHub review, since self-approval is impossible here (see
+   pr_review_approved) — instead of moving any ticket file. There is nothing
+   to move: the ticket's DONE move already happened on the branch when it
+   was implemented, and a bounce just means the same open PR gets another
+   commit (this repo's established convention), not a ticket-directory
+   round trip. *)
 let run_review ticket_id result_file =
   match find_pr_for_ticket ticket_id with
   | None ->
@@ -246,19 +264,32 @@ let run_review ticket_id result_file =
     let (status, summary, violations) = parse_result (String.trim json_str) in
     (match status with
      | Pass ->
-       let body = if summary = "" then "Automated review: pass." else summary in
-       ignore (Soldev_shell.run_cmd ~echo:false
-         (Printf.sprintf "gh pr review %s --approve --body %s"
-            (Filename.quote p.pr_url) (Filename.quote body)));
+       let body =
+         Printf.sprintf "%s\n\n%s" review_pass_marker
+           (if summary = "" then "Automated review: pass." else summary)
+       in
+       let rc = Soldev_shell.run_cmd ~echo:false
+         (Printf.sprintf "gh pr comment %s --body %s"
+            (Filename.quote p.pr_url) (Filename.quote body))
+       in
+       if rc <> 0 then begin
+         Printf.eprintf "error: failed to post review-pass comment on %s\n" p.pr_url;
+         exit 1
+       end;
        Printf.printf "[%s] %s → approved\n" ticket_id p.pr_url
      | Fail ->
        let body =
          Printf.sprintf "Automated review: changes requested.\n\n%s"
            (format_violations violations)
        in
-       ignore (Soldev_shell.run_cmd ~echo:false
+       let rc = Soldev_shell.run_cmd ~echo:false
          (Printf.sprintf "gh pr comment %s --body %s"
-            (Filename.quote p.pr_url) (Filename.quote body)));
+            (Filename.quote p.pr_url) (Filename.quote body))
+       in
+       if rc <> 0 then begin
+         Printf.eprintf "error: failed to post review-fail comment on %s\n" p.pr_url;
+         exit 1
+       end;
        Printf.printf "[%s] %s → changes requested (%d violation(s))\n"
          ticket_id p.pr_url (List.length violations))
 
@@ -354,25 +385,28 @@ let run_merge dry_run accept_performance_regression ticket_filter =
     end else if dry_run then begin
       Printf.printf "  (dry-run) gh pr merge %s --squash --delete-branch\n" p.pr_url
     end else begin
+      (* `gh pr merge --delete-branch` fails outright — nonzero exit, even
+         though the merge itself already landed on GitHub — if the branch is
+         still checked out in a linked worktree. That's not an edge case:
+         it's the normal state of any ticket that just finished. Remove the
+         worktree *before* calling `gh pr merge` so branch deletion never
+         conflicts with it in the first place. *)
+      Soldev_shell.run_cmd_lines "git worktree list --porcelain"
+      |> List.filter_map (fun line ->
+           if String.length line > 9 && String.sub line 0 9 = "worktree "
+           then Some (String.sub line 9 (String.length line - 9)) else None)
+      |> List.iter (fun wt_path ->
+           let wt_branch = Sol_process.output_shell ~echo:false
+             (Printf.sprintf "git -C %s rev-parse --abbrev-ref HEAD 2>/dev/null" (Filename.quote wt_path)) in
+           if wt_branch = p.pr_branch then
+             ignore (Soldev_shell.run_cmd (Printf.sprintf
+               "git worktree remove %s --force" (Filename.quote wt_path))));
       let merge_rc = Soldev_shell.run_cmd (Printf.sprintf
         "gh pr merge %s --squash --delete-branch --admin" (Filename.quote p.pr_url)) in
       if merge_rc <> 0 then begin
         Printf.eprintf "  gh pr merge failed for %s — leaving open, retry once green\n" p.pr_url;
         incr errors
       end else begin
-        (* A branch checked out in a linked worktree can't be deleted by
-           --delete-branch above; find and remove any leftover worktree for
-           this branch now that its work has landed. *)
-        Soldev_shell.run_cmd_lines "git worktree list --porcelain"
-        |> List.filter_map (fun line ->
-             if String.length line > 9 && String.sub line 0 9 = "worktree "
-             then Some (String.sub line 9 (String.length line - 9)) else None)
-        |> List.iter (fun wt_path ->
-             let wt_branch = Sol_process.output_shell ~echo:false
-               (Printf.sprintf "git -C %s rev-parse --abbrev-ref HEAD 2>/dev/null" (Filename.quote wt_path)) in
-             if wt_branch = p.pr_branch then
-               ignore (Soldev_shell.run_cmd (Printf.sprintf
-                 "git worktree remove %s --force" (Filename.quote wt_path))));
         ignore (Soldev_shell.run_cmd ~echo:false "git fetch origin main -q");
         let sync_rc = Soldev_shell.run_cmd ~echo:false "git merge origin/main --no-edit -q" in
         if sync_rc <> 0 then begin

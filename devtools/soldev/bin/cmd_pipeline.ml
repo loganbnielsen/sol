@@ -62,9 +62,11 @@ let result_file_arg =
 let review_cmd =
   Cmd.v
     (Cmd.info "review"
-       ~doc:"Process a structured JSON review result by leaving it on the \
-             ticket's PR — a real GitHub approval on pass (which `merge` \
-             checks for), a plain comment on fail. No ticket file moves.")
+       ~doc:"Process a structured JSON review result by leaving it as a PR \
+             comment — marked SOLDEV-REVIEW: PASS on pass (which `merge` \
+             checks for), an ordinary violations comment on fail. Not a \
+             formal GitHub review: `gh` always runs as the PR's own author \
+             here, and GitHub refuses self-approval. No ticket file moves.")
     Term.(const Soldev_merge.run_review $ ticket_arg $ result_file_arg)
 
 let include_done_flag =

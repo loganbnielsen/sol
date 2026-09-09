@@ -125,7 +125,7 @@ After collecting each result, write it to a temp file and call:
 soldev pipeline review <ticket-id> --result-file /tmp/<ticket-id>-result.json
 ```
 
-`soldev pipeline review` leaves the verdict on the PR itself — a real GitHub review approval on pass (which `soldev pipeline merge` checks for before it will act), a plain comment on fail. It does not touch any ticket file; there is nothing to move.
+`soldev pipeline review` leaves the verdict on the PR itself as a plain comment either way — one carrying the `SOLDEV-REVIEW: PASS` marker on pass (which `soldev pipeline merge` checks for before it will act), an ordinary violations comment on fail. It's a comment, not a formal GitHub review, because `gh` always runs as the PR's own author here and GitHub refuses self-approval. It does not touch any ticket file; there is nothing to move.
 
 ## Step 3 — Report
 
@@ -136,4 +136,4 @@ EXP-007   PR #43  → changes requested   cmd_dev.ml:142 — Sys.command rc unch
 ```
 
 Human next steps for approved tickets:
-- Run `soldev pipeline merge` (optionally with a ticket ID, or `--dry-run` first). This checks the PR's review approval and CI status directly against GitHub, and only then runs `gh pr merge --squash --delete-branch` — a red/pending check or missing approval leaves the PR open, untouched, not force-merged. On success it fast-forwards local `main`, runs the perf suite, and updates the baseline (or reverts the squash commit on a real regression — which un-does the ticket's `DONE` move right along with the code, landing it back in `READY_FOR_ENGINEERING` automatically). It does **not** push `main` — push it yourself once you're happy with the resulting local commits.
+- Run `soldev pipeline merge` (optionally with a ticket ID, or `--dry-run` first). This checks the PR for the review-pass marker comment and CI status directly against GitHub, and only then runs `gh pr merge --squash --delete-branch --admin` — a red/pending check or missing pass-marker leaves the PR open, untouched, not force-merged. On success it fast-forwards local `main`, runs the perf suite, and updates the baseline (or reverts the squash commit on a real regression — which un-does the ticket's `DONE` move right along with the code, landing it back in `READY_FOR_ENGINEERING` automatically). It does **not** push `main` — push it yourself once you're happy with the resulting local commits.
