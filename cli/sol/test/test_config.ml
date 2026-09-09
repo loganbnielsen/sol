@@ -4,6 +4,9 @@ let check_int_opt = Alcotest.(check (option int))
 let check_bool = Alcotest.(check bool)
 let check_str_opt = Alcotest.(check (option string))
 
+let check_provider label expected provider =
+  check_str label expected (Sol_cli_provider.to_string provider)
+
 let contains ~needle s =
   let nlen = String.length needle and slen = String.length s in
   let rec loop i = i + nlen <= slen && (String.sub s i nlen = needle || loop (i + 1)) in
@@ -100,7 +103,7 @@ services:
       let target = Option.get (Sol_cli_config.target cfg) in
       check_str "target name" "prod/aws/us-east-1" target.name;
       check_str "env" "prod" target.env;
-      check_str "provider" "aws" target.provider;
+      check_provider "provider" "aws" target.provider;
       check_str "region" "us-east-1" target.region;
       check_str "cluster" "pluto-prod" (Option.get target.cluster_name);
       let resource = List.hd (Sol_cli_config.resources cfg) in
@@ -467,6 +470,14 @@ let test_bad_target_path_fails () =
     | Error e ->
       check_str "message" "target must look like <env>/<provider>/<region>" e.message)
 
+let test_unknown_target_provider_fails () =
+  with_temp_dir (fun () ->
+    write_base ();
+    match Sol_cli_config.load_for_target ~target:"prod/azure/us-east-1" with
+    | Ok _ -> Alcotest.fail "expected unknown target provider"
+    | Error e ->
+      check_str "message" "unsupported provider \"azure\"" e.message)
+
 let test_parent_target_path_fails () =
   with_temp_dir (fun () ->
     write_base ();
@@ -478,18 +489,17 @@ let test_parent_target_path_fails () =
 (* FEAT-026 round 1: load_for_target requires at least one of sol.yml or
    the target file to exist -- a target that's neither declared in a
    sol.yml nor has its own overlay file is just a well-shaped path
-   (e.g. an old-style service path like app/payments/charge_svc
-   misinterpreted after sol deploy's positional-arg change), not a real
+   (e.g. a known-provider target like dev/aws/us-west-2), not a real
    target. *)
 let test_target_with_neither_file_fails () =
   with_temp_dir (fun () ->
     (* deliberately no write_base (), no sol.yml, no target file *)
-    match Sol_cli_config.load_for_target ~target:"app/payments/charge_svc" with
+    match Sol_cli_config.load_for_target ~target:"dev/aws/us-west-2" with
     | Ok _ -> Alcotest.fail "expected target with no sol.yml and no \
                              target file to fail"
     | Error e ->
       check_bool "message names the target" true
-        (let needle = "app/payments/charge_svc" and s = e.message in
+        (let needle = "dev/aws/us-west-2" and s = e.message in
          let n = String.length needle and l = String.length s in
          let found = ref false in
          for i = 0 to l - n do
@@ -585,6 +595,15 @@ target:
 |};
     expect_load_error "duplicate target provider box \"aws\"")
 
+let test_unknown_provider_box_fails () =
+  with_temp_dir (fun () ->
+    write "sol.yml" {|
+target:
+  azure:
+    subscription_id: pluto-dev
+|};
+    expect_load_error "unsupported provider \"azure\"")
+
 let test_provider_fields_feed_active_terraform_provider () =
   with_temp_dir (fun () ->
     write "sol.yml" {|
@@ -665,6 +684,7 @@ let () =
         Alcotest.test_case "observability_backend parsed" `Quick test_target_observability_backend_parsed;
         Alcotest.test_case "observability_backend absent when unset" `Quick test_target_observability_backend_absent_when_unset;
         Alcotest.test_case "bad target path fails" `Quick test_bad_target_path_fails;
+        Alcotest.test_case "unknown target provider fails" `Quick test_unknown_target_provider_fails;
         Alcotest.test_case "parent target path fails" `Quick test_parent_target_path_fails;
         Alcotest.test_case "target with neither sol.yml nor overlay fails" `Quick test_target_with_neither_file_fails;
         Alcotest.test_case "target with only sol.yml succeeds" `Quick test_target_with_only_sol_yml_succeeds;
@@ -697,6 +717,7 @@ let () =
         Alcotest.test_case "FEAT-028 shapes tolerated" `Quick test_feat_028_shapes_still_tolerated;
         Alcotest.test_case "provider box round trips" `Quick test_provider_box_round_trips;
         Alcotest.test_case "duplicate provider box fails" `Quick test_duplicate_provider_box_fails;
+        Alcotest.test_case "unknown provider box fails" `Quick test_unknown_provider_box_fails;
         Alcotest.test_case "provider fields feed terraform vars" `Quick test_provider_fields_feed_active_terraform_provider;
         Alcotest.test_case "terraform vars: workspace_name + ecr_repositories" `Quick test_terraform_vars_workspace_name_and_ecr_repositories;
         Alcotest.test_case "terraform vars: ecr_repositories empty without app/" `Quick test_terraform_vars_ecr_repositories_empty_without_app_dir;

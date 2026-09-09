@@ -99,17 +99,15 @@ let configure_kubectl infra_dir =
 
 (* ── cloud apply/plan ───────────────────────────────────────────────────── *)
 
-type provider = Aws | Gcp
-
-let provider_name = function Aws -> "aws" | Gcp -> "gcp"
-
 let provider_of_target_path target =
   match String.split_on_char '/' target with
-  | [_env; "aws"; _region] -> Aws
-  | [_env; "gcp"; _region] -> Gcp
   | [_env; provider; _region] ->
-    Printf.eprintf "error: unsupported provider %S in target %S.\n" provider target;
-    exit 1
+    begin match Sol_cli_provider.of_string provider with
+    | Some provider -> provider
+    | None ->
+      Printf.eprintf "error: unsupported provider %S in target %S.\n" provider target;
+      exit 1
+    end
   | _ ->
     Printf.eprintf "error: target must look like <env>/<provider>/<region>.\n";
     exit 1
@@ -122,7 +120,7 @@ let check_terraform () =
   end
 
 let infra_dir provider =
-  let pname = provider_name provider in
+  let pname = Sol_cli_provider.to_string provider in
   let sol_home = resolve_sol_home () in
   let dir = Filename.concat sol_home
     (Printf.sprintf "cli/platform/infra/%s" pname) in
@@ -522,7 +520,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
     Printf.printf "\nDone. Re-run with --apply to destroy cloud resources.\n%!"
   | Apply ->
     (match provider with
-     | Aws ->
+     | Sol_cli_provider.Aws ->
        (match resolved_var "cluster_name" ~var_files ~vars ~default:None with
         | None -> ()
         | Some cluster_name ->
@@ -531,14 +529,14 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
             ~default:"us-east-1"
           in
           delete_loadbalancer_services ~region ~cluster_name)
-     | Gcp -> ());
+     | Sol_cli_provider.Gcp -> ());
     require_terraform_success
       (Sol_cli_run_log.run_phase run_log ~name:"terraform-destroy"
          (fun () -> Sol_cli_terraform.destroy ~chdir:infra_dir ~var_files ~vars));
     Printf.printf "\nVerifying teardown...\n%!";
     (match provider with
-     | Aws -> verify_aws_destroy ~var_files ~vars
-     | Gcp -> Printf.printf "  (GCP destroy verification not implemented yet)\n%!");
+     | Sol_cli_provider.Aws -> verify_aws_destroy ~var_files ~vars
+     | Sol_cli_provider.Gcp -> Printf.printf "  (GCP destroy verification not implemented yet)\n%!");
     Printf.printf "\nDone.\n%!"
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)

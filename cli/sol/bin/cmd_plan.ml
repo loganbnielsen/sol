@@ -32,7 +32,7 @@ let run target_name =
       Printf.printf "Target: %s\n\n" target_name;
       Printf.printf "Target config:\n";
       print_opt "env" (Some target.env);
-      print_opt "provider" (Some target.provider);
+      print_opt "provider" (Some (Sol_cli_provider.to_string target.provider));
       print_opt "region" (Some target.region);
       print_opt "registry" target.registry;
       print_opt "cluster" target.cluster_name;
