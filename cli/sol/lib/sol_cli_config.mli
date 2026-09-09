@@ -1,7 +1,7 @@
 type target = {
   name                   : string;
   env                    : string;
-  provider               : string;
+  provider               : Sol_cli_provider.t;
   region                 : string;
   registry               : string option;
   base_domain            : string option;

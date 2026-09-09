@@ -1,7 +1,7 @@
 type target = {
   name                   : string;
   env                    : string;
-  provider               : string;
+  provider               : Sol_cli_provider.t;
   region                 : string;
   registry               : string option;
   base_domain            : string option;
@@ -42,6 +42,13 @@ type t = {
   target    : target option;
   resources : resource list;
   services  : service list;
+}
+
+let target_empty = {
+  name = ""; env = ""; provider = Sol_cli_provider.Aws; region = "";
+  registry = None; base_domain = None; cluster_name = None;
+  terraform_var_file = None; observability_backend = None;
+  provider_fields = [];
 }
 
 let empty = { project = None; target = None; resources = []; services = [] }
@@ -151,6 +158,11 @@ let service_empty name = {
   omit = false;
 }
 
+let target_scalar_key = function
+  | "registry" | "base_domain" | "cluster_name" | "terraform_var_file"
+  | "observability_backend" -> true
+  | _ -> false
+
 type section =
   | None_section
   | Target
@@ -214,12 +226,7 @@ let load path =
            Ok ()
          in
          let update_provider provider f =
-           let target = Option.value !cfg.target ~default:{
-             name = ""; env = ""; provider = ""; region = "";
-             registry = None; base_domain = None; cluster_name = None;
-             terraform_var_file = None; observability_backend = None;
-             provider_fields = [];
-           } in
+           let target = Option.value !cfg.target ~default:target_empty in
            let fields = List.assoc_opt provider target.provider_fields
                         |> Option.value ~default:[] in
            let* fields = f fields in
@@ -295,7 +302,7 @@ let load path =
                    loop ()
                  | No_root ->
                    begin match !section, split_key_value body with
-                   | (Target | Target_provider _), Some (k, "") when k = "aws" || k = "gcp" ->
+                   | (Target | Target_provider _), Some (k, "") when Sol_cli_provider.is_known k ->
                      if List.mem k !seen_provider_boxes then
                        fail (Printf.sprintf "duplicate target provider box %S" k)
                      else begin
@@ -303,15 +310,17 @@ let load path =
                        section := Target_provider k;
                        loop ()
                      end
-                   | (Target | Target_provider _), Some (k, "") ->
+                   | (Target | Target_provider _), Some (k, "") when target_scalar_key k ->
                      fail (Printf.sprintf "missing value for %s" k)
+                   | (Target | Target_provider _), Some (k, "") ->
+                     fail (Printf.sprintf "unsupported provider %S" k)
                    | _ -> fail "unsupported sol.yml syntax"
                    end
                  end
                | 2, _, Some (k, v) ->
                  let* () = begin match !section with
                  | Target | Target_provider _ ->
-                   if (k = "aws" || k = "gcp") && v = "" then begin
+                   if (Sol_cli_provider.is_known k) && v = "" then begin
                      if List.mem k !seen_provider_boxes then
                        fail (Printf.sprintf "duplicate target provider box %S" k)
                      else begin
@@ -322,12 +331,7 @@ let load path =
                    end else
                    let* () = require_value k v in
                    section := Target;
-                   let current = Option.value !cfg.target ~default:{
-                     name = ""; env = ""; provider = ""; region = "";
-                     registry = None; base_domain = None; cluster_name = None;
-                     terraform_var_file = None; observability_backend = None;
-                     provider_fields = [];
-                   } in
+                   let current = Option.value !cfg.target ~default:target_empty in
                    let* target =
                      match k with
                      | "registry" ->
@@ -345,7 +349,11 @@ let load path =
                      | "observability_backend" ->
                        let* v = scalar k v in
                        Ok { current with observability_backend = Some v }
-                     | _ -> fail (Printf.sprintf "unknown target key %S" k)
+                   | _ when v = "" ->
+                     if Sol_cli_provider.is_known k then
+                       fail (Printf.sprintf "missing value for %s" k)
+                     else fail (Printf.sprintf "unsupported provider %S" k)
+                   | _ -> fail (Printf.sprintf "unknown target key %S" k)
                    in
                    cfg := { !cfg with target = Some target };
                    Ok ()
@@ -555,9 +563,15 @@ let target_of_path s =
   | [env; provider; region]
     when env <> "" && provider <> "" && region <> ""
          && env <> ".." && provider <> ".." && region <> ".." ->
-    Ok { name = s; env; provider; region; registry = None; base_domain = None;
-         cluster_name = None; terraform_var_file = None; observability_backend = None;
-         provider_fields = [] }
+    begin match Sol_cli_provider.of_string provider with
+    | Some provider ->
+      Ok { name = s; env; provider; region; registry = None; base_domain = None;
+           cluster_name = None; terraform_var_file = None; observability_backend = None;
+           provider_fields = [] }
+    | None ->
+      Error { path = s; line = 0;
+              message = Printf.sprintf "unsupported provider %S" provider }
+    end
   | parts when List.exists ((=) "..") parts ->
     Error { path = s; line = 0; message = "target path must not contain '..'" }
   | _ ->
@@ -567,7 +581,8 @@ let target_of_path s =
 let target_file target =
   Filename.concat "sol"
     (Filename.concat target.env
-       (Filename.concat target.provider (target.region ^ ".yml")))
+       (Filename.concat (Sol_cli_provider.to_string target.provider)
+          (target.region ^ ".yml")))
 
 let active_resources cfg =
   List.filter (fun (r : resource) -> not r.omit) cfg.resources
@@ -576,10 +591,10 @@ let active_services cfg =
   List.filter (fun (s : service) -> not s.omit) cfg.services
 
 (* Matches the only providers sol.yml's target-provider box itself
-   recognizes (`k = "aws" || k = "gcp"` above) — no third value invented
-   here that nothing else in the codebase (cmd_cloud_tf.ml's `provider`
-   type, cli/platform/infra/) can actually provision against. *)
-let known_provider s = s = "aws" || s = "gcp"
+   recognizes (`Sol_cli_provider.is_known k` above) — no third value invented
+   here that nothing else in the codebase (cli/platform/infra/) can actually
+   provision against. *)
+let known_provider = Sol_cli_provider.is_known
 
 let format_use_ref ref =
   if ref <> "" && ref.[0] = '/' then ref ^ " (cross-region)" else ref
@@ -704,7 +719,7 @@ let terraform_vars ~workspace cfg =
       |> add_opt "workspace_name" (Some workspace)
     in
     let vars =
-      List.assoc_opt target.provider target.provider_fields
+      List.assoc_opt (Sol_cli_provider.to_string target.provider) target.provider_fields
       |> Option.value ~default:[]
       |> List.rev_append vars
     in

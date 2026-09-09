@@ -9,6 +9,7 @@
   Sol_cli_workspace
   Sol_cli_manifest_yaml
   Sol_cli_manifest
+  Sol_cli_provider
   Sol_cli_config
   Sol_cli_toml
   Sol_cli_plan_ids
