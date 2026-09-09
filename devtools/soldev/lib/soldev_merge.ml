@@ -24,7 +24,8 @@ let git_branch_exists branch =
    field. A branch's convention is `<TICKET-ID>/<slug>`, so the ticket ID is
    the path segment before the first `/`. *)
 
-type pr_info = { pr_number : int; pr_url : string; pr_branch : string }
+type pr_info =
+  { pr_number : int; pr_url : string; pr_branch : string; pr_head_sha : string }
 
 let ticket_id_of_branch branch =
   match String.index_opt branch '/' with
@@ -34,16 +35,17 @@ let ticket_id_of_branch branch =
 let open_prs () =
   let json_str =
     Sol_process.output_shell ~echo:false
-      "gh pr list --state open --json number,url,headRefName --limit 200"
+      "gh pr list --state open --json number,url,headRefName,headRefOid --limit 200"
   in
   if json_str = "" then []
   else
     let open Yojson.Basic.Util in
     Yojson.Basic.from_string json_str |> to_list
     |> List.map (fun j ->
-      { pr_number = j |> member "number" |> to_int
-      ; pr_url    = j |> member "url" |> to_string
-      ; pr_branch = j |> member "headRefName" |> to_string })
+      { pr_number  = j |> member "number" |> to_int
+      ; pr_url     = j |> member "url" |> to_string
+      ; pr_branch  = j |> member "headRefName" |> to_string
+      ; pr_head_sha = j |> member "headRefOid" |> to_string })
 
 let find_pr_for_ticket ticket_id =
   open_prs () |> List.find_opt (fun p -> ticket_id_of_branch p.pr_branch = ticket_id)
@@ -61,23 +63,67 @@ let pr_checks_green pr_url =
    approve their own PR (`gh pr review --approve` fails with "Can not
    approve your own pull request"). So review readiness can't be GitHub's
    own reviewDecision — it's a plain PR comment carrying this marker,
-   posted by `run_review` on pass and checked for here. Branch protection's
+   posted by `run_review` and checked for here. Branch protection's
    1-approval requirement is separately satisfied at merge time via
-   `gh pr merge --admin`, same as before. *)
-let review_pass_marker = "SOLDEV-REVIEW: PASS"
+   `gh pr merge --admin`, same as before.
 
-let pr_review_approved pr_url =
-  let comments =
+   A pass comment is only trustworthy for the exact commit it reviewed: a
+   bounce-then-refix round posts a *later* comment on the same PR, and a
+   naive "does a PASS exist anywhere in history" check would still see the
+   earlier PASS and call the PR approved even though the latest verdict is
+   FAIL, or even though HEAD moved past the reviewed commit entirely (a
+   rebase, a manual fixup, any commit nobody re-reviewed). So: only the
+   temporally-last SOLDEV-REVIEW comment counts, and a PASS only counts if
+   its embedded sha still equals the PR's current head. *)
+let review_pass_marker = "SOLDEV-REVIEW: PASS"
+let review_fail_marker = "SOLDEV-REVIEW: FAIL"
+
+type review_verdict = Reviewed_pass of string (* reviewed sha *) | Reviewed_fail
+
+let starts_with ~prefix s =
+  String.length s >= String.length prefix
+  && String.sub s 0 (String.length prefix) = prefix
+
+let parse_review_marker body =
+  match String.split_on_char '\n' body with
+  | [] -> None
+  | first_line :: _ ->
+    if starts_with ~prefix:review_pass_marker first_line then
+      let rest_start = String.length review_pass_marker in
+      let sha =
+        String.sub first_line rest_start (String.length first_line - rest_start)
+        |> String.trim
+      in
+      Some (Reviewed_pass sha)
+    else if starts_with ~prefix:review_fail_marker first_line then
+      Some Reviewed_fail
+    else None
+
+(* Later comments override earlier ones — this is what makes a bounce
+   correctly supersede a prior pass. *)
+let latest_review_verdict_of_bodies bodies =
+  List.fold_left (fun acc body ->
+    match parse_review_marker body with
+    | Some v -> Some v
+    | None -> acc)
+    None bodies
+
+let pr_comment_bodies pr_url =
+  let json_str =
     Sol_process.output_shell ~echo:false
-      (Printf.sprintf "gh pr view %s --json comments -q '.comments[].body'"
-         (Filename.quote pr_url))
+      (Printf.sprintf "gh pr view %s --json comments" (Filename.quote pr_url))
   in
-  let contains_marker line =
-    let nl = String.length review_pass_marker and ll = String.length line in
-    let rec go i = i + nl <= ll && (String.sub line i nl = review_pass_marker || go (i + 1)) in
-    go 0
-  in
-  String.split_on_char '\n' comments |> List.exists contains_marker
+  if json_str = "" then []
+  else
+    let open Yojson.Basic.Util in
+    Yojson.Basic.from_string json_str
+    |> member "comments" |> to_list
+    |> List.map (fun c -> c |> member "body" |> to_string)
+
+let pr_review_approved pr =
+  match latest_review_verdict_of_bodies (pr_comment_bodies pr.pr_url) with
+  | Some (Reviewed_pass reviewed_sha) -> reviewed_sha = pr.pr_head_sha
+  | Some Reviewed_fail | None -> false
 
 (* ── pipeline check-reverts ──────────────────────────────────────────────── *)
 
@@ -264,8 +310,11 @@ let run_review ticket_id result_file =
     let (status, summary, violations) = parse_result (String.trim json_str) in
     (match status with
      | Pass ->
+       (* Embed the PR's current head sha (from GitHub, not the local
+          worktree — see REFAC-077 follow-up) so a later commit nobody
+          reviewed can never ride in on this comment's approval. *)
        let body =
-         Printf.sprintf "%s\n\n%s" review_pass_marker
+         Printf.sprintf "%s %s\n\n%s" review_pass_marker p.pr_head_sha
            (if summary = "" then "Automated review: pass." else summary)
        in
        let rc = Soldev_shell.run_cmd ~echo:false
@@ -279,8 +328,8 @@ let run_review ticket_id result_file =
        Printf.printf "[%s] %s → approved\n" ticket_id p.pr_url
      | Fail ->
        let body =
-         Printf.sprintf "Automated review: changes requested.\n\n%s"
-           (format_violations violations)
+         Printf.sprintf "%s\n\nAutomated review: changes requested.\n\n%s"
+           review_fail_marker (format_violations violations)
        in
        let rc = Soldev_shell.run_cmd ~echo:false
          (Printf.sprintf "gh pr comment %s --body %s"
@@ -378,7 +427,7 @@ let run_merge dry_run accept_performance_regression ticket_filter =
   let merged = ref [] in
   List.iter (fun (id, p) ->
     Printf.printf "\n[%s]\n%!" id;
-    if not (pr_review_approved p.pr_url) then begin
+    if not (pr_review_approved p) then begin
       Printf.printf "  not approved yet — skipping (%s)\n" p.pr_url
     end else if not (pr_checks_green p.pr_url) then begin
       Printf.printf "  checks not green yet — skipping (%s)\n" p.pr_url

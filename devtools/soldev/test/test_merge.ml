@@ -42,6 +42,37 @@ let test_mentions_id_rejects_numeric_suffix () =
   check_bool "AUDIT-2 must not match inside AUDIT-23" false
     (Soldev_merge.mentions_id ~id:"AUDIT-2" "abc123 fix AUDIT-23 typo")
 
+(* ── review-approval sha-pinning (REFAC-077 follow-up) ───────────────────
+
+   `pr_review_approved` must treat only the most recent SOLDEV-REVIEW
+   comment as authoritative, and a PASS only counts when its embedded sha
+   still matches the PR's current head — otherwise a stale PASS from an
+   earlier round (superseded by a later FAIL, or by an unreviewed commit
+   pushed after approval) would wrongly read as still-approved. *)
+
+let sha_a = "aaaaaaa1111111111111111111111111111111"
+let sha_b = "bbbbbbb2222222222222222222222222222222"
+
+let pass_body sha = Printf.sprintf "SOLDEV-REVIEW: PASS %s\n\nAutomated review: pass." sha
+let fail_body = "SOLDEV-REVIEW: FAIL\n\nAutomated review: changes requested.\n\n- some violation"
+
+let approved_for_head head_sha bodies =
+  match Soldev_merge.latest_review_verdict_of_bodies bodies with
+  | Some (Soldev_merge.Reviewed_pass reviewed_sha) -> reviewed_sha = head_sha
+  | Some Soldev_merge.Reviewed_fail | None -> false
+
+let test_pass_then_fail_not_approved () =
+  check_bool "later FAIL supersedes earlier PASS" false
+    (approved_for_head sha_a [ pass_body sha_a; fail_body ])
+
+let test_pass_on_old_sha_then_new_commit_not_approved () =
+  check_bool "PASS on stale sha does not cover a later unreviewed commit" false
+    (approved_for_head sha_b [ pass_body sha_a ])
+
+let test_pass_on_current_sha_approved () =
+  check_bool "PASS on the current head sha is approved" true
+    (approved_for_head sha_a [ pass_body sha_a ])
+
 (* ── stale-binary post-merge race (REFAC-075) ────────────────────────────
 
    Regression test for the bug that caused REFAC-072/074's false-positive
@@ -126,5 +157,13 @@ let () =
     "stale-binary post-merge race", [
       Alcotest.test_case "rebuild before invoking avoids the stale-path race"
         `Quick test_stale_binary_fails_after_rename;
+    ];
+    "pr_review_approved sha-pinning", [
+      Alcotest.test_case "PASS then FAIL is not approved"
+        `Quick test_pass_then_fail_not_approved;
+      Alcotest.test_case "PASS on old sha does not cover a new commit"
+        `Quick test_pass_on_old_sha_then_new_commit_not_approved;
+      Alcotest.test_case "PASS on current sha is approved"
+        `Quick test_pass_on_current_sha_approved;
     ];
   ]
