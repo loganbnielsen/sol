@@ -17,6 +17,9 @@ let merge_ticket_arg =
                local directory. Omit to sweep every open PR whose branch looks \
                like <TICKET-ID>/....")
 
+let run_merge dry_run accept_performance_regression ticket_filter =
+  Soldev_merge.run_merge ~dry_run ~accept_performance_regression ~ticket_filter
+
 let merge_cmd =
   Cmd.v
     (Cmd.info "merge"
@@ -24,7 +27,7 @@ let merge_cmd =
              own branch already committed that move, not because this command \
              moves anything locally. Pass a ticket ID to merge one; omit to \
              sweep all open, ready PRs.")
-    Term.(const Soldev_merge.run_merge
+    Term.(const run_merge
           $ dry_run_flag $ accept_performance_regression_flag $ merge_ticket_arg)
 
 let ticket_arg =
@@ -35,6 +38,10 @@ let merge_sha_arg =
   Arg.(required & pos 1 (some string) None &
        info [] ~docv:"MERGE-SHA" ~doc:"The commit `merge` just synced to local main")
 
+let run_merge_finish ticket_id merge_sha accept_performance_regression =
+  Soldev_merge.run_merge_finish
+    ~ticket_id ~merge_sha ~accept_performance_regression
+
 let merge_finish_cmd =
   Cmd.v
     (Cmd.info "merge-finish"
@@ -42,7 +49,7 @@ let merge_finish_cmd =
              after the PR's merge commit landed, never invoke directly. Runs the \
              post-merge test suite and updates the perf baseline; reverts the \
              merge (ticket and code together) on a real regression.")
-    Term.(const Soldev_merge.run_merge_finish
+    Term.(const run_merge_finish
           $ ticket_arg $ merge_sha_arg $ accept_performance_regression_flag)
 
 let submit_cmd =
