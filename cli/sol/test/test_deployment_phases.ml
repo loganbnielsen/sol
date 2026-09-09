@@ -561,6 +561,18 @@ let test_all_paths_start_from_same_plan_workspace () =
       (List.length plan.Sol_cli_deployment_plan.services)
   ) [plan_local; plan_direct; plan_gitops; plan_hosted]
 
+let test_up_execution_descriptor_uses_host_push_image () =
+  let exec =
+    Sol_cli_up_execution.service_execution
+      ~workspace:"myapp" ~ctx_dir:"/tmp/myapp.docker-ctx" ~sha:"abc123" svc_spec
+  in
+  Alcotest.(check string) "k8s name" "charge-svc" exec.k8s_name;
+  Alcotest.(check string) "namespace" "myapp-payments" exec.namespace;
+  Alcotest.(check string) "push image"
+    "localhost:5000/myapp/charge-svc:abc123" exec.push_image;
+  Alcotest.(check string) "dockerfile"
+    "/tmp/myapp.docker-ctx/app/payments/charge_svc/Dockerfile" exec.dockerfile
+
 (* ── entry point ─────────────────────────────────────────────────────────── *)
 
 let () =
@@ -619,5 +631,6 @@ let () =
       ; Alcotest.test_case "gitops shares plan type"            `Quick test_gitops_shares_plan_type
       ; Alcotest.test_case "build is mode-agnostic"             `Quick test_change_set_build_is_path_agnostic
       ; Alcotest.test_case "all paths start from same workspace" `Quick test_all_paths_start_from_same_plan_workspace
+      ; Alcotest.test_case "up execution descriptor uses host push image" `Quick test_up_execution_descriptor_uses_host_push_image
       ]
     ]
