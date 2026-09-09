@@ -5,6 +5,7 @@ severity: low
 source: FEAT-033 findings (project/dogfood/2026-09-07_typescript_demo_spike.md) — headline recommendation of that spike, second priority after FEAT-034
 branch: FEAT-035/sol-obs
 worktree: ../sol-FEAT-035-sol-obs
+pr: https://github.com/loganbnielsen/sol/pull/166
 ---
 
 **Depends on:** FEAT-033 (done — evidence base).
