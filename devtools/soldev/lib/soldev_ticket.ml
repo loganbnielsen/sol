@@ -115,6 +115,63 @@ let strip_trailing_period s =
   let n = String.length s in
   if n > 0 && s.[n - 1] = '.' then String.sub s 0 (n - 1) else s
 
+let is_ticket_id_token_char c =
+  (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+  || (c >= '0' && c <= '9') || c = '_' || c = '-'
+
+(* A ticket ID looks like PREFIX-NUMBER, where PREFIX is uppercase
+   letters/underscores (FEAT, AUDIT, CODEX_STYLE_AUDIT, ...) and NUMBER is
+   digits (FEAT-033, CODEX_STYLE_AUDIT-006). Reject anything else so prose
+   words in an annotated "Depends on:" line (e.g. "(done — merged as the
+   evidence base for this ticket)", "conceptually", "in practice") never get
+   mistaken for a dependency. *)
+let is_ticket_id_token s =
+  match String.rindex_opt s '-' with
+  | None -> false
+  | Some i when i = 0 || i = String.length s - 1 -> false
+  | Some i ->
+    let prefix = String.sub s 0 i in
+    let suffix = String.sub s (i + 1) (String.length s - i - 1) in
+    let is_upper_or_underscore c = (c >= 'A' && c <= 'Z') || c = '_' in
+    let is_digit c = c >= '0' && c <= '9' in
+    prefix.[0] >= 'A' && prefix.[0] <= 'Z'
+    && String.for_all is_upper_or_underscore prefix
+    && String.length suffix > 0
+    && String.for_all is_digit suffix
+
+(* Extract every ticket-ID-shaped token from a raw "Depends on:" value,
+   ignoring parenthetical annotations, prose ("and", "in practice", "not a
+   hard dependency"), and punctuation — a "Depends on:" line in this repo is
+   free-form prose, not a structured list (e.g.
+   "FEAT-034 (done), FEAT-035 (done)." or
+   "FEAT-034 in practice — ... Not a hard code dependency."). *)
+let extract_ticket_ids raw =
+  let n = String.length raw in
+  let rec go i acc =
+    if i >= n then List.rev acc
+    else if not (is_ticket_id_token_char raw.[i]) then go (i + 1) acc
+    else
+      let j = ref i in
+      while !j < n && is_ticket_id_token_char raw.[!j] do
+        incr j
+      done;
+      let token = String.sub raw i (!j - i) in
+      let acc = if is_ticket_id_token token then token :: acc else acc in
+      go !j acc
+  in
+  go 0 []
+
+(* "None." always means zero dependencies in this repo's convention, even
+   when followed by an unrelated parenthetical aside that happens to mention
+   another ticket (e.g. "None. (BUG-008's fix already unblocked this.)") —
+   that mention is context, not a second dependency. *)
+let starts_with_none raw =
+  let raw = String.trim raw in
+  let n = String.length raw in
+  n >= 4
+  && String.lowercase_ascii (String.sub raw 0 4) = "none"
+  && (n = 4 || not (is_ticket_id_token_char raw.[4]))
+
 let parse_depends content =
   let prefix = "**Depends on:**" in
   let rec find = function
@@ -127,11 +184,7 @@ let parse_depends content =
             (String.length line - String.length prefix)
           |> strip_trailing_period
         in
-        if String.lowercase_ascii (String.trim raw) = "none" then []
-        else
-          String.split_on_char ',' raw
-          |> List.map String.trim
-          |> List.filter (fun s -> s <> "")
+        if starts_with_none raw then [] else extract_ticket_ids raw
       else find rest
   in
   find (String.split_on_char '\n' content)

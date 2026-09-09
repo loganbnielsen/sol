@@ -73,6 +73,40 @@ let test_depends_missing () =
   let content = "---\nid: X\n---\n\nNo depends line.\n" in
   check_list_string "missing" [] (Soldev_ticket.parse_depends content)
 
+let test_depends_annotated_single () =
+  let content =
+    "---\nid: X\n---\n\n**Depends on:** FEAT-033 (done — merged as the evidence base for this ticket).\n"
+  in
+  check_list_string "annotated single" ["FEAT-033"] (Soldev_ticket.parse_depends content)
+
+let test_depends_annotated_multiple () =
+  let content =
+    "---\nid: X\n---\n\n**Depends on:** FEAT-034 (done), FEAT-035 (done).\n"
+  in
+  check_list_string "annotated multiple" ["FEAT-034"; "FEAT-035"]
+    (Soldev_ticket.parse_depends content)
+
+let test_depends_prose () =
+  let content =
+    "---\nid: X\n---\n\n**Depends on:** FEAT-034 in practice — the natural trigger for this ticket is FEAT-034 actually getting built. Not a hard code dependency.\n"
+  in
+  check_list_string "prose, repeated id" ["FEAT-034"; "FEAT-034"]
+    (Soldev_ticket.parse_depends content)
+
+let test_depends_none_with_parenthetical () =
+  let content =
+    "---\nid: X\n---\n\n**Depends on:** None. (BUG-008's port-shadowing fix already unblocked local access.)\n"
+  in
+  check_list_string "none with parenthetical, aside is not a dependency" []
+    (Soldev_ticket.parse_depends content)
+
+let test_depends_underscore_prefix () =
+  let content =
+    "---\nid: X\n---\n\n**Depends on:** CODEX_STYLE_AUDIT-006.\n"
+  in
+  check_list_string "underscore prefix" ["CODEX_STYLE_AUDIT-006"]
+    (Soldev_ticket.parse_depends content)
+
 (* ── has_human_decision_gate ─────────────────────────────────────────────── *)
 
 let test_no_gate () =
@@ -174,6 +208,11 @@ let () =
       Alcotest.test_case "single dep"            `Quick test_depends_single;
       Alcotest.test_case "multiple deps"         `Quick test_depends_multiple;
       Alcotest.test_case "no depends line"       `Quick test_depends_missing;
+      Alcotest.test_case "annotated single"      `Quick test_depends_annotated_single;
+      Alcotest.test_case "annotated multiple"    `Quick test_depends_annotated_multiple;
+      Alcotest.test_case "prose, repeated id"    `Quick test_depends_prose;
+      Alcotest.test_case "none w/ parenthetical" `Quick test_depends_none_with_parenthetical;
+      Alcotest.test_case "underscore prefix"     `Quick test_depends_underscore_prefix;
     ];
     "has_human_decision_gate", [
       Alcotest.test_case "no gate"               `Quick test_no_gate;
