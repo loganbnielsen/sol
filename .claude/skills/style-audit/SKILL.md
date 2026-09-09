@@ -57,6 +57,10 @@ Flag these three categories:
    - Manual first-error refs or accumulator matches where Result pipelines would
      be clearer.
    - Repeated JSON/decode/validate/dispatch code that should be extracted.
+   - Control-flow fragmentation: the same mode/phase value is matched
+     repeatedly through a long imperative function, especially with empty
+     branches or inline guard matches. Prefer one higher-level branch, a tuple
+     match over the actual dimensions, or a small phase boundary.
 
 ## Manual Folder Walk
 
