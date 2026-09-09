@@ -158,10 +158,35 @@ let service_empty name = {
   omit = false;
 }
 
-let target_scalar_key = function
-  | "registry" | "base_domain" | "cluster_name" | "terraform_var_file"
-  | "observability_backend" -> true
-  | _ -> false
+type target_key =
+  | Target_registry
+  | Target_base_domain
+  | Target_cluster_name
+  | Target_terraform_var_file
+  | Target_observability_backend
+  | Target_provider_box of Sol_cli_provider.t
+  | Target_unknown of string
+
+let target_key_of_string s =
+  match s with
+  | "registry" -> Target_registry
+  | "base_domain" -> Target_base_domain
+  | "cluster_name" -> Target_cluster_name
+  | "terraform_var_file" -> Target_terraform_var_file
+  | "observability_backend" -> Target_observability_backend
+  | _ ->
+    match Sol_cli_provider.of_string s with
+    | Some provider -> Target_provider_box provider
+    | None -> Target_unknown s
+
+let target_key_name = function
+  | Target_registry -> "registry"
+  | Target_base_domain -> "base_domain"
+  | Target_cluster_name -> "cluster_name"
+  | Target_terraform_var_file -> "terraform_var_file"
+  | Target_observability_backend -> "observability_backend"
+  | Target_provider_box provider -> Sol_cli_provider.to_string provider
+  | Target_unknown s -> s
 
 type section =
   | None_section
@@ -302,61 +327,73 @@ let load path =
                    loop ()
                  | No_root ->
                    begin match !section, split_key_value body with
-                   | (Target | Target_provider _), Some (k, "") when Sol_cli_provider.is_known k ->
-                     if List.mem k !seen_provider_boxes then
-                       fail (Printf.sprintf "duplicate target provider box %S" k)
-                     else begin
-                       seen_provider_boxes := k :: !seen_provider_boxes;
-                       section := Target_provider k;
-                       loop ()
-                     end
-                   | (Target | Target_provider _), Some (k, "") when target_scalar_key k ->
-                     fail (Printf.sprintf "missing value for %s" k)
                    | (Target | Target_provider _), Some (k, "") ->
-                     fail (Printf.sprintf "unsupported provider %S" k)
+                     begin match target_key_of_string k with
+                     | Target_provider_box provider ->
+                       let provider = Sol_cli_provider.to_string provider in
+                       if List.mem provider !seen_provider_boxes then
+                         fail (Printf.sprintf "duplicate target provider box %S" provider)
+                       else begin
+                         seen_provider_boxes := provider :: !seen_provider_boxes;
+                         section := Target_provider provider;
+                         loop ()
+                       end
+                     | Target_unknown k ->
+                       fail (Printf.sprintf "unsupported provider %S" k)
+                     | key ->
+                       fail (Printf.sprintf "missing value for %s" (target_key_name key))
+                     end
                    | _ -> fail "unsupported sol.yml syntax"
                    end
                  end
                | 2, _, Some (k, v) ->
                  let* () = begin match !section with
                  | Target | Target_provider _ ->
-                   if (Sol_cli_provider.is_known k) && v = "" then begin
-                     if List.mem k !seen_provider_boxes then
-                       fail (Printf.sprintf "duplicate target provider box %S" k)
+                   let key = target_key_of_string k in
+                   begin match key, v with
+                   | Target_provider_box provider, "" ->
+                     let provider = Sol_cli_provider.to_string provider in
+                     if List.mem provider !seen_provider_boxes then
+                       fail (Printf.sprintf "duplicate target provider box %S" provider)
                      else begin
-                       seen_provider_boxes := k :: !seen_provider_boxes;
-                       section := Target_provider k;
+                       seen_provider_boxes := provider :: !seen_provider_boxes;
+                       section := Target_provider provider;
                        Ok ()
                      end
-                   end else
-                   let* () = require_value k v in
-                   section := Target;
-                   let current = Option.value !cfg.target ~default:target_empty in
-                   let* target =
-                     match k with
-                     | "registry" ->
-                       let* v = scalar k v in
-                       Ok { current with registry = Some v }
-                     | "base_domain" ->
-                       let* v = scalar k v in
-                       Ok { current with base_domain = Some v }
-                     | "cluster_name" ->
-                       let* v = scalar k v in
-                       Ok { current with cluster_name = Some v }
-                     | "terraform_var_file" ->
-                       let* v = scalar k v in
-                       Ok { current with terraform_var_file = Some v }
-                     | "observability_backend" ->
-                       let* v = scalar k v in
-                       Ok { current with observability_backend = Some v }
-                   | _ when v = "" ->
-                     if Sol_cli_provider.is_known k then
-                       fail (Printf.sprintf "missing value for %s" k)
-                     else fail (Printf.sprintf "unsupported provider %S" k)
-                   | _ -> fail (Printf.sprintf "unknown target key %S" k)
-                   in
-                   cfg := { !cfg with target = Some target };
-                   Ok ()
+                   | Target_unknown k, "" ->
+                     fail (Printf.sprintf "unsupported provider %S" k)
+                   | Target_unknown k, _ ->
+                     fail (Printf.sprintf "unknown target key %S" k)
+                   | Target_provider_box _, _ ->
+                     fail (Printf.sprintf "unknown target key %S" k)
+                   | key, "" ->
+                     fail (Printf.sprintf "missing value for %s" (target_key_name key))
+                   | _ ->
+                     let current = Option.value !cfg.target ~default:target_empty in
+                     let* target =
+                       match key with
+                       | Target_registry ->
+                         let* v = scalar k v in
+                         Ok { current with registry = Some v }
+                       | Target_base_domain ->
+                         let* v = scalar k v in
+                         Ok { current with base_domain = Some v }
+                       | Target_cluster_name ->
+                         let* v = scalar k v in
+                         Ok { current with cluster_name = Some v }
+                       | Target_terraform_var_file ->
+                         let* v = scalar k v in
+                         Ok { current with terraform_var_file = Some v }
+                       | Target_observability_backend ->
+                         let* v = scalar k v in
+                         Ok { current with observability_backend = Some v }
+                       | Target_provider_box _ | Target_unknown _ ->
+                         assert false
+                     in
+                     section := Target;
+                     cfg := { !cfg with target = Some target };
+                     Ok ()
+                   end
                  | _ -> fail "unsupported sol.yml syntax"
                  end in
                  loop ()
@@ -590,10 +627,9 @@ let active_resources cfg =
 let active_services cfg =
   List.filter (fun (s : service) -> not s.omit) cfg.services
 
-(* Matches the only providers sol.yml's target-provider box itself
-   recognizes (`Sol_cli_provider.is_known k` above) — no third value invented
-   here that nothing else in the codebase (cli/platform/infra/) can actually
-   provision against. *)
+(* Matches the only providers sol.yml's target-provider boxes recognize — no
+   third value invented here that nothing else in the codebase
+   (cli/platform/infra/) can actually provision against. *)
 let known_provider = Sol_cli_provider.is_known
 
 let format_use_ref ref =
