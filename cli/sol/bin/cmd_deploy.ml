@@ -41,16 +41,223 @@ let print_service_urls (results : Sol_cli_executor.result list) =
     | _ -> ()
   ) namespaces
 
+let check_contract ~filter_path =
+  let findings = Sol_cli_check.run ~filter_path () in
+  List.iter (fun f -> Printf.eprintf "%s\n" (Sol_cli_check.finding_to_string f)) findings;
+  if Sol_cli_check.has_errors findings then exit 1
+
+let ensure_postgres_url () =
+  match Sys.getenv_opt "POSTGRES_URL" with
+  | None | Some "" ->
+    Printf.eprintf
+      "error: POSTGRES_URL is not set.\n\
+       Set it in your environment before running 'sol deploy':\n\
+       \  export POSTGRES_URL=postgresql://user:pass@host:5432/dbname\n";
+    exit 1
+  | Some _ -> ()
+
+let check_consumer_group_changes ~workspace ~confirm_group_change plan =
+  let prev_groups = Sol_cli_deployment_state.load_deployed_groups workspace in
+  let next_groups = List.map Sol_cli_plan_ids.Consumer_group.to_string
+                      plan.Sol_cli_deployment_plan.consumer_groups in
+  let removed = Sol_cli_deployment_state.removed_consumer_groups ~prev:prev_groups ~next:next_groups in
+  if removed <> [] && not confirm_group_change then begin
+    Printf.eprintf
+      "\nwarning: the following consumer group(s) are no longer present in \
+       this deploy plan:\n";
+    List.iter (fun g -> Printf.eprintf "  - %s\n" g) removed;
+    Printf.eprintf
+      "\nMessages produced while the old group is absent will be consumed\n\
+       from the latest offset when the group is re-added, silently skipping\n\
+       any backlog.  Pass --confirm-group-change to acknowledge and proceed.\n\n";
+    exit 1
+  end
+
+let check_apply_environment ~filter_path =
+  check_contract ~filter_path;
+  ensure_postgres_url ()
+
+type deploy_context = {
+  workspace : string;
+  sha : string;
+  registry : string;
+  secret_backend : Sol_cli_manifest.secret_backend;
+  emit_plan_to : string option;
+  target_cfg : Sol_cli_config.target;
+  resolved_config : Sol_cli_config.t;
+  services : Sol_cli_manifest.service list;
+}
+
+let print_header ~workspace ~sha ?mode_line () =
+  Printf.printf "\nWorkspace: %s  tag: %s\n" workspace sha;
+  Option.iter (Printf.printf "%s\n") mode_line;
+  Printf.printf "\n%!"
+
+let build_plan ctx ~emit_to =
+  let env_target =
+    match Sol_cli_env_target.customer_cloud_defaults
+            ~registry:ctx.registry
+            ~image_tag:ctx.sha
+            ~emit_to
+            ()
+    with
+    | Ok t      -> t
+    | Error msg ->
+      Printf.eprintf "error: %s\n" msg;
+      exit 1
+  in
+  (* Guard: Kubernetes_live is never allowed with a GitOps target.
+     Combining the two would write plaintext secret values into the GitOps
+     repository, leaking them to everyone with read access to the repo. *)
+  (match env_target, ctx.secret_backend with
+   | Sol_cli_env_target.Customer_gitops _, Sol_cli_manifest.Kubernetes_live ->
+     begin
+       Printf.eprintf
+         "error: cannot use --secret-backend kubernetes-live with --emit-to \
+          (GitOps mode).\n\
+          \  This combination would write plaintext secrets into the GitOps \
+          repository,\n\
+          \  leaking them to every reader of the repo.\n\
+          \  Use --secret-backend kubernetes-placeholder (the default) or \
+          --secret-backend external-secrets instead.\n";
+       exit 1
+     end
+   | _ -> ());
+
+  let env  = { (Sol_cli_env_target.to_env_config ~name:ctx.workspace env_target) with
+               Sol_cli_deployment_plan.secret_backend = ctx.secret_backend;
+               env = Some ctx.target_cfg.Sol_cli_config.env } in
+  match Sol_cli_deployment_plan.of_services_result
+          ~workspace:ctx.workspace ~env ~resolved_config:ctx.resolved_config ctx.services with
+  | Ok plan -> plan
+  | Error err ->
+    Printf.eprintf "error: %s\n" (Sol_cli_deployment_plan.plan_error_to_string err);
+    exit 1
+
+let write_plan_if_requested ~emit_plan_to plan =
+  (match emit_plan_to with
+   | None -> ()
+   | Some path ->
+     let json_str = Yojson.Safe.pretty_to_string (Sol_cli_deployment_plan.to_json plan) in
+     if path = "-" then begin
+       print_string json_str;
+       print_char '\n'
+     end else begin
+       let oc = open_out path in
+       output_string oc json_str;
+       output_char oc '\n';
+       close_out oc;
+       Printf.printf "Plan written to %s\n%!" path
+     end)
+
+let to_manifest_primitive = function
+  | Sol_cli_deployment_plan.Svc    -> Svc
+  | Sol_cli_deployment_plan.Worker -> Worker
+  | Sol_cli_deployment_plan.Fn     -> Fn
+
+let print_planned_services plan =
+  List.iter (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+    Printf.printf "[%s] %s/%s\n%!" (primitive_label (to_manifest_primitive spec.primitive))
+    spec.domain spec.source_name)
+    plan.Sol_cli_deployment_plan.services
+
+let run_plan_or_exit ~workspace ~target_env ~mode ~secret_backend plan =
+  try
+    match Sol_cli_executor.run_plan ~workspace ~env:target_env
+            ~mode ~secret_backend plan.Sol_cli_deployment_plan.services with
+    | Ok rs -> rs
+    | Error msg ->
+      Printf.eprintf "\nerror: %s\n" msg;
+      exit 1
+  with Deploy_failed msg ->
+    Printf.eprintf "\nerror: %s\n" msg;
+    exit 1
+
+let run_dry_run ctx ~emit_to =
+  print_header ~workspace:ctx.workspace ~sha:ctx.sha ~mode_line:"(dry-run)" ();
+  let plan = build_plan ctx ~emit_to in
+  write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
+  print_planned_services plan;
+  ignore (run_plan_or_exit ~workspace:ctx.workspace
+            ~target_env:ctx.target_cfg.Sol_cli_config.env
+            ~mode:Sol_cli_executor.Dry_run ~secret_backend:ctx.secret_backend plan)
+
+let run_emit ctx ~dir =
+  print_header ~workspace:ctx.workspace ~sha:ctx.sha
+    ~mode_line:(Printf.sprintf "emit-to: %s" dir) ();
+  let plan = build_plan ctx ~emit_to:(Some dir) in
+  write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
+  print_planned_services plan;
+  let results =
+    run_plan_or_exit ~workspace:ctx.workspace
+      ~target_env:ctx.target_cfg.Sol_cli_config.env
+      ~mode:(Sol_cli_executor.Emit_to dir) ~secret_backend:ctx.secret_backend plan
+  in
+  List.iter (fun (r : Sol_cli_executor.result) ->
+    let path = Filename.concat dir
+      (Printf.sprintf "%s-%s.yaml" r.Sol_cli_executor.namespace r.Sol_cli_executor.name) in
+    Printf.printf "  ✓  %s\n%!" path)
+  results;
+  Printf.printf "\nManifests written to %s/\n" dir;
+  Printf.printf "Commit and push to your GitOps repo, then Argo CD will apply them.\n"
+
+let push_deploy_events ~workspace ~target_cfg ~loki_push_url plan =
+  let backend =
+    Option.bind target_cfg.Sol_cli_config.observability_backend
+      Sol_cli_observability_url.backend_of_string
+    |> Option.value ~default:Sol_cli_observability_url.Local
+  in
+  let deploy_events =
+    List.map (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+      { Sol_cli_deploy_event.workspace;
+        env       = target_cfg.Sol_cli_config.env;
+        domain    = spec.domain;
+        service   = Sol_cli_kubernetes_name.k8s_name_to_string spec.k8s_name;
+        primitive = primitive_label (to_manifest_primitive spec.primitive);
+        release   = Sol_cli_manifest_yaml.release_of_image spec.image;
+      }
+    ) plan.Sol_cli_deployment_plan.services
+  in
+  try Cmd_deploy_event.push_all ~backend ~explicit_url:loki_push_url deploy_events
+  with
+  | Eio.Cancel.Cancelled _ as exn -> raise exn
+  | (Out_of_memory | Stack_overflow | Sys.Break) as exn -> raise exn
+  | exn ->
+    Printf.eprintf "warning: deploy-event log push failed: %s\n%!" (Printexc.to_string exn)
+
+let run_apply ctx ~filter_path ~confirm_group_change ~loki_push_url =
+  check_apply_environment ~filter_path;
+  print_header ~workspace:ctx.workspace ~sha:ctx.sha ();
+  let target_env = ctx.target_cfg.Sol_cli_config.env in
+  let plan = build_plan ctx ~emit_to:None in
+  check_consumer_group_changes ~workspace:ctx.workspace ~confirm_group_change plan;
+  write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
+  print_planned_services plan;
+  let results =
+    run_plan_or_exit ~workspace:ctx.workspace ~target_env ~mode:Sol_cli_executor.Apply
+      ~secret_backend:ctx.secret_backend plan
+  in
+  List.iter (fun (r : Sol_cli_executor.result) ->
+    Printf.printf "  ✓  namespace %s  image %s\n\n%!"
+      r.Sol_cli_executor.namespace r.Sol_cli_executor.image)
+    results;
+  Printf.printf "\nDone. %d service(s) deployed.\n" (List.length ctx.services);
+  print_service_urls results;
+  Printf.printf "Run 'sol status' to check pod health.\n";
+  Sol_cli_deployment_state.record_outcome ctx.workspace
+    (Sol_cli_deployment_state.Applied {
+      namespace = "default";
+      name = ctx.workspace;
+      image = ctx.sha;
+      consumer_groups = List.map Sol_cli_plan_ids.Consumer_group.to_string
+                          plan.Sol_cli_deployment_plan.consumer_groups;
+    });
+  push_deploy_events ~workspace:ctx.workspace ~target_cfg:ctx.target_cfg ~loki_push_url plan
+
 let run (req : Sol_cli_command_request.deploy_request) =
   let workspace = workspace_name () in
   let sha       = req.image_tag in
   let services  = discover_services ~filter_path:req.filter_path in
-  let mode =
-    match req.mode, req.emit_to with
-    | Sol_cli_command_request.Dry_run, _ -> Sol_cli_executor.Dry_run
-    | Sol_cli_command_request.Apply, Some dir -> Sol_cli_executor.Emit_to dir
-    | Sol_cli_command_request.Apply, None -> Sol_cli_executor.Apply
-  in
 
   let resolved_config, target_cfg =
     match Sol_cli_config.load_for_target ~target:req.target with
@@ -100,199 +307,24 @@ let run (req : Sol_cli_command_request.deploy_request) =
     exit 1
   end;
 
-  (match mode with
-   | Sol_cli_executor.Apply ->
-    let findings = Sol_cli_check.run ~filter_path:req.filter_path () in
-    List.iter (fun f -> Printf.eprintf "%s\n" (Sol_cli_check.finding_to_string f)) findings;
-    if Sol_cli_check.has_errors findings then exit 1
-   | Sol_cli_executor.Dry_run
-   | Sol_cli_executor.Emit_to _ -> ());
+  let ctx = {
+    workspace;
+    sha;
+    registry;
+    secret_backend = req.secret_backend;
+    emit_plan_to = req.emit_plan_to;
+    target_cfg;
+    resolved_config;
+    services;
+  } in
 
-  (* Pre-flight: POSTGRES_URL must be set when deploying live credentials to a
-     cluster.  Skip the check for --dry-run and --emit-to: those modes either
-     only print YAML or emit redacted GitOps manifests with no real values. *)
-  (match mode with
-   | Sol_cli_executor.Apply ->
-     (match Sys.getenv_opt "POSTGRES_URL" with
-      | None | Some "" ->
-        Printf.eprintf
-          "error: POSTGRES_URL is not set.\n\
-           Set it in your environment before running 'sol deploy':\n\
-           \  export POSTGRES_URL=postgresql://user:pass@host:5432/dbname\n";
-        exit 1
-      | Some _ -> ())
-   | Sol_cli_executor.Dry_run
-   | Sol_cli_executor.Emit_to _ -> ());
-
-  Printf.printf "\nWorkspace: %s  tag: %s\n" workspace sha;
-  (match mode with
-   | Sol_cli_executor.Emit_to dir -> Printf.printf "emit-to: %s\n" dir
-   | Sol_cli_executor.Dry_run -> Printf.printf "(dry-run)\n"
-   | Sol_cli_executor.Apply -> ());
-  Printf.printf "\n%!";
-
-  let env_target =
-    match Sol_cli_env_target.customer_cloud_defaults
-            ~registry
-            ~image_tag:sha
-            ~emit_to:req.emit_to
-            ()
-    with
-    | Ok t      -> t
-    | Error msg ->
-      Printf.eprintf "error: %s\n" msg;
-      exit 1
-  in
-  (* Guard: Kubernetes_live is never allowed with a GitOps target.
-     Combining the two would write plaintext secret values into the GitOps
-     repository, leaking them to everyone with read access to the repo. *)
-  (match env_target, req.secret_backend with
-   | Sol_cli_env_target.Customer_gitops _, Sol_cli_manifest.Kubernetes_live ->
-     Printf.eprintf
-       "error: cannot use --secret-backend kubernetes-live with --emit-to \
-        (GitOps mode).\n\
-        \  This combination would write plaintext secrets into the GitOps \
-        repository,\n\
-        \  leaking them to every reader of the repo.\n\
-        \  Use --secret-backend kubernetes-placeholder (the default) or \
-        --secret-backend external-secrets instead.\n";
-     exit 1
-   | _ -> ());
-
-  let env  = { (Sol_cli_env_target.to_env_config ~name:workspace env_target) with
-               Sol_cli_deployment_plan.secret_backend = req.secret_backend;
-               env = Some target_cfg.Sol_cli_config.env } in
-  let plan =
-    match Sol_cli_deployment_plan.of_services_result ~workspace ~env ~resolved_config services with
-    | Ok plan -> plan
-    | Error err ->
-      Printf.eprintf "error: %s\n" (Sol_cli_deployment_plan.plan_error_to_string err);
-      exit 1
-  in
-
-  (* Consumer group rename/removal guard (skipped in GitOps/emit-to mode,
-     since that path does not touch the cluster directly). *)
-  (match mode with
-   | Sol_cli_executor.Apply ->
-    let prev_groups = Sol_cli_deployment_state.load_deployed_groups workspace in
-    let next_groups = List.map Sol_cli_plan_ids.Consumer_group.to_string
-                        plan.Sol_cli_deployment_plan.consumer_groups in
-    let removed = Sol_cli_deployment_state.removed_consumer_groups ~prev:prev_groups ~next:next_groups in
-    if removed <> [] && not req.confirm_group_change then begin
-      Printf.eprintf
-        "\nwarning: the following consumer group(s) are no longer present in \
-         this deploy plan:\n";
-      List.iter (fun g -> Printf.eprintf "  - %s\n" g) removed;
-      Printf.eprintf
-        "\nMessages produced while the old group is absent will be consumed\n\
-         from the latest offset when the group is re-added, silently skipping\n\
-         any backlog.  Pass --confirm-group-change to acknowledge and proceed.\n\n";
-      exit 1
-    end
-   | Sol_cli_executor.Dry_run
-   | Sol_cli_executor.Emit_to _ -> ());
-
-  (match req.emit_plan_to with
-   | None -> ()
-   | Some path ->
-     let json_str = Yojson.Safe.pretty_to_string (Sol_cli_deployment_plan.to_json plan) in
-     if path = "-" then begin
-       print_string json_str;
-       print_char '\n'
-     end else begin
-       let oc = open_out path in
-       output_string oc json_str;
-       output_char oc '\n';
-       close_out oc;
-       Printf.printf "Plan written to %s\n%!" path
-     end);
-
-  List.iter (fun (spec : Sol_cli_deployment_plan.service_spec) ->
-    Printf.printf "[%s] %s/%s\n%!" (primitive_label
-      (match spec.primitive with
-       | Sol_cli_deployment_plan.Svc    -> Svc
-       | Sol_cli_deployment_plan.Worker -> Worker
-       | Sol_cli_deployment_plan.Fn     -> Fn))
-    spec.domain spec.source_name)
-  plan.Sol_cli_deployment_plan.services;
-
-  let results =
-    try
-      match Sol_cli_executor.run_plan ~workspace ~env:target_cfg.Sol_cli_config.env
-              ~mode ~secret_backend:req.secret_backend
-              plan.Sol_cli_deployment_plan.services with
-      | Ok rs -> rs
-      | Error msg ->
-        Printf.eprintf "\nerror: %s\n" msg;
-        exit 1
-    with Deploy_failed msg ->
-      Printf.eprintf "\nerror: %s\n" msg;
-      exit 1
-  in
-  List.iter (fun (r : Sol_cli_executor.result) ->
-    match mode with
-    | Sol_cli_executor.Emit_to dir ->
-      let path = Filename.concat dir
-        (Printf.sprintf "%s-%s.yaml" r.Sol_cli_executor.namespace r.Sol_cli_executor.name) in
-      Printf.printf "  ✓  %s\n%!" path
-    | Sol_cli_executor.Apply ->
-      Printf.printf "  ✓  namespace %s  image %s\n\n%!" r.Sol_cli_executor.namespace r.Sol_cli_executor.image
-    | Sol_cli_executor.Dry_run -> ())
-  results;
-
-  (match mode with
-   | Sol_cli_executor.Emit_to dir ->
-     Printf.printf "\nManifests written to %s/\n" dir;
-     Printf.printf "Commit and push to your GitOps repo, then Argo CD will apply them.\n"
-   | Sol_cli_executor.Apply ->
-     Printf.printf "\nDone. %d service(s) deployed.\n" (List.length services);
-     print_service_urls results;
-     Printf.printf "Run 'sol status' to check pod health.\n";
-     Sol_cli_deployment_state.record_outcome workspace
-       (Sol_cli_deployment_state.Applied {
-         namespace = "default";
-         name = workspace;
-         image = sha;
-         consumer_groups = List.map Sol_cli_plan_ids.Consumer_group.to_string
-                             plan.Sol_cli_deployment_plan.consumer_groups;
-       });
-     (* OBS-037: one structured Loki log line per deployed service, for
-        OBS-038's deploy/release timeline dashboard. Real apply only (this
-        branch is neither --dry-run nor --emit-to already); a push failure
-        must never fail a deploy that has already succeeded, so this is
-        wrapped on top of cmd_deploy_event.ml's own per-event try/with as a
-        second safety net -- cancellation/fatal exceptions still propagate,
-        matching Obs_eio's own exclusion list. *)
-     let backend =
-       match target_cfg.Sol_cli_config.observability_backend with
-       | Some s ->
-         (match Sol_cli_observability_url.backend_of_string s with
-          | Some b -> b
-          | None -> Sol_cli_observability_url.Local)
-       | None -> Sol_cli_observability_url.Local
-     in
-     let deploy_events =
-       List.map (fun (spec : Sol_cli_deployment_plan.service_spec) ->
-         { Sol_cli_deploy_event.workspace;
-           env       = target_cfg.Sol_cli_config.env;
-           domain    = spec.domain;
-           service   = Sol_cli_kubernetes_name.k8s_name_to_string spec.k8s_name;
-           primitive = primitive_label
-             (match spec.primitive with
-              | Sol_cli_deployment_plan.Svc    -> Svc
-              | Sol_cli_deployment_plan.Worker -> Worker
-              | Sol_cli_deployment_plan.Fn     -> Fn);
-           release   = Sol_cli_manifest_yaml.release_of_image spec.image;
-         }
-       ) plan.Sol_cli_deployment_plan.services
-     in
-     (try Cmd_deploy_event.push_all ~backend ~explicit_url:req.loki_push_url deploy_events
-      with
-      | Eio.Cancel.Cancelled _ as exn -> raise exn
-      | (Out_of_memory | Stack_overflow | Sys.Break) as exn -> raise exn
-      | exn ->
-        Printf.eprintf "warning: deploy-event log push failed: %s\n%!" (Printexc.to_string exn))
-   | Sol_cli_executor.Dry_run -> ())
+  match req.mode, req.emit_to with
+  | Sol_cli_command_request.Dry_run, _ ->
+    run_dry_run ctx ~emit_to:req.emit_to
+  | Apply, Some dir -> run_emit ctx ~dir
+  | Apply, None ->
+    run_apply ctx ~filter_path:req.filter_path
+      ~confirm_group_change:req.confirm_group_change ~loki_push_url:req.loki_push_url
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
 
