@@ -17,25 +17,25 @@ Package: `cli/sol/` — binary at `_build/default/cli/sol/bin/main.exe`.
 
 ## Ticket system
 
-Work is tracked in `pipeline/tickets/` using a directory-per-status layout. Each ticket is a markdown file with YAML frontmatter. **The `pipeline/tickets/` directory is only ever modified in the `main` checkout — never inside a worktree branch.**
+Work is tracked in `pipeline/tickets/` using a directory-per-status layout. Each ticket is a markdown file with YAML frontmatter.
 
 ```
 pipeline/tickets/
   BACKLOG/                  ← captured but not yet prioritised
-  READY_FOR_ENGINEERING/    ← actionable; pick up with /start
-  IN_PROGRESS/              ← worktree exists, work underway
-  REVIEW/                   ← work submitted; awaiting /review-worktree
-  READY_TO_MERGE/           ← review passed; human merges
-  BLOCKED_BY_PERFORMANCE/   ← perf regression; needs fix or sign-off
+  READY_FOR_ENGINEERING/    ← actionable; pick up with /work — covers "not started"
+                               through "PR open, in review": GitHub's own open-PR/
+                               review/CI state already tracks that, no local
+                               directory duplicates it
   DONE/                     ← merged
 ```
 
-**State machine:** `READY_FOR_ENGINEERING` → `IN_PROGRESS` → `REVIEW` → `READY_TO_MERGE` → `DONE`  
-`IN_PROGRESS` → `REVIEW` happens via `soldev pipeline submit <ticket-id>`, which pushes the ticket's branch and opens a real GitHub PR (recorded in the ticket's `pr:` field) — `REVIEW` means "a PR is open," not just "a worktree exists."  
-If `/review-worktree` finds issues: back to `READY_FOR_ENGINEERING` (with inline notes; `branch`/`worktree` fields preserved).  
-`READY_TO_MERGE` → `DONE` happens via `soldev pipeline merge`, which merges the PR (`gh pr merge --squash --delete-branch`) — real GitHub branch protection and required checks gate the merge, not local logic.
+**State machine (REFAC-077):** `READY_FOR_ENGINEERING` → `DONE`, full stop. There is no separate "in progress," "in review," "ready to merge," or "blocked by performance" directory any more.
 
-**Ticket frontmatter fields:** `id`, `type` (ux-finding | audit-finding | feature | bug), `severity`, `source`, `branch`, `worktree`, `pr` (set by `soldev pipeline submit`, once a PR exists).  
+`pipeline/tickets/` is normally only ever modified in the `main` checkout — never inside a worktree branch — **with one deliberate exception**: the `READY_FOR_ENGINEERING → DONE` move itself is committed *on the ticket's own PR branch*, as the worker's own final implementation commit. That's what makes `gh pr merge --squash` carry the ticket's completion into `main` inside the very same commit as the code, instead of needing a separate commit on `main` for it. A `BACKLOG → READY_FOR_ENGINEERING` move (e.g. an audit materialising a new finding) still only ever happens in the main checkout, same as before.
+
+Review and merge readiness live entirely on the PR, not on a ticket directory: `soldev pipeline review <ticket-id>` leaves a real GitHub review approval on pass, or a plain PR comment on fail — a bounce just means another commit on the same open PR, this repo's established convention, never a ticket-directory round trip. `soldev pipeline merge` checks the PR's review-approval and CI status directly against GitHub before it will act, then runs `gh pr merge --squash --delete-branch` — real GitHub branch protection and required checks gate the merge, not local logic. A post-merge regression is handled by reverting that one squash commit, which un-does the code *and* the ticket's `DONE` move together (they were always the same commit) — the ticket lands back in `READY_FOR_ENGINEERING` automatically, with no separate "blocked" state to move it out of.
+
+**Ticket frontmatter fields:** `id`, `type` (ux-finding | audit-finding | feature | bug), `severity`, `source`. `branch`/`worktree`/`pr` are no longer persisted on `main` — they're only meaningful while a ticket has an open PR, which `soldev pipeline ls`/`check` surface live from GitHub instead.  
 Do not add a `status:` field — the directory encodes status.
 
 **Human-judgment gates:** Tickets in `BACKLOG/` may contain `## Open Questions`, `## Decision Required`, or `## Blocked On` sections. Tickets in `READY_FOR_ENGINEERING/` are treated as actionable, so `/work` must stop before creating a worktree if any unresolved decision section or marker remains. Resolve the decision in the ticket body or keep the ticket in `BACKLOG/` until the Remediation is unambiguous.
@@ -43,11 +43,11 @@ Do not add a `status:` field — the directory encodes status.
 **Ticket dependencies:** Use a body line near the top of each ticket: `**Depends on:** None.` or `**Depends on:** FEAT-003, EXP-008.` `/work` must verify dependencies before creating a worktree. A `READY_FOR_ENGINEERING` ticket with dependencies not yet in `pipeline/tickets/DONE/` stays blocked.
 
 **Skills that interact with tickets:**
-- `/work` — unified entry point; dispatches by state: creates worktrees for `READY_FOR_ENGINEERING`, resumes `IN_PROGRESS`, runs review agent on `REVIEW`. Submits `IN_PROGRESS` → `REVIEW` via `soldev pipeline submit` (push + open PR)
-- `/review-worktree` — standalone review gate (called internally by `/work review`); subagents emit JSON, `soldev pipeline review` handles file moves
+- `/work` — unified entry point; creates worktrees for `READY_FOR_ENGINEERING` tickets with no open PR yet, resumes ones that already have one, runs the review agent on ones ready for it. The worker's own last commit moves the ticket to `DONE/` on the branch before `soldev pipeline submit` pushes it and opens the PR.
+- `/review-worktree` — standalone review gate (called internally by `/work`); subagents emit JSON, `soldev pipeline review` leaves the verdict on the PR
 - `/audit` and `/ux-audit` — materialise new findings into `READY_FOR_ENGINEERING/` (idempotent)
 
-**Performance baseline conflict:** `devtools/perf/perf_baseline.json` is set to `merge=ours` in `.gitattributes`. On merge, main's baseline wins; a post-merge perf run determines whether the ticket stays merged or moves to `BLOCKED_BY_PERFORMANCE`.
+**Performance baseline conflict:** `devtools/perf/perf_baseline.json` is set to `merge=ours` in `.gitattributes`. On merge, main's baseline wins; a post-merge perf run determines whether the merge stands or gets reverted (taking the ticket back to `READY_FOR_ENGINEERING` with it).
 
 ## Core design principles every engineer must know
 

@@ -18,9 +18,9 @@ each blocking or high-friction finding as a ticket in
 pipeline/tickets/
   BACKLOG/                  ← captured but not yet ready to act on
   READY_FOR_ENGINEERING/    ← actionable; blocking findings land here
-  IN_PROGRESS/              ← worktree exists, work underway
-  REVIEW/                   ← work submitted; awaiting /review-worktree
-  READY_TO_MERGE/           ← review passed; human merges
+                               (also covers "worktree/PR open" — GitHub's own
+                               open-PR/review/CI state tracks that, no local
+                               directory duplicates it; see REFAC-077)
   DONE/                     ← merged
 ```
 

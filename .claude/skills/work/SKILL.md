@@ -1,37 +1,28 @@
 ---
-description: Unified ticket worker. Dispatches based on ticket state — creates worktrees for READY_FOR_ENGINEERING tickets, resumes IN_PROGRESS ones, and runs the review agent on REVIEW tickets. One command for the full development loop.
+description: Unified ticket worker. Dispatches based on ticket state — creates worktrees for READY_FOR_ENGINEERING tickets (resuming one that already has an open PR/branch), and runs the review agent on tickets with an open PR. One command for the full development loop.
 ---
 
 # /work — Unified ticket worker
 
-Single entry point for the development loop. Pass ticket IDs, a group selector, or nothing to get a menu. Dispatches each ticket to the right action based on its current state.
+Single entry point for the development loop. Pass ticket IDs, a group selector, or nothing to get a menu. Dispatches each ticket to the right action.
+
+Since REFAC-077, there are only two persisted ticket-directory states: `READY_FOR_ENGINEERING/` and `DONE/` (plus `BACKLOG/`, a pre-work human-judgment gate this skill doesn't touch). "In progress" and "in review" are no longer local directories — they're just an open PR/branch for the ticket, which GitHub already tracks. A ticket's move to `DONE/` is committed **on its own PR branch**, as the worker's own final commit, so it rides into `main` inside the same squashed commit as the code — there is no separate commit on `main` for it.
 
 ## Usage
 
 ```
-/work                        # list all active tickets across states; user picks
-/work all                    # process every ticket in READY_FOR_ENGINEERING/, IN_PROGRESS/, and REVIEW/
+/work                        # list all active tickets; user picks
+/work all                    # process every ticket in READY_FOR_ENGINEERING/
 /work FEAT-002               # dispatch one ticket by ID
 /work EXP-005 EXP-007        # dispatch multiple tickets
 /work open                   # all tickets in READY_FOR_ENGINEERING/
 /work open-exp               # all EXP-* tickets in READY_FOR_ENGINEERING/
 /work open-audit             # all AUDIT-* tickets in READY_FOR_ENGINEERING/
-/work in-progress            # all tickets in IN_PROGRESS/
-/work review                 # all tickets in REVIEW/
 ```
 
 ## Step 1 — Resolve tickets and their states
 
-For each ID given:
-- Check `READY_FOR_ENGINEERING/`, `IN_PROGRESS/`, `REVIEW/` in order — use the first match.
-- If found in `READY_TO_MERGE/`, `BLOCKED_BY_PERFORMANCE/`, or `DONE/` — skip and print a note.
-- If not found anywhere — print an error.
-
-For `all` — glob all three active directories (`READY_FOR_ENGINEERING/`, `IN_PROGRESS/`, `REVIEW/`) and process every ticket found.
-
-For group selectors (`open`, `open-exp`, `open-audit`, `in-progress`, `review`) — glob the corresponding directory.
-
-If no args given — list all tickets across `READY_FOR_ENGINEERING/`, `IN_PROGRESS/`, and `REVIEW/` grouped by state, then stop and let the user choose.
+For each ID given: look it up with `soldev pipeline check <ticket-id>` (or `find_ticket` semantics) — a ticket is either in `READY_FOR_ENGINEERING/` (not started, or already has an open PR — check with `soldev pipeline ls`, which annotates a ticket with `(PR #N open)` when one exists) or `DONE/`.
 
 Use deterministic pipeline tooling for ticket status whenever possible:
 
@@ -39,11 +30,11 @@ Use deterministic pipeline tooling for ticket status whenever possible:
 soldev pipeline ls
 ```
 
-This command prints ticket state, dependency status, human-decision blockers, and actionable status. Do not reconstruct dependency graphs by interpretation when this command is available.
+This prints ticket state, dependency status, human-decision blockers, actionable status, and (for `READY_FOR_ENGINEERING` tickets) whether a PR is already open. Do not reconstruct dependency graphs by interpretation when this command is available.
 
-## Step 2 — Dispatch by state
+## Step 2 — Dispatch
 
-### READY_FOR_ENGINEERING → create worktree + implement
+### No open PR yet → create worktree + implement
 
 Before creating a worktree, run the deterministic ticket preflight:
 
@@ -53,36 +44,35 @@ soldev pipeline check <ticket-id>
 
 Only create a worktree if the command exits 0 and prints `status: actionable`.
 
-If it reports `blocked-for-human-decision`, `blocked-by-dependency`, `unknown ticket`, or any non-actionable status:
-- Do not create a worktree.
-- Do not move the ticket to `IN_PROGRESS/`.
-- Print the command output for the user.
-- Leave the ticket in its current directory.
+If it reports `blocked-for-human-decision`, `blocked-by-dependency`, `unknown ticket`, or any non-actionable status: do not create a worktree, leave the ticket where it is, print the command output for the user.
 
 1. Determine branch slug from ticket title (lowercase, hyphens).
 2. Create worktree:
    ```bash
    git worktree add -b ticket-id/short-slug ../sol-ticket-id-short-slug main
    ```
-3. Update ticket frontmatter with `branch:` and `worktree:`, move file to `IN_PROGRESS/`.
-4. Commit the ticket state change in the main checkout.
-5. Implement the ticket in the worktree — read the ticket's **Remediation** as the specification.
-6. When done, from the main checkout:
+   No `pipeline/tickets/` commit for this — nothing to record on `main` yet.
+3. Implement the ticket in the worktree — read the ticket's **Remediation** as the specification.
+4. **Your own last implementation commit in the worktree must move the ticket file itself:**
+   ```bash
+   git mv pipeline/tickets/READY_FOR_ENGINEERING/<ticket-id>.md pipeline/tickets/DONE/<ticket-id>.md
+   ```
+   Commit this together with (or as the final commit after) your code changes, on the branch. This is what makes the eventual squash-merge carry the ticket's completion into `main` for free.
+5. From **inside the worktree** (not the main checkout — there is nothing on `main` to touch):
    ```bash
    soldev pipeline submit <ticket-id>
    ```
-   Pushes the branch, opens a PR (or reuses an existing one for that branch), records the PR URL in the ticket's `pr:` frontmatter field, moves the ticket to `REVIEW/`, and commits the move. `REVIEW` now corresponds to a real, reviewable GitHub PR, not just a local worktree — do not push the branch or open the PR by hand.
+   Pushes the branch and opens a PR (or reuses an existing one for that branch) via `gh pr create`. Does not touch `pipeline/tickets/` on `main` at all.
 
-### IN_PROGRESS → resume + implement
+### Ticket already has an open PR → resume + implement
 
-1. Read `worktree:` from frontmatter. If the path exists — resume there. If gone — create a fresh worktree from main.
-2. Print `resuming <worktree-path>`.
-3. Implement the remaining work in the worktree.
-4. When done, from the main checkout: `soldev pipeline submit <ticket-id>` (see above).
+1. Find the worktree via `git worktree list` (the branch is `<ticket-id>/...`). If gone, re-create it from the PR's branch: `git worktree add <path> <ticket-id>/<slug>` (the branch already exists on `origin`).
+2. Implement the remaining work. A bounce from review just means more commits on this same branch — never a ticket-directory round trip.
+3. When done: `git push` (from the worktree) to update the existing PR.
 
-### REVIEW → run review agent + process result
+### Has an open PR, ready for review → run review agent + process result
 
-Fan out one subagent per ticket. Each subagent receives the worktree path, branch name, and full ticket file. Subagents run in parallel.
+Fan out one subagent per ticket. Each subagent receives the worktree path, branch name, PR URL, and full ticket file. Subagents run in parallel.
 
 **Subagent output contract** — return only a JSON object, no prose, no file moves:
 
@@ -110,7 +100,7 @@ Build failure → immediate **fail** with compiler error as violation.
 git diff main...<branch> --stat
 git diff main...<branch>
 ```
-Verify changes are confined to files relevant to the ticket. `pipeline/tickets/` must not be touched in the worktree branch.
+Verify changes are confined to files relevant to the ticket, **except** the expected `pipeline/tickets/READY_FOR_ENGINEERING/<id>.md → DONE/<id>.md` move — that one is required, not a scope violation.
 
 #### C. Implementation correctness
 Read each changed file. Verify:
@@ -135,17 +125,15 @@ After collecting each result, write it to a temp file and call:
 soldev pipeline review <ticket-id> --result-file /tmp/<ticket-id>-result.json
 ```
 
-`soldev pipeline review` handles all ticket file moves and commits them itself. Do not move ticket files directly, and no separate commit is needed after calling it.
+`soldev pipeline review` leaves the verdict on the PR itself — a real GitHub review approval on pass (which `soldev pipeline merge` checks for before it will act), a plain comment on fail. It does not touch any ticket file; there is nothing to move.
 
 ## Step 3 — Report
 
 ```
-FEAT-002  IN_PROGRESS  → resumed ../sol-FEAT-002-perf-baseline-merge
-EXP-005   REVIEW       → READY_TO_MERGE   build ✓  diff scoped
-EXP-007   REVIEW       → READY_FOR_ENGINEERING   cmd_dev.ml:142 — Sys.command rc unchecked
-EXP-008   REVIEW       → READY_TO_MERGE   build ✓  all checks passed
-FEAT-001  READY_TO_MERGE  skipped (already past review)
+FEAT-002  READY_FOR_ENGINEERING  (PR #41 open)  → resumed ../sol-FEAT-002-perf-baseline-merge
+EXP-005   PR #42  → approved
+EXP-007   PR #43  → changes requested   cmd_dev.ml:142 — Sys.command rc unchecked
 ```
 
-Human next steps for tickets that reached READY_TO_MERGE:
-- Run `soldev pipeline merge` (optionally with a ticket ID, or `--dry-run` first). This merges each ticket's PR via `gh pr merge --squash --delete-branch` — real GitHub branch protection and required checks gate the merge, so a ticket with a red/pending check or missing approval is left in `READY_TO_MERGE` with an error, not force-merged. On success it fast-forwards local `main`, runs the perf suite, and moves the ticket to `DONE` (or `BLOCKED_BY_PERFORMANCE` on a regression, reverting the squash commit). It does **not** push `main` — push it yourself once you're happy with the resulting local commits.
+Human next steps for approved tickets:
+- Run `soldev pipeline merge` (optionally with a ticket ID, or `--dry-run` first). This checks the PR's review approval and CI status directly against GitHub, and only then runs `gh pr merge --squash --delete-branch` — a red/pending check or missing approval leaves the PR open, untouched, not force-merged. On success it fast-forwards local `main`, runs the perf suite, and updates the baseline (or reverts the squash commit on a real regression — which un-does the ticket's `DONE` move right along with the code, landing it back in `READY_FOR_ENGINEERING` automatically). It does **not** push `main` — push it yourself once you're happy with the resulting local commits.

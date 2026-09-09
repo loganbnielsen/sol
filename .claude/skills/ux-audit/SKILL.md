@@ -16,10 +16,9 @@ Also check whether the experience teaches and preserves Sol's mission: autonomou
 pipeline/tickets/
   BACKLOG/                  ← captured but not yet ready to act on
   READY_FOR_ENGINEERING/    ← actionable; this is where new findings land
-  IN_PROGRESS/              ← worktree exists, work underway
-  REVIEW/                   ← work submitted; awaiting /review-worktree
-  READY_TO_MERGE/           ← review passed; human merges
-  BLOCKED_BY_PERFORMANCE/   ← perf regression; needs fix or sign-off
+                               (also covers "worktree/PR open" — GitHub's own
+                               open-PR/review/CI state tracks that, no local
+                               directory duplicates it; see REFAC-077)
   DONE/                     ← merged
 ```
 

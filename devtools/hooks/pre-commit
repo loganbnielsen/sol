@@ -9,18 +9,26 @@
 
 # ── Worktree guard ─────────────────────────────────────────────────────────────
 # pipeline/tickets/ is only ever modified in the main checkout — never inside a worktree
-# branch. Catching this at commit time prevents rename/rename merge conflicts.
+# branch — with one exception (REFAC-077): a ticket's own final commit may move its
+# file from READY_FOR_ENGINEERING/<id>.md to DONE/<id>.md, so that move rides into
+# main inside the PR's squash-merge commit instead of a separate main-only commit.
 GIT_DIR_ABS="$(git rev-parse --absolute-git-dir 2>/dev/null)"
 if printf '%s\n' "$GIT_DIR_ABS" | grep -q "/worktrees/"; then
   STAGED_TICKETS="$(git diff --cached --name-only | grep '^pipeline/tickets/' || true)"
   if [ -n "$STAGED_TICKETS" ]; then
-    echo ""
-    echo "✗ Cannot commit pipeline/tickets/ changes inside a worktree branch."
-    echo "  pipeline/tickets/ is managed exclusively in the main checkout."
-    echo "  Staged paths:"
-    printf '    %s\n' $STAGED_TICKETS
-    echo "  Fix: git restore --staged pipeline/tickets/"
-    exit 1
+    DISALLOWED="$(git diff --cached -M --name-status -- pipeline/tickets/ \
+      | grep -v '^R[0-9]*\s*pipeline/tickets/READY_FOR_ENGINEERING/[^/]*\.md\s*pipeline/tickets/DONE/[^/]*\.md$' \
+      || true)"
+    if [ -n "$DISALLOWED" ]; then
+      echo ""
+      echo "✗ Cannot commit pipeline/tickets/ changes inside a worktree branch."
+      echo "  pipeline/tickets/ is managed exclusively in the main checkout, except"
+      echo "  for a ticket's own READY_FOR_ENGINEERING → DONE move on its own branch."
+      echo "  Disallowed staged changes:"
+      printf '    %s\n' "$DISALLOWED"
+      echo "  Fix: git restore --staged pipeline/tickets/"
+      exit 1
+    fi
   fi
 fi
 
