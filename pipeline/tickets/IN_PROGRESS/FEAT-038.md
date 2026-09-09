@@ -3,6 +3,8 @@ id: FEAT-038
 type: feature
 severity: medium
 source: dogfood pass following FEAT-034/035, 2026-09-08
+branch: FEAT-038/dogfood-ts-packages
+worktree: ../sol-FEAT-038-dogfood-ts-packages
 ---
 
 **Depends on:** FEAT-034 (done), FEAT-035 (done).
