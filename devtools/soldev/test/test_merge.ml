@@ -21,6 +21,30 @@ let test_ticket_id_from_branch_no_slash () =
   check_string "whole string when no slash" "EXP-023"
     (Soldev_merge.ticket_id_from_branch "EXP-023")
 
+let test_parse_worktree_porcelain () =
+  let lines =
+    [
+      "worktree /home/user/sol";
+      "HEAD abc123";
+      "branch refs/heads/main";
+      "";
+      "worktree /home/user/sol-FEAT-040-x";
+      "HEAD def456";
+      "branch refs/heads/FEAT-040/x";
+      "bare";
+      "detached";
+    ]
+  in
+  let expected =
+    [
+      ("/home/user/sol", Some "main");
+      ("/home/user/sol-FEAT-040-x", Some "FEAT-040/x");
+    ]
+  in
+  Alcotest.(check (list (pair string (option string))))
+    "parses worktree paths and branches" expected
+    (Soldev_merge.parse_worktree_porcelain lines)
+
 let check_bool msg expected actual = Alcotest.(check bool) msg expected actual
 
 let test_mentions_id_exact () =
@@ -160,6 +184,11 @@ let () =
             test_ticket_id_from_branch_with_slash;
           Alcotest.test_case "passes through when no slash" `Quick
             test_ticket_id_from_branch_no_slash;
+        ] );
+      ( "worktree_porcelain",
+        [
+          Alcotest.test_case "parses paths and branches" `Quick
+            test_parse_worktree_porcelain;
         ] );
       ( "mentions_id",
         [
