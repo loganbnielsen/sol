@@ -5,6 +5,7 @@ severity: low
 source: found while working FEAT-035, 2026-09-08
 branch: REFAC-076/depends-parse
 worktree: ../sol-REFAC-076-depends-parse
+pr: https://github.com/loganbnielsen/sol/pull/169
 ---
 
 **Depends on:** None.
