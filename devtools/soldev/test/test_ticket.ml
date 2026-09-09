@@ -90,7 +90,7 @@ let test_depends_prose () =
   let content =
     "---\nid: X\n---\n\n**Depends on:** FEAT-034 in practice — the natural trigger for this ticket is FEAT-034 actually getting built. Not a hard code dependency.\n"
   in
-  check_list_string "prose, repeated id" ["FEAT-034"; "FEAT-034"]
+  check_list_string "prose, repeated id deduped" ["FEAT-034"]
     (Soldev_ticket.parse_depends content)
 
 let test_depends_none_with_parenthetical () =

@@ -145,6 +145,16 @@ let is_ticket_id_token s =
    free-form prose, not a structured list (e.g.
    "FEAT-034 (done), FEAT-035 (done)." or
    "FEAT-034 in practice — ... Not a hard code dependency."). *)
+let dedup_preserve_order tokens =
+  let seen = Hashtbl.create (List.length tokens) in
+  List.filter
+    (fun token ->
+      if Hashtbl.mem seen token then false
+      else (
+        Hashtbl.add seen token ();
+        true))
+    tokens
+
 let extract_ticket_ids raw =
   let n = String.length raw in
   let rec go i acc =
@@ -159,7 +169,7 @@ let extract_ticket_ids raw =
       let acc = if is_ticket_id_token token then token :: acc else acc in
       go !j acc
   in
-  go 0 []
+  go 0 [] |> dedup_preserve_order
 
 (* "None." always means zero dependencies in this repo's convention, even
    when followed by an unrelated parenthetical aside that happens to mention
