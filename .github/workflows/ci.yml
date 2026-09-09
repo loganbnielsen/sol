@@ -26,12 +26,6 @@ jobs:
       - name: Install OCaml dependencies
         run: opam install . --deps-only --with-test -y
 
-      - name: Install formatter
-        run: opam install ocamlformat.0.29.0 -y
-
-      - name: Format check
-        run: opam exec -- dune fmt --preview
-
       - name: Build
         run: opam exec -- dune build
 
@@ -39,6 +33,16 @@ jobs:
         # framework/kafka-eio-service/ excluded: its test/dune also builds a
         # broker-requiring integration suite (see run_tests.sh's run_kafka()).
         run: opam exec -- dune test framework/sol-env/ framework/sol-fn/ framework/sol-obs/ framework/sol-svc/ framework/sol-worker/ cli/sol/test/
+
+      # INFRA-006: formatting check runs after unit tests on purpose — running
+      # `dune fmt --preview` first populates _build/default/framework, which
+      # makes the CLI tests' SOL_HOME ancestor walk resolve to _build/default
+      # instead of the source checkout.
+      - name: Install formatter
+        run: opam install ocamlformat.0.29.0 -y
+
+      - name: Format check
+        run: opam exec -- dune fmt --preview
 
       - name: Platform-component drift guardrail (ADR 0001 / CODE_LAYER-005)
         run: devtools/ci/check_platform_component_drift.sh
