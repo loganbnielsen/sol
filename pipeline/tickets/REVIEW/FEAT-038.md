@@ -5,6 +5,7 @@ severity: medium
 source: dogfood pass following FEAT-034/035, 2026-09-08
 branch: FEAT-038/dogfood-ts-packages
 worktree: ../sol-FEAT-038-dogfood-ts-packages
+pr: https://github.com/loganbnielsen/sol/pull/167
 ---
 
 **Depends on:** FEAT-034 (done), FEAT-035 (done).
