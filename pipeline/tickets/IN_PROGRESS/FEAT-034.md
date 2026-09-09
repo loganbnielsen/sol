@@ -3,6 +3,8 @@ id: FEAT-034
 type: feature
 severity: medium
 source: FEAT-033 findings (project/dogfood/2026-09-07_typescript_demo_spike.md) — headline recommendation of that spike
+branch: FEAT-034/sol-kafka
+worktree: ../sol-FEAT-034-sol-kafka
 ---
 
 **Depends on:** FEAT-033 (done — merged as the evidence base for this ticket).
