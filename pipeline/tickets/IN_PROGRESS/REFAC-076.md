@@ -3,6 +3,8 @@ id: REFAC-076
 type: bug
 severity: low
 source: found while working FEAT-035, 2026-09-08
+branch: REFAC-076/depends-parse
+worktree: ../sol-REFAC-076-depends-parse
 ---
 
 **Depends on:** None.
