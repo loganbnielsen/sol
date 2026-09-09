@@ -3,9 +3,13 @@ id: FEAT-035
 type: feature
 severity: low
 source: FEAT-033 findings (project/dogfood/2026-09-07_typescript_demo_spike.md) — headline recommendation of that spike, second priority after FEAT-034
+branch: FEAT-035/sol-obs
+worktree: ../sol-FEAT-035-sol-obs
 ---
 
-**Depends on:** FEAT-033 (done — evidence base). Not on FEAT-034 — this is deliberately Kafka-agnostic (see below), so it doesn't need to wait for the Kafka package, though in practice they'd likely be built together since FEAT-034 depends on the tracing/metrics primitives this ticket would own.
+**Depends on:** FEAT-033 (done — evidence base).
+
+Not blocked on FEAT-034 — this package is deliberately Kafka-agnostic (see below), so it doesn't need to wait for the Kafka package, though in practice they'd likely be built together since FEAT-034 depends on the tracing/metrics primitives this ticket would own.
 
 Build `@sol/obs`, a small TypeScript package encoding Sol's observability *naming and shape* conventions — metric names/labels, Loki push shape — once a real external TypeScript user needs cross-language dashboard/log consistency with Sol's OCaml services.
 
