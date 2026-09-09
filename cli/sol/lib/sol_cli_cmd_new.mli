@@ -3,7 +3,11 @@ val is_sol_home : string -> bool
     bundle). Checks for the two sentinel files that must exist in any valid Sol
     root:
     - [framework/sol-svc/lib/dune]
-    - [framework/kafka-eio-service/lib/dune] *)
+    - [framework/kafka-eio-service/lib/dune]
+
+    Rejects paths containing a [_build] component: dune mirrors source
+    directories into build contexts, so the sentinels alone are not sufficient
+    to distinguish a source checkout from `_build/default`. *)
 
 val find_ancestor : (string -> bool) -> string -> string option
 (** [find_ancestor pred dir] walks up the directory tree from [dir], returning
