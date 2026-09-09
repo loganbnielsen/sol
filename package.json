@@ -1,0 +1,9 @@
+{
+  "name": "sol-ts-packages",
+  "private": true,
+  "description": "npm workspace root for Sol's in-tree TypeScript packages (packages/*) and the TS demo that dogfoods them (examples/pluto/app/demo_ts/*). Not published -- these packages ship in-repo until real external usage proves the extraction boundary, matching this repo's kafka-eio/obs-eio/pg-eio precedent.",
+  "workspaces": [
+    "packages/*",
+    "examples/pluto/app/demo_ts/*"
+  ]
+}

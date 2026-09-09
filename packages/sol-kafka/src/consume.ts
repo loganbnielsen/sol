@@ -1,7 +1,7 @@
 import type { Consumer, EachMessagePayload } from "kafkajs";
 import type { SpanContext } from "@opentelemetry/api";
 import { decodeWire, WireFormatError } from "./wireFormat.js";
-import { extractTraceparent } from "./tracing.js";
+import { extractTraceparent } from "@sol/obs";
 
 export interface DecodeErrorCounter {
   inc(): void;
