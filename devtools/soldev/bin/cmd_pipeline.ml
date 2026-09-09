@@ -13,13 +13,17 @@ let accept_performance_regression_flag =
 let merge_ticket_arg =
   Arg.(value & pos 0 (some string) None &
        info [] ~docv:"TICKET-ID"
-         ~doc:"Ticket to merge (e.g. EXP-005). Omit to merge all READY_TO_MERGE tickets.")
+         ~doc:"Ticket to merge (e.g. EXP-005) — looked up by its open PR, not a \
+               local directory. Omit to sweep every open PR whose branch looks \
+               like <TICKET-ID>/....")
 
 let merge_cmd =
   Cmd.v
     (Cmd.info "merge"
-       ~doc:"Merge READY_TO_MERGE tickets into main, remove worktrees, move to DONE. \
-             Pass a ticket ID to merge one; omit to merge all.")
+       ~doc:"Merge approved, CI-green PRs — a ticket lands in DONE because its \
+             own branch already committed that move, not because this command \
+             moves anything locally. Pass a ticket ID to merge one; omit to \
+             sweep all open, ready PRs.")
     Term.(const Soldev_merge.run_merge
           $ dry_run_flag $ accept_performance_regression_flag $ merge_ticket_arg)
 
@@ -36,17 +40,18 @@ let merge_finish_cmd =
     (Cmd.info "merge-finish"
        ~doc:"Internal — spawned by `merge` as a subprocess of a binary rebuilt \
              after the PR's merge commit landed, never invoke directly. Runs the \
-             post-merge test suite, updates the perf baseline, and moves the \
-             ticket to DONE or BLOCKED_BY_PERFORMANCE.")
+             post-merge test suite and updates the perf baseline; reverts the \
+             merge (ticket and code together) on a real regression.")
     Term.(const Soldev_merge.run_merge_finish
           $ ticket_arg $ merge_sha_arg $ accept_performance_regression_flag)
 
 let submit_cmd =
   Cmd.v
     (Cmd.info "submit"
-       ~doc:"Push an IN_PROGRESS ticket's branch, open a PR (or reuse an \
-             existing one for that branch), record it in the ticket's \
-             frontmatter, and move the ticket to REVIEW.")
+       ~doc:"Run from inside the ticket's worktree, after your final commit has \
+             already moved the ticket file to DONE/ on that branch. Pushes the \
+             branch and opens a PR (or reuses an existing one) — never touches \
+             pipeline/tickets/ on main.")
     Term.(const Soldev_merge.run_submit $ ticket_arg)
 
 let result_file_arg =
@@ -57,8 +62,11 @@ let result_file_arg =
 let review_cmd =
   Cmd.v
     (Cmd.info "review"
-       ~doc:"Process a structured JSON review result, moving the ticket to \
-             READY_TO_MERGE or READY_FOR_ENGINEERING")
+       ~doc:"Process a structured JSON review result by leaving it as a PR \
+             comment — marked SOLDEV-REVIEW: PASS on pass (which `merge` \
+             checks for), an ordinary violations comment on fail. Not a \
+             formal GitHub review: `gh` always runs as the PR's own author \
+             here, and GitHub refuses self-approval. No ticket file moves.")
     Term.(const Soldev_merge.run_review $ ticket_arg $ result_file_arg)
 
 let include_done_flag =

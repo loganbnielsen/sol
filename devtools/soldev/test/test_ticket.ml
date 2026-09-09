@@ -23,15 +23,6 @@ let ticket_state =
 let check_state_option msg expected actual =
   Alcotest.(check (option ticket_state)) msg expected actual
 
-let review_status =
-  Alcotest.testable
-    (fun fmt status ->
-       Format.pp_print_string fmt (Soldev_ticket.review_status_to_string status))
-    (=)
-
-let check_review_status_option msg expected actual =
-  Alcotest.(check (option review_status)) msg expected actual
-
 (* ── parse_frontmatter ───────────────────────────────────────────────────── *)
 
 let test_parse_empty () =
@@ -161,19 +152,20 @@ let test_state_roundtrip () =
 let test_state_unknown () =
   check_state_option "unknown" None (Soldev_ticket.state_of_dir "NOPE")
 
-let test_review_status_roundtrip () =
-  check_review_status_option "pass" (Some Soldev_ticket.Pass)
-    (Soldev_ticket.review_status_of_string "pass");
-  check_review_status_option "fail" (Some Soldev_ticket.Fail)
-    (Soldev_ticket.review_status_of_string "fail");
-  check_string "pass string" "pass"
-    (Soldev_ticket.review_status_to_string Soldev_ticket.Pass);
-  check_string "fail string" "fail"
-    (Soldev_ticket.review_status_to_string Soldev_ticket.Fail)
-
-let test_review_status_unknown () =
-  check_review_status_option "unknown" None
-    (Soldev_ticket.review_status_of_string "maybe")
+let test_states_no_longer_include_removed_states () =
+  (* REFAC-077: IN_PROGRESS/REVIEW/READY_TO_MERGE/BLOCKED_BY_PERFORMANCE are
+     gone — GitHub's own open-PR/review/CI state represents what they used
+     to track, and a ticket's DONE move now rides in on its PR's squash
+     commit instead of a separate directory transition. *)
+  check_state_option "IN_PROGRESS no longer a state" None
+    (Soldev_ticket.state_of_dir "IN_PROGRESS");
+  check_state_option "REVIEW no longer a state" None
+    (Soldev_ticket.state_of_dir "REVIEW");
+  check_state_option "READY_TO_MERGE no longer a state" None
+    (Soldev_ticket.state_of_dir "READY_TO_MERGE");
+  check_state_option "BLOCKED_BY_PERFORMANCE no longer a state" None
+    (Soldev_ticket.state_of_dir "BLOCKED_BY_PERFORMANCE");
+  check_bool "only 3 states remain" true (List.length Soldev_ticket.all_states = 3)
 
 (* ── set_frontmatter_field ───────────────────────────────────────────────── *)
 
@@ -232,10 +224,7 @@ let () =
       Alcotest.test_case "includes RFE"          `Quick test_states_include_rfe;
       Alcotest.test_case "state roundtrip"       `Quick test_state_roundtrip;
       Alcotest.test_case "unknown state"         `Quick test_state_unknown;
-    ];
-    "review_status", [
-      Alcotest.test_case "roundtrip"             `Quick test_review_status_roundtrip;
-      Alcotest.test_case "unknown"               `Quick test_review_status_unknown;
+      Alcotest.test_case "removed states gone"   `Quick test_states_no_longer_include_removed_states;
     ];
     "set_frontmatter_field", [
       Alcotest.test_case "appends when absent"   `Quick test_set_field_appends_when_absent;

@@ -1,18 +1,21 @@
+(* Only three persisted states remain (see REFAC-077): [Backlog] is a
+   pre-work human-judgment gate, [Ready_for_engineering] covers everything
+   from "not started" through "PR open, in review" (GitHub's own open-PR/
+   review/CI state IS that information — no local directory duplicates it),
+   and [Done] is committed on the ticket's own PR branch as part of the
+   worker's implementation commit, so it rides into `main` inside the same
+   squashed merge commit as the code. There is no persisted "in review" or
+   "ready to merge" directory, and no "blocked by performance" directory: a
+   post-merge revert undoes the code and the ticket's DONE move atomically,
+   since they were always the same commit — it lands back in
+   [Ready_for_engineering] for free. *)
 type ticket_state =
   | Backlog
   | Ready_for_engineering
-  | In_progress
-  | Review
-  | Ready_to_merge
-  | Blocked_by_performance
   | Done
-
-type review_status = Pass | Fail
 
 val state_to_dir : ticket_state -> string
 val state_of_dir : string -> ticket_state option
-val review_status_to_string : review_status -> string
-val review_status_of_string : string -> review_status option
 
 val all_states : ticket_state list
 

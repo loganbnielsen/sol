@@ -16,19 +16,119 @@ let git_branch_exists branch =
   Sol_process.run_shell_rc ~echo:false
     (Printf.sprintf "git rev-parse --verify %s >/dev/null 2>&1" (Filename.quote branch)) = 0
 
-let gh_pr_url_for_branch branch =
-  match Sol_process.output_shell ~echo:false
-          (Printf.sprintf "gh pr view %s --json url -q .url" (Filename.quote branch)) with
-  | "" -> None
-  | url -> Some url
+(* ── PR lookup (see REFAC-077) ───────────────────────────────────────────────
+
+   Since a ticket in flight no longer carries `branch:`/`pr:` frontmatter on
+   `main` (there is nothing to persist there until it lands in DONE), finding
+   a ticket's PR means asking GitHub directly rather than reading a local
+   field. A branch's convention is `<TICKET-ID>/<slug>`, so the ticket ID is
+   the path segment before the first `/`. *)
+
+type pr_info =
+  { pr_number : int; pr_url : string; pr_branch : string; pr_head_sha : string }
+
+let ticket_id_of_branch branch =
+  match String.index_opt branch '/' with
+  | Some i -> String.sub branch 0 i
+  | None -> branch
+
+let open_prs () =
+  let json_str =
+    Sol_process.output_shell ~echo:false
+      "gh pr list --state open --json number,url,headRefName,headRefOid --limit 200"
+  in
+  if json_str = "" then []
+  else
+    let open Yojson.Basic.Util in
+    Yojson.Basic.from_string json_str |> to_list
+    |> List.map (fun j ->
+      { pr_number  = j |> member "number" |> to_int
+      ; pr_url     = j |> member "url" |> to_string
+      ; pr_branch  = j |> member "headRefName" |> to_string
+      ; pr_head_sha = j |> member "headRefOid" |> to_string })
+
+let find_pr_for_ticket ticket_id =
+  open_prs () |> List.find_opt (fun p -> ticket_id_of_branch p.pr_branch = ticket_id)
+
+(* `gh pr checks` exits 0 iff every required check has completed and passed —
+   pending or failing checks give a non-zero exit. That is exactly the
+   "is this actually ready" signal `merge` needs; no need to parse the JSON
+   ourselves. *)
+let pr_checks_green pr_url =
+  Sol_process.run_shell_rc ~echo:false
+    (Printf.sprintf "gh pr checks %s >/dev/null 2>&1" (Filename.quote pr_url)) = 0
+
+(* This is a solo-owned repo: the `gh` identity running review/merge is
+   always the PR's own author, and GitHub refuses to let an author formally
+   approve their own PR (`gh pr review --approve` fails with "Can not
+   approve your own pull request"). So review readiness can't be GitHub's
+   own reviewDecision — it's a plain PR comment carrying this marker,
+   posted by `run_review` and checked for here. Branch protection's
+   1-approval requirement is separately satisfied at merge time via
+   `gh pr merge --admin`, same as before.
+
+   A pass comment is only trustworthy for the exact commit it reviewed: a
+   bounce-then-refix round posts a *later* comment on the same PR, and a
+   naive "does a PASS exist anywhere in history" check would still see the
+   earlier PASS and call the PR approved even though the latest verdict is
+   FAIL, or even though HEAD moved past the reviewed commit entirely (a
+   rebase, a manual fixup, any commit nobody re-reviewed). So: only the
+   temporally-last SOLDEV-REVIEW comment counts, and a PASS only counts if
+   its embedded sha still equals the PR's current head. *)
+let review_pass_marker = "SOLDEV-REVIEW: PASS"
+let review_fail_marker = "SOLDEV-REVIEW: FAIL"
+
+type review_verdict = Reviewed_pass of string (* reviewed sha *) | Reviewed_fail
+
+let starts_with ~prefix s =
+  String.length s >= String.length prefix
+  && String.sub s 0 (String.length prefix) = prefix
+
+let parse_review_marker body =
+  match String.split_on_char '\n' body with
+  | [] -> None
+  | first_line :: _ ->
+    if starts_with ~prefix:review_pass_marker first_line then
+      let rest_start = String.length review_pass_marker in
+      let sha =
+        String.sub first_line rest_start (String.length first_line - rest_start)
+        |> String.trim
+      in
+      Some (Reviewed_pass sha)
+    else if starts_with ~prefix:review_fail_marker first_line then
+      Some Reviewed_fail
+    else None
+
+(* Later comments override earlier ones — this is what makes a bounce
+   correctly supersede a prior pass. *)
+let latest_review_verdict_of_bodies bodies =
+  List.fold_left (fun acc body ->
+    match parse_review_marker body with
+    | Some v -> Some v
+    | None -> acc)
+    None bodies
+
+let pr_comment_bodies pr_url =
+  let json_str =
+    Sol_process.output_shell ~echo:false
+      (Printf.sprintf "gh pr view %s --json comments" (Filename.quote pr_url))
+  in
+  if json_str = "" then []
+  else
+    let open Yojson.Basic.Util in
+    Yojson.Basic.from_string json_str
+    |> member "comments" |> to_list
+    |> List.map (fun c -> c |> member "body" |> to_string)
+
+let pr_review_approved pr =
+  match latest_review_verdict_of_bodies (pr_comment_bodies pr.pr_url) with
+  | Some (Reviewed_pass reviewed_sha) -> reviewed_sha = pr.pr_head_sha
+  | Some Reviewed_fail | None -> false
 
 (* ── pipeline check-reverts ──────────────────────────────────────────────── *)
 
 (* `Revert "Merge branch 'EXP-023/cloud-init-kubeconfig'..."` -> "EXP-023" *)
-let ticket_id_from_branch branch =
-  match String.index_opt branch '/' with
-  | Some i -> String.sub branch 0 i
-  | None -> branch
+let ticket_id_from_branch branch = ticket_id_of_branch branch
 
 let extract_reverted_branch subject =
   let marker = "Revert \"Merge branch '" in
@@ -59,20 +159,19 @@ let mentions_id ~id line =
   go 0
 
 (* This repo routinely reverts a merge on a test failure and then reapplies
-   the fix in a later "Reapply ..." commit (see FRIC-011, FRIC-012, FRIC-013,
-   and the CODEX_STYLE_AUDIT tickets) — that pattern is healthy and must not
-   be flagged. Only a revert with no later commit mentioning the ticket id
-   is a real "never refixed" case. *)
+   the fix in a later "Reapply ..." commit — that pattern is healthy and must
+   not be flagged. Only a revert with no later commit mentioning the ticket id
+   is a real "never refixed" case.
+
+   Since REFAC-077, a ticket's DONE move is committed on the same commit as
+   its code, so a revert here already un-does both atomically — this check
+   should rarely if ever fire going forward. Kept as defense in depth, not
+   because it's still load-bearing the way it was for EXP-032. *)
 let refixed_after ~id ~revert_hash =
   Soldev_shell.run_cmd_lines
     (Printf.sprintf "git log --oneline %s" (Filename.quote (revert_hash ^ "..HEAD")))
   |> List.exists (mentions_id ~id)
 
-(* Lower-effort interim safeguard for EXP-032: a merge can be reverted after
-   its ticket already moved to DONE/, and nothing else in the pipeline
-   notices — the ticket file just sits there describing a fix that no longer
-   exists in main. Full automation (auto-move on revert) is out of scope
-   here; this only flags the mismatch for a human or the next audit run. *)
 let run_check_reverts () =
   let lines =
     Soldev_shell.run_cmd_lines
@@ -108,261 +207,53 @@ let run_check_reverts () =
     exit 1
   end
 
-(* ── pipeline submit ─────────────────────────────────────────────────────── *)
+(* ── pipeline submit ──────────────────────────────────────────────────────── *)
 
-(* Push the ticket's branch and open a PR (or reuse an existing one for that
-   branch), then move the ticket IN_PROGRESS → REVIEW. Replaces "move to
-   REVIEW/, commit the move in main" as a manual step in the /work skill —
-   this is what makes REVIEW correspond to a real, reviewable PR instead of
-   just a local worktree. *)
+(* Run from WITHIN the ticket's worktree (not the main checkout — see
+   REFAC-077). The worker's own last implementation commit already moved the
+   ticket file from READY_FOR_ENGINEERING/ to DONE/ *on this branch*; submit's
+   only job is to push the branch and open the PR (or reuse an existing one).
+   It never touches `pipeline/tickets/` on `main` — there is nothing to move
+   there until the PR actually merges. *)
 let run_submit ticket_id =
-  let src = Printf.sprintf "%s/%s.md" (ticket_dir Soldev_ticket.In_progress) ticket_id in
-  if not (Sys.file_exists src) then begin
-    Printf.eprintf "error: %s not found (expected an IN_PROGRESS ticket)\n" src; exit 1
+  let done_path = Printf.sprintf "%s/%s.md" (ticket_dir Soldev_ticket.Done) ticket_id in
+  if not (Sys.file_exists done_path) then begin
+    Printf.eprintf
+      "error: %s not found. Run this from the ticket's worktree, after your \
+       final commit has already moved the ticket file to DONE/ on this branch.\n"
+      done_path;
+    exit 1
   end;
-  let content = read_file src in
-  let fields = Soldev_ticket.parse_frontmatter content in
-  let branch = match Soldev_ticket.fm_get fields "branch" with
-    | Some b -> b
-    | None -> Printf.eprintf "error: %s has no branch: in frontmatter\n" ticket_id; exit 1
-  in
-  if not (git_branch_exists branch) then begin
-    Printf.eprintf "error: branch %s not found locally\n" branch; exit 1
+  let branch = current_branch () in
+  if branch = "main" || branch = "" then begin
+    Printf.eprintf "error: not on a ticket branch (currently on %s)\n" branch; exit 1
   end;
   Printf.printf "[%s] pushing %s...\n%!" ticket_id branch;
   if Soldev_shell.run_cmd (Printf.sprintf "git push -u origin %s" (Filename.quote branch)) <> 0 then begin
     Printf.eprintf "error: git push failed for %s\n" branch; exit 1
   end;
-  let pr_url = match gh_pr_url_for_branch branch with
-    | Some url ->
-      Printf.printf "[%s] PR already exists: %s\n%!" ticket_id url; url
-    | None ->
-      Printf.printf "[%s] opening PR...\n%!" ticket_id;
-      let title = Printf.sprintf "%s: %s" ticket_id (Soldev_ticket.ticket_title content) in
-      let body = Printf.sprintf
-        "Ticket: `%s`\n\nSee `pipeline/tickets/REVIEW/%s.md` for the full spec.\n" ticket_id ticket_id in
-      let r = Sol_process.run_shell ~echo:false (Printf.sprintf
-        "gh pr create --base main --head %s --title %s --body %s"
-        (Filename.quote branch) (Filename.quote title) (Filename.quote body)) in
-      if not (Sol_process.succeeded r) then begin
-        Printf.eprintf "error: gh pr create failed:\n%s\n" r.Sol_process.stderr; exit 1
-      end;
-      String.trim r.Sol_process.stdout
-  in
-  let updated = Soldev_ticket.set_frontmatter_field content "pr" pr_url in
-  let dst = Printf.sprintf "%s/%s.md" (ticket_dir Soldev_ticket.Review) ticket_id in
-  write_file src updated;
-  Sys.rename src dst;
-  ignore (Soldev_shell.run_cmd ~echo:false
-    (Printf.sprintf "git add pipeline/tickets/ && git commit -m %s"
-      (Filename.quote (Printf.sprintf "pipeline: submit %s for review\n\nPR: %s" ticket_id pr_url))));
-  Printf.printf "[%s] → REVIEW  (%s)\n%!" ticket_id pr_url
+  let content = read_file done_path in
+  match find_pr_for_ticket ticket_id with
+  | Some p ->
+    Printf.printf "[%s] PR already exists: %s\n%!" ticket_id p.pr_url
+  | None ->
+    Printf.printf "[%s] opening PR...\n%!" ticket_id;
+    let title = Printf.sprintf "%s: %s" ticket_id (Soldev_ticket.ticket_title content) in
+    let body = Printf.sprintf
+      "Ticket: `%s`\n\nSee `pipeline/tickets/DONE/%s.md` on this branch for the full spec — \
+       it lands in `pipeline/tickets/DONE/` on `main` as part of this PR's squash-merge.\n"
+      ticket_id ticket_id in
+    let r = Sol_process.run_shell ~echo:false (Printf.sprintf
+      "gh pr create --base main --head %s --title %s --body %s"
+      (Filename.quote branch) (Filename.quote title) (Filename.quote body)) in
+    if not (Sol_process.succeeded r) then begin
+      Printf.eprintf "error: gh pr create failed:\n%s\n" r.Sol_process.stderr; exit 1
+    end;
+    Printf.printf "[%s] → %s\n%!" ticket_id (String.trim r.Sol_process.stdout)
 
-(* ── pipeline merge-finish (internal — spawned by `merge`, never call directly) ──
+(* ── pipeline review ──────────────────────────────────────────────────────── *)
 
-   Runs the post-merge test suite, updates the perf baseline, and moves the
-   ticket to DONE or BLOCKED_BY_PERFORMANCE. `merge` always invokes this as a
-   subprocess of a binary rebuilt *after* the PR's merge commit landed —
-   never inline in the resident pre-merge process. A merge that renames a
-   path this logic depends on (run_tests.sh's own location, say) would
-   otherwise be checked against the *old* compiled-in path by the
-   already-running binary, fail spuriously, and trigger an automatic revert
-   of a perfectly good merge — exactly what happened to REFAC-072 (left a
-   split ticket-state mess) and REFAC-074 (reverted an already-CI-green
-   116-file merge) before this fix. *)
-let run_merge_finish ticket_id merge_sha accept_performance_regression =
-  let ready_dir = ticket_dir Soldev_ticket.Ready_to_merge in
-  let filename = ticket_id ^ ".md" in
-  let src = Filename.concat ready_dir filename in
-  if not (Sys.file_exists src) then begin
-    Printf.eprintf "error: %s not found in READY_TO_MERGE\n" ticket_id; exit 1
-  end;
-  let perf_rc = Soldev_shell.run_cmd "./cli/platform/local/scripts/run_tests.sh" in
-  if perf_rc = 2 && accept_performance_regression then begin
-    Printf.eprintf "  perf regression explicitly accepted — recording new baseline\n%!";
-    ignore (Soldev_shell.run_cmd ~echo:false
-      "./cli/platform/local/scripts/run_tests.sh --update-baseline");
-    Sys.rename src (Filename.concat (ticket_dir Soldev_ticket.Done) filename);
-    ignore (Soldev_shell.run_cmd ~echo:false
-      (Printf.sprintf "git add pipeline/tickets/ devtools/perf/perf_baseline.json && git commit -m %s"
-        (Filename.quote
-          (Printf.sprintf "pipeline: move %s to DONE (perf regression accepted)" ticket_id))));
-    Printf.printf "  ✓  merged → DONE\n%!";
-    exit 0
-  end else if perf_rc >= 1 then begin
-    let label = if perf_rc = 2 then "perf regression" else "test failure" in
-    (* run_tests.sh always appends a non-baseline history entry to
-       devtools/perf/perf_baseline.json, even here, leaving it locally
-       modified. That made `git revert` below fail with "local changes
-       would be overwritten by merge" every time this path fired
-       (CODE_LAYER-011) — the entry was never meant to be committed on this
-       path, so discard it before reverting. *)
-    ignore (Soldev_shell.run_cmd ~echo:false
-      "git checkout -- devtools/perf/perf_baseline.json");
-    let revert_rc = Soldev_shell.run_cmd ~echo:false (Printf.sprintf
-      "SOL_SKIP_HOOKS=1 git revert %s --no-edit" (Filename.quote merge_sha)) in
-    let reverted = revert_rc = 0 in
-    Printf.eprintf "  %s detected — moving to BLOCKED_BY_PERFORMANCE\n%!" label;
-    Sys.rename src (Filename.concat (ticket_dir Soldev_ticket.Blocked_by_performance) filename);
-    ignore (Soldev_shell.run_cmd ~echo:false
-      (Printf.sprintf "git add pipeline/tickets/ && git commit -m %s"
-        (Filename.quote (Printf.sprintf "pipeline: %s blocked %s" label ticket_id))));
-    if not reverted then
-      Printf.eprintf "  warning: %s remains merged because automatic revert failed\n%!" ticket_id;
-    exit 1
-  end else begin
-    ignore (Soldev_shell.run_cmd ~echo:false
-      "./cli/platform/local/scripts/run_tests.sh --update-baseline");
-    Sys.rename src (Filename.concat (ticket_dir Soldev_ticket.Done) filename);
-    ignore (Soldev_shell.run_cmd ~echo:false
-      (Printf.sprintf "git add pipeline/tickets/ devtools/perf/perf_baseline.json && git commit -m %s"
-        (Filename.quote (Printf.sprintf "pipeline: move %s to DONE" ticket_id))));
-    Printf.printf "  ✓  merged → DONE\n%!";
-    exit 0
-  end
-
-(* Path to the binary `dune build` just refreshed. Invoked directly rather
-   than via the `soldev` name on PATH, so this doesn't depend on
-   ~/.local/bin/soldev being symlinked at all (a fresh checkout might never
-   have run an install step). *)
-let freshly_built_soldev = "_build/default/devtools/soldev/bin/main.exe"
-
-(* ── pipeline merge ──────────────────────────────────────────────────────── *)
-
-(* Merges via `gh pr merge` — GitHub branch protection and required checks
-   gate the actual merge, not local logic. Local main is then fast-forwarded/
-   merged to pick up the result, then rebuilt and handed to `merge-finish`
-   (see above) as a fresh subprocess for the post-merge test/baseline/DONE
-   step, which decides whether the ticket lands in DONE or
-   BLOCKED_BY_PERFORMANCE (per CLAUDE.md's performance baseline policy) —
-   and, since a squash merge is a single ordinary commit, not a merge
-   commit, a regression reverts with a plain `git revert`, no `-m 1` needed. *)
-
-let run_merge dry_run accept_performance_regression ticket_filter =
-  let ready_dir = ticket_dir Soldev_ticket.Ready_to_merge in
-  if not (Sys.file_exists ready_dir) then begin
-    Printf.eprintf "error: %s not found; run from workspace root.\n" ready_dir; exit 1
-  end;
-  let files =
-    Sys.readdir ready_dir |> Array.to_list
-    |> List.filter (fun f -> Filename.check_suffix f ".md")
-    |> List.filter (fun f -> match ticket_filter with
-       | None    -> true
-       | Some id -> f = id ^ ".md")
-    |> List.sort String.compare
-  in
-  if files = [] then begin
-    (match ticket_filter with
-     | Some id -> Printf.eprintf "error: %s not found in READY_TO_MERGE\n" id
-     | None    -> Printf.printf "Nothing in READY_TO_MERGE.\n");
-    exit 0
-  end;
-  let branch = current_branch () in
-  if branch <> "main" then begin
-    Printf.eprintf "error: must be on main to merge (currently on %s).\n" branch; exit 1
-  end;
-  let errors = ref 0 in
-  let merged = ref [] in
-  List.iter (fun filename ->
-    let src    = Filename.concat ready_dir filename in
-    let id     = Filename.chop_suffix filename ".md" in
-    let fields = Soldev_ticket.parse_frontmatter (read_file src) in
-    Printf.printf "\n[%s]\n%!" id;
-    match Soldev_ticket.fm_get fields "branch", Soldev_ticket.fm_get fields "worktree" with
-    | None, _ ->
-      Printf.eprintf "  no branch: in frontmatter — skipping\n"; incr errors
-    | _, None ->
-      Printf.eprintf "  no worktree: in frontmatter — skipping\n"; incr errors
-    | Some branch, Some worktree ->
-      if not (git_branch_exists branch) then begin
-        Printf.eprintf "  branch %s not found — skipping\n" branch; incr errors
-      end else
-        match (match Soldev_ticket.fm_get fields "pr" with
-               | Some url -> Some url
-               | None -> gh_pr_url_for_branch branch) with
-        | None ->
-          Printf.eprintf "  no PR found for %s — run `soldev pipeline submit %s` first\n" branch id;
-          incr errors
-        | Some pr_url ->
-          if dry_run then begin
-            Printf.printf "  (dry-run) gh pr merge %s --squash --delete-branch\n" pr_url;
-            Printf.printf "  (dry-run) remove worktree %s\n" worktree;
-            Printf.printf "  (dry-run) → %s/%s\n" (ticket_dir Soldev_ticket.Done) filename
-          end else begin
-            (* Remove the worktree first: a branch checked out in a linked
-               worktree can't be deleted, and --delete-branch needs to. *)
-            if Sys.file_exists worktree then
-              ignore (Soldev_shell.run_cmd (Printf.sprintf
-                "git worktree remove %s --force" (Filename.quote worktree)))
-            else Printf.printf "  worktree %s already removed\n%!" worktree;
-            (* --admin: this repo requires 1 approving review, which a
-               solo-owned repo with no other reviewer can never satisfy
-               through the normal flow. Self-merge after a green required
-               check is already the accepted policy here (see /pr's
-               "repos the user owns" merge flow) — --admin exercises the
-               same override `gh pr merge --admin` gives any repo admin,
-               it does not skip the required status check itself. *)
-            let merge_rc = Soldev_shell.run_cmd (Printf.sprintf
-              "gh pr merge %s --squash --delete-branch --admin" (Filename.quote pr_url)) in
-            if merge_rc <> 0 then begin
-              Printf.eprintf
-                "  gh pr merge failed for %s (checks or review not satisfied?) — \
-                 leaving in READY_TO_MERGE, retry once green\n" pr_url;
-              incr errors
-            end else begin
-              ignore (Soldev_shell.run_cmd ~echo:false "git fetch origin main -q");
-              let sync_rc = Soldev_shell.run_cmd ~echo:false "git merge origin/main --no-edit -q" in
-              if sync_rc <> 0 then begin
-                Printf.eprintf
-                  "  merged on GitHub but failed to sync local main — resolve manually\n";
-                incr errors
-              end else begin
-                let merge_sha = Sol_process.output_shell ~echo:false "git rev-parse origin/main" in
-                (* Rebuild BEFORE running any post-merge check against this
-                   ticket's own code — the merge we just synced may have
-                   changed a path this repo's own tooling depends on (see
-                   the comment on run_merge_finish). Then hand off to a
-                   subprocess of that freshly-built binary; never run the
-                   post-merge logic inline in this (necessarily pre-merge)
-                   process. *)
-                Printf.printf "  rebuilding before post-merge checks...\n%!";
-                let build_rc = Soldev_shell.run_cmd "dune build" in
-                if build_rc <> 0 then begin
-                  Printf.eprintf "  post-merge build failed — reverting %s\n%!" merge_sha;
-                  ignore (Soldev_shell.run_cmd ~echo:false
-                    "git checkout -- devtools/perf/perf_baseline.json");
-                  let revert_rc = Soldev_shell.run_cmd ~echo:false (Printf.sprintf
-                    "SOL_SKIP_HOOKS=1 git revert %s --no-edit" (Filename.quote merge_sha)) in
-                  if revert_rc <> 0 then
-                    Printf.eprintf
-                      "  warning: %s remains merged because automatic revert failed\n%!" id;
-                  Sys.rename src
-                    (Filename.concat (ticket_dir Soldev_ticket.Blocked_by_performance) filename);
-                  ignore (Soldev_shell.run_cmd ~echo:false
-                    (Printf.sprintf "git add pipeline/tickets/ && git commit -m %s"
-                      (Filename.quote (Printf.sprintf "pipeline: build failure blocked %s" id))));
-                  incr errors
-                end else begin
-                  let finish_rc = Soldev_shell.run_cmd (Printf.sprintf
-                    "%s pipeline merge-finish %s %s%s"
-                    (Filename.quote freshly_built_soldev) (Filename.quote id)
-                    (Filename.quote merge_sha)
-                    (if accept_performance_regression then " --accept-performance-regression" else ""))
-                  in
-                  if finish_rc = 0 then merged := id :: !merged else incr errors
-                end
-              end
-            end
-          end
-  ) files;
-  (* Each ticket already committed its own DONE (+ baseline) move inside
-     merge-finish — no trailing aggregate commit needed. *)
-  if !errors > 0 then Printf.eprintf "\n%d ticket(s) had errors.\n" !errors;
-  if (not dry_run) && !merged <> [] then
-    Printf.printf "\nLocal main has new commits — remember to `git push origin main`.\n";
-  Printf.printf "\nDone. %d merged.\n" (List.length !merged)
-
-(* ── pipeline review ─────────────────────────────────────────────────────── *)
+type review_status = Pass | Fail
 
 type violation = { vfile: string; vline: int option; vmessage: string }
 
@@ -371,11 +262,10 @@ let parse_result json_str =
   let j = Yojson.Basic.from_string json_str in
   let status_raw = j |> member "status" |> to_string in
   let status =
-    match Soldev_ticket.review_status_of_string status_raw with
-    | Some status -> status
-    | None ->
-      Printf.eprintf "error: unknown status %S\n" status_raw;
-      exit 1
+    match status_raw with
+    | "pass" -> Pass
+    | "fail" -> Fail
+    | _ -> Printf.eprintf "error: unknown status %S\n" status_raw; exit 1
   in
   let summary = j |> member "summary" |> to_string_option |> Option.value ~default:"" in
   let violations =
@@ -396,52 +286,211 @@ let format_violations vs =
     | None   -> Printf.sprintf "- `%s` — %s" v.vfile v.vmessage
   ) vs)
 
-(* Commits its own ticket-file move — a prior version left this to whoever
-   called `pipeline review` to remember, which repeatedly produced
-   uncommitted ticket-state moves in practice (see REFAC-075). *)
+(* Review leaves its verdict on the PR itself as a plain comment — not a
+   formal GitHub review, since self-approval is impossible here (see
+   pr_review_approved) — instead of moving any ticket file. There is nothing
+   to move: the ticket's DONE move already happened on the branch when it
+   was implemented, and a bounce just means the same open PR gets another
+   commit (this repo's established convention), not a ticket-directory
+   round trip. *)
 let run_review ticket_id result_file =
-  let src =
-    Printf.sprintf "%s/%s.md" (ticket_dir Soldev_ticket.Review) ticket_id
-  in
-  if not (Sys.file_exists src) then begin
-    Printf.eprintf "error: %s not found\n" src; exit 1
-  end;
-  let json_str =
-    match result_file with
-    | Some path -> read_file path
+  match find_pr_for_ticket ticket_id with
+  | None ->
+    Printf.eprintf "error: no open PR found for %s (branch prefix %s/)\n" ticket_id ticket_id;
+    exit 1
+  | Some p ->
+    let json_str =
+      match result_file with
+      | Some path -> read_file path
+      | None ->
+        let buf = Buffer.create 512 in
+        (try while true do Buffer.add_channel buf stdin 4096 done with End_of_file -> ());
+        Buffer.contents buf
+    in
+    let (status, summary, violations) = parse_result (String.trim json_str) in
+    (match status with
+     | Pass ->
+       (* Embed the PR's current head sha (from GitHub, not the local
+          worktree — see REFAC-077 follow-up) so a later commit nobody
+          reviewed can never ride in on this comment's approval. *)
+       let body =
+         Printf.sprintf "%s %s\n\n%s" review_pass_marker p.pr_head_sha
+           (if summary = "" then "Automated review: pass." else summary)
+       in
+       let rc = Soldev_shell.run_cmd ~echo:false
+         (Printf.sprintf "gh pr comment %s --body %s"
+            (Filename.quote p.pr_url) (Filename.quote body))
+       in
+       if rc <> 0 then begin
+         Printf.eprintf "error: failed to post review-pass comment on %s\n" p.pr_url;
+         exit 1
+       end;
+       Printf.printf "[%s] %s → approved\n" ticket_id p.pr_url
+     | Fail ->
+       let body =
+         Printf.sprintf "%s\n\nAutomated review: changes requested.\n\n%s"
+           review_fail_marker (format_violations violations)
+       in
+       let rc = Soldev_shell.run_cmd ~echo:false
+         (Printf.sprintf "gh pr comment %s --body %s"
+            (Filename.quote p.pr_url) (Filename.quote body))
+       in
+       if rc <> 0 then begin
+         Printf.eprintf "error: failed to post review-fail comment on %s\n" p.pr_url;
+         exit 1
+       end;
+       Printf.printf "[%s] %s → changes requested (%d violation(s))\n"
+         ticket_id p.pr_url (List.length violations))
+
+(* ── pipeline merge-finish (internal — spawned by `merge`, never call directly) ──
+
+   Runs the post-merge test suite and updates the perf baseline. `merge`
+   always invokes this as a subprocess of a binary rebuilt *after* the PR's
+   merge commit landed — never inline in the resident pre-merge process (see
+   REFAC-075). There is no ticket file to move here any more: the squash
+   commit `merge` just applied already carried the ticket's own
+   READY_FOR_ENGINEERING -> DONE move (committed by the worker, on the
+   branch). On a real regression, reverting that squash commit un-does the
+   code *and* the ticket's DONE move together, landing it back in
+   READY_FOR_ENGINEERING for free — no BLOCKED_BY_PERFORMANCE state needed. *)
+let run_merge_finish label merge_sha accept_performance_regression =
+  let perf_rc = Soldev_shell.run_cmd "./cli/platform/local/scripts/run_tests.sh" in
+  if perf_rc = 2 && accept_performance_regression then begin
+    Printf.eprintf "  perf regression explicitly accepted — recording new baseline\n%!";
+    ignore (Soldev_shell.run_cmd ~echo:false
+      "./cli/platform/local/scripts/run_tests.sh --update-baseline");
+    ignore (Soldev_shell.run_cmd ~echo:false
+      (Printf.sprintf "git add devtools/perf/perf_baseline.json && git commit -m %s"
+        (Filename.quote
+          (Printf.sprintf "pipeline: update perf baseline after %s (perf regression accepted)" label))));
+    Printf.printf "  ✓  merged\n%!";
+    exit 0
+  end else if perf_rc >= 1 then begin
+    let kind = if perf_rc = 2 then "perf regression" else "test failure" in
+    (* run_tests.sh always appends a non-baseline history entry to
+       devtools/perf/perf_baseline.json, even here, leaving it locally
+       modified. That made `git revert` fail with "local changes would be
+       overwritten by merge" every time this path fired (CODE_LAYER-011) —
+       discard it before reverting. *)
+    ignore (Soldev_shell.run_cmd ~echo:false
+      "git checkout -- devtools/perf/perf_baseline.json");
+    let revert_rc = Soldev_shell.run_cmd ~echo:false (Printf.sprintf
+      "SOL_SKIP_HOOKS=1 git revert %s --no-edit" (Filename.quote merge_sha)) in
+    Printf.eprintf "  %s detected — reverted %s (ticket returns to READY_FOR_ENGINEERING with it)\n%!"
+      kind merge_sha;
+    if revert_rc <> 0 then
+      Printf.eprintf "  warning: %s remains merged because automatic revert failed\n%!" label;
+    exit 1
+  end else begin
+    ignore (Soldev_shell.run_cmd ~echo:false
+      "./cli/platform/local/scripts/run_tests.sh --update-baseline");
+    ignore (Soldev_shell.run_cmd ~echo:false
+      (Printf.sprintf "git add devtools/perf/perf_baseline.json && git commit -m %s"
+        (Filename.quote (Printf.sprintf "pipeline: update perf baseline after %s" label))));
+    Printf.printf "  ✓  merged\n%!";
+    exit 0
+  end
+
+(* Path to the binary `dune build` just refreshed. Invoked directly rather
+   than via the `soldev` name on PATH, so this doesn't depend on
+   ~/.local/bin/soldev being symlinked at all. *)
+let freshly_built_soldev = "_build/default/devtools/soldev/bin/main.exe"
+
+(* ── pipeline merge ──────────────────────────────────────────────────────── *)
+
+(* Merges via `gh pr merge` — GitHub branch protection and required checks
+   gate the actual merge, not local logic. A ticket is candidate for merging
+   the moment it has an open PR with an approved review and green checks;
+   there is no local READY_TO_MERGE directory to enumerate any more (see
+   REFAC-077) — `merge` asks GitHub directly. Pass a ticket ID to merge one;
+   omit to sweep every open PR whose branch looks like `<TICKET-ID>/...`. *)
+let run_merge dry_run accept_performance_regression ticket_filter =
+  let candidates =
+    match ticket_filter with
+    | Some id ->
+      (match find_pr_for_ticket id with
+       | Some p -> [ (id, p) ]
+       | None ->
+         Printf.eprintf "error: no open PR found for %s\n" id; exit 1)
     | None ->
-      let buf = Buffer.create 512 in
-      (try while true do Buffer.add_channel buf stdin 4096 done with End_of_file -> ());
-      Buffer.contents buf
+      open_prs ()
+      |> List.map (fun p -> (ticket_id_of_branch p.pr_branch, p))
   in
-  let (status, summary, violations) = parse_result (String.trim json_str) in
-  let content = read_file src in
-  (match status with
-   | Soldev_ticket.Pass ->
-     let note = Printf.sprintf "\n## Review — automated checks passed\n%s\n" summary in
-     let dst =
-       Printf.sprintf "%s/%s.md" (ticket_dir Soldev_ticket.Ready_to_merge) ticket_id
-     in
-     write_file src (content ^ note);
-     Sys.rename src dst;
-     ignore (Soldev_shell.run_cmd ~echo:false
-       (Printf.sprintf "git add pipeline/tickets/ && git commit -m %s"
-         (Filename.quote (Printf.sprintf "pipeline: %s review passed → READY_TO_MERGE" ticket_id))));
-     Printf.printf "[%s] → %s\n" ticket_id (dir Soldev_ticket.Ready_to_merge)
-   | Soldev_ticket.Fail ->
-     let note = Printf.sprintf "\n## Review — returned for revision\n%s\n"
-       (format_violations violations) in
-     let dst =
-       Printf.sprintf "%s/%s.md"
-         (ticket_dir Soldev_ticket.Ready_for_engineering) ticket_id
-     in
-     write_file src (content ^ note);
-     Sys.rename src dst;
-     ignore (Soldev_shell.run_cmd ~echo:false
-       (Printf.sprintf "git add pipeline/tickets/ && git commit -m %s"
-         (Filename.quote (Printf.sprintf "pipeline: %s review returned for revision" ticket_id))));
-     Printf.printf "[%s] → %s  (%d violation(s))\n"
-       ticket_id (dir Soldev_ticket.Ready_for_engineering) (List.length violations))
+  if candidates = [] then begin
+    Printf.printf "No open PRs to merge.\n"; exit 0
+  end;
+  let branch = current_branch () in
+  if branch <> "main" then begin
+    Printf.eprintf "error: must be on main to merge (currently on %s).\n" branch; exit 1
+  end;
+  let errors = ref 0 in
+  let merged = ref [] in
+  List.iter (fun (id, p) ->
+    Printf.printf "\n[%s]\n%!" id;
+    if not (pr_review_approved p) then begin
+      Printf.printf "  not approved yet — skipping (%s)\n" p.pr_url
+    end else if not (pr_checks_green p.pr_url) then begin
+      Printf.printf "  checks not green yet — skipping (%s)\n" p.pr_url
+    end else if dry_run then begin
+      Printf.printf "  (dry-run) gh pr merge %s --squash --delete-branch\n" p.pr_url
+    end else begin
+      (* `gh pr merge --delete-branch` fails outright — nonzero exit, even
+         though the merge itself already landed on GitHub — if the branch is
+         still checked out in a linked worktree. That's not an edge case:
+         it's the normal state of any ticket that just finished. Remove the
+         worktree *before* calling `gh pr merge` so branch deletion never
+         conflicts with it in the first place. *)
+      Soldev_shell.run_cmd_lines "git worktree list --porcelain"
+      |> List.filter_map (fun line ->
+           if String.length line > 9 && String.sub line 0 9 = "worktree "
+           then Some (String.sub line 9 (String.length line - 9)) else None)
+      |> List.iter (fun wt_path ->
+           let wt_branch = Sol_process.output_shell ~echo:false
+             (Printf.sprintf "git -C %s rev-parse --abbrev-ref HEAD 2>/dev/null" (Filename.quote wt_path)) in
+           if wt_branch = p.pr_branch then
+             ignore (Soldev_shell.run_cmd (Printf.sprintf
+               "git worktree remove %s --force" (Filename.quote wt_path))));
+      let merge_rc = Soldev_shell.run_cmd (Printf.sprintf
+        "gh pr merge %s --squash --delete-branch --admin" (Filename.quote p.pr_url)) in
+      if merge_rc <> 0 then begin
+        Printf.eprintf "  gh pr merge failed for %s — leaving open, retry once green\n" p.pr_url;
+        incr errors
+      end else begin
+        ignore (Soldev_shell.run_cmd ~echo:false "git fetch origin main -q");
+        let sync_rc = Soldev_shell.run_cmd ~echo:false "git merge origin/main --no-edit -q" in
+        if sync_rc <> 0 then begin
+          Printf.eprintf "  merged on GitHub but failed to sync local main — resolve manually\n";
+          incr errors
+        end else begin
+          let merge_sha = Sol_process.output_shell ~echo:false "git rev-parse origin/main" in
+          Printf.printf "  rebuilding before post-merge checks...\n%!";
+          let build_rc = Soldev_shell.run_cmd "dune build" in
+          if build_rc <> 0 then begin
+            Printf.eprintf "  post-merge build failed — reverting %s\n%!" merge_sha;
+            ignore (Soldev_shell.run_cmd ~echo:false
+              "git checkout -- devtools/perf/perf_baseline.json");
+            let revert_rc = Soldev_shell.run_cmd ~echo:false (Printf.sprintf
+              "SOL_SKIP_HOOKS=1 git revert %s --no-edit" (Filename.quote merge_sha)) in
+            if revert_rc <> 0 then
+              Printf.eprintf "  warning: %s remains merged because automatic revert failed\n%!" id;
+            incr errors
+          end else begin
+            let finish_rc = Soldev_shell.run_cmd (Printf.sprintf
+              "%s pipeline merge-finish %s %s%s"
+              (Filename.quote freshly_built_soldev) (Filename.quote id)
+              (Filename.quote merge_sha)
+              (if accept_performance_regression then " --accept-performance-regression" else ""))
+            in
+            if finish_rc = 0 then merged := id :: !merged else incr errors
+          end
+        end
+      end
+    end
+  ) candidates;
+  if !errors > 0 then Printf.eprintf "\n%d ticket(s) had errors.\n" !errors;
+  if (not dry_run) && !merged <> [] then
+    Printf.printf "\nLocal main has new commits — remember to `git push origin main`.\n";
+  Printf.printf "\nDone. %d merged.\n" (List.length !merged)
 
 (* ── pipeline ls ─────────────────────────────────────────────────────────── *)
 
@@ -470,6 +519,13 @@ let run_ls include_done =
           let sev     = Soldev_ticket.fm_get fields "severity" |> Option.value ~default:"-" in
           let deps    = Soldev_ticket.parse_depends content |> Soldev_ticket.dependency_summary in
           let ready   = Soldev_ticket.readiness_label state content in
+          let ready   =
+            if state = Soldev_ticket.Ready_for_engineering then
+              match find_pr_for_ticket id with
+              | Some p -> ready ^ Printf.sprintf " (PR #%d open)" p.pr_number
+              | None -> ready
+            else ready
+          in
           let title   = Soldev_ticket.ticket_title content in
           Printf.printf "  %-12s  %-18s  %-7s  depends on: %-24s  %-24s  %s\n"
             id typ sev deps ready title
@@ -490,6 +546,9 @@ let run_check ticket_id =
     let deps = Soldev_ticket.parse_depends content in
     Printf.printf "%s  state: %s\n" ticket_id (dir state);
     Printf.printf "depends on: %s\n" (Soldev_ticket.dependency_summary deps);
+    (match find_pr_for_ticket ticket_id with
+     | Some p -> Printf.printf "open PR: %s\n" p.pr_url
+     | None -> ());
     if Soldev_ticket.has_human_decision_gate content then begin
       let details = Soldev_ticket.human_decision_details content in
       if String.trim details <> "" then Printf.printf "\n%s\n\n" details;

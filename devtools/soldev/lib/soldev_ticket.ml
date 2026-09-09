@@ -1,49 +1,24 @@
+(* Only three persisted states remain (see REFAC-077) — see the .mli for the
+   full rationale. *)
 type ticket_state =
   | Backlog
   | Ready_for_engineering
-  | In_progress
-  | Review
-  | Ready_to_merge
-  | Blocked_by_performance
   | Done
 
-type review_status = Pass | Fail
-
-let review_status_to_string = function
-  | Pass -> "pass"
-  | Fail -> "fail"
-
-let review_status_of_string = function
-  | "pass" -> Some Pass
-  | "fail" -> Some Fail
-  | _      -> None
-
 let state_to_dir = function
-  | Backlog                -> "BACKLOG"
-  | Ready_for_engineering  -> "READY_FOR_ENGINEERING"
-  | In_progress            -> "IN_PROGRESS"
-  | Review                 -> "REVIEW"
-  | Ready_to_merge         -> "READY_TO_MERGE"
-  | Blocked_by_performance -> "BLOCKED_BY_PERFORMANCE"
-  | Done                   -> "DONE"
+  | Backlog               -> "BACKLOG"
+  | Ready_for_engineering -> "READY_FOR_ENGINEERING"
+  | Done                  -> "DONE"
 
 let state_of_dir = function
-  | "BACKLOG"                -> Some Backlog
-  | "READY_FOR_ENGINEERING"  -> Some Ready_for_engineering
-  | "IN_PROGRESS"            -> Some In_progress
-  | "REVIEW"                 -> Some Review
-  | "READY_TO_MERGE"         -> Some Ready_to_merge
-  | "BLOCKED_BY_PERFORMANCE" -> Some Blocked_by_performance
-  | "DONE"                   -> Some Done
-  | _                        -> None
+  | "BACKLOG"               -> Some Backlog
+  | "READY_FOR_ENGINEERING" -> Some Ready_for_engineering
+  | "DONE"                  -> Some Done
+  | _                       -> None
 
 let all_states = [
   Backlog;
   Ready_for_engineering;
-  In_progress;
-  Review;
-  Ready_to_merge;
-  Blocked_by_performance;
   Done;
 ]
 
