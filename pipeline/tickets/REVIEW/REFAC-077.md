@@ -5,6 +5,7 @@ worktree: ../sol-REFAC-077-collapse-ticket-states
 type: refactor
 severity: high
 source: git-history-noise discussion with user, 2026-09-08/09
+pr: https://github.com/loganbnielsen/sol/pull/172
 ---
 
 **Depends on:** None. **Sequencing note:** do this alone, not concurrently with other ticket-pipeline work — it changes the pipeline tooling every other ticket runs through. All of `IN_PROGRESS/`, `REVIEW/`, `READY_TO_MERGE/`, `BLOCKED_BY_PERFORMANCE/` are empty as of filing — no in-flight tickets need migrating, so there's no cleanup debt to carry into this change. Do it now, not later.
