@@ -231,3 +231,27 @@ jobs:
 
       - name: Build ${{ matrix.dockerfile }}
         run: docker build --no-cache -f ${{ matrix.dockerfile }} .
+
+  # FEAT-039: example-dockerfile-smoke above deliberately excludes
+  # examples/pluto/app/demo_ts/ (hand-maintained, no Sol template to drift
+  # from). But its two Dockerfiles still need *some* ongoing build check --
+  # FEAT-038 rewrote them to depend on the in-tree npm workspace packages
+  # (packages/sol-kafka, packages/sol-obs), and a broken workspace
+  # reference in any of the three package.json files would otherwise go
+  # unnoticed until someone tried to run the demo by hand. This job is a
+  # plain build-success check, not a drift check -- no template to diff
+  # against here.
+  demo-ts-dockerfile-smoke:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile:
+          - examples/pluto/app/demo_ts/order_svc/Dockerfile
+          - examples/pluto/app/demo_ts/fulfillment_worker/Dockerfile
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build ${{ matrix.dockerfile }}
+        run: docker build --no-cache -f ${{ matrix.dockerfile }} .
