@@ -1,4 +1,6 @@
 **/_build/
+node_modules/
+**/dist/
 .sol/
 .sun/
 .dogfood-bin/

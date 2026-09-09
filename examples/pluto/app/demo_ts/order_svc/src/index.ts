@@ -4,9 +4,9 @@ import { Pushgateway } from "prom-client";
 import { SpanStatusCode } from "@opentelemetry/api";
 import { randomBytes } from "node:crypto";
 
-import { encodeWire, registerSchema, setSubjectCompatibility } from "./schemaRegistry.js";
-import { makeLokiPusher } from "./loki.js";
-import { initTracing, traceparentOf, SpanKind } from "./tracing.js";
+import { encodeWire, registerTopic } from "@sol/kafka";
+import { traceparentOf, routeLabel, statusClassOf, makeLokiPusher } from "@sol/obs";
+import { initTracing, SpanKind } from "./tracing.js";
 import { makeSvcMetrics } from "./metrics.js";
 
 // service.ml:208-212 (the contract this ticket names by name) falls back
@@ -41,38 +41,23 @@ const log = makeLokiPusher(LOKI_URL, "order-svc-ts");
 const { tracer, shutdown: shutdownTracing } = initTracing("order-svc-ts", TEMPO_URL);
 const { register: metricsRegister, requestsTotal, requestDuration } = makeSvcMetrics();
 
-const TOPIC_PARTITIONS = 1; // matches Kafka_service_config's default (kafka_service_config.ml:16)
-
 async function main() {
   console.log(`[order-svc-ts] brokers=${KAFKA_BROKERS} registry=${SCHEMA_REGISTRY_URL} topic=${TOPIC_NAME}`);
 
   const kafka = new Kafka({ clientId: "order-svc-ts", brokers: KAFKA_BROKERS });
 
-  // Kafka_service.register (kafka_service.ml:148-165) explicitly provisions
-  // the topic (ensure_topic -> Kafka.Producer.create_topic) BEFORE touching
-  // the schema registry — relying on broker auto-create-on-produce (the
-  // default on this repo's local Redpanda) silently drops this on any
-  // cluster with auto.create.topics.enable=false. createTopics resolves
-  // `false` (not an error) if the topic already exists — same idempotent
-  // shape as ensure_topic.
-  const admin = kafka.admin();
-  await admin.connect();
-  await admin.createTopics({
-    topics: [{ topic: TOPIC_NAME, numPartitions: TOPIC_PARTITIONS, replicationFactor: 1 }],
+  // @sol/kafka's registerTopic is the single entry point for provisioning
+  // the topic and registering its schema in Sol's exact order/fatality
+  // policy (provision -> register schema, fatal -> set compatibility,
+  // non-fatal) -- see packages/sol-kafka/src/register.ts for why this is
+  // one function rather than three independently-callable steps.
+  const { schemaId } = await registerTopic({
+    kafka,
+    registryUrl: SCHEMA_REGISTRY_URL,
+    topicName: TOPIC_NAME,
+    schema: ORDER_PLACED_SCHEMA,
   });
-  await admin.disconnect();
-
-  // Order matches Kafka_service.register (kafka_service.ml:167-177) exactly:
-  // register_schema is fatal (let it throw, unguarded); set_subject_compatibility
-  // is best-effort and must never block startup on a registry that doesn't
-  // support it.
-  const schemaId = await registerSchema(SCHEMA_REGISTRY_URL, TOPIC_NAME, ORDER_PLACED_SCHEMA);
   console.log(`[order-svc-ts] schema registered, id=${schemaId}`);
-  try {
-    await setSubjectCompatibility(SCHEMA_REGISTRY_URL, TOPIC_NAME);
-  } catch (err) {
-    console.warn(`[order-svc-ts] warn: could not set schema compatibility for ${TOPIC_NAME}: ${String(err)}`);
-  }
 
   const producer = kafka.producer();
   await producer.connect();
@@ -86,13 +71,13 @@ async function main() {
   // recording inline in the handler (an earlier version of this file did)
   // silently drops metrics for any request that throws.
   app.addHook("onResponse", async (req, reply) => {
-    // sol-svc's dispatcher (service.ml:113-114) uses a fixed "unmatched"
-    // label for any request that never matched a route — an unbounded,
-    // caller-controlled path as a label value is a Prometheus cardinality
-    // bomb under real internet traffic (scanners, retries with varying
-    // paths). routeOptions is only set once Fastify has matched a route.
-    const route = req.routeOptions?.url ?? "unmatched";
-    const statusClass = `${Math.floor(reply.statusCode / 100)}xx`;
+    // routeLabel/statusClassOf are @sol/obs's exact port of service.ml's
+    // label derivation, including the fixed "unmatched" default for any
+    // request that never matched a route -- an unbounded, caller-controlled
+    // path as a label value is a Prometheus cardinality bomb under real
+    // internet traffic (scanners, retries with varying paths).
+    const route = routeLabel(req.routeOptions?.url);
+    const statusClass = statusClassOf(reply.statusCode);
     requestsTotal.inc({ method: req.method, route, status_class: statusClass });
     requestDuration.observe({ method: req.method, route }, reply.elapsedTime / 1000);
   });

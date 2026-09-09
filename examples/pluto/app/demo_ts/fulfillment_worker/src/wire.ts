@@ -1,18 +1,9 @@
-// Same Confluent wire format as order_svc/src/schemaRegistry.ts (Sol/Redpanda
-// convention, not a kafkajs feature) plus the OrderPlaced.decode port from
-// examples/local-demo/lib/events.ml — required-field validation is how the
-// OCaml reference actually enforces the contract at consume time (not a
-// separate JSON-schema validator call), so this mirrors that exactly.
-
-const MAGIC_BYTE = 0x00;
-
-export function decodeWire(bytes: Buffer): { schemaId: number; json: unknown } {
-  if (bytes.length < 5) throw new Error("wire format: message too short");
-  if (bytes.readUInt8(0) !== MAGIC_BYTE) throw new Error("wire format: invalid magic byte");
-  const schemaId = bytes.readUInt32BE(1);
-  const json = JSON.parse(bytes.subarray(5).toString("utf8"));
-  return { schemaId, json };
-}
+// The OrderPlaced.decode port from examples/local-demo/lib/events.ml —
+// required-field validation is how the OCaml reference actually enforces
+// the contract at consume time (not a separate JSON-schema validator call),
+// so this mirrors that exactly. The Confluent wire-format decode itself
+// (Sol/Redpanda convention, not a kafkajs feature) now comes from
+// @sol/kafka rather than being duplicated here.
 
 export interface OrderPlaced {
   order_id: string;
