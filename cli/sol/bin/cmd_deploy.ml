@@ -45,6 +45,12 @@ let run (req : Sol_cli_command_request.deploy_request) =
   let workspace = workspace_name () in
   let sha       = req.image_tag in
   let services  = discover_services ~filter_path:req.filter_path in
+  let mode =
+    match req.mode, req.emit_to with
+    | Sol_cli_command_request.Dry_run, _ -> Sol_cli_executor.Dry_run
+    | Sol_cli_command_request.Apply, Some dir -> Sol_cli_executor.Emit_to dir
+    | Sol_cli_command_request.Apply, None -> Sol_cli_executor.Apply
+  in
 
   let resolved_config, target_cfg =
     match Sol_cli_config.load_for_target ~target:req.target with
@@ -94,25 +100,35 @@ let run (req : Sol_cli_command_request.deploy_request) =
     exit 1
   end;
 
+  (match mode with
+   | Sol_cli_executor.Apply ->
+    let findings = Sol_cli_check.run ~filter_path:req.filter_path () in
+    List.iter (fun f -> Printf.eprintf "%s\n" (Sol_cli_check.finding_to_string f)) findings;
+    if Sol_cli_check.has_errors findings then exit 1
+   | Sol_cli_executor.Dry_run
+   | Sol_cli_executor.Emit_to _ -> ());
+
   (* Pre-flight: POSTGRES_URL must be set when deploying live credentials to a
      cluster.  Skip the check for --dry-run and --emit-to: those modes either
      only print YAML or emit redacted GitOps manifests with no real values. *)
-  if not req.dry_run && req.emit_to = None then begin
-    match Sys.getenv_opt "POSTGRES_URL" with
-    | None | Some "" ->
-      Printf.eprintf
-        "error: POSTGRES_URL is not set.\n\
-         Set it in your environment before running 'sol deploy':\n\
-         \  export POSTGRES_URL=postgresql://user:pass@host:5432/dbname\n";
-      exit 1
-    | Some _ -> ()
-  end;
+  (match mode with
+   | Sol_cli_executor.Apply ->
+     (match Sys.getenv_opt "POSTGRES_URL" with
+      | None | Some "" ->
+        Printf.eprintf
+          "error: POSTGRES_URL is not set.\n\
+           Set it in your environment before running 'sol deploy':\n\
+           \  export POSTGRES_URL=postgresql://user:pass@host:5432/dbname\n";
+        exit 1
+      | Some _ -> ())
+   | Sol_cli_executor.Dry_run
+   | Sol_cli_executor.Emit_to _ -> ());
 
   Printf.printf "\nWorkspace: %s  tag: %s\n" workspace sha;
-  (match req.emit_to with
-   | Some dir -> Printf.printf "emit-to: %s\n" dir
-   | None when req.dry_run -> Printf.printf "(dry-run)\n"
-   | None -> ());
+  (match mode with
+   | Sol_cli_executor.Emit_to dir -> Printf.printf "emit-to: %s\n" dir
+   | Sol_cli_executor.Dry_run -> Printf.printf "(dry-run)\n"
+   | Sol_cli_executor.Apply -> ());
   Printf.printf "\n%!";
 
   let env_target =
@@ -156,7 +172,8 @@ let run (req : Sol_cli_command_request.deploy_request) =
 
   (* Consumer group rename/removal guard (skipped in GitOps/emit-to mode,
      since that path does not touch the cluster directly). *)
-  if not req.dry_run && req.emit_to = None then begin
+  (match mode with
+   | Sol_cli_executor.Apply ->
     let prev_groups = Sol_cli_deployment_state.load_deployed_groups workspace in
     let next_groups = List.map Sol_cli_plan_ids.Consumer_group.to_string
                         plan.Sol_cli_deployment_plan.consumer_groups in
@@ -172,7 +189,8 @@ let run (req : Sol_cli_command_request.deploy_request) =
          any backlog.  Pass --confirm-group-change to acknowledge and proceed.\n\n";
       exit 1
     end
-  end;
+   | Sol_cli_executor.Dry_run
+   | Sol_cli_executor.Emit_to _ -> ());
 
   (match req.emit_plan_to with
    | None -> ()
@@ -188,13 +206,6 @@ let run (req : Sol_cli_command_request.deploy_request) =
        close_out oc;
        Printf.printf "Plan written to %s\n%!" path
      end);
-
-  let mode =
-    if req.dry_run then Sol_cli_executor.Dry_run
-    else match req.emit_to with
-      | Some dir -> Sol_cli_executor.Emit_to dir
-      | None     -> Sol_cli_executor.Apply
-  in
 
   List.iter (fun (spec : Sol_cli_deployment_plan.service_spec) ->
     Printf.printf "[%s] %s/%s\n%!" (primitive_label
@@ -229,11 +240,11 @@ let run (req : Sol_cli_command_request.deploy_request) =
     | Sol_cli_executor.Dry_run -> ())
   results;
 
-  (match req.emit_to with
-   | Some dir ->
+  (match mode with
+   | Sol_cli_executor.Emit_to dir ->
      Printf.printf "\nManifests written to %s/\n" dir;
      Printf.printf "Commit and push to your GitOps repo, then Argo CD will apply them.\n"
-   | None when not req.dry_run ->
+   | Sol_cli_executor.Apply ->
      Printf.printf "\nDone. %d service(s) deployed.\n" (List.length services);
      print_service_urls results;
      Printf.printf "Run 'sol status' to check pod health.\n";
@@ -281,7 +292,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
       | (Out_of_memory | Stack_overflow | Sys.Break) as exn -> raise exn
       | exn ->
         Printf.eprintf "warning: deploy-event log push failed: %s\n%!" (Printexc.to_string exn))
-   | None -> ())
+   | Sol_cli_executor.Dry_run -> ())
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
 

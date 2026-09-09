@@ -44,16 +44,26 @@ let run (req : Sol_cli_command_request.up_request) =
   let services  = discover_services ~filter_path:req.filter_path in
   let repo_root = find_repo_root () in
   let pf_failed = ref false in
+  let dry_run = match req.mode with
+    | Sol_cli_command_request.Dry_run -> true
+    | Apply -> false
+  in
 
   if services = [] then begin
     Printf.eprintf "No services found in app/ with a Dockerfile.\n";
     exit 1
   end;
 
+  if not dry_run then begin
+    let findings = Sol_cli_check.run ~filter_path:req.filter_path () in
+    List.iter (fun f -> Printf.eprintf "%s\n" (Sol_cli_check.finding_to_string f)) findings;
+    if Sol_cli_check.has_errors findings then exit 1
+  end;
+
   (* POSTGRES_URL must be set for non-local clusters; for local k3d it's
      auto-populated with the in-cluster dev URL unless already set. Dry-run
      is exempt since it only prints YAML. *)
-  if not req.dry_run then begin
+  if not dry_run then begin
     if is_known_local_dev_context () then begin
       (match Sys.getenv_opt "POSTGRES_URL" with
        | None | Some "" ->
@@ -73,7 +83,7 @@ let run (req : Sol_cli_command_request.up_request) =
   end;
 
   Printf.printf "\nWorkspace: %s  tag: %s\n" workspace sha;
-  if req.dry_run then Printf.printf "(dry-run)\n";
+  if dry_run then Printf.printf "(dry-run)\n";
   Printf.printf "\n%!";
 
   (* k3d maps sol-registry:5000 to the registry container; the env target owns
@@ -93,7 +103,7 @@ let run (req : Sol_cli_command_request.up_request) =
 
   (* Consumer group rename/removal guard.  Skipped in dry-run — no state is
      loaded or written, and no blocking question is asked. *)
-  if not req.dry_run then begin
+  if not dry_run then begin
     let prev_groups = Sol_cli_deployment_state.load_deployed_groups workspace in
     let next_groups = List.map Sol_cli_plan_ids.Consumer_group.to_string
                         plan.Sol_cli_deployment_plan.consumer_groups in
@@ -115,7 +125,7 @@ let run (req : Sol_cli_command_request.up_request) =
      resolved copy; rsync --copy-links builds one, excluding _build/.git to
      dodge stale dune internal symlinks. *)
   let ctx_dir = repo_root ^ ".docker-ctx" in
-  if not req.dry_run then begin
+  if not dry_run then begin
     ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote ctx_dir)));
     Printf.printf "Preparing build context...\n%!";
     let rsync_cmd = Printf.sprintf
@@ -140,7 +150,7 @@ let run (req : Sol_cli_command_request.up_request) =
       let repo_dir   = spec.source_dir in
       (* In dry-run the ctx_dir is not created; fall back to repo_root for the
          Dockerfile path so the plan output shows a real path. *)
-      let build_ctx  = if req.dry_run then repo_root else ctx_dir in
+      let build_ctx  = if dry_run then repo_root else ctx_dir in
       let dockerfile = Printf.sprintf "%s/%s/Dockerfile" build_ctx repo_dir in
       (* Sol_cli_deployment_plan.primitive -> Sol_cli_manifest.primitive;
          needed by both primitive_label below and pod_expectation_of_primitive
@@ -155,7 +165,7 @@ let run (req : Sol_cli_command_request.up_request) =
         (primitive_label (to_manifest_primitive spec.primitive))
         spec.domain spec.source_name;
 
-      if not req.dry_run then begin
+      if not dry_run then begin
         Printf.printf "  packaging %s...\n%!" push_image;
         (* Docker build/push failures dump their raw captured stderr
            verbatim (can be a full build log) -- deliberately unlike the
@@ -178,12 +188,12 @@ let run (req : Sol_cli_command_request.up_request) =
       (* dry-run shows push_image (what actually gets pushed); live apply uses
          spec.image (the cluster-resolved reference). *)
       let exec_spec =
-        if req.dry_run then { spec with Sol_cli_deployment_plan.image = push_image }
+        if dry_run then { spec with Sol_cli_deployment_plan.image = push_image }
         else spec
       in
-      ignore (Sol_cli_executor.local ~workspace ~dry_run:req.dry_run exec_spec);
+      ignore (Sol_cli_executor.local ~workspace ~dry_run exec_spec);
 
-      if not req.dry_run then begin
+      if not dry_run then begin
         (match spec.primitive with
          | Sol_cli_deployment_plan.Svc
          | Sol_cli_deployment_plan.Worker ->
@@ -240,9 +250,9 @@ let run (req : Sol_cli_command_request.up_request) =
              pf_failed := true;
              Printf.printf "\n%!"
            end
-         | _ ->
-           Printf.printf "  ✓  namespace %s  image %s\n%!" namespace spec.image;
-           Printf.printf "\n%!")
+        | _ ->
+          Printf.printf "  ✓  namespace %s  image %s\n%!" namespace spec.image;
+          Printf.printf "\n%!")
       end
 
     ) plan.Sol_cli_deployment_plan.services
@@ -251,7 +261,7 @@ let run (req : Sol_cli_command_request.up_request) =
     Printf.eprintf "\nerror: %s\n" msg;
     exit 1);
 
-  if not req.dry_run then begin
+  if not dry_run then begin
     ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote ctx_dir)));
     Printf.printf "Done. %d service(s) deployed.\n" (List.length services);
     Printf.printf "Run 'sol status' to check pod health.\n";

@@ -13,6 +13,7 @@
   Sol_cli_toml
   Sol_cli_plan_ids
   Sol_cli_workspace_scan
+  Sol_cli_check
   Sol_cli_kubernetes_name
   Sol_cli_deployment_plan
   Sol_cli_deployment_render

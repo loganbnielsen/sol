@@ -10,6 +10,7 @@ let () =
          ~version:Version.v
          ~doc:"Sol platform CLI — scaffold, run, and deploy Sol services")
       [ Sol_cli_cmd_new.cmd
+      ; Cmd_check.cmd
       ; Cmd_dev.cmd
       ; Cmd_plan.cmd
       ; Cmd_up.cmd

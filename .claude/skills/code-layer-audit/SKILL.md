@@ -52,6 +52,10 @@ Flag these first:
   they are tiny, or move down because two adapters truly need the same thing.
 - Compatibility shims, aliases, or optional parameters that keep a broken layer
   shape alive after the intended API is clear.
+- Control-flow fragmentation: the same mode/phase value is matched repeatedly
+  through a long imperative function, especially with empty branches or inline
+  guard matches. Prefer one higher-level branch, a tuple match over the actual
+  dimensions, or a small phase boundary.
 
 ## File Organization
 
@@ -85,6 +89,8 @@ Useful tags:
 - `move:` code belongs in another layer/package
 - `duplicate:` repeated code should be shared, or deliberately left duplicated
 - `name:` module/file name hides the layer it actually implements
+- `flow:` mode or phase branches are scattered instead of owning a readable
+  execution path
 
 End with the simplest recommended architecture in one short code-path sketch,
 for example:

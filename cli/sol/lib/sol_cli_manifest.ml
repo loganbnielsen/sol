@@ -33,39 +33,52 @@ let primitive_of_suffix name =
    normalizes. Compare on the normalized form so both spellings match. *)
 let normalize_filter = String.map (function '-' -> '_' | c -> c)
 
-let discover_services ~filter_path =
+type discover_error =
+  | Missing_app_dir
+
+let discover_error_to_string = function
+  | Missing_app_dir -> "'app/' not found — run from the workspace root."
+
+let discover_services_result ~filter_path =
   let app_dir = "app" in
-  if not (Sys.file_exists app_dir && Sys.is_directory app_dir) then begin
-    Printf.eprintf "error: 'app/' not found — run from the workspace root.\n";
+  if not (Sys.file_exists app_dir && Sys.is_directory app_dir) then
+    Error Missing_app_dir
+  else begin
+    let services = ref [] in
+    (try
+      Array.iter (fun domain ->
+        let dp = Filename.concat app_dir domain in
+        if domain.[0] <> '.' && Sys.is_directory dp then
+          (try
+            Array.iter (fun svc_dir ->
+              let sp = Filename.concat dp svc_dir in
+              if svc_dir.[0] <> '.' && Sys.is_directory sp then
+                match primitive_of_suffix svc_dir with
+                | None -> ()
+                | Some primitive ->
+                  if Sys.file_exists (Filename.concat sp "Dockerfile") then begin
+                    let svc = { domain; name = svc_dir; primitive; dir = sp } in
+                    let included = match filter_path with
+                      | None   -> true
+                      | Some p ->
+                        let p = normalize_filter p in
+                        sp = p || Filename.basename sp = p
+                    in
+                    if included then services := svc :: !services
+                  end
+            ) (Sys.readdir dp)
+          with _ -> ())
+      ) (Sys.readdir app_dir)
+    with _ -> ());
+    Ok (List.rev !services)
+  end
+
+let discover_services ~filter_path =
+  match discover_services_result ~filter_path with
+  | Ok services -> services
+  | Error err ->
+    Printf.eprintf "error: %s\n" (discover_error_to_string err);
     exit 1
-  end;
-  let services = ref [] in
-  (try
-    Array.iter (fun domain ->
-      let dp = Filename.concat app_dir domain in
-      if domain.[0] <> '.' && Sys.is_directory dp then
-        (try
-          Array.iter (fun svc_dir ->
-            let sp = Filename.concat dp svc_dir in
-            if svc_dir.[0] <> '.' && Sys.is_directory sp then
-              match primitive_of_suffix svc_dir with
-              | None -> ()
-              | Some primitive ->
-                if Sys.file_exists (Filename.concat sp "Dockerfile") then begin
-                  let svc = { domain; name = svc_dir; primitive; dir = sp } in
-                  let included = match filter_path with
-                    | None   -> true
-                    | Some p ->
-                      let p = normalize_filter p in
-                      sp = p || Filename.basename sp = p
-                  in
-                  if included then services := svc :: !services
-                end
-          ) (Sys.readdir dp)
-        with _ -> ())
-    ) (Sys.readdir app_dir)
-  with _ -> ());
-  List.rev !services
 
 (* ── Apply / emit helpers ────────────────────────────────────────────────── *)
 

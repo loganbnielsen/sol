@@ -1,6 +1,7 @@
 (tests
  (names
   test_deployment_plan
+  test_check
   test_config
   test_env_target
   test_manifest_render
@@ -44,3 +45,25 @@ services:
 EOF
 cd \"$tmp\"
 \"$sol\" plan prod/aws/us-east-1 | grep -F 'uses: /us-east-1/analytics_db (cross-region)' >/dev/null")))
+
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe)
+ (action
+  (bash
+   "set -eu
+sol=$(pwd)/%{deps}
+tmp=$(mktemp -d)
+trap 'rm -rf \"$tmp\"' EXIT
+mkdir -p \"$tmp/app/payments/charge_svc\"
+cat > \"$tmp/app/payments/charge_svc/Dockerfile\" <<'EOF'
+FROM scratch
+EOF
+cd \"$tmp\"
+\"$sol\" check >\"$tmp/ok.out\"
+rm \"$tmp/app/payments/charge_svc/Dockerfile\"
+if \"$sol\" check >\"$tmp/bad.out\" 2>&1; then
+  echo 'sol check unexpectedly passed without Dockerfile' >&2
+  exit 1
+fi
+grep -F 'Dockerfile is missing' \"$tmp/bad.out\" >/dev/null")))
