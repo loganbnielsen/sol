@@ -1,12 +1,6 @@
 open Cmdliner
 open Sol_cli_manifest
 
-let wait_for_rollout ~namespace ~name =
-  match Sol_cli_kubectl.rollout_status
-          ~kind_name:("deployment/" ^ name) ~namespace with
-  | Ok r -> r.Sol_cli_process.exit_code
-  | Error _ -> 1
-
 (* ── Workspace / git helpers ─────────────────────────────────────────────── *)
 
 let workspace_name () = Filename.basename (Sys.getcwd ())
@@ -43,8 +37,8 @@ let print_header ~workspace ~sha ~dry_run =
   if dry_run then Printf.printf "(dry-run)\n";
   Printf.printf "\n%!"
 
-let build_plan ~workspace ~services ~env =
-  match Sol_cli_deployment_plan.of_services_result ~workspace ~env services with
+let build_plan ~workspace ~sha ~services =
+  match Sol_cli_up_execution.local_plan ~workspace ~sha services with
   | Ok plan -> plan
   | Error err ->
     Printf.eprintf "error: %s\n" (Sol_cli_deployment_plan.plan_error_to_string err);
@@ -90,96 +84,73 @@ let check_consumer_group_changes ~workspace ~confirm_group_change plan =
     exit 1
   end
 
-let prepare_context ~repo_root ~ctx_dir =
-  ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote ctx_dir)));
+let prepare_context ~repo_root =
   Printf.printf "Preparing build context...\n%!";
-  let rsync_cmd = Printf.sprintf
-    "rsync -a --copy-links --exclude='_build' --exclude='.git' %s/ %s"
-    (Filename.quote repo_root) (Filename.quote ctx_dir) in
-  if Sys.command rsync_cmd <> 0 then begin
-    Printf.eprintf "error: failed to copy workspace for docker build context\n";
+  match Sol_cli_up_execution.prepare_build_context ~repo_root with
+  | Ok ctx_dir -> ctx_dir
+  | Error msg ->
+    Printf.eprintf "error: %s\n" msg;
     exit 1
-  end
 
-let to_manifest_primitive = function
-  | Sol_cli_deployment_plan.Svc    -> Svc
-  | Sol_cli_deployment_plan.Worker -> Worker
-  | Sol_cli_deployment_plan.Fn     -> Fn
+let to_manifest_primitive =
+  Sol_cli_up_execution.manifest_primitive
 
 let print_service_start spec =
   Printf.printf "[%s] %s/%s\n%!"
     (primitive_label (to_manifest_primitive spec.Sol_cli_deployment_plan.primitive))
     spec.domain spec.source_name
 
-let dry_run_service ~workspace ~push_registry ~sha
+let dry_run_service ~workspace ~sha
     (spec : Sol_cli_deployment_plan.service_spec) =
-  let push_image = Sol_cli_deployment_plan.image_ref
-    ~registry:push_registry ~workspace
-    ~k8s_name:spec.k8s_name ~tag:sha in
   print_service_start spec;
-  ignore (Sol_cli_executor.local ~workspace ~dry_run:true
-    { spec with Sol_cli_deployment_plan.image = push_image })
+  match Sol_cli_up_execution.apply_service_manifest ~workspace ~dry_run:true
+          (Sol_cli_up_execution.dry_run_spec ~workspace ~sha spec) with
+  | Ok _ -> ()
+  | Error msg -> raise (Deploy_failed msg)
 
-let apply_service ~workspace ~ctx_dir ~push_registry ~sha ~pf_failed
+let apply_service ~workspace ~ctx_dir ~sha ~pf_failed
     (spec : Sol_cli_deployment_plan.service_spec) =
-  let k8s_name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name in
-  let namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace in
-  let push_image = Sol_cli_deployment_plan.image_ref
-    ~registry:push_registry ~workspace
-    ~k8s_name:spec.k8s_name ~tag:sha in
-  let dockerfile = Printf.sprintf "%s/%s/Dockerfile" ctx_dir spec.source_dir in
+  let exec = Sol_cli_up_execution.service_execution ~workspace ~ctx_dir ~sha spec in
 
   print_service_start spec;
-  Printf.printf "  packaging %s...\n%!" push_image;
-  (match Sol_cli_docker.build ~tag:push_image ~dockerfile ~context:ctx_dir with
-   | Error e ->
-     raise (Deploy_failed (Printf.sprintf "docker build failed: %s\n%s"
-       spec.source_dir (Sol_cli_process.error_to_string e)))
+  Printf.printf "  packaging %s...\n%!" exec.push_image;
+  (match Sol_cli_up_execution.build_image exec with
+   | Error msg -> raise (Deploy_failed msg)
    | Ok () -> ());
   Printf.printf "  pushing...\n%!";
-  (match Sol_cli_docker.push ~image_ref:push_image with
-   | Error e ->
-     raise (Deploy_failed (Printf.sprintf "docker push failed: %s\n%s"
-       push_image (Sol_cli_process.error_to_string e)))
+  (match Sol_cli_up_execution.push_image exec with
+   | Error msg -> raise (Deploy_failed msg)
    | Ok () -> ());
 
-  ignore (Sol_cli_executor.local ~workspace ~dry_run:false spec);
+  (match Sol_cli_up_execution.apply_service_manifest ~workspace ~dry_run:false spec with
+   | Ok _ -> ()
+   | Error msg -> raise (Deploy_failed msg));
 
   (match spec.primitive with
+   | Sol_cli_deployment_plan.Fn -> ()
    | Sol_cli_deployment_plan.Svc
    | Sol_cli_deployment_plan.Worker ->
      Printf.printf "  waiting for rollout...\n%!";
-     if wait_for_rollout ~namespace ~name:k8s_name <> 0 then begin
-       let pod_expectation =
-         Sol_cli_status.pod_expectation_of_primitive (to_manifest_primitive spec.primitive)
-       in
-       let diagnosis =
-         Sol_cli_rollout_diagnosis.diagnose_service_live
-           ~pod_expectation ~ns:namespace ~service_name:spec.source_name
-           ~k8s_name ()
-       in
-       raise (Deploy_failed (match diagnosis with
-         | Some d -> d
-         | None   -> Printf.sprintf "rollout failed: %s/%s" namespace k8s_name))
-     end
-   | Sol_cli_deployment_plan.Fn -> ());
+     (match Sol_cli_up_execution.wait_for_service_rollout spec exec with
+      | Ok () -> ()
+      | Error msg -> raise (Deploy_failed msg)));
   (match spec.primitive with
    | Sol_cli_deployment_plan.Svc ->
      let local_port = 8080 in
-     if not (Sol_cli_port_forward.is_running k8s_name) then begin
+     if not (Sol_cli_port_forward.is_running exec.k8s_name) then begin
        if Sol_cli_port_forward.detect_stale ~local_port
-            ~namespace ~target:("svc/" ^ k8s_name)
+            ~namespace:exec.namespace ~target:("svc/" ^ exec.k8s_name)
        then Unix.sleepf 0.4;
        Sol_cli_port_forward.start {
-         name        = k8s_name;
-         namespace;
-         target      = "svc/" ^ k8s_name;
+         name        = exec.k8s_name;
+         namespace   = exec.namespace;
+         target      = "svc/" ^ exec.k8s_name;
          local_port;
          remote_port = 80;
        }
      end;
-     let pf_alive = Sol_cli_port_forward.check_alive ~name:k8s_name ~local_port in
-     Printf.printf "  ✓  namespace %s  image %s\n%!" namespace spec.image;
+     let pf_alive = Sol_cli_port_forward.check_alive ~name:exec.k8s_name ~local_port in
+     Printf.printf "  ✓  namespace %s  image %s\n%!" exec.namespace spec.image;
      if pf_alive then
        Printf.printf "  →  http://localhost:%d  (port-forward running in background)\n\n%!" local_port
      else begin
@@ -187,53 +158,39 @@ let apply_service ~workspace ~ctx_dir ~push_registry ~sha ~pf_failed
        Printf.printf "\n%!"
      end
    | _ ->
-     Printf.printf "  ✓  namespace %s  image %s\n%!" namespace spec.image;
+     Printf.printf "  ✓  namespace %s  image %s\n%!" exec.namespace spec.image;
      Printf.printf "\n%!")
 
 let run_dry_run ~workspace ~sha ~services =
   print_header ~workspace ~sha ~dry_run:true;
-  let env_target = Sol_cli_env_target.local_defaults ~image_tag:sha in
-  let push_registry = "localhost:5000" in
-  let env = Sol_cli_env_target.to_env_config ~name:workspace env_target in
-  let plan = build_plan ~workspace ~services ~env in
-  List.iter (dry_run_service ~workspace ~push_registry ~sha)
+  let plan = build_plan ~workspace ~sha ~services in
+  List.iter (dry_run_service ~workspace ~sha)
     plan.Sol_cli_deployment_plan.services
 
 let run_apply ~workspace ~sha ~filter_path ~services ~repo_root ~confirm_group_change =
   check_contract ~filter_path;
   ensure_postgres_url ();
   print_header ~workspace ~sha ~dry_run:false;
-  let env_target = Sol_cli_env_target.local_defaults ~image_tag:sha in
-  let push_registry = "localhost:5000" in
-  let env = Sol_cli_env_target.to_env_config ~name:workspace env_target in
-  let plan = build_plan ~workspace ~services ~env in
+  let plan = build_plan ~workspace ~sha ~services in
   check_consumer_group_changes ~workspace ~confirm_group_change plan;
-  let ctx_dir = repo_root ^ ".docker-ctx" in
   let pf_failed = ref false in
-  prepare_context ~repo_root ~ctx_dir;
+  let ctx_dir = prepare_context ~repo_root in
   (try
-    List.iter (apply_service ~workspace ~ctx_dir ~push_registry ~sha ~pf_failed)
+    List.iter (apply_service ~workspace ~ctx_dir ~sha ~pf_failed)
       plan.Sol_cli_deployment_plan.services
   with Deploy_failed msg ->
-    ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote ctx_dir)));
+    Sol_cli_up_execution.remove_build_context ~ctx_dir;
     Printf.eprintf "\nerror: %s\n" msg;
     exit 1);
-  ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote ctx_dir)));
-  Printf.printf "Done. %d service(s) deployed.\n" (List.length services);
+  Sol_cli_up_execution.remove_build_context ~ctx_dir;
+  let summary = Sol_cli_up_execution.post_deploy_summary ~cwd:(Sys.getcwd ()) plan in
+  Printf.printf "Done. %d service(s) deployed.\n" summary.deployed_count;
   Printf.printf "Run 'sol status' to check pod health.\n";
-  let n = Sol_cli_workspace.pending_migration_count ~dir:(Sys.getcwd ()) in
-  if n > 0 then
+  if summary.pending_migrations > 0 then
     Printf.printf
       "\nNote: %d migration file(s) found in db/migrations/ — run 'sol migrate' to apply.\n"
-      n;
-  Sol_cli_deployment_state.record_outcome workspace
-    (Sol_cli_deployment_state.Applied {
-      namespace = "default";
-      name = workspace;
-      image = sha;
-      consumer_groups = List.map Sol_cli_plan_ids.Consumer_group.to_string
-                          plan.Sol_cli_deployment_plan.consumer_groups;
-    });
+      summary.pending_migrations;
+  Sol_cli_up_execution.record_applied ~workspace ~sha plan;
   if !pf_failed then exit 1
 
 let run (req : Sol_cli_command_request.up_request) =

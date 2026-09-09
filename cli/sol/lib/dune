@@ -19,6 +19,7 @@
   Sol_cli_deployment_render
   Sol_cli_env_target
   Sol_cli_executor
+  Sol_cli_up_execution
   Sol_cli_release_inspection
   Sol_cli_secret
   Sol_cli_cmd_new
