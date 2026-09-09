@@ -7,10 +7,7 @@ type service_execution = {
   source_dir : string;
 }
 
-type post_deploy_summary = {
-  deployed_count : int;
-  pending_migrations : int;
-}
+type post_deploy_summary = { deployed_count : int; pending_migrations : int }
 
 val push_registry : string
 val build_context_dir : repo_root:string -> string
@@ -37,17 +34,10 @@ val dry_run_spec :
   Sol_cli_deployment_plan.service_spec ->
   Sol_cli_deployment_plan.service_spec
 
-val prepare_build_context :
-  repo_root:string -> (string, string) result
-
-val remove_build_context :
-  ctx_dir:string -> unit
-
-val build_image :
-  service_execution -> (unit, string) result
-
-val push_image :
-  service_execution -> (unit, string) result
+val prepare_build_context : repo_root:string -> (string, string) result
+val remove_build_context : ctx_dir:string -> unit
+val build_image : service_execution -> (unit, string) result
+val push_image : service_execution -> (unit, string) result
 
 val apply_service_manifest :
   workspace:string ->
@@ -61,12 +51,7 @@ val wait_for_service_rollout :
   (unit, string) result
 
 val post_deploy_summary :
-  cwd:string ->
-  Sol_cli_deployment_plan.t ->
-  post_deploy_summary
+  cwd:string -> Sol_cli_deployment_plan.t -> post_deploy_summary
 
 val record_applied :
-  workspace:string ->
-  sha:string ->
-  Sol_cli_deployment_plan.t ->
-  unit
+  workspace:string -> sha:string -> Sol_cli_deployment_plan.t -> unit

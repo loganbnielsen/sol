@@ -1,21 +1,25 @@
 let check_string = Alcotest.(check string)
-let check_int    = Alcotest.(check int)
-let check_bool   = Alcotest.(check bool)
+let check_int = Alcotest.(check int)
+let check_bool = Alcotest.(check bool)
 
 module R = Sol_cli_run_log
 
 (* ── generate_run_id ─────────────────────────────────────────────────── *)
 
 let test_generate_run_id_format () =
-  let id = R.generate_run_id ~prefix:"cloud-apply" ~now:1_700_000_000.0 ~pid:4242 in
+  let id =
+    R.generate_run_id ~prefix:"cloud-apply" ~now:1_700_000_000.0 ~pid:4242
+  in
   check_bool "starts with prefix" true
-    (String.length id >= String.length "cloud-apply-" &&
-     String.sub id 0 (String.length "cloud-apply-") = "cloud-apply-")
+    (String.length id >= String.length "cloud-apply-"
+    && String.sub id 0 (String.length "cloud-apply-") = "cloud-apply-")
 
 let test_generate_run_id_ends_with_pid () =
   let id = R.generate_run_id ~prefix:"x" ~now:1_700_000_000.0 ~pid:4242 in
   check_bool "ends with pid" true
-    (try ignore (Str.search_forward (Str.regexp_string "-4242") id 0); true
+    (try
+       ignore (Str.search_forward (Str.regexp_string "-4242") id 0);
+       true
      with Not_found -> false)
 
 let test_generate_run_id_deterministic () =
@@ -42,9 +46,15 @@ let test_phase_log_content_no_stderr () =
 let test_phase_log_content_with_stderr () =
   let content = R.phase_log_content ~stdout:"out" ~stderr:"err" in
   check_bool "contains stdout" true
-    (try ignore (Str.search_forward (Str.regexp_string "out") content 0); true with Not_found -> false);
+    (try
+       ignore (Str.search_forward (Str.regexp_string "out") content 0);
+       true
+     with Not_found -> false);
   check_bool "contains stderr" true
-    (try ignore (Str.search_forward (Str.regexp_string "err") content 0); true with Not_found -> false)
+    (try
+       ignore (Str.search_forward (Str.regexp_string "err") content 0);
+       true
+     with Not_found -> false)
 
 (* ── format_phase_line ───────────────────────────────────────────────── *)
 
@@ -60,7 +70,7 @@ let test_format_phase_line_failed () =
 
 let test_runs_to_prune_under_limit () =
   check_int "nothing to prune" 0
-    (List.length (R.runs_to_prune ~all_run_ids:["a-1"; "a-2"] ~keep:20))
+    (List.length (R.runs_to_prune ~all_run_ids:[ "a-1"; "a-2" ] ~keep:20))
 
 let test_runs_to_prune_keeps_most_recent () =
   let ids = List.init 25 (fun i -> Printf.sprintf "run-%02d" i) in
@@ -71,25 +81,37 @@ let test_runs_to_prune_keeps_most_recent () =
 
 let () =
   Alcotest.run "run_log"
-    [ ("generate_run_id",
-       [ Alcotest.test_case "format" `Quick test_generate_run_id_format;
-         Alcotest.test_case "ends with pid" `Quick test_generate_run_id_ends_with_pid;
-         Alcotest.test_case "deterministic" `Quick test_generate_run_id_deterministic;
-       ]);
-      ("tail_lines",
-       [ Alcotest.test_case "shorter than n" `Quick test_tail_lines_shorter_than_n;
-         Alcotest.test_case "longer than n" `Quick test_tail_lines_longer_than_n;
-       ]);
-      ("phase_log_content",
-       [ Alcotest.test_case "no stderr" `Quick test_phase_log_content_no_stderr;
-         Alcotest.test_case "with stderr" `Quick test_phase_log_content_with_stderr;
-       ]);
-      ("format_phase_line",
-       [ Alcotest.test_case "ok" `Quick test_format_phase_line_ok;
-         Alcotest.test_case "failed" `Quick test_format_phase_line_failed;
-       ]);
-      ("runs_to_prune",
-       [ Alcotest.test_case "under limit" `Quick test_runs_to_prune_under_limit;
-         Alcotest.test_case "keeps most recent" `Quick test_runs_to_prune_keeps_most_recent;
-       ]);
+    [
+      ( "generate_run_id",
+        [
+          Alcotest.test_case "format" `Quick test_generate_run_id_format;
+          Alcotest.test_case "ends with pid" `Quick
+            test_generate_run_id_ends_with_pid;
+          Alcotest.test_case "deterministic" `Quick
+            test_generate_run_id_deterministic;
+        ] );
+      ( "tail_lines",
+        [
+          Alcotest.test_case "shorter than n" `Quick
+            test_tail_lines_shorter_than_n;
+          Alcotest.test_case "longer than n" `Quick
+            test_tail_lines_longer_than_n;
+        ] );
+      ( "phase_log_content",
+        [
+          Alcotest.test_case "no stderr" `Quick test_phase_log_content_no_stderr;
+          Alcotest.test_case "with stderr" `Quick
+            test_phase_log_content_with_stderr;
+        ] );
+      ( "format_phase_line",
+        [
+          Alcotest.test_case "ok" `Quick test_format_phase_line_ok;
+          Alcotest.test_case "failed" `Quick test_format_phase_line_failed;
+        ] );
+      ( "runs_to_prune",
+        [
+          Alcotest.test_case "under limit" `Quick test_runs_to_prune_under_limit;
+          Alcotest.test_case "keeps most recent" `Quick
+            test_runs_to_prune_keeps_most_recent;
+        ] );
     ]

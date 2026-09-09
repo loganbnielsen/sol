@@ -8,7 +8,8 @@
 let k8s_name value =
   match Sol_cli_deployment_plan.k8s_name_result value with
   | Ok name -> name
-  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+  | Error err ->
+      Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 
 let namespace ~workspace ~domain =
   Sol_cli_deployment_plan.namespace_of_exn ~workspace ~domain
@@ -23,47 +24,49 @@ let memory s =
   | Ok quantity -> quantity
   | Error message -> Alcotest.fail message
 
-let svc_spec : Sol_cli_deployment_plan.service_spec = {
-  domain      = "payments";
-  source_name = "charge_svc";
-  k8s_name    = k8s_name "charge-svc";
-  namespace   = namespace ~workspace:"myapp" ~domain:"payments";
-  primitive   = Sol_cli_deployment_plan.Svc;
-  source_dir  = "app/payments/charge_svc";
-  image       = "sol-registry:5000/myapp/charge-svc:abc123";
-  config      = [];
-  secrets     = [];
-  schedule              = None;
-  replicas              = 1;
-  cpu                   = cpu "100m";
-  memory                = memory "128Mi";
-  rollout_strategy      = None;
-  ingress_host          = None;
-  ingress_path          = None;
-  extra_labels          = [];
-  progressive_delivery  = None;
-}
+let svc_spec : Sol_cli_deployment_plan.service_spec =
+  {
+    domain = "payments";
+    source_name = "charge_svc";
+    k8s_name = k8s_name "charge-svc";
+    namespace = namespace ~workspace:"myapp" ~domain:"payments";
+    primitive = Sol_cli_deployment_plan.Svc;
+    source_dir = "app/payments/charge_svc";
+    image = "sol-registry:5000/myapp/charge-svc:abc123";
+    config = [];
+    secrets = [];
+    schedule = None;
+    replicas = 1;
+    cpu = cpu "100m";
+    memory = memory "128Mi";
+    rollout_strategy = None;
+    ingress_host = None;
+    ingress_path = None;
+    extra_labels = [];
+    progressive_delivery = None;
+  }
 
-let worker_spec : Sol_cli_deployment_plan.service_spec = {
-  domain      = "comms";
-  source_name = "notify_worker";
-  k8s_name    = k8s_name "notify-worker";
-  namespace   = namespace ~workspace:"myapp" ~domain:"comms";
-  primitive   = Sol_cli_deployment_plan.Worker;
-  source_dir  = "app/comms/notify_worker";
-  image       = "sol-registry:5000/myapp/notify-worker:abc123";
-  config      = [];
-  secrets     = [];
-  schedule              = None;
-  replicas              = 1;
-  cpu                   = cpu "100m";
-  memory                = memory "128Mi";
-  rollout_strategy      = None;
-  ingress_host          = None;
-  ingress_path          = None;
-  extra_labels          = [];
-  progressive_delivery  = None;
-}
+let worker_spec : Sol_cli_deployment_plan.service_spec =
+  {
+    domain = "comms";
+    source_name = "notify_worker";
+    k8s_name = k8s_name "notify-worker";
+    namespace = namespace ~workspace:"myapp" ~domain:"comms";
+    primitive = Sol_cli_deployment_plan.Worker;
+    source_dir = "app/comms/notify_worker";
+    image = "sol-registry:5000/myapp/notify-worker:abc123";
+    config = [];
+    secrets = [];
+    schedule = None;
+    replicas = 1;
+    cpu = cpu "100m";
+    memory = memory "128Mi";
+    rollout_strategy = None;
+    ingress_host = None;
+    ingress_path = None;
+    extra_labels = [];
+    progressive_delivery = None;
+  }
 
 let check_string = Alcotest.(check string)
 
@@ -73,26 +76,30 @@ let test_local_result_fields () =
   (* dry_run=true exercises render+apply without invoking kubectl *)
   let r = Sol_cli_executor.local ~workspace:"myapp" ~dry_run:true svc_spec in
   check_string "local namespace" "myapp-payments" r.Sol_cli_executor.namespace;
-  check_string "local name"      "charge-svc"     r.Sol_cli_executor.name;
-  check_string "local image"     "sol-registry:5000/myapp/charge-svc:abc123" r.Sol_cli_executor.image
+  check_string "local name" "charge-svc" r.Sol_cli_executor.name;
+  check_string "local image" "sol-registry:5000/myapp/charge-svc:abc123"
+    r.Sol_cli_executor.image
 
 let test_local_worker_result () =
   let r = Sol_cli_executor.local ~workspace:"myapp" ~dry_run:true worker_spec in
-  check_string "local worker namespace" "myapp-comms"   r.Sol_cli_executor.namespace;
-  check_string "local worker name"      "notify-worker" r.Sol_cli_executor.name
+  check_string "local worker namespace" "myapp-comms"
+    r.Sol_cli_executor.namespace;
+  check_string "local worker name" "notify-worker" r.Sol_cli_executor.name
 
 (* ── direct executor ─────────────────────────────────────────────────────── *)
 
 let test_direct_result_fields () =
   let r = Sol_cli_executor.local ~workspace:"myapp" ~dry_run:true svc_spec in
   check_string "direct namespace" "myapp-payments" r.Sol_cli_executor.namespace;
-  check_string "direct name"      "charge-svc"     r.Sol_cli_executor.name;
-  check_string "direct image"     "sol-registry:5000/myapp/charge-svc:abc123" r.Sol_cli_executor.image
+  check_string "direct name" "charge-svc" r.Sol_cli_executor.name;
+  check_string "direct image" "sol-registry:5000/myapp/charge-svc:abc123"
+    r.Sol_cli_executor.image
 
 let test_direct_worker_result () =
   let r = Sol_cli_executor.local ~workspace:"myapp" ~dry_run:true worker_spec in
-  check_string "direct worker namespace" "myapp-comms"   r.Sol_cli_executor.namespace;
-  check_string "direct worker name"      "notify-worker" r.Sol_cli_executor.name
+  check_string "direct worker namespace" "myapp-comms"
+    r.Sol_cli_executor.namespace;
+  check_string "direct worker name" "notify-worker" r.Sol_cli_executor.name
 
 (* ── gitops executor ─────────────────────────────────────────────────────── *)
 
@@ -103,12 +110,13 @@ let test_gitops_result_fields () =
   Unix.mkdir dir 0o755;
   let r = Sol_cli_executor.gitops ~workspace:"myapp" ~dir svc_spec in
   check_string "gitops namespace" "myapp-payments" r.Sol_cli_executor.namespace;
-  check_string "gitops name"      "charge-svc"     r.Sol_cli_executor.name;
-  check_string "gitops image"     "sol-registry:5000/myapp/charge-svc:abc123" r.Sol_cli_executor.image;
+  check_string "gitops name" "charge-svc" r.Sol_cli_executor.name;
+  check_string "gitops image" "sol-registry:5000/myapp/charge-svc:abc123"
+    r.Sol_cli_executor.image;
   (* clean up *)
   let path = Filename.concat dir "myapp-payments-charge-svc.yaml" in
   (try Sys.remove path with _ -> ());
-  (try Unix.rmdir dir with _ -> ())
+  try Unix.rmdir dir with _ -> ()
 
 let test_gitops_writes_file () =
   let dir = Filename.temp_file "sol-gitops-test-" "" in
@@ -122,13 +130,16 @@ let test_gitops_writes_file () =
     if exists then begin
       let ic = open_in path in
       let s = In_channel.input_all ic in
-      close_in ic; s
-    end else ""
+      close_in ic;
+      s
+    end
+    else ""
   in
   (try Sys.remove path with _ -> ());
   (try Unix.rmdir dir with _ -> ());
   Alcotest.(check bool) "gitops file created" true exists;
-  Alcotest.(check bool) "gitops yaml has namespace" true
+  Alcotest.(check bool)
+    "gitops yaml has namespace" true
     (let needle = "name: myapp-payments" in
      let hl = String.length content and nl = String.length needle in
      let found = ref false in
@@ -146,25 +157,34 @@ let test_gitops_worker () =
   let exists = Sys.file_exists path in
   (try Sys.remove path with _ -> ());
   (try Unix.rmdir dir with _ -> ());
-  check_string "gitops worker namespace" "myapp-comms"   r.Sol_cli_executor.namespace;
-  check_string "gitops worker name"      "notify-worker" r.Sol_cli_executor.name;
+  check_string "gitops worker namespace" "myapp-comms"
+    r.Sol_cli_executor.namespace;
+  check_string "gitops worker name" "notify-worker" r.Sol_cli_executor.name;
   Alcotest.(check bool) "gitops worker file created" true exists
 
 (* ── entry point ─────────────────────────────────────────────────────────── *)
 
 let () =
   Alcotest.run "executor"
-    [ "local", [
-        Alcotest.test_case "result fields (svc)"    `Quick test_local_result_fields
-      ; Alcotest.test_case "result fields (worker)" `Quick test_local_worker_result
-      ]
-    ; "direct", [
-        Alcotest.test_case "result fields (svc)"    `Quick test_direct_result_fields
-      ; Alcotest.test_case "result fields (worker)" `Quick test_direct_worker_result
-      ]
-    ; "gitops", [
-        Alcotest.test_case "result fields"          `Quick test_gitops_result_fields
-      ; Alcotest.test_case "file written"           `Quick test_gitops_writes_file
-      ; Alcotest.test_case "worker file written"    `Quick test_gitops_worker
-      ]
+    [
+      ( "local",
+        [
+          Alcotest.test_case "result fields (svc)" `Quick
+            test_local_result_fields;
+          Alcotest.test_case "result fields (worker)" `Quick
+            test_local_worker_result;
+        ] );
+      ( "direct",
+        [
+          Alcotest.test_case "result fields (svc)" `Quick
+            test_direct_result_fields;
+          Alcotest.test_case "result fields (worker)" `Quick
+            test_direct_worker_result;
+        ] );
+      ( "gitops",
+        [
+          Alcotest.test_case "result fields" `Quick test_gitops_result_fields;
+          Alcotest.test_case "file written" `Quick test_gitops_writes_file;
+          Alcotest.test_case "worker file written" `Quick test_gitops_worker;
+        ] );
     ]

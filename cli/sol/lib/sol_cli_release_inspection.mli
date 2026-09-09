@@ -17,72 +17,64 @@ type health_status =
   | Health_degraded
   | Health_unhealthy
 
-type release_state =
-  | Queued
-  | Building
-  | Live
-  | Failed
-  | Mock_submitted
+type release_state = Queued | Building | Live | Failed | Mock_submitted
 
 type deployment_plan_summary = {
-  workspace       : string;
-  environment     : string;
-  mode            : Sol_cli_deployment_plan.deployment_mode;
-  image_tag       : string;
-  service_count   : int;
-  topic_count     : int;
+  workspace : string;
+  environment : string;
+  mode : Sol_cli_deployment_plan.deployment_mode;
+  image_tag : string;
+  service_count : int;
+  topic_count : int;
   migration_count : int;
 }
 
-type image_ref = {
-  service_name : string;
-  image        : string;
-}
+type image_ref = { service_name : string; image : string }
 
 type affected_service = {
-  service_name   : string;
-  namespace      : string;
-  primitive      : Sol_cli_deployment_plan.primitive;
-  image          : string;
+  service_name : string;
+  namespace : string;
+  primitive : Sol_cli_deployment_plan.primitive;
+  image : string;
   rollout_status : rollout_status;
-  health_status  : health_status;
-  error_reason   : string option;
-  default_url    : string option;
-  (** Sol-managed default URL; [Some] for [-svc] workloads with a hosted
-      base domain, [None] for [-worker] and [-fn] primitives. *)
+  health_status : health_status;
+  error_reason : string option;
+  default_url : string option;
+      (** Sol-managed default URL; [Some] for [-svc] workloads with a hosted
+          base domain, [None] for [-worker] and [-fn] primitives. *)
 }
 
 type release_summary = {
-  release_id       : string;
-  environment_id   : string;
+  release_id : string;
+  environment_id : string;
   environment_name : string;
-  status           : release_state;
-  plan             : deployment_plan_summary;
-  image_refs       : image_ref list;
-  services         : affected_service list;
+  status : release_state;
+  plan : deployment_plan_summary;
+  image_refs : image_ref list;
+  services : affected_service list;
 }
 
 type rendered_manifest = {
-  name      : string;
+  name : string;
   namespace : string;
-  kind      : string;
-  yaml      : string;
+  kind : string;
+  yaml : string;
 }
 
 type diagnostic_event = {
-  source   : string;
-  reason   : string;
-  message  : string;
+  source : string;
+  reason : string;
+  message : string;
   severity : string;
 }
 
 type diagnostics = {
-  release               : release_summary;
-  rendered_manifests    : rendered_manifest list;
+  release : release_summary;
+  rendered_manifests : rendered_manifest list;
   reconciliation_events : diagnostic_event list;
-  rollout_resources     : string list;
-  kubernetes_events     : diagnostic_event list;
-  raw_failure_details   : string option;
+  rollout_resources : string list;
+  kubernetes_events : diagnostic_event list;
+  raw_failure_details : string option;
 }
 
 val rollout_status_to_string : rollout_status -> string

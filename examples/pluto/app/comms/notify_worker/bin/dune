@@ -1,7 +1,13 @@
 (executable
  (name main)
  (libraries
-  pluto_comms_notify sol_worker kafka_eio_service
-  obs-eio sol_obs
-  pg-eio caqti-eio caqti-eio.unix caqti-driver-postgresql
+  pluto_comms_notify
+  sol_worker
+  kafka_eio_service
+  obs-eio
+  sol_obs
+  pg-eio
+  caqti-eio
+  caqti-eio.unix
+  caqti-driver-postgresql
   eio_main))

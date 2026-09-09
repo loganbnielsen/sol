@@ -3,16 +3,16 @@ open Sol_cli_manifest
 open Sol_cli_helm
 
 let check_tool name install_url =
-  match Sol_cli_process.run (Sol_cli_process.cmd ["which"; name]) with
+  match Sol_cli_process.run (Sol_cli_process.cmd [ "which"; name ]) with
   | Ok r when r.Sol_cli_process.exit_code = 0 -> ()
   | _ ->
-    Printf.eprintf "error: %S not found in PATH.\n" name;
-    Printf.eprintf "  Install: %s\n" install_url;
-    exit 1
+      Printf.eprintf "error: %S not found in PATH.\n" name;
+      Printf.eprintf "  Install: %s\n" install_url;
+      exit 1
 
 let require_tools () =
-  check_tool "k3d"     "https://k3d.io/";
-  check_tool "helm"    "https://helm.sh/";
+  check_tool "k3d" "https://k3d.io/";
+  check_tool "helm" "https://helm.sh/";
   check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/"
 
 (* ── State file ─────────────────────────────────────────────────────────── *)
@@ -29,40 +29,47 @@ let registry_port = 5000
    indication of why (bad values, chart not found, timeout, etc). Centralized
    here instead of fixed at each site: every helm_install caller gets the
    real diagnostic for free. *)
-let helm_install ~label release chart ~namespace ?version ?(values = []) ?values_yaml () =
-  match upgrade_install ~release ~chart ~namespace ?version ~values ?values_yaml () with
+let helm_install ~label release chart ~namespace ?version ?(values = [])
+    ?values_yaml () =
+  match
+    upgrade_install ~release ~chart ~namespace ?version ~values ?values_yaml ()
+  with
   | Ok r when r.Sol_cli_process.exit_code = 0 -> ()
   | Ok r ->
-    Printf.eprintf "error: %s install failed\n" label;
-    if r.Sol_cli_process.stderr <> "" then Printf.eprintf "%s\n" r.Sol_cli_process.stderr
-    else if r.Sol_cli_process.stdout <> "" then Printf.eprintf "%s\n" r.Sol_cli_process.stdout;
-    exit 1
+      Printf.eprintf "error: %s install failed\n" label;
+      if r.Sol_cli_process.stderr <> "" then
+        Printf.eprintf "%s\n" r.Sol_cli_process.stderr
+      else if r.Sol_cli_process.stdout <> "" then
+        Printf.eprintf "%s\n" r.Sol_cli_process.stdout;
+      exit 1
   | Error e ->
-    Printf.eprintf "error: %s install failed\n" label;
-    Printf.eprintf "%s\n" (Sol_cli_process.error_to_string e);
-    exit 1
+      Printf.eprintf "error: %s install failed\n" label;
+      Printf.eprintf "%s\n" (Sol_cli_process.error_to_string e);
+      exit 1
 
 let apply_yaml yaml =
   let tmp = Sol_cli_manifest.write_tmp yaml in
   Fun.protect
     ~finally:(fun () -> try Sys.remove tmp with _ -> ())
     (fun () ->
-       match Sol_cli_kubectl.apply ~file:tmp with
-       | Ok () -> ()
-       | Error e ->
-         Printf.eprintf "error: kubectl apply failed: %s\n"
-           (Sol_cli_process.error_to_string e);
-         exit 1)
+      match Sol_cli_kubectl.apply ~file:tmp with
+      | Ok () -> ()
+      | Error e ->
+          Printf.eprintf "error: kubectl apply failed: %s\n"
+            (Sol_cli_process.error_to_string e);
+          exit 1)
 
 let install_local_grafana_config ~prometheus ~tempo =
-  apply_yaml (Sol_cli_dev_observability.dashboard_configmap_yaml ~namespace:"monitoring");
+  apply_yaml
+    (Sol_cli_dev_observability.dashboard_configmap_yaml ~namespace:"monitoring");
   (* OBS-039: no longer auto-provisioned by a bundled loki-stack Grafana
      subchart -- see Sol_cli_dev_observability.loki_datasource_configmap_yaml.
      OBS-042: this datasource also carries the derivedFields link to Tempo,
      applied regardless of `tempo` -- harmless if Tempo isn't installed, and
      avoids two near-identical Loki datasource YAMLs. *)
   apply_yaml
-    (Sol_cli_dev_observability.loki_datasource_configmap_yaml ~namespace:"monitoring");
+    (Sol_cli_dev_observability.loki_datasource_configmap_yaml
+       ~namespace:"monitoring");
   if prometheus then
     apply_yaml
       (Sol_cli_dev_observability.prometheus_datasource_configmap_yaml
@@ -84,8 +91,10 @@ let dev_up () =
   (* 1. Cluster *)
   Printf.printf "\n[1/4] Provisioning cluster...\n%!";
   let cluster_exists =
-    match Sol_cli_process.run
-        (Sol_cli_process.cmd ["k3d"; "cluster"; "get"; cluster_name]) with
+    match
+      Sol_cli_process.run
+        (Sol_cli_process.cmd [ "k3d"; "cluster"; "get"; cluster_name ])
+    with
     | Ok r -> r.Sol_cli_process.exit_code = 0
     | Error _ -> false
   in
@@ -103,30 +112,42 @@ let dev_up () =
        port-probe logic to narrow. *)
     let pre_rename_cluster_name = "sun-local" in
     let pre_rename_cluster_exists =
-      match Sol_cli_process.run
-          (Sol_cli_process.cmd ["k3d"; "cluster"; "get"; pre_rename_cluster_name]) with
+      match
+        Sol_cli_process.run
+          (Sol_cli_process.cmd
+             [ "k3d"; "cluster"; "get"; pre_rename_cluster_name ])
+      with
       | Ok r -> r.Sol_cli_process.exit_code = 0
       | Error _ -> false
     in
     if pre_rename_cluster_exists then begin
-      Printf.eprintf
-        "error: found a pre-rename '%s' k3d cluster.\n" pre_rename_cluster_name;
+      Printf.eprintf "error: found a pre-rename '%s' k3d cluster.\n"
+        pre_rename_cluster_name;
       Printf.eprintf
         "  Sol's local cluster is now named '%s', and its registry would try\n"
         cluster_name;
       Printf.eprintf
-        "  to bind the same host port (%d) that '%s'/'sun-registry' would also use.\n"
+        "  to bind the same host port (%d) that '%s'/'sun-registry' would also \
+         use.\n"
         registry_port pre_rename_cluster_name;
       Printf.eprintf "  Remove the old cluster first:\n";
       Printf.eprintf "    k3d cluster delete %s\n" pre_rename_cluster_name;
-      Printf.eprintf "  (rename or keep it yourself first if you still need it for something else)\n";
+      Printf.eprintf
+        "  (rename or keep it yourself first if you still need it for \
+         something else)\n";
       exit 1
     end;
     let create_result =
       Sol_cli_process.run ~echo:true
         (Sol_cli_process.cmd
-           ["k3d"; "cluster"; "create"; cluster_name;
-            "--registry-create"; Printf.sprintf "sol-registry:%d" registry_port])
+           [
+             "k3d";
+             "cluster";
+             "create";
+             cluster_name;
+             "--registry-create";
+             Printf.sprintf "sol-registry:%d" registry_port;
+           ])
     in
     let rc =
       match create_result with
@@ -139,12 +160,12 @@ let dev_up () =
          already allocated") -- surface it instead of leaving the user to
          re-run k3d by hand to find out why. *)
       (match create_result with
-       | Ok r when r.Sol_cli_process.stderr <> "" ->
-         Printf.eprintf "%s\n" r.Sol_cli_process.stderr
-       | Ok r when r.Sol_cli_process.stdout <> "" ->
-         Printf.eprintf "%s\n" r.Sol_cli_process.stdout
-       | Ok _ -> ()
-       | Error e -> Printf.eprintf "%s\n" (Sol_cli_process.error_to_string e));
+      | Ok r when r.Sol_cli_process.stderr <> "" ->
+          Printf.eprintf "%s\n" r.Sol_cli_process.stderr
+      | Ok r when r.Sol_cli_process.stdout <> "" ->
+          Printf.eprintf "%s\n" r.Sol_cli_process.stdout
+      | Ok _ -> ()
+      | Error e -> Printf.eprintf "%s\n" (Sol_cli_process.error_to_string e));
       exit 1
     end
   end;
@@ -152,21 +173,33 @@ let dev_up () =
   (* 2. Scan *)
   Printf.printf "\n[2/4] Scanning workspace...\n%!";
   let req = Sol_cli_workspace.scan ~dir:"." in
-  Printf.printf "  kafka=%-5b  postgres=%-5b  loki=%-5b  prometheus=%-5b  tempo=%b\n%!"
+  Printf.printf
+    "  kafka=%-5b  postgres=%-5b  loki=%-5b  prometheus=%-5b  tempo=%b\n%!"
     req.kafka req.postgres req.loki req.prometheus req.tempo;
 
   (* 3. Infra *)
   Printf.printf "\n[3/4] Deploying infra...\n%!";
-  let need_any = req.kafka || req.postgres || req.loki || req.prometheus || req.tempo in
+  let need_any =
+    req.kafka || req.postgres || req.loki || req.prometheus || req.tempo
+  in
   if need_any then begin
-    ignore (Sol_cli_helm.repo_add ~name:"redpanda"             ~url:"https://charts.redpanda.com");
+    ignore
+      (Sol_cli_helm.repo_add ~name:"redpanda" ~url:"https://charts.redpanda.com");
     (* Alloy stays on this repo -- only loki/grafana moved (see
        grafana-community below, OBS-039). *)
-    ignore (Sol_cli_helm.repo_add ~name:"grafana"              ~url:"https://grafana.github.io/helm-charts");
-    ignore (Sol_cli_helm.repo_add ~name:"grafana-community"    ~url:"https://grafana-community.github.io/helm-charts");
-    ignore (Sol_cli_helm.repo_add ~name:"bitnami"              ~url:"https://charts.bitnami.com/bitnami");
-    ignore (Sol_cli_helm.repo_add ~name:"prometheus-community" ~url:"https://prometheus-community.github.io/helm-charts");
-    ignore (Sol_cli_helm.repo_update ());
+    ignore
+      (Sol_cli_helm.repo_add ~name:"grafana"
+         ~url:"https://grafana.github.io/helm-charts");
+    ignore
+      (Sol_cli_helm.repo_add ~name:"grafana-community"
+         ~url:"https://grafana-community.github.io/helm-charts");
+    ignore
+      (Sol_cli_helm.repo_add ~name:"bitnami"
+         ~url:"https://charts.bitnami.com/bitnami");
+    ignore
+      (Sol_cli_helm.repo_add ~name:"prometheus-community"
+         ~url:"https://prometheus-community.github.io/helm-charts");
+    ignore (Sol_cli_helm.repo_update ())
   end;
 
   if req.kafka then begin
@@ -195,8 +228,9 @@ let dev_up () =
        all), matching Grafana's adminPassword/Prometheus's
        node-exporter.enabled precedent for content that stays local-only
        precisely because nothing shields it on the Terraform side. *)
-    helm_install ~label:"Redpanda" "redpanda" "redpanda/redpanda" ~namespace:"redpanda"
-      (* FRIC-007: 5.8.12 (image v24.1.8) predates JSON Schema Registry
+    helm_install ~label:"Redpanda" "redpanda" "redpanda/redpanda"
+      ~namespace:"redpanda"
+        (* FRIC-007: 5.8.12 (image v24.1.8) predates JSON Schema Registry
          support, which landed in Redpanda 24.2
          (redpanda-data/redpanda#6220, confirmed via a Redpanda team
          member's closing comment) -- every generated Sol service's
@@ -212,23 +246,27 @@ let dev_up () =
          its own full live-verification, not bundled into this crash-loop
          fix. CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin. *)
       ~version:"5.9.15"
-      ~values:[
-        ("storage.persistentVolume.size", Str "1Gi");
-        (* Advertise localhost:9092 so librdkafka reconnects to the port-forward
+      ~values:
+        [
+          ("storage.persistentVolume.size", Str "1Gi");
+          (* Advertise localhost:9092 so librdkafka reconnects to the port-forward
            after bootstrap instead of the unresolvable internal cluster DNS. *)
-        ("external.enabled",                                    Bool true);
-        ("external.service.enabled",                            Bool false);
-        ("external.addresses[0]",                               Str "localhost");
-        ("listeners.kafka.external.default.advertisedPorts[0]", Float 9092.);
-      ]
-      ~values_yaml:(Sol_cli_platform_component.merged_values_yaml
-                      ~component:"redpanda" ~profile:"local") ()
+          ("external.enabled", Bool true);
+          ("external.service.enabled", Bool false);
+          ("external.addresses[0]", Str "localhost");
+          ("listeners.kafka.external.default.advertisedPorts[0]", Float 9092.);
+        ]
+      ~values_yaml:
+        (Sol_cli_platform_component.merged_values_yaml ~component:"redpanda"
+           ~profile:"local")
+      ()
   end;
 
   if req.postgres then begin
     Printf.printf "\n  Installing PostgreSQL...\n%!";
-    helm_install ~label:"PostgreSQL" "postgresql" "bitnami/postgresql" ~namespace:"postgresql"
-      (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin. Not
+    helm_install ~label:"PostgreSQL" "postgresql" "bitnami/postgresql"
+      ~namespace:"postgresql"
+        (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin. Not
          15.5.1 -- confirmed live that version's default image tag
          (bitnami/postgresql:16.3.0-debian-12-r12) no longer exists on
          Docker Hub; main.tf was bumped to 18.8.17 in the same change (a
@@ -238,7 +276,7 @@ let dev_up () =
          other tag to pin to). Fine for this ephemeral local cluster
          (no persistent volume to be incompatible with -- see below). *)
       ~version:"18.8.17"
-      (* CODE_LAYER-010: values come from
+        (* CODE_LAYER-010: values come from
          cli/platform/components/postgresql/{values-common,values-local}.json
          (ADR 0001) -- auth.database ("dev") is genuinely shared with
          cli/platform/infra/base/main.tf; auth.postgresPassword and
@@ -246,8 +284,10 @@ let dev_up () =
          (main.tf keeps its own var-driven `set` for both -- a real secret
          and an "ephemeral by default" choice matching Loki/Prometheus's
          local profile, neither with a value cmd_dev.ml should share). *)
-      ~values_yaml:(Sol_cli_platform_component.merged_values_yaml
-                      ~component:"postgresql" ~profile:"local") ()
+      ~values_yaml:
+        (Sol_cli_platform_component.merged_values_yaml ~component:"postgresql"
+           ~profile:"local")
+      ()
   end;
 
   let need_grafana = req.loki || req.prometheus || req.tempo in
@@ -265,10 +305,14 @@ let dev_up () =
        observability_backend branch, so a fix like BUG-013's
        replication_factor lands here automatically instead of requiring a
        second, independently-maintained edit (BUG-016). *)
-    helm_install ~label:"Loki" "loki" "grafana-community/loki" ~namespace:"monitoring"
-      ~version:"18.12.1"  (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin *)
-      ~values_yaml:(Sol_cli_platform_component.merged_values_yaml
-                      ~component:"loki" ~profile:"local") ();
+    helm_install ~label:"Loki" "loki" "grafana-community/loki"
+      ~namespace:"monitoring"
+      ~version:"18.12.1"
+        (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin *)
+      ~values_yaml:
+        (Sol_cli_platform_component.merged_values_yaml ~component:"loki"
+           ~profile:"local")
+      ();
 
     Printf.printf "\n  Installing Grafana...\n%!";
     (* Values come from cli/platform/components/grafana/{values-common,values-local}.json
@@ -277,16 +321,20 @@ let dev_up () =
        standalone chart's own top-level sidecar.* -- both now need an
        explicit value since this chart (unlike loki-stack) defaults
        sidecar.datasources.enabled to false. *)
-    helm_install ~label:"Grafana" "grafana" "grafana-community/grafana" ~namespace:"monitoring"
-      ~version:"13.2.1"  (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin *)
-      (* CODE_LAYER-008: base/main.tf sets adminPassword explicitly
+    helm_install ~label:"Grafana" "grafana" "grafana-community/grafana"
+      ~namespace:"monitoring"
+      ~version:"13.2.1"
+        (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin *)
+        (* CODE_LAYER-008: base/main.tf sets adminPassword explicitly
          (var.grafana_admin_password); left at the chart's own default here
          previously, making sol dev up's Grafana login undocumented and
          chart-version-dependent. Fixed dev-only value, matching
          PostgreSQL's hardcoded "dev" password convention above. *)
-      ~values:[("adminPassword", Str "dev")]
-      ~values_yaml:(Sol_cli_platform_component.merged_values_yaml
-                      ~component:"grafana" ~profile:"local") ();
+      ~values:[ ("adminPassword", Str "dev") ]
+      ~values_yaml:
+        (Sol_cli_platform_component.merged_values_yaml ~component:"grafana"
+           ~profile:"local")
+      ();
 
     Printf.printf "\n  Installing Alloy...\n%!";
     (* Cluster-wide pod stdout/stderr scraping via DaemonSet -- same role
@@ -297,8 +345,10 @@ let dev_up () =
        shared with cli/platform/infra/base/main.tf's own templatefile() call
        for the same file -- instead of a second, hand-synced OCaml copy. *)
     helm_install ~label:"Alloy" "alloy" "grafana/alloy" ~namespace:"monitoring"
-      ~version:"1.12.1"  (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin *)
-      ~values_yaml:(Sol_cli_dev_observability.alloy_values_yaml ()) ()
+      ~version:"1.12.1"
+        (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin *)
+      ~values_yaml:(Sol_cli_dev_observability.alloy_values_yaml ())
+      ()
   end;
 
   if req.tempo then begin
@@ -318,10 +368,14 @@ let dev_up () =
        already agree by relying on the chart's own defaults) -- wiring it up
        anyway locks in the source of truth so the CI guardrail can catch the
        next Tempo value that would otherwise drift, see ADR 0001. *)
-    helm_install ~label:"Tempo" "tempo" "grafana-community/tempo" ~namespace:"monitoring"
-      ~version:"2.3.0"  (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin *)
-      ~values_yaml:(Sol_cli_platform_component.merged_values_yaml
-                      ~component:"tempo" ~profile:"local") ()
+    helm_install ~label:"Tempo" "tempo" "grafana-community/tempo"
+      ~namespace:"monitoring"
+      ~version:"2.3.0"
+        (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin *)
+      ~values_yaml:
+        (Sol_cli_platform_component.merged_values_yaml ~component:"tempo"
+           ~profile:"local")
+      ()
   end;
 
   if req.prometheus then begin
@@ -338,12 +392,15 @@ let dev_up () =
        to move from this ~values literal into the shared JSON, the literal
        here must be deleted in the same change -- leaving both would let
        this ~values entry silently and permanently win. *)
-    helm_install ~label:"Prometheus" "prometheus" "prometheus-community/prometheus"
-      ~namespace:"monitoring"
-      ~version:"25.20.1"  (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin *)
-      ~values:[("prometheus-node-exporter.enabled", Bool false)]
-      ~values_yaml:(Sol_cli_platform_component.merged_values_yaml
-                      ~component:"prometheus" ~profile:"local") ()
+    helm_install ~label:"Prometheus" "prometheus"
+      "prometheus-community/prometheus" ~namespace:"monitoring"
+      ~version:"25.20.1"
+        (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin *)
+      ~values:[ ("prometheus-node-exporter.enabled", Bool false) ]
+      ~values_yaml:
+        (Sol_cli_platform_component.merged_values_yaml ~component:"prometheus"
+           ~profile:"local")
+      ()
   end;
 
   if need_grafana then
@@ -351,63 +408,128 @@ let dev_up () =
 
   (* 4. Port-forwards *)
   Printf.printf "\n[4/4] Starting port-forwards...\n%!";
-  ignore (Sys.command "sleep 2");  (* brief pause for service endpoints to settle *)
+  ignore (Sys.command "sleep 2");
 
+  (* brief pause for service endpoints to settle *)
   let pf pf_spec =
     Printf.printf "  port-forward  %-14s localhost:%d → %s/%s:%d\n%!"
-      pf_spec.Sol_cli_port_forward.name pf_spec.local_port
-      pf_spec.namespace pf_spec.target pf_spec.remote_port;
+      pf_spec.Sol_cli_port_forward.name pf_spec.local_port pf_spec.namespace
+      pf_spec.target pf_spec.remote_port;
     Sol_cli_port_forward.start pf_spec
   in
   if req.kafka then begin
     (* Target the pod, not svc: the headless service only exposes the internal
        port 9093, and the external listener on 9094 is pod-only. *)
-    pf { name = "kafka"; namespace = "redpanda";
-         target = "pod/redpanda-0"; local_port = 9092; remote_port = 9094 };
-    pf { name = "schema-registry"; namespace = "redpanda";
-         target = "svc/redpanda"; local_port = 8081; remote_port = 8081 };
+    pf
+      {
+        name = "kafka";
+        namespace = "redpanda";
+        target = "pod/redpanda-0";
+        local_port = 9092;
+        remote_port = 9094;
+      };
+    pf
+      {
+        name = "schema-registry";
+        namespace = "redpanda";
+        target = "svc/redpanda";
+        local_port = 8081;
+        remote_port = 8081;
+      }
   end;
   if req.postgres then
-    pf { name = "postgres"; namespace = "postgresql";
-         target = "svc/postgresql"; local_port = 5432; remote_port = 5432 };
+    pf
+      {
+        name = "postgres";
+        namespace = "postgresql";
+        target = "svc/postgresql";
+        local_port = 5432;
+        remote_port = 5432;
+      };
   if need_grafana then
-    pf { name = "loki"; namespace = "monitoring";
-         target = "svc/loki"; local_port = 3100; remote_port = 3100 };
+    pf
+      {
+        name = "loki";
+        namespace = "monitoring";
+        target = "svc/loki";
+        local_port = 3100;
+        remote_port = 3100;
+      };
   if need_grafana then
-    pf { name = "grafana"; namespace = "monitoring";
-         target = "svc/grafana"; local_port = 3000; remote_port = 80 };
+    pf
+      {
+        name = "grafana";
+        namespace = "monitoring";
+        target = "svc/grafana";
+        local_port = 3000;
+        remote_port = 80;
+      };
   if req.prometheus then
-    pf { name = "prometheus"; namespace = "monitoring";
-         target = "svc/prometheus-server"; local_port = 9090; remote_port = 80 };
+    pf
+      {
+        name = "prometheus";
+        namespace = "monitoring";
+        target = "svc/prometheus-server";
+        local_port = 9090;
+        remote_port = 80;
+      };
   if req.prometheus then
-    pf { name = "pushgateway"; namespace = "monitoring";
-         target = "svc/prometheus-prometheus-pushgateway";
-         local_port = 9091; remote_port = 9091 };
+    pf
+      {
+        name = "pushgateway";
+        namespace = "monitoring";
+        target = "svc/prometheus-prometheus-pushgateway";
+        local_port = 9091;
+        remote_port = 9091;
+      };
   if req.tempo then begin
     (* Two forwards, matching prometheus/pushgateway's split above: OTLP/HTTP
        ingestion (obs-tempo-eio's TEMPO_URL, what -svc pushes spans to) and
        the query API (what Grafana's Tempo datasource and a developer's own
        curl/Explore session read from) are different ports on the same
        Service. *)
-    pf { name = "tempo"; namespace = "monitoring";
-         target = "svc/tempo"; local_port = 4318; remote_port = 4318 };
-    pf { name = "tempo-query"; namespace = "monitoring";
-         target = "svc/tempo"; local_port = 3200; remote_port = 3200 };
+    pf
+      {
+        name = "tempo";
+        namespace = "monitoring";
+        target = "svc/tempo";
+        local_port = 4318;
+        remote_port = 4318;
+      };
+    pf
+      {
+        name = "tempo-query";
+        namespace = "monitoring";
+        target = "svc/tempo";
+        local_port = 3200;
+        remote_port = 3200;
+      }
   end;
 
   (* Summary *)
   Printf.printf "\n";
   Printf.printf "  cluster      ✓  %s\n" cluster_name;
   Printf.printf "  registry     ✓  localhost:%d\n" registry_port;
-  if req.kafka    then Printf.printf "  kafka        ✓  localhost:9092  (port-forwarded)\n";
-  if req.kafka    then Printf.printf "  schema-reg   ✓  http://localhost:8081\n";
-  if req.postgres then Printf.printf "  postgres     ✓  postgresql://postgres:dev@localhost:5432/dev  (port-forwarded)\n";
-  if need_grafana then Printf.printf "  loki         ✓  http://localhost:3100  (port-forwarded)\n";
-  if need_grafana then Printf.printf "  grafana      ✓  http://localhost:3000  (port-forwarded)\n";
-  if req.prometheus then Printf.printf "  prometheus   ✓  http://localhost:9090  (port-forwarded)\n";
-  if req.prometheus then Printf.printf "  pushgateway  ✓  http://localhost:9091  (port-forwarded)\n";
-  if req.tempo    then Printf.printf "  tempo        ✓  http://localhost:4318  (OTLP, port-forwarded)\n";
-  if req.tempo    then Printf.printf "  tempo-query  ✓  http://localhost:3200  (port-forwarded)\n";
+  if req.kafka then
+    Printf.printf "  kafka        ✓  localhost:9092  (port-forwarded)\n";
+  if req.kafka then Printf.printf "  schema-reg   ✓  http://localhost:8081\n";
+  if req.postgres then
+    Printf.printf
+      "  postgres     ✓  postgresql://postgres:dev@localhost:5432/dev  \
+       (port-forwarded)\n";
+  if need_grafana then
+    Printf.printf "  loki         ✓  http://localhost:3100  (port-forwarded)\n";
+  if need_grafana then
+    Printf.printf "  grafana      ✓  http://localhost:3000  (port-forwarded)\n";
+  if req.prometheus then
+    Printf.printf "  prometheus   ✓  http://localhost:9090  (port-forwarded)\n";
+  if req.prometheus then
+    Printf.printf "  pushgateway  ✓  http://localhost:9091  (port-forwarded)\n";
+  if req.tempo then
+    Printf.printf
+      "  tempo        ✓  http://localhost:4318  (OTLP, port-forwarded)\n";
+  if req.tempo then
+    Printf.printf "  tempo-query  ✓  http://localhost:3200  (port-forwarded)\n";
   Printf.printf "\n"
 
 (* ── dev down ────────────────────────────────────────────────────────────── *)
@@ -419,17 +541,23 @@ let dev_down delete_cluster =
   if delete_cluster then begin
     check_tool "k3d" "https://k3d.io/";
     Printf.printf "Deleting cluster %s...\n%!" cluster_name;
-    ignore (Sol_cli_process.run (Sol_cli_process.cmd ["k3d"; "cluster"; "delete"; cluster_name]))
-  end else
-    Printf.printf "Port-forwards stopped. Cluster %s is still running.\n" cluster_name
+    ignore
+      (Sol_cli_process.run
+         (Sol_cli_process.cmd [ "k3d"; "cluster"; "delete"; cluster_name ]))
+  end
+  else
+    Printf.printf "Port-forwards stopped. Cluster %s is still running.\n"
+      cluster_name
 
 (* ── dev status ──────────────────────────────────────────────────────────── *)
 
 let dev_status () =
   check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/";
   let cluster_running =
-    match Sol_cli_process.run
-        (Sol_cli_process.cmd ["k3d"; "cluster"; "get"; cluster_name]) with
+    match
+      Sol_cli_process.run
+        (Sol_cli_process.cmd [ "k3d"; "cluster"; "get"; cluster_name ])
+    with
     | Ok r -> r.Sol_cli_process.exit_code = 0
     | Error _ -> false
   in
@@ -437,29 +565,37 @@ let dev_status () =
     (if cluster_running then "✓ running" else "✗ not found");
   if cluster_running then begin
     Printf.printf "\nPods:\n%!";
-    (match Sol_cli_process.run (Sol_cli_process.cmd ["kubectl"; "get"; "pods"; "-A"]) with
-     | Ok r -> print_string r.Sol_cli_process.stdout; print_char '\n'
-     | Error _ -> ());
+    (match
+       Sol_cli_process.run
+         (Sol_cli_process.cmd [ "kubectl"; "get"; "pods"; "-A" ])
+     with
+    | Ok r ->
+        print_string r.Sol_cli_process.stdout;
+        print_char '\n'
+    | Error _ -> ());
     Printf.printf "\nPort-forwards:\n%!";
     if Sys.file_exists Sol_cli_state.dir then begin
       let entries = try Sys.readdir Sol_cli_state.dir with _ -> [||] in
-      let pids = Array.to_list entries
+      let pids =
+        Array.to_list entries
         |> List.filter (fun f -> Filename.check_suffix f ".pid")
       in
-      if pids = [] then
-        Printf.printf "  none\n"
+      if pids = [] then Printf.printf "  none\n"
       else
-        List.iter (fun f ->
-          let name = Filename.chop_suffix f ".pid" in
-          let path = Printf.sprintf "%s/%s" Sol_cli_state.dir f in
-          let pid_s = try
-            let ic = open_in path in
-            let s = String.trim (In_channel.input_all ic) in
-            close_in ic; s
-          with _ -> "?"
-          in
-          Printf.printf "  %-12s  pid %s\n" name pid_s
-        ) pids
+        List.iter
+          (fun f ->
+            let name = Filename.chop_suffix f ".pid" in
+            let path = Printf.sprintf "%s/%s" Sol_cli_state.dir f in
+            let pid_s =
+              try
+                let ic = open_in path in
+                let s = String.trim (In_channel.input_all ic) in
+                close_in ic;
+                s
+              with _ -> "?"
+            in
+            Printf.printf "  %-12s  pid %s\n" name pid_s)
+          pids
     end
   end;
   Printf.printf "\n"
@@ -467,30 +603,34 @@ let dev_status () =
 (* ── dev run ─────────────────────────────────────────────────────────────── *)
 
 (** Dev-local addresses matching the port-forwards from [sol dev up], mirroring
-    the cluster-internal addresses [sol up] injects but rewritten to localhost. *)
-let dev_env_vars = [
-  "KAFKA_BROKERS",       "localhost:9092";
-  "SCHEMA_REGISTRY_URL", "http://localhost:8081";
-  "REDPANDA_ADMIN_URL",  "http://localhost:9644";
-  "POSTGRES_URL",        "postgresql://postgres:dev@localhost:5432/dev";
-  "LOKI_URL",            "http://localhost:3100";
-  "PUSHGATEWAY_URL",     "http://localhost:9091";
-  "TEMPO_URL",           "http://localhost:4318";
-  "KAFKA_SECURITY_PROTOCOL", "Plaintext";
-]
+    the cluster-internal addresses [sol up] injects but rewritten to localhost.
+*)
+let dev_env_vars =
+  [
+    ("KAFKA_BROKERS", "localhost:9092");
+    ("SCHEMA_REGISTRY_URL", "http://localhost:8081");
+    ("REDPANDA_ADMIN_URL", "http://localhost:9644");
+    ("POSTGRES_URL", "postgresql://postgres:dev@localhost:5432/dev");
+    ("LOKI_URL", "http://localhost:3100");
+    ("PUSHGATEWAY_URL", "http://localhost:9091");
+    ("TEMPO_URL", "http://localhost:4318");
+    ("KAFKA_SECURITY_PROTOCOL", "Plaintext");
+  ]
 
 (** [dev_env_vars] merged on top of the current environment, overriding any
     matching keys so every service reaches the local broker/database. *)
 let build_env () =
   let current = Unix.environment () in
   let dev_keys = List.map fst dev_env_vars in
-  let filtered = Array.to_list current
+  let filtered =
+    Array.to_list current
     |> List.filter (fun entry ->
-      let key = match String.index_opt entry '=' with
-        | Some i -> String.sub entry 0 i
-        | None   -> entry
-      in
-      not (List.mem key dev_keys))
+        let key =
+          match String.index_opt entry '=' with
+          | Some i -> String.sub entry 0 i
+          | None -> entry
+        in
+        not (List.mem key dev_keys))
   in
   let extras = List.map (fun (k, v) -> k ^ "=" ^ v) dev_env_vars in
   Array.of_list (filtered @ extras)
@@ -500,48 +640,50 @@ let build_env () =
 let prefix_lines_thread fd label =
   let ic = Unix.in_channel_of_descr fd in
   (try
-    while true do
-      let line = input_line ic in
-      Printf.printf "[%s] %s\n%!" label line
-    done
-  with End_of_file | Sys_error _ -> ());
-  (try Unix.close fd with _ -> ())
+     while true do
+       let line = input_line ic in
+       Printf.printf "[%s] %s\n%!" label line
+     done
+   with End_of_file | Sys_error _ -> ());
+  try Unix.close fd with _ -> ()
 
-type child = {
-  pid    : int;
-  label  : string;
-}
+type child = { pid : int; label : string }
 
 let dev_run workspace_dir filter_path =
   let dir = match workspace_dir with Some d -> d | None -> "." in
   (* Change to workspace dir if given explicitly so discover_services works *)
-  (match workspace_dir with
-   | Some d -> Unix.chdir d
-   | None   -> ());
+  (match workspace_dir with Some d -> Unix.chdir d | None -> ());
   let services = discover_services ~filter_path in
   if services = [] then begin
     Printf.eprintf "error: no Sol services found. ";
-    Printf.eprintf "Expected app/<domain>/<name>_{svc,worker,fn}/ directories with a Dockerfile.\n";
+    Printf.eprintf
+      "Expected app/<domain>/<name>_{svc,worker,fn}/ directories with a \
+       Dockerfile.\n";
     exit 1
   end;
 
-  Printf.printf "\n  Starting %d service(s) from %s\n" (List.length services) dir;
-  List.iter (fun svc ->
-    Printf.printf "    [%s] %s/%s → %s/bin/main.exe\n"
-      (primitive_label svc.primitive) svc.domain svc.name svc.dir
-  ) services;
+  Printf.printf "\n  Starting %d service(s) from %s\n" (List.length services)
+    dir;
+  List.iter
+    (fun svc ->
+      Printf.printf "    [%s] %s/%s → %s/bin/main.exe\n"
+        (primitive_label svc.primitive)
+        svc.domain svc.name svc.dir)
+    services;
   Printf.printf "\n%!";
 
   (* Build all services first with a single dune invocation so that parallel
      dune exec calls below don't fight over the _build/.lock file. *)
   Printf.printf "  Building...\n%!";
-  let build_targets = List.map (fun (svc : Sol_cli_manifest.service) ->
-    svc.dir ^ "/bin/main.exe"
-  ) services in
+  let build_targets =
+    List.map
+      (fun (svc : Sol_cli_manifest.service) -> svc.dir ^ "/bin/main.exe")
+      services
+  in
   let opam_eval = "eval $(opam env 2>/dev/null) 2>/dev/null; " in
-  let build_cmd = Printf.sprintf "%sdune build %s"
-    opam_eval
-    (String.concat " " (List.map Filename.quote build_targets))
+  let build_cmd =
+    Printf.sprintf "%sdune build %s" opam_eval
+      (String.concat " " (List.map Filename.quote build_targets))
   in
   let build_rc = Sys.command build_cmd in
   if build_rc <> 0 then begin
@@ -553,25 +695,31 @@ let dev_run workspace_dir filter_path =
   let env = build_env () in
 
   (* Run the pre-built executable directly, avoiding dune exec lock contention. *)
-  let children = List.filter_map (fun (svc : Sol_cli_manifest.service) ->
-    let label = svc.domain ^ "/" ^ svc.name in
-    let exe_path = "_build/default/" ^ svc.dir ^ "/bin/main.exe" in
-    let cmd_str = Filename.quote exe_path in
-    let (pipe_read, pipe_write) = Unix.pipe () in
-    (try
-      let pid = Unix.create_process_env
-        "sh" [| "sh"; "-c"; cmd_str |] env
-        Unix.stdin pipe_write pipe_write
-      in
-      Unix.close pipe_write;
-      let _t = Thread.create (fun () -> prefix_lines_thread pipe_read label) () in
-      Some { pid; label }
-    with Unix.Unix_error (e, fn, _) ->
-      Unix.close pipe_read;
-      Unix.close pipe_write;
-      Printf.eprintf "error: failed to spawn [%s]: %s in %s\n" label (Unix.error_message e) fn;
-      None)
-  ) services in
+  let children =
+    List.filter_map
+      (fun (svc : Sol_cli_manifest.service) ->
+        let label = svc.domain ^ "/" ^ svc.name in
+        let exe_path = "_build/default/" ^ svc.dir ^ "/bin/main.exe" in
+        let cmd_str = Filename.quote exe_path in
+        let pipe_read, pipe_write = Unix.pipe () in
+        try
+          let pid =
+            Unix.create_process_env "sh" [| "sh"; "-c"; cmd_str |] env
+              Unix.stdin pipe_write pipe_write
+          in
+          Unix.close pipe_write;
+          let _t =
+            Thread.create (fun () -> prefix_lines_thread pipe_read label) ()
+          in
+          Some { pid; label }
+        with Unix.Unix_error (e, fn, _) ->
+          Unix.close pipe_read;
+          Unix.close pipe_write;
+          Printf.eprintf "error: failed to spawn [%s]: %s in %s\n" label
+            (Unix.error_message e) fn;
+          None)
+      services
+  in
 
   if children = [] then begin
     Printf.eprintf "error: no services could be started\n";
@@ -583,36 +731,35 @@ let dev_run workspace_dir filter_path =
   (* On SIGINT (Ctrl-C), kill every child before exiting *)
   let kill_all () =
     Printf.printf "\n  Stopping services...\n%!";
-    List.iter (fun c ->
-      (try Unix.kill c.pid Sys.sigterm with _ -> ())
-    ) children;
+    List.iter (fun c -> try Unix.kill c.pid Sys.sigterm with _ -> ()) children;
     (* Brief grace period, then SIGKILL *)
     Unix.sleepf 0.5;
-    List.iter (fun c ->
-      (try Unix.kill c.pid Sys.sigkill with _ -> ())
-    ) children
+    List.iter (fun c -> try Unix.kill c.pid Sys.sigkill with _ -> ()) children
   in
-  Sys.set_signal Sys.sigint (Sys.Signal_handle (fun _ ->
-    kill_all ();
-    exit 130));
+  Sys.set_signal Sys.sigint
+    (Sys.Signal_handle
+       (fun _ ->
+         kill_all ();
+         exit 130));
 
   (* Wait for children in any-exit order so an early crash is reported immediately *)
   let by_pid = Hashtbl.create 8 in
   List.iter (fun c -> Hashtbl.replace by_pid c.pid c) children;
   let remaining = ref (Hashtbl.length by_pid) in
   while !remaining > 0 do
-    (try
-      let (pid, status) = Unix.wait () in
+    try
+      let pid, status = Unix.wait () in
       decr remaining;
-      (match Hashtbl.find_opt by_pid pid with
-       | None -> ()
-       | Some c ->
-         (match status with
-          | Unix.WEXITED 0   -> ()
-          | Unix.WEXITED n   -> Printf.eprintf "[%s] exited with code %d\n%!" c.label n
+      match Hashtbl.find_opt by_pid pid with
+      | None -> ()
+      | Some c -> (
+          match status with
+          | Unix.WEXITED 0 -> ()
+          | Unix.WEXITED n ->
+              Printf.eprintf "[%s] exited with code %d\n%!" c.label n
           | Unix.WSIGNALED _ -> ()
-          | Unix.WSTOPPED  _ -> ()))
-    with Unix.Unix_error _ -> remaining := 0)
+          | Unix.WSTOPPED _ -> ())
+    with Unix.Unix_error _ -> remaining := 0
   done
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
@@ -625,7 +772,7 @@ let up_cmd =
 
 let down_cmd =
   let cluster_flag =
-    Arg.(value & flag & info ["cluster"] ~doc:"Also delete the k3d cluster")
+    Arg.(value & flag & info [ "cluster" ] ~doc:"Also delete the k3d cluster")
   in
   Cmd.v
     (Cmd.info "down"
@@ -634,26 +781,29 @@ let down_cmd =
 
 let status_cmd =
   Cmd.v
-    (Cmd.info "status"
-       ~doc:"Show infra pod health and registered port-forwards")
+    (Cmd.info "status" ~doc:"Show infra pod health and registered port-forwards")
     Term.(const dev_status $ const ())
 
 let run_workspace_arg =
-  Arg.(value & opt (some string) None &
-       info ["workspace"; "C"]
-         ~docv:"DIR"
-         ~doc:"Workspace root directory (default: current directory)")
+  Arg.(
+    value
+    & opt (some string) None
+    & info [ "workspace"; "C" ] ~docv:"DIR"
+        ~doc:"Workspace root directory (default: current directory)")
 
 let run_path_arg =
-  Arg.(value & pos 0 (some string) None &
-       info []
-         ~docv:"PATH"
-         ~doc:"Restrict to a single service path (default: all services)")
+  Arg.(
+    value
+    & pos 0 (some string) None
+    & info [] ~docv:"PATH"
+        ~doc:"Restrict to a single service path (default: all services)")
 
 let run_subcmd =
   Cmd.v
     (Cmd.info "run"
-       ~doc:"Start all workspace services locally using dune exec with dev env vars")
+       ~doc:
+         "Start all workspace services locally using dune exec with dev env \
+          vars")
     Term.(const dev_run $ run_workspace_arg $ run_path_arg)
 
 let cmd =

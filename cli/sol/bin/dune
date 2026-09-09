@@ -1,11 +1,11 @@
 (rule
  (targets version.ml)
- (deps
-  (universe))
+ (deps (universe))
  (action
   (with-stdout-to
    version.ml
-   (system "printf 'let v = \"%s\"\\n' \"$(git describe --tags --always --dirty 2>/dev/null || echo dev)\""))))
+   (system
+    "printf 'let v = \"%s\"\\n' \"$(git describe --tags --always --dirty 2>/dev/null || echo dev)\""))))
 
 (executable
  (name main)

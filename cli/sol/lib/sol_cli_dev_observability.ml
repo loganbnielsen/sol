@@ -1,6 +1,5 @@
 let indent_block s =
-  s
-  |> String.split_on_char '\n'
+  s |> String.split_on_char '\n'
   |> List.map (fun line -> "    " ^ line)
   |> String.concat "\n"
 
@@ -25,7 +24,8 @@ metadata:
 %s
 data:
 %s
-|} name namespace labels_yaml data_yaml
+|}
+    name namespace labels_yaml data_yaml
 
 (* OBS-042: uid is pinned explicitly (rather than left for Grafana to derive
    from the datasource name) so grafana_loki_datasource's derivedFields entry
@@ -40,7 +40,8 @@ datasources:
     type: prometheus
     access: proxy
     url: http://prometheus-server.%s.svc.cluster.local:80
-    isDefault: false|} namespace
+    isDefault: false|}
+    namespace
 
 (* CODE_LAYER-007: cli/platform/infra/base/dashboards/*.json is now the single
    source of Sol's four generic Grafana dashboards -- both `sol dev up`
@@ -57,40 +58,42 @@ datasources:
    (`kubectl apply` on the new render came back "unchanged" against the
    cluster's existing ConfigMap). *)
 let read_dashboard_json ~sol_home name =
-  let path = Filename.concat sol_home
-    (Filename.concat "cli/platform/infra/base/dashboards" name) in
+  let path =
+    Filename.concat sol_home
+      (Filename.concat "cli/platform/infra/base/dashboards" name)
+  in
   let ic = open_in_bin path in
-  Fun.protect ~finally:(fun () -> close_in_noerr ic)
+  Fun.protect
+    ~finally:(fun () -> close_in_noerr ic)
     (fun () -> really_input_string ic (in_channel_length ic))
 
 let dashboard_configmap_yaml ~namespace =
-  let sol_home = match Sol_cli_cmd_new.infer_sol_home () with
+  let sol_home =
+    match Sol_cli_cmd_new.infer_sol_home () with
     | Some dir -> dir
     | None ->
-      Printf.eprintf
-        "error: cannot locate the Sol monorepo root to read cli/platform/infra/base/dashboards/*.json.\n";
-      Printf.eprintf "  Set SOL_HOME to your Sol checkout and re-run:\n";
-      Printf.eprintf "    export SOL_HOME=/path/to/sol\n";
-      exit 1
+        Printf.eprintf
+          "error: cannot locate the Sol monorepo root to read \
+           cli/platform/infra/base/dashboards/*.json.\n";
+        Printf.eprintf "  Set SOL_HOME to your Sol checkout and re-run:\n";
+        Printf.eprintf "    export SOL_HOME=/path/to/sol\n";
+        exit 1
   in
   let dashboard name = read_dashboard_json ~sol_home name in
-  configmap_yaml
-    ~name:"sol-grafana-dashboards"
-    ~namespace
-    ~labels:["grafana_dashboard", "1"]
-    ~data:[
-      "workspace-overview.json", dashboard "workspace-overview.json";
-      "domain-overview.json", dashboard "domain-overview.json";
-      "service-template.json", dashboard "service-template.json";
-      "release-timeline.json", dashboard "release-timeline.json";
-    ]
+  configmap_yaml ~name:"sol-grafana-dashboards" ~namespace
+    ~labels:[ ("grafana_dashboard", "1") ]
+    ~data:
+      [
+        ("workspace-overview.json", dashboard "workspace-overview.json");
+        ("domain-overview.json", dashboard "domain-overview.json");
+        ("service-template.json", dashboard "service-template.json");
+        ("release-timeline.json", dashboard "release-timeline.json");
+      ]
 
 let prometheus_datasource_configmap_yaml ~namespace =
-  configmap_yaml
-    ~name:"grafana-prometheus-datasource"
-    ~namespace
-    ~labels:["grafana_datasource", "1"]
-    ~data:["prometheus.yaml", prometheus_datasource_yaml ~namespace]
+  configmap_yaml ~name:"grafana-prometheus-datasource" ~namespace
+    ~labels:[ ("grafana_datasource", "1") ]
+    ~data:[ ("prometheus.yaml", prometheus_datasource_yaml ~namespace) ]
 
 (* OBS-042: Tempo query API (chart/service port 3200, distinct from the
    OTLP/HTTP ingestion port 4318 obs-tempo-eio pushes spans to) exposed as a
@@ -104,14 +107,13 @@ datasources:
     access: proxy
     uid: %s
     url: http://tempo:3200
-    isDefault: false|} tempo_datasource_uid
+    isDefault: false|}
+    tempo_datasource_uid
 
 let tempo_datasource_configmap_yaml ~namespace =
-  configmap_yaml
-    ~name:"grafana-tempo-datasource"
-    ~namespace
-    ~labels:["grafana_datasource", "1"]
-    ~data:["tempo.yaml", tempo_datasource_yaml]
+  configmap_yaml ~name:"grafana-tempo-datasource" ~namespace
+    ~labels:[ ("grafana_datasource", "1") ]
+    ~data:[ ("tempo.yaml", tempo_datasource_yaml) ]
 
 (* OBS-039: loki-stack's bundled Grafana subchart auto-provisioned a "Loki"
    datasource itself (a chart-internal template, not just the generic
@@ -140,14 +142,13 @@ datasources:
         - datasourceUid: %s
           matcherRegex: "trace_id=([0-9a-f]{32})"
           name: TraceID
-          url: "${__value.raw}"|} tempo_datasource_uid
+          url: "${__value.raw}"|}
+    tempo_datasource_uid
 
 let loki_datasource_configmap_yaml ~namespace =
-  configmap_yaml
-    ~name:"grafana-loki-datasource"
-    ~namespace
-    ~labels:["grafana_datasource", "1"]
-    ~data:["loki.yaml", loki_datasource_yaml]
+  configmap_yaml ~name:"grafana-loki-datasource" ~namespace
+    ~labels:[ ("grafana_datasource", "1") ]
+    ~data:[ ("loki.yaml", loki_datasource_yaml) ]
 
 (* CODE_LAYER-006: cli/platform/infra/base/alloy/logs.alloy.tftpl is now the
    single source of Alloy's River log-shipping config -- both `sol dev up`
@@ -182,7 +183,8 @@ let replace_all ~pattern ~replacement s =
       else if String.sub s i pn = pattern then begin
         Buffer.add_string buf replacement;
         go (i + pn)
-      end else begin
+      end
+      else begin
         Buffer.add_char buf s.[i];
         go (i + 1)
       end
@@ -198,52 +200,68 @@ let replace_all ~pattern ~replacement s =
    loudly at render time, not silently produce wrong River config. *)
 let slice_between ~marker_start ~marker_end content =
   match find_substring ~needle:marker_start content with
-  | None -> invalid_arg (Printf.sprintf "alloy template: marker not found: %S" marker_start)
-  | Some s ->
-    let inner_start = s + String.length marker_start in
-    (match find_substring ~needle:marker_end content with
-     | None -> invalid_arg (Printf.sprintf "alloy template: marker not found: %S" marker_end)
-     | Some e when e < inner_start ->
-       invalid_arg (Printf.sprintf "alloy template: %S found before %S" marker_end marker_start)
-     | Some e ->
-       let before = String.sub content 0 s in
-       let inner  = String.sub content inner_start (e - inner_start) in
-       let after_start = e + String.length marker_end in
-       let after  = String.sub content after_start (String.length content - after_start) in
-       (before, inner, after))
+  | None ->
+      invalid_arg
+        (Printf.sprintf "alloy template: marker not found: %S" marker_start)
+  | Some s -> (
+      let inner_start = s + String.length marker_start in
+      match find_substring ~needle:marker_end content with
+      | None ->
+          invalid_arg
+            (Printf.sprintf "alloy template: marker not found: %S" marker_end)
+      | Some e when e < inner_start ->
+          invalid_arg
+            (Printf.sprintf "alloy template: %S found before %S" marker_end
+               marker_start)
+      | Some e ->
+          let before = String.sub content 0 s in
+          let inner = String.sub content inner_start (e - inner_start) in
+          let after_start = e + String.length marker_end in
+          let after =
+            String.sub content after_start (String.length content - after_start)
+          in
+          (before, inner, after))
 
 let basic_auth_if_start = {|%{ if loki_push_basic_auth_username != "" ~}
 |}
+
 let basic_auth_if_end = "%{ endif ~}\n"
 
 let render_alloy_config ~sol_home ~taxonomy_labels ~loki_push_url
     ~loki_push_basic_auth_username ~loki_push_basic_auth_password =
-  let path = Filename.concat sol_home "cli/platform/infra/base/alloy/logs.alloy.tftpl" in
+  let path =
+    Filename.concat sol_home "cli/platform/infra/base/alloy/logs.alloy.tftpl"
+  in
   let ic = open_in_bin path in
   let content =
-    Fun.protect ~finally:(fun () -> close_in_noerr ic)
+    Fun.protect
+      ~finally:(fun () -> close_in_noerr ic)
       (fun () -> really_input_string ic (in_channel_length ic))
   in
-  let (before, loop_body, after) =
-    slice_between
-      ~marker_start:"%{ for label in taxonomy_labels ~}\n"
-      ~marker_end:"%{ endfor ~}\n"
-      content
+  let before, loop_body, after =
+    slice_between ~marker_start:"%{ for label in taxonomy_labels ~}\n"
+      ~marker_end:"%{ endfor ~}\n" content
   in
   let expanded_loop =
     taxonomy_labels
-    |> List.map (fun label -> replace_all ~pattern:"${label}" ~replacement:label loop_body)
+    |> List.map (fun label ->
+        replace_all ~pattern:"${label}" ~replacement:label loop_body)
     |> String.concat ""
   in
   let content = before ^ expanded_loop ^ after in
-  let (before, inner, after) =
-    slice_between ~marker_start:basic_auth_if_start ~marker_end:basic_auth_if_end content
+  let before, inner, after =
+    slice_between ~marker_start:basic_auth_if_start
+      ~marker_end:basic_auth_if_end content
   in
-  let content = before ^ (if loki_push_basic_auth_username = "" then "" else inner) ^ after in
+  let content =
+    before ^ (if loki_push_basic_auth_username = "" then "" else inner) ^ after
+  in
   content
   |> replace_all ~pattern:"${loki_push_url}" ~replacement:loki_push_url
-  |> replace_all ~pattern:"${loki_push_basic_auth_username}" ~replacement:loki_push_basic_auth_username
-  |> replace_all ~pattern:"${loki_push_basic_auth_password}" ~replacement:loki_push_basic_auth_password
+  |> replace_all ~pattern:"${loki_push_basic_auth_username}"
+       ~replacement:loki_push_basic_auth_username
+  |> replace_all ~pattern:"${loki_push_basic_auth_password}"
+       ~replacement:loki_push_basic_auth_password
 
 (* `sol dev up`'s local profile: push straight to the in-cluster Loki, no
    basic auth (`sol dev up` has no "external backend" concept), the same
@@ -254,14 +272,16 @@ let render_alloy_config ~sol_home ~taxonomy_labels ~loki_push_url
    resolve_sol_home already use) rather than pushing that onto the
    caller. *)
 let alloy_values_yaml () =
-  let sol_home = match Sol_cli_cmd_new.infer_sol_home () with
+  let sol_home =
+    match Sol_cli_cmd_new.infer_sol_home () with
     | Some dir -> dir
     | None ->
-      Printf.eprintf
-        "error: cannot locate the Sol monorepo root to read cli/platform/infra/base/alloy/logs.alloy.tftpl.\n";
-      Printf.eprintf "  Set SOL_HOME to your Sol checkout and re-run:\n";
-      Printf.eprintf "    export SOL_HOME=/path/to/sol\n";
-      exit 1
+        Printf.eprintf
+          "error: cannot locate the Sol monorepo root to read \
+           cli/platform/infra/base/alloy/logs.alloy.tftpl.\n";
+        Printf.eprintf "  Set SOL_HOME to your Sol checkout and re-run:\n";
+        Printf.eprintf "    export SOL_HOME=/path/to/sol\n";
+        exit 1
   in
   (* CODE_LAYER-006: found along the way -- `content: |-`'s own indent here
      is 4 spaces (nested under alloy/configMap), so indent_block's flat
@@ -280,10 +300,10 @@ let alloy_values_yaml () =
 %s
 |}
     (render_alloy_config ~sol_home
-       ~taxonomy_labels:["workspace"; "domain"; "service"; "primitive"; "release"]
+       ~taxonomy_labels:
+         [ "workspace"; "domain"; "service"; "primitive"; "release" ]
        ~loki_push_url:"http://loki:3100/loki/api/v1/push"
-       ~loki_push_basic_auth_username:""
-       ~loki_push_basic_auth_password:""
-     |> String.split_on_char '\n'
-     |> List.map (fun line -> "      " ^ line)
-     |> String.concat "\n")
+       ~loki_push_basic_auth_username:"" ~loki_push_basic_auth_password:""
+    |> String.split_on_char '\n'
+    |> List.map (fun line -> "      " ^ line)
+    |> String.concat "\n")
