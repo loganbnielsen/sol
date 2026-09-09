@@ -1,5 +1,7 @@
 ---
 id: REFAC-077
+branch: REFAC-077/collapse-ticket-states
+worktree: ../sol-REFAC-077-collapse-ticket-states
 type: refactor
 severity: high
 source: git-history-noise discussion with user, 2026-09-08/09
