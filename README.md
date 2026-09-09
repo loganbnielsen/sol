@@ -116,3 +116,5 @@ See [ROADMAP.md](docs/planning/ROADMAP.md) for the current implementation status
 - [Roadmap](docs/planning/ROADMAP.md) — current status and what's next
 - [Contributor map](docs/architecture/contributing-map.md) — where to make common changes
 - Build-from-source, running tests, and the full repo layout: [`.claude/CLAUDE.md`](.claude/CLAUDE.md)
+
+<!-- SCRATCH-999 e2e proof: harmless, removed with this ticket's cleanup -->
