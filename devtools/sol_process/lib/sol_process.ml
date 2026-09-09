@@ -1,37 +1,27 @@
-type status =
-  | Exited of int
-  | Signaled of int
-  | Stopped of int
-
-type result = {
-  status : status;
-  stdout : string;
-  stderr : string;
-}
+type status = Exited of int | Signaled of int | Stopped of int
+type result = { status : status; stdout : string; stderr : string }
 
 (* ponytail: OCaml stores signals as -(posix_n) on Linux; abs gives the POSIX number *)
 let signal_number n = abs n
 
 let status_of_unix = function
-  | Unix.WEXITED n   -> Exited n
+  | Unix.WEXITED n -> Exited n
   | Unix.WSIGNALED n -> Signaled (signal_number n)
-  | Unix.WSTOPPED n  -> Stopped (signal_number n)
+  | Unix.WSTOPPED n -> Stopped (signal_number n)
 
 let status_to_exit_code = function
-  | Exited n   -> n
+  | Exited n -> n
   | Signaled n -> 128 + n
-  | Stopped n  -> 128 + n
+  | Stopped n -> 128 + n
 
-let exit_code r =
-  status_to_exit_code r.status
+let exit_code r = status_to_exit_code r.status
 
 let succeeded r =
   match r.status with
   | Exited 0 -> true
   | Exited _ | Signaled _ | Stopped _ -> false
 
-let command_of_argv argv =
-  String.concat " " (List.map Filename.quote argv)
+let command_of_argv argv = String.concat " " (List.map Filename.quote argv)
 
 let trim_result r =
   { r with stdout = String.trim r.stdout; stderr = String.trim r.stderr }
@@ -55,39 +45,37 @@ let capture_fds stdout_fd stderr_fd =
   let rec loop stdout_open stderr_open =
     if stdout_open || stderr_open then begin
       let reads =
-        (if stdout_open then [stdout_fd] else [])
-        @ (if stderr_open then [stderr_fd] else [])
+        (if stdout_open then [ stdout_fd ] else [])
+        @ if stderr_open then [ stderr_fd ] else []
       in
       let ready, _, _ = Unix.select reads [] [] (-1.0) in
       let stdout_open =
         stdout_open
-        &&
-        (not (List.mem stdout_fd ready)
-         ||
-         match read_available stdout_fd stdout_buf with
-         | `Open -> true
-         | `Closed -> false)
+        && ((not (List.mem stdout_fd ready))
+           ||
+           match read_available stdout_fd stdout_buf with
+           | `Open -> true
+           | `Closed -> false)
       in
       let stderr_open =
         stderr_open
-        &&
-        (not (List.mem stderr_fd ready)
-         ||
-         match read_available stderr_fd stderr_buf with
-         | `Open -> true
-         | `Closed -> false)
+        && ((not (List.mem stderr_fd ready))
+           ||
+           match read_available stderr_fd stderr_buf with
+           | `Open -> true
+           | `Closed -> false)
       in
       loop stdout_open stderr_open
     end
   in
   loop true true;
-  { status = Exited 0
-  ; stdout = Buffer.contents stdout_buf
-  ; stderr = Buffer.contents stderr_buf
+  {
+    status = Exited 0;
+    stdout = Buffer.contents stdout_buf;
+    stderr = Buffer.contents stderr_buf;
   }
 
-let close_noerr fd =
-  try Unix.close fd with Unix.Unix_error _ -> ()
+let close_noerr fd = try Unix.close fd with Unix.Unix_error _ -> ()
 
 (* Run [argv] directly with Unix.create_process and capture stdout + stderr.
    No shell is involved, so metacharacters are passed as ordinary argument
@@ -95,9 +83,9 @@ let close_noerr fd =
 let run_argv ?(echo = false) argv =
   match argv with
   | [] -> invalid_arg "Sol_process.run_argv: empty argv"
-  | prog :: _ ->
+  | prog :: _ -> (
       if echo then Printf.printf "  $ %s\n%!" (command_of_argv argv);
-      let stdin_fd = Unix.openfile "/dev/null" [Unix.O_RDONLY] 0 in
+      let stdin_fd = Unix.openfile "/dev/null" [ Unix.O_RDONLY ] 0 in
       let stdout_r, stdout_w = Unix.pipe ~cloexec:true () in
       let stderr_r, stderr_w = Unix.pipe ~cloexec:true () in
       match
@@ -118,10 +106,13 @@ let run_argv ?(echo = false) argv =
           close_noerr stdout_w;
           close_noerr stderr_r;
           close_noerr stderr_w;
-          { status = Exited 127
-          ; stdout = ""
-          ; stderr = Printf.sprintf "%s: %s %s" fn arg (Unix.error_message err) |> String.trim
-          }
+          {
+            status = Exited 127;
+            stdout = "";
+            stderr =
+              Printf.sprintf "%s: %s %s" fn arg (Unix.error_message err)
+              |> String.trim;
+          })
 
 (* Run [cmd] via /bin/sh and capture stdout + stderr.
    Reads stdout then stderr sequentially; safe for the small outputs typical
@@ -143,7 +134,9 @@ let lines_shell ?(echo = false) cmd =
   let ic = Unix.open_process_in (cmd ^ " 2>/dev/null") in
   let content = In_channel.input_all ic in
   ignore (Unix.close_process_in ic);
-  List.filter (fun s -> s <> "") (String.split_on_char '\n' (String.trim content))
+  List.filter
+    (fun s -> s <> "")
+    (String.split_on_char '\n' (String.trim content))
 
 (* Capture stdout as a trimmed string; stderr goes to /dev/null. *)
 let output_shell ?(echo = false) cmd =

@@ -1,10 +1,5 @@
-type compatibility_response =
-  { is_compatible : bool
-  }
-
-type registration_response =
-  { id : int
-  }
+type compatibility_response = { is_compatible : bool }
+type registration_response = { id : int }
 
 let decode_json ~parse_error resp_body =
   try Ok (Yojson.Safe.from_string resp_body)
@@ -19,94 +14,95 @@ let decode_compatibility_response resp_body =
       resp_body
   in
   match json with
-  | `Assoc fields ->
-    (match List.assoc_opt "is_compatible" fields with
-     | Some (`Bool is_compatible) -> Ok { is_compatible }
-     | _ -> Error ("unexpected registry response: " ^ resp_body))
+  | `Assoc fields -> (
+      match List.assoc_opt "is_compatible" fields with
+      | Some (`Bool is_compatible) -> Ok { is_compatible }
+      | _ -> Error ("unexpected registry response: " ^ resp_body))
   | _ -> Error ("unexpected registry response: " ^ resp_body)
 
 let decode_registration_response resp_body =
   let ( let* ) = Result.bind in
   let* json =
     decode_json
-      ~parse_error:(fun body ->
-        "schema registry: json parse error in: " ^ body)
+      ~parse_error:(fun body -> "schema registry: json parse error in: " ^ body)
       resp_body
   in
   match json with
-  | `Assoc fields ->
-    (match List.assoc_opt "id" fields with
-     | Some (`Int id) -> Ok { id }
-     | _ -> Error ("schema registry: missing 'id' in: " ^ resp_body))
+  | `Assoc fields -> (
+      match List.assoc_opt "id" fields with
+      | Some (`Int id) -> Ok { id }
+      | _ -> Error ("schema registry: missing 'id' in: " ^ resp_body))
   | _ -> Error ("schema registry: unexpected response: " ^ resp_body)
 
 module Schema = struct
   let check ~net ~clock ~registry_url (module M : Kafka_service_intf.MESSAGE) =
     let topic_name = Kafka_service_intf.topic_name_to_string M.topic_name in
     let subject = topic_name ^ "-value" in
-    let body = Yojson.Safe.to_string (`Assoc [
-      ("schemaType", `String "JSON");
-      ("schema",     `String M.schema);
-    ]) in
-    match Kafka_service_http.http_post net ~clock ~base_url:registry_url
-            ~path:(Printf.sprintf "/compatibility/subjects/%s/versions/latest" subject)
-            ~content_type:"application/vnd.schemaregistry.v1+json"
-            ~body with
+    let body =
+      Yojson.Safe.to_string
+        (`Assoc [ ("schemaType", `String "JSON"); ("schema", `String M.schema) ])
+    in
+    match
+      Kafka_service_http.http_post net ~clock ~base_url:registry_url
+        ~path:
+          (Printf.sprintf "/compatibility/subjects/%s/versions/latest" subject)
+        ~content_type:"application/vnd.schemaregistry.v1+json" ~body
+    with
     | Error e -> Error ("connection failed: " ^ e)
-    | Ok (200, resp_body) ->
-      (match decode_compatibility_response resp_body with
-       | Error _ as err -> err
-       | Ok { is_compatible = true } -> Ok ()
-       | Ok { is_compatible = false } ->
-         Error (Printf.sprintf
-           "schema for topic '%s' is not compatible with the registered version"
-           topic_name))
-    | Ok (404, _) ->
-      Ok ()
+    | Ok (200, resp_body) -> (
+        match decode_compatibility_response resp_body with
+        | Error _ as err -> err
+        | Ok { is_compatible = true } -> Ok ()
+        | Ok { is_compatible = false } ->
+            Error
+              (Printf.sprintf
+                 "schema for topic '%s' is not compatible with the registered \
+                  version"
+                 topic_name))
+    | Ok (404, _) -> Ok ()
     | Ok (status, body) ->
-      Error (Printf.sprintf "schema registry HTTP %d: %s" status body)
+        Error (Printf.sprintf "schema registry HTTP %d: %s" status body)
 
   let check_all ~net ~clock ~registry_url modules =
-    List.fold_left (fun acc m ->
-      match acc with
-      | Error _ as e -> e
-      | Ok ()        -> check ~net ~clock ~registry_url m
-    ) (Ok ()) modules
+    List.fold_left
+      (fun acc m ->
+        match acc with
+        | Error _ as e -> e
+        | Ok () -> check ~net ~clock ~registry_url m)
+      (Ok ()) modules
 end
 
 let set_subject_compatibility net ~clock ~registry_url ~topic_name =
-
   let subject = topic_name ^ "-value" in
   let body = {|{"compatibility":"FULL"}|} in
-  match Kafka_service_http.http_put net ~clock ~base_url:registry_url
-          ~path:(Printf.sprintf "/config/%s" subject)
-          ~content_type:"application/vnd.schemaregistry.v1+json"
-          ~body with
+  match
+    Kafka_service_http.http_put net ~clock ~base_url:registry_url
+      ~path:(Printf.sprintf "/config/%s" subject)
+      ~content_type:"application/vnd.schemaregistry.v1+json" ~body
+  with
   | Error e -> Error ("set compatibility: " ^ e)
   | Ok (200, _) | Ok (204, _) -> Ok ()
   | Ok (status, resp_body) ->
-    Error (Printf.sprintf "set compatibility: HTTP %d: %s" status resp_body)
+      Error (Printf.sprintf "set compatibility: HTTP %d: %s" status resp_body)
 
 let register_schema net ~clock ~registry_url ~topic_name ~schema =
-
   let subject = topic_name ^ "-value" in
   let body =
-    Yojson.Safe.to_string (`Assoc [
-      ("schemaType", `String "JSON");
-      ("schema",     `String schema);
-    ])
+    Yojson.Safe.to_string
+      (`Assoc [ ("schemaType", `String "JSON"); ("schema", `String schema) ])
   in
-  match Kafka_service_http.http_post net ~clock ~base_url:registry_url
-          ~path:(Printf.sprintf "/subjects/%s/versions" subject)
-          ~content_type:"application/vnd.schemaregistry.v1+json"
-          ~body with
+  match
+    Kafka_service_http.http_post net ~clock ~base_url:registry_url
+      ~path:(Printf.sprintf "/subjects/%s/versions" subject)
+      ~content_type:"application/vnd.schemaregistry.v1+json" ~body
+  with
   | Error e -> Error ("schema registry connect: " ^ e)
-  | Ok (status, resp_body) when status = 200 || status = 201 ->
-    (match decode_registration_response resp_body with
-     | Ok { id } -> Ok id
-     | Error _ as err -> err)
+  | Ok (status, resp_body) when status = 200 || status = 201 -> (
+      match decode_registration_response resp_body with
+      | Ok { id } -> Ok id
+      | Error _ as err -> err)
   | Ok (status, resp_body) ->
-    Error (Printf.sprintf "schema registry: HTTP %d: %s" status resp_body)
+      Error (Printf.sprintf "schema registry: HTTP %d: %s" status resp_body)
 
 module Confluent_wire = struct
   let header_len = 5
@@ -130,7 +126,9 @@ module Confluent_wire = struct
         Error "wire format: invalid magic byte"
       else
         let schema_id = Int32.to_int (Cstruct.BE.get_uint32 cs 1) in
-        let json_str = Cstruct.(to_string (sub cs header_len (length cs - header_len))) in
+        let json_str =
+          Cstruct.(to_string (sub cs header_len (length cs - header_len)))
+        in
         Ok (schema_id, json_str)
 end
 
@@ -148,18 +146,18 @@ let decode_message topic raw_msg =
   let trace_ctx = Obs_trace.extract_from_headers string_headers in
   let result =
     let* raw_bytes =
-      Option.to_result raw_bytes ~none:"wire format: tombstone (message has no value)"
+      Option.to_result raw_bytes
+        ~none:"wire format: tombstone (message has no value)"
     in
-    let* (_schema_id, json_str) = decode_wire raw_bytes in
+    let* _schema_id, json_str = decode_wire raw_bytes in
     let* json =
-      (try Ok (Yojson.Safe.from_string json_str)
-       with
-       | (Out_of_memory | Stack_overflow | Sys.Break) as exn -> raise exn
-       | exn -> Error ("json parse: " ^ Printexc.to_string exn))
+      try Ok (Yojson.Safe.from_string json_str) with
+      | (Out_of_memory | Stack_overflow | Sys.Break) as exn -> raise exn
+      | exn -> Error ("json parse: " ^ Printexc.to_string exn)
     in
     topic.Kafka_service_intf.decode json
     |> Result.map_error (fun e -> "message decode: " ^ e)
   in
   match result with
-  | Ok msg  -> Ok (msg, trace_ctx)
+  | Ok msg -> Ok (msg, trace_ctx)
   | Error e -> Error (e, raw_bytes)

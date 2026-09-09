@@ -8,21 +8,23 @@
    output stays readable. *)
 let url_encode_logql s =
   let buf = Buffer.create (String.length s * 2) in
-  String.iter (fun c ->
-    Buffer.add_string buf (match c with
-      | '{' -> "%7B"
-      | '}' -> "%7D"
-      | '"' -> "%22"
-      | ',' -> "%2C"
-      | '=' -> "%3D"
-      | ' ' -> "%20"
-      | '%' -> "%25"
-      | '+' -> "%2B"
-      | '&' -> "%26"
-      | '?' -> "%3F"
-      | '#' -> "%23"
-      | c   -> String.make 1 c)
-  ) s;
+  String.iter
+    (fun c ->
+      Buffer.add_string buf
+        (match c with
+        | '{' -> "%7B"
+        | '}' -> "%7D"
+        | '"' -> "%22"
+        | ',' -> "%2C"
+        | '=' -> "%3D"
+        | ' ' -> "%20"
+        | '%' -> "%25"
+        | '+' -> "%2B"
+        | '&' -> "%26"
+        | '?' -> "%3F"
+        | '#' -> "%23"
+        | c -> String.make 1 c))
+    s;
   Buffer.contents buf
 
 (* Build a Grafana Explore URL for the given raw LogQL query. *)
@@ -38,18 +40,18 @@ let explore_url ~base_url ~logql =
    k8s_name: service k8s name (hyphens, lowercase)
    Returns a URL the operator can paste directly into a browser. *)
 let grafana_explore_url ~base_url ~ns ~k8s_name =
-  explore_url ~base_url ~logql:(Printf.sprintf {|{namespace="%s",app="%s"}|} ns k8s_name)
+  explore_url ~base_url
+    ~logql:(Printf.sprintf {|{namespace="%s",app="%s"}|} ns k8s_name)
 
-type kubectl_log_target =
-  | Deployment of string
-  | App_selector of string
+type kubectl_log_target = Deployment of string | App_selector of string
 
 let kubectl_logs_argv ~ns ~target ~follow ~tail =
-  let target_args = match target with
-    | Deployment name -> ["deployment/" ^ name]
-    | App_selector app -> ["-l"; "app=" ^ app; "--all-containers=true"]
+  let target_args =
+    match target with
+    | Deployment name -> [ "deployment/" ^ name ]
+    | App_selector app -> [ "-l"; "app=" ^ app; "--all-containers=true" ]
   in
-  ["kubectl"; "logs"; "-n"; ns]
+  [ "kubectl"; "logs"; "-n"; ns ]
   @ target_args
-  @ (if follow then ["--follow"] else [])
-  @ ["--tail=" ^ string_of_int tail]
+  @ (if follow then [ "--follow" ] else [])
+  @ [ "--tail=" ^ string_of_int tail ]

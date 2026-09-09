@@ -9,25 +9,18 @@
    post-merge revert undoes the code and the ticket's DONE move atomically,
    since they were always the same commit — it lands back in
    [Ready_for_engineering] for free. *)
-type ticket_state =
-  | Backlog
-  | Ready_for_engineering
-  | Done
+type ticket_state = Backlog | Ready_for_engineering | Done
 
 val state_to_dir : ticket_state -> string
 val state_of_dir : string -> ticket_state option
-
 val all_states : ticket_state list
-
 val parse_frontmatter : string -> (string * string) list
 val fm_get : (string * string) list -> string -> string option
 val set_frontmatter_field : string -> string -> string -> string
-
 val parse_depends : string -> string list
 val has_human_decision_gate : string -> bool
 val human_decision_details : string -> string
 val ticket_title : string -> string
-
 val find_ticket : string -> (ticket_state * string) option
 val dependency_status : string -> [ `Done | `Unknown | `Blocked of ticket_state ]
 val dependency_summary : string list -> string

@@ -8,12 +8,14 @@ type action_result =
 
 val mode_of_env : string -> (mode, string) result
 val validate_key : string -> (unit, string) result
+
 val secret_manifest :
   existing_data:(string * string) list ->
   namespace:string ->
   key:string ->
   value:string ->
   string
+
 val redacted_result : action_result -> string
 
 val set :

@@ -10,4 +10,10 @@
 (test
  (name test_kafka_service_integration)
  (modules test_kafka_service_integration)
- (libraries kafka_eio_service kafka-eio kafka_test_helpers alcotest eio_main unix))
+ (libraries
+  kafka_eio_service
+  kafka-eio
+  kafka_test_helpers
+  alcotest
+  eio_main
+  unix))

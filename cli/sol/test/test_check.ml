@@ -7,74 +7,101 @@ let mkdir_p path =
   ignore (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote path)))
 
 let with_tmp f =
-  let root = Filename.concat (Filename.get_temp_dir_name ())
-      ("sol-check-" ^ string_of_int (Random.bits ())) in
+  let root =
+    Filename.concat
+      (Filename.get_temp_dir_name ())
+      ("sol-check-" ^ string_of_int (Random.bits ()))
+  in
   mkdir_p root;
   Fun.protect
-    ~finally:(fun () -> ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote root))))
+    ~finally:(fun () ->
+      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote root))))
     (fun () ->
-       let cwd = Sys.getcwd () in
-       Fun.protect
-         ~finally:(fun () -> Sys.chdir cwd)
-         (fun () -> Sys.chdir root; f root))
+      let cwd = Sys.getcwd () in
+      Fun.protect
+        ~finally:(fun () -> Sys.chdir cwd)
+        (fun () ->
+          Sys.chdir root;
+          f root))
 
 let has_msg needle findings =
-  List.exists (fun (f : Sol_cli_check.finding) ->
-    String.contains f.message needle.[0] &&
-    (try ignore (Str.search_forward (Str.regexp_string needle) f.message 0); true
-     with Not_found -> false)
-  ) findings
+  List.exists
+    (fun (f : Sol_cli_check.finding) ->
+      String.contains f.message needle.[0]
+      &&
+        try
+          ignore (Str.search_forward (Str.regexp_string needle) f.message 0);
+          true
+        with Not_found -> false)
+    findings
 
 let test_missing_app_result () =
   with_tmp (fun _ ->
-    match Sol_cli_manifest.discover_services_result ~filter_path:None with
-    | Error Sol_cli_manifest.Missing_app_dir -> ()
-    | Ok _ -> Alcotest.fail "expected missing app error")
+      match Sol_cli_manifest.discover_services_result ~filter_path:None with
+      | Error Sol_cli_manifest.Missing_app_dir -> ()
+      | Ok _ -> Alcotest.fail "expected missing app error")
 
 let test_discover_valid_service () =
   with_tmp (fun _ ->
-    mkdir_p "app/payments/charge_svc";
-    write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
-    match Sol_cli_manifest.discover_services_result ~filter_path:None with
-    | Error e -> Alcotest.fail (Sol_cli_manifest.discover_error_to_string e)
-    | Ok [svc] ->
-      Alcotest.(check string) "domain" "payments" svc.domain;
-      Alcotest.(check string) "name" "charge_svc" svc.name
-    | Ok _ -> Alcotest.fail "expected one service")
+      mkdir_p "app/payments/charge_svc";
+      write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
+      match Sol_cli_manifest.discover_services_result ~filter_path:None with
+      | Error e -> Alcotest.fail (Sol_cli_manifest.discover_error_to_string e)
+      | Ok [ svc ] ->
+          Alcotest.(check string) "domain" "payments" svc.domain;
+          Alcotest.(check string) "name" "charge_svc" svc.name
+      | Ok _ -> Alcotest.fail "expected one service")
 
 let test_check_valid_service () =
   with_tmp (fun _ ->
-    mkdir_p "app/payments/charge_svc";
-    write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
-    write "app/payments/charge_svc/sol.toml" "[infra.env]\nsecrets = [\"DATABASE_URL\"]\n";
-    let findings = Sol_cli_check.run ~filter_path:None () in
-    Alcotest.(check bool) "no errors" false (Sol_cli_check.has_errors findings))
+      mkdir_p "app/payments/charge_svc";
+      write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
+      write "app/payments/charge_svc/sol.toml"
+        "[infra.env]\nsecrets = [\"DATABASE_URL\"]\n";
+      let findings = Sol_cli_check.run ~filter_path:None () in
+      Alcotest.(check bool)
+        "no errors" false
+        (Sol_cli_check.has_errors findings))
 
 let test_check_bad_secret_key () =
   with_tmp (fun _ ->
-    mkdir_p "app/payments/charge_svc";
-    write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
-    write "app/payments/charge_svc/sol.toml" "[infra.env]\nsecrets = [\"bad-key\"]\n";
-    let findings = Sol_cli_check.run ~filter_path:None () in
-    Alcotest.(check bool) "has errors" true (Sol_cli_check.has_errors findings);
-    Alcotest.(check bool) "mentions invalid secret" true (has_msg "invalid secret key" findings))
+      mkdir_p "app/payments/charge_svc";
+      write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
+      write "app/payments/charge_svc/sol.toml"
+        "[infra.env]\nsecrets = [\"bad-key\"]\n";
+      let findings = Sol_cli_check.run ~filter_path:None () in
+      Alcotest.(check bool)
+        "has errors" true
+        (Sol_cli_check.has_errors findings);
+      Alcotest.(check bool)
+        "mentions invalid secret" true
+        (has_msg "invalid secret key" findings))
 
 let test_check_missing_dockerfile () =
   with_tmp (fun _ ->
-    mkdir_p "app/payments/charge_svc";
-    let findings = Sol_cli_check.run ~filter_path:None () in
-    Alcotest.(check bool) "has errors" true (Sol_cli_check.has_errors findings);
-    Alcotest.(check bool) "mentions Dockerfile" true (has_msg "Dockerfile is missing" findings))
+      mkdir_p "app/payments/charge_svc";
+      let findings = Sol_cli_check.run ~filter_path:None () in
+      Alcotest.(check bool)
+        "has errors" true
+        (Sol_cli_check.has_errors findings);
+      Alcotest.(check bool)
+        "mentions Dockerfile" true
+        (has_msg "Dockerfile is missing" findings))
 
 let () =
-  Alcotest.run "sol_cli_check" [
-    "discover", [
-      Alcotest.test_case "missing app returns error" `Quick test_missing_app_result;
-      Alcotest.test_case "valid service" `Quick test_discover_valid_service;
-    ];
-    "check", [
-      Alcotest.test_case "valid service" `Quick test_check_valid_service;
-      Alcotest.test_case "bad secret key" `Quick test_check_bad_secret_key;
-      Alcotest.test_case "missing Dockerfile" `Quick test_check_missing_dockerfile;
-    ];
-  ]
+  Alcotest.run "sol_cli_check"
+    [
+      ( "discover",
+        [
+          Alcotest.test_case "missing app returns error" `Quick
+            test_missing_app_result;
+          Alcotest.test_case "valid service" `Quick test_discover_valid_service;
+        ] );
+      ( "check",
+        [
+          Alcotest.test_case "valid service" `Quick test_check_valid_service;
+          Alcotest.test_case "bad secret key" `Quick test_check_bad_secret_key;
+          Alcotest.test_case "missing Dockerfile" `Quick
+            test_check_missing_dockerfile;
+        ] );
+    ]

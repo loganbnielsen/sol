@@ -1,21 +1,18 @@
 type handler = Request.t -> Response.t
+type pattern_segment = Literal of string | Param of string
 
-type pattern_segment =
-  | Literal of string
-  | Param of string
+type pattern = {
+  source : string;
+  segments : pattern_segment list;
+  trailing_slash : bool;
+}
 
-type pattern =
-  { source         : string
-  ; segments       : pattern_segment list
-  ; trailing_slash : bool
-  }
-
-type t =
-  { method_  : Request.method_
-  ; pattern  : pattern
-  ; auth     : Auth.level
-  ; handler  : handler
-  }
+type t = {
+  method_ : Request.method_;
+  pattern : pattern;
+  auth : Auth.level;
+  handler : handler;
+}
 
 (* ── Path parsing and matching ───────────────────────────────────────────── *)
 
@@ -49,43 +46,42 @@ let valid_param_name name =
   len > 0 && is_start name.[0] && String.for_all is_rest name
 
 let parse_pattern source =
-  let fail msg = Error (Printf.sprintf "invalid route pattern %S: %s" source msg) in
+  let fail msg =
+    Error (Printf.sprintf "invalid route pattern %S: %s" source msg)
+  in
   if source = "" then fail "empty pattern"
   else if source.[0] <> '/' then fail "pattern must start with /"
   else
     match parse_request_path source with
     | None -> fail "pattern must not contain consecutive slashes"
     | Some (raw_segments, trailing_slash) ->
-      let rec parse_segments acc = function
-        | [] -> Ok (List.rev acc)
-        | seg :: rest ->
-          if String.length seg > 0 && seg.[0] = ':' then
-            let name = String.sub seg 1 (String.length seg - 1) in
-            if valid_param_name name then
-              parse_segments (Param name :: acc) rest
-            else
-              fail (Printf.sprintf "invalid parameter segment %S" seg)
-          else if String.contains seg ':' then
-            fail (Printf.sprintf "literal segment %S must not contain :" seg)
-          else
-            parse_segments (Literal seg :: acc) rest
-      in
-      Result.map
-        (fun segments -> { source; segments; trailing_slash })
-        (parse_segments [] raw_segments)
+        let rec parse_segments acc = function
+          | [] -> Ok (List.rev acc)
+          | seg :: rest ->
+              if String.length seg > 0 && seg.[0] = ':' then
+                let name = String.sub seg 1 (String.length seg - 1) in
+                if valid_param_name name then
+                  parse_segments (Param name :: acc) rest
+                else fail (Printf.sprintf "invalid parameter segment %S" seg)
+              else if String.contains seg ':' then
+                fail
+                  (Printf.sprintf "literal segment %S must not contain :" seg)
+              else parse_segments (Literal seg :: acc) rest
+        in
+        Result.map
+          (fun segments -> { source; segments; trailing_slash })
+          (parse_segments [] raw_segments)
 
 let pattern source =
-  match parse_pattern source with
-  | Ok p -> p
-  | Error msg -> invalid_arg msg
+  match parse_pattern source with Ok p -> p | Error msg -> invalid_arg msg
 
 let pattern_to_string p = p.source
 
 let make m pattern_source ~auth handler =
   { method_ = m; pattern = pattern pattern_source; auth; handler }
 
-let get    p ~auth h = make `GET    p ~auth h
-let post   p ~auth h = make `POST   p ~auth h
-let put    p ~auth h = make `PUT    p ~auth h
-let patch  p ~auth h = make `PATCH  p ~auth h
+let get p ~auth h = make `GET p ~auth h
+let post p ~auth h = make `POST p ~auth h
+let put p ~auth h = make `PUT p ~auth h
+let patch p ~auth h = make `PATCH p ~auth h
 let delete p ~auth h = make `DELETE p ~auth h

@@ -34,36 +34,11 @@
  (deps ../bin/main.exe)
  (action
   (bash
-   "set -eu
-sol=$(pwd)/%{deps}
-tmp=$(mktemp -d)
-trap 'rm -rf \"$tmp\"' EXIT
-cat > \"$tmp/sol.yml\" <<'EOF'
-services:
-  api:
-    uses: [/us-east-1/analytics_db]
-EOF
-cd \"$tmp\"
-\"$sol\" plan prod/aws/us-east-1 | grep -F 'uses: /us-east-1/analytics_db (cross-region)' >/dev/null")))
+   "set -eu\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\ncat > \"$tmp/sol.yml\" <<'EOF'\nservices:\n  api:\n    uses: [/us-east-1/analytics_db]\nEOF\ncd \"$tmp\"\n\"$sol\" plan prod/aws/us-east-1 | grep -F 'uses: /us-east-1/analytics_db (cross-region)' >/dev/null")))
 
 (rule
  (alias runtest)
  (deps ../bin/main.exe)
  (action
   (bash
-   "set -eu
-sol=$(pwd)/%{deps}
-tmp=$(mktemp -d)
-trap 'rm -rf \"$tmp\"' EXIT
-mkdir -p \"$tmp/app/payments/charge_svc\"
-cat > \"$tmp/app/payments/charge_svc/Dockerfile\" <<'EOF'
-FROM scratch
-EOF
-cd \"$tmp\"
-\"$sol\" check >\"$tmp/ok.out\"
-rm \"$tmp/app/payments/charge_svc/Dockerfile\"
-if \"$sol\" check >\"$tmp/bad.out\" 2>&1; then
-  echo 'sol check unexpectedly passed without Dockerfile' >&2
-  exit 1
-fi
-grep -F 'Dockerfile is missing' \"$tmp/bad.out\" >/dev/null")))
+   "set -eu\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nmkdir -p \"$tmp/app/payments/charge_svc\"\ncat > \"$tmp/app/payments/charge_svc/Dockerfile\" <<'EOF'\nFROM scratch\nEOF\ncd \"$tmp\"\n\"$sol\" check >\"$tmp/ok.out\"\nrm \"$tmp/app/payments/charge_svc/Dockerfile\"\nif \"$sol\" check >\"$tmp/bad.out\" 2>&1; then\n  echo 'sol check unexpectedly passed without Dockerfile' >&2\n  exit 1\nfi\ngrep -F 'Dockerfile is missing' \"$tmp/bad.out\" >/dev/null")))
