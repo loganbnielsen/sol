@@ -11,10 +11,12 @@
       → call pipeline
     ]} *)
 
+type execution_mode = Dry_run | Apply
+
 (** A validated request for [sol up]: build images and deploy to a local cluster. *)
 type up_request = {
   filter_path          : string option;
-  dry_run              : bool;
+  mode                 : execution_mode;
   image_tag            : string;
   confirm_group_change : bool;
 }
@@ -26,7 +28,7 @@ type deploy_request = {
       [Sol_cli_config.load_for_target]. Required: [sol deploy]'s positional
       target argument, matching [sol plan]'s existing convention. *)
   filter_path           : string option;
-  dry_run               : bool;
+  mode                  : execution_mode;
   emit_to               : string option;
   emit_plan_to          : string option;
   image_tag             : string;

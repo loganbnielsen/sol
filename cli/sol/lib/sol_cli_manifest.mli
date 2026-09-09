@@ -21,6 +21,12 @@ type service = {
 
 val primitive_of_suffix : string -> primitive option
 val primitive_label : primitive -> string
+
+type discover_error =
+  | Missing_app_dir
+
+val discover_error_to_string : discover_error -> string
+val discover_services_result : filter_path:string option -> (service list, discover_error) result
 val discover_services : filter_path:string option -> service list
 val extract_schedule  : dir:string -> name:string -> string
 

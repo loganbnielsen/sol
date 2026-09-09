@@ -166,14 +166,16 @@ let test_up_request_falls_back_to_git_sha () =
                 req.Sol_cli_command_request.image_tag
   | Error msg -> Alcotest.fail msg
 
-let test_up_request_preserves_dry_run () =
+let test_up_request_preserves_mode () =
   let r = Sol_cli_command_request.make_up_request
     ~filter_path:None ~dry_run:true ~tag:(Some "t")
     ~confirm_group_change:false ~git_sha:(fun () -> "")
   in
   match r with
-  | Ok req -> Alcotest.(check bool) "dry_run preserved" true
-                req.Sol_cli_command_request.dry_run
+  | Ok req -> Alcotest.(check bool) "dry-run mode" true
+                (match req.Sol_cli_command_request.mode with
+                 | Sol_cli_command_request.Dry_run -> true
+                 | Apply -> false)
   | Error msg -> Alcotest.fail msg
 
 let test_deploy_request_uses_explicit_tag () =
@@ -566,7 +568,7 @@ let () =
     [ "request_validation", [
         Alcotest.test_case "up: explicit tag used"          `Quick test_up_request_uses_explicit_tag
       ; Alcotest.test_case "up: git sha fallback"           `Quick test_up_request_falls_back_to_git_sha
-      ; Alcotest.test_case "up: dry_run preserved"          `Quick test_up_request_preserves_dry_run
+      ; Alcotest.test_case "up: mode preserved"             `Quick test_up_request_preserves_mode
       ; Alcotest.test_case "deploy: explicit tag used"      `Quick test_deploy_request_uses_explicit_tag
       ; Alcotest.test_case "deploy: local mode Ok"          `Quick test_deploy_request_local_mode_builds_request
       ; Alcotest.test_case "deploy: emit_to stored"         `Quick test_deploy_request_gitops_emit_to_stored

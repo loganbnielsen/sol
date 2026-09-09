@@ -23,6 +23,7 @@
  (modules
   main
   version
+  cmd_check
   cmd_dev
   cmd_plan
   cmd_up

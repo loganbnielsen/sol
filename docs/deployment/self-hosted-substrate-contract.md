@@ -53,31 +53,37 @@ The following substrate inputs must exist before running `sol deploy`.
 - Comma-separated broker addresses, e.g. `broker-1:9092,broker-2:9092`.
 - A Confluent-compatible schema registry URL, e.g. `http://schema-registry:8081`.
 - Sol workers and services read `KAFKA_BROKERS` and `SCHEMA_REGISTRY_URL` from
-  their environment. You supply these values via a Kubernetes Secret whose name
-  you pass as `kafka_secret_name` in `sol.toml`.
-- Sol generates the Secret reference in the Deployment env block. It does not
-  create the Kafka cluster or seed topics.
+  their environment. The generated ConfigMap points at Sol's in-cluster
+  Redpanda defaults. For an external Kafka substrate, override those values via
+  `[infra.env] config = { ... }` in each service's `sol.toml` or through a
+  GitOps overlay.
+- Sol's workspace scan discovers topic intent from `events/**/sol.toml`, but
+  it does not create an external Kafka cluster for you.
 
 ### Postgres Connection Secret
 
-- A Kubernetes Secret containing a `DATABASE_URL` key with a valid libpq
+- A Kubernetes Secret containing a `POSTGRES_URL` key with a valid libpq
   connection string, e.g.
   `postgresql://user:password@host:5432/dbname?sslmode=require`.
-- Pass the Secret name via `postgres_secret_name` in `sol.toml` or the
-  `--postgres-secret` flag.
-- Sol generates a `valueFrom.secretKeyRef` reference. It does not create the
-  database, run migrations at cluster startup, or manage credentials rotation.
-  Use `sol migrate` to apply migrations from CI after the schema Secret exists.
+- Sol renders a per-workload Secret named `<service>-secrets` and injects it
+  through `envFrom`. In live direct deploys, `POSTGRES_URL` must be present in
+  the caller's environment. In GitOps output, the value is emitted empty or via
+  an `ExternalSecret`, depending on `--secret-backend`.
+- Sol does not create the database in the application deploy path, run
+  migrations at cluster startup, or manage credentials rotation. Use
+  `sol migrate` to apply migrations after `POSTGRES_URL` is available.
 
 ### Observability Endpoints
 
 - **Loki**: HTTP push URL, e.g. `http://loki.monitoring.svc:3100`.
-  Pass via `LOKI_URL` environment variable or `loki_url` in `sol.toml`.
+  The generated ConfigMap defaults `LOKI_URL` to Sol's in-cluster Loki service.
 - **Prometheus Pushgateway**: HTTP URL for `sol fn` metrics push, e.g.
   `http://pushgateway.monitoring.svc:9091`.
-  Pass via `PUSHGATEWAY_URL` or `pushgateway_url` in `sol.toml`.
-- Both are optional. If omitted, the corresponding observability features are
-  disabled at runtime without crashing the service.
+  The generated ConfigMap defaults `PUSHGATEWAY_URL` to Sol's in-cluster
+  Pushgateway service.
+- **Tempo**: OTLP/HTTP URL, defaulted as `TEMPO_URL` when Tempo is installed.
+- Override these with `[infra.env] config = { ... }` if you use external
+  observability endpoints.
 
 ### Base Domain and TLS (Optional)
 
@@ -87,10 +93,9 @@ The following substrate inputs must exist before running `sol deploy`.
 - When `ingress_host` is set, Sol generates an Ingress object for the `-svc`
   with a host rule matching that value.
 - TLS termination is the cluster's responsibility. Sol does not create
-  `Certificate` resources or interact with cert-manager unless you add a
-  `tls_secret_name` field to the service spec in `sol.toml`. Sol will then
-  reference that secret in the Ingress TLS block, but it will not provision the
-  certificate.
+  `Certificate` resources or per-service Ingress TLS blocks today. cert-manager
+  is installed by the base Terraform module, but application Ingress TLS wiring
+  currently belongs to the cluster/overlay layer.
 - If no service has `ingress_host` set, no Ingress objects are generated and
   services are only reachable via `kubectl port-forward` or ClusterIP.
 
@@ -105,8 +110,8 @@ objects for each service in your workspace:
 |---|---|
 | Namespace | Always. One namespace per `<workspace>-<domain>` pair. |
 | ServiceAccount | Always. One per service, in its namespace. |
-| ConfigMap | When `config:` keys are present in `sol.toml`. |
-| Secret (redacted) | Always, in GitOps mode (`--emit-to`). All `stringData` values are empty strings with a comment listing the keys to populate. In direct mode the dev defaults are used. |
+| ConfigMap | Always. Contains Sol's platform defaults plus any `[infra.env] config` keys from `sol.toml`. |
+| Secret | Always. Direct deploy reads required secret values such as `POSTGRES_URL` from the caller's environment. GitOps mode (`--emit-to`) emits empty `stringData` placeholders or `ExternalSecret` resources, depending on `--secret-backend`. |
 | Deployment | For every `-svc` and `-worker`. |
 | Service (ClusterIP) | For every `-svc`. |
 | CronJob | For every `-fn`, using the `schedule:` field from `sol.toml`. |
