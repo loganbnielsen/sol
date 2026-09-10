@@ -177,7 +177,7 @@ should use `Peer` for the URL/header plumbing and ordinary
 ```ocaml
 Sol_obs.with_span obs ?parent:req.trace_ctx "call_checkout" (fun span ->
   let trace_ctx = Sol_obs.current_trace_context span in
-  match Peer.url "checkout_svc", Peer.headers ~env ~trace_ctx ~peer:"checkout_svc" () with
+  match Peer.url "checkout_svc", Peer.headers ~env ~trace_ctx () with
   | Ok base_uri, Ok headers ->
     let uri = Uri.with_path base_uri "/quote" in
     let headers = Http.Header.of_list headers in

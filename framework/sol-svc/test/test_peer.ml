@@ -48,7 +48,7 @@ let test_headers_from_span env () =
       in
       Sol_obs.with_span obs "caller" (fun span ->
         let trace_ctx = Sol_obs.current_trace_context span in
-        match Peer.headers ~env ~trace_ctx ~peer:"checkout_svc" () with
+        match Peer.headers ~env ~trace_ctx () with
         | Error err -> Alcotest.fail (Peer.error_to_string err)
         | Ok headers ->
           Alcotest.(check (option string))
@@ -70,7 +70,7 @@ let test_file_precedes_env env () =
     (fun () ->
        with_env "SOL_API_KEY_FILE" path (fun () ->
          with_env "SOL_API_KEY" "from-env" (fun () ->
-           match Peer.headers ~env ~peer:"checkout_svc" () with
+           match Peer.headers ~env () with
            | Error err -> Alcotest.fail (Peer.error_to_string err)
            | Ok headers ->
              Alcotest.(check (option string))

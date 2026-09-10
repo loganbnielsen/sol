@@ -214,7 +214,6 @@ val headers
   :  env:< fs : Eio.Fs.dir_ty Eio.Path.t ; .. >
   -> ?trace_ctx:Obs_trace.t
   -> ?headers:(string * string) list
-  -> peer:string
   -> unit
   -> ((string * string) list, [ `Config of string ]) result
 ```

@@ -6,9 +6,7 @@
 let checkout_quote ~env ~sw ~obs req =
   Sol_obs.with_span obs ?parent:req.Request.trace_ctx "checkout_quote" (fun span ->
     let trace_ctx = Sol_obs.current_trace_context span in
-    match
-      Peer.url "checkout_svc", Peer.headers ~env ~trace_ctx ~peer:"checkout_svc" ()
-    with
+    match Peer.url "checkout_svc", Peer.headers ~env ~trace_ctx () with
     | Error err, _ | _, Error err -> Response.internal_error (Peer.error_to_string err)
     | Ok base_uri, Ok headers ->
       let client = Cohttp_eio.Client.make ~https:None env#net in

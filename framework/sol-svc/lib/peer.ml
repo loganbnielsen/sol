@@ -51,7 +51,7 @@ let api_key ~env =
   | None, None -> Error (`Config "SOL_API_KEY/SOL_API_KEY_FILE is not set")
 ;;
 
-let headers ~env ?trace_ctx ?(headers = []) ~peer:_ () =
+let headers ~env ?trace_ctx ?(headers = []) () =
   match api_key ~env with
   | Error _ as err -> err
   | Ok key ->
