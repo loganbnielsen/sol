@@ -1,5 +1,39 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: Pipeline hardening, perf-gate removal, and code-layer follow-ups (2026-09-09/10)
+
+Started from INFRA-006 (a CI guardrail for `dune fmt` drift) and followed the
+audit findings into the code-layer and docs queues:
+
+- Hardened `infer_sol_home()` against `_build` build contexts (BUG-017),
+  surfaced dirty/unpushed ticket worktrees in `soldev pipeline ls/check`
+  (FEAT-040), and fixed the perf-status `jq` null-history error (BUG-019).
+- REFAC-078 made `devtools/perf/perf_baseline.json` a main-only informational
+  file and removed the local perf-ratio merge gate/auto-revert; REFAC-079
+  documented soldev's orchestration-vs-informational command roles.
+- CODE_LAYER-019 modeled workspace discovery as typed facts; CODE_LAYER-015
+  documented the static pre-deploy contract boundary and filed CODE_LAYER-022
+  for real post-deploy `/healthz` + `/metrics` probing; CODE_LAYER-016 added
+  `[infra.volumes.<name>]` PVC rendering for services/workers; CODE_LAYER-018
+  added the Cmdliner-free `Sol_cli_factory` boundary.
+- Closed the stale-doc gaps: CODE_LAYER-017 substrate contract, DOCS-010
+  TypeScript packages/demo, DOCS-011 `sol open`, DOCS-012 DOCS_AUDIT paths,
+  and this WORK_SUMMARY refresh.
+- Filed REFAC-080 for the repo-wide switch to the Jane Street `ocamlformat`
+  profile.
+
+## 2026-09-08 — Four-part directory reorg, TypeScript parity, docs audit
+
+- REFAC-071..076 reorganized the repo into `cli/`, `framework/`, `devtools/`,
+  and `platform/`; REFAC-077 collapsed the ticket state machine to
+  `READY_FOR_ENGINEERING` + `DONE` with the DONE move committed on the PR
+  branch, and REFAC-075 fixed the merge tooling.
+- FEAT-033..039 built the TypeScript framework-parity showcase: `@sol/kafka`,
+  `@sol/obs`, and the `examples/pluto/app/demo_ts` service/worker pair,
+  including a live cross-service trace-linked run.
+- The 2026-09-08 docs audit produced DOCS-009..013 and refreshed the audit
+  templates, including the DOCS_AUDIT path/command cleanup.
+
 ## Latest: FEAT-032 — sun -> sol rename (2026-09-06)
 
 Renamed the project from Sun to Sol across code, CLI, config conventions,
