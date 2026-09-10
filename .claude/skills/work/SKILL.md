@@ -55,6 +55,13 @@ If `soldev pipeline check <ticket-id>` prints `worktree: (dirty worktree ...)` o
    ```
    No `pipeline/tickets/` commit for this — nothing to record on `main` yet.
 3. Implement the ticket in the worktree — read the ticket's **Remediation** as the specification.
+   - Per `.claude/CLAUDE.md`'s demo/example coverage rule: if the ticket changes
+     what an app author does (new `sol.toml` field, primitive/runtime contract,
+     new CLI command, changed generated manifests), update a runnable
+     example/demo in this same worktree, add any new example Dockerfile to the
+     `example-dockerfile-smoke` matrix, and run `/demo-review` on it. If a demo
+     genuinely does not apply, record the one-line exemption in the ticket's
+     completion notes.
 4. **Your own last implementation commit in the worktree must move the ticket file itself:**
    ```bash
    git mv pipeline/tickets/READY_FOR_ENGINEERING/<ticket-id>.md pipeline/tickets/DONE/<ticket-id>.md
