@@ -23,7 +23,7 @@ FEAT-041 wired declared `[service] calls` (injected `*_URL` env, per-pair Networ
 One example workspace demonstrates, and its README/TUTORIAL section explains:
 
 1. An east-west call: a `-svc` declaring `calls = ["checkout/checkout_svc"]`, then making an instrumented request to `CHECKOUT_SVC_URL` (`x-api-key` plus forwarded `traceparent`). The doc text states plainly that the request resolves through cluster DNS to a ClusterIP and never leaves the cluster network, and that the generated per-pair NetworkPolicy is what permits it.
-2. A north-south exposure: one `-svc` reached through Ingress — hostless locally via `sol dev up` + `http://localhost:8088`, and with `ingress_host` + TLS for customer-cloud — including the DNS-record step.
+2. A north-south exposure: one `-svc` reached through Ingress — locally at `http://<svc>.<namespace>.localhost:8088` via `sol dev up` (the per-service dev host from BUG-021), and with `ingress_host` + TLS for customer-cloud — including the DNS-record step.
 
 ## Remediation
 
