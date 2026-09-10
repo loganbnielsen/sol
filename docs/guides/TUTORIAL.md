@@ -514,6 +514,12 @@ sol migrate rollback                              roll back the last applied mig
 
 sol rollback [domain/service]                     roll back last deploy for one or all services
 sol logs <service> [--no-follow] [--tail=N]       stream logs from a deployed service
+sol open logs [SCOPE] [--links]                   open Grafana Explore logs (browser unless --links)
+sol open metrics [SCOPE] [--links]                open Grafana metrics dashboard
+sol open dashboard [SCOPE] [--links]              open Grafana workspace/service dashboard
+#   SCOPE: omit for workspace, domain, domain/service, or resource/<type>/<name>
+#   also accepts --observability-backend {local|self_hosted_durable|external},
+#   --base-domain DOMAIN, and TARGET
 
 sol secret set <KEY> --env <ENV> --value <VAL> [PATH]   create or update a secret
 sol secret list --env <ENV> [PATH]                      list secret keys (values never printed)
