@@ -35,6 +35,7 @@ let env : Sol_cli_deployment_plan.env_config =
   ; env = None
   ; region = None
   ; base_domain = None
+  ; cluster_issuer = "letsencrypt-prod"
   ; secret_backend = Sol_cli_manifest.Kubernetes_placeholder
   }
 ;;

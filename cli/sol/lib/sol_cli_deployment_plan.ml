@@ -11,6 +11,7 @@ type env_config =
   ; env : string option
   ; region : string option
   ; base_domain : string option
+  ; cluster_issuer : string
   ; secret_backend : Sol_cli_manifest.secret_backend
   }
 
@@ -46,6 +47,7 @@ type service_spec =
   ; rollout_strategy : Sol_cli_toml.rollout_strategy option
   ; ingress_host : Sol_cli_toml.hostname option
   ; ingress_path : Sol_cli_toml.ingress_path option
+  ; cluster_issuer : string
   ; extra_labels : (string * string) list
   ; progressive_delivery : Sol_cli_toml.progressive_delivery option
   }
@@ -150,7 +152,23 @@ let to_json t =
         | Some path -> Sol_cli_toml.ingress_path_to_string path
         | None -> "/"
       in
-      `Assoc [ "host", `String host; "path", `String path ]
+      `Assoc
+        [ "host", `String host
+        ; "path", `String path
+        ; ( "tls"
+          , `Assoc
+              [ "hosts", `List [ `String host ]
+              ; ( "secretName"
+                , `String (s.k8s_name |> k8s_name_to_string |> fun name -> name ^ "-tls")
+                )
+              ] )
+        ; "cluster_issuer", `String s.cluster_issuer
+        ; ( "annotations"
+          , `Assoc
+              [ "cert-manager.io/cluster-issuer", `String s.cluster_issuer
+              ; "nginx.ingress.kubernetes.io/ssl-redirect", `String "true"
+              ] )
+        ]
   in
   let service_to_json (s : service_spec) =
     let rollout_strategy =
@@ -201,6 +219,7 @@ let to_json t =
           ; "env", opt_string env.env
           ; "region", opt_string env.region
           ; "base_domain", opt_string env.base_domain
+          ; "cluster_issuer", `String env.cluster_issuer
           ; "secret_backend", secret_backend_to_json env.secret_backend
           ] )
     ; "services", `List (List.map service_to_json t.services)
@@ -407,6 +426,7 @@ let of_services_result ~workspace ~env ?resolved_config services =
     ; rollout_strategy = toml.Sol_cli_toml.rollout_strategy
     ; ingress_host = toml.Sol_cli_toml.ingress_host
     ; ingress_path = toml.Sol_cli_toml.ingress_path
+    ; cluster_issuer = env.cluster_issuer
     ; extra_labels = toml.Sol_cli_toml.extra_labels
     ; progressive_delivery = toml.Sol_cli_toml.progressive_delivery
     }

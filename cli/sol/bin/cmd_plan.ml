@@ -39,6 +39,7 @@ let run target_name =
        print_opt "registry" target.registry;
        print_opt "cluster" target.cluster_name;
        print_opt "domain" target.base_domain;
+       print_opt "cluster issuer" target.cluster_issuer;
        Printf.printf "\nResources:\n";
        if resources = [] then Printf.printf "  (none)\n";
        List.iter

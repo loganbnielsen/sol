@@ -542,6 +542,8 @@ The `sol deploy` command is `sol up` without the build step. It is designed to r
 
 `sol deploy` takes a required `<env>/<provider>/<region>` target — same convention as `sol plan` — and the target file it resolves must exist first, even if empty. `sol new workspace` scaffolds a placeholder at `sol/prod/aws/us-east-1.yml`; rename it to match your real target if it isn't `prod/aws/us-east-1`.
 
+Set `target.cluster_issuer` in that file to override the cert-manager ClusterIssuer used for service Ingress TLS; it defaults to `letsencrypt-prod`, matching `cli/platform/infra/base`.
+
 ### Direct deploy (CI pushes to the cluster)
 
 ```bash

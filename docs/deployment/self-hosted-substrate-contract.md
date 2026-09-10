@@ -97,15 +97,13 @@ The following substrate inputs must exist before running `sol deploy`.
 
 - A DNS name under which services are exposed, e.g. `myapp.example.com`.
   Set `ingress_host` in `[infra.deploy]` of each service's `sol.toml` to
-  enable Ingress generation for that service.
+  enable host-specific TLS for that service.
 - When `ingress_host` is set, Sol generates an Ingress object for the `-svc`
-  with a host rule matching that value.
-- TLS termination is the cluster's responsibility. Sol does not create
-  `Certificate` resources or per-service Ingress TLS blocks today. cert-manager
-  is installed by the base Terraform module, but application Ingress TLS wiring
-  currently belongs to the cluster/overlay layer.
-- If no service has `ingress_host` set, no Ingress objects are generated and
-  services are only reachable via `kubectl port-forward` or ClusterIP.
+  with a host rule, a per-service TLS secret, and cert-manager annotations.
+  Override the ClusterIssuer with `target.cluster_issuer`; it defaults to
+  `letsencrypt-prod`, matching `cli/platform/infra/base`.
+- If a service has no `ingress_host`, Sol may still generate a hostless Ingress,
+  but leaves TLS and HTTPS redirect off.
 
 ---
 
@@ -123,7 +121,7 @@ objects for each service in your workspace:
 | Deployment | For every `-svc` and `-worker`. |
 | Service (ClusterIP) | For every `-svc`. |
 | CronJob | For every `-fn`, using the `schedule:` field from `sol.toml`. |
-| Ingress | For `-svc` when `ingress_host` is set in `sol.toml`. |
+| Ingress | For every `-svc`; TLS and HTTPS redirect only when `ingress_host` is set in `sol.toml`. |
 | NetworkPolicy | Always. Denies NodePort egress, enforces non-root containers. |
 
 Sol's artifact is the set of YAML manifests. In direct mode (`sol deploy`

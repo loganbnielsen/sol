@@ -17,6 +17,7 @@ type env_config =
           [docs/architecture/observability-design.md]'s Identity table. *)
   ; region : string option
   ; base_domain : string option
+  ; cluster_issuer : string
   ; secret_backend : Sol_cli_manifest.secret_backend
   }
 
@@ -52,6 +53,7 @@ type service_spec =
   ; rollout_strategy : Sol_cli_toml.rollout_strategy option
   ; ingress_host : Sol_cli_toml.hostname option
   ; ingress_path : Sol_cli_toml.ingress_path option
+  ; cluster_issuer : string
   ; extra_labels : (string * string) list
   ; progressive_delivery : Sol_cli_toml.progressive_delivery option
   }

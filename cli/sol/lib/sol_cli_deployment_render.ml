@@ -22,6 +22,7 @@ type http_fields =
   { deployment : deployment_fields
   ; ingress_host : Sol_cli_toml.hostname option
   ; ingress_path : Sol_cli_toml.ingress_path option
+  ; cluster_issuer : string
   }
 
 type worker_fields = { deployment : deployment_fields }
@@ -103,7 +104,13 @@ let render
            ; network_policy_doc ~ns ~name
            ]
          in
-         let deployment_resources ~shape ~ingress_host ~ingress_path ~deployment =
+         let deployment_resources
+               ~shape
+               ~ingress_host
+               ~ingress_path
+               ~cluster_issuer
+               ~deployment
+           =
            let { replicas
                ; cpu
                ; memory
@@ -149,6 +156,8 @@ let render
                        ingress_doc
                          ~ingress_host
                          ~ingress_path
+                         ~cluster_issuer
+                         ~tls_secret_name:(name ^ "-tls")
                          ~ns
                          ~name:(name ^ "-active")
                          ()
@@ -161,7 +170,15 @@ let render
                   in
                   let ingr =
                     if shape = Http_service
-                    then [ ingress_doc ~ingress_host ~ingress_path ~ns ~name () ]
+                    then
+                      [ ingress_doc
+                          ~ingress_host
+                          ~ingress_path
+                          ~cluster_issuer
+                          ~ns
+                          ~name
+                          ()
+                      ]
                     else []
                   in
                   [ rollout ] @ svc @ ingr)
@@ -194,7 +211,7 @@ let render
          in
          let resources =
            match workload with
-           | Render_svc { deployment; ingress_host; ingress_path } ->
+           | Render_svc { deployment; ingress_host; ingress_path; cluster_issuer } ->
              let ingress_host =
                match ingress_host with
                | Some host -> Sol_cli_toml.hostname_to_string host
@@ -210,6 +227,7 @@ let render
                  ~shape:Http_service
                  ~ingress_host
                  ~ingress_path
+                 ~cluster_issuer
                  ~deployment
              in
              (match deployment.progressive_delivery with
@@ -217,13 +235,14 @@ let render
               | None ->
                 resources
                 @ [ service_doc ~ns ~name
-                  ; ingress_doc ~ingress_host ~ingress_path ~ns ~name ()
+                  ; ingress_doc ~ingress_host ~ingress_path ~cluster_issuer ~ns ~name ()
                   ])
            | Render_worker { deployment } ->
              deployment_resources
                ~shape:Background_worker
                ~ingress_host:""
                ~ingress_path:"/"
+               ~cluster_issuer:"letsencrypt-prod"
                ~deployment
            | Render_fn { schedule } ->
              [ cronjob_doc
@@ -279,7 +298,11 @@ let render_spec
     match s.primitive with
     | Svc ->
       Render_svc
-        { deployment; ingress_host = s.ingress_host; ingress_path = s.ingress_path }
+        { deployment
+        ; ingress_host = s.ingress_host
+        ; ingress_path = s.ingress_path
+        ; cluster_issuer = s.cluster_issuer
+        }
     | Worker -> Render_worker { deployment }
     | Fn ->
       let schedule = Option.value s.schedule ~default:"0 * * * *" in

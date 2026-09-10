@@ -5,6 +5,7 @@ type target =
   ; region : string
   ; registry : string option
   ; base_domain : string option
+  ; cluster_issuer : string option
   ; cluster_name : string option
   ; terraform_var_file : string option
   ; observability_backend : string option

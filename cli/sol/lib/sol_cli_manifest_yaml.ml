@@ -709,9 +709,43 @@ spec:
     name
 ;;
 
-let ingress_doc ?(ingress_host = "") ?(ingress_path = "/") ~ns ~name () =
-  (* host line is optional — omit to match all hostnames. *)
-  let host_line = if ingress_host = "" then "" else f "    host: %s\n" ingress_host in
+let ingress_doc
+      ?(ingress_host = "")
+      ?(ingress_path = "/")
+      ?(cluster_issuer = "letsencrypt-prod")
+      ?tls_secret_name
+      ~ns
+      ~name
+      ()
+  =
+  let rule_head =
+    if ingress_host = "" then "  - http:" else f "  - host: %s\n    http:" ingress_host
+  in
+  let annotations =
+    if ingress_host = ""
+    then ""
+    else
+      f
+        {|
+  annotations:
+    cert-manager.io/cluster-issuer: %s
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"|}
+        cluster_issuer
+  in
+  let tls =
+    if ingress_host = ""
+    then ""
+    else (
+      let secret_name = Option.value tls_secret_name ~default:(name ^ "-tls") in
+      f
+        {|
+  tls:
+  - hosts:
+    - %s
+    secretName: %s|}
+        ingress_host
+        secret_name)
+  in
   f
     {|---
 apiVersion: networking.k8s.io/v1
@@ -719,11 +753,11 @@ kind: Ingress
 metadata:
   name: %s
   namespace: %s
-  annotations:
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+%s
 spec:
+%s
   rules:
-  - %shttp:
+%s
       paths:
       - path: %s
         pathType: Prefix
@@ -734,7 +768,9 @@ spec:
               number: 80|}
     name
     ns
-    host_line
+    annotations
+    tls
+    rule_head
     ingress_path
     name
 ;;

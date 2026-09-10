@@ -5,6 +5,7 @@ type target =
   ; region : string
   ; registry : string option
   ; base_domain : string option
+  ; cluster_issuer : string option
   ; cluster_name : string option
   ; terraform_var_file : string option
   ; observability_backend : string option
@@ -51,6 +52,7 @@ let target_empty =
   ; region = ""
   ; registry = None
   ; base_domain = None
+  ; cluster_issuer = None
   ; cluster_name = None
   ; terraform_var_file = None
   ; observability_backend = None
@@ -194,6 +196,7 @@ let service_empty name =
 type target_key =
   | Target_registry
   | Target_base_domain
+  | Target_cluster_issuer
   | Target_cluster_name
   | Target_terraform_var_file
   | Target_observability_backend
@@ -204,6 +207,7 @@ let target_key_of_string s =
   match s with
   | "registry" -> Target_registry
   | "base_domain" -> Target_base_domain
+  | "cluster_issuer" -> Target_cluster_issuer
   | "cluster_name" -> Target_cluster_name
   | "terraform_var_file" -> Target_terraform_var_file
   | "observability_backend" -> Target_observability_backend
@@ -216,6 +220,7 @@ let target_key_of_string s =
 let target_key_name = function
   | Target_registry -> "registry"
   | Target_base_domain -> "base_domain"
+  | Target_cluster_issuer -> "cluster_issuer"
   | Target_cluster_name -> "cluster_name"
   | Target_terraform_var_file -> "terraform_var_file"
   | Target_observability_backend -> "observability_backend"
@@ -431,6 +436,9 @@ let load path =
                           | Target_base_domain ->
                             let* v = scalar k v in
                             Ok { current with base_domain = Some v }
+                          | Target_cluster_issuer ->
+                            let* v = scalar k v in
+                            Ok { current with cluster_issuer = Some v }
                           | Target_cluster_name ->
                             let* v = scalar k v in
                             Ok { current with cluster_name = Some v }
@@ -624,6 +632,7 @@ let merge_target a b =
   { a with
     registry = prefer a.registry b.registry
   ; base_domain = prefer a.base_domain b.base_domain
+  ; cluster_issuer = prefer a.cluster_issuer b.cluster_issuer
   ; cluster_name = prefer a.cluster_name b.cluster_name
   ; terraform_var_file = prefer a.terraform_var_file b.terraform_var_file
   ; observability_backend = prefer a.observability_backend b.observability_backend
@@ -702,6 +711,7 @@ let target_of_path s =
          ; region
          ; registry = None
          ; base_domain = None
+         ; cluster_issuer = None
          ; cluster_name = None
          ; terraform_var_file = None
          ; observability_backend = None
@@ -899,6 +909,7 @@ let terraform_vars ~workspace cfg =
       |> add_opt "region" (Some target.region)
       |> add_opt "cluster_name" target.cluster_name
       |> add_opt "base_domain" target.base_domain
+      |> add_opt "cluster_issuer" target.cluster_issuer
       |> add_opt "workspace_name" (Some workspace)
     in
     let vars =

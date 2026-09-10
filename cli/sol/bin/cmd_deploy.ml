@@ -155,6 +155,10 @@ let build_plan ctx ~emit_to =
     { (Sol_cli_env_target.to_env_config ~name:ctx.workspace env_target) with
       Sol_cli_deployment_plan.secret_backend = ctx.secret_backend
     ; env = Some ctx.target_cfg.Sol_cli_config.env
+    ; cluster_issuer =
+        Option.value
+          ctx.target_cfg.Sol_cli_config.cluster_issuer
+          ~default:"letsencrypt-prod"
     }
   in
   match

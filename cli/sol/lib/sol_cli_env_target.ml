@@ -80,6 +80,7 @@ let to_env_config ~name t : Sol_cli_deployment_plan.env_config =
   ; env = None
   ; region = None
   ; base_domain = None
+  ; cluster_issuer = "letsencrypt-prod"
   ; secret_backend = default_secret_backend t
   }
 ;;

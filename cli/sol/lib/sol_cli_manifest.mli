@@ -168,6 +168,8 @@ val service_doc : ns:string -> name:string -> string
 val ingress_doc
   :  ?ingress_host:string
   -> ?ingress_path:string
+  -> ?cluster_issuer:string
+  -> ?tls_secret_name:string
   -> ns:string
   -> name:string
   -> unit
