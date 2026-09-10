@@ -15,6 +15,7 @@ type deployment_fields = {
   rollout_strategy : Sol_cli_toml.rollout_strategy option;
   extra_labels : (string * string) list;
   progressive_delivery : Sol_cli_toml.progressive_delivery option;
+  volumes : Sol_cli_toml.volume list;
 }
 
 type http_fields = {
@@ -100,51 +101,59 @@ let render ~workspace ?env ?(image = "")
             rollout_strategy;
             extra_labels;
             progressive_delivery;
+            volumes;
           } =
             deployment
           in
           let cpu = Sol_cli_toml.cpu_quantity_to_string cpu in
           let memory = Sol_cli_toml.memory_quantity_to_string memory in
-          match progressive_delivery with
-          | Some pd -> (
-              let rollout =
-                rollout_doc ~extra_labels ~secret_keys:(List.map fst secrets)
-                  ~config_hash:cfg_hash ?env ~shape ~replicas ~cpu ~memory ~ns
-                  ~name ~image:img ~pd ~workspace ~domain ~primitive ()
-              in
-              match pd with
-              | Sol_cli_toml.Blue_green ->
-                  [
-                    rollout;
-                    blue_green_service_docs ~ns ~name;
-                    (if shape = Http_service then
-                       ingress_doc ~ingress_host ~ingress_path ~ns
-                         ~name:(name ^ "-active") ()
-                     else "");
-                  ]
-                  |> List.filter (fun s -> s <> "")
-              | Sol_cli_toml.Canary _ ->
-                  let svc =
-                    if shape = Http_service then [ service_doc ~ns ~name ]
-                    else []
-                  in
-                  let ingr =
-                    if shape = Http_service then
-                      [ ingress_doc ~ingress_host ~ingress_path ~ns ~name () ]
-                    else []
-                  in
-                  [ rollout ] @ svc @ ingr)
-          | None ->
-              let rollout_strategy =
-                Option.value rollout_strategy
-                  ~default:Sol_cli_toml.RollingUpdate
-              in
-              [
-                deployment_doc ~rollout_strategy ~extra_labels
-                  ~config_hash:cfg_hash ~secret_keys:(List.map fst secrets) ?env
-                  ~shape ~replicas ~cpu ~memory ~ns ~name ~image:img ~workspace
-                  ~domain ~primitive ();
-              ]
+          let workload_resources =
+            match progressive_delivery with
+            | Some pd -> (
+                let rollout =
+                  rollout_doc ~extra_labels ~secret_keys:(List.map fst secrets)
+                    ~volumes ~config_hash:cfg_hash ?env ~shape ~replicas ~cpu
+                    ~memory ~ns ~name ~image:img ~pd ~workspace ~domain
+                    ~primitive ()
+                in
+                match pd with
+                | Sol_cli_toml.Blue_green ->
+                    [
+                      rollout;
+                      blue_green_service_docs ~ns ~name;
+                      (if shape = Http_service then
+                         ingress_doc ~ingress_host ~ingress_path ~ns
+                           ~name:(name ^ "-active") ()
+                       else "");
+                    ]
+                    |> List.filter (fun s -> s <> "")
+                | Sol_cli_toml.Canary _ ->
+                    let svc =
+                      if shape = Http_service then [ service_doc ~ns ~name ]
+                      else []
+                    in
+                    let ingr =
+                      if shape = Http_service then
+                        [ ingress_doc ~ingress_host ~ingress_path ~ns ~name () ]
+                      else []
+                    in
+                    [ rollout ] @ svc @ ingr)
+            | None ->
+                let rollout_strategy =
+                  Option.value rollout_strategy
+                    ~default:Sol_cli_toml.RollingUpdate
+                in
+                [
+                  deployment_doc ~rollout_strategy ~extra_labels
+                    ~config_hash:cfg_hash ~secret_keys:(List.map fst secrets)
+                    ~volumes ?env ~shape ~replicas ~cpu ~memory ~ns ~name
+                    ~image:img ~workspace ~domain ~primitive ();
+                ]
+          in
+          let pvcs =
+            if volumes = [] then [] else [ pvc_docs ~ns ~name volumes ]
+          in
+          pvcs @ workload_resources
         in
         let resources =
           match workload with
@@ -211,6 +220,7 @@ let render_spec ~workspace ?env ?(image = "")
       rollout_strategy = s.rollout_strategy;
       extra_labels = s.extra_labels;
       progressive_delivery = s.progressive_delivery;
+      volumes = s.volumes;
     }
   in
   let workload =

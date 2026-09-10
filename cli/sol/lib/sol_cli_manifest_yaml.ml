@@ -214,9 +214,66 @@ let render_taxonomy_labels ?(indent = "        ") ?env ~workspace ~domain
   |> List.map (fun (k, v) -> f "%s%s: \"%s\"" indent k (sanitize_label_value v))
   |> String.concat "\n"
 
+(* CODE_LAYER-016: render per-workload volumes as a PVC per declared volume plus
+   container [volumeMounts] and pod [volumes] entries. StorageClass, snapshots,
+   and backup policy stay out of scope. *)
+let volume_claim_name ~name ~volume_name =
+  Printf.sprintf "%s-%s" name volume_name
+
+let render_volume_mounts volumes =
+  if volumes = [] then ""
+  else
+    "        volumeMounts:\n"
+    ^ String.concat ""
+        (List.map
+           (fun (v : Sol_cli_toml.volume) ->
+             f "        - name: %s\n          mountPath: %s\n" v.name
+               v.mount_path)
+           volumes)
+
+let render_pod_volumes ~name volumes =
+  if volumes = [] then ""
+  else
+    "      volumes:\n"
+    ^ String.concat ""
+        (List.map
+           (fun (v : Sol_cli_toml.volume) ->
+             f
+               "      - name: %s\n\
+               \        persistentVolumeClaim:\n\
+               \          claimName: %s\n"
+               v.name
+               (volume_claim_name ~name ~volume_name:v.name))
+           volumes)
+
+let pvc_docs ~ns ~name volumes =
+  String.concat "\n"
+    (List.map
+       (fun (v : Sol_cli_toml.volume) ->
+         f
+           {|---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  accessModes:
+  - %s
+  resources:
+    requests:
+      storage: %s
+|}
+           (volume_claim_name ~name ~volume_name:v.name)
+           ns
+           (Sol_cli_toml.volume_access_mode_to_string v.access_mode)
+           v.size)
+       volumes)
+
 let deployment_doc ?(rollout_strategy = Sol_cli_toml.RollingUpdate)
-    ?(extra_labels = []) ?(secret_keys = []) ?env ?(config_hash = "") ~shape
-    ~replicas ~cpu ~memory ~ns ~name ~image ~workspace ~domain ~primitive () =
+    ?(extra_labels = []) ?(secret_keys = []) ?(volumes = []) ?env
+    ?(config_hash = "") ~shape ~replicas ~cpu ~memory ~ns ~name ~image
+    ~workspace ~domain ~primitive () =
   let ports_section =
     match shape with
     | Http_service -> {|        ports:
@@ -252,6 +309,8 @@ let deployment_doc ?(rollout_strategy = Sol_cli_toml.RollingUpdate)
     if extra_labels = [] then "" else "\n" ^ render_extra_labels extra_labels
   in
   let secret_env_section = render_secret_key_refs ~name secret_keys in
+  let volume_mounts_section = render_volume_mounts volumes in
+  let pod_volumes_section = render_pod_volumes ~name volumes in
   let taxonomy_labels_section =
     render_taxonomy_labels ?env ~workspace ~domain ~service:name ~primitive
       ~image ()
@@ -294,14 +353,14 @@ spec:
         runAsGroup: 65534
         seccompProfile:
           type: RuntimeDefault
-      containers:
+%s      containers:
       - name: %s
         image: %s
         imagePullPolicy: Always
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
-%s%s        envFrom:
+%s%s%s        envFrom:
         - configMapRef:
             name: %s-env
         - secretRef:
@@ -315,9 +374,9 @@ spec:
             memory: %s
 %s|}
     name ns replicas strategy_type name name taxonomy_labels_section
-    extra_labels_section config_hash prometheus_annotations name name image
-    ports_section secret_env_section name name cpu memory cpu memory
-    probe_section
+    extra_labels_section config_hash prometheus_annotations name
+    pod_volumes_section name image ports_section volume_mounts_section
+    secret_env_section name name cpu memory cpu memory probe_section
 
 (* ── Argo Rollouts helpers ────────────────────────────────────────────────── *)
 
@@ -347,9 +406,9 @@ let render_blue_green_strategy name =
     pod template is the same as a Deployment; only the top-level kind,
     apiVersion, and strategy section differ. [progressive_delivery] must be
     [Some _] — callers in [render_spec] only invoke this when it is set. *)
-let rollout_doc ?(extra_labels = []) ?(secret_keys = []) ?(config_hash = "")
-    ?env ~shape ~replicas ~cpu ~memory ~ns ~name ~image ~pd ~workspace ~domain
-    ~primitive () =
+let rollout_doc ?(extra_labels = []) ?(secret_keys = []) ?(volumes = [])
+    ?(config_hash = "") ?env ~shape ~replicas ~cpu ~memory ~ns ~name ~image ~pd
+    ~workspace ~domain ~primitive () =
   let ports_section =
     match shape with
     | Http_service -> {|        ports:
@@ -380,6 +439,8 @@ let rollout_doc ?(extra_labels = []) ?(secret_keys = []) ?(config_hash = "")
     if extra_labels = [] then "" else "\n" ^ render_extra_labels extra_labels
   in
   let secret_env_section = render_secret_key_refs ~name secret_keys in
+  let volume_mounts_section = render_volume_mounts volumes in
+  let pod_volumes_section = render_pod_volumes ~name volumes in
   let taxonomy_labels_section =
     render_taxonomy_labels ?env ~workspace ~domain ~service:name ~primitive
       ~image ()
@@ -425,14 +486,14 @@ spec:
         runAsGroup: 65534
         seccompProfile:
           type: RuntimeDefault
-      containers:
+%s      containers:
       - name: %s
         image: %s
         imagePullPolicy: Always
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
-%s%s        envFrom:
+%s%s%s        envFrom:
         - configMapRef:
             name: %s-env
         - secretRef:
@@ -448,9 +509,9 @@ spec:
   strategy:
 %s|}
     name ns replicas name name taxonomy_labels_section extra_labels_section
-    config_hash prometheus_annotations name name image ports_section
-    secret_env_section name name cpu memory cpu memory probe_section
-    strategy_block
+    config_hash prometheus_annotations name pod_volumes_section name image
+    ports_section volume_mounts_section secret_env_section name name cpu memory
+    cpu memory probe_section strategy_block
 
 (** Two ClusterIP Services required by the blue-green strategy: [<name>-active]
     receives live traffic; [<name>-preview] receives canary traffic. Both select

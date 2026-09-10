@@ -104,6 +104,7 @@ let svc_spec : Sol_cli_deployment_plan.service_spec =
     image = "sol-registry:5000/myapp/charge-svc:abc123";
     config = [ ("APP_ENV", "staging") ];
     secrets = [];
+    volumes = [];
     schedule = None;
     replicas = 2;
     cpu = cpu "200m";
@@ -126,6 +127,7 @@ let worker_spec : Sol_cli_deployment_plan.service_spec =
     image = "sol-registry:5000/myapp/notify-worker:abc123";
     config = [];
     secrets = [];
+    volumes = [];
     schedule = None;
     replicas = 1;
     cpu = cpu "100m";
@@ -148,6 +150,7 @@ let fn_spec : Sol_cli_deployment_plan.service_spec =
     image = "sol-registry:5000/myapp/invoice-fn:abc123";
     config = [];
     secrets = [];
+    volumes = [];
     schedule = Some "0 9 * * 1";
     replicas = 1;
     cpu = cpu "100m";
@@ -158,6 +161,33 @@ let fn_spec : Sol_cli_deployment_plan.service_spec =
     extra_labels = [];
     progressive_delivery = None;
   }
+
+let test_volume : Sol_cli_toml.volume =
+  {
+    name = "data";
+    mount_path = "/var/lib/data";
+    size = "10Gi";
+    access_mode = Sol_cli_toml.ReadWriteOnce;
+  }
+
+let with_volumes volumes (spec : Sol_cli_deployment_plan.service_spec) =
+  { spec with volumes }
+
+(* ── volume tests ────────────────────────────────────────────────────────── *)
+
+let test_svc_volumes () =
+  let _, workload = render_spec_ok (with_volumes [ test_volume ] svc_spec) in
+  assert_contains "svc PVC" workload "kind: PersistentVolumeClaim";
+  assert_contains "svc PVC name" workload "name: charge-svc-data";
+  assert_contains "svc mountPath" workload "mountPath: /var/lib/data";
+  assert_contains "svc claimName" workload "claimName: charge-svc-data";
+  assert_contains "svc storage" workload "storage: 10Gi"
+
+let test_worker_volumes () =
+  let _, workload = render_spec_ok (with_volumes [ test_volume ] worker_spec) in
+  assert_contains "worker PVC name" workload "name: notify-worker-data";
+  assert_contains "worker mountPath" workload "mountPath: /var/lib/data";
+  assert_contains "worker claimName" workload "claimName: notify-worker-data"
 
 (* ── Svc tests ───────────────────────────────────────────────────────────── *)
 
@@ -1453,6 +1483,8 @@ let () =
       ( "svc",
         [
           Alcotest.test_case "namespace yaml" `Quick test_svc_namespace;
+          Alcotest.test_case "persistent volume claim + mount" `Quick
+            test_svc_volumes;
           Alcotest.test_case "deployment name" `Quick test_svc_deployment_name;
           Alcotest.test_case "image" `Quick test_svc_image;
           Alcotest.test_case "has Service resource" `Quick
@@ -1499,6 +1531,8 @@ let () =
       ( "worker",
         [
           Alcotest.test_case "namespace yaml" `Quick test_worker_namespace;
+          Alcotest.test_case "persistent volume claim + mount" `Quick
+            test_worker_volumes;
           Alcotest.test_case "image" `Quick test_worker_image;
           Alcotest.test_case "no Service/Ingress" `Quick
             test_worker_no_service_resource;

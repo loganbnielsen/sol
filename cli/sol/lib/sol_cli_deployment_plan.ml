@@ -32,6 +32,7 @@ type service_spec = {
   image : string;
   config : (string * string) list;
   secrets : (string * string) list;
+  volumes : Sol_cli_toml.volume list;
   schedule : string option;
   replicas : int;
   cpu : Sol_cli_toml.cpu_quantity;
@@ -149,6 +150,21 @@ let to_json t =
         ("image", `String s.image);
         ("config", `Assoc (List.map (fun (k, v) -> (k, `String v)) s.config));
         ("secret_keys", `List (List.map (fun (k, _) -> `String k) s.secrets));
+        ( "volumes",
+          `List
+            (List.map
+               (fun (v : Sol_cli_toml.volume) ->
+                 `Assoc
+                   [
+                     ("name", `String v.Sol_cli_toml.name);
+                     ("mount_path", `String v.Sol_cli_toml.mount_path);
+                     ("size", `String v.Sol_cli_toml.size);
+                     ( "access_mode",
+                       `String
+                         (Sol_cli_toml.volume_access_mode_to_string
+                            v.Sol_cli_toml.access_mode) );
+                   ])
+               s.volumes) );
         ("schedule", opt_string s.schedule);
         ("replicas", `Int s.replicas);
         ("cpu", `String (Sol_cli_toml.cpu_quantity_to_string s.cpu));
@@ -352,6 +368,7 @@ let of_services_result ~workspace ~env ?resolved_config services =
       image;
       config = toml.Sol_cli_toml.env_config;
       secrets = List.map (fun key -> (key, "")) toml.Sol_cli_toml.secret_keys;
+      volumes = toml.Sol_cli_toml.volumes;
       schedule;
       replicas =
         (match

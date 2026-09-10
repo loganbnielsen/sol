@@ -27,12 +27,31 @@ val memory_quantity_to_string : memory_quantity -> string
 val hostname_to_string : hostname -> string
 val ingress_path_to_string : ingress_path -> string
 
+type volume_access_mode =
+  | ReadWriteOnce
+  | ReadOnlyMany
+  | ReadWriteMany
+      (** PersistentVolumeClaim access modes supported for application volumes.
+      *)
+
+type volume = {
+  name : string;
+  mount_path : string;
+  size : string;
+  access_mode : volume_access_mode;
+}
+(** A named persistent volume requested by a workload via
+    [[infra.volumes.<name>]]. *)
+
+val volume_access_mode_to_string : volume_access_mode -> string
+
 type t = {
   replicas : int option;
   cpu : cpu_quantity option;
   memory : memory_quantity option;
   env_config : (string * string) list;
   secret_keys : string list;
+  volumes : volume list;
   rollout_strategy : rollout_strategy option;
   ingress_host : hostname option;
   ingress_path : ingress_path option;

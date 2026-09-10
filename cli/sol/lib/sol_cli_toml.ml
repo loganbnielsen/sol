@@ -12,11 +12,24 @@ type cpu_quantity = Cpu_quantity of string
 type memory_quantity = Memory_quantity of string
 type hostname = Hostname of string
 type ingress_path = Ingress_path of string
+type volume_access_mode = ReadWriteOnce | ReadOnlyMany | ReadWriteMany
+
+type volume = {
+  name : string;
+  mount_path : string;
+  size : string;
+  access_mode : volume_access_mode;
+}
 
 let cpu_quantity_to_string (Cpu_quantity s) = s
 let memory_quantity_to_string (Memory_quantity s) = s
 let hostname_to_string (Hostname s) = s
 let ingress_path_to_string (Ingress_path s) = s
+
+let volume_access_mode_to_string = function
+  | ReadWriteOnce -> "ReadWriteOnce"
+  | ReadOnlyMany -> "ReadOnlyMany"
+  | ReadWriteMany -> "ReadWriteMany"
 
 type t = {
   replicas : int option;
@@ -24,6 +37,7 @@ type t = {
   memory : memory_quantity option;
   env_config : (string * string) list;
   secret_keys : string list;
+  volumes : volume list;
   rollout_strategy : rollout_strategy option;
   ingress_host : hostname option;
   ingress_path : ingress_path option;
@@ -40,6 +54,7 @@ let empty =
     memory = None;
     env_config = [];
     secret_keys = [];
+    volumes = [];
     rollout_strategy = None;
     ingress_host = None;
     ingress_path = None;
@@ -220,6 +235,89 @@ let validate_opt path parse = function
       |> Result.map (fun v -> Some v)
       |> Result.map_error (fun message -> Validation { path; message })
 
+(* ── [infra.volumes.<name>] ─────────────────────────────────────────────── *)
+
+let parse_volume_access_mode path ~volume_name = function
+  | "ReadWriteOnce" -> Ok ReadWriteOnce
+  | "ReadOnlyMany" -> Ok ReadOnlyMany
+  | "ReadWriteMany" -> Ok ReadWriteMany
+  | other ->
+      validation_error path
+        (Printf.sprintf
+           "sol.toml: [infra.volumes.%s] access_mode %S is invalid — valid \
+            values are \"ReadWriteOnce\", \"ReadOnlyMany\", and \
+            \"ReadWriteMany\""
+           volume_name other)
+
+let volume_string_field path ~volume_name ~field fields =
+  match List.assoc_opt field fields with
+  | None ->
+      validation_error path
+        (Printf.sprintf "sol.toml: [infra.volumes.%s] missing required %s"
+           volume_name field)
+  | Some v -> (
+      try Ok (Otoml.get_string v)
+      with Otoml.Type_error _ ->
+        validation_error path
+          (Printf.sprintf "sol.toml: [infra.volumes.%s] %s must be a string"
+             volume_name field))
+
+let parse_volume path (name, value) =
+  let* fields =
+    try Otoml.get_table value |> Result.ok
+    with Otoml.Type_error _ ->
+      validation_error path
+        (Printf.sprintf "sol.toml: [infra.volumes.%s] must be a table" name)
+  in
+  let* mount_path =
+    volume_string_field path ~volume_name:name ~field:"mount_path" fields
+  in
+  let* size = volume_string_field path ~volume_name:name ~field:"size" fields in
+  let* access_mode =
+    match List.assoc_opt "access_mode" fields with
+    | None -> Ok ReadWriteOnce
+    | Some v -> (
+        try parse_volume_access_mode path ~volume_name:name (Otoml.get_string v)
+        with Otoml.Type_error _ ->
+          validation_error path
+            (Printf.sprintf
+               "sol.toml: [infra.volumes.%s] access_mode must be a string" name)
+        )
+  in
+  if not (validate_hostname_label name) then
+    validation_error path
+      (Printf.sprintf
+         "sol.toml: [infra.volumes.%s] name is invalid — use lowercase \
+          letters, digits, and hyphens"
+         name)
+  else if String.length mount_path = 0 || mount_path.[0] <> '/' then
+    validation_error path
+      (Printf.sprintf
+         "sol.toml: [infra.volumes.%s] mount_path must be an absolute path" name)
+  else if String.trim size = "" then
+    validation_error path
+      (Printf.sprintf "sol.toml: [infra.volumes.%s] size must not be empty" name)
+  else Ok { name; mount_path; size; access_mode }
+
+let parse_volumes path doc =
+  match Otoml.find_opt doc Otoml.get_value [ "infra"; "volumes" ] with
+  | None -> Ok []
+  | Some v ->
+      let* entries =
+        try Otoml.get_table v |> Result.ok
+        with Otoml.Type_error _ ->
+          validation_error path
+            "sol.toml: [infra.volumes] must be a table of tables, e.g. \
+             [infra.volumes.data]"
+      in
+      List.fold_left
+        (fun acc entry ->
+          let* acc = acc in
+          let* volume = parse_volume path entry in
+          Ok (volume :: acc))
+        (Ok []) entries
+      |> Result.map List.rev
+
 (* Guard: keys starting with "sol.dev/" are reserved for Sol internals. *)
 let validate_extra_label_key k =
   let prefix = "sol.dev/" in
@@ -399,6 +497,9 @@ let load_result path =
                  e.g. secrets = [\"KEY1\", \"KEY2\"]")
       in
 
+      (* [infra.volumes.<name>] *)
+      let* volumes = parse_volumes path doc in
+
       (* [infra.deploy] *)
       let* rollout_strategy =
         match
@@ -492,6 +593,7 @@ let load_result path =
           memory;
           env_config;
           secret_keys;
+          volumes;
           rollout_strategy;
           ingress_host;
           ingress_path;

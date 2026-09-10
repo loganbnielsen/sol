@@ -45,6 +45,7 @@ let service ?(name = "charge-svc") ?(primitive = Sol_cli_deployment_plan.Svc)
     image = "registry.sol.dev/acct_123/pluto/" ^ name ^ ":abc123";
     config = [ ("LOG_LEVEL", "info") ];
     secrets = [ ("DATABASE_URL", "postgres://secret") ];
+    volumes = [];
     schedule = None;
     replicas = 2;
     cpu = cpu "250m";
