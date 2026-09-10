@@ -416,48 +416,22 @@ let run_review ticket_id result_file =
    branch). On a real regression, reverting that squash commit un-does the
    code *and* the ticket's DONE move together, landing it back in
    READY_FOR_ENGINEERING for free — no BLOCKED_BY_PERFORMANCE state needed. *)
-let run_merge_finish ~ticket_id ~merge_sha ~accept_performance_regression =
+let run_merge_finish ~ticket_id ~merge_sha =
   let perf_rc =
     Soldev_shell.run_cmd "./cli/platform/local/scripts/run_tests.sh"
   in
-  if perf_rc = 2 && accept_performance_regression then begin
-    Printf.eprintf
-      "  perf regression explicitly accepted — recording new baseline\n%!";
-    ignore
-      (Soldev_shell.run_cmd ~echo:false
-         "./cli/platform/local/scripts/run_tests.sh --update-baseline");
-    ignore
-      (Soldev_shell.run_cmd ~echo:false
-         (Printf.sprintf
-            "git add devtools/perf/perf_baseline.json && git commit -m %s"
-            (Filename.quote
-               (Printf.sprintf
-                  "pipeline: update perf baseline after %s (perf regression \
-                   accepted)"
-                  ticket_id))));
-    Printf.printf "  ✓  merged\n%!";
-    exit 0
-  end
-  else if perf_rc >= 1 then begin
-    let kind = if perf_rc = 2 then "perf regression" else "test failure" in
-    (* run_tests.sh always appends a non-baseline history entry to
-       devtools/perf/perf_baseline.json, even here, leaving it locally
-       modified. That made `git revert` fail with "local changes would be
-       overwritten by merge" every time this path fired (CODE_LAYER-011) —
-       discard it before reverting. *)
-    ignore
-      (Soldev_shell.run_cmd ~echo:false
-         "git checkout -- devtools/perf/perf_baseline.json");
+  if perf_rc = 1 then begin
+    (* Functional test failure: the PR should not have merged; revert it. *)
     let revert_rc =
       Soldev_shell.run_cmd ~echo:false
         (Printf.sprintf "SOL_SKIP_HOOKS=1 git revert %s --no-edit"
            (Filename.quote merge_sha))
     in
     Printf.eprintf
-      "  %s detected — reverted %s (ticket returns to READY_FOR_ENGINEERING \
-       with it)\n\
+      "  test failure detected — reverted %s (ticket returns to \
+       READY_FOR_ENGINEERING with it)\n\
        %!"
-      kind merge_sha;
+      merge_sha;
     if revert_rc <> 0 then
       Printf.eprintf
         "  warning: %s remains merged because automatic revert failed\n%!"
@@ -465,16 +439,28 @@ let run_merge_finish ~ticket_id ~merge_sha ~accept_performance_regression =
     exit 1
   end
   else begin
+    (* Perf-ratio regressions (rc = 2) are informational only: record the new
+       baseline so history reflects the merged commit, but do not revert. *)
+    if perf_rc = 2 then
+      Printf.eprintf
+        "  perf regression detected (informational only — recording baseline, \
+         not reverting)\n\
+         %!";
     ignore
       (Soldev_shell.run_cmd ~echo:false
          "./cli/platform/local/scripts/run_tests.sh --update-baseline");
+    let message =
+      if perf_rc = 2 then
+        Printf.sprintf
+          "pipeline: update perf baseline after %s (perf regression recorded)"
+          ticket_id
+      else Printf.sprintf "pipeline: update perf baseline after %s" ticket_id
+    in
     ignore
       (Soldev_shell.run_cmd ~echo:false
          (Printf.sprintf
             "git add devtools/perf/perf_baseline.json && git commit -m %s"
-            (Filename.quote
-               (Printf.sprintf "pipeline: update perf baseline after %s"
-                  ticket_id))));
+            (Filename.quote message)));
     Printf.printf "  ✓  merged\n%!";
     exit 0
   end
@@ -492,7 +478,7 @@ let freshly_built_soldev = "_build/default/devtools/soldev/bin/main.exe"
    there is no local READY_TO_MERGE directory to enumerate any more (see
    REFAC-077) — `merge` asks GitHub directly. Pass a ticket ID to merge one;
    omit to sweep every open PR whose branch looks like `<TICKET-ID>/...`. *)
-let run_merge ~dry_run ~accept_performance_regression ~ticket_filter =
+let run_merge ~dry_run ~ticket_filter =
   let candidates =
     match ticket_filter with
     | Some id -> (
@@ -602,12 +588,9 @@ let run_merge ~dry_run ~accept_performance_regression ~ticket_filter =
             else begin
               let finish_rc =
                 Soldev_shell.run_cmd
-                  (Printf.sprintf "%s pipeline merge-finish %s %s%s"
+                  (Printf.sprintf "%s pipeline merge-finish %s %s"
                      (Filename.quote freshly_built_soldev)
-                     (Filename.quote id) (Filename.quote merge_sha)
-                     (if accept_performance_regression then
-                        " --accept-performance-regression"
-                      else ""))
+                     (Filename.quote id) (Filename.quote merge_sha))
               in
               if finish_rc = 0 then merged := id :: !merged else incr errors
             end
