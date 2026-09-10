@@ -139,5 +139,7 @@ See [ROADMAP.md](docs/planning/ROADMAP.md) for the current implementation status
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE). The "Sol" name and logo are not covered by that licence.
+Apache-2.0 — see [LICENSE](LICENSE). The "Sol" name and logo are covered by
+[TRADEMARK.md](TRADEMARK.md), not by that licence. Contributions are accepted
+under the [DCO](CONTRIBUTING.md).
 
