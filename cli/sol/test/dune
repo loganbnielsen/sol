@@ -16,6 +16,7 @@
   test_dev_observability
   test_change_set
   test_deployment_phases
+  test_factory
   test_rollback
   test_secret_strategy
   test_rollout_diagnosis
