@@ -77,6 +77,16 @@ Read each changed file in full. Verify:
 - If the ticket requires a doc change, verify README or TUTORIAL was updated
 - If a new `sol <command>` was added, it appears in at least one user-facing doc
 
+#### F. Demo/example coverage
+- If the change affects app-author surface (new `sol.toml` field, primitive or
+  runtime contract, new CLI command, changed generated manifests), verify a
+  runnable example/demo was updated in the same PR — or that the ticket's
+  completion notes record why none applies. "The CI smoke covers it" is not
+  sufficient.
+- A new example Dockerfile must appear in the `example-dockerfile-smoke` matrix.
+- Flag missing demo coverage as a violation, quoting the ticket's claimed
+  exemption if it recorded one.
+
 ### 3. Process results via soldev pipeline review
 
 For each subagent result, write the JSON to a temp file and call:

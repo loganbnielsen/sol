@@ -30,3 +30,22 @@ The convention is written where the implementer and the reviewer both read it, a
 
 - `.claude/CLAUDE.md`, `.claude/skills/work/SKILL.md`, and `.claude/skills/review-worktree/SKILL.md` each state the rule.
 - A reader of `/work` or `/review-worktree` cannot complete a feature ticket that changes app-author surface without either touching a demo or recording the exemption.
+
+## Completion notes
+
+Added the rule in the three places an implementer and reviewer actually read:
+
+- `.claude/CLAUDE.md` — new "Demo/example coverage" paragraph in the Ticket system section.
+- `.claude/skills/work/SKILL.md` — a note under the implementation step.
+- `.claude/skills/review-worktree/SKILL.md` — new subagent checklist section F, so a missing demo is a reviewable violation.
+
+The rule scopes to changes in app-author surface and requires either a runnable
+example/demo or a one-line recorded exemption; it explicitly rejects "the CI
+smoke covers it", since a smoke test is a test, not a reference a user can read
+or run.
+
+Demo/example coverage exemption for this ticket: it changes agent guidance and
+repo documentation only, with no app-author-visible behaviour, so there is no
+runnable artifact to extend. Diff is confined to the three guidance files and
+the ticket move; no build/test impact.
+
