@@ -72,6 +72,10 @@ The following substrate inputs must exist before running `sol deploy`.
 - Sol does not create the database in the application deploy path, run
   migrations at cluster startup, or manage credentials rotation. Use
   `sol migrate` to apply migrations after `POSTGRES_URL` is available.
+- The contract key is **`POSTGRES_URL`**, not `DATABASE_URL`. There are no
+  `postgres_secret_name`, `kafka_secret_name`, or `tls_secret_name` fields in
+  `sol.toml`; per-workload Secret names are derived as `<service>-secrets`, and
+  `sol.toml` declares only secret *keys* under `[infra.env] secrets`.
 
 ### Observability Endpoints
 
@@ -84,6 +88,10 @@ The following substrate inputs must exist before running `sol deploy`.
 - **Tempo**: OTLP/HTTP URL, defaulted as `TEMPO_URL` when Tempo is installed.
 - Override these with `[infra.env] config = { ... }` if you use external
   observability endpoints.
+- There are no `loki_url` or `pushgateway_url` fields in `sol.toml`. These are
+  ConfigMap values (`LOKI_URL`, `PUSHGATEWAY_URL`, `TEMPO_URL`) with Sol
+  defaults, overridden through `[infra.env] config` rather than a dedicated
+  `sol.toml` key.
 
 ### Base Domain and TLS (Optional)
 
