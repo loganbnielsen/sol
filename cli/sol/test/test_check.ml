@@ -68,6 +68,9 @@ let test_typed_scan_reports_missing_dockerfile_and_unexpected_dirs () =
           let _, unexpected_name, _ = List.hd scan.unexpected in
           Alcotest.(check string) "unexpected name" "helpers" unexpected_name)
 
+(* Framework-backed services do not need /healthz or /metrics in their own
+   source; the shared pre-deploy phase is static and must not require those
+   strings. Runtime probing is CODE_LAYER-022. *)
 let test_check_valid_service () =
   with_tmp (fun _ ->
       mkdir_p "app/payments/charge_svc";
