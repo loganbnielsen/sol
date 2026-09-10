@@ -7,8 +7,17 @@ let link = Sol_cli_scaffold.link_dir
 let norm = Sol_cli_scaffold.normalize
 let cap = Sol_cli_scaffold.capitalize_name
 
+(* A dune build context mirrors source directories under `_build/...`, including
+   the two framework sentinels `is_sol_home` looks for. Never accept a build
+   context as Sol home — otherwise CLI tests run from
+   `_build/default/cli/sol/test` resolve SOL_HOME to the build tree instead of
+   the source checkout/release bundle. *)
+let contains_build_context dir =
+  String.split_on_char '/' dir |> List.mem "_build"
+
 let is_sol_home dir =
-  Sys.file_exists (Filename.concat dir "framework/sol-svc/lib/dune")
+  (not (contains_build_context dir))
+  && Sys.file_exists (Filename.concat dir "framework/sol-svc/lib/dune")
   && Sys.file_exists
        (Filename.concat dir "framework/kafka-eio-service/lib/dune")
 

@@ -30,7 +30,7 @@ Use deterministic pipeline tooling for ticket status whenever possible:
 soldev pipeline ls
 ```
 
-This prints ticket state, dependency status, human-decision blockers, actionable status, and (for `READY_FOR_ENGINEERING` tickets) whether a PR is already open. Do not reconstruct dependency graphs by interpretation when this command is available.
+This prints ticket state, dependency status, human-decision blockers, actionable status, and (for `READY_FOR_ENGINEERING` tickets) whether a PR is already open. It also annotates `(dirty worktree @ <path>)` and/or `(unpushed commits @ <path>)` when an existing worktree branch for the ticket has uncommitted or unpushed work — treat that as an interrupted implementation to **resume**, not as a fresh ticket. Do not reconstruct dependency graphs by interpretation when this command is available.
 
 ## Step 2 — Dispatch
 
@@ -45,6 +45,8 @@ soldev pipeline check <ticket-id>
 Only create a worktree if the command exits 0 and prints `status: actionable`.
 
 If it reports `blocked-for-human-decision`, `blocked-by-dependency`, `unknown ticket`, or any non-actionable status: do not create a worktree, leave the ticket where it is, print the command output for the user.
+
+If `soldev pipeline check <ticket-id>` prints `worktree: (dirty worktree ...)` or `(unpushed commits ...)`, stop and resume that existing worktree — do **not** create a second worktree for the same ticket.
 
 1. Determine branch slug from ticket title (lowercase, hyphens).
 2. Create worktree:
