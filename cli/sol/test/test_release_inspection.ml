@@ -63,6 +63,8 @@ let service
   ; ingress_host = None
   ; ingress_path = None
   ; cluster_issuer = "letsencrypt-prod"
+  ; calls = []
+  ; called_by = []
   ; extra_labels = []
   ; progressive_delivery
   }

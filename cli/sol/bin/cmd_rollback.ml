@@ -67,6 +67,8 @@ let run filter_path =
          ; ingress_host = None
          ; ingress_path = None
          ; cluster_issuer = "letsencrypt-prod"
+         ; calls = []
+         ; called_by = []
          ; extra_labels = []
          ; progressive_delivery = toml.Sol_cli_toml.progressive_delivery
          }

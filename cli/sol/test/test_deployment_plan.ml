@@ -136,6 +136,8 @@ let test_k8s_name_rejects_invalid_characters () =
     assert (contains (Str.regexp "lowercase alphanumeric") message)
   | Ok _ -> Alcotest.fail "expected invalid k8s name"
   | Error (Sol_cli_deployment_plan.Toml_error _) -> Alcotest.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
+    Alcotest.fail "expected name error"
 ;;
 
 let test_k8s_name_rejects_empty () =
@@ -144,6 +146,8 @@ let test_k8s_name_rejects_empty () =
     assert (contains (Str.regexp "1 and 63") message)
   | Ok _ -> Alcotest.fail "expected empty k8s name to fail"
   | Error (Sol_cli_deployment_plan.Toml_error _) -> Alcotest.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
+    Alcotest.fail "expected name error"
 ;;
 
 let test_k8s_name_rejects_overlong () =
@@ -154,6 +158,8 @@ let test_k8s_name_rejects_overlong () =
     assert (contains (Str.regexp "1 and 63") message)
   | Ok _ -> Alcotest.fail "expected overlong k8s name to fail"
   | Error (Sol_cli_deployment_plan.Toml_error _) -> Alcotest.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
+    Alcotest.fail "expected name error"
 ;;
 
 let test_namespace_rejects_invalid_domain () =
@@ -166,6 +172,8 @@ let test_namespace_rejects_invalid_domain () =
     assert (contains (Str.regexp "lowercase alphanumeric") message)
   | Ok _ -> Alcotest.fail "expected invalid namespace"
   | Error (Sol_cli_deployment_plan.Toml_error _) -> Alcotest.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
+    Alcotest.fail "expected name error"
 ;;
 
 let test_namespace_rejects_overlong () =
@@ -179,6 +187,8 @@ let test_namespace_rejects_overlong () =
     assert (contains (Str.regexp "1 and 63") message)
   | Ok _ -> Alcotest.fail "expected overlong namespace"
   | Error (Sol_cli_deployment_plan.Toml_error _) -> Alcotest.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
+    Alcotest.fail "expected name error"
 ;;
 
 let test_image_ref_local () =
@@ -249,6 +259,8 @@ let sample_plan () : Sol_cli_deployment_plan.t =
     ; ingress_host = None
     ; ingress_path = None
     ; cluster_issuer = "letsencrypt-prod"
+    ; calls = []
+    ; called_by = []
     ; extra_labels = []
     ; progressive_delivery = None
     }
@@ -722,6 +734,8 @@ let make_worker_spec name domain =
   ; ingress_host = None
   ; ingress_path = None
   ; cluster_issuer = "letsencrypt-prod"
+  ; calls = []
+  ; called_by = []
   ; extra_labels = []
   ; progressive_delivery = None
   }
@@ -984,7 +998,9 @@ let test_of_services_result_surfaces_toml_parse_error () =
     | Error (Sol_cli_deployment_plan.Toml_error (Sol_cli_toml.Toml_syntax _)) ->
       Alcotest.fail "expected validation error, got syntax error"
     | Error (Sol_cli_deployment_plan.Invalid_kubernetes_name _) ->
-      Alcotest.fail "expected TOML error, got Kubernetes name error")
+      Alcotest.fail "expected TOML error, got Kubernetes name error"
+    | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
+      Alcotest.fail "expected TOML error, got service call error")
 ;;
 
 (* ── BUG-004: sol.yml scale overrides sol.toml replicas ──────────────────── *)
@@ -1142,6 +1158,99 @@ let test_toml_volumes_carry_into_service_spec () =
               (volume.Sol_cli_toml.access_mode = Sol_cli_toml.ReadWriteOnce)
           | _ -> Alcotest.fail "expected exactly one volume")
        | _ -> Alcotest.fail "expected exactly one service"))
+;;
+
+let test_service_calls_resolve_to_env_and_reverse_edge () =
+  let tmp = Filename.temp_dir "sol_test_plan_calls" "" in
+  with_cwd tmp (fun () ->
+    mkdirs "app/payments/charge_svc";
+    mkdirs "app/checkout/checkout_svc";
+    write_file
+      "app/payments/charge_svc/sol.toml"
+      {|[service]
+calls = ["checkout/checkout_svc"]
+|};
+    write_file "app/checkout/checkout_svc/sol.toml" "";
+    let checkout_service : Sol_cli_manifest.service =
+      { domain = "checkout"
+      ; name = "checkout_svc"
+      ; primitive = Sol_cli_manifest.Svc
+      ; dir = "app/checkout/checkout_svc"
+      }
+    in
+    match
+      Sol_cli_deployment_plan.of_services_result
+        ~workspace:"myworkspace"
+        ~env:deploy_env
+        [ charge_svc_service; checkout_service ]
+    with
+    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+    | Ok plan ->
+      (match plan.Sol_cli_deployment_plan.services with
+       | [ caller; callee ] ->
+         Alcotest.(check (list (pair string string)))
+           "caller config"
+           [ ( "CHECKOUT_SVC_URL"
+             , "http://checkout-svc.myworkspace-checkout.svc.cluster.local" )
+           ]
+           caller.config;
+         Alcotest.(check int) "caller calls" 1 (List.length caller.calls);
+         Alcotest.(check int) "callee called_by" 1 (List.length callee.called_by)
+       | _ -> Alcotest.fail "expected two service specs"))
+;;
+
+let test_unknown_service_call_fails () =
+  let tmp = Filename.temp_dir "sol_test_plan_bad_call" "" in
+  with_cwd tmp (fun () ->
+    mkdirs "app/payments/charge_svc";
+    write_file
+      "app/payments/charge_svc/sol.toml"
+      {|[service]
+calls = ["checkout/missing_svc"]
+|};
+    match
+      Sol_cli_deployment_plan.of_services_result
+        ~workspace:"myworkspace"
+        ~env:deploy_env
+        [ charge_svc_service ]
+    with
+    | Error (Sol_cli_deployment_plan.Invalid_service_call { message; _ }) ->
+      assert (contains (Str.regexp "target service not found") message)
+    | Ok _ -> Alcotest.fail "expected invalid service call"
+    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
+;;
+
+let test_service_call_env_conflict_fails () =
+  let tmp = Filename.temp_dir "sol_test_plan_call_env_conflict" "" in
+  with_cwd tmp (fun () ->
+    mkdirs "app/payments/charge_svc";
+    mkdirs "app/checkout/checkout_svc";
+    write_file
+      "app/payments/charge_svc/sol.toml"
+      {|[service]
+calls = ["checkout/checkout_svc"]
+
+[infra.env]
+config = { CHECKOUT_SVC_URL = "http://example.invalid" }
+|};
+    write_file "app/checkout/checkout_svc/sol.toml" "";
+    let checkout_service : Sol_cli_manifest.service =
+      { domain = "checkout"
+      ; name = "checkout_svc"
+      ; primitive = Sol_cli_manifest.Svc
+      ; dir = "app/checkout/checkout_svc"
+      }
+    in
+    match
+      Sol_cli_deployment_plan.of_services_result
+        ~workspace:"myworkspace"
+        ~env:deploy_env
+        [ charge_svc_service; checkout_service ]
+    with
+    | Error (Sol_cli_deployment_plan.Invalid_service_call { message; _ }) ->
+      assert (contains (Str.regexp "conflicts") message)
+    | Ok _ -> Alcotest.fail "expected invalid service call"
+    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
 
 (* ── plan_ids newtype unit tests ────────────────────────────────────────── *)
@@ -1449,6 +1558,18 @@ let () =
             "sol.toml volumes carry into service spec"
             `Quick
             test_toml_volumes_carry_into_service_spec
+        ; Alcotest.test_case
+            "service calls resolve"
+            `Quick
+            test_service_calls_resolve_to_env_and_reverse_edge
+        ; Alcotest.test_case
+            "unknown service call fails"
+            `Quick
+            test_unknown_service_call_fails
+        ; Alcotest.test_case
+            "service call env conflict fails"
+            `Quick
+            test_service_call_env_conflict_fails
         ] )
     ; ( "plan_ids"
       , [ Alcotest.test_case "Topic_name valid" `Quick test_topic_name_valid

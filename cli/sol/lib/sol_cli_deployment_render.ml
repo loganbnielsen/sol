@@ -6,6 +6,8 @@ type common_fields =
   ; spec_image : string
   ; config : (string * string) list
   ; secrets : (string * string) list
+  ; calls : Sol_cli_deployment_plan.service_call list
+  ; called_by : Sol_cli_deployment_plan.service_call list
   }
 
 type deployment_fields =
@@ -45,7 +47,19 @@ let render
       ?(secret_backend = Sol_cli_manifest.Kubernetes_live)
       { common; workload }
   =
-  let { namespace; k8s_name; domain; primitive; spec_image; config; secrets } = common in
+  let { namespace
+      ; k8s_name
+      ; domain
+      ; primitive
+      ; spec_image
+      ; config
+      ; secrets
+      ; calls
+      ; called_by
+      }
+    =
+    common
+  in
   let ns = Sol_cli_kubernetes_name.namespace_to_string namespace in
   let name = Sol_cli_kubernetes_name.k8s_name_to_string k8s_name in
   let img = if image = "" then spec_image else image in
@@ -101,7 +115,22 @@ let render
            [ service_account_doc ~ns ~name
            ; configmap_doc ~extra_env:config ~ns ~name ()
            ; secret_resource
-           ; network_policy_doc ~ns ~name
+           ; network_policy_doc
+               ~egress_to:
+                 (List.map
+                    (fun (c : Sol_cli_deployment_plan.service_call) ->
+                       ( Sol_cli_kubernetes_name.namespace_to_string c.target_namespace
+                       , Sol_cli_kubernetes_name.k8s_name_to_string c.target_name ))
+                    calls)
+               ~ingress_from:
+                 (List.map
+                    (fun (c : Sol_cli_deployment_plan.service_call) ->
+                       ( Sol_cli_kubernetes_name.namespace_to_string c.target_namespace
+                       , Sol_cli_kubernetes_name.k8s_name_to_string c.target_name ))
+                    called_by)
+               ~ns
+               ~name
+               ()
            ]
          in
          let deployment_resources
@@ -282,6 +311,8 @@ let render_spec
     ; spec_image = s.image
     ; config = s.config
     ; secrets = s.secrets
+    ; calls = s.calls
+    ; called_by = s.called_by
     }
   in
   let deployment =

@@ -281,11 +281,27 @@ The generated ConfigMap injects cluster-internal service addresses so pods commu
 ```
 KAFKA_BROKERS       redpanda.redpanda.svc.cluster.local:9093
 SCHEMA_REGISTRY_URL http://redpanda.redpanda.svc.cluster.local:8081
-POSTGRES_URL        postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev
 LOKI_URL            http://loki.monitoring.svc.cluster.local:3100
+TEMPO_URL           http://tempo.monitoring.svc.cluster.local:4318
 ```
 
-These names are deterministic from the Helm release names chosen by `sol dev up`.
+Secrets such as `POSTGRES_URL` and `SOL_API_KEY` are emitted through a
+Kubernetes Secret instead of the ConfigMap.
+
+When a service needs a synchronous call to another service, declare it in the
+caller:
+
+```toml
+[service]
+calls = ["checkout/checkout_svc"]
+```
+
+Sol injects `CHECKOUT_SVC_URL` and opens only that pair's NetworkPolicy path.
+Prefer events for cross-domain flows unless the synchronous dependency is part
+of the service contract.
+
+These names are deterministic from the Helm release names and workspace/domain
+names chosen by `sol dev up`.
 
 After `sol up` finishes, check what's running:
 

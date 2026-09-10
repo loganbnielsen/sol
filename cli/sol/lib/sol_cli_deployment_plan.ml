@@ -29,6 +29,14 @@ type effective_rollout_strategy =
 type k8s_name = Sol_cli_kubernetes_name.k8s_name
 type namespace = Sol_cli_kubernetes_name.namespace
 
+type service_call =
+  { env_var : string
+  ; url : string
+  ; target_domain : string
+  ; target_name : k8s_name
+  ; target_namespace : namespace
+  }
+
 type service_spec =
   { domain : string
   ; source_name : string
@@ -48,6 +56,8 @@ type service_spec =
   ; ingress_host : Sol_cli_toml.hostname option
   ; ingress_path : Sol_cli_toml.ingress_path option
   ; cluster_issuer : string
+  ; calls : service_call list
+  ; called_by : service_call list
   ; extra_labels : (string * string) list
   ; progressive_delivery : Sol_cli_toml.progressive_delivery option
   }
@@ -64,6 +74,11 @@ type t =
 
 type plan_error =
   | Toml_error of Sol_cli_toml.parse_error
+  | Invalid_service_call of
+      { service : string
+      ; ref : string
+      ; message : string
+      }
   | Invalid_kubernetes_name of
       { field : string
       ; value : string
@@ -203,6 +218,18 @@ let to_json t =
       ; "memory", `String (Sol_cli_toml.memory_quantity_to_string s.memory)
       ; "rollout_strategy", `String rollout_strategy
       ; "ingress", ingress_json s
+      ; ( "calls"
+        , `List
+            (List.map
+               (fun c ->
+                  `Assoc
+                    [ "env", `String c.env_var
+                    ; "url", `String c.url
+                    ; "target_domain", `String c.target_domain
+                    ; "target_name", `String (k8s_name_to_string c.target_name)
+                    ; "target_namespace", `String (namespace_to_string c.target_namespace)
+                    ])
+               s.calls) )
       ; "progressive_delivery", progressive_delivery_to_json s.progressive_delivery
       ]
   in
@@ -344,6 +371,8 @@ let namespace_of_exn ~workspace ~domain =
       (match err with
        | Invalid_kubernetes_name { field; value; message } ->
          Printf.sprintf "invalid Kubernetes %s %S: %s" field value message
+       | Invalid_service_call { service; ref; message } ->
+         Printf.sprintf "service %S calls %S: %s" service ref message
        | Toml_error toml -> Sol_cli_toml.parse_error_to_string toml)
 ;;
 
@@ -353,6 +382,8 @@ let image_ref ~registry ~workspace ~k8s_name ~tag =
 
 let plan_error_to_string = function
   | Toml_error err -> Sol_cli_toml.parse_error_to_string err
+  | Invalid_service_call { service; ref; message } ->
+    Printf.sprintf "service %S calls %S: %s" service ref message
   | Invalid_kubernetes_name { field; value; message } ->
     Printf.sprintf "invalid Kubernetes %s %S: %s" field value message
 ;;
@@ -361,6 +392,20 @@ let primitive_of_manifest = function
   | Sol_cli_manifest.Svc -> Svc
   | Sol_cli_manifest.Worker -> Worker
   | Sol_cli_manifest.Fn -> Fn
+;;
+
+let call_env_var source_name =
+  source_name
+  |> String.map (function
+    | 'a' .. 'z' as c -> Char.uppercase_ascii c
+    | ('A' .. 'Z' | '0' .. '9') as c -> c
+    | _ -> '_')
+  |> fun s -> s ^ "_URL"
+;;
+
+let service_url ~workspace ~domain ~k8s_name =
+  let ns = namespace_of_exn ~workspace ~domain |> namespace_to_string in
+  Printf.sprintf "http://%s.%s.svc.cluster.local" (k8s_name_to_string k8s_name) ns
 ;;
 
 (* sol.yml scale (a min/max range) and sol.toml's replicas (a fixed count)
@@ -382,16 +427,87 @@ let sol_yml_replicas_override ~resolved_config ~service_name =
 ;;
 
 let of_services_result ~workspace ~env ?resolved_config services =
-  let to_spec svc =
+  let loaded =
+    List.map
+      (fun svc ->
+         Sol_cli_toml.load_result (Filename.concat svc.Sol_cli_manifest.dir "sol.toml")
+         |> Result.map_error (fun err -> Toml_error err)
+         |> Result.map (fun toml -> svc, toml))
+      services
+  in
+  let rec collect_loaded acc = function
+    | [] -> Ok (List.rev acc)
+    | result :: rest ->
+      let* item = result in
+      collect_loaded (item :: acc) rest
+  in
+  let* loaded = collect_loaded [] loaded in
+  let lookup_call caller ref =
+    match String.split_on_char '/' ref with
+    | [ domain; source_name ] when domain <> "" && source_name <> "" ->
+      (match
+         List.find_opt
+           (fun (svc, _) ->
+              svc.Sol_cli_manifest.domain = domain
+              && svc.Sol_cli_manifest.name = source_name
+              && svc.Sol_cli_manifest.primitive = Sol_cli_manifest.Svc)
+           loaded
+       with
+       | None ->
+         Error
+           (Invalid_service_call
+              { service = caller; ref; message = "target service not found" })
+       | Some (target, _) ->
+         let* target_name = k8s_name_result target.Sol_cli_manifest.name in
+         let* target_namespace =
+           namespace_result ~workspace ~domain:target.Sol_cli_manifest.domain
+         in
+         Ok
+           { env_var = call_env_var target.Sol_cli_manifest.name
+           ; url =
+               service_url
+                 ~workspace
+                 ~domain:target.Sol_cli_manifest.domain
+                 ~k8s_name:target_name
+           ; target_domain = target.Sol_cli_manifest.domain
+           ; target_name
+           ; target_namespace
+           })
+    | _ ->
+      Error
+        (Invalid_service_call
+           { service = caller; ref; message = "expected domain/service_name" })
+  in
+  let to_spec (svc, toml) =
     let* k8s_name = k8s_name_result svc.Sol_cli_manifest.name in
     let* namespace = namespace_result ~workspace ~domain:svc.Sol_cli_manifest.domain in
     let image =
       image_ref ~registry:env.registry ~workspace ~k8s_name ~tag:env.image_tag
     in
     let primitive = primitive_of_manifest svc.Sol_cli_manifest.primitive in
-    let* toml =
-      Sol_cli_toml.load_result (Filename.concat svc.Sol_cli_manifest.dir "sol.toml")
-      |> Result.map_error (fun err -> Toml_error err)
+    let* calls =
+      let rec collect acc = function
+        | [] -> Ok (List.rev acc)
+        | ref :: rest ->
+          let* call = lookup_call svc.Sol_cli_manifest.name ref in
+          collect (call :: acc) rest
+      in
+      collect [] toml.Sol_cli_toml.calls
+    in
+    let* () =
+      match
+        List.find_opt
+          (fun (key, _) -> List.exists (fun c -> c.env_var = key) calls)
+          toml.Sol_cli_toml.env_config
+      with
+      | None -> Ok ()
+      | Some (key, _) ->
+        Error
+          (Invalid_service_call
+             { service = svc.Sol_cli_manifest.name
+             ; ref = key
+             ; message = "call URL env var conflicts with [infra.env] config"
+             })
     in
     let schedule =
       match primitive with
@@ -409,7 +525,7 @@ let of_services_result ~workspace ~env ?resolved_config services =
     ; primitive
     ; source_dir = svc.Sol_cli_manifest.dir
     ; image
-    ; config = toml.Sol_cli_toml.env_config
+    ; config = toml.Sol_cli_toml.env_config @ List.map (fun c -> c.env_var, c.url) calls
     ; secrets = List.map (fun key -> key, "") toml.Sol_cli_toml.secret_keys
     ; volumes = toml.Sol_cli_toml.volumes
     ; schedule
@@ -427,6 +543,8 @@ let of_services_result ~workspace ~env ?resolved_config services =
     ; ingress_host = toml.Sol_cli_toml.ingress_host
     ; ingress_path = toml.Sol_cli_toml.ingress_path
     ; cluster_issuer = env.cluster_issuer
+    ; calls
+    ; called_by = []
     ; extra_labels = toml.Sol_cli_toml.extra_labels
     ; progressive_delivery = toml.Sol_cli_toml.progressive_delivery
     }
@@ -438,7 +556,39 @@ let of_services_result ~workspace ~env ?resolved_config services =
       let* spec = to_spec svc in
       collect (spec :: acc) rest
   in
-  let* resolved_services = collect [] services in
+  let* resolved_services = collect [] loaded in
+  let resolved_services =
+    List.map
+      (fun (svc : service_spec) ->
+         let called_by =
+           List.filter_map
+             (fun (caller : service_spec) ->
+                if
+                  List.exists
+                    (fun c ->
+                       namespace_to_string c.target_namespace
+                       = namespace_to_string svc.namespace
+                       && k8s_name_to_string c.target_name
+                          = k8s_name_to_string svc.k8s_name)
+                    caller.calls
+                then
+                  Some
+                    { env_var = call_env_var caller.source_name
+                    ; url =
+                        service_url
+                          ~workspace
+                          ~domain:caller.domain
+                          ~k8s_name:caller.k8s_name
+                    ; target_domain = caller.domain
+                    ; target_name = caller.k8s_name
+                    ; target_namespace = caller.namespace
+                    }
+                else None)
+             resolved_services
+         in
+         { svc with called_by })
+      resolved_services
+  in
   Ok
     { workspace
     ; environment = env

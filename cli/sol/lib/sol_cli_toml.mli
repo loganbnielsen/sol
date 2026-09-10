@@ -67,6 +67,8 @@ type t =
     (** Kafka topic names owned by this event/service directory. Read from
           [[service] topics] in sol.toml. Used by [discover_topics] to collect
           topics without scanning OCaml source files. *)
+  ; calls : string list
+    (** Synchronous service dependencies as ["domain/service_name"] refs. *)
   ; topics : string list
   }
 
