@@ -2,30 +2,30 @@
 
 Sol is Apache-2.0 — see [`LICENSE`](LICENSE). Thanks for considering a change.
 
-## Developer Certificate of Origin (required)
+## Contributor sign-off (policy)
 
-Every commit in a pull request must be **signed off**. The sign-off certifies that
-you wrote the change, or otherwise have the right to submit it under this
-project's licence:
+Contributions are accepted under the [Developer Certificate of Origin 1.1](https://developercertificate.org/) — a short certificate, not a contract. By signing off, you state for each commit that:
+
+- you created the contribution, in whole or in part, and have the right to submit it under this project's licence; or
+- it is based on appropriately-licensed prior work that you have the right to submit under the same licence; or
+- it came directly from someone who certified the above and you have not modified it; and
+- you understand the contribution and its record are public and may be redistributed under the project's licence.
+
+In practice that means committing with:
 
 ```bash
 git commit -s -m "your message"
 ```
 
-which appends a trailer:
+which appends:
 
 ```
 Signed-off-by: Your Name <you@example.com>
 ```
 
-Commits without one fail CI (`.github/workflows/dco.yml`). Use your real name and
-a reachable address; `git config user.name` and `user.email` are what get used.
-The full certificate is at <https://developercertificate.org/>.
+**This is not currently enforced by CI.** It is stated so contributors know the terms before contributing; enforcement will be added when the project actively solicits outside contributions — alongside the people it governs.
 
-*Why this is a hard gate:* the sign-off is what keeps the project's licensing
-options open — including relicensing a component later if it needs different
-terms. It costs nothing now and cannot be reconstructed retroactively once
-outside code has landed.
+**What a sign-off does and does not do.** It is an *origin statement*, not a rights grant: it certifies you had the right to submit the work under this project's licence. It does **not** give the project permission to relicense your contribution under different terms — that requires a CLA, which is a separate and more consequential decision. Two consequences worth stating plainly: do not sign off on someone else's behalf, and do not add the trailer mechanically. An attestation nobody means is worse than no attestation, because it puts a hollow statement on the record.
 
 ## Before you start
 
