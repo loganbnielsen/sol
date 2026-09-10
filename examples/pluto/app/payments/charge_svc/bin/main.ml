@@ -31,7 +31,7 @@ let () =
   Eio.Switch.run
   @@ fun sw ->
   let pool = require_db_pool ~sw ~stdenv:(env :> Caqti_eio.stdenv) postgres_url in
-  Service.run (Handler.routes pool) ~env ~ot:obs ()
+  Service.run (Handler.routes ~env ~sw ~obs pool) ~env ~ot:obs ()
   |> Result.map_error Service.run_error_to_string
   |> function
   | Ok () -> ()

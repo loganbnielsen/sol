@@ -1,0 +1,12 @@
+# Sol service configuration — all fields are optional.
+
+[infra.deploy]
+# Local dev ingress: http://checkout-svc.<namespace>.localhost:8088
+# Customer-cloud/prod: set ingress_host to your DNS name and create a DNS
+# record for it pointing at the ingress load balancer.
+# ingress_host = "checkout.example.com"
+# ingress_path = "/"
+
+[infra.env]
+# secrets = []
+# config  = {}

@@ -343,6 +343,7 @@ jobs:
       matrix:
         dockerfile:
           - examples/pluto/app/payments/charge_svc/Dockerfile
+          - examples/pluto/app/checkout/checkout_svc/Dockerfile
           - examples/pluto/app/comms/notify_worker/Dockerfile
           - examples/venus/app/comms/notify_worker/Dockerfile
           - examples/venus/app/logistics/fulfillment_worker/Dockerfile

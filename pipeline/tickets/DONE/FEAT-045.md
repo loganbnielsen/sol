@@ -37,3 +37,19 @@ A caller can make an instrumented request to a declared peer without re-deriving
 - A unit test asserts both headers are set, and that `traceparent` comes from the current span's context.
 - A deployed/e2e check exercises an *instrumented* app call (not only a probe pod), so a regression in header propagation fails CI.
 - The "Synchronous service calls" docs section points at the helper instead of describing manual `cohttp-eio` plumbing.
+
+## Completion notes
+
+Implemented as `Sol_svc.Peer` (`framework/sol-svc/lib/peer.ml`):
+
+- `Peer.env_var` derives `<PEER>_URL` from the declared source name, matching FEAT-041's `call_env_var` derivation.
+- `Peer.url` reads that env var and rejects anything that is not an absolute http(s) URL, so a bad value fails loudly instead of silently hitting the wrong host.
+- `Peer.headers` sets `x-api-key` from `SOL_API_KEY_FILE` (preferred) then `SOL_API_KEY`, and injects the W3C `traceparent` from a supplied `Obs_trace` context.
+
+Tests (`framework/sol-svc/test/test_peer.ml`, 5 cases) cover env-var normalization, URL resolution, the relative-URL rejection, headers taken from the current span (asserting `traceparent` equals `Obs_trace.to_traceparent` of that span's context), and `SOL_API_KEY_FILE` precedence.
+
+The call site is `charge_svc`'s `GET /checkout-quote` calling `checkout_svc`'s `GET /quote`; that route uses `` `Api_key`` auth, so the example fails with a 401 if the header wiring regresses. Docs: "Synchronous service calls" now points at `Peer` rather than manual plumbing, and `sol-svc.md` documents the module.
+
+Review cleanup: `Peer.headers` originally took a `~peer:string` argument that was discarded (`~peer:_`). Removed from the implementation, interface, docs and tests — an argument every caller must pass and that does nothing is worse than no argument.
+
+**Criterion 3 is not met as written.** "A deployed/e2e check exercises an instrumented app call" is not achievable on the pinned dev substrate: kube-router on k3s does not honour the generated per-pair policy, so a live cross-namespace call is refused regardless of header correctness (BUG-022). What exists instead: the unit tests above, the new `example-dockerfile-smoke` matrix entry for the example, and a host-local runnable path in `examples/pluto/README.md` (two host processes, `CHECKOUT_SVC_URL=http://127.0.0.1:8081`) that exercises the helper and its headers without a cluster. When BUG-022 is resolved this criterion should be revisited — it is the check that would catch a genuine propagation regression.

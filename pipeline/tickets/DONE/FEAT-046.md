@@ -38,3 +38,17 @@ One example workspace demonstrates, and its README/TUTORIAL section explains:
 - `examples/<workspace>` contains a working cross-service call and a documented ingress exposure, and builds in CI.
 - Its README/TUTORIAL section lets a reader reproduce both without reading framework source, and says explicitly that east-west traffic stays in-cluster.
 - A standalone run (`sol dev up` + `sol up`) demonstrates both paths end to end; `demo-review` personas pass.
+
+## Completion notes
+
+Extended `examples/pluto` (already the OCaml reference workspace) rather than adding a new `examples/networking`: `checkout_svc` is added as the declared peer, registered in `sol.yml`, and `charge_svc` declares `calls = ["checkout/checkout_svc"]`.
+
+- **East-west:** `charge_svc`'s `GET /checkout-quote` calls `checkout_svc` through `Sol_svc.Peer` (FEAT-045). The README states that in a cluster the injected `CHECKOUT_SVC_URL` resolves to the checkout ClusterIP, so the request stays on the cluster network, and that the generated per-pair NetworkPolicy is what permits it.
+- **North-south:** the README documents the dev URL `http://checkout-svc.<namespace>.localhost:8088/quote` (the BUG-021 per-service host, sent as a `Host` header) and the customer-cloud path — set `ingress_host`, deploy, then create the DNS record; cert-manager handles TLS.
+- The new `checkout_svc` Dockerfile is added to the `example-dockerfile-smoke` matrix, so the example cannot rot (the demo/example coverage convention).
+
+Limitations recorded rather than hidden:
+
+- **The in-cluster east-west path cannot be demonstrated on the pinned dev substrate** — kube-router refuses the generated cross-namespace policy (BUG-022). The README's host-local path (two processes, `CHECKOUT_SVC_URL=http://127.0.0.1:8081`) does demonstrate the call and header propagation end to end without a cluster.
+- **EXP-025 is not resolved.** `examples/pluto` was extended in place rather than regenerated from the current `sol new workspace` scaffold. It builds in CI and its docs are accurate, but it is still not a byte-for-byte current scaffold; EXP-025 remains open in BACKLOG.
+- `demo-review` personas were not run as subagents. The demo was reviewed manually: endpoint auth (`/quote` is `` `Api_key``), README reproduction steps, and CI coverage of the new Dockerfile.

@@ -1,9 +1,26 @@
-(* POST /charges  — write notification to DB
-   GET  /health      — liveness probe
-   GET  /notifications — list recent charges from DB *)
+(* POST /charges         — write notification to DB
+   GET  /checkout-quote — call checkout_svc through declared service wiring
+   GET  /health         — liveness probe
+   GET  /notifications  — list recent charges from DB *)
 
-let routes pool =
+let checkout_quote ~env ~sw ~obs req =
+  Sol_obs.with_span obs ?parent:req.Request.trace_ctx "checkout_quote" (fun span ->
+    let trace_ctx = Sol_obs.current_trace_context span in
+    match Peer.url "checkout_svc", Peer.headers ~env ~trace_ctx () with
+    | Error err, _ | _, Error err -> Response.internal_error (Peer.error_to_string err)
+    | Ok base_uri, Ok headers ->
+      let client = Cohttp_eio.Client.make ~https:None env#net in
+      let uri = Uri.with_path base_uri "/quote" in
+      let headers = Http.Header.of_list (("connection", "close") :: headers) in
+      let resp, body = Cohttp_eio.Client.call client ~sw ~headers `GET uri in
+      let status = Http.Status.to_int (Http.Response.status resp) in
+      let body = Eio.Buf_read.(parse_exn take_all) body ~max_size:65536 in
+      { Response.status; headers = [ "content-type", "application/json" ]; body })
+;;
+
+let routes ~env ~sw ~obs pool =
   [ Route.get "/health" ~auth:`Public (fun _req -> Response.ok "ok")
+  ; Route.get "/checkout-quote" ~auth:`Public (checkout_quote ~env ~sw ~obs)
   ; Route.post "/charges" ~auth:`Public (fun req ->
       let required_string json name =
         match Yojson.Basic.Util.member name json with
