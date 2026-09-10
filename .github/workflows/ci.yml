@@ -111,21 +111,14 @@ jobs:
           # branch, so piping them to a shell would trust unreviewed,
           # unpinned script content on every CI run even though the
           # *installed tool version* is pinned via TAG/DESIRED_VERSION.
-          #
-          # The k3d pin is load-bearing: it fixes the bundled k3s version
-          # (v5.9.0 -> k3s v1.35.5), and the k3s version decides NetworkPolicy
-          # behaviour. k3s <= v1.27 ignores cross-namespace namespaceSelector
-          # ingress rules, which denies Sol's generated per-pair policies — see
-          # BUG-022 and docs/dogfood/DOGFOOD.md.
-          curl -fsSL -o k3d "https://github.com/k3d-io/k3d/releases/download/v5.9.0/k3d-linux-amd64"
+          curl -fsSL -o k3d "https://github.com/k3d-io/k3d/releases/download/v5.6.0/k3d-linux-amd64"
           chmod +x k3d
           sudo mv k3d /usr/local/bin/k3d
 
           curl -fsSL "https://get.helm.sh/helm-v3.21.0-linux-amd64.tar.gz" | tar -xz -C /tmp
           sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
 
-          # kubectl tracks the server minor (kubectl's supported skew is +/-1).
-          curl -fsSL -o kubectl "https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl"
+          curl -fsSL -o kubectl "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/kubectl
 
