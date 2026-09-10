@@ -77,20 +77,35 @@ Tested versions — other versions may work but are not validated:
 | Tool | Version |
 |------|---------|
 | Docker | 29.x |
-| k3d | **v5.6.0** |
-| kubectl | **v1.29.0** |
+| k3d | **v5.9.0** |
+| kubectl | **v1.35.0** |
 | helm | **v3.21.0** |
 
 ```bash
 # k3d
-curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=v5.6.0 bash
+curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=v5.9.0 bash
 # helm
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | DESIRED_VERSION=v3.21.0 bash
 ```
 
-k3d v5.6.0 is pinned because `sol dev up` passes chart values tuned against
-that version (Redpanda CPU/replica settings, node-exporter disable flag). Older
-k3d versions may reject those values or install different chart defaults.
+k3d v5.9.0 is pinned because it fixes the **bundled k3s version** that
+`sol dev up` and this smoke run against — currently k3s v1.35.5. Two constraints
+make that version load-bearing:
+
+- **NetworkPolicy semantics.** k3s ≤ v1.27 (k3d ≤ v5.6.0) ships a kube-router
+  that does not honour cross-namespace `namespaceSelector` ingress rules, so
+  Sol's generated per-pair policies **deny** declared service-to-service calls
+  even though the YAML is correct (BUG-022). k3s v1.35.5 honours them; this was
+  verified with a negative control, so enforcement is genuinely active rather
+  than absent.
+- **Chart-value compatibility.** `sol dev up` passes chart values tuned against
+  this version (Redpanda CPU/replica settings, node-exporter disable flag). A
+  different k3s may reject them or install different chart defaults, which is
+  why the pin is not free to move — a bump has to be validated end to end by the
+  golden-path smoke, not just by `k3d cluster create` succeeding.
+
+kubectl tracks the server minor (kubectl's supported skew is ±1). helm is
+client-side and does not need to move with the cluster.
 
 These three versions are also hardcoded in `.github/workflows/ci.yml`'s
 `golden-path-smoke` job (FRIC-009). No automated check keeps the two in
