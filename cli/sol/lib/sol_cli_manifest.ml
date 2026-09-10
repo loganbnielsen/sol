@@ -40,45 +40,74 @@ type discover_error = Missing_app_dir
 let discover_error_to_string = function
   | Missing_app_dir -> "'app/' not found — run from the workspace root."
 
-let discover_services_result ~filter_path =
+(* CODE_LAYER-019: one scan produces typed workspace facts instead of each
+   caller re-walking `app/<domain>/...` with its own suffix/Dockerfile rules.
+   A workload fact exists for every directory that looks like a Sol primitive,
+   even when its Dockerfile is missing — `sol check` needs those to report the
+   missing file. Unexpected directories are captured as warnings instead of
+   disappearing silently.
+   Records are avoided for these facts because they would duplicate the field
+   labels already used by [service] in this module and make every existing
+   qualified record access ambiguous. *)
+
+type workload_fact = service * bool
+(** [workload_fact] is a [service] plus whether it has a Dockerfile. *)
+
+type unexpected = string * string * string
+(** [unexpected] is [(domain, name, dir)] for directories that do not match a
+    Sol workload suffix. *)
+
+type workspace_scan = {
+  workloads : workload_fact list;
+  unexpected : unexpected list;
+}
+
+let workload_fact_to_service ((svc, _) : workload_fact) : service = svc
+let has_dockerfile dir = Sys.file_exists (Filename.concat dir "Dockerfile")
+
+let included_by_filter ~filter_path dir name =
+  match filter_path with
+  | None -> true
+  | Some p ->
+      let p = normalize_filter p in
+      dir = p || Filename.basename dir = p || name = p
+
+let scan_workspace ~filter_path =
   let app_dir = "app" in
   if not (Sys.file_exists app_dir && Sys.is_directory app_dir) then
     Error Missing_app_dir
   else begin
-    let services = ref [] in
-    (try
-       Array.iter
-         (fun domain ->
-           let dp = Filename.concat app_dir domain in
-           if domain.[0] <> '.' && Sys.is_directory dp then
-             try
-               Array.iter
-                 (fun svc_dir ->
-                   let sp = Filename.concat dp svc_dir in
-                   if svc_dir.[0] <> '.' && Sys.is_directory sp then
-                     match primitive_of_suffix svc_dir with
-                     | None -> ()
-                     | Some primitive ->
-                         if Sys.file_exists (Filename.concat sp "Dockerfile")
-                         then begin
-                           let svc =
-                             { domain; name = svc_dir; primitive; dir = sp }
-                           in
-                           let included =
-                             match filter_path with
-                             | None -> true
-                             | Some p ->
-                                 let p = normalize_filter p in
-                                 sp = p || Filename.basename sp = p
-                           in
-                           if included then services := svc :: !services
-                         end)
-                 (Sys.readdir dp)
-             with _ -> ())
-         (Sys.readdir app_dir)
-     with _ -> ());
-    Ok (List.rev !services)
+    let workloads = ref [] in
+    let unexpected = ref [] in
+    Array.iter
+      (fun domain ->
+        let dp = Filename.concat app_dir domain in
+        if domain.[0] <> '.' && Sys.is_directory dp then
+          Array.iter
+            (fun name ->
+              let dir = Filename.concat dp name in
+              if name.[0] <> '.' && Sys.is_directory dir then
+                match primitive_of_suffix name with
+                | Some primitive ->
+                    if included_by_filter ~filter_path dir name then
+                      let svc = { domain; name; primitive; dir } in
+                      workloads := (svc, has_dockerfile dir) :: !workloads
+                | None ->
+                    if included_by_filter ~filter_path dir name then
+                      unexpected := (domain, name, dir) :: !unexpected)
+            (Sys.readdir dp))
+      (Sys.readdir app_dir);
+    Ok { workloads = List.rev !workloads; unexpected = List.rev !unexpected }
   end
+
+let discover_services_result ~filter_path =
+  match scan_workspace ~filter_path with
+  | Error _ as err -> err
+  | Ok scan ->
+      Ok
+        (scan.workloads
+        |> List.filter_map (fun (svc, has_dockerfile) ->
+            if has_dockerfile then Some svc else None))
 
 let discover_services ~filter_path =
   match discover_services_result ~filter_path with
