@@ -13,10 +13,16 @@
     mention them at all. Verifying those endpoints requires a post-deploy smoke
     probe against a running workload, not a static pre-deploy check. *)
 module Severity : sig
-  type t = Error | Warning
+  type t =
+    | Error
+    | Warning
 end
 
-type finding = { severity : Severity.t; path : string; message : string }
+type finding =
+  { severity : Severity.t
+  ; path : string
+  ; message : string
+  }
 
 val finding_to_string : finding -> string
 val run : filter_path:string option -> unit -> finding list

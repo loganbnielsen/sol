@@ -1,10 +1,14 @@
-type rollout_strategy = Recreate | RollingUpdate
+type rollout_strategy =
+  | Recreate
+  | RollingUpdate
 
 (** A single step in an Argo Rollouts canary strategy. [Weight n] sets the
     traffic weight percentage to [n]. [Pause None] pauses indefinitely (requires
     manual promotion). [Pause (Some s)] pauses for [s] seconds then
     auto-promotes. *)
-type canary_step = Weight of int | Pause of int option
+type canary_step =
+  | Weight of int
+  | Pause of int option
 
 (** Progressive delivery strategy for Argo Rollouts. [Canary] uses weighted
     traffic-shifting steps. [Blue_green] uses two Services (active + preview)
@@ -31,55 +35,60 @@ type volume_access_mode =
   | ReadWriteOnce
   | ReadOnlyMany
   | ReadWriteMany
-      (** PersistentVolumeClaim access modes supported for application volumes.
+  (** PersistentVolumeClaim access modes supported for application volumes.
       *)
 
-type volume = {
-  name : string;
-  mount_path : string;
-  size : string;
-  access_mode : volume_access_mode;
-}
 (** A named persistent volume requested by a workload via
     [[infra.volumes.<name>]]. *)
+type volume =
+  { name : string
+  ; mount_path : string
+  ; size : string
+  ; access_mode : volume_access_mode
+  }
 
 val volume_access_mode_to_string : volume_access_mode -> string
 
-type t = {
-  replicas : int option;
-  cpu : cpu_quantity option;
-  memory : memory_quantity option;
-  env_config : (string * string) list;
-  secret_keys : string list;
-  volumes : volume list;
-  rollout_strategy : rollout_strategy option;
-  ingress_host : hostname option;
-  ingress_path : ingress_path option;
-  extra_labels : (string * string) list;
-  progressive_delivery : progressive_delivery option;
-      (** Cron schedule for [-fn] services, e.g. ["0 * * * *"]. Read from
+type t =
+  { replicas : int option
+  ; cpu : cpu_quantity option
+  ; memory : memory_quantity option
+  ; env_config : (string * string) list
+  ; secret_keys : string list
+  ; volumes : volume list
+  ; rollout_strategy : rollout_strategy option
+  ; ingress_host : hostname option
+  ; ingress_path : ingress_path option
+  ; extra_labels : (string * string) list
+  ; progressive_delivery : progressive_delivery option
+    (** Cron schedule for [-fn] services, e.g. ["0 * * * *"]. Read from
           [[service] schedule] in sol.toml. [None] means "use default". *)
-  schedule : string option;
-      (** Kafka topic names owned by this event/service directory. Read from
+  ; schedule : string option
+    (** Kafka topic names owned by this event/service directory. Read from
           [[service] topics] in sol.toml. Used by [discover_topics] to collect
           topics without scanning OCaml source files. *)
-  topics : string list;
-}
+  ; topics : string list
+  }
 
 val empty : t
 
 (** Typed errors returned by [load_result]. *)
 type parse_error =
-  | Toml_syntax of { path : string; message : string }
-  | Validation of { path : string; message : string }
+  | Toml_syntax of
+      { path : string
+      ; message : string
+      }
+  | Validation of
+      { path : string
+      ; message : string
+      }
 
 val parse_error_to_string : parse_error -> string
 
-val load_result : string -> (t, parse_error) result
 (** Load and parse a sol.toml file. Returns [Ok empty] if the file does not
     exist. Returns [Error _] for malformed TOML or validation errors. *)
+val load_result : string -> (t, parse_error) result
 
-val load : string -> t
 (** Load and parse a sol.toml file. Returns [empty] if the file does not exist.
     Compatibility wrapper around [load_result]. Raises [Failure] with a
     descriptive message on parse or validation errors:
@@ -89,3 +98,4 @@ val load : string -> t
     - Unknown [infra.rollout] strategy values (only "canary" and "blue-green"
       accepted).
     - Canary strategy with an empty steps list or weights outside 0..100. *)
+val load : string -> t

@@ -1,10 +1,3 @@
-val render_spec :
-  workspace:string ->
-  ?env:string ->
-  ?image:string ->
-  ?secret_backend:Sol_cli_manifest.secret_backend ->
-  Sol_cli_deployment_plan.service_spec ->
-  (string * string, string) result
 (** Render a [(namespace_yaml, workload_yaml)] pair from a resolved
     [service_spec]. [workspace] plus the spec's [domain]/[primitive] populate
     the OBS-008 label taxonomy. Pass [~env] (the resolved deployment
@@ -25,3 +18,10 @@ val render_spec :
       (GitOps);
     - [External_secrets _]: emit an ExternalSecret CRD for the External Secrets
       Operator. *)
+val render_spec
+  :  workspace:string
+  -> ?env:string
+  -> ?image:string
+  -> ?secret_backend:Sol_cli_manifest.secret_backend
+  -> Sol_cli_deployment_plan.service_spec
+  -> (string * string, string) result

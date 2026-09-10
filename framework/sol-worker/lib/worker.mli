@@ -1,12 +1,10 @@
 module type WORKER = sig
   module Message : Kafka_service.MESSAGE
 
-  val group_id : string
   (** Consumer group ID. Use a stable, service-scoped name, e.g.
       ["payments-broadcast-worker"]. *)
+  val group_id : string
 
-  val handle :
-    Message.t -> trace_ctx:Obs_trace.t option -> (unit, string) result
   (** Called once per successfully decoded message. [trace_ctx] carries the
       upstream [traceparent] header — pass it as [?parent:trace_ctx] to
       [Obs_eio.with_span] to link spans.
@@ -22,17 +20,18 @@ module type WORKER = sig
       acknowledged). The worker retries the same message using the [retry]
       policy passed to [Make(W).run]. Once [max_attempts] is exhausted (if
       non-negative), the worker stops and [Make(W).run] returns [Error]. *)
+  val handle : Message.t -> trace_ctx:Obs_trace.t option -> (unit, string) result
 end
 
-type retry_policy = Kafka.Consumer.retry_policy = {
-  base_delay_s : float;
-      (** Initial backoff in seconds. Doubles on each consecutive failure. *)
-  max_delay_s : float;
-      (** Backoff is capped at this value. Default: [600.0] (10 minutes). *)
-  max_attempts : int;
-      (** Maximum number of attempts before the worker stops. Negative = retry
+type retry_policy = Kafka.Consumer.retry_policy =
+  { base_delay_s : float
+    (** Initial backoff in seconds. Doubles on each consecutive failure. *)
+  ; max_delay_s : float
+    (** Backoff is capped at this value. Default: [600.0] (10 minutes). *)
+  ; max_attempts : int
+    (** Maximum number of attempts before the worker stops. Negative = retry
           indefinitely. Default: [-1]. *)
-}
+  }
 
 (** How the worker should handle transient failures from [W.handle].
 
@@ -52,16 +51,17 @@ type retry_strategy = Kafka_service.retry_strategy =
 type run_error =
   [ `Create of Kafka_service.error
   | `Register of Kafka_service.error
-  | `Consume of Kafka_service.consume_partitioned_error ]
+  | `Consume of Kafka_service.consume_partitioned_error
+  ]
 
 val run_error_to_string : run_error -> string
 
 module Make (W : WORKER) : sig
-  val run :
-    env:(_, _, _, _) Sol_env.timed ->
-    config:Kafka_service.config ->
-    ?ot:Sol_obs.t
-      (** Observability handle. When provided,
+  val run
+    :  env:(_, _, _, _) Sol_env.timed
+    -> config:Kafka_service.config
+    -> ?ot:Sol_obs.t
+         (** Observability handle. When provided,
           [sol_worker_messages_total{status}] (labels: [ok], [retry], [error],
           [ack_failed]) and [sol_worker_message_duration_seconds] are emitted
           per message, and the worker exposes [GET /metrics] on [metrics_port]
@@ -73,51 +73,51 @@ module Make (W : WORKER) : sig
           uncommitted for natural redelivery rather than retried immediately.
           Escalates to [Error] (stopping the worker) only when the commit
           failure is [Kafka.Error.is_fatal] — a broken consumer, not a transient
-          hiccup — logged at [Error] in that case. *) ->
-    ?metrics_port:int
-      (** Port for the [/metrics] endpoint above. Default: [9090]. Only binds
+          hiccup — logged at [Error] in that case. *)
+    -> ?metrics_port:int
+         (** Port for the [/metrics] endpoint above. Default: [9090]. Only binds
           when [ot] is provided; pass [0] for an OS-assigned port (e.g. when
           running more than one [-worker]/[-svc] in the same process, or in
           tests) or when [ot] is provided purely for metric registration and
-          another process already owns the default port. *) ->
-    ?on_ready:(unit -> unit)
-      (** Called exactly once when the broker assigns partitions to this
-          consumer. *) ->
-    ?stop:unit Eio.Promise.t
-      (** External stop signal. Resolve to request graceful shutdown; checked
+          another process already owns the default port. *)
+    -> ?on_ready:(unit -> unit)
+         (** Called exactly once when the broker assigns partitions to this
+          consumer. *)
+    -> ?stop:unit Eio.Promise.t
+         (** External stop signal. Resolve to request graceful shutdown; checked
           alongside the worker's own SIGTERM/SIGINT handling, not in place of
-          it. *) ->
-    ?max_messages:int
-      (** Stop cleanly after this many successfully processed messages. *) ->
-    ?retry_strategy:retry_strategy
-      (** Failure strategy for [Error] results from [W.handle]. Defaults to
-          [In_memory default_retry]. See [retry_strategy] for the two modes. *) ->
-    unit ->
-    (unit, run_error) result
+          it. *)
+    -> ?max_messages:int
+         (** Stop cleanly after this many successfully processed messages. *)
+    -> ?retry_strategy:retry_strategy
+         (** Failure strategy for [Error] results from [W.handle]. Defaults to
+          [In_memory default_retry]. See [retry_strategy] for the two modes. *)
+    -> unit
+    -> (unit, run_error) result
 end
 
 (** Test-only hook for unit tests that drive the worker handler without Kafka.
 *)
 module For_testing : sig
   module Make (W : WORKER) : sig
-    val run :
-      env:(_, _, _, _) Sol_env.timed ->
-      config:Kafka_service.config ->
-      ?ot:Sol_obs.t ->
-      ?metrics_port:int ->
-      ?on_ready:(unit -> unit) ->
-      ?stop:unit Eio.Promise.t ->
-      ?max_messages:int ->
-      ?retry_strategy:retry_strategy ->
-      ?test_consume_loop:
-        (handler:
-           (W.Message.t ->
-           ack:(unit -> (unit, Kafka.Error.t) result) ->
-           trace_ctx:Obs_trace.t option ->
-           Kafka.Error.t Kafka.Consumer.handler_result) ->
-        unit ->
-        unit) ->
-      unit ->
-      (unit, run_error) result
+    val run
+      :  env:(_, _, _, _) Sol_env.timed
+      -> config:Kafka_service.config
+      -> ?ot:Sol_obs.t
+      -> ?metrics_port:int
+      -> ?on_ready:(unit -> unit)
+      -> ?stop:unit Eio.Promise.t
+      -> ?max_messages:int
+      -> ?retry_strategy:retry_strategy
+      -> ?test_consume_loop:
+           (handler:
+              (W.Message.t
+               -> ack:(unit -> (unit, Kafka.Error.t) result)
+               -> trace_ctx:Obs_trace.t option
+               -> Kafka.Error.t Kafka.Consumer.handler_result)
+            -> unit
+            -> unit)
+      -> unit
+      -> (unit, run_error) result
   end
 end

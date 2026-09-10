@@ -3,7 +3,6 @@
     [sol dev up] and [cli/platform/infra/base/main.tf]'s [helm_release]
     resources stop hand-duplicating the same Helm values. *)
 
-val merged_values_yaml : component:string -> profile:string -> string
 (** [merged_values_yaml ~component ~profile] reads
     [cli/platform/components/<component>/values-common.json] and
     [values-<profile>.json], deep-merges the profile file over common (profile
@@ -17,3 +16,4 @@ val merged_values_yaml : component:string -> profile:string -> string
     with an error message if the Sol monorepo root can't be located (same
     resolution as [sol cloud plan/apply], see {!Sol_cli_cmd_new.infer_sol_home})
     or if a values file exists but isn't valid JSON. *)
+val merged_values_yaml : component:string -> profile:string -> string

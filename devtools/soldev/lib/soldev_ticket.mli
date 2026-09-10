@@ -9,7 +9,10 @@
    post-merge revert undoes the code and the ticket's DONE move atomically,
    since they were always the same commit — it lands back in
    [Ready_for_engineering] for free. *)
-type ticket_state = Backlog | Ready_for_engineering | Done
+type ticket_state =
+  | Backlog
+  | Ready_for_engineering
+  | Done
 
 val state_to_dir : ticket_state -> string
 val state_of_dir : string -> ticket_state option

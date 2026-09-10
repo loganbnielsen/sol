@@ -7,29 +7,36 @@
    lines. Pure/testable; the actual HTTP push and Loki-reachability I/O live
    in cli/sol/bin/cmd_deploy_event.ml. *)
 
-type t = {
-  workspace : string;
-  env : string;
-  domain : string;
-  service : string;
-  primitive : string;
-  release : string;
-}
+type t =
+  { workspace : string
+  ; env : string
+  ; domain : string
+  ; service : string
+  ; primitive : string
+  ; release : string
+  }
 
 let fields t =
-  [
-    ("event", "deploy");
-    ("workspace", t.workspace);
-    ("env", t.env);
-    ("domain", t.domain);
-    ("service", t.service);
-    ("primitive", t.primitive);
-    ("release", t.release);
+  [ "event", "deploy"
+  ; "workspace", t.workspace
+  ; "env", t.env
+  ; "domain", t.domain
+  ; "service", t.service
+  ; "primitive", t.primitive
+  ; "release", t.release
   ]
+;;
 
 let message t =
-  Printf.sprintf "deployed %s/%s (%s) release %s to workspace %s (%s)" t.domain
-    t.service t.primitive t.release t.workspace t.env
+  Printf.sprintf
+    "deployed %s/%s (%s) release %s to workspace %s (%s)"
+    t.domain
+    t.service
+    t.primitive
+    t.release
+    t.workspace
+    t.env
+;;
 
 (* Push URL resolution (OBS-037). Same explicit-always-wins precedence as
    Sol_cli_status.probe_url, but for a push target instead of a query
@@ -46,16 +53,19 @@ let message t =
      [loki_install_local] condition excludes it) and no existing
      [Sol_cli_config] target field carries an external push URL --
      [Skip reason] explains why nothing was pushed. *)
-type push_url_decision = Explicit of string | Auto_detect | Skip of string
+type push_url_decision =
+  | Explicit of string
+  | Auto_detect
+  | Skip of string
 
 let resolve_push_url ~backend ~explicit_url =
   match explicit_url with
   | Some url -> Explicit url
-  | None -> (
-      match (backend : Sol_cli_observability_url.backend) with
-      | Local | Self_hosted_durable -> Auto_detect
-      | External ->
-          Skip
-            "the \"external\" observability backend has no configured Loki \
-             push URL -- pass --loki-push-url to record this deploy's release \
-             event")
+  | None ->
+    (match (backend : Sol_cli_observability_url.backend) with
+     | Local | Self_hosted_durable -> Auto_detect
+     | External ->
+       Skip
+         "the \"external\" observability backend has no configured Loki push URL -- pass \
+          --loki-push-url to record this deploy's release event")
+;;

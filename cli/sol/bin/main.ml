@@ -6,22 +6,24 @@ let () =
      of which asked for workspace-root-relative behavior (OBS-017). *)
   let cmd =
     Cmdliner.Cmd.group
-      (Cmdliner.Cmd.info "sol" ~version:Version.v
+      (Cmdliner.Cmd.info
+         "sol"
+         ~version:Version.v
          ~doc:"Sol platform CLI — scaffold, run, and deploy Sol services")
-      [
-        Sol_cli_cmd_new.cmd;
-        Cmd_check.cmd;
-        Cmd_dev.cmd;
-        Cmd_plan.cmd;
-        Cmd_up.cmd;
-        Cmd_deploy.cmd;
-        Cmd_status.cmd;
-        Cmd_logs.cmd;
-        Cmd_open.cmd;
-        Cmd_migrate.cmd;
-        Cmd_rollback.cmd;
-        Cmd_secret.cmd;
-        Cmd_cloud.cmd;
+      [ Sol_cli_cmd_new.cmd
+      ; Cmd_check.cmd
+      ; Cmd_dev.cmd
+      ; Cmd_plan.cmd
+      ; Cmd_up.cmd
+      ; Cmd_deploy.cmd
+      ; Cmd_status.cmd
+      ; Cmd_logs.cmd
+      ; Cmd_open.cmd
+      ; Cmd_migrate.cmd
+      ; Cmd_rollback.cmd
+      ; Cmd_secret.cmd
+      ; Cmd_cloud.cmd
       ]
   in
   exit (Cmdliner.Cmd.eval cmd)
+;;

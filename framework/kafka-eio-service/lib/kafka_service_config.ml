@@ -8,13 +8,12 @@ let of_env () =
   match Kafka.Security.of_env () with
   | Error msg -> Error msg
   | Ok security ->
-      Ok
-        {
-          Kafka_service_intf.brokers = String.split_on_char ',' brokers_str;
-          schema_registry_url =
-            env_or "SCHEMA_REGISTRY_URL" "http://localhost:8081";
-          admin_url = env_or "REDPANDA_ADMIN_URL" "http://localhost:9644";
-          linger_ms = 50;
-          partitions = 1;
-          security;
-        }
+    Ok
+      { Kafka_service_intf.brokers = String.split_on_char ',' brokers_str
+      ; schema_registry_url = env_or "SCHEMA_REGISTRY_URL" "http://localhost:8081"
+      ; admin_url = env_or "REDPANDA_ADMIN_URL" "http://localhost:9644"
+      ; linger_ms = 50
+      ; partitions = 1
+      ; security
+      }
+;;
