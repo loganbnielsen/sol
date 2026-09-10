@@ -173,6 +173,12 @@ That declaration makes Sol inject `CHECKOUT_SVC_URL` into the caller and opens
 the generated NetworkPolicy only for that caller/target pair. Application code
 should read the URL from the environment and use ordinary `cohttp-eio` calls.
 
+Propagate context on the outbound request yourself, the same way the Kafka path
+does: copy the current W3C `traceparent` header so the callee's span joins the
+caller's trace — `Obs_trace.inject_to_headers` (or `Obs_trace.to_traceparent`)
+serializes it from the current span (`Sol_obs.current_trace_context`), and the
+callee's `Sol_svc` extracts it into `Request.trace_ctx`.
+
 Routes that use `` `Api_key`` auth expect the caller to send `x-api-key`.
 `sol-svc` reads the expected value from `SOL_API_KEY_FILE` first, then
 `SOL_API_KEY`. Sol emits `SOL_API_KEY` in the generated Secret with an empty

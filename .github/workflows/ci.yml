@@ -143,6 +143,16 @@ jobs:
 
           sol new workspace ci_smoke
           cd ci_smoke
+
+          # FEAT-041: the workspace scaffold ships exactly one -svc plus one
+          # worker, and only -svc gets a ClusterIP Service -- so a real
+          # cross-namespace request needs a second service to call. Add a
+          # throwaway peer and declare the synchronous dependency on charge_svc
+          # (whose sol.toml is the shared template, so appending a [service]
+          # section is valid TOML).
+          sol new svc checkout/checkout
+          printf '\n[service]\ncalls = ["checkout/checkout_svc"]\n' >> app/payments/charge_svc/sol.toml
+
           eval $(opam env)
           dune build
 
@@ -187,6 +197,67 @@ jobs:
             echo "::error::golden-path smoke test: /metrics did not return Prometheus text"
             exit 1
           fi
+
+          # FEAT-041: prove a declared cross-namespace call actually works on
+          # the cluster, and that an undeclared pod is still denied. The
+          # generated runtime image has no curl (ubuntu + librdkafka/libpq), so
+          # run a throwaway curl pod in the caller namespace. The allow probe
+          # carries app=charge-svc so it matches the generated NetworkPolicy
+          # rule for the declared pair; the deny probe carries no app label.
+          run_netprobe() {
+            local ns=$1 label=$2 url=$3 phase i
+            kubectl -n "$ns" delete pod netprobe --ignore-not-found >/dev/null 2>&1 || true
+            if [ -n "$label" ]; then
+              kubectl -n "$ns" run netprobe --image=curlimages/curl:8.11.1 \
+                --restart=Never --labels "app=$label" --command -- \
+                curl -sf --max-time 5 "$url"
+            else
+              kubectl -n "$ns" run netprobe --image=curlimages/curl:8.11.1 \
+                --restart=Never --command -- curl -sf --max-time 5 "$url"
+            fi
+            for i in $(seq 1 30); do
+              phase=$(kubectl -n "$ns" get pod netprobe -o jsonpath='{.status.phase}' 2>/dev/null) || phase=""
+              case "$phase" in
+                Succeeded)
+                  kubectl -n "$ns" delete pod netprobe --ignore-not-found >/dev/null 2>&1 || true
+                  return 0
+                  ;;
+                Failed)
+                  echo "--- netprobe logs ($ns, label='${label:-<none>}') ---"
+                  kubectl -n "$ns" logs netprobe || true
+                  kubectl -n "$ns" delete pod netprobe --ignore-not-found >/dev/null 2>&1 || true
+                  return 1
+                  ;;
+              esac
+              sleep 2
+            done
+            echo "--- netprobe timed out ($ns, label='${label:-<none>}') ---"
+            kubectl -n "$ns" delete pod netprobe --ignore-not-found >/dev/null 2>&1 || true
+            return 1
+          }
+
+          # Derive namespaces from the cluster rather than assuming the
+          # workspace->namespace normalization, so this keeps working if the
+          # naming rule changes.
+          caller_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-payments$' | head -1 || true)
+          peer_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-checkout$' | head -1 || true)
+          if [ -z "$caller_ns" ] || [ -z "$peer_ns" ]; then
+            echo "::error::FEAT-041: could not locate caller ('$caller_ns') or peer ('$peer_ns') namespace"
+            exit 1
+          fi
+
+          peer_url="http://checkout-svc.${peer_ns}.svc.cluster.local/healthz"
+          if ! run_netprobe "$caller_ns" charge-svc "$peer_url"; then
+            echo "::error::FEAT-041: declared caller charge-svc could not reach its peer"
+            exit 1
+          fi
+          echo "cross-namespace declared call OK"
+
+          if run_netprobe "$caller_ns" "" "$peer_url"; then
+            echo "::error::FEAT-041: undeclared pod reached the peer -- NetworkPolicy is not restrictive"
+            exit 1
+          fi
+          echo "cross-namespace undeclared call denied OK"
 
       # `sol up` blocks on an un-timed-out `kubectl rollout status`
       # internally, so a crash-looping pod (this job's whole reason to
