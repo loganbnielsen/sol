@@ -149,15 +149,33 @@ jobs:
           sol dev up
           sol up
 
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:8080/health > /tmp/health.out; then
-              echo "health check OK: $(cat /tmp/health.out)"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::golden-path smoke test: /health never became reachable"
-          exit 1
+          # CODE_LAYER-022: verify the framework's runtime endpoints against a
+          # real deployed pod, not just the scaffolded /health route. /healthz
+          # and /metrics are registered by Sol_svc.Service, so a regression in
+          # that layer must fail this job rather than only showing up as a
+          # missing Grafana series later.
+          probe() {
+            local path=$1
+            local out="/tmp/probe$(echo "$path" | tr -c '[:alnum:]' '_').out"
+            local i
+            for i in $(seq 1 30); do
+              if curl -sf "http://localhost:8080${path}" > "$out"; then
+                echo "${path} OK"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "::error::golden-path smoke test: ${path} never became reachable"
+            return 1
+          }
+
+          probe /health
+          probe /healthz
+          probe /metrics
+          if ! grep -Eq '# (HELP|TYPE)' /tmp/probe_metrics.out; then
+            echo "::error::golden-path smoke test: /metrics did not return Prometheus text"
+            exit 1
+          fi
 
       # `sol up` blocks on an un-timed-out `kubectl rollout status`
       # internally, so a crash-looping pod (this job's whole reason to
