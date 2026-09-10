@@ -7,8 +7,6 @@ source: architecture discussion 2026-09-09 (ingress/egress cost review, Cloudfla
 
 **Depends on:** None.
 
-Related: BUG-022 (dev-substrate policy gap), DEC-008 / INFRA-004 (hosted tenancy).
-
 Prove the self-hosted substrate contract is satisfiable on a cheap Kubernetes provider, and document the recipe end to end — including the credential story for DNS/TLS without cloud IAM.
 
 ## Problem
@@ -40,3 +38,4 @@ A documented, verified recipe: one cheap provider, one real `sol deploy` + `sol 
 
 - Sol's own non-production environments are the lowest-risk first consumer; a customer-facing hosted shape is a separate decision (DEC-008 / INFRA-004).
 - This is deliberately a recipe plus a verification run, not a new provider Terraform module: user-facing provider breadth is already covered by the bring-your-own-cluster path (`self-hosted-substrate-contract.md`, "Pulumi / CloudFormation / Other IaC").
+- Related: BUG-022 (dev-substrate policy gap), DEC-008 / INFRA-004 (hosted tenancy).
