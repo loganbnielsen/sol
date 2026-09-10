@@ -72,6 +72,7 @@ let run filter_path =
           image = "";
           config = [];
           secrets = [];
+          volumes = toml.Sol_cli_toml.volumes;
           schedule = None;
           replicas = 1;
           cpu = default_cpu;

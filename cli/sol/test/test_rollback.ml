@@ -28,6 +28,7 @@ let base_spec : Sol_cli_deployment_plan.service_spec =
     image = "";
     config = [];
     secrets = [];
+    volumes = [];
     schedule = None;
     replicas = 1;
     cpu = cpu "100m";

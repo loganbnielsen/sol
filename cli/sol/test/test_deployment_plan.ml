@@ -202,6 +202,7 @@ let sample_plan () : Sol_cli_deployment_plan.t =
       config = [ ("LOG_LEVEL", "info"); ("REGION", "us-east-1") ];
       secrets =
         [ ("DB_PASSWORD", "super-secret-value"); ("API_KEY", "also-secret") ];
+      volumes = [];
       schedule = None;
       replicas = 2;
       cpu = cpu "250m";
@@ -621,6 +622,7 @@ let make_worker_spec name domain =
     image = "reg/ws/" ^ name ^ ":t";
     config = [];
     secrets = [];
+    volumes = [];
     schedule = None;
     replicas = 1;
     cpu = cpu "100m";
@@ -1025,6 +1027,38 @@ let test_no_matching_sol_yml_service_uses_toml_replicas () =
       | Error err ->
           Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 
+let test_toml_volumes_carry_into_service_spec () =
+  let tmp = Filename.temp_dir "sol_test_plan_volumes" "" in
+  with_cwd tmp (fun () ->
+      mkdirs "app/payments/charge_svc";
+      write_file "app/payments/charge_svc/sol.toml"
+        "[infra.volumes.data]\n\
+         mount_path = \"/var/lib/data\"\n\
+         size = \"10Gi\"\n\
+         access_mode = \"ReadWriteOnce\"\n";
+      match
+        Sol_cli_deployment_plan.of_services_result ~workspace:"myworkspace"
+          ~env:deploy_env [ charge_svc_service ]
+      with
+      | Error err ->
+          Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+      | Ok plan -> (
+          match plan.Sol_cli_deployment_plan.services with
+          | [ spec ] -> (
+              match spec.Sol_cli_deployment_plan.volumes with
+              | [ volume ] ->
+                  Alcotest.(check string)
+                    "volume name" "data" volume.Sol_cli_toml.name;
+                  Alcotest.(check string)
+                    "mount path" "/var/lib/data" volume.Sol_cli_toml.mount_path;
+                  Alcotest.(check string) "size" "10Gi" volume.Sol_cli_toml.size;
+                  Alcotest.(check bool)
+                    "access mode" true
+                    (volume.Sol_cli_toml.access_mode
+                   = Sol_cli_toml.ReadWriteOnce)
+              | _ -> Alcotest.fail "expected exactly one volume")
+          | _ -> Alcotest.fail "expected exactly one service"))
+
 (* ── plan_ids newtype unit tests ────────────────────────────────────────── *)
 
 let test_topic_name_valid () =
@@ -1247,6 +1281,8 @@ let () =
           Alcotest.test_case
             "no matching sol.yml service keeps sol.toml replicas" `Quick
             test_no_matching_sol_yml_service_uses_toml_replicas;
+          Alcotest.test_case "sol.toml volumes carry into service spec" `Quick
+            test_toml_volumes_carry_into_service_spec;
         ] );
       ( "plan_ids",
         [

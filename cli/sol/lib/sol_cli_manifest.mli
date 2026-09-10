@@ -112,6 +112,7 @@ val deployment_doc :
   ?rollout_strategy:Sol_cli_toml.rollout_strategy ->
   ?extra_labels:(string * string) list ->
   ?secret_keys:string list ->
+  ?volumes:Sol_cli_toml.volume list ->
   ?env:string ->
   ?config_hash:string ->
   shape:workload_shape ->
@@ -130,6 +131,7 @@ val deployment_doc :
 val rollout_doc :
   ?extra_labels:(string * string) list ->
   ?secret_keys:string list ->
+  ?volumes:Sol_cli_toml.volume list ->
   ?config_hash:string ->
   ?env:string ->
   shape:workload_shape ->
@@ -148,6 +150,11 @@ val rollout_doc :
 (** [rollout_doc] renders an Argo Rollout resource instead of a Deployment.
     Requires Argo Rollouts installed in the cluster. [pd] must be [Canary _] or
     [Blue_green]. *)
+
+val pvc_docs : ns:string -> name:string -> Sol_cli_toml.volume list -> string
+(** [pvc_docs ~ns ~name volumes] renders one PersistentVolumeClaim per declared
+    volume. [storage] is emitted as-is; StorageClass and backup policy are out
+    of scope. *)
 
 val blue_green_service_docs : ns:string -> name:string -> string
 (** [blue_green_service_docs ~ns ~name] renders two ClusterIP Services

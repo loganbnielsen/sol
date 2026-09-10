@@ -38,6 +38,7 @@ type service_spec = {
   image : string;
   config : (string * string) list;
   secrets : (string * string) list;
+  volumes : Sol_cli_toml.volume list;
   schedule : string option;
   replicas : int;
   cpu : Sol_cli_toml.cpu_quantity;
