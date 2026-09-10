@@ -220,6 +220,22 @@ let routes pool ~publish_charged ~ot = [
 
 Auth is always declared explicitly on each route. There is no implicit auth based on path conventions.
 
+### Two services talking
+
+Pluto also includes `app/checkout/checkout_svc`, an API-key-protected HTTP
+service. `charge_svc` declares the east-west dependency in `sol.toml`:
+
+```toml
+[service]
+calls = ["checkout/checkout_svc"]
+```
+
+That makes Sol inject `CHECKOUT_SVC_URL` into `charge_svc` and generate the
+per-pair NetworkPolicy. In-cluster, the URL resolves through Kubernetes DNS to
+the checkout ClusterIP; the request never goes out to the public internet.
+The caller endpoint uses `Peer.url "checkout_svc"` and `Peer.headers` so
+`x-api-key` and the current W3C `traceparent` are set in one place.
+
 ### The worker
 
 `app/comms/notify_worker/lib/notify_worker.ml` is a Kafka consumer:
@@ -265,7 +281,7 @@ The `lib/dune` file publishes this as `pluto_storage`, a library both services d
 ## Part 3 — Deploy to the local cluster
 
 ```bash
-sol up
+SOL_API_KEY=dev-internal-key sol up
 ```
 
 For each service that has a `Dockerfile`, Sol:
@@ -286,7 +302,8 @@ TEMPO_URL           http://tempo.monitoring.svc.cluster.local:4318
 ```
 
 Secrets such as `POSTGRES_URL` and `SOL_API_KEY` are emitted through a
-Kubernetes Secret instead of the ConfigMap.
+Kubernetes Secret instead of the ConfigMap. The `SOL_API_KEY=... sol up`
+prefix fills the shared internal key used by the checkout example.
 
 When a service needs a synchronous call to another service, declare it in the
 caller:
@@ -372,6 +389,10 @@ curl -X POST localhost:8080/charges \
 # List stored notifications
 curl localhost:8080/notifications
 # [{"charge_id":"ch_042381","customer_id":"cus_123","amount_cents":4999,"currency":"usd"}]
+
+# Call checkout through charge_svc's declared service dependency
+curl localhost:8080/checkout-quote
+# {"shipping_cents":799,"currency":"USD","trace_id":"..."}
 ```
 
 ---
@@ -388,7 +409,22 @@ Go to **Explore → Loki** and query:
 {service=~"pluto-.*"} | logfmt
 ```
 
-You will see structured log lines from both services. Each line includes `level`, `msg`, `span`, `trace_id`, and any fields the handler added. W3C `traceparent` headers propagate across the Kafka boundary, so a charge request's `trace_id` appears in both the `charge-svc` logs and the `notify-worker` logs when the event is consumed.
+You will see structured log lines from both services. Each line includes `level`, `msg`, `span`, `trace_id`, and any fields the handler added. W3C `traceparent` headers propagate across the Kafka boundary, so a charge request's `trace_id` appears in both the `charge-svc` logs and the `notify-worker` logs when the event is consumed. The `/checkout-quote` path also forwards `traceparent` over HTTP via `Peer`, so the checkout response includes the propagated `trace_id`.
+
+### Ingress
+
+In local dev, Sol serves `checkout_svc` on its per-service host:
+
+```bash
+curl -H 'Host: checkout-svc.pluto-checkout.localhost' \
+  -H 'x-api-key: dev-internal-key' \
+  http://localhost:8088/quote
+```
+
+For customer-cloud, set `ingress_host` in `checkout_svc/sol.toml` to your DNS
+name, run `sol deploy customer_cloud/aws/us-east-1`, then create an `A` or
+`CNAME` record pointing at the ingress load balancer. Cert-manager provisions
+TLS through the configured cluster issuer.
 
 ### Metrics
 

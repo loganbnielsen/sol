@@ -8,6 +8,10 @@ resources:
     type: kafka
 
 services:
+  checkout_svc:
+    type: http
+    path: app/checkout/checkout_svc
+
   charge_svc:
     type: http
     path: app/payments/charge_svc

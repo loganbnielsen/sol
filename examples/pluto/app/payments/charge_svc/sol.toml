@@ -8,3 +8,6 @@
 [infra.env]
 # secrets = []
 # config  = {}
+
+[service]
+calls = ["checkout/checkout_svc"]

@@ -202,6 +202,30 @@ driven by `kid` lookup in the JWKS, not by attacker input.
 
 ---
 
+## Module: `Peer`
+
+`Peer` is the outbound helper for declared `[service] calls`.
+
+```ocaml
+val env_var : string -> string
+val url : string -> (Uri.t, [ `Config of string ]) result
+
+val headers
+  :  env:< fs : Eio.Fs.dir_ty Eio.Path.t ; .. >
+  -> ?trace_ctx:Obs_trace.t
+  -> ?headers:(string * string) list
+  -> peer:string
+  -> unit
+  -> ((string * string) list, [ `Config of string ]) result
+```
+
+`Peer.url "checkout_svc"` reads `CHECKOUT_SVC_URL`, matching the env var Sol
+injects for `calls = ["checkout/checkout_svc"]`. `Peer.headers` sets
+`x-api-key` from `SOL_API_KEY_FILE`/`SOL_API_KEY` and adds `traceparent` when
+given the current span context.
+
+---
+
 ## Module: `Sol_svc.Route`
 
 ### Types
