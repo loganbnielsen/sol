@@ -1,31 +1,27 @@
 # Contributing to Sol
 
-Sol is Apache-2.0 — see [`LICENSE`](LICENSE). Thanks for considering a change.
+Sol is Apache-2.0 — see [`LICENSE`](LICENSE).
 
-## Contributor sign-off (policy)
+## Not accepting outside contributions yet
 
-Contributions are accepted under the [Developer Certificate of Origin 1.1](https://developercertificate.org/) — a short certificate, not a contract. By signing off, you state for each commit that:
+**The project is not currently accepting pull requests**, and that is deliberate rather than an oversight: the terms on which outside code is accepted are still being settled (below), and accepting a contribution under the wrong terms permanently restricts what the project can do with its licence.
 
-- you created the contribution, in whole or in part, and have the right to submit it under this project's licence; or
-- it is based on appropriately-licensed prior work that you have the right to submit under the same licence; or
-- it came directly from someone who certified the above and you have not modified it; and
-- you understand the contribution and its record are public and may be redistributed under the project's licence.
+What is welcome in the meantime:
 
-In practice that means committing with:
+- **Issues.** Bug reports with a reproduction, design critique, and "this was confusing" are genuinely useful.
+- **Security reports.** Please report these privately rather than in a public issue.
+- **Questions.** If you are building on Sol and something is unclear, that is a documentation bug worth reporting.
 
-```bash
-git commit -s -m "your message"
-```
+If you have already prepared a change, tell us through an issue rather than letting it sit — we would rather say whether it is something we can take, and under what terms, than have you guess.
 
-which appends:
+## Contributor terms (to be settled before any contribution is accepted)
 
-```
-Signed-off-by: Your Name <you@example.com>
-```
+Two mechanisms are on the table, and the choice is not cosmetic:
 
-**This is not currently enforced by CI.** It is stated so contributors know the terms before contributing; enforcement will be added when the project actively solicits outside contributions — alongside the people it governs.
+- **DCO sign-off** (`git commit -s`) — a per-commit *origin statement*: you certify you created the work, in whole or in part, or otherwise have the right to submit it under this project's licence. Minimum friction, and what most projects use. It does **not** grant permission to relicense the contribution.
+- **CLA** — a signed agreement that does grant that permission, which is what makes it possible to change the project's licence later (for example tightening it to prevent a reseller), and what every notable relicensing has relied on.
 
-**What a sign-off does and does not do.** It is an *origin statement*, not a rights grant: it certifies you had the right to submit the work under this project's licence. It does **not** give the project permission to relicense your contribution under different terms — that requires a CLA, which is a separate and more consequential decision. Two consequences worth stating plainly: do not sign off on someone else's behalf, and do not add the trailer mechanically. An attestation nobody means is worse than no attestation, because it puts a hollow statement on the record.
+The distinction is worth stating plainly because it is easy to conflate: a sign-off is an *origin statement, not a rights grant*. And the difference only matters *before* code lands — after a handful of contributors it is not realistically reversible without tracking each of them down. That is why the choice is being settled first rather than deferred, and why no contribution will be accepted until it is.
 
 ## Before you start
 
