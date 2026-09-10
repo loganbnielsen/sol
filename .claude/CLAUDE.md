@@ -47,7 +47,18 @@ Do not add a `status:` field — the directory encodes status.
 - `/review-worktree` — standalone review gate (called internally by `/work`); subagents emit JSON, `soldev pipeline review` leaves the verdict on the PR
 - `/audit` and `/ux-audit` — materialise new findings into `READY_FOR_ENGINEERING/` (idempotent)
 
-**Performance baseline conflict:** `devtools/perf/perf_baseline.json` is set to `merge=ours` in `.gitattributes`. On merge, main's baseline wins; a post-merge perf run determines whether the merge stands or gets reverted (taking the ticket back to `READY_FOR_ENGINEERING` with it).
+**soldev roles (REFAC-079):** GitHub PRs/CI are the source of truth; `soldev` is an orchestration layer over GitHub, not a second authority.
+- `pipeline ls` / `pipeline check` — orchestration: queue view, preflight gates, PR and dirty-worktree annotations.
+- `pipeline submit` — orchestration: pushes the ticket branch and opens/reuses the PR.
+- `pipeline review` — orchestration: posts the structured `SOLDEV-REVIEW` verdict comment that `merge` trusts.
+- `pipeline merge` — orchestration: verifies review marker + CI directly on GitHub, then runs `gh pr merge --squash --delete-branch --admin`.
+- `pipeline merge-finish` — informational/maintenance, invoked by `merge`: records perf baseline/history after a merge. It does **not** gate or revert merges; merging outside soldev simply skips this informational step.
+- `pipeline check-reverts` — safety diagnostic over git history.
+- Pre-commit hook — convenience local gate; GitHub CI is the authoritative PR gate. `SOL_SKIP_HOOKS=1` intentionally allows a one-off local bypass.
+- Post-commit hook — informational perf status + orphaned-worktree warnings.
+- Direct-to-`main` ticket-file commits (`BACKLOG` promotions, audit filings) — bookkeeping exception; kept outside PRs because they are metadata moves, not code.
+
+**Performance baseline:** `devtools/perf/perf_baseline.json` is main-only and informational. `run_tests.sh` writes it only with `--update-baseline`; pre-commit never stages it into code commits; merges never revert on perf-ratio regressions (REFAC-078). `.gitattributes` keeps `merge=ours` for local merges.
 
 ## Core design principles every engineer must know
 
