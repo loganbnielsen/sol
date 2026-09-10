@@ -1,11 +1,15 @@
 (* ── Shared templates ─────────────────────────────────────────────────────── *)
 
-let tpl_ocamlformat = {tpl|profile = default
+let tpl_ocamlformat =
+  {tpl|profile = default
 version = 0.29.0
 |tpl}
+;;
 
-let tpl_dune_project = {tpl|(lang dune 3.0)
+let tpl_dune_project =
+  {tpl|(lang dune 3.0)
 |tpl}
+;;
 
 let tpl_readme =
   {tpl|# {{Name}}
@@ -72,6 +76,7 @@ test/                     ← schema backward-compatibility CI gate
 vendor/                   ← symlinks to Sol framework source (not committed)
 ```
 |tpl}
+;;
 
 let tpl_sol_toml =
   {tpl|# Sol service configuration — all fields are optional.
@@ -89,6 +94,7 @@ let tpl_sol_toml =
 # strategy = "canary"       # or "blue-green"
 # steps    = [10, 40, 100]  # canary only
 |tpl}
+;;
 
 (* -fn sol.toml: [service] carries the cron schedule so sol deploy reads it
    without scanning OCaml source for "schedule = ..." string literals. *)
@@ -106,6 +112,7 @@ schedule = "0 * * * *"   # cron schedule (default: every hour)
 # secrets = []
 # config  = {}
 |tpl}
+;;
 
 (* Event-directory sol.toml: [service] carries the topic name so sol deploy
    discovers topics without scanning OCaml source. *)
@@ -115,6 +122,7 @@ let tpl_event_sol_toml =
 [service]
 topics = ["{{team}}-{{name}}s"]
 |tpl}
+;;
 
 (* Three-job pipeline: build-and-test, build-images, deploy — see the
    generated workflow's own header comment for the full contract. *)
@@ -335,6 +343,7 @@ jobs:
           git commit -m "deploy: ${IMAGE_TAG::7}"
           git push
 |tpl}
+;;
 
 let tpl_github_deploy =
   {tpl|# CI/CD — deploy to your Sol cluster on every push to main.
@@ -443,6 +452,7 @@ jobs:
       - name: Status
         run: eval $(opam env) && sol status
 |tpl}
+;;
 
 let tpl_dockerfile =
   {tpl|# Stage 1: compile inside ubuntu-24.04 so the binary links against glibc 2.39.
@@ -502,11 +512,14 @@ COPY --from=build /workspace/_build/default/{{repo_dir}}/bin/main.exe /usr/local
 USER 65534
 CMD ["/usr/local/bin/{{binary}}"]
 |tpl}
+;;
 
-let tpl_dockerignore = {tpl|_build/
+let tpl_dockerignore =
+  {tpl|_build/
 .git/
 *.docker-ctx/
 |tpl}
+;;
 
 (* sol deploy deliberately refuses to run against a target with no
    sol/<env>/<provider>/<region>.yml file, even an empty one -- otherwise a
@@ -523,6 +536,7 @@ let tpl_deploy_target =
 # target:
 #   registry: <your-registry-url>
 |tpl}
+;;
 
 (* ── Workspace scaffold templates ─────────────────────────────────────────── *)
 
@@ -582,6 +596,7 @@ let decode = function
     Ok { id; amount_cents; customer_id; currency; correlation_id }
   | _ -> Error "expected object"
 |tpl}
+;;
 
 (* events/payments/dune *)
 let ws_events_dune =
@@ -591,6 +606,7 @@ let ws_events_dune =
  (modules Charged)
  (libraries kafka_eio_service yojson))
 |tpl}
+;;
 
 (* lib/notification.ml — shared storage module *)
 let ws_notification_ml =
@@ -615,6 +631,7 @@ let insert pool ~charge_id ~customer_id ~amount_cents ~currency =
 let list_recent pool =
   Pg_db.collect pool list_q ()
 |tpl}
+;;
 
 (* lib/dune — shared storage library *)
 let ws_storage_dune =
@@ -624,6 +641,7 @@ let ws_storage_dune =
  (modules Notification)
  (libraries pg-eio caqti))
 |tpl}
+;;
 
 (* app/payments/charge_svc/lib/handler.ml *)
 let ws_svc_handler_ml =
@@ -699,6 +717,7 @@ let routes pool ~publish_charged ~obs = [
   );
 ]
 |tpl}
+;;
 
 (* app/payments/charge_svc/lib/dune *)
 let ws_svc_lib_dune =
@@ -708,6 +727,7 @@ let ws_svc_lib_dune =
  (modules Handler)
  (libraries {{name}}_storage {{name}}_payments_events sol_svc sol_obs yojson))
 |tpl}
+;;
 
 (* app/payments/charge_svc/bin/main.ml *)
 let ws_svc_bin_ml =
@@ -748,6 +768,7 @@ let () =
   |> Result.map_error Service.run_error_to_string
   |> function Ok () -> () | Error e -> fatal e
 |tpl}
+;;
 
 (* app/payments/charge_svc/bin/dune *)
 let ws_svc_bin_dune =
@@ -759,6 +780,7 @@ let ws_svc_bin_dune =
   pg-eio caqti-eio caqti-eio.unix caqti-driver-postgresql
   eio_main))
 |tpl}
+;;
 
 (* app/comms/notify_worker/lib/notify_worker.ml — satisfies Worker.WORKER *)
 let ws_worker_ml =
@@ -790,6 +812,7 @@ end) = struct
 
 end
 |tpl}
+;;
 
 (* app/comms/notify_worker/lib/dune *)
 let ws_worker_lib_dune =
@@ -801,6 +824,7 @@ let ws_worker_lib_dune =
   {{name}}_storage {{name}}_payments_events
   kafka_eio_service sol_obs pg-eio))
 |tpl}
+;;
 
 (* app/comms/notify_worker/bin/main.ml *)
 let ws_worker_bin_ml =
@@ -836,6 +860,7 @@ let () =
   |> Result.map_error Worker.run_error_to_string
   |> function Ok () -> () | Error msg -> fatal msg
 |tpl}
+;;
 
 (* app/comms/notify_worker/bin/dune *)
 let ws_worker_bin_dune =
@@ -846,6 +871,7 @@ let ws_worker_bin_dune =
   pg-eio caqti-eio caqti-eio.unix caqti-driver-postgresql
   eio_main))
 |tpl}
+;;
 
 (* db/migrations/0001_notifications.sql *)
 let ws_migration_sql =
@@ -858,11 +884,13 @@ let ws_migration_sql =
   created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 |tpl}
+;;
 
 (* db/migrations/0001_notifications.down.sql *)
 let ws_migration_down_sql =
   {tpl|DROP TABLE IF EXISTS {{name}}_notifications;
 |tpl}
+;;
 
 (* test/test_schemas.ml — schema compatibility CI gate *)
 let ws_test_schemas_ml =
@@ -888,6 +916,7 @@ let () =
         exit 1
     )
 |tpl}
+;;
 
 (* test/dune *)
 let ws_test_dune =
@@ -895,6 +924,7 @@ let ws_test_dune =
  (name test_schemas)
  (libraries kafka_eio_service eio_main {{name}}_payments_events))
 |tpl}
+;;
 
 (* ── Generic primitive templates ──────────────────────────────────────────── *)
 
@@ -906,6 +936,7 @@ let svc_handler_ml =
   );
 ]
 |tpl}
+;;
 
 (* Generic svc: lib/dune *)
 let svc_lib_dune =
@@ -915,6 +946,7 @@ let svc_lib_dune =
  (modules Handler)
  (libraries sol_svc))
 |tpl}
+;;
 
 (* Generic svc: bin/main.ml *)
 let svc_bin_ml =
@@ -931,6 +963,7 @@ let () = Eio_main.run @@ fun env ->
   |> Result.map_error Service.run_error_to_string
   |> function Ok () -> () | Error e -> fatal e
 |tpl}
+;;
 
 (* Generic svc: bin/dune *)
 let svc_bin_dune =
@@ -938,6 +971,7 @@ let svc_bin_dune =
  (name main)
  (libraries {{lib}} sol_svc sol_obs eio_main))
 |tpl}
+;;
 
 (* Generic worker: lib/<name>_worker.ml — satisfies Worker.WORKER; replace the
    stub Message with your event module. *)
@@ -971,6 +1005,7 @@ let handle (msg : Message.t) ~trace_ctx:_ =
      ack to call. Returning Error causes the message to be retried. *)
   Ok ()
 |tpl}
+;;
 
 (* Generic worker: lib/dune *)
 let worker_lib_dune =
@@ -980,6 +1015,7 @@ let worker_lib_dune =
  (modules {{Mod}})
  (libraries kafka_eio_service yojson))
 |tpl}
+;;
 
 (* Generic worker: bin/main.ml *)
 let worker_bin_ml =
@@ -1002,6 +1038,7 @@ let () = Eio_main.run @@ fun env ->
   |> Result.map_error Worker.run_error_to_string
   |> function Ok () -> () | Error msg -> fatal msg
 |tpl}
+;;
 
 (* Generic worker: bin/dune *)
 let worker_bin_dune =
@@ -1009,6 +1046,7 @@ let worker_bin_dune =
  (name main)
  (libraries {{lib}} sol_worker kafka_eio_service sol_obs eio_main))
 |tpl}
+;;
 
 (* Generic fn: lib/<name>_fn.ml — satisfies Fn.FN *)
 let fn_lib_ml =
@@ -1018,6 +1056,7 @@ let run () =
   Printf.printf "[{{name}}-fn] running\n%!";
   Ok ()
 |tpl}
+;;
 
 (* Generic fn: lib/dune *)
 let fn_lib_dune =
@@ -1027,6 +1066,7 @@ let fn_lib_dune =
  (libraries sol_fn)
  (modules {{Mod}}))
 |tpl}
+;;
 
 (* Generic fn: bin/main.ml *)
 let fn_bin_ml =
@@ -1045,6 +1085,7 @@ let () = Eio_main.run @@ fun env ->
   | Error `Signalled -> exit 130
   | Error e -> fatal (Fn.run_error_to_string e)
 |tpl}
+;;
 
 (* Generic fn: bin/dune *)
 let fn_bin_dune =
@@ -1052,6 +1093,7 @@ let fn_bin_dune =
  (name main)
  (libraries {{lib}} sol_fn sol_obs eio_main))
 |tpl}
+;;
 
 (* Generic event: <name>.ml — satisfies Kafka_service.MESSAGE *)
 let event_ml =
@@ -1091,3 +1133,4 @@ let decode = function
     Ok { id; payload }
   | _ -> Error "expected object"
 |tpl}
+;;

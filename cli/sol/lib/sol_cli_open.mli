@@ -5,26 +5,23 @@ type scope =
   | Domain of string
   | Service of string * string
   | Resource of string * string
-      (** [Resource (resource_type, resource_name)] -- a managed infrastructure
+  (** [Resource (resource_type, resource_name)] -- a managed infrastructure
           resource dashboard (OBS-044), e.g. an RDS instance. Generic over
           [resource_type]: the CLI never validates it against a known list,
           matching cli/platform/infra's generic-by-resource-type Terraform
           shape. *)
 
-type kind = Logs | Metrics | Dashboard
+type kind =
+  | Logs
+  | Metrics
+  | Dashboard
 
-val parse_scope : string option -> (scope, string) result
 (** [parse_scope arg] parses the optional 'sol open' positional argument: [None]
     is workspace scope; ["domain"] is domain scope; ["domain/service"] is
     service scope; ["resource/<type>/<name>"] is a managed resource dashboard
     scope (OBS-044). Anything else is an [Error]. *)
+val parse_scope : string option -> (scope, string) result
 
-val url :
-  base_url:string ->
-  workspace:string ->
-  kind:kind ->
-  scope ->
-  (string, string) result
 (** [url ~base_url ~workspace ~kind scope] builds the Grafana URL for [kind] at
     [scope]:
     - [Logs] builds an Explore URL scoped by namespace (and service, when scoped
@@ -40,3 +37,9 @@ val url :
       [scope]'s domain/service/resource name failed Sol's naming rules (see
       [Sol_cli_deployment_plan]), or (for [Logs] + [Resource]) that no logs view
       exists for managed resources. *)
+val url
+  :  base_url:string
+  -> workspace:string
+  -> kind:kind
+  -> scope
+  -> (string, string) result

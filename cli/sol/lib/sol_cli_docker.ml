@@ -13,35 +13,27 @@ let build ~tag ~dockerfile ~context =
      cluster was involved. *)
   run_ok
     (cmd
-       [
-         "docker";
-         "build";
-         "--provenance=false";
-         "--sbom=false";
-         "-t";
-         tag;
-         "-f";
-         dockerfile;
-         context;
+       [ "docker"
+       ; "build"
+       ; "--provenance=false"
+       ; "--sbom=false"
+       ; "-t"
+       ; tag
+       ; "-f"
+       ; dockerfile
+       ; context
        ])
+;;
 
 let push ~image_ref = run_ok (cmd [ "docker"; "push"; image_ref ])
 
 let inspect_digest ~image_ref =
   match
-    run
-      (cmd
-         [
-           "docker";
-           "inspect";
-           "--format";
-           "{{index .RepoDigests 0}}";
-           image_ref;
-         ])
+    run (cmd [ "docker"; "inspect"; "--format"; "{{index .RepoDigests 0}}"; image_ref ])
   with
   | Ok r
     when r.Sol_cli_process.exit_code = 0
          && r.Sol_cli_process.stdout <> ""
-         && r.Sol_cli_process.stdout <> "<no value>" ->
-      r.Sol_cli_process.stdout
+         && r.Sol_cli_process.stdout <> "<no value>" -> r.Sol_cli_process.stdout
   | _ -> image_ref
+;;

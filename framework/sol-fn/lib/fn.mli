@@ -1,7 +1,7 @@
 type trigger =
-  | Cron of string  (** Cron expression, e.g. ["0 * * * *"] for hourly. *)
+  | Cron of string (** Cron expression, e.g. ["0 * * * *"] for hourly. *)
   | Lambda
-      (** Runs via the AWS Lambda Runtime API loop ([lambda-eio]) instead of
+  (** Runs via the AWS Lambda Runtime API loop ([lambda-eio]) instead of
           once-and-exit — see [aws-audit.md] and [lambda-eio.md] for the full
           design. Not a general event-processing trigger: v1 does not thread the
           Lambda event payload into [F.run] at all, matching this module's
@@ -12,33 +12,19 @@ type trigger =
 module type FN = sig
   val trigger : trigger
 
-  val run : unit -> (unit, string) result
   (** The function body. Called once per invocation; must return. *)
+  val run : unit -> (unit, string) result
 end
 
-type run_error = [ `Config of string | `Run of string | `Signalled ]
+type run_error =
+  [ `Config of string
+  | `Run of string
+  | `Signalled
+  ]
 
 val run_error_to_string : run_error -> string
 
 module Make (F : FN) : sig
-  val run :
-    env:(_, _, _, _) Sol_env.timed ->
-    ?pushgateway_url:string
-      (** Pushgateway base URL, e.g. "http://pushgateway:9091". If absent,
-          metrics are recorded in-process but not pushed. *) ->
-    ?job:string
-      (** Pushgateway job label. Defaults to the cron schedule string for
-          [Cron], or ["lambda"] for [Lambda]. *) ->
-    ?ot:Sol_obs.t
-      (** Observability handle. Its composed backend + renderer are used for
-          this invocation's metrics and push; defaults to a bare
-          [Obs_prometheus.create ()] backend when absent. *) ->
-    ?stop:unit Eio.Promise.t
-      (** External stop signal. [Cron] returns [`Signalled] without starting a
-          new run if it is already resolved; [Lambda] leaves the runtime loop
-          after the current invocation. *) ->
-    unit ->
-    (unit, run_error) result
   (** [Cron _]: run [F.run ()] once, record metrics, push to Pushgateway if
       configured, then return. [F.run () = Error msg] becomes
       [Error (`Run msg)]. Ordinary exceptions from [F.run] become
@@ -58,4 +44,22 @@ module Make (F : FN) : sig
       itself; the execution environment manages the process lifecycle. Requires
       [AWS_LAMBDA_RUNTIME_API] to be set, otherwise returns
       [Error (`Config ...)]. *)
+  val run
+    :  env:(_, _, _, _) Sol_env.timed
+    -> ?pushgateway_url:string
+         (** Pushgateway base URL, e.g. "http://pushgateway:9091". If absent,
+          metrics are recorded in-process but not pushed. *)
+    -> ?job:string
+         (** Pushgateway job label. Defaults to the cron schedule string for
+          [Cron], or ["lambda"] for [Lambda]. *)
+    -> ?ot:Sol_obs.t
+         (** Observability handle. Its composed backend + renderer are used for
+          this invocation's metrics and push; defaults to a bare
+          [Obs_prometheus.create ()] backend when absent. *)
+    -> ?stop:unit Eio.Promise.t
+         (** External stop signal. [Cron] returns [`Signalled] without starting a
+          new run if it is already resolved; [Lambda] leaves the runtime loop
+          after the current invocation. *)
+    -> unit
+    -> (unit, run_error) result
 end

@@ -2,23 +2,28 @@
    used by sol logs/sol open/sol status's "Open" hints alike, instead of
    each command inventing its own flag and default. *)
 
-type backend = Local | Self_hosted_durable | External
+type backend =
+  | Local
+  | Self_hosted_durable
+  | External
 
 let backend_of_string = function
   | "local" -> Some Local
   | "self_hosted_durable" -> Some Self_hosted_durable
   | "external" -> Some External
   | _ -> None
+;;
 
 let backend_to_string = function
   | Local -> "local"
   | Self_hosted_durable -> "self_hosted_durable"
   | External -> "external"
+;;
 
 type resolution =
   | Url of string
   | No_url of string
-      (** [No_url reason] — there is nothing safe to link to; [reason] is a
+  (** [No_url reason] — there is nothing safe to link to; [reason] is a
           short, printable explanation for the caller to show the user instead
           of a broken/guessed link. *)
 
@@ -41,21 +46,19 @@ type resolution =
 let resolve ~backend ?base_domain ?override () =
   match override with
   | Some url -> Url url
-  | None -> (
-      match backend with
-      | Local -> Url "http://localhost:3000"
-      | Self_hosted_durable -> (
-          match base_domain with
-          | Some d when String.trim d <> "" ->
-              Url (Printf.sprintf "https://grafana.%s" d)
-          | _ ->
-              No_url
-                "self_hosted_durable requires --base-domain to resolve the \
-                 Grafana URL")
-      | External ->
-          No_url
-            "no generated URL for the \"external\" backend -- check your \
-             configured observability provider directly")
+  | None ->
+    (match backend with
+     | Local -> Url "http://localhost:3000"
+     | Self_hosted_durable ->
+       (match base_domain with
+        | Some d when String.trim d <> "" -> Url (Printf.sprintf "https://grafana.%s" d)
+        | _ ->
+          No_url "self_hosted_durable requires --base-domain to resolve the Grafana URL")
+     | External ->
+       No_url
+         "no generated URL for the \"external\" backend -- check your configured \
+          observability provider directly")
+;;
 
 (* OBS-015: sol status/logs/open used to default straight to Local/no
    base_domain, with no path to the target's actual configuration --
@@ -73,42 +76,42 @@ let resolve ~backend ?base_domain ?override () =
       [Error _] covers: [target] fails to load, resolves to no target, or sets
       an [observability_backend] value that isn't one of
       ["local"|"self_hosted_durable"|"external"]. *)
-let effective_backend_and_base_domain ~explicit_backend ~explicit_base_domain
-    ~target () =
+let effective_backend_and_base_domain ~explicit_backend ~explicit_base_domain ~target () =
   match target with
-  | None ->
-      Ok (Option.value explicit_backend ~default:Local, explicit_base_domain)
-  | Some target_path -> (
-      match Sol_cli_config.load_for_target ~target:target_path with
-      | Error e -> Error (Sol_cli_config.error_to_string e)
-      | Ok cfg -> (
-          match Sol_cli_config.target cfg with
-          | None -> Error (Printf.sprintf "target %S not found" target_path)
-          | Some t -> (
-              let target_backend =
-                match t.Sol_cli_config.observability_backend with
-                | None -> Ok None
-                | Some s -> (
-                    match backend_of_string s with
-                    | Some b -> Ok (Some b)
-                    | None ->
-                        Error
-                          (Printf.sprintf
-                             "target %s has invalid observability_backend %S \
-                              (expected: local, self_hosted_durable, external)"
-                             target_path s))
-              in
-              match target_backend with
-              | Error e -> Error e
-              | Ok target_backend ->
-                  let backend =
-                    match explicit_backend with
-                    | Some b -> b
-                    | None -> Option.value target_backend ~default:Local
-                  in
-                  let base_domain =
-                    match explicit_base_domain with
-                    | Some _ -> explicit_base_domain
-                    | None -> t.Sol_cli_config.base_domain
-                  in
-                  Ok (backend, base_domain))))
+  | None -> Ok (Option.value explicit_backend ~default:Local, explicit_base_domain)
+  | Some target_path ->
+    (match Sol_cli_config.load_for_target ~target:target_path with
+     | Error e -> Error (Sol_cli_config.error_to_string e)
+     | Ok cfg ->
+       (match Sol_cli_config.target cfg with
+        | None -> Error (Printf.sprintf "target %S not found" target_path)
+        | Some t ->
+          let target_backend =
+            match t.Sol_cli_config.observability_backend with
+            | None -> Ok None
+            | Some s ->
+              (match backend_of_string s with
+               | Some b -> Ok (Some b)
+               | None ->
+                 Error
+                   (Printf.sprintf
+                      "target %s has invalid observability_backend %S (expected: local, \
+                       self_hosted_durable, external)"
+                      target_path
+                      s))
+          in
+          (match target_backend with
+           | Error e -> Error e
+           | Ok target_backend ->
+             let backend =
+               match explicit_backend with
+               | Some b -> b
+               | None -> Option.value target_backend ~default:Local
+             in
+             let base_domain =
+               match explicit_base_domain with
+               | Some _ -> explicit_base_domain
+               | None -> t.Sol_cli_config.base_domain
+             in
+             Ok (backend, base_domain))))
+;;

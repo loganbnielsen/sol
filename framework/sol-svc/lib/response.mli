@@ -1,4 +1,8 @@
-type t = { status : int; headers : (string * string) list; body : string }
+type t =
+  { status : int
+  ; headers : (string * string) list
+  ; body : string
+  }
 
 val ok : ?headers:(string * string) list -> string -> t
 val created : ?headers:(string * string) list -> string -> t
