@@ -256,10 +256,11 @@ run_suite() {
     fi
   fi
 
+  # REFAC-078: only persist history/baseline entries when explicitly updating
+  # them. Ordinary test runs (pre-commit, local debugging) must leave
+  # perf_baseline.json untouched so code PRs never carry perf-run diffs.
   if [ $UPDATE_BASELINE -eq 1 ]; then
     baseline_append "$suite" "$elapsed" "true"
-  else
-    baseline_append "$suite" "$elapsed" "false"
   fi
 }
 

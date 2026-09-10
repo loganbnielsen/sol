@@ -5,16 +5,6 @@ let dry_run_flag =
     value & flag
     & info [ "dry-run" ] ~doc:"Print what would happen without making changes")
 
-let accept_performance_regression_flag =
-  Arg.(
-    value & flag
-    & info
-        [ "accept-performance-regression" ]
-        ~doc:
-          "Explicitly accept a detected performance regression, keep the \
-           merge, and record a new performance baseline. Functional test \
-           failures still block the merge.")
-
 let merge_ticket_arg =
   Arg.(
     value
@@ -25,8 +15,8 @@ let merge_ticket_arg =
            local directory. Omit to sweep every open PR whose branch looks \
            like <TICKET-ID>/....")
 
-let run_merge dry_run accept_performance_regression ticket_filter =
-  Soldev_merge.run_merge ~dry_run ~accept_performance_regression ~ticket_filter
+let run_merge dry_run ticket_filter =
+  Soldev_merge.run_merge ~dry_run ~ticket_filter
 
 let merge_cmd =
   Cmd.v
@@ -36,9 +26,7 @@ let merge_cmd =
           own branch already committed that move, not because this command \
           moves anything locally. Pass a ticket ID to merge one; omit to sweep \
           all open, ready PRs.")
-    Term.(
-      const run_merge $ dry_run_flag $ accept_performance_regression_flag
-      $ merge_ticket_arg)
+    Term.(const run_merge $ dry_run_flag $ merge_ticket_arg)
 
 let ticket_arg =
   Arg.(
@@ -53,9 +41,8 @@ let merge_sha_arg =
     & info [] ~docv:"MERGE-SHA"
         ~doc:"The commit `merge` just synced to local main")
 
-let run_merge_finish ticket_id merge_sha accept_performance_regression =
+let run_merge_finish ticket_id merge_sha =
   Soldev_merge.run_merge_finish ~ticket_id ~merge_sha
-    ~accept_performance_regression
 
 let merge_finish_cmd =
   Cmd.v
@@ -63,11 +50,10 @@ let merge_finish_cmd =
        ~doc:
          "Internal — spawned by `merge` as a subprocess of a binary rebuilt \
           after the PR's merge commit landed, never invoke directly. Runs the \
-          post-merge test suite and updates the perf baseline; reverts the \
-          merge (ticket and code together) on a real regression.")
-    Term.(
-      const run_merge_finish $ ticket_arg $ merge_sha_arg
-      $ accept_performance_regression_flag)
+          post-merge test suite and records the perf baseline; functional test \
+          failures revert the merge. Perf-ratio regressions are informational \
+          only and do not revert.")
+    Term.(const run_merge_finish $ ticket_arg $ merge_sha_arg)
 
 let submit_cmd =
   Cmd.v
