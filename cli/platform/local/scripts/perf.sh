@@ -30,9 +30,12 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m
 command -v jq &>/dev/null || { echo "perf.sh requires jq (sudo apt-get install jq)"; exit 1; }
 
 # ── Data accessors ────────────────────────────────────────────────────────────
-suite_baseline() { jq -r ".suites.$1.history | map(select(.baseline==true)) | last | .duration_s // \"null\"" "$BASELINE"; }
-suite_latest()   { jq -r ".suites.$1.history | last | .duration_s // \"null\"" "$BASELINE"; }
-suite_count()    { jq -r ".suites.$1.history | length" "$BASELINE"; }
+# `history` can be absent/null for suites that have never been recorded in
+# perf_baseline.json (e.g. observability/storage before their first run).
+# `// []` keeps every accessor total even when a suite key is missing.
+suite_baseline() { jq -r "(.suites.$1.history // []) | map(select(.baseline==true)) | last | .duration_s // \"null\"" "$BASELINE"; }
+suite_latest()   { jq -r "(.suites.$1.history // []) | last | .duration_s // \"null\"" "$BASELINE"; }
+suite_count()    { jq -r "(.suites.$1.history // []) | length" "$BASELINE"; }
 
 drift_pct() {
   local base=$1 val=$2
@@ -113,7 +116,7 @@ cmd_history() {
       fi
 
       echo -e "  ${color}${date}   ${commit}   ${duration}s${NC}${suffix}"
-    done < <(jq -r ".suites.${suite}.history[] | [.date, (.commit // \"—\"), .duration_s, (.baseline // false)] | @tsv" "$BASELINE")
+    done < <(jq -r "(.suites.${suite}.history // [])[] | [.date, (.commit // \"—\"), .duration_s, (.baseline // false)] | @tsv" "$BASELINE")
   done
   echo ""
 }
