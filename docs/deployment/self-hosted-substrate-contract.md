@@ -102,8 +102,10 @@ The following substrate inputs must exist before running `sol deploy`.
   with a host rule, a per-service TLS secret, and cert-manager annotations.
   Override the ClusterIssuer with `target.cluster_issuer`; it defaults to
   `letsencrypt-prod`, matching `cli/platform/infra/base`.
-- If a service has no `ingress_host`, Sol may still generate a hostless Ingress,
-  but leaves TLS and HTTPS redirect off.
+- If a service has no `ingress_host`, Sol still generates an Ingress, but gives
+  it a per-service dev host, `<k8s-name>.<namespace>.localhost`, and leaves TLS
+  and HTTPS redirect off. The namespace is part of the host so several services
+  — and several workspaces sharing one cluster — never collide.
 - **No DNS record is created for you.** `cli/platform/infra/base` installs
   ingress-nginx, and `cli/platform/infra/aws` can create the Route53 zone, but
   Sol does not run external-dns: an `ingress_host` only resolves once its
@@ -114,8 +116,11 @@ The following substrate inputs must exist before running `sol deploy`.
   `cli/platform/infra/aws` outputs; on GCP use the Cloud DNS zone). A wildcard
   record such as `*.acme.com` covers every service in one entry.
 - Locally, `sol dev up` installs the same ingress-nginx chart (NodePort) and
-  forwards the controller to `http://localhost:8088`, so a hostless Ingress is
-  reachable at that port with no DNS or TLS involved.
+  forwards the controller to `http://localhost:8088`. Reach a service there
+  with its dev host as the `Host` header, e.g.
+  `curl -H 'Host: charge-svc.acme-payments.localhost' http://localhost:8088/health`
+  — browsers resolve `*.localhost` to loopback, so on many systems the host
+  works in the URL directly. No DNS or TLS is involved.
 
 ---
 
