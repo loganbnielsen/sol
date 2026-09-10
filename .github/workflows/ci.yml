@@ -154,9 +154,20 @@ jobs:
           # and /metrics are registered by Sol_svc.Service, so a regression in
           # that layer must fail this job rather than only showing up as a
           # missing Grafana series later.
+          # Single source of truth for where probe() writes a response body.
+          # /metrics is read back below, so deriving this name in two places is
+          # how it came to disagree with what probe() actually wrote: `echo`
+          # appends a newline that tr turned into a trailing '_', leaving the
+          # body at /tmp/probe_metrics_.out while the check grepped
+          # /tmp/probe_metrics.out. printf keeps the derivation exact.
+          probe_out_path() {
+            printf '/tmp/probe%s.out' "$(printf '%s' "$1" | tr -c '[:alnum:]' '_')"
+          }
+
           probe() {
             local path=$1
-            local out="/tmp/probe$(echo "$path" | tr -c '[:alnum:]' '_').out"
+            local out
+            out=$(probe_out_path "$path")
             local i
             for i in $(seq 1 30); do
               if curl -sf "http://localhost:8080${path}" > "$out"; then
@@ -172,7 +183,7 @@ jobs:
           probe /health
           probe /healthz
           probe /metrics
-          if ! grep -Eq '# (HELP|TYPE)' /tmp/probe_metrics.out; then
+          if ! grep -Eq '# (HELP|TYPE)' "$(probe_out_path /metrics)"; then
             echo "::error::golden-path smoke test: /metrics did not return Prometheus text"
             exit 1
           fi
