@@ -159,6 +159,29 @@ jobs:
           sol dev up
           sol up
 
+          # FEAT-042/BUG-021: `sol dev up` installs ingress-nginx and forwards
+          # the controller to localhost:8088, so the Ingress `sol up` generated
+          # for charge_svc must route a request end to end. A service with no
+          # declared ingress_host gets a per-service dev host
+          # (`<svc>.<ns>.localhost`), so send it as the Host header; derive the
+          # namespace from the cluster rather than assuming the
+          # workspace->namespace normalization.
+          ingress_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-payments$' | head -1 || true)
+          ingress_host="charge-svc.${ingress_ns}.localhost"
+          ingress_ok=0
+          for i in $(seq 1 30); do
+            if curl -sf -H "Host: ${ingress_host}" "http://localhost:8088/health" >/dev/null; then
+              echo "/health via ingress OK (Host: ${ingress_host})"
+              ingress_ok=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ingress_ok" -ne 1 ]; then
+            echo "::error::FEAT-042: /health never became reachable through the local ingress (Host: ${ingress_host})"
+            exit 1
+          fi
+
           # CODE_LAYER-022: verify the framework's runtime endpoints against a
           # real deployed pod, not just the scaffolded /health route. /healthz
           # and /metrics are registered by Sol_svc.Service, so a regression in

@@ -239,7 +239,16 @@ let test_svc_has_service_resource () =
 
 let test_svc_has_ingress () =
   let _ns, workload = render_spec_ok svc_spec in
-  assert_contains "svc Ingress resource" workload "kind: Ingress"
+  let ingress_block = extract_kind_block workload "kind: Ingress" in
+  assert_contains "svc Ingress resource" workload "kind: Ingress";
+  (* FEAT-042: pin the class explicitly. k3s/k3d ships Traefik as its own
+     IngressClass, so a classless Ingress is claimed by Traefik locally and by
+     nothing once ingress-nginx's class is not the cluster default. `nginx`
+     matches cli/platform/infra/base's own `ingress_class_name`. *)
+  assert_contains
+    "ingress pins the nginx IngressClass"
+    ingress_block
+    "ingressClassName: nginx"
 ;;
 
 (* Regression test: the NetworkPolicy's egress already allowed pods to reach
@@ -767,16 +776,26 @@ let test_ingress_host_override () =
     {|tls:
   - hosts:
     - payments.example.com|};
-  assert_contains "tls secret" ingress_block "secretName: charge-svc-tls"
+  assert_contains "tls secret" ingress_block "secretName: charge-svc-tls";
+  assert_contains
+    "host ingress still pins the nginx IngressClass"
+    ingress_block
+    "ingressClassName: nginx"
 ;;
 
-let test_hostless_ingress_has_no_tls_redirect () =
+let test_undeclared_ingress_host_gets_dev_host () =
   let _ns, workload = render_spec_ok svc_spec in
   let ingress_block = extract_kind_block workload "kind: Ingress" in
-  assert_contains "hostless http rule" ingress_block "  - http:";
-  assert_absent "hostless no issuer" ingress_block "cert-manager.io/cluster-issuer";
-  assert_absent "hostless no ssl redirect" ingress_block "ssl-redirect";
-  assert_absent "hostless no tls" ingress_block "tls:"
+  (* BUG-021: a service with no ingress_host still gets a host, so two of them
+     cannot collide on host "" + path "/" (which ingress-nginx's admission
+     webhook rejects cluster-wide). It stays HTTP-only. *)
+  assert_contains
+    "dev host rule"
+    ingress_block
+    "  - host: charge-svc.myapp-payments.localhost";
+  assert_absent "no issuer for dev host" ingress_block "cert-manager.io/cluster-issuer";
+  assert_absent "no ssl redirect for dev host" ingress_block "ssl-redirect";
+  assert_absent "no tls for dev host" ingress_block "tls:"
 ;;
 
 let test_blue_green_ingress_tls_secret_matches_plan () =
@@ -1964,9 +1983,9 @@ let () =
             test_rollout_blue_green_secrets_use_sol_secrets
         ; Alcotest.test_case "ingress host override" `Quick test_ingress_host_override
         ; Alcotest.test_case
-            "hostless ingress has no tls redirect"
+            "undeclared ingress_host gets a dev host"
             `Quick
-            test_hostless_ingress_has_no_tls_redirect
+            test_undeclared_ingress_host_gets_dev_host
         ; Alcotest.test_case
             "blue-green ingress tls secret matches plan"
             `Quick

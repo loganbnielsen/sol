@@ -42,6 +42,8 @@ Do not add a `status:` field — the directory encodes status.
 
 **Ticket dependencies:** Use a body line near the top of each ticket: `**Depends on:** None.` or `**Depends on:** FEAT-003, EXP-008.` `/work` must verify dependencies before creating a worktree. A `READY_FOR_ENGINEERING` ticket with dependencies not yet in `pipeline/tickets/DONE/` stays blocked.
 
+**Demo/example coverage:** Any ticket that changes what an app author does — a new `sol.toml` field, a framework primitive or runtime contract, a new CLI command, or changed generated manifests — must update a runnable example or demo (`examples/`, a tutorial code sample, or the scaffolded workspace) in the same ticket, and must say so in its Acceptance criteria. If a demo genuinely does not apply (internal refactor, pure documentation), state that in one line in the ticket's completion notes. "The CI smoke covers it" is not sufficient: a smoke test is a test, not a reference a user can read or run. New example Dockerfiles go in the `example-dockerfile-smoke` CI matrix, and demo-facing changes run `/demo-review`.
+
 **Skills that interact with tickets:**
 - `/work` — unified entry point; creates worktrees for `READY_FOR_ENGINEERING` tickets with no open PR yet, resumes ones that already have one, runs the review agent on ones ready for it. The worker's own last commit moves the ticket to `DONE/` on the branch before `soldev pipeline submit` pushes it and opens the PR.
 - `/review-worktree` — standalone review gate (called internally by `/work`); subagents emit JSON, `soldev pipeline review` leaves the verdict on the PR

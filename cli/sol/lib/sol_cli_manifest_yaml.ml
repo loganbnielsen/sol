@@ -719,7 +719,17 @@ let ingress_doc
       ()
   =
   let rule_head =
-    if ingress_host = "" then "  - http:" else f "  - host: %s\n    http:" ingress_host
+    (* BUG-021: never emit a hostless rule. nginx matches on host+path and its
+       admission webhook rejects a duplicate host+path cluster-wide, so two
+       services without an ingress_host (or two workspaces sharing `sol-local`)
+       collided on host "" + path "/" and broke `sol up`. Give each a
+       per-service dev host instead; including the namespace keeps it unique
+       when several workspaces share a cluster. It is HTTP-only -- the TLS,
+       cert-manager, and ssl-redirect bits below stay off unless a real
+       `ingress_host` was declared. *)
+    if ingress_host = ""
+    then f "  - host: %s.%s.localhost\n    http:" name ns
+    else f "  - host: %s\n    http:" ingress_host
   in
   let annotations =
     if ingress_host = ""
@@ -755,7 +765,7 @@ metadata:
   namespace: %s
 %s
 spec:
-%s
+  ingressClassName: nginx%s
   rules:
 %s
       paths:
