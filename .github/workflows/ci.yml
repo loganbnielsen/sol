@@ -149,6 +149,24 @@ jobs:
           sol dev up
           sol up
 
+          # FEAT-042: `sol dev up` installs ingress-nginx and forwards the
+          # controller to localhost:8088, so the hostless Ingress `sol up`
+          # generated for charge_svc must route a request end to end, rather
+          # than existing as an inert object the way it did before.
+          ingress_ok=0
+          for i in $(seq 1 30); do
+            if curl -sf "http://localhost:8088/health" >/dev/null; then
+              echo "/health via ingress OK"
+              ingress_ok=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ingress_ok" -ne 1 ]; then
+            echo "::error::FEAT-042: /health never became reachable through the local ingress"
+            exit 1
+          fi
+
           # CODE_LAYER-022: verify the framework's runtime endpoints against a
           # real deployed pod, not just the scaffolded /health route. /healthz
           # and /metrics are registered by Sol_svc.Service, so a regression in

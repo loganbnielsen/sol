@@ -104,6 +104,18 @@ The following substrate inputs must exist before running `sol deploy`.
   `letsencrypt-prod`, matching `cli/platform/infra/base`.
 - If a service has no `ingress_host`, Sol may still generate a hostless Ingress,
   but leaves TLS and HTTPS redirect off.
+- **No DNS record is created for you.** `cli/platform/infra/base` installs
+  ingress-nginx, and `cli/platform/infra/aws` can create the Route53 zone, but
+  Sol does not run external-dns: an `ingress_host` only resolves once its
+  record exists. Find the controller's address with
+  `kubectl get svc -n ingress-nginx ingress-nginx-controller` (the
+  `EXTERNAL-IP`) and create an `A`/alias or `CNAME` record for each
+  `ingress_host` in that zone (`route53_zone_id` / `route53_nameservers` are
+  `cli/platform/infra/aws` outputs; on GCP use the Cloud DNS zone). A wildcard
+  record such as `*.acme.com` covers every service in one entry.
+- Locally, `sol dev up` installs the same ingress-nginx chart (NodePort) and
+  forwards the controller to `http://localhost:8088`, so a hostless Ingress is
+  reachable at that port with no DNS or TLS involved.
 
 ---
 

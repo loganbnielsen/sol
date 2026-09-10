@@ -233,7 +233,16 @@ let test_svc_has_service_resource () =
 
 let test_svc_has_ingress () =
   let _ns, workload = render_spec_ok svc_spec in
-  assert_contains "svc Ingress resource" workload "kind: Ingress"
+  let ingress_block = extract_kind_block workload "kind: Ingress" in
+  assert_contains "svc Ingress resource" workload "kind: Ingress";
+  (* FEAT-042: pin the class explicitly. k3s/k3d ships Traefik as its own
+     IngressClass, so a classless Ingress is claimed by Traefik locally and by
+     nothing once ingress-nginx's class is not the cluster default. `nginx`
+     matches cli/platform/infra/base's own `ingress_class_name`. *)
+  assert_contains
+    "ingress pins the nginx IngressClass"
+    ingress_block
+    "ingressClassName: nginx"
 ;;
 
 (* Regression test: the NetworkPolicy's egress already allowed pods to reach
@@ -706,7 +715,11 @@ let test_ingress_host_override () =
     {|tls:
   - hosts:
     - payments.example.com|};
-  assert_contains "tls secret" ingress_block "secretName: charge-svc-tls"
+  assert_contains "tls secret" ingress_block "secretName: charge-svc-tls";
+  assert_contains
+    "host ingress still pins the nginx IngressClass"
+    ingress_block
+    "ingressClassName: nginx"
 ;;
 
 let test_hostless_ingress_has_no_tls_redirect () =

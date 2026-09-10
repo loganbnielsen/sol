@@ -755,7 +755,7 @@ metadata:
   namespace: %s
 %s
 spec:
-%s
+  ingressClassName: nginx%s
   rules:
 %s
       paths:
