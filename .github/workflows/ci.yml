@@ -274,18 +274,7 @@ jobs:
           fi
 
           peer_url="http://checkout-svc.${peer_ns}.svc.cluster.local/healthz"
-          # The allow path depends on the generated NetworkPolicy being in
-          # effect, which can lag the rollout by a moment; retry before
-          # declaring the feature broken. The deny probe below stays
-          # single-shot -- a denial that briefly "worked" would be masking a
-          # real hole, not a propagation delay.
-          allow_ok=0
-          for _ in 1 2 3; do
-            if run_netprobe "$caller_ns" charge-svc "$peer_url"; then allow_ok=1; break; fi
-            echo "declared-call probe attempt failed; retrying after a short pause"
-            sleep 3
-          done
-          if [ "$allow_ok" -ne 1 ]; then
+          if ! run_netprobe "$caller_ns" charge-svc "$peer_url"; then
             echo "::error::FEAT-041: declared caller charge-svc could not reach its peer"
             exit 1
           fi
