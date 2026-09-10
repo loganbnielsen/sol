@@ -16,42 +16,13 @@ let is_error f = f.severity = Severity.Error
 let valid_env_key key =
   match Sol_cli_secret.validate_key key with Ok () -> true | Error _ -> false
 
-let normalize_filter = String.map (function '-' -> '_' | c -> c)
-
-let discover_candidates ~filter_path =
-  let app_dir = "app" in
-  if not (Sys.file_exists app_dir && Sys.is_directory app_dir) then
-    Error Sol_cli_manifest.Missing_app_dir
-  else begin
-    let services = ref [] in
-    (try
-       Array.iter
-         (fun domain ->
-           let dp = Filename.concat app_dir domain in
-           if domain.[0] <> '.' && Sys.is_directory dp then
-             Array.iter
-               (fun name ->
-                 let dir = Filename.concat dp name in
-                 if name.[0] <> '.' && Sys.is_directory dir then
-                   match Sol_cli_manifest.primitive_of_suffix name with
-                   | None -> ()
-                   | Some primitive ->
-                       let included =
-                         match filter_path with
-                         | None -> true
-                         | Some p ->
-                             let p = normalize_filter p in
-                             dir = p || Filename.basename dir = p
-                       in
-                       if included then
-                         services :=
-                           { Sol_cli_manifest.domain; name; primitive; dir }
-                           :: !services)
-               (Sys.readdir dp))
-         (Sys.readdir app_dir)
-     with _ -> ());
-    Ok (List.rev !services)
-  end
+let unexpected_finding ((_domain, _name, dir) : Sol_cli_manifest.unexpected) =
+  {
+    severity = Severity.Warning;
+    path = dir;
+    message =
+      "directory does not match a Sol workload suffix (*_svc, *_worker, *_fn)";
+  }
 
 let check_service (svc : Sol_cli_manifest.service) =
   let findings = ref [] in
@@ -86,7 +57,7 @@ let check_service (svc : Sol_cli_manifest.service) =
   List.rev !findings
 
 let run ~filter_path () =
-  match discover_candidates ~filter_path with
+  match Sol_cli_manifest.scan_workspace ~filter_path with
   | Error err ->
       [
         {
@@ -95,14 +66,23 @@ let run ~filter_path () =
           message = Sol_cli_manifest.discover_error_to_string err;
         };
       ]
-  | Ok services when services = [] ->
-      [
-        {
-          severity = Severity.Error;
-          path = "app";
-          message = "no Sol workloads found with a Dockerfile";
-        };
-      ]
-  | Ok services -> List.concat_map check_service services
+  | Ok scan when scan.workloads = [] ->
+      let warnings = List.map unexpected_finding scan.unexpected in
+      warnings
+      @ [
+          {
+            severity = Severity.Error;
+            path = "app";
+            message = "no Sol workloads found with a Dockerfile";
+          };
+        ]
+  | Ok scan ->
+      let warnings = List.map unexpected_finding scan.unexpected in
+      let workload_findings =
+        List.concat_map
+          (fun w -> check_service (Sol_cli_manifest.workload_fact_to_service w))
+          scan.workloads
+      in
+      warnings @ workload_findings
 
 let has_errors findings = List.exists is_error findings

@@ -21,11 +21,34 @@ type service = {
   dir : string;
 }
 
-val primitive_of_suffix : string -> primitive option
-val primitive_label : primitive -> string
+(* CODE_LAYER-019: typed workspace facts. A [workload_fact] is produced for
+   every recognized Sol primitive directory, even when it is missing a
+   Dockerfile, so `sol check` can report that as a finding. Directories that do
+   not look like a Sol primitive are returned in [unexpected] instead of being
+   silently skipped.
+   Tuples are used rather than records so the new facts do not duplicate the
+   field labels already used by [service] in this module. *)
+type workload_fact = service * bool
+(** A [service] plus whether it has a Dockerfile. *)
+
+type unexpected = string * string * string
+(** [(domain, name, dir)] for a directory that does not match a Sol workload
+    suffix. *)
+
+type workspace_scan = {
+  workloads : workload_fact list;
+  unexpected : unexpected list;
+}
 
 type discover_error = Missing_app_dir
 
+val workload_fact_to_service : workload_fact -> service
+
+val scan_workspace :
+  filter_path:string option -> (workspace_scan, discover_error) result
+
+val primitive_of_suffix : string -> primitive option
+val primitive_label : primitive -> string
 val discover_error_to_string : discover_error -> string
 
 val discover_services_result :

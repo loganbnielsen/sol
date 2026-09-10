@@ -52,6 +52,22 @@ let test_discover_valid_service () =
           Alcotest.(check string) "name" "charge_svc" svc.name
       | Ok _ -> Alcotest.fail "expected one service")
 
+let test_typed_scan_reports_missing_dockerfile_and_unexpected_dirs () =
+  with_tmp (fun _ ->
+      mkdir_p "app/payments/charge_svc";
+      mkdir_p "app/payments/helpers";
+      match Sol_cli_manifest.scan_workspace ~filter_path:None with
+      | Error e -> Alcotest.fail (Sol_cli_manifest.discover_error_to_string e)
+      | Ok scan ->
+          Alcotest.(check int) "workload count" 1 (List.length scan.workloads);
+          let _, has_dockerfile = List.hd scan.workloads in
+          Alcotest.(check bool) "has dockerfile false" false has_dockerfile;
+          Alcotest.(check int)
+            "unexpected count" 1
+            (List.length scan.unexpected);
+          let _, unexpected_name, _ = List.hd scan.unexpected in
+          Alcotest.(check string) "unexpected name" "helpers" unexpected_name)
+
 let test_check_valid_service () =
   with_tmp (fun _ ->
       mkdir_p "app/payments/charge_svc";
@@ -96,6 +112,8 @@ let () =
           Alcotest.test_case "missing app returns error" `Quick
             test_missing_app_result;
           Alcotest.test_case "valid service" `Quick test_discover_valid_service;
+          Alcotest.test_case "typed scan facts" `Quick
+            test_typed_scan_reports_missing_dockerfile_and_unexpected_dirs;
         ] );
       ( "check",
         [
