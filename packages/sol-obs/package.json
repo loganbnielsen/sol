@@ -2,6 +2,7 @@
   "name": "@sol/obs",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "Sol's observability naming/shape conventions -- metric names and label vocabularies, Loki push shape, W3C traceparent propagation. Not a metrics or logging library; prom-client (or any Prometheus client) and the caller's logger of choice remain the mechanism.",
   "main": "dist/index.js",

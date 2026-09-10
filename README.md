@@ -4,7 +4,7 @@
 
 # Sol
 
-Sol is an open-source OCaml software factory for backend systems. Write direct-style OCaml domain logic; Sol scaffolds, builds, packages, observes, and deploys it — no hand-written Dockerfiles, Kubernetes YAML, CI glue, or infrastructure wiring. Its conventions are regular enough that AI coding agents produce correct output without touching Kubernetes internals, and OCaml's type system (no null, errors as values, exhaustive pattern matching, Eio's structured concurrency) catches entire classes of bugs before they ship.
+Sol is an open-source software factory for backend systems. Write domain logic in OCaml (the first-class, encouraged path) or TypeScript; Sol scaffolds, builds, packages, observes, and deploys it — no hand-written Dockerfiles, Kubernetes YAML, CI glue, or infrastructure wiring. Its conventions are regular enough that AI coding agents produce correct output without touching Kubernetes internals, and OCaml's type system (no null, errors as values, exhaustive pattern matching, Eio's structured concurrency) catches entire classes of bugs before they ship.
 
 ---
 
@@ -136,4 +136,8 @@ See [ROADMAP.md](docs/planning/ROADMAP.md) for the current implementation status
 - [Roadmap](docs/planning/ROADMAP.md) — current status and what's next
 - [Contributor map](docs/architecture/contributing-map.md) — where to make common changes
 - Build-from-source, running tests, and the full repo layout: [`.claude/CLAUDE.md`](.claude/CLAUDE.md)
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE). The "Sol" name and logo are not covered by that licence.
 

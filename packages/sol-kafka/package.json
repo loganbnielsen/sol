@@ -2,6 +2,7 @@
   "name": "@sol/kafka",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "Sol's Kafka policy layer on top of kafkajs -- schema registry conventions, explicit topic provisioning, decode/retry/crash routing, and W3C traceparent propagation. Not a Kafka client; kafkajs remains the transport.",
   "main": "dist/index.js",
