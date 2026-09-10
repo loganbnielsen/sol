@@ -89,6 +89,25 @@ myapp/
 
 See [Product Architecture](docs/architecture/PRODUCT_ARCHITECTURE.md) for the full factory model and design principles.
 
+### TypeScript
+
+The same application model and operational conventions are available to
+TypeScript services through two in-tree npm packages:
+
+- [`@sol/kafka`](packages/sol-kafka/README.md) — Kafka policy layer over
+  `kafkajs`: schema-registry ordering/fatality, explicit topic provisioning,
+  the Confluent wire format, decode/retry/crash routing, and trace propagation.
+- [`@sol/obs`](packages/sol-obs/README.md) — metric names, label vocabularies,
+  Loki push shape, and W3C `traceparent` propagation, so TS and OCaml workloads
+  land in the same Grafana panels and Tempo traces.
+
+The runnable showcase is
+[`examples/pluto/app/demo_ts`](examples/pluto/app/demo_ts/README.md): a
+TypeScript `-svc` and `-worker` deployed by the same Sol CLI and Kubernetes
+machinery, exercising a live cross-service, trace-linked Kafka run. Both
+packages are built in-tree and not yet published to npm — the same
+extraction pattern used for the OCaml `*-eio` packages.
+
 ---
 
 ## Deployment
@@ -110,6 +129,7 @@ See [ROADMAP.md](docs/planning/ROADMAP.md) for the current implementation status
 ## Docs
 
 - [Tutorial](docs/guides/TUTORIAL.md) — full walkthrough, start to finish
+- [TypeScript packages](packages/sol-kafka/README.md) — `@sol/kafka` Kafka policy layer, plus [`@sol/obs`](packages/sol-obs/README.md) and the [`demo_ts`](examples/pluto/app/demo_ts/README.md) showcase
 - [Product Architecture](docs/architecture/PRODUCT_ARCHITECTURE.md) — factory model, design principles, ownership lanes
 - [Factory Pipeline](docs/architecture/devops-pipeline.md) — what each `sol` command does
 - [Deployment escape hatches](docs/deployment/escape-hatches.md) — `sol.toml` reference
