@@ -39,6 +39,8 @@ let base_spec : Sol_cli_deployment_plan.service_spec =
   ; ingress_host = None
   ; ingress_path = None
   ; cluster_issuer = "letsencrypt-prod"
+  ; calls = []
+  ; called_by = []
   ; extra_labels = []
   ; progressive_delivery = None
   }

@@ -54,6 +54,7 @@ type t =
   ; extra_labels : (string * string) list
   ; progressive_delivery : progressive_delivery option
   ; schedule : string option
+  ; calls : string list
   ; topics : string list
   }
 
@@ -70,6 +71,7 @@ let empty =
   ; extra_labels = []
   ; progressive_delivery = None
   ; schedule = None
+  ; calls = []
   ; topics = []
   }
 ;;
@@ -629,6 +631,17 @@ let load_result path =
       in
       (* [service] *)
       let schedule = Otoml.Helpers.find_string_opt doc [ "service"; "schedule" ] in
+      let* calls =
+        match Otoml.find_opt doc Otoml.get_value [ "service"; "calls" ] with
+        | None -> Ok []
+        | Some v ->
+          (try Otoml.get_array Otoml.get_string v |> Result.ok with
+           | Otoml.Type_error _ ->
+             validation_error
+               path
+               "sol.toml: [service] calls must be an array of strings, e.g. calls = \
+                [\"checkout/checkout_svc\"]")
+      in
       let* topics =
         match Otoml.find_opt doc Otoml.get_value [ "service"; "topics" ] with
         | None -> Ok []
@@ -653,6 +666,7 @@ let load_result path =
         ; extra_labels
         ; progressive_delivery
         ; schedule
+        ; calls
         ; topics
         }
   with

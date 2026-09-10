@@ -35,6 +35,14 @@ type effective_rollout_strategy =
 type k8s_name = Sol_cli_kubernetes_name.k8s_name
 type namespace = Sol_cli_kubernetes_name.namespace
 
+type service_call =
+  { env_var : string
+  ; url : string
+  ; target_domain : string
+  ; target_name : k8s_name
+  ; target_namespace : namespace
+  }
+
 type service_spec =
   { domain : string
   ; source_name : string
@@ -54,6 +62,8 @@ type service_spec =
   ; ingress_host : Sol_cli_toml.hostname option
   ; ingress_path : Sol_cli_toml.ingress_path option
   ; cluster_issuer : string
+  ; calls : service_call list
+  ; called_by : service_call list
   ; extra_labels : (string * string) list
   ; progressive_delivery : Sol_cli_toml.progressive_delivery option
   }
@@ -70,6 +80,11 @@ type t =
 
 type plan_error =
   | Toml_error of Sol_cli_toml.parse_error
+  | Invalid_service_call of
+      { service : string
+      ; ref : string
+      ; message : string
+      }
   | Invalid_kubernetes_name of
       { field : string
       ; value : string

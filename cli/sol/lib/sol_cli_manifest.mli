@@ -175,7 +175,13 @@ val ingress_doc
   -> unit
   -> string
 
-val network_policy_doc : ns:string -> name:string -> string
+val network_policy_doc
+  :  ?egress_to:(string * string) list
+  -> ?ingress_from:(string * string) list
+  -> ns:string
+  -> name:string
+  -> unit
+  -> string
 
 val cronjob_doc
   :  ?secret_keys:string list

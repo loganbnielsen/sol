@@ -159,6 +159,40 @@ choice was made at all:
   enforcement, and indistinguishable to Sol's discovery/deploy tooling from
   one that uses it correctly.
 
+## Synchronous service calls
+
+Cross-domain events are the default integration path. A synchronous
+service-to-service request is an explicit opt-in:
+
+```toml
+[service]
+calls = ["checkout/checkout_svc"]
+```
+
+That declaration makes Sol inject `CHECKOUT_SVC_URL` into the caller and opens
+the generated NetworkPolicy only for that caller/target pair. Application code
+should read the URL from the environment and use ordinary `cohttp-eio` calls.
+
+**Dev-substrate caveat:** the generated policy is correct per the Kubernetes
+spec, but the local dev substrate's policy engine (kube-router on k3d/k3s
+v1.27) does not enforce cross-namespace `namespaceSelector` rules, so a declared
+call is refused locally even though it is wired correctly. Customer-cloud
+clusters are unaffected. See BUG-022 for the reproduction; the golden-path smoke
+asserts the wiring (injected URL plus the applied policy pair) rather than live
+enforcement.
+
+Propagate context on the outbound request yourself, the same way the Kafka path
+does: copy the current W3C `traceparent` header so the callee's span joins the
+caller's trace — `Obs_trace.inject_to_headers` (or `Obs_trace.to_traceparent`)
+serializes it from the current span (`Sol_obs.current_trace_context`), and the
+callee's `Sol_svc` extracts it into `Request.trace_ctx`.
+
+Routes that use `` `Api_key`` auth expect the caller to send `x-api-key`.
+`sol-svc` reads the expected value from `SOL_API_KEY_FILE` first, then
+`SOL_API_KEY`. Sol emits `SOL_API_KEY` in the generated Secret with an empty
+placeholder value, so operators can provide one shared internal key through
+the normal Secret or ExternalSecret path.
+
 ## Summary
 
 | Layer | Enforced by | When |
@@ -171,6 +205,7 @@ choice was made at all:
 | Migration SQL correctness | The database itself | At apply time, via whatever error the driver returns |
 | Kafka security config shape | OCaml compiler | Only if code constructs `kafka-eio`'s types directly |
 | Per-route auth declaration | OCaml compiler | Only if code uses `sol-svc`'s `Route` DSL |
+| Service call NetworkPolicy | `sol.toml` `calls` declaration | Only for explicitly declared caller/target pairs |
 
 If you're building anything on top of Sol that generates code or containers
 on a user's behalf (a UI, a codegen tool), this table is the actual safety

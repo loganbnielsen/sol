@@ -54,7 +54,7 @@ let default_cluster_env =
 
 (* Credentials that must never appear in ConfigMap; emitted empty into a
    Secret for operators to fill in via env or a secrets manager. *)
-let default_secrets = [ "POSTGRES_URL", "" ]
+let default_secrets = [ "POSTGRES_URL", ""; "SOL_API_KEY", "" ]
 let runtime_secret_name = "sol-secrets"
 let f = Printf.sprintf
 
@@ -785,7 +785,49 @@ spec:
     name
 ;;
 
-let network_policy_doc ~ns ~name =
+let network_policy_doc ?(egress_to = []) ?(ingress_from = []) ~ns ~name () =
+  let ingress_from =
+    ingress_from
+    |> List.map (fun (from_ns, from_name) ->
+      f
+        {|  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: %s
+      podSelector:
+        matchLabels:
+          app: %s
+    ports:
+    - port: 8080|}
+        from_ns
+        from_name)
+    |> String.concat "\n"
+  in
+  let egress_to =
+    (* No `ports:` here, deliberately. Egress policy is evaluated on the packet
+       leaving the caller, before kube-proxy DNATs the Service ClusterIP -- so a
+       port restriction would have to name the target's *Service* port (80),
+       not its container port (8080). A CNI that instead matches post-DNAT
+       would need 8080, so no single number is portable. Scoping by the target
+       pod (namespace + app) with no port restriction is what the platform
+       dependency rules above already do, and it works under either
+       interpretation. The ingress side below keeps 8080 because ingress is
+       always evaluated after DNAT, against the target pod's real port. *)
+    egress_to
+    |> List.map (fun (to_ns, to_name) ->
+      f
+        {|  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: %s
+      podSelector:
+        matchLabels:
+          app: %s|}
+        to_ns
+        to_name)
+    |> String.concat "\n"
+  in
+  let opt_section s = if s = "" then "" else "\n" ^ s in
   f
     {|---
 apiVersion: networking.k8s.io/v1
@@ -809,6 +851,7 @@ spec:
         matchLabels:
           kubernetes.io/metadata.name: monitoring
     - podSelector: {}
+%s
   egress:
   - ports:
     - port: 53
@@ -824,10 +867,13 @@ spec:
           kubernetes.io/metadata.name: postgresql
     - namespaceSelector:
         matchLabels:
-          kubernetes.io/metadata.name: monitoring|}
+          kubernetes.io/metadata.name: monitoring
+%s|}
     name
     ns
     name
+    (opt_section ingress_from)
+    (opt_section egress_to)
 ;;
 
 let cronjob_doc ?(secret_keys = []) ?env ~ns ~name ~image ~schedule ~workspace ~domain () =

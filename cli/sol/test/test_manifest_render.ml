@@ -125,6 +125,8 @@ let svc_spec : Sol_cli_deployment_plan.service_spec =
   ; ingress_host = None
   ; ingress_path = None
   ; cluster_issuer = "letsencrypt-prod"
+  ; calls = []
+  ; called_by = []
   ; extra_labels = []
   ; progressive_delivery = None
   }
@@ -149,6 +151,8 @@ let worker_spec : Sol_cli_deployment_plan.service_spec =
   ; ingress_host = None
   ; ingress_path = None
   ; cluster_issuer = "letsencrypt-prod"
+  ; calls = []
+  ; called_by = []
   ; extra_labels = []
   ; progressive_delivery = None
   }
@@ -173,6 +177,8 @@ let fn_spec : Sol_cli_deployment_plan.service_spec =
   ; ingress_host = None
   ; ingress_path = None
   ; cluster_issuer = "letsencrypt-prod"
+  ; calls = []
+  ; called_by = []
   ; extra_labels = []
   ; progressive_delivery = None
   }
@@ -269,6 +275,60 @@ let test_svc_networkpolicy_allows_monitoring_ingress () =
     "kubernetes.io/metadata.name: monitoring"
 ;;
 
+let test_svc_calls_peer_env_and_network_policy () =
+  let checkout =
+    { Sol_cli_deployment_plan.env_var = "CHECKOUT_SVC_URL"
+    ; url = "http://checkout-svc.myapp-checkout.svc.cluster.local"
+    ; target_domain = "checkout"
+    ; target_name = k8s_name "checkout-svc"
+    ; target_namespace = namespace ~workspace:"myapp" ~domain:"checkout"
+    }
+  in
+  let payments =
+    { Sol_cli_deployment_plan.env_var = "CHARGE_SVC_URL"
+    ; url = "http://charge-svc.myapp-payments.svc.cluster.local"
+    ; target_domain = "payments"
+    ; target_name = k8s_name "charge-svc"
+    ; target_namespace = namespace ~workspace:"myapp" ~domain:"payments"
+    }
+  in
+  let caller =
+    { svc_spec with calls = [ checkout ]; config = [ checkout.env_var, checkout.url ] }
+  in
+  let callee =
+    { svc_spec with
+      domain = "checkout"
+    ; source_name = "checkout_svc"
+    ; k8s_name = k8s_name "checkout-svc"
+    ; namespace = namespace ~workspace:"myapp" ~domain:"checkout"
+    ; called_by = [ payments ]
+    }
+  in
+  let _ns, caller_yaml = render_spec_ok caller in
+  let caller_cm = extract_kind_block caller_yaml "kind: ConfigMap" in
+  let caller_netpol = extract_kind_block caller_yaml "kind: NetworkPolicy" in
+  assert_contains
+    "peer url env"
+    caller_cm
+    {|CHECKOUT_SVC_URL: "http://checkout-svc.myapp-checkout.svc.cluster.local"|};
+  assert_contains "egress peer namespace" caller_netpol "myapp-checkout";
+  assert_contains "egress peer app" caller_netpol "app: checkout-svc";
+  (* Egress is evaluated before the Service DNAT, so it must not be pinned to
+     the target's container port (see network_policy_doc's comment); ingress
+     is post-DNAT and does keep the real container port. *)
+  let egress_block =
+    match Str.bounded_split_delim (Str.regexp_string "\n  egress:") caller_netpol 2 with
+    | _ :: rest -> String.concat "\n  egress:" rest
+    | [] -> caller_netpol
+  in
+  assert_absent "caller egress is not port-pinned" egress_block "port: 8080";
+  let _ns, callee_yaml = render_spec_ok callee in
+  let callee_netpol = extract_kind_block callee_yaml "kind: NetworkPolicy" in
+  assert_contains "ingress caller namespace" callee_netpol "myapp-payments";
+  assert_contains "ingress caller app" callee_netpol "app: charge-svc";
+  assert_contains "ingress uses the container port" callee_netpol "port: 8080"
+;;
+
 let test_svc_has_ports () =
   let _ns, workload = render_spec_ok svc_spec in
   assert_contains "svc containerPort" workload "containerPort: 8080"
@@ -343,7 +403,8 @@ let test_postgres_url_in_secret () =
   assert_contains "Secret resource present" workload "kind: Secret";
   assert_contains "stringData section" workload "stringData:";
   let secret_block = extract_kind_block workload "kind: Secret" in
-  assert_contains "POSTGRES_URL in stringData" secret_block {|POSTGRES_URL: ""|}
+  assert_contains "POSTGRES_URL in stringData" secret_block {|POSTGRES_URL: ""|};
+  assert_contains "SOL_API_KEY in stringData" secret_block {|SOL_API_KEY: ""|}
 ;;
 
 let test_live_secret_uses_postgres_url_env () =
@@ -857,6 +918,23 @@ ingress_path = "/v1"
     true
     (Option.map Sol_cli_toml.ingress_path_to_string toml.Sol_cli_toml.ingress_path
      = Some "/v1")
+;;
+
+let test_toml_valid_service_calls () =
+  let path = Filename.temp_file "sol-toml-test-" ".toml" in
+  let oc = open_out path in
+  output_string
+    oc
+    {|[service]
+calls = ["checkout/checkout_svc"]
+|};
+  close_out oc;
+  let toml = Sol_cli_toml.load path in
+  Sys.remove path;
+  Alcotest.(check (list string))
+    "calls parsed"
+    [ "checkout/checkout_svc" ]
+    toml.Sol_cli_toml.calls
 ;;
 
 let test_toml_invalid_cpu_quantity () =
@@ -1776,6 +1854,10 @@ let () =
             "NetworkPolicy allows monitoring ingress"
             `Quick
             test_svc_networkpolicy_allows_monitoring_ingress
+        ; Alcotest.test_case
+            "calls peer env and NetworkPolicy"
+            `Quick
+            test_svc_calls_peer_env_and_network_policy
         ; Alcotest.test_case "has containerPort" `Quick test_svc_has_ports
         ; Alcotest.test_case "replicas from spec" `Quick test_svc_replicas
         ; Alcotest.test_case
@@ -1934,6 +2016,10 @@ let () =
             "valid ingress overrides toml"
             `Quick
             test_toml_valid_ingress_overrides
+        ; Alcotest.test_case
+            "valid service calls toml"
+            `Quick
+            test_toml_valid_service_calls
         ; Alcotest.test_case "invalid cpu quantity" `Quick test_toml_invalid_cpu_quantity
         ; Alcotest.test_case
             "invalid memory quantity"

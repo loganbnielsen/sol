@@ -143,6 +143,16 @@ jobs:
 
           sol new workspace ci_smoke
           cd ci_smoke
+
+          # FEAT-041: the workspace scaffold ships exactly one -svc plus one
+          # worker, and only -svc gets a ClusterIP Service -- so a real
+          # cross-namespace request needs a second service to call. Add a
+          # throwaway peer and declare the synchronous dependency on charge_svc
+          # (whose sol.toml is the shared template, so appending a [service]
+          # section is valid TOML).
+          sol new svc checkout/checkout
+          printf '\n[service]\ncalls = ["checkout/checkout_svc"]\n' >> app/payments/charge_svc/sol.toml
+
           eval $(opam env)
           dune build
 
@@ -210,6 +220,54 @@ jobs:
             echo "::error::golden-path smoke test: /metrics did not return Prometheus text"
             exit 1
           fi
+
+          # FEAT-041: the declared call's network path is a pair of
+          # NetworkPolicies plus an injected peer URL. Assert that the deploy
+          # applied all three as rendered -- this covers resolution, rendering
+          # and apply end to end.
+          #
+          # Enforcement is deliberately NOT asserted against the live cluster
+          # here: the dev substrate's policy engine (kube-router on k3s v1.27.4)
+          # does not match `namespaceSelector` ingress rules for freshly created
+          # namespaces and ignores egress policy entirely, so an allow-probe is
+          # denied even though the policy is correct per the Kubernetes spec.
+          # BUG-022 has the deterministic repro. Rendering is unit-tested in
+          # cli/sol/test/test_manifest_render.ml, and customer-cloud CNIs
+          # enforce it.
+          #
+          # Derive namespaces from the cluster rather than assuming the
+          # workspace->namespace normalization, so this keeps working if the
+          # naming rule changes.
+          caller_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-payments$' | head -1 || true)
+          peer_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-checkout$' | head -1 || true)
+          if [ -z "$caller_ns" ] || [ -z "$peer_ns" ]; then
+            echo "::error::FEAT-041: could not locate caller ('$caller_ns') or peer ('$peer_ns') namespace"
+            exit 1
+          fi
+
+          caller_env=$(kubectl -n "$caller_ns" get configmap charge-svc-env -o yaml 2>/dev/null || true)
+          for needle in "CHECKOUT_SVC_URL" "http://checkout-svc.${peer_ns}.svc.cluster.local"; do
+            case "$caller_env" in
+              *"$needle"*) ;;
+              *) echo "::error::FEAT-041: caller ConfigMap is missing '$needle'"; exit 1 ;;
+            esac
+          done
+
+          caller_np=$(kubectl -n "$caller_ns" get networkpolicy charge-svc-netpol -o yaml 2>/dev/null || true)
+          peer_np=$(kubectl -n "$peer_ns" get networkpolicy checkout-svc-netpol -o yaml 2>/dev/null || true)
+          for needle in "$peer_ns" "app: checkout-svc"; do
+            case "$caller_np" in
+              *"$needle"*) ;;
+              *) echo "::error::FEAT-041: caller NetworkPolicy is missing '$needle'"; exit 1 ;;
+            esac
+          done
+          for needle in "$caller_ns" "app: charge-svc" "port: 8080"; do
+            case "$peer_np" in
+              *"$needle"*) ;;
+              *) echo "::error::FEAT-041: peer NetworkPolicy is missing '$needle'"; exit 1 ;;
+            esac
+          done
+          echo "declared service-call wiring (env + NetworkPolicy pair) applied OK"
 
       # `sol up` blocks on an un-timed-out `kubectl rollout status`
       # internally, so a crash-looping pod (this job's whole reason to

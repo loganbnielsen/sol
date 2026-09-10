@@ -55,6 +55,20 @@ resources. You retain full control and full responsibility.
 
 All overrides live under sections in the per-service `sol.toml` file.
 
+### `[service]`
+
+| Key     | Type     | Default | Description                                    |
+|---------|----------|---------|------------------------------------------------|
+| `calls` | string[] | `[]`    | Explicit service dependencies, e.g. `["checkout/checkout_svc"]`. |
+
+Each `calls` entry must be `domain/service_name` and must point at another
+`-svc` in the workspace. Sol resolves it to
+`http://<service>.<workspace>-<domain>.svc.cluster.local`, adds
+`<SERVICE>_URL` to the caller's ConfigMap, and opens only that caller/target
+NetworkPolicy path. Cross-domain event messages remain the default integration
+style; use `calls` only when a synchronous request is intentionally part of the
+contract.
+
 ### `[infra.scale]`
 
 | Key        | Type    | Default   | Description                              |
