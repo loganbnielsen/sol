@@ -185,14 +185,13 @@ Sol_obs.with_span obs ?parent:req.trace_ctx "call_checkout" (fun span ->
   | Error err, _ | _, Error err -> ...)
 ```
 
-**Dev-substrate version caveat:** the generated policy is correct per the
-Kubernetes spec, but k3s ≤ v1.27 (k3d ≤ v5.6.0) ships a kube-router that does
-not honour cross-namespace `namespaceSelector` rules — on such a cluster a
-declared call is refused even though it is wired correctly (BUG-022). The pinned
-toolchain is now k3d v5.9.0 / k3s v1.35.5, which does enforce them. The
-golden-path smoke still asserts the wiring (injected URL plus the applied policy
-pair) rather than live enforcement; restoring a live cross-namespace assertion
-is tracked as a follow-up.
+**Substrate version requirement:** the cluster must honour cross-namespace
+`namespaceSelector` policy. k3s ≤ v1.27 (k3d ≤ v5.6.0) ignores it, which refuses a
+correctly-wired declared call — kube-router signals that as `Connection refused`,
+not a timeout, so it reads like a dead backend (BUG-022). The pinned toolchain is
+k3d v5.9.0 / k3s v1.35.5, and the golden-path smoke asserts both halves against a
+live cluster: the declared caller reaches its peer, and an undeclared pod does
+not.
 
 `Peer.headers` sets `x-api-key` from `SOL_API_KEY_FILE`/`SOL_API_KEY` and
 serializes the supplied `trace_ctx` as a W3C `traceparent`. The callee's

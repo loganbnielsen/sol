@@ -27,3 +27,17 @@ BUG-022 removed the obstacle by moving the pin to k3d v5.9.0 / k3s v1.35.5, veri
 - The smoke fails if a declared cross-namespace call is refused, and fails if an undeclared pod reaches the peer.
 - The instrumented caller route is exercised, not only a probe pod, so a regression in `Peer`'s header wiring fails CI.
 - The dev-substrate caveat is removed or reduced to a version statement.
+
+## Completion notes
+
+The `golden-path-smoke` job now asserts the call's network path three ways:
+
+1. **Deploy path** (unchanged from FEAT-041's softened version): the injected `CHECKOUT_SVC_URL` and the applied NetworkPolicy pair are read back from the cluster.
+2. **Live allow:** a throwaway pod labelled `app=charge-svc` in the caller namespace reaches `http://checkout-svc.<peer-ns>.svc.cluster.local/healthz`.
+3. **Live deny:** the identical probe without that label is refused.
+
+Keeping the deny half wasn't theoretical. During BUG-022's investigation an allow-only probe returning 200 looked like success on a substrate that was not enforcing anything at all; only a negative control distinguished "the rule matched" from "policy is ignored". The comment in the job says so, so the next person doesn't delete the deny probe as redundant.
+
+`service-runtime-contract.md`'s "Dev-substrate caveat" is replaced by a "Substrate version requirement" naming the k3s ≤ v1.27 boundary — the smoke now asserts enforcement, not merely wiring.
+
+**Criterion 2 is only partly met, and that is deliberate.** The live assertions exercise the *policy* path with a probe pod, not instrumented application code, so a regression in `Peer`'s header wiring would not fail this job. The reason is structural, not a shortcut: this workspace comes from `sol new workspace` + `sol new svc`, and a scaffolded `-svc` has no route that calls a peer — constructing one would mean patching generated OCaml inside CI. The instrumented path is covered instead by `framework/sol-svc/test/test_peer.ml` (header injection and env resolution) and by `examples/pluto`'s `/checkout-quote` → `checkout_svc` `/quote` call from FEAT-046, which is runnable locally. Making the golden-path job own that assertion would require the scaffold to generate a caller route — a product change, not a test change, and not something to smuggle into this ticket.
