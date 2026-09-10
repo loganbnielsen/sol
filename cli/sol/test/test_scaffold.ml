@@ -521,6 +521,47 @@ let test_ancestor_walk_finds_bundle_root () =
       check_bool "find_ancestor: resolved path matches bundle root" true
         (result = Some tmpdir))
 
+(* BUG-017: the ancestor walk must skip `_build/default` even when dune has
+   mirrored the framework sentinel files there. If it did not, CLI tests run
+   from `_build/default/cli/sol/test` would resolve SOL_HOME to the build tree
+   and fail against missing source-side files/artifacts. *)
+let test_ancestor_walk_skips_build_context () =
+  let tmpdir = Filename.temp_file "sol-build-context-test-" "" in
+  Sys.remove tmpdir;
+  Unix.mkdir tmpdir 0o755;
+  Fun.protect
+    ~finally:(fun () ->
+      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote tmpdir))))
+    (fun () ->
+      let mkdir_p path =
+        ignore
+          (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote path)))
+      in
+      let touch path =
+        let oc = open_out path in
+        close_out oc
+      in
+      (* A real source/release root: tmpdir/framework/... *)
+      mkdir_p (Filename.concat tmpdir "framework/sol-svc/lib");
+      mkdir_p (Filename.concat tmpdir "framework/kafka-eio-service/lib");
+      touch (Filename.concat tmpdir "framework/sol-svc/lib/dune");
+      touch (Filename.concat tmpdir "framework/kafka-eio-service/lib/dune");
+      (* The misleading build context: tmpdir/_build/default/framework/... *)
+      let build_default = Filename.concat tmpdir "_build/default" in
+      mkdir_p (Filename.concat build_default "framework/sol-svc/lib");
+      mkdir_p (Filename.concat build_default "framework/kafka-eio-service/lib");
+      touch (Filename.concat build_default "framework/sol-svc/lib/dune");
+      touch
+        (Filename.concat build_default "framework/kafka-eio-service/lib/dune");
+      check_bool "is_sol_home rejects _build/default" false
+        (Sol_cli_cmd_new.is_sol_home build_default);
+      (* Walk from a simulated test executable under the build context. *)
+      let start = Filename.concat build_default "cli/sol/test" in
+      let result =
+        Sol_cli_cmd_new.find_ancestor Sol_cli_cmd_new.is_sol_home start
+      in
+      check_bool "ancestor walk skips _build/default" true (result = Some tmpdir))
+
 (* The framework acknowledges automatically after handle returns Ok (); a
    generated worker must have no ~ack param to call, misorder, or forget. *)
 let test_worker_has_no_ack_param () =
@@ -810,6 +851,8 @@ let () =
             test_incomplete_bundle_rejected;
           Alcotest.test_case "ancestor walk finds bundle root from bin/" `Quick
             test_ancestor_walk_finds_bundle_root;
+          Alcotest.test_case "ancestor walk skips _build context" `Quick
+            test_ancestor_walk_skips_build_context;
         ] );
       ( "pending_migrations",
         [
