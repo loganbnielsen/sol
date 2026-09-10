@@ -137,6 +137,12 @@ bash cli/platform/local/scripts/ensure-loki.sh
 KAFKA_BROKERS=localhost:9092 LOKI_URL=http://localhost:3100 dune test --force
 ```
 
+If CLI tests report `Multiple rules generated` for `vendor/framework/...` paths
+or missing files under `_build/default/cli/platform/...`, remove `_build` and
+rerun — BUG-017 prevents the `_build/default` SOL_HOME mis-resolution that
+originally caused those failures, but a stale/partial build tree can still
+leave confusing artifacts. A clean rebuild is the documented recovery.
+
 ## Run the demo
 
 ```bash
