@@ -621,6 +621,104 @@ let run_merge ~dry_run ~accept_performance_regression ~ticket_filter =
       "\nLocal main has new commits — remember to `git push origin main`.\n";
   Printf.printf "\nDone. %d merged.\n" (List.length !merged)
 
+(* ── worktree annotations for pipeline ls/check (FEAT-040) ───────────────
+
+   REFAC-077 removed the local "in progress" state: an open branch/worktree
+   plus PR is the source of truth. But an interrupted implementation can sit
+   as uncommitted/unpushed changes in a worktree with no PR and no local
+   status marker. `pipeline ls`/`check` therefore surface dirty/unpushed
+   worktrees for READY tickets so an orchestrator resumes instead of
+   re-starting the ticket. *)
+
+let parse_worktree_porcelain lines =
+  let rec go current acc = function
+    | [] -> List.rev (match current with Some wt -> wt :: acc | None -> acc)
+    | line :: rest ->
+        if starts_with ~prefix:"worktree " line then begin
+          let path = String.sub line 9 (String.length line - 9) in
+          let acc = match current with Some wt -> wt :: acc | None -> acc in
+          go (Some (path, None)) acc rest
+        end
+        else if starts_with ~prefix:"branch refs/heads/" line then
+          begin match current with
+          | Some (path, None) ->
+              let branch = String.sub line 18 (String.length line - 18) in
+              go (Some (path, Some branch)) acc rest
+          | _ -> go current acc rest
+          end
+        else go current acc rest
+  in
+  go None [] lines
+
+let shell_output_trim cmd =
+  Sol_process.output_shell ~echo:false cmd |> String.trim
+
+type worktree_snapshot = {
+  ws_path : string;
+  ws_branch : string;
+  ws_dirty : bool;
+  ws_unpushed : bool;
+}
+
+let worktree_snapshot_of_entry = function
+  | _, None -> None
+  | path, Some branch ->
+      let qpath = Filename.quote path in
+      let status =
+        shell_output_trim (Printf.sprintf "git -C %s status --porcelain" qpath)
+      in
+      let dirty = status <> "" in
+      let local_sha =
+        shell_output_trim (Printf.sprintf "git -C %s rev-parse HEAD" qpath)
+      in
+      let upstream = "origin/" ^ branch in
+      let upstream_rc =
+        Sol_process.run_shell_rc ~echo:false
+          (Printf.sprintf "git -C %s rev-parse --verify %s >/dev/null 2>&1"
+             qpath (Filename.quote upstream))
+      in
+      let unpushed =
+        if upstream_rc = 0 then
+          let remote_sha =
+            shell_output_trim
+              (Printf.sprintf "git -C %s rev-parse %s" qpath
+                 (Filename.quote upstream))
+          in
+          local_sha <> remote_sha
+        else
+          let main_sha = shell_output_trim "git rev-parse origin/main" in
+          local_sha <> main_sha
+      in
+      Some
+        {
+          ws_path = path;
+          ws_branch = branch;
+          ws_dirty = dirty;
+          ws_unpushed = unpushed;
+        }
+
+let worktree_snapshots () =
+  Soldev_shell.run_cmd_lines "git worktree list --porcelain"
+  |> parse_worktree_porcelain
+  |> List.filter_map worktree_snapshot_of_entry
+
+let find_ticket_worktree ticket_id =
+  worktree_snapshots ()
+  |> List.find_opt (fun wt ->
+      wt.ws_branch <> "main" && ticket_id_of_branch wt.ws_branch = ticket_id)
+
+let worktree_annotation_for_ticket ticket_id =
+  match find_ticket_worktree ticket_id with
+  | None -> None
+  | Some wt ->
+      let notes =
+        (if wt.ws_dirty then [ "dirty worktree" ] else [])
+        @ if wt.ws_unpushed then [ "unpushed commits" ] else []
+      in
+      if notes = [] then None
+      else
+        Some (Printf.sprintf "(%s @ %s)" (String.concat ", " notes) wt.ws_path)
+
 (* ── pipeline ls ─────────────────────────────────────────────────────────── *)
 
 let run_ls include_done =
@@ -666,6 +764,11 @@ let run_ls include_done =
                   | None -> ready
                 else ready
               in
+              let ready =
+                match worktree_annotation_for_ticket id with
+                | Some annotation -> ready ^ " " ^ annotation
+                | None -> ready
+              in
               let title = Soldev_ticket.ticket_title content in
               Printf.printf
                 "  %-12s  %-18s  %-7s  depends on: %-24s  %-24s  %s\n" id typ
@@ -690,6 +793,9 @@ let run_check ticket_id =
       Printf.printf "depends on: %s\n" (Soldev_ticket.dependency_summary deps);
       (match find_pr_for_ticket ticket_id with
       | Some p -> Printf.printf "open PR: %s\n" p.pr_url
+      | None -> ());
+      (match worktree_annotation_for_ticket ticket_id with
+      | Some annotation -> Printf.printf "worktree: %s\n" annotation
       | None -> ());
       if Soldev_ticket.has_human_decision_gate content then begin
         let details = Soldev_ticket.human_decision_details content in
