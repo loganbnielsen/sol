@@ -208,12 +208,14 @@ jobs:
             local ns=$1 label=$2 url=$3 phase i
             kubectl -n "$ns" delete pod netprobe --ignore-not-found >/dev/null 2>&1 || true
             if [ -n "$label" ]; then
+              # -v so a failure's logs show whether it was DNS, connect, or
+              # HTTP; an empty `kubectl logs` was previously the only signal.
               kubectl -n "$ns" run netprobe --image=curlimages/curl:8.11.1 \
                 --restart=Never --labels "app=$label" --command -- \
-                curl -sf --max-time 5 "$url"
+                curl -sfv --max-time 5 "$url"
             else
               kubectl -n "$ns" run netprobe --image=curlimages/curl:8.11.1 \
-                --restart=Never --command -- curl -sf --max-time 5 "$url"
+                --restart=Never --command -- curl -sfv --max-time 5 "$url"
             fi
             for i in $(seq 1 30); do
               phase=$(kubectl -n "$ns" get pod netprobe -o jsonpath='{.status.phase}' 2>/dev/null) || phase=""
@@ -225,6 +227,8 @@ jobs:
                 Failed)
                   echo "--- netprobe logs ($ns, label='${label:-<none>}') ---"
                   kubectl -n "$ns" logs netprobe || true
+                  echo "--- netprobe termination ($ns) ---"
+                  kubectl -n "$ns" get pod netprobe -o jsonpath='reason={.status.containerStatuses[0].state.terminated.reason} exit={.status.containerStatuses[0].state.terminated.exitCode}{"\n"}' || true
                   kubectl -n "$ns" delete pod netprobe --ignore-not-found >/dev/null 2>&1 || true
                   return 1
                   ;;
@@ -247,7 +251,18 @@ jobs:
           fi
 
           peer_url="http://checkout-svc.${peer_ns}.svc.cluster.local/healthz"
-          if ! run_netprobe "$caller_ns" charge-svc "$peer_url"; then
+          # The allow path depends on the generated NetworkPolicy being in
+          # effect, which can lag the rollout by a moment; retry before
+          # declaring the feature broken. The deny probe below stays
+          # single-shot -- a denial that briefly "worked" would be masking a
+          # real hole, not a propagation delay.
+          allow_ok=0
+          for _ in 1 2 3; do
+            if run_netprobe "$caller_ns" charge-svc "$peer_url"; then allow_ok=1; break; fi
+            echo "declared-call probe attempt failed; retrying after a short pause"
+            sleep 3
+          done
+          if [ "$allow_ok" -ne 1 ]; then
             echo "::error::FEAT-041: declared caller charge-svc could not reach its peer"
             exit 1
           fi

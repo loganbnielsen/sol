@@ -304,10 +304,20 @@ let test_svc_calls_peer_env_and_network_policy () =
     {|CHECKOUT_SVC_URL: "http://checkout-svc.myapp-checkout.svc.cluster.local"|};
   assert_contains "egress peer namespace" caller_netpol "myapp-checkout";
   assert_contains "egress peer app" caller_netpol "app: checkout-svc";
+  (* Egress is evaluated before the Service DNAT, so it must not be pinned to
+     the target's container port (see network_policy_doc's comment); ingress
+     is post-DNAT and does keep the real container port. *)
+  let egress_block =
+    match Str.bounded_split_delim (Str.regexp_string "\n  egress:") caller_netpol 2 with
+    | _ :: rest -> String.concat "\n  egress:" rest
+    | [] -> caller_netpol
+  in
+  assert_absent "caller egress is not port-pinned" egress_block "port: 8080";
   let _ns, callee_yaml = render_spec_ok callee in
   let callee_netpol = extract_kind_block callee_yaml "kind: NetworkPolicy" in
   assert_contains "ingress caller namespace" callee_netpol "myapp-payments";
-  assert_contains "ingress caller app" callee_netpol "app: charge-svc"
+  assert_contains "ingress caller app" callee_netpol "app: charge-svc";
+  assert_contains "ingress uses the container port" callee_netpol "port: 8080"
 ;;
 
 let test_svc_has_ports () =
