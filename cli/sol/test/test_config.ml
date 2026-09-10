@@ -110,6 +110,7 @@ let test_target_path_supplies_placement () =
 target:
   cluster_name: pluto-prod
   base_domain: pluto.example.com
+  cluster_issuer: letsencrypt-staging
 
 services:
   api:
@@ -127,6 +128,7 @@ services:
       check_provider "provider" "aws" target.provider;
       check_str "region" "us-east-1" target.region;
       check_str "cluster" "pluto-prod" (Option.get target.cluster_name);
+      check_str "cluster issuer" "letsencrypt-staging" (Option.get target.cluster_issuer);
       let resource = List.hd (Sol_cli_config.resources cfg) in
       check_str "resource" "app_db" resource.name;
       let service = List.hd (Sol_cli_config.services cfg) in

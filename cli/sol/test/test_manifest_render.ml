@@ -124,6 +124,7 @@ let svc_spec : Sol_cli_deployment_plan.service_spec =
   ; rollout_strategy = None
   ; ingress_host = None
   ; ingress_path = None
+  ; cluster_issuer = "letsencrypt-prod"
   ; extra_labels = []
   ; progressive_delivery = None
   }
@@ -147,6 +148,7 @@ let worker_spec : Sol_cli_deployment_plan.service_spec =
   ; rollout_strategy = None
   ; ingress_host = None
   ; ingress_path = None
+  ; cluster_issuer = "letsencrypt-prod"
   ; extra_labels = []
   ; progressive_delivery = None
   }
@@ -170,6 +172,7 @@ let fn_spec : Sol_cli_deployment_plan.service_spec =
   ; rollout_strategy = None
   ; ingress_host = None
   ; ingress_path = None
+  ; cluster_issuer = "letsencrypt-prod"
   ; extra_labels = []
   ; progressive_delivery = None
   }
@@ -681,10 +684,54 @@ let test_rollout_blue_green_secrets_use_sol_secrets () =
 ;;
 
 let test_ingress_host_override () =
-  (* ingress_host override must appear in the Ingress rule *)
-  let spec = { svc_spec with ingress_host = Some (hostname "payments.example.com") } in
+  let spec =
+    { svc_spec with
+      ingress_host = Some (hostname "payments.example.com")
+    ; cluster_issuer = "letsencrypt-staging"
+    }
+  in
   let _ns, workload = render_spec_ok spec in
-  assert_contains "ingress host" workload "host: payments.example.com"
+  let ingress_block = extract_kind_block workload "kind: Ingress" in
+  assert_contains
+    "ingress host rule"
+    ingress_block
+    "  - host: payments.example.com\n    http:";
+  assert_contains
+    "cert-manager issuer"
+    ingress_block
+    "cert-manager.io/cluster-issuer: letsencrypt-staging";
+  assert_contains
+    "tls host"
+    ingress_block
+    {|tls:
+  - hosts:
+    - payments.example.com|};
+  assert_contains "tls secret" ingress_block "secretName: charge-svc-tls"
+;;
+
+let test_hostless_ingress_has_no_tls_redirect () =
+  let _ns, workload = render_spec_ok svc_spec in
+  let ingress_block = extract_kind_block workload "kind: Ingress" in
+  assert_contains "hostless http rule" ingress_block "  - http:";
+  assert_absent "hostless no issuer" ingress_block "cert-manager.io/cluster-issuer";
+  assert_absent "hostless no ssl redirect" ingress_block "ssl-redirect";
+  assert_absent "hostless no tls" ingress_block "tls:"
+;;
+
+let test_blue_green_ingress_tls_secret_matches_plan () =
+  let spec =
+    { svc_spec with
+      ingress_host = Some (hostname "payments.example.com")
+    ; progressive_delivery = Some Sol_cli_toml.Blue_green
+    }
+  in
+  let _ns, workload = render_spec_ok spec in
+  let ingress_block = extract_kind_block workload "kind: Ingress" in
+  assert_contains
+    "ingress points at active service"
+    ingress_block
+    "name: charge-svc-active";
+  assert_contains "tls secret matches plan" ingress_block "secretName: charge-svc-tls"
 ;;
 
 let test_ingress_path_override () =
@@ -1834,6 +1881,14 @@ let () =
             `Quick
             test_rollout_blue_green_secrets_use_sol_secrets
         ; Alcotest.test_case "ingress host override" `Quick test_ingress_host_override
+        ; Alcotest.test_case
+            "hostless ingress has no tls redirect"
+            `Quick
+            test_hostless_ingress_has_no_tls_redirect
+        ; Alcotest.test_case
+            "blue-green ingress tls secret matches plan"
+            `Quick
+            test_blue_green_ingress_tls_secret_matches_plan
         ; Alcotest.test_case "ingress path override" `Quick test_ingress_path_override
         ; Alcotest.test_case "ingress default path" `Quick test_ingress_default_path
         ; Alcotest.test_case

@@ -62,6 +62,7 @@ let service
   ; rollout_strategy = None
   ; ingress_host = None
   ; ingress_path = None
+  ; cluster_issuer = "letsencrypt-prod"
   ; extra_labels = []
   ; progressive_delivery
   }
@@ -76,6 +77,7 @@ let hosted_plan ?progressive_delivery () =
     ; env = Some "prod"
     ; region = Some "us-east-1"
     ; base_domain = Some "sol.example"
+    ; cluster_issuer = "letsencrypt-prod"
     ; secret_backend = Sol_cli_manifest.Kubernetes_placeholder
     }
   in

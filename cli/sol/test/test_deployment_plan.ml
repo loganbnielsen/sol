@@ -226,6 +226,7 @@ let sample_plan () : Sol_cli_deployment_plan.t =
     ; env = Some "prod"
     ; region = Some "us-east-1"
     ; base_domain = Some "example.com"
+    ; cluster_issuer = "letsencrypt-prod"
     ; secret_backend = Sol_cli_manifest.Kubernetes_placeholder
     }
   in
@@ -247,6 +248,7 @@ let sample_plan () : Sol_cli_deployment_plan.t =
     ; rollout_strategy = None
     ; ingress_host = None
     ; ingress_path = None
+    ; cluster_issuer = "letsencrypt-prod"
     ; extra_labels = []
     ; progressive_delivery = None
     }
@@ -330,6 +332,7 @@ let test_to_json_mode_strings () =
       ; env = None
       ; region = None
       ; base_domain = None
+      ; cluster_issuer = "letsencrypt-prod"
       ; secret_backend = Sol_cli_manifest.Kubernetes_placeholder
       }
     in
@@ -718,6 +721,7 @@ let make_worker_spec name domain =
   ; rollout_strategy = None
   ; ingress_host = None
   ; ingress_path = None
+  ; cluster_issuer = "letsencrypt-prod"
   ; extra_labels = []
   ; progressive_delivery = None
   }
@@ -901,9 +905,14 @@ let test_to_json_ingress_present () =
   in
   let plan2 = { plan with services = [ svc_with_ingress ] } in
   let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan2) in
-  assert (
-    let re = Str.regexp {|"ingress":{"host":"example.com","path":"/api"}|} in
-    contains re s)
+  List.iter
+    (fun fragment -> assert (contains (Str.regexp_string fragment) s))
+    [ {|"ingress":{"host":"example.com","path":"/api"|}
+    ; {|"tls":{"hosts":["example.com"],"secretName":"charge-svc-tls"}|}
+    ; {|"cluster_issuer":"letsencrypt-prod"|}
+    ; {|"cert-manager.io/cluster-issuer":"letsencrypt-prod"|}
+    ; {|"nginx.ingress.kubernetes.io/ssl-redirect":"true"|}
+    ]
 ;;
 
 let test_to_json_schema_subjects_present () =
@@ -952,6 +961,7 @@ let test_of_services_result_surfaces_toml_parse_error () =
       ; env = None
       ; region = None
       ; base_domain = None
+      ; cluster_issuer = "letsencrypt-prod"
       ; secret_backend = Sol_cli_manifest.Kubernetes_live
       }
     in
@@ -987,6 +997,7 @@ let deploy_env : Sol_cli_deployment_plan.env_config =
   ; env = None
   ; region = None
   ; base_domain = None
+  ; cluster_issuer = "letsencrypt-prod"
   ; secret_backend = Sol_cli_manifest.Kubernetes_live
   }
 ;;

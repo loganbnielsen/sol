@@ -66,6 +66,7 @@ let run filter_path =
          ; rollout_strategy = toml.Sol_cli_toml.rollout_strategy
          ; ingress_host = None
          ; ingress_path = None
+         ; cluster_issuer = "letsencrypt-prod"
          ; extra_labels = []
          ; progressive_delivery = toml.Sol_cli_toml.progressive_delivery
          }
