@@ -173,6 +173,14 @@ That declaration makes Sol inject `CHECKOUT_SVC_URL` into the caller and opens
 the generated NetworkPolicy only for that caller/target pair. Application code
 should read the URL from the environment and use ordinary `cohttp-eio` calls.
 
+**Dev-substrate caveat:** the generated policy is correct per the Kubernetes
+spec, but the local dev substrate's policy engine (kube-router on k3d/k3s
+v1.27) does not enforce cross-namespace `namespaceSelector` rules, so a declared
+call is refused locally even though it is wired correctly. Customer-cloud
+clusters are unaffected. See BUG-022 for the reproduction; the golden-path smoke
+asserts the wiring (injected URL plus the applied policy pair) rather than live
+enforcement.
+
 Propagate context on the outbound request yourself, the same way the Kafka path
 does: copy the current W3C `traceparent` header so the callee's span joins the
 caller's trace — `Obs_trace.inject_to_headers` (or `Obs_trace.to_traceparent`)
