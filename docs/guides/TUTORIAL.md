@@ -667,6 +667,15 @@ terraform apply \
 
 After `terraform apply`, the cluster is identical to `sol dev up` — same DNS names, same ConfigMap values, same Grafana dashboards.
 
+**Point DNS at the ingress** before any service with an `ingress_host` in its `sol.toml` is reachable:
+
+```bash
+# The controller's externally provisioned address (AWS ELB / GCP LB):
+kubectl get svc -n ingress-nginx ingress-nginx-controller   # EXTERNAL-IP
+```
+
+Create an `A`/alias or `CNAME` record for each `ingress_host` — or one wildcard record such as `*.acme.com` — in the zone created by your provider module (`cli/platform/infra/aws` exposes `route53_zone_id` and `route53_nameservers`; point your registrar's NS at the latter on first setup). Sol deliberately does not run external-dns, so this is a required manual step, and cert-manager only finishes TLS once the name resolves. Locally there is nothing to do: `sol dev up` forwards the same controller to `http://localhost:8088`.
+
 > **Advanced / manual override:** `sol cloud plan/apply` is a thin wrapper around Terraform. Engineers who need full Terraform control — custom variables, targeted applies, remote state configuration, or workspace management — can invoke Terraform directly against the same modules:
 >
 > ```bash

@@ -22,6 +22,11 @@ let require_tools () =
 let cluster_name = "sol-local"
 let registry_port = 5000
 
+(* FEAT-042: host port the local ingress-nginx controller is port-forwarded
+   to. Deliberately not 8080 -- that is where `sol up` forwards a service, so
+   the two would collide. Nothing else in `sol dev up` uses 8088. *)
+let ingress_local_port = 8088
+
 (* ── Helm helpers ────────────────────────────────────────────────────────── *)
 
 (* FRIC-006: same discard-on-failure bug as the cluster-creation/docker/
@@ -420,6 +425,30 @@ let dev_up () =
       ());
   if need_grafana
   then install_local_grafana_config ~prometheus:req.prometheus ~tempo:req.tempo;
+  (* FEAT-042: install ingress-nginx unconditionally, mirroring
+     cli/platform/infra/base's helm_release.ingress_nginx (same chart version,
+     pinned together) so the Ingress objects `sol up`/`sol deploy` generate are
+     actually served locally instead of sitting inert. Service type NodePort
+     matches base/variables.tf's documented k3d/local value of
+     ingress_service_type; the controller is reached through the port-forward
+     below, so no k3d host-port mapping is needed. Deliberately not a
+     cli/platform/components/ entry: base/main.tf's own install is a
+     var-driven `set` (ingress_service_type), the same category ADR 0001
+     leaves inline on both sides. *)
+  Printf.printf "\n  Installing ingress-nginx...\n%!";
+  ignore
+    (Sol_cli_helm.repo_add
+       ~name:"ingress-nginx"
+       ~url:"https://kubernetes.github.io/ingress-nginx");
+  ignore (Sol_cli_helm.repo_update ());
+  helm_install
+    ~label:"ingress-nginx"
+    "ingress-nginx"
+    "ingress-nginx/ingress-nginx"
+    ~namespace:"ingress-nginx"
+    ~version:"4.10.1"
+    ~values:[ "controller.service.type", Str "NodePort" ]
+    ();
   (* 4. Port-forwards *)
   Printf.printf "\n[4/4] Starting port-forwards...\n%!";
   ignore (Sys.command "sleep 2");
@@ -518,6 +547,16 @@ let dev_up () =
       ; local_port = 3200
       ; remote_port = 3200
       });
+  (* FEAT-042: the controller install above is unconditional, so is this
+     forward -- a workspace Ingress can only be reached from the host through
+     it. Remote port 80 is ingress-nginx's controller Service `http` port. *)
+  pf
+    { name = "ingress"
+    ; namespace = "ingress-nginx"
+    ; target = "svc/ingress-nginx-controller"
+    ; local_port = ingress_local_port
+    ; remote_port = 80
+    };
   (* Summary *)
   Printf.printf "\n";
   Printf.printf "  cluster      ✓  %s\n" cluster_name;
@@ -540,6 +579,9 @@ let dev_up () =
   then Printf.printf "  tempo        ✓  http://localhost:4318  (OTLP, port-forwarded)\n";
   if req.tempo
   then Printf.printf "  tempo-query  ✓  http://localhost:3200  (port-forwarded)\n";
+  Printf.printf
+    "  ingress      ✓  http://localhost:%d  (ingress-nginx, port-forwarded)\n"
+    ingress_local_port;
   Printf.printf "\n"
 ;;
 
