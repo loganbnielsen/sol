@@ -27,3 +27,11 @@ BUG-022 removed the obstacle by moving the pin to k3d v5.9.0 / k3s v1.35.5, veri
 - The smoke fails if a declared cross-namespace call is refused, and fails if an undeclared pod reaches the peer.
 - The instrumented caller route is exercised, not only a probe pod, so a regression in `Peer`'s header wiring fails CI.
 - The dev-substrate caveat is removed or reduced to a version statement.
+
+## Closed — superseded by BUG-024
+
+**Not completed.** This ticket's premise is void: it was written on BUG-022's claim that a newer k3s honours cross-namespace `namespaceSelector` policy, and that claim is wrong (BUG-024). The live assertion those criteria describe **cannot pass** on the dev substrate — `namespaceSelector` rules are never honoured by kube-router on any k3s tested, so the allow half always fails.
+
+The part of this ticket that *is* achievable already exists on `main`: the golden-path smoke asserts the deploy path (injected `CHECKOUT_SVC_URL` plus the applied NetworkPolicy pair), and `service-runtime-contract.md` carries a caveat stating the real limitation.
+
+An attempt to do as written was made in PR #205 and closed, with the evidence in that PR's comment. If app-to-app calls must work locally, the answer is a substrate decision (a CNI that implements `namespaceSelector`, e.g. Calico/Cilium on k3d), not a change to what the smoke asserts.
