@@ -160,13 +160,12 @@ let build_plan ctx ~emit_to =
     }
   in
   match
-    Sol_cli_deployment_plan.of_services_result ~workspace:ctx.workspace ~env
+    Sol_cli_factory.plan_of_services ~workspace:ctx.workspace ~env
       ~resolved_config:ctx.resolved_config ctx.services
   with
   | Ok plan -> plan
-  | Error err ->
-      Printf.eprintf "error: %s\n"
-        (Sol_cli_deployment_plan.plan_error_to_string err);
+  | Error msg ->
+      Printf.eprintf "error: %s\n" msg;
       exit 1
 
 let write_plan_if_requested ~emit_plan_to plan =
@@ -204,8 +203,8 @@ let print_planned_services plan =
 let run_plan_or_exit ~workspace ~target_env ~mode ~secret_backend plan =
   try
     match
-      Sol_cli_executor.run_plan ~workspace ~env:target_env ~mode ~secret_backend
-        plan.Sol_cli_deployment_plan.services
+      Sol_cli_factory.execute ~workspace ~env:target_env ~mode ~secret_backend
+        plan
     with
     | Ok rs -> rs
     | Error msg ->
