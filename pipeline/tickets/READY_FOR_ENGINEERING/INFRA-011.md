@@ -15,8 +15,10 @@ The pipeline derives user-visible text from a ticket body by a rule that has nev
 
 - **PR titles / squash subjects** come from the ticket's first non-metadata line, prefixed with the id. FEAT-060's body opened with `**Depends on:**` followed by a paragraph of reasoning, so #213's squash subject is that paragraph: `FEAT-060: FEAT-056 is DONE, but two of its criteria are not: SOL_ENV is only asserted for services...` — a sentence where a title belongs, and now permanent in `git log`.
 - **Backlog summaries** (what `soldev pipeline ls` shows) come from the first line too. A ticket that led with `**Status:** …` displayed its status as its summary until the line was removed.
+- **Novel metadata prefixes are not skipped, so they become the summary.** Reproduced while filing this ticket: `**Related:** DEC-016, DEC-020, FEAT-057.` and `**Replaces:** the enforcement half of FEAT-058` are now the displayed summaries of FEAT-058 and FEAT-059 respectively. Any prefix outside the hard-coded skip list is treated as content.
+- **A heading is taken verbatim, marker included.** This ticket's own summary displays as `# The ticket body decides the PR title and the backlog summary, and the rule is written down nowhere`.
 
-Both are the same defect: **the tooling infers intent from position and skips only the markers it happens to know about**, so any body that doesn't happen to open with a title produces a wrong-looking subject or summary. The convention that avoids it ("put a short title line first") is implicit knowledge, and it has cost two corrections this week.
+Both are the same defect: **the tooling infers intent from position and skips only the markers it happens to know about**, so any body that doesn't happen to open with a title produces a wrong-looking subject or summary. The convention that avoids it ("put a short title line first") is implicit knowledge, and it has cost three corrections this week — the third being this ticket's own two fields, which reproduced the bug within minutes of filing it.
 
 ## Proposed fix
 
