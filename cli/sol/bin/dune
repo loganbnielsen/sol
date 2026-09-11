@@ -35,5 +35,6 @@
   cmd_migrate
   cmd_rollback
   cmd_secret
+  cmd_target
   cmd_cloud
   cmd_cloud_tf))

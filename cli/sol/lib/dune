@@ -39,6 +39,7 @@
   Sol_cli_loki
   Sol_cli_run_log
   Sol_cli_observability_url
+  Sol_cli_target_report
   Sol_cli_open
   Sol_cli_status
   Sol_cli_rollback
