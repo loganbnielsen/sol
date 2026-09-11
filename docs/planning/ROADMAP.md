@@ -762,11 +762,12 @@ cluster observable instead, with the right data source per layer:
 | Cluster/deployment diagnosis | `kubectl` — pods, events, image pull errors, OOMKilled, scheduling failures, rollout status | Powers `sol status`, `sol deploy status`, failed-deploy summaries. Most reliable source when the app never starts, so it does not depend on Loki. |
 | Runtime logs | Loki — app logs, worker logs, platform pod logs once promtail/an agent scrapes pod stdout (not just app-pushed lines) | `sol logs <service>` prefers Loki, falls back to `kubectl logs` when a Loki *query* fails, not only when Loki is absent. |
 
-Follow-up work implied (not yet ticketed): install promtail (or equivalent)
-as part of `cli/platform/infra/base/` scraping pod stdout directly, not just
-app-pushed Loki lines; add `sol status`/`sol deploy status` summarizing
-rollout health from Kubernetes events/pod states; give `sol deploy` run IDs
-and local `.sol/runs/` logging.
+**Follow-up work — status corrected 2026-09-11.** This paragraph previously described the work above as "not yet ticketed". Three of the four items had in fact already landed, and the fourth is now ticketed:
+
+- **Kubernetes-derived diagnosis** in `sol status` — done (OBS-001; `Sol_cli_status.service_diagnoses_named` → `Sol_cli_rollout_diagnosis.diagnose_service_live`).
+- **Pod-stdout collection** — done, and with **Alloy** rather than promtail: `cli/platform/infra/base/alloy/logs.alloy.tftpl` uses `discovery.kubernetes "pods"` + `loki.source.kubernetes`, so it tails pod logs through the Kubernetes API instead of depending on app-pushed lines.
+- **`sol logs` runtime fallback** — done: triggered from `Sol_cli_loki.classify_process_error` (timeout, connection, other) at five call sites.
+- **Run IDs and local `.sol/runs/` logging for `sol deploy`** — the one genuine gap. `Sol_cli_run_log` exists, but its only caller is `cmd_cloud_tf.ml` (the terraform phases), so `sol up`/`sol deploy` still keep their diagnostics only in the terminal that ran them. Tracked as **FEAT-055**.
 
 **`sol logs <svc>` fallback is a runtime check, not a config flag.** Trigger
 the `kubectl logs` fallback on any of: Loki query failure, timeout (~5s),
