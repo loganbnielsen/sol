@@ -2043,10 +2043,57 @@ let test_environment_absent_from_the_namespace () =
   assert_absent "namespace" ns_beta "beta"
 ;;
 
+(* FEAT-060: SOL_ENV reaches every primitive, not just services. All three render
+   through the same [configmap_doc] path, so these assert the shared path — but
+   they are the assertions that would fail if a primitive were ever split off it.
+   Postgres URL, secrets and the env label are asserted per primitive elsewhere
+   in this file; SOL_ENV was the exception. *)
+let test_worker_sol_env_configmap_present_when_resolved () =
+  let _ns, workload = render_spec_ok ~env:"staging" worker_spec in
+  let cm_block = extract_kind_block workload "kind: ConfigMap" in
+  assert_contains "worker SOL_ENV config" cm_block {|SOL_ENV: "staging"|}
+;;
+
+let test_worker_sol_env_configmap_absent_by_default () =
+  let _ns, workload = render_spec_ok worker_spec in
+  let cm_block = extract_kind_block workload "kind: ConfigMap" in
+  assert_absent "worker SOL_ENV config" cm_block {|SOL_ENV: |}
+;;
+
+let test_fn_sol_env_configmap_present_when_resolved () =
+  let _ns, workload = render_spec_ok ~env:"dev" fn_spec in
+  let cm_block = extract_kind_block workload "kind: ConfigMap" in
+  assert_contains "fn SOL_ENV config" cm_block {|SOL_ENV: "dev"|}
+;;
+
+let test_fn_sol_env_configmap_absent_by_default () =
+  let _ns, workload = render_spec_ok fn_spec in
+  let cm_block = extract_kind_block workload "kind: ConfigMap" in
+  assert_absent "fn SOL_ENV config" cm_block {|SOL_ENV: |}
+;;
+
 let () =
   Alcotest.run
     "manifest_render"
-    [ ( "svc"
+    [ ( "SOL_ENV reaches every primitive"
+      , [ Alcotest.test_case
+            "worker SOL_ENV when resolved"
+            `Quick
+            test_worker_sol_env_configmap_present_when_resolved
+        ; Alcotest.test_case
+            "worker SOL_ENV absent by default"
+            `Quick
+            test_worker_sol_env_configmap_absent_by_default
+        ; Alcotest.test_case
+            "fn SOL_ENV when resolved"
+            `Quick
+            test_fn_sol_env_configmap_present_when_resolved
+        ; Alcotest.test_case
+            "fn SOL_ENV absent by default"
+            `Quick
+            test_fn_sol_env_configmap_absent_by_default
+        ] )
+    ; ( "svc"
       , [ Alcotest.test_case "namespace yaml" `Quick test_svc_namespace
         ; Alcotest.test_case "persistent volume claim + mount" `Quick test_svc_volumes
         ; Alcotest.test_case "deployment name" `Quick test_svc_deployment_name

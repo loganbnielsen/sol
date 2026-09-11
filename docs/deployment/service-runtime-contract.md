@@ -125,6 +125,26 @@ environment variable by the name Sol/you expect (`POSTGRES_URL`,
 and nothing fails until the connection you expected to work doesn't, at
 runtime.
 
+### `SOL_ENV` — the environment, for behaviour only
+
+Every generated workload's `<name>-env` ConfigMap carries `SOL_ENV`, set to the
+resolved target's environment. Two properties are deliberate:
+
+- **It is absent when no target is resolved.** `sol up` against the local
+  cluster deploys without a resolved target, so nothing sets it. Application
+  code should treat "no environment" as a real state rather than assuming a
+  value is always present.
+- **It is for behaviour, never topology.** Use it to label logs, gate feature
+  flags, or refuse destructive operations outside production. Do **not** derive
+  any address, hostname, namespace or URL from it: namespaces, service names
+  and injected internal URLs are identical in every environment by design
+  (DEC-016), and anything that has to be rewritten to move between environments
+  is somewhere dev and production can silently diverge. The same rule covers the
+  `env` label Sol sets on the workload — it identifies, it never addresses.
+
+The resolved target is authoritative: a `SOL_ENV` declared in a service's own
+`config` is replaced by the target's environment rather than shadowing it.
+
 ## Migration file convention — filenames only, SQL content unchecked
 
 `sol migrate --dry-run` (`cmd_migrate.ml`'s `print_pending_sql`) previews
