@@ -5,7 +5,9 @@ severity: low
 source: review of FEAT-057 (same-cluster check) 2026-09-11 — it compares config names, not clusters
 ---
 
-**Depends on:** FEAT-059 (target-scoped destinations). Related: DEC-016, DEC-020, FEAT-057.
+**Depends on:** FEAT-059.
+
+**Related:** DEC-016, DEC-020, FEAT-057.
 
 Downgraded from `READY_FOR_ENGINEERING` on 2026-09-11: DEC-020 removes the hidden input that made this urgent (an ambient `kubectl` context silently choosing the destination), which leaves this ticket as defense-in-depth against a different and rarer class — an *explicitly named* destination that resolves to an unexpected physical cluster. Kept because the analysis is sound and the trigger conditions below are foreseeable; not needed for DEC-020's invariant, and deliberately not built while nothing is live and the deployment contract is still being designed.
 

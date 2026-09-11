@@ -5,7 +5,9 @@ severity: medium
 source: DEC-020 (deployment destinations are explicit)
 ---
 
-**Depends on:** DEC-020. Replaces the enforcement half of FEAT-058 (now backlog). Related: DEC-016.
+**Depends on:** DEC-020.
+
+**Replaces:** the enforcement half of FEAT-058 (now backlog). Related: DEC-016.
 
 Make the destination a function of the selected target: pass the resolved Kubernetes context (or a scoped `KUBECONFIG`) through every operation, and stop reading or mutating `kubectl`'s current context.
 
