@@ -168,6 +168,60 @@ let test_title_no_frontmatter () =
   check_string "no frontmatter" "Just a title line" (Soldev_ticket.ticket_title content)
 ;;
 
+let test_title_explicit_field_wins () =
+  (* The fix: a ticket can say what its title is, so nothing has to infer it. *)
+  let content =
+    "---\n\
+     id: X\n\
+     title: Charged twice on retry\n\
+     ---\n\n\
+     **Depends on:** None.\n\n\
+     An opening paragraph that reads like a sentence, not a title.\n"
+  in
+  check_string
+    "explicit title"
+    "Charged twice on retry"
+    (Soldev_ticket.ticket_title content)
+;;
+
+let test_title_strips_heading_markers () =
+  (* A summary should read as a title, not as Markdown. *)
+  let content =
+    "---\nid: X\n---\n\n**Depends on:** None.\n\n# Real title here\n\nBody.\n"
+  in
+  check_string
+    "heading markers stripped"
+    "Real title here"
+    (Soldev_ticket.ticket_title content)
+;;
+
+let test_title_skips_any_bold_field () =
+  (* Deliberately not a list of known labels: `**Related:**` and `**Replaces:**`
+     each became the displayed summary of a real ticket before anyone noticed. *)
+  let content =
+    "---\n\
+     id: X\n\
+     ---\n\n\
+     **Depends on:** None.\n\n\
+     **Related:** DEC-016, FEAT-058.\n\n\
+     A prose title sentence.\n"
+  in
+  check_string
+    "a second bold field is skipped too"
+    "A prose title sentence."
+    (Soldev_ticket.ticket_title content)
+;;
+
+let test_title_blank_field_falls_back () =
+  let content =
+    "---\nid: X\ntitle:  \n---\n\n**Depends on:** None.\n\nFallback title\n"
+  in
+  check_string
+    "a blank title field is not a title"
+    "Fallback title"
+    (Soldev_ticket.ticket_title content)
+;;
+
 (* ── dependency_summary ──────────────────────────────────────────────────── *)
 
 let test_dep_summary_empty () =
@@ -288,6 +342,22 @@ let () =
     ; ( "ticket_title"
       , [ Alcotest.test_case "skips depends line" `Quick test_title_basic
         ; Alcotest.test_case "no frontmatter" `Quick test_title_no_frontmatter
+        ; Alcotest.test_case
+            "explicit title field wins"
+            `Quick
+            test_title_explicit_field_wins
+        ; Alcotest.test_case
+            "heading markers stripped"
+            `Quick
+            test_title_strips_heading_markers
+        ; Alcotest.test_case
+            "any bold field skipped"
+            `Quick
+            test_title_skips_any_bold_field
+        ; Alcotest.test_case
+            "blank title field falls back"
+            `Quick
+            test_title_blank_field_falls_back
         ] )
     ; ( "dependency_summary"
       , [ Alcotest.test_case "empty" `Quick test_dep_summary_empty

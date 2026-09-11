@@ -37,4 +37,16 @@ Any of these; the first is the substantive one:
 
 ## Notes
 
+## Completion notes
+
+**The fix is two rules, and the second one is what generalises.** An explicit `title:` frontmatter field wins outright when present and non-blank. Otherwise the title is the first body line that is not a **bold-labelled field**, with Markdown heading markers stripped — recognising the *shape* (`**Label:**`) rather than listing labels, because a list is what failed: `**Status:**` was known, then `**Related:**` and `**Replaces:**` were not, and each shipped as a displayed summary before anyone noticed.
+
+**Deviation from the third proposal, deliberately.** The ticket suggested preferring the first Markdown heading anywhere in the body. Not implemented: a ticket that opens with prose and later has `## Problem` would then be titled "Problem". Taking the *first content line* and stripping markers if it happens to be a heading is both simpler and can't pick a section heading far from the top. Every observed case — `# ...` titles, plain-sentence titles, labelled-field openings — is handled.
+
+**Both surfaces fixed at once.** `ticket_title` feeds the PR subject (`soldev_merge.ml:294`) and the listing summary (`:810`), so one change covers the two symptoms that were reported as separate incidents.
+
+**Tests.** Four added, alongside the two that existed: the explicit field winning, heading markers stripped, a second bold field skipped (`**Related:**`, the observed failure), and a blank `title:` falling back rather than producing an empty title. A first attempt at the bold-field rule checked for `**` *before* the colon; the marker is after it (`**Label:**`), so it matched nothing and four tests failed — the failures caught it, and the comment on the function now records the shape so the next reader does not repeat it.
+
+**Verification.** The listing no longer shows a leading `#` on this ticket or INFRA-012 — the visible symptom, checked directly rather than inferred from the unit tests.
+
 Low severity by impact, but it lands in `git log` permanently and it has already caused two corrections, which is the definition of a convention that should be explicit rather than remembered.
