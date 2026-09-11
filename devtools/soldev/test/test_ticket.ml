@@ -317,5 +317,58 @@ let () =
             `Quick
             test_set_field_no_frontmatter_is_noop
         ] )
+    ; ( "dependency cycles"
+      , [ (* The walk takes [deps_of] injected, so these need no ticket files —
+             which also makes them a test of the walk rather than of the repo's
+             current contents. *)
+          Alcotest.test_case "self cycle" `Quick (fun () ->
+            Alcotest.(check (option (list string)))
+              "a ticket depending on itself is a cycle"
+              (Some [ "A-1"; "A-1" ])
+              (Soldev_ticket.find_dependency_cycle_from
+                 ~deps_of:(fun id -> if String.equal id "A-1" then [ "A-1" ] else [])
+                 "A-1"))
+        ; Alcotest.test_case "mutual cycle" `Quick (fun () ->
+            let deps_of = function
+              | "A-1" -> [ "B-2" ]
+              | "B-2" -> [ "A-1" ]
+              | _ -> []
+            in
+            Alcotest.(check (option (list string)))
+              "each names the other"
+              (Some [ "A-1"; "B-2"; "A-1" ])
+              (Soldev_ticket.find_dependency_cycle_from ~deps_of "A-1"))
+        ; Alcotest.test_case "cycle reached from outside" `Quick (fun () ->
+            let deps_of = function
+              | "X-9" -> [ "A-1" ]
+              | "A-1" -> [ "B-2" ]
+              | "B-2" -> [ "A-1" ]
+              | _ -> []
+            in
+            Alcotest.(check (option (list string)))
+              "reports the cycle and not the path taken to reach it"
+              (Some [ "A-1"; "B-2"; "A-1" ])
+              (Soldev_ticket.find_dependency_cycle_from ~deps_of "X-9"))
+        ; Alcotest.test_case "no cycle" `Quick (fun () ->
+            let deps_of = function
+              | "A-1" -> [ "B-2" ]
+              | "B-2" -> [ "C-3" ]
+              | _ -> []
+            in
+            Alcotest.(check (option (list string)))
+              "a chain is not a cycle"
+              None
+              (Soldev_ticket.find_dependency_cycle_from ~deps_of "A-1"))
+        ; Alcotest.test_case "shared dependency is not a cycle" `Quick (fun () ->
+            let deps_of = function
+              | "A-1" -> [ "B-2"; "C-3" ]
+              | "B-2" -> [ "C-3" ]
+              | _ -> []
+            in
+            Alcotest.(check (option (list string)))
+              "a diamond is not a cycle"
+              None
+              (Soldev_ticket.find_dependency_cycle_from ~deps_of "A-1"))
+        ] )
     ]
 ;;
