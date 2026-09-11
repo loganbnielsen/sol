@@ -261,24 +261,73 @@ let human_decision_details content =
   String.concat "\n\n" (sections @ marker_hits)
 ;;
 
-let ticket_title content =
-  let lines = String.split_on_char '\n' content in
-  let after_frontmatter = function
-    | "---" :: rest ->
-      let rec skip = function
-        | [] -> []
-        | "---" :: rest -> rest
-        | _ :: rest -> skip rest
-      in
-      skip rest
-    | lines -> lines
+(* ── the title ───────────────────────────────────────────────────────────── *)
+
+(* A line that is a bold-labelled field, e.g. `**Depends on:** None.` or
+   `**Related:** DEC-016`. Recognising the *shape* rather than listing labels is
+   the point: `**Status:**` first became a displayed summary, then `**Related:**`
+   and `**Replaces:**` did — each a new label the old hardcoded skip list did not
+   know, and each noticed only after it showed up in `pipeline ls`.
+
+   Note the shape: the bold span *closes around the colon* (`**Label:**`), so the
+   marker to look for sits immediately after it, not before. Getting that
+   backwards makes the rule match nothing, which is how this was first written. *)
+let is_bold_field_line line =
+  let line = String.trim line in
+  match String.index_opt line ':' with
+  | None -> false
+  | Some colon ->
+    String.length line >= 4
+    && String.sub line 0 2 = "**"
+    && colon + 3 <= String.length line
+    && String.sub line (colon + 1) 2 = "**"
+;;
+
+let is_heading line =
+  let line = String.trim line in
+  String.length line > 0 && line.[0] = '#'
+;;
+
+let strip_heading_markers line =
+  let line = String.trim line in
+  let n = String.length line in
+  let rec first_content i =
+    if i < n && line.[i] = '#' then first_content (i + 1) else i
   in
-  after_frontmatter lines
-  |> List.find_opt (fun line ->
-    let line = String.trim line in
-    line <> "" && not (starts_with ~prefix:"**Depends on:**" line))
-  |> Option.map String.trim
-  |> Option.value ~default:"-"
+  let start = first_content 0 in
+  String.trim (String.sub line start (n - start))
+;;
+
+let ticket_title content =
+  (* An explicit title wins, always. Intent stated beats intent inferred, and it
+     survives editing the body — every other rule here is a guess about which
+     line the author meant. *)
+  match fm_get (parse_frontmatter content) "title" with
+  | Some title when String.trim title <> "" -> String.trim title
+  | _ ->
+    let lines = String.split_on_char '\n' content in
+    let after_frontmatter = function
+      | "---" :: rest ->
+        let rec skip = function
+          | [] -> []
+          | "---" :: rest -> rest
+          | _ :: rest -> skip rest
+        in
+        skip rest
+      | lines -> lines
+    in
+    (* The first line that is not metadata. If it is a heading, drop the markers:
+       a summary should read as a title, not as Markdown. Note this takes the
+       first content line rather than the first *heading* anywhere in the body —
+       a ticket that opens with prose and later has `## Problem` would otherwise
+       be titled "Problem". *)
+    after_frontmatter lines
+    |> List.find_opt (fun line ->
+      let line = String.trim line in
+      line <> "" && not (is_bold_field_line line))
+    |> Option.map (fun line ->
+      if is_heading line then strip_heading_markers line else String.trim line)
+    |> Option.value ~default:"-"
 ;;
 
 let find_ticket ticket_id =
