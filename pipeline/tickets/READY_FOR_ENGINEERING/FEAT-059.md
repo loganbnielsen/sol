@@ -11,6 +11,8 @@ source: DEC-020 (deployment destinations are explicit)
 
 Make the destination a function of the selected target: pass the resolved Kubernetes context (or a scoped `KUBECONFIG`) through every operation, and stop reading or mutating `kubectl`'s current context.
 
+**Boundary — destination is not scope.** This ticket decides *where* an operation runs; it must not decide *what* it touches. Scope — which services, workers or functions are being deployed — resolves above the Kubernetes seam, in discovery and the plan, and is modelled separately in FEAT-061. Concretely: `sol_cli_kubectl` learns *where*, never *what*. A kubectl helper that knows which service is being deployed has already conflated the two axes, and would make changing one silently affect the other. Resolution should be centralised at that seam for the destination only; do not let it grow into a selection mechanism.
+
 ## Scope
 
 **1. Resolve the destination from the target.**
