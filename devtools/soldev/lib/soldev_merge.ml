@@ -794,6 +794,25 @@ let run_ls include_done =
                   Soldev_ticket.parse_depends content |> Soldev_ticket.dependency_summary
                 in
                 let ready = Soldev_ticket.readiness_label ~ticket_id:id state content in
+                (* INFRA-010: a stale premise must not read as actionable, and the
+                   listing is exactly where it silently did. Echo is off here
+                   because `ls` is a summary; `check` is where the probe is shown
+                   before it runs. *)
+                let ready =
+                  match Soldev_ticket.premise_of content with
+                  | None -> ready
+                  | Some probe ->
+                    (match
+                       Soldev_ticket.premise_verdict
+                         ~probe
+                         ~exit_code:(Soldev_shell.run_cmd ~echo:false probe)
+                     with
+                     | Soldev_ticket.Premise_holds -> ready
+                     | Soldev_ticket.Premise_stale ->
+                       "premise-stale — the probe succeeded, so this may be done already"
+                     | Soldev_ticket.Premise_unverified reason ->
+                       "premise-unverified: " ^ reason)
+                in
                 let ready =
                   if state = Soldev_ticket.Ready_for_engineering
                   then (
@@ -839,6 +858,31 @@ let run_check ticket_id =
     (match worktree_annotation_for_ticket ticket_id with
      | Some annotation -> Printf.printf "worktree: %s\n" annotation
      | None -> ());
+    (* INFRA-010: before the dependency and gate checks, ask whether the finding
+       still exists at all. A stale ticket is indistinguishable from real work
+       from the outside, and this is the cheapest place to find out. The probe is
+       echoed, so it is visible what is about to run. *)
+    (match Soldev_ticket.premise_of content with
+     | None -> ()
+     | Some probe ->
+       (match
+          Soldev_ticket.premise_verdict ~probe ~exit_code:(Soldev_shell.run_cmd probe)
+        with
+        | Soldev_ticket.Premise_holds -> Printf.printf "premise: holds\n"
+        | Soldev_ticket.Premise_stale ->
+          Printf.printf
+            "premise stale: the probe succeeded, so the work this ticket describes may \
+             already be done. Re-read the ticket and either close it with evidence or \
+             fix the probe.\n";
+          Printf.printf "status: premise-stale\n";
+          exit 1
+        | Soldev_ticket.Premise_unverified reason ->
+          Printf.printf
+            "premise unverified: %s. Confirm the premise by hand before starting, then \
+             fix or remove the probe.\n"
+            reason;
+          Printf.printf "status: premise-unverified\n";
+          exit 1));
     if Soldev_ticket.has_human_decision_gate content
     then (
       let details = Soldev_ticket.human_decision_details content in

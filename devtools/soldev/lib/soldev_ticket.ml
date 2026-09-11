@@ -298,6 +298,56 @@ let strip_heading_markers line =
   String.trim (String.sub line start (n - start))
 ;;
 
+(* ── premise probes (INFRA-010) ──────────────────────────────────────────── *)
+
+(* A ticket's premise is the claim that its finding is still unfixed. Most name a
+   symbol, file or command that would not exist if the work had been done, so a
+   probe is written in the *inverted* form: it SUCCEEDS when the premise no
+   longer holds, i.e. when the ticket may already be done.
+
+   The inversion is deliberate. The natural form — "succeeds when the premise
+   still holds" — needs every probe wrapped in a negation, and a mis-negated
+   probe then fails silently in the direction of "still actionable", which is the
+   exact failure this exists to catch. *)
+type premise_verdict =
+  | Premise_holds
+  | Premise_stale
+  | Premise_unverified of string
+
+let premise_of content =
+  match fm_get (parse_frontmatter content) "premise" with
+  | None -> None
+  | Some probe ->
+    (* The convention quotes a probe containing a colon or quote character, so
+       accept both forms rather than documenting one and parsing the other. *)
+    let probe = String.trim probe in
+    let n = String.length probe in
+    let unquoted =
+      if
+        n >= 2
+        && ((probe.[0] = '"' && probe.[n - 1] = '"')
+            || (probe.[0] = '\'' && probe.[n - 1] = '\''))
+      then String.trim (String.sub probe 1 (n - 2))
+      else probe
+    in
+    if unquoted = "" then None else Some unquoted
+;;
+
+(* [exit_code] is passed in rather than obtained here, so the classification is
+   testable without executing anything. A probe that cannot be run at all is
+   "unverified" rather than "holds": failing open in the useful direction. *)
+let premise_verdict ~probe ~exit_code =
+  if String.trim probe = ""
+  then Premise_unverified "the ticket declares an empty probe"
+  else if exit_code = 0
+  then Premise_stale
+  else if exit_code = 127
+  then Premise_unverified "the probe command was not found (exit 127)"
+  else if exit_code = 126
+  then Premise_unverified "the probe command is not executable (exit 126)"
+  else Premise_holds
+;;
+
 let ticket_title content =
   (* An explicit title wins, always. Intent stated beats intent inferred, and it
      survives editing the body — every other rule here is a guess about which

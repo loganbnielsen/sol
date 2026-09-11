@@ -44,6 +44,16 @@ Do not add a `status:` field — the directory encodes status.
 
 **Ticket titles:** The PR title and the listing summary both come from the ticket body — an explicit `title:` frontmatter field when present, otherwise the first line that is not a bold-labelled field, with Markdown heading markers stripped. So either state `title:` or open the body with a real title sentence. Two ways this goes wrong, both observed: opening with a paragraph of argument produces a PR subject that reads as a sentence, and opening with a labelled field (any `**Label:**`, not just `**Depends on:**`) makes that field the displayed summary.
 
+**Ticket premises:** A ticket is written at discovery time and rarely re-read, while the code moves on — so before starting a non-`DONE` ticket, verify its *premise* (the claim that the work is still missing) and record that in one line in the ticket, with what was checked. For findings that reduce to an existence check, declare the probe instead and let the pipeline evaluate it:
+
+```yaml
+premise: "rg -q 'fallback_to_kubectl' cli/sol/bin/cmd_logs.ml"
+```
+
+**The probe succeeds when the premise is stale** — the finding has already been fixed. The inverted form is deliberate: the natural form would need every probe wrapped in a negation, and a mis-negated probe fails in the direction of "still actionable", which is the exact failure this exists to catch. `soldev pipeline check` runs it and reports `premise-stale` or `premise-unverified` instead of `actionable`; `pipeline ls` shows the same in its label column. A probe that cannot run at all (exit 126/127) is `unverified`, never "holds".
+
+Two rules for writing one: **`check` echoes the command before running it, and a probe is shell supplied by whoever wrote the ticket — read it before you let it run.** And keep the probe cheap and read-only; it runs on every `ls`, so a probe with side effects runs on every listing.
+
 **Demo/example coverage:** Any ticket that changes what an app author does — a new `sol.toml` field, a framework primitive or runtime contract, a new CLI command, or changed generated manifests — must update a runnable example or demo (`examples/`, a tutorial code sample, or the scaffolded workspace) in the same ticket, and must say so in its Acceptance criteria. If a demo genuinely does not apply (internal refactor, pure documentation), state that in one line in the ticket's completion notes. "The CI smoke covers it" is not sufficient: a smoke test is a test, not a reference a user can read or run. New example Dockerfiles go in the `example-dockerfile-smoke` CI matrix, and demo-facing changes run `/demo-review`.
 
 **Skills that interact with tickets:**

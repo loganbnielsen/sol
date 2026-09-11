@@ -440,5 +440,53 @@ let () =
               None
               (Soldev_ticket.find_dependency_cycle_from ~deps_of "A-1"))
         ] )
+    ; ( "premise probes"
+      , [ (* INFRA-010: the probe SUCCEEDS when the premise is stale, so exit 0
+             means "this may already be done". These tests pin that inversion, and
+             the fail-open direction: a probe that cannot run is unverified
+             rather than "holds". *)
+          Alcotest.test_case "declared probe is read" `Quick (fun () ->
+            let content = "---\nid: X\npremise: \"rg -q foo bar.ml\"\n---\n\nBody\n" in
+            Alcotest.(check (option string))
+              "probe, with the documented quoting stripped"
+              (Some "rg -q foo bar.ml")
+              (Soldev_ticket.premise_of content))
+        ; Alcotest.test_case "unquoted probe is read too" `Quick (fun () ->
+            let content = "---\nid: X\npremise: rg -q foo bar.ml\n---\n\nBody\n" in
+            Alcotest.(check (option string))
+              "probe"
+              (Some "rg -q foo bar.ml")
+              (Soldev_ticket.premise_of content))
+        ; Alcotest.test_case "no probe" `Quick (fun () ->
+            Alcotest.(check (option string))
+              "none"
+              None
+              (Soldev_ticket.premise_of "---\nid: X\n---\n\nBody\n"))
+        ; Alcotest.test_case "blank probe is no probe" `Quick (fun () ->
+            Alcotest.(check (option string))
+              "none"
+              None
+              (Soldev_ticket.premise_of "---\nid: X\npremise: \"  \"\n---\n\nBody\n"))
+        ; Alcotest.test_case "exit 0 means stale" `Quick (fun () ->
+            match
+              Soldev_ticket.premise_verdict ~probe:"rg -q foo bar.ml" ~exit_code:0
+            with
+            | Soldev_ticket.Premise_stale -> ()
+            | Soldev_ticket.Premise_holds -> Alcotest.fail "exit 0 must mean stale"
+            | Soldev_ticket.Premise_unverified reason ->
+              Alcotest.fail ("unexpected unverified: " ^ reason))
+        ; Alcotest.test_case "non-zero means the premise holds" `Quick (fun () ->
+            match
+              Soldev_ticket.premise_verdict ~probe:"rg -q foo bar.ml" ~exit_code:1
+            with
+            | Soldev_ticket.Premise_holds -> ()
+            | _ -> Alcotest.fail "a failing probe means the premise still holds")
+        ; Alcotest.test_case "127 is unverified, not holds" `Quick (fun () ->
+            match
+              Soldev_ticket.premise_verdict ~probe:"no-such-tool --x" ~exit_code:127
+            with
+            | Soldev_ticket.Premise_unverified _ -> ()
+            | _ -> Alcotest.fail "a probe that cannot run must not read as holds")
+        ] )
     ]
 ;;

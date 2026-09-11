@@ -28,6 +28,22 @@ val find_ticket : string -> (ticket_state * string) option
 val dependency_status : string -> [ `Done | `Unknown | `Blocked of ticket_state ]
 val dependency_summary : string list -> string
 
+(** The outcome of evaluating a ticket's [premise:] probe (INFRA-010). *)
+type premise_verdict =
+  | Premise_holds
+  | Premise_stale
+  | Premise_unverified of string
+
+(** The probe a ticket declares, if any. *)
+val premise_of : string -> string option
+
+(** [premise_verdict ~probe ~exit_code] classifies a probe run. A probe succeeds
+    when the premise is *stale* — see the implementation for why that inversion
+    is deliberate. The exit code is injected so this is testable without running
+    anything; a probe that cannot be run is [Premise_unverified], never
+    [Premise_holds]. *)
+val premise_verdict : probe:string -> exit_code:int -> premise_verdict
+
 (** [find_dependency_cycle_from ~deps_of start] walks [deps_of] from [start] and
     returns the first cycle it closes, as a path like
     [["DEC-020"; "FEAT-063"; "DEC-020"]]. [deps_of] is injected so the walk is
