@@ -953,11 +953,26 @@ let test_example_pluto_prod_target_parses () =
       check_str_opt "size" (Some "small") resource.size)
 ;;
 
+(* `local` is not an environment: it names Sol's own ephemeral substrate, and
+   reserving the word keeps it from also meaning a selectable one. A cluster
+   someone runs themselves is still a cluster, and gets named for itself
+   (DEC-016, REFAC-083). *)
+let test_local_env_is_reserved () =
+  with_temp_dir (fun () ->
+    write_base ();
+    match Sol_cli_config.load_for_target ~target:"local/aws/us-east-1" with
+    | Ok _ -> Alcotest.fail "expected `local` to be rejected as an env name"
+    | Error e ->
+      assert (contains ~needle:"reserved" e.message);
+      assert (contains ~needle:"sol local up" e.message))
+;;
+
 let () =
   Alcotest.run
     "config"
     [ ( "sol.yml"
-      , [ Alcotest.test_case
+      , [ Alcotest.test_case "local env is reserved" `Quick test_local_env_is_reserved
+        ; Alcotest.test_case
             "target path supplies placement"
             `Quick
             test_target_path_supplies_placement

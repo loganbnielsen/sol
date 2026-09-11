@@ -102,7 +102,7 @@ Users must keep the TXT verification record in place for as long as they want So
 
 ## What does not leak between paths
 
-The default URL and custom domain model applies **only to hosted deploys** (`sol cloud deploy`). The local dev path (`sol dev up` / `sol up`) and the customer-cloud path (`sol deploy`) are unaffected:
+The default URL and custom domain model applies **only to hosted deploys** (`sol cloud deploy`). The local dev path (`sol local up` / `sol up`) and the customer-cloud path (`sol deploy`) are unaffected:
 
 - `sol up` against a local k3d cluster uses NodePort services and `kubectl port-forward` for local access.
 - `sol deploy` for customer-cloud produces Kubernetes manifests that the customer controls; they manage DNS, TLS, and ingress themselves.
