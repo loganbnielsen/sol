@@ -1,0 +1,5 @@
+(library
+ (name venus_billing_events)
+ (wrapped false)
+ (modules Payment_confirmed)
+ (libraries kafka_eio_service yojson))

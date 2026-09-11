@@ -1,0 +1,4 @@
+(library
+ (name demo_events)
+ (wrapped false)
+ (libraries kafka_eio_service))

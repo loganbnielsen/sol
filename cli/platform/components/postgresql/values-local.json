@@ -1,0 +1,4 @@
+{
+  "auth": { "postgresPassword": "dev" },
+  "primary": { "persistence": { "enabled": false } }
+}

@@ -1,0 +1,4 @@
+{
+  "statefulset": { "replicas": 1 },
+  "resources": { "cpu": { "cores": "1.5" } }
+}

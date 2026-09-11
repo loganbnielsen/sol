@@ -1,0 +1,9 @@
+{
+  "tls": { "enabled": false },
+  "config": { "cluster": { "auto_create_topics_enabled": true } },
+  "console": {
+    "enabled": false,
+    "ingress": { "className": "" },
+    "service": { "targetPort": 8080 }
+  }
+}

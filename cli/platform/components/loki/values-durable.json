@@ -1,0 +1,25 @@
+{
+  "deploymentMode": "Monolithic",
+  "singleBinary": {
+    "replicas": 1
+  },
+  "write": { "replicas": 0 },
+  "read": { "replicas": 0 },
+  "backend": { "replicas": 0 },
+  "loki": {
+    "commonConfig": { "replication_factor": 1 },
+    "storage": { "type": "s3" },
+    "useTestSchema": false,
+    "schemaConfig": {
+      "configs": [
+        {
+          "from": "2024-01-01",
+          "store": "tsdb",
+          "object_store": "s3",
+          "schema": "v13",
+          "index": { "prefix": "index_", "period": "24h" }
+        }
+      ]
+    }
+  }
+}

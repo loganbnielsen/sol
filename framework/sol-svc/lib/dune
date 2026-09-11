@@ -1,0 +1,17 @@
+(library
+ (name sol_svc)
+ (wrapped false)
+ (private_modules auth_internal route_internal)
+ (libraries
+  cohttp-eio
+  http
+  uri
+  yojson
+  base64
+  eio
+  eio.unix
+  obs-eio
+  sol_obs
+  jose
+  ptime
+  https-eio))

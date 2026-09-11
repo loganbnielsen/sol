@@ -1,0 +1,59 @@
+// Cluster-wide pod log shipping, rendered from cli/platform/infra/base/main.tf's
+// helm_release.alloy. Alloy's Promtail successor: this file is real River
+// config (Alloy's config language), not Promtail-shaped YAML. See
+// OBS-039 for the migration this replaces (promtail.enabled -> Alloy).
+//
+// discovery.kubernetes finds every pod on the cluster; discovery.relabel
+// promotes standard Kubernetes metadata (namespace/pod/container) plus
+// Sol's taxonomy label set (render_taxonomy_labels in
+// Sol_cli_manifest_yaml) from pod labels into log stream labels;
+// loki.source.kubernetes tails each pod's logs via the Kubernetes API (no
+// hostPath mount, no extra RBAC beyond this chart's default ClusterRole);
+// loki.write ships the result to Loki.
+
+discovery.kubernetes "pods" {
+  role = "pod"
+}
+
+discovery.relabel "pods" {
+  targets = discovery.kubernetes.pods.targets
+
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    target_label  = "container"
+  }
+
+%{ for label in taxonomy_labels ~}
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_${label}"]
+    target_label  = "${label}"
+  }
+%{ endfor ~}
+}
+
+loki.source.kubernetes "pods" {
+  targets    = discovery.relabel.pods.output
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "${loki_push_url}"
+%{ if loki_push_basic_auth_username != "" ~}
+    basic_auth {
+      username = "${loki_push_basic_auth_username}"
+      password = "${loki_push_basic_auth_password}"
+    }
+%{ endif ~}
+  }
+}

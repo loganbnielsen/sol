@@ -1,0 +1,88 @@
+{
+  "title": "Sol Service",
+  "uid": "sol-service-template",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["sol"],
+  "templating": {
+    "list": [
+      {
+        "name": "workspace",
+        "type": "query",
+        "datasource": "Loki",
+        "query": "label_values(workspace)",
+        "refresh": 2,
+        "includeAll": false
+      },
+      {
+        "name": "domain",
+        "type": "query",
+        "datasource": "Loki",
+        "query": "label_values({workspace=\"$workspace\"}, domain)",
+        "refresh": 2,
+        "includeAll": false
+      },
+      {
+        "name": "service",
+        "type": "query",
+        "datasource": "Loki",
+        "query": "label_values({workspace=\"$workspace\", domain=\"$domain\"}, service)",
+        "refresh": 2,
+        "includeAll": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum(rate(sol_svc_requests_total{workspace=\"$workspace\", domain=\"$domain\", service=\"$service\"}[5m])) by (route, method)",
+          "legendFormat": "{{method}} {{route}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "p95 request duration",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(sol_svc_request_duration_seconds_bucket{workspace=\"$workspace\", domain=\"$domain\", service=\"$service\"}[5m])) by (le, route))",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Pod up",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "up{workspace=\"$workspace\", domain=\"$domain\", service=\"$service\"}",
+          "legendFormat": "{{pod}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Logs",
+      "type": "logs",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": "Loki",
+      "targets": [
+        { "expr": "{workspace=\"$workspace\", domain=\"$domain\", service=\"$service\"}" }
+      ]
+    }
+  ]
+}

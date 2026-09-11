@@ -1,0 +1,5 @@
+(library
+ (name pluto_checkout_svc)
+ (wrapped false)
+ (modules Checkout)
+ (libraries sol_svc sol_obs yojson))

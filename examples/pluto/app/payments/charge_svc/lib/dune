@@ -1,0 +1,14 @@
+(library
+ (name pluto_payments_charge_svc)
+ (wrapped false)
+ (modules Handler)
+ (libraries
+  pluto_storage
+  sol_svc
+  sol_obs
+  cohttp-eio
+  http
+  uri
+  yojson
+  pg-eio
+  eio))

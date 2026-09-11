@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux-x86_64:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y librdkafka-dev libpq-dev libpq5
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.4.1
+
+      - name: Pin extracted opam packages
+        run: |
+          # Tracking #main on every support package during active parallel
+          # development across all of them — sol should build against their
+          # latest code, not a tag that's fallen behind. Revert to tagged
+          # pins once these settle and cut real releases (re-running a past
+          # sol release build later can then pull in different dependency
+          # code than what originally shipped — accepted tradeoff for now).
+          # https-eio first: obs-loki-eio/obs-prometheus-eio/aws-eio all
+          # depend on it, and each -y pin below installs immediately --
+          # pinning it after them let their own install step pull in the
+          # published opam-repository https-eio before this pin ever ran.
+          opam pin add https-eio https://github.com/loganbnielsen/https-eio.git#main -y
+          opam pin add kafka-eio https://github.com/loganbnielsen/kafka-eio.git#main -y
+          opam pin add obs-eio https://github.com/loganbnielsen/obs-eio.git#main -y
+          opam pin add obs-loki-eio https://github.com/loganbnielsen/obs-loki-eio.git#main -y
+          opam pin add obs-prometheus-eio https://github.com/loganbnielsen/obs-prometheus-eio.git#main -y
+          opam pin add obs-tempo-eio https://github.com/loganbnielsen/obs-tempo-eio.git#main -y
+          opam pin add pg-eio https://github.com/loganbnielsen/pg-eio.git#main -y
+          opam pin add aws-eio https://github.com/loganbnielsen/aws-eio.git#main -y
+          opam pin add s3-eio https://github.com/loganbnielsen/s3-eio.git#main -y
+          opam pin add dynamodb-eio https://github.com/loganbnielsen/dynamodb-eio.git#main -y
+          opam pin add lambda-eio https://github.com/loganbnielsen/lambda-eio.git#main -y
+
+      - name: Install OCaml dependencies
+        run: opam install . --deps-only -y
+
+      - name: Build sol binary
+        run: opam exec -- dune build cli/sol/bin/main.exe
+
+      - name: Stage artifact
+        run: |
+          VERSION="${{ github.ref_name }}"
+          BUNDLE="sol-${VERSION}-linux-x86_64"
+          mkdir -p dist/${BUNDLE}/bin
+          cp _build/default/cli/sol/bin/main.exe dist/${BUNDLE}/bin/sol
+          chmod +x dist/${BUNDLE}/bin/sol
+          cp -r framework dist/${BUNDLE}/framework
+          cd dist
+          tar czf ${BUNDLE}.tar.gz ${BUNDLE}
+          # Also keep the standalone binary for scripted installs
+          cp ${BUNDLE}/bin/sol sol-linux-x86_64
+
+      - name: Smoke test release bundle
+        run: |
+          set -e
+          VERSION="${{ github.ref_name }}"
+          BUNDLE="dist/sol-${VERSION}-linux-x86_64"
+          # Binary should start and show help without framework resolution errors
+          ${BUNDLE}/bin/sol --help > /dev/null
+          # Verify framework source exists at expected location in bundle
+          test -f ${BUNDLE}/framework/sol-svc/lib/dune
+          test -f ${BUNDLE}/framework/kafka-eio-service/lib/dune
+          echo "Bundle structure verified"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/sol-linux-x86_64
+            dist/sol-*-linux-x86_64.tar.gz
+          generate_release_notes: true

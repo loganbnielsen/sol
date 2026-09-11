@@ -1,0 +1,5 @@
+(library
+ (name pluto_payments_events)
+ (wrapped false)
+ (modules Charged)
+ (libraries kafka_eio_service yojson))

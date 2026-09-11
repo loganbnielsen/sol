@@ -1,0 +1,19 @@
+(library
+ (name kafka_test_helpers)
+ (modules kafka_test_brokers kafka_test_helpers))
+
+(test
+ (name test_kafka_service)
+ (modules test_kafka_service)
+ (libraries kafka_eio_service kafka-eio alcotest yojson uri unix))
+
+(test
+ (name test_kafka_service_integration)
+ (modules test_kafka_service_integration)
+ (libraries
+  kafka_eio_service
+  kafka-eio
+  kafka_test_helpers
+  alcotest
+  eio_main
+  unix))

@@ -1,0 +1,378 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y librdkafka-dev libpq-dev libpq5
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.4.1
+
+      - name: Pin extracted opam packages
+        uses: ./.github/actions/pin-opam-packages
+
+      - name: Install OCaml dependencies
+        run: opam install . --deps-only --with-test -y
+
+      - name: Build
+        run: opam exec -- dune build
+
+      - name: Unit tests (no broker/Postgres/Loki required)
+        # framework/kafka-eio-service/ excluded: its test/dune also builds a
+        # broker-requiring integration suite (see run_tests.sh's run_kafka()).
+        run: opam exec -- dune test framework/sol-env/ framework/sol-fn/ framework/sol-obs/ framework/sol-svc/ framework/sol-worker/ cli/sol/test/
+
+      # INFRA-006: formatting check runs after unit tests on purpose — running
+      # `dune fmt --preview` first populates _build/default/framework, which
+      # makes the CLI tests' SOL_HOME ancestor walk resolve to _build/default
+      # instead of the source checkout.
+      - name: Install formatter
+        run: opam install ocamlformat.0.29.0 -y
+
+      - name: Format check
+        run: opam exec -- dune fmt --preview
+
+      - name: Platform-component drift guardrail (ADR 0001 / CODE_LAYER-005)
+        run: devtools/ci/check_platform_component_drift.sh
+
+  # FRIC-009: smallest check that would have caught a regression like
+  # FRIC-007 (every generated service permanently broken on a fresh
+  # substrate) — nothing above exercises the golden path against live
+  # infra. Deliberately narrow: no migrate/status/Kafka round-trip, that's
+  # periodic /dogfood's job. Separate job (not folded into `test`) so its
+  # cluster-bootstrap time doesn't slow the fast unit-test signal.
+  #
+  # Docker/k3d availability: `ubuntu-22.04` is a GitHub-hosted runner with
+  # Docker Engine preinstalled — no availability gate needed today. If
+  # `runs-on` ever changes to a self-hosted label, re-check this before
+  # assuming Docker is still there.
+  #
+  # Version pins (k3d/helm/kubectl below) must stay in sync with
+  # docs/dogfood/DOGFOOD.md's "Kubernetes toolchain" table — that doc
+  # explains *why* k3d is pinned to this exact version (chart-value
+  # compatibility). No automated drift check between the two files exists
+  # yet; update both by hand on any bump.
+  golden-path-smoke:
+    runs-on: ubuntu-22.04
+    # Outer safety net only — per-step timeouts below do the real fail-fast
+    # work. Generous on purpose: a job-level timeout cancels the whole job,
+    # which would also skip the `if: always()` diagnostics step below, so
+    # this must never fire under normal operation (worst observed run so
+    # far: ~17min).
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y librdkafka-dev libpq-dev libpq5
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.4.1
+
+      - name: Pin extracted opam packages
+        timeout-minutes: 10
+        uses: ./.github/actions/pin-opam-packages
+
+      - name: Install OCaml dependencies
+        timeout-minutes: 10
+        # --with-test IS needed here despite this job never running `dune
+        # test` directly: the generated ci_smoke workspace's `dune build`
+        # (inside the smoke-test step below) also compiles test
+        # executables under vendor/framework/*/test (symlinked into this
+        # monorepo) as part of dune's default alias -- those need alcotest etc. as a
+        # BUILD dependency, not just to run. Confirmed by removing this
+        # flag and watching golden-path-smoke fail with "Library
+        # alcotest not found" on a real CI run.
+        run: opam install . --deps-only --with-test -y
+
+      - name: Build sol CLI
+        timeout-minutes: 5
+        run: opam exec -- dune build cli/sol/bin/main.exe
+
+      - name: Install k3d/kubectl/helm (pinned versions — docs/dogfood/DOGFOOD.md)
+        timeout-minutes: 5
+        run: |
+          # Direct pinned-release binary downloads, not `curl | bash` —
+          # k3d's/helm's own install scripts live on their mutable default
+          # branch, so piping them to a shell would trust unreviewed,
+          # unpinned script content on every CI run even though the
+          # *installed tool version* is pinned via TAG/DESIRED_VERSION.
+          curl -fsSL -o k3d "https://github.com/k3d-io/k3d/releases/download/v5.6.0/k3d-linux-amd64"
+          chmod +x k3d
+          sudo mv k3d /usr/local/bin/k3d
+
+          curl -fsSL "https://get.helm.sh/helm-v3.21.0-linux-amd64.tar.gz" | tar -xz -C /tmp
+          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
+
+          curl -fsSL -o kubectl "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+
+      - name: Golden-path smoke test
+        # Measured across the first 3 real runs on this branch: 11m43s,
+        # 8m20s, 10m59s -- a ~40% swing with no code change touching this
+        # step's actual work (cluster boot, chart install, health-wait,
+        # notably including the exact Redpanda/schema-registry startup
+        # FRIC-007 was about). 12min left as little as 17s-1min margin
+        # twice out of three runs -- real measured flake risk, not
+        # hypothetical. 18min gives comfortable headroom while still
+        # failing well inside the 45min job-level net; a genuine
+        # crash-loop still gets caught, just not shaved as close.
+        timeout-minutes: 18
+        run: |
+          set -eo pipefail
+          export SOL_HOME="$GITHUB_WORKSPACE"
+          mkdir -p "$SOL_HOME/.ci-bin"
+          ln -sf "$SOL_HOME/_build/default/cli/sol/bin/main.exe" "$SOL_HOME/.ci-bin/sol"
+          export PATH="$SOL_HOME/.ci-bin:$PATH"
+          hash -r
+
+          sol new workspace ci_smoke
+          cd ci_smoke
+
+          # FEAT-041: the workspace scaffold ships exactly one -svc plus one
+          # worker, and only -svc gets a ClusterIP Service -- so a real
+          # cross-namespace request needs a second service to call. Add a
+          # throwaway peer and declare the synchronous dependency on charge_svc
+          # (whose sol.toml is the shared template, so appending a [service]
+          # section is valid TOML).
+          sol new svc checkout/checkout
+          printf '\n[service]\ncalls = ["checkout/checkout_svc"]\n' >> app/payments/charge_svc/sol.toml
+
+          eval $(opam env)
+          dune build
+
+          sol dev up
+          sol up
+
+          # FEAT-042/BUG-021: `sol dev up` installs ingress-nginx and forwards
+          # the controller to localhost:8088, so the Ingress `sol up` generated
+          # for charge_svc must route a request end to end. A service with no
+          # declared ingress_host gets a per-service dev host
+          # (`<svc>.<ns>.localhost`), so send it as the Host header; derive the
+          # namespace from the cluster rather than assuming the
+          # workspace->namespace normalization.
+          ingress_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-payments$' | head -1 || true)
+          ingress_host="charge-svc.${ingress_ns}.localhost"
+          ingress_ok=0
+          for i in $(seq 1 30); do
+            if curl -sf -H "Host: ${ingress_host}" "http://localhost:8088/health" >/dev/null; then
+              echo "/health via ingress OK (Host: ${ingress_host})"
+              ingress_ok=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ingress_ok" -ne 1 ]; then
+            echo "::error::FEAT-042: /health never became reachable through the local ingress (Host: ${ingress_host})"
+            exit 1
+          fi
+
+          # CODE_LAYER-022: verify the framework's runtime endpoints against a
+          # real deployed pod, not just the scaffolded /health route. /healthz
+          # and /metrics are registered by Sol_svc.Service, so a regression in
+          # that layer must fail this job rather than only showing up as a
+          # missing Grafana series later.
+          # Single source of truth for where probe() writes a response body.
+          # /metrics is read back below, so deriving this name in two places is
+          # how it came to disagree with what probe() actually wrote: `echo`
+          # appends a newline that tr turned into a trailing '_', leaving the
+          # body at /tmp/probe_metrics_.out while the check grepped
+          # /tmp/probe_metrics.out. printf keeps the derivation exact.
+          probe_out_path() {
+            printf '/tmp/probe%s.out' "$(printf '%s' "$1" | tr -c '[:alnum:]' '_')"
+          }
+
+          probe() {
+            local path=$1
+            local out
+            out=$(probe_out_path "$path")
+            local i
+            for i in $(seq 1 30); do
+              if curl -sf "http://localhost:8080${path}" > "$out"; then
+                echo "${path} OK"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "::error::golden-path smoke test: ${path} never became reachable"
+            return 1
+          }
+
+          probe /health
+          probe /healthz
+          probe /metrics
+          if ! grep -Eq '# (HELP|TYPE)' "$(probe_out_path /metrics)"; then
+            echo "::error::golden-path smoke test: /metrics did not return Prometheus text"
+            exit 1
+          fi
+
+          # FEAT-041: the declared call's network path is a pair of
+          # NetworkPolicies plus an injected peer URL. Assert that the deploy
+          # applied all three as rendered -- this covers resolution, rendering
+          # and apply end to end.
+          #
+          # Enforcement is deliberately NOT asserted against the live cluster
+          # here: the dev substrate's policy engine (kube-router on k3s v1.27.4)
+          # does not match `namespaceSelector` ingress rules for freshly created
+          # namespaces and ignores egress policy entirely, so an allow-probe is
+          # denied even though the policy is correct per the Kubernetes spec.
+          # BUG-022 has the deterministic repro. Rendering is unit-tested in
+          # cli/sol/test/test_manifest_render.ml, and customer-cloud CNIs
+          # enforce it.
+          #
+          # Derive namespaces from the cluster rather than assuming the
+          # workspace->namespace normalization, so this keeps working if the
+          # naming rule changes.
+          caller_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-payments$' | head -1 || true)
+          peer_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-checkout$' | head -1 || true)
+          if [ -z "$caller_ns" ] || [ -z "$peer_ns" ]; then
+            echo "::error::FEAT-041: could not locate caller ('$caller_ns') or peer ('$peer_ns') namespace"
+            exit 1
+          fi
+
+          caller_env=$(kubectl -n "$caller_ns" get configmap charge-svc-env -o yaml 2>/dev/null || true)
+          for needle in "CHECKOUT_SVC_URL" "http://checkout-svc.${peer_ns}.svc.cluster.local"; do
+            case "$caller_env" in
+              *"$needle"*) ;;
+              *) echo "::error::FEAT-041: caller ConfigMap is missing '$needle'"; exit 1 ;;
+            esac
+          done
+
+          caller_np=$(kubectl -n "$caller_ns" get networkpolicy charge-svc-netpol -o yaml 2>/dev/null || true)
+          peer_np=$(kubectl -n "$peer_ns" get networkpolicy checkout-svc-netpol -o yaml 2>/dev/null || true)
+          for needle in "$peer_ns" "app: checkout-svc"; do
+            case "$caller_np" in
+              *"$needle"*) ;;
+              *) echo "::error::FEAT-041: caller NetworkPolicy is missing '$needle'"; exit 1 ;;
+            esac
+          done
+          for needle in "$caller_ns" "app: charge-svc" "port: 8080"; do
+            case "$peer_np" in
+              *"$needle"*) ;;
+              *) echo "::error::FEAT-041: peer NetworkPolicy is missing '$needle'"; exit 1 ;;
+            esac
+          done
+          echo "declared service-call wiring (env + NetworkPolicy pair) applied OK"
+
+      # `sol up` blocks on an un-timed-out `kubectl rollout status`
+      # internally, so a crash-looping pod (this job's whole reason to
+      # exist — see FRIC-007) makes the step above hang until GitHub
+      # Actions kills it at its own timeout-minutes, bypassing any
+      # in-step diagnostic logic entirely. `if: always()` so this step
+      # still runs after that kind of external kill, not just after a
+      # clean nonzero exit — named for what it does, not when: per-pod
+      # describe/logs only fire for pods this loop finds unhealthy, so a
+      # green run still stays cheap (one cluster/pod/event summary).
+      - name: Dump cluster diagnostics
+        if: always()
+        run: |
+          echo "=== k3d clusters ==="
+          k3d cluster list || true
+          echo "=== all pods ==="
+          kubectl get pods -A -o wide || true
+          echo "=== recent events ==="
+          kubectl get events -A --sort-by=.lastTimestamp || true
+          for ns in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+            for pod in $(kubectl get pods -n "$ns" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+              # || true on both: a pod can be deleted/replaced between the
+              # outer list above and these per-pod queries -- entirely
+              # realistic during actual pod churn (a crash-looping pod
+              # restarting), i.e. exactly the scenario this step exists to
+              # diagnose. Without || true, set -e would kill this whole
+              # loop on that race, possibly before ever reaching the pod
+              # that's actually broken.
+              phase=$(kubectl get pod "$pod" -n "$ns" -o jsonpath='{.status.phase}' 2>/dev/null) || true
+              # Pod-level Ready condition, not containerStatuses[0] -- a
+              # multi-container pod's first container isn't reliably the
+              # workload container (e.g. redpanda-0 here is
+              # [config-watcher, redpanda]; index 0 being ready says
+              # nothing about whether redpanda itself is). The Ready
+              # condition is True only when every container is ready.
+              ready=$(kubectl get pod "$pod" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null) || true
+              if [ "$phase" != "Running" ] || [ "$ready" != "True" ]; then
+                echo "=== describe $ns/$pod ==="
+                kubectl describe pod "$pod" -n "$ns" || true
+                echo "=== logs $ns/$pod (current) ==="
+                kubectl logs "$pod" -n "$ns" --all-containers || true
+                echo "=== logs $ns/$pod (previous, if crash-looped) ==="
+                kubectl logs "$pod" -n "$ns" --all-containers --previous || true
+              fi
+            done
+          done
+
+  # FRIC-014: nothing else catches the checked-in example workspaces
+  # (examples/pluto, examples/venus) drifting out of sync with what `sol
+  # new`'s scaffold template (tpl_dockerfile in
+  # cli/sol/lib/sol_cli_scaffold_templates.ml) actually generates.
+  # DOGFOOD-011 found a real, live instance: a stale base image tag and a
+  # missing `opam install` step, invisible locally only because a stale
+  # Docker layer cache papered over it. --no-cache is deliberate for the
+  # same reason -- a cached layer is exactly what let this go unnoticed.
+  #
+  # Scoped to the OCaml example Dockerfiles only: those are the ones a Sol
+  # scaffold template actually generates. examples/pluto/app/demo_ts/ (the
+  # FEAT-033 TypeScript spike) is hand-maintained with no Sol template to
+  # drift from, so it's out of scope here.
+  #
+  # Build context is the monorepo root, not the example's own directory:
+  # each of these Dockerfiles' build stage runs `dune build
+  # examples/<workspace>/app/.../bin/main.exe`, a path relative to the
+  # monorepo root, matching how a real checkout of this repo would build
+  # them (these examples live inside sol itself, unlike a real user's
+  # scaffolded workspace, which is self-contained).
+  example-dockerfile-smoke:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile:
+          - examples/pluto/app/payments/charge_svc/Dockerfile
+          - examples/pluto/app/checkout/checkout_svc/Dockerfile
+          - examples/pluto/app/comms/notify_worker/Dockerfile
+          - examples/venus/app/comms/notify_worker/Dockerfile
+          - examples/venus/app/logistics/fulfillment_worker/Dockerfile
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build ${{ matrix.dockerfile }}
+        run: docker build --no-cache -f ${{ matrix.dockerfile }} .
+
+  # FEAT-039: example-dockerfile-smoke above deliberately excludes
+  # examples/pluto/app/demo_ts/ (hand-maintained, no Sol template to drift
+  # from). But its two Dockerfiles still need *some* ongoing build check --
+  # FEAT-038 rewrote them to depend on the in-tree npm workspace packages
+  # (packages/sol-kafka, packages/sol-obs), and a broken workspace
+  # reference in any of the three package.json files would otherwise go
+  # unnoticed until someone tried to run the demo by hand. This job is a
+  # plain build-success check, not a drift check -- no template to diff
+  # against here.
+  demo-ts-dockerfile-smoke:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile:
+          - examples/pluto/app/demo_ts/order_svc/Dockerfile
+          - examples/pluto/app/demo_ts/fulfillment_worker/Dockerfile
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build ${{ matrix.dockerfile }}
+        run: docker build --no-cache -f ${{ matrix.dockerfile }} .

@@ -1,0 +1,108 @@
+# GitHub Actions workflow for Sol workspaces — GitOps mode (Argo CD).
+#
+# This workflow:
+#   1. Builds and pushes Docker images to ECR on every push to main
+#   2. Uses `sol deploy --emit-to` to generate Kubernetes manifests
+#   3. Commits the manifests to a separate GitOps repo
+#   4. Argo CD watches that repo and reconciles the cluster
+#
+# This keeps the application repo free of generated YAML and gives you a
+# complete audit trail of every cluster change in the GitOps repo.
+#
+# Required secrets (application repo):
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION
+#   ECR_REGISTRY              — from `terraform output ecr_registry`
+#   GITOPS_DEPLOY_KEY         — SSH deploy key with write access to GITOPS_REPO
+#
+# Required variables (application repo):
+#   GITOPS_REPO               — e.g. git@github.com:myorg/acme-gitops.git
+#   SOL_TARGET                — deployment target, <env>/<provider>/<region>, e.g.
+#                                prod/aws/us-east-1. Requires a matching
+#                                sol/<env>/<provider>/<region>.yml file committed in
+#                                this repo -- create one before the first deploy, even
+#                                empty: mkdir -p sol/prod/aws && touch sol/prod/aws/us-east-1.yml
+#
+# Argo CD Application (create once in the cluster after cli/platform/infra/base/ apply):
+#   kubectl apply -f cli/platform/infra/argocd/application.yaml
+
+name: Deploy (GitOps)
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Build, push, emit manifests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ocaml/setup-ocaml@v2
+        with:
+          ocaml-compiler: "5.4"
+          opam-depext: false
+
+      - name: Install system deps
+        run: sudo apt-get install -y librdkafka-dev libpq-dev
+
+      - name: Install OCaml packages
+        run: |
+          opam install . --deps-only --with-test -y
+          eval $(opam env)
+          dune build
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION }}
+
+      - name: Login to ECR and push images
+        env:
+          REGISTRY: ${{ secrets.ECR_REGISTRY }}
+          SHA:      ${{ github.sha }}
+          WORKSPACE: ${{ github.event.repository.name }}
+        run: |
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
+            | docker login --username AWS --password-stdin "$REGISTRY"
+          SHORT_SHA=${SHA::7}
+          find app -name Dockerfile | while read dockerfile; do
+            dir=$(dirname "$dockerfile")
+            svc=$(basename "$dir" | tr '_' '-')
+            image="${REGISTRY}/${WORKSPACE}/${svc}:${SHORT_SHA}"
+            docker build -t "$image" -f "$dockerfile" .
+            docker push "$image"
+          done
+
+      - name: Emit manifests
+        env:
+          SHA:        ${{ github.sha }}
+          REGISTRY:   ${{ secrets.ECR_REGISTRY }}
+          SOL_TARGET: ${{ vars.SOL_TARGET }}
+        run: |
+          eval $(opam env)
+          SHORT_SHA=${SHA::7}
+          sol deploy "$SOL_TARGET" \
+            --emit-to  manifests/ \
+            --image-tag "$SHORT_SHA" \
+            --registry  "$REGISTRY"
+
+      - name: Push manifests to GitOps repo
+        env:
+          GITOPS_REPO: ${{ vars.GITOPS_REPO }}
+          SHA:         ${{ github.sha }}
+        run: |
+          eval $(ssh-agent -s)
+          echo "${{ secrets.GITOPS_DEPLOY_KEY }}" | ssh-add -
+          git clone "$GITOPS_REPO" gitops-repo
+          cp manifests/*.yaml gitops-repo/
+          cd gitops-repo
+          git config user.email "ci@sol-platform"
+          git config user.name  "Sol CI"
+          git add -A
+          git diff --cached --quiet || \
+            git commit -m "deploy: ${SHA::7} from ${{ github.repository }}"
+          git push

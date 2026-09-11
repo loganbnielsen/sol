@@ -1,0 +1,27 @@
+(library
+ (name kafka_eio_service)
+ (wrapped false)
+ (modules
+  kafka_service
+  kafka_service_intf
+  kafka_service_http
+  kafka_service_schema
+  kafka_service_config
+  kafka_service_retry_topics)
+ (private_modules
+  kafka_service_intf
+  kafka_service_http
+  kafka_service_schema
+  kafka_service_config
+  kafka_service_retry_topics)
+ (libraries
+  kafka-eio
+  eio
+  eio.unix
+  unix
+  yojson
+  obs-eio
+  http
+  uri
+  cstruct
+  https-eio))

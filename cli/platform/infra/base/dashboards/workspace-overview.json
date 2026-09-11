@@ -1,0 +1,72 @@
+{
+  "title": "Sol Workspace Overview",
+  "uid": "sol-workspace-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["sol"],
+  "templating": {
+    "list": [
+      {
+        "name": "workspace",
+        "type": "query",
+        "datasource": "Loki",
+        "query": "label_values(workspace)",
+        "refresh": 2,
+        "includeAll": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request rate by domain",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum(rate(sol_svc_requests_total{workspace=\"$workspace\"}[5m])) by (domain)",
+          "legendFormat": "{{domain}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "5xx error rate by domain",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum(rate(sol_svc_requests_total{workspace=\"$workspace\", status_class=\"5xx\"}[5m])) by (domain)",
+          "legendFormat": "{{domain}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Scraped targets up, by domain",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum(up{workspace=\"$workspace\"}) by (domain)",
+          "legendFormat": "{{domain}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Recent logs, all domains",
+      "type": "logs",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": "Loki",
+      "targets": [
+        { "expr": "{workspace=\"$workspace\"}" }
+      ]
+    }
+  ]
+}

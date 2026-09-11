@@ -1,0 +1,12 @@
+(library
+ (name sol_worker)
+ (wrapped false)
+ (libraries
+  eio
+  eio.unix
+  obs-eio
+  obs-prometheus-eio
+  kafka_eio_service
+  kafka-eio
+  sol_env
+  sol_obs))

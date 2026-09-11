@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Blocks the commit if tests fail or a performance regression is detected.
+# Runs unit tests always; other suites when their infra is up.
+#
+# Install: bash cli/platform/local/scripts/install-hooks.sh
+# Skip once: SOL_SKIP_HOOKS=1 git commit ...
+
+[ "${SOL_SKIP_HOOKS:-0}" = "1" ] && exit 0
+
+# ── Worktree guard ─────────────────────────────────────────────────────────────
+# pipeline/tickets/ is only ever modified in the main checkout — never inside a worktree
+# branch — with one exception (REFAC-077): a ticket's own final commit may move its
+# file from READY_FOR_ENGINEERING/<id>.md to DONE/<id>.md, so that move rides into
+# main inside the PR's squash-merge commit instead of a separate main-only commit.
+GIT_DIR_ABS="$(git rev-parse --absolute-git-dir 2>/dev/null)"
+if printf '%s\n' "$GIT_DIR_ABS" | grep -q "/worktrees/"; then
+  STAGED_TICKETS="$(git diff --cached --name-only | grep '^pipeline/tickets/' || true)"
+  if [ -n "$STAGED_TICKETS" ]; then
+    DISALLOWED="$(git diff --cached -M --name-status -- pipeline/tickets/ \
+      | grep -v '^R[0-9]*\s*pipeline/tickets/READY_FOR_ENGINEERING/[^/]*\.md\s*pipeline/tickets/DONE/[^/]*\.md$' \
+      || true)"
+    if [ -n "$DISALLOWED" ]; then
+      echo ""
+      echo "✗ Cannot commit pipeline/tickets/ changes inside a worktree branch."
+      echo "  pipeline/tickets/ is managed exclusively in the main checkout, except"
+      echo "  for a ticket's own READY_FOR_ENGINEERING → DONE move on its own branch."
+      echo "  Disallowed staged changes:"
+      printf '    %s\n' "$DISALLOWED"
+      echo "  Fix: git restore --staged pipeline/tickets/"
+      exit 1
+    fi
+  fi
+fi
+
+# ── Merge commit: skip test run ───────────────────────────────────────────────
+# The pipeline verifies tests explicitly before and after every merge.
+# Running them again here on the merge commit is redundant.
+GIT_DIR="$(git rev-parse --git-dir)"
+if [ -f "$GIT_DIR/MERGE_HEAD" ]; then
+  echo ""
+  echo "  (merge commit — tests already verified by pipeline)"
+  exit 0
+fi
+
+# ── Bookkeeping commit: skip test run ─────────────────────────────────────────
+# If every staged file is a ticket markdown, a doc, or the perf baseline,
+# there is no code change to verify.
+OTHER_FILES="$(git diff --cached --name-only \
+  | grep -v '^pipeline/tickets/' \
+  | grep -v '\.md$' \
+  | grep -v '^devtools/perf/perf_baseline.json$' \
+  || true)"
+if [ -z "$OTHER_FILES" ]; then
+  echo ""
+  echo "  (no source code staged — skipping test suite)"
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+RUNNER="$REPO_ROOT/cli/platform/local/scripts/run_tests.sh"
+
+if [ ! -x "$RUNNER" ]; then
+  echo "✗ Test runner not found or not executable: $RUNNER"
+  exit 1
+fi
+
+eval "$(opam env)"
+
+# ── Infra detection ────────────────────────────────────────────────────────────
+BROKER_UP=0;   rpk cluster info &>/dev/null 2>&1            && BROKER_UP=1
+LOKI_UP=0;     curl -sf http://localhost:3100/ready &>/dev/null && LOKI_UP=1
+POSTGRES_UP=0; bash -c 'echo > /dev/tcp/localhost/5432' &>/dev/null && POSTGRES_UP=1
+
+# ── Build ──────────────────────────────────────────────────────────────────────
+echo ""
+echo "▶ pre-commit: build"
+if ! dune build --root "$REPO_ROOT" 2>&1; then
+  echo "✗ Build failed — commit blocked."
+  exit 1
+fi
+
+# ── Helper: run a suite and exit on failure ────────────────────────────────────
+run_suite() {
+  local name="$1"
+  echo ""
+  echo "▶ pre-commit: $name"
+  "$RUNNER" "$name" --no-infra
+  local rc=$?
+  if [ $rc -eq 1 ]; then
+    echo ""
+    echo "✗ ${name} tests failed — commit blocked."
+    echo "  Skip once: SOL_SKIP_HOOKS=1 git commit ..."
+    exit 1
+  elif [ $rc -eq 2 ]; then
+    echo ""
+    echo "✗ Performance regression in ${name} suite — commit blocked."
+    echo "  If intentional: bash $RUNNER ${name} --update-baseline"
+    echo "  Skip once:      SOL_SKIP_HOOKS=1 git commit ..."
+    exit 2
+  fi
+}
+
+# ── Unit (always) ─────────────────────────────────────────────────────────────
+run_suite unit
+
+# ── Kafka (broker-conditional) ────────────────────────────────────────────────
+if [ $BROKER_UP -eq 1 ]; then
+  run_suite kafka
+else
+  echo ""
+  echo "  (Redpanda not running — kafka + e2e tests skipped)"
+  exit 0
+fi
+
+# ── E2e (all infra required) ──────────────────────────────────────────────────
+if [ $LOKI_UP -eq 1 ] && [ $POSTGRES_UP -eq 1 ]; then
+  run_suite e2e
+else
+  echo ""
+  [ $LOKI_UP    -eq 0 ] && echo "  (Loki not running — e2e skipped)"
+  [ $POSTGRES_UP -eq 0 ] && echo "  (Postgres not running — e2e skipped)"
+fi
+
+exit 0
