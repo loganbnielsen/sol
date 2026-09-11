@@ -1840,6 +1840,111 @@ let test_discover_services_non_matching_filter_excludes () =
   Alcotest.(check (list string)) "non-matching filter excludes" [] (names found)
 ;;
 
+(* ── an environment labels, but never re-addresses (DEC-016) ─────────────── *)
+
+(** Every occurrence of [needle] replaced by [replacement]. *)
+let replace_all haystack needle replacement =
+  let hl = String.length haystack
+  and nl = String.length needle in
+  if nl = 0
+  then haystack
+  else (
+    let out = Buffer.create hl in
+    let i = ref 0 in
+    while !i <= hl - nl do
+      if String.sub haystack !i nl = needle
+      then (
+        Buffer.add_string out replacement;
+        i := !i + nl)
+      else (
+        Buffer.add_char out haystack.[!i];
+        incr i)
+    done;
+    Buffer.add_string out (String.sub haystack !i (hl - !i));
+    Buffer.contents out)
+;;
+
+let render_for ?(workspace = "myapp") env spec =
+  let ns, workload = render_spec_ok ~workspace ~env spec in
+  ns, workload
+;;
+
+(** Resource names — every [name:] value in a rendered document. *)
+let resource_names yaml =
+  String.split_on_char '\n' yaml
+  |> List.filter_map (fun line ->
+    let trimmed = String.trim line in
+    let prefix = "name:" in
+    let plen = String.length prefix in
+    if String.length trimmed > plen && String.sub trimmed 0 plen = prefix
+    then Some (String.trim (String.sub trimmed plen (String.length trimmed - plen)))
+    else None)
+;;
+
+(** [label] fails unless every line that differs between [a] and [b] differs
+    *only* by the environment's own name: each side must name its environment,
+    and the lines must become identical once those names are normalised away. *)
+let check_only_the_environment_differs label a b ~env_a ~env_b =
+  let la = String.split_on_char '\n' a
+  and lb = String.split_on_char '\n' b in
+  if List.length la <> List.length lb
+  then Alcotest.fail (label ^ ": the two renders differ in line count");
+  List.iter2
+    (fun x y ->
+       if x <> y
+       then (
+         assert_contains label x env_a;
+         assert_contains label y env_b;
+         check_string
+           (label ^ ": the difference is the environment's name and nothing else")
+           (replace_all x env_a "<env>")
+           (replace_all y env_b "<env>")))
+    la
+    lb
+;;
+
+(* DEC-016: the same service must promote unchanged. An environment may *label* a
+   workload — that is how you tell which environment it belongs to — but it must
+   not change what the workload is called, where it lives, or how it is
+   addressed. Anything that has to be rewritten to move between environments is
+   somewhere dev and prod can silently diverge. *)
+let test_environment_labels_but_does_not_re_address () =
+  (* "alpha"/"beta" rather than "staging"/"prod": svc_spec carries a config value
+     of "staging", so an environment name that also occurs in fixture data would
+     make the comparison below pass for the wrong reason. *)
+  let ns_alpha, workload_alpha = render_for "alpha" svc_spec in
+  let ns_beta, workload_beta = render_for "beta" svc_spec in
+  (* Guard against a vacuous test: the environment must genuinely be represented,
+     or the equality checks below would hold because it is being ignored. *)
+  assert_contains "the environment is represented" workload_alpha "alpha";
+  assert_contains "the environment is represented" workload_beta "beta";
+  check_bool
+    "the two environments do not render identically"
+    false
+    (workload_alpha = workload_beta);
+  (* Addressing is environment-independent, exactly. *)
+  check_string "the namespace document is identical" ns_alpha ns_beta;
+  Alcotest.(check (list string))
+    "resource names are identical"
+    (resource_names workload_alpha)
+    (resource_names workload_beta);
+  check_only_the_environment_differs
+    "workload"
+    workload_alpha
+    workload_beta
+    ~env_a:"alpha"
+    ~env_b:"beta"
+;;
+
+(* The rule stated directly on addressing: no environment identifier in a
+   namespace. *)
+let test_environment_absent_from_the_namespace () =
+  let ns_alpha, _ = render_for "alpha" svc_spec in
+  let ns_beta, _ = render_for "beta" svc_spec in
+  assert_absent "namespace" ns_alpha "alpha";
+  assert_absent "namespace" ns_beta "beta"
+;;
+
 let () =
   Alcotest.run
     "manifest_render"
@@ -2226,6 +2331,16 @@ let () =
             "non-matching filter excludes"
             `Quick
             test_discover_services_non_matching_filter_excludes
+        ] )
+    ; ( "environment"
+      , [ Alcotest.test_case
+            "an environment labels but does not re-address"
+            `Quick
+            test_environment_labels_but_does_not_re_address
+        ; Alcotest.test_case
+            "an environment is absent from the namespace"
+            `Quick
+            test_environment_absent_from_the_namespace
         ] )
     ]
 ;;
