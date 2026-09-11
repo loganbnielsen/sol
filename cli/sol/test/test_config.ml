@@ -648,12 +648,14 @@ let test_same_cluster_across_envs_fails () =
       {|
 target:
   cluster_name: shared
+  kube_context: shared
 |};
     write
       "sol/prod/aws/us-east-1.yml"
       {|
 target:
   cluster_name: shared
+  kube_context: shared
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Ok _ -> Alcotest.fail "expected same-cluster envs to fail"
@@ -663,7 +665,11 @@ target:
       assert (contains ~needle:"shared" e.message))
 ;;
 
-let test_same_cluster_name_different_region_succeeds () =
+(* The lint compares the destination Sol will use, not the descriptive
+   cluster_name. Here both targets *say* the same cluster_name while pointing at
+   different contexts, which is two clusters — so this must succeed, and it is
+   the case that would break if the lint went back to reading cluster_name. *)
+let test_different_destinations_succeed () =
   with_temp_dir (fun () ->
     write_base ();
     mkdir_p "sol/dev/aws";
@@ -673,16 +679,78 @@ let test_same_cluster_name_different_region_succeeds () =
       {|
 target:
   cluster_name: shared
+  kube_context: shared-eu
 |};
     write
       "sol/prod/aws/us-east-1.yml"
       {|
 target:
   cluster_name: shared
+  kube_context: shared-us
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok _ -> ())
+;;
+
+(* The destination is a function of the target. Nothing consults the machine's
+   kubectl state, and the arguments the deploy will use come straight from the
+   configured context. *)
+let test_destination_comes_from_the_target () =
+  with_temp_dir (fun () ->
+    write_base ();
+    mkdir_p "sol/prod/aws";
+    write
+      "sol/prod/aws/us-east-1.yml"
+      {|
+target:
+  kube_context: sol-prod-us-east-1
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      let target = Option.get (Sol_cli_config.target cfg) in
+      (match Sol_cli_config.destination_of_target target with
+       | Error message -> Alcotest.fail message
+       | Ok destination ->
+         Alcotest.(check string)
+           "the context comes from the target"
+           "sol-prod-us-east-1"
+           destination.context;
+         Alcotest.(check (list string))
+           "and scopes the kubectl call"
+           [ "--context"; "sol-prod-us-east-1" ]
+           (Sol_cli_kube_destination.kubectl_args destination)))
+;;
+
+(* An unconfigured destination fails closed rather than falling back to whatever
+   kubectl is pointed at — the reason the field exists at all, and the property
+   that keeps the ambient context out of the deploy path. *)
+let test_destination_missing_fails_closed () =
+  with_temp_dir (fun () ->
+    write_base ();
+    mkdir_p "sol/prod/aws";
+    write
+      "sol/prod/aws/us-east-1.yml"
+      {|
+target:
+  cluster_name: sol-prod
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      let target = Option.get (Sol_cli_config.target cfg) in
+      (match Sol_cli_config.destination_of_target target with
+       | Ok destination ->
+         Alcotest.fail
+           (Printf.sprintf
+              "expected a target with no context to fail closed, got %S"
+              (Sol_cli_kube_destination.to_string destination))
+       | Error message ->
+         Alcotest.(check bool)
+           "the error names the field to set"
+           true
+           (contains ~needle:"kube_context" message)))
 ;;
 
 let test_root_target_defaults_survive () =
@@ -927,9 +995,17 @@ let () =
             `Quick
             test_same_cluster_across_envs_fails
         ; Alcotest.test_case
-            "same cluster name in different region succeeds"
+            "different destinations succeed"
             `Quick
-            test_same_cluster_name_different_region_succeeds
+            test_different_destinations_succeed
+        ; Alcotest.test_case
+            "destination comes from the target"
+            `Quick
+            test_destination_comes_from_the_target
+        ; Alcotest.test_case
+            "missing destination fails closed"
+            `Quick
+            test_destination_missing_fails_closed
         ; Alcotest.test_case
             "duplicate resource fails"
             `Quick

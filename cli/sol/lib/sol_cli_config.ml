@@ -7,6 +7,7 @@ type target =
   ; base_domain : string option
   ; cluster_issuer : string option
   ; cluster_name : string option
+  ; kube_context : string option
   ; terraform_var_file : string option
   ; observability_backend : string option
   ; provider_fields : (string * (string * string) list) list
@@ -54,6 +55,7 @@ let target_empty =
   ; base_domain = None
   ; cluster_issuer = None
   ; cluster_name = None
+  ; kube_context = None
   ; terraform_var_file = None
   ; observability_backend = None
   ; provider_fields = []
@@ -198,6 +200,7 @@ type target_key =
   | Target_base_domain
   | Target_cluster_issuer
   | Target_cluster_name
+  | Target_kube_context
   | Target_terraform_var_file
   | Target_observability_backend
   | Target_provider_box of Sol_cli_provider.t
@@ -209,6 +212,7 @@ let target_key_of_string s =
   | "base_domain" -> Target_base_domain
   | "cluster_issuer" -> Target_cluster_issuer
   | "cluster_name" -> Target_cluster_name
+  | "kube_context" -> Target_kube_context
   | "terraform_var_file" -> Target_terraform_var_file
   | "observability_backend" -> Target_observability_backend
   | _ ->
@@ -222,6 +226,7 @@ let target_key_name = function
   | Target_base_domain -> "base_domain"
   | Target_cluster_issuer -> "cluster_issuer"
   | Target_cluster_name -> "cluster_name"
+  | Target_kube_context -> "kube_context"
   | Target_terraform_var_file -> "terraform_var_file"
   | Target_observability_backend -> "observability_backend"
   | Target_provider_box provider -> Sol_cli_provider.to_string provider
@@ -442,6 +447,9 @@ let load path =
                           | Target_cluster_name ->
                             let* v = scalar k v in
                             Ok { current with cluster_name = Some v }
+                          | Target_kube_context ->
+                            let* v = scalar k v in
+                            Ok { current with kube_context = Some v }
                           | Target_terraform_var_file ->
                             let* v = scalar k v in
                             Ok { current with terraform_var_file = Some v }
@@ -634,6 +642,7 @@ let merge_target a b =
   ; base_domain = prefer a.base_domain b.base_domain
   ; cluster_issuer = prefer a.cluster_issuer b.cluster_issuer
   ; cluster_name = prefer a.cluster_name b.cluster_name
+  ; kube_context = prefer a.kube_context b.kube_context
   ; terraform_var_file = prefer a.terraform_var_file b.terraform_var_file
   ; observability_backend = prefer a.observability_backend b.observability_backend
   ; provider_fields = merge_provider_fields a.provider_fields b.provider_fields
@@ -713,6 +722,7 @@ let target_of_path s =
          ; base_domain = None
          ; cluster_issuer = None
          ; cluster_name = None
+         ; kube_context = None
          ; terraform_var_file = None
          ; observability_backend = None
          ; provider_fields = []
@@ -884,10 +894,24 @@ let resolved_target base target_path =
   | None -> assert false
 ;;
 
-let cluster_id target =
-  Option.map
-    (fun cluster -> Sol_cli_provider.to_string target.provider, target.region, cluster)
-    target.cluster_name
+(** Where this target deploys. Fails closed when it names no context. *)
+let destination_of_target (target : target) =
+  Sol_cli_kube_destination.of_context (Option.value target.kube_context ~default:"")
+;;
+
+(* The same-cluster lint compares the destination Sol will actually use, not the
+   descriptive [cluster_name]. Two fields describing the same property would be
+   two sources of truth for exactly what this check protects — the lint could
+   verify one field while the deploy landed via the other. Contexts are compared
+   together with the kubeconfig they came from, because the same context name in
+   two different kubeconfigs can be two different clusters.
+
+   [None] means the destination cannot be resolved, so there is nothing to
+   compare; such a target fails closed at deploy time instead. *)
+let destination_identity target =
+  match destination_of_target target with
+  | Error _ -> None
+  | Ok destination -> Some (destination.kubeconfig, destination.context)
 ;;
 
 let validate_no_same_cluster base (selected : target) =
@@ -904,21 +928,22 @@ let validate_no_same_cluster base (selected : target) =
         match resolved_target base path with
         | Error error -> Error error
         | Ok (other : target) ->
-          (match cluster_id selected, cluster_id other with
-           | Some (provider, region, cluster), Some other_cluster
-             when selected.env <> other.env && (provider, region, cluster) = other_cluster
+          (match destination_identity selected, destination_identity other with
+           | Some (kubeconfig, context), Some other_destination
+             when selected.env <> other.env && (kubeconfig, context) = other_destination
              ->
              Error
                { path = selected.name
                ; line = 0
                ; message =
                    Printf.sprintf
-                     "environments %S and %S both resolve to cluster %S (%s/%s)"
+                     "environments %S and %S both deploy to Kubernetes context %S, so \
+                      they would share namespaces, service names and injected URLs — \
+                      which are deliberately identical in every environment (DEC-016). \
+                      Point one of them at a different target."
                      selected.env
                      other.env
-                     cluster
-                     provider
-                     region
+                     context
                }
            | _ -> loop rest))
   in
