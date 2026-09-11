@@ -742,35 +742,39 @@ let target_file target =
 
 let active_resources cfg = List.filter (fun (r : resource) -> not r.omit) cfg.resources
 let active_services cfg = List.filter (fun (s : service) -> not s.omit) cfg.services
-let is_dir path = Sys.file_exists path && Sys.is_directory path
 
-let target_paths () =
-  let sol_dir = "sol" in
-  if not (is_dir sol_dir)
-  then []
-  else
-    Sys.readdir sol_dir
-    |> Array.to_list
+(* The target layout — [sol/<env>/<provider>/<region>.yml] — is known here and
+   nowhere else. Every level is traversed through [Sol_cli_fs_walk], so a path
+   that exists but cannot be read is reported instead of contributing nothing:
+   the same-cluster check must never read "unverified" as "fine". An absent
+   [sol/] directory stays a real fact — a workspace with no targets. *)
+let discover_target_paths () =
+  let failure = ref None in
+  let read path select =
+    match select path with
+    | Ok names -> names
+    | Error (Sol_cli_fs_walk.Absent _) -> []
+    | Error e ->
+      if !failure = None then failure := Some e;
+      []
+  in
+  let paths =
+    read "sol" Sol_cli_fs_walk.dirs
     |> List.concat_map (fun env ->
-      let env_dir = Filename.concat sol_dir env in
-      if not (is_dir env_dir)
-      then []
-      else
-        Sys.readdir env_dir
-        |> Array.to_list
-        |> List.concat_map (fun provider ->
-          let provider_dir = Filename.concat env_dir provider in
-          if not (is_dir provider_dir)
-          then []
-          else
-            Sys.readdir provider_dir
-            |> Array.to_list
-            |> List.filter_map (fun file ->
-              if Filename.check_suffix file ".yml"
-              then (
-                let region = Filename.chop_suffix file ".yml" in
-                Some (String.concat "/" [ env; provider; region ]))
-              else None)))
+      let env_dir = Filename.concat "sol" env in
+      read env_dir Sol_cli_fs_walk.dirs
+      |> List.concat_map (fun provider ->
+        let provider_dir = Filename.concat env_dir provider in
+        read provider_dir Sol_cli_fs_walk.files
+        |> List.filter_map (fun file ->
+          if Filename.check_suffix file ".yml"
+          then
+            Some (String.concat "/" [ env; provider; Filename.chop_suffix file ".yml" ])
+          else None)))
+  in
+  match !failure with
+  | Some e -> Error { path = "sol"; line = 0; message = Sol_cli_fs_walk.to_string e }
+  | None -> Ok (List.sort String.compare paths)
 ;;
 
 (* Matches the only providers sol.yml's target-provider boxes recognize — no
@@ -887,14 +891,18 @@ let cluster_id target =
 ;;
 
 let validate_no_same_cluster base (selected : target) =
+  let* paths = discover_target_paths () in
   let rec loop = function
     | [] -> Ok ()
     | path :: rest ->
       if path = selected.name
       then loop rest
       else (
+        (* A target that cannot be read or resolved is an environment whose
+           cluster we cannot check. Failing here is the point: an unverified
+           environment must not pass as a verified one. *)
         match resolved_target base path with
-        | Error _ -> loop rest
+        | Error error -> Error error
         | Ok (other : target) ->
           (match cluster_id selected, cluster_id other with
            | Some (provider, region, cluster), Some other_cluster
@@ -914,7 +922,7 @@ let validate_no_same_cluster base (selected : target) =
                }
            | _ -> loop rest))
   in
-  loop (target_paths ())
+  loop paths
 ;;
 
 let load_for_target ~target =

@@ -1901,10 +1901,59 @@ let resource_names yaml =
     else None)
 ;;
 
-(** [label] fails unless every line that differs between [a] and [b] differs
-    *only* by the environment's own name: each side must name its environment,
-    and the lines must become identical once those names are normalised away. *)
-let check_only_the_environment_differs label a b ~env_a ~env_b =
+(** Keys whose values may legitimately differ between environments, each for a
+    reason DEC-016 states:
+
+    - [env] — the taxonomy label: how you tell which environment a workload
+      belongs to;
+    - [SOL_ENV] — the runtime variable handed to application code;
+    - [sol.dev/config-hash] — derived, not independent: the hash covers the
+      ConfigMap that contains [SOL_ENV], and that is precisely why moving a
+      workload between environments restarts it.
+
+    Anything else that differs is a leak — which is the point of the test. *)
+let environment_dependent_keys = [ "env"; "SOL_ENV"; "sol.dev/config-hash" ]
+
+(** The key of a YAML line, for allowlist purposes: the text before the first
+    colon, handling both [key: value] and [- key: value]. *)
+let line_key line =
+  let trimmed = String.trim line in
+  let trimmed =
+    if String.length trimmed > 2 && String.sub trimmed 0 2 = "- "
+    then String.trim (String.sub trimmed 2 (String.length trimmed - 2))
+    else trimmed
+  in
+  match String.index_opt trimmed ':' with
+  | Some i -> String.trim (String.sub trimmed 0 i)
+  | None -> trimmed
+;;
+
+(** Every value of [key] in a rendered document. *)
+let values_of_key key yaml =
+  String.split_on_char '\n' yaml
+  |> List.filter_map (fun line ->
+    if line_key line <> key
+    then None
+    else (
+      let trimmed = String.trim line in
+      match String.index_opt trimmed ':' with
+      | Some i ->
+        Some (String.trim (String.sub trimmed (i + 1) (String.length trimmed - i - 1)))
+      | None -> None))
+;;
+
+(** Internal addresses — every line that resolves inside the cluster. *)
+let internal_addresses yaml =
+  String.split_on_char '\n' yaml
+  |> List.filter (fun line -> contains line ".svc.cluster.local")
+  |> List.map String.trim
+;;
+
+(** Nothing may depend on the environment except the keys above, and those keys
+    must carry the environment's name and nothing else. The config hash is the
+    one exception, because it is derived from a ConfigMap that legitimately
+    contains [SOL_ENV]. *)
+let check_no_unexplained_differences label a b ~env_a ~env_b =
   let la = String.split_on_char '\n' a
   and lb = String.split_on_char '\n' b in
   if List.length la <> List.length lb
@@ -1913,12 +1962,23 @@ let check_only_the_environment_differs label a b ~env_a ~env_b =
     (fun x y ->
        if x <> y
        then (
-         assert_contains label x env_a;
-         assert_contains label y env_b;
-         check_string
-           (label ^ ": the difference is the environment's name and nothing else")
-           (replace_all x env_a "<env>")
-           (replace_all y env_b "<env>")))
+         let key = line_key x in
+         if not (List.mem key environment_dependent_keys)
+         then
+           Alcotest.fail
+             (Printf.sprintf
+                "%s: this line differs between environments, and only %s may: %s"
+                label
+                (String.concat ", " environment_dependent_keys)
+                (String.trim x));
+         if key <> "sol.dev/config-hash"
+         then (
+           assert_contains label x env_a;
+           assert_contains label y env_b;
+           check_string
+             (label ^ ": " ^ key ^ " carries the environment's name and nothing else")
+             (replace_all x env_a "<env>")
+             (replace_all y env_b "<env>"))))
     la
     lb
 ;;
@@ -1942,18 +2002,36 @@ let test_environment_labels_but_does_not_re_address () =
     "the two environments do not render identically"
     false
     (workload_alpha = workload_beta);
-  (* Addressing is environment-independent, exactly. *)
+  (* Identity and addressing are environment-independent, asserted directly on
+     the fields rather than inferred from text: a leaked environment would
+     otherwise pass simply by mentioning its own name. *)
   check_string "the namespace document is identical" ns_alpha ns_beta;
   Alcotest.(check (list string))
     "resource names are identical"
     (resource_names workload_alpha)
     (resource_names workload_beta);
-  check_only_the_environment_differs
+  Alcotest.(check (list string))
+    "image references are identical"
+    (values_of_key "image" workload_alpha)
+    (values_of_key "image" workload_beta);
+  Alcotest.(check (list string))
+    "internal addresses are identical"
+    (internal_addresses workload_alpha)
+    (internal_addresses workload_beta);
+  (* And nothing else may differ. *)
+  check_no_unexplained_differences
     "workload"
     workload_alpha
     workload_beta
     ~env_a:"alpha"
-    ~env_b:"beta"
+    ~env_b:"beta";
+  (* The other half of "promotes unchanged": rendering the same spec for the same
+     environment twice is byte-identical. A difference here would mean the output
+     depends on something other than its inputs — traversal order, the clock, the
+     filesystem — which no amount of re-deploying would stabilise. *)
+  let ns_again, workload_again = render_for "alpha" svc_spec in
+  check_string "the namespace document is stable across renders" ns_alpha ns_again;
+  check_string "the workload is stable across renders" workload_alpha workload_again
 ;;
 
 (* The rule stated directly on addressing: no environment identifier in a
