@@ -24,6 +24,7 @@
   test_loki
   test_run_log
   test_observability_url
+  test_target_report
   test_deploy_event
   test_open
   test_status
@@ -44,3 +45,17 @@
  (action
   (bash
    "set -eu\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nmkdir -p \"$tmp/app/payments/charge_svc\"\ncat > \"$tmp/app/payments/charge_svc/Dockerfile\" <<'EOF'\nFROM scratch\nEOF\ncd \"$tmp\"\n\"$sol\" check >\"$tmp/ok.out\"\nrm \"$tmp/app/payments/charge_svc/Dockerfile\"\nif \"$sol\" check >\"$tmp/bad.out\" 2>&1; then\n  echo 'sol check unexpectedly passed without Dockerfile' >&2\n  exit 1\nfi\ngrep -F 'Dockerfile is missing' \"$tmp/bad.out\" >/dev/null")))
+
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe)
+ (action
+  (bash
+   "set -eu\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nmkdir -p \"$tmp/sol/prod/aws\"\ncat > \"$tmp/sol/prod/aws/us-east-1.yml\" <<'EOF'\ntarget:\n  kube_context: prod-us-east-1\nEOF\ncd \"$tmp\"\nout=$(\"$sol\" target show --target prod/aws/us-east-1)\necho \"$out\" | grep -F 'us-east-1' >/dev/null\nif echo \"$out\" | grep -F 'prod-us-east-1' >/dev/null; then\n  echo 'sol target show leaked the kube-context without --verbose' >&2\n  exit 1\nfi\n\"$sol\" target show --target prod/aws/us-east-1 --verbose | grep -F 'prod-us-east-1' >/dev/null\nif \"$sol\" target show --target prod/aws/nope >\"$tmp/bad.out\" 2>&1; then\n  echo 'sol target show accepted an unknown target' >&2\n  exit 1\nfi\ngrep -F 'available targets:' \"$tmp/bad.out\" >/dev/null\ngrep -F 'prod/aws/us-east-1' \"$tmp/bad.out\" >/dev/null")))
+
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe)
+ (action
+  (bash
+   "set -eu\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nmkdir -p \"$tmp/sol/prod/aws\"\ncat > \"$tmp/sol/prod/aws/us-east-1.yml\" <<'EOF'\ntarget:\n  kube_context: prod-us-east-1\nEOF\ncd \"$tmp\"\nif \"$sol\" target show >\"$tmp/out\" 2>&1; then\n  echo 'sol target show ran without naming a target' >&2\n  exit 1\nfi\ngrep -F 'available targets:' \"$tmp/out\" >/dev/null")))

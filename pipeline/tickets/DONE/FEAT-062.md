@@ -59,3 +59,17 @@ The recommendation is offline by default with `--check`, and a `Kubernetes  conf
 ## Notes
 
 Not a prerequisite for FEAT-059 — destinations can land without a way to display them. It is the ergonomics companion, and it should follow soon after, while the destination is fresh: the longer the only way to see a destination is to read YAML, the more the YAML is the interface.
+
+## Completion notes
+
+**The open decision was resolved as recommended: offline by default, `--check` to probe.** The reasoning held up in the implementation — the summary is also what you read *while diagnosing* an unreachable cluster, so a command that blocks on a timeout before printing is least useful exactly when it is needed most. `--check` uses `Sol_cli_kubectl.probe` with the target's destination, so it scopes the probe to the right cluster rather than the ambient one.
+
+**All three states are named, as the ticket asked.** `not configured` says the target names no `kube_context` and points at what writes it; `configured` says explicitly that it has not been checked and how to check; `unreachable` carries a reason. "Could not verify" never reads as "fine".
+
+**`probe` returns a plain `bool`**, so `--check` can report reachable/unreachable but not *why*. Rather than invent a cause, the message says what is known and names the by-hand equivalent. If the reason is wanted, the adapter needs a variant that returns the process result — worth doing with FEAT-063, which reworks these helpers anyway.
+
+**The masking rule is enforced, not just intended.** The raw context is absent from the default rendering and from the `unreachable` message (writing it there would have leaked it through the back door). Seven unit tests, and the end-to-end CLI rule asserts it through the real binary: the default output must not contain the context string, and `--verbose` must.
+
+**Layout.** `Sol_cli_target_report` holds the pure rendering (rows feed both text and JSON, so the two cannot drift — asserted by a test comparing them), and `cmd_target.ml` holds the command, including a failure path that lists available targets by reusing `Sol_cli_fs_walk`. Two end-to-end rules in `cli/sol/test/dune` exercise the real binary: the masking invariant, and the two failure modes (unknown target, no target named).
+
+**Demo coverage.** `docs/guides/TUTORIAL.md` gains an "Inspecting a target" section with real output, including the `not configured` explanation and the unknown-target failure. Nothing in `examples/` changes — this adds a command, not a contract an app author writes against.

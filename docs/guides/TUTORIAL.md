@@ -596,6 +596,41 @@ The `sol deploy` command is `sol up` without the build step. It is designed to r
 
 Set `target.cluster_issuer` in that file to override the cert-manager ClusterIssuer used for service Ingress TLS; it defaults to `letsencrypt-prod`, matching `cli/platform/infra/base`.
 
+### Inspecting a target
+
+Before deploying, look at what the target actually is — rather than at the kubectl plumbing underneath it:
+
+```bash
+sol target show --target prod/aws/us-east-1
+```
+
+```
+provider      aws
+region        us-east-1
+cluster       acme-prod
+registry      123456789012.dkr.ecr.us-east-1.amazonaws.com
+base domain   acme.com
+kubernetes    configured — not checked; pass --check to probe it
+```
+
+The summary is offline by default, so it still prints while you are diagnosing a cluster you cannot reach. `--check` probes it, `--json` prints the same fields for scripts, and `--verbose` adds where the target sits plus the raw kube-context Sol will use.
+
+Two things that line is telling you:
+
+- **`not configured`** means the target names no `kube_context`, so `sol deploy` has no cluster to reach. `sol cloud init` writes it when Sol creates the cluster; for a cluster you own, name its context in the target.
+- **The context is hidden unless you ask.** It is how Sol reaches the cluster, not what the target is, so it does not lead the summary — but it is what you need when you want to run `kubectl` by hand, which is what `--verbose` is for.
+
+Naming a target that does not exist fails closed and lists the ones that do:
+
+```bash
+sol target show --target prod/aws/nope
+```
+
+```
+available targets:
+  prod/aws/us-east-1
+```
+
 ### Direct deploy (CI pushes to the cluster)
 
 ```bash

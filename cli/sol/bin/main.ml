@@ -22,6 +22,7 @@ let () =
       ; Cmd_migrate.cmd
       ; Cmd_rollback.cmd
       ; Cmd_secret.cmd
+      ; Cmd_target.cmd
       ; Cmd_cloud.cmd
       ]
   in
