@@ -638,6 +638,53 @@ let test_target_with_only_sol_yml_succeeds () =
     | Ok _ -> ())
 ;;
 
+let test_same_cluster_across_envs_fails () =
+  with_temp_dir (fun () ->
+    write_base ();
+    mkdir_p "sol/dev/aws";
+    mkdir_p "sol/prod/aws";
+    write
+      "sol/dev/aws/us-east-1.yml"
+      {|
+target:
+  cluster_name: shared
+|};
+    write
+      "sol/prod/aws/us-east-1.yml"
+      {|
+target:
+  cluster_name: shared
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Ok _ -> Alcotest.fail "expected same-cluster envs to fail"
+    | Error e ->
+      assert (contains ~needle:"dev" e.message);
+      assert (contains ~needle:"prod" e.message);
+      assert (contains ~needle:"shared" e.message))
+;;
+
+let test_same_cluster_name_different_region_succeeds () =
+  with_temp_dir (fun () ->
+    write_base ();
+    mkdir_p "sol/dev/aws";
+    mkdir_p "sol/prod/aws";
+    write
+      "sol/dev/aws/us-west-2.yml"
+      {|
+target:
+  cluster_name: shared
+|};
+    write
+      "sol/prod/aws/us-east-1.yml"
+      {|
+target:
+  cluster_name: shared
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok _ -> ())
+;;
+
 let test_root_target_defaults_survive () =
   with_temp_dir (fun () ->
     write
@@ -875,6 +922,14 @@ let () =
             "target with only sol.yml succeeds"
             `Quick
             test_target_with_only_sol_yml_succeeds
+        ; Alcotest.test_case
+            "same cluster across envs fails"
+            `Quick
+            test_same_cluster_across_envs_fails
+        ; Alcotest.test_case
+            "same cluster name in different region succeeds"
+            `Quick
+            test_same_cluster_name_different_region_succeeds
         ; Alcotest.test_case
             "duplicate resource fails"
             `Quick
