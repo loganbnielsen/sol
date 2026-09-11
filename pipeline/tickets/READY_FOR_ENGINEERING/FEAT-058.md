@@ -25,7 +25,7 @@ So the bargain is: *names stay environment-agnostic, therefore clusters must be 
 
 **False negatives (the dangerous direction)** — one cluster, configured under names that differ, so the check passes:
 
-- **Two kube-contexts aliasing one cluster.** `prod` and `prod-eu` in one kubeconfig pointing at the same API server. Common the moment contexts are named by convention rather than by cluster.
+- **Two kube-contexts aliasing one cluster.** `prod` and `prod-eu` in one kubeconfig pointing at the same API server. Likely wherever contexts are named by convention rather than by cluster — and most likely of all for the hosted platform, which drives deploys across many clusters and therefore holds many contexts. That is a forward-looking risk, not a description of anything deployed today.
 - **A stale or re-spelled field.** One environment's `region` was never updated after a move, or a cluster was renamed and only one target was edited. Since `provider`/`region` are *declared*, not verified, a stale value silently disables the comparison.
 - **Two accounts, same shape.** Provider, region and cluster name can all match across accounts, where the tuple cannot tell them apart.
 
@@ -33,12 +33,19 @@ So the bargain is: *names stay environment-agnostic, therefore clusters must be 
 
 The root difficulty: **a name is not an identity.** What a cluster name resolves to is a property of the credentials on the deploying machine, not of the config file, so no amount of file inspection can close this. It becomes more dangerous, not less, once the hosted platform drives deploys — Sol holds many contexts, and a mismatch there overwrites a customer's production.
 
+## Not a migration
+
+Nothing is deployed and there is no older schema to move. Both pieces of state below are **additive**, and neither requires an existing deployment to be re-created or any ticket here to be read as requiring one:
+
+- A namespace gains its marker on its **next** deploy. Absence of a marker means *unclaimed*, not *conflicting*, so the first environment to deploy claims the namespace — correct while nothing is live. When that stops being true, how a claim should be transferred becomes a real question, and the answer belongs to whoever is operating deployments at that point, not to this ticket.
+- The recorded cluster identity is written on the next successful deploy, for environments that have one. An environment that has never deployed has nothing recorded and is simply not yet comparable.
+
 ## Recommended shape
 
 Layered, cheapest first, with only the middle layer being true enforcement:
 
 1. **Keep the config check as a lint.** It catches the obvious mistake before anything is applied, and its message is good.
-2. **A cluster-side environment marker — the real enforcement.** `sol deploy` writes `sol.dev/environment: <env>` on the namespace it manages, and refuses to apply when the cluster already carries a *different* environment's marker. This needs credentials only for the target cluster (no cross-environment access), cannot be aliased around because it travels with the cluster, and fails at the exact moment the accident would occur. It is also consistent with DEC-016: the environment may appear in a **label**; what it may not appear in is a name or an address.
+2. **A cluster-side environment marker — the real enforcement.** `sol deploy` writes `sol.dev/environment: <env>` on the namespace it manages, and refuses to apply when the cluster already carries a *different* environment's marker. Absent means unclaimed (see above); only a *mismatch* refuses. This needs credentials only for the target cluster (no cross-environment access), cannot be aliased around because it travels with the cluster, and fails at the exact moment the accident would occur. It is also consistent with DEC-016: the environment may appear in a **label**; what it may not appear in is a name or an address.
 3. **Record the resolved cluster identity per environment.** After a successful deploy, store the cluster's own identifier — the `kube-system` namespace UID, or the context's server URL — alongside the environment's state. Later deploys compare the cluster in hand against the identifiers recorded for the workspace's other environments. This is the only layer that catches a *repointed context* (prod's context edited to point at dev), because it compares what actually happened rather than what the config intends — the same shift as pinning digests instead of tags.
 
 ## Acceptance criteria
