@@ -63,6 +63,12 @@ let render
   let ns = Sol_cli_kubernetes_name.namespace_to_string namespace in
   let name = Sol_cli_kubernetes_name.k8s_name_to_string k8s_name in
   let img = if image = "" then spec_image else image in
+  let config =
+    match env with
+    | None -> config
+    | Some env ->
+      ("SOL_ENV", env) :: List.filter (fun (key, _) -> key <> "SOL_ENV") config
+  in
   let cfg_hash = Sol_cli_manifest.config_hash config in
   Sol_cli_manifest.(
     let ns_yaml = namespace_doc ~ns in
