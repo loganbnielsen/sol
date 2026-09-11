@@ -35,19 +35,20 @@ That also rejects the softer version of the same design: an optional `?destinati
 
 So the criterion is not "the adapter takes a destination" but **"every kubectl invocation is scoped"**, and the check for it is a grep for `kubectl` across `cli/` that must return only the adapter (plus the local-dev carve-out). Anything left is a path that still inherits the ambient context while looking converted.
 
-## Open question — how do diagnostics learn their target?
+## Decided: the CLI grammar (2026-09-11)
 
-Deploy paths already have a resolved target, so the destination is available. Diagnostics do not: `sol status`, `sol logs`, `sol rollback` and `sol logs -f` would each have to answer *which cluster*. Three shapes, and the choice changes the implementation:
+**Local operations live under `sol local`; any operation against a configured target requires `--target <name>`; there is no current target and no implicit local fallback.** DEC-016's grammar section carries the reasoning and the two rejected alternatives (a `--local` flag, and a workspace current-target file).
 
-1. **A required `--target` on each cluster-touching command.** Most explicit and consistent with the parameter decision above; costs a flag on every diagnostic invocation, which is friction for the common local case.
-2. **A workspace-level "current target"** (`sol target use prod`, written to a file in the workspace). Convenient, and it is *configuration* rather than ambient machine state — but it is still state a reader cannot see at the call site or the command line, which is the property this whole line of work objects to.
-3. **Diagnostics accept a target for remote work and default to the local destination otherwise.** Least friction; but "no target means local" is exactly the inference DEC-020 forbids for anything touching a live environment, so it would need to fail closed whenever the workspace has any non-local target.
+What that means here:
 
-Not decided. The implementation should not start until it is, because it determines whether the destination is a parameter on every command or resolved from workspace state.
+- Cluster-touching commands gain a local counterpart — `sol local status`, `sol local logs`, `sol local rollback`, `sol local up` — and a **required `--target`** on the top-level form.
+- A top-level cluster-touching command with no `--target` **fails closed**, and its error points at `sol local <command>`: the inference is not merely absent, the correct spelling is named so it is discoverable.
+- `--local` must not exist, and both spellings must not be supported. One grammar, or the CLI starts accumulating aliases for one destination.
+- The destination is therefore always visible in the invocation — the property DEC-020 asks for.
 
 ## Scope
 
-**1. Thread the destination** through the operation helpers, keeping the destination/scope boundary (FEAT-061): the Kubernetes seam learns *where*, never *what*.
+**1. Restructure the CLI grammar, then thread the destination** through the operation helpers, keeping the destination/scope boundary (FEAT-061): the Kubernetes seam learns *where*, never *what*. The grammar comes first because it is what makes a destination *available* to diagnostics — before it, `sol status` has no way to name a cluster at all.
 
 **2. Remove the ambient reads.** Four files consult ambient context state today:
 
