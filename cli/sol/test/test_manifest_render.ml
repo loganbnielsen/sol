@@ -373,6 +373,26 @@ let test_svc_env_label_absent_by_default () =
   assert_absent "svc env label" workload {|env: "|}
 ;;
 
+let test_svc_sol_env_configmap_present_when_resolved () =
+  let _ns, workload = render_spec_ok ~env:"prod" svc_spec in
+  let cm_block = extract_kind_block workload "kind: ConfigMap" in
+  assert_contains "svc SOL_ENV config" cm_block {|SOL_ENV: "prod"|}
+;;
+
+let test_svc_sol_env_configmap_absent_by_default () =
+  let _ns, workload = render_spec_ok svc_spec in
+  let cm_block = extract_kind_block workload "kind: ConfigMap" in
+  assert_absent "svc SOL_ENV config" cm_block {|SOL_ENV: |}
+;;
+
+let test_svc_sol_env_configmap_target_overrides_config () =
+  let spec = { svc_spec with config = [ "SOL_ENV", "user-value" ] } in
+  let _ns, workload = render_spec_ok ~env:"prod" spec in
+  let cm_block = extract_kind_block workload "kind: ConfigMap" in
+  assert_contains "svc SOL_ENV target value" cm_block {|SOL_ENV: "prod"|};
+  assert_absent "svc SOL_ENV user value" cm_block "user-value"
+;;
+
 let test_worker_env_label_present_when_resolved () =
   let _ns, workload = render_spec_ok ~env:"staging" worker_spec in
   assert_contains "worker env label" workload {|env: "staging"|}
@@ -1873,6 +1893,18 @@ let () =
             "env label absent by default"
             `Quick
             test_svc_env_label_absent_by_default
+        ; Alcotest.test_case
+            "SOL_ENV config when resolved"
+            `Quick
+            test_svc_sol_env_configmap_present_when_resolved
+        ; Alcotest.test_case
+            "SOL_ENV config absent by default"
+            `Quick
+            test_svc_sol_env_configmap_absent_by_default
+        ; Alcotest.test_case
+            "SOL_ENV config uses target"
+            `Quick
+            test_svc_sol_env_configmap_target_overrides_config
         ; Alcotest.test_case "default postgres url" `Quick test_svc_default_postgres_url
         ; Alcotest.test_case
             "POSTGRES_URL not in ConfigMap"
