@@ -7,10 +7,16 @@ type target =
   ; base_domain : string option
   ; cluster_issuer : string option
   ; cluster_name : string option
+  ; kube_context : string option
   ; terraform_var_file : string option
   ; observability_backend : string option
   ; provider_fields : (string * (string * string) list) list
   }
+
+(** Where this target deploys — the mechanism Sol uses to reach the cluster, not
+    its identity (DEC-020). Returns [Error] when the target names no context, so
+    no caller can fall back to the ambient one. *)
+val destination_of_target : target -> (Sol_cli_kube_destination.t, string) result
 
 type index =
   { index_name : string
