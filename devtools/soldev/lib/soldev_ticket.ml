@@ -303,16 +303,69 @@ let dependency_summary deps =
   | deps -> String.concat ", " deps
 ;;
 
-let readiness_label state content =
+(* ── dependency cycles ───────────────────────────────────────────────────── *)
+
+(* [find_dependency_cycle_from ~deps_of start] follows [deps_of] from [start]
+   and returns the first cycle it closes, as a path such as
+   ["DEC-020"; "FEAT-063"; "DEC-020"], or [None].
+
+   A cycle is the failure mode this exists to surface. Every member reports only
+   "blocked by <the other>" — which is indistinguishable from waiting on real
+   work — so the queue reads as idle rather than broken. It happened: a prose
+   mention on a `Depends on:` line became a dependency (`Implemented by
+   FEAT-059`), and DEC-020 and FEAT-063 each named the other while neither was
+   actionable, with nothing saying why.
+
+   [deps_of] is injected so the walk is testable without the filesystem. *)
+let find_dependency_cycle_from ~deps_of start =
+  (* [path] is newest-first. On detection the repeated id heads [id :: path],
+     and the earlier occurrence is somewhere behind it; trimming to the first
+     occurrence drops any prefix walked before the cycle was entered, so a cycle
+     reached from outside does not report the approach path as part of it. *)
+  let cycle_from rev_path repeated =
+    let rec drop = function
+      | [] -> []
+      | x :: rest -> if x = repeated then x :: rest else drop rest
+    in
+    drop (List.rev rev_path)
+  in
+  let rec walk path id =
+    if List.mem id path
+    then Some (cycle_from (id :: path) id)
+    else List.find_map (walk (id :: path)) (deps_of id)
+  in
+  walk [] start
+;;
+
+let find_dependency_cycle ticket_id =
+  find_dependency_cycle_from
+    ~deps_of:(fun id ->
+      match find_ticket id with
+      | None -> []
+      | Some (_, path) ->
+        parse_depends (In_channel.with_open_text path In_channel.input_all))
+    ticket_id
+;;
+
+(* A cycle only matters when it actually blocks. If any member is already done,
+   the chain is satisfied and what remains is ordinary waiting — reporting a
+   cycle there would be noise. *)
+let cycle_blocks cycle = List.for_all (fun id -> dependency_status id <> `Done) cycle
+
+let readiness_label ~ticket_id state content =
   if has_human_decision_gate content
   then "needs-human"
   else (
     let deps = parse_depends content in
-    match List.find_opt (fun dep -> dependency_status dep <> `Done) deps with
-    | Some dep ->
-      (match dependency_status dep with
-       | `Unknown -> "blocked: unknown " ^ dep
-       | `Blocked s -> "blocked: " ^ dep ^ " in " ^ state_to_dir s
-       | `Done -> "actionable")
-    | None -> if state = Ready_for_engineering then "actionable" else "-")
+    match find_dependency_cycle ticket_id with
+    | Some cycle when cycle_blocks cycle ->
+      "blocked: dependency cycle " ^ String.concat " -> " cycle
+    | _ ->
+      (match List.find_opt (fun dep -> dependency_status dep <> `Done) deps with
+       | Some dep ->
+         (match dependency_status dep with
+          | `Unknown -> "blocked: unknown " ^ dep
+          | `Blocked s -> "blocked: " ^ dep ^ " in " ^ state_to_dir s
+          | `Done -> "actionable")
+       | None -> if state = Ready_for_engineering then "actionable" else "-"))
 ;;

@@ -793,7 +793,7 @@ let run_ls include_done =
                 let deps =
                   Soldev_ticket.parse_depends content |> Soldev_ticket.dependency_summary
                 in
-                let ready = Soldev_ticket.readiness_label state content in
+                let ready = Soldev_ticket.readiness_label ~ticket_id:id state content in
                 let ready =
                   if state = Soldev_ticket.Ready_for_engineering
                   then (
@@ -845,6 +845,20 @@ let run_check ticket_id =
       if String.trim details <> "" then Printf.printf "\n%s\n\n" details;
       Printf.printf "status: blocked-for-human-decision\n";
       exit 1);
+    (* A cycle is reported before the ordinary dependency list, because "blocked
+       by dependency" is exactly what a deadlock looks like from the outside:
+       every member is waiting on another, so the queue reads as busy rather than
+       broken. *)
+    (match Soldev_ticket.find_dependency_cycle ticket_id with
+     | Some cycle when Soldev_ticket.cycle_blocks cycle ->
+       Printf.printf "dependency cycle: %s\n" (String.concat " -> " cycle);
+       Printf.printf
+         "  every member waits on the next, so none of them can start. Check each \
+          `Depends on:` line in the cycle: an id mentioned as prose (`Implemented by X`, \
+          `Related: X`) is read as a dependency.\n";
+       Printf.printf "status: blocked-by-dependency-cycle\n";
+       exit 1
+     | _ -> ());
     let blocked =
       deps
       |> List.filter_map (fun dep ->

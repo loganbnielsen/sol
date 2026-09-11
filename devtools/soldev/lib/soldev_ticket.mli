@@ -27,4 +27,21 @@ val ticket_title : string -> string
 val find_ticket : string -> (ticket_state * string) option
 val dependency_status : string -> [ `Done | `Unknown | `Blocked of ticket_state ]
 val dependency_summary : string list -> string
-val readiness_label : ticket_state -> string -> string
+
+(** [find_dependency_cycle_from ~deps_of start] walks [deps_of] from [start] and
+    returns the first cycle it closes, as a path like
+    [["DEC-020"; "FEAT-063"; "DEC-020"]]. [deps_of] is injected so the walk is
+    testable without the filesystem. *)
+val find_dependency_cycle_from
+  :  deps_of:(string -> string list)
+  -> string
+  -> string list option
+
+(** The same walk over the tickets on disk. *)
+val find_dependency_cycle : string -> string list option
+
+(** Whether a cycle actually blocks: false when any member is already [Done],
+    since a satisfied chain is ordinary waiting rather than a deadlock. *)
+val cycle_blocks : string list -> bool
+
+val readiness_label : ticket_id:string -> ticket_state -> string -> string
