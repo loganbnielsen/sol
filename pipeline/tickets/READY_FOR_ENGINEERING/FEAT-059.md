@@ -23,9 +23,20 @@ Explicit does not mean manual. If deploying to a Sol-created cluster requires th
 
 ## Scope
 
-**1. Resolve the destination from the target.**
+**1. Resolve the destination from the target — as a mechanism, not an identity.**
 
-The target schema gains the destination's Kubernetes identity — a `kube_context` (context names are usually compound, e.g. `arn:aws:eks:…`, so this is not always the same as `cluster_name`) and/or a per-target `kubeconfig`. A target must fully determine where it lands. The field is written by provisioning for clusters Sol creates, and authored by hand only for clusters it did not.
+The target schema gains the **mechanism Sol uses to reach** the destination, not the destination's identity:
+
+```ocaml
+type kubernetes_destination =
+  { context : string
+  ; kubeconfig : string option
+  }
+```
+
+A kube-context is a client-side handle: it bundles a cluster reference, credentials and optionally a namespace, and it can be renamed without the cluster changing. So keep three things distinct — the **target** (identity), the **destination configuration** (how Sol reaches it, e.g. `kube_context = "sol-prod-us-west-2"`), and the **resolved physical cluster** (whatever that context actually points to). DEC-020 says Sol trusts the configured destination and does not prove physical identity; calling this field the target's "Kubernetes identity" would blur precisely the line that keeps FEAT-058 unnecessary.
+
+Context names are usually compound (`arn:aws:eks:…`), so this is not the same thing as `cluster_name`, and the two are not required to agree textually — see the lint criterion below.
 
 **2. Pass it explicitly, everywhere.**
 
@@ -50,14 +61,27 @@ The ephemeral local target may name `k3d-sol-local` literally — it is Sol's ow
 
 When a target names no context, or the resolved context cannot be reached, the error names the target, the context it expected, and what would otherwise have been used — so the change in behaviour is obvious to someone whose habits were built on switching context first.
 
+**6. Inspectable is not the same as authorable.**
+
+Storing the result in the YAML must not make the YAML the user-facing API. The intended surface stays:
+
+```
+sol cloud init prod
+sol deploy payments --env prod
+```
+
+A target summary should read as a target, not as kubectl output — provider, region, cluster, and whether Kubernetes is reachable — with the raw context available only when asked for. That `sol cloud init` writes the field is the mechanism; a user having to read or write it is the failure mode.
+
 ## Acceptance criteria
 
+- **A target created by `sol cloud init` comes out with its destination already set.** This is the criterion that tests the abstraction boundary: if it passes, an ordinary user never discovers that this ticket introduced a context field at all.
+- **The same-cluster lint (FEAT-057) compares the destination Sol will actually use**, not the descriptive `cluster_name`. Two fields describing the same property are two sources of truth for exactly the thing that lint protects. `cluster_name` stays descriptive, and is not required to agree textually with the context.
 - A unit test proves resolution ignores the ambient context: with the machine's current context set to something unrelated, the resolved destination for a target is unchanged.
 - Two targets naming different contexts resolve to different destinations, and the resolved context reaches the executed command.
 - No Kubernetes operation in the CLI decides its destination from `current-context`, and none mutates it.
 - A target that names no context fails closed with a message naming the target and the expected field — no silent fallback to the ambient context.
 - The local target continues to work without ambient state.
-- Docs updated: the tutorial's cloud section and the self-hosted substrate contract describe target-scoped destinations, and no longer imply "switch context, then run `sol`".
+- Docs updated: the tutorial's cloud section and the self-hosted substrate contract describe target-scoped destinations, and no longer imply "switch context, then run `sol`". Examples show `sol cloud init` then `sol deploy` — never a hand-written context.
 
 ## Notes
 
