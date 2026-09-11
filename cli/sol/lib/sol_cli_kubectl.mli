@@ -54,3 +54,10 @@ val argo_rollout_status
   -> (Sol_cli_process.result, Sol_cli_process.error) result
 
 val probe : args:string list -> bool
+
+(** The same probe, but keeping what kubectl said: the exit code and the reason
+    a human should see (stderr when present, else stdout). [Error] means kubectl
+    could not be run at all, which is a different failure from running and
+    failing. Bounded by a timeout, and non-interactive because the runner gives
+    children /dev/null on stdin. *)
+val probe_result : args:string list -> (int * string, string) result

@@ -59,3 +59,10 @@
  (action
   (bash
    "set -eu\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nmkdir -p \"$tmp/sol/prod/aws\"\ncat > \"$tmp/sol/prod/aws/us-east-1.yml\" <<'EOF'\ntarget:\n  kube_context: prod-us-east-1\nEOF\ncd \"$tmp\"\nif \"$sol\" target show >\"$tmp/out\" 2>&1; then\n  echo 'sol target show ran without naming a target' >&2\n  exit 1\nfi\ngrep -F 'available targets:' \"$tmp/out\" >/dev/null")))
+
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe)
+ (action
+  (bash
+   "set -eu\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nmkdir -p \"$tmp/sol/prod/aws\"\ncat > \"$tmp/sol/prod/aws/us-east-1.yml\" <<'EOF'\ntarget:\n  kube_context: no-such-context-xyz\nEOF\ncd \"$tmp\"\nout=$(\"$sol\" target show --target prod/aws/us-east-1 --check)\necho \"$out\" | grep -F 'unreachable' >/dev/null\nif echo \"$out\" | grep -F 'no-such-context-xyz' >/dev/null; then\n  echo 'sol target show --check leaked the kube-context in the default output' >&2\n  exit 1\nfi\n\"$sol\" target show --target prod/aws/us-east-1 --check --verbose | grep -F 'no-such-context-xyz' >/dev/null\nif command -v kubectl >/dev/null 2>&1; then\n  \"$sol\" target show --target prod/aws/us-east-1 --check --verbose | grep -F 'does not exist' >/dev/null\nfi")))

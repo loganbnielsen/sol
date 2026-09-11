@@ -16,10 +16,37 @@ type kubernetes_status =
   | Reachable of string
   | Unreachable of string * string
 
+(* kubectl quotes the context back when it cannot find one — observed: `error:
+   context "prod-us-east-1" does not exist`. So the *reason* has to be filtered
+   too, not only the context field: withholding the name from one line and
+   printing it from the next would satisfy the rule only in appearance. *)
+
 (** [describe ~verbose status] is the one-line Kubernetes summary. The raw
     context appears only when [verbose]: it is a mechanism, not the target's
     identity (DEC-020), and a summary that leads with it teaches the wrong
     lesson. *)
+let redact ~needle ~replacement haystack =
+  if needle = ""
+  then haystack
+  else (
+    let length = String.length haystack in
+    let n = String.length needle in
+    let buffer = Buffer.create length in
+    let rec go i =
+      if i >= length
+      then ()
+      else if i + n <= length && String.sub haystack i n = needle
+      then (
+        Buffer.add_string buffer replacement;
+        go (i + n))
+      else (
+        Buffer.add_char buffer haystack.[i];
+        go (i + 1))
+    in
+    go 0;
+    Buffer.contents buffer)
+;;
+
 let describe ~verbose = function
   | Not_configured ->
     "not configured — this target names no kube_context, so `sol deploy` has no cluster \
@@ -34,7 +61,10 @@ let describe ~verbose = function
   | Unreachable (context, reason) ->
     if verbose
     then Printf.sprintf "unreachable (%s): %s" context reason
-    else Printf.sprintf "unreachable: %s" reason
+    else
+      Printf.sprintf
+        "unreachable: %s"
+        (redact ~needle:context ~replacement:"<context>" reason)
 ;;
 
 let provider_name (target : Sol_cli_config.target) =

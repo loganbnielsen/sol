@@ -63,8 +63,33 @@ let argo_rollout_status ~namespace ~name =
   run (cmd [ "kubectl"; "argo"; "rollouts"; "status"; name; "-n"; namespace ])
 ;;
 
+(* A probe answers "is it reachable", and now also "and if not, what did kubectl
+   say". The verdict is only half a diagnosis: the reason goes to stderr and used
+   to be discarded here, which left `sol target show --check` able to report
+   "unreachable" and nothing else (REFAC-084).
+
+   Bounded on purpose: a probe is an inspection command, so it should not hang on
+   a cluster that is simply unreachable. Sol's runner already spawns children with
+   stdin on /dev/null (so a credential prompt returns EOF instead of waiting for
+   input), and [timeout_s] bounds a network wait. *)
+let probe_timeout_s = 15.0
+
+(* Returns the exit code and the reason to show a human: stderr when kubectl
+   wrote any, else stdout, trimmed. An [Error] means kubectl could not be run at
+   all — distinct from running and failing. *)
+let probe_result ~args =
+  match run (cmd ~timeout_s:probe_timeout_s ([ "kubectl" ] @ args)) with
+  | Error _ -> Error "kubectl could not be run"
+  | Ok r ->
+    let reason =
+      let stderr = String.trim r.Sol_cli_process.stderr in
+      if stderr <> "" then stderr else String.trim r.Sol_cli_process.stdout
+    in
+    Ok (r.Sol_cli_process.exit_code, reason)
+;;
+
 let probe ~args =
-  match run (cmd ([ "kubectl" ] @ args)) with
-  | Ok r -> r.Sol_cli_process.exit_code = 0
-  | Error _ -> false
+  match probe_result ~args with
+  | Ok (0, _) -> true
+  | Ok _ | Error _ -> false
 ;;
