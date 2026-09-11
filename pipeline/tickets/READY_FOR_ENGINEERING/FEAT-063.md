@@ -11,16 +11,21 @@ Bind every Kubernetes operation to the target's destination, so the cluster is c
 
 Until this lands, `kube_context` is expressible and checked but **not in force**: deploys still inherit the ambient context.
 
-## Decide this first — the mechanism
+## Decided: destinations are required parameters
 
-Two candidates, materially different, and the choice determines the size of the change:
+**Decision (2026-09-11): explicit threading, with a *required* parameter.** Not optional, and not the process-global alternative.
 
-1. **Explicit threading.** Give the kubectl/helm helpers a destination parameter and thread it through their callers. Strongest reading of "explicit", and a reader of any call site can see where it goes. Measured surface: **28 `Sol_cli_kubectl.*` call sites across 13 modules** — `cmd_up`, `cmd_status`, `cmd_deploy`, `cmd_logs`, `cmd_migrate`, `cmd_deploy_event`, `cmd_dev` in `bin/`, and `sol_cli_manifest`, `sol_cli_secret`, `sol_cli_rollback`, `sol_cli_rollout_diagnosis`, `sol_cli_deployment_state`, `sol_cli_up_execution` in `lib/` — plus helm's `--kube-context`.
-   - If the parameter is **optional**, unthreaded call sites silently keep inheriting the ambient context. That is precisely the failure mode this session kept finding: something that looks fixed while a path still isn't. Do not do that.
-   - If it is **required**, the compiler enumerates every site, and every cluster-touching command must resolve a destination. That is the honest version, and it implies the explicit-target model is applied to diagnostics too (`sol logs`, `sol status`): they need to know *which* cluster, which is the same question the deploy asks.
-2. **One resolution point, scoped child environment.** Resolve the destination once at the start of a cluster-touching command and give every child process a scoped `KUBECONFIG`. Far smaller, deterministic, and it also keeps other environments' credentials out of the process — a security win in its own right, and the thing the hosted platform needs anyway. Cost: implicit at the call sites; a reader of `sol_cli_rollback.ml` cannot see which cluster it touches.
+The asymmetry is what settles it: **a parameter can be relaxed from required to optional later, but never tightened from optional to required** — tightening breaks every caller. So the strict signature costs nothing now and preserves the option to loosen it if some caller genuinely cannot supply a destination. The reverse choice is permanent.
 
-**Recommendation: (1) with a required parameter.** "Explicit" is the whole point of DEC-020, and an optional parameter reintroduces the hidden input one layer down. If that is judged too large, (2) is defensible — but say so in the ticket, because the difference is architectural, not cosmetic.
+That also rejects the softer version of the same design: an optional `?destination` leaves unthreaded call sites silently inheriting the ambient context — the hidden input DEC-020 exists to remove, reproduced one layer down where it is harder to see.
+
+**Accepted consequence: every cluster-touching command must resolve a destination**, including diagnostics (`sol logs`, `sol status`, `sol rollback`). They have to answer *which cluster* explicitly, which is the same question the deploy answers — the explicit-target model (DEC-016) applied consistently rather than only where a deploy happens. A command that cannot name a destination fails closed rather than guessing.
+
+**Rejected:** one resolution point with a scoped `KUBECONFIG`. Smaller, and it would scope credentials per process, which is a genuine benefit — but it makes the destination invisible at every call site (a reader of `sol_cli_rollback.ml` cannot see which cluster it touches), and nothing in the type system stops a new call site from being added outside the scoped path. If the credential-scoping benefit is wanted later, it can be added *underneath* required parameters; it is not an alternative to them.
+
+### The surface this covers
+
+**28 `Sol_cli_kubectl.*` call sites across 13 modules** — `cmd_up`, `cmd_status`, `cmd_deploy`, `cmd_logs`, `cmd_migrate`, `cmd_deploy_event`, `cmd_dev` in `bin/`, and `sol_cli_manifest`, `sol_cli_secret`, `sol_cli_rollback`, `sol_cli_rollout_diagnosis`, `sol_cli_deployment_state`, `sol_cli_up_execution` in `lib/` — plus helm's `--kube-context`.
 
 ## Scope
 
