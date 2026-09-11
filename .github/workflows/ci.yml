@@ -156,10 +156,10 @@ jobs:
           eval $(opam env)
           dune build
 
-          sol dev up
+          sol local up
           sol up
 
-          # FEAT-042/BUG-021: `sol dev up` installs ingress-nginx and forwards
+          # FEAT-042/BUG-021: `sol local up` installs ingress-nginx and forwards
           # the controller to localhost:8088, so the Ingress `sol up` generated
           # for charge_svc must route a request end to end. A service with no
           # declared ingress_host gets a per-service dev host

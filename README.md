@@ -44,7 +44,7 @@ Sol owns the server lifecycle, graceful shutdown, structured logging, metrics, t
 curl -L https://github.com/loganbnielsen/sol/releases/latest/download/sol-vX.Y.Z-linux-x86_64.tar.gz | tar xz
 export PATH="$PWD/sol-vX.Y.Z-linux-x86_64/bin:$PATH"
 
-sol dev up              # local cluster: Redpanda, PostgreSQL, Loki, Prometheus, Grafana
+sol local up              # local cluster: Redpanda, PostgreSQL, Loki, Prometheus, Grafana
 sol new workspace pluto
 cd pluto
 sol up                  # build + deploy

@@ -52,7 +52,7 @@ The tarball includes the `sol` binary and the framework source tree (`framework/
 Sol's local cluster mirrors production exactly: same Helm charts, same service DNS names, same security model. The only difference is scale (single replica, no persistent volumes).
 
 ```bash
-sol dev up
+sol local up
 ```
 
 This creates a k3d cluster named `sol-local` and installs:
@@ -75,37 +75,37 @@ Grafana         localhost:3000   (admin / dev)
 Pushgateway     localhost:9091
 ```
 
-These port-forwards are managed by Sol in the background (PIDs recorded in `~/.local/share/sol/`). `sol dev down` tears everything down. Running `sol dev up` again clears any stale port-forwards first, so repeat runs are safe.
+These port-forwards are managed by Sol in the background (PIDs recorded in `~/.local/share/sol/`). `sol local down` tears everything down. Running `sol local up` again clears any stale port-forwards first, so repeat runs are safe.
 
-### Local iteration with `sol dev run`
+### Local iteration with `sol local run`
 
-Once the cluster is up and you have a workspace (see Part 2), use `sol dev run` for rapid code-change iteration:
+Once the cluster is up and you have a workspace (see Part 2), use `sol local run` for rapid code-change iteration:
 
 ```bash
-sol dev run
+sol local run
 ```
 
-`sol dev run` discovers every service in `app/<domain>/<name>/` that has a `Dockerfile`, runs a single `dune build` across all of them, then spawns each compiled binary as a **native process** — no Docker image rebuild required. Each service's stdout and stderr are prefixed with `[domain/name]` so you can follow multiple services in one terminal. Ctrl-C cleanly kills all child processes.
+`sol local run` discovers every service in `app/<domain>/<name>/` that has a `Dockerfile`, runs a single `dune build` across all of them, then spawns each compiled binary as a **native process** — no Docker image rebuild required. Each service's stdout and stderr are prefixed with `[domain/name]` so you can follow multiple services in one terminal. Ctrl-C cleanly kills all child processes.
 
-The environment variables your services expect are inherited directly from the shell (set by `sol dev up`'s port-forwards):
+The environment variables your services expect are inherited directly from the shell (set by `sol local up`'s port-forwards):
 
-| Variable | Value (set by `sol dev up`) |
+| Variable | Value (set by `sol local up`) |
 |---|---|
 | `KAFKA_BROKERS` | `localhost:9092` |
 | `SCHEMA_REGISTRY_URL` | `http://localhost:8081` |
 | `POSTGRES_URL` | `postgresql://postgres:dev@localhost:5432/dev` |
 | `LOKI_URL` | `http://localhost:3100` |
 
-**When to use `sol dev run` vs `sol up`:**
+**When to use `sol local run` vs `sol up`:**
 
-| | `sol dev run` | `sol up` |
+| | `sol local run` | `sol up` |
 |---|---|---|
 | How services run | Native OCaml binaries | Docker containers in k3d |
 | On code change | `dune build` + re-run (~seconds) | `docker build` + redeploy (~minutes) |
-| Uses k3d infra | Yes (via port-forwards from `sol dev up`) | Yes |
+| Uses k3d infra | Yes (via port-forwards from `sol local up`) | Yes |
 | Good for | Fast edit-compile-run loop | Final smoke test before CI |
 
-Both commands talk to the same Kafka broker, PostgreSQL, and Loki instance that `sol dev up` started. The difference is only in how the service processes themselves are launched.
+Both commands talk to the same Kafka broker, PostgreSQL, and Loki instance that `sol local up` started. The difference is only in how the service processes themselves are launched.
 
 ---
 
@@ -318,7 +318,7 @@ Prefer events for cross-domain flows unless the synchronous dependency is part
 of the service contract.
 
 These names are deterministic from the Helm release names and workspace/domain
-names chosen by `sol dev up`.
+names chosen by `sol local up`.
 
 After `sol up` finishes, check what's running:
 
@@ -440,7 +440,7 @@ Sol registers these metrics automatically when `?ot` is wired in the service ent
 
 ### Traces
 
-Unlike metrics, tracing isn't automatic — a handler opts in by wrapping its work in `Obs_eio.with_span`, as `POST /charges` does (Part 2). `sol dev up` provisions Tempo and wires `TEMPO_URL` in automatically, so any handler that calls `with_span` gets a real trace with no extra setup. Click a `charge-svc` log line in the Loki view above: next to `trace_id=...` Grafana shows a **Tempo** button (a derived-field link, no copy-pasting IDs) that jumps straight to that request's span waterfall in **Explore → Tempo**.
+Unlike metrics, tracing isn't automatic — a handler opts in by wrapping its work in `Obs_eio.with_span`, as `POST /charges` does (Part 2). `sol local up` provisions Tempo and wires `TEMPO_URL` in automatically, so any handler that calls `with_span` gets a real trace with no extra setup. Click a `charge-svc` log line in the Loki view above: next to `trace_id=...` Grafana shows a **Tempo** button (a derived-field link, no copy-pasting IDs) that jumps straight to that request's span waterfall in **Explore → Tempo**.
 
 Tracing is `-svc`-only for now. `notify-worker` receives the same trace context and logs the matching `trace_id` for correlation, but doesn't wrap its work in a span, so it doesn't emit its own spans to Tempo yet.
 
@@ -534,7 +534,7 @@ and `Sol_obs.metrics_renderer obs` hand the lower-level pieces to
 
 When `LOKI_URL`/`TEMPO_URL` are absent (local `dune exec` dev), logs go to
 stdout in logfmt format and no traces are emitted. In the cluster,
-`sol dev up` sets Loki/Tempo automatically. The code is identical either way.
+`sol local up` sets Loki/Tempo automatically. The code is identical either way.
 Workers follow the same pattern, but only service handlers currently opt into
 application spans.
 
@@ -549,10 +549,10 @@ sol new worker <domain>/<name>                    add a Kafka consumer
 sol new fn <domain>/<name>                        add a scheduled function
 sol new event <team>/<name>                       add a typed Kafka event
 
-sol dev up                                        provision local k3d cluster
-sol dev down                                      tear down the cluster
-sol dev status                                    show running infra endpoints
-sol dev run                                       run services as native processes (fast iteration)
+sol local up                                        provision local k3d cluster
+sol local down                                      tear down the cluster
+sol local status                                    show running infra endpoints
+sol local run                                       run services as native processes (fast iteration)
 
 sol plan TARGET                                   print merged app/resource/service plan
 sol up [path] [--dry-run] [--tag]                 build images and deploy to local cluster
@@ -717,7 +717,7 @@ terraform apply \
   -var="install_postgresql=false"   # using RDS or Cloud SQL
 ```
 
-After `terraform apply`, the cluster is identical to `sol dev up` — same DNS names, same ConfigMap values, same Grafana dashboards.
+After `terraform apply`, the cluster is identical to `sol local up` — same DNS names, same ConfigMap values, same Grafana dashboards.
 
 **Point DNS at the ingress** before any service with an `ingress_host` in its `sol.toml` is reachable:
 
@@ -726,7 +726,7 @@ After `terraform apply`, the cluster is identical to `sol dev up` — same DNS n
 kubectl get svc -n ingress-nginx ingress-nginx-controller   # EXTERNAL-IP
 ```
 
-Create an `A`/alias or `CNAME` record for each `ingress_host` — or one wildcard record such as `*.acme.com` — in the zone created by your provider module (`cli/platform/infra/aws` exposes `route53_zone_id` and `route53_nameservers`; point your registrar's NS at the latter on first setup). Sol deliberately does not run external-dns, so this is a required manual step, and cert-manager only finishes TLS once the name resolves. Locally there is nothing to do: `sol dev up` forwards the same controller to `http://localhost:8088`, and a service with no `ingress_host` gets the dev host `<svc>.<namespace>.localhost` — send it as the `Host` header, e.g. `curl -H 'Host: charge-svc.acme-payments.localhost' http://localhost:8088/health`.
+Create an `A`/alias or `CNAME` record for each `ingress_host` — or one wildcard record such as `*.acme.com` — in the zone created by your provider module (`cli/platform/infra/aws` exposes `route53_zone_id` and `route53_nameservers`; point your registrar's NS at the latter on first setup). Sol deliberately does not run external-dns, so this is a required manual step, and cert-manager only finishes TLS once the name resolves. Locally there is nothing to do: `sol local up` forwards the same controller to `http://localhost:8088`, and a service with no `ingress_host` gets the dev host `<svc>.<namespace>.localhost` — send it as the `Host` header, e.g. `curl -H 'Host: charge-svc.acme-payments.localhost' http://localhost:8088/health`.
 
 > **Advanced / manual override:** `sol cloud plan/apply` is a thin wrapper around Terraform. Engineers who need full Terraform control — custom variables, targeted applies, remote state configuration, or workspace management — can invoke Terraform directly against the same modules:
 >

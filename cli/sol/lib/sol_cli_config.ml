@@ -702,6 +702,12 @@ let merge base overlay =
   }
 ;;
 
+(* `local` names Sol's own ephemeral substrate, not an environment — it is the
+   absence of a target, which is why `SOL_ENV` is deliberately unset there
+   (DEC-016). Reserving the word keeps it from also meaning an environment the
+   user can select, and keeps one word for one thing (REFAC-083). *)
+let reserved_env_name = "local"
+
 let target_of_path s =
   match String.split_on_char '/' s with
   | [ env; provider; region ]
@@ -711,28 +717,42 @@ let target_of_path s =
          && env <> ".."
          && provider <> ".."
          && region <> ".." ->
-    (match Sol_cli_provider.of_string provider with
-     | Some provider ->
-       Ok
-         { name = s
-         ; env
-         ; provider
-         ; region
-         ; registry = None
-         ; base_domain = None
-         ; cluster_issuer = None
-         ; cluster_name = None
-         ; kube_context = None
-         ; terraform_var_file = None
-         ; observability_backend = None
-         ; provider_fields = []
-         }
-     | None ->
-       Error
-         { path = s
-         ; line = 0
-         ; message = Printf.sprintf "unsupported provider %S" provider
-         })
+    if env = reserved_env_name
+    then
+      Error
+        { path = s
+        ; line = 0
+        ; message =
+            Printf.sprintf
+              "%S is reserved: it names Sol's own ephemeral cluster — the substrate `sol \
+               local up` brings up — not an environment. Name this target for the \
+               cluster it points at (`dev`, `staging`, …), even when that cluster is \
+               small and yours."
+              env
+        }
+    else (
+      match Sol_cli_provider.of_string provider with
+      | Some provider ->
+        Ok
+          { name = s
+          ; env
+          ; provider
+          ; region
+          ; registry = None
+          ; base_domain = None
+          ; cluster_issuer = None
+          ; cluster_name = None
+          ; kube_context = None
+          ; terraform_var_file = None
+          ; observability_backend = None
+          ; provider_fields = []
+          }
+      | None ->
+        Error
+          { path = s
+          ; line = 0
+          ; message = Printf.sprintf "unsupported provider %S" provider
+          })
   | parts when List.exists (( = ) "..") parts ->
     Error { path = s; line = 0; message = "target path must not contain '..'" }
   | _ ->

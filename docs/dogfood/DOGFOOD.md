@@ -88,7 +88,7 @@ curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=v5.6.
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | DESIRED_VERSION=v3.21.0 bash
 ```
 
-k3d v5.6.0 is pinned because `sol dev up` passes chart values tuned against
+k3d v5.6.0 is pinned because `sol local up` passes chart values tuned against
 that version (Redpanda CPU/replica settings, node-exporter disable flag). Older
 k3d versions may reject those values or install different chart defaults.
 
@@ -163,7 +163,7 @@ Verify the generated workspace builds:
 Provision or reconcile local substrate:
 
 ```bash
-/usr/bin/time -f 'elapsed=%E' sol dev up
+/usr/bin/time -f 'elapsed=%E' sol local up
 ```
 
 Deploy services:
@@ -270,8 +270,8 @@ OCaml:
 |------|---------|
 | sol new workspace | |
 | dune build | |
-| sol dev up, fresh cluster | |
-| sol dev up, existing cluster | |
+| sol local up, fresh cluster | |
+| sol local up, existing cluster | |
 | sol up | |
 | sol migrate | |
 | first successful curl | |
@@ -309,7 +309,7 @@ _(links or IDs of any tickets created from friction/findings above)_
   `vendor/framework`. This unblocks dogfood, but it is
   not the final distribution model. The long-term answer is opam packages or an
   explicit `sol sdk vendor` command.
-- `sol dev up` is substrate bootstrap/reconcile work. It should not be counted as
+- `sol local up` is substrate bootstrap/reconcile work. It should not be counted as
   everyday deploy latency once a substrate exists.
 
 ---

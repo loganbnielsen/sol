@@ -897,6 +897,6 @@ let run_subcmd =
 
 let cmd =
   Cmd.group
-    (Cmd.info "dev" ~doc:"Manage the local k3d development cluster")
+    (Cmd.info "local" ~doc:"Manage the local cluster (k3d) and its substrate")
     [ up_cmd; down_cmd; status_cmd; run_subcmd ]
 ;;
