@@ -50,6 +50,17 @@ What that means here:
 
 **1. Restructure the CLI grammar, then thread the destination** through the operation helpers, keeping the destination/scope boundary (FEAT-061): the Kubernetes seam learns *where*, never *what*. The grammar comes first because it is what makes a destination *available* to diagnostics — before it, `sol status` has no way to name a cluster at all.
 
+### Implementation note — thread one destination-side value, not a bare destination
+
+The cost of this refactor is per **cross-cutting input**, and that cost is fixed by the call graph, not by the input itself: roughly sixteen files that reach kubectl need their signatures and forwarding changed either way. FEAT-061 then adds a *second* such input (scope) over the same call graph, and would repeat all of it.
+
+So pass one small destination-side value through the helpers — a context record — rather than a bare `Sol_cli_kube_destination.t`, so the next input of the same kind rides the same channel instead of starting a new refactor.
+
+Two boundaries on what may be in it, because a convenient record is exactly how boundaries like these fail:
+
+- **Destination-side facts only**: how an operation reaches a cluster — context, kubeconfig, and any credential scoping. Nothing about *what* is being deployed.
+- **Scope must not join it**, even though scope is also cross-cutting. The Kubernetes seam must never learn which services are being deployed (FEAT-061), so scope travels on its own channel even when the plumbing looks identical. Bundling the two would satisfy this ticket and break the next one.
+
 **2. Remove the ambient reads.** Four files consult ambient context state today:
 
 - `cli/sol/bin/cmd_up.ml` — `current_kube_context`, `is_known_local_dev_context`. `sol up` is the local deploy path, so it should pass the literal local destination; the guard becomes unnecessary because the context is named explicitly and `kubectl` fails if it is missing.
