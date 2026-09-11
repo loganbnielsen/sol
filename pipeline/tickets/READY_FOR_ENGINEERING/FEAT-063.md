@@ -27,6 +27,24 @@ That also rejects the softer version of the same design: an optional `?destinati
 
 **28 `Sol_cli_kubectl.*` call sites across 13 modules** — `cmd_up`, `cmd_status`, `cmd_deploy`, `cmd_logs`, `cmd_migrate`, `cmd_deploy_event`, `cmd_dev` in `bin/`, and `sol_cli_manifest`, `sol_cli_secret`, `sol_cli_rollback`, `sol_cli_rollout_diagnosis`, `sol_cli_deployment_state`, `sol_cli_up_execution` in `lib/` — plus helm's `--kube-context`.
 
+**But the adapter is not the only way kubectl gets invoked**, which makes "thread the adapter and be done" wrong. Found while scoping the work (2026-09-11):
+
+- `cli/sol/bin/cmd_logs.ml` builds a `kubectl get` inline (line 82) and, for follow mode, **`Unix.execvp "kubectl"`** (line 104). Because it `exec`s, no wrapper can inject a flag — the arguments must be built correctly *before* the exec, in that file.
+- `cli/sol/lib/sol_cli_logs.ml` constructs its own kubectl argv (line 60).
+- `cli/sol/bin/cmd_cloud_tf.ml` invokes kubectl inline in about eight places (load-balancer teardown, `config delete-context`/`delete-cluster`/`delete-user`, `use-context`).
+
+So the criterion is not "the adapter takes a destination" but **"every kubectl invocation is scoped"**, and the check for it is a grep for `kubectl` across `cli/` that must return only the adapter (plus the local-dev carve-out). Anything left is a path that still inherits the ambient context while looking converted.
+
+## Open question — how do diagnostics learn their target?
+
+Deploy paths already have a resolved target, so the destination is available. Diagnostics do not: `sol status`, `sol logs`, `sol rollback` and `sol logs -f` would each have to answer *which cluster*. Three shapes, and the choice changes the implementation:
+
+1. **A required `--target` on each cluster-touching command.** Most explicit and consistent with the parameter decision above; costs a flag on every diagnostic invocation, which is friction for the common local case.
+2. **A workspace-level "current target"** (`sol target use prod`, written to a file in the workspace). Convenient, and it is *configuration* rather than ambient machine state — but it is still state a reader cannot see at the call site or the command line, which is the property this whole line of work objects to.
+3. **Diagnostics accept a target for remote work and default to the local destination otherwise.** Least friction; but "no target means local" is exactly the inference DEC-020 forbids for anything touching a live environment, so it would need to fail closed whenever the workspace has any non-local target.
+
+Not decided. The implementation should not start until it is, because it determines whether the destination is a parameter on every command or resolved from workspace state.
+
 ## Scope
 
 **1. Thread the destination** through the operation helpers, keeping the destination/scope boundary (FEAT-061): the Kubernetes seam learns *where*, never *what*.
