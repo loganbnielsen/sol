@@ -1,18 +1,15 @@
-(* Fold over entries in [dir], silently returning [init] if the dir is absent. *)
+(* Fold over entries in [dir]. Absence yields [init] quietly — a workspace with
+   no [events/] simply has no topics. A directory that *exists but cannot be
+   read* is different, and is reported rather than silently producing "no
+   facts": the traversal no longer decides that policy, so it is stated here. *)
 let fold_dir dir ~init ~f =
-  if not (Sys.file_exists dir && Sys.is_directory dir)
-  then init
-  else (
-    let acc = ref init in
-    (try
-       Array.iter
-         (fun entry ->
-            let path = Filename.concat dir entry in
-            acc := f !acc entry path)
-         (Sys.readdir dir)
-     with
-     | _ -> ());
-    !acc)
+  match Sol_cli_fs_walk.entries dir with
+  | Ok names ->
+    List.fold_left (fun acc entry -> f acc entry (Filename.concat dir entry)) init names
+  | Error (Sol_cli_fs_walk.Absent _) -> init
+  | Error error ->
+    Printf.eprintf "sol: warning: %s\n%!" (Sol_cli_fs_walk.to_string error);
+    init
 ;;
 
 (** Convert a string through a newtype constructor, printing a warning and
