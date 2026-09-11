@@ -13,11 +13,19 @@ Make the destination a function of the selected target: pass the resolved Kubern
 
 **Boundary — destination is not scope.** This ticket decides *where* an operation runs; it must not decide *what* it touches. Scope — which services, workers or functions are being deployed — resolves above the Kubernetes seam, in discovery and the plan, and is modelled separately in FEAT-061. Concretely: `sol_cli_kubectl` learns *where*, never *what*. A kubectl helper that knows which service is being deployed has already conflated the two axes, and would make changing one silently affect the other. Resolution should be centralised at that seam for the destination only; do not let it grow into a selection mechanism.
 
+**Sol writes the destination; the user chooses a target.** This must not become a pass-through for kubectl plumbing. Sol already provisions the cluster (`sol cloud init` creates it and writes the kubeconfig), so **Sol knows the context name it created** — it should record that in the target when it provisions, and the user should never have to hand-write an ARN to deploy to a cluster Sol made. The field is a target-level fact, not user homework:
+
+- **Provisioned clusters:** `sol cloud init` writes the resolved context into the target. Zero user input, explicit by construction.
+- **Bring-your-own clusters:** the user names a context, ideally the friendly name from their `kubeconfig` rather than a raw ARN, and Sol verifies it resolves — failing closed if it does not.
+- **Never:** a fallback to whatever `kubectl` happens to be pointing at, and never a *required* hand-written field for the common path.
+
+Explicit does not mean manual. If deploying to a Sol-created cluster requires the user to know what a kube-context is, this ticket has failed its intent even if the invariant holds.
+
 ## Scope
 
 **1. Resolve the destination from the target.**
 
-The target schema gains the destination's Kubernetes identity — a `kube_context` (context names are usually compound, e.g. `arn:aws:eks:…`, so this is not always the same as `cluster_name`) and/or a per-target `kubeconfig`. A target must fully determine where it lands.
+The target schema gains the destination's Kubernetes identity — a `kube_context` (context names are usually compound, e.g. `arn:aws:eks:…`, so this is not always the same as `cluster_name`) and/or a per-target `kubeconfig`. A target must fully determine where it lands. The field is written by provisioning for clusters Sol creates, and authored by hand only for clusters it did not.
 
 **2. Pass it explicitly, everywhere.**
 
