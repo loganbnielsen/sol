@@ -78,4 +78,10 @@ Both could satisfy the criteria, but they differ in what "a release" means, whic
 
 **Recommendation: (1)**, spelling scope the way `sol open` already spells it (`domain` or `domain/service`) for services and adding an explicit kind, so there is one vocabulary with two projections rather than two vocabularies.
 
-**Not implemented yet, deliberately.** The type is easy; the decision above determines whether it is built on paths or replaces them, and that is not something to guess at — this ticket exists because conflating two axes cost a review cycle already.
+## Status — the vocabulary and its first consumer landed (2026-09-11)
+
+Branch `FEAT-061/scope`: `Sol_cli_deployment_scope` (ten unit tests) and `sol check --scope`, verified against `examples/pluto` — `--scope logistics` and `--scope payments/refund_svc` both exit 2 naming what exists, while the happy paths and the workspace default are unchanged.
+
+Criteria 1, 4 and 5 are met by that work. Criteria 2 and 3 move to FEAT-064.
+
+**The escape hatch this ticket retained is scheduled for deletion, not preservation.** Checking the positional filter showed it is redundant for *selection*: it matches an exact directory or a name and never a subtree, and directories discovery did not recognise are unreachable by any filter. So the earlier "keep it as the escape hatch" decision is superseded — FEAT-064 removes it along with `filter_path`, and moves the `-` → `_` normalisation into the resolver where the logical spelling belongs.

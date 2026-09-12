@@ -2,39 +2,74 @@
 id: FEAT-064
 type: feature
 severity: medium
-source: FEAT-061 part 1, 2026-09-11 — the vocabulary landed on a branch; the consumer did not
+source: FEAT-061 part 1, 2026-09-11 — the vocabulary landed; selection stays loose until this
 ---
 
 **Depends on:** FEAT-061.
 
-Wire the scope vocabulary into the commands that select work, and record the resolved scope in the plan.
+One workload-selection model across Sol: `--scope`. Remove `filter_path` and every loose positional workload alias, resolve a scope once into discovery's neutral `named`, fail closed at that boundary, and let each command adapt from there.
 
-## What already exists
+**Supersedes:** this ticket's earlier framing ("wire the vocabulary into a command, keep the path argument as an escape hatch"). Checking found the escape hatch redundant for selection, so it is deleted rather than documented as legacy compatibility.
 
-`Sol_cli_deployment_scope` landed on branch `FEAT-061/scope` (commit `4bd024ae`), verified by ten unit tests: `parse_request` (`domain`, `domain/unit`, or absent for the workspace), `select_named` and `select` (resolution against discovery, failing closed with what exists), `named_of_spec`, `kind_of_primitive`, and `to_string`. It is not yet consumed by any command, which is the whole of this ticket.
+**Related:** FEAT-063 (destination), DEC-018 (rollback), DEC-016.
 
-The design decision that shaped it is recorded on FEAT-061: **scope is a named unit**, with the positional path argument kept as the explicit escape hatch. A service is spelled `domain/service`, matching `sol open`.
+## Why delete rather than keep both cleanly
 
-## What remains
+`app/payments/charge_svc`, `charge_svc` and `--scope payments/charge_svc` all identify the same discovered workload, and the positional forms add no capability:
 
-**1. A consumer, and the plumbing needs care.** The attempt to add `--scope` to `sol check` was reverted, not because the approach was wrong but because the nested `match` in `cmd_check.ml`'s `run` was thrashing on paren balance. The shape that reads well: bind `request` and `services` with separate `let`s (each `match` handling its own failure and exiting), then a single parenthesised `match` on `select`. Do not nest parens three deep.
+- `included_by_filter` matches an exact directory, a basename, or a name — **never a subtree** — so `app/payments` selects nothing today.
+- A directory discovery did not recognise cannot be reached by any filter either (it lands in the scanner's `unexpected`), so workspace-wide `sol check` is the tool for that case.
+- Nothing documented depends on the positional forms: the only same-shaped invocations in CI, README, TUTORIAL and DOGFOOD are `sol deploy <target>`, which is `--target`.
 
-**2. Replace `filter_path` in the deploy path.** `sol up` and `Sol_cli_factory.run` thread a path prefix; a resolved scope should select the units instead, with the path argument retained as the escape hatch. This is where criterion 4's fail-closed behaviour matters most: an unmatched selection currently deploys nothing, quietly.
+So they buy compatibility with undocumented behaviour, in exchange for an argument meaning "maybe a name, maybe a normalised name, maybe a directory". That is the overload this project has spent its time removing elsewhere, and now is when it is cheapest to remove.
 
-**3. Record the scope with the deployment** and show it in `--emit-plan-to` output, so "what was deployed" has an answer that survives the command (FEAT-061's criterion 3). The plan already carries per-service detail, so this is a field plus its JSON, not a new shape.
+## Scope
 
-**4. The independence tests** (FEAT-061's criterion 2) — selecting a scope must not affect the resolved destination and vice versa — which cannot be written meaningfully until FEAT-063 threads the destination through. Do them together or in that order.
+**1. One resolver, returning a typed selection error.**
 
-**5. The projection onto `sol open`'s addressing**, documented where both types are visible: service → `domain/service`, worker/function → their `domain/service` naming, workspace → workspace. `open`'s scope has no worker or function case because telemetry naming collapses them, which is exactly why these are two types with a projection rather than one type.
+```ocaml
+resolve
+  :  ?what:string
+  -> request
+  -> Sol_cli_manifest.service list
+  -> (named list, selection_error) result
+```
+
+with `named = { domain; name; primitive; dir }` from discovery. Two failures, both raised *before* any command logic runs:
+
+```
+scope "payments/foo" matches no workload
+  available in payments: charge_svc, refund_worker
+
+"app/payments/foo" is not a discovered Sol workload directory
+```
+
+The second only matters if any path form survives (see 4). Today's `no Sol workloads found with a Dockerfile` is a *check finding* (`sol_cli_check.ml:84`); it becomes unreachable once selection cannot be reached with a bad selector.
+
+**2. Delete `filter_path`.** It is not a `sol check` detail: `cmd_up.ml` threads it into `discover_services` (:235) and the factory (:247), and `check_contract` (:54) passes it onward. `discover_services` should stop taking a user-supplied string at all — a scope resolves to workloads, and commands receive those.
+
+**3. Move `-` → `_` normalisation into the resolver.** `normalize_filter` does it in the *filter* today, which is why `charge-svc` works positionally and fails under `--scope`. The logical selector is where it belongs: the hyphenated spelling is what a user sees in the cluster, while the canonical internal form is the repository name.
+
+**4. No positional workload selector.** `sol check charge_svc` becomes an unknown argument. Decide during implementation whether a stray positional gets cmdliner's generic error or a rejected-argument message pointing at `--scope` — the latter teaches, but keeps a vestigial argument alive for one release.
+
+**5. `--scope` on every command that can meaningfully operate on a subset** — not on every command for uniformity's sake. `check`, `up`, `deploy`, `status`, `logs` and `rollback` qualify; omission means workspace-wide where that is today's behaviour. `sol status` selects everything unconditionally (`filter_path:None`), so it needs this as much as the others.
+
+**6. After selection, commands never see a selector again.** From `named` onward, `check`, the plan, the apply and the diagnostics take the same input, so no two commands can disagree about what a name means.
+
+**7. Record the resolved scope in the emitted plan**, so "what was deployed" survives the command (FEAT-061's criterion 3, moved here).
+
+**8. Demo and docs follow**, per the repo's convention: the TUTORIAL's local sections, the CI smoke, and `sol check --help`.
 
 ## Acceptance criteria
 
-- `sol check --scope payments/charge_svc` checks that unit, and `--scope logistics` fails closed naming what exists.
-- The path argument keeps working unchanged, and the two are separate arguments rather than one that guesses.
-- The deploy path selects by scope, and an unmatched scope fails closed before anything is applied.
-- The resolved scope appears in the emitted plan.
-- The projection onto `sol open`'s scope is implemented and documented where both types are visible.
+- `--scope payments` resolves a domain; `--scope payments/charge_svc` resolves a unit; `--scope payments/charge-svc` resolves the same unit.
+- Unknown domain and unknown unit each fail closed with a typed selection error naming what exists.
+- No `filter_path` remains in `sol_cli_manifest`, `sol_cli_check` or any command, and no positional workload selector remains.
+- Every scope-aware command uses the same resolver — asserted by a test, not by inspection.
+- A bad selector fails before check or deploy logic runs, so no command can report a downstream cause for it.
+- `sol check` with no `--scope` still covers the whole workspace.
+- FEAT-061's independence tests with the destination (its criterion 2) are written once FEAT-063 threads it.
 
 ## Notes
 
-Split from FEAT-061 rather than left half-built: the vocabulary is complete and tested, and this is the consumer work. It is deliberately not a "part 2" of an unfinished branch — the branch is ready to merge as the vocabulary, and this ticket takes it from there.
+Sequencing: this is the strict-selection half of the scope work. FEAT-061 landed the vocabulary and its first consumer with the escape hatch still present; this ticket removes the rest, and the argument for doing it now is the whole ticket — once something depends on the positional forms, deleting them becomes a compatibility negotiation instead of a cleanup.
