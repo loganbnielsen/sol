@@ -61,3 +61,21 @@ and, importantly, the reverse: changing destinations must not change what gets d
 ## Notes
 
 Not a prerequisite for FEAT-059 — destinations can be made explicit while scope stays a filter. But it is a prerequisite for a coherent answer to DEC-018, and the vocabulary is easier to introduce before the platform depends on the current one.
+
+## Finding before implementation (2026-09-11) — the reuse this ticket proposes does not fit
+
+This ticket says `sol open` "parses exactly this granularity" and that the fix is likely to reuse `parse_scope`. Checked first, as the ticket asks, and the assumption does not hold:
+
+- `Sol_cli_open.parse_scope` returns `Workspace | Domain of string | Service of (domain, service) | Resource of (type, name)`. That is **dashboard and log addressing**, keyed by namespace segments. There is no worker case and no function case — a worker's telemetry is addressed by the same `domain/service` pair a service uses, because the naming collapses them.
+- The deploy path's unit is a **primitive with a kind**, and it is selected by **directory prefix** (`Sol_cli_manifest.included_by_filter`, fed by `filter_path`). So "deploy the payments worker" has no expression today, in either vocabulary.
+
+So `deployment_scope` is not a second name for `open`'s scope, and reusing it verbatim would be wrong — but inventing a third vocabulary is the outcome this ticket itself calls worse than one. Two honest shapes:
+
+1. **Scope is a named unit** — `Service of "payments/charge_svc" | Worker of … | Function of … | Workspace` — resolved against discovery, with a documented *projection* onto `open`'s scope for observability (service → `domain/service`; worker and function → their `domain/service` naming; workspace → workspace). Paths stop being the identity; `--filter` stays as the explicit "these two directories" escape hatch.
+2. **Scope is a resolved path set** — keep paths as the identity but make resolution first-class and typed (workspace | named unit | explicit paths), with name → path resolution as the new part.
+
+Both could satisfy the criteria, but they differ in what "a release" means, which is the thing DEC-018 needs. (1) is what this ticket's own example implies (`sol deploy charge-svc`), and it is what makes rollback's unit of restoration well defined. Its cost is a name index over discovery plus one decision: whether a name is the service *name* or its `domain/service` path — the codebase uses both, and `sol open` already accepts `domain/service`.
+
+**Recommendation: (1)**, spelling scope the way `sol open` already spells it (`domain` or `domain/service`) for services and adding an explicit kind, so there is one vocabulary with two projections rather than two vocabularies.
+
+**Not implemented yet, deliberately.** The type is easy; the decision above determines whether it is built on paths or replaces them, and that is not something to guess at — this ticket exists because conflating two axes cost a review cycle already.
