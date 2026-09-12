@@ -50,18 +50,11 @@ The second only matters if any path form survives (see 4). Today's `no Sol workl
 
 **3. Move `-` → `_` normalisation into the resolver.** `normalize_filter` does it in the *filter* today, which is why `charge-svc` works positionally and fails under `--scope`. The logical selector is where it belongs: the hyphenated spelling is what a user sees in the cluster, while the canonical internal form is the repository name.
 
-**4. No positional workload selector — and the failure teaches.** A stray positional is *rejected with a message naming the grammar*, not cmdliner's generic "unknown argument":
+**4. Delete the positional argument outright — no rejection shim, no teaching branch.** `sol check charge_svc` fails through cmdliner as an unexpected positional, and the teaching happens in the grammar the command already publishes: cmdliner prints its usage line on a parse error, so `--scope DOMAIN[/UNIT]` with a clear `docv` and a "Workload selection" man section is where a user learns the valid form.
 
-```
-error: unexpected positional argument 'charge_svc'
+**Checked rather than assumed**, because the choice hinged on it: cmdliner exposes no `hidden` option for arguments, and an optional positional *is* advertised in usage — `sol check --help` already shows `[PATH]` today. There is also no `Cmd.eval`-style variant that hands back the parse error to reword. So a rejection shim would not be invisible: it would put a permanent `[ARG]` in the command's public usage line, i.e. it would *add* invalid grammar to the surface in order to produce a nicer sentence for it.
 
-Workloads are selected with --scope <domain>[/<unit>].
-```
-
-Two rules keep this from becoming the compatibility alias it is meant to replace:
-
-- **The message never guesses the value.** No "did you mean `--scope payments/charge_svc`?": the domain cannot be inferred from a lone basename, and guessing is how an alias starts living inside an error path.
-- **The rejection is asserted by a test.** The positional is a shim that must *fail*; without a test, a later "helpful" change could make it work and nobody would notice that `--scope` stopped being the only selector. Its cost is that the argument still appears in the command's usage line for one release, so it should be marked as rejected there and deleted afterwards.
+The principle, since this is the second time it has come up: **teach through errors when the invalid input belongs to a real, supported grammar; do not add invalid grammar solely to produce a teaching error.** A removed positional is not part of Sol's grammar any more, and nothing documented or deployed depends on it, so there is no migration story that would justify the shim — "one release" was a period measured against users who do not exist.
 
 **5. `--scope` on every command that can meaningfully operate on a subset** — not on every command for uniformity's sake. `check`, `up`, `deploy`, `status`, `logs` and `rollback` qualify; omission means workspace-wide where that is today's behaviour. `sol status` selects everything unconditionally (`filter_path:None`), so it needs this as much as the others.
 
