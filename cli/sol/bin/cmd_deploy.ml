@@ -117,6 +117,7 @@ type deploy_context =
   ; resolved_config : Sol_cli_config.t
   ; services : Sol_cli_manifest.service list
   ; requested_scope : string
+  ; run_log : Sol_cli_run_log.t
   }
 
 let print_header ~workspace ~sha ?mode_line () =
@@ -210,17 +211,23 @@ let print_planned_services plan =
     plan.Sol_cli_deployment_plan.services
 ;;
 
-let run_plan_or_exit ~workspace ~target_env ~mode ~secret_backend plan =
-  try
-    match
-      Sol_cli_factory.execute ~workspace ~env:target_env ~mode ~secret_backend plan
-    with
-    | Ok rs -> rs
-    | Error msg ->
-      Printf.eprintf "\nerror: %s\n" msg;
-      exit 1
+let record_plan run_log plan =
+  Sol_cli_run_log.append_phase_log
+    run_log
+    ~phase:"plan"
+    (Format.asprintf "%a" Sol_cli_deployment_plan.pp_summary plan)
+;;
+
+let run_plan ~run_log ~phase ~workspace ~target_env ~mode ~secret_backend plan =
+  match
+    Sol_cli_run_log.run_task run_log ~name:phase (fun () ->
+      try
+        Sol_cli_factory.execute ~workspace ~env:target_env ~mode ~secret_backend plan
+      with
+      | Deploy_failed msg -> Error msg)
   with
-  | Deploy_failed msg ->
+  | Ok rs -> rs
+  | Error msg ->
     Printf.eprintf "\nerror: %s\n" msg;
     exit 1
 ;;
@@ -230,8 +237,11 @@ let run_dry_run ctx ~emit_to =
   let plan = build_plan ctx ~emit_to in
   write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
   print_planned_services plan;
+  record_plan ctx.run_log plan;
   ignore
-    (run_plan_or_exit
+    (run_plan
+       ~run_log:ctx.run_log
+       ~phase:"dry-run"
        ~workspace:ctx.workspace
        ~target_env:ctx.target_cfg.Sol_cli_config.env
        ~mode:Sol_cli_executor.Dry_run
@@ -248,8 +258,11 @@ let run_emit ctx ~dir =
   let plan = build_plan ctx ~emit_to:(Some dir) in
   write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
   print_planned_services plan;
+  record_plan ctx.run_log plan;
   let results =
-    run_plan_or_exit
+    run_plan
+      ~run_log:ctx.run_log
+      ~phase:"emit"
       ~workspace:ctx.workspace
       ~target_env:ctx.target_cfg.Sol_cli_config.env
       ~mode:(Sol_cli_executor.Emit_to dir)
@@ -308,8 +321,11 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
   check_consumer_group_changes ~workspace:ctx.workspace ~confirm_group_change plan;
   write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
   print_planned_services plan;
+  record_plan ctx.run_log plan;
   let results =
-    run_plan_or_exit
+    run_plan
+      ~run_log:ctx.run_log
+      ~phase:"apply"
       ~workspace:ctx.workspace
       ~target_env
       ~mode:Sol_cli_executor.Apply
@@ -406,6 +422,11 @@ let run (req : Sol_cli_command_request.deploy_request) =
   then (
     Printf.eprintf "No services found in app/ with a Dockerfile.\n";
     exit 1);
+  let run_log = Sol_cli_run_log.create ~prefix:"deploy" () in
+  Printf.printf
+    "\nRun: %s\n  log: %s/\n"
+    (Sol_cli_run_log.run_id run_log)
+    (Sol_cli_run_log.dir run_log);
   let ctx =
     { workspace
     ; sha
@@ -416,6 +437,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
     ; resolved_config
     ; services
     ; requested_scope
+    ; run_log
     }
   in
   match req.action with

@@ -104,10 +104,8 @@ let check_consumer_group_changes ~workspace ~confirm_group_change plan =
 let prepare_context ~repo_root =
   Printf.printf "Preparing build context...\n%!";
   match Sol_cli_up_execution.prepare_build_context ~repo_root with
-  | Ok ctx_dir -> ctx_dir
-  | Error msg ->
-    Printf.eprintf "error: %s\n" msg;
-    exit 1
+  | Ok ctx_dir -> Ok ctx_dir
+  | Error msg -> Error msg
 ;;
 
 let to_manifest_primitive = Sol_cli_up_execution.manifest_primitive
@@ -192,30 +190,67 @@ let apply_service
     Printf.printf "\n%!"
 ;;
 
-let run_dry_run ~requested_scope ~workspace ~sha ~services =
-  print_header ~workspace ~sha ~dry_run:true;
-  let plan = build_plan ~requested_scope ~workspace ~sha ~services in
-  List.iter (dry_run_service ~workspace ~sha) plan.Sol_cli_deployment_plan.services
+let record_plan run_log plan =
+  Sol_cli_run_log.append_phase_log
+    run_log
+    ~phase:"plan"
+    (Format.asprintf "%a" Sol_cli_deployment_plan.pp_summary plan)
 ;;
 
-let run_apply ~requested_scope ~workspace ~sha ~services ~repo_root ~confirm_group_change =
+let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~services =
+  print_header ~workspace ~sha ~dry_run:true;
+  let plan = build_plan ~requested_scope ~workspace ~sha ~services in
+  record_plan run_log plan;
+  match
+    Sol_cli_run_log.run_task run_log ~name:"dry-run" (fun () ->
+      try
+        List.iter (dry_run_service ~workspace ~sha) plan.Sol_cli_deployment_plan.services;
+        Ok ()
+      with
+      | Deploy_failed msg -> Error msg)
+  with
+  | Ok () -> ()
+  | Error msg ->
+    Printf.eprintf "\nerror: %s\n" msg;
+    exit 1
+;;
+
+let run_apply
+      ~run_log
+      ~requested_scope
+      ~workspace
+      ~sha
+      ~services
+      ~repo_root
+      ~confirm_group_change
+  =
   check_contract ~services;
   ensure_postgres_url ();
   print_header ~workspace ~sha ~dry_run:false;
   let plan = build_plan ~requested_scope ~workspace ~sha ~services in
   check_consumer_group_changes ~workspace ~confirm_group_change plan;
+  record_plan run_log plan;
   let pf_failed = ref false in
-  let ctx_dir = prepare_context ~repo_root in
-  (try
-     List.iter
-       (apply_service ~workspace ~ctx_dir ~sha ~pf_failed)
-       plan.Sol_cli_deployment_plan.services
+  (match
+     Sol_cli_run_log.run_task run_log ~name:"apply" (fun () ->
+       match prepare_context ~repo_root with
+       | Error msg -> Error msg
+       | Ok ctx_dir ->
+         (try
+            List.iter
+              (apply_service ~workspace ~ctx_dir ~sha ~pf_failed)
+              plan.Sol_cli_deployment_plan.services;
+            Sol_cli_up_execution.remove_build_context ~ctx_dir;
+            Ok ()
+          with
+          | Deploy_failed msg ->
+            Sol_cli_up_execution.remove_build_context ~ctx_dir;
+            Error msg))
    with
-   | Deploy_failed msg ->
-     Sol_cli_up_execution.remove_build_context ~ctx_dir;
+   | Ok () -> ()
+   | Error msg ->
      Printf.eprintf "\nerror: %s\n" msg;
      exit 1);
-  Sol_cli_up_execution.remove_build_context ~ctx_dir;
   let summary = Sol_cli_up_execution.post_deploy_summary ~cwd:(Sys.getcwd ()) plan in
   Printf.printf "Done. %d service(s) deployed.\n" summary.deployed_count;
   Printf.printf "Run 'sol status' to check pod health.\n";
@@ -248,12 +283,18 @@ let run (req : Sol_cli_command_request.up_request) =
   then (
     Printf.eprintf "No services found in app/ with a Dockerfile.\n";
     exit 1);
+  let run_log = Sol_cli_run_log.create ~prefix:"up" () in
+  Printf.printf
+    "\nRun: %s\n  log: %s/\n"
+    (Sol_cli_run_log.run_id run_log)
+    (Sol_cli_run_log.dir run_log);
   match req.mode with
   | Sol_cli_command_request.Dry_run ->
-    run_dry_run ~requested_scope ~workspace ~sha ~services
+    run_dry_run ~run_log ~requested_scope ~workspace ~sha ~services
   | Apply ->
     let repo_root = find_repo_root () in
     run_apply
+      ~run_log
       ~requested_scope
       ~workspace
       ~sha
