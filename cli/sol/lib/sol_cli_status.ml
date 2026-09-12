@@ -90,7 +90,7 @@ let signal_flag = function
 
 (* Matches cli/platform/infra/base/main.tf's monitoring namespace and the
    loki/prometheus-community chart service names (also mirrored by
-   `sol dev up`'s local port-forwards in cmd_dev.ml). *)
+   `sol dev up`'s local port-forwards in cmd_local.ml). *)
 let signal_port_forward = function
   | Loki -> "kubectl port-forward -n monitoring svc/loki 3100:3100"
   | Prometheus -> "kubectl port-forward -n monitoring svc/prometheus-server 9090:80"
