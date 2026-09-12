@@ -36,3 +36,17 @@ One implementation of the signal/self-pipe handling, called by all three primiti
 - No primitive contains an independent self-pipe body; the REFAC-043 acceptance grep holds.
 - `dune build framework/` and `dune test framework/` pass.
 - A check (test or CI grep) fails if the duplication returns.
+
+## Finding before implementation (2026-09-11): the shared *home* is an unmade decision
+
+The duplication is confirmed — `install_signal_handler` exists in `sol-svc`, `sol-worker` and `sol-fn`, and the self-pipe shape is identical (a byte written from the signal handler, an Eio fiber awaiting readability on the read end, resolving a stop promise the consumer checks at a message boundary so the in-flight message finishes).
+
+What this ticket did not settle is **where the extracted version lives**, and the tree does not answer it:
+
+- All three primitives already depend on **`sol_obs`** — but that package is observability (metrics, logs, traces), and a shutdown handler is not observation. Putting it there would be a naming lie that outlives the convenience.
+- **`sol_env`** is the existing shared package, but it is `(modules_without_implementation sol_env)` — an interface package by design. Adding an implementation changes what it is.
+- A new package (`sol-runtime`) is the conceptually clean home, and it is a **packaging** change: opam metadata plus the release and publish path, not a refactor.
+
+So this ticket is gated on one decision: *which package owns shared runtime behaviour that is neither observability nor an interface?* My recommendation is the new package, taken deliberately rather than as a drive-by, because this will not be the last such piece — the same question recurs for anything a service and a worker both need.
+
+**The extraction is also not purely mechanical.** The three copies differ in their surrounding control flow (`Eio.Switch.run` in one, the consumer's own loop in another), so the shared signature has to be chosen by what all three can call — and the tests should assert the shutdown *behaviour* (the promise resolves, the in-flight message completes) rather than the helper's internals, or the refactor will be verified by nothing.
