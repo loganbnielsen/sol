@@ -86,10 +86,42 @@ let sanitize_label (s : string) : string =
   if trimmed = "" then "none" else trimmed
 ;;
 
+(* A Kubernetes object *name* (RFC 1123 subdomain) is stricter than a label
+   value: lowercase alphanumerics, '-' and '.', and it must start and end
+   alphanumerically — so '_' is allowed in a label value but NOT in a name.
+   Workspaces like [ci_smoke] are ordinary, so the pointer name must not reuse
+   [sanitize_label]. *)
+let sanitize_name (s : string) : string =
+  let buf = Buffer.create (String.length s) in
+  String.iter
+    (fun c ->
+       match c with
+       | 'a' .. 'z' | '0' .. '9' | '-' | '.' -> Buffer.add_char buf c
+       | 'A' .. 'Z' -> Buffer.add_char buf (Char.lowercase_ascii c)
+       | _ -> Buffer.add_char buf '-')
+    s;
+  let out = Buffer.contents buf in
+  let out = if String.length out > 253 then String.sub out 0 253 else out in
+  let alnum c = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') in
+  let len = String.length out in
+  let start = ref 0 in
+  while !start < len && not (alnum out.[!start]) do
+    incr start
+  done;
+  let stop = ref (len - 1) in
+  while !stop >= !start && not (alnum out.[!stop]) do
+    decr stop
+  done;
+  let trimmed =
+    if !stop < !start then "" else String.sub out !start (!stop - !start + 1)
+  in
+  if trimmed = "" then "none" else trimmed
+;;
+
 let configmap_name (t : t) : string = Printf.sprintf "sol-release-%s" t.release_id
 
 let current_configmap_name ~(workspace : string) : string =
-  Printf.sprintf "sol-release-current-%s" (sanitize_label workspace)
+  Printf.sprintf "sol-release-current-%s" (sanitize_name workspace)
 ;;
 
 let of_plan

@@ -335,12 +335,12 @@ jobs:
             echo "::error::FEAT-067: sol up recorded no release"
             exit 1
           fi
-          release_cm=$(kubectl -n default get configmap -l sol.dev/type=release -o jsonpath='{.items[0].metadata.name}')
+          release_cm=$(kubectl -n default get configmap -l sol.dev/type=release -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
           if [ -z "$release_cm" ]; then
             echo "::error::FEAT-067: no release ConfigMap in the cluster"
             exit 1
           fi
-          pointer=$(kubectl -n default get configmap sol-release-current-ci_smoke -o jsonpath='{.data.release_id}')
+          pointer=$(kubectl -n default get configmap sol-release-current-ci_smoke -o jsonpath='{.data.release_id}' 2>/dev/null || true)
           if [ -z "$pointer" ]; then
             echo "::error::FEAT-067: current-release pointer is missing or empty"
             exit 1

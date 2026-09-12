@@ -30,6 +30,14 @@ let test_sanitize_label () =
   check_string "all separators collapses to none" "none" (R.sanitize_label "///")
 ;;
 
+(* The CI golden path's workspace is [ci_smoke] — a name must not keep the '_'. *)
+let test_sanitize_name () =
+  check_string "underscore is illegal in a name" "ci-smoke" (R.sanitize_name "ci_smoke");
+  check_string "dot survives" "a.b" (R.sanitize_name "a.b");
+  check_string "leading/trailing separators trimmed" "abc" (R.sanitize_name "-abc-");
+  check_string "nothing usable collapses to none" "none" (R.sanitize_name "___")
+;;
+
 (* ── record shape ────────────────────────────────────────────────────────── *)
 
 let sample_record : R.t =
@@ -100,6 +108,10 @@ let test_current_pointer_names_release () =
     "name"
     "sol-release-current-myworkspace"
     (member "metadata" json |> member "name" |> to_string);
+  check_string
+    "underscore workspace yields a valid name"
+    "sol-release-current-ci-smoke"
+    (R.current_configmap_name ~workspace:"ci_smoke");
   check_string
     "points at the release"
     (R.configmap_name sample_record)
@@ -222,6 +234,7 @@ let () =
       , [ Alcotest.test_case "format" `Quick test_release_id_format
         ; Alcotest.test_case "rfc3339 utc" `Quick test_rfc3339
         ; Alcotest.test_case "label sanitization" `Quick test_sanitize_label
+        ; Alcotest.test_case "name sanitization" `Quick test_sanitize_name
         ] )
     ; ( "record"
       , [ Alcotest.test_case "json round trip" `Quick test_json_round_trip
