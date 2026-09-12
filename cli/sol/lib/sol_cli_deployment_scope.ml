@@ -1,4 +1,4 @@
-(* FEAT-061: deployment scope as a first-class, *named* value.
+(* FEAT-061 / FEAT-064: deployment scope as a first-class, *named* value.
 
    Scope answers WHAT a release contains. It deliberately says nothing about
    WHERE that release goes — that is the destination (FEAT-059) — and the two
@@ -6,23 +6,16 @@
    targets, or a kubectl helper that knows which service it deploys, has already
    conflated them.
 
-   A scope is a name, not a path. Discovery still walks directories, and the
-   positional path argument stays as an explicit escape hatch for "these
-   directories", but the identity of a release is the unit it names. That is
-   what DEC-018 needs: rolling back a service and rolling back a workspace are
-   different operations with different blast radius, and a path prefix cannot
-   tell them apart.
-
-   The *kind* of a unit is not something the user states. Whether
-   `payments/charge_svc` is a service, a worker or a function is a property of
-   what discovery found, so a request carries a name and resolution supplies the
-   kind — asking the user would be asking them to remember the filesystem. *)
+   A scope is a name, not a path: the identity of a release is the unit it names,
+   which is what DEC-018 needs to restore one. The *kind* of a unit is not
+   something the user states — whether `payments/charge_svc` is a service, a
+   worker or a function is a property of what discovery found, so a request
+   carries a name and resolution supplies the kind. *)
 
 type kind =
   | Service
   | Worker
   | Function
-;;
 
 let kind_to_string = function
   | Service -> "service"
@@ -44,7 +37,6 @@ type t =
       ; name : string
       ; kind : kind
       }
-;;
 
 let to_string = function
   | Workspace -> "workspace"
@@ -57,11 +49,11 @@ type request =
   | Whole_workspace
   | Whole_domain of string
   | Unit_named of string * string
-;;
 
 (* Absent means the whole workspace, which is what it means today — in both
    `sol check` and `sol open` — so the vocabulary preserves it rather than
-   inventing a new default. *)
+   inventing a new default. A three-segment value is rejected: it is a *path*,
+   and a path is not a name. *)
 let parse_request ?(what = "scope") value =
   let trimmed = String.trim (Option.value value ~default:"") in
   if trimmed = ""
@@ -79,22 +71,23 @@ let parse_request ?(what = "scope") value =
            trimmed))
 ;;
 
-(* A unit as discovery reports it: the shape resolution actually needs, kept
-   separate from [service_spec] so the resolution logic can be tested without
-   constructing a 24-field record. *)
+(* A unit as discovery reports it. Kept separate from [service_spec] and from
+   [Sol_cli_manifest.service] so resolution is testable without constructing
+   either record, and so neither record becomes the centre of the design. *)
 type named =
   { domain : string
   ; name : string
   ; kind : kind
   }
-;;
 
-let named_of_spec (spec : Sol_cli_deployment_plan.service_spec) =
-  { domain = spec.domain
-  ; name = spec.source_name
-  ; kind = kind_of_primitive spec.primitive
-  }
-;;
+(* Whether the request matched anything. Deliberately neutral: the resolver
+   answers "what matched", and whether zero matches is *meaningful* is the calling
+   command's policy — `check` and `status` accept an empty workspace, while `up`,
+   `deploy` and `rollback` must not (FEAT-064). Encoding that policy here would
+   make the selector know what its caller intends to do with the answer. *)
+type selection =
+  | Selected of named list
+  | Empty
 
 let domains_of units =
   units |> List.map (fun unit -> unit.domain) |> List.sort_uniq String.compare
@@ -111,34 +104,50 @@ let or_none = function
   | values -> String.concat ", " values
 ;;
 
-(* [select_named ~what request units] resolves a request against what discovery
-   found, and fails closed naming the available units when it names something
-   that does not exist. That failure mode is half the point of this module:
-   today an unmatched filter selects nothing and the command proceeds to deploy
-   nothing, quietly. *)
-let select_named ?(what = "scope") request units =
+(* The repository name is canonical: discovery derives it from the directory, and
+   `charge-svc` is merely what a user sees in the cluster. Normalising on the way
+   in lets the hyphenated spelling resolve to the same unit without either
+   spelling becoming a second identity — the resolved scope always carries the
+   discovered name. *)
+let normalize_name =
+  String.map (function
+    | '-' -> '_'
+    | c -> c)
+;;
+
+let equal_name a b = String.equal (normalize_name a) (normalize_name b)
+
+(* [resolve ~what request units] resolves a request against what discovery found,
+   and fails closed naming what exists when it names something that does not.
+   That failure mode is half the point of this module: an unmatched selection must
+   not be able to proceed as though it had matched nothing on purpose. *)
+let resolve ?(what = "scope") request units =
   match request with
-  | Whole_workspace -> Ok (Workspace, units)
+  | Whole_workspace -> Ok (Workspace, if units = [] then Empty else Selected units)
   | Whole_domain domain ->
-    let selected = List.filter (fun unit -> String.equal unit.domain domain) units in
+    let selected = List.filter (fun unit -> equal_name unit.domain domain) units in
     if selected = []
     then
       Error
         (Printf.sprintf
-           "%s %S matches no units; domains with units: %s"
+           "%s %S matches no workload; domains with units: %s"
            what
            domain
            (or_none (domains_of units)))
-    else Ok (Domain domain, selected)
+    else Ok (Domain domain, Selected selected)
   | Unit_named (domain, name) ->
     (match
        List.find_opt
-         (fun unit -> String.equal unit.domain domain && String.equal unit.name name)
+         (fun unit -> equal_name unit.domain domain && equal_name unit.name name)
          units
      with
-     | Some unit -> Ok (Unit { domain; name; kind = unit.kind }, [ unit ])
+     | Some unit ->
+       (* Canonical, from discovery — not the spelling that was typed. *)
+       Ok
+         ( Unit { domain = unit.domain; name = unit.name; kind = unit.kind }
+         , Selected [ unit ] )
      | None ->
-       let in_domain = List.filter (fun unit -> String.equal unit.domain domain) units in
+       let in_domain = List.filter (fun unit -> equal_name unit.domain domain) units in
        Error
          (Printf.sprintf
             "%s %S matches no unit; units under %S: %s; domains with units: %s"
@@ -147,15 +156,4 @@ let select_named ?(what = "scope") request units =
             domain
             (or_none (unit_names_of in_domain))
             (or_none (domains_of units))))
-;;
-
-let select ?what request specs =
-  let units = List.map named_of_spec specs in
-  match select_named ?what request units with
-  | Error _ as error -> error
-  | Ok (scope, selected) ->
-    let matches unit (spec : Sol_cli_deployment_plan.service_spec) =
-      String.equal unit.domain spec.domain && String.equal unit.name spec.source_name
-    in
-    Ok (scope, List.filter (fun spec -> List.exists (fun unit -> matches unit spec) selected) specs)
 ;;
