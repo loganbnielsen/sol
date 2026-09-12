@@ -326,6 +326,31 @@ jobs:
           done
           echo "declared service-call wiring (env + NetworkPolicy pair) applied OK"
 
+          # FEAT-067: a successful deploy must leave a release record — listed by
+          # `sol releases`, pointed at by the current-release object, and not
+          # editable in place.
+          sol releases > "$GITHUB_WORKSPACE/releases.txt"
+          grep -F 'COMMIT' "$GITHUB_WORKSPACE/releases.txt" >/dev/null
+          if [ "$(wc -l < "$GITHUB_WORKSPACE/releases.txt")" -lt 2 ]; then
+            echo "::error::FEAT-067: sol up recorded no release"
+            exit 1
+          fi
+          release_cm=$(kubectl -n default get configmap -l sol.dev/type=release -o jsonpath='{.items[0].metadata.name}')
+          if [ -z "$release_cm" ]; then
+            echo "::error::FEAT-067: no release ConfigMap in the cluster"
+            exit 1
+          fi
+          pointer=$(kubectl -n default get configmap sol-release-current-ci_smoke -o jsonpath='{.data.release_id}')
+          if [ -z "$pointer" ]; then
+            echo "::error::FEAT-067: current-release pointer is missing or empty"
+            exit 1
+          fi
+          if kubectl -n default patch configmap "$release_cm" -p '{"data":{"tampered":"1"}}' >/dev/null 2>&1; then
+            echo "::error::FEAT-067: release ConfigMap was edited in place (immutable: true not honoured)"
+            exit 1
+          fi
+          echo "release record written, listed and immutable OK"
+
       # `sol up` blocks on an un-timed-out `kubectl rollout status`
       # internally, so a crash-looping pod (this job's whole reason to
       # exist — see FRIC-007) makes the step above hang until GitHub

@@ -117,6 +117,7 @@ type deploy_context =
   ; resolved_config : Sol_cli_config.t
   ; services : Sol_cli_manifest.service list
   ; requested_scope : string
+  ; target_name : string
   ; run_log : Sol_cli_run_log.t
   }
 
@@ -353,6 +354,17 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
              Sol_cli_plan_ids.Consumer_group.to_string
              plan.Sol_cli_deployment_plan.consumer_groups
        });
+  (* FEAT-067: record the release after a successful apply. Non-fatal on
+     failure: the deploy happened, and the record is for later. *)
+  (match
+     Sol_cli_release_store.record_plan
+       ~workspace:ctx.workspace
+       ~target:ctx.target_name
+       ~mode:"deploy"
+       plan
+   with
+   | Ok () -> ()
+   | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);
   push_deploy_events
     ~workspace:ctx.workspace
     ~target_cfg:ctx.target_cfg
@@ -437,6 +449,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
     ; resolved_config
     ; services
     ; requested_scope
+    ; target_name = req.target
     ; run_log
     }
   in

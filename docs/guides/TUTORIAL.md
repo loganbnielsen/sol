@@ -559,6 +559,7 @@ sol up [--scope DOMAIN[/UNIT]] [--dry-run] [--tag]  build images and deploy to l
 sol deploy TARGET [--scope DOMAIN[/UNIT]] [--image-tag TAG] [--registry URL]  deploy pre-built images (CI mode)
 sol deploy TARGET --emit-to DIR [--image-tag TAG] ...  write YAML for Argo CD (GitOps mode)
 sol status [domain]                               show running pods and port-forward hints
+sol releases                                     list this workspace's recorded releases (id, commit, scope, time)
 
 sol migrate [apply]                               apply pending migrations
 sol migrate status                                show per-file applied/pending table
@@ -668,6 +669,8 @@ If a deploy introduces a regression, `sol rollback --scope <domain>[/<unit>]` ro
 For services using a standard `Deployment` (no `[infra.rollout]` in `sol.toml`), this calls `kubectl rollout undo deployment/<name>`. For services configured with `[infra.rollout]` (Argo Rollouts), `sol rollback` automatically calls `kubectl argo rollouts undo <name>` instead. This requires the [Argo Rollouts kubectl plugin](https://argoproj.github.io/argo-rollouts/installation/#kubectl-plugin); if the plugin is not installed, `sol rollback` prints the manual command and exits 1.
 
 To inspect what a running service is doing, `sol logs --scope <domain>/<unit>` streams live output directly from the cluster pod, following Sol's namespace convention automatically.
+
+Every `sol up` and `sol deploy` also records a release in the target's cluster: `sol releases` lists the recorded deploys (id, commit, requested scope, time, target). A record is an immutable Kubernetes ConfigMap, so history cannot be edited in place — it is what a later rollback will restore.
 
 ### Progressive delivery with Argo Rollouts
 

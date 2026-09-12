@@ -24,6 +24,7 @@
   test_rollout_diagnosis
   test_loki
   test_run_log
+  test_release
   test_observability_url
   test_target_report
   test_deploy_event

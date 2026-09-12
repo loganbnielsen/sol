@@ -23,6 +23,7 @@ let () =
       ; Cmd_rollback.cmd
       ; Cmd_secret.cmd
       ; Cmd_target.cmd
+      ; Cmd_releases.cmd
       ; Cmd_cloud.cmd
       ]
   in
