@@ -50,3 +50,13 @@ Unit suites: deployment_scope 12, check 6, config 49, factory 2; full unit suite
 ## Moved to FEAT-065
 
 Deleting `filter_path` everywhere, `--scope` on the remaining commands, the per-command empty policy for mutating commands, recording both the requested scope and the resolved workloads in the plan, and the projection into telemetry addressing. FEAT-065 also carries the invariant that governs them.
+
+## Completion notes
+
+Landed as one PR: the resolver and its first consumer. The narrow scope is deliberate — the cross-command migration is FEAT-065 — so "done" here means the resolver exists, canonicalises, and is used strictly by one command.
+
+**Three things worth recording beyond the criteria.**
+
+1. **The result type earned its place immediately.** Making it `Selected | Empty` produced `partial-match` errors in three tests until emptiness was handled explicitly, which is the compiler asking the design's own question — is zero matches meaningful *here*? `check` answers yes and says so in a comment; `up`, `deploy` and `rollback` answer no in FEAT-065.
+2. **Normalisation is input-only, and that was verified end to end rather than only in unit tests.** `payments/charge-svc` resolves, and the resolved scope carries `charge_svc`. Getting this wrong is invisible until two release records disagree about one workload's name.
+3. **The verification method matters, because two earlier attempts reported the opposite of the truth.** The CLI cases were run against the built binary directly. An earlier pass through `dune exec` reported parse failures for arguments that are valid — the wrapper had consumed `--scope` — and `rc=124` in a parse failure is cmdliner's CLI-error exit code, not a timeout. Worth knowing before anyone asserts on `124` in a test.
