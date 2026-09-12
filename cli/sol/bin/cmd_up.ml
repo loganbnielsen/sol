@@ -261,6 +261,14 @@ let run_apply
        Note: %d migration file(s) found in db/migrations/ — run 'sol migrate' to apply.\n"
       summary.pending_migrations;
   Sol_cli_up_execution.record_applied ~workspace ~sha plan;
+  (* FEAT-067: record the release after a successful apply. A failure to record
+     is reported, not fatal — the deploy really did happen, and pretending it
+     did not would be worse than a missing record. *)
+  (match
+     Sol_cli_release_store.record_plan ~workspace ~target:"local" ~mode:"local" plan
+   with
+   | Ok () -> ()
+   | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);
   if !pf_failed then exit 1
 ;;
 

@@ -22,6 +22,8 @@
   Sol_cli_kubernetes_name
   Sol_cli_deployment_plan
   Sol_cli_deployment_render
+  Sol_cli_release
+  Sol_cli_release_store
   Sol_cli_env_target
   Sol_cli_executor
   Sol_cli_up_execution
