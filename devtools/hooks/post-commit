@@ -12,8 +12,11 @@ PERF="$REPO_ROOT/cli/platform/local/scripts/perf.sh"
 
 [ -x "$PERF" ] || exit 0
 
-echo ""
-bash "$PERF" status
+# REFAC-085: only when a suite crossed its threshold. The gate lives in
+# pre-commit; this is meant to be a signal, and a signal that fires on every
+# commit is noise — the orphaned-worktree check below follows the same rule
+# (silent unless there is something to do).
+bash "$PERF" status --regressions-only
 
 # ── Orphaned worktree check ───────────────────────────────────────────────────
 # Warn if any git worktree corresponds to a ticket now in DONE/.
