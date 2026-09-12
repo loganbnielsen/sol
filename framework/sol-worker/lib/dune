@@ -9,4 +9,5 @@
   kafka_eio_service
   kafka-eio
   sol_env
-  sol_obs))
+  sol_obs
+  sol_runtime))

@@ -21,33 +21,8 @@ end
 
 (* ── Signal handling ────────────────────────────────────────────────────── *)
 
-(* Self-pipe trick: signal handler writes one byte to a non-blocking pipe;
-   an Eio fiber awaits the read end and resolves the stop promise. *)
-let install_signal_handler ~sw resolver =
-  let r, w = Unix.pipe ~cloexec:true () in
-  Unix.set_nonblock w;
-  let handle _ =
-    try ignore (Unix.single_write w (Bytes.make 1 '\x00') 0 1) with
-    | _ -> ()
-  in
-  Sys.set_signal Sys.sigterm (Sys.Signal_handle handle);
-  Sys.set_signal Sys.sigint (Sys.Signal_handle handle);
-  (* Daemon fiber: the switch cancels it once the body returns normally. *)
-  Eio.Fiber.fork_daemon ~sw (fun () ->
-    Fun.protect
-      ~finally:(fun () ->
-        Unix.close r;
-        try Unix.close w with
-        | _ -> ())
-      (fun () ->
-         Eio_unix.await_readable r;
-         let buf = Bytes.create 1 in
-         (try ignore (Unix.read r buf 0 1) with
-          | _ -> ());
-         (try Eio.Promise.resolve resolver () with
-          | _ -> ());
-         `Stop_daemon))
-;;
+(* The self-pipe handler lives in [Sol_runtime] (REFAC-081): the function, the
+   service and the worker all need the same shutdown contract. *)
 
 (* ── Make functor ───────────────────────────────────────────────────────── *)
 
@@ -122,7 +97,7 @@ module Make (F : FN) = struct
         | Some external_stop when Eio.Promise.is_resolved external_stop -> `Signalled
         | _ ->
           Eio.Switch.run (fun sw ->
-            install_signal_handler ~sw signal_stop_r;
+            Sol_runtime.install_signal_handler ~sw signal_stop_r;
             Eio.Fiber.first
               (fun () -> `Completed (run_body ()))
               (fun () ->
@@ -149,7 +124,7 @@ module Make (F : FN) = struct
          in
          let result =
            Eio.Switch.run (fun sw ->
-             install_signal_handler ~sw signal_stop_r;
+             Sol_runtime.install_signal_handler ~sw signal_stop_r;
              let runtime = Lambda_runtime.create ~net:env#net ~base in
              Eio.Fiber.first
                (fun () ->
