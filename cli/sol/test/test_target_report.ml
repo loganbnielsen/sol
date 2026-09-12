@@ -148,6 +148,25 @@ let () =
             "configured is not checked and hides the context"
             `Quick
             test_configured_is_not_checked_and_hides_the_context
+        ; Alcotest.test_case "the reason is filtered too" `Quick (fun () ->
+            (* kubectl quotes the context back — `error: context "X" does not
+               exist` — so filtering only the context field would satisfy the
+               masking rule in appearance while the reason leaked the name. *)
+            let reason = "error: context \"prod-us-east-1\" does not exist" in
+            let quiet =
+              Sol_cli_target_report.describe
+                ~verbose:false
+                (Unreachable ("prod-us-east-1", reason))
+            in
+            assert (contains ~needle:"does not exist" quiet);
+            assert (not (contains ~needle:"prod-us-east-1" quiet));
+            assert (contains ~needle:"<context>" quiet);
+            let loud =
+              Sol_cli_target_report.describe
+                ~verbose:true
+                (Unreachable ("prod-us-east-1", reason))
+            in
+            assert (contains ~needle:"prod-us-east-1" loud))
         ; Alcotest.test_case
             "verbose shows the context"
             `Quick

@@ -42,11 +42,18 @@ let print_available () =
 
 (* The only part that touches a cluster, and only when asked to.
 
-   [Sol_cli_kubectl.probe] answers yes/no and does not surface the reason, so the
-   message says what is known and names the command that would explain it,
-   rather than inventing a cause. The reason deliberately does not repeat the
-   context: the default rendering hides it, so an "unreachable" line that leaked
-   it would undo that rule through the back door. *)
+   [Sol_cli_kubectl.probe_result] keeps what kubectl said, so the reason is
+   reported rather than named as a command to run by hand. It is filtered by the
+   rendering layer when not verbose, because kubectl quotes the context back — an
+   "unreachable" line that leaked it would undo the masking rule through the back
+   door (REFAC-084). *)
+let first_line text =
+  (* kubectl's first line is the error; what follows is usually help text. *)
+  match String.split_on_char '\n' (String.trim text) with
+  | line :: _ -> String.trim line
+  | [] -> ""
+;;
+
 let kubernetes_status ~check (target : Sol_cli_config.target) =
   match Sol_cli_config.destination_of_target target with
   | Error _ -> Sol_cli_target_report.Not_configured
@@ -56,13 +63,14 @@ let kubernetes_status ~check (target : Sol_cli_config.target) =
     then Sol_cli_target_report.Configured context
     else (
       let args = Sol_cli_kube_destination.kubectl_args destination @ [ "cluster-info" ] in
-      if Sol_cli_kubectl.probe ~args
-      then Sol_cli_target_report.Reachable context
-      else
+      match Sol_cli_kubectl.probe_result ~args with
+      | Ok (0, _) -> Sol_cli_target_report.Reachable context
+      | Ok (_, reason) when String.trim reason <> "" ->
+        Sol_cli_target_report.Unreachable (context, first_line reason)
+      | Ok (code, _) ->
         Sol_cli_target_report.Unreachable
-          ( context
-          , "no response from the cluster; `sol target show --verbose` prints the \
-             context to probe by hand" ))
+          (context, Printf.sprintf "kubectl exited %d without saying why" code)
+      | Error message -> Sol_cli_target_report.Unreachable (context, message))
 ;;
 
 (* Positional, not labelled: cmdliner's [Term.const] applies its arguments in
