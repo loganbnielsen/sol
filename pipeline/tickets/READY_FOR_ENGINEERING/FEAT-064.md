@@ -50,24 +50,42 @@ The second only matters if any path form survives (see 4). Today's `no Sol workl
 
 **3. Move `-` → `_` normalisation into the resolver.** `normalize_filter` does it in the *filter* today, which is why `charge-svc` works positionally and fails under `--scope`. The logical selector is where it belongs: the hyphenated spelling is what a user sees in the cluster, while the canonical internal form is the repository name.
 
-**4. No positional workload selector.** `sol check charge_svc` becomes an unknown argument. Decide during implementation whether a stray positional gets cmdliner's generic error or a rejected-argument message pointing at `--scope` — the latter teaches, but keeps a vestigial argument alive for one release.
+**4. No positional workload selector — and the failure teaches.** A stray positional is *rejected with a message naming the grammar*, not cmdliner's generic "unknown argument":
+
+```
+error: unexpected positional argument 'charge_svc'
+
+Workloads are selected with --scope <domain>[/<unit>].
+```
+
+Two rules keep this from becoming the compatibility alias it is meant to replace:
+
+- **The message never guesses the value.** No "did you mean `--scope payments/charge_svc`?": the domain cannot be inferred from a lone basename, and guessing is how an alias starts living inside an error path.
+- **The rejection is asserted by a test.** The positional is a shim that must *fail*; without a test, a later "helpful" change could make it work and nobody would notice that `--scope` stopped being the only selector. Its cost is that the argument still appears in the command's usage line for one release, so it should be marked as rejected there and deleted afterwards.
 
 **5. `--scope` on every command that can meaningfully operate on a subset** — not on every command for uniformity's sake. `check`, `up`, `deploy`, `status`, `logs` and `rollback` qualify; omission means workspace-wide where that is today's behaviour. `sol status` selects everything unconditionally (`filter_path:None`), so it needs this as much as the others.
 
-**6. After selection, commands never see a selector again.** From `named` onward, `check`, the plan, the apply and the diagnostics take the same input, so no two commands can disagree about what a name means.
+**6. `logs` needs the projection this ticket's earlier draft dropped.** `sol logs` (and `sol open`) address telemetry through `Sol_cli_open.scope` — `Workspace | Domain | Service of (domain, service) | Resource of (type, name)` — a different vocabulary, keyed by namespace segments, with **no worker or function case** because telemetry naming collapses them. So `logs --scope payments/settle_worker` resolves a *deployment* unit that the telemetry side cannot address directly. That projection has to exist explicitly (worker and function → their `domain/service` naming), in one place, with a test — otherwise the two vocabularies drift and the failure looks like missing logs rather than a naming mismatch. `sol open` keeps its own argument; the projection is what the command uses internally.
 
-**7. Record the resolved scope in the emitted plan**, so "what was deployed" survives the command (FEAT-061's criterion 3, moved here).
+**7. After selection, commands never see a selector again.** From `named` onward, `check`, the plan, the apply and the diagnostics take the same input, so no two commands can disagree about what a name means.
 
-**8. Demo and docs follow**, per the repo's convention: the TUTORIAL's local sections, the CI smoke, and `sol check --help`.
+**8. Record both the requested scope and the resolved set in the emitted plan** (FEAT-061's criterion 3, moved here). The resolved `named` list answers "what was deployed"; the requested scope answers "what was *asked* for" — and it is the requested scope that defines the boundary of a release, which is what DEC-018 needs to restore one. Recording only the resolved set would leave rollback inferring the boundary from a service list.
+
+**9. Omitted scope in a mutating command is not a silent no-op.** `sol up` with no scope on a workspace that discovers nothing must fail ("no workloads discovered"), for the same reason the loose filter had to go: a selector that matches nothing must not look like success. Read-only commands can report an empty workspace and exit 0.
+
+**10. Demo and docs follow**, per the repo's convention: the TUTORIAL's local sections, the CI smoke, and `sol check --help`.
 
 ## Acceptance criteria
 
-- `--scope payments` resolves a domain; `--scope payments/charge_svc` resolves a unit; `--scope payments/charge-svc` resolves the same unit.
+- `--scope payments` resolves a domain; `--scope payments/charge_svc` and `--scope payments/charge-svc` resolve the **same** workload, with discovery's repo-derived `charge_svc` remaining the **canonical** internal name — normalisation is an input convenience, not two equal names to carry around.
 - Unknown domain and unknown unit each fail closed with a typed selection error naming what exists.
-- No `filter_path` remains in `sol_cli_manifest`, `sol_cli_check` or any command, and no positional workload selector remains.
+- A positional workload argument fails with a message naming `--scope`, asserted by a test rather than by reading the shim.
+- No `filter_path` remains in `sol_cli_manifest`, `sol_cli_check` or any command, and no positional workload selector remains functional.
 - Every scope-aware command uses the same resolver — asserted by a test, not by inspection.
 - A bad selector fails before check or deploy logic runs, so no command can report a downstream cause for it.
-- `sol check` with no `--scope` still covers the whole workspace.
+- A worker or function scope projects onto the telemetry addressing `logs` uses, tested, rather than being assumed to line up.
+- `sol check` with no `--scope` still covers the whole workspace; a mutating command with no scope on an empty workspace fails rather than reporting success.
+- The emitted plan carries both the requested scope and the resolved workloads.
 - FEAT-061's independence tests with the destination (its criterion 2) are written once FEAT-063 threads it.
 
 ## Notes
