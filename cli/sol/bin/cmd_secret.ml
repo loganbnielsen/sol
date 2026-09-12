@@ -10,15 +10,42 @@ let namespace_or_exit ~workspace ~domain =
     exit 1
 ;;
 
-(* Namespaces are derived from discovered services (same mechanism sol
-   up/sol deploy already use), not a raw listing of every app/ directory --
-   a domain directory with no real, deployable (Dockerfile-having) service
-   under it should never produce a namespace target, and an optional path
-   filter lets a user scope to just the domain/service they mean to touch
-   instead of every domain in the workspace (FRIC-013). *)
-let discover_namespaces ~filter_path =
+(* Secrets are addressed by Kubernetes namespace, not by workload, so this
+   command deliberately does not accept [--scope]: a secret operation does not
+   consume a *deployment* scope, and shipping [--scope payments/charge_svc] here
+   would imply a unit granularity that the underlying object cannot honour
+   (FEAT-065's invariant). [--domain] is the honest vocabulary.
+
+   Namespaces are still derived from discovery (the same mechanism sol up/sol
+   deploy use), because a domain directory with no deployable service should
+   never produce a namespace target -- but the command owns that derivation.
+   A [--domain] that matches no workload fails closed and names the domains that
+   exist, rather than silently touching no namespace. *)
+let discover_namespaces ~domain =
   let workspace = workspace_name () in
-  Sol_cli_manifest.discover_services ~filter_path
+  let services = Sol_cli_manifest.discover_services () in
+  let domains =
+    services
+    |> List.map (fun (s : Sol_cli_manifest.service) -> s.Sol_cli_manifest.domain)
+    |> List.sort_uniq compare
+  in
+  (match domain with
+   | None -> ()
+   | Some requested ->
+     if not (List.exists (Sol_cli_deployment_scope.equal_name requested) domains)
+     then (
+       Printf.eprintf
+         "error: --domain %S matches no workload; domains with units: %s\n"
+         requested
+         (match domains with
+          | [] -> "(none)"
+          | _ -> String.concat ", " domains);
+       exit 1));
+  services
+  |> List.filter (fun (s : Sol_cli_manifest.service) ->
+    match domain with
+    | None -> true
+    | Some requested -> Sol_cli_deployment_scope.equal_name requested s.domain)
   |> List.map (fun (s : Sol_cli_manifest.service) -> s.Sol_cli_manifest.domain)
   |> List.sort_uniq compare
   |> List.map (fun domain -> namespace_or_exit ~workspace ~domain)
@@ -35,7 +62,7 @@ let print_result = function
     exit 1
 ;;
 
-let run_set env value key filter_path =
+let run_set env value key domain =
   let value =
     match value with
     | Some v -> v
@@ -45,25 +72,25 @@ let run_set env value key filter_path =
     (Sol_cli_secret.set
        ~env
        ~workspace:(workspace_name ())
-       ~namespaces:(discover_namespaces ~filter_path)
+       ~namespaces:(discover_namespaces ~domain)
        ~key
        ~value)
 ;;
 
-let run_list env filter_path =
+let run_list env domain =
   print_result
     (Sol_cli_secret.list
        ~env
        ~workspace:(workspace_name ())
-       ~namespaces:(discover_namespaces ~filter_path))
+       ~namespaces:(discover_namespaces ~domain))
 ;;
 
-let run_delete env key filter_path =
+let run_delete env key domain =
   print_result
     (Sol_cli_secret.delete
        ~env
        ~workspace:(workspace_name ())
-       ~namespaces:(discover_namespaces ~filter_path)
+       ~namespaces:(discover_namespaces ~domain)
        ~key)
 ;;
 
@@ -97,48 +124,35 @@ let key_arg =
     & info [] ~docv:"KEY" ~doc:"Secret key, e.g. DATABASE_URL.")
 ;;
 
-let path_arg_after_key =
+let domain_arg =
   Arg.(
     value
-    & pos 1 (some string) None
+    & opt (some string) None
     & info
-        []
-        ~docv:"PATH"
+        [ "domain" ]
+        ~docv:"DOMAIN"
         ~doc:
-          "Domain/service path to scope this secret to (default: every domain discovered \
-           in the workspace). Matches the same discover_services filter sol up/sol \
-           deploy use, e.g. 'payments' or 'payments/charge-svc'.")
-;;
-
-let path_arg =
-  Arg.(
-    value
-    & pos 0 (some string) None
-    & info
-        []
-        ~docv:"PATH"
-        ~doc:
-          "Domain/service path to scope this secret to (default: every domain discovered \
-           in the workspace). Matches the same discover_services filter sol up/sol \
-           deploy use, e.g. 'payments' or 'payments/charge-svc'.")
+          "Restrict the operation to one domain's namespace (`payments`). Omit for every \
+           domain discovered in the workspace. Domains are derived from deployable \
+           services, so a directory with no workload is never targeted.")
 ;;
 
 let set_cmd =
   Cmd.v
     (Cmd.info "set" ~doc:"Create or update a secret key")
-    Term.(const run_set $ env_arg $ value_arg $ key_arg $ path_arg_after_key)
+    Term.(const run_set $ env_arg $ value_arg $ key_arg $ domain_arg)
 ;;
 
 let list_cmd =
   Cmd.v
     (Cmd.info "list" ~doc:"List secret keys without values")
-    Term.(const run_list $ env_arg $ path_arg)
+    Term.(const run_list $ env_arg $ domain_arg)
 ;;
 
 let delete_cmd =
   Cmd.v
     (Cmd.info "delete" ~doc:"Delete a secret key")
-    Term.(const run_delete $ env_arg $ key_arg $ path_arg_after_key)
+    Term.(const run_delete $ env_arg $ key_arg $ domain_arg)
 ;;
 
 let cmd =

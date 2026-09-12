@@ -50,7 +50,7 @@ For read-side log snapshots, pass a Loki query URL and credentials to
 export SOL_LOKI_USERNAME="123456"
 export SOL_LOKI_PASSWORD="<api key>"
 
-sol logs payments/charge_svc \
+sol logs --scope payments/charge_svc \
   --no-follow \
   --observability-backend external \
   --loki-base-url https://logs-prod-000.grafana.net

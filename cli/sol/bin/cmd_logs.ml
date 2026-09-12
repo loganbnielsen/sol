@@ -7,68 +7,36 @@ let workspace_name () =
   Filename.basename (Sys.getcwd ())
 ;;
 
-let find_service_by_name name =
-  let app_dir = "app" in
-  if not (Sys.file_exists app_dir && Sys.is_directory app_dir)
-  then []
-  else (
-    let matches = ref [] in
-    (try
-       Array.iter
-         (fun domain ->
-            let domain_path = Filename.concat app_dir domain in
-            if domain.[0] <> '.' && Sys.is_directory domain_path
-            then (
-              try
-                Array.iter
-                  (fun svc ->
-                     if svc.[0] <> '.'
-                     then (
-                       let svc_path = Filename.concat domain_path svc in
-                       if Sys.is_directory svc_path && svc = name
-                       then matches := (domain, svc) :: !matches))
-                  (Sys.readdir domain_path)
-              with
-              | _ -> ()))
-         (Sys.readdir app_dir)
-     with
-     | _ -> ());
-    List.rev !matches)
-;;
-
-let resolve_service arg =
-  if String.contains arg '/'
-  then (
-    match String.split_on_char '/' arg with
-    | [ domain; name ] -> Some (domain, name)
-    | _ ->
-      Printf.eprintf "error: service path must be in 'domain/name' form, got '%s'.\n" arg;
-      exit 1)
-  else (
-    match find_service_by_name arg with
-    | [] ->
-      Printf.eprintf "error: service '%s' not found in app/.\n" arg;
-      Printf.eprintf "  Use 'domain/name' form or run from the workspace root.\n";
+(* [logs] streams exactly one workload's output, and both Loki's addressing
+   (namespace + k8s name) and [kubectl logs] preserve unit granularity -- so
+   [--scope] is honest here at *unit* granularity only. A domain or
+   whole-workspace request does not project into "one pod's logs"; rather than
+   silently narrowing it, this command refuses and points at [sol open logs],
+   whose addressing model does support those scopes (FEAT-065's invariant). *)
+let resolve_unit ~scope =
+  let selected =
+    match
+      Sol_cli_workload_selection.resolve
+        ~what:"--scope"
+        (Some scope)
+        (Sol_cli_manifest.discover_services ())
+    with
+    | Ok selected -> selected
+    | Error message ->
+      Printf.eprintf "error: %s\n" message;
       exit 1
-    | [ (domain, name) ] -> Some (domain, name)
-    | matches ->
-      Printf.eprintf "error: '%s' is ambiguous — found in multiple domains:\n" arg;
-      List.iter (fun (d, n) -> Printf.eprintf "  %s/%s\n" d n) matches;
-      Printf.eprintf
-        "  Specify the full path, e.g. 'sol logs %s/%s'.\n"
-        (fst (List.hd matches))
-        arg;
-      exit 1)
-;;
-
-let declared_service ~domain ~k8s_name =
-  Sol_cli_manifest.discover_services ~filter_path:None
-  |> List.find_opt (fun (s : Sol_cli_manifest.service) ->
-    s.domain = domain
-    &&
-    match Sol_cli_deployment_plan.k8s_name_result s.name with
-    | Ok name -> Sol_cli_deployment_plan.k8s_name_to_string name = k8s_name
-    | Error _ -> false)
+  in
+  match selected.request, selected.services with
+  | Sol_cli_deployment_scope.Unit_named _, [ svc ] -> svc
+  | Sol_cli_deployment_scope.Unit_named _, _ ->
+    (* A unit request always resolves to exactly one discovered service. *)
+    Printf.eprintf "error: --scope %S did not resolve to exactly one workload.\n" scope;
+    exit 1
+  | _ ->
+    Printf.eprintf
+      "error: sol logs addresses exactly one unit ('domain/name'); for a domain or \
+       workspace view, use 'sol open logs <scope>'.\n";
+    exit 1
 ;;
 
 let workload_exists ~ns ~primitive ~k8s_name =
@@ -105,7 +73,7 @@ let exec_kubectl_logs ~ns ~target ~follow ~tail =
 ;;
 
 let run
-      ~service_arg
+      ~scope
       ~follow
       ~tail
       ~explicit_backend
@@ -119,11 +87,9 @@ let run
   : unit
   =
   let workspace = workspace_name () in
-  let domain, name =
-    match resolve_service service_arg with
-    | Some p -> p
-    | None -> exit 1
-  in
+  let svc = resolve_unit ~scope in
+  let domain = svc.Sol_cli_manifest.domain in
+  let name = svc.Sol_cli_manifest.name in
   let ns = namespace_or_exit ~workspace ~domain in
   let k8s_name =
     match Sol_cli_deployment_plan.k8s_name_result name with
@@ -132,13 +98,7 @@ let run
       Printf.eprintf "error: %s\n" (Sol_cli_deployment_plan.plan_error_to_string err);
       exit 1
   in
-  let primitive =
-    match declared_service ~domain ~k8s_name with
-    | Some service -> service.Sol_cli_manifest.primitive
-    | None ->
-      Printf.eprintf "Service '%s' not found in domain '%s'.\n" name domain;
-      exit 1
-  in
+  let primitive = svc.Sol_cli_manifest.primitive in
   let backend, base_domain =
     match
       Sol_cli_observability_url.effective_backend_and_base_domain
@@ -240,17 +200,17 @@ let run
 
 (* ── Cmdliner Terms ─────────────────────────────────────────────────────── *)
 
-let service_arg =
+let scope_arg =
   Arg.(
     required
-    & pos 0 (some string) None
+    & opt (some string) None
     & info
-        []
-        ~docv:"SERVICE"
+        [ "scope" ]
+        ~docv:"DOMAIN/UNIT"
         ~doc:
-          "Service to stream logs from, in 'domain/name' or bare 'name' form (e.g. \
-           payments/charge_svc or charge_svc). Underscores are accepted; Sol maps them \
-           to hyphens in Kubernetes.")
+          "Unit to stream logs from, e.g. payments/charge_svc. Exactly one unit: logs \
+           address a single workload, so a domain or workspace scope is not accepted \
+           here -- use 'sol open logs' for those views.")
 ;;
 
 let follow_flag =
@@ -418,7 +378,7 @@ let cmd =
     Term.(
       const
         (fun
-            service_arg
+            scope
              follow
              tail
              observability_backend
@@ -431,7 +391,7 @@ let cmd =
            ->
            let explicit_backend = backend_of_arg observability_backend in
            run
-             ~service_arg
+             ~scope
              ~follow
              ~tail
              ~explicit_backend
@@ -442,7 +402,7 @@ let cmd =
              ~explicit_loki_password:loki_password
              ?grafana_base_url
              ())
-      $ service_arg
+      $ scope_arg
       $ follow_term
       $ tail_arg
       $ observability_backend_arg

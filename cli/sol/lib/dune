@@ -7,6 +7,7 @@
   Sol_cli_fs_walk
   Sol_cli_kube_destination
   Sol_cli_deployment_scope
+  Sol_cli_workload_selection
   Sol_cli_scaffold
   Sol_cli_scaffold_templates
   Sol_cli_workspace

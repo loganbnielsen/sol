@@ -99,6 +99,7 @@ let hosted_plan ?progressive_delivery () =
        | Error _ -> [])
   ; schema_subjects = []
   ; consumer_groups = []
+  ; requested_scope = "workspace"
   }
 ;;
 

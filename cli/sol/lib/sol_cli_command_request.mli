@@ -24,7 +24,9 @@ type deploy_action =
 (** A validated request for [sol up]: build images and deploy to a local
     cluster. *)
 type up_request =
-  { filter_path : string option
+  { scope : string option
+    (** Raw [--scope] value: a domain or ["domain/unit"], resolved once in
+          [cmd_up.ml] via [Sol_cli_workload_selection]. *)
   ; mode : execution_mode
   ; image_tag : string
   ; confirm_group_change : bool
@@ -37,7 +39,7 @@ type deploy_request =
     (** Deployment target path, [<env>/<provider>/<region>] — resolved via
           [Sol_cli_config.load_for_target]. Required: [sol deploy]'s positional
           target argument, matching [sol plan]'s existing convention. *)
-  ; filter_path : string option
+  ; scope : string option
   ; action : deploy_action
   ; emit_plan_to : string option
   ; image_tag : string
@@ -62,7 +64,7 @@ type deploy_request =
     a thunk so callers can inject a real or stub implementation. Returns
     [Error msg] if validation fails. *)
 val make_up_request
-  :  filter_path:string option
+  :  scope:string option
   -> dry_run:bool
   -> tag:string option
   -> confirm_group_change:bool
@@ -76,7 +78,7 @@ val make_up_request
     doesn't assume its caller enforced that). *)
 val make_deploy_request
   :  target:string
-  -> filter_path:string option
+  -> scope:string option
   -> dry_run:bool
   -> emit_to:string option
   -> emit_plan_to:string option

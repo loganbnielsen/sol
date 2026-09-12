@@ -40,23 +40,31 @@ let env : Sol_cli_deployment_plan.env_config =
   }
 ;;
 
+(* FEAT-065: the factory no longer scans. The caller resolves a scope and hands
+   the resolved services in, so the factory cannot select a different set. *)
 let test_run_without_cmdliner () =
   with_tmp (fun root ->
     mkdir_p "app/payments/charge_svc";
     write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
     write "app/payments/charge_svc/sol.toml" "[infra.env]\nsecrets = [\"DATABASE_URL\"]\n";
     let emit_dir = Filename.concat root "out" in
+    let services = Sol_cli_manifest.discover_services () in
     match
       Sol_cli_factory.run
         ~workspace:"myapp"
         ~env
-        ~filter_path:None
+        ~requested_scope:"payments"
         ~mode:(Sol_cli_executor.Emit_to emit_dir)
+        services
         ()
     with
     | Error msg -> Alcotest.fail ("factory run failed: " ^ msg)
     | Ok execution ->
       Alcotest.(check int) "one result" 1 (List.length execution.Sol_cli_factory.results);
+      Alcotest.(check string)
+        "requested scope recorded"
+        "payments"
+        execution.plan.Sol_cli_deployment_plan.requested_scope;
       let facts =
         Sol_cli_factory.affected_services ~plan:execution.plan ~results:execution.results
       in
@@ -65,11 +73,11 @@ let test_run_without_cmdliner () =
       Alcotest.(check bool) "manifest emitted" true (Sys.file_exists emitted))
 ;;
 
-let test_plan_missing_app () =
+let test_discover_missing_app () =
   with_tmp (fun _ ->
-    match Sol_cli_factory.plan ~workspace:"myapp" ~env ~filter_path:None with
-    | Ok _ -> Alcotest.fail "expected missing app error"
-    | Error msg -> Alcotest.(check bool) "actionable error" true (String.length msg > 0))
+    match Sol_cli_manifest.discover_services_result () with
+    | Error Sol_cli_manifest.Missing_app_dir -> ()
+    | Ok _ -> Alcotest.fail "expected missing app error")
 ;;
 
 let () =
@@ -77,7 +85,7 @@ let () =
     "factory"
     [ ( "boundary"
       , [ Alcotest.test_case "run without cmdliner" `Quick test_run_without_cmdliner
-        ; Alcotest.test_case "plan missing app" `Quick test_plan_missing_app
+        ; Alcotest.test_case "discovery missing app" `Quick test_discover_missing_app
         ] )
     ]
 ;;

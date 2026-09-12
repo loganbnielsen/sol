@@ -25,5 +25,14 @@ type finding =
   }
 
 val finding_to_string : finding -> string
-val run : filter_path:string option -> unit -> finding list
+
+(** Check the whole workspace: scan it, warn about unexpected directories, and
+    error when no deployable workload exists. *)
+val run : unit -> finding list
+
+(** Check exactly the given workloads, without rescanning the workspace. Commands
+    that resolved a [--scope] pass the resolved set here so the contract check
+    covers the same set they are about to mutate. *)
+val run_services : Sol_cli_manifest.service list -> finding list
+
 val has_errors : finding list -> bool

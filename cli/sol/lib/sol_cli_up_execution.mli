@@ -16,7 +16,8 @@ val push_registry : string
 val build_context_dir : repo_root:string -> string
 
 val local_plan
-  :  workspace:string
+  :  requested_scope:string
+  -> workspace:string
   -> sha:string
   -> Sol_cli_manifest.service list
   -> (Sol_cli_deployment_plan.t, Sol_cli_deployment_plan.plan_error) result

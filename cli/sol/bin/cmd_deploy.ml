@@ -61,8 +61,8 @@ let print_service_urls (results : Sol_cli_executor.result list) =
     namespaces
 ;;
 
-let check_contract ~filter_path =
-  let findings = Sol_cli_check.run ~filter_path () in
+let check_contract ~services =
+  let findings = Sol_cli_check.run_services services in
   List.iter (fun f -> Printf.eprintf "%s\n" (Sol_cli_check.finding_to_string f)) findings;
   if Sol_cli_check.has_errors findings then exit 1
 ;;
@@ -102,8 +102,8 @@ let check_consumer_group_changes ~workspace ~confirm_group_change plan =
     exit 1)
 ;;
 
-let check_apply_environment ~filter_path =
-  check_contract ~filter_path;
+let check_apply_environment ~services =
+  check_contract ~services;
   ensure_postgres_url ()
 ;;
 
@@ -116,6 +116,7 @@ type deploy_context =
   ; target_cfg : Sol_cli_config.target
   ; resolved_config : Sol_cli_config.t
   ; services : Sol_cli_manifest.service list
+  ; requested_scope : string
   }
 
 let print_header ~workspace ~sha ?mode_line () =
@@ -165,6 +166,7 @@ let build_plan ctx ~emit_to =
     Sol_cli_factory.plan_of_services
       ~workspace:ctx.workspace
       ~env
+      ~requested_scope:ctx.requested_scope
       ~resolved_config:ctx.resolved_config
       ctx.services
   with
@@ -298,8 +300,8 @@ let push_deploy_events ~workspace ~target_cfg ~loki_push_url plan =
       (Printexc.to_string exn)
 ;;
 
-let run_apply ctx ~filter_path ~confirm_group_change ~loki_push_url =
-  check_apply_environment ~filter_path;
+let run_apply ctx ~confirm_group_change ~loki_push_url =
+  check_apply_environment ~services:ctx.services;
   print_header ~workspace:ctx.workspace ~sha:ctx.sha ();
   let target_env = ctx.target_cfg.Sol_cli_config.env in
   let plan = build_plan ctx ~emit_to:None in
@@ -345,7 +347,18 @@ let run_apply ctx ~filter_path ~confirm_group_change ~loki_push_url =
 let run (req : Sol_cli_command_request.deploy_request) =
   let workspace = workspace_name () in
   let sha = req.image_tag in
-  let services = discover_services ~filter_path:req.filter_path in
+  (* Resolve the scope first: a bad selector must fail before any deploy logic
+     (target loading, contract check, registry resolution) can report a
+     downstream cause for it. *)
+  let selected =
+    match Sol_cli_workload_selection.resolve req.scope (discover_services ()) with
+    | Ok selected -> selected
+    | Error message ->
+      Printf.eprintf "error: %s\n" message;
+      exit 1
+  in
+  let requested_scope = Sol_cli_deployment_scope.request_to_string selected.request in
+  let services = selected.Sol_cli_workload_selection.services in
   let resolved_config, target_cfg =
     match Sol_cli_config.load_for_target ~target:req.target with
     | Error e ->
@@ -402,6 +415,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
     ; target_cfg
     ; resolved_config
     ; services
+    ; requested_scope
     }
   in
   match req.action with
@@ -410,7 +424,6 @@ let run (req : Sol_cli_command_request.deploy_request) =
   | Deploy_apply ->
     run_apply
       ctx
-      ~filter_path:req.filter_path
       ~confirm_group_change:req.confirm_group_change
       ~loki_push_url:req.loki_push_url
 ;;
@@ -431,14 +444,17 @@ let target_arg =
            (local-only, no target concept), this is required.")
 ;;
 
-let path_arg =
+let scope_arg =
   Arg.(
     value
-    & pos 1 (some string) None
+    & opt (some string) None
     & info
-        []
-        ~docv:"PATH"
-        ~doc:"Service path to deploy (default: all services in workspace)")
+        [ "scope" ]
+        ~docv:"DOMAIN[/UNIT]"
+        ~doc:
+          "Deploy one domain (`payments`) or one unit (`payments/charge_svc`). Omit to \
+           deploy the whole workspace. A name that matches nothing fails closed and says \
+           what does, before the target or registry is resolved.")
 ;;
 
 let dry_run_flag =
@@ -640,7 +656,7 @@ let cmd =
       const
         (fun
             target
-             filter_path
+             scope
              dry_run
              emit_to
              emit_plan_to
@@ -653,7 +669,7 @@ let cmd =
            match
              Sol_cli_command_request.make_deploy_request
                ~target
-               ~filter_path
+               ~scope
                ~dry_run
                ~emit_to
                ~emit_plan_to
@@ -669,7 +685,7 @@ let cmd =
              Printf.eprintf "error: %s\n" msg;
              exit 1)
       $ target_arg
-      $ path_arg
+      $ scope_arg
       $ dry_run_flag
       $ emit_to_arg
       $ emit_plan_to_arg

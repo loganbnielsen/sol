@@ -170,6 +170,7 @@ let make_plan ?(env = customer_env) services : Sol_cli_deployment_plan.t =
   ; migrations = []
   ; schema_subjects = []
   ; consumer_groups = []
+  ; requested_scope = "workspace"
   }
 ;;
 
@@ -178,7 +179,7 @@ let make_plan ?(env = customer_env) services : Sol_cli_deployment_plan.t =
 let test_up_request_uses_explicit_tag () =
   let r =
     Sol_cli_command_request.make_up_request
-      ~filter_path:None
+      ~scope:None
       ~dry_run:false
       ~tag:(Some "v1.2.3")
       ~confirm_group_change:false
@@ -194,7 +195,7 @@ let test_up_request_uses_explicit_tag () =
 let test_up_request_falls_back_to_git_sha () =
   let r =
     Sol_cli_command_request.make_up_request
-      ~filter_path:None
+      ~scope:None
       ~dry_run:false
       ~tag:None
       ~confirm_group_change:false
@@ -212,7 +213,7 @@ let test_up_request_falls_back_to_git_sha () =
 let test_up_request_preserves_mode () =
   let r =
     Sol_cli_command_request.make_up_request
-      ~filter_path:None
+      ~scope:None
       ~dry_run:true
       ~tag:(Some "t")
       ~confirm_group_change:false
@@ -233,7 +234,7 @@ let test_deploy_request_uses_explicit_tag () =
   let r =
     Sol_cli_command_request.make_deploy_request
       ~target:"dev/aws/us-east-1"
-      ~filter_path:None
+      ~scope:None
       ~dry_run:false
       ~emit_to:None
       ~emit_plan_to:None
@@ -254,7 +255,7 @@ let test_deploy_request_local_mode_builds_request () =
   let r =
     Sol_cli_command_request.make_deploy_request
       ~target:"dev/aws/us-east-1"
-      ~filter_path:None
+      ~scope:None
       ~dry_run:false
       ~emit_to:None
       ~emit_plan_to:None
@@ -280,7 +281,7 @@ let test_deploy_request_gitops_action () =
   let r =
     Sol_cli_command_request.make_deploy_request
       ~target:"dev/aws/us-east-1"
-      ~filter_path:None
+      ~scope:None
       ~dry_run:false
       ~emit_to:(Some "/tmp/gitops")
       ~emit_plan_to:None
@@ -306,7 +307,7 @@ let test_deploy_request_dry_run_action_preserves_emit_to () =
   let r =
     Sol_cli_command_request.make_deploy_request
       ~target:"dev/aws/us-east-1"
-      ~filter_path:None
+      ~scope:None
       ~dry_run:true
       ~emit_to:(Some "/tmp/gitops")
       ~emit_plan_to:None
@@ -335,7 +336,7 @@ let test_deploy_request_rejects_empty_target () =
   let r =
     Sol_cli_command_request.make_deploy_request
       ~target:""
-      ~filter_path:None
+      ~scope:None
       ~dry_run:false
       ~emit_to:None
       ~emit_plan_to:None
@@ -356,7 +357,7 @@ let test_deploy_request_registry_omitted_stays_none () =
   let r =
     Sol_cli_command_request.make_deploy_request
       ~target:"dev/aws/us-east-1"
-      ~filter_path:None
+      ~scope:None
       ~dry_run:false
       ~emit_to:None
       ~emit_plan_to:None

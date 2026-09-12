@@ -445,9 +445,9 @@ All five endpoints verified: kafka `localhost:9092`, postgres `localhost:5432`, 
 Builds Docker images for all services in the workspace, generates k8s manifests, validates them, and deploys to the cluster.
 
 ```bash
-sol up                          # build + deploy all services
-sol up app/payments/charge_svc  # build + deploy one service
-sol up --dry-run                # print YAML to stdout, do not apply
+sol up                                    # build + deploy all services
+sol up --scope payments/charge_svc        # build + deploy one unit
+sol up --dry-run                          # print YAML to stdout, do not apply
 ```
 
 #### v1 design (template-based, validated)
@@ -760,7 +760,7 @@ cluster observable instead, with the right data source per layer:
 |---|---|---|
 | Deploy/build logs | Local command output — `sol deploy`, Docker/buildx, Terraform, Helm | Stored per run under `.sol/runs/<run-id>/`; compact progress printed, full log attached/tailed on failure. Never store deploy diagnostics only inside a cluster that the run itself may tear down. |
 | Cluster/deployment diagnosis | `kubectl` — pods, events, image pull errors, OOMKilled, scheduling failures, rollout status | Powers `sol status`, `sol deploy status`, failed-deploy summaries. Most reliable source when the app never starts, so it does not depend on Loki. |
-| Runtime logs | Loki — app logs, worker logs, platform pod logs once promtail/an agent scrapes pod stdout (not just app-pushed lines) | `sol logs <service>` prefers Loki, falls back to `kubectl logs` when a Loki *query* fails, not only when Loki is absent. |
+| Runtime logs | Loki — app logs, worker logs, platform pod logs once promtail/an agent scrapes pod stdout (not just app-pushed lines) | `sol logs --scope <domain>/<unit>` prefers Loki, falls back to `kubectl logs` when a Loki *query* fails, not only when Loki is absent. |
 
 **Follow-up work — status corrected 2026-09-11.** This paragraph previously described the work above as "not yet ticketed". Three of the four items had in fact already landed, and the fourth is now ticketed:
 
@@ -769,7 +769,7 @@ cluster observable instead, with the right data source per layer:
 - **`sol logs` runtime fallback** — done: triggered from `Sol_cli_loki.classify_process_error` (timeout, connection, other) at five call sites.
 - **Run IDs and local `.sol/runs/` logging for `sol deploy`** — the one genuine gap. `Sol_cli_run_log` exists, but its only caller is `cmd_cloud_tf.ml` (the terraform phases), so `sol up`/`sol deploy` still keep their diagnostics only in the terminal that ran them. Tracked as **FEAT-055**.
 
-**`sol logs <svc>` fallback is a runtime check, not a config flag.** Trigger
+**`sol logs --scope <domain>/<unit>` fallback is a runtime check, not a config flag.** Trigger
 the `kubectl logs` fallback on any of: Loki query failure, timeout (~5s),
 auth/connect error, or unhealthy Loki pods — not only "Loki not installed".
 Print why before falling back (`Loki unavailable: query timed out after 5s.

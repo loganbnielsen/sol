@@ -47,16 +47,16 @@ type workspace_scan =
 type discover_error = Missing_app_dir
 
 val workload_fact_to_service : workload_fact -> service
-val scan_workspace : filter_path:string option -> (workspace_scan, discover_error) result
+
+(** Scan every workload on disk. Discovery never filters: selection is applied
+    once, after discovery, by [Sol_cli_workload_selection] (FEAT-065). *)
+val scan_workspace : unit -> (workspace_scan, discover_error) result
+
 val primitive_of_suffix : string -> primitive option
 val primitive_label : primitive -> string
 val discover_error_to_string : discover_error -> string
-
-val discover_services_result
-  :  filter_path:string option
-  -> (service list, discover_error) result
-
-val discover_services : filter_path:string option -> service list
+val discover_services_result : unit -> (service list, discover_error) result
+val discover_services : unit -> service list
 val extract_schedule : dir:string -> name:string -> string
 val default_cluster_env : (string * string) list
 val default_secrets : (string * string) list

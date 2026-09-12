@@ -71,6 +71,16 @@ let parse_request ?(what = "scope") value =
            trimmed))
 ;;
 
+(* [request_to_string] is the spelling a command records as *requested* scope
+   (DEC-018/FEAT-065): intent, before discovery narrowed it. It deliberately
+   does not normalise `-` to `_` — what the user asked for is what the requested
+   scope says; the resolved set carries discovery's canonical names. *)
+let request_to_string = function
+  | Whole_workspace -> "workspace"
+  | Whole_domain domain -> domain
+  | Unit_named (domain, name) -> Printf.sprintf "%s/%s" domain name
+;;
+
 (* A unit as discovery reports it. Kept separate from [service_spec] and from
    [Sol_cli_manifest.service] so resolution is testable without constructing
    either record, and so neither record becomes the centre of the design. *)

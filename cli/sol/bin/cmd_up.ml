@@ -43,16 +43,16 @@ let print_header ~workspace ~sha ~dry_run =
   Printf.printf "\n%!"
 ;;
 
-let build_plan ~workspace ~sha ~services =
-  match Sol_cli_up_execution.local_plan ~workspace ~sha services with
+let build_plan ~requested_scope ~workspace ~sha ~services =
+  match Sol_cli_up_execution.local_plan ~requested_scope ~workspace ~sha services with
   | Ok plan -> plan
   | Error err ->
     Printf.eprintf "error: %s\n" (Sol_cli_deployment_plan.plan_error_to_string err);
     exit 1
 ;;
 
-let check_contract ~filter_path =
-  let findings = Sol_cli_check.run ~filter_path () in
+let check_contract ~services =
+  let findings = Sol_cli_check.run_services services in
   List.iter (fun f -> Printf.eprintf "%s\n" (Sol_cli_check.finding_to_string f)) findings;
   if Sol_cli_check.has_errors findings then exit 1
 ;;
@@ -192,17 +192,17 @@ let apply_service
     Printf.printf "\n%!"
 ;;
 
-let run_dry_run ~workspace ~sha ~services =
+let run_dry_run ~requested_scope ~workspace ~sha ~services =
   print_header ~workspace ~sha ~dry_run:true;
-  let plan = build_plan ~workspace ~sha ~services in
+  let plan = build_plan ~requested_scope ~workspace ~sha ~services in
   List.iter (dry_run_service ~workspace ~sha) plan.Sol_cli_deployment_plan.services
 ;;
 
-let run_apply ~workspace ~sha ~filter_path ~services ~repo_root ~confirm_group_change =
-  check_contract ~filter_path;
+let run_apply ~requested_scope ~workspace ~sha ~services ~repo_root ~confirm_group_change =
+  check_contract ~services;
   ensure_postgres_url ();
   print_header ~workspace ~sha ~dry_run:false;
-  let plan = build_plan ~workspace ~sha ~services in
+  let plan = build_plan ~requested_scope ~workspace ~sha ~services in
   check_consumer_group_changes ~workspace ~confirm_group_change plan;
   let pf_failed = ref false in
   let ctx_dir = prepare_context ~repo_root in
@@ -232,19 +232,31 @@ let run_apply ~workspace ~sha ~filter_path ~services ~repo_root ~confirm_group_c
 let run (req : Sol_cli_command_request.up_request) =
   let workspace = workspace_name () in
   let sha = req.image_tag in
-  let services = discover_services ~filter_path:req.filter_path in
+  let selected =
+    match Sol_cli_workload_selection.resolve req.scope (discover_services ()) with
+    | Ok selected -> selected
+    | Error message ->
+      Printf.eprintf "error: %s\n" message;
+      exit 1
+  in
+  let requested_scope = Sol_cli_deployment_scope.request_to_string selected.request in
+  let services = selected.Sol_cli_workload_selection.services in
+  (* Mutating command: an empty selection is an error, never a silent success.
+     [resolve] only yields empty for a whole-workspace request over nothing, so
+     the message names that case rather than the scope. *)
   if services = []
   then (
     Printf.eprintf "No services found in app/ with a Dockerfile.\n";
     exit 1);
   match req.mode with
-  | Sol_cli_command_request.Dry_run -> run_dry_run ~workspace ~sha ~services
+  | Sol_cli_command_request.Dry_run ->
+    run_dry_run ~requested_scope ~workspace ~sha ~services
   | Apply ->
     let repo_root = find_repo_root () in
     run_apply
+      ~requested_scope
       ~workspace
       ~sha
-      ~filter_path:req.filter_path
       ~services
       ~repo_root
       ~confirm_group_change:req.confirm_group_change
@@ -252,18 +264,17 @@ let run (req : Sol_cli_command_request.up_request) =
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
 
-let path_arg =
+let scope_arg =
   Arg.(
     value
-    & pos 0 (some string) None
+    & opt (some string) None
     & info
-        []
-        ~docv:"PATH"
+        [ "scope" ]
+        ~docv:"DOMAIN[/UNIT]"
         ~doc:
-          "Service path to build and deploy (default: all services in workspace). 'sol \
-           up' is local-only and has no target concept, so unlike 'sol deploy TARGET \
-           [path]' this positional is the optional service-path filter, not a required \
-           deployment target.")
+          "Build and deploy one domain (`payments`) or one unit (`payments/charge_svc`). \
+           Omit to deploy the whole workspace. A name that matches nothing fails closed \
+           and says what does, before any image is built.")
 ;;
 
 let dry_run_flag =
@@ -299,10 +310,10 @@ let cmd =
          "Build images, synthesize k8s manifests, and deploy to the local cluster. \
           Local-only — no target concept, unlike 'sol deploy'.")
     Term.(
-      const (fun filter_path dry_run tag confirm_group_change ->
+      const (fun scope dry_run tag confirm_group_change ->
         match
           Sol_cli_command_request.make_up_request
-            ~filter_path
+            ~scope
             ~dry_run
             ~tag
             ~confirm_group_change
@@ -312,7 +323,7 @@ let cmd =
         | Error msg ->
           Printf.eprintf "error: %s\n" msg;
           exit 1)
-      $ path_arg
+      $ scope_arg
       $ dry_run_flag
       $ tag_arg
       $ confirm_group_change_flag)

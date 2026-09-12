@@ -1056,7 +1056,7 @@ let services cfg = active_services cfg
 let ecr_repositories_var () =
   let services =
     if Sys.file_exists "app" && Sys.is_directory "app"
-    then Sol_cli_manifest.discover_services ~filter_path:None
+    then Sol_cli_manifest.discover_services ()
     else []
   in
   services

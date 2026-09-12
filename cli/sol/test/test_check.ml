@@ -42,7 +42,7 @@ let has_msg needle findings =
 
 let test_missing_app_result () =
   with_tmp (fun _ ->
-    match Sol_cli_manifest.discover_services_result ~filter_path:None with
+    match Sol_cli_manifest.discover_services_result () with
     | Error Sol_cli_manifest.Missing_app_dir -> ()
     | Ok _ -> Alcotest.fail "expected missing app error")
 ;;
@@ -51,7 +51,7 @@ let test_discover_valid_service () =
   with_tmp (fun _ ->
     mkdir_p "app/payments/charge_svc";
     write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
-    match Sol_cli_manifest.discover_services_result ~filter_path:None with
+    match Sol_cli_manifest.discover_services_result () with
     | Error e -> Alcotest.fail (Sol_cli_manifest.discover_error_to_string e)
     | Ok [ svc ] ->
       Alcotest.(check string) "domain" "payments" svc.domain;
@@ -63,7 +63,7 @@ let test_typed_scan_reports_missing_dockerfile_and_unexpected_dirs () =
   with_tmp (fun _ ->
     mkdir_p "app/payments/charge_svc";
     mkdir_p "app/payments/helpers";
-    match Sol_cli_manifest.scan_workspace ~filter_path:None with
+    match Sol_cli_manifest.scan_workspace () with
     | Error e -> Alcotest.fail (Sol_cli_manifest.discover_error_to_string e)
     | Ok scan ->
       Alcotest.(check int) "workload count" 1 (List.length scan.workloads);
@@ -82,7 +82,7 @@ let test_check_valid_service () =
     mkdir_p "app/payments/charge_svc";
     write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
     write "app/payments/charge_svc/sol.toml" "[infra.env]\nsecrets = [\"DATABASE_URL\"]\n";
-    let findings = Sol_cli_check.run ~filter_path:None () in
+    let findings = Sol_cli_check.run () in
     Alcotest.(check bool) "no errors" false (Sol_cli_check.has_errors findings))
 ;;
 
@@ -91,7 +91,7 @@ let test_check_bad_secret_key () =
     mkdir_p "app/payments/charge_svc";
     write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
     write "app/payments/charge_svc/sol.toml" "[infra.env]\nsecrets = [\"bad-key\"]\n";
-    let findings = Sol_cli_check.run ~filter_path:None () in
+    let findings = Sol_cli_check.run () in
     Alcotest.(check bool) "has errors" true (Sol_cli_check.has_errors findings);
     Alcotest.(check bool)
       "mentions invalid secret"
@@ -102,12 +102,33 @@ let test_check_bad_secret_key () =
 let test_check_missing_dockerfile () =
   with_tmp (fun _ ->
     mkdir_p "app/payments/charge_svc";
-    let findings = Sol_cli_check.run ~filter_path:None () in
+    let findings = Sol_cli_check.run () in
     Alcotest.(check bool) "has errors" true (Sol_cli_check.has_errors findings);
     Alcotest.(check bool)
       "mentions Dockerfile"
       true
       (has_msg "Dockerfile is missing" findings))
+;;
+
+(* FEAT-065: a command that resolved a scope checks exactly that set, so a bad
+   workload outside the selection cannot fail a scoped run. *)
+let test_run_services_scopes_the_check () =
+  with_tmp (fun _ ->
+    mkdir_p "app/payments/charge_svc";
+    write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
+    write "app/payments/charge_svc/sol.toml" "[infra.env]\nsecrets = [\"DATABASE_URL\"]\n";
+    mkdir_p "app/comms/notify_worker";
+    write "app/comms/notify_worker/Dockerfile" "FROM scratch\n";
+    write "app/comms/notify_worker/sol.toml" "[infra.env]\nsecrets = [\"bad-key\"]\n";
+    let services = Sol_cli_manifest.discover_services () in
+    let charge =
+      List.filter (fun (s : Sol_cli_manifest.service) -> s.name = "charge_svc") services
+    in
+    let findings = Sol_cli_check.run_services charge in
+    Alcotest.(check bool)
+      "only the selected workload is checked"
+      false
+      (Sol_cli_check.has_errors findings))
 ;;
 
 let () =
@@ -125,6 +146,10 @@ let () =
       , [ Alcotest.test_case "valid service" `Quick test_check_valid_service
         ; Alcotest.test_case "bad secret key" `Quick test_check_bad_secret_key
         ; Alcotest.test_case "missing Dockerfile" `Quick test_check_missing_dockerfile
+        ; Alcotest.test_case
+            "run_services checks only the selected set"
+            `Quick
+            test_run_services_scopes_the_check
         ] )
     ]
 ;;

@@ -272,6 +272,7 @@ let sample_plan () : Sol_cli_deployment_plan.t =
   ; migrations = []
   ; schema_subjects = []
   ; consumer_groups = []
+  ; requested_scope = "workspace"
   }
 ;;
 
@@ -356,6 +357,7 @@ let test_to_json_mode_strings () =
       ; migrations = []
       ; schema_subjects = []
       ; consumer_groups = []
+      ; requested_scope = "workspace"
       }
     in
     let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
@@ -945,6 +947,22 @@ let test_to_json_schema_subjects_present () =
     contains re s)
 ;;
 
+(* FEAT-065: the emitted plan carries both facts -- the requested scope (intent)
+   and the resolved workloads (exact membership) -- because DEC-018's release
+   record needs both. *)
+let test_to_json_requested_scope_and_resolved_workloads () =
+  let plan = { (sample_plan ()) with requested_scope = "payments" } in
+  let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
+  assert (
+    let re = Str.regexp_string {|"requested_scope":"payments"|} in
+    contains re s);
+  assert (
+    let re =
+      Str.regexp_string {|"resolved_workloads":[{"domain":"orders","name":"charge_svc"}]|}
+    in
+    contains re s)
+;;
+
 let test_to_json_consumer_groups_present () =
   let plan =
     { (sample_plan ()) with
@@ -1445,6 +1463,10 @@ let () =
             "consumer_groups in json"
             `Quick
             test_to_json_consumer_groups_present
+        ; Alcotest.test_case
+            "requested scope and resolved workloads in json"
+            `Quick
+            test_to_json_requested_scope_and_resolved_workloads
         ] )
     ; ( "discover_topics"
       , [ Alcotest.test_case

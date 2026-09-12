@@ -76,6 +76,11 @@ type t =
   ; migrations : Sol_cli_plan_ids.Migration_file.t list
   ; schema_subjects : Sol_cli_plan_ids.Schema_subject.t list
   ; consumer_groups : Sol_cli_plan_ids.Consumer_group.t list
+  ; requested_scope : string
+    (** What the user asked for, before discovery narrowed it (FEAT-065):
+          ["workspace"], a domain, or ["domain/unit"]. [services] is the
+          concrete resolved set; [to_json] emits both, because intent and exact
+          membership are different facts (DEC-018's release record needs both). *)
   }
 
 type plan_error =
@@ -169,6 +174,7 @@ val image_ref
 val of_services
   :  workspace:string
   -> env:env_config
+  -> ?requested_scope:string
   -> ?resolved_config:Sol_cli_config.t
   -> Sol_cli_manifest.service list
   -> t
@@ -176,6 +182,9 @@ val of_services
 (** Build a deployment plan from a discovered service list and an environment
     config. Returns a typed error when a Kubernetes artifact name is invalid or
     a service [sol.toml] cannot be parsed or validated.
+
+    [requested_scope] records what the user asked for (default ["workspace"]),
+    alongside the resolved [services] (FEAT-065).
 
     [resolved_config], when given (the [sol deploy]/target-resolved path;
     [sol up] never has one), overrides a service's [sol.toml] [replicas] with
@@ -186,6 +195,7 @@ val of_services
 val of_services_result
   :  workspace:string
   -> env:env_config
+  -> ?requested_scope:string
   -> ?resolved_config:Sol_cli_config.t
   -> Sol_cli_manifest.service list
   -> (t, plan_error) result
