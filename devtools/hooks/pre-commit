@@ -12,21 +12,67 @@
 # branch — with one exception (REFAC-077): a ticket's own final commit may move its
 # file from READY_FOR_ENGINEERING/<id>.md to DONE/<id>.md, so that move rides into
 # main inside the PR's squash-merge commit instead of a separate main-only commit.
+#
+# The exception is judged by *file name*, not by how much prose the commit added
+# (BUG-023). It used to lean on git's rename detection at its default 50%
+# similarity, and the workflow appends completion notes immediately before the
+# move — so a small ticket with substantial notes came out as an add plus a
+# delete and was refused, twice, on exactly the tickets with the most to
+# document. A move is a move if the file name is unchanged; similarity is not
+# the question anyone was asking.
 GIT_DIR_ABS="$(git rev-parse --absolute-git-dir 2>/dev/null)"
 if printf '%s\n' "$GIT_DIR_ABS" | grep -q "/worktrees/"; then
   STAGED_TICKETS="$(git diff --cached --name-only | grep '^pipeline/tickets/' || true)"
   if [ -n "$STAGED_TICKETS" ]; then
-    DISALLOWED="$(git diff --cached -M --name-status -- pipeline/tickets/ \
-      | grep -v '^R[0-9]*\s*pipeline/tickets/READY_FOR_ENGINEERING/[^/]*\.md\s*pipeline/tickets/DONE/[^/]*\.md$' \
-      || true)"
-    if [ -n "$DISALLOWED" ]; then
+    # -M10% so a heavily annotated move is still *reported* as a rename; when it
+    # is not, the add/delete pair below is matched by name instead, so the
+    # threshold is no longer load-bearing either way.
+    TICKET_STATUS="$(git diff --cached --name-status -M10% -- pipeline/tickets/)"
+    REFUSAL="$(printf '%s\n' "$TICKET_STATUS" | awk -F'\t' '
+      function id_of(path, prefix,    s) {
+        s = path
+        sub(prefix, "", s)
+        return (s == path) ? "" : s
+      }
+      /^$/ { next }
+      /^R/ {
+        old = $2; new = $3
+        old_id = id_of(old, "^pipeline/tickets/READY_FOR_ENGINEERING/")
+        new_id = id_of(new, "^pipeline/tickets/DONE/")
+        if (old_id == "" || new_id == "" || old_id != new_id) {
+          print "  a move must be READY_FOR_ENGINEERING/<id>.md -> DONE/<id>.md, same <id>: " old " -> " new
+        }
+        next
+      }
+      /^D/ {
+        removed[id_of($2, "^pipeline/tickets/READY_FOR_ENGINEERING/")] = 1
+        if (id_of($2, "^pipeline/tickets/READY_FOR_ENGINEERING/") == "") {
+          print "  deletion is not a ticket move: " $2
+        }
+        next
+      }
+      /^A/ {
+        added[id_of($2, "^pipeline/tickets/DONE/")] = 1
+        if (id_of($2, "^pipeline/tickets/DONE/") == "") {
+          print "  addition is not a ticket move: " $2
+        }
+        next
+      }
+      { print "  only a ticket move may touch pipeline/tickets/ in a worktree: " $0 }
+      END {
+        # Fills the gap when git did not pair the add and the delete.
+        for (id in removed) if (!(id in added)) print "  removed " id " but nothing with that name was added under DONE/"
+        for (id in added) if (!(id in removed)) print "  added " id " under DONE/ but nothing with that name was removed from READY_FOR_ENGINEERING/"
+      }')"
+    if [ -n "$REFUSAL" ]; then
       echo ""
       echo "✗ Cannot commit pipeline/tickets/ changes inside a worktree branch."
       echo "  pipeline/tickets/ is managed exclusively in the main checkout, except"
-      echo "  for a ticket's own READY_FOR_ENGINEERING → DONE move on its own branch."
-      echo "  Disallowed staged changes:"
-      printf '    %s\n' "$DISALLOWED"
-      echo "  Fix: git restore --staged pipeline/tickets/"
+      echo "  for a ticket's own READY_FOR_ENGINEERING → DONE move on its own branch,"
+      echo "  which must keep the same file name."
+      printf '%s\n' "$REFUSAL"
+      echo "  If this is not the move you intended, unstage it:"
+      echo "    git restore --staged pipeline/tickets/"
       exit 1
     fi
   fi
