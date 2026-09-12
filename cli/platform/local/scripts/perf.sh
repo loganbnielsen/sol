@@ -51,12 +51,27 @@ is_regression() {
 }
 
 # ── status ────────────────────────────────────────────────────────────────────
+# Renders the status table. With [--regressions-only] it prints nothing unless a
+# suite has crossed its threshold — the post-commit hook uses that mode, because
+# a signal that fires on every commit is noise, and the gate that actually fails
+# a breached suite lives in pre-commit (REFAC-085). Called without a flag, the
+# output is unchanged.
 cmd_status() {
-  echo ""
-  printf "  ${BOLD}%-16s %-11s %-11s %-9s %-8s %s${NC}\n" \
-    "Suite" "Baseline" "Latest" "Drift" "Thresh" "Runs"
-  printf "  %-16s %-11s %-11s %-9s %-8s %s\n" \
-    "───────────────" "──────────" "──────────" "────────" "───────" "────"
+  local regressions_only=0
+  [ "${1:-}" = "--regressions-only" ] && regressions_only=1
+
+  # Rows are collected rather than printed, because "say nothing when clean" can
+  # only be decided once every suite has been measured.
+  local rows=() breached=0
+  local header_main header_rule
+  header_main="$(
+    printf "  ${BOLD}%-16s %-11s %-11s %-9s %-8s %s${NC}" \
+      "Suite" "Baseline" "Latest" "Drift" "Thresh" "Runs"
+  )"
+  header_rule="$(
+    printf "  %-16s %-11s %-11s %-9s %-8s %s" \
+      "───────────────" "──────────" "──────────" "────────" "───────" "────"
+  )"
 
   for suite in "${ALL_SUITES[@]}"; do
     local base; base=$(suite_baseline "$suite")
@@ -68,15 +83,31 @@ cmd_status() {
     local base_s="—";   [ "$base"   != "null" ] && base_s="${base}s"
     local latest_s="—"; [ "$latest" != "null" ] && latest_s="${latest}s"
 
-    printf "  %-16s %-11s %-11s " "$suite" "$base_s" "$latest_s"
+    local drift_cell
     if is_regression "$suite" "$base" "$latest"; then
-      echo -ne "${RED}${drift}${NC}"
+      breached=1
+      drift_cell="${RED}${drift}${NC}"
     else
-      echo -ne "$drift"
+      drift_cell="$drift"
     fi
-    printf " %*s" $((9 - ${#drift} + ${#threshold})) "$threshold"
-    printf " %s\n" "$count"
+    # Same printf sequence as before, built into one string so the column
+    # alignment is untouched by the refactor.
+    rows+=(
+      "$(
+        printf "  %-16s %-11s %-11s " "$suite" "$base_s" "$latest_s"
+        printf "%b" "$drift_cell"
+        printf " %*s" $((9 - ${#drift} + ${#threshold})) "$threshold"
+        printf " %s" "$count"
+      )"
+    )
   done
+
+  if [ "$regressions_only" = "1" ] && [ "$breached" = "0" ]; then
+    return 0
+  fi
+
+  echo ""
+  printf '%s\n' "$header_main" "$header_rule" "${rows[@]}"
   echo ""
 }
 

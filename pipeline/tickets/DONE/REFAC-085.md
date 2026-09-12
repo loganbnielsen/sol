@@ -47,3 +47,21 @@ It is informational only — the gate lives in `run_tests.sh` via pre-commit —
 ## Notes
 
 Filed from a review of which parts of `devtools` earn their keep rather than from a failure. Two other findings from that review are handled elsewhere: the rename detection in the worktree guard (BUG-023) and the check that guards a duplicated source of truth (`check_platform_component_drift.sh`), which is the pattern worth copying.
+
+## Completion notes
+
+**`perf.sh status --regressions-only` added, and `post-commit` uses it.** The rows are now collected before anything is printed, because "say nothing when clean" can only be decided once every suite has been measured; the breach count comes from the existing `is_regression`, so no threshold logic was added. The hook's unconditional leading blank line is gone too, so a clean commit prints nothing at all.
+
+**Verified with the check that matters for the "unchanged" criterion** rather than by reading the diff: `perf.sh status` output is **byte-for-byte identical** to the same command on `main`, including the column alignment — the row printf sequence was preserved deliberately, since the drift column is colourised and a naive rewrite shifts the threshold column.
+
+| check | result |
+|---|---|
+| `perf.sh status` vs main | identical byte-for-byte |
+| `status --regressions-only`, no breach | 0 bytes |
+| `status --regressions-only`, breach forced (unit baseline lowered to 1.0s) | table printed, `+161%` in red |
+| `post-commit` with a breach forced | speaks |
+| `post-commit`, no breach | 0 bytes, exit 0 |
+
+The breach was forced by temporarily lowering the unit baseline and restoring it afterwards, so the "it still fires when it should" half is demonstrated rather than assumed. Worth noting what that exercise also confirms: the numbers were never interesting — `+161%` is what a real regression looks like, and the committed table has always shown single-digit drifts against 1.4–1.5× thresholds.
+
+**What deliberately did not change:** the pre-commit gate that fails a breached suite, the baseline file, `set-baseline`/`history`, and the tool itself as an on-demand command. The gap between "no baseline yet" and "regressed" is untouched — a suite with no baseline was already excluded by `is_regression`. This ticket removes unconditional *reporting*; nothing measures less than before.
