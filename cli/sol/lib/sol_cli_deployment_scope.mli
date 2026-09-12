@@ -1,13 +1,8 @@
-(** Deployment scope as a first-class, named value (FEAT-061).
+(** Deployment scope as a first-class, named value (FEAT-061, FEAT-064).
 
     Scope answers *what* a release contains; the destination (FEAT-059) answers
     *where* it goes. The two axes are separate, and neither should learn about
-    the other.
-
-    A scope is a name rather than a path: discovery still walks directories and
-    the existing path argument remains as an escape hatch, but the identity of a
-    release is the unit it names. See the implementation for why DEC-018 needs
-    that distinction. *)
+    the other. *)
 
 (** The kind of unit a scope names. Resolution supplies it from discovery, so a
     request never carries one. *)
@@ -30,7 +25,7 @@ type t =
       }
 
 (** [to_string scope] is the spelling a user types back: ["workspace"],
-    ["payments"], ["payments/charge_svc"]. *)
+    ["payments"], ["payments/charge_svc"] — always canonical. *)
 val to_string : t -> string
 
 (** What a user asked for, before discovery is consulted. *)
@@ -41,35 +36,27 @@ type request =
 
 (** [parse_request value] parses the optional user argument: absent or blank is
     the whole workspace, ["domain"] is a domain, ["domain/unit"] is one unit.
-    Anything else — including a path with three or more segments — is an
-    [Error] naming the accepted forms, because a request that cannot be
-    understood must not fall back to deploying everything. *)
+    Anything else — including a path with three or more segments — is an [Error]
+    naming the accepted forms, because a request that cannot be understood must
+    not fall back to selecting everything. *)
 val parse_request : ?what:string -> string option -> (request, string) result
 
-(** A unit as discovery reports it. Kept separate from
-    [Sol_cli_deployment_plan.service_spec] so resolution can be tested without
-    constructing a 24-field record. *)
+(** A unit as discovery reports it. *)
 type named =
   { domain : string
   ; name : string
   ; kind : kind
   }
 
-val named_of_spec : Sol_cli_deployment_plan.service_spec -> named
+(** Whether the request matched anything. Neutral on purpose: whether zero
+    matches is *meaningful* is the calling command's policy, not the selector's. *)
+type selection =
+  | Selected of named list
+  | Empty
 
-(** [select_named ~what request units] resolves a request against the units
-    discovery found. It fails closed when the request names something that does
-    not exist, listing what does — the failure mode this exists to remove is an
-    unmatched selection quietly deploying nothing. *)
-val select_named
-  :  ?what:string
-  -> request
-  -> named list
-  -> (t * named list, string) result
-
-(** The same, over discovered services. *)
-val select
-  :  ?what:string
-  -> request
-  -> Sol_cli_deployment_plan.service_spec list
-  -> (t * Sol_cli_deployment_plan.service_spec list, string) result
+(** [resolve ~what request units] resolves against the units discovery found,
+    failing closed with what exists when the request names something that does
+    not. Matching normalises `-` to `_`, so `payments/charge-svc` resolves the
+    same unit as `payments/charge_svc`; the resolved scope always carries
+    discovery's canonical name rather than the spelling that was typed. *)
+val resolve : ?what:string -> request -> named list -> (t * selection, string) result
