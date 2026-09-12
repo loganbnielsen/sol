@@ -7,6 +7,8 @@ source: 2026-09-09 code-layer audit finding 7; REFAC-043 verification
 
 **Depends on:** None.
 
+**Premise checked 2026-09-12:** the self-pipe body was still present verbatim in `framework/sol-svc/lib/service.ml`, `framework/sol-worker/lib/worker.ml`, and `framework/sol-fn/lib/fn.ml`.
+
 Complete the self-pipe signal-handler extraction that REFAC-043 claimed but did not land: `install_signal_handler` is still duplicated across all three primitives.
 
 ## Problem
@@ -50,3 +52,47 @@ What this ticket did not settle is **where the extracted version lives**, and th
 So this ticket is gated on one decision: *which package owns shared runtime behaviour that is neither observability nor an interface?* My recommendation is the new package, taken deliberately rather than as a drive-by, because this will not be the last such piece — the same question recurs for anything a service and a worker both need.
 
 **The extraction is also not purely mechanical.** The three copies differ in their surrounding control flow (`Eio.Switch.run` in one, the consumer's own loop in another), so the shared signature has to be chosen by what all three can call — and the tests should assert the shutdown *behaviour* (the promise resolves, the in-flight message completes) rather than the helper's internals, or the refactor will be verified by nothing.
+
+## Decision — the shared home (settles the 2026-09-11 finding)
+
+`framework/sol-runtime/`, as an in-tree dune library. Not a new opam package, and
+not `sol_obs` or `sol_env`.
+
+The finding assumed a new package was "a packaging change: opam metadata plus the
+release and publish path". That is not true of this repo's model: the primitives
+are dune libraries inside the single `(package sol)` stanza in `dune-project`
+(`(generate_opam_files true)`), so adding `framework/sol-runtime/` adds no opam
+metadata and no release path. `sol_obs` would read as observation, which a
+shutdown handler is not, and `sol_env` is deliberately
+`(modules_without_implementation)`. A small dedicated runtime library is the
+honest home, and it is where the next shared primitive behaviour should go.
+
+Correction: the finding said the worker needed an `Atomic.bool` variant. It does
+not — all three copies take `Eio.Promise.u` and update a stop promise, so one
+variant is the whole surface.
+
+## Completion notes
+
+Landed 2026-09-12.
+
+- New `framework/sol-runtime/` (`Sol_runtime.install_signal_handler`): one
+  self-pipe body. It uses `fork_daemon`, which worker/fn already used; svc's
+  `fork` became the daemon form too, so a service that exits for a reason other
+  than a signal cannot hang its switch on a fiber waiting for a signal that
+  never comes.
+- `sol-svc`, `sol-worker` and `sol-fn` call it and carry a one-line pointer
+  instead of a body.
+- `framework/sol-runtime/test/test_signal.ml` asserts the *behaviour*: a real
+  `SIGTERM`/`SIGINT` resolves the stop promise. A five-second timeout means a
+  broken handler fails the test instead of hanging it.
+- `devtools/ci/check_signal_handler_duplication.sh` greps the three primitive
+  `lib/` dirs for `Unix.pipe` / `Unix.set_nonblock` / `Sys.set_signal` and fails
+  if the shape returns; it is wired into the `test` job. This is the check
+  REFAC-043's acceptance grep claimed but never had.
+
+Verified: `dune build`, the new behaviour test, and the CI unit-test set
+(`framework/sol-env sol-fn sol-obs sol-runtime sol-svc sol-worker cli/sol/test`)
+all pass; `dune fmt --preview` is clean.
+
+Demo/example coverage: internal refactor with no app-author-facing surface — the
+one-line exemption the repo's demo rule allows.

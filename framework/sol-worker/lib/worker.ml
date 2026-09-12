@@ -46,34 +46,9 @@ let run_error_to_string = function
 
 (* ── Signal handling ────────────────────────────────────────────────────── *)
 
-(* Self-pipe: signal handler writes one byte; an Eio fiber reads it and
-   resolves the stop promise, which the consumer checks at each message
-   boundary so the in-flight message finishes before shutdown. Same shape as
-   sol-fn's install_signal_handler. *)
-let install_signal_handler ~sw resolver =
-  let r, w = Unix.pipe ~cloexec:true () in
-  Unix.set_nonblock w;
-  let handle _ =
-    try ignore (Unix.single_write w (Bytes.make 1 '\x00') 0 1) with
-    | _ -> ()
-  in
-  Sys.set_signal Sys.sigterm (Sys.Signal_handle handle);
-  Sys.set_signal Sys.sigint (Sys.Signal_handle handle);
-  Eio.Fiber.fork_daemon ~sw (fun () ->
-    Fun.protect
-      ~finally:(fun () ->
-        Unix.close r;
-        try Unix.close w with
-        | _ -> ())
-      (fun () ->
-         Eio_unix.await_readable r;
-         let buf = Bytes.create 1 in
-         (try ignore (Unix.read r buf 0 1) with
-          | _ -> ());
-         (try Eio.Promise.resolve resolver () with
-          | _ -> ());
-         `Stop_daemon))
-;;
+(* The self-pipe handler lives in [Sol_runtime] (REFAC-081): the worker, the
+   service and the function all need the same shutdown contract, and the
+   handler's correctness is subtle enough that one copy is safer than three. *)
 
 (* ── Make functors ──────────────────────────────────────────────────────── *)
 
@@ -130,7 +105,7 @@ module Make_with_test_seam (W : WORKER) = struct
     in
     let result =
       Eio.Switch.run (fun sw ->
-        install_signal_handler ~sw signal_stop_r;
+        Sol_runtime.install_signal_handler ~sw signal_stop_r;
         Option.iter
           (fun render ->
              Obs_prometheus.serve
