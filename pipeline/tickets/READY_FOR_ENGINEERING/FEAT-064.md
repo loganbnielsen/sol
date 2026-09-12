@@ -84,3 +84,13 @@ The principle, since this is the second time it has come up: **teach through err
 ## Notes
 
 Sequencing: this is the strict-selection half of the scope work. FEAT-061 landed the vocabulary and its first consumer with the escape hatch still present; this ticket removes the rest, and the argument for doing it now is the whole ticket — once something depends on the positional forms, deleting them becomes a compatibility negotiation instead of a cleanup.
+
+## The invariant, and what follows from it
+
+> **Sol has one workload-selection language. Commands may project that selection into their own addressing model, but may not reinterpret it.**
+
+Three consequences, each of which came up as a question during design:
+
+- **Selection is neutral about emptiness.** The resolver answers `Selected of named list | Empty`; whether zero matches is *meaningful* is a command policy — `status` and `check` accept an empty workspace, `up`, `deploy` and `rollback` do not. Encoding that policy inside the selection type would make the selector know what its caller intends to do with the answer.
+- **A command receives `--scope` only when every accepted scope projects into that command's addressing model without changing its meaning.** If `payments/settle_worker` resolves as a deployment unit but Loki can only address `payments`, then `logs --scope payments/settle_worker` must not ship implying unit granularity: either write the projection that preserves the intended granularity, or defer `--scope` for that command and say so here. `scope resolution != command addressing`.
+- **The plan carries both facts.** The requested scope (`Domain "payments"`) and the concrete resolved set (`charge_svc`, `refund_svc`, `settle_worker`) are different pieces of information: intent, and reproducibility. A service added to `payments` next week does not retroactively change what the boundary of *that* release was, and rollback needs both.
