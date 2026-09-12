@@ -3,9 +3,12 @@ id: FEAT-055
 type: feature
 severity: low
 source: verification 2026-09-11 — deploy/runtime visibility is largely already built; this is the one real gap
+premise: "test $(rg -l Sol_cli_run_log cli/sol/bin/cmd_up.ml cli/sol/bin/cmd_deploy.ml 2>/dev/null | wc -l) -eq 2"
 ---
 
 **Depends on:** None.
+
+**Premise probe (INFRA-010):** the `premise:` above succeeds when this work is *done*, so once the run log is wired into both deploy paths the pipeline will report `premise-stale` instead of `actionable` and nobody has to remember to re-read this ticket. It currently reports `holds` — `Sol_cli_run_log` is used only by `cmd_cloud_tf.ml` and its test, so neither `sol up` nor `sol deploy` has it yet. This is the mechanism's first use, and the reason it is here: four findings were closed on 2026-09-11 as already-built, and this ticket was filed in the same pass.
 
 Wire the run log into the deploy path, so `sol up` and `sol deploy` produce a run ID and keep their diagnostics on disk instead of only in the terminal that ran them.
 
