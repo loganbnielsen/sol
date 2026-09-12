@@ -46,7 +46,16 @@ let test_mode_of_env_accepts_hosted_aliases () =
 let test_mode_of_env_accepts_local_aliases () =
   List.iter
     (fun env -> check_mode env Sol_cli_secret.Local (Sol_cli_secret.mode_of_env env))
-    [ "local"; "dev" ]
+    [ "local" ]
+;;
+
+(* REFAC-086: `dev` was accepted here until it was retired. Asserting the
+   rejection, not merely deleting the value, is what keeps a retired word from
+   quietly returning — a deleted list entry proves nothing about the parser. *)
+let test_mode_of_env_rejects_the_retired_dev_alias () =
+  match Sol_cli_secret.mode_of_env "dev" with
+  | Ok _ -> Alcotest.fail "\"dev\" must no longer select the local secret mode"
+  | Error _ -> ()
 ;;
 
 let test_mode_of_env_accepts_customer_cloud_aliases () =
@@ -63,7 +72,7 @@ let test_mode_of_env_rejects_unknown () =
     check_string
       "error"
       "unknown secret environment \"staging\"; expected one of: hosted, sol_hosted, \
-       sol-hosted, local, dev, cloud, customer_cloud, customer-cloud"
+       sol-hosted, local, cloud, customer_cloud, customer-cloud"
       msg
 ;;
 
@@ -142,7 +151,7 @@ let test_list_rejects_unknown_env () =
     check_string
       "unknown env"
       "unknown secret environment \"staging\"; expected one of: hosted, sol_hosted, \
-       sol-hosted, local, dev, cloud, customer_cloud, customer-cloud"
+       sol-hosted, local, cloud, customer_cloud, customer-cloud"
       msg
 ;;
 
@@ -169,6 +178,10 @@ let () =
             "accepts local aliases"
             `Quick
             test_mode_of_env_accepts_local_aliases
+        ; Alcotest.test_case
+            "the retired dev alias is rejected"
+            `Quick
+            test_mode_of_env_rejects_the_retired_dev_alias
         ; Alcotest.test_case
             "accepts customer cloud aliases"
             `Quick
