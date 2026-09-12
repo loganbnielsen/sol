@@ -191,7 +191,7 @@ let test_helm_upgrade_install_argv () =
    between --create-namespace and --set/-f (see sol_cli_helm.ml) -- this
    documents that shape, same as the sibling argv tests above; the real
    `upgrade_install` function itself is exercised end to end by live
-   cluster verification (all 7 helm_install call sites in cmd_dev.ml,
+   cluster verification (all 7 helm_install call sites in cmd_local.ml,
    CODE_LAYER-008), not by this suite, same as every other _argv test in
    this file (none call the real Sol_cli_kubectl/Sol_cli_docker/Sol_cli_helm
    functions -- see the module comment at the top of this file if that

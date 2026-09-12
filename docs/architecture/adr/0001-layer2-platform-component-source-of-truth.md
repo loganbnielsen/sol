@@ -31,13 +31,13 @@ both execution paths.
 expresses platform-component desired state as Terraform `helm_release`
 resources in `cli/platform/infra/base/main.tf`. Local development expresses
 the *same* desired state as hand-written `helm install`/`helm upgrade`
-calls with inline OCaml values in `cmd_dev.ml`. The two are kept in sync
+calls with inline OCaml values in `cmd_local.ml`. The two are kept in sync
 only by a repeated code comment — "Dev mirrors prod exactly" — which
 describes an intended invariant but enforces nothing.
 
 This stopped being theoretical when BUG-013 fixed Loki's
 `commonConfig.replication_factor` in `cli/platform/infra/base/main.tf` and
-nobody thought to check `cmd_dev.ml`'s independent Loki config, which
+nobody thought to check `cmd_local.ml`'s independent Loki config, which
 still lacks the fix (BUG-016): a fresh `sol dev up` today can hit the
 exact ring-quorum failure BUG-013 already fixed in production. The
 follow-up code-layer audit (`pipeline/audits/2026-09-06_code_layer_audit.md`)
@@ -105,7 +105,7 @@ literal baked into a component's own files; that value is *supplied*
 through the binding, the component only declares it needs
 `serviceAccount.annotations`).
 
-**Execution layers select and merge; they do not define.** `cmd_dev.ml`
+**Execution layers select and merge; they do not define.** `cmd_local.ml`
 becomes: "install Loki using `values-common.json` + `values-local.json`."
 `cli/platform/infra/base/main.tf`'s `helm_release` becomes: "install Loki
 using `jsondecode(file(...common...))` + `jsondecode(file(...durable...))`
@@ -113,7 +113,7 @@ using `jsondecode(file(...common...))` + `jsondecode(file(...durable...))`
 anymore; both own only orchestration.
 
 **Guardrail, applied symmetrically to both execution paths**: CI should
-flag new inline Helm configuration growing back in either `cmd_dev.ml`
+flag new inline Helm configuration growing back in either `cmd_local.ml`
 (new `helm_install ~values:[...]` literals for a component that has a
 `cli/platform/components/` entry) or `cli/platform/infra/base/main.tf` (new
 `set {}` blocks or growing `yamlencode(...)`/`jsonencode(...)` literals
@@ -146,7 +146,7 @@ become the new dumping ground defeats the point.
 - Fixing a genuinely shared platform-component value (the next BUG-013)
   is one file edit instead of a "remember to also update the other
   system" convention that has already failed once.
-- `cmd_dev.ml` and `cli/platform/infra/base/main.tf` both get smaller and
+- `cmd_local.ml` and `cli/platform/infra/base/main.tf` both get smaller and
   more boring — they orchestrate, they no longer encode.
 - Local/durable differences become explicitly inspectable by diffing two
   adjacent files, rather than requiring a reader to hold both a Terraform

@@ -7,6 +7,8 @@ source: split from REFAC-086, 2026-09-11 — the naming half of the local/target
 
 **Depends on:** None.
 
+**Premise checked 2026-09-12:** `cli/sol/bin/cmd_dev.ml` still existed and `devtools/ci/check_platform_component_drift.sh` still hardcoded its path, so the rename was genuinely outstanding.
+
 **Related:** REFAC-086 (which landed the alias removal and the destination guard), REFAC-083 (which renamed the command to `local`), DEC-016, DEC-020, **REFAC-088** (the capability-core half, split out on 2026-09-12 because it needs FEAT-063's destination abstraction).
 
 Name the file that implements the `local` group for what it contains.
@@ -28,3 +30,28 @@ References that must move with it, because a stale one is not cosmetic:
 - The file implementing the `local` group is named `cmd_local.ml`, and `main.ml`/`dune` reference `Cmd_local`.
 - The drift guardrail points at the new path.
 - No reference to the old module name remains in code, build files, or docs describing current state.
+
+## Completion notes
+
+Landed 2026-09-12.
+
+- `cli/sol/bin/cmd_dev.ml` → `cli/sol/bin/cmd_local.ml` (`git mv`, so history
+  follows), with `cli/sol/bin/dune` and `main.ml` (`Cmd_dev.cmd` →
+  `Cmd_local.cmd`) updated.
+- `devtools/ci/check_platform_component_drift.sh`'s `cmd_local` variable and its
+  keys/messages now point at the new path. This was the load-bearing one: with
+  the old path the `grep` reads a missing file, the `if` goes false, and the
+  guardrail passes silently — verified it still runs and reports against
+  `cmd_local.ml`.
+- Comments and current-state docs updated: `sol_cli_status.ml`,
+  `test_tool_adapters.ml`, `cli/platform/infra/base/main.tf`, ADR 0001,
+  `docs/architecture/devops-pipeline.md`,
+  `docs/deployment/observability-backends.md`, `docs/planning/ROADMAP.md`.
+- **Left as historical record:** `pipeline/audits/*`, `pipeline/dogfood/*` and
+  `docs/planning/WORK_SUMMARY.md`, which state what was true when written;
+  rewriting them would falsify the record rather than fix a reference. Verified
+  the only remaining `cmd_dev` mentions are those plus ticket prose.
+
+Verified: `dune build`, the drift guardrail, and the full `cli/sol/test` suite
+all pass. Demo/example coverage: no CLI surface change — `sol local` and its
+subcommands are untouched; only the module file's name moved.
