@@ -87,6 +87,30 @@ let test_format_phase_line_failed () =
     (R.format_phase_line ~name:"terraform-apply" ~elapsed_s:0.3 ~ok:false)
 ;;
 
+(* ── format_failure_report ───────────────────────────────────────────── *)
+
+let contains needle haystack =
+  try
+    ignore (Str.search_forward (Str.regexp_string needle) haystack 0);
+    true
+  with
+  | Not_found -> false
+;;
+
+(* FEAT-055: a failing phase must name the run, not just the log path, so a
+   deploy is recoverable after the terminal that ran it is gone. *)
+let test_format_failure_report_names_run_and_log () =
+  let report =
+    R.format_failure_report
+      ~run_id:"deploy-20260101T000000Z-1"
+      ~log_path:"/tmp/runs/apply.log"
+      ~tail:"boom"
+  in
+  check_bool "names the run id" true (contains "deploy-20260101T000000Z-1" report);
+  check_bool "names the log path" true (contains "/tmp/runs/apply.log" report);
+  check_bool "includes the tail" true (contains "boom" report)
+;;
+
 (* ── runs_to_prune ───────────────────────────────────────────────────── *)
 
 let test_runs_to_prune_under_limit () =
@@ -123,6 +147,12 @@ let () =
     ; ( "format_phase_line"
       , [ Alcotest.test_case "ok" `Quick test_format_phase_line_ok
         ; Alcotest.test_case "failed" `Quick test_format_phase_line_failed
+        ] )
+    ; ( "format_failure_report"
+      , [ Alcotest.test_case
+            "names run and log"
+            `Quick
+            test_format_failure_report_names_run_and_log
         ] )
     ; ( "runs_to_prune"
       , [ Alcotest.test_case "under limit" `Quick test_runs_to_prune_under_limit

@@ -36,9 +36,10 @@ let format_phase_line ~name ~elapsed_s ~ok : string =
   Printf.sprintf "[%s] %s (%.1fs)" name (if ok then "ok" else "FAILED") elapsed_s
 ;;
 
-let format_failure_report ~log_path ~tail : string =
+let format_failure_report ~run_id ~log_path ~tail : string =
   Printf.sprintf
-    "  log: %s\n  last lines:\n%s\n"
+    "  run: %s\n  log: %s\n  last lines:\n%s\n"
+    run_id
     log_path
     (String.concat "\n" (List.map (fun l -> "    " ^ l) (String.split_on_char '\n' tail)))
 ;;
@@ -87,6 +88,37 @@ let create ?(keep = 20) ~prefix () : t =
 ;;
 
 let phase_log_path t ~phase = Filename.concat t.dir (phase ^ ".log")
+let run_id t = t.run_id
+let dir t = t.dir
+
+let write_file path contents =
+  let oc = open_out path in
+  output_string oc contents;
+  close_out oc
+;;
+
+(* Shared finish for every phase kind: write the log, print the compact line
+   and — only on failure — the run id, log path and tail. *)
+let finish_phase t ~name ~elapsed_s ~ok ~contents =
+  let log_path = phase_log_path t ~phase:name in
+  write_file log_path contents;
+  Printf.printf "%s\n%!" (format_phase_line ~name ~elapsed_s ~ok);
+  if not ok
+  then
+    Printf.printf
+      "%s%!"
+      (format_failure_report ~run_id:t.run_id ~log_path ~tail:(tail_lines ~n:40 contents))
+;;
+
+(** Append [text] to a phase's log, creating it if needed. Lets a caller record
+    diagnostics a phase produced outside [run_phase]/[run_task] — for example
+    the rendered plan it acted on. *)
+let append_phase_log t ~phase text =
+  let path = phase_log_path t ~phase in
+  let oc = open_out_gen [ Open_creat; Open_append; Open_text ] 0o644 path in
+  output_string oc text;
+  close_out oc
+;;
 
 let run_phase
       t
@@ -97,7 +129,6 @@ let run_phase
   let start = Unix.gettimeofday () in
   let result = thunk () in
   let elapsed_s = Unix.gettimeofday () -. start in
-  let log_path = phase_log_path t ~phase:name in
   let ok, contents =
     match result with
     | Ok r ->
@@ -108,14 +139,23 @@ let run_phase
     | Error e ->
       false, phase_log_content ~stdout:"" ~stderr:(Sol_cli_process.error_to_string e)
   in
-  (let oc = open_out log_path in
-   output_string oc contents;
-   close_out oc);
-  Printf.printf "%s\n%!" (format_phase_line ~name ~elapsed_s ~ok);
-  if not ok
-  then
-    Printf.printf
-      "%s%!"
-      (format_failure_report ~log_path ~tail:(tail_lines ~n:40 contents));
+  finish_phase t ~name ~elapsed_s ~ok ~contents;
+  result
+;;
+
+(** Like [run_phase], but for a phase that is not one subprocess: [thunk]
+    returns [Ok v] or [Error msg], and [msg] becomes the phase's log content on
+    failure. Same compact line and failure report as [run_phase], so the deploy
+    path and the Terraform path share one mechanism. *)
+let run_task t ~name (thunk : unit -> ('a, string) result) : ('a, string) result =
+  let start = Unix.gettimeofday () in
+  let result = thunk () in
+  let elapsed_s = Unix.gettimeofday () -. start in
+  let ok, contents =
+    match result with
+    | Ok _ -> true, ""
+    | Error msg -> false, msg
+  in
+  finish_phase t ~name ~elapsed_s ~ok ~contents;
   result
 ;;

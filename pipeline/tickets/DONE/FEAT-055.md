@@ -35,3 +35,38 @@ A verification pass over the four items the ROADMAP listed as "not yet ticketed"
 - A failing phase prints the run ID and the path to its log.
 - The run-log directory stays bounded by the existing pruning policy.
 - One run-log implementation: the deploy path and `cmd_cloud_tf.ml` share it, and no second one is introduced.
+
+## Completion notes
+
+Landed 2026-09-12. The `premise:` probe above now reports **premise-stale** by
+design — it succeeds once both `cmd_up.ml` and `cmd_deploy.ml` mention
+`Sol_cli_run_log`, which is exactly what this change did.
+
+- `Sol_cli_run_log` gained a second phase kind. `run_phase` already covered a
+  single subprocess; `run_task` covers the deploy path's phases (the executor,
+  the build/apply loop) whose output is a `(unit, string) result`. Both share
+  one `finish_phase`, so there is still exactly one run-log implementation, and
+  `cmd_cloud_tf.ml` is untouched.
+- `format_failure_report` now prints the **run id** as well as the log path and
+  tail, which is what makes a deploy recoverable after the terminal is gone.
+- `sol up` and `sol deploy` create a run (`up-…` / `deploy-…`) before doing any
+  work, print `Run: …` and its directory, record the rendered plan summary to
+  `plan.log`, and wrap the mutating phase (`apply`/`dry-run`/`emit`) so a
+  failure lands a `apply.log` with the full error detail and prints the run id,
+  path and tail. Pruning is inherited from `create`.
+
+On the "full log" wording in Scope: the phase log holds the plan the command
+acted on and, on failure, the propagated error string — which already includes
+the failing subprocess's stderr (`Sol_cli_process.error_to_string` prints
+`Non_zero … : stderr`), and docker/kubectl write their diagnostics to stderr.
+So a failed build or apply is recoverable from the log. Live progress stays on
+the terminal, as the ticket requires.
+
+Verified end to end with a scaffolded workspace: `sol up --dry-run` printed
+`Run: up-…` and wrote `.sol/runs/up-…/{plan.log,dry-run.log}`, with `plan.log`
+holding the rendered plan summary. The full `cli/sol/test` suite passes,
+including a new `format_failure_report` test asserting the run id is named.
+
+Demo/example coverage: the CLI surface is unchanged (no new flags or commands);
+the run directory is created for the existing `sol up`/`sol deploy`, which the
+`golden-path-smoke` job already runs.
