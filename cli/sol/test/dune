@@ -1,6 +1,7 @@
 (tests
  (names
   test_kube_destination
+  test_deployment_scope
   test_deployment_plan
   test_check
   test_config
