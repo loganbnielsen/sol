@@ -35,15 +35,6 @@ let primitive_of_suffix name =
   else None
 ;;
 
-(* Service directories are underscored (charge_svc); CLI filters may be typed
-   hyphenated (charge-svc), matching the convention sol new/scaffold already
-   normalizes. Compare on the normalized form so both spellings match. *)
-let normalize_filter =
-  String.map (function
-    | '-' -> '_'
-    | c -> c)
-;;
-
 type discover_error = Missing_app_dir
 
 let discover_error_to_string = function
@@ -75,15 +66,12 @@ type workspace_scan =
 let workload_fact_to_service ((svc, _) : workload_fact) : service = svc
 let has_dockerfile dir = Sys.file_exists (Filename.concat dir "Dockerfile")
 
-let included_by_filter ~filter_path dir name =
-  match filter_path with
-  | None -> true
-  | Some p ->
-    let p = normalize_filter p in
-    dir = p || Filename.basename dir = p || name = p
-;;
-
-let scan_workspace ~filter_path =
+(* Discovery answers "what is on disk", never "what did the user ask for".
+   Selection happens once, after discovery, in [Sol_cli_workload_selection]
+   (FEAT-065): a scan that took a filter could return a subset that looked
+   identical to an empty workspace, which is exactly the confusion the strict
+   selector removes. *)
+let scan_workspace () =
   let app_dir = "app" in
   if not (Sys.file_exists app_dir && Sys.is_directory app_dir)
   then Error Missing_app_dir
@@ -102,20 +90,16 @@ let scan_workspace ~filter_path =
                 then (
                   match primitive_of_suffix name with
                   | Some primitive ->
-                    if included_by_filter ~filter_path dir name
-                    then (
-                      let svc = { domain; name; primitive; dir } in
-                      workloads := (svc, has_dockerfile dir) :: !workloads)
-                  | None ->
-                    if included_by_filter ~filter_path dir name
-                    then unexpected := (domain, name, dir) :: !unexpected))
+                    let svc = { domain; name; primitive; dir } in
+                    workloads := (svc, has_dockerfile dir) :: !workloads
+                  | None -> unexpected := (domain, name, dir) :: !unexpected))
              (Sys.readdir dp))
       (Sys.readdir app_dir);
     Ok { workloads = List.rev !workloads; unexpected = List.rev !unexpected })
 ;;
 
-let discover_services_result ~filter_path =
-  match scan_workspace ~filter_path with
+let discover_services_result () =
+  match scan_workspace () with
   | Error _ as err -> err
   | Ok scan ->
     Ok
@@ -124,8 +108,8 @@ let discover_services_result ~filter_path =
          if has_dockerfile then Some svc else None))
 ;;
 
-let discover_services ~filter_path =
-  match discover_services_result ~filter_path with
+let discover_services () =
+  match discover_services_result () with
   | Ok services -> services
   | Error err ->
     Printf.eprintf "error: %s\n" (discover_error_to_string err);

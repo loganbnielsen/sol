@@ -70,6 +70,11 @@ type t =
   ; migrations : Sol_cli_plan_ids.Migration_file.t list
   ; schema_subjects : Sol_cli_plan_ids.Schema_subject.t list
   ; consumer_groups : Sol_cli_plan_ids.Consumer_group.t list
+  ; requested_scope : string
+    (** What the user asked for, before discovery narrowed it (FEAT-065):
+          ["workspace"], a domain, or ["domain/unit"]. The concrete resolved
+          set is [services]; the pair is intent plus reproducibility, and
+          DEC-018's release record needs both. *)
   }
 
 type plan_error =
@@ -249,6 +254,13 @@ let to_json t =
           ; "cluster_issuer", `String env.cluster_issuer
           ; "secret_backend", secret_backend_to_json env.secret_backend
           ] )
+    ; "requested_scope", `String t.requested_scope
+    ; ( "resolved_workloads"
+      , `List
+          (List.map
+             (fun (s : service_spec) ->
+                `Assoc [ "domain", `String s.domain; "name", `String s.source_name ])
+             t.services) )
     ; "services", `List (List.map service_to_json t.services)
     ; ( "topics"
       , `List
@@ -426,7 +438,13 @@ let sol_yml_replicas_override ~resolved_config ~service_name =
      | Some { Sol_cli_config.scale_min; _ } -> scale_min)
 ;;
 
-let of_services_result ~workspace ~env ?resolved_config services =
+let of_services_result
+      ~workspace
+      ~env
+      ?(requested_scope = "workspace")
+      ?resolved_config
+      services
+  =
   let loaded =
     List.map
       (fun svc ->
@@ -597,11 +615,12 @@ let of_services_result ~workspace ~env ?resolved_config services =
     ; migrations = discover_migrations ()
     ; schema_subjects = discover_schema_subjects ()
     ; consumer_groups = derive_consumer_groups workspace resolved_services
+    ; requested_scope
     }
 ;;
 
-let of_services ~workspace ~env ?resolved_config services =
-  match of_services_result ~workspace ~env ?resolved_config services with
+let of_services ~workspace ~env ?requested_scope ?resolved_config services =
+  match of_services_result ~workspace ~env ?requested_scope ?resolved_config services with
   | Ok plan -> plan
   | Error err -> failwith (plan_error_to_string err)
 ;;

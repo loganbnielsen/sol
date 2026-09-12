@@ -98,6 +98,7 @@ let make_plan services =
   ; migrations = []
   ; schema_subjects = []
   ; consumer_groups = []
+  ; requested_scope = "workspace"
   }
 ;;
 

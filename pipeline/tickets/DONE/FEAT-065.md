@@ -9,6 +9,8 @@ source: split from FEAT-064, 2026-09-11 — the resolver landed; the migration d
 
 **Related:** DEC-018 (rollback), DEC-016, REFAC-086 (local vs target surfaces).
 
+**Premise checked 2026-09-11:** `rg -n 'filter_path' cli/sol` still matched 21 source files — the migration was genuinely outstanding.
+
 Propagate strict scope selection across the commands that operate on a subset of workloads.
 
 ## The invariant
@@ -51,3 +53,52 @@ If it is the latter, give that behaviour **its own vocabulary** rather than forc
 - The emitted plan carries the requested scope and the resolved workloads.
 - Where a command's addressing cannot preserve the scope's granularity, the flag is withheld and the reason is recorded in this ticket — not shipped with a narrower meaning than it implies.
 - Any `filter_path` use that turns out not to be workload selection is given its own vocabulary, with the reason recorded.
+
+## Completion notes
+
+Landed 2026-09-11. `filter_path` is gone from every source file; no command
+accepts a positional workload selector; every scope-taking command resolves
+through the one bridge (`Sol_cli_workload_selection.resolve`), and the emitted
+plan carries `requested_scope` and `resolved_workloads`.
+
+**Per-command disposition** — the "ask what each use *meant*" pass:
+
+- `up`, `deploy`, `rollback` — `--scope`. Mutating, so an empty selection is an
+  error, and the selector is resolved *before* target loading, contract checks
+  or registry resolution, so a bad name can never report a downstream cause.
+- `check` — `--scope`. Read-only, so an empty workspace is reported, not failed.
+- `status` — keeps its positional scope grammar (workspace/domain/unit/managed
+  resource), but Domain/Service now resolve through the shared resolver instead
+  of a hand-rolled `declared_services ~domain` filter.
+- `logs` — **`--scope` accepted at unit granularity only.** Loki's addressing
+  (namespace + k8s name) and `kubectl logs` both preserve unit granularity, but
+  neither projects a domain or workspace request into "one pod's logs". Rather
+  than narrow a domain scope silently, the command refuses and points at
+  `sol open logs`, whose addressing model does support those scopes.
+- `open` — unchanged. It never used `filter_path`, and its scope grammar
+  (including `resource/<type>/<name>`) is broader than the deployment
+  vocabulary, so extending it was unnecessary.
+- `migrate` — no flag, deliberately. Its discovery picks a *substrate* (which
+  namespace and ECR repository the one-off Job reuses), not a subset of
+  workloads; `--scope` would imply a mutation granularity it does not have.
+- `secret` — its positional PATH is replaced by `--domain`. Secrets are
+  addressed by Kubernetes namespace, not by workload, so this is its own
+  vocabulary: `--scope payments/charge_svc` would imply a unit granularity the
+  underlying object cannot honour. An unknown `--domain` fails closed and names
+  the domains that exist.
+- `local run` — `--scope`.
+
+**Tests:** the bridge is covered in `test_deployment_scope.ml` (requested +
+resolved carried together; canonical hyphenated unit; empty workspace);
+`test_check.ml` covers `run_services` scoping the check; `test_deployment_plan.ml`
+asserts the emitted JSON carries `requested_scope` and `resolved_workloads`; the
+old `discover_services` filter tests became discovery-through-bridge tests.
+Bad-selector precedence and the empty policy were smoke-checked against the
+built binary.
+
+**Demo/example coverage:** the CLI surface changed (positionals → `--scope` /
+`--domain`), so the runnable command reference in `docs/guides/TUTORIAL.md`,
+plus example invocations in `docs/planning/ROADMAP.md` and
+`docs/deployment/observability-backends.md`, were updated in this ticket. No
+`examples/` script invoked a positional selector, so no example Dockerfile or CI
+smoke-matrix entry changed.

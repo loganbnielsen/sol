@@ -5,9 +5,16 @@ open Sol_cli_manifest
 
 let workspace_name () = Filename.basename (Sys.getcwd ())
 
-let run filter_path =
+let run scope =
   let workspace = workspace_name () in
-  let services = discover_services ~filter_path in
+  let selected =
+    match Sol_cli_workload_selection.resolve scope (discover_services ()) with
+    | Ok selected -> selected
+    | Error message ->
+      Printf.eprintf "error: %s\n" message;
+      exit 1
+  in
+  let services = selected.Sol_cli_workload_selection.services in
   if services = []
   then (
     Printf.eprintf "No services found in app/ with a Dockerfile.\n";
@@ -97,16 +104,17 @@ let run filter_path =
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
 
-let path_arg =
+let scope_arg =
   Arg.(
     value
-    & pos 0 (some string) None
+    & opt (some string) None
     & info
-        []
-        ~docv:"SERVICE"
+        [ "scope" ]
+        ~docv:"DOMAIN[/UNIT]"
         ~doc:
-          "Service path to roll back, e.g. payments/charge_svc (default: all services in \
-           workspace)")
+          "Roll back one domain (`payments`) or one unit (`payments/charge_svc`). Omit \
+           to roll back every service in the workspace. A name that matches nothing \
+           fails closed and says what does, before any rollout is touched.")
 ;;
 
 let cmd =
@@ -117,5 +125,5 @@ let cmd =
          "Roll back the last deployment for one or all services. Runs 'kubectl rollout \
           undo' for each matching service and waits for the previous revision to become \
           healthy.")
-    Term.(const run $ path_arg)
+    Term.(const run $ scope_arg)
 ;;

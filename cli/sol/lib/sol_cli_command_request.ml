@@ -8,7 +8,7 @@ type deploy_action =
   | Deploy_apply
 
 type up_request =
-  { filter_path : string option
+  { scope : string option
   ; mode : execution_mode
   ; image_tag : string
   ; confirm_group_change : bool
@@ -16,7 +16,7 @@ type up_request =
 
 type deploy_request =
   { target : string
-  ; filter_path : string option
+  ; scope : string option
   ; action : deploy_action
   ; emit_plan_to : string option
   ; image_tag : string
@@ -26,19 +26,19 @@ type deploy_request =
   ; loki_push_url : string option
   }
 
-let make_up_request ~filter_path ~dry_run ~tag ~confirm_group_change ~git_sha =
+let make_up_request ~scope ~dry_run ~tag ~confirm_group_change ~git_sha =
   let image_tag =
     match tag with
     | Some t -> t
     | None -> git_sha ()
   in
   let mode = if dry_run then Dry_run else Apply in
-  Ok { filter_path; mode; image_tag; confirm_group_change }
+  Ok { scope; mode; image_tag; confirm_group_change }
 ;;
 
 let make_deploy_request
       ~target
-      ~filter_path
+      ~scope
       ~dry_run
       ~emit_to
       ~emit_plan_to
@@ -67,7 +67,7 @@ let make_deploy_request
     in
     Ok
       { target
-      ; filter_path
+      ; scope
       ; action
       ; emit_plan_to
       ; image_tag

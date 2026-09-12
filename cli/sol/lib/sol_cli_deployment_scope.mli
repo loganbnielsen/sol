@@ -41,6 +41,19 @@ type request =
     not fall back to selecting everything. *)
 val parse_request : ?what:string -> string option -> (request, string) result
 
+(** [request_to_string request] is the spelling a command records as the
+    *requested* scope: intent, before discovery narrowed it. Unlike
+    {!to_string}, it does not canonicalise `-` to `_`, because the requested
+    scope is what the user asked for and the resolved set carries discovery's
+    canonical names. *)
+val request_to_string : request -> string
+
+(** [equal_name a b] compares two names with `-` normalised to `_`, which is the
+    matching rule {!resolve} uses. Exposed so the discovery bridge can match a
+    resolved scope back to the workloads it came from without duplicating the
+    normalisation. *)
+val equal_name : string -> string -> bool
+
 (** A unit as discovery reports it. *)
 type named =
   { domain : string

@@ -366,7 +366,7 @@ spec:
    distinct tag (not a version tag) avoids needing a new, otherwise-empty
    repository just for this one-off image. *)
 let pick_namespace_and_service ~workspace =
-  match Sol_cli_manifest.discover_services ~filter_path:None with
+  match Sol_cli_manifest.discover_services () with
   | [] ->
     fatal
       "no deployed service found in this workspace -- nothing to run the migration Job \

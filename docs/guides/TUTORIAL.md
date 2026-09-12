@@ -552,11 +552,11 @@ sol new event <team>/<name>                       add a typed Kafka event
 sol local up                                        provision local k3d cluster
 sol local down                                      tear down the cluster
 sol local status                                    show running infra endpoints
-sol local run                                       run services as native processes (fast iteration)
+sol local run [--scope DOMAIN[/UNIT]]                 run services as native processes (fast iteration)
 
 sol plan TARGET                                   print merged app/resource/service plan
-sol up [path] [--dry-run] [--tag]                 build images and deploy to local cluster
-sol deploy TARGET [--image-tag TAG] [--registry URL]  deploy pre-built images (CI mode)
+sol up [--scope DOMAIN[/UNIT]] [--dry-run] [--tag]  build images and deploy to local cluster
+sol deploy TARGET [--scope DOMAIN[/UNIT]] [--image-tag TAG] [--registry URL]  deploy pre-built images (CI mode)
 sol deploy TARGET --emit-to DIR [--image-tag TAG] ...  write YAML for Argo CD (GitOps mode)
 sol status [domain]                               show running pods and port-forward hints
 
@@ -564,8 +564,8 @@ sol migrate [apply]                               apply pending migrations
 sol migrate status                                show per-file applied/pending table
 sol migrate rollback                              roll back the last applied migration
 
-sol rollback [domain/service]                     roll back last deploy for one or all services
-sol logs <service> [--no-follow] [--tail=N]       stream logs from a deployed service
+sol rollback [--scope DOMAIN[/UNIT]]              roll back last deploy for one or all services
+sol logs --scope DOMAIN/UNIT [--no-follow] [--tail=N]  stream logs from a deployed service
 sol open logs [SCOPE] [--links]                   open Grafana Explore logs (browser unless --links)
 sol open metrics [SCOPE] [--links]                open Grafana metrics dashboard
 sol open dashboard [SCOPE] [--links]              open Grafana workspace/service dashboard
@@ -573,13 +573,17 @@ sol open dashboard [SCOPE] [--links]              open Grafana workspace/service
 #   also accepts --observability-backend {local|self_hosted_durable|external},
 #   --base-domain DOMAIN, and TARGET
 
-sol secret set <KEY> --env <ENV> --value <VAL> [PATH]   create or update a secret
-sol secret list --env <ENV> [PATH]                      list secret keys (values never printed)
-sol secret delete <KEY> --env <ENV> [PATH]              delete a secret
+sol secret set <KEY> --env <ENV> --value <VAL> [--domain DOMAIN]   create or update a secret
+sol secret list --env <ENV> [--domain DOMAIN]                      list secret keys (values never printed)
+sol secret delete <KEY> --env <ENV> [--domain DOMAIN]              delete a secret
 
-# PATH scopes the command to one domain/service (e.g. `payments` or
-# `payments/charge-svc`) instead of every domain in the workspace --
-# useful when a domain hasn't been deployed yet and has no namespace.
+# --scope selects one domain (`payments`) or one unit (`payments/charge_svc`).
+# A name that matches nothing fails closed and says what exists, before any
+# mutation runs. Mutating commands (up/deploy/rollback) refuse an empty
+# selection. `sol logs` accepts a single unit only; use `sol open logs` for a
+# domain or workspace view. `sol secret` takes `--domain` rather than
+# `--scope`, because secrets are addressed by Kubernetes namespace, not by
+# workload.
 
 sol cloud plan TARGET                             preview cloud infrastructure changes
 sol cloud apply TARGET                            apply cloud infrastructure changes
@@ -659,11 +663,11 @@ The generated files contain the full manifest (Namespace, ServiceAccount, Config
 
 ### Day-2 operations
 
-If a deploy introduces a regression, `sol rollback [domain/service]` rolls back one or all services and waits for the previous revision to become healthy — no kubectl knowledge required.
+If a deploy introduces a regression, `sol rollback --scope <domain>[/<unit>]` rolls back that domain or unit (omit `--scope` for every service) and waits for the previous revision to become healthy — no kubectl knowledge required.
 
 For services using a standard `Deployment` (no `[infra.rollout]` in `sol.toml`), this calls `kubectl rollout undo deployment/<name>`. For services configured with `[infra.rollout]` (Argo Rollouts), `sol rollback` automatically calls `kubectl argo rollouts undo <name>` instead. This requires the [Argo Rollouts kubectl plugin](https://argoproj.github.io/argo-rollouts/installation/#kubectl-plugin); if the plugin is not installed, `sol rollback` prints the manual command and exits 1.
 
-To inspect what a running service is doing, `sol logs <service>` streams live output directly from the cluster pod, following Sol's namespace convention automatically.
+To inspect what a running service is doing, `sol logs --scope <domain>/<unit>` streams live output directly from the cluster pod, following Sol's namespace convention automatically.
 
 ### Progressive delivery with Argo Rollouts
 

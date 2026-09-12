@@ -17,23 +17,17 @@ type execution =
   ; results : Sol_cli_executor.result list
   }
 
-(** Build a deployment plan from an already-discovered service list. This is the
-    variant CLI commands with their own filtering use; {!plan} is the
-    workspace-scanning variant hosted mode uses. *)
+(** Build a deployment plan from an already-resolved service list. This is the
+    only entry point: selection happens once, at the command (or hosted-handler)
+    boundary, via [Sol_cli_workload_selection], so the factory never scans the
+    workspace and cannot select a different set than the caller asked for
+    (FEAT-065). *)
 val plan_of_services
   :  workspace:string
   -> env:Sol_cli_deployment_plan.env_config
+  -> ?requested_scope:string
   -> ?resolved_config:Sol_cli_config.t
   -> Sol_cli_manifest.service list
-  -> (Sol_cli_deployment_plan.t, string) result
-
-(** Discover workloads and build a deployment plan. Returns an actionable error
-    string when discovery or plan construction fails instead of exiting; callers
-    without a console decide how to present it. *)
-val plan
-  :  workspace:string
-  -> env:Sol_cli_deployment_plan.env_config
-  -> filter_path:string option
   -> (Sol_cli_deployment_plan.t, string) result
 
 (** Execute every service in the plan under [mode] ([Dry_run], [Emit_to], or
@@ -47,15 +41,17 @@ val execute
   -> Sol_cli_deployment_plan.t
   -> (Sol_cli_executor.result list, string) result
 
-(** [run] combines {!plan} and {!execute} into one call, returning both the plan
-    and its per-service results. This is the entry point hosted mode should use.
-*)
+(** [run] combines {!plan_of_services} and {!execute} into one call, returning
+    both the plan and its per-service results. This is the entry point hosted
+    mode should use. [services] is already resolved. *)
 val run
   :  workspace:string
   -> env:Sol_cli_deployment_plan.env_config
   -> ?env_label:string
-  -> filter_path:string option
+  -> ?requested_scope:string
+  -> ?resolved_config:Sol_cli_config.t
   -> mode:Sol_cli_executor.mode
+  -> Sol_cli_manifest.service list
   -> unit
   -> (execution, string) result
 

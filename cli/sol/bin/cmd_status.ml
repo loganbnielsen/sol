@@ -32,32 +32,35 @@ let namespace_or_exit ~workspace ~domain =
     exit 1
 ;;
 
-let declared_services ~domain : (string * string * Sol_cli_manifest.primitive) list =
-  Sol_cli_manifest.discover_services ~filter_path:None
-  |> List.filter (fun (s : Sol_cli_manifest.service) -> s.domain = domain)
+(* Status projects a resolved selection into its own addressing model: the
+   discovery list is passed down rather than re-read per domain, and [run] is
+   what resolved the scope (through the same function every other command uses).
+   Nothing here re-interprets a selector string. *)
+let services_of_domain services domain =
+  List.filter (fun (s : Sol_cli_manifest.service) -> s.domain = domain) services
+;;
+
+let service_diagnoses_named ~ns (services : Sol_cli_manifest.service list)
+  : (string * string option) list
+  =
+  services
   |> List.filter_map (fun (s : Sol_cli_manifest.service) ->
     match Sol_cli_deployment_plan.k8s_name_result s.name with
     | Error _ -> None
     | Ok k8s_name ->
-      Some (s.name, Sol_cli_deployment_plan.k8s_name_to_string k8s_name, s.primitive))
+      let k8s_name = Sol_cli_deployment_plan.k8s_name_to_string k8s_name in
+      let pod_expectation = Sol_cli_status.pod_expectation_of_primitive s.primitive in
+      Some
+        ( k8s_name
+        , Sol_cli_rollout_diagnosis.diagnose_service_live
+            ~pod_expectation
+            ~ns
+            ~service_name:s.name
+            ~k8s_name
+            () ))
 ;;
 
-let service_diagnoses_named ~ns ~domain : (string * string option) list =
-  declared_services ~domain
-  |> List.map (fun (service_name, k8s_name, primitive) ->
-    let pod_expectation = Sol_cli_status.pod_expectation_of_primitive primitive in
-    ( k8s_name
-    , Sol_cli_rollout_diagnosis.diagnose_service_live
-        ~pod_expectation
-        ~ns
-        ~service_name
-        ~k8s_name
-        () ))
-;;
-
-let service_diagnoses ~ns ~domain : string option list =
-  service_diagnoses_named ~ns ~domain |> List.map snd
-;;
+let service_diagnoses ~ns services = service_diagnoses_named ~ns services |> List.map snd
 
 let ns_exists ns =
   match Sol_cli_kubectl.get_raw ~args:[ "get"; "ns"; ns ] with
@@ -206,7 +209,7 @@ let print_open_block ~scope =
 
 (* ── Raw Kubernetes Diagnostics ─────────────────────────────────────────── *)
 
-let print_raw_diagnostics ~ns ~domain ~only_k8s_name =
+let print_raw_diagnostics ~ns ~domain ~services ~only_k8s_name =
   Printf.printf "\nNamespace: %s\n%!" ns;
   if ns_exists ns
   then (
@@ -245,7 +248,7 @@ let print_raw_diagnostics ~ns ~domain ~only_k8s_name =
          | _ -> ());
        print_char '\n'
      | _ -> ());
-    service_diagnoses_named ~ns ~domain
+    service_diagnoses_named ~ns (services_of_domain services domain)
     |> List.iter (fun (k8s_name, diagnosis) ->
       match only_k8s_name with
       | Some only when only <> k8s_name -> ()
@@ -306,6 +309,7 @@ let print_raw_diagnostics ~ns ~domain ~only_k8s_name =
 let print_workspace_index
       ~workspace
       ~domains
+      ~services
       ~backend
       ~explicit_loki_url
       ~explicit_prometheus_url
@@ -315,7 +319,9 @@ let print_workspace_index
     (fun domain ->
        let ns = namespace_or_exit ~workspace ~domain in
        let exists = ns_exists ns in
-       let diagnoses = if exists then service_diagnoses ~ns ~domain else [] in
+       let diagnoses =
+         if exists then service_diagnoses ~ns (services_of_domain services domain) else []
+       in
        let status = Sol_cli_status.rollup_domain_status ~ns_exists:exists diagnoses in
        Printf.printf "  %-12s %s\n" domain (Sol_cli_status.domain_status_to_string status))
     domains;
@@ -330,6 +336,7 @@ let print_workspace_index
 let print_domain_status
       ~workspace
       ~domain
+      ~services
       ~backend
       ~base_domain
       ~explicit_loki_url
@@ -337,7 +344,11 @@ let print_domain_status
   =
   let ns = namespace_or_exit ~workspace ~domain in
   let exists = ns_exists ns in
-  let named = if exists then service_diagnoses_named ~ns ~domain else [] in
+  let named =
+    if exists
+    then service_diagnoses_named ~ns (services_of_domain services domain)
+    else []
+  in
   let status =
     Sol_cli_status.rollup_domain_status ~ns_exists:exists (List.map snd named)
   in
@@ -366,7 +377,7 @@ let print_domain_status
     ~explicit_loki_url
     ~explicit_prometheus_url;
   print_open_block ~scope:domain;
-  print_raw_diagnostics ~ns ~domain ~only_k8s_name:None
+  print_raw_diagnostics ~ns ~domain ~services ~only_k8s_name:None
 ;;
 
 (* ── Service Scope ──────────────────────────────────────────────────────── *)
@@ -375,27 +386,37 @@ let print_service_status
       ~workspace
       ~domain
       ~service_name
+      ~services
       ~backend
       ~base_domain
       ~explicit_loki_url
       ~explicit_prometheus_url
   =
   let ns = namespace_or_exit ~workspace ~domain in
+  (* [services] is the resolver's selection for this scope: exactly the services
+     whose canonical name matched [service_name]. *)
+  let svc =
+    match
+      List.find_opt
+        (fun (s : Sol_cli_manifest.service) ->
+           s.domain = domain && Sol_cli_deployment_scope.equal_name s.name service_name)
+        services
+    with
+    | Some svc -> svc
+    | None ->
+      Printf.eprintf "Service '%s' not found in domain '%s'.\n" service_name domain;
+      exit 1
+  in
   let k8s_name =
-    match Sol_cli_deployment_plan.k8s_name_result service_name with
+    match Sol_cli_deployment_plan.k8s_name_result svc.Sol_cli_manifest.name with
     | Ok k -> Sol_cli_deployment_plan.k8s_name_to_string k
     | Error err ->
       Printf.eprintf "error: %s\n" (Sol_cli_deployment_plan.plan_error_to_string err);
       exit 1
   in
-  let declared = declared_services ~domain in
-  let declared_k8s_names = List.map (fun (_, k, _) -> k) declared in
-  if not (Sol_cli_status.service_is_declared ~k8s_name declared_k8s_names)
-  then (
-    Printf.eprintf "Service '%s' not found in domain '%s'.\n" service_name domain;
-    exit 1);
-  let _, _, primitive = List.find (fun (_, k, _) -> k = k8s_name) declared in
-  let pod_expectation = Sol_cli_status.pod_expectation_of_primitive primitive in
+  let pod_expectation =
+    Sol_cli_status.pod_expectation_of_primitive svc.Sol_cli_manifest.primitive
+  in
   let exists = ns_exists ns in
   let diagnosis =
     if exists
@@ -420,7 +441,7 @@ let print_service_status
     ~explicit_loki_url
     ~explicit_prometheus_url;
   print_open_block ~scope:(domain ^ "/" ^ k8s_name);
-  print_raw_diagnostics ~ns ~domain ~only_k8s_name:(Some k8s_name)
+  print_raw_diagnostics ~ns ~domain ~services ~only_k8s_name:(Some k8s_name)
 ;;
 
 let run
@@ -437,6 +458,9 @@ let run
   then (
     Printf.eprintf "No domains found in app/. Run from the workspace root.\n";
     exit 1);
+  (* Discovery happens once; scope resolution then projects it into status's own
+     addressing model (workspace / domain / unit / managed resource). *)
+  let services = Sol_cli_manifest.discover_services () in
   let scope =
     match Sol_cli_open.parse_scope scope_str with
     | Ok s -> s
@@ -444,24 +468,33 @@ let run
       Printf.eprintf "error: %s\n" msg;
       exit 1
   in
+  let resolve_status_scope request =
+    match Sol_cli_workload_selection.resolve ~what:"status scope" request services with
+    | Ok selected -> selected
+    | Error message ->
+      Printf.eprintf "error: %s\n" message;
+      exit 1
+  in
+  let backend_and_base_domain () =
+    match
+      Sol_cli_observability_url.effective_backend_and_base_domain
+        ~explicit_backend
+        ~explicit_base_domain
+        ~target
+        ()
+    with
+    | Error msg ->
+      Printf.eprintf "error: %s\n" msg;
+      exit 1
+    | Ok pair -> pair
+  in
   match scope with
   | Sol_cli_open.Workspace ->
-    let backend =
-      match
-        Sol_cli_observability_url.effective_backend_and_base_domain
-          ~explicit_backend
-          ~explicit_base_domain
-          ~target
-          ()
-      with
-      | Error msg ->
-        Printf.eprintf "error: %s\n" msg;
-        exit 1
-      | Ok (backend, _base_domain) -> backend
-    in
+    let backend, _base_domain = backend_and_base_domain () in
     print_workspace_index
       ~workspace
       ~domains:all_domains
+      ~services
       ~backend
       ~explicit_loki_url
       ~explicit_prometheus_url
@@ -478,42 +511,29 @@ let run
       "  dashboard  sol open dashboard resource/%s/%s\n%!"
       resource_type
       resource_name
-  | Sol_cli_open.Domain domain | Sol_cli_open.Service (domain, _) ->
-    if not (List.mem domain all_domains)
-    then (
-      Printf.eprintf "Domain '%s' not found in app/.\n" domain;
-      exit 1);
-    let backend, base_domain =
-      match
-        Sol_cli_observability_url.effective_backend_and_base_domain
-          ~explicit_backend
-          ~explicit_base_domain
-          ~target
-          ()
-      with
-      | Error msg ->
-        Printf.eprintf "error: %s\n" msg;
-        exit 1
-      | Ok pair -> pair
-    in
-    (match scope with
-     | Sol_cli_open.Service (_, service_name) ->
-       print_service_status
-         ~workspace
-         ~domain
-         ~service_name
-         ~backend
-         ~base_domain
-         ~explicit_loki_url
-         ~explicit_prometheus_url
-     | _ ->
-       print_domain_status
-         ~workspace
-         ~domain
-         ~backend
-         ~base_domain
-         ~explicit_loki_url
-         ~explicit_prometheus_url)
+  | Sol_cli_open.Domain domain ->
+    let selected = resolve_status_scope (Some domain) in
+    let backend, base_domain = backend_and_base_domain () in
+    print_domain_status
+      ~workspace
+      ~domain
+      ~services:selected.Sol_cli_workload_selection.services
+      ~backend
+      ~base_domain
+      ~explicit_loki_url
+      ~explicit_prometheus_url
+  | Sol_cli_open.Service (domain, service_name) ->
+    let selected = resolve_status_scope (Some (domain ^ "/" ^ service_name)) in
+    let backend, base_domain = backend_and_base_domain () in
+    print_service_status
+      ~workspace
+      ~domain
+      ~service_name
+      ~services:selected.Sol_cli_workload_selection.services
+      ~backend
+      ~base_domain
+      ~explicit_loki_url
+      ~explicit_prometheus_url
 ;;
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)

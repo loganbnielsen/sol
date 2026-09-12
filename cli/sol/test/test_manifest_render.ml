@@ -1788,7 +1788,7 @@ let test_sanitize_label_value_strips_leading_non_alnum () =
     (Sol_cli_manifest.sanitize_label_value "---app")
 ;;
 
-(* ── discover_services filter matching ──────────────────────────────────── *)
+(* ── workload selection over discovery (FEAT-065) ───────────────────────── *)
 
 (* Run [f] inside a fresh temp workspace root, then restore cwd and delete it. *)
 let in_temp_workspace f =
@@ -1804,10 +1804,6 @@ let in_temp_workspace f =
     f
 ;;
 
-(* charge_svc is the on-disk (underscored) directory name; sol new/scaffold's
-   own normalize converts hyphens to underscores, so a filter typed
-   hyphenated (as in FEAT-026's acceptance criteria,
-   "app/payments/charge-svc") must match it too. *)
 let with_charge_svc_workspace f =
   in_temp_workspace
   @@ fun () ->
@@ -1821,43 +1817,40 @@ let with_charge_svc_workspace f =
 
 let names services = List.map (fun (s : Sol_cli_manifest.service) -> s.name) services
 
-let test_discover_services_hyphenated_filter_matches_underscored_dir () =
+(* Discovery is unfiltered; selection happens once, after it, through the one
+   bridge. charge_svc is the on-disk (underscored) directory name, and the
+   resolver canonicalises the hyphenated spelling to it. *)
+let test_selection_hyphenated_unit_resolves_to_discovered_name () =
   with_charge_svc_workspace
   @@ fun () ->
-  let found =
-    Sol_cli_manifest.discover_services ~filter_path:(Some "app/payments/charge-svc")
+  let selected =
+    match
+      Sol_cli_workload_selection.resolve
+        ~what:"--scope"
+        (Some "payments/charge-svc")
+        (Sol_cli_manifest.discover_services ())
+    with
+    | Ok selected -> selected
+    | Error message -> Alcotest.fail message
   in
   Alcotest.(check (list string))
-    "hyphenated full path matches"
+    "hyphenated unit resolves to the discovered name"
     [ "charge_svc" ]
-    (names found)
+    (names selected.services)
 ;;
 
-let test_discover_services_hyphenated_basename_filter_matches () =
+let test_selection_unknown_unit_fails_closed () =
   with_charge_svc_workspace
   @@ fun () ->
-  let found = Sol_cli_manifest.discover_services ~filter_path:(Some "charge-svc") in
-  Alcotest.(check (list string))
-    "hyphenated basename matches"
-    [ "charge_svc" ]
-    (names found)
-;;
-
-let test_discover_services_underscored_filter_still_matches () =
-  with_charge_svc_workspace
-  @@ fun () ->
-  let found = Sol_cli_manifest.discover_services ~filter_path:(Some "charge_svc") in
-  Alcotest.(check (list string))
-    "underscored basename still matches"
-    [ "charge_svc" ]
-    (names found)
-;;
-
-let test_discover_services_non_matching_filter_excludes () =
-  with_charge_svc_workspace
-  @@ fun () ->
-  let found = Sol_cli_manifest.discover_services ~filter_path:(Some "notify-worker") in
-  Alcotest.(check (list string)) "non-matching filter excludes" [] (names found)
+  match
+    Sol_cli_workload_selection.resolve
+      ~what:"--scope"
+      (Some "payments/nope")
+      (Sol_cli_manifest.discover_services ())
+  with
+  | Ok _ -> Alcotest.fail "expected a fail-closed resolution"
+  | Error message ->
+    Alcotest.(check bool) "error names what exists" true (String.length message > 0)
 ;;
 
 (* ── an environment labels, but never re-addresses (DEC-016) ─────────────── *)
@@ -2471,23 +2464,15 @@ let () =
             `Quick
             test_sanitize_label_value_strips_leading_non_alnum
         ] )
-    ; ( "discover_services_filter"
+    ; ( "workload_selection"
       , [ Alcotest.test_case
-            "hyphenated full path matches underscored dir"
+            "hyphenated unit resolves to discovered name"
             `Quick
-            test_discover_services_hyphenated_filter_matches_underscored_dir
+            test_selection_hyphenated_unit_resolves_to_discovered_name
         ; Alcotest.test_case
-            "hyphenated basename matches"
+            "unknown unit fails closed"
             `Quick
-            test_discover_services_hyphenated_basename_filter_matches
-        ; Alcotest.test_case
-            "underscored filter still matches"
-            `Quick
-            test_discover_services_underscored_filter_still_matches
-        ; Alcotest.test_case
-            "non-matching filter excludes"
-            `Quick
-            test_discover_services_non_matching_filter_excludes
+            test_selection_unknown_unit_fails_closed
         ] )
     ; ( "environment"
       , [ Alcotest.test_case

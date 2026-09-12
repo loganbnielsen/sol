@@ -68,8 +68,15 @@ let check_service (svc : Sol_cli_manifest.service) =
   List.rev !findings
 ;;
 
-let run ~filter_path () =
-  match Sol_cli_manifest.scan_workspace ~filter_path with
+(* Check exactly the workloads a command resolved. Selection has already
+   happened by the time a command calls this (FEAT-065), so a scoped [sol up]
+   inspects the same set it is about to mutate. *)
+let run_services services = List.concat_map check_service services
+
+(* The whole-workspace check: scan everything, report unexpected directories as
+   warnings, and fail when the workspace has no deployable workload at all. *)
+let run () =
+  match Sol_cli_manifest.scan_workspace () with
   | Error err ->
     [ { severity = Severity.Error
       ; path = "app"

@@ -15,10 +15,10 @@ type post_deploy_summary =
 let push_registry = "localhost:5000"
 let build_context_dir ~repo_root = repo_root ^ ".docker-ctx"
 
-let local_plan ~workspace ~sha services =
+let local_plan ~requested_scope ~workspace ~sha services =
   let env_target = Sol_cli_env_target.local_defaults ~image_tag:sha in
   let env = Sol_cli_env_target.to_env_config ~name:workspace env_target in
-  Sol_cli_deployment_plan.of_services_result ~workspace ~env services
+  Sol_cli_deployment_plan.of_services_result ~requested_scope ~workspace ~env services
 ;;
 
 let manifest_primitive = function

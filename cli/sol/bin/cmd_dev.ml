@@ -713,7 +713,7 @@ type child =
   ; label : string
   }
 
-let dev_run workspace_dir filter_path =
+let dev_run workspace_dir scope =
   let dir =
     match workspace_dir with
     | Some d -> d
@@ -723,7 +723,13 @@ let dev_run workspace_dir filter_path =
   (match workspace_dir with
    | Some d -> Unix.chdir d
    | None -> ());
-  let services = discover_services ~filter_path in
+  let services =
+    match Sol_cli_workload_selection.resolve scope (discover_services ()) with
+    | Ok selected -> selected.Sol_cli_workload_selection.services
+    | Error message ->
+      Printf.eprintf "error: %s\n" message;
+      exit 1
+  in
   if services = []
   then (
     Printf.eprintf "error: no Sol services found. ";
@@ -877,14 +883,16 @@ let run_workspace_arg =
         ~doc:"Workspace root directory (default: current directory)")
 ;;
 
-let run_path_arg =
+let run_scope_arg =
   Arg.(
     value
-    & pos 0 (some string) None
+    & opt (some string) None
     & info
-        []
-        ~docv:"PATH"
-        ~doc:"Restrict to a single service path (default: all services)")
+        [ "scope" ]
+        ~docv:"DOMAIN[/UNIT]"
+        ~doc:
+          "Run one domain (`payments`) or one unit (`payments/charge_svc`). Omit to run \
+           every service in the workspace.")
 ;;
 
 let run_subcmd =
@@ -892,7 +900,7 @@ let run_subcmd =
     (Cmd.info
        "run"
        ~doc:"Start all workspace services locally using dune exec with dev env vars")
-    Term.(const dev_run $ run_workspace_arg $ run_path_arg)
+    Term.(const dev_run $ run_workspace_arg $ run_scope_arg)
 ;;
 
 let cmd =

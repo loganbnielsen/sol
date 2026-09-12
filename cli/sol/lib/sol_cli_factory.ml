@@ -17,15 +17,14 @@ type execution =
   ; results : Sol_cli_executor.result list
   }
 
-let plan_of_services ~workspace ~env ?resolved_config services =
-  Sol_cli_deployment_plan.of_services_result ~workspace ~env ?resolved_config services
+let plan_of_services ~workspace ~env ?requested_scope ?resolved_config services =
+  Sol_cli_deployment_plan.of_services_result
+    ~workspace
+    ~env
+    ?requested_scope
+    ?resolved_config
+    services
   |> Result.map_error Sol_cli_deployment_plan.plan_error_to_string
-;;
-
-let plan ~workspace ~env ~filter_path =
-  match Sol_cli_manifest.discover_services_result ~filter_path with
-  | Error err -> Error (Sol_cli_manifest.discover_error_to_string err)
-  | Ok services -> plan_of_services ~workspace ~env services
 ;;
 
 let execute ~workspace ?env ~mode ?secret_backend plan =
@@ -37,8 +36,12 @@ let execute ~workspace ?env ~mode ?secret_backend plan =
     plan.Sol_cli_deployment_plan.services
 ;;
 
-let run ~workspace ~env ?env_label ~filter_path ~mode () =
-  match plan ~workspace ~env ~filter_path with
+(* [services] is already resolved: selection happens once, at the command (or
+   hosted-handler) boundary, via [Sol_cli_workload_selection] (FEAT-065). The
+   factory no longer scans the workspace, so it cannot quietly select a
+   different set than the caller asked for. *)
+let run ~workspace ~env ?env_label ?requested_scope ?resolved_config ~mode services () =
+  match plan_of_services ~workspace ~env ?requested_scope ?resolved_config services with
   | Error msg -> Error msg
   | Ok plan ->
     (match execute ~workspace ?env:env_label ~mode plan with

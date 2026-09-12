@@ -153,6 +153,73 @@ let test_nothing_discovered_is_empty_not_selected () =
   | Ok (_, Selected _) -> Alcotest.fail "an empty workspace cannot be a selection"
 ;;
 
+(* FEAT-065: the bridge is the one place discovery meets the vocabulary. It
+   resolves once and carries both facts callers need: the requested scope
+   (intent) and the discovered services (exact membership). *)
+let services () =
+  [ { Sol_cli_manifest.domain = "payments"
+    ; name = "charge_svc"
+    ; primitive = Sol_cli_manifest.Svc
+    ; dir = "app/payments/charge_svc"
+    }
+  ; { Sol_cli_manifest.domain = "payments"
+    ; name = "settle_worker"
+    ; primitive = Sol_cli_manifest.Worker
+    ; dir = "app/payments/settle_worker"
+    }
+  ; { Sol_cli_manifest.domain = "comms"
+    ; name = "notify_fn"
+    ; primitive = Sol_cli_manifest.Fn
+    ; dir = "app/comms/notify_fn"
+    }
+  ]
+;;
+
+let service_names selected =
+  List.map
+    (fun (s : Sol_cli_manifest.service) ->
+       s.Sol_cli_manifest.domain ^ "/" ^ s.Sol_cli_manifest.name)
+    selected.Sol_cli_workload_selection.services
+;;
+
+let test_bridge_carries_requested_scope_and_resolved_set () =
+  match
+    Sol_cli_workload_selection.resolve ~what:"--scope" (Some "payments") (services ())
+  with
+  | Error message -> Alcotest.fail message
+  | Ok selected ->
+    Alcotest.(check string)
+      "requested scope"
+      "payments"
+      (request_to_string selected.Sol_cli_workload_selection.request);
+    Alcotest.(check (list string))
+      "resolved set"
+      [ "payments/charge_svc"; "payments/settle_worker" ]
+      (service_names selected)
+;;
+
+let test_bridge_unit_is_canonical () =
+  match
+    Sol_cli_workload_selection.resolve
+      ~what:"--scope"
+      (Some "payments/settle-worker")
+      (services ())
+  with
+  | Error message -> Alcotest.fail message
+  | Ok selected ->
+    Alcotest.(check (list string))
+      "canonical resolved name"
+      [ "payments/settle_worker" ]
+      (service_names selected)
+;;
+
+let test_bridge_empty_workspace () =
+  match Sol_cli_workload_selection.resolve ~what:"--scope" None [] with
+  | Error message -> Alcotest.fail message
+  | Ok selected ->
+    Alcotest.(check bool) "empty" true (Sol_cli_workload_selection.is_empty selected)
+;;
+
 let () =
   Alcotest.run
     "deployment_scope"
@@ -202,6 +269,17 @@ let () =
             "nothing discovered is Empty, not Selected"
             `Quick
             test_nothing_discovered_is_empty_not_selected
+        ] )
+    ; ( "workload_selection"
+      , [ Alcotest.test_case
+            "carries requested scope and resolved set"
+            `Quick
+            test_bridge_carries_requested_scope_and_resolved_set
+        ; Alcotest.test_case
+            "unit resolves canonically"
+            `Quick
+            test_bridge_unit_is_canonical
+        ; Alcotest.test_case "empty workspace is empty" `Quick test_bridge_empty_workspace
         ] )
     ]
 ;;
