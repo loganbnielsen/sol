@@ -64,3 +64,15 @@ This taxonomy is worth writing down in the decision notes in roughly this form, 
 ## Notes
 
 Nothing here changes behaviour the reservation already established; it closes the gaps that were left next to it. Work item 3 is the only one that adds a check rather than removing or renaming something.
+
+## Completion notes
+
+**Items 1 and 3 landed; items 2 and 4 moved to REFAC-087.** The split is by kind rather than by size: one removes a word from a vocabulary and adds a guard, the other renames a module and single-sources two command surfaces. Holding the guard behind a command-surface refactor would have delayed the part that protects an invariant.
+
+**Item 1 — the retired `dev` alias is gone.** It was in the parser *and* in the message the parser advertises, which two existing tests pin verbatim (`test_mode_of_env_rejects_unknown`, `test_list_rejects_unknown_env`); both expectations were updated deliberately, because a test that pins the accepted vocabulary is exactly the thing that should fail when the vocabulary changes. A third test was added asserting that `dev` is now *rejected* — deleting the value from the accepted list proves nothing about the parser, whereas the negative case is what a future "helpful" re-addition would have to get past.
+
+**Item 3 — a configured target may not resolve to the local destination.** The guard lives in `destination_of_target`, which is the resolution point, so no path can obtain a destination without passing it; it compares through `Sol_cli_kube_destination.local` rather than repeating `"k3d-sol-local"`, using structural equality on purpose (a field added to the destination type keeps it correct, where a hand-written `equal` could drift). It is deliberately *not* in `validate_no_same_cluster`, which reasons about relationships among configured environments.
+
+**Where it fails, and why that is the right place.** `load_for_target` does not resolve destinations, so a target pointing at the local cluster loads and then fails when its destination is resolved. That is deliberate rather than a gap: failing at load would stop `sol target show` from *explaining* the misconfiguration, and a diagnostic that refuses to look at broken configuration is worse than one that reports it.
+
+**Verified:** `test_config` 49 cases green including the new guard case; `test_secret` 13 cases green including the new negative case; build clean; `dune fmt` applied.

@@ -914,9 +914,37 @@ let resolved_target base target_path =
   | None -> assert false
 ;;
 
-(** Where this target deploys. Fails closed when it names no context. *)
+(** Where this target deploys. Fails closed when it names no context, and when it
+    names Sol's own cluster.
+
+    REFAC-086: the reservation of the *name* [reserved_env_name] stops a target
+    being called "local"; this stops one being pointed at the same cluster, which
+    would hand target semantics — credentials, [SOL_ENV], target identity, release
+    history — to Sol's ephemeral substrate and recreate a synthetic local target
+    through the back door.
+
+    Compared through the destination abstraction rather than a repeated literal, so
+    changing the local context cannot silently disarm the check. Structural
+    equality is deliberate: a field added to the destination type keeps this
+    correct, where a hand-written [equal] could drift.
+
+    Deliberately not folded into [validate_no_same_cluster]: that one is about
+    relationships among configured environments, this is about a reserved
+    execution mode. *)
 let destination_of_target (target : target) =
-  Sol_cli_kube_destination.of_context (Option.value target.kube_context ~default:"")
+  let* destination =
+    Sol_cli_kube_destination.of_context (Option.value target.kube_context ~default:"")
+  in
+  let reserved = Sol_cli_kube_destination.local in
+  if destination = reserved
+  then
+    Error
+      (Printf.sprintf
+         "this target resolves to %s, Sol's own cluster, which is a reserved execution \
+          mode rather than a target: use `sol local <command>` for it, and point this \
+          target at a cluster you own"
+         (Sol_cli_kube_destination.to_string reserved))
+  else Ok destination
 ;;
 
 (* The same-cluster lint compares the destination Sol will actually use, not the

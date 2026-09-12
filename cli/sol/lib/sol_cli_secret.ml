@@ -15,13 +15,17 @@ let mode_of_env env =
   let normalized = String.lowercase_ascii (String.trim env) in
   match normalized with
   | "hosted" | "sol_hosted" | "sol-hosted" -> Ok Sol_hosted
-  | "local" | "dev" -> Ok Local
+  (* REFAC-086: `dev` was an alias here until it was retired as user vocabulary
+     when `sol dev up` became `sol local up` (REFAC-083). A retired word left in
+     a config vocabulary is how it comes back — in examples, in error messages,
+     in migrations — so it is deleted rather than tolerated. *)
+  | "local" -> Ok Local
   | "cloud" | "customer_cloud" | "customer-cloud" -> Ok Customer_cloud
   | _ ->
     Error
       (Printf.sprintf
          "unknown secret environment %S; expected one of: hosted, sol_hosted, \
-          sol-hosted, local, dev, cloud, customer_cloud, customer-cloud"
+          sol-hosted, local, cloud, customer_cloud, customer-cloud"
          env)
 ;;
 

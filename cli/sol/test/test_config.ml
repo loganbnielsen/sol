@@ -967,6 +967,31 @@ let test_local_env_is_reserved () =
       assert (contains ~needle:"sol local up" e.message))
 ;;
 
+(* REFAC-086: the name `local` is reserved, and so is the cluster behind it. A
+   target pointed at the local substrate would hand target semantics to Sol's
+   ephemeral cluster — the synthetic local target the reservation exists to
+   prevent, arriving through the back door. *)
+let test_target_cannot_resolve_to_the_local_destination () =
+  with_temp_dir (fun () ->
+    write_base ();
+    mkdir_p "sol/prod/aws";
+    write
+      "sol/prod/aws/us-east-1.yml"
+      {|
+target:
+  kube_context: k3d-sol-local
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      let target = Option.get (Sol_cli_config.target cfg) in
+      (match Sol_cli_config.destination_of_target target with
+       | Ok _ -> Alcotest.fail "a configured target must not resolve to the local cluster"
+       | Error message ->
+         assert (String.length message > 0);
+         assert (String.length message > 0 && message <> "")))
+;;
+
 let () =
   Alcotest.run
     "config"
@@ -1021,6 +1046,10 @@ let () =
             "missing destination fails closed"
             `Quick
             test_destination_missing_fails_closed
+        ; Alcotest.test_case
+            "a target cannot resolve to the local destination"
+            `Quick
+            test_target_cannot_resolve_to_the_local_destination
         ; Alcotest.test_case
             "duplicate resource fails"
             `Quick
