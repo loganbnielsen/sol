@@ -34,13 +34,9 @@ val generate_release_id : now:float -> commit:string -> string
 
 (** Lowercase a value and replace anything a Kubernetes label value forbids, so
     it can be used for lookup. The exact text is preserved in the record body.
-    Label *values* may contain [\_], which is why this is not used for names. *)
+    Label *values* may contain [\_], which is why this is not used for names;
+    object names go through [Sol_cli_kubernetes_name.sanitize_name]. *)
 val sanitize_label : string -> string
-
-(** The stricter RFC 1123 subdomain form required for a Kubernetes object
-    *name*: lowercase, no [\_], and it must start and end alphanumerically. Used
-    for the current-release pointer, whose name embeds the workspace. *)
-val sanitize_name : string -> string
 
 val configmap_name : t -> string
 val current_configmap_name : workspace:string -> string
