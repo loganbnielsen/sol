@@ -20,11 +20,41 @@ jobs:
         with:
           ocaml-compiler: 5.4.1
 
+      - name: Cache opam download cache
+        # INFRA-008: setup-ocaml caches the switch (~/.opam) keyed on the
+        # switch files, so a key change — or a cold cache on a new branch —
+        # re-fetches every source. The download cache is content-addressed and
+        # safe to share, and the broad restore-key lets a pull request reuse
+        # the last cache for this OS even after the pin file changes. That is
+        # what stops a brief non-GitHub tarball-host outage from failing a PR
+        # that changed no dependencies.
+        uses: actions/cache@v4
+        with:
+          path: ~/.opam/download-cache
+          key: opam-download-${{ runner.os }}-${{ hashFiles('.github/actions/pin-opam-packages/action.yml', 'dune-project', 'sol.opam') }}
+          restore-keys: |
+            opam-download-${{ runner.os }}-
+
       - name: Pin extracted opam packages
         uses: ./.github/actions/pin-opam-packages
 
       - name: Install OCaml dependencies
-        run: opam install . --deps-only --with-test -y
+        timeout-minutes: 20
+        # INFRA-008: retry a transient upstream fetch failure before failing
+        # the job, and name the unreachable host when the failure is permanent.
+        run: |
+          set -o pipefail
+          log="$(mktemp)"
+          for attempt in 1 2 3; do
+            if opam install . --deps-only --with-test -y 2>&1 | tee "$log"; then
+              exit 0
+            fi
+            echo "::warning::opam install failed (attempt ${attempt}/3); retrying in $((attempt * 10))s"
+            sleep $((attempt * 10))
+          done
+          host="$(grep -oE 'Fetch_fail\("[^"]+' "$log" | tail -1 | sed -E 's/.*"//; s|^https?://||; s|/.*||' || true)"
+          echo "::error::opam install failed after 3 attempts${host:+ — unreachable host: ${host}}"
+          exit 1
 
       - name: Build
         run: opam exec -- dune build
@@ -83,12 +113,21 @@ jobs:
         with:
           ocaml-compiler: 5.4.1
 
+      - name: Cache opam download cache
+        # INFRA-008: same shared download cache as the `test` job's step.
+        uses: actions/cache@v4
+        with:
+          path: ~/.opam/download-cache
+          key: opam-download-${{ runner.os }}-${{ hashFiles('.github/actions/pin-opam-packages/action.yml', 'dune-project', 'sol.opam') }}
+          restore-keys: |
+            opam-download-${{ runner.os }}-
+
       - name: Pin extracted opam packages
         timeout-minutes: 10
         uses: ./.github/actions/pin-opam-packages
 
       - name: Install OCaml dependencies
-        timeout-minutes: 10
+        timeout-minutes: 20
         # --with-test IS needed here despite this job never running `dune
         # test` directly: the generated ci_smoke workspace's `dune build`
         # (inside the smoke-test step below) also compiles test
@@ -97,7 +136,22 @@ jobs:
         # BUILD dependency, not just to run. Confirmed by removing this
         # flag and watching golden-path-smoke fail with "Library
         # alcotest not found" on a real CI run.
-        run: opam install . --deps-only --with-test -y
+        #
+        # INFRA-008: retry a transient upstream fetch failure before failing
+        # the job, and name the unreachable host when the failure is permanent.
+        run: |
+          set -o pipefail
+          log="$(mktemp)"
+          for attempt in 1 2 3; do
+            if opam install . --deps-only --with-test -y 2>&1 | tee "$log"; then
+              exit 0
+            fi
+            echo "::warning::opam install failed (attempt ${attempt}/3); retrying in $((attempt * 10))s"
+            sleep $((attempt * 10))
+          done
+          host="$(grep -oE 'Fetch_fail\("[^"]+' "$log" | tail -1 | sed -E 's/.*"//; s|^https?://||; s|/.*||' || true)"
+          echo "::error::opam install failed after 3 attempts${host:+ — unreachable host: ${host}}"
+          exit 1
 
       - name: Build sol CLI
         timeout-minutes: 5

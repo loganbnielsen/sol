@@ -1,30 +1,64 @@
 name: Pin opam packages
 description: >
-  Pin every extracted -eio/https-eio support package to #main. Single
-  source of truth for both CI jobs that need a full build (test and
-  golden-path-smoke) so the pin list and its ordering constraint never
-  drift out of sync between them.
+  Pin every extracted -eio/https-eio support package to #main, retrying each
+  pin a bounded number of times so a brief upstream tarball-host outage
+  (INFRA-008) does not fail a pull request that changes no dependencies.
+  Single source of truth for both CI jobs that need a full build (test and
+  golden-path-smoke) so the pin list and its ordering constraint never drift
+  out of sync between them.
 runs:
   using: composite
   steps:
     - shell: bash
       run: |
+        # Explicit even though Actions sets it: the retry below depends on the
+        # pipeline's status coming from opam, not from the trailing `tee`.
+        set -o pipefail
+
         # Tracking #main on every support package during active parallel
         # development across all of them — sol should build against their
         # latest code, not a tag that's fallen behind. Revert to tagged
         # pins once these settle and cut real releases.
+        #
         # https-eio first: obs-loki-eio/obs-prometheus-eio/aws-eio all
         # depend on it, and each -y pin below installs immediately --
         # pinning it after them let their own install step pull in the
         # published opam-repository https-eio before this pin ever ran.
-        opam pin add https-eio https://github.com/loganbnielsen/https-eio.git#main -y
-        opam pin add kafka-eio https://github.com/loganbnielsen/kafka-eio.git#main -y
-        opam pin add obs-eio https://github.com/loganbnielsen/obs-eio.git#main -y
-        opam pin add obs-loki-eio https://github.com/loganbnielsen/obs-loki-eio.git#main -y
-        opam pin add obs-prometheus-eio https://github.com/loganbnielsen/obs-prometheus-eio.git#main -y
-        opam pin add obs-tempo-eio https://github.com/loganbnielsen/obs-tempo-eio.git#main -y
-        opam pin add pg-eio https://github.com/loganbnielsen/pg-eio.git#main -y
-        opam pin add aws-eio https://github.com/loganbnielsen/aws-eio.git#main -y
-        opam pin add s3-eio https://github.com/loganbnielsen/s3-eio.git#main -y
-        opam pin add dynamodb-eio https://github.com/loganbnielsen/dynamodb-eio.git#main -y
-        opam pin add lambda-eio https://github.com/loganbnielsen/lambda-eio.git#main -y
+        #
+        # INFRA-008: a pin installs immediately, so it can fetch a transitive
+        # source from a non-GitHub host (observed: mtime from erratique.ch).
+        # Opam's own --retry did not ride out a brief outage there, so retry
+        # the pin ourselves; on final failure, quote the unreachable host so
+        # the diagnosis does not require reading the whole job log.
+        retry_pin() {
+          local pkg="$1" url="$2" attempt=1 delay=5 log host
+          log="$(mktemp)"
+          while true; do
+            if opam pin add "$pkg" "$url" -y 2>&1 | tee "$log"; then
+              rm -f "$log"
+              return 0
+            fi
+            if [ "$attempt" -ge 3 ]; then
+              host="$(grep -oE 'Fetch_fail\("[^"]+' "$log" | tail -1 | sed -E 's/.*"//; s|^https?://||; s|/.*||' || true)"
+              echo "::error::opam pin ${pkg} failed after 3 attempts${host:+ — unreachable host: ${host}}"
+              rm -f "$log"
+              return 1
+            fi
+            echo "::warning::opam pin ${pkg} failed (attempt ${attempt}/3); retrying in ${delay}s"
+            attempt=$((attempt + 1))
+            sleep "$delay"
+            delay=$((delay * 2))
+          done
+        }
+
+        retry_pin https-eio https://github.com/loganbnielsen/https-eio.git#main
+        retry_pin kafka-eio https://github.com/loganbnielsen/kafka-eio.git#main
+        retry_pin obs-eio https://github.com/loganbnielsen/obs-eio.git#main
+        retry_pin obs-loki-eio https://github.com/loganbnielsen/obs-loki-eio.git#main
+        retry_pin obs-prometheus-eio https://github.com/loganbnielsen/obs-prometheus-eio.git#main
+        retry_pin obs-tempo-eio https://github.com/loganbnielsen/obs-tempo-eio.git#main
+        retry_pin pg-eio https://github.com/loganbnielsen/pg-eio.git#main
+        retry_pin aws-eio https://github.com/loganbnielsen/aws-eio.git#main
+        retry_pin s3-eio https://github.com/loganbnielsen/s3-eio.git#main
+        retry_pin dynamodb-eio https://github.com/loganbnielsen/dynamodb-eio.git#main
+        retry_pin lambda-eio https://github.com/loganbnielsen/lambda-eio.git#main
