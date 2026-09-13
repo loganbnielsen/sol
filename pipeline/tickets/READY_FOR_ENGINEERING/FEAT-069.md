@@ -232,3 +232,75 @@ group by **lifetime and authority**, not by count. `cluster`/`workspace`/`env`
 share the lifetime of one execution; `mode` lives for one call; a release id
 lives for one plan. Facts that share a lifetime belong in one value; facts that
 do not, must not be flattened into one.
+
+## Decisions carried into 5b-7 (2026-09-13)
+
+**5b — the render path keeps the abstract type.** `render_taxonomy_labels` takes
+`~release_id : Release_id.t`, not a `string`; `Release_id.to_string` is called
+only at the YAML serialization edge. That preserves the guarantee the abstract
+type was introduced for: inside the render path nothing can feed an image tag, an
+arbitrary string, or a malformed id into the release label.
+
+Do **not** introduce a render-context record for this. One fact is a labelled
+parameter; a context type is only earned when several release-level facts
+accumulate together. The fan-out is contained and legitimate:
+
+```text
+plan.release_id
+    ↓
+executor render boundary
+    ↓
+render_spec
+    ↓
+primitive renderer
+    ↓
+render_taxonomy_labels
+```
+
+That is data reaching the code that needs it — not the cross-layer threading that
+made `ctx` a smell. Note also that `~image` drops out of
+`render_taxonomy_labels` entirely: the image tag is already its own fact as
+`container.image`, and re-emitting it as a label would import the same
+unbounded-cardinality problem as a Prometheus label.
+
+**6 — record and pointer, and what inconsistency means.** Keep it simple:
+
+```text
+immutable release record   describes r-X
+sol-current-release        says r-X is the selected release
+```
+
+An inconsistency between them (record content not matching its name; pointer
+naming a release with no record) is **detectable invalid state**, not something
+to reconcile in place. The pointer payload stays minimal — `release_id` only —
+so there is exactly one authoritative immutable description of a release rather
+than a copy that can drift.
+
+**6 — the test that proves the promise at the artifact layer:**
+
+```text
+same release_content
+  => same release_id
+  => byte-for-byte equivalent immutable release record
+```
+
+(modulo deterministic YAML formatting). `Release_id.of_content` being
+deterministic is not enough; the *record* derived from it must be too, or the
+GitOps empty-diff property fails one level below the label.
+
+**7 — malformed and unknown are different failures:**
+
+```text
+sol logs --release banana        -> invalid release id "banana"
+sol logs --release r-0123456789abcdef
+                                 -> release r-0123456789abcdef is not known in target staging
+```
+
+`Release_id.of_string` already makes that separation natural, and the second
+message should name the target it looked in.
+
+**Not claimed:** Kubernetes does not give transactional atomicity across
+workloads, record and pointer. Step 6 defines *valid* states and makes invalid
+ones detectable; how strongly transitions between them are guaranteed is
+FEAT-066's decision (ordered apply + verification, server-side apply, git-commit
+atomicity in GitOps mode, or an explicit lease protocol).

@@ -37,3 +37,29 @@ remaining slices 2–3; rollback reads the record FEAT-067 writes.)*
 - Rolling back a release whose `requested_scope` resolved to a subset restores exactly that subset, not today's membership of that scope.
 - Verification reports structural equality where Sol is the mutator, and reports that verification is not applicable where a controller owns the resources.
 - Retention prunes only successful releases beyond the window, and never the current or previous one.
+
+## Carry-forward from FEAT-069 (2026-09-13)
+
+**Rollback is a logical transition, not a pointer move.**
+
+```text
+rollback
+  = restore the prior release content
+    + make the current-release pointer agree with it
+
+as one logical transition. Pointer-only rollback is invalid.
+```
+
+`sol-current-release` *reflects* the active release; it does not *cause* it.
+Moving the pointer without restoring the workload desired state leaves the
+pointer claiming `r_old` while the workloads still carry `r_new`'s manifests —
+which is worse than no rollback, because the store now lies.
+
+Do **not** claim Kubernetes-level transactional atomicity across workloads, the
+release record and the pointer: a multi-object apply does not provide it. The
+invariant to hold is narrower and achievable: **the pointer must not advance
+independently of the desired release state.** How it is enforced is this ticket's
+choice — ordered apply + verification, server-side apply, git-commit atomicity in
+GitOps mode (where the content and the pointer travel in one commit, which is why
+the pointer belongs in the emitted bundle), or an explicit protocol. State which,
+and make inconsistent states detectable rather than silently reconciling them.
