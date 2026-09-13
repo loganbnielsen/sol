@@ -382,3 +382,42 @@ enough resolved facts to rederive the id (image, config, secret references,
 scaling, environment), which is more than the minimal pointer carries — and
 that asymmetry is the point. The record is the authoritative description; the
 pointer is a claim about which one is selected.
+
+## 5b fan-out, mapped (2026-09-13)
+
+Reconnaissance done; the change is narrower than the render library suggested.
+Three renderer entry points reach the taxonomy labels, and nothing else does:
+
+```text
+sol_cli_manifest_yaml.ml
+  render_taxonomy_labels      <- drop ~image, take ~release_id : Release_id.t
+  deployment_doc   (svc+worker)  <- add ~release_id, pass through
+  rollout_doc      (canary/bg)   <- add ~release_id, pass through
+  cronjob_doc      (fn)          <- add ~release_id, pass through
+
+sol_cli_deployment_render.ml
+  render_spec                    <- add ~release_id (it already takes ?image)
+  (its three calls into the above)
+
+callers of render_spec
+  sol_cli_executor.ml  x3  (run_plan has plan.release_id; local/emit need it passed)
+  test_deployment_phases.ml x1
+```
+
+So the id enters once at the executor boundary from `plan.release_id` and fans
+out only inside the render library — one labelled parameter, no new context type
+(one fact is a parameter; a context earns its name when several facts share a
+lifetime).
+
+Two mechanical notes for the implementer:
+
+- `render_taxonomy_labels` **loses** `~image` rather than gaining a second
+  parameter: the image tag is already `container.image`, and re-emitting it as a
+  label imports the unbounded-cardinality problem into Loki's label space.
+- `render_spec` already carries `?(image = "")`, so the image path is unrelated
+  and must keep working; only the *label* comes from the release id.
+
+`Sol_cli_executor.local` and the emit path take a bare spec (used by `sol up`'s
+per-service apply and `sol deploy --emit-to`), so they need `~release_id` from
+their callers — both of which already hold the plan, so this is passing a value
+that already exists rather than deriving a second time.
