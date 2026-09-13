@@ -31,10 +31,14 @@ val plan_of_services
   -> (Sol_cli_deployment_plan.t, string) result
 
 (** Execute every service in the plan under [mode] ([Dry_run], [Emit_to], or
-    [Apply]). [env], when supplied, is threaded into rendered manifest labels.
-*)
+    [Apply]) in the cluster [ctx] names. [env], when supplied, is threaded into
+    rendered manifest labels.
+
+    FEAT-063: the destination is a required parameter and is never resolved
+    here; it arrives already resolved from the command or hosted boundary. *)
 val execute
-  :  workspace:string
+  :  ctx:Sol_cli_kube_destination.context
+  -> workspace:string
   -> ?env:string
   -> mode:Sol_cli_executor.mode
   -> ?secret_backend:Sol_cli_manifest.secret_backend
@@ -43,9 +47,11 @@ val execute
 
 (** [run] combines {!plan_of_services} and {!execute} into one call, returning
     both the plan and its per-service results. This is the entry point hosted
-    mode should use. [services] is already resolved. *)
+    mode should use. [services] is already resolved, and [ctx] is already
+    resolved. *)
 val run
-  :  workspace:string
+  :  ctx:Sol_cli_kube_destination.context
+  -> workspace:string
   -> env:Sol_cli_deployment_plan.env_config
   -> ?env_label:string
   -> ?requested_scope:string
