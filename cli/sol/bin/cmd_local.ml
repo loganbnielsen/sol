@@ -213,7 +213,7 @@ let dev_up () =
        (ADR 0001), shared with cli/platform/infra/base/main.tf --
        tls.enabled/config.cluster.auto_create_topics_enabled
        (values-common.json) and statefulset.replicas/resources.cpu.cores
-       (values-local.json, for cmd_dev.ml's benefit only -- main.tf's own
+       (values-local.json, for cmd_local.ml's benefit only -- main.tf's own
        var-driven override in its trailing values-list entry always wins
        there, same shadowing pattern as Loki's persistence knob).
 
@@ -303,7 +303,7 @@ let dev_up () =
          primary.persistence.enabled are dev-only local-profile content
          (main.tf keeps its own var-driven `set` for both -- a real secret
          and an "ephemeral by default" choice matching Loki/Prometheus's
-         local profile, neither with a value cmd_dev.ml should share). *)
+         local profile, neither with a value cmd_local.ml should share). *)
       ~values_yaml:
         (Sol_cli_platform_component.merged_values_yaml
            ~component:"postgresql"

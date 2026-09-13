@@ -414,7 +414,7 @@ All five scaffold commands fully implemented and verified. `sol new workspace ac
 
 ### ~~Step 2~~ ✓ — `sol dev up/down/status`
 
-Implemented in `cli/sol/bin/cmd_dev.ml`. k3d cluster lifecycle, Helm chart installs (Redpanda, PostgreSQL, Loki, kube-prometheus-stack), port-forward manager (PID files in `.sol/`), endpoint summary table.
+Implemented in `cli/sol/bin/cmd_local.ml`. k3d cluster lifecycle, Helm chart installs (Redpanda, PostgreSQL, Loki, kube-prometheus-stack), port-forward manager (PID files in `.sol/`), endpoint summary table.
 
 **Testing status:** k3d v5.6.0 and Helm v3.21.0 are now installed. End-to-end test pending (Step 2a below).
 

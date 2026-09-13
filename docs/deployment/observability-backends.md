@@ -298,7 +298,7 @@ no local Tempo to receive spans from when there's no local Grafana to
 browse them in either) plus a Grafana datasource ConfigMap
 (`kubernetes_config_map.grafana_tempo_datasource`) loaded through the same
 sidecar convention as the others. `sol dev up` mirrors this exactly via
-direct `helm`/`kubectl` calls in `cmd_dev.ml` and
+direct `helm`/`kubectl` calls in `cmd_local.ml` and
 `Sol_cli_dev_observability.ml`, so local dev and Terraform-provisioned
 clusters both get tracing the same way ("Dev mirrors prod exactly").
 

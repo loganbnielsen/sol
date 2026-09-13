@@ -72,7 +72,7 @@ CLI flags
 
 ### `sol dev up`
 
-**Module:** `cli/sol/bin/cmd_dev.ml` → `dev_up`
+**Module:** `cli/sol/bin/cmd_local.ml` → `dev_up`
 
 Provisions a local k3d cluster and installs the local factory substrate via
 Helm. Does **not** run the Plan/Render/Execute pipeline. Steps:
@@ -94,7 +94,7 @@ the rest of the factory targets.
 
 ### `sol dev run`
 
-**Module:** `cli/sol/bin/cmd_dev.ml` → `dev_run`
+**Module:** `cli/sol/bin/cmd_local.ml` → `dev_run`
 
 Builds all workspace services with `dune build` and runs each executable directly
 on the host (not inside k3d). Injects dev environment variables

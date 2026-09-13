@@ -236,30 +236,30 @@ resource "helm_release" "redpanda" {
   # Deployment/Service/ConfigMap/ServiceAccount down, not just skips installing
   # them. Verified safe (ClusterIP-only, no ingress, nothing in Sol references
   # it), but a real operator diffing a real plan should expect that deletion.
-  # Keep this in sync with cmd_dev.ml's pin (CODE_LAYER-008).
+  # Keep this in sync with cmd_local.ml's pin (CODE_LAYER-008).
   version   = "26.1.11"
   namespace = kubernetes_namespace.redpanda.metadata[0].name
   timeout   = 600
 
   # CODE_LAYER-010: tls.enabled/config.cluster.auto_create_topics_enabled
   # now live in cli/platform/components/redpanda/values-common.json (ADR 0001),
-  # shared with cmd_dev.ml's own Redpanda install. statefulset.replicas/
-  # resources.cpu.cores also appear in values-local.json (for cmd_dev.ml's
+  # shared with cmd_local.ml's own Redpanda install. statefulset.replicas/
+  # resources.cpu.cores also appear in values-local.json (for cmd_local.ml's
   # benefit only) but are safely overridden here regardless, since this
   # block is the LAST entry in the values list. What's left here
   # (replicas/cpu/memory/persistence) is genuinely Terraform-only --
-  # driven by operator variables cmd_dev.ml has no equivalent for, same
+  # driven by operator variables cmd_local.ml has no equivalent for, same
   # reasoning as Loki's singleBinary.persistence.enabled `set` above.
   #
-  # storage.persistentVolume.size and cmd_dev.ml's external.*/
+  # storage.persistentVolume.size and cmd_local.ml's external.*/
   # listeners.kafka.* block are deliberately NOT in
   # cli/platform/components/redpanda/ at all (neither values-common.json nor
   # values-local.json) -- this resource never overrides them, so putting
   # them in a file this resource reads would have silently shipped
-  # cmd_dev.ml's dev-only values (a 1Gi PVC size vs. the chart's 20Gi
+  # cmd_local.ml's dev-only values (a 1Gi PVC size vs. the chart's 20Gi
   # default, and an external listener advertising "localhost") to every
   # real terraform apply that doesn't opt into self_hosted_durable.
-  # Caught in review; see cmd_dev.ml's own comment on its Redpanda install
+  # Caught in review; see cmd_local.ml's own comment on its Redpanda install
   # for the full story.
   values = concat(
     local.redpanda_component_values,
@@ -322,11 +322,11 @@ resource "helm_release" "postgresql" {
 
   # CODE_LAYER-010: auth.database now lives in
   # cli/platform/components/postgresql/values-common.json (ADR 0001), shared
-  # with cmd_dev.ml's own PostgreSQL install -- was a hardcoded "dev" `set`
+  # with cmd_local.ml's own PostgreSQL install -- was a hardcoded "dev" `set`
   # in both files independently before. postgresPassword/persistence.enabled
   # stay Terraform-only `set`s: the former is a real secret
-  # (var.postgres_password) with no cmd_dev.ml equivalent to share, the
-  # latter is the same var-driven, no-cmd_dev.ml-equivalent case Loki's
+  # (var.postgres_password) with no cmd_local.ml equivalent to share, the
+  # latter is the same var-driven, no-cmd_local.ml-equivalent case Loki's
   # persistence knob already established above.
   values = local.postgresql_component_values
 }
@@ -372,8 +372,8 @@ locals {
 
   # ADR 0001 / CODE_LAYER-005: cli/platform/components/<name>/ is now the shared
   # source of truth for Helm values that used to be independently
-  # hand-duplicated here and in cmd_dev.ml (sol dev up). "local" is the same
-  # profile cmd_dev.ml uses for its k3d cluster; "durable" is the
+  # hand-duplicated here and in cmd_local.ml (sol dev up). "local" is the same
+  # profile cmd_local.ml uses for its k3d cluster; "durable" is the
   # self_hosted_durable, S3-backed profile. Each component's values-common
   # + values-<profile>.json are read via jsondecode(file(...)) -- per the
   # ADR -- and re-encoded with jsonencode so a malformed JSON file fails
@@ -496,17 +496,17 @@ resource "helm_release" "loki" {
   # BUG-006/BUG-008/BUG-013's replication_factor: 1 fix, filesystem vs S3
   # storage/schema) now lives in
   # cli/platform/components/loki/{values-common,values-local,values-durable}.json
-  # (ADR 0001 / CODE_LAYER-005) -- the same "local" profile file cmd_dev.ml's
+  # (ADR 0001 / CODE_LAYER-005) -- the same "local" profile file cmd_local.ml's
   # `sol dev up` reads for its own Loki install, so this no longer needs a
   # parallel, independently-maintained copy (that's the exact gap BUG-016
   # found). See that directory's files for the current values and git blame
   # on this resource for the per-value history that used to live here.
   #
   # Persistence stays a `set` override here: var.loki_persistent_storage is
-  # a Terraform-only operator knob with no cmd_dev.ml equivalent, and `set`
+  # a Terraform-only operator knob with no cmd_local.ml equivalent, and `set`
   # always wins over `values` regardless of which profile file is selected
   # below. values-local.json (only) also carries singleBinary.persistence.
-  # enabled: false, purely for cmd_dev.ml's benefit (it has no var to
+  # enabled: false, purely for cmd_local.ml's benefit (it has no var to
   # override with) -- values-durable.json deliberately omits this key so
   # there's exactly one place that actually controls persistence for this
   # resource, not two.
@@ -543,7 +543,7 @@ resource "helm_release" "grafana" {
   # sidecar.dashboards/datasources.enabled (OBS-011: loki-stack's bundled
   # subchart did this implicitly; this standalone chart needs it explicit)
   # now lives in cli/platform/components/grafana/values-common.json (ADR 0001 /
-  # CODE_LAYER-005), shared with cmd_dev.ml's own Grafana install.
+  # CODE_LAYER-005), shared with cmd_local.ml's own Grafana install.
   #
   # OBS-044: serviceAccount.annotations is the chart's own documented IRSA
   # example (`helm show values grafana-community/grafana --version 13.2.1`)
@@ -698,7 +698,7 @@ resource "helm_release" "tempo" {
   namespace  = kubernetes_namespace.monitoring.metadata[0].name
 
   # cli/platform/components/tempo/ has nothing to say today -- both this
-  # resource and cmd_dev.ml's Tempo install already agreed by relying on the
+  # resource and cmd_local.ml's Tempo install already agreed by relying on the
   # chart's own defaults. Wired up anyway (ADR 0001 / CODE_LAYER-005) so the
   # CI guardrail covers Tempo's next value the same way it now covers
   # Loki/Grafana/Prometheus.
@@ -1086,10 +1086,10 @@ resource "helm_release" "prometheus" {
 
   # Persistence stays a `set` override here, same reasoning as Loki's
   # singleBinary.persistence.enabled above: var.prometheus_persistent_storage
-  # is a Terraform-only operator knob with no cmd_dev.ml equivalent, and
+  # is a Terraform-only operator knob with no cmd_local.ml equivalent, and
   # `set` always wins over `values` regardless of which profile file is
   # selected. values-local.json (only) also carries
-  # server.persistentVolume.enabled: false, purely for cmd_dev.ml's benefit
+  # server.persistentVolume.enabled: false, purely for cmd_local.ml's benefit
   # (it has no var to override with) -- values-durable.json deliberately
   # omits this key so there's exactly one place that actually controls
   # persistence for this resource, not two.
@@ -1106,9 +1106,9 @@ resource "helm_release" "prometheus" {
 
   # pushgateway.enabled/alertmanager.enabled now live in
   # cli/platform/components/prometheus/values-common.json (ADR 0001 /
-  # CODE_LAYER-005), shared with cmd_dev.ml's own Prometheus install --
+  # CODE_LAYER-005), shared with cmd_local.ml's own Prometheus install --
   # previously `true` here unconditionally and relied on as the chart's own
-  # default over in cmd_dev.ml, so making both paths state it explicitly
+  # default over in cmd_local.ml, so making both paths state it explicitly
   # from one file removes an implicit-default-drift risk without changing
   # either path's actual behavior.
   values = concat(

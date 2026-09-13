@@ -24,7 +24,7 @@
   main
   version
   cmd_check
-  cmd_dev
+  cmd_local
   cmd_plan
   cmd_up
   cmd_deploy
