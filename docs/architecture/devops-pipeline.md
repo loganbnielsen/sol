@@ -201,6 +201,14 @@ emits one or both of:
 - A Grafana Explore URL built by `Sol_cli_logs.grafana_explore_url` using LogQL
   `{namespace="<ns>",app="<name>"}`.
 
+`--release <id>` (FEAT-069) narrows to one released identity, adding
+`release="<id>"` to the selector — or using `{release="<id>"}` alone when no
+`--scope` is given, since the id is workspace-unique by construction. The
+outcome order is deliberate: a malformed id fails before the cluster is
+consulted; a well-formed id with no recorded release fails naming the target and
+recent releases; a known release whose query returns nothing is an empty
+success, never reported as an unknown release.
+
 **Reads:** live cluster via kubectl. **Writes:** nothing.
 
 ---

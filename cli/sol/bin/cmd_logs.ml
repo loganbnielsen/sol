@@ -58,6 +58,14 @@ let namespace_or_exit ~workspace ~domain =
     exit 1
 ;;
 
+let k8s_name_or_exit name =
+  match Sol_cli_deployment_plan.k8s_name_result name with
+  | Ok k8s_name -> Sol_cli_deployment_plan.k8s_name_to_string k8s_name
+  | Error err ->
+    Printf.eprintf "error: %s\n" (Sol_cli_deployment_plan.plan_error_to_string err);
+    exit 1
+;;
+
 let kubectl_log_target ~primitive ~k8s_name : Sol_cli_logs.kubectl_log_target =
   match (primitive : Sol_cli_manifest.primitive) with
   | Fn -> App_selector k8s_name
@@ -102,10 +110,12 @@ type observability_options =
   ; loki_password : string option
   }
 
-(** What `sol logs` needs: the workload it is about, how to stream, and where the
-    telemetry lives. [scope] is the selection; [observability] is the rest. *)
+(** What `sol logs` needs: the workload (or release) it is about, how to stream,
+    and where the telemetry lives. Exactly one of [scope]/[release] must be
+    given; [observability] is the rest. *)
 type log_options =
-  { scope : string
+  { scope : string option
+  ; release : string option
   ; follow : bool
   ; tail : int
   ; observability : observability_options
@@ -124,8 +134,7 @@ let backend_of_arg = function
        exit 1)
 ;;
 
-let run ~ctx ~target (options : log_options) () : unit =
-  let scope = options.scope in
+let run_unit ~ctx ~target (options : log_options) scope : unit =
   let follow = options.follow in
   let tail = options.tail in
   let observability = options.observability in
@@ -140,13 +149,7 @@ let run ~ctx ~target (options : log_options) () : unit =
   let domain = svc.Sol_cli_manifest.domain in
   let name = svc.Sol_cli_manifest.name in
   let ns = namespace_or_exit ~workspace ~domain in
-  let k8s_name =
-    match Sol_cli_deployment_plan.k8s_name_result name with
-    | Ok k8s_name -> Sol_cli_deployment_plan.k8s_name_to_string k8s_name
-    | Error err ->
-      Printf.eprintf "error: %s\n" (Sol_cli_deployment_plan.plan_error_to_string err);
-      exit 1
-  in
+  let k8s_name = k8s_name_or_exit name in
   let primitive = svc.Sol_cli_manifest.primitive in
   let backend, base_domain =
     match
@@ -248,11 +251,154 @@ let run ~ctx ~target (options : log_options) () : unit =
          fallback_to_kubectl ()))
 ;;
 
+(* FEAT-069: [sol logs --release <id>]. The order is the contract: the id is
+   validated first (a malformed value never reaches the cluster), the unit's
+   namespace is validated next when one narrows the query, then the release
+   store says whether the id is known, and only then does the logs backend
+   participate. A known release with no matching lines is an empty success, not
+   "unknown release" -- a rollback or a short-lived workload can legitimately
+   have no logs left. *)
+let run_release ~ctx ~target (options : log_options) release : unit =
+  let tail = options.tail in
+  let observability = options.observability in
+  let explicit_backend = backend_of_arg observability.backend in
+  let explicit_loki_url = observability.loki_base_url in
+  let explicit_loki_username = observability.loki_username in
+  let explicit_loki_password = observability.loki_password in
+  let grafana_base_url = observability.grafana_base_url in
+  let workspace = workspace_name () in
+  let target_name = Option.value target ~default:"local" in
+  let scope =
+    match options.scope with
+    | None -> None
+    | Some scope ->
+      let svc = resolve_unit ~scope in
+      let ns = namespace_or_exit ~workspace ~domain:svc.Sol_cli_manifest.domain in
+      let k8s_name = k8s_name_or_exit svc.Sol_cli_manifest.name in
+      Some (ns, k8s_name)
+  in
+  let loaded = ref None in
+  let records () =
+    match !loaded with
+    | Some records -> records
+    | None ->
+      (match Sol_cli_release_store.list ~ctx ~workspace with
+       | Ok records ->
+         loaded := Some records;
+         records
+       | Error msg ->
+         Printf.eprintf "error: %s\n" msg;
+         exit 1)
+  in
+  let known id =
+    List.exists
+      (fun (r : Sol_cli_release.t) ->
+         String.equal r.Sol_cli_release.release_id (Sol_cli_release_id.to_string id))
+      (records ())
+  in
+  match Sol_cli_logs.release_query ~release ~target:target_name ~known ?scope () with
+  | Sol_cli_logs.Release_invalid msg ->
+    Printf.eprintf "error: %s\n" msg;
+    exit 1
+  | Sol_cli_logs.Release_unknown { release_id; target } ->
+    Printf.eprintf "error: release %s is not known in target %s\n" release_id target;
+    (match records () with
+     | [] -> ()
+     | recent ->
+       Printf.eprintf
+         "Recent releases: %s\n"
+         (String.concat
+            ", "
+            (List.map
+               (fun (r : Sol_cli_release.t) -> r.Sol_cli_release.release_id)
+               recent)));
+    exit 1
+  | Sol_cli_logs.Release_logs { release_id; logql } ->
+    let backend, base_domain =
+      match
+        Sol_cli_observability_url.effective_backend_and_base_domain
+          ~explicit_backend
+          ~explicit_base_domain:observability.base_domain
+          ~target
+          ()
+      with
+      | Error msg ->
+        Printf.eprintf "error: %s\n" msg;
+        exit 1
+      | Ok pair -> pair
+    in
+    (match
+       Sol_cli_observability_url.resolve
+         ~backend
+         ?base_domain
+         ?override:grafana_base_url
+         ()
+     with
+     | Sol_cli_observability_url.Url base_url ->
+       Printf.printf "Grafana logs: %s\n%!" (Sol_cli_logs.explore_url ~base_url ~logql)
+     | Sol_cli_observability_url.No_url reason ->
+       Printf.printf "Grafana logs: (%s)\n%!" reason);
+    (match
+       Sol_cli_status.probe_url
+         ~backend
+         ~explicit_url:explicit_loki_url
+         ~default_local_url:"http://localhost:3100"
+         ~probe_path:""
+     with
+     | None ->
+       Printf.printf
+         "(%s)\n%!"
+         (Sol_cli_status.not_configured_message ~signal:Sol_cli_status.Loki ~backend)
+     | Some loki_base_url ->
+       let credentials =
+         match
+           Sol_cli_loki.resolve_credentials
+             ~flag_username:explicit_loki_username
+             ~flag_password:explicit_loki_password
+             ~env_username:(Sys.getenv_opt "SOL_LOKI_USERNAME")
+             ~env_password:(Sys.getenv_opt "SOL_LOKI_PASSWORD")
+         with
+         | Ok credentials -> credentials
+         | Error msg ->
+           Printf.eprintf "error: %s\n" msg;
+           exit 1
+       in
+       (match
+          Sol_cli_loki.query_logql
+            ~base_url:loki_base_url
+            ~logql
+            ?credentials
+            ~limit:tail
+            ()
+        with
+        | Ok [] -> Printf.printf "No log lines found for release %s.\n%!" release_id
+        | Ok lines ->
+          List.iter (fun (l : Sol_cli_loki.line) -> print_endline l.text) lines
+        | Error e ->
+          Printf.eprintf
+            "error: %s\n"
+            (Sol_cli_status.unreachable_message
+               ~url:loki_base_url
+               ~error:(Sol_cli_loki.fetch_error_to_string e));
+          exit 1))
+;;
+
+let run ~ctx ~target (options : log_options) () : unit =
+  match options.release with
+  | Some release -> run_release ~ctx ~target options release
+  | None ->
+    (match options.scope with
+     | Some scope -> run_unit ~ctx ~target options scope
+     | None ->
+       Printf.eprintf "error: pass --scope DOMAIN/UNIT (or --release <id>)\n%!";
+       exit 1)
+;;
+
 (* ── Cmdliner Terms ─────────────────────────────────────────────────────── *)
 
 let scope_arg =
   Arg.(
-    required
+    value
     & opt (some string) None
     & info
         [ "scope" ]
@@ -260,7 +406,24 @@ let scope_arg =
         ~doc:
           "Unit to stream logs from, e.g. payments/charge_svc. Exactly one unit: logs \
            address a single workload, so a domain or workspace scope is not accepted \
-           here -- use 'sol open logs' for those views.")
+           here -- use 'sol open logs' for those views. Optional when --release narrows \
+           the query to a released identity.")
+;;
+
+let release_arg =
+  Arg.(
+    value
+    & opt (some string) None
+    & info
+        [ "release" ]
+        ~docv:"RELEASE_ID"
+        ~doc:
+          "Only logs from this release, e.g. r-0123456789abcdef. The id is the \
+           content-addressed identity `sol releases` lists and every workload carries as \
+           its release label. A malformed id fails closed before the cluster is \
+           consulted; a well-formed id with no recorded release fails closed naming \
+           recent releases; a known release with no matching lines is an empty result, \
+           not an error.")
 ;;
 
 let follow_flag =
@@ -435,7 +598,7 @@ let observability_options_term =
    destination and in whether --target is declared at all. *)
 let run_term ~local ~target_term =
   Term.(
-    const (fun scope follow tail observability target ->
+    const (fun scope release follow tail observability target ->
       let ctx =
         if local
         then Cmd_destination.local
@@ -443,8 +606,9 @@ let run_term ~local ~target_term =
           Cmd_destination.or_exit
             (Cmd_destination.resolve ~command:"logs" ~local:false ~target)
       in
-      run ~ctx ~target { scope; follow; tail; observability } ())
+      run ~ctx ~target { scope; release; follow; tail; observability } ())
     $ scope_arg
+    $ release_arg
     $ follow_term
     $ tail_arg
     $ observability_options_term
@@ -457,7 +621,8 @@ let cmd =
        "logs"
        ~doc:
          "Stream logs from a deployed service. Wraps 'kubectl logs' with Sol's namespace \
-          convention (<workspace>-<domain>).")
+          convention (<workspace>-<domain>), or filters to one released identity with \
+          --release <id>.")
     (run_term ~local:false ~target_term:Cmd_destination.target_arg)
 ;;
 

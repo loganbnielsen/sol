@@ -566,7 +566,7 @@ sol migrate status                                show per-file applied/pending 
 sol migrate rollback                              roll back the last applied migration
 
 sol rollback [--scope DOMAIN[/UNIT]]              roll back last deploy for one or all services
-sol logs --scope DOMAIN/UNIT [--no-follow] [--tail=N]  stream logs from a deployed service
+sol logs --scope DOMAIN/UNIT [--release RELEASE_ID] [--no-follow] [--tail=N]  stream logs from a deployed service
 sol open logs [SCOPE] [--links]                   open Grafana Explore logs (browser unless --links)
 sol open metrics [SCOPE] [--links]                open Grafana metrics dashboard
 sol open dashboard [SCOPE] [--links]              open Grafana workspace/service dashboard

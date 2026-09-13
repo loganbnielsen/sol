@@ -9,10 +9,9 @@ type credentials =
   ; password : string
   }
 
-let query_range_argv ~base_url ~ns ~k8s_name ~limit ~timeout_s ?curl_config ()
+let query_range_argv_logql ~base_url ~logql ~limit ~timeout_s ?curl_config ()
   : string list
   =
-  let logql = Printf.sprintf {|{namespace="%s",app="%s"}|} ns k8s_name in
   let auth_args =
     match curl_config with
     | None -> []
@@ -31,6 +30,17 @@ let query_range_argv ~base_url ~ns ~k8s_name ~limit ~timeout_s ?curl_config ()
     ; "--data-urlencode"
     ; "direction=backward"
     ]
+;;
+
+(* Service-scoped form, kept for 'sol logs' unit queries. *)
+let query_range_argv ~base_url ~ns ~k8s_name ~limit ~timeout_s ?curl_config () =
+  query_range_argv_logql
+    ~base_url
+    ~logql:(Printf.sprintf {|{namespace="%s",app="%s"}|} ns k8s_name)
+    ~limit
+    ~timeout_s
+    ?curl_config
+    ()
 ;;
 
 type line =
@@ -171,7 +181,7 @@ let write_curl_auth_config { username; password } =
     Error (Printexc.to_string exn)
 ;;
 
-let query ~base_url ~ns ~k8s_name ?credentials ?(limit = 100) ?(timeout_s = 5.0) ()
+let query_logql ~base_url ~logql ?credentials ?(limit = 100) ?(timeout_s = 5.0) ()
   : (line list, fetch_error) result
   =
   let curl_config =
@@ -190,7 +200,7 @@ let query ~base_url ~ns ~k8s_name ?credentials ?(limit = 100) ?(timeout_s = 5.0)
          | _ -> ()))
     @@ fun () ->
     let argv =
-      query_range_argv ~base_url ~ns ~k8s_name ~limit ~timeout_s ?curl_config ()
+      query_range_argv_logql ~base_url ~logql ~limit ~timeout_s ?curl_config ()
     in
     let redact =
       match credentials with
@@ -223,4 +233,14 @@ let query ~base_url ~ns ~k8s_name ?credentials ?(limit = 100) ?(timeout_s = 5.0)
           (match parse_query_range_body body with
            | Ok lines -> Ok lines
            | Error msg -> Error (Other msg))))
+;;
+
+let query ~base_url ~ns ~k8s_name ?credentials ?limit ?timeout_s () =
+  query_logql
+    ~base_url
+    ~logql:(Printf.sprintf {|{namespace="%s",app="%s"}|} ns k8s_name)
+    ?credentials
+    ?limit
+    ?timeout_s
+    ()
 ;;

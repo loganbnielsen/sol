@@ -30,6 +30,17 @@ val query_range_argv
   -> unit
   -> string list
 
+(** [query_range_argv_logql] is the general form of {!query_range_argv}: it
+    takes any LogQL selector, which is what [sol logs --release] needs. *)
+val query_range_argv_logql
+  :  base_url:string
+  -> logql:string
+  -> limit:int
+  -> timeout_s:float
+  -> ?curl_config:string
+  -> unit
+  -> string list
+
 (** Split curl's ["<body>\n<http_code>"] output (produced by
     [-w '\n%{http_code}']) back into the body and the parsed status code. *)
 val split_body_and_status : string -> string * int option
@@ -73,6 +84,17 @@ val query
   :  base_url:string
   -> ns:string
   -> k8s_name:string
+  -> ?credentials:credentials
+  -> ?limit:int
+  -> ?timeout_s:float
+  -> unit
+  -> (line list, fetch_error) result
+
+(** [query_logql] is the general form of {!query}: it takes any LogQL selector,
+    which is what [sol logs --release] needs. *)
+val query_logql
+  :  base_url:string
+  -> logql:string
   -> ?credentials:credentials
   -> ?limit:int
   -> ?timeout_s:float

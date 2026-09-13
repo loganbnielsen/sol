@@ -192,6 +192,80 @@ let test_kubectl_logs_fn_target () =
           ~tail:25))
 ;;
 
+(* ── release_query (FEAT-069) ────────────────────────────────────────────── *)
+
+let test_release_query_malformed_never_consults_store () =
+  let consulted = ref false in
+  match
+    Sol_cli_logs.release_query
+      ~release:"banana"
+      ~target:"staging"
+      ~known:(fun _ ->
+        consulted := true;
+        true)
+      ()
+  with
+  | Sol_cli_logs.Release_invalid msg ->
+    check_bool "store never consulted for a malformed id" false !consulted;
+    check_bool
+      "message names the bad id"
+      true
+      (let re = Str.regexp "banana" in
+       try
+         ignore (Str.search_forward re msg 0);
+         true
+       with
+       | Not_found -> false)
+  | _ -> Alcotest.fail "expected Release_invalid"
+;;
+
+let test_release_query_unknown_names_target () =
+  match
+    Sol_cli_logs.release_query
+      ~release:"r-0123456789abcdef"
+      ~target:"staging"
+      ~known:(fun _ -> false)
+      ()
+  with
+  | Sol_cli_logs.Release_unknown { release_id; target } ->
+    check_string "id preserved" "r-0123456789abcdef" release_id;
+    check_string "target named" "staging" target
+  | _ -> Alcotest.fail "expected Release_unknown"
+;;
+
+let test_release_query_known_builds_exact_selector () =
+  match
+    Sol_cli_logs.release_query
+      ~release:"r-0123456789abcdef"
+      ~target:"staging"
+      ~known:(fun _ -> true)
+      ()
+  with
+  | Sol_cli_logs.Release_logs { logql; _ } ->
+    check_string
+      "selector is the exact release label"
+      {|{release="r-0123456789abcdef"}|}
+      logql
+  | _ -> Alcotest.fail "expected Release_logs"
+;;
+
+let test_release_query_scoped_selector_narrows_to_the_unit () =
+  match
+    Sol_cli_logs.release_query
+      ~release:"r-0123456789abcdef"
+      ~target:"staging"
+      ~known:(fun _ -> true)
+      ~scope:("myapp-payments", "charge-svc")
+      ()
+  with
+  | Sol_cli_logs.Release_logs { logql; _ } ->
+    check_string
+      "selector adds release to the unit selector"
+      {|{namespace="myapp-payments",app="charge-svc",release="r-0123456789abcdef"}|}
+      logql
+  | _ -> Alcotest.fail "expected Release_logs"
+;;
+
 (* ── runner ─────────────────────────────────────────────────────────────── *)
 
 let () =
@@ -225,6 +299,24 @@ let () =
             `Quick
             test_kubectl_logs_deployment_target
         ; Alcotest.test_case "fn target" `Quick test_kubectl_logs_fn_target
+        ] )
+    ; ( "release_query"
+      , [ Alcotest.test_case
+            "malformed never consults the store"
+            `Quick
+            test_release_query_malformed_never_consults_store
+        ; Alcotest.test_case
+            "unknown names the target"
+            `Quick
+            test_release_query_unknown_names_target
+        ; Alcotest.test_case
+            "known builds the exact selector"
+            `Quick
+            test_release_query_known_builds_exact_selector
+        ; Alcotest.test_case
+            "scoped selector narrows to the unit"
+            `Quick
+            test_release_query_scoped_selector_narrows_to_the_unit
         ] )
     ]
 ;;
