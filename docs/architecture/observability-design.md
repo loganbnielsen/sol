@@ -60,6 +60,14 @@ must carry the same ownership identity:
 > FEAT-069) and is written verbatim — the same id `sol releases` lists and
 > `sol logs --release` queries.
 >
+> A deployment *event* (FEAT-070) is the separate object: its own minted
+> `deployment_id` (`d-<YYYYMMDDtHHMMSSz>-<16 hex>`) plus provenance, recorded as
+> an immutable `sol-deployment-<id>` ConfigMap and listed by `sol deployments`.
+> The deploy marker pushed to Loki carries the same `deployment_id` as a logfmt
+> *field* (not a stream label — it varies per invocation), which is the join key
+> from the observability timeline to the authoritative record. `deployment_id`
+> never enters the pod template: it identifies the event, not the released state.
+>
 > **`release` is not a metrics dimension.** It is written into the pod template
 > (so Loki can select it exactly) but never into a Prometheus label: releases
 > accumulate forever, and a per-release time series would be unbounded
