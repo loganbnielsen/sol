@@ -3,6 +3,10 @@
    dry_run=true mode only prints the YAML — no kubectl is invoked.
    The gitops executor writes a file to a temp directory. *)
 
+let release_id_of_test =
+  Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
+;;
+
 (* ── fixtures ────────────────────────────────────────────────────────────── *)
 
 let k8s_name value =
@@ -89,6 +93,7 @@ let test_local_result_fields () =
     Sol_cli_executor.local
       ~ctx:Sol_cli_kube_destination.local_context
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~dry_run:true
       svc_spec
   in
@@ -105,6 +110,7 @@ let test_local_worker_result () =
     Sol_cli_executor.local
       ~ctx:Sol_cli_kube_destination.local_context
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~dry_run:true
       worker_spec
   in
@@ -119,6 +125,7 @@ let test_direct_result_fields () =
     Sol_cli_executor.local
       ~ctx:Sol_cli_kube_destination.local_context
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~dry_run:true
       svc_spec
   in
@@ -135,6 +142,7 @@ let test_direct_worker_result () =
     Sol_cli_executor.local
       ~ctx:Sol_cli_kube_destination.local_context
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~dry_run:true
       worker_spec
   in
@@ -153,6 +161,7 @@ let test_gitops_result_fields () =
     Sol_cli_executor.gitops
       ~ctx:Sol_cli_kube_destination.local_context
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~dir
       svc_spec
   in
@@ -178,6 +187,7 @@ let test_gitops_writes_file () =
     (Sol_cli_executor.gitops
        ~ctx:Sol_cli_kube_destination.local_context
        ~workspace:"myapp"
+       ~release_id:release_id_of_test
        ~dir
        svc_spec);
   let path = Filename.concat dir "myapp-payments-charge-svc.yaml" in
@@ -218,6 +228,7 @@ let test_gitops_worker () =
     Sol_cli_executor.gitops
       ~ctx:Sol_cli_kube_destination.local_context
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~dir
       worker_spec
   in

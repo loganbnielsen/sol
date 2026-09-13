@@ -24,10 +24,12 @@ type mode =
 (** Apply to the cluster [ctx] names. In dry-run mode the rendered YAML is
     printed to stdout rather than applied. Pass [~image] indirectly via the spec;
     callers that need to show a push-registry image should override [spec.image]
-    before calling. *)
+    before calling. [~release_id] is the plan's release identity (FEAT-069) and
+    is rendered into the taxonomy [release] label verbatim. *)
 val local
   :  ctx:Sol_cli_kube_destination.context
   -> workspace:string
+  -> release_id:Sol_cli_release_id.t
   -> dry_run:bool
   -> Sol_cli_deployment_plan.service_spec
   -> result
@@ -36,10 +38,12 @@ val local
     directory is created if it does not already exist. When [~secret_backend] is
     [External_secrets _], an ExternalSecret CRD is emitted instead of a
     placeholder Kubernetes Secret. Returns [result] with [namespace] and [name]
-    from the spec and [image] from the spec. *)
+    from the spec and [image] from the spec. [~release_id] is the plan's release
+    identity (FEAT-069). *)
 val gitops
   :  ctx:Sol_cli_kube_destination.context
   -> workspace:string
+  -> release_id:Sol_cli_release_id.t
   -> dir:string
   -> ?secret_backend:Sol_cli_manifest.secret_backend
   -> Sol_cli_deployment_plan.service_spec

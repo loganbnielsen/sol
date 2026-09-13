@@ -198,12 +198,20 @@ let manifest_name yaml =
 let rendered_manifests_of_service
       ~workspace
       ?env
+      ~release_id
       ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder)
       service
   =
   (* Default to Kubernetes_placeholder for diagnostics so that
      rendered_manifests_of_plan can be called without live env vars. *)
-  match Sol_cli_deployment_render.render_spec ~workspace ?env ~secret_backend service with
+  match
+    Sol_cli_deployment_render.render_spec
+      ~workspace
+      ?env
+      ~release_id
+      ~secret_backend
+      service
+  with
   | Error msg -> failwith msg
   | Ok (namespace_yaml, workload_yaml) ->
     split_manifest_docs (namespace_yaml ^ "\n" ^ workload_yaml)
@@ -220,6 +228,7 @@ let rendered_manifests_of_plan (plan : Sol_cli_deployment_plan.t) =
     (rendered_manifests_of_service
        ~workspace:plan.workspace
        ?env:plan.environment.Sol_cli_deployment_plan.env
+       ~release_id:plan.Sol_cli_deployment_plan.release_id
        ~secret_backend:plan.environment.Sol_cli_deployment_plan.secret_backend)
     plan.services
 ;;

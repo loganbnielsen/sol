@@ -467,6 +467,7 @@ let render_ok spec =
   match
     Sol_cli_deployment_render.render_spec
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
       spec
   with
@@ -629,6 +630,7 @@ let test_local_executor_result_fields () =
     Sol_cli_executor.local
       ~ctx:Sol_cli_kube_destination.local_context
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~dry_run:true
       svc_spec
   in
@@ -645,6 +647,7 @@ let test_direct_executor_result_fields () =
     Sol_cli_executor.local
       ~ctx:Sol_cli_kube_destination.local_context
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~dry_run:true
       svc_spec
   in
@@ -662,6 +665,7 @@ let test_gitops_executor_result_fields () =
       Sol_cli_executor.gitops
         ~ctx:Sol_cli_kube_destination.local_context
         ~workspace:"myapp"
+        ~release_id:release_id_of_test
         ~dir
         svc_spec
     in
@@ -681,6 +685,7 @@ let test_local_worker_executor_result_fields () =
     Sol_cli_executor.local
       ~ctx:Sol_cli_kube_destination.local_context
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~dry_run:true
       worker_spec
   in
@@ -696,6 +701,7 @@ let test_direct_fn_executor_result_fields () =
     Sol_cli_executor.local
       ~ctx:Sol_cli_kube_destination.local_context
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~dry_run:true
       fn_spec
   in
@@ -773,6 +779,7 @@ let test_local_and_direct_share_plan_type () =
       (Sol_cli_executor.local
          ~ctx:Sol_cli_kube_destination.local_context
          ~workspace:plan.Sol_cli_deployment_plan.workspace
+         ~release_id:plan.Sol_cli_deployment_plan.release_id
          ~dry_run:true)
       plan.Sol_cli_deployment_plan.services
   in
@@ -781,6 +788,7 @@ let test_local_and_direct_share_plan_type () =
       (Sol_cli_executor.local
          ~ctx:Sol_cli_kube_destination.local_context
          ~workspace:plan.Sol_cli_deployment_plan.workspace
+         ~release_id:plan.Sol_cli_deployment_plan.release_id
          ~dry_run:true)
       plan.Sol_cli_deployment_plan.services
   in
@@ -812,6 +820,7 @@ let test_gitops_shares_plan_type () =
         (Sol_cli_executor.gitops
            ~ctx:Sol_cli_kube_destination.local_context
            ~workspace:plan.Sol_cli_deployment_plan.workspace
+           ~release_id:plan.Sol_cli_deployment_plan.release_id
            ~dir)
         plan.Sol_cli_deployment_plan.services
     in
@@ -820,6 +829,7 @@ let test_gitops_shares_plan_type () =
         (Sol_cli_executor.local
            ~ctx:Sol_cli_kube_destination.local_context
            ~workspace:plan.Sol_cli_deployment_plan.workspace
+           ~release_id:plan.Sol_cli_deployment_plan.release_id
            ~dry_run:true)
         plan.Sol_cli_deployment_plan.services
     in

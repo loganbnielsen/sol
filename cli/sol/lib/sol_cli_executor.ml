@@ -43,8 +43,8 @@ let dispatch_rendered ~ctx ~mode spec yaml =
 
 (* ── executors ───────────────────────────────────────────────────────────── *)
 
-let local ~ctx ~workspace ~dry_run spec =
-  match Sol_cli_deployment_render.render_spec ~workspace spec with
+let local ~ctx ~workspace ~release_id ~dry_run spec =
+  match Sol_cli_deployment_render.render_spec ~workspace ~release_id spec with
   | Error msg -> failwith msg
   | Ok yaml -> dispatch_rendered ~ctx ~mode:(if dry_run then Dry_run else Apply) spec yaml
 ;;
@@ -52,11 +52,14 @@ let local ~ctx ~workspace ~dry_run spec =
 let gitops
       ~ctx
       ~workspace
+      ~release_id
       ~dir
       ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder)
       spec
   =
-  match Sol_cli_deployment_render.render_spec ~workspace ~secret_backend spec with
+  match
+    Sol_cli_deployment_render.render_spec ~workspace ~release_id ~secret_backend spec
+  with
   | Error msg -> failwith msg
   | Ok yaml -> dispatch_rendered ~ctx ~mode:(Emit_to dir) spec yaml
 ;;
@@ -90,6 +93,7 @@ let run_plan
            Sol_cli_deployment_render.render_spec
              ~workspace
              ?env
+             ~release_id:plan.Sol_cli_deployment_plan.release_id
              ~secret_backend:backend
              spec
          with

@@ -295,7 +295,7 @@ let push_deploy_events ~ctx ~workspace ~target_cfg ~loki_push_url plan =
          ; domain = spec.domain
          ; service = Sol_cli_kubernetes_name.k8s_name_to_string spec.k8s_name
          ; primitive = primitive_label (to_manifest_primitive spec.primitive)
-         ; release = Sol_cli_manifest_yaml.release_of_image spec.image
+         ; release = Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id
          })
       plan.Sol_cli_deployment_plan.services
   in

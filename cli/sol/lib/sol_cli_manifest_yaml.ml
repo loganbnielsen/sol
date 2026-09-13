@@ -226,18 +226,15 @@ let render_extra_labels labels =
    the active deployment target -- passed to render_taxonomy_labels below
    as ?env, omitted (not a fake default) when no target resolved one, e.g.
    sol up (FEAT-026; see OBS-016 for the original gap). `release` is the
-   image tag, the part after the last ':'
-   -- falls back to "unknown" for a tag-less/malformed image ref rather
-   than raising, since a bad label value is far cheaper than a failed
-   deploy; sanitize_label_value bounds it to Kubernetes' 63-char
-   label-value limit for the same reason (an oversized value from a long
-   CI-generated tag would otherwise make `kubectl apply` fail outright).
+   content-addressed release id (FEAT-069) and is written verbatim: it is
+   label-safe by construction (Sol_cli_release_id.t), and sanitizing it at
+   the render site would let the label drift from the id the release record
+   stores -- the BUG-025 failure mode in a new place. The image tag is no
+   longer a label at all: it is already container.image, and re-emitting it
+   here would import unbounded cardinality into Loki's label space.
+   workspace/domain/service/primitive/env are still sanitized, because none
+   of them is label-safe by construction at this render site.
    Rendered at pod-template indent (8 spaces), same as extra_labels. *)
-let release_of_image image =
-  match String.rindex_opt image ':' with
-  | Some i -> String.sub image (i + 1) (String.length image - i - 1)
-  | None -> "unknown"
-;;
 
 (* OBS-021: delegates to Sol_cli_kubernetes_name's canonical sanitizer so
    this and Sol_cli_open.dashboard_url always agree on the same
@@ -254,27 +251,34 @@ let render_taxonomy_labels
       ~domain
       ~service
       ~primitive
-      ~image
+      ~release_id
       ()
   =
-  (* Every value goes through sanitize_label_value uniformly -- workspace/
-     domain are only indirectly bounded today (namespace_result validates
-     their combined length before render is ever called) and service is
-     only safe because it's always a validated k8s_name in this render
-     path; neither is a guarantee at this render site itself, so don't
-     rely on a value being safe by construction from somewhere else. *)
-  ([ "workspace", workspace
-   ; "domain", domain
-   ; "service", service
-   ; "primitive", primitive
-   ; "release", release_of_image image
-   ]
-   @
-   match env with
-   | None -> []
-   | Some e -> [ "env", e ])
-  |> List.map (fun (k, v) -> f "%s%s: \"%s\"" indent k (sanitize_label_value v))
-  |> String.concat "\n"
+  (* Every value except `release` goes through sanitize_label_value:
+     workspace/domain are only indirectly bounded today (namespace_result
+     validates their combined length before render is ever called) and
+     service is only safe because it's always a validated k8s_name in this
+     render path; neither is a guarantee at this render site itself, so
+     don't rely on a value being safe by construction from somewhere else.
+     `release` is the exception precisely because it *is* safe by
+     construction, and must stay byte-identical to the stored id. *)
+  let sanitized =
+    [ "workspace", workspace
+    ; "domain", domain
+    ; "service", service
+    ; "primitive", primitive
+    ]
+    |> List.map (fun (k, v) -> k, sanitize_label_value v)
+  in
+  let labels =
+    sanitized
+    @ [ "release", Sol_cli_release_id.to_string release_id ]
+    @
+    match env with
+    | None -> []
+    | Some e -> [ "env", sanitize_label_value e ]
+  in
+  String.concat "\n" (List.map (fun (k, v) -> f "%s%s: \"%s\"" indent k v) labels)
 ;;
 
 (* CODE_LAYER-016: render per-workload volumes as a PVC per declared volume plus
@@ -356,6 +360,7 @@ let deployment_doc
       ~workspace
       ~domain
       ~primitive
+      ~release_id
       ()
   =
   let ports_section =
@@ -399,7 +404,7 @@ let deployment_doc
   let volume_mounts_section = render_volume_mounts volumes in
   let pod_volumes_section = render_pod_volumes ~name volumes in
   let taxonomy_labels_section =
-    render_taxonomy_labels ?env ~workspace ~domain ~service:name ~primitive ~image ()
+    render_taxonomy_labels ?env ~workspace ~domain ~service:name ~primitive ~release_id ()
   in
   let prometheus_annotations =
     match shape with
@@ -534,6 +539,7 @@ let rollout_doc
       ~workspace
       ~domain
       ~primitive
+      ~release_id
       ()
   =
   let ports_section =
@@ -572,7 +578,7 @@ let rollout_doc
   let volume_mounts_section = render_volume_mounts volumes in
   let pod_volumes_section = render_pod_volumes ~name volumes in
   let taxonomy_labels_section =
-    render_taxonomy_labels ?env ~workspace ~domain ~service:name ~primitive ~image ()
+    render_taxonomy_labels ?env ~workspace ~domain ~service:name ~primitive ~release_id ()
   in
   let prometheus_annotations =
     match shape with
@@ -876,7 +882,18 @@ spec:
     (opt_section egress_to)
 ;;
 
-let cronjob_doc ?(secret_keys = []) ?env ~ns ~name ~image ~schedule ~workspace ~domain () =
+let cronjob_doc
+      ?(secret_keys = [])
+      ?env
+      ~ns
+      ~name
+      ~image
+      ~schedule
+      ~workspace
+      ~domain
+      ~release_id
+      ()
+  =
   let secret_env_section = render_secret_key_refs ~name secret_keys in
   let taxonomy_labels_section =
     render_taxonomy_labels
@@ -886,7 +903,7 @@ let cronjob_doc ?(secret_keys = []) ?env ~ns ~name ~image ~schedule ~workspace ~
       ~domain
       ~service:name
       ~primitive:"fn"
-      ~image
+      ~release_id
       ()
   in
   f
