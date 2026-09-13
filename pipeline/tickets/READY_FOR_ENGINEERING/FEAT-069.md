@@ -357,3 +357,28 @@ of the desired release state*), because a multi-object apply gives no
 transactional atomicity. The same discipline applies to step 7's error wording
 and to the retention rule: Sol's vocabulary should only claim what the substrate
 actually provides.
+
+## Validating a record: check both directions (2026-09-13)
+
+The step-6 invariant has two halves, and only checking the first is a trap:
+
+```text
+name direction     metadata.name == "sol-release-" ^ release_id
+content direction  the stored record is the canonical content for that release_id
+```
+
+A correctly *named* record can still be corrupt, stale, hand-edited, or the
+product of a bug, and it would pass a name-only check. So `sol-release-r-x` must
+not be trusted merely because it is called `r-x`.
+
+This does **not** mean recomputing release identity from the stored record on
+every hot path. It means there is a validation path (and a test invariant) that
+recomputes the identity from the record's content and compares — so the two
+directions are checked somewhere real, and corruption is *reported* rather than
+silently accepted, or worse, silently reconciled.
+
+Note the coupling this creates: validating content means the record must carry
+enough resolved facts to rederive the id (image, config, secret references,
+scaling, environment), which is more than the minimal pointer carries — and
+that asymmetry is the point. The record is the authoritative description; the
+pointer is a claim about which one is selected.
