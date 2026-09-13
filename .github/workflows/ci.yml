@@ -387,9 +387,12 @@ jobs:
             echo "::error::FEAT-070: deployment event points at '$listed_deployment_release', workload release is '$label_release'"
             exit 1
           fi
-          deployment_release=$(kubectl -n default get configmap "sol-deployment-${listed_deployment}" -o jsonpath='{.data.release_id}' 2>/dev/null || true)
-          if [ "$deployment_release" != "$label_release" ]; then
-            echo "::error::FEAT-070: deployment record '$deployment_release' != workload release '$label_release'"
+          # The record's release link is its sol.dev/release label (the JSON body
+          # carries it too); `sol deployments` must have listed the record that
+          # claims this release, named by its deployment id.
+          deployment_cm=$(kubectl -n default get configmap -l "sol.dev/type=deployment,sol.dev/release=${label_release}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+          if [ "$deployment_cm" != "sol-deployment-${listed_deployment}" ]; then
+            echo "::error::FEAT-070: deployment record for release '$label_release' is '$deployment_cm', sol deployments listed 'sol-deployment-${listed_deployment}'"
             exit 1
           fi
           if kubectl -n default patch configmap "sol-deployment-${listed_deployment}" -p '{"data":{"tampered":"1"}}' >/dev/null 2>&1; then
