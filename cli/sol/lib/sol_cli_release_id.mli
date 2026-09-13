@@ -24,6 +24,13 @@
     here is what stops a field added to the plan from silently changing every
     release identity.
 
+    {b Environment identity counts.} A release is "this release of this
+    workspace in this environment", so two environments whose resolved workload
+    state happens to be identical are still two releases. The alternative (hash
+    only the resolved state) would make [r-x] a generic content hash, and would
+    stop it being a useful join key in an environment-aware operational system.
+    Local, with no target, is its own environment rather than a wildcard.
+
     Secret {i values} are likewise absent: rotating a secret does not by itself
     change the release, because secrets are operational state rather than release
     content. This is a rule, and it is tested, so that "fixing" the hash later

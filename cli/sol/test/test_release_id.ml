@@ -243,6 +243,40 @@ let test_known_vector () =
           ]))
 ;;
 
+(* The deliberate choice, named: environment identity is part of release identity
+   (model A), not merely whatever the resolved workload state happens to be
+   (model B). The two contents below resolve to byte-identical workload state and
+   still differ, because a release is "this release of this workspace in this
+   environment" -- [r-x] is a join key inside an environment-aware operational
+   system, not a generic OCI/Nix-style content hash.
+
+   Pinned because "content-addressed" reads as though environment names ought to
+   be excluded, so somebody could reasonably "simplify" this away. *)
+let test_environment_identity_counts_not_just_resolved_state () =
+  let same_state =
+    [ wl ~config:[ "FOO", "1" ] ~replicas:2 "charge_svc" "acme/charge:1" ]
+  in
+  check_bool
+    "identical resolved state in two environments is two releases"
+    true
+    (id (content ~environment:(Some "staging") same_state)
+     <> id (content ~environment:(Some "prod") same_state));
+  (* The other half, and the one that keeps deploys idempotent: within one
+     environment, identical resolved state is the *same* release, so re-running
+     a deploy is not a new identity and does not churn the pod template. *)
+  check_string
+    "identical resolved state in one environment is one release"
+    (id (content ~environment:(Some "prod") same_state))
+    (id (content ~environment:(Some "prod") same_state));
+  (* Local (no target) is its own environment rather than "unknown": [sol up]
+     releases must not collide with a target's releases. *)
+  check_bool
+    "no environment is its own identity, not a wildcard"
+    true
+    (id (content ~environment:None same_state)
+     <> id (content ~environment:(Some "prod") same_state))
+;;
+
 let () =
   Alcotest.run
     "release_id"
@@ -286,6 +320,10 @@ let () =
             test_secret_references_count_and_values_do_not
         ; Alcotest.test_case "encoding is unambiguous" `Quick test_encoding_is_unambiguous
         ; Alcotest.test_case "known vector" `Quick test_known_vector
+        ; Alcotest.test_case
+            "environment identity counts, not just resolved state"
+            `Quick
+            test_environment_identity_counts_not_just_resolved_state
         ] )
     ; ( "value"
       , [ Alcotest.test_case
