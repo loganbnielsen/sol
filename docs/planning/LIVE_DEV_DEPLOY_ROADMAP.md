@@ -5,7 +5,7 @@ deploys without hiding cost, state, or rollback risk.
 
 ## Current Reality
 
-- `sol dev up` creates the local substrate.
+- `sol local infra up` creates the local substrate.
 - `sol up` builds every discovered Dockerfile-backed service and applies
   Kubernetes manifests.
 - `sol cloud plan/apply` creates customer-cloud substrate with Terraform.

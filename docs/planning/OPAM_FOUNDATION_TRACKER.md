@@ -201,7 +201,7 @@ dune build @install @runtest
 sol new workspace foundation_smoke
 cd foundation_smoke
 dune build
-sol dev up
+sol local infra up
 sol up
 sol status
 sol migrate
@@ -303,4 +303,4 @@ Tracking tickets:
 
 ## Next Action
 
-Track `https-eio` PR #30570 and `kafka-eio` PR #30557 through opam-repository CI/review (both green on linter/Windows; `opam-ci` distro matrix pending on both as of 2026-08-26, ~2h elapsed with no change — shared community CI, not a sign of a new problem). `aws-eio` has now cleared local lint/build, the cross-package clean-switch test (Phase 3), and real live-AWS STS + S3 smoke tests (`AWS-001` fully proven as of 2026-08-27) — it is ready to submit to opam-repository whenever that's wanted. Remaining before calling the foundation fully proven: Phase 4 (Sol end-to-end via `sol new workspace` / `sol dev up` / `sol deploy --dry-run` against the pinned foundation, not just `dune build`/`dune test`), and the `sol cloud init --aws` path against a real account.
+Track `https-eio` PR #30570 and `kafka-eio` PR #30557 through opam-repository CI/review (both green on linter/Windows; `opam-ci` distro matrix pending on both as of 2026-08-26, ~2h elapsed with no change — shared community CI, not a sign of a new problem). `aws-eio` has now cleared local lint/build, the cross-package clean-switch test (Phase 3), and real live-AWS STS + S3 smoke tests (`AWS-001` fully proven as of 2026-08-27) — it is ready to submit to opam-repository whenever that's wanted. Remaining before calling the foundation fully proven: Phase 4 (Sol end-to-end via `sol new workspace` / `sol local infra up` / `sol deploy --dry-run` against the pinned foundation, not just `dune build`/`dune test`), and the `sol cloud init --aws` path against a real account.

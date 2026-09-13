@@ -40,7 +40,7 @@ curl localhost:8080/checkout-quote
 # {"shipping_cents":799,"currency":"USD","trace_id":"..."}
 ```
 
-With `sol dev up`, `checkout_svc` is exposed through the local north-south URL:
+With `sol local infra up`, `checkout_svc` is exposed through the local north-south URL:
 
 ```bash
 curl -H 'Host: checkout-svc.pluto-checkout.localhost' \
@@ -56,10 +56,10 @@ Cert-manager uses the configured cluster issuer for TLS.
 ## CLI commands
 
 ```bash
-sol dev up        # provision local k3d cluster + infra
+sol local infra up        # provision local k3d cluster + infra
 SOL_API_KEY=dev-internal-key sol up
-sol status        # show running pods and endpoints
-sol migrate       # apply database migrations
+sol local status  # show running pods and endpoints
+sol local migrate # apply database migrations
 ```
 
 ## Project layout

@@ -38,7 +38,7 @@ describes an intended invariant but enforces nothing.
 This stopped being theoretical when BUG-013 fixed Loki's
 `commonConfig.replication_factor` in `cli/platform/infra/base/main.tf` and
 nobody thought to check `cmd_local.ml`'s independent Loki config, which
-still lacks the fix (BUG-016): a fresh `sol dev up` today can hit the
+still lacks the fix (BUG-016): a fresh `sol local infra up` today can hit the
 exact ring-quorum failure BUG-013 already fixed in production. The
 follow-up code-layer audit (`pipeline/audits/2026-09-06_code_layer_audit.md`)
 found three more instances of the same failure mode (Alloy River config,

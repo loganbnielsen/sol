@@ -759,9 +759,8 @@ let local_cmd =
   Cmd.v
     (Cmd.info "migrate" ~doc:"Apply migrations against the local cluster's Postgres")
     Term.(
-      const
-        (fun dir table dry_run registry ->
-           run_apply ~ctx:Cmd_destination.local dir table dry_run None registry)
+      const (fun dir table dry_run registry ->
+        run_apply ~ctx:Cmd_destination.local dir table dry_run None registry)
       $ dir_arg
       $ table_arg
       $ dry_run_flag

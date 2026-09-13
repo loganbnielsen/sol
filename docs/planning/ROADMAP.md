@@ -47,7 +47,7 @@ Every roadmap item should strengthen one of these goals. A feature that increase
 | Observability app facade (`framework/sol-obs` — `Sol_obs.t`) | Complete — scaffold templates and app handler examples use it instead of composing Loki/Prometheus/Tempo providers directly |
 | Storage (PostgreSQL) | Complete |
 | Sol CLI — scaffold (`sol new workspace/svc/worker/fn/event`) | Complete |
-| Sol CLI — local infra (`sol dev up/down/status/run`) | Complete |
+| Sol CLI — local infra (`sol local infra up/down/status/run`) | Complete |
 | Sol CLI — deploy (`sol up`, `sol status`, `sol migrate`) | Complete |
 | Sol CLI — secrets (`sol secret set/list/delete`) | Complete |
 | Production deployment pipeline (`sol deploy`, Terraform, Argo CD) | Complete |
@@ -80,7 +80,7 @@ for full reports.
 ### What the dogfood found
 
 **All core flows passed:**
-- `sol new workspace` → `dune build` → `sol dev up` → `sol up` → `sol status` → `sol rollback`
+- `sol new workspace` → `dune build` → `sol local infra up` → `sol up` → `sol status` → `sol rollback`
 - `sol migrate` auto-detects cluster postgres via port-forward
 - `sol logs`, `sol secret set/list/delete` all functional
 - `sol deploy --dry-run / --emit-plan-to / --emit-to` all functional
@@ -106,7 +106,7 @@ shape.
 
 | Lane | Who owns infra? | User interface | Sol responsibility |
 |---|---|---|---|
-| Local Dev | Developer machine | `sol dev up`, `sol dev run`, `sol up` | Provision local substrate, run app, expose logs/metrics |
+| Local Dev | Developer machine | `sol local infra up`, `sol dev run`, `sol up` | Provision local substrate, run app, expose logs/metrics |
 | Managed Customer Cloud | Customer cloud account, Sol substrate shape | high-level env/provider/tier config | Provision/update Sol's standard substrate, deploy app, operate release workflow |
 | Exported Self-Managed | Customer | generated Terraform/manifests/GitOps artifacts | Generate artifacts and inspect releases; customer owns apply/drift/ops |
 | Future Sol Hosted | Sol | hosted UI/API plus CLI | Run the factory floor: builders, previews, deploys, secrets, observability, release history, RBAC, audit, billing |
@@ -155,7 +155,7 @@ The Dogfood Alpha milestone is complete when a fresh environment can run:
 ```bash
 sol new workspace acme
 cd acme
-sol dev up
+sol local infra up
 sol dev run
 sol up
 sol status
@@ -389,7 +389,7 @@ The `sol` CLI is the developer-facing entry point to the framework. Its job is t
 ```bash
 sol new workspace acme
 cd acme
-sol dev up              # provision local k3d cluster + deploy infra into it
+sol local infra up              # provision local k3d cluster + deploy infra into it
 sol up                  # build images, synthesize manifests, deploy services
 sol status              # show running pods and endpoints
 ```
@@ -412,7 +412,7 @@ All five scaffold commands fully implemented and verified. `sol new workspace ac
 
 ---
 
-### ~~Step 2~~ ✓ — `sol dev up/down/status`
+### ~~Step 2~~ ✓ — `sol local infra up/down/status`
 
 Implemented in `cli/sol/bin/cmd_local.ml`. k3d cluster lifecycle, Helm chart installs (Redpanda, PostgreSQL, Loki, kube-prometheus-stack), port-forward manager (PID files in `.sol/`), endpoint summary table.
 
@@ -426,7 +426,7 @@ Implemented in `cli/sol/bin/cmd_migrate.ml`. Thin Eio + caqti wrapper over `Sol.
 
 ---
 
-### ~~Step 2a~~ ✓ — Validate `sol dev up` end-to-end
+### ~~Step 2a~~ ✓ — Validate `sol local infra up` end-to-end
 
 Validated against a live cluster. Two issues found and fixed during the run:
 
@@ -479,7 +479,7 @@ Schedule for `_fn` is read from the `FN.schedule` value in `lib/<name>_fn.ml` vi
 
 #### In-cluster env vars (critical, verified against live cluster)
 
-Pods communicate via k8s service DNS, not host port-forwards. The generated `ConfigMap` injects cluster-internal addresses. These are exact service names verified by `kubectl get svc` against a running `sol dev up` cluster:
+Pods communicate via k8s service DNS, not host port-forwards. The generated `ConfigMap` injects cluster-internal addresses. These are exact service names verified by `kubectl get svc` against a running `sol local infra up` cluster:
 
 ```
 KAFKA_BROKERS       = redpanda.redpanda.svc.cluster.local:9093
@@ -503,9 +503,9 @@ localhost:4318   → tempo:4318        (tempo, OTLP/HTTP ingestion)
 localhost:3200   → tempo:3200        (tempo, query API)
 ```
 
-These addresses are deterministic from the Helm release names in `sol dev up`. Hardcoded in v1 — no dynamic discovery needed.
+These addresses are deterministic from the Helm release names in `sol local infra up`. Hardcoded in v1 — no dynamic discovery needed.
 
-**Helm release names** (set by `sol dev up`, determines all DNS names above):
+**Helm release names** (set by `sol local infra up`, determines all DNS names above):
 
 | Component | Release name | Namespace |
 |-----------|-------------|-----------|
@@ -574,7 +574,7 @@ Implementation: parse workspace name from the current directory, derive namespac
 
 ### ~~Step 3b~~ ✓ — Logistics/fulfillment extension (acceptance test)
 
-After `sol dev up` + `sol up` are working, validate the full loop against a real multi-domain extension:
+After `sol local infra up` + `sol up` are working, validate the full loop against a real multi-domain extension:
 
 1. `sol new event billing/payment_confirmed` — new cross-domain event in venus
 2. `sol new worker logistics/fulfillment` — new worker in new domain
@@ -594,7 +594,7 @@ This is the real acceptance test: a new domain stood up in a running cluster wit
 | `cli/sol/` package skeleton + `cmdliner` wiring | ✓ done |
 | `sol new workspace <name>` — 17-file scaffold, compiles first try | ✓ done |
 | `sol new svc/worker/fn/event` | ✓ done |
-| `sol dev up/down/status` — k3d + Helm orchestration | ✓ done, validated |
+| `sol local infra up/down/status` — k3d + Helm orchestration | ✓ done, validated |
 | `sol migrate` / `sol migrate status` | ✓ done, verified |
 | `sol up` — template-based v1 with dry-run validation | ✓ done |
 | `sol status` | ✓ done |
@@ -624,7 +624,7 @@ Phase 5 built the synthesis pipeline and proved it against a local k3d cluster. 
 
 ### Deployment modes
 
-**Local (`sol up`)** — builds Docker images and deploys to the local k3d cluster provisioned by `sol dev up`. Intended for development and smoke-testing.
+**Local (`sol up`)** — builds Docker images and deploys to the local k3d cluster provisioned by `sol local infra up`. Intended for development and smoke-testing.
 
 **Customer-cloud direct (`sol deploy`)** — CI builds images, pushes them to a production registry, then `sol deploy <env>/<provider>/<region> --image-tag $SHA --registry $REGISTRY` synthesizes manifests and applies them directly to a customer-managed Kubernetes cluster. The target resolves `sol.yml` + `sol/<env>/<provider>/<region>.yml` for `--registry`'s default and the `env` manifest label — same convention as `sol plan`.
 
@@ -684,7 +684,7 @@ Terraform modules for bootstrapping the cluster itself. Run once per environment
 - `cli/platform/infra/gcp/` — GKE Autopilot cluster, VPC, Cloud SQL, Artifact Registry, Cloud DNS
 - `cli/platform/infra/base/` — cluster-agnostic: Argo CD, kube-prometheus-stack, Loki, Redpanda, cert-manager, ingress-nginx
 
-After `terraform apply`, the cluster looks identical to `sol dev up` — same infra components, same Helm charts, same Sol-generated manifests.
+After `terraform apply`, the cluster looks identical to `sol local infra up` — same infra components, same Helm charts, same Sol-generated manifests.
 
 ---
 

@@ -936,6 +936,7 @@ let cmd =
     ; Cmd_logs.local_cmd
     ; Cmd_rollback.local_cmd
     ; Cmd_migrate.local_cmd
+    ; Cmd_releases.local_cmd
     ; run_subcmd
     ]
 ;;

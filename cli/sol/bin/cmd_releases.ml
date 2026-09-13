@@ -27,6 +27,20 @@ let cmd =
           first. Each row is a recorded deploy: id, commit, requested scope, time and \
           target. Records are written by 'sol up' and 'sol deploy'.")
     Term.(
-      const (fun target -> run ~ctx:(Cmd_destination.top ~command:"releases" target) ())
-      $ Cmd_destination.required_target_arg)
+      const (fun target ->
+        run
+          ~ctx:
+            (Cmd_destination.or_exit
+               (Cmd_destination.resolve ~command:"releases" ~local:false ~target))
+          ())
+      $ Cmd_destination.target_arg)
+;;
+
+(* FEAT-063: the local form -- release records from Sol's own cluster. *)
+let local_cmd =
+  Cmd.v
+    (Cmd.info
+       "releases"
+       ~doc:"List the release records Sol's local cluster holds for this workspace")
+    Term.(const (fun () -> run ~ctx:Cmd_destination.local ()) $ const ())
 ;;
