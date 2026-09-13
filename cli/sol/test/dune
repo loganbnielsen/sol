@@ -26,6 +26,7 @@
   test_loki
   test_run_log
   test_release
+  test_release_id
   test_observability_url
   test_target_report
   test_deploy_event
