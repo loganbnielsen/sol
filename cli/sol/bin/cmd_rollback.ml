@@ -127,7 +127,21 @@ let cmd =
           healthy.")
     Term.(
       const (fun scope target ->
-        run ~ctx:(Cmd_destination.top ~command:"rollback" target) scope)
+        run
+          ~ctx:
+            (Cmd_destination.or_exit
+               (Cmd_destination.resolve ~command:"rollback" ~local:false ~target))
+          scope)
       $ scope_arg
-      $ Cmd_destination.required_target_arg)
+      $ Cmd_destination.target_arg)
+;;
+
+(* FEAT-063: the local form -- the same operation with the destination named
+   literally as Sol's own cluster instead of resolved from --target. *)
+let local_cmd =
+  Cmd.v
+    (Cmd.info
+       "rollback"
+       ~doc:"Roll back the most recent deployment of a workload on the local cluster")
+    Term.(const (fun scope -> run ~ctx:Cmd_destination.local scope) $ scope_arg)
 ;;

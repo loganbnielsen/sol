@@ -438,3 +438,44 @@ let cmd =
       $ loki_username_arg
       $ loki_password_arg)
 ;;
+
+(* FEAT-063: the local form -- logs from a workload on Sol's own cluster. *)
+let local_cmd =
+  Cmd.v
+    (Cmd.info "logs" ~doc:"Stream logs from a workload running on the local cluster")
+    Term.(
+      const
+        (fun
+            scope
+             follow
+             tail
+             observability_backend
+             base_domain
+             grafana_base_url
+             loki_base_url
+             loki_username
+             loki_password
+           ->
+           run
+             ~ctx:Cmd_destination.local
+             ~scope
+             ~follow
+             ~tail
+             ~explicit_backend:(backend_of_arg observability_backend)
+             ~explicit_base_domain:base_domain
+             ~target:None
+             ~explicit_loki_url:loki_base_url
+             ~explicit_loki_username:loki_username
+             ~explicit_loki_password:loki_password
+             ?grafana_base_url
+             ())
+      $ scope_arg
+      $ follow_term
+      $ tail_arg
+      $ observability_backend_arg
+      $ base_domain_arg
+      $ grafana_base_url_arg
+      $ loki_base_url_arg
+      $ loki_username_arg
+      $ loki_password_arg)
+;;

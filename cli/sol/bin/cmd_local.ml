@@ -916,8 +916,26 @@ let run_subcmd =
     Term.(const dev_run $ run_workspace_arg $ run_scope_arg)
 ;;
 
+(* FEAT-063: `sol local` reads as "the local destination". The substrate
+   lifecycle moves under `sol local infra`, so `sol local status` can mean the
+   same thing as `sol status --target <t>` (workloads) rather than overloading
+   "status" with two unrelated output domains. *)
+let infra_cmd =
+  Cmd.group
+    (Cmd.info
+       "infra"
+       ~doc:"Manage the local Kubernetes substrate (k3d, Redpanda, Postgres, Grafana)")
+    [ up_cmd; down_cmd; status_cmd ]
+;;
+
 let cmd =
   Cmd.group
-    (Cmd.info "local" ~doc:"Manage the local cluster (k3d) and its substrate")
-    [ up_cmd; down_cmd; status_cmd; run_subcmd ]
+    (Cmd.info "local" ~doc:"Operate on Sol's own local cluster (k3d)")
+    [ infra_cmd
+    ; Cmd_status.local_cmd
+    ; Cmd_logs.local_cmd
+    ; Cmd_rollback.local_cmd
+    ; Cmd_migrate.local_cmd
+    ; run_subcmd
+    ]
 ;;

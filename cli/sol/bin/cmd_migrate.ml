@@ -753,3 +753,17 @@ let cmd =
         $ registry_arg)
     [ apply_cmd; status_cmd; rollback_cmd ]
 ;;
+
+(* FEAT-063: the local form -- migrations against Sol's own cluster. *)
+let local_cmd =
+  Cmd.v
+    (Cmd.info "migrate" ~doc:"Apply migrations against the local cluster's Postgres")
+    Term.(
+      const
+        (fun dir table dry_run registry ->
+           run_apply ~ctx:Cmd_destination.local dir table dry_run None registry)
+      $ dir_arg
+      $ table_arg
+      $ dry_run_flag
+      $ registry_arg)
+;;

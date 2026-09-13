@@ -640,3 +640,25 @@ let cmd =
       $ loki_base_url_arg
       $ prometheus_base_url_arg)
 ;;
+
+(* FEAT-063: the local form -- workload status against Sol's own cluster. *)
+let local_cmd =
+  Cmd.v
+    (Cmd.info "status" ~doc:"Show local workload health and observability status")
+    Term.(
+      const
+        (fun scope observability_backend base_domain loki_base_url prometheus_base_url ->
+           run
+             ~ctx:Cmd_destination.local
+             scope
+             (backend_of_arg observability_backend)
+             base_domain
+             None
+             loki_base_url
+             prometheus_base_url)
+      $ domain_arg
+      $ Cmd_logs.observability_backend_arg
+      $ Cmd_logs.base_domain_arg
+      $ loki_base_url_arg
+      $ prometheus_base_url_arg)
+;;
