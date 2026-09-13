@@ -367,6 +367,37 @@ jobs:
           fi
           echo "release record written, listed, labelled and immutable OK"
 
+          # FEAT-070: the same deploy is also a deployment event — an immutable
+          # sol-deployment-<id> record whose release_id is the release above, and
+          # whose deployment_id is the id `sol deployments` lists. The event is
+          # the deploy invocation; the release is what it put in place.
+          sol local deployments > "$GITHUB_WORKSPACE/deployments.txt"
+          grep -F 'DEPLOYMENT' "$GITHUB_WORKSPACE/deployments.txt" >/dev/null
+          if [ "$(wc -l < "$GITHUB_WORKSPACE/deployments.txt")" -lt 2 ]; then
+            echo "::error::FEAT-070: sol up recorded no deployment event"
+            exit 1
+          fi
+          listed_deployment=$(awk 'NR==2 {print $1}' "$GITHUB_WORKSPACE/deployments.txt")
+          listed_deployment_release=$(awk 'NR==2 {print $2}' "$GITHUB_WORKSPACE/deployments.txt")
+          case "$listed_deployment" in
+            d-*) ;;
+            *) echo "::error::FEAT-070: sol deployments listed '$listed_deployment', not a deployment id"; exit 1 ;;
+          esac
+          if [ "$listed_deployment_release" != "$label_release" ]; then
+            echo "::error::FEAT-070: deployment event points at '$listed_deployment_release', workload release is '$label_release'"
+            exit 1
+          fi
+          deployment_release=$(kubectl -n default get configmap "sol-deployment-${listed_deployment}" -o jsonpath='{.data.release_id}' 2>/dev/null || true)
+          if [ "$deployment_release" != "$label_release" ]; then
+            echo "::error::FEAT-070: deployment record '$deployment_release' != workload release '$label_release'"
+            exit 1
+          fi
+          if kubectl -n default patch configmap "sol-deployment-${listed_deployment}" -p '{"data":{"tampered":"1"}}' >/dev/null 2>&1; then
+            echo "::error::FEAT-070: deployment ConfigMap was edited in place (immutable: true not honoured)"
+            exit 1
+          fi
+          echo "deployment event written, listed, joined to its release and immutable OK"
+
       # `sol up` blocks on an un-timed-out `kubectl rollout status`
       # internally, so a crash-looping pod (this job's whole reason to
       # exist — see FRIC-007) makes the step above hang until GitHub
