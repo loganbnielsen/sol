@@ -32,10 +32,26 @@ There is also no query: `sol logs`'s Grafana link selects `{namespace=…,app=�
 
 ## Scope
 
-1. **Mint the release id once, before render.** The label is rendered into the pod template at apply time; the record is written after. For the two to agree, the id must be created *before* rendering and carried to the record write, not generated separately at record time. This is the load-bearing design point of the ticket.
-2. **Make the taxonomy `release` label carry that id** rather than the image tag (which remains available as its own fact — do not lose the image tag just to reuse the word).
-3. **Add the query:** `sol logs --release <id>` (and the same for `sol status`/`sol open` links) adds `release="<id>"` to the LogQL/Grafana selector, so `sol releases` → `sol logs --release <id>` is a real workflow.
-4. **Metrics: do not add release as an unbounded Prometheus label.** Releases increase forever, so a raw `release=` dimension accumulates cardinality without bound. Metrics correlate through deployment metadata and/or a bounded *current-release* info metric. Logs and traces are the surfaces that take the label directly. Record whichever mechanism is chosen rather than leaving it implicit.
+1. **Define `release_content` and `Release_id.of_content`.** A pure, canonical
+   projection of the deployment inputs, and a content-addressed id over it.
+   Label-safe by construction; `of_string` validated so tests and deserialization
+   can construct one.
+2. **Put `release_id` on the plan**, established before render. Every plan has
+   one, including `--dry-run` and `--emit` — recording is a side-effect
+   decision, having an identity is not, and it keeps execution mode from
+   changing the plan's shape (REFAC-089's separation).
+3. **The taxonomy `release` label carries the release id verbatim**, not the
+   image tag. The image tag stays available as its own fact; it is a
+   build/artifact identity, and one release can span several images.
+4. **Emit the release metadata with the bundle**: an immutable
+   `sol-release-<id>` record plus the `sol-current-release` pointer, both
+   deterministic for a given id, so GitOps stays idempotent and the record is an
+   applied artifact rather than a CLI side effect.
+5. **`sol logs --release <id>`** (and the `sol status` / `sol open` links) key on
+   `release_id`; an unknown id fails closed naming recent releases.
+6. **Do not add release as an unbounded Prometheus label.** Releases accumulate
+   forever; metrics correlate through deployment metadata and/or a bounded
+   current-release info metric. Record which.
 
 ## Acceptance criteria
 
@@ -96,50 +112,114 @@ place. So the label is written verbatim from the canonical id.
 list recent releases, the same way scope resolution refuses an unknown unit
 (FEAT-065).
 
-## Open decisions (blocking implementation)
+## Model (settled 2026-09-13)
 
-### 1. Is the id *minted* (per deploy event) or *derived* (per released content)?
+**Two domain objects, not one.** FEAT-067's record conflated them (its id was
+minted per deploy but named `release_id`), which is why the `created_at`
+contradiction appeared: a content-addressed id can be deployed twice, so
+`release_id.created_at` has no single correct answer.
 
-This is the one thing worth settling before writing code, because it decides
-whether `Release_id` has a `create : unit -> t`-shape or a
-`derive ~inputs -> t`-shape, and it has an operational consequence that is easy
-to miss:
+```text
+Release                                Deployment (event)
+  release_id = hash(content)             deployment_id = minted per invocation
+  workloads / images / config / scaling  release_id  (which release was attempted)
+  deterministic for given content         created_at, git_commit, git_dirty,
+  appears on workload labels                actor, target
+  sol logs --release keys on this         NOT on labels; provenance/audit only
+```
 
-**A minted-per-deploy id changes the pod template on every deploy, and therefore
-forces a rollout every deploy** — including a no-op redeploy, and including a
-GitOps sync that would otherwise be an empty diff. With a content-derived id,
-"deploy the same thing twice" is a no-op, which is what makes `--emit-plan-to` +
-Argo idempotent.
+- **`release_id`** is the content-addressed identity of *desired released state*.
+  Same desired workload ⇒ same release ⇒ same id ⇒ **no rollout merely because
+  Sol ran again**. Observability metadata must never be the thing that mutates
+  the workload it observes.
+- **`deployment_id`** identifies one invocation. It never appears in the pod
+  template and never determines log ownership. `sol deployments` can list
+  history (`d_1044 r_8f31c 10:41 abc123`, `d_1043 r_8f31c 10:32 abc123` — two
+  deploys, one release, because nothing substantive changed); see **FEAT-070**.
 
-Proposed split, if we take derived:
+### The canonical content projection — do not hash the plan
 
-- **`Release_id` = identity of the released content** — a pure function of the
-  plan (workspace, env, and per-workload image + config + secret *references* +
-  scaling). Stable across re-deploys; trivially testable.
-- **The release record = the deploy event** — `created_at`, `git_commit`,
-  `git_dirty`, who/what triggered it. FEAT-067 already carries these.
+```ocaml
+type release_content =
+  { workspace : string
+  ; environment : ...
+  ; workloads : workload_release list
+  }
 
-That makes "same content ⇒ same identity" true, and keeps event history in the
-record where it belongs. Known limitation to state explicitly: the id covers
-secret *references*, not secret material (DEC-018), so rotating a secret value
-does not by itself change the release identity.
+val Release_id.of_content : release_content -> Release_id.t
+```
 
-### 2. How does GitOps/`--emit-plan-to` mode record the release?
+Only fields whose difference means *this is a different running release*.
+Explicitly excluded: `created_at`, `requested_scope`, `output_directory`,
+`git_dirty`, `deployment_id`, and `release_id` itself. Two reasons:
+it stops identity churn when somebody later adds a field to `deployment_plan`;
+and it breaks the obvious recursion, since the plan carries the id and the
+manifests carry the id.
 
-Today the record is written by `sol deploy` after a direct apply. In emit mode
-Sol renders manifests and Argo applies them, so nothing writes a record — the
-labels would say `release=r_x` while `sol releases` has no `r_x`. To keep the
-"same ID everywhere" invariant true in both modes, the record should be part of
-the emitted bundle (a ConfigMap manifest alongside the workloads), so applying
-the bundle records the release. That also makes the record a deployed artifact
-rather than a CLI side effect, which is closer to DEC-018's "the release record
-is authoritative".
+```text
+deployment inputs
+      │
+      ▼
+canonical release_content
+      │
+      ▼
+Release_id.of_content
+      │
+      ▼
+deployment_plan { release_id; … }
+      │
+      ▼
+render labels with release_id
+```
 
-### 3. Does the id belong in the emitted plan JSON / `--emit-plan-to` output?
+### Labels
 
-Probably yes — the emitted artifact is a release intent, and its id is the thing
-a reviewer and a later rollback both need. Flagged because it changes the emitted
-plan shape and any golden assertions over it.
+The label carries `release_id` verbatim, and the id is **label-safe by
+construction** — never sanitized at the render site. If the render path
+sanitizes a value the record stores raw, the label and the record disagree and
+the join key breaks silently (BUG-025 in a new place). `of_string` validates.
+
+### Secret references — a rule to state, not an accident
+
+Hashing *references* means rotating a secret's value does **not** change the
+release. That is defensible (secrets are operational state, independent of
+releases) but it must be a deliberate rule. If secret versions are ever part of
+release identity, hash an immutable version/digest — never the value.
+
+### GitOps: the record travels in the bundle
+
+The emitted bundle *is* the release artifact, so the metadata travels with it:
+
+```text
+sol deploy --emit-to ./out
+      │
+      ▼
+release bundle
+  ├── deployment.yaml / service.yaml / config.yaml
+  ├── sol-release-<id>.yaml      (immutable, named by release id)
+  └── sol-current-release.yaml   (mutable pointer → the current id)
+```
+
+- **The emitted release record must be deterministic for a given
+  `release_id`** — no `created_at`, no `git_dirty`, no invocation id. Otherwise
+  every render churns the diff and the "same content ⇒ same diff" property that
+  makes GitOps idempotent is destroyed.
+- Invocation provenance is deployment-event metadata, which is why it belongs
+  to the Deployment object rather than the release artifact.
+- **Record semantics: "this release exists / was applied to this target" — not
+  "this release reached healthy state."** Argo can apply the record and the
+  Deployment can still crash-loop. Health is read from the live workload /
+  Argo and never written back into the immutable record.
+- Cluster shape is therefore mode-independent: immutable `sol-release-<id>`
+  history plus one mutable `sol-current-release` pointer, whether the applying
+  actor is Sol or Argo. Only the actor changes; the semantics do not.
+
+### The query
+
+`sol logs --release <id>` (plus `sol status` / `sol open` links) adds
+`release="<id>"` to the selector and keys on `release_id`. An unknown id fails
+closed and names recent releases, the same way scope resolution refuses an
+unknown unit (FEAT-065).
 
 ## The rule, sharpened
 
