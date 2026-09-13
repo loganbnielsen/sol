@@ -11,6 +11,7 @@ let sample =
   ; service = "invoicer"
   ; primitive = "svc"
   ; release = "a1b2c3d"
+  ; deployment_id = "d-20260101t000000z-0123456789abcdef"
   }
 ;;
 
@@ -19,6 +20,14 @@ let sample =
 let test_fields_includes_event_deploy () =
   let fields = E.fields sample in
   check_bool "event=deploy present" true (List.mem ("event", "deploy") fields)
+;;
+
+let test_fields_includes_deployment_id_join_key () =
+  let fields = E.fields sample in
+  check_bool
+    "deployment_id present (FEAT-070 join key)"
+    true
+    (List.mem ("deployment_id", "d-20260101t000000z-0123456789abcdef") fields)
 ;;
 
 let test_fields_matches_taxonomy_label_set () =
@@ -91,6 +100,10 @@ let () =
             "matches taxonomy label set"
             `Quick
             test_fields_matches_taxonomy_label_set
+        ; Alcotest.test_case
+            "includes deployment_id join key"
+            `Quick
+            test_fields_includes_deployment_id_join_key
         ] )
     ; ( "message"
       , [ Alcotest.test_case

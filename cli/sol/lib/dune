@@ -26,6 +26,9 @@
   Sol_cli_release
   Sol_cli_release_id
   Sol_cli_release_store
+  Sol_cli_deployment
+  Sol_cli_deployment_id
+  Sol_cli_deployment_store
   Sol_cli_env_target
   Sol_cli_executor
   Sol_cli_execution

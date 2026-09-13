@@ -294,6 +294,26 @@ let run_apply
    with
    | Ok () -> ()
    | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);
+  (* FEAT-070: `sol up` is a deployment too, so it records the event as well.
+     Non-fatal like the release record; the release path above is untouched. *)
+  let now = Unix.gettimeofday () in
+  let deployment_id =
+    Sol_cli_deployment_id.create ~now ~entropy:(Sol_cli_deployment_id.random_entropy ())
+  in
+  (match
+     Sol_cli_deployment_store.record
+       ~ctx:Sol_cli_kube_destination.local_context
+       (Sol_cli_deployment.of_plan
+          ~deployment_id
+          ~now
+          ~git_commit:(Sol_cli_deployment.git_commit ())
+          ~git_dirty:(Sol_cli_deployment.git_dirty ())
+          ~actor:(Sys.getenv_opt "SOL_ACTOR")
+          ~target:(Some "local")
+          plan)
+   with
+   | Ok () -> ()
+   | Error msg -> Printf.eprintf "warning: could not record deployment: %s\n%!" msg);
   if !pf_failed then exit 1
 ;;
 

@@ -24,6 +24,7 @@ let () =
       ; Cmd_secret.cmd
       ; Cmd_target.cmd
       ; Cmd_releases.cmd
+      ; Cmd_deployments.cmd
       ; Cmd_cloud.cmd
       ]
   in

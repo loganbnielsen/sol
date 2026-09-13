@@ -14,6 +14,7 @@ type t =
   ; service : string
   ; primitive : string
   ; release : string
+  ; deployment_id : string
   }
 
 let fields t =
@@ -24,16 +25,18 @@ let fields t =
   ; "service", t.service
   ; "primitive", t.primitive
   ; "release", t.release
+  ; "deployment_id", t.deployment_id
   ]
 ;;
 
 let message t =
   Printf.sprintf
-    "deployed %s/%s (%s) release %s to workspace %s (%s)"
+    "deployed %s/%s (%s) release %s as deployment %s to workspace %s (%s)"
     t.domain
     t.service
     t.primitive
     t.release
+    t.deployment_id
     t.workspace
     t.env
 ;;
