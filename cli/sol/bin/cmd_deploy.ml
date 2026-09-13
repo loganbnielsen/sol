@@ -222,11 +222,22 @@ let record_plan run_log plan =
     (Format.asprintf "%a" Sol_cli_deployment_plan.pp_summary plan)
 ;;
 
-let run_plan ~ctx ~run_log ~phase ~workspace ~target_env ~mode ~secret_backend plan =
+(* REFAC-089: the record the caller already holds is the parameter. Every input
+   here except [phase] and [mode] is a property of *this deploy invocation* --
+   workspace, run log, target environment, destination, secret backend -- not a
+   choice this execution makes, so listing them as labelled arguments unpacked
+   [deploy_context] only to repack it. *)
+let run_plan ctx ~phase ~mode plan =
   match
-    Sol_cli_run_log.run_task run_log ~name:phase (fun () ->
+    Sol_cli_run_log.run_task ctx.run_log ~name:phase (fun () ->
       try
-        Sol_cli_factory.execute ~ctx ~workspace ~env:target_env ~mode ~secret_backend plan
+        Sol_cli_factory.execute
+          ~ctx:ctx.kube_ctx
+          ~workspace:ctx.workspace
+          ~env:ctx.target_cfg.Sol_cli_config.env
+          ~mode
+          ~secret_backend:ctx.secret_backend
+          plan
       with
       | Deploy_failed msg -> Error msg)
   with
@@ -242,16 +253,7 @@ let run_dry_run ctx ~emit_to =
   write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
   print_planned_services plan;
   record_plan ctx.run_log plan;
-  ignore
-    (run_plan
-       ~ctx:ctx.kube_ctx
-       ~run_log:ctx.run_log
-       ~phase:"dry-run"
-       ~workspace:ctx.workspace
-       ~target_env:ctx.target_cfg.Sol_cli_config.env
-       ~mode:Sol_cli_executor.Dry_run
-       ~secret_backend:ctx.secret_backend
-       plan)
+  ignore (run_plan ctx ~phase:"dry-run" ~mode:Sol_cli_executor.Dry_run plan)
 ;;
 
 let run_emit ctx ~dir =
@@ -264,17 +266,7 @@ let run_emit ctx ~dir =
   write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
   print_planned_services plan;
   record_plan ctx.run_log plan;
-  let results =
-    run_plan
-      ~ctx:ctx.kube_ctx
-      ~run_log:ctx.run_log
-      ~phase:"emit"
-      ~workspace:ctx.workspace
-      ~target_env:ctx.target_cfg.Sol_cli_config.env
-      ~mode:(Sol_cli_executor.Emit_to dir)
-      ~secret_backend:ctx.secret_backend
-      plan
-  in
+  let results = run_plan ctx ~phase:"emit" ~mode:(Sol_cli_executor.Emit_to dir) plan in
   List.iter
     (fun (r : Sol_cli_executor.result) ->
        let path =
@@ -324,7 +316,6 @@ let push_deploy_events ~ctx ~workspace ~target_cfg ~loki_push_url plan =
 let run_apply ctx ~confirm_group_change ~loki_push_url =
   check_apply_environment ~services:ctx.services;
   print_header ~workspace:ctx.workspace ~sha:ctx.sha ();
-  let target_env = ctx.target_cfg.Sol_cli_config.env in
   let plan = build_plan ctx ~emit_to:None in
   check_consumer_group_changes
     ~ctx:ctx.kube_ctx
@@ -334,17 +325,7 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
   write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
   print_planned_services plan;
   record_plan ctx.run_log plan;
-  let results =
-    run_plan
-      ~ctx:ctx.kube_ctx
-      ~run_log:ctx.run_log
-      ~phase:"apply"
-      ~workspace:ctx.workspace
-      ~target_env
-      ~mode:Sol_cli_executor.Apply
-      ~secret_backend:ctx.secret_backend
-      plan
-  in
+  let results = run_plan ctx ~phase:"apply" ~mode:Sol_cli_executor.Apply plan in
   List.iter
     (fun (r : Sol_cli_executor.result) ->
        Printf.printf

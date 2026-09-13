@@ -90,21 +90,51 @@ let exec_kubectl_logs ~ctx ~ns ~target ~follow ~tail =
   Unix.execvpe "kubectl" (Array.of_list argv) env
 ;;
 
-let run
-      ~ctx
-      ~scope
-      ~follow
-      ~tail
-      ~explicit_backend
-      ~explicit_base_domain
-      ~target
-      ~explicit_loki_url
-      ~explicit_loki_username
-      ~explicit_loki_password
-      ?grafana_base_url
-      ()
-  : unit
-  =
+(* REFAC-089: the observability flags travel together, mean one thing -- where to
+   read telemetry, and with what credentials -- and were six labelled arguments
+   on every command that touches telemetry. One value, built at the CLI edge. *)
+type observability_options =
+  { backend : string option
+  ; base_domain : string option
+  ; grafana_base_url : string option
+  ; loki_base_url : string option
+  ; loki_username : string option
+  ; loki_password : string option
+  }
+
+(** What `sol logs` needs: the workload it is about, how to stream, and where the
+    telemetry lives. [scope] is the selection; [observability] is the rest. *)
+type log_options =
+  { scope : string
+  ; follow : bool
+  ; tail : int
+  ; observability : observability_options
+  }
+
+let backend_of_arg = function
+  | None -> None
+  | Some s ->
+    (match Sol_cli_observability_url.backend_of_string s with
+     | Some b -> Some b
+     | None ->
+       Printf.eprintf
+         "error: unknown --observability-backend %S (expected: local, \
+          self_hosted_durable, external)\n"
+         s;
+       exit 1)
+;;
+
+let run ~ctx ~target (options : log_options) () : unit =
+  let scope = options.scope in
+  let follow = options.follow in
+  let tail = options.tail in
+  let observability = options.observability in
+  let explicit_backend = backend_of_arg observability.backend in
+  let explicit_base_domain = observability.base_domain in
+  let explicit_loki_url = observability.loki_base_url in
+  let explicit_loki_username = observability.loki_username in
+  let explicit_loki_password = observability.loki_password in
+  let grafana_base_url = observability.grafana_base_url in
   let workspace = workspace_name () in
   let svc = resolve_unit ~scope in
   let domain = svc.Sol_cli_manifest.domain in
@@ -375,17 +405,50 @@ let follow_term =
   Term.(const combine $ follow_flag $ no_follow_flag)
 ;;
 
-let backend_of_arg = function
-  | None -> None
-  | Some s ->
-    (match Sol_cli_observability_url.backend_of_string s with
-     | Some b -> Some b
-     | None ->
-       Printf.eprintf
-         "error: unknown --observability-backend %S (expected: local, \
-          self_hosted_durable, external)\n"
-         s;
-       exit 1)
+let observability_options_term =
+  Term.(
+    const
+      (fun
+          backend
+           base_domain
+           grafana_base_url
+           loki_base_url
+           loki_username
+           loki_password
+         ->
+         { backend
+         ; base_domain
+         ; grafana_base_url
+         ; loki_base_url
+         ; loki_username
+         ; loki_password
+         })
+    $ observability_backend_arg
+    $ base_domain_arg
+    $ grafana_base_url_arg
+    $ loki_base_url_arg
+    $ loki_username_arg
+    $ loki_password_arg)
+;;
+
+(* REFAC-089: the two entry points differ only in how they produce the
+   destination and in whether --target is declared at all. *)
+let run_term ~local ~target_term =
+  Term.(
+    const (fun scope follow tail observability target ->
+      let ctx =
+        if local
+        then Cmd_destination.local
+        else
+          Cmd_destination.or_exit
+            (Cmd_destination.resolve ~command:"logs" ~local:false ~target)
+      in
+      run ~ctx ~target { scope; follow; tail; observability } ())
+    $ scope_arg
+    $ follow_term
+    $ tail_arg
+    $ observability_options_term
+    $ target_term)
 ;;
 
 let cmd =
@@ -395,87 +458,13 @@ let cmd =
        ~doc:
          "Stream logs from a deployed service. Wraps 'kubectl logs' with Sol's namespace \
           convention (<workspace>-<domain>).")
-    Term.(
-      const
-        (fun
-            scope
-             follow
-             tail
-             observability_backend
-             base_domain
-             target
-             grafana_base_url
-             loki_base_url
-             loki_username
-             loki_password
-           ->
-           let explicit_backend = backend_of_arg observability_backend in
-           let ctx =
-             Cmd_destination.or_exit
-               (Cmd_destination.resolve ~command:"logs" ~local:false ~target)
-           in
-           run
-             ~ctx
-             ~scope
-             ~follow
-             ~tail
-             ~explicit_backend
-             ~explicit_base_domain:base_domain
-             ~target
-             ~explicit_loki_url:loki_base_url
-             ~explicit_loki_username:loki_username
-             ~explicit_loki_password:loki_password
-             ?grafana_base_url
-             ())
-      $ scope_arg
-      $ follow_term
-      $ tail_arg
-      $ observability_backend_arg
-      $ base_domain_arg
-      $ target_arg
-      $ grafana_base_url_arg
-      $ loki_base_url_arg
-      $ loki_username_arg
-      $ loki_password_arg)
+    (run_term ~local:false ~target_term:Cmd_destination.target_arg)
 ;;
 
-(* FEAT-063: the local form -- logs from a workload on Sol's own cluster. *)
+(* FEAT-063: the local form -- logs from a workload on Sol's own cluster. The
+   destination is the local one, so no --target is declared at all. *)
 let local_cmd =
   Cmd.v
     (Cmd.info "logs" ~doc:"Stream logs from a workload running on the local cluster")
-    Term.(
-      const
-        (fun
-            scope
-             follow
-             tail
-             observability_backend
-             base_domain
-             grafana_base_url
-             loki_base_url
-             loki_username
-             loki_password
-           ->
-           run
-             ~ctx:Cmd_destination.local
-             ~scope
-             ~follow
-             ~tail
-             ~explicit_backend:(backend_of_arg observability_backend)
-             ~explicit_base_domain:base_domain
-             ~target:None
-             ~explicit_loki_url:loki_base_url
-             ~explicit_loki_username:loki_username
-             ~explicit_loki_password:loki_password
-             ?grafana_base_url
-             ())
-      $ scope_arg
-      $ follow_term
-      $ tail_arg
-      $ observability_backend_arg
-      $ base_domain_arg
-      $ grafana_base_url_arg
-      $ loki_base_url_arg
-      $ loki_username_arg
-      $ loki_password_arg)
+    (run_term ~local:true ~target_term:(Term.const None))
 ;;
