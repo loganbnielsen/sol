@@ -59,6 +59,13 @@ must carry the same ownership identity:
 > `release` is the plan's content-addressed identity (`Release_id.of_content`,
 > FEAT-069) and is written verbatim — the same id `sol releases` lists and
 > `sol logs --release` queries.
+>
+> **`release` is not a metrics dimension.** It is written into the pod template
+> (so Loki can select it exactly) but never into a Prometheus label: releases
+> accumulate forever, and a per-release time series would be unbounded
+> cardinality. Metrics correlate to a release through deployment metadata
+> (FEAT-070's deployment events / `sol deployments`) and the bounded workload
+> labels already in this table.
 
 These labels are the API. Kubernetes namespaces, pod names, Helm release
 names, bucket names, and cloud resource names are implementation details.
