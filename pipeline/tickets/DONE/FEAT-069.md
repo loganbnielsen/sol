@@ -421,3 +421,94 @@ Two mechanical notes for the implementer:
 per-service apply and `sol deploy --emit-to`), so they need `~release_id` from
 their callers — both of which already hold the plan, so this is passing a value
 that already exists rather than deriving a second time.
+
+## Completion notes (2026-09-13)
+
+Landed the release half of the model: steps 5b, 6 and 7.
+
+**Premise verified before starting.** Re-checked the ticket's "What already
+exists" against the tree: `render_taxonomy_labels` still derived `release` from
+`release_of_image`, `Sol_cli_release.of_plan` still minted `<timestamp>-<commit>`,
+and `sol logs` had no `--release`. All three were stale in the direction the
+ticket predicted — the work was still missing.
+
+### 5b — the label is `plan.release_id`
+
+- `render_taxonomy_labels` drops `~image` and takes `~release_id : Release_id.t`,
+  written verbatim (label-safe by construction); the other taxonomy values still
+  go through `sanitize_label_value`. `release_of_image` is deleted.
+- `deployment_doc`/`rollout_doc`/`cronjob_doc`, `render`/`render_spec`,
+  `Sol_cli_executor.local`/`gitops`, `apply_service_manifest`, and the
+  diagnostics renderer take `~release_id`; `run_plan`,
+  `rendered_manifests_of_plan`, `cmd_up` and the `--emit-to` path pass
+  `plan.release_id`. The abstract type is kept through the whole render path —
+  `to_string` is called only at the YAML edge.
+- The deploy event's `release` field follows the same identity, so the deploy
+  marker and the manifest labels describe one release.
+- **Recon correction:** the mapped fan-out undercounted. Besides the three
+  `render_spec` calls in `sol_cli_executor.ml`, `render_spec` is also called by
+  `Sol_cli_release_inspection.rendered_manifests_of_service` and by
+  `test_manifest_render.ml`'s helper, and `cmd_deploy.ml` read
+  `release_of_image` directly. All were updated in the same pass.
+
+### 6 — the record is the content-addressed artifact
+
+- `Sol_cli_release` is a pure function of the released content: `of_plan`
+  consumes `plan.release_id` (never recomputes it), the body is exactly the facts
+  that rederive it, and `created_at`/`git_commit`/`git_dirty`/`target`/`mode`/
+  `requested_scope` are gone. Provenance is a FEAT-070 hand-off.
+- `content_of_record`/`derived_release_id`/`validate ~name` check the invariant
+  in both directions; `parse_kubectl_list` validates on the read path, so a
+  correctly named but corrupt record is not surfaced as a release.
+- Serialization is deterministic (workloads and map-like pairs canonically
+  sorted) and the pointer payload is `release_id` only. `sol deploy --emit-to`
+  writes `sol-release-<id>.yaml` and `sol-current-release.yaml` into the bundle;
+  `sol releases` shows ID / ENV / WORKLOADS.
+- Tests prove the artifact-layer promise: same content ⇒ same id ⇒ byte-identical
+  record, including two plans that differ only in requested scope.
+
+### 7 — the query
+
+- `sol logs --release <id>` filters by the exact `release` label. The three
+  outcomes are ordered and distinct: malformed id fails in `of_string` before the
+  release store or cluster is touched; a well-formed id with no record fails
+  naming the target and recent releases; a known release with no lines is an
+  empty success, never reported as unknown.
+- Namespace validation (when `--scope` narrows) runs before the store, and the
+  store before the logs backend. `Sol_cli_logs.release_query` is a pure
+  classifier, so the order and the built selector are asserted without a
+  backend: `{release="<id>"}`, or `{namespace=…,app=…,release="<id>"}` when
+  scoped. `Sol_cli_loki` gained a raw-LogQL query form; the service-scoped form
+  delegates to it.
+
+### Deviations and hand-offs (deliberate)
+
+- **Pointer name.** The bundle file is `sol-current-release.yaml` per the design,
+  but the ConfigMap keeps the workspace-scoped `sol-release-current-<workspace>`
+  name: it lives in the shared `default` namespace, so a fixed name would collide
+  across workspaces.
+- **Config values are stored, secret values are not.** The record must carry
+  enough to rederive the id, and the content projection hashes config key *and*
+  value; secret *references* are stored and secret values remain unrepresentable.
+  FEAT-067's "keys not values" holds for secrets; for non-secret config the id
+  depends on the value.
+- **Metrics stay bounded.** `release` is not added as a Prometheus label; the
+  correlation mechanism is documented in `docs/architecture/observability-design.md`.
+
+### Demo / example coverage
+
+A runnable demo cannot exercise `sol logs --release` (it needs a live cluster
+plus Loki), so per the coverage rule this ticket's user-facing surface is covered
+by docs and tests instead: the observability identity table, `docs/guides/TUTORIAL.md`
+(`sol releases` shape, `sol logs --release`), the `sol logs` / `--emit-to`
+sections of `docs/architecture/devops-pipeline.md`, the substrate contract's
+GitOps section, and `docs/planning/WORK_SUMMARY.md`. New tests: `test_release`
+(record shape, both-direction validation, same-content determinism),
+`test_logs` (`release_query` outcomes and selectors), `test_loki`
+(`query_range_argv_logql`), plus the updated `test_manifest_render` /
+`test_deployment_phases` / `test_executor` release-label and bundle cases.
+
+### Verification
+
+`dune build`, `dune fmt` (clean), and the full `dune test` suite pass; the
+pre-commit hook's unit run passes on each commit.
