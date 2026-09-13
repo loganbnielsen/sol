@@ -1,3 +1,7 @@
+let release_id_of_test =
+  Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
+;;
+
 (* Phase-oriented tests for the Sol deployment compiler.
    Documents the contract at each phase boundary so infra contributors can
    reason about plan generation, artifact rendering, GitOps emit, executor
@@ -170,6 +174,7 @@ let make_plan ?(env = customer_env) services : Sol_cli_deployment_plan.t =
   ; migrations = []
   ; schema_subjects = []
   ; consumer_groups = []
+  ; release_id = release_id_of_test
   ; requested_scope = "workspace"
   }
 ;;

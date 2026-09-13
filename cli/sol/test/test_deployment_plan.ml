@@ -1,3 +1,7 @@
+let release_id_of_test =
+  Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
+;;
+
 let check_string = Alcotest.(check string)
 
 let contains re s =
@@ -272,6 +276,7 @@ let sample_plan () : Sol_cli_deployment_plan.t =
   ; migrations = []
   ; schema_subjects = []
   ; consumer_groups = []
+  ; release_id = release_id_of_test
   ; requested_scope = "workspace"
   }
 ;;
@@ -357,6 +362,7 @@ let test_to_json_mode_strings () =
       ; migrations = []
       ; schema_subjects = []
       ; consumer_groups = []
+      ; release_id = release_id_of_test
       ; requested_scope = "workspace"
       }
     in
