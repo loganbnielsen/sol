@@ -7,6 +7,8 @@ source: FEAT-059 review 2026-09-11 — the destination field landed; nothing con
 
 **Depends on:** FEAT-059.
 
+**Premise checked 2026-09-13:** `Sol_cli_kubectl` still took no destination at all and `config_current_context` existed, so every call site inherited the ambient context — the binding was genuinely outstanding.
+
 **Related:** FEAT-068 (the `sol cloud` lifecycle half — `cloud init` writing the destination, teardown via a scoped kubeconfig — split out 2026-09-13 so this binding change lands on its own), DEC-016, DEC-020, FEAT-061 (the destination/scope boundary), REFAC-088 (the capability core this unblocks).
 
 Bind every Kubernetes operation to the target's destination, so the cluster is chosen by the target rather than by whatever `kubectl` happens to be pointing at.
@@ -103,3 +105,77 @@ Two boundaries on what may be in it, because a convenient record is exactly how 
 ## Notes
 
 FEAT-059 shipped the type, the field, the resolution and the lint. This is the binding half; FEAT-068 is the `sol cloud` lifecycle half. See INFRA-011/012 for the ticket-tooling bugs found while splitting this work — neither blocks it.
+
+## Completion notes
+
+Landed 2026-09-13.
+
+**The channel.** `Sol_cli_kube_destination.context` is the destination-side record
+threaded through the operation helpers (`context_of_destination`, `local_context`).
+It carries *where* and never *what*; scope stays on its own channel (FEAT-061),
+which is why this could be done without touching the selection language.
+
+**One place applies it.** `Sol_cli_kubectl` takes `ctx` on every function and
+builds the invocation once in `invocation`: `--context` from the destination, plus
+`KUBECONFIG` in the child env when one is scoped. `config_current_context` is
+deleted. A call site cannot compile without a destination.
+
+**Every invocation, including the ones no wrapper could reach.** The criterion was
+never "the adapter takes a destination" — it was "every kubectl invocation is
+scoped". Three paths build their own argv, and all three now do:
+
+- `cmd_logs` follow-mode `Unix.execvp` → **`execvpe`** with
+  `Sol_cli_kube_destination.child_environment ctx` (the merge helper exists
+  precisely so an exec path cannot apply `--context` and forget `KUBECONFIG`).
+- `cmd_migrate`'s temporary Postgres port-forward → `create_process_env`, same pair.
+- `cmd_deploy_event`'s temporary Loki port-forward → `create_process_env`, same pair.
+
+`cmd_logs`'s inline `kubectl get` also moved onto `Sol_cli_kubectl.probe`.
+
+**Ambient reads removed.** `cmd_up` (`current_kube_context`,
+`is_known_local_dev_context`), `sol_cli_port_forward.current_kube_context`, and
+`Sol_cli_kubectl.config_current_context` (and its test) are gone.
+`ensure_postgres_url` no longer asks "is the current context local?" — `sol up`
+*is* the local path, so it just sets the local default. The only remaining
+`current-context` reads in `cli/` are in `cmd_cloud_tf.ml`, the recorded exception
+that **FEAT-068** removes.
+
+**Resolution at the boundary.** `cmd_destination` is the single resolver:
+`sol local <command>` → the literal local context; `--target` →
+`load_for_target` → `destination_of_target`; neither → **fails closed**, naming the
+`sol local` spelling rather than letting Cmdliner print "required option missing".
+Nothing below the command layer resolves a destination; `factory`/`executor` only
+forward what they were given.
+
+**Grammar.** `sol local` now reads as a destination modifier:
+`sol local status|logs|rollback|migrate|releases` are the local forms, and
+`sol <command> --target <t>` is the top-level form. Per the decision recorded
+during this work, the substrate lifecycle moved to **`sol local infra up|down|status`**
+so `status` means one thing on each side rather than two.
+
+**The acceptance test.** `test_kube_destination`'s *"ambient context cannot leak"*
+sets the machine's `KUBECONFIG` to a file whose `current-context` is
+`definitely-wrong-cluster`, binds a destination to `sol-staging`, and asserts the
+built argv names `sol-staging` and the child env pins the destination's
+kubeconfig — with the ambient name appearing nowhere. That is DEC-020 as a
+checked property rather than prose.
+
+**Docs & examples.** The tutorial gained a "Destinations" section (target-supplied
+cluster, never your shell) and its local commands were corrected;
+`self-hosted-substrate-contract`, `DOGFOOD`, the architecture docs, the pluto
+example and the golden-path CI step follow the `sol local infra` spelling.
+Historical records under `docs/audits/` and `pipeline/` are left as written.
+
+**Verification.** `dune build`, `dune fmt`, `cli/sol/test` and the whole `dune test`
+are green. The golden-path CI job is the live check.
+
+## Note for a follow-up (not this ticket)
+
+The diff is the right place to ask the question the work surfaced: **which
+modules take `ctx` only to forward it?** Classify every `ctx` parameter as
+(A) resolves/interprets a destination, (B) performs cluster IO, or (C) merely
+forwards. A large **C** count would argue for binding once at the edge and passing
+a capability (`Kubectl.t`/`Cluster.t`) instead of the raw destination; a mostly
+**B** count would say the explicit parameter is the right shape and the wide diff
+was just the unavoidable cost of removing a hidden global. Deliberately not
+decided here.
