@@ -35,3 +35,17 @@ let environment ({ kubeconfig; _ } : t) =
   | Some path -> [ "KUBECONFIG", path ]
   | None -> []
 ;;
+
+(* FEAT-063: the value threaded through the operation helpers. A record rather
+   than a bare [t] so the next destination-side input (credential scoping) rides
+   the same channel instead of starting a second refactor over the same call
+   graph. Scope deliberately does NOT live here (FEAT-061): the Kubernetes seam
+   learns *where*, never *what*. *)
+type context = { destination : t }
+
+let context_of_destination destination = { destination }
+let local_context = { destination = local }
+let kubectl_context_args (ctx : context) = kubectl_args ctx.destination
+let helm_context_args (ctx : context) = helm_args ctx.destination
+let context_environment (ctx : context) = environment ctx.destination
+let context_to_string (ctx : context) = to_string ctx.destination

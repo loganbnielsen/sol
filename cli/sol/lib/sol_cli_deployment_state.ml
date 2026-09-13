@@ -20,10 +20,13 @@ let deploy_state_configmap_name workspace =
   Printf.sprintf "sol-deploy-state-%s" (Sol_cli_kubernetes_name.sanitize_name workspace)
 ;;
 
-let load_deployed_groups workspace =
+(* FEAT-063: the state ConfigMap lives in the cluster the target names, so every
+   entry point takes the destination-side context and passes it to kubectl. *)
+let load_deployed_groups ~ctx workspace =
   let name = deploy_state_configmap_name workspace in
   match
     Sol_cli_kubectl.get
+      ~ctx
       ~resource:"configmap"
       ~name
       ~namespace:"default"
@@ -37,7 +40,7 @@ let load_deployed_groups workspace =
     |> List.filter (fun s -> s <> "")
 ;;
 
-let save_deployed_groups workspace groups =
+let save_deployed_groups ~ctx workspace groups =
   let name = deploy_state_configmap_name workspace in
   let value = String.concat "\n" groups in
   let apply_json =
@@ -53,7 +56,7 @@ let save_deployed_groups workspace groups =
   (* BUG-025: report a failed write. The consumer-group drift check depends on
      this object existing, so ignoring the result let the check run against
      nothing while looking healthy. *)
-  (match Sol_cli_kubectl.apply ~file:path with
+  (match Sol_cli_kubectl.apply ~ctx ~file:path with
    | Ok () -> ()
    | Error e ->
      Printf.eprintf
@@ -64,9 +67,9 @@ let save_deployed_groups workspace groups =
   | _ -> ()
 ;;
 
-let record_outcome workspace outcome =
+let record_outcome ~ctx workspace outcome =
   match outcome with
-  | Applied { consumer_groups; _ } -> save_deployed_groups workspace consumer_groups
+  | Applied { consumer_groups; _ } -> save_deployed_groups ~ctx workspace consumer_groups
   | Emitted _ | Dry_run | Failed _ -> ()
 ;;
 
