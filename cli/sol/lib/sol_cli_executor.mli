@@ -57,5 +57,5 @@ val run_plan
   :  Sol_cli_execution.context
   -> mode:mode
   -> ?secret_backend:Sol_cli_manifest.secret_backend
-  -> Sol_cli_deployment_plan.service_spec list
+  -> Sol_cli_deployment_plan.t
   -> (result list, string) Stdlib.result

@@ -63,14 +63,20 @@ let gitops
 
 (* ── plan-level executor ─────────────────────────────────────────────────── *)
 
+(* REFAC-089/FEAT-069: [run_plan] takes the *plan*, not a bare service list. Once
+   the plan carries release identity -- which materially affects rendering -- the
+   services alone are no longer the complete executable payload. Consuming the
+   plan also means the executor reads decisions rather than re-deriving them: it
+   must never reconstruct [release_id] from the plan. *)
 let run_plan
       (execution : Sol_cli_execution.context)
       ~mode
       ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder)
-      services
+      plan
   =
   let workspace = execution.workspace in
   let env = execution.env in
+  let services = plan.Sol_cli_deployment_plan.services in
   let backend =
     match mode with
     | Emit_to _ -> Sol_cli_manifest.Kubernetes_placeholder

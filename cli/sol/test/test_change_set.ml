@@ -116,7 +116,7 @@ let run_ok ~mode ?secret_backend plan =
          ())
       ~mode
       ?secret_backend
-      plan.Sol_cli_deployment_plan.services
+      plan
   with
   | Ok rs -> rs
   | Error e -> Alcotest.fail ("run_plan unexpectedly failed: " ^ e)
