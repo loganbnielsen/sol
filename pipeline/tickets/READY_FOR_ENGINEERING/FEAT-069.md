@@ -304,3 +304,56 @@ workloads, record and pointer. Step 6 defines *valid* states and makes invalid
 ones detectable; how strongly transitions between them are guaranteed is
 FEAT-066's decision (ordered apply + verification, server-side apply, git-commit
 atomicity in GitOps mode, or an explicit lease protocol).
+
+## Step 7 — the command-level behavioural seam (2026-09-13)
+
+Three cases, and the **order** is part of the contract: the logs backend must not
+participate until identity validation *and* namespace validation have succeeded.
+
+```text
+input string
+   ↓
+Release_id.of_string
+   ├─ invalid → malformed release-id error        (store never consulted)
+   └─ valid
+        ↓
+      release-store lookup
+        ├─ absent  → "release <id> is not known in target <t>"
+        └─ present → query the configured logs backend by exact release label
+```
+
+**The third case is the one most likely to be got wrong:**
+
+```text
+unknown release     = no release record exists          → error
+known release, no logs = record exists, query is empty  → success, empty result
+```
+
+"No logs" is not "no release". They stay distinct, and the distinction matters
+after a rollback, for short-lived jobs, after log-retention expiry, and for a
+release that never took traffic. A known release whose query returns nothing is a
+*valid empty answer*, not a failure — collapsing the two would make Sol report
+"unknown release" for a release it is simultaneously listing in `sol releases`.
+
+## The strengthened step-6 invariant
+
+```text
+release_id = X
+  implies
+exactly one valid canonical release record for X
+```
+
+That is stronger than "records are immutable": if `sol-release-r-abc` exists with
+content that does not correspond to `r-abc`, that is **corruption to report**,
+never something to update into shape. Combined with a pointer whose payload is
+only a `release_id`, there is exactly one authoritative description of a release
+and no second copy that can drift.
+
+## On guarantees (lesson recorded here so it is not relearned)
+
+Do not name a weaker property as a stronger one. "Atomic" was corrected above to
+the invariant that is actually held (*the pointer must not advance independently
+of the desired release state*), because a multi-object apply gives no
+transactional atomicity. The same discipline applies to step 7's error wording
+and to the retention rule: Sol's vocabulary should only claim what the substrate
+actually provides.
