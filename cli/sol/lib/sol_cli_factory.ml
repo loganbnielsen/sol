@@ -27,11 +27,9 @@ let plan_of_services ~workspace ~env ?requested_scope ?resolved_config services 
   |> Result.map_error Sol_cli_deployment_plan.plan_error_to_string
 ;;
 
-let execute ~ctx ~workspace ?env ~mode ?secret_backend plan =
+let execute execution ~mode ?secret_backend plan =
   Sol_cli_executor.run_plan
-    ~ctx
-    ~workspace
-    ?env
+    execution
     ~mode
     ?secret_backend
     plan.Sol_cli_deployment_plan.services
@@ -45,21 +43,27 @@ let execute ~ctx ~workspace ?env ~mode ?secret_backend plan =
    FEAT-063: [ctx] is the destination the caller resolved, threaded straight
    through to kubectl. The factory never resolves one itself — resolution lives
    at the command/hosted boundary. *)
-let run
-      ~ctx
-      ~workspace
-      ~env
-      ?env_label
-      ?requested_scope
-      ?resolved_config
-      ~mode
+(** The selection/config half of a factory run (REFAC-089): *what* to deploy and
+    with what resolved configuration. Deliberately not the execution
+    environment -- that is {!Sol_cli_execution.context}. *)
+type request =
+  { env : Sol_cli_deployment_plan.env_config
+  ; requested_scope : string option
+  ; resolved_config : Sol_cli_config.t option
+  }
+
+let run execution ~(request : request) ~mode services =
+  match
+    plan_of_services
+      ~workspace:execution.Sol_cli_execution.workspace
+      ~env:request.env
+      ?requested_scope:request.requested_scope
+      ?resolved_config:request.resolved_config
       services
-      ()
-  =
-  match plan_of_services ~workspace ~env ?requested_scope ?resolved_config services with
+  with
   | Error msg -> Error msg
   | Ok plan ->
-    (match execute ~ctx ~workspace ?env:env_label ~mode plan with
+    (match execute execution ~mode plan with
      | Error msg -> Error msg
      | Ok results -> Ok { plan; results })
 ;;

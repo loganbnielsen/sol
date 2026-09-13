@@ -110,7 +110,7 @@ let check_apply_environment ~services =
 ;;
 
 type deploy_context =
-  { workspace : string
+  { execution : Sol_cli_execution.context
   ; sha : string
   ; registry : string
   ; secret_backend : Sol_cli_manifest.secret_backend
@@ -121,7 +121,6 @@ type deploy_context =
   ; requested_scope : string
   ; target_name : string
   ; run_log : Sol_cli_run_log.t
-  ; kube_ctx : Sol_cli_kube_destination.context
   }
 
 let print_header ~workspace ~sha ?mode_line () =
@@ -158,7 +157,7 @@ let build_plan ctx ~emit_to =
      exit 1
    | _ -> ());
   let env =
-    { (Sol_cli_env_target.to_env_config ~name:ctx.workspace env_target) with
+    { (Sol_cli_env_target.to_env_config ~name:ctx.execution.workspace env_target) with
       Sol_cli_deployment_plan.secret_backend = ctx.secret_backend
     ; env = Some ctx.target_cfg.Sol_cli_config.env
     ; cluster_issuer =
@@ -169,7 +168,7 @@ let build_plan ctx ~emit_to =
   in
   match
     Sol_cli_factory.plan_of_services
-      ~workspace:ctx.workspace
+      ~workspace:ctx.execution.workspace
       ~env
       ~requested_scope:ctx.requested_scope
       ~resolved_config:ctx.resolved_config
@@ -222,11 +221,20 @@ let record_plan run_log plan =
     (Format.asprintf "%a" Sol_cli_deployment_plan.pp_summary plan)
 ;;
 
-let run_plan ~ctx ~run_log ~phase ~workspace ~target_env ~mode ~secret_backend plan =
+(* REFAC-089: the record the caller already holds is the parameter. Every input
+   here except [phase] and [mode] is a property of *this deploy invocation* --
+   workspace, run log, target environment, destination, secret backend -- not a
+   choice this execution makes, so listing them as labelled arguments unpacked
+   [deploy_context] only to repack it. *)
+let run_plan ctx ~phase ~mode plan =
   match
-    Sol_cli_run_log.run_task run_log ~name:phase (fun () ->
+    Sol_cli_run_log.run_task ctx.run_log ~name:phase (fun () ->
       try
-        Sol_cli_factory.execute ~ctx ~workspace ~env:target_env ~mode ~secret_backend plan
+        Sol_cli_factory.execute
+          ctx.execution
+          ~mode
+          ~secret_backend:ctx.secret_backend
+          plan
       with
       | Deploy_failed msg -> Error msg)
   with
@@ -237,26 +245,17 @@ let run_plan ~ctx ~run_log ~phase ~workspace ~target_env ~mode ~secret_backend p
 ;;
 
 let run_dry_run ctx ~emit_to =
-  print_header ~workspace:ctx.workspace ~sha:ctx.sha ~mode_line:"(dry-run)" ();
+  print_header ~workspace:ctx.execution.workspace ~sha:ctx.sha ~mode_line:"(dry-run)" ();
   let plan = build_plan ctx ~emit_to in
   write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
   print_planned_services plan;
   record_plan ctx.run_log plan;
-  ignore
-    (run_plan
-       ~ctx:ctx.kube_ctx
-       ~run_log:ctx.run_log
-       ~phase:"dry-run"
-       ~workspace:ctx.workspace
-       ~target_env:ctx.target_cfg.Sol_cli_config.env
-       ~mode:Sol_cli_executor.Dry_run
-       ~secret_backend:ctx.secret_backend
-       plan)
+  ignore (run_plan ctx ~phase:"dry-run" ~mode:Sol_cli_executor.Dry_run plan)
 ;;
 
 let run_emit ctx ~dir =
   print_header
-    ~workspace:ctx.workspace
+    ~workspace:ctx.execution.workspace
     ~sha:ctx.sha
     ~mode_line:(Printf.sprintf "emit-to: %s" dir)
     ();
@@ -264,17 +263,7 @@ let run_emit ctx ~dir =
   write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
   print_planned_services plan;
   record_plan ctx.run_log plan;
-  let results =
-    run_plan
-      ~ctx:ctx.kube_ctx
-      ~run_log:ctx.run_log
-      ~phase:"emit"
-      ~workspace:ctx.workspace
-      ~target_env:ctx.target_cfg.Sol_cli_config.env
-      ~mode:(Sol_cli_executor.Emit_to dir)
-      ~secret_backend:ctx.secret_backend
-      plan
-  in
+  let results = run_plan ctx ~phase:"emit" ~mode:(Sol_cli_executor.Emit_to dir) plan in
   List.iter
     (fun (r : Sol_cli_executor.result) ->
        let path =
@@ -323,28 +312,17 @@ let push_deploy_events ~ctx ~workspace ~target_cfg ~loki_push_url plan =
 
 let run_apply ctx ~confirm_group_change ~loki_push_url =
   check_apply_environment ~services:ctx.services;
-  print_header ~workspace:ctx.workspace ~sha:ctx.sha ();
-  let target_env = ctx.target_cfg.Sol_cli_config.env in
+  print_header ~workspace:ctx.execution.workspace ~sha:ctx.sha ();
   let plan = build_plan ctx ~emit_to:None in
   check_consumer_group_changes
-    ~ctx:ctx.kube_ctx
-    ~workspace:ctx.workspace
+    ~ctx:ctx.execution.cluster
+    ~workspace:ctx.execution.workspace
     ~confirm_group_change
     plan;
   write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
   print_planned_services plan;
   record_plan ctx.run_log plan;
-  let results =
-    run_plan
-      ~ctx:ctx.kube_ctx
-      ~run_log:ctx.run_log
-      ~phase:"apply"
-      ~workspace:ctx.workspace
-      ~target_env
-      ~mode:Sol_cli_executor.Apply
-      ~secret_backend:ctx.secret_backend
-      plan
-  in
+  let results = run_plan ctx ~phase:"apply" ~mode:Sol_cli_executor.Apply plan in
   List.iter
     (fun (r : Sol_cli_executor.result) ->
        Printf.printf
@@ -353,14 +331,14 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
          r.Sol_cli_executor.image)
     results;
   Printf.printf "\nDone. %d service(s) deployed.\n" (List.length ctx.services);
-  print_service_urls ~ctx:ctx.kube_ctx results;
+  print_service_urls ~ctx:ctx.execution.cluster results;
   Printf.printf "Run 'sol status' to check pod health.\n";
   Sol_cli_deployment_state.record_outcome
-    ~ctx:ctx.kube_ctx
-    ctx.workspace
+    ~ctx:ctx.execution.cluster
+    ctx.execution.workspace
     (Sol_cli_deployment_state.Applied
        { namespace = "default"
-       ; name = ctx.workspace
+       ; name = ctx.execution.workspace
        ; image = ctx.sha
        ; consumer_groups =
            List.map
@@ -371,8 +349,8 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
      failure: the deploy happened, and the record is for later. *)
   (match
      Sol_cli_release_store.record_plan
-       ~ctx:ctx.kube_ctx
-       ~workspace:ctx.workspace
+       ~ctx:ctx.execution.cluster
+       ~workspace:ctx.execution.workspace
        ~target:ctx.target_name
        ~mode:"deploy"
        plan
@@ -380,8 +358,8 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
    | Ok () -> ()
    | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);
   push_deploy_events
-    ~ctx:ctx.kube_ctx
-    ~workspace:ctx.workspace
+    ~ctx:ctx.execution.cluster
+    ~workspace:ctx.execution.workspace
     ~target_cfg:ctx.target_cfg
     ~loki_push_url
     plan
@@ -455,7 +433,18 @@ let run (req : Sol_cli_command_request.deploy_request) =
     (Sol_cli_run_log.run_id run_log)
     (Sol_cli_run_log.dir run_log);
   let ctx =
-    { workspace
+    { execution =
+        Sol_cli_execution.context
+          ~cluster:
+            (match Sol_cli_config.destination_of_target target_cfg with
+             | Ok destination ->
+               Sol_cli_kube_destination.context_of_destination destination
+             | Error msg ->
+               Printf.eprintf "error: %s\n%!" msg;
+               exit 1)
+          ~workspace
+          ~env:target_cfg.Sol_cli_config.env
+          ()
     ; sha
     ; registry
     ; secret_backend = req.secret_backend
@@ -466,12 +455,6 @@ let run (req : Sol_cli_command_request.deploy_request) =
     ; requested_scope
     ; target_name = req.target
     ; run_log
-    ; kube_ctx =
-        (match Sol_cli_config.destination_of_target target_cfg with
-         | Ok destination -> Sol_cli_kube_destination.context_of_destination destination
-         | Error msg ->
-           Printf.eprintf "error: %s\n%!" msg;
-           exit 1)
     }
   in
   match req.action with

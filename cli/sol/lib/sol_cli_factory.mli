@@ -37,28 +37,29 @@ val plan_of_services
     FEAT-063: the destination is a required parameter and is never resolved
     here; it arrives already resolved from the command or hosted boundary. *)
 val execute
-  :  ctx:Sol_cli_kube_destination.context
-  -> workspace:string
-  -> ?env:string
+  :  Sol_cli_execution.context
   -> mode:Sol_cli_executor.mode
   -> ?secret_backend:Sol_cli_manifest.secret_backend
   -> Sol_cli_deployment_plan.t
   -> (Sol_cli_executor.result list, string) result
+
+(** The selection/config half of a {!run}: what to deploy, and with what
+    resolved configuration. The execution environment is separate. *)
+type request =
+  { env : Sol_cli_deployment_plan.env_config
+  ; requested_scope : string option
+  ; resolved_config : Sol_cli_config.t option
+  }
 
 (** [run] combines {!plan_of_services} and {!execute} into one call, returning
     both the plan and its per-service results. This is the entry point hosted
     mode should use. [services] is already resolved, and [ctx] is already
     resolved. *)
 val run
-  :  ctx:Sol_cli_kube_destination.context
-  -> workspace:string
-  -> env:Sol_cli_deployment_plan.env_config
-  -> ?env_label:string
-  -> ?requested_scope:string
-  -> ?resolved_config:Sol_cli_config.t
+  :  Sol_cli_execution.context
+  -> request:request
   -> mode:Sol_cli_executor.mode
   -> Sol_cli_manifest.service list
-  -> unit
   -> (execution, string) result
 
 (** Derive release-inspection facts from a plan and its execution results,

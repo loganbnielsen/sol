@@ -455,15 +455,35 @@ let print_service_status
   print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name:(Some k8s_name)
 ;;
 
-let run
-      ~ctx
-      scope_str
-      explicit_backend
-      explicit_base_domain
-      target
-      explicit_loki_url
-      explicit_prometheus_url
-  =
+(* REFAC-089: status's inputs travel together too -- the selection, the target
+   they are read against, and where the telemetry lives. *)
+type status_options =
+  { scope : string option
+  ; target : string option
+  ; observability : Cmd_logs.observability_options
+  ; prometheus_base_url : string option
+  }
+
+let backend_of_arg = function
+  | None -> None
+  | Some s ->
+    (match Sol_cli_observability_url.backend_of_string s with
+     | Some b -> Some b
+     | None ->
+       Printf.eprintf
+         "error: unknown --observability-backend %S (expected: local, \
+          self_hosted_durable, external)\n"
+         s;
+       exit 1)
+;;
+
+let run ~ctx (options : status_options) =
+  let scope_str = options.scope in
+  let explicit_backend = backend_of_arg options.observability.backend in
+  let explicit_base_domain = options.observability.base_domain in
+  let target = options.target in
+  let explicit_loki_url = options.observability.loki_base_url in
+  let explicit_prometheus_url = options.prometheus_base_url in
   let workspace = workspace_name () in
   let all_domains = discover_domains () in
   if all_domains = []
@@ -593,17 +613,38 @@ let prometheus_base_url_arg =
            explains why and prints the exact 'kubectl port-forward' command to run.")
 ;;
 
-let backend_of_arg = function
-  | None -> None
-  | Some s ->
-    (match Sol_cli_observability_url.backend_of_string s with
-     | Some b -> Some b
-     | None ->
-       Printf.eprintf
-         "error: unknown --observability-backend %S (expected: local, \
-          self_hosted_durable, external)\n"
-         s;
-       exit 1)
+let status_observability_term =
+  Term.(
+    const (fun backend base_domain loki_base_url ->
+      { Cmd_logs.backend
+      ; base_domain
+      ; grafana_base_url = None
+      ; loki_base_url
+      ; loki_username = None
+      ; loki_password = None
+      })
+    $ Cmd_logs.observability_backend_arg
+    $ Cmd_logs.base_domain_arg
+    $ loki_base_url_arg)
+;;
+
+(* REFAC-089: the two entry points differ only in how they produce the
+   destination and in whether --target is declared at all. *)
+let status_term ~local ~target_term =
+  Term.(
+    const (fun scope observability prometheus_base_url target ->
+      let ctx =
+        if local
+        then Cmd_destination.local
+        else
+          Cmd_destination.or_exit
+            (Cmd_destination.resolve ~command:"status" ~local:false ~target)
+      in
+      run ~ctx { scope; target; observability; prometheus_base_url })
+    $ domain_arg
+    $ status_observability_term
+    $ prometheus_base_url_arg
+    $ target_term)
 ;;
 
 let cmd =
@@ -611,54 +652,12 @@ let cmd =
     (Cmd.info
        "status"
        ~doc:"Show workspace/domain/service health and observability status.")
-    Term.(
-      const
-        (fun
-            scope
-             observability_backend
-             base_domain
-             target
-             loki_base_url
-             prometheus_base_url
-           ->
-           let ctx =
-             Cmd_destination.or_exit
-               (Cmd_destination.resolve ~command:"status" ~local:false ~target)
-           in
-           run
-             ~ctx
-             scope
-             (backend_of_arg observability_backend)
-             base_domain
-             target
-             loki_base_url
-             prometheus_base_url)
-      $ domain_arg
-      $ Cmd_logs.observability_backend_arg
-      $ Cmd_logs.base_domain_arg
-      $ Cmd_logs.target_arg
-      $ loki_base_url_arg
-      $ prometheus_base_url_arg)
+    (status_term ~local:false ~target_term:Cmd_destination.target_arg)
 ;;
 
 (* FEAT-063: the local form -- workload status against Sol's own cluster. *)
 let local_cmd =
   Cmd.v
     (Cmd.info "status" ~doc:"Show local workload health and observability status")
-    Term.(
-      const
-        (fun scope observability_backend base_domain loki_base_url prometheus_base_url ->
-           run
-             ~ctx:Cmd_destination.local
-             scope
-             (backend_of_arg observability_backend)
-             base_domain
-             None
-             loki_base_url
-             prometheus_base_url)
-      $ domain_arg
-      $ Cmd_logs.observability_backend_arg
-      $ Cmd_logs.base_domain_arg
-      $ loki_base_url_arg
-      $ prometheus_base_url_arg)
+    (status_term ~local:true ~target_term:(Term.const None))
 ;;

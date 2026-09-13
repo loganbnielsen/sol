@@ -64,13 +64,13 @@ let gitops
 (* ── plan-level executor ─────────────────────────────────────────────────── *)
 
 let run_plan
-      ~ctx
-      ~workspace
-      ?env
+      (execution : Sol_cli_execution.context)
       ~mode
       ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder)
       services
   =
+  let workspace = execution.workspace in
+  let env = execution.env in
   let backend =
     match mode with
     | Emit_to _ -> Sol_cli_manifest.Kubernetes_placeholder
@@ -110,6 +110,6 @@ let run_plan
     Ok
       (List.map
          (fun ((spec : Sol_cli_deployment_plan.service_spec), yaml) ->
-            dispatch_rendered ~ctx ~mode spec yaml)
+            dispatch_rendered ~ctx:execution.cluster ~mode spec yaml)
          pairs)
 ;;
