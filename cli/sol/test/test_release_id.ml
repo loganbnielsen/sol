@@ -223,6 +223,26 @@ let test_of_string_round_trips_and_validates () =
     ]
 ;;
 
+(* The encoding is an identity function with a version tag, so it gets a known
+   vector. Not because this particular hash is sacred, but because the canonical
+   encoder changing must be an explicit migration event: if this fails, either
+   [encoding_version] was bumped deliberately (then update the vector) or the
+   encoding drifted by accident (then fix the encoding). Content-addressed
+   identifiers become durable API quickly, so this is cheap insurance. *)
+let test_known_vector () =
+  check_string
+    "known id for a fixed content"
+    "r-f4db347c7c7a2d1b"
+    (id
+       (content
+          [ wl
+              ~config:[ "LOG_LEVEL", "info" ]
+              ~secrets:[ "DATABASE_URL", "db-prod" ]
+              "charge_svc"
+              "acme/charge:1"
+          ]))
+;;
+
 let () =
   Alcotest.run
     "release_id"
@@ -265,6 +285,7 @@ let () =
             `Quick
             test_secret_references_count_and_values_do_not
         ; Alcotest.test_case "encoding is unambiguous" `Quick test_encoding_is_unambiguous
+        ; Alcotest.test_case "known vector" `Quick test_known_vector
         ] )
     ; ( "value"
       , [ Alcotest.test_case
