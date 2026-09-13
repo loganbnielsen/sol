@@ -336,7 +336,7 @@ jobs:
             echo "::error::FEAT-067: sol up recorded no release"
             exit 1
           fi
-          listed_ids=$(awk 'NR>1 {print $1}' "$GITHUB_WORKSPACE/releases.txt")
+          listed_ids=$(awk 'NR>1 {print $1}' "$GITHUB_WORKSPACE/releases.txt" | tr '\n' ' ')
 
           # FEAT-069: the taxonomy label a workload carries must be one of the
           # ids `sol releases` lists — that equality is the join key from a
