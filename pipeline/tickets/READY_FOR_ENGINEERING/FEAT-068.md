@@ -13,7 +13,7 @@ Make `sol cloud` produce and consume target-scoped destinations, so an operator 
 
 ## Work
 
-1. **`sol cloud init` writes the destination into the target it creates.** A target Sol creates comes out with `kube_context` already set, so an ordinary user never learns the field exists. When the target file is hand-written rather than generated, print the exact line to add instead of rewriting the user's file.
+1. **`sol cloud init` writes the destination into the target it creates.** A target Sol creates comes out with `kube_context` already set, so an ordinary user never learns the field exists. When the target file is hand-written rather than generated, print the exact line to add instead of rewriting the user's file. Per FEAT-063's destination-is-a-pair rule, write **both halves** where the cloud provides them: the context name *and* a scoped `kubeconfig` — a context-only target is the weaker mode.
 2. **Teardown must not mutate the operator's kubeconfig.** `cli/sol/bin/cmd_cloud_tf.ml` reads `kubectl config current-context` to name the context it just created, and runs `kubectl config use-context` to restore the operator's. Both are ambient-state mutations. Use a **scoped kubeconfig** instead: write the teardown credentials to a temp file and hand them to the child via `KUBECONFIG` (or `--kubeconfig`), so the operator's own ambient state is never touched. This is also what removes FEAT-063's recorded exception to its own grep criterion.
 3. `sol cloud init` may still **print** a context-switching command for the human's own `kubectl`. It must not make Sol depend on it.
 
