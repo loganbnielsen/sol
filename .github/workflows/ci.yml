@@ -213,10 +213,10 @@ jobs:
           eval $(opam env)
           dune build
 
-          sol local up
+          sol local infra up
           sol up
 
-          # FEAT-042/BUG-021: `sol local up` installs ingress-nginx and forwards
+          # FEAT-042/BUG-021: `sol local infra up` installs ingress-nginx and forwards
           # the controller to localhost:8088, so the Ingress `sol up` generated
           # for charge_svc must route a request end to end. A service with no
           # declared ingress_host gets a per-service dev host
@@ -329,7 +329,7 @@ jobs:
           # FEAT-067: a successful deploy must leave a release record — listed by
           # `sol releases`, pointed at by the current-release object, and not
           # editable in place.
-          sol releases > "$GITHUB_WORKSPACE/releases.txt"
+          sol local releases > "$GITHUB_WORKSPACE/releases.txt"
           grep -F 'COMMIT' "$GITHUB_WORKSPACE/releases.txt" >/dev/null
           if [ "$(wc -l < "$GITHUB_WORKSPACE/releases.txt")" -lt 2 ]; then
             echo "::error::FEAT-067: sol up recorded no release"

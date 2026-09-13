@@ -40,7 +40,7 @@ let services_of_domain services domain =
   List.filter (fun (s : Sol_cli_manifest.service) -> s.domain = domain) services
 ;;
 
-let service_diagnoses_named ~ns (services : Sol_cli_manifest.service list)
+let service_diagnoses_named ~ctx ~ns (services : Sol_cli_manifest.service list)
   : (string * string option) list
   =
   services
@@ -53,6 +53,7 @@ let service_diagnoses_named ~ns (services : Sol_cli_manifest.service list)
       Some
         ( k8s_name
         , Sol_cli_rollout_diagnosis.diagnose_service_live
+            ~ctx
             ~pod_expectation
             ~ns
             ~service_name:s.name
@@ -60,10 +61,12 @@ let service_diagnoses_named ~ns (services : Sol_cli_manifest.service list)
             () ))
 ;;
 
-let service_diagnoses ~ns services = service_diagnoses_named ~ns services |> List.map snd
+let service_diagnoses ~ctx ~ns services =
+  service_diagnoses_named ~ctx ~ns services |> List.map snd
+;;
 
-let ns_exists ns =
-  match Sol_cli_kubectl.get_raw ~args:[ "get"; "ns"; ns ] with
+let ns_exists ~ctx ns =
+  match Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; "ns"; ns ] with
   | Ok r -> r.Sol_cli_process.exit_code = 0
   | Error _ -> false
 ;;
@@ -209,16 +212,16 @@ let print_open_block ~scope =
 
 (* ── Raw Kubernetes Diagnostics ─────────────────────────────────────────── *)
 
-let print_raw_diagnostics ~ns ~domain ~services ~only_k8s_name =
+let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
   Printf.printf "\nNamespace: %s\n%!" ns;
-  if ns_exists ns
+  if ns_exists ~ctx ns
   then (
     let pod_args =
       match only_k8s_name with
       | None -> [ "get"; "pods"; "-n"; ns ]
       | Some k8s_name -> [ "get"; "pods"; "-n"; ns; "-l"; "app=" ^ k8s_name ]
     in
-    (match Sol_cli_kubectl.get_raw ~args:pod_args with
+    (match Sol_cli_kubectl.get_raw ~ctx ~args:pod_args with
      | Ok r ->
        print_string r.Sol_cli_process.stdout;
        print_char '\n'
@@ -236,7 +239,7 @@ let print_raw_diagnostics ~ns ~domain ~services ~only_k8s_name =
       "-o=jsonpath={range \
        .items[*]}{.metadata.name}{\"\\t\"}{.spec.template.spec.containers[0].image}{\"\\n\"}{end}"
     in
-    (match Sol_cli_kubectl.get_raw ~args:(deploy_args @ [ image_jsonpath ]) with
+    (match Sol_cli_kubectl.get_raw ~ctx ~args:(deploy_args @ [ image_jsonpath ]) with
      | Ok r
        when r.Sol_cli_process.exit_code = 0 && String.trim r.Sol_cli_process.stdout <> ""
        ->
@@ -248,7 +251,7 @@ let print_raw_diagnostics ~ns ~domain ~services ~only_k8s_name =
          | _ -> ());
        print_char '\n'
      | _ -> ());
-    service_diagnoses_named ~ns (services_of_domain services domain)
+    service_diagnoses_named ~ctx ~ns (services_of_domain services domain)
     |> List.iter (fun (k8s_name, diagnosis) ->
       match only_k8s_name with
       | Some only when only <> k8s_name -> ()
@@ -263,6 +266,7 @@ let print_raw_diagnostics ~ns ~domain ~services ~only_k8s_name =
     let svc_names_raw =
       match
         Sol_cli_kubectl.get_raw
+          ~ctx
           ~args:[ "get"; "svc"; "-n"; ns; "-o"; "jsonpath=" ^ jsonpath ]
       with
       | Ok r when r.Sol_cli_process.exit_code = 0 -> r.Sol_cli_process.stdout
@@ -288,6 +292,7 @@ let print_raw_diagnostics ~ns ~domain ~services ~only_k8s_name =
              &&
              match
                Sol_cli_kubectl.get
+                 ~ctx
                  ~resource:"svc"
                  ~name
                  ~namespace:ns
@@ -307,6 +312,7 @@ let print_raw_diagnostics ~ns ~domain ~services ~only_k8s_name =
 (* ── Workspace Scope ────────────────────────────────────────────────────── *)
 
 let print_workspace_index
+      ~ctx
       ~workspace
       ~domains
       ~services
@@ -318,9 +324,11 @@ let print_workspace_index
   List.iter
     (fun domain ->
        let ns = namespace_or_exit ~workspace ~domain in
-       let exists = ns_exists ns in
+       let exists = ns_exists ~ctx ns in
        let diagnoses =
-         if exists then service_diagnoses ~ns (services_of_domain services domain) else []
+         if exists
+         then service_diagnoses ~ctx ~ns (services_of_domain services domain)
+         else []
        in
        let status = Sol_cli_status.rollup_domain_status ~ns_exists:exists diagnoses in
        Printf.printf "  %-12s %s\n" domain (Sol_cli_status.domain_status_to_string status))
@@ -334,6 +342,7 @@ let print_workspace_index
 (* ── Domain Scope ───────────────────────────────────────────────────────── *)
 
 let print_domain_status
+      ~ctx
       ~workspace
       ~domain
       ~services
@@ -343,10 +352,10 @@ let print_domain_status
       ~explicit_prometheus_url
   =
   let ns = namespace_or_exit ~workspace ~domain in
-  let exists = ns_exists ns in
+  let exists = ns_exists ~ctx ns in
   let named =
     if exists
-    then service_diagnoses_named ~ns (services_of_domain services domain)
+    then service_diagnoses_named ~ctx ~ns (services_of_domain services domain)
     else []
   in
   let status =
@@ -377,12 +386,13 @@ let print_domain_status
     ~explicit_loki_url
     ~explicit_prometheus_url;
   print_open_block ~scope:domain;
-  print_raw_diagnostics ~ns ~domain ~services ~only_k8s_name:None
+  print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name:None
 ;;
 
 (* ── Service Scope ──────────────────────────────────────────────────────── *)
 
 let print_service_status
+      ~ctx
       ~workspace
       ~domain
       ~service_name
@@ -417,11 +427,12 @@ let print_service_status
   let pod_expectation =
     Sol_cli_status.pod_expectation_of_primitive svc.Sol_cli_manifest.primitive
   in
-  let exists = ns_exists ns in
+  let exists = ns_exists ~ctx ns in
   let diagnosis =
     if exists
     then
       Sol_cli_rollout_diagnosis.diagnose_service_live
+        ~ctx
         ~pod_expectation
         ~ns
         ~service_name:k8s_name
@@ -441,10 +452,11 @@ let print_service_status
     ~explicit_loki_url
     ~explicit_prometheus_url;
   print_open_block ~scope:(domain ^ "/" ^ k8s_name);
-  print_raw_diagnostics ~ns ~domain ~services ~only_k8s_name:(Some k8s_name)
+  print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name:(Some k8s_name)
 ;;
 
 let run
+      ~ctx
       scope_str
       explicit_backend
       explicit_base_domain
@@ -492,6 +504,7 @@ let run
   | Sol_cli_open.Workspace ->
     let backend, _base_domain = backend_and_base_domain () in
     print_workspace_index
+      ~ctx
       ~workspace
       ~domains:all_domains
       ~services
@@ -515,6 +528,7 @@ let run
     let selected = resolve_status_scope (Some domain) in
     let backend, base_domain = backend_and_base_domain () in
     print_domain_status
+      ~ctx
       ~workspace
       ~domain
       ~services:selected.Sol_cli_workload_selection.services
@@ -526,6 +540,7 @@ let run
     let selected = resolve_status_scope (Some (domain ^ "/" ^ service_name)) in
     let backend, base_domain = backend_and_base_domain () in
     print_service_status
+      ~ctx
       ~workspace
       ~domain
       ~service_name
@@ -606,7 +621,12 @@ let cmd =
              loki_base_url
              prometheus_base_url
            ->
+           let ctx =
+             Cmd_destination.or_exit
+               (Cmd_destination.resolve ~command:"status" ~local:false ~target)
+           in
            run
+             ~ctx
              scope
              (backend_of_arg observability_backend)
              base_domain
@@ -617,6 +637,28 @@ let cmd =
       $ Cmd_logs.observability_backend_arg
       $ Cmd_logs.base_domain_arg
       $ Cmd_logs.target_arg
+      $ loki_base_url_arg
+      $ prometheus_base_url_arg)
+;;
+
+(* FEAT-063: the local form -- workload status against Sol's own cluster. *)
+let local_cmd =
+  Cmd.v
+    (Cmd.info "status" ~doc:"Show local workload health and observability status")
+    Term.(
+      const
+        (fun scope observability_backend base_domain loki_base_url prometheus_base_url ->
+           run
+             ~ctx:Cmd_destination.local
+             scope
+             (backend_of_arg observability_backend)
+             base_domain
+             None
+             loki_base_url
+             prometheus_base_url)
+      $ domain_arg
+      $ Cmd_logs.observability_backend_arg
+      $ Cmd_logs.base_domain_arg
       $ loki_base_url_arg
       $ prometheus_base_url_arg)
 ;;

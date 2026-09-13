@@ -285,7 +285,7 @@ this ticket.
 - **Not verified against a live Grafana instance.** This pass validated the
   dashboard JSON is well-formed and the Terraform/Helm wiring
   (`terraform validate`, chart values checked against `helm show values`),
-  but did not run a real `sol dev up` and confirm the panels/variables
+  but did not run a real `sol local infra up` and confirm the panels/variables
   actually render and populate. Flagged explicitly — do this before trusting
   the dashboards in a real review.
 
@@ -297,7 +297,7 @@ Grafana: `helm_release.tempo` (`grafana-community/tempo`, gated by
 no local Tempo to receive spans from when there's no local Grafana to
 browse them in either) plus a Grafana datasource ConfigMap
 (`kubernetes_config_map.grafana_tempo_datasource`) loaded through the same
-sidecar convention as the others. `sol dev up` mirrors this exactly via
+sidecar convention as the others. `sol local infra up` mirrors this exactly via
 direct `helm`/`kubectl` calls in `cmd_local.ml` and
 `Sol_cli_dev_observability.ml`, so local dev and Terraform-provisioned
 clusters both get tracing the same way ("Dev mirrors prod exactly").
@@ -316,11 +316,11 @@ precedent had left open.
 **Two ports, two purposes.** Spans push to Tempo's OTLP/HTTP receiver on
 port 4318 (`TEMPO_URL`, what `-svc` and `examples/local-demo`'s order-svc
 push to); Grafana's Tempo datasource reads from Tempo's own query API on
-port 3200. `sol dev up` port-forwards both (`tempo` and `tempo-query`).
+port 3200. `sol local infra up` port-forwards both (`tempo` and `tempo-query`).
 
 **Trace-lookup link.** The Loki datasource (both
 `kubernetes_config_map.grafana_loki_datasource` in Terraform and
-`Sol_cli_dev_observability.loki_datasource_yaml` in `sol dev up`) carries a
+`Sol_cli_dev_observability.loki_datasource_yaml` in `sol local infra up`) carries a
 `derivedFields` entry matching `obs-loki-eio`'s real `trace_id=` logfmt
 output (an unquoted 32-hex-char field), so a `trace_id` in any Loki log
 line is clickable through to its Tempo waterfall. A dedicated

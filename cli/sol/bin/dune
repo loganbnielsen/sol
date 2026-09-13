@@ -23,6 +23,7 @@
  (modules
   main
   version
+  cmd_destination
   cmd_check
   cmd_local
   cmd_plan

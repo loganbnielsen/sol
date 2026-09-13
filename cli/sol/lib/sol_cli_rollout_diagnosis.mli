@@ -110,12 +110,14 @@ val format_active_run_diagnosis
   -> event list
   -> string option
 
-(** Live diagnosis for a deployed workload. [Ephemeral] tries
-    [format_active_run_diagnosis] first when a run is currently active and its
-    pod(s) can be fetched, falling back to [format_cronjob_diagnosis] otherwise
-    (no active run, or the active pod fetch itself failed). *)
+(** Live diagnosis for a deployed workload in the cluster [ctx] names.
+    [Ephemeral] tries [format_active_run_diagnosis] first when a run is
+    currently active and its pod(s) can be fetched, falling back to
+    [format_cronjob_diagnosis] otherwise (no active run, or the active pod fetch
+    itself failed). *)
 val diagnose_service_live
-  :  pod_expectation:pod_expectation
+  :  ctx:Sol_cli_kube_destination.context
+  -> pod_expectation:pod_expectation
   -> ns:string
   -> service_name:string
   -> k8s_name:string

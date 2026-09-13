@@ -42,3 +42,32 @@ val helm_args : t -> string list
     scoped. Preferring a scoped kubeconfig where practical also keeps other
     environments' credentials out of the process. *)
 val environment : t -> (string * string) list
+
+(** FEAT-063: the destination-side value threaded through the operation helpers,
+    so a reader of any cluster-touching module can see which cluster it reaches.
+
+    This is a record rather than a bare {!t} so the next destination-side input
+    (credential scoping) rides the same channel instead of forcing a second
+    refactor over the same call graph. It carries destination-side facts only:
+    *where* an operation reaches a cluster, never *what* is being deployed —
+    scope travels separately (FEAT-061), so the Kubernetes seam never learns the
+    workload set. *)
+type context = { destination : t }
+
+val context_of_destination : t -> context
+
+(** The literal local cluster, [k3d-sol-local] — the one default that cannot be
+    ambiguous, because Sol owns it. *)
+val local_context : context
+
+val kubectl_context_args : context -> string list
+val helm_context_args : context -> string list
+val context_environment : context -> (string * string) list
+val context_to_string : context -> string
+
+(** The full child environment — the ambient one with the destination's
+    [KUBECONFIG] override applied — for [Unix.execvpe] / [Unix.create_process_env],
+    which take a whole environment rather than a delta. Use this wherever kubectl
+    is spawned directly rather than through {!Sol_cli_kubectl}, so an exec path
+    cannot apply [--context] while forgetting the kubeconfig. *)
+val child_environment : context -> string array

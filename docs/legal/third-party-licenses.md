@@ -4,7 +4,7 @@ Sol's own licence (Apache-2.0) says nothing about the software Sol deploys *for*
 users. This is the inventory of what the platform modules install, which licences
 apply, and where those terms interact with Sol's own product decisions.
 
-**Status:** first pass, covering what `platform/infra/base` and `sol dev up`
+**Status:** first pass, covering what `platform/infra/base` and `sol local infra up`
 install. The opam and npm dependency graphs are not yet inventoried — see
 [Not yet inventoried](#not-yet-inventoried).
 

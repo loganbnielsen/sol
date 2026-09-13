@@ -70,7 +70,7 @@ CLI flags
 
 ## Command map
 
-### `sol dev up`
+### `sol local infra up`
 
 **Module:** `cli/sol/bin/cmd_local.ml` → `dev_up`
 
@@ -99,7 +99,7 @@ the rest of the factory targets.
 Builds all workspace services with `dune build` and runs each executable directly
 on the host (not inside k3d). Injects dev environment variables
 (`KAFKA_BROKERS=localhost:9092`, `POSTGRES_URL=...`, etc.) that match the
-port-forwards started by `sol dev up`. Prefixes each service's stdout/stderr with
+port-forwards started by `sol local infra up`. Prefixes each service's stdout/stderr with
 `[domain/name]`. Stops all children on Ctrl-C (SIGTERM → SIGKILL).
 
 **No Plan/Render/Execute pipeline** — services run as native processes.
@@ -409,7 +409,7 @@ Add it to `sol_cli_deployment_plan.ml` (plan phase) or `sol_cli_executor.ml`
 
 ## Generated Kubernetes Artifact Invariants
 
-Every resource emitted by `sol up`, `sol deploy`, and `sol dev up` must satisfy
+Every resource emitted by `sol up`, `sol deploy`, and `sol local infra up` must satisfy
 these invariants. The security context invariants are enforced in
 `cli/sol/test/test_manifest_render.ml` via the `assert_k8s_invariants` helper
 and the `artifact_invariants` test suite.

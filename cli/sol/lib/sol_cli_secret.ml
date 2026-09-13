@@ -137,10 +137,13 @@ let redacted_result = function
   | Hosted_unavailable msg -> msg
 ;;
 
-let apply_manifest yaml =
+(* FEAT-063: secrets are cluster objects, so every entry point takes the
+   destination-side context and passes it to kubectl. Nothing here reads the
+   ambient context. *)
+let apply_manifest ~ctx yaml =
   let path = Sol_cli_manifest.write_tmp yaml in
   let result =
-    match Sol_cli_kubectl.apply ~file:path with
+    match Sol_cli_kubectl.apply ~ctx ~file:path with
     | Ok () -> Ok ()
     | Error e -> Error (Sol_cli_process.error_to_string e)
   in
@@ -149,8 +152,8 @@ let apply_manifest yaml =
   result
 ;;
 
-let get_named_secret_json ~name namespace =
-  match Sol_cli_kubectl.get ~resource:"secret" ~name ~namespace ~output:"json" with
+let get_named_secret_json ~ctx ~name namespace =
+  match Sol_cli_kubectl.get ~ctx ~resource:"secret" ~name ~namespace ~output:"json" with
   | Error _ -> Ok None
   | Ok r when r.Sol_cli_process.exit_code <> 0 -> Ok None
   | Ok r ->
@@ -158,8 +161,8 @@ let get_named_secret_json ~name namespace =
      | _ -> Ok None)
 ;;
 
-let get_secret_json namespace =
-  get_named_secret_json ~name:Sol_cli_manifest.runtime_secret_name namespace
+let get_secret_json ~ctx namespace =
+  get_named_secret_json ~ctx ~name:Sol_cli_manifest.runtime_secret_name namespace
 ;;
 
 let data_keys = function
@@ -183,10 +186,11 @@ let existing_data = function
 (* List per-workload secret names in a namespace — secrets ending in "-secrets"
    except the shared sol-secrets object, which is patched separately for
    Argo Rollout compatibility. *)
-let list_workload_secrets namespace =
+let list_workload_secrets ~ctx namespace =
   let jsonpath = "{range .items[*]}{.metadata.name}{\"\\n\"}{end}" in
   match
     Sol_cli_kubectl.get_raw
+      ~ctx
       ~args:[ "get"; "secrets"; "-n"; namespace; "-o"; "jsonpath=" ^ jsonpath ]
   with
   | Error _ -> []
@@ -200,15 +204,15 @@ let list_workload_secrets namespace =
       && String.ends_with ~suffix:"-secrets" name)
 ;;
 
-let apply_to_named_secret ~secret_name ~namespace ~key ~value =
-  let* existing = get_named_secret_json ~name:secret_name namespace in
+let apply_to_named_secret ~ctx ~secret_name ~namespace ~key ~value =
+  let* existing = get_named_secret_json ~ctx ~name:secret_name namespace in
   let existing_data = existing_data existing in
   let yaml = named_secret_manifest ~secret_name ~existing_data ~namespace ~key ~value in
-  apply_manifest yaml
+  apply_manifest ~ctx yaml
 ;;
 
-let rollout_restart namespace =
-  ignore (Sol_cli_kubectl.rollout_restart ~kind:"deployment" ~namespace)
+let rollout_restart ~ctx namespace =
+  ignore (Sol_cli_kubectl.rollout_restart ~ctx ~kind:"deployment" ~namespace)
 ;;
 
 let hosted_stub _env =
@@ -240,66 +244,67 @@ let fold_namespaces namespaces ~init ~f =
   List.fold_left (fun acc ns -> Result.bind acc (fun x -> f x ns)) (Ok init) namespaces
 ;;
 
-let patch_workload_secrets ~namespace ~key ~value =
-  list_workload_secrets namespace
+let patch_workload_secrets ~ctx ~namespace ~key ~value =
+  list_workload_secrets ~ctx namespace
   |> List.map (fun secret_name ->
-    apply_to_named_secret ~secret_name ~namespace ~key ~value)
+    apply_to_named_secret ~ctx ~secret_name ~namespace ~key ~value)
   |> List.find_opt Result.is_error
   |> function
   | Some (Error _ as e) -> e
   | _ -> Ok ()
 ;;
 
-let set ~env ~workspace:_ ~namespaces ~key ~value =
+let set ~ctx ~env ~workspace:_ ~namespaces ~key ~value =
   let* () = validate_key key in
   let* namespaces = validate_operation_context ~env ~namespaces in
   let* () =
     iter_namespaces namespaces ~f:(fun namespace ->
       (* Patch sol-secrets for Argo Rollout workloads *)
-      let* existing = get_secret_json namespace in
+      let* existing = get_secret_json ~ctx namespace in
       let existing_data = existing_data existing in
       let yaml = secret_manifest ~existing_data ~namespace ~key ~value in
-      let* () = apply_manifest yaml in
+      let* () = apply_manifest ~ctx yaml in
       (* Also patch each per-service secret so standard Deployment workloads
          (which mount <svc>-secrets, not sol-secrets) see the updated value
          immediately on next restart. *)
-      let* () = patch_workload_secrets ~namespace ~key ~value in
-      rollout_restart namespace;
+      let* () = patch_workload_secrets ~ctx ~namespace ~key ~value in
+      rollout_restart ~ctx namespace;
       Ok ())
   in
   Ok (Applied namespaces)
 ;;
 
-let read_keys namespace =
-  let* json = get_secret_json namespace in
+let read_keys ~ctx namespace =
+  let* json = get_secret_json ~ctx namespace in
   match json with
   | None -> Ok []
   | Some json -> Ok (List.map fst (data_keys json))
 ;;
 
-let list ~env ~workspace:_ ~namespaces =
+let list ~ctx ~env ~workspace:_ ~namespaces =
   let* namespaces = validate_operation_context ~env ~namespaces in
   let* keys =
     fold_namespaces namespaces ~init:[] ~f:(fun acc namespace ->
-      match read_keys namespace with
+      match read_keys ~ctx namespace with
       | Ok keys -> Ok (keys @ acc)
       | Error _ -> Ok acc)
   in
   Ok (Listed (List.sort_uniq String.compare keys))
 ;;
 
-let delete ~env ~workspace:_ ~namespaces ~key =
+let delete ~ctx ~env ~workspace:_ ~namespaces ~key =
   let* () = validate_key key in
   let* namespaces = validate_operation_context ~env ~namespaces in
   let patch = Printf.sprintf "[{\"op\":\"remove\",\"path\":\"/data/%s\"}]" key in
   let remove_from namespace name =
-    let* existing = get_named_secret_json ~name namespace in
+    let* existing = get_named_secret_json ~ctx ~name namespace in
     let data = existing_data existing in
     if not (List.mem_assoc key data)
     then Ok ()
     else (
       match
         Sol_cli_kubectl.patch
+          ~ctx
           ~resource:"secret"
           ~name
           ~namespace
@@ -320,10 +325,10 @@ let delete ~env ~workspace:_ ~namespaces ~key =
     iter_namespaces namespaces ~f:(fun namespace ->
       let* () = remove_from namespace Sol_cli_manifest.runtime_secret_name in
       let* () =
-        iter_namespaces (list_workload_secrets namespace) ~f:(fun secret_name ->
+        iter_namespaces (list_workload_secrets ~ctx namespace) ~f:(fun secret_name ->
           remove_from namespace secret_name)
       in
-      rollout_restart namespace;
+      rollout_restart ~ctx namespace;
       Ok ())
   in
   Ok (Deleted namespaces)

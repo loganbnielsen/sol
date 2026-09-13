@@ -5,7 +5,7 @@ open Sol_cli_manifest
 
 let workspace_name () = Filename.basename (Sys.getcwd ())
 
-let run scope =
+let run ~ctx scope =
   let workspace = workspace_name () in
   let selected =
     match Sol_cli_workload_selection.resolve scope (discover_services ()) with
@@ -81,7 +81,7 @@ let run scope =
          }
        in
        let target = Sol_cli_rollback.rollback_target_of_service spec in
-       (match Sol_cli_rollback.execute_rollback target with
+       (match Sol_cli_rollback.execute_rollback ~ctx target with
         | Ok () ->
           (match target with
            | Sol_cli_rollback.No_op reason ->
@@ -125,5 +125,23 @@ let cmd =
          "Roll back the last deployment for one or all services. Runs 'kubectl rollout \
           undo' for each matching service and waits for the previous revision to become \
           healthy.")
-    Term.(const run $ scope_arg)
+    Term.(
+      const (fun scope target ->
+        run
+          ~ctx:
+            (Cmd_destination.or_exit
+               (Cmd_destination.resolve ~command:"rollback" ~local:false ~target))
+          scope)
+      $ scope_arg
+      $ Cmd_destination.target_arg)
+;;
+
+(* FEAT-063: the local form -- the same operation with the destination named
+   literally as Sol's own cluster instead of resolved from --target. *)
+let local_cmd =
+  Cmd.v
+    (Cmd.info
+       "rollback"
+       ~doc:"Roll back the most recent deployment of a workload on the local cluster")
+    Term.(const (fun scope -> run ~ctx:Cmd_destination.local scope) $ scope_arg)
 ;;

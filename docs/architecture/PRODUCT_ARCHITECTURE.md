@@ -36,7 +36,7 @@ detailed control-plane API before the factory contract is stable.
 
 **Security on Day 1.** Sol's framework types carry security configuration as a first-class concern — transport encryption, SASL authentication, and TLS are all part of the data model from the beginning, defaulting to plaintext only in dev and reading from environment variables in all other environments. You can't accidentally ship a production service with no security configuration because the type forces the field.
 
-**Dev mirrors prod exactly.** `sol dev up` provisions a local k3d cluster with the same Helm charts used in production — Redpanda, PostgreSQL, Loki, Prometheus, Grafana. The only difference is scale (single replica, no persistent volume). Port-forwards make all services reachable at the same addresses your services expect. Surprises at deploy time are a symptom of divergent environments; Sol eliminates that divergence.
+**Dev mirrors prod exactly.** `sol local infra up` provisions a local k3d cluster with the same Helm charts used in production — Redpanda, PostgreSQL, Loki, Prometheus, Grafana. The only difference is scale (single replica, no persistent volume). Port-forwards make all services reachable at the same addresses your services expect. Surprises at deploy time are a symptom of divergent environments; Sol eliminates that divergence.
 
 **FOSS infrastructure.** The full stack runs on open source primitives — Kubernetes, Strimzi, Argo CD, Prometheus, Loki, Grafana, Terraform. No vendor lock-in. Cloud providers are an infrastructure detail.
 
@@ -101,7 +101,7 @@ over the same application model.
 The user runs Sol on their machine.
 
 ```bash
-sol dev up
+sol local infra up
 sol up
 ```
 

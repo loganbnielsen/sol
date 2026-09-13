@@ -27,8 +27,9 @@ let plan_of_services ~workspace ~env ?requested_scope ?resolved_config services 
   |> Result.map_error Sol_cli_deployment_plan.plan_error_to_string
 ;;
 
-let execute ~workspace ?env ~mode ?secret_backend plan =
+let execute ~ctx ~workspace ?env ~mode ?secret_backend plan =
   Sol_cli_executor.run_plan
+    ~ctx
     ~workspace
     ?env
     ~mode
@@ -39,12 +40,26 @@ let execute ~workspace ?env ~mode ?secret_backend plan =
 (* [services] is already resolved: selection happens once, at the command (or
    hosted-handler) boundary, via [Sol_cli_workload_selection] (FEAT-065). The
    factory no longer scans the workspace, so it cannot quietly select a
-   different set than the caller asked for. *)
-let run ~workspace ~env ?env_label ?requested_scope ?resolved_config ~mode services () =
+   different set than the caller asked for.
+
+   FEAT-063: [ctx] is the destination the caller resolved, threaded straight
+   through to kubectl. The factory never resolves one itself — resolution lives
+   at the command/hosted boundary. *)
+let run
+      ~ctx
+      ~workspace
+      ~env
+      ?env_label
+      ?requested_scope
+      ?resolved_config
+      ~mode
+      services
+      ()
+  =
   match plan_of_services ~workspace ~env ?requested_scope ?resolved_config services with
   | Error msg -> Error msg
   | Ok plan ->
-    (match execute ~workspace ?env:env_label ~mode plan with
+    (match execute ~ctx ~workspace ?env:env_label ~mode plan with
      | Error msg -> Error msg
      | Ok results -> Ok { plan; results })
 ;;

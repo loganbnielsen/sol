@@ -16,9 +16,10 @@ let default_table_name =
   Printf.sprintf "sol_%s_schema_migrations" (Buffer.contents buf)
 ;;
 
-let cluster_pg_exists () =
+let cluster_pg_exists ~ctx () =
   match
     Sol_cli_kubectl.get
+      ~ctx
       ~resource:"svc"
       ~name:"postgresql"
       ~namespace:"postgresql"
@@ -30,20 +31,26 @@ let cluster_pg_exists () =
 
 (* Start a background port-forward to cluster postgres and return the local URL.
    Registers at_exit cleanup so the forward is killed when the process exits. *)
-let auto_forward_pg () =
+let auto_forward_pg ~ctx () =
   Printf.printf "Forwarding postgresql (cluster) → localhost:15432 ...\n%!";
   let devnull_w = Unix.openfile "/dev/null" [ Unix.O_WRONLY ] 0 in
+  let context_name = ctx.Sol_cli_kube_destination.destination.context in
+  (* FEAT-063: scoped like every other invocation -- [--context] in the argv and
+     the destination's [KUBECONFIG] in the child env. *)
   let pid =
     try
-      Unix.create_process
+      Unix.create_process_env
         "kubectl"
         [| "kubectl"
+         ; "--context"
+         ; context_name
          ; "port-forward"
          ; "svc/postgresql"
          ; "-n"
          ; "postgresql"
          ; "15432:5432"
         |]
+        (Sol_cli_kube_destination.child_environment ctx)
         Unix.stdin
         devnull_w
         devnull_w
@@ -114,12 +121,12 @@ let auto_forward_pg () =
   "postgresql://postgres:dev@localhost:15432/dev"
 ;;
 
-let get_postgres_url () =
+let get_postgres_url ~ctx () =
   match Sys.getenv_opt "POSTGRES_URL" with
   | Some u -> u
   | None ->
-    if cluster_pg_exists ()
-    then auto_forward_pg ()
+    if cluster_pg_exists ~ctx ()
+    then auto_forward_pg ~ctx ()
     else (
       Printf.eprintf "error: POSTGRES_URL not set and no cluster postgres found.\n";
       Printf.eprintf "  Run 'sol dev up' first, then retry.\n";
@@ -165,11 +172,11 @@ let print_pending_sql dir =
       files
 ;;
 
-let run_apply_local dir table dry_run =
+let run_apply_local ~ctx dir table dry_run =
   if dry_run
   then print_pending_sql dir
   else (
-    let url = get_postgres_url () in
+    let url = get_postgres_url ~ctx () in
     with_pool url (fun ~fs pool ->
       Printf.printf "Applying migrations from %s...\n%!" dir;
       match Migration.apply ~table pool ~dir ~fs with
@@ -249,15 +256,20 @@ let read_migration_files dir =
       fname, content)
 ;;
 
-let run_kubectl ?(timeout_s = 30.) argv =
-  Sol_cli_process.run (Sol_cli_process.cmd ~timeout_s ("kubectl" :: argv))
+(* FEAT-063: the context args are prefixed here, so every migration kubectl call
+   is scoped by construction. *)
+let run_kubectl ~ctx ?(timeout_s = 30.) argv =
+  Sol_cli_process.run
+    (Sol_cli_process.cmd
+       ~timeout_s
+       (("kubectl" :: Sol_cli_kube_destination.kubectl_context_args ctx) @ argv))
 ;;
 
 (* [on_fail] runs before erroring out -- used to clean up a ConfigMap that
    already applied successfully if the following Job apply then fails, so a
    half-created migration attempt doesn't leave stray cluster objects. *)
-let kubectl_apply_or_fatal ~what ?(on_fail = fun () -> ()) argv =
-  match run_kubectl argv with
+let kubectl_apply_or_fatal ~ctx ~what ?(on_fail = fun () -> ()) argv =
+  match run_kubectl ~ctx argv with
   | Ok r when r.Sol_cli_process.exit_code = 0 -> ()
   | Ok r ->
     on_fail ();
@@ -398,7 +410,7 @@ let pick_namespace_and_service ~workspace =
     namespace, k8s_name
 ;;
 
-let run_apply_in_cluster ~target ~dir ~table ~registry_override =
+let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
   match Sol_cli_config.load_for_target ~target with
   | Error e -> fatal (Sol_cli_config.error_to_string e)
   | Ok cfg ->
@@ -454,6 +466,7 @@ let run_apply_in_cluster ~target ~dir ~table ~registry_override =
          let cleanup () =
            ignore
              (run_kubectl
+                ~ctx
                 [ "delete"
                 ; "job"
                 ; job_name
@@ -464,6 +477,7 @@ let run_apply_in_cluster ~target ~dir ~table ~registry_override =
                 ]);
            ignore
              (run_kubectl
+                ~ctx
                 [ "delete"
                 ; "configmap"
                 ; configmap_name
@@ -487,9 +501,11 @@ let run_apply_in_cluster ~target ~dir ~table ~registry_override =
            job_name
            namespace;
          kubectl_apply_or_fatal
+           ~ctx
            ~what:"kubectl apply (configmap)"
            [ "apply"; "-f"; configmap_yaml ];
          kubectl_apply_or_fatal
+           ~ctx
            ~what:"kubectl apply (job)"
            ~on_fail:cleanup
            [ "apply"; "-f"; job_yaml ];
@@ -514,6 +530,7 @@ let run_apply_in_cluster ~target ~dir ~table ~registry_override =
          let job_field field =
            match
              run_kubectl
+               ~ctx
                ~timeout_s:15.
                [ "get"
                ; "job"
@@ -551,6 +568,7 @@ let run_apply_in_cluster ~target ~dir ~table ~registry_override =
          Printf.printf "\n--- migration Job logs (%s) ---\n%!" job_name;
          (match
             run_kubectl
+              ~ctx
               ~timeout_s:30.
               [ "logs"; Printf.sprintf "job/%s" job_name; "-n"; namespace ]
           with
@@ -575,8 +593,8 @@ let run_apply_in_cluster ~target ~dir ~table ~registry_override =
 
 (* ── status ──────────────────────────────────────────────────────────────── *)
 
-let run_status dir table () =
-  let url = get_postgres_url () in
+let run_status ~ctx dir table () =
+  let url = get_postgres_url ~ctx () in
   with_pool url (fun ~fs pool ->
     match Migration.status ~table pool ~dir ~fs with
     | Error e ->
@@ -597,8 +615,8 @@ let run_status dir table () =
 
 (* ── rollback ────────────────────────────────────────────────────────────── *)
 
-let run_rollback dir table () =
-  let url = get_postgres_url () in
+let run_rollback ~ctx dir table () =
+  let url = get_postgres_url ~ctx () in
   with_pool url (fun ~fs pool ->
     match Migration.rollback ~table pool ~dir ~fs with
     | Ok () -> Printf.printf "Rolled back.\n"
@@ -609,13 +627,14 @@ let run_rollback dir table () =
 
 (* ── apply dispatch: local direct-connect vs in-cluster Job ────────────────── *)
 
-let run_apply dir table dry_run target registry =
+let run_apply ~ctx dir table dry_run target registry =
   if dry_run
   then print_pending_sql dir
   else (
     match target with
-    | None -> run_apply_local dir table dry_run
-    | Some target -> run_apply_in_cluster ~target ~dir ~table ~registry_override:registry)
+    | None -> run_apply_local ~ctx dir table dry_run
+    | Some target ->
+      run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override:registry)
 ;;
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
@@ -681,19 +700,38 @@ let apply_cmd =
   Cmd.v
     (Cmd.info "apply" ~doc:"Apply all pending migrations (default subcommand)")
     Term.(
-      const run_apply $ dir_arg $ table_arg $ dry_run_flag $ target_arg $ registry_arg)
+      const (fun dir table dry_run target registry ->
+        (* FEAT-063: a named target supplies the destination; the no-target
+              form is the local dev path and uses the literal local cluster. *)
+        let ctx =
+          match target with
+          | Some t -> Cmd_destination.top ~command:"migrate" t
+          | None -> Cmd_destination.local
+        in
+        run_apply ~ctx dir table dry_run target registry)
+      $ dir_arg
+      $ table_arg
+      $ dry_run_flag
+      $ target_arg
+      $ registry_arg)
 ;;
 
 let status_cmd =
   Cmd.v
     (Cmd.info "status" ~doc:"Show per-file applied/pending status")
-    Term.(const run_status $ dir_arg $ table_arg $ const ())
+    Term.(
+      const (fun dir table -> run_status ~ctx:Cmd_destination.local dir table ())
+      $ dir_arg
+      $ table_arg)
 ;;
 
 let rollback_cmd =
   Cmd.v
     (Cmd.info "rollback" ~doc:"Roll back the last applied migration")
-    Term.(const run_rollback $ dir_arg $ table_arg $ const ())
+    Term.(
+      const (fun dir table -> run_rollback ~ctx:Cmd_destination.local dir table ())
+      $ dir_arg
+      $ table_arg)
 ;;
 
 let cmd =
@@ -701,6 +739,30 @@ let cmd =
     (Cmd.info "migrate" ~doc:"Run database migrations against POSTGRES_URL")
     ~default:
       Term.(
-        const run_apply $ dir_arg $ table_arg $ dry_run_flag $ target_arg $ registry_arg)
+        const (fun dir table dry_run target registry ->
+          let ctx =
+            match target with
+            | Some t -> Cmd_destination.top ~command:"migrate" t
+            | None -> Cmd_destination.local
+          in
+          run_apply ~ctx dir table dry_run target registry)
+        $ dir_arg
+        $ table_arg
+        $ dry_run_flag
+        $ target_arg
+        $ registry_arg)
     [ apply_cmd; status_cmd; rollback_cmd ]
+;;
+
+(* FEAT-063: the local form -- migrations against Sol's own cluster. *)
+let local_cmd =
+  Cmd.v
+    (Cmd.info "migrate" ~doc:"Apply migrations against the local cluster's Postgres")
+    Term.(
+      const (fun dir table dry_run registry ->
+        run_apply ~ctx:Cmd_destination.local dir table dry_run None registry)
+      $ dir_arg
+      $ table_arg
+      $ dry_run_flag
+      $ registry_arg)
 ;;

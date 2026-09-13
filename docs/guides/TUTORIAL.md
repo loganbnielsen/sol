@@ -52,7 +52,7 @@ The tarball includes the `sol` binary and the framework source tree (`framework/
 Sol's local cluster mirrors production exactly: same Helm charts, same service DNS names, same security model. The only difference is scale (single replica, no persistent volumes).
 
 ```bash
-sol local up
+sol local infra up
 ```
 
 This creates a k3d cluster named `sol-local` and installs:
@@ -75,7 +75,7 @@ Grafana         localhost:3000   (admin / dev)
 Pushgateway     localhost:9091
 ```
 
-These port-forwards are managed by Sol in the background (PIDs recorded in `~/.local/share/sol/`). `sol local down` tears everything down. Running `sol local up` again clears any stale port-forwards first, so repeat runs are safe.
+These port-forwards are managed by Sol in the background (PIDs recorded in `~/.local/share/sol/`). `sol local infra down` tears everything down. Running `sol local infra up` again clears any stale port-forwards first, so repeat runs are safe.
 
 ### Local iteration with `sol local run`
 
@@ -87,9 +87,9 @@ sol local run
 
 `sol local run` discovers every service in `app/<domain>/<name>/` that has a `Dockerfile`, runs a single `dune build` across all of them, then spawns each compiled binary as a **native process** — no Docker image rebuild required. Each service's stdout and stderr are prefixed with `[domain/name]` so you can follow multiple services in one terminal. Ctrl-C cleanly kills all child processes.
 
-The environment variables your services expect are inherited directly from the shell (set by `sol local up`'s port-forwards):
+The environment variables your services expect are inherited directly from the shell (set by `sol local infra up`'s port-forwards):
 
-| Variable | Value (set by `sol local up`) |
+| Variable | Value (set by `sol local infra up`) |
 |---|---|
 | `KAFKA_BROKERS` | `localhost:9092` |
 | `SCHEMA_REGISTRY_URL` | `http://localhost:8081` |
@@ -102,10 +102,10 @@ The environment variables your services expect are inherited directly from the s
 |---|---|---|
 | How services run | Native OCaml binaries | Docker containers in k3d |
 | On code change | `dune build` + re-run (~seconds) | `docker build` + redeploy (~minutes) |
-| Uses k3d infra | Yes (via port-forwards from `sol local up`) | Yes |
+| Uses k3d infra | Yes (via port-forwards from `sol local infra up`) | Yes |
 | Good for | Fast edit-compile-run loop | Final smoke test before CI |
 
-Both commands talk to the same Kafka broker, PostgreSQL, and Loki instance that `sol local up` started. The difference is only in how the service processes themselves are launched.
+Both commands talk to the same Kafka broker, PostgreSQL, and Loki instance that `sol local infra up` started. The difference is only in how the service processes themselves are launched.
 
 ---
 
@@ -172,7 +172,7 @@ pluto/
 
   db/migrations/
     0001_notifications.sql        ← initial schema
-    0001_notifications.down.sql   ← companion rollback migration (used by `sol migrate rollback`)
+    0001_notifications.down.sql   ← companion rollback migration (used by `sol local migrate rollback`)
 
   test/
     test_schemas.ml               ← schema backward-compatibility CI gate
@@ -318,12 +318,12 @@ Prefer events for cross-domain flows unless the synchronous dependency is part
 of the service contract.
 
 These names are deterministic from the Helm release names and workspace/domain
-names chosen by `sol local up`.
+names chosen by `sol local infra up`.
 
 After `sol up` finishes, check what's running:
 
 ```bash
-sol status
+sol local status
 ```
 
 ```
@@ -342,7 +342,7 @@ charge-svc-5464d77bd4-2lnb9    1/1     Running   0          2m
 ## Part 4 — Run database migrations
 
 ```bash
-sol migrate
+sol local migrate
 ```
 
 If `POSTGRES_URL` is not set, Sol detects the cluster postgres automatically and starts a background port-forward:
@@ -353,14 +353,14 @@ Applying migrations from db/migrations...
 Done.
 ```
 
-The migration runner applies SQL files in numeric order and records each applied version in a `sol_<workspace>_schema_migrations` table (for example, `sol_pluto_schema_migrations` when your workspace directory is `pluto`). Re-running `sol migrate` is safe — already-applied versions are skipped.
+The migration runner applies SQL files in numeric order and records each applied version in a `sol_<workspace>_schema_migrations` table (for example, `sol_pluto_schema_migrations` when your workspace directory is `pluto`). Re-running `sol local migrate` is safe — already-applied versions are skipped.
 
 The table name is derived from your workspace directory name. Use `--table <name>` to override the default if you need a custom tracking table.
 
 Check migration status at any time:
 
 ```bash
-sol migrate status
+sol local migrate status
 ```
 
 ```
@@ -440,7 +440,7 @@ Sol registers these metrics automatically when `?ot` is wired in the service ent
 
 ### Traces
 
-Unlike metrics, tracing isn't automatic — a handler opts in by wrapping its work in `Obs_eio.with_span`, as `POST /charges` does (Part 2). `sol local up` provisions Tempo and wires `TEMPO_URL` in automatically, so any handler that calls `with_span` gets a real trace with no extra setup. Click a `charge-svc` log line in the Loki view above: next to `trace_id=...` Grafana shows a **Tempo** button (a derived-field link, no copy-pasting IDs) that jumps straight to that request's span waterfall in **Explore → Tempo**.
+Unlike metrics, tracing isn't automatic — a handler opts in by wrapping its work in `Obs_eio.with_span`, as `POST /charges` does (Part 2). `sol local infra up` provisions Tempo and wires `TEMPO_URL` in automatically, so any handler that calls `with_span` gets a real trace with no extra setup. Click a `charge-svc` log line in the Loki view above: next to `trace_id=...` Grafana shows a **Tempo** button (a derived-field link, no copy-pasting IDs) that jumps straight to that request's span waterfall in **Explore → Tempo**.
 
 Tracing is `-svc`-only for now. `notify-worker` receives the same trace context and logs the matching `trace_id` for correlation, but doesn't wrap its work in a span, so it doesn't emit its own spans to Tempo yet.
 
@@ -534,7 +534,7 @@ and `Sol_obs.metrics_renderer obs` hand the lower-level pieces to
 
 When `LOKI_URL`/`TEMPO_URL` are absent (local `dune exec` dev), logs go to
 stdout in logfmt format and no traces are emitted. In the cluster,
-`sol local up` sets Loki/Tempo automatically. The code is identical either way.
+`sol local infra up` sets Loki/Tempo automatically. The code is identical either way.
 Workers follow the same pattern, but only service handlers currently opt into
 application spans.
 
@@ -549,8 +549,8 @@ sol new worker <domain>/<name>                    add a Kafka consumer
 sol new fn <domain>/<name>                        add a scheduled function
 sol new event <team>/<name>                       add a typed Kafka event
 
-sol local up                                        provision local k3d cluster
-sol local down                                      tear down the cluster
+sol local infra up                                        provision local k3d cluster
+sol local infra down                                      tear down the cluster
 sol local status                                    show running infra endpoints
 sol local run [--scope DOMAIN[/UNIT]]                 run services as native processes (fast iteration)
 
@@ -624,6 +624,35 @@ Two things that line is telling you:
 
 - **`not configured`** means the target names no `kube_context`, so `sol deploy` has no cluster to reach. `sol cloud init` writes it when Sol creates the cluster; for a cluster you own, name its context in the target.
 - **The context is hidden unless you ask.** It is how Sol reaches the cluster, not what the target is, so it does not lead the summary — but it is what you need when you want to run `kubectl` by hand, which is what `--verbose` is for.
+
+### Destinations: the cluster comes from the target, never from your shell
+
+Every cluster-touching command resolves its destination from the target you
+name, and Sol passes it to `kubectl` explicitly as `--context` (plus a scoped
+`KUBECONFIG` when the target has one). It never consults, and never changes,
+your machine's active `kubectl` context. So there is no "switch context, then
+run `sol`" step, and no risk of a stale context sending a command to the wrong
+cluster:
+
+```bash
+sol deploy prod/aws/us-east-1        # explicitly against that target's cluster
+sol status --target prod/aws/us-east-1
+sol logs charge_svc --target prod/aws/us-east-1
+```
+
+For Sol's own local cluster, the destination is the literal `k3d-sol-local`, so
+the local forms need no target at all:
+
+```bash
+sol local status
+sol local logs charge_svc
+sol local rollback charge_svc
+sol local migrate
+```
+
+The two forms are one grammar: `sol <command> --target <t>` and
+`sol local <command>`. A top-level cluster-touching command with no `--target`
+fails closed and points at its `sol local` spelling rather than guessing.
 
 Naming a target that does not exist fails closed and lists the ones that do:
 
@@ -730,7 +759,7 @@ sol cloud apply prod/aws/us-east-1 --var-file prod.tfvars
 sol cloud apply prod/aws/us-east-1 --var cluster_name=acme-prod --var db_password=...
 ```
 
-On success the command prints the key provisioned endpoints, then runs `kubeconfig_command` automatically so `kubectl` (and therefore `sol status`/`sol deploy`/`sol migrate`) can reach the new cluster right away — no separate manual step needed:
+On success the command prints the key provisioned endpoints, then runs `kubeconfig_command` automatically so `kubectl` (and therefore `sol local status`/`sol deploy`/`sol local migrate`) can reach the new cluster right away — no separate manual step needed:
 
 ```
   cluster_name                  acme-prod
@@ -759,7 +788,7 @@ terraform apply \
   -var="install_postgresql=false"   # using RDS or Cloud SQL
 ```
 
-After `terraform apply`, the cluster is identical to `sol local up` — same DNS names, same ConfigMap values, same Grafana dashboards.
+After `terraform apply`, the cluster is identical to `sol local infra up` — same DNS names, same ConfigMap values, same Grafana dashboards.
 
 **Point DNS at the ingress** before any service with an `ingress_host` in its `sol.toml` is reachable:
 
@@ -768,7 +797,7 @@ After `terraform apply`, the cluster is identical to `sol local up` — same DNS
 kubectl get svc -n ingress-nginx ingress-nginx-controller   # EXTERNAL-IP
 ```
 
-Create an `A`/alias or `CNAME` record for each `ingress_host` — or one wildcard record such as `*.acme.com` — in the zone created by your provider module (`cli/platform/infra/aws` exposes `route53_zone_id` and `route53_nameservers`; point your registrar's NS at the latter on first setup). Sol deliberately does not run external-dns, so this is a required manual step, and cert-manager only finishes TLS once the name resolves. Locally there is nothing to do: `sol local up` forwards the same controller to `http://localhost:8088`, and a service with no `ingress_host` gets the dev host `<svc>.<namespace>.localhost` — send it as the `Host` header, e.g. `curl -H 'Host: charge-svc.acme-payments.localhost' http://localhost:8088/health`.
+Create an `A`/alias or `CNAME` record for each `ingress_host` — or one wildcard record such as `*.acme.com` — in the zone created by your provider module (`cli/platform/infra/aws` exposes `route53_zone_id` and `route53_nameservers`; point your registrar's NS at the latter on first setup). Sol deliberately does not run external-dns, so this is a required manual step, and cert-manager only finishes TLS once the name resolves. Locally there is nothing to do: `sol local infra up` forwards the same controller to `http://localhost:8088`, and a service with no `ingress_host` gets the dev host `<svc>.<namespace>.localhost` — send it as the `Host` header, e.g. `curl -H 'Host: charge-svc.acme-payments.localhost' http://localhost:8088/health`.
 
 > **Advanced / manual override:** `sol cloud plan/apply` is a thin wrapper around Terraform. Engineers who need full Terraform control — custom variables, targeted applies, remote state configuration, or workspace management — can invoke Terraform directly against the same modules:
 >

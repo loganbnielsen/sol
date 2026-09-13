@@ -32,28 +32,30 @@ let rollback_target_of_service (s : Sol_cli_deployment_plan.service_spec) =
      | None -> Standard_deployment { namespace = ns; name })
 ;;
 
-let argo_plugin_available () =
+(* FEAT-063: even the plugin probe is scoped, so a rollback never has to be told
+   which cluster twice — the same destination reaches the probe and the undo. *)
+let argo_plugin_available ~ctx () =
   (match
      Sol_cli_process.run (Sol_cli_process.cmd [ "kubectl-argo-rollouts"; "version" ])
    with
    | Ok r -> r.Sol_cli_process.exit_code = 0
    | Error _ -> false)
-  || Sol_cli_kubectl.probe ~args:[ "argo"; "rollouts"; "version" ]
+  || Sol_cli_kubectl.probe ~ctx ~args:[ "argo"; "rollouts"; "version" ]
 ;;
 
-let execute_rollback target =
+let execute_rollback ~ctx target =
   match target with
   | No_op _ -> Ok ()
   | Standard_deployment { namespace; name } ->
     let kind_name = "deployment/" ^ name in
-    (match Sol_cli_kubectl.rollout_undo ~kind_name ~namespace with
+    (match Sol_cli_kubectl.rollout_undo ~ctx ~kind_name ~namespace with
      | Error e -> Error (Kubectl_error e)
      | Ok r when r.Sol_cli_process.exit_code <> 0 ->
        Error
          (Non_zero
             { command = "kubectl rollout undo"; exit_code = r.Sol_cli_process.exit_code })
      | Ok _ ->
-       (match Sol_cli_kubectl.rollout_status ~kind_name ~namespace with
+       (match Sol_cli_kubectl.rollout_status ~ctx ~kind_name ~namespace with
         | Error e -> Error (Kubectl_error e)
         | Ok r when r.Sol_cli_process.exit_code <> 0 ->
           Error
@@ -63,10 +65,10 @@ let execute_rollback target =
                })
         | Ok _ -> Ok ()))
   | Argo_rollout { namespace; name } ->
-    if not (argo_plugin_available ())
+    if not (argo_plugin_available ~ctx ())
     then Error (Plugin_missing { namespace; name })
     else (
-      match Sol_cli_kubectl.argo_rollout_undo ~namespace ~name with
+      match Sol_cli_kubectl.argo_rollout_undo ~ctx ~namespace ~name with
       | Error e -> Error (Kubectl_error e)
       | Ok r when r.Sol_cli_process.exit_code <> 0 ->
         Error
@@ -75,7 +77,7 @@ let execute_rollback target =
              ; exit_code = r.Sol_cli_process.exit_code
              })
       | Ok _ ->
-        (match Sol_cli_kubectl.argo_rollout_status ~namespace ~name with
+        (match Sol_cli_kubectl.argo_rollout_status ~ctx ~namespace ~name with
          | Error e -> Error (Kubectl_error e)
          | Ok r when r.Sol_cli_process.exit_code <> 0 ->
            Error

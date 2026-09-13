@@ -2,7 +2,10 @@
    is two applies: the immutable per-release ConfigMap, then the mutable pointer
    naming the current release. A failure to write is reported to the caller,
    which decides whether it is fatal — recording must never pretend to have
-   happened. *)
+   happened.
+
+   FEAT-063: records live in the cluster the target names, so each entry point
+   takes the destination-side context and hands it to kubectl. *)
 
 let with_temp_json json (f : string -> 'a) : 'a =
   let path = Filename.temp_file "sol-release-" ".json" in
@@ -16,22 +19,23 @@ let with_temp_json json (f : string -> 'a) : 'a =
     (fun () -> f path)
 ;;
 
-let apply_json json =
+let apply_json ~ctx json =
   with_temp_json json (fun path ->
-    match Sol_cli_kubectl.apply ~file:path with
+    match Sol_cli_kubectl.apply ~ctx ~file:path with
     | Ok () -> Ok ()
     | Error e -> Error (Sol_cli_process.error_to_string e))
 ;;
 
-let record (t : Sol_cli_release.t) : (unit, string) result =
-  match apply_json (Sol_cli_release.to_configmap_json t) with
+let record ~ctx (t : Sol_cli_release.t) : (unit, string) result =
+  match apply_json ~ctx (Sol_cli_release.to_configmap_json t) with
   | Error e -> Error e
-  | Ok () -> apply_json (Sol_cli_release.to_current_configmap_json t)
+  | Ok () -> apply_json ~ctx (Sol_cli_release.to_current_configmap_json t)
 ;;
 
 (* Provenance is read here rather than threaded from the command, so [sol up]
    and [sol deploy] record the same two facts the same way. *)
 let record_plan
+      ~ctx
       ~(workspace : string)
       ~(target : string)
       ~(mode : string)
@@ -39,6 +43,7 @@ let record_plan
   : (unit, string) result
   =
   record
+    ~ctx
     (Sol_cli_release.of_plan
        ~workspace
        ~target
@@ -48,7 +53,7 @@ let record_plan
        plan)
 ;;
 
-let list ~(workspace : string) : (Sol_cli_release.t list, string) result =
+let list ~ctx ~(workspace : string) : (Sol_cli_release.t list, string) result =
   let selector =
     Printf.sprintf
       "sol.dev/type=release,sol.dev/workspace=%s"
@@ -56,6 +61,7 @@ let list ~(workspace : string) : (Sol_cli_release.t list, string) result =
   in
   match
     Sol_cli_kubectl.get_raw
+      ~ctx
       ~args:[ "get"; "configmap"; "-n"; "default"; "-l"; selector; "-o"; "json" ]
   with
   | Error e -> Error (Sol_cli_process.error_to_string e)

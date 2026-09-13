@@ -23,7 +23,7 @@ let git_sha () =
    get a Service resource (sol_cli_deployment_render.ml only emits
    service_doc for Http_service shapes), so this naturally excludes
    worker/fn services without needing to thread primitive info through. *)
-let print_service_urls (results : Sol_cli_executor.result list) =
+let print_service_urls ~ctx (results : Sol_cli_executor.result list) =
   let deployed_names =
     List.map (fun (r : Sol_cli_executor.result) -> r.Sol_cli_executor.name) results
   in
@@ -39,6 +39,7 @@ let print_service_urls (results : Sol_cli_executor.result list) =
        let jsonpath = "{.items[?(@.spec.type==\"ClusterIP\")].metadata.name}" in
        match
          Sol_cli_kubectl.get_raw
+           ~ctx
            ~args:[ "get"; "svc"; "-n"; ns; "-o"; "jsonpath=" ^ jsonpath ]
        with
        | Ok r when r.Sol_cli_process.exit_code = 0 && r.Sol_cli_process.stdout <> "" ->
@@ -48,6 +49,7 @@ let print_service_urls (results : Sol_cli_executor.result list) =
          |> List.iter (fun name ->
            match
              Sol_cli_kubectl.get
+               ~ctx
                ~resource:"svc"
                ~name
                ~namespace:ns
@@ -78,8 +80,8 @@ let ensure_postgres_url () =
   | Some _ -> ()
 ;;
 
-let check_consumer_group_changes ~workspace ~confirm_group_change plan =
-  let prev_groups = Sol_cli_deployment_state.load_deployed_groups workspace in
+let check_consumer_group_changes ~ctx ~workspace ~confirm_group_change plan =
+  let prev_groups = Sol_cli_deployment_state.load_deployed_groups ~ctx workspace in
   let next_groups =
     List.map
       Sol_cli_plan_ids.Consumer_group.to_string
@@ -119,6 +121,7 @@ type deploy_context =
   ; requested_scope : string
   ; target_name : string
   ; run_log : Sol_cli_run_log.t
+  ; kube_ctx : Sol_cli_kube_destination.context
   }
 
 let print_header ~workspace ~sha ?mode_line () =
@@ -219,11 +222,11 @@ let record_plan run_log plan =
     (Format.asprintf "%a" Sol_cli_deployment_plan.pp_summary plan)
 ;;
 
-let run_plan ~run_log ~phase ~workspace ~target_env ~mode ~secret_backend plan =
+let run_plan ~ctx ~run_log ~phase ~workspace ~target_env ~mode ~secret_backend plan =
   match
     Sol_cli_run_log.run_task run_log ~name:phase (fun () ->
       try
-        Sol_cli_factory.execute ~workspace ~env:target_env ~mode ~secret_backend plan
+        Sol_cli_factory.execute ~ctx ~workspace ~env:target_env ~mode ~secret_backend plan
       with
       | Deploy_failed msg -> Error msg)
   with
@@ -241,6 +244,7 @@ let run_dry_run ctx ~emit_to =
   record_plan ctx.run_log plan;
   ignore
     (run_plan
+       ~ctx:ctx.kube_ctx
        ~run_log:ctx.run_log
        ~phase:"dry-run"
        ~workspace:ctx.workspace
@@ -262,6 +266,7 @@ let run_emit ctx ~dir =
   record_plan ctx.run_log plan;
   let results =
     run_plan
+      ~ctx:ctx.kube_ctx
       ~run_log:ctx.run_log
       ~phase:"emit"
       ~workspace:ctx.workspace
@@ -286,7 +291,7 @@ let run_emit ctx ~dir =
   Printf.printf "Commit and push to your GitOps repo, then Argo CD will apply them.\n"
 ;;
 
-let push_deploy_events ~workspace ~target_cfg ~loki_push_url plan =
+let push_deploy_events ~ctx ~workspace ~target_cfg ~loki_push_url plan =
   let backend =
     Option.bind
       target_cfg.Sol_cli_config.observability_backend
@@ -305,7 +310,9 @@ let push_deploy_events ~workspace ~target_cfg ~loki_push_url plan =
          })
       plan.Sol_cli_deployment_plan.services
   in
-  try Cmd_deploy_event.push_all ~backend ~explicit_url:loki_push_url deploy_events with
+  try
+    Cmd_deploy_event.push_all ~ctx ~backend ~explicit_url:loki_push_url deploy_events
+  with
   | Eio.Cancel.Cancelled _ as exn -> raise exn
   | (Out_of_memory | Stack_overflow | Sys.Break) as exn -> raise exn
   | exn ->
@@ -319,12 +326,17 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
   print_header ~workspace:ctx.workspace ~sha:ctx.sha ();
   let target_env = ctx.target_cfg.Sol_cli_config.env in
   let plan = build_plan ctx ~emit_to:None in
-  check_consumer_group_changes ~workspace:ctx.workspace ~confirm_group_change plan;
+  check_consumer_group_changes
+    ~ctx:ctx.kube_ctx
+    ~workspace:ctx.workspace
+    ~confirm_group_change
+    plan;
   write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
   print_planned_services plan;
   record_plan ctx.run_log plan;
   let results =
     run_plan
+      ~ctx:ctx.kube_ctx
       ~run_log:ctx.run_log
       ~phase:"apply"
       ~workspace:ctx.workspace
@@ -341,9 +353,10 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
          r.Sol_cli_executor.image)
     results;
   Printf.printf "\nDone. %d service(s) deployed.\n" (List.length ctx.services);
-  print_service_urls results;
+  print_service_urls ~ctx:ctx.kube_ctx results;
   Printf.printf "Run 'sol status' to check pod health.\n";
   Sol_cli_deployment_state.record_outcome
+    ~ctx:ctx.kube_ctx
     ctx.workspace
     (Sol_cli_deployment_state.Applied
        { namespace = "default"
@@ -358,6 +371,7 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
      failure: the deploy happened, and the record is for later. *)
   (match
      Sol_cli_release_store.record_plan
+       ~ctx:ctx.kube_ctx
        ~workspace:ctx.workspace
        ~target:ctx.target_name
        ~mode:"deploy"
@@ -366,6 +380,7 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
    | Ok () -> ()
    | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);
   push_deploy_events
+    ~ctx:ctx.kube_ctx
     ~workspace:ctx.workspace
     ~target_cfg:ctx.target_cfg
     ~loki_push_url
@@ -451,6 +466,12 @@ let run (req : Sol_cli_command_request.deploy_request) =
     ; requested_scope
     ; target_name = req.target
     ; run_log
+    ; kube_ctx =
+        (match Sol_cli_config.destination_of_target target_cfg with
+         | Ok destination -> Sol_cli_kube_destination.context_of_destination destination
+         | Error msg ->
+           Printf.eprintf "error: %s\n%!" msg;
+           exit 1)
     }
   in
   match req.action with

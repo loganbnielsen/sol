@@ -39,18 +39,15 @@ let resolve_unit ~scope =
     exit 1
 ;;
 
-let workload_exists ~ns ~primitive ~k8s_name =
+(* FEAT-063: even this existence check goes through the adapter, so it cannot
+   drift into an unscoped kubectl invocation. *)
+let workload_exists ~ctx ~ns ~primitive ~k8s_name =
   let kind =
     match (primitive : Sol_cli_manifest.primitive) with
     | Fn -> "cronjob"
     | Svc | Worker -> "deployment"
   in
-  match
-    Sol_cli_process.run
-      (Sol_cli_process.cmd [ "kubectl"; "get"; kind; k8s_name; "-n"; ns ])
-  with
-  | Ok r -> r.Sol_cli_process.exit_code = 0
-  | Error _ -> false
+  Sol_cli_kubectl.probe ~ctx ~args:[ "get"; kind; k8s_name; "-n"; ns ]
 ;;
 
 let namespace_or_exit ~workspace ~domain =
@@ -67,12 +64,34 @@ let kubectl_log_target ~primitive ~k8s_name : Sol_cli_logs.kubectl_log_target =
   | Svc | Worker -> Deployment k8s_name
 ;;
 
-let exec_kubectl_logs ~ns ~target ~follow ~tail =
-  let argv = Sol_cli_logs.kubectl_logs_argv ~ns ~target ~follow ~tail in
-  Unix.execvp "kubectl" (Array.of_list argv)
+(* Because this [exec]s, no wrapper can inject anything after the fact: the
+   invocation must already carry the destination (FEAT-063). The argv gets
+   [--context], and the child env gets [KUBECONFIG] when one is scoped -- the
+   same pair [Sol_cli_kubectl] would apply for a non-exec call. *)
+let exec_kubectl_logs ~ctx ~ns ~target ~follow ~tail =
+  let argv = Sol_cli_logs.kubectl_logs_argv ~ctx ~ns ~target ~follow ~tail in
+  let overrides = Sol_cli_kube_destination.context_environment ctx in
+  let env =
+    if overrides = []
+    then Unix.environment ()
+    else (
+      let keys = List.map fst overrides in
+      let base =
+        Array.to_list (Unix.environment ())
+        |> List.filter (fun entry ->
+          match String.index_opt entry '=' with
+          | None -> true
+          | Some i ->
+            let name = String.sub entry 0 i in
+            not (List.mem name keys))
+      in
+      Array.of_list (base @ List.map (fun (k, v) -> k ^ "=" ^ v) overrides))
+  in
+  Unix.execvpe "kubectl" (Array.of_list argv) env
 ;;
 
 let run
+      ~ctx
       ~scope
       ~follow
       ~tail
@@ -122,13 +141,14 @@ let run
      Printf.printf "Grafana logs: (%s)\n%!" reason);
   let kubectl_target = kubectl_log_target ~primitive ~k8s_name in
   let fallback_to_kubectl () =
-    if not (workload_exists ~ns ~primitive ~k8s_name)
+    if not (workload_exists ~ctx ~ns ~primitive ~k8s_name)
     then (
       Printf.eprintf "Service %s not found in namespace %s.\n" name ns;
       Printf.eprintf "Run 'sol status' to see deployed services.\n";
       exit 1);
     (match
        Sol_cli_rollout_diagnosis.diagnose_service_live
+         ~ctx
          ~pod_expectation:(Sol_cli_status.pod_expectation_of_primitive primitive)
          ~ns
          ~service_name:name
@@ -137,7 +157,7 @@ let run
      with
      | Some diagnosis -> Printf.printf "%s\n%!" diagnosis
      | None -> ());
-    exec_kubectl_logs ~ns ~target:kubectl_target ~follow ~tail
+    exec_kubectl_logs ~ctx ~ns ~target:kubectl_target ~follow ~tail
   in
   if follow
   then fallback_to_kubectl ()
@@ -390,7 +410,12 @@ let cmd =
              loki_password
            ->
            let explicit_backend = backend_of_arg observability_backend in
+           let ctx =
+             Cmd_destination.or_exit
+               (Cmd_destination.resolve ~command:"logs" ~local:false ~target)
+           in
            run
+             ~ctx
              ~scope
              ~follow
              ~tail
@@ -408,6 +433,47 @@ let cmd =
       $ observability_backend_arg
       $ base_domain_arg
       $ target_arg
+      $ grafana_base_url_arg
+      $ loki_base_url_arg
+      $ loki_username_arg
+      $ loki_password_arg)
+;;
+
+(* FEAT-063: the local form -- logs from a workload on Sol's own cluster. *)
+let local_cmd =
+  Cmd.v
+    (Cmd.info "logs" ~doc:"Stream logs from a workload running on the local cluster")
+    Term.(
+      const
+        (fun
+            scope
+             follow
+             tail
+             observability_backend
+             base_domain
+             grafana_base_url
+             loki_base_url
+             loki_username
+             loki_password
+           ->
+           run
+             ~ctx:Cmd_destination.local
+             ~scope
+             ~follow
+             ~tail
+             ~explicit_backend:(backend_of_arg observability_backend)
+             ~explicit_base_domain:base_domain
+             ~target:None
+             ~explicit_loki_url:loki_base_url
+             ~explicit_loki_username:loki_username
+             ~explicit_loki_password:loki_password
+             ?grafana_base_url
+             ())
+      $ scope_arg
+      $ follow_term
+      $ tail_arg
+      $ observability_backend_arg
+      $ base_domain_arg
       $ grafana_base_url_arg
       $ loki_base_url_arg
       $ loki_username_arg

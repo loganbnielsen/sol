@@ -51,6 +51,7 @@ let test_run_without_cmdliner () =
     let services = Sol_cli_manifest.discover_services () in
     match
       Sol_cli_factory.run
+        ~ctx:Sol_cli_kube_destination.local_context
         ~workspace:"myapp"
         ~env
         ~requested_scope:"payments"

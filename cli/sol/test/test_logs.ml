@@ -165,10 +165,12 @@ let test_url_default_base () =
 let test_kubectl_logs_deployment_target () =
   check_string
     "argv"
-    "kubectl logs -n acme-payments deployment/charge-svc --follow --tail=50"
+    "kubectl --context k3d-sol-local logs -n acme-payments deployment/charge-svc \
+     --follow --tail=50"
     (String.concat
        " "
        (Sol_cli_logs.kubectl_logs_argv
+          ~ctx:Sol_cli_kube_destination.local_context
           ~ns:"acme-payments"
           ~target:(Sol_cli_logs.Deployment "charge-svc")
           ~follow:true
@@ -178,10 +180,12 @@ let test_kubectl_logs_deployment_target () =
 let test_kubectl_logs_fn_target () =
   check_string
     "argv"
-    "kubectl logs -n acme-billing -l app=invoice-fn --all-containers=true --tail=25"
+    "kubectl --context k3d-sol-local logs -n acme-billing -l app=invoice-fn \
+     --all-containers=true --tail=25"
     (String.concat
        " "
        (Sol_cli_logs.kubectl_logs_argv
+          ~ctx:Sol_cli_kube_destination.local_context
           ~ns:"acme-billing"
           ~target:(Sol_cli_logs.App_selector "invoice-fn")
           ~follow:false

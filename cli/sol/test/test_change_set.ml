@@ -1,4 +1,4 @@
-(* Tests for Sol_cli_executor.run_plan (formerly Sol_cli_change_set).
+(* Tests for Sol_cli_executor.run_plan ~ctx:Sol_cli_kube_destination.local_context (formerly Sol_cli_change_set).
    Verifies that run_plan renders all specs and dispatches correctly per mode. *)
 
 (* ── fixtures ────────────────────────────────────────────────────────────── *)
@@ -105,6 +105,7 @@ let make_plan services =
 let run_ok ~mode ?secret_backend plan =
   match
     Sol_cli_executor.run_plan
+      ~ctx:Sol_cli_kube_destination.local_context
       ~workspace:plan.Sol_cli_deployment_plan.workspace
       ~mode
       ?secret_backend

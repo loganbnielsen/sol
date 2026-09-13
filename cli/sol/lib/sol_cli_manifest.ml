@@ -128,16 +128,16 @@ let write_tmp content =
   tmp
 ;;
 
-let kubectl_apply tmp =
-  match Sol_cli_kubectl.apply ~file:tmp with
+let kubectl_apply ~ctx tmp =
+  match Sol_cli_kubectl.apply ~ctx ~file:tmp with
   | Ok () -> ()
   | Error e ->
     raise (Deploy_failed ("kubectl apply failed: " ^ Sol_cli_process.error_to_string e))
 ;;
 
-let apply_live yaml =
+let apply_live ~ctx yaml =
   let tmp = write_tmp yaml in
-  (try kubectl_apply tmp with
+  (try kubectl_apply ~ctx tmp with
    | e ->
      (try Sys.remove tmp with
       | _ -> ());
@@ -145,20 +145,20 @@ let apply_live yaml =
   Sys.remove tmp
 ;;
 
-let apply (ns_yaml, workload_yaml) ~dry_run =
+let apply ~ctx (ns_yaml, workload_yaml) ~dry_run =
   if dry_run
   then Printf.printf "%s\n%s\n" ns_yaml workload_yaml
   else (
-    apply_live ns_yaml;
+    apply_live ~ctx ns_yaml;
     let tmp = write_tmp workload_yaml in
     (try
-       (match Sol_cli_kubectl.apply_dry_run ~file:tmp with
+       (match Sol_cli_kubectl.apply_dry_run ~ctx ~file:tmp with
         | Ok () -> ()
         | Error e ->
           raise
             (Deploy_failed
                ("kubectl server-side dry-run failed: " ^ Sol_cli_process.error_to_string e)));
-       kubectl_apply tmp
+       kubectl_apply ~ctx tmp
      with
      | e ->
        (try Sys.remove tmp with

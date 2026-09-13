@@ -14,14 +14,6 @@ let git_sha () =
   | _ -> "dev"
 ;;
 
-let current_kube_context () =
-  match Sol_cli_kubectl.config_current_context () with
-  | Ok r when r.Sol_cli_process.exit_code = 0 -> r.Sol_cli_process.stdout
-  | _ -> ""
-;;
-
-let is_known_local_dev_context () = current_kube_context () = "k3d-sol-local"
-
 let find_repo_root () =
   let rec go dir =
     if Sys.file_exists (Filename.concat dir "dune-workspace")
@@ -57,28 +49,26 @@ let check_contract ~services =
   if Sol_cli_check.has_errors findings then exit 1
 ;;
 
+(* FEAT-063: `sol up` is the local deploy path — its destination is the literal
+   local cluster, named explicitly rather than inferred from ambient state. So
+   there is no "is the current context the local one?" question to ask any more:
+   set the local default, and let the explicit `--context` fail if the cluster
+   is gone. *)
 let ensure_postgres_url () =
-  if is_known_local_dev_context ()
-  then (
-    match Sys.getenv_opt "POSTGRES_URL" with
-    | None | Some "" ->
-      Unix.putenv
-        "POSTGRES_URL"
-        "postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev"
-    | Some _ -> ())
-  else (
-    match Sys.getenv_opt "POSTGRES_URL" with
-    | None | Some "" ->
-      Printf.eprintf
-        "error: POSTGRES_URL is not set.\n\
-         Set it in your environment before running 'sol up':\n\
-        \  export POSTGRES_URL=postgresql://user:pass@host:5432/dbname\n";
-      exit 1
-    | Some _ -> ())
+  match Sys.getenv_opt "POSTGRES_URL" with
+  | None | Some "" ->
+    Unix.putenv
+      "POSTGRES_URL"
+      "postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev"
+  | Some _ -> ()
 ;;
 
 let check_consumer_group_changes ~workspace ~confirm_group_change plan =
-  let prev_groups = Sol_cli_deployment_state.load_deployed_groups workspace in
+  let prev_groups =
+    Sol_cli_deployment_state.load_deployed_groups
+      ~ctx:Sol_cli_kube_destination.local_context
+      workspace
+  in
   let next_groups =
     List.map
       Sol_cli_plan_ids.Consumer_group.to_string
@@ -122,6 +112,7 @@ let dry_run_service ~workspace ~sha (spec : Sol_cli_deployment_plan.service_spec
   print_service_start spec;
   match
     Sol_cli_up_execution.apply_service_manifest
+      ~ctx:Sol_cli_kube_destination.local_context
       ~workspace
       ~dry_run:true
       (Sol_cli_up_execution.dry_run_spec ~workspace ~sha spec)
@@ -147,14 +138,25 @@ let apply_service
   (match Sol_cli_up_execution.push_image exec with
    | Error msg -> raise (Deploy_failed msg)
    | Ok () -> ());
-  (match Sol_cli_up_execution.apply_service_manifest ~workspace ~dry_run:false spec with
+  (match
+     Sol_cli_up_execution.apply_service_manifest
+       ~ctx:Sol_cli_kube_destination.local_context
+       ~workspace
+       ~dry_run:false
+       spec
+   with
    | Ok _ -> ()
    | Error msg -> raise (Deploy_failed msg));
   (match spec.primitive with
    | Sol_cli_deployment_plan.Fn -> ()
    | Sol_cli_deployment_plan.Svc | Sol_cli_deployment_plan.Worker ->
      Printf.printf "  waiting for rollout...\n%!";
-     (match Sol_cli_up_execution.wait_for_service_rollout spec exec with
+     (match
+        Sol_cli_up_execution.wait_for_service_rollout
+          ~ctx:Sol_cli_kube_destination.local_context
+          spec
+          exec
+      with
       | Ok () -> ()
       | Error msg -> raise (Deploy_failed msg)));
   match spec.primitive with
@@ -169,6 +171,7 @@ let apply_service
           ~target:("svc/" ^ exec.k8s_name)
       then Unix.sleepf 0.4;
       Sol_cli_port_forward.start
+        ~ctx:Sol_cli_kube_destination.local_context
         { name = exec.k8s_name
         ; namespace = exec.namespace
         ; target = "svc/" ^ exec.k8s_name
@@ -260,12 +263,21 @@ let run_apply
       "\n\
        Note: %d migration file(s) found in db/migrations/ — run 'sol migrate' to apply.\n"
       summary.pending_migrations;
-  Sol_cli_up_execution.record_applied ~workspace ~sha plan;
+  Sol_cli_up_execution.record_applied
+    ~ctx:Sol_cli_kube_destination.local_context
+    ~workspace
+    ~sha
+    plan;
   (* FEAT-067: record the release after a successful apply. A failure to record
      is reported, not fatal — the deploy really did happen, and pretending it
      did not would be worse than a missing record. *)
   (match
-     Sol_cli_release_store.record_plan ~workspace ~target:"local" ~mode:"local" plan
+     Sol_cli_release_store.record_plan
+       ~ctx:Sol_cli_kube_destination.local_context
+       ~workspace
+       ~target:"local"
+       ~mode:"local"
+       plan
    with
    | Ok () -> ()
    | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);
