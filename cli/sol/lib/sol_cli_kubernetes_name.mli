@@ -31,3 +31,12 @@ val namespace_to_string : namespace -> string
     [Sol_cli_open.dashboard_url] both call for workspace/domain, so a rendered
     label and a dashboard link's query param always agree for the same input. *)
 val sanitize_label_value : string -> string
+
+(** [sanitize_name v] produces a valid Kubernetes object *name* (an RFC 1123
+    subdomain: lowercase alphanumerics, [-], [.], up to 253 characters, starting
+    and ending alphanumerically) from any input. It is the stricter sibling of
+    {!sanitize_label_value} — notably [_] is legal in a label value but not in
+    a name, which is how a workspace like [ci_smoke] produced an invalid
+    ["sol-deploy-state-ci_smoke"]. Use this whenever a workspace, domain or unit
+    is embedded in [metadata.name]. *)
+val sanitize_name : string -> string

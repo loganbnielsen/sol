@@ -84,3 +84,35 @@ let sanitize_label_value v =
   then s
   else String.sub s 0 (len - 1) ^ "0"
 ;;
+
+(* BUG-025: Kubernetes object *names* (metadata.name) are RFC 1123 subdomains —
+   lowercase alphanumerics, '-' and '.', up to 253 characters, and they must
+   start and end alphanumerically. '_' is legal in a label *value* but NOT in a
+   name, which is how "sol-deploy-state-ci_smoke" came to be rejected. This is
+   the shared home for that transform; [Sol_cli_release] and
+   [Sol_cli_deployment_state] both build object names from a workspace. *)
+let sanitize_name (s : string) : string =
+  let buf = Buffer.create (String.length s) in
+  String.iter
+    (fun c ->
+       match c with
+       | 'a' .. 'z' | '0' .. '9' | '-' | '.' -> Buffer.add_char buf c
+       | 'A' .. 'Z' -> Buffer.add_char buf (Char.lowercase_ascii c)
+       | _ -> Buffer.add_char buf '-')
+    s;
+  let out = Buffer.contents buf in
+  let out = if String.length out > 253 then String.sub out 0 253 else out in
+  let len = String.length out in
+  let start = ref 0 in
+  while !start < len && not (is_alnum out.[!start]) do
+    incr start
+  done;
+  let stop = ref (len - 1) in
+  while !stop >= !start && not (is_alnum out.[!stop]) do
+    decr stop
+  done;
+  let trimmed =
+    if !stop < !start then "" else String.sub out !start (!stop - !start + 1)
+  in
+  if trimmed = "" then "none" else trimmed
+;;

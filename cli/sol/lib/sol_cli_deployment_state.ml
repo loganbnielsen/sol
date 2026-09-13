@@ -12,7 +12,13 @@ type execution_outcome =
       ; message : string
       }
 
-let deploy_state_configmap_name workspace = Printf.sprintf "sol-deploy-state-%s" workspace
+(* BUG-025: the name embeds the workspace, and '_' or uppercase are illegal in
+   a Kubernetes object name — so a workspace like [ci_smoke] produced
+   "sol-deploy-state-ci_smoke", which the API server rejects. Because the apply
+   result used to be ignored below, that failure was silent. *)
+let deploy_state_configmap_name workspace =
+  Printf.sprintf "sol-deploy-state-%s" (Sol_cli_kubernetes_name.sanitize_name workspace)
+;;
 
 let load_deployed_groups workspace =
   let name = deploy_state_configmap_name workspace in
@@ -44,7 +50,16 @@ let save_deployed_groups workspace groups =
   let oc = open_out path in
   output_string oc apply_json;
   close_out oc;
-  ignore (Sol_cli_kubectl.apply ~file:path);
+  (* BUG-025: report a failed write. The consumer-group drift check depends on
+     this object existing, so ignoring the result let the check run against
+     nothing while looking healthy. *)
+  (match Sol_cli_kubectl.apply ~file:path with
+   | Ok () -> ()
+   | Error e ->
+     Printf.eprintf
+       "warning: could not record deploy state (%s): %s\n%!"
+       name
+       (Sol_cli_process.error_to_string e));
   try Sys.remove path with
   | _ -> ()
 ;;

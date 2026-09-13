@@ -1,7 +1,8 @@
 (* Tests for Sol_cli_deployment_state.record_outcome.
    Verifies that Dry_run, Failed, and Emitted outcomes are no-ops and that
-   Applied outcomes invoke the state write path. The kubectl call inside
-   save_deployed_groups is ignored on error so tests run without a cluster. *)
+   Applied outcomes invoke the state write path. A failed kubectl call inside
+   save_deployed_groups is reported as a warning rather than ignored (BUG-025),
+   but it is still non-fatal, so these tests run without a cluster. *)
 
 let test_dry_run_is_noop () =
   Sol_cli_deployment_state.record_outcome
@@ -61,10 +62,33 @@ let test_removed_consumer_groups_additions_ignored () =
   Alcotest.(check (list string)) "additions do not appear as removed" [] removed
 ;;
 
+(* ── BUG-025: the state ConfigMap name must be a valid object name ───────── *)
+
+let test_configmap_name_sanitizes_workspace () =
+  Alcotest.(check string)
+    "underscore workspace"
+    "sol-deploy-state-ci-smoke"
+    (Sol_cli_deployment_state.deploy_state_configmap_name "ci_smoke");
+  Alcotest.(check string)
+    "uppercase and underscore workspace"
+    "sol-deploy-state-my-app"
+    (Sol_cli_deployment_state.deploy_state_configmap_name "My_App");
+  Alcotest.(check string)
+    "already-valid workspace is unchanged"
+    "sol-deploy-state-pluto"
+    (Sol_cli_deployment_state.deploy_state_configmap_name "pluto")
+;;
+
 let () =
   Alcotest.run
     "deployment_state"
-    [ ( "record_outcome"
+    [ ( "configmap_name"
+      , [ Alcotest.test_case
+            "sanitizes the workspace"
+            `Quick
+            test_configmap_name_sanitizes_workspace
+        ] )
+    ; ( "record_outcome"
       , [ Alcotest.test_case "dry-run is a no-op" `Quick test_dry_run_is_noop
         ; Alcotest.test_case "failed is a no-op" `Quick test_failed_is_noop
         ; Alcotest.test_case "emitted is a no-op" `Quick test_emitted_is_noop
