@@ -393,16 +393,19 @@ let format_cronjob_diagnosis ~service_name (result : cronjob_fetch_result) : str
                scheduled))
 ;;
 
-let fetch_namespace_events ~ns : event list =
-  match Sol_cli_kubectl.get_raw ~args:[ "get"; "events"; "-n"; ns; "-o"; "json" ] with
+let fetch_namespace_events ~ctx ~ns : event list =
+  match
+    Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; "events"; "-n"; ns; "-o"; "json" ]
+  with
   | Ok r when r.Sol_cli_process.exit_code = 0 ->
     parse_events_json r.Sol_cli_process.stdout
   | _ -> []
 ;;
 
-let fetch_pod_statuses ~ns ~k8s_name : pod_status list option =
+let fetch_pod_statuses ~ctx ~ns ~k8s_name : pod_status list option =
   match
     Sol_cli_kubectl.get_raw
+      ~ctx
       ~args:[ "get"; "pods"; "-n"; ns; "-l"; "app=" ^ k8s_name; "-o"; "json" ]
   with
   | Ok r when r.Sol_cli_process.exit_code = 0 ->
@@ -410,9 +413,10 @@ let fetch_pod_statuses ~ns ~k8s_name : pod_status list option =
   | _ -> None
 ;;
 
-let fetch_job_pod_statuses ~ns ~job_name : pod_status list option =
+let fetch_job_pod_statuses ~ctx ~ns ~job_name : pod_status list option =
   match
     Sol_cli_kubectl.get_raw
+      ~ctx
       ~args:[ "get"; "pods"; "-n"; ns; "-l"; "job-name=" ^ job_name; "-o"; "json" ]
   with
   | Ok r when r.Sol_cli_process.exit_code = 0 ->
@@ -422,18 +426,21 @@ let fetch_job_pod_statuses ~ns ~job_name : pod_status list option =
 
 (* Best-effort per job: one failed fetch doesn't block the others. [None]
    only when every fetch fails. *)
-let fetch_active_cronjob_pods ~ns job_names : pod_status list option =
+let fetch_active_cronjob_pods ~ctx ~ns job_names : pod_status list option =
   let fetched =
-    job_names |> List.filter_map (fun job_name -> fetch_job_pod_statuses ~ns ~job_name)
+    job_names
+    |> List.filter_map (fun job_name -> fetch_job_pod_statuses ~ctx ~ns ~job_name)
   in
   match fetched with
   | [] when job_names <> [] -> None
   | _ -> Some (List.concat fetched)
 ;;
 
-let fetch_cronjob_status ~ns ~k8s_name : cronjob_fetch_result =
+let fetch_cronjob_status ~ctx ~ns ~k8s_name : cronjob_fetch_result =
   match
-    Sol_cli_kubectl.get_raw ~args:[ "get"; "cronjob"; k8s_name; "-n"; ns; "-o"; "json" ]
+    Sol_cli_kubectl.get_raw
+      ~ctx
+      ~args:[ "get"; "cronjob"; k8s_name; "-n"; ns; "-o"; "json" ]
   with
   | Error _ -> Unavailable
   | Ok r when r.Sol_cli_process.exit_code = 0 ->
@@ -446,21 +453,23 @@ let fetch_cronjob_status ~ns ~k8s_name : cronjob_fetch_result =
     else Unavailable
 ;;
 
-let diagnose_service_live ~pod_expectation ~ns ~service_name ~k8s_name () : string option =
+(* FEAT-063: diagnosis is cluster IO, so the destination-side context reaches
+   every fetch through [ctx]. *)
+let diagnose_service_live ~ctx ~pod_expectation ~ns ~service_name ~k8s_name () : string option =
   match pod_expectation with
   | Continuous ->
-    (match fetch_pod_statuses ~ns ~k8s_name with
+    (match fetch_pod_statuses ~ctx ~ns ~k8s_name with
      | None -> None
      | Some pods ->
-       let events = fetch_namespace_events ~ns in
+       let events = fetch_namespace_events ~ctx ~ns in
        format_service_diagnosis ~service_name pods events)
   | Ephemeral ->
-    let cronjob = fetch_cronjob_status ~ns ~k8s_name in
+    let cronjob = fetch_cronjob_status ~ctx ~ns ~k8s_name in
     (match cronjob with
      | Found { active_job_names = _ :: _ as job_names; _ } ->
-       (match fetch_active_cronjob_pods ~ns job_names with
+       (match fetch_active_cronjob_pods ~ctx ~ns job_names with
         | Some (_ :: _ as pods) ->
-          let events = fetch_namespace_events ~ns in
+          let events = fetch_namespace_events ~ctx ~ns in
           format_active_run_diagnosis ~service_name pods events
         | Some [] | None -> format_cronjob_diagnosis ~service_name cronjob)
      | _ -> format_cronjob_diagnosis ~service_name cronjob)

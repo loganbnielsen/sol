@@ -43,7 +43,8 @@ val build_image : service_execution -> (unit, string) result
 val push_image : service_execution -> (unit, string) result
 
 val apply_service_manifest
-  :  workspace:string
+  :  ctx:Sol_cli_kube_destination.context
+  -> workspace:string
   -> dry_run:bool
   -> Sol_cli_deployment_plan.service_spec
   -> (Sol_cli_executor.result, string) result

@@ -99,8 +99,8 @@ let push_image exec =
   | Ok () -> Ok ()
 ;;
 
-let apply_service_manifest ~workspace ~dry_run spec =
-  try Ok (Sol_cli_executor.local ~workspace ~dry_run spec) with
+let apply_service_manifest ~ctx ~workspace ~dry_run spec =
+  try Ok (Sol_cli_executor.local ~ctx ~workspace ~dry_run spec) with
   | Failure msg -> Error msg
 ;;
 

@@ -59,7 +59,7 @@ let apply_yaml yaml =
       try Sys.remove tmp with
       | _ -> ())
     (fun () ->
-       match Sol_cli_kubectl.apply ~file:tmp with
+       match Sol_cli_kubectl.apply ~ctx:Sol_cli_kube_destination.local_context ~file:tmp with
        | Ok () -> ()
        | Error e ->
          Printf.eprintf
@@ -472,7 +472,7 @@ let dev_up () =
       pf_spec.namespace
       pf_spec.target
       pf_spec.remote_port;
-    Sol_cli_port_forward.start pf_spec
+    Sol_cli_port_forward.start ~ctx:Sol_cli_kube_destination.local_context pf_spec
   in
   if req.kafka
   then (

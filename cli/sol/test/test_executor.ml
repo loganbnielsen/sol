@@ -85,7 +85,7 @@ let check_string = Alcotest.(check string)
 
 let test_local_result_fields () =
   (* dry_run=true exercises render+apply without invoking kubectl *)
-  let r = Sol_cli_executor.local ~workspace:"myapp" ~dry_run:true svc_spec in
+  let r = Sol_cli_executor.local ~ctx:Sol_cli_kube_destination.local_context ~workspace:"myapp" ~dry_run:true svc_spec in
   check_string "local namespace" "myapp-payments" r.Sol_cli_executor.namespace;
   check_string "local name" "charge-svc" r.Sol_cli_executor.name;
   check_string
@@ -95,7 +95,7 @@ let test_local_result_fields () =
 ;;
 
 let test_local_worker_result () =
-  let r = Sol_cli_executor.local ~workspace:"myapp" ~dry_run:true worker_spec in
+  let r = Sol_cli_executor.local ~ctx:Sol_cli_kube_destination.local_context ~workspace:"myapp" ~dry_run:true worker_spec in
   check_string "local worker namespace" "myapp-comms" r.Sol_cli_executor.namespace;
   check_string "local worker name" "notify-worker" r.Sol_cli_executor.name
 ;;
@@ -103,7 +103,7 @@ let test_local_worker_result () =
 (* ── direct executor ─────────────────────────────────────────────────────── *)
 
 let test_direct_result_fields () =
-  let r = Sol_cli_executor.local ~workspace:"myapp" ~dry_run:true svc_spec in
+  let r = Sol_cli_executor.local ~ctx:Sol_cli_kube_destination.local_context ~workspace:"myapp" ~dry_run:true svc_spec in
   check_string "direct namespace" "myapp-payments" r.Sol_cli_executor.namespace;
   check_string "direct name" "charge-svc" r.Sol_cli_executor.name;
   check_string
@@ -113,7 +113,7 @@ let test_direct_result_fields () =
 ;;
 
 let test_direct_worker_result () =
-  let r = Sol_cli_executor.local ~workspace:"myapp" ~dry_run:true worker_spec in
+  let r = Sol_cli_executor.local ~ctx:Sol_cli_kube_destination.local_context ~workspace:"myapp" ~dry_run:true worker_spec in
   check_string "direct worker namespace" "myapp-comms" r.Sol_cli_executor.namespace;
   check_string "direct worker name" "notify-worker" r.Sol_cli_executor.name
 ;;
@@ -125,7 +125,7 @@ let test_gitops_result_fields () =
   (* temp_file creates a regular file; we need a directory *)
   Sys.remove dir;
   Unix.mkdir dir 0o755;
-  let r = Sol_cli_executor.gitops ~workspace:"myapp" ~dir svc_spec in
+  let r = Sol_cli_executor.gitops ~ctx:Sol_cli_kube_destination.local_context ~workspace:"myapp" ~dir svc_spec in
   check_string "gitops namespace" "myapp-payments" r.Sol_cli_executor.namespace;
   check_string "gitops name" "charge-svc" r.Sol_cli_executor.name;
   check_string
@@ -144,7 +144,7 @@ let test_gitops_writes_file () =
   let dir = Filename.temp_file "sol-gitops-test-" "" in
   Sys.remove dir;
   Unix.mkdir dir 0o755;
-  ignore (Sol_cli_executor.gitops ~workspace:"myapp" ~dir svc_spec);
+  ignore (Sol_cli_executor.gitops ~ctx:Sol_cli_kube_destination.local_context ~workspace:"myapp" ~dir svc_spec);
   let path = Filename.concat dir "myapp-payments-charge-svc.yaml" in
   let exists = Sys.file_exists path in
   (* read and check content before cleanup *)
@@ -179,7 +179,7 @@ let test_gitops_worker () =
   let dir = Filename.temp_file "sol-gitops-worker-" "" in
   Sys.remove dir;
   Unix.mkdir dir 0o755;
-  let r = Sol_cli_executor.gitops ~workspace:"myapp" ~dir worker_spec in
+  let r = Sol_cli_executor.gitops ~ctx:Sol_cli_kube_destination.local_context ~workspace:"myapp" ~dir worker_spec in
   let path = Filename.concat dir "myapp-comms-notify-worker.yaml" in
   let exists = Sys.file_exists path in
   (try Sys.remove path with

@@ -23,7 +23,7 @@ let test_kubectl_apply_argv () =
 ;;
 
 let test_kubectl_apply_failure () =
-  assert_error (Sol_cli_kubectl.apply ~file:"/nonexistent-path-zxqwerty.yaml")
+  assert_error (Sol_cli_kubectl.apply ~ctx:Sol_cli_kube_destination.local_context ~file:"/nonexistent-path-zxqwerty.yaml")
 ;;
 
 let test_kubectl_apply_dry_run_argv () =
@@ -46,6 +46,7 @@ let test_kubectl_get_argv () =
 let test_kubectl_get_failure () =
   assert_error
     (Sol_cli_kubectl.get
+       ~ctx:Sol_cli_kube_destination.local_context
        ~resource:"pod"
        ~name:"nonexistent-abc123"
        ~namespace:"nonexistent-ns"
@@ -98,14 +99,8 @@ let test_kubectl_patch_argv () =
   check_str "patch_data" "[{}]" (List.nth c.Sol_cli_process.argv 9)
 ;;
 
-let test_kubectl_config_current_context_argv () =
-  let c = Sol_cli_process.cmd [ "kubectl"; "config"; "current-context" ] in
-  check_str "subcommand" "config" (List.nth c.Sol_cli_process.argv 1);
-  check_str "action" "current-context" (List.nth c.Sol_cli_process.argv 2)
-;;
-
 let test_kubectl_probe_false_on_missing_binary () =
-  let result = Sol_cli_kubectl.probe ~args:[ "nonexistent-abc123-subcommand" ] in
+  let result = Sol_cli_kubectl.probe ~ctx:Sol_cli_kube_destination.local_context ~args:[ "nonexistent-abc123-subcommand" ] in
   check_bool "probe returns false for missing tool" false result
 ;;
 
@@ -306,10 +301,6 @@ let () =
             `Quick
             test_kubectl_rollout_restart_argv
         ; Alcotest.test_case "patch argv" `Quick test_kubectl_patch_argv
-        ; Alcotest.test_case
-            "config current-context"
-            `Quick
-            test_kubectl_config_current_context_argv
         ] )
     ; ( "kubectl_failures"
       , [ Alcotest.test_case "apply propagates error" `Quick test_kubectl_apply_failure

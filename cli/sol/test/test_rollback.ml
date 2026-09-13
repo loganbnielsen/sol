@@ -142,7 +142,7 @@ let test_fn_with_progressive_delivery_still_no_op () =
 (* ── execute_rollback No_op ─────────────────────────────────────────────── *)
 
 let test_execute_no_op_returns_ok () =
-  match Sol_cli_rollback.execute_rollback (Sol_cli_rollback.No_op "test reason") with
+  match Sol_cli_rollback.execute_rollback ~ctx:Sol_cli_kube_destination.local_context (Sol_cli_rollback.No_op "test reason") with
   | Ok () -> ()
   | Error e ->
     Alcotest.failf "expected Ok, got error: %s" (Sol_cli_rollback.error_to_string e)

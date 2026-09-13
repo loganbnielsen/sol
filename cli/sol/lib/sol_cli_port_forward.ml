@@ -153,12 +153,12 @@ let is_running name =
   else false
 ;;
 
-(* AUDIT-065: the wrapper script's retry loop must never let a later ambient
-   `kubectl config use-context` redirect an already-running port-forward.
-   [start] pins the context that is current *at creation time* into every
-   retry iteration via `--context`, so switching contexts elsewhere for
-   unrelated work can no longer silently repoint a live port-forward at a
-   different (possibly since-destroyed) cluster. *)
+(* AUDIT-065 / FEAT-063: the wrapper script's retry loop must never let a later
+   ambient `kubectl config use-context` redirect an already-running
+   port-forward. The destination is passed in and named explicitly (the caller
+   supplies the literal local destination — port-forwarding is a local-dev
+   feature), so every retry pins the same `--context` and the ambient context is
+   never consulted at all. *)
 
 (* Consecutive fast failures before the retry loop gives up rather than
    spinning forever. A kubectl port-forward that exits in under
@@ -169,49 +169,30 @@ let is_running name =
 let max_fail_streak = 30
 let quick_fail_threshold_s = 5
 
-let current_kube_context () =
-  match Sol_cli_kubectl.config_current_context () with
-  | Ok r
-    when r.Sol_cli_process.exit_code = 0 && String.trim r.Sol_cli_process.stdout <> "" ->
-    Some (String.trim r.Sol_cli_process.stdout)
-  | _ -> None
-;;
-
 (** Write a self-restarting wrapper script and background it in a new session.
     On pod rollout, kubectl exits; the loop restarts it within ~1 s so the
     port-forward stays live across deploys without manual intervention. The
-    kubectl context current at call time is captured and pinned into every retry
-    (see AUDIT-065); the loop gives up after [max_fail_streak] consecutive fast
-    failures instead of retrying forever against a context/cluster that is gone.
+    destination's context is pinned into every retry (see AUDIT-065); the loop
+    gives up after [max_fail_streak] consecutive fast failures instead of
+    retrying forever against a context/cluster that is gone.
 *)
-let start (pf : spec) =
+let start ~ctx (pf : spec) =
   Sol_cli_state.ensure ();
   let sf = Sol_cli_state.script_file pf.name in
   let lf = Sol_cli_state.log_file pf.name in
   let pf_file = Sol_cli_state.pid_file pf.name in
-  let context = current_kube_context () in
+  let context_name = ctx.Sol_cli_kube_destination.destination.context in
   let kubectl_invocation =
-    match context with
-    | Some ctx ->
-      Printf.sprintf
-        "kubectl --context %s port-forward -n %s %s %d:%d"
-        (Filename.quote ctx)
-        (Filename.quote pf.namespace)
-        (Filename.quote pf.target)
-        pf.local_port
-        pf.remote_port
-    | None ->
-      Printf.sprintf
-        "kubectl port-forward -n %s %s %d:%d"
-        (Filename.quote pf.namespace)
-        (Filename.quote pf.target)
-        pf.local_port
-        pf.remote_port
+    Printf.sprintf
+      "kubectl --context %s port-forward -n %s %s %d:%d"
+      (Filename.quote context_name)
+      (Filename.quote pf.namespace)
+      (Filename.quote pf.target)
+      pf.local_port
+      pf.remote_port
   in
   let give_up_reason =
-    match context with
-    | Some ctx -> Printf.sprintf "pinned context %s unreachable or gone" ctx
-    | None -> "repeated fast failures; no kubectl context was available to pin at start"
+    Printf.sprintf "pinned context %s unreachable or gone" context_name
   in
   let lines =
     [ "#!/bin/sh"

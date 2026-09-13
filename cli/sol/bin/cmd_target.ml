@@ -63,7 +63,7 @@ let kubernetes_status ~check (target : Sol_cli_config.target) =
     then Sol_cli_target_report.Configured context
     else (
       let args = Sol_cli_kube_destination.kubectl_args destination @ [ "cluster-info" ] in
-      match Sol_cli_kubectl.probe_result ~args with
+      match Sol_cli_kubectl.probe_result ~ctx:(Sol_cli_kube_destination.context_of_destination destination) ~args with
       | Ok (0, _) -> Sol_cli_target_report.Reachable context
       | Ok (_, reason) when String.trim reason <> "" ->
         Sol_cli_target_report.Unreachable (context, first_line reason)

@@ -126,7 +126,7 @@ let test_redacted_result_hides_value () =
 
 let test_hosted_stub_boundary () =
   match
-    Sol_cli_secret.set
+    Sol_cli_secret.set ~ctx:Sol_cli_kube_destination.local_context
       ~env:"hosted"
       ~workspace:"myapp"
       ~namespaces:[ "myapp-payments" ]
@@ -144,7 +144,7 @@ let test_hosted_stub_boundary () =
 
 let test_list_rejects_unknown_env () =
   match
-    Sol_cli_secret.list ~env:"staging" ~workspace:"myapp" ~namespaces:[ "myapp-payments" ]
+    Sol_cli_secret.list ~ctx:Sol_cli_kube_destination.local_context ~env:"staging" ~workspace:"myapp" ~namespaces:[ "myapp-payments" ]
   with
   | Ok _ -> Alcotest.fail "unknown env list unexpectedly succeeded"
   | Error msg ->
