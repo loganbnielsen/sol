@@ -263,8 +263,10 @@ What Sol does in step 2:
    deploy` is always the customer-cluster path.
 4. Renders namespaces, service accounts, Deployments/Services/CronJobs,
    Ingress (when `ingress_host` is set in `sol.toml`), and NetworkPolicies.
-5. Applies manifests via `kubectl apply` (direct mode) or writes YAML files
-   to the `--emit-to` directory (GitOps mode).
+5. Applies manifests via `kubectl apply` (direct mode) or writes the per-service
+   YAML files plus the release artifact (`sol-release-<id>` record and
+   `sol-current-release` pointer) to the `--emit-to` directory (GitOps mode), so
+   the release metadata travels with the bundle.
 
 Sol does not SSH into nodes, modify cloud resources, or touch anything outside
 the Kubernetes API server.
@@ -281,6 +283,12 @@ sol deploy prod/aws/us-east-1 \
 Manifests are written to `gitops/manifests/`. Commit and push. Argo CD or Flux
 detects the change and applies it to the cluster. Sol's role ends when the files
 are written.
+
+Alongside the manifests, Sol writes `sol-release-<id>.yaml` (named by the plan's
+content-addressed release id — the same id every workload carries as its
+`release` label) and a `sol-current-release.yaml` pointer. Both are pure
+functions of the released content, so re-deploying identical content leaves the
+bundle byte-identical and the diff empty.
 
 ---
 

@@ -620,7 +620,43 @@ let test_gitops_emit_one_file_per_service () =
     let plan = make_plan [ svc_spec; worker_spec ] in
     ignore (run_plan_ok ~mode:(Sol_cli_executor.Emit_to dir) plan);
     let files = Sys.readdir dir |> Array.to_list in
-    Alcotest.(check int) "one file per service" 2 (List.length files))
+    (* FEAT-069: the bundle also carries the release artifact — the immutable
+       record named by the plan's release id, plus the current-release pointer. *)
+    Alcotest.(check int) "two service files + two release files" 4 (List.length files);
+    let record = Sol_cli_release.(configmap_name (of_plan plan) ^ ".yaml") in
+    Alcotest.(check bool) "release record emitted" true (List.mem record files);
+    Alcotest.(check bool)
+      "current-release pointer emitted"
+      true
+      (List.mem "sol-current-release.yaml" files))
+;;
+
+(* The release artifact is a pure function of the plan's content: re-emitting an
+   identical plan leaves the record byte-identical, which is what keeps a GitOps
+   bundle an empty diff. *)
+let test_gitops_release_artifact_is_deterministic () =
+  with_temp_dir (fun dir_a ->
+    with_temp_dir (fun dir_b ->
+      let plan = make_plan [ svc_spec; worker_spec ] in
+      ignore (run_plan_ok ~mode:(Sol_cli_executor.Emit_to dir_a) plan);
+      ignore (run_plan_ok ~mode:(Sol_cli_executor.Emit_to dir_b) plan);
+      let record =
+        Sol_cli_release.configmap_name (Sol_cli_release.of_plan plan) ^ ".yaml"
+      in
+      let read dir name =
+        let ic = open_in (Filename.concat dir name) in
+        let s = In_channel.input_all ic in
+        close_in ic;
+        s
+      in
+      Alcotest.(check string)
+        "record bytes identical"
+        (read dir_a record)
+        (read dir_b record);
+      Alcotest.(check string)
+        "pointer bytes identical"
+        (read dir_a "sol-current-release.yaml")
+        (read dir_b "sol-current-release.yaml")))
 ;;
 
 (* ── Phase 5: executor commands ─────────────────────────────────────────── *)
@@ -1009,9 +1045,13 @@ let () =
             `Quick
             test_gitops_emit_uses_placeholder_backend
         ; Alcotest.test_case
-            "one file per service"
+            "one file per service + release artifact"
             `Quick
             test_gitops_emit_one_file_per_service
+        ; Alcotest.test_case
+            "release artifact deterministic"
+            `Quick
+            test_gitops_release_artifact_is_deterministic
         ] )
     ; ( "executor_commands"
       , [ Alcotest.test_case

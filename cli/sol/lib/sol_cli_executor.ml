@@ -64,6 +64,24 @@ let gitops
   | Ok yaml -> dispatch_rendered ~ctx ~mode:(Emit_to dir) spec yaml
 ;;
 
+(* FEAT-069: the emitted bundle carries the release artifact — the immutable
+   [sol-release-<id>] record and the current-release pointer — so the record
+   travels with the manifests it describes instead of being a CLI side effect.
+   [bundle_files] is pure in the plan's release identity, so re-emitting
+   identical content is an empty diff. *)
+let write_release_bundle ~dir plan =
+  (try Unix.mkdir dir 0o755 with
+   | Unix.Unix_error (Unix.EEXIST, _, _) -> ());
+  List.iter
+    (fun (name, contents) ->
+       let path = Filename.concat dir name in
+       let oc = open_out path in
+       Fun.protect
+         ~finally:(fun () -> close_out_noerr oc)
+         (fun () -> output_string oc contents))
+    (Sol_cli_release.bundle_files (Sol_cli_release.of_plan plan))
+;;
+
 (* ── plan-level executor ─────────────────────────────────────────────────── *)
 
 (* REFAC-089/FEAT-069: [run_plan] takes the *plan*, not a bare service list. Once
@@ -117,9 +135,14 @@ let run_plan
           | Error _ -> None)
         rendered
     in
-    Ok
-      (List.map
-         (fun ((spec : Sol_cli_deployment_plan.service_spec), yaml) ->
-            dispatch_rendered ~ctx:execution.cluster ~mode spec yaml)
-         pairs)
+    let results =
+      List.map
+        (fun ((spec : Sol_cli_deployment_plan.service_spec), yaml) ->
+           dispatch_rendered ~ctx:execution.cluster ~mode spec yaml)
+        pairs
+    in
+    (match mode with
+     | Emit_to dir -> write_release_bundle ~dir plan
+     | Dry_run | Apply -> ());
+    Ok results
 ;;

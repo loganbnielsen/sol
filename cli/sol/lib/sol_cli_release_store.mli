@@ -15,14 +15,11 @@ val record
   -> Sol_cli_release.t
   -> (unit, string) result
 
-(** [record_plan ~ctx ~workspace ~target ~mode plan] builds the record from a
-    deployment plan (reading git provenance itself) and writes it. This is the
-    entry point both [sol up] and [sol deploy] use. *)
+(** [record_plan ~ctx plan] builds the canonical record from a deployment plan
+    — its id is [plan.release_id] — and writes it. This is the entry point both
+    [sol up] and [sol deploy] use. *)
 val record_plan
   :  ctx:Sol_cli_kube_destination.context
-  -> workspace:string
-  -> target:string
-  -> mode:string
   -> Sol_cli_deployment_plan.t
   -> (unit, string) result
 

@@ -290,12 +290,7 @@ let run_apply
      is reported, not fatal — the deploy really did happen, and pretending it
      did not would be worse than a missing record. *)
   (match
-     Sol_cli_release_store.record_plan
-       ~ctx:Sol_cli_kube_destination.local_context
-       ~workspace
-       ~target:"local"
-       ~mode:"local"
-       plan
+     Sol_cli_release_store.record_plan ~ctx:Sol_cli_kube_destination.local_context plan
    with
    | Ok () -> ()
    | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);

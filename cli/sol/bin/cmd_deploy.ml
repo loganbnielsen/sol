@@ -347,14 +347,7 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
        });
   (* FEAT-067: record the release after a successful apply. Non-fatal on
      failure: the deploy happened, and the record is for later. *)
-  (match
-     Sol_cli_release_store.record_plan
-       ~ctx:ctx.execution.cluster
-       ~workspace:ctx.execution.workspace
-       ~target:ctx.target_name
-       ~mode:"deploy"
-       plan
-   with
+  (match Sol_cli_release_store.record_plan ~ctx:ctx.execution.cluster plan with
    | Ok () -> ()
    | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);
   push_deploy_events
