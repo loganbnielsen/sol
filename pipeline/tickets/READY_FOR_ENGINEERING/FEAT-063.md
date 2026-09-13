@@ -7,6 +7,8 @@ source: FEAT-059 review 2026-09-11 — the destination field landed; nothing con
 
 **Depends on:** FEAT-059.
 
+**Related:** FEAT-068 (the `sol cloud` lifecycle half — `cloud init` writing the destination, teardown via a scoped kubeconfig — split out 2026-09-13 so this binding change lands on its own), DEC-016, DEC-020, FEAT-061 (the destination/scope boundary), REFAC-088 (the capability core this unblocks).
+
 Bind every Kubernetes operation to the target's destination, so the cluster is chosen by the target rather than by whatever `kubectl` happens to be pointing at.
 
 Until this lands, `kube_context` is expressible and checked but **not in force**: deploys still inherit the ambient context.
@@ -25,15 +27,15 @@ That also rejects the softer version of the same design: an optional `?destinati
 
 ### The surface this covers
 
-**28 `Sol_cli_kubectl.*` call sites across 13 modules** — `cmd_up`, `cmd_status`, `cmd_deploy`, `cmd_logs`, `cmd_migrate`, `cmd_deploy_event`, `cmd_dev` in `bin/`, and `sol_cli_manifest`, `sol_cli_secret`, `sol_cli_rollback`, `sol_cli_rollout_diagnosis`, `sol_cli_deployment_state`, `sol_cli_up_execution` in `lib/` — plus helm's `--kube-context`.
+**28 `Sol_cli_kubectl.*` call sites across 13 modules** — `cmd_up`, `cmd_status`, `cmd_deploy`, `cmd_logs`, `cmd_migrate`, `cmd_deploy_event`, `cmd_local` in `bin/`, and `sol_cli_manifest`, `sol_cli_secret`, `sol_cli_rollback`, `sol_cli_rollout_diagnosis`, `sol_cli_deployment_state`, `sol_cli_up_execution`, `sol_cli_release_store` in `lib/` — plus helm's `--kube-context`.
 
 **But the adapter is not the only way kubectl gets invoked**, which makes "thread the adapter and be done" wrong. Found while scoping the work (2026-09-11):
 
-- `cli/sol/bin/cmd_logs.ml` builds a `kubectl get` inline (line 82) and, for follow mode, **`Unix.execvp "kubectl"`** (line 104). Because it `exec`s, no wrapper can inject a flag — the arguments must be built correctly *before* the exec, in that file.
-- `cli/sol/lib/sol_cli_logs.ml` constructs its own kubectl argv (line 60).
-- `cli/sol/bin/cmd_cloud_tf.ml` invokes kubectl inline in about eight places (load-balancer teardown, `config delete-context`/`delete-cluster`/`delete-user`, `use-context`).
+- `cli/sol/bin/cmd_logs.ml` builds a `kubectl get` inline and, for follow mode, **`Unix.execvp "kubectl"`** (line ~72). Because it `exec`s, no wrapper can inject a flag — the arguments must be built correctly *before* the exec, in that file.
+- `cli/sol/lib/sol_cli_logs.ml` constructs its own kubectl argv.
+- `cli/sol/bin/cmd_deploy_event.ml` and `cli/sol/bin/cmd_migrate.ml` build kubectl argv for exec/`run`.
 
-So the criterion is not "the adapter takes a destination" but **"every kubectl invocation is scoped"**, and the check for it is a grep for `kubectl` across `cli/` that must return only the adapter (plus the local-dev carve-out). Anything left is a path that still inherits the ambient context while looking converted.
+So the criterion is not "the adapter takes a destination" but **"every kubectl invocation is scoped"**, and the check for it is a grep for `kubectl` across `cli/` that must return only the adapter plus the local-dev carve-out — with `cmd_cloud_tf.ml` as a known, recorded exception until **FEAT-068** converts its teardown to a scoped kubeconfig.
 
 ## Decided: the CLI grammar (2026-09-11)
 
@@ -61,33 +63,29 @@ Two boundaries on what may be in it, because a convenient record is exactly how 
 - **Destination-side facts only**: how an operation reaches a cluster — context, kubeconfig, and any credential scoping. Nothing about *what* is being deployed.
 - **Scope must not join it**, even though scope is also cross-cutting. The Kubernetes seam must never learn which services are being deployed (FEAT-061), so scope travels on its own channel even when the plumbing looks identical. Bundling the two would satisfy this ticket and break the next one.
 
-**2. Remove the ambient reads.** Four files consult ambient context state today:
+**2. Remove the ambient reads.** Three files consult ambient context state today:
 
 - `cli/sol/bin/cmd_up.ml` — `current_kube_context`, `is_known_local_dev_context`. `sol up` is the local deploy path, so it should pass the literal local destination; the guard becomes unnecessary because the context is named explicitly and `kubectl` fails if it is missing.
 - `cli/sol/lib/sol_cli_port_forward.ml` — derives `--context` from the ambient context; it is a local-dev feature, so it should take the local destination.
 - `cli/sol/lib/sol_cli_kubectl.ml` — `config_current_context` (and its test in `test_tool_adapters.ml`) should go.
-- `cli/sol/bin/cmd_cloud_tf.ml` — reads `current-context` to name the context it just created, and runs `use-context` to restore the operator's. The temporary access for teardown should use a **scoped kubeconfig** rather than mutating the operator's kubeconfig at all.
 
-`sol cloud init` may still **print** a context-switching command for the human's own `kubectl`. It must not make Sol depend on it.
+(`cmd_cloud_tf.ml`'s `current-context`/`use-context` reads are **FEAT-068**, not here.)
 
-**3. `sol cloud init` writes the destination into the target.** The abstraction-boundary criterion: a target Sol creates comes out with its destination already set, so an ordinary user never learns the field exists. If the target file is hand-written rather than generated, print the exact line to add instead of rewriting the user's file.
+**3. The local carve-out, everywhere.** `k3d-sol-local` named literally for `sol up`, `sol local up` and port-forwarding. Nothing else gets a default.
 
-**4. The local carve-out, everywhere.** `k3d-sol-local` named literally for `sol up`, `sol dev up` and port-forwarding. Nothing else gets a default.
+**4. Fail in a way that teaches.** When a target names no context, or the resolved context is unreachable, the error names the target, the context it expected, and what would otherwise have been used — so the change is obvious to someone whose habits were built on switching context first.
 
-**5. Fail in a way that teaches.** When a target names no context, or the resolved context is unreachable, the error names the target, the context it expected, and what would otherwise have been used — so the change is obvious to someone whose habits were built on switching context first.
-
-**6. Docs.** The tutorial's cloud section and the self-hosted substrate contract describe target-scoped destinations and no longer imply "switch context, then run `sol`". Examples show `sol cloud init` then `sol deploy` — never a hand-written context.
+**5. Docs.** The tutorial's cloud section and the self-hosted substrate contract describe target-scoped destinations and no longer imply "switch context, then run `sol`". Examples show `sol cloud init` then `sol deploy` — never a hand-written context.
 
 ## Acceptance criteria
 
 - A unit test proves resolution ignores the ambient context: with the machine's current context set to something unrelated, the destination for a target is unchanged.
 - The resolved context reaches the executed command (assert on the argv the helpers build).
-- No Kubernetes operation in the CLI decides its destination from `current-context`, and none mutates it — including `sol cloud init`'s own access to a cluster it is tearing down.
+- No Kubernetes operation in the CLI decides its destination from `current-context` (the `cmd_cloud_tf` teardown is the recorded exception, deferred to FEAT-068).
 - A cluster-touching command with no resolvable destination fails closed, naming the target and the field.
-- Local (`sol up`, `sol dev up`, port-forward) keeps working without ambient state, using the literal local destination.
-- A target created by `sol cloud init` comes out with `kube_context` already set.
+- Local (`sol up`, `sol local up`, port-forward) keeps working without ambient state, using the literal local destination.
 - Docs updated as above.
 
 ## Notes
 
-FEAT-059 shipped the type, the field, the resolution and the lint. This is the binding half. See INFRA-011/012 for the ticket-tooling bugs found while splitting this work — neither blocks it.
+FEAT-059 shipped the type, the field, the resolution and the lint. This is the binding half; FEAT-068 is the `sol cloud` lifecycle half. See INFRA-011/012 for the ticket-tooling bugs found while splitting this work — neither blocks it.
