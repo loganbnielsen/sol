@@ -329,7 +329,7 @@ jobs:
           # FEAT-067: a successful deploy must leave a release record — listed by
           # `sol releases`, pointed at by the current-release object, and not
           # editable in place.
-          sol releases > "$GITHUB_WORKSPACE/releases.txt"
+          sol local releases > "$GITHUB_WORKSPACE/releases.txt"
           grep -F 'COMMIT' "$GITHUB_WORKSPACE/releases.txt" >/dev/null
           if [ "$(wc -l < "$GITHUB_WORKSPACE/releases.txt")" -lt 2 ]; then
             echo "::error::FEAT-067: sol up recorded no release"
