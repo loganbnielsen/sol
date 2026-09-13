@@ -48,6 +48,20 @@ What that means here:
 - `--local` must not exist, and both spellings must not be supported. One grammar, or the CLI starts accumulating aliases for one destination.
 - The destination is therefore always visible in the invocation — the property DEC-020 asks for.
 
+## Decided: cluster selection is destination state, not ambient state (2026-09-13)
+
+The property this buys, stated plainly: **Sol can operate on several clusters independently — even concurrently — without switching, or depending on, the operator's active kubectl context.** `kubectl config use-context` makes the cluster a function of mutable user state; `kubectl --context <name>` makes it a function of the invocation. The failure this removes is not "wrong cluster" in the abstract but "correct command, wrong moment" — the `use-context` hazard.
+
+Precisely, the destination is a **pair**: a kubeconfig source and a context name within it. Both are needed for a target to be fully determined, and today only one half is always explicit:
+
+- The context name alone is resolved against whatever kubeconfig the process has loaded (the ambient `KUBECONFIG`, or `~/.kube/config` when unset). So `context = "prod"` with `kubeconfig = None` is *half* explicit — the name is chosen, the file it is read from is not. With a multi-file `KUBECONFIG` list, context names can also collide across files.
+- A scoped `kubeconfig` **plus** the context name is the complete identity. That pair is what `sol cloud init` should produce (FEAT-068) — which is why FEAT-068 depends on this ticket rather than sitting beside it.
+
+So the sharper failure to avoid is not "wrong context string" but **"right context string, resolved against the wrong kubeconfig."** Two consequences for this ticket:
+
+- A context-only destination is a documented weaker mode, not an equivalent one. Where a kubeconfig is available it should be set.
+- Errors and `sol target check` name the resolved destination — `Sol_cli_kube_destination.to_string` renders `context (kubeconfig …)` — so "what would you have used?" is answerable. This complements the existing note that a context cannot *prove* which physical cluster it names (FEAT-058): it may not even pin which file is consulted.
+
 ## Scope
 
 **1. Restructure the CLI grammar, then thread the destination** through the operation helpers, keeping the destination/scope boundary (FEAT-061): the Kubernetes seam learns *where*, never *what*. The grammar comes first because it is what makes a destination *available* to diagnostics — before it, `sol status` has no way to name a cluster at all.
