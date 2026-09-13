@@ -62,7 +62,7 @@ let print_result = function
     exit 1
 ;;
 
-let run_set env value key domain =
+let run_set ~ctx env value key domain =
   let value =
     match value with
     | Some v -> v
@@ -70,6 +70,7 @@ let run_set env value key domain =
   in
   print_result
     (Sol_cli_secret.set
+       ~ctx
        ~env
        ~workspace:(workspace_name ())
        ~namespaces:(discover_namespaces ~domain)
@@ -77,17 +78,19 @@ let run_set env value key domain =
        ~value)
 ;;
 
-let run_list env domain =
+let run_list ~ctx env domain =
   print_result
     (Sol_cli_secret.list
+       ~ctx
        ~env
        ~workspace:(workspace_name ())
        ~namespaces:(discover_namespaces ~domain))
 ;;
 
-let run_delete env key domain =
+let run_delete ~ctx env key domain =
   print_result
     (Sol_cli_secret.delete
+       ~ctx
        ~env
        ~workspace:(workspace_name ())
        ~namespaces:(discover_namespaces ~domain)
@@ -140,19 +143,28 @@ let domain_arg =
 let set_cmd =
   Cmd.v
     (Cmd.info "set" ~doc:"Create or update a secret key")
-    Term.(const run_set $ env_arg $ value_arg $ key_arg $ domain_arg)
+    Term.(
+      const (fun env value key domain target ->
+        run_set ~ctx:(Cmd_destination.top ~command:"secret set" target) env value key domain)
+      $ env_arg $ value_arg $ key_arg $ domain_arg $ Cmd_destination.required_target_arg)
 ;;
 
 let list_cmd =
   Cmd.v
     (Cmd.info "list" ~doc:"List secret keys without values")
-    Term.(const run_list $ env_arg $ domain_arg)
+    Term.(
+      const (fun env domain target ->
+        run_list ~ctx:(Cmd_destination.top ~command:"secret list" target) env domain)
+      $ env_arg $ domain_arg $ Cmd_destination.required_target_arg)
 ;;
 
 let delete_cmd =
   Cmd.v
     (Cmd.info "delete" ~doc:"Delete a secret key")
-    Term.(const run_delete $ env_arg $ key_arg $ domain_arg)
+    Term.(
+      const (fun env key domain target ->
+        run_delete ~ctx:(Cmd_destination.top ~command:"secret delete" target) env key domain)
+      $ env_arg $ key_arg $ domain_arg $ Cmd_destination.required_target_arg)
 ;;
 
 let cmd =
