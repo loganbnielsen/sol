@@ -54,9 +54,7 @@ val gitops
     - [Emit_to dir] — writes YAML files under [dir]; no kubectl called.
     - [Apply] — applies manifests to the cluster [ctx] names via kubectl. *)
 val run_plan
-  :  ctx:Sol_cli_kube_destination.context
-  -> workspace:string
-  -> ?env:string
+  :  Sol_cli_execution.context
   -> mode:mode
   -> ?secret_backend:Sol_cli_manifest.secret_backend
   -> Sol_cli_deployment_plan.service_spec list

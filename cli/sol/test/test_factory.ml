@@ -51,13 +51,17 @@ let test_run_without_cmdliner () =
     let services = Sol_cli_manifest.discover_services () in
     match
       Sol_cli_factory.run
-        ~ctx:Sol_cli_kube_destination.local_context
-        ~workspace:"myapp"
-        ~env
-        ~requested_scope:"payments"
+        (Sol_cli_execution.context
+           ~cluster:Sol_cli_kube_destination.local_context
+           ~workspace:"myapp"
+           ())
+        ~request:
+          { Sol_cli_factory.env
+          ; requested_scope = Some "payments"
+          ; resolved_config = None
+          }
         ~mode:(Sol_cli_executor.Emit_to emit_dir)
         services
-        ()
     with
     | Error msg -> Alcotest.fail ("factory run failed: " ^ msg)
     | Ok execution ->
