@@ -11,9 +11,10 @@ let loki_service = "loki"
 
 (* Mirrors cmd_migrate.ml's cluster_pg_exists -- a live kubectl probe, not a
    guess, since sol deploy's direct-apply mode already has cluster access. *)
-let cluster_loki_exists () =
+let cluster_loki_exists ~ctx () =
   match
     Sol_cli_kubectl.get
+      ~ctx
       ~resource:"svc"
       ~name:loki_service
       ~namespace:loki_namespace
@@ -31,19 +32,26 @@ let cluster_loki_exists () =
    local push URL, or [None] if the forward never started or never became
    ready in time (never raises; a failed forward here must not fail the
    deploy). *)
-let auto_forward_loki () =
+let auto_forward_loki ~ctx () =
   Printf.eprintf "Forwarding loki (cluster) -> localhost:%d ...\n%!" loki_local_port;
   let devnull_w = Unix.openfile "/dev/null" [ Unix.O_WRONLY ] 0 in
+  let context_name = ctx.Sol_cli_kube_destination.destination.context in
+  (* FEAT-063: the temporary forward is scoped like every other invocation --
+     [--context] in the argv and the destination's [KUBECONFIG] in the child env
+     ([create_process_env], since this path does not go through the adapter). *)
   match
-    Unix.create_process
+    Unix.create_process_env
       "kubectl"
       [| "kubectl"
+       ; "--context"
+       ; context_name
        ; "port-forward"
        ; Printf.sprintf "svc/%s" loki_service
        ; "-n"
        ; loki_namespace
        ; Printf.sprintf "%d:%d" loki_local_port loki_remote_port
       |]
+      (Sol_cli_kube_destination.child_environment ctx)
       Unix.stdin
       devnull_w
       devnull_w
@@ -113,12 +121,12 @@ let auto_forward_loki () =
    layer deliberately leaves to its caller. Never raises; prints an
    explanatory note/warning and returns [None] for every "nothing to push
    to" outcome. *)
-let resolve_url ~backend ~explicit_url =
+let resolve_url ~ctx ~backend ~explicit_url =
   match Sol_cli_deploy_event.resolve_push_url ~backend ~explicit_url with
   | Sol_cli_deploy_event.Explicit url -> Some url
   | Sol_cli_deploy_event.Auto_detect ->
-    if cluster_loki_exists ()
-    then auto_forward_loki ()
+    if cluster_loki_exists ~ctx ()
+    then auto_forward_loki ~ctx ()
     else (
       Printf.eprintf
         "note: no in-cluster Loki service found (svc/%s -n %s); skipping deploy-event \
@@ -193,10 +201,10 @@ let push_event ~net ~clock ~mono_clock ~url (event : Sol_cli_deploy_event.t) =
    scoped to just this call, like cmd_migrate.ml's with_pool, rather than
    wrapping the whole sol binary in Eio. A no-op (no Eio_main.run at all)
    when there is nothing to push to, or no events. *)
-let push_all ~backend ~explicit_url (events : Sol_cli_deploy_event.t list) =
+let push_all ~ctx ~backend ~explicit_url (events : Sol_cli_deploy_event.t list) =
   if events <> []
   then (
-    match resolve_url ~backend ~explicit_url with
+    match resolve_url ~ctx ~backend ~explicit_url with
     | None -> ()
     | Some url ->
       Eio_main.run (fun env ->

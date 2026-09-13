@@ -50,7 +50,8 @@ let test_run_without_cmdliner () =
     let emit_dir = Filename.concat root "out" in
     let services = Sol_cli_manifest.discover_services () in
     match
-      Sol_cli_factory.run ~ctx:Sol_cli_kube_destination.local_context
+      Sol_cli_factory.run
+        ~ctx:Sol_cli_kube_destination.local_context
         ~workspace:"myapp"
         ~env
         ~requested_scope:"payments"

@@ -455,7 +455,9 @@ let fetch_cronjob_status ~ctx ~ns ~k8s_name : cronjob_fetch_result =
 
 (* FEAT-063: diagnosis is cluster IO, so the destination-side context reaches
    every fetch through [ctx]. *)
-let diagnose_service_live ~ctx ~pod_expectation ~ns ~service_name ~k8s_name () : string option =
+let diagnose_service_live ~ctx ~pod_expectation ~ns ~service_name ~k8s_name ()
+  : string option
+  =
   match pod_expectation with
   | Continuous ->
     (match fetch_pod_statuses ~ctx ~ns ~k8s_name with

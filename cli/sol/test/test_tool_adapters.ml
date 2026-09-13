@@ -23,7 +23,10 @@ let test_kubectl_apply_argv () =
 ;;
 
 let test_kubectl_apply_failure () =
-  assert_error (Sol_cli_kubectl.apply ~ctx:Sol_cli_kube_destination.local_context ~file:"/nonexistent-path-zxqwerty.yaml")
+  assert_error
+    (Sol_cli_kubectl.apply
+       ~ctx:Sol_cli_kube_destination.local_context
+       ~file:"/nonexistent-path-zxqwerty.yaml")
 ;;
 
 let test_kubectl_apply_dry_run_argv () =
@@ -100,7 +103,11 @@ let test_kubectl_patch_argv () =
 ;;
 
 let test_kubectl_probe_false_on_missing_binary () =
-  let result = Sol_cli_kubectl.probe ~ctx:Sol_cli_kube_destination.local_context ~args:[ "nonexistent-abc123-subcommand" ] in
+  let result =
+    Sol_cli_kubectl.probe
+      ~ctx:Sol_cli_kube_destination.local_context
+      ~args:[ "nonexistent-abc123-subcommand" ]
+  in
   check_bool "probe returns false for missing tool" false result
 ;;
 

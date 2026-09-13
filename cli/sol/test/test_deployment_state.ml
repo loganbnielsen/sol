@@ -5,26 +5,30 @@
    but it is still non-fatal, so these tests run without a cluster. *)
 
 let test_dry_run_is_noop () =
-  Sol_cli_deployment_state.record_outcome ~ctx:Sol_cli_kube_destination.local_context
+  Sol_cli_deployment_state.record_outcome
+    ~ctx:Sol_cli_kube_destination.local_context
     "test-workspace"
     Sol_cli_deployment_state.Dry_run
 ;;
 
 let test_failed_is_noop () =
-  Sol_cli_deployment_state.record_outcome ~ctx:Sol_cli_kube_destination.local_context
+  Sol_cli_deployment_state.record_outcome
+    ~ctx:Sol_cli_kube_destination.local_context
     "test-workspace"
     (Sol_cli_deployment_state.Failed { phase = "build"; message = "docker build failed" })
 ;;
 
 let test_emitted_is_noop () =
-  Sol_cli_deployment_state.record_outcome ~ctx:Sol_cli_kube_destination.local_context
+  Sol_cli_deployment_state.record_outcome
+    ~ctx:Sol_cli_kube_destination.local_context
     "test-workspace"
     (Sol_cli_deployment_state.Emitted { file = "/tmp/myapp-default-svc.yaml" })
 ;;
 
 let test_applied_does_not_raise () =
   (* kubectl apply will fail without a cluster; save_deployed_groups ignores the error *)
-  Sol_cli_deployment_state.record_outcome ~ctx:Sol_cli_kube_destination.local_context
+  Sol_cli_deployment_state.record_outcome
+    ~ctx:Sol_cli_kube_destination.local_context
     "test-workspace"
     (Sol_cli_deployment_state.Applied
        { namespace = "default"

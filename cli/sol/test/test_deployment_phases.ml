@@ -471,7 +471,8 @@ let render_ok spec =
 
 let run_plan_ok ~mode ?secret_backend plan =
   match
-    Sol_cli_executor.run_plan ~ctx:Sol_cli_kube_destination.local_context
+    Sol_cli_executor.run_plan
+      ~ctx:Sol_cli_kube_destination.local_context
       ~workspace:plan.Sol_cli_deployment_plan.workspace
       ~mode
       ?secret_backend
@@ -617,7 +618,13 @@ let test_gitops_emit_one_file_per_service () =
 (* ── Phase 5: executor commands ─────────────────────────────────────────── *)
 
 let test_local_executor_result_fields () =
-  let r = Sol_cli_executor.local ~ctx:Sol_cli_kube_destination.local_context ~workspace:"myapp" ~dry_run:true svc_spec in
+  let r =
+    Sol_cli_executor.local
+      ~ctx:Sol_cli_kube_destination.local_context
+      ~workspace:"myapp"
+      ~dry_run:true
+      svc_spec
+  in
   Alcotest.(check string) "local namespace" "myapp-payments" r.Sol_cli_executor.namespace;
   Alcotest.(check string) "local name" "charge-svc" r.Sol_cli_executor.name;
   Alcotest.(check string)
@@ -627,7 +634,13 @@ let test_local_executor_result_fields () =
 ;;
 
 let test_direct_executor_result_fields () =
-  let r = Sol_cli_executor.local ~ctx:Sol_cli_kube_destination.local_context ~workspace:"myapp" ~dry_run:true svc_spec in
+  let r =
+    Sol_cli_executor.local
+      ~ctx:Sol_cli_kube_destination.local_context
+      ~workspace:"myapp"
+      ~dry_run:true
+      svc_spec
+  in
   Alcotest.(check string) "direct namespace" "myapp-payments" r.Sol_cli_executor.namespace;
   Alcotest.(check string) "direct name" "charge-svc" r.Sol_cli_executor.name;
   Alcotest.(check string)
@@ -638,7 +651,13 @@ let test_direct_executor_result_fields () =
 
 let test_gitops_executor_result_fields () =
   with_temp_dir (fun dir ->
-    let r = Sol_cli_executor.gitops ~ctx:Sol_cli_kube_destination.local_context ~workspace:"myapp" ~dir svc_spec in
+    let r =
+      Sol_cli_executor.gitops
+        ~ctx:Sol_cli_kube_destination.local_context
+        ~workspace:"myapp"
+        ~dir
+        svc_spec
+    in
     Alcotest.(check string)
       "gitops namespace"
       "myapp-payments"
@@ -651,7 +670,13 @@ let test_gitops_executor_result_fields () =
 ;;
 
 let test_local_worker_executor_result_fields () =
-  let r = Sol_cli_executor.local ~ctx:Sol_cli_kube_destination.local_context ~workspace:"myapp" ~dry_run:true worker_spec in
+  let r =
+    Sol_cli_executor.local
+      ~ctx:Sol_cli_kube_destination.local_context
+      ~workspace:"myapp"
+      ~dry_run:true
+      worker_spec
+  in
   Alcotest.(check string)
     "local worker namespace"
     "myapp-comms"
@@ -660,7 +685,13 @@ let test_local_worker_executor_result_fields () =
 ;;
 
 let test_direct_fn_executor_result_fields () =
-  let r = Sol_cli_executor.local ~ctx:Sol_cli_kube_destination.local_context ~workspace:"myapp" ~dry_run:true fn_spec in
+  let r =
+    Sol_cli_executor.local
+      ~ctx:Sol_cli_kube_destination.local_context
+      ~workspace:"myapp"
+      ~dry_run:true
+      fn_spec
+  in
   Alcotest.(check string)
     "direct fn namespace"
     "myapp-billing"
@@ -671,7 +702,8 @@ let test_direct_fn_executor_result_fields () =
 (* ── Phase 6: state update ──────────────────────────────────────────────── *)
 
 let test_state_applied_does_not_raise () =
-  Sol_cli_deployment_state.record_outcome ~ctx:Sol_cli_kube_destination.local_context
+  Sol_cli_deployment_state.record_outcome
+    ~ctx:Sol_cli_kube_destination.local_context
     "myapp"
     (Sol_cli_deployment_state.Applied
        { namespace = "myapp-payments"
@@ -682,17 +714,22 @@ let test_state_applied_does_not_raise () =
 ;;
 
 let test_state_dry_run_is_noop () =
-  Sol_cli_deployment_state.record_outcome ~ctx:Sol_cli_kube_destination.local_context "myapp" Sol_cli_deployment_state.Dry_run
+  Sol_cli_deployment_state.record_outcome
+    ~ctx:Sol_cli_kube_destination.local_context
+    "myapp"
+    Sol_cli_deployment_state.Dry_run
 ;;
 
 let test_state_failed_is_noop () =
-  Sol_cli_deployment_state.record_outcome ~ctx:Sol_cli_kube_destination.local_context
+  Sol_cli_deployment_state.record_outcome
+    ~ctx:Sol_cli_kube_destination.local_context
     "myapp"
     (Sol_cli_deployment_state.Failed { phase = "render"; message = "YAML error" })
 ;;
 
 let test_state_emitted_is_noop () =
-  Sol_cli_deployment_state.record_outcome ~ctx:Sol_cli_kube_destination.local_context
+  Sol_cli_deployment_state.record_outcome
+    ~ctx:Sol_cli_kube_destination.local_context
     "myapp"
     (Sol_cli_deployment_state.Emitted { file = "/tmp/myapp-payments-charge-svc.yaml" })
 ;;
@@ -765,7 +802,10 @@ let test_gitops_shares_plan_type () =
     let plan = make_plan ~env:customer_env [ svc_spec ] in
     let gitops_results =
       List.map
-        (Sol_cli_executor.gitops ~ctx:Sol_cli_kube_destination.local_context ~workspace:plan.Sol_cli_deployment_plan.workspace ~dir)
+        (Sol_cli_executor.gitops
+           ~ctx:Sol_cli_kube_destination.local_context
+           ~workspace:plan.Sol_cli_deployment_plan.workspace
+           ~dir)
         plan.Sol_cli_deployment_plan.services
     in
     let direct_results =

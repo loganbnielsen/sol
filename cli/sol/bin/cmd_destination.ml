@@ -22,8 +22,8 @@ let resolve ~command ~local ~target =
           | None ->
             Error
               (Printf.sprintf
-                 "target %s declares no kube_context, so Sol cannot tell which cluster to \
-                  reach; add `kube_context:` to its target file"
+                 "target %s declares no kube_context, so Sol cannot tell which cluster \
+                  to reach; add `kube_context:` to its target file"
                  path)
           | Some t ->
             (match Sol_cli_config.destination_of_target t with

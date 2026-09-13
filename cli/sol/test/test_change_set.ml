@@ -104,7 +104,8 @@ let make_plan services =
 
 let run_ok ~mode ?secret_backend plan =
   match
-    Sol_cli_executor.run_plan ~ctx:Sol_cli_kube_destination.local_context
+    Sol_cli_executor.run_plan
+      ~ctx:Sol_cli_kube_destination.local_context
       ~workspace:plan.Sol_cli_deployment_plan.workspace
       ~mode
       ?secret_backend

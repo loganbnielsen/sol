@@ -326,7 +326,9 @@ let print_workspace_index
        let ns = namespace_or_exit ~workspace ~domain in
        let exists = ns_exists ~ctx ns in
        let diagnoses =
-         if exists then service_diagnoses ~ctx ~ns (services_of_domain services domain) else []
+         if exists
+         then service_diagnoses ~ctx ~ns (services_of_domain services domain)
+         else []
        in
        let status = Sol_cli_status.rollup_domain_status ~ns_exists:exists diagnoses in
        Printf.printf "  %-12s %s\n" domain (Sol_cli_status.domain_status_to_string status))

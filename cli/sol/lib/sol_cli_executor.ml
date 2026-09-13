@@ -49,7 +49,12 @@ let local ~ctx ~workspace ~dry_run spec =
   | Ok yaml -> dispatch_rendered ~ctx ~mode:(if dry_run then Dry_run else Apply) spec yaml
 ;;
 
-let gitops ~ctx ~workspace ~dir ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder) spec
+let gitops
+      ~ctx
+      ~workspace
+      ~dir
+      ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder)
+      spec
   =
   match Sol_cli_deployment_render.render_spec ~workspace ~secret_backend spec with
   | Error msg -> failwith msg

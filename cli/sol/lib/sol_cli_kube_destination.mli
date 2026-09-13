@@ -64,3 +64,10 @@ val kubectl_context_args : context -> string list
 val helm_context_args : context -> string list
 val context_environment : context -> (string * string) list
 val context_to_string : context -> string
+
+(** The full child environment — the ambient one with the destination's
+    [KUBECONFIG] override applied — for [Unix.execvpe] / [Unix.create_process_env],
+    which take a whole environment rather than a delta. Use this wherever kubectl
+    is spawned directly rather than through {!Sol_cli_kubectl}, so an exec path
+    cannot apply [--context] while forgetting the kubeconfig. *)
+val child_environment : context -> string array

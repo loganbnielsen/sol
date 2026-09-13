@@ -145,8 +145,17 @@ let set_cmd =
     (Cmd.info "set" ~doc:"Create or update a secret key")
     Term.(
       const (fun env value key domain target ->
-        run_set ~ctx:(Cmd_destination.top ~command:"secret set" target) env value key domain)
-      $ env_arg $ value_arg $ key_arg $ domain_arg $ Cmd_destination.required_target_arg)
+        run_set
+          ~ctx:(Cmd_destination.top ~command:"secret set" target)
+          env
+          value
+          key
+          domain)
+      $ env_arg
+      $ value_arg
+      $ key_arg
+      $ domain_arg
+      $ Cmd_destination.required_target_arg)
 ;;
 
 let list_cmd =
@@ -155,7 +164,9 @@ let list_cmd =
     Term.(
       const (fun env domain target ->
         run_list ~ctx:(Cmd_destination.top ~command:"secret list" target) env domain)
-      $ env_arg $ domain_arg $ Cmd_destination.required_target_arg)
+      $ env_arg
+      $ domain_arg
+      $ Cmd_destination.required_target_arg)
 ;;
 
 let delete_cmd =
@@ -163,8 +174,15 @@ let delete_cmd =
     (Cmd.info "delete" ~doc:"Delete a secret key")
     Term.(
       const (fun env key domain target ->
-        run_delete ~ctx:(Cmd_destination.top ~command:"secret delete" target) env key domain)
-      $ env_arg $ key_arg $ domain_arg $ Cmd_destination.required_target_arg)
+        run_delete
+          ~ctx:(Cmd_destination.top ~command:"secret delete" target)
+          env
+          key
+          domain)
+      $ env_arg
+      $ key_arg
+      $ domain_arg
+      $ Cmd_destination.required_target_arg)
 ;;
 
 let cmd =

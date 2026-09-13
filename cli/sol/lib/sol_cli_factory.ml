@@ -45,7 +45,17 @@ let execute ~ctx ~workspace ?env ~mode ?secret_backend plan =
    FEAT-063: [ctx] is the destination the caller resolved, threaded straight
    through to kubectl. The factory never resolves one itself — resolution lives
    at the command/hosted boundary. *)
-let run ~ctx ~workspace ~env ?env_label ?requested_scope ?resolved_config ~mode services () =
+let run
+      ~ctx
+      ~workspace
+      ~env
+      ?env_label
+      ?requested_scope
+      ?resolved_config
+      ~mode
+      services
+      ()
+  =
   match plan_of_services ~workspace ~env ?requested_scope ?resolved_config services with
   | Error msg -> Error msg
   | Ok plan ->

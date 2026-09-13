@@ -64,7 +64,11 @@ let ensure_postgres_url () =
 ;;
 
 let check_consumer_group_changes ~workspace ~confirm_group_change plan =
-  let prev_groups = Sol_cli_deployment_state.load_deployed_groups ~ctx:Sol_cli_kube_destination.local_context workspace in
+  let prev_groups =
+    Sol_cli_deployment_state.load_deployed_groups
+      ~ctx:Sol_cli_kube_destination.local_context
+      workspace
+  in
   let next_groups =
     List.map
       Sol_cli_plan_ids.Consumer_group.to_string
@@ -107,7 +111,8 @@ let print_service_start spec =
 let dry_run_service ~workspace ~sha (spec : Sol_cli_deployment_plan.service_spec) =
   print_service_start spec;
   match
-    Sol_cli_up_execution.apply_service_manifest ~ctx:Sol_cli_kube_destination.local_context
+    Sol_cli_up_execution.apply_service_manifest
+      ~ctx:Sol_cli_kube_destination.local_context
       ~workspace
       ~dry_run:true
       (Sol_cli_up_execution.dry_run_spec ~workspace ~sha spec)
@@ -133,14 +138,25 @@ let apply_service
   (match Sol_cli_up_execution.push_image exec with
    | Error msg -> raise (Deploy_failed msg)
    | Ok () -> ());
-  (match Sol_cli_up_execution.apply_service_manifest ~ctx:Sol_cli_kube_destination.local_context ~workspace ~dry_run:false spec with
+  (match
+     Sol_cli_up_execution.apply_service_manifest
+       ~ctx:Sol_cli_kube_destination.local_context
+       ~workspace
+       ~dry_run:false
+       spec
+   with
    | Ok _ -> ()
    | Error msg -> raise (Deploy_failed msg));
   (match spec.primitive with
    | Sol_cli_deployment_plan.Fn -> ()
    | Sol_cli_deployment_plan.Svc | Sol_cli_deployment_plan.Worker ->
      Printf.printf "  waiting for rollout...\n%!";
-     (match Sol_cli_up_execution.wait_for_service_rollout ~ctx:Sol_cli_kube_destination.local_context spec exec with
+     (match
+        Sol_cli_up_execution.wait_for_service_rollout
+          ~ctx:Sol_cli_kube_destination.local_context
+          spec
+          exec
+      with
       | Ok () -> ()
       | Error msg -> raise (Deploy_failed msg)));
   match spec.primitive with
@@ -154,7 +170,8 @@ let apply_service
           ~namespace:exec.namespace
           ~target:("svc/" ^ exec.k8s_name)
       then Unix.sleepf 0.4;
-      Sol_cli_port_forward.start ~ctx:Sol_cli_kube_destination.local_context
+      Sol_cli_port_forward.start
+        ~ctx:Sol_cli_kube_destination.local_context
         { name = exec.k8s_name
         ; namespace = exec.namespace
         ; target = "svc/" ^ exec.k8s_name
@@ -246,12 +263,21 @@ let run_apply
       "\n\
        Note: %d migration file(s) found in db/migrations/ — run 'sol migrate' to apply.\n"
       summary.pending_migrations;
-  Sol_cli_up_execution.record_applied ~ctx:Sol_cli_kube_destination.local_context ~workspace ~sha plan;
+  Sol_cli_up_execution.record_applied
+    ~ctx:Sol_cli_kube_destination.local_context
+    ~workspace
+    ~sha
+    plan;
   (* FEAT-067: record the release after a successful apply. A failure to record
      is reported, not fatal — the deploy really did happen, and pretending it
      did not would be worse than a missing record. *)
   (match
-     Sol_cli_release_store.record_plan ~ctx:Sol_cli_kube_destination.local_context ~workspace ~target:"local" ~mode:"local" plan
+     Sol_cli_release_store.record_plan
+       ~ctx:Sol_cli_kube_destination.local_context
+       ~workspace
+       ~target:"local"
+       ~mode:"local"
+       plan
    with
    | Ok () -> ()
    | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);

@@ -59,7 +59,9 @@ let apply_yaml yaml =
       try Sys.remove tmp with
       | _ -> ())
     (fun () ->
-       match Sol_cli_kubectl.apply ~ctx:Sol_cli_kube_destination.local_context ~file:tmp with
+       match
+         Sol_cli_kubectl.apply ~ctx:Sol_cli_kube_destination.local_context ~file:tmp
+       with
        | Ok () -> ()
        | Error e ->
          Printf.eprintf

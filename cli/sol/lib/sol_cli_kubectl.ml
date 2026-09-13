@@ -14,9 +14,7 @@ let invocation ?timeout_s ~ctx args =
   Sol_cli_process.cmd
     ~env:(Sol_cli_kube_destination.context_environment ctx)
     ?timeout_s
-    ([ "kubectl" ]
-     @ Sol_cli_kube_destination.kubectl_context_args ctx
-     @ args)
+    ([ "kubectl" ] @ Sol_cli_kube_destination.kubectl_context_args ctx @ args)
 ;;
 
 let apply ~ctx ~file = Sol_cli_process.run_ok (invocation ~ctx [ "apply"; "-f"; file ])
@@ -27,7 +25,8 @@ let apply_dry_run ~ctx ~file =
 
 let get ~ctx ~resource ~name ~namespace ~output =
   match
-    Sol_cli_process.run (invocation ~ctx [ "get"; resource; name; "-n"; namespace; "-o"; output ])
+    Sol_cli_process.run
+      (invocation ~ctx [ "get"; resource; name; "-n"; namespace; "-o"; output ])
   with
   | Ok r when r.Sol_cli_process.exit_code <> 0 ->
     Error (Sol_cli_process.Non_zero { exit_code = r.exit_code; stderr = r.stderr })
@@ -42,11 +41,13 @@ let logs ~ctx ~pod ~namespace ~container =
     | None -> []
     | Some c -> [ "-c"; c ]
   in
-  Sol_cli_process.run (invocation ~ctx ([ "logs"; pod; "-n"; namespace ] @ container_args))
+  Sol_cli_process.run
+    (invocation ~ctx ([ "logs"; pod; "-n"; namespace ] @ container_args))
 ;;
 
 let rollout_status ~ctx ~kind_name ~namespace =
-  Sol_cli_process.run (invocation ~ctx [ "rollout"; "status"; kind_name; "-n"; namespace ])
+  Sol_cli_process.run
+    (invocation ~ctx [ "rollout"; "status"; kind_name; "-n"; namespace ])
 ;;
 
 let rollout_undo ~ctx ~kind_name ~namespace =
@@ -61,16 +62,7 @@ let patch ~ctx ~resource ~name ~namespace ~patch_type ~patch =
   Sol_cli_process.run
     (invocation
        ~ctx
-       [ "patch"
-       ; resource
-       ; name
-       ; "-n"
-       ; namespace
-       ; "--type"
-       ; patch_type
-       ; "-p"
-       ; patch
-       ])
+       [ "patch"; resource; name; "-n"; namespace; "--type"; patch_type; "-p"; patch ])
 ;;
 
 let argo_rollout_undo ~ctx ~namespace ~name =
@@ -80,7 +72,8 @@ let argo_rollout_undo ~ctx ~namespace ~name =
 ;;
 
 let argo_rollout_status ~ctx ~namespace ~name =
-  Sol_cli_process.run (invocation ~ctx [ "argo"; "rollouts"; "status"; name; "-n"; namespace ])
+  Sol_cli_process.run
+    (invocation ~ctx [ "argo"; "rollouts"; "status"; name; "-n"; namespace ])
 ;;
 
 (* A probe answers "is it reachable", and now also "and if not, what did kubectl

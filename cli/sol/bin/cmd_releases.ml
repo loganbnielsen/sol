@@ -26,5 +26,7 @@ let cmd =
          "List the release records the target's cluster holds for this workspace, newest \
           first. Each row is a recorded deploy: id, commit, requested scope, time and \
           target. Records are written by 'sol up' and 'sol deploy'.")
-    Term.(const (fun target -> run ~ctx:(Cmd_destination.top ~command:"releases" target) ()) $ Cmd_destination.required_target_arg)
+    Term.(
+      const (fun target -> run ~ctx:(Cmd_destination.top ~command:"releases" target) ())
+      $ Cmd_destination.required_target_arg)
 ;;
