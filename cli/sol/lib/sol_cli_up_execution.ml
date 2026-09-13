@@ -104,12 +104,15 @@ let apply_service_manifest ~workspace ~dry_run spec =
   | Failure msg -> Error msg
 ;;
 
-let wait_for_service_rollout spec exec =
+(* FEAT-063: the rollout is watched in the cluster the target names, so the
+   destination reaches kubectl through [ctx]. *)
+let wait_for_service_rollout ~ctx spec exec =
   match spec.Sol_cli_deployment_plan.primitive with
   | Sol_cli_deployment_plan.Fn -> Ok ()
   | Sol_cli_deployment_plan.Svc | Sol_cli_deployment_plan.Worker ->
     (match
        Sol_cli_kubectl.rollout_status
+         ~ctx
          ~kind_name:("deployment/" ^ exec.k8s_name)
          ~namespace:exec.namespace
      with
@@ -120,6 +123,7 @@ let wait_for_service_rollout spec exec =
        in
        (match
           Sol_cli_rollout_diagnosis.diagnose_service_live
+            ~ctx
             ~pod_expectation
             ~ns:exec.namespace
             ~service_name:spec.source_name
@@ -137,8 +141,9 @@ let post_deploy_summary ~cwd plan =
   }
 ;;
 
-let record_applied ~workspace ~sha plan =
+let record_applied ~ctx ~workspace ~sha plan =
   Sol_cli_deployment_state.record_outcome
+    ~ctx
     workspace
     (Sol_cli_deployment_state.Applied
        { namespace = "default"

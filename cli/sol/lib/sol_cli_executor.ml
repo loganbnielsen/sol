@@ -1,6 +1,10 @@
 (* Deployment executors — plan-in, side-effect-out.
    Each executor renders a service_spec to YAML and dispatches to the
-   appropriate Sol_cli_manifest primitive. *)
+   appropriate Sol_cli_manifest primitive.
+
+   FEAT-063: applying is a Kubernetes operation, so the destination-side context
+   is threaded through. [Emit_to] writes files and touches no cluster, but it
+   takes the same parameter so the dispatch shape stays uniform. *)
 
 type result =
   { namespace : string
@@ -22,10 +26,10 @@ let make_result (spec : Sol_cli_deployment_plan.service_spec) =
   }
 ;;
 
-let dispatch_rendered ~mode spec yaml =
+let dispatch_rendered ~ctx ~mode spec yaml =
   (match mode with
-   | Dry_run -> Sol_cli_manifest.apply yaml ~dry_run:true
-   | Apply -> Sol_cli_manifest.apply yaml ~dry_run:false
+   | Dry_run -> Sol_cli_manifest.apply ~ctx yaml ~dry_run:true
+   | Apply -> Sol_cli_manifest.apply ~ctx yaml ~dry_run:false
    | Emit_to dir ->
      let ns =
        Sol_cli_deployment_plan.namespace_to_string spec.Sol_cli_deployment_plan.namespace
@@ -39,26 +43,23 @@ let dispatch_rendered ~mode spec yaml =
 
 (* ── executors ───────────────────────────────────────────────────────────── *)
 
-let local ~workspace ~dry_run spec =
+let local ~ctx ~workspace ~dry_run spec =
   match Sol_cli_deployment_render.render_spec ~workspace spec with
   | Error msg -> failwith msg
-  | Ok yaml -> dispatch_rendered ~mode:(if dry_run then Dry_run else Apply) spec yaml
+  | Ok yaml -> dispatch_rendered ~ctx ~mode:(if dry_run then Dry_run else Apply) spec yaml
 ;;
 
-let gitops
-      ~workspace
-      ~dir
-      ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder)
-      spec
+let gitops ~ctx ~workspace ~dir ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder) spec
   =
   match Sol_cli_deployment_render.render_spec ~workspace ~secret_backend spec with
   | Error msg -> failwith msg
-  | Ok yaml -> dispatch_rendered ~mode:(Emit_to dir) spec yaml
+  | Ok yaml -> dispatch_rendered ~ctx ~mode:(Emit_to dir) spec yaml
 ;;
 
 (* ── plan-level executor ─────────────────────────────────────────────────── *)
 
 let run_plan
+      ~ctx
       ~workspace
       ?env
       ~mode
@@ -104,6 +105,6 @@ let run_plan
     Ok
       (List.map
          (fun ((spec : Sol_cli_deployment_plan.service_spec), yaml) ->
-            dispatch_rendered ~mode spec yaml)
+            dispatch_rendered ~ctx ~mode spec yaml)
          pairs)
 ;;

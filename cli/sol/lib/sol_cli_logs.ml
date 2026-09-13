@@ -51,13 +51,15 @@ type kubectl_log_target =
   | Deployment of string
   | App_selector of string
 
-let kubectl_logs_argv ~ns ~target ~follow ~tail =
+let kubectl_logs_argv ~ctx ~ns ~target ~follow ~tail =
   let target_args =
     match target with
     | Deployment name -> [ "deployment/" ^ name ]
     | App_selector app -> [ "-l"; "app=" ^ app; "--all-containers=true" ]
   in
-  [ "kubectl"; "logs"; "-n"; ns ]
+  [ "kubectl" ]
+  @ Sol_cli_kube_destination.kubectl_context_args ctx
+  @ [ "logs"; "-n"; ns ]
   @ target_args
   @ (if follow then [ "--follow" ] else [])
   @ [ "--tail=" ^ string_of_int tail ]

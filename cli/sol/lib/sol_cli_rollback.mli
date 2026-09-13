@@ -28,12 +28,16 @@ val rollback_target_of_service : Sol_cli_deployment_plan.service_spec -> rollbac
 
 (** Return [true] when the kubectl-argo-rollouts plugin is reachable via
     [kubectl-argo-rollouts version] or [kubectl argo rollouts version]. *)
-val argo_plugin_available : unit -> bool
+val argo_plugin_available : ctx:Sol_cli_kube_destination.context -> unit -> bool
 
-(** Execute the rollback for the given target. [Standard_deployment] calls
-    [kubectl rollout undo] then [kubectl rollout status]. [Argo_rollout] calls
-    [kubectl argo rollouts undo] if the plugin is available, or returns
-    [Error (Plugin_missing _)] otherwise. [No_op] always returns [Ok ()]. *)
-val execute_rollback : rollback_target -> (unit, error) result
+(** Execute the rollback for the given target in the cluster [ctx] names.
+    [Standard_deployment] calls [kubectl rollout undo] then [kubectl rollout
+    status]. [Argo_rollout] calls [kubectl argo rollouts undo] if the plugin is
+    available, or returns [Error (Plugin_missing _)] otherwise. [No_op] always
+    returns [Ok ()]. *)
+val execute_rollback
+  :  ctx:Sol_cli_kube_destination.context
+  -> rollback_target
+  -> (unit, error) result
 
 val error_to_string : error -> string
