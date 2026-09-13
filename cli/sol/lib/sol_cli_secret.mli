@@ -21,8 +21,10 @@ val secret_manifest
 
 val redacted_result : action_result -> string
 
+(** FEAT-063: each operation runs against the cluster [ctx] names. *)
 val set
-  :  env:string
+  :  ctx:Sol_cli_kube_destination.context
+  -> env:string
   -> workspace:string
   -> namespaces:string list
   -> key:string
@@ -30,13 +32,15 @@ val set
   -> (action_result, string) result
 
 val list
-  :  env:string
+  :  ctx:Sol_cli_kube_destination.context
+  -> env:string
   -> workspace:string
   -> namespaces:string list
   -> (action_result, string) result
 
 val delete
-  :  env:string
+  :  ctx:Sol_cli_kube_destination.context
+  -> env:string
   -> workspace:string
   -> namespaces:string list
   -> key:string
