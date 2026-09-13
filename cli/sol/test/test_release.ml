@@ -12,16 +12,7 @@ let contains needle haystack =
   | Not_found -> false
 ;;
 
-(* ── id / timestamp / labels ─────────────────────────────────────────────── *)
-
-let test_release_id_format () =
-  let id = R.generate_release_id ~now:1_700_000_000.0 ~commit:"ABC1234" in
-  check_string "utc, lowercase, dns-safe" "20231114t221320z-abc1234" id
-;;
-
-let test_rfc3339 () =
-  check_string "utc" "2023-11-14T22:13:20Z" (R.rfc3339_utc 1_700_000_000.0)
-;;
+(* ── labels ──────────────────────────────────────────────────────────────── *)
 
 let test_sanitize_label () =
   check_string "target path" "dev-aws-us-east-1" (R.sanitize_label "dev/aws/us-east-1");
@@ -32,24 +23,33 @@ let test_sanitize_label () =
 
 (* ── record shape ────────────────────────────────────────────────────────── *)
 
+let sample_workload : R.workload =
+  { domain = "payments"
+  ; name = "charge_svc"
+  ; primitive = "svc"
+  ; image = "reg/myworkspace/charge-svc:abc1234"
+  ; config = [ "LOG_LEVEL", "info" ]
+  ; secrets = [ "DATABASE_URL", "db-secret" ]
+  ; schedule = None
+  ; replicas = 2
+  ; cpu = "100m"
+  ; memory = "128Mi"
+  ; extra_labels = [ "team", "payments" ]
+  }
+;;
+
+(* The id is derived from the record's own content, so a hand-built fixture is
+   canonical by construction — exactly the property [validate] checks. *)
 let sample_record : R.t =
-  { release_id = "20231114t221320z-abc1234"
-  ; created_at = "2023-11-14T22:13:20Z"
-  ; workspace = "myworkspace"
-  ; target = "dev/aws/us-east-1"
-  ; mode = "deploy"
-  ; git_commit = "abc1234"
-  ; git_dirty = false
-  ; requested_scope = "payments"
-  ; workloads =
-      [ { domain = "payments"
-        ; name = "charge_svc"
-        ; image = "reg/myworkspace/charge-svc:abc1234"
-        ; config_keys = [ "LOG_LEVEL" ]
-        ; secret_keys = [ "DATABASE_URL" ]
-        }
-      ]
-  ; migrations = [ "0001_init.sql" ]
+  let placeholder =
+    { R.release_id = "r-0000000000000000"
+    ; workspace = "myworkspace"
+    ; environment = Some "dev"
+    ; workloads = [ sample_workload ]
+    }
+  in
+  { placeholder with
+    release_id = Sol_cli_release_id.to_string (R.derived_release_id placeholder)
   }
 ;;
 
@@ -57,43 +57,49 @@ let test_json_round_trip () =
   match R.of_json (R.to_json sample_record) with
   | Error msg -> Alcotest.fail msg
   | Ok r ->
-    check_string "scope preserved" "payments" r.requested_scope;
-    check_string "commit preserved" "abc1234" r.git_commit;
-    check_bool "dirty preserved" false r.git_dirty;
+    check_string "workspace preserved" "myworkspace" r.workspace;
+    check_string "environment preserved" "dev" (Option.value r.environment ~default:"");
     check_int "one workload" 1 (List.length r.workloads);
+    let w = List.hd r.workloads in
+    check_string "image preserved" "reg/myworkspace/charge-svc:abc1234" w.image;
+    check_string "config value preserved" "info" (List.assoc "LOG_LEVEL" w.config);
     check_string
-      "image preserved"
-      "reg/myworkspace/charge-svc:abc1234"
-      (List.hd r.workloads).image
+      "secret reference preserved"
+      "db-secret"
+      (List.assoc "DATABASE_URL" w.secrets);
+    check_int "replicas preserved" 2 w.replicas
 ;;
 
-(* The AC: an immutable, labelled ConfigMap whose record carries the requested
-   scope and the resolved set, and no secret *values*. *)
+(* The AC: an immutable, labelled ConfigMap named by the release id, whose
+   record carries the resolved content and no secret *values*. *)
 let test_configmap_object () =
   let json = Yojson.Safe.from_string (R.to_configmap_json sample_record) in
   let open Yojson.Safe.Util in
   check_string "kind" "ConfigMap" (member "kind" json |> to_string);
   check_bool "immutable" true (member "immutable" json |> to_bool);
   check_string
+    "name is the release id"
+    (R.configmap_name sample_record)
+    (member "metadata" json |> member "name" |> to_string);
+  check_string
     "type label"
     "release"
     (member "metadata" json |> member "labels" |> member "sol.dev/type" |> to_string);
+  let data = member "data" json in
   check_string
-    "scope label"
-    "payments"
-    (member "metadata" json |> member "labels" |> member "sol.dev/scope" |> to_string);
-  check_string
-    "target label sanitized"
-    "dev-aws-us-east-1"
-    (member "metadata" json |> member "labels" |> member "sol.dev/target" |> to_string);
-  let record = member "data" json |> member "record" |> to_string in
-  check_bool "scope in body" true (contains "\"requested_scope\":\"payments\"" record);
-  check_bool "resolved workload in body" true (contains "charge_svc" record);
-  check_bool "secret key name recorded" true (contains "DATABASE_URL" record);
-  check_bool "no secret value" false (contains "hunter2" record)
+    "release_id in data"
+    sample_record.release_id
+    (member "release_id" data |> to_string);
+  let record = member "record" data |> to_string in
+  check_bool "workspace in body" true (contains "myworkspace" record);
+  check_bool "workload in body" true (contains "charge_svc" record);
+  check_bool "secret reference in body" true (contains "db-secret" record);
+  check_bool "no unrelated secret value" false (contains "hunter2" record)
 ;;
 
-let test_current_pointer_names_release () =
+(* The pointer is a claim about *which* record is selected, not a second copy of
+   it: its payload is release_id and nothing else, so it cannot drift. *)
+let test_current_pointer_is_minimal () =
   let json = Yojson.Safe.from_string (R.to_current_configmap_json sample_record) in
   let open Yojson.Safe.Util in
   check_string
@@ -104,18 +110,47 @@ let test_current_pointer_names_release () =
     "underscore workspace yields a valid name"
     "sol-release-current-ci-smoke"
     (R.current_configmap_name ~workspace:"ci_smoke");
+  let data = member "data" json |> to_assoc in
+  check_int "payload is release_id only" 1 (List.length data);
   check_string
     "points at the release"
-    (R.configmap_name sample_record)
-    (Printf.sprintf
-       "sol-release-%s"
-       (member "data" json |> member "release_id" |> to_string))
+    sample_record.release_id
+    (List.assoc "release_id" data |> to_string)
+;;
+
+(* ── validating both directions ──────────────────────────────────────────── *)
+
+let test_validate_accepts_canonical_record () =
+  match R.validate ~name:(R.configmap_name sample_record) sample_record with
+  | Ok () -> ()
+  | Error msg -> Alcotest.fail ("canonical record rejected: " ^ msg)
+;;
+
+let test_validate_rejects_wrong_name () =
+  match R.validate ~name:"sol-release-r-deadbeefdeadbeef" sample_record with
+  | Ok () -> Alcotest.fail "expected a name-direction failure"
+  | Error msg ->
+    check_bool "names the record" true (contains sample_record.release_id msg)
+;;
+
+let test_validate_rejects_corrupt_content () =
+  (* A correctly named record whose body does not rederive its id: exactly the
+     corruption a name-only check would miss. *)
+  let corrupt = { sample_record with workloads = [] } in
+  match R.validate ~name:(R.configmap_name corrupt) corrupt with
+  | Ok () -> Alcotest.fail "expected a content-direction failure"
+  | Error msg -> check_bool "reports corruption" true (contains "corrupt" msg)
 ;;
 
 (* ── reading back ────────────────────────────────────────────────────────── *)
 
-let test_parse_kubectl_list_skips_items_without_a_record () =
-  let item json = `Assoc [ "data", `Assoc [ "record", `String json ] ] in
+let test_parse_kubectl_list_skips_invalid_items () =
+  let item ?(name = R.configmap_name sample_record) json =
+    `Assoc
+      [ "metadata", `Assoc [ "name", `String name ]
+      ; "data", `Assoc [ "record", `String json ]
+      ]
+  in
   let json =
     `Assoc
       [ ( "items"
@@ -123,6 +158,9 @@ let test_parse_kubectl_list_skips_items_without_a_record () =
             [ item (Yojson.Safe.to_string (R.to_json sample_record))
             ; `Assoc []
             ; item "not json"
+            ; item
+                ~name:"sol-release-r-deadbeefdeadbeef"
+                (Yojson.Safe.to_string (R.to_json sample_record))
             ] )
       ]
   in
@@ -131,20 +169,13 @@ let test_parse_kubectl_list_skips_items_without_a_record () =
   | Ok records -> check_int "only the valid record" 1 (List.length records)
 ;;
 
-let test_format_table_newest_first () =
-  let older =
-    { sample_record with R.release_id = "older"; created_at = "2023-01-01T00:00:00Z" }
-  in
-  let newer =
-    { sample_record with R.release_id = "newer"; created_at = "2024-01-01T00:00:00Z" }
-  in
-  let table = R.format_table [ older; newer ] in
-  let pos needle = Str.search_forward (Str.regexp_string needle) table 0 in
-  check_bool "newest row first" true (pos "newer" < pos "older");
+let test_format_table_lists_the_id () =
+  let table = R.format_table [ sample_record ] in
+  check_bool "id column present" true (contains sample_record.release_id table);
   check_bool "header present" true (contains "ID" table)
 ;;
 
-(* ── of_plan ─────────────────────────────────────────────────────────────── *)
+(* ── of_plan / bundle determinism ────────────────────────────────────────── *)
 
 let mkdirs path =
   let rec go p =
@@ -171,79 +202,129 @@ let with_cwd dir f =
   Fun.protect ~finally:(fun () -> Sys.chdir old) f
 ;;
 
-let test_of_plan_records_scope_and_resolved_set () =
+let test_env : Sol_cli_deployment_plan.env_config =
+  { name = "local"
+  ; mode = Sol_cli_deployment_plan.Local
+  ; registry = "sol-registry:5000"
+  ; image_tag = "dev"
+  ; env = None
+  ; region = None
+  ; base_domain = None
+  ; cluster_issuer = "letsencrypt-prod"
+  ; secret_backend = Sol_cli_manifest.Kubernetes_live
+  }
+;;
+
+let test_service : Sol_cli_manifest.service =
+  { domain = "payments"
+  ; name = "charge_svc"
+  ; primitive = Sol_cli_manifest.Svc
+  ; dir = "app/payments/charge_svc"
+  }
+;;
+
+let with_plan ~requested_scope f =
   let tmp = Filename.temp_dir "sol_test_release_plan" "" in
   with_cwd tmp (fun () ->
     mkdirs "app/payments/charge_svc";
     write_file "app/payments/charge_svc/sol.toml" "";
-    let env : Sol_cli_deployment_plan.env_config =
-      { name = "local"
-      ; mode = Sol_cli_deployment_plan.Local
-      ; registry = "sol-registry:5000"
-      ; image_tag = "dev"
-      ; env = None
-      ; region = None
-      ; base_domain = None
-      ; cluster_issuer = "letsencrypt-prod"
-      ; secret_backend = Sol_cli_manifest.Kubernetes_live
-      }
-    in
-    let service : Sol_cli_manifest.service =
-      { domain = "payments"
-      ; name = "charge_svc"
-      ; primitive = Sol_cli_manifest.Svc
-      ; dir = "app/payments/charge_svc"
-      }
-    in
     match
       Sol_cli_deployment_plan.of_services_result
         ~workspace:"myworkspace"
-        ~env
-        ~requested_scope:"payments"
-        [ service ]
+        ~env:test_env
+        ~requested_scope
+        [ test_service ]
     with
     | Error e -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string e)
-    | Ok plan ->
-      let r =
-        R.of_plan
-          ~workspace:"myworkspace"
-          ~target:"local"
-          ~mode:"local"
-          ~git_commit:"abc1234"
-          ~git_dirty:false
-          plan
-      in
-      check_string "requested scope is recorded" "payments" r.requested_scope;
-      check_int "one resolved workload" 1 (List.length r.workloads);
-      check_string "workload name" "charge_svc" (List.hd r.workloads).name;
-      check_bool "image recorded" true (contains "charge-svc" (List.hd r.workloads).image))
+    | Ok plan -> f plan)
+;;
+
+let test_of_plan_rederives_the_plan_identity () =
+  with_plan ~requested_scope:"payments" (fun plan ->
+    let r = R.of_plan plan in
+    check_string
+      "record id is the plan id"
+      (Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id)
+      r.release_id;
+    check_string
+      "record content rederives the plan id"
+      (Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id)
+      (Sol_cli_release_id.to_string (R.derived_release_id r));
+    check_int "one resolved workload" 1 (List.length r.workloads);
+    check_string "workload name" "charge_svc" (List.hd r.workloads).name;
+    check_bool "image recorded" true (contains "charge-svc" (List.hd r.workloads).image))
+;;
+
+(* The step-6 promise at the artifact layer: same content -> same id ->
+   byte-for-byte the same record, even though the two plans were asked for by
+   different scopes (scope is intent, not released state). *)
+let test_same_content_same_record () =
+  with_plan ~requested_scope:"payments" (fun plan_a ->
+    with_plan ~requested_scope:"workspace" (fun plan_b ->
+      let a = R.of_plan plan_a
+      and b = R.of_plan plan_b in
+      check_string "same id" a.release_id b.release_id;
+      check_string "same record bytes" (R.to_configmap_json a) (R.to_configmap_json b)))
+;;
+
+let test_bundle_files_are_deterministic () =
+  let files = R.bundle_files sample_record in
+  check_int "record + pointer" 2 (List.length files);
+  check_bool
+    "record file is named by the id"
+    true
+    (List.mem_assoc (R.configmap_name sample_record ^ ".yaml") files);
+  check_bool "pointer file present" true (List.mem_assoc "sol-current-release.yaml" files);
+  check_bool
+    "record content is stable"
+    true
+    (List.assoc (R.configmap_name sample_record ^ ".yaml") files
+     = R.to_configmap_json sample_record)
 ;;
 
 let () =
   Alcotest.run
     "release"
-    [ ( "id"
-      , [ Alcotest.test_case "format" `Quick test_release_id_format
-        ; Alcotest.test_case "rfc3339 utc" `Quick test_rfc3339
-        ; Alcotest.test_case "label sanitization" `Quick test_sanitize_label
-        ] )
+    [ "labels", [ Alcotest.test_case "sanitization" `Quick test_sanitize_label ]
     ; ( "record"
       , [ Alcotest.test_case "json round trip" `Quick test_json_round_trip
         ; Alcotest.test_case "configmap object" `Quick test_configmap_object
-        ; Alcotest.test_case "current pointer" `Quick test_current_pointer_names_release
+        ; Alcotest.test_case "pointer is minimal" `Quick test_current_pointer_is_minimal
+        ] )
+    ; ( "validate"
+      , [ Alcotest.test_case
+            "accepts a canonical record"
+            `Quick
+            test_validate_accepts_canonical_record
+        ; Alcotest.test_case
+            "rejects a wrong name"
+            `Quick
+            test_validate_rejects_wrong_name
+        ; Alcotest.test_case
+            "rejects corrupt content"
+            `Quick
+            test_validate_rejects_corrupt_content
         ] )
     ; ( "read"
       , [ Alcotest.test_case
             "parse skips invalid items"
             `Quick
-            test_parse_kubectl_list_skips_items_without_a_record
-        ; Alcotest.test_case "table is newest first" `Quick test_format_table_newest_first
+            test_parse_kubectl_list_skips_invalid_items
+        ; Alcotest.test_case "table lists the id" `Quick test_format_table_lists_the_id
         ] )
     ; ( "of_plan"
       , [ Alcotest.test_case
-            "records scope and resolved set"
+            "rederives the plan identity"
             `Quick
-            test_of_plan_records_scope_and_resolved_set
+            test_of_plan_rederives_the_plan_identity
+        ; Alcotest.test_case
+            "same content, same record"
+            `Quick
+            test_same_content_same_record
+        ; Alcotest.test_case
+            "bundle files are deterministic"
+            `Quick
+            test_bundle_files_are_deterministic
         ] )
     ]
 ;;

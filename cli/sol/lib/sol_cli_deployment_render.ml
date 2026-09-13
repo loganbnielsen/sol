@@ -45,6 +45,7 @@ let render
       ?env
       ?(image = "")
       ?(secret_backend = Sol_cli_manifest.Kubernetes_live)
+      ~release_id
       { common; workload }
   =
   let { namespace
@@ -180,6 +181,7 @@ let render
                    ~workspace
                    ~domain
                    ~primitive
+                   ~release_id
                    ()
                in
                (match pd with
@@ -238,6 +240,7 @@ let render
                    ~workspace
                    ~domain
                    ~primitive
+                   ~release_id
                    ()
                ]
            in
@@ -289,6 +292,7 @@ let render
                  ~schedule
                  ~workspace
                  ~domain
+                 ~release_id
                  ()
              ]
          in
@@ -300,6 +304,7 @@ let render_spec
       ~workspace
       ?env
       ?(image = "")
+      ~release_id
       ?(secret_backend = Sol_cli_manifest.Kubernetes_live)
       (s : Sol_cli_deployment_plan.service_spec)
   =
@@ -345,5 +350,5 @@ let render_spec
       let schedule = Option.value s.schedule ~default:"0 * * * *" in
       Render_fn { schedule }
   in
-  render ~workspace ?env ~image ~secret_backend { common; workload }
+  render ~workspace ?env ~image ~release_id ~secret_backend { common; workload }
 ;;

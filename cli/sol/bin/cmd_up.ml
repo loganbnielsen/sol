@@ -108,12 +108,18 @@ let print_service_start spec =
     spec.source_name
 ;;
 
-let dry_run_service ~workspace ~sha (spec : Sol_cli_deployment_plan.service_spec) =
+let dry_run_service
+      ~workspace
+      ~sha
+      ~release_id
+      (spec : Sol_cli_deployment_plan.service_spec)
+  =
   print_service_start spec;
   match
     Sol_cli_up_execution.apply_service_manifest
       ~ctx:Sol_cli_kube_destination.local_context
       ~workspace
+      ~release_id
       ~dry_run:true
       (Sol_cli_up_execution.dry_run_spec ~workspace ~sha spec)
   with
@@ -126,6 +132,7 @@ let apply_service
       ~ctx_dir
       ~sha
       ~pf_failed
+      ~release_id
       (spec : Sol_cli_deployment_plan.service_spec)
   =
   let exec = Sol_cli_up_execution.service_execution ~workspace ~ctx_dir ~sha spec in
@@ -142,6 +149,7 @@ let apply_service
      Sol_cli_up_execution.apply_service_manifest
        ~ctx:Sol_cli_kube_destination.local_context
        ~workspace
+       ~release_id
        ~dry_run:false
        spec
    with
@@ -207,7 +215,12 @@ let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~services =
   match
     Sol_cli_run_log.run_task run_log ~name:"dry-run" (fun () ->
       try
-        List.iter (dry_run_service ~workspace ~sha) plan.Sol_cli_deployment_plan.services;
+        List.iter
+          (dry_run_service
+             ~workspace
+             ~sha
+             ~release_id:plan.Sol_cli_deployment_plan.release_id)
+          plan.Sol_cli_deployment_plan.services;
         Ok ()
       with
       | Deploy_failed msg -> Error msg)
@@ -241,7 +254,12 @@ let run_apply
        | Ok ctx_dir ->
          (try
             List.iter
-              (apply_service ~workspace ~ctx_dir ~sha ~pf_failed)
+              (apply_service
+                 ~workspace
+                 ~ctx_dir
+                 ~sha
+                 ~pf_failed
+                 ~release_id:plan.Sol_cli_deployment_plan.release_id)
               plan.Sol_cli_deployment_plan.services;
             Sol_cli_up_execution.remove_build_context ~ctx_dir;
             Ok ()
@@ -272,12 +290,7 @@ let run_apply
      is reported, not fatal — the deploy really did happen, and pretending it
      did not would be worse than a missing record. *)
   (match
-     Sol_cli_release_store.record_plan
-       ~ctx:Sol_cli_kube_destination.local_context
-       ~workspace
-       ~target:"local"
-       ~mode:"local"
-       plan
+     Sol_cli_release_store.record_plan ~ctx:Sol_cli_kube_destination.local_context plan
    with
    | Ok () -> ()
    | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);

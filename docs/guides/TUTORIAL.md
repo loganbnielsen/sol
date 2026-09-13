@@ -559,14 +559,14 @@ sol up [--scope DOMAIN[/UNIT]] [--dry-run] [--tag]  build images and deploy to l
 sol deploy TARGET [--scope DOMAIN[/UNIT]] [--image-tag TAG] [--registry URL]  deploy pre-built images (CI mode)
 sol deploy TARGET --emit-to DIR [--image-tag TAG] ...  write YAML for Argo CD (GitOps mode)
 sol status [domain]                               show running pods and port-forward hints
-sol releases                                     list this workspace's recorded releases (id, commit, scope, time)
+sol releases                                     list this workspace's recorded releases (id, environment, workloads)
 
 sol migrate [apply]                               apply pending migrations
 sol migrate status                                show per-file applied/pending table
 sol migrate rollback                              roll back the last applied migration
 
 sol rollback [--scope DOMAIN[/UNIT]]              roll back last deploy for one or all services
-sol logs --scope DOMAIN/UNIT [--no-follow] [--tail=N]  stream logs from a deployed service
+sol logs --scope DOMAIN/UNIT [--release RELEASE_ID] [--no-follow] [--tail=N]  stream logs from a deployed service
 sol open logs [SCOPE] [--links]                   open Grafana Explore logs (browser unless --links)
 sol open metrics [SCOPE] [--links]                open Grafana metrics dashboard
 sol open dashboard [SCOPE] [--links]              open Grafana workspace/service dashboard
@@ -699,7 +699,7 @@ For services using a standard `Deployment` (no `[infra.rollout]` in `sol.toml`),
 
 To inspect what a running service is doing, `sol logs --scope <domain>/<unit>` streams live output directly from the cluster pod, following Sol's namespace convention automatically.
 
-Every `sol up` and `sol deploy` also records a release in the target's cluster: `sol releases` lists the recorded deploys (id, commit, requested scope, time, target). A record is an immutable Kubernetes ConfigMap, so history cannot be edited in place — it is what a later rollback will restore.
+Every `sol up` and `sol deploy` also records a release in the target's cluster: `sol releases` lists the recorded releases (content-addressed id, environment, workload count). A record is an immutable Kubernetes ConfigMap, so history cannot be edited in place. The same id is rendered verbatim into every workload's `release` label, which is the join key from a deploy record to its logs (`sol logs --release <id>`) — identical released content is one release however many times it is deployed.
 
 ### Progressive delivery with Argo Rollouts
 

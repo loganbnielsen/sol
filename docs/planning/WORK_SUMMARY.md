@@ -1,5 +1,38 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: FEAT-069 — release identity (2026-09-13)
+
+One content-addressed release identity now spans the deploy record and the
+observability data, so a release is the join key between "what did I deploy?" and
+"what happened after I deployed it?".
+
+- `Sol_cli_release_id` (new): `r-<16 hex> = hash(canonical release_content)`,
+  label-safe by construction, with a private projection computed once in
+  `Sol_cli_deployment_plan.of_services_result` and stored on the plan as
+  `release_id`. Provenance (timestamp, commit, target, output dir) is excluded,
+  so an identical release never churns.
+- The taxonomy `release` label a rendered workload carries is that id verbatim,
+  not the image tag (the image tag stays `container.image`). The deploy event's
+  `release` field follows the same identity.
+- The release record is content-addressed and deterministic: the id is
+  `plan.release_id`, the body is exactly the facts that rederive it, and the
+  `sol-current-release` pointer carries `release_id` only. `sol deploy
+  --emit-to` writes `sol-release-<id>.yaml` and `sol-current-release.yaml` into
+  the bundle, so re-emitting identical content is an empty diff. `sol releases`
+  lists (id, environment, workloads); provenance moves to FEAT-070's deployment
+  events.
+- `sol logs --release <id>` filters by the exact `release` label. Order is the
+  contract: a malformed id fails before the cluster is consulted; a well-formed
+  id with no recorded release fails naming the target; a known release with no
+  logs is an empty success, distinct from "unknown release".
+- Docs: observability identity table, TUTORIAL, and the devops-pipeline `sol
+  logs` / `--emit-to` sections.
+
+Remaining in-queue follow-ups: FEAT-070 (deployment events / `sol deployments`,
+which takes the invocation provenance off the release record), FEAT-066
+(rollback restores prior release content and advances the pointer as one
+logical transition).
+
 ## Latest: Pipeline hardening, perf-gate removal, and code-layer follow-ups (2026-09-09/10)
 
 Started from INFRA-006 (a CI guardrail for `dune fmt` drift) and followed the

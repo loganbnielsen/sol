@@ -64,6 +64,11 @@ type service_spec =
 
 type t =
   { workspace : string
+  ; release_id : Sol_cli_release_id.t
+    (** FEAT-069: the content-addressed identity of the desired released state.
+        Computed once in {!of_services_result} -- the first point at which every
+        release-defining service input is resolved -- and never recomputed.
+        Downstream rendering and recording consume this value. *)
   ; environment : env_config
   ; services : service_spec list
   ; topics : Sol_cli_plan_ids.Topic_name.t list
@@ -254,6 +259,7 @@ let to_json t =
           ; "cluster_issuer", `String env.cluster_issuer
           ; "secret_backend", secret_backend_to_json env.secret_backend
           ] )
+    ; "release_id", `String (Sol_cli_release_id.to_string t.release_id)
     ; "requested_scope", `String t.requested_scope
     ; ( "resolved_workloads"
       , `List
@@ -607,8 +613,39 @@ let of_services_result
          { svc with called_by })
       resolved_services
   in
+  (* FEAT-069: release identity is computed here because this is the first point
+     at which all release-defining service inputs have been resolved. It is
+     derived once from the canonical projection (which deliberately excludes
+     provenance: timestamps, commit, output directory) and stored on the plan;
+     downstream code must consume [plan.release_id] rather than recompute it. *)
+  let workload_of_spec (spec : service_spec) : Sol_cli_release_id.workload =
+    { Sol_cli_release_id.domain = spec.domain
+    ; name = spec.source_name
+    ; primitive =
+        (match spec.primitive with
+         | Svc -> "svc"
+         | Worker -> "worker"
+         | Fn -> "fn")
+    ; image = spec.image
+    ; config = spec.config
+    ; secrets = spec.secrets
+    ; schedule = spec.schedule
+    ; replicas = spec.replicas
+    ; cpu = Sol_cli_toml.cpu_quantity_to_string spec.cpu
+    ; memory = Sol_cli_toml.memory_quantity_to_string spec.memory
+    ; extra_labels = spec.extra_labels
+    }
+  in
+  let release_id =
+    Sol_cli_release_id.of_content
+      { workspace
+      ; environment = env.env
+      ; workloads = List.map workload_of_spec resolved_services
+      }
+  in
   Ok
     { workspace
+    ; release_id
     ; environment = env
     ; services = resolved_services
     ; topics = discover_topics ()

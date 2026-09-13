@@ -32,25 +32,11 @@ let record ~ctx (t : Sol_cli_release.t) : (unit, string) result =
   | Ok () -> apply_json ~ctx (Sol_cli_release.to_current_configmap_json t)
 ;;
 
-(* Provenance is read here rather than threaded from the command, so [sol up]
-   and [sol deploy] record the same two facts the same way. *)
-let record_plan
-      ~ctx
-      ~(workspace : string)
-      ~(target : string)
-      ~(mode : string)
-      (plan : Sol_cli_deployment_plan.t)
-  : (unit, string) result
-  =
-  record
-    ~ctx
-    (Sol_cli_release.of_plan
-       ~workspace
-       ~target
-       ~mode
-       ~git_commit:(Sol_cli_release.git_commit ())
-       ~git_dirty:(Sol_cli_release.git_dirty ())
-       plan)
+(* FEAT-069: the record is content-addressed, so it is built from the plan's
+   own [release_id] and content — no invocation provenance is read or threaded
+   here. [sol up] and [sol deploy] therefore record the same artifact. *)
+let record_plan ~ctx (plan : Sol_cli_deployment_plan.t) : (unit, string) result =
+  record ~ctx (Sol_cli_release.of_plan plan)
 ;;
 
 let list ~ctx ~(workspace : string) : (Sol_cli_release.t list, string) result =

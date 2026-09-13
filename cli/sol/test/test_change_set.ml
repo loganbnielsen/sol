@@ -1,3 +1,7 @@
+let release_id_of_test =
+  Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
+;;
+
 (* Tests for Sol_cli_executor.run_plan ~ctx:Sol_cli_kube_destination.local_context (formerly Sol_cli_change_set).
    Verifies that run_plan renders all specs and dispatches correctly per mode. *)
 
@@ -98,6 +102,7 @@ let make_plan services =
   ; migrations = []
   ; schema_subjects = []
   ; consumer_groups = []
+  ; release_id = release_id_of_test
   ; requested_scope = "workspace"
   }
 ;;
@@ -111,7 +116,7 @@ let run_ok ~mode ?secret_backend plan =
          ())
       ~mode
       ?secret_backend
-      plan.Sol_cli_deployment_plan.services
+      plan
   with
   | Ok rs -> rs
   | Error e -> Alcotest.fail ("run_plan unexpectedly failed: " ^ e)

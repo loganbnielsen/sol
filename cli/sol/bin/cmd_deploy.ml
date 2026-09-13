@@ -295,7 +295,7 @@ let push_deploy_events ~ctx ~workspace ~target_cfg ~loki_push_url plan =
          ; domain = spec.domain
          ; service = Sol_cli_kubernetes_name.k8s_name_to_string spec.k8s_name
          ; primitive = primitive_label (to_manifest_primitive spec.primitive)
-         ; release = Sol_cli_manifest_yaml.release_of_image spec.image
+         ; release = Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id
          })
       plan.Sol_cli_deployment_plan.services
   in
@@ -347,14 +347,7 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
        });
   (* FEAT-067: record the release after a successful apply. Non-fatal on
      failure: the deploy happened, and the record is for later. *)
-  (match
-     Sol_cli_release_store.record_plan
-       ~ctx:ctx.execution.cluster
-       ~workspace:ctx.execution.workspace
-       ~target:ctx.target_name
-       ~mode:"deploy"
-       plan
-   with
+  (match Sol_cli_release_store.record_plan ~ctx:ctx.execution.cluster plan with
    | Ok () -> ()
    | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);
   push_deploy_events

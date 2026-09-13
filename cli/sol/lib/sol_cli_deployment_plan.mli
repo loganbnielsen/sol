@@ -70,6 +70,10 @@ type service_spec =
 
 type t =
   { workspace : string
+  ; release_id : Sol_cli_release_id.t
+    (** The content-addressed identity of the desired released state (FEAT-069).
+        Attached to the plan, so rendering and recording consume it rather than
+        deriving it again. *)
   ; environment : env_config
   ; services : service_spec list
   ; topics : Sol_cli_plan_ids.Topic_name.t list

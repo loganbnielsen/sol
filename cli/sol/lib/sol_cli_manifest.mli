@@ -65,9 +65,12 @@ val config_hash : (string * string) list -> string
 
 (** Bounds a taxonomy label value to Kubernetes' 63-char label-value limit and
     fixes up a trailing non-alphanumeric character left by truncation (or
-    present in the original value). Applied uniformly to every taxonomy label
-    value rendered by [render_taxonomy_labels] -- exposed here since it's a
-    reusable safety net, not a guarantee any particular caller already provides.
+    present in the original value). Applied to every taxonomy label value
+    except [`release`], which is label-safe by construction
+    ([Sol_cli_release_id.t]) and is written verbatim so the manifest label can
+    never drift from the stored release id -- exposed here since it's a
+    reusable safety net, not a guarantee any particular caller already
+    provides.
 *)
 val sanitize_label_value : string -> string
 
@@ -127,6 +130,7 @@ val deployment_doc
   -> workspace:string
   -> domain:string
   -> primitive:string
+  -> release_id:Sol_cli_release_id.t
   -> unit
   -> string
 
@@ -150,6 +154,7 @@ val rollout_doc
   -> workspace:string
   -> domain:string
   -> primitive:string
+  -> release_id:Sol_cli_release_id.t
   -> unit
   -> string
 
@@ -192,6 +197,7 @@ val cronjob_doc
   -> schedule:string
   -> workspace:string
   -> domain:string
+  -> release_id:Sol_cli_release_id.t
   -> unit
   -> string
 

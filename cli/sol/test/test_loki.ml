@@ -1,5 +1,6 @@
 let check_string = Alcotest.(check string)
 let check_int = Alcotest.(check int)
+let check_bool = Alcotest.(check bool)
 
 module L = Sol_cli_loki
 
@@ -174,6 +175,27 @@ let test_query_range_argv_config_adds_config_path_not_secret () =
   | None -> Alcotest.fail "expected --config <path> in argv"
 ;;
 
+let test_query_range_argv_logql_carries_exact_selector () =
+  let argv =
+    L.query_range_argv_logql
+      ~base_url:"http://localhost:3100"
+      ~logql:{|{release="r-0123456789abcdef"}|}
+      ~limit:100
+      ~timeout_s:5.0
+      ()
+  in
+  let joined = String.concat " " argv in
+  check_bool
+    "exact release selector in the query argument"
+    true
+    (let re = Str.regexp_string {|query={release="r-0123456789abcdef"}|} in
+     try
+       ignore (Str.search_forward re joined 0);
+       true
+     with
+     | Not_found -> false)
+;;
+
 (* ── resolve_credentials ─────────────────────────────────────────────── *)
 
 let test_resolve_credentials_neither_set_is_ok_none () =
@@ -331,6 +353,10 @@ let () =
             "config -> --config path"
             `Quick
             test_query_range_argv_config_adds_config_path_not_secret
+        ; Alcotest.test_case
+            "raw logql -> exact selector"
+            `Quick
+            test_query_range_argv_logql_carries_exact_selector
         ] )
     ; ( "resolve_credentials"
       , [ Alcotest.test_case

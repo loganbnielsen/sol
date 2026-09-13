@@ -45,7 +45,7 @@ must carry the same ownership identity:
 | `domain` | Business domain/team slice, for example `payments` |
 | `service` | Service, worker, or function name |
 | `primitive` | `svc`, `worker`, or `fn` |
-| `release` | Deployed image/release identity when known |
+| `release` | Content-addressed release id (`r-<16 hex>`) — the join key from a deploy record to its telemetry. Not the image tag: one release can span several images. |
 
 > **Status:** all six labels, including `env`, are emitted (OBS-008,
 > `env` added by FEAT-026). `sol deploy <env>/<provider>/<region>` resolves
@@ -55,6 +55,17 @@ must carry the same ownership identity:
 > `env = target.env` through to every generated manifest's labels. `sol
 > up` stays local-only by design (no target, no `env` label — it's omitted
 > there, not defaulted to a fake value like `"local"`).
+>
+> `release` is the plan's content-addressed identity (`Release_id.of_content`,
+> FEAT-069) and is written verbatim — the same id `sol releases` lists and
+> `sol logs --release` queries.
+>
+> **`release` is not a metrics dimension.** It is written into the pod template
+> (so Loki can select it exactly) but never into a Prometheus label: releases
+> accumulate forever, and a per-release time series would be unbounded
+> cardinality. Metrics correlate to a release through deployment metadata
+> (FEAT-070's deployment events / `sol deployments`) and the bounded workload
+> labels already in this table.
 
 These labels are the API. Kubernetes namespaces, pod names, Helm release
 names, bucket names, and cloud resource names are implementation details.

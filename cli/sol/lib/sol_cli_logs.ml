@@ -47,6 +47,52 @@ let grafana_explore_url ~base_url ~ns ~k8s_name =
   explore_url ~base_url ~logql:(Printf.sprintf {|{namespace="%s",app="%s"}|} ns k8s_name)
 ;;
 
+(* FEAT-069: a release-scoped query. The release id is workspace-unique by
+   construction (the workspace and environment are part of the hashed content),
+   so the exact [release] label is the whole selector when no unit narrows it. *)
+let release_logql ~release_id = Printf.sprintf {|{release="%s"}|} release_id
+
+let unit_release_logql ~ns ~k8s_name ~release_id =
+  Printf.sprintf {|{namespace="%s",app="%s",release="%s"}|} ns k8s_name release_id
+;;
+
+type release_query =
+  | Release_invalid of string
+  | Release_unknown of
+      { release_id : string
+      ; target : string
+      }
+  | Release_logs of
+      { release_id : string
+      ; logql : string
+      }
+
+(** [release_query ~release ~target ~known ?scope ()] classifies a [--release]
+    argument. The order is the contract: the id is validated first, so a
+    malformed value returns [Release_invalid] *without* [known] ever being
+    called — the release store must not be consulted for input that is not an
+    id. [Release_unknown] and [Release_logs] stay distinct because "no such
+    release" is an error while "a known release with no logs" is an empty
+    success, and collapsing them would misreport a real release.
+
+    [~scope] is the already-validated [(namespace, k8s_name)] of a unit, when
+    one was given; it narrows the selector to that workload. *)
+let release_query ~release ~target ~known ?scope () =
+  match Sol_cli_release_id.of_string release with
+  | Error msg -> Release_invalid msg
+  | Ok id ->
+    let release_id = Sol_cli_release_id.to_string id in
+    if not (known id)
+    then Release_unknown { release_id; target }
+    else (
+      let logql =
+        match scope with
+        | None -> release_logql ~release_id
+        | Some (ns, k8s_name) -> unit_release_logql ~ns ~k8s_name ~release_id
+      in
+      Release_logs { release_id; logql })
+;;
+
 type kubectl_log_target =
   | Deployment of string
   | App_selector of string

@@ -1,57 +1,38 @@
-(* The release record (DEC-018, FEAT-067): what was deployed, from what, and how
-   it was scoped — recorded immutably in the target's cluster so a later
-   rollback can restore it and an operator can audit it.
+(* The release record (DEC-018, FEAT-067; content-addressed by FEAT-069).
 
-   Never stores secret *values*; only the key names, because the record is meant
-   to be readable by anyone with cluster access. *)
+   A release record describes *what is running* — the resolved released state —
+   and is named by the content-addressed release id (FEAT-069). Two deploys of
+   identical content are one release with one record; the invocation is a
+   deployment event (FEAT-070), whose provenance deliberately does not appear
+   here, because a timestamp or commit in the artifact would churn the GitOps
+   diff for an unchanged release.
+
+   The record body is the content the id is derived from, so a reader can
+   recompute the id from the record rather than trust its name (see [validate]).
+   It never stores secret *values*; only the secret references a workload uses.
+   Config values are part of released state and are stored, because the id is
+   derived from them. *)
 
 type workload =
   { domain : string
   ; name : string
+  ; primitive : string
   ; image : string
-  ; config_keys : string list
-  ; secret_keys : string list
+  ; config : (string * string) list
+  ; secrets : (string * string) list
+  ; schedule : string option
+  ; replicas : int
+  ; cpu : string
+  ; memory : string
+  ; extra_labels : (string * string) list
   }
 
 type t =
   { release_id : string
-  ; created_at : string
   ; workspace : string
-  ; target : string
-  ; mode : string
-  ; git_commit : string
-  ; git_dirty : bool
-  ; requested_scope : string
+  ; environment : string option
   ; workloads : workload list
-  ; migrations : string list
   }
-
-(* UTC, second precision, lexicographically sortable. *)
-let rfc3339_utc (now : float) : string =
-  let tm = Unix.gmtime now in
-  Printf.sprintf
-    "%04d-%02d-%02dT%02d:%02d:%02dZ"
-    (tm.Unix.tm_year + 1900)
-    (tm.Unix.tm_mon + 1)
-    tm.Unix.tm_mday
-    tm.Unix.tm_hour
-    tm.Unix.tm_min
-    tm.Unix.tm_sec
-;;
-
-(* DNS-1123-ish, lowercase: the release id becomes part of a ConfigMap name. *)
-let generate_release_id ~(now : float) ~(commit : string) : string =
-  let tm = Unix.gmtime now in
-  Printf.sprintf
-    "%04d%02d%02dt%02d%02d%02dz-%s"
-    (tm.Unix.tm_year + 1900)
-    (tm.Unix.tm_mon + 1)
-    tm.Unix.tm_mday
-    tm.Unix.tm_hour
-    tm.Unix.tm_min
-    tm.Unix.tm_sec
-    (String.lowercase_ascii commit)
-;;
 
 (* Label/annotation *values* are constrained (<=63 chars, no '/'); the exact
    text is preserved in the record body, this is only for lookup. *)
@@ -97,72 +78,140 @@ let current_configmap_name ~(workspace : string) : string =
     (Sol_cli_kubernetes_name.sanitize_name workspace)
 ;;
 
-let of_plan
-      ~(workspace : string)
-      ~(target : string)
-      ~(mode : string)
-      ~(git_commit : string)
-      ~(git_dirty : bool)
-      (plan : Sol_cli_deployment_plan.t)
-  : t
-  =
-  let now = Unix.gettimeofday () in
-  let workloads =
-    List.map
-      (fun (spec : Sol_cli_deployment_plan.service_spec) ->
-         { domain = spec.domain
-         ; name = spec.source_name
-         ; image = spec.image
-         ; config_keys = List.map fst spec.config
-         ; secret_keys = List.map fst spec.secrets
-         })
-      plan.Sol_cli_deployment_plan.services
-  in
-  let migrations =
-    List.map
-      Sol_cli_plan_ids.Migration_file.to_string
-      plan.Sol_cli_deployment_plan.migrations
-  in
-  { release_id = generate_release_id ~now ~commit:git_commit
-  ; created_at = rfc3339_utc now
-  ; workspace
-  ; target
-  ; mode
-  ; git_commit
-  ; git_dirty
-  ; requested_scope = plan.Sol_cli_deployment_plan.requested_scope
-  ; workloads
-  ; migrations
+(* ── building the canonical record ───────────────────────────────────────── *)
+
+let primitive_to_string (p : Sol_cli_deployment_plan.primitive) =
+  match p with
+  | Sol_cli_deployment_plan.Svc -> "svc"
+  | Sol_cli_deployment_plan.Worker -> "worker"
+  | Sol_cli_deployment_plan.Fn -> "fn"
+;;
+
+(* This mirrors the private projection in [Sol_cli_deployment_plan]'s
+   [of_services_result]. It is intentionally the *same* set of facts, so
+   [derived_release_id] on a record built here reproduces [plan.release_id];
+   the test [of_plan rederives the plan's identity] pins the two together. *)
+let workload_of_spec (spec : Sol_cli_deployment_plan.service_spec) : workload =
+  { domain = spec.domain
+  ; name = spec.source_name
+  ; primitive = primitive_to_string spec.primitive
+  ; image = spec.image
+  ; config = spec.config
+  ; secrets = spec.secrets
+  ; schedule = spec.schedule
+  ; replicas = spec.replicas
+  ; cpu = Sol_cli_toml.cpu_quantity_to_string spec.cpu
+  ; memory = Sol_cli_toml.memory_quantity_to_string spec.memory
+  ; extra_labels = spec.extra_labels
   }
+;;
+
+let of_plan (plan : Sol_cli_deployment_plan.t) : t =
+  { release_id = Sol_cli_release_id.to_string plan.release_id
+  ; workspace = plan.workspace
+  ; environment = plan.environment.Sol_cli_deployment_plan.env
+  ; workloads = List.map workload_of_spec plan.services
+  }
+;;
+
+let content_of_record (t : t) : Sol_cli_release_id.content =
+  { workspace = t.workspace
+  ; environment = t.environment
+  ; workloads =
+      List.map
+        (fun (w : workload) ->
+           { Sol_cli_release_id.domain = w.domain
+           ; name = w.name
+           ; primitive = w.primitive
+           ; image = w.image
+           ; config = w.config
+           ; secrets = w.secrets
+           ; schedule = w.schedule
+           ; replicas = w.replicas
+           ; cpu = w.cpu
+           ; memory = w.memory
+           ; extra_labels = w.extra_labels
+           })
+        t.workloads
+  }
+;;
+
+let derived_release_id (t : t) : Sol_cli_release_id.t =
+  Sol_cli_release_id.of_content (content_of_record t)
+;;
+
+let validate ~(name : string) (t : t) : (unit, string) result =
+  match Sol_cli_release_id.of_string t.release_id with
+  | Error msg -> Error msg
+  | Ok id ->
+    if not (String.equal name (configmap_name t))
+    then
+      Error
+        (Printf.sprintf
+           "%s is not the record for release %s (expected name %s)"
+           name
+           t.release_id
+           (configmap_name t))
+    else (
+      let derived = derived_release_id t in
+      if derived <> id
+      then
+        Error
+          (Printf.sprintf
+             "release record %s is corrupt: its content rederives %s"
+             t.release_id
+             (Sol_cli_release_id.to_string derived))
+      else Ok ())
 ;;
 
 (* ── JSON ─────────────────────────────────────────────────────────────────── *)
 
-let json_string s = `String s
-let json_list f xs = `List (List.map f xs)
+(* Ordering is not semantic: sort every map-like list so the same content
+   serializes to the same bytes, which is what makes the bundle idempotent. *)
+let sorted_pairs pairs = List.sort (fun (a, _) (b, _) -> String.compare a b) pairs
+
+let pairs_to_assoc pairs =
+  `Assoc (List.map (fun (k, v) -> k, `String v) (sorted_pairs pairs))
+;;
+
+let compare_workload (a : workload) (b : workload) =
+  let by_domain = String.compare a.domain b.domain in
+  if by_domain <> 0
+  then by_domain
+  else (
+    let by_name = String.compare a.name b.name in
+    if by_name <> 0 then by_name else String.compare a.primitive b.primitive)
+;;
 
 let workload_to_json (w : workload) : Yojson.Safe.t =
   `Assoc
     [ "domain", `String w.domain
     ; "name", `String w.name
+    ; "primitive", `String w.primitive
     ; "image", `String w.image
-    ; "config_keys", json_list json_string w.config_keys
-    ; "secret_keys", json_list json_string w.secret_keys
+    ; "config", pairs_to_assoc w.config
+    ; "secrets", pairs_to_assoc w.secrets
+    ; ( "schedule"
+      , match w.schedule with
+        | None -> `Null
+        | Some s -> `String s )
+    ; "replicas", `Int w.replicas
+    ; "cpu", `String w.cpu
+    ; "memory", `String w.memory
+    ; "extra_labels", pairs_to_assoc w.extra_labels
     ]
 ;;
 
 let to_json (t : t) : Yojson.Safe.t =
   `Assoc
     [ "release_id", `String t.release_id
-    ; "created_at", `String t.created_at
     ; "workspace", `String t.workspace
-    ; "target", `String t.target
-    ; "mode", `String t.mode
-    ; "git_commit", `String t.git_commit
-    ; "git_dirty", `Bool t.git_dirty
-    ; "requested_scope", `String t.requested_scope
-    ; "workloads", json_list workload_to_json t.workloads
-    ; "migrations", json_list json_string t.migrations
+    ; ( "environment"
+      , match t.environment with
+        | None -> `Null
+        | Some e -> `String e )
+    ; ( "workloads"
+      , `List (List.map workload_to_json (List.sort compare_workload t.workloads)) )
     ]
 ;;
 
@@ -178,10 +227,10 @@ let str key json =
   | _ -> ""
 ;;
 
-let boolean key json =
+let int key json =
   match mem key json with
-  | Some (`Bool b) -> b
-  | _ -> false
+  | Some (`Int i) -> i
+  | _ -> 0
 ;;
 
 let list key json =
@@ -190,38 +239,49 @@ let list key json =
   | _ -> []
 ;;
 
-let str_list key json =
-  List.map
-    (function
-      | `String s -> s
-      | _ -> "")
-    (list key json)
+let string_option key json =
+  match mem key json with
+  | Some (`String s) -> Some s
+  | _ -> None
 ;;
 
-let workload_of_json json : workload =
+let pairs key json =
+  match mem key json with
+  | Some (`Assoc kvs) ->
+    List.map
+      (fun (k, v) ->
+         ( k
+         , match v with
+           | `String s -> s
+           | _ -> "" ))
+      kvs
+  | _ -> []
+;;
+
+let workload_of_json (json : Yojson.Safe.t) : workload =
   { domain = str "domain" json
   ; name = str "name" json
+  ; primitive = str "primitive" json
   ; image = str "image" json
-  ; config_keys = str_list "config_keys" json
-  ; secret_keys = str_list "secret_keys" json
+  ; config = pairs "config" json
+  ; secrets = pairs "secrets" json
+  ; schedule = string_option "schedule" json
+  ; replicas = int "replicas" json
+  ; cpu = str "cpu" json
+  ; memory = str "memory" json
+  ; extra_labels = pairs "extra_labels" json
   }
 ;;
 
 let of_json (json : Yojson.Safe.t) : (t, string) result =
-  match str "release_id" json, str "created_at" json with
-  | "", _ | _, "" -> Error "release record is missing release_id/created_at"
-  | release_id, created_at ->
+  match str "release_id" json, str "workspace" json with
+  | "", _ | _, "" -> Error "release record is missing release_id/workspace"
+  | release_id, workspace ->
     Ok
       { release_id
-      ; created_at
-      ; workspace = str "workspace" json
-      ; target = str "target" json
-      ; mode = str "mode" json
-      ; git_commit = str "git_commit" json
-      ; git_dirty = boolean "git_dirty" json
-      ; requested_scope = str "requested_scope" json
+      ; workspace
+      ; environment = string_option "environment" json
       ; workloads = List.map workload_of_json (list "workloads" json)
-      ; migrations = str_list "migrations" json
       }
 ;;
 
@@ -244,28 +304,20 @@ let to_configmap_json (t : t) : string =
                 , `Assoc
                     [ "sol.dev/type", `String "release"
                     ; "sol.dev/workspace", `String (sanitize_label t.workspace)
-                    ; "sol.dev/target", `String (sanitize_label t.target)
-                    ; "sol.dev/scope", `String (sanitize_label t.requested_scope)
-                    ; "sol.dev/git-commit", `String (sanitize_label t.git_commit)
-                    ] )
-              ; ( "annotations"
-                , `Assoc
-                    [ "sol.dev/created-at", `String t.created_at
-                    ; "sol.dev/mode", `String t.mode
-                    ; "sol.dev/git-dirty", `String (string_of_bool t.git_dirty)
                     ] )
               ] )
         ; ( "data"
           , `Assoc
               [ "release_id", `String t.release_id
-              ; "requested_scope", `String t.requested_scope
               ; "record", `String (Yojson.Safe.to_string (to_json t))
               ] )
         ])
 ;;
 
 (* Mutable pointer: names the current release per workspace, so a later
-   rollback can find "what is deployed" without scanning. *)
+   rollback can find "what is deployed" without scanning. Its payload is
+   deliberately [release_id] only — the immutable record is the one
+   authoritative description, and a second copy here could drift from it. *)
 let to_current_configmap_json (t : t) : string =
   Yojson.Safe.pretty_to_string
     (`Assoc
@@ -281,21 +333,28 @@ let to_current_configmap_json (t : t) : string =
                     ; "sol.dev/workspace", `String (sanitize_label t.workspace)
                     ] )
               ] )
-        ; ( "data"
-          , `Assoc
-              [ "release_id", `String t.release_id
-              ; "target", `String t.target
-              ; "requested_scope", `String t.requested_scope
-              ; "updated_at", `String t.created_at
-              ] )
+        ; "data", `Assoc [ "release_id", `String t.release_id ]
         ])
+;;
+
+let bundle_files (t : t) : (string * string) list =
+  [ configmap_name t ^ ".yaml", to_configmap_json t
+  ; "sol-current-release.yaml", to_current_configmap_json t
+  ]
 ;;
 
 (* ── Reading back ─────────────────────────────────────────────────────────── *)
 
+let item_name item =
+  match mem "metadata" item with
+  | Some metadata -> str "name" metadata
+  | None -> ""
+;;
+
 (* [kubectl get configmap -l ... -o json] -> the records it carries. An item
    whose [data.record] is absent or malformed is skipped rather than failing
-   the whole listing. *)
+   the whole listing; one that is present but does not validate is corruption,
+   and is likewise not surfaced as a usable record (see [validate]). *)
 let parse_kubectl_list (json : Yojson.Safe.t) : (t list, string) result =
   let items = list "items" json in
   let records =
@@ -306,7 +365,14 @@ let parse_kubectl_list (json : Yojson.Safe.t) : (t list, string) result =
          | Some data ->
            (match mem "record" data with
             | Some (`String record) ->
-              (try of_json (Yojson.Safe.from_string record) |> Result.to_option with
+              (try
+                 match of_json (Yojson.Safe.from_string record) with
+                 | Ok r ->
+                   (match validate ~name:(item_name item) r with
+                    | Ok () -> Some r
+                    | Error _ -> None)
+                 | Error _ -> None
+               with
                | _ -> None)
             | _ -> None))
       items
@@ -316,15 +382,20 @@ let parse_kubectl_list (json : Yojson.Safe.t) : (t list, string) result =
 
 let format_table (records : t list) : string =
   let sorted =
-    List.sort (fun (a : t) (b : t) -> compare b.created_at a.created_at) records
+    List.sort (fun (a : t) (b : t) -> String.compare a.release_id b.release_id) records
   in
   let rows =
     List.map
       (fun (r : t) ->
-         [ r.release_id; r.git_commit; r.requested_scope; r.created_at; r.target ])
+         [ r.release_id
+         ; (match r.environment with
+            | None -> "-"
+            | Some e -> e)
+         ; string_of_int (List.length r.workloads)
+         ])
       sorted
   in
-  let headers = [ "ID"; "COMMIT"; "SCOPE"; "CREATED"; "TARGET" ] in
+  let headers = [ "ID"; "ENV"; "WORKLOADS" ] in
   let widths =
     List.mapi
       (fun i h ->
@@ -340,25 +411,4 @@ let format_table (records : t list) : string =
     |> fun s -> String.trim s
   in
   String.concat "\n" (render_row headers :: List.map render_row rows)
-;;
-
-(* ── Provenance ───────────────────────────────────────────────────────────── *)
-
-let run_git args =
-  match Sol_cli_process.run (Sol_cli_process.cmd ("git" :: args)) with
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    Some (String.trim r.Sol_cli_process.stdout)
-  | _ -> None
-;;
-
-let git_commit () =
-  match run_git [ "rev-parse"; "--short"; "HEAD" ] with
-  | Some s when s <> "" -> s
-  | _ -> "unknown"
-;;
-
-let git_dirty () =
-  match run_git [ "status"; "--porcelain" ] with
-  | Some s -> s <> ""
-  | None -> false
 ;;

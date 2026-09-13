@@ -3,13 +3,37 @@
    that the rendered YAML contains the expected resource names, image
    references, namespaces, and primitive-specific resources. *)
 
+(* FEAT-069: rendering takes the plan's release identity, so these direct
+   render calls supply one explicitly. The exact value does not matter to the
+   YAML-shape tests; the release-label tests below pin it. *)
+let release_id_of_test =
+  Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
+;;
+
+let expected_release_label =
+  Printf.sprintf {|release: "%s"|} (Sol_cli_release_id.to_string release_id_of_test)
+;;
+
 let check_string = Alcotest.(check string)
 let check_bool = Alcotest.(check bool)
 
 (** Unwrap a [render_spec] result, failing the test on [Error]. *)
-let render_spec_ok ?(workspace = "myapp") ?env ?image ?secret_backend spec =
+let render_spec_ok
+      ?(workspace = "myapp")
+      ?env
+      ?image
+      ?(release_id = release_id_of_test)
+      ?secret_backend
+      spec
+  =
   match
-    Sol_cli_deployment_render.render_spec ~workspace ?env ?image ?secret_backend spec
+    Sol_cli_deployment_render.render_spec
+      ~workspace
+      ?env
+      ?image
+      ~release_id
+      ?secret_backend
+      spec
   with
   | Ok v -> v
   | Error e -> Alcotest.fail ("render_spec unexpectedly failed: " ^ e)
@@ -1379,6 +1403,7 @@ let test_live_backend_missing_user_secret_returns_error () =
   (match
      Sol_cli_deployment_render.render_spec
        ~workspace:"myapp"
+       ~release_id:release_id_of_test
        ~secret_backend:Sol_cli_manifest.Kubernetes_live
        spec_with_secret
    with
@@ -1391,6 +1416,7 @@ let test_live_backend_missing_user_secret_returns_error () =
   match
     Sol_cli_deployment_render.render_spec
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~secret_backend:Sol_cli_manifest.Kubernetes_live
       spec_missing
   with
@@ -1407,6 +1433,7 @@ let test_live_backend_multiple_missing_secrets_all_reported () =
   match
     Sol_cli_deployment_render.render_spec
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~secret_backend:Sol_cli_manifest.Kubernetes_live
       spec
   with
@@ -1424,6 +1451,7 @@ let test_live_backend_no_user_secrets_always_succeeds () =
   match
     Sol_cli_deployment_render.render_spec
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~secret_backend:Sol_cli_manifest.Kubernetes_live
       spec
   with
@@ -1514,6 +1542,7 @@ let test_shape_http_service_deployment_has_ports () =
       ~name:"charge-svc"
       ~image:"sol-registry:5000/myapp/charge-svc:abc123"
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~domain:"payments"
       ~primitive:"svc"
       ()
@@ -1537,6 +1566,7 @@ let test_shape_background_worker_deployment_has_metrics_port () =
       ~name:"notify-worker"
       ~image:"sol-registry:5000/myapp/notify-worker:abc123"
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~domain:"comms"
       ~primitive:"worker"
       ()
@@ -1562,6 +1592,7 @@ let test_shape_rollout_http_service_has_ports () =
       ~image:"sol-registry:5000/myapp/charge-svc:abc123"
       ~pd:(Sol_cli_toml.Canary { steps = [ Sol_cli_toml.Weight 50 ] })
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~domain:"payments"
       ~primitive:"svc"
       ()
@@ -1582,6 +1613,7 @@ let test_shape_rollout_background_worker_metrics_port () =
       ~image:"sol-registry:5000/myapp/notify-worker:abc123"
       ~pd:(Sol_cli_toml.Canary { steps = [ Sol_cli_toml.Weight 50 ] })
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~domain:"comms"
       ~primitive:"worker"
       ()
@@ -1609,7 +1641,7 @@ let test_taxonomy_labels_svc () =
   assert_contains "domain label" workload {|domain: "payments"|};
   assert_contains "service label" workload {|service: "charge-svc"|};
   assert_contains "primitive label" workload {|primitive: "svc"|};
-  assert_contains "release label" workload {|release: "abc123"|}
+  assert_contains "release label" workload expected_release_label
 ;;
 
 let test_taxonomy_labels_worker () =
@@ -1618,7 +1650,7 @@ let test_taxonomy_labels_worker () =
   assert_contains "domain label" workload {|domain: "comms"|};
   assert_contains "service label" workload {|service: "notify-worker"|};
   assert_contains "primitive label" workload {|primitive: "worker"|};
-  assert_contains "release label" workload {|release: "abc123"|}
+  assert_contains "release label" workload expected_release_label
 ;;
 
 let test_taxonomy_labels_fn () =
@@ -1627,7 +1659,7 @@ let test_taxonomy_labels_fn () =
   assert_contains "domain label" workload {|domain: "billing"|};
   assert_contains "service label" workload {|service: "invoice-fn"|};
   assert_contains "primitive label" workload {|primitive: "fn"|};
-  assert_contains "release label" workload {|release: "abc123"|}
+  assert_contains "release label" workload expected_release_label
 ;;
 
 (* matchLabels/selector must stay app-only -- changing selector labels would
@@ -1683,57 +1715,48 @@ let test_taxonomy_labels_not_in_selector () =
     "matchLabels:\n      app: charge-svc\n  template:"
 ;;
 
-let test_release_of_image_malformed () =
-  let spec = { svc_spec with image = "no-tag-image" } in
-  let _, workload = render_spec_ok spec in
-  assert_contains "release falls back to unknown" workload {|release: "unknown"|}
+(* FEAT-069: the taxonomy `release` label carries the plan's content-addressed
+   release id, not the image tag. The image tag remains available as
+   container.image -- a build/artifact fact, not a release identity. *)
+let test_release_label_is_release_id () =
+  let _, workload = render_spec_ok svc_spec in
+  assert_contains "release label is the release id" workload expected_release_label
 ;;
 
-let test_release_of_image_oversized_tag_truncated () =
-  let long_tag = String.make 90 'a' in
-  let spec = { svc_spec with image = "sol-registry:5000/myapp/charge-svc:" ^ long_tag } in
+let test_release_label_does_not_leak_image_tag () =
+  let spec = { svc_spec with image = "sol-registry:5000/myapp/charge-svc:abc123" } in
   let _, workload = render_spec_ok spec in
-  (* the image: field legitimately still carries the full tag -- only the
-     release label value itself must be bounded to 63 chars. *)
+  assert_absent "image tag is not the release label" workload {|release: "abc123"|};
   assert_contains
-    "release truncated to 63 chars"
+    "image tag still present as the container image"
     workload
-    (Printf.sprintf {|release: "%s"|} (String.make 63 'a'));
-  assert_absent
-    "release label is not the full 90-char tag"
-    workload
-    (Printf.sprintf {|release: "%s"|} long_tag)
+    "image: sol-registry:5000/myapp/charge-svc:abc123"
 ;;
 
-let test_release_of_image_trailing_non_alnum_after_truncation () =
-  (* 62 'a's + '.' lands right at the 63-char boundary with a non-alnum
-     trailing character once truncated -- must be fixed up, not left as an
-     invalid Kubernetes label value. *)
-  let tag = String.make 62 'a' ^ "." ^ String.make 5 'b' in
-  let spec = { svc_spec with image = "sol-registry:5000/myapp/charge-svc:" ^ tag } in
-  let _, workload = render_spec_ok spec in
+(* The render path only ever sees the abstract [Release_id.t], so it cannot
+   substitute an image tag or a bare string for the label: whatever identity
+   the caller supplies is the label, byte for byte. *)
+let test_release_label_is_the_supplied_identity () =
+  let other =
+    Sol_cli_release_id.of_content
+      { workspace = "other"; environment = Some "prod"; workloads = [] }
+  in
+  let _, workload = render_spec_ok ~release_id:other svc_spec in
   assert_contains
-    "trailing '.' replaced with a safe char"
+    "release label is the supplied id"
     workload
-    (Printf.sprintf {|release: "%s0"|} (String.make 62 'a'))
+    (Printf.sprintf {|release: "%s"|} (Sol_cli_release_id.to_string other));
+  assert_absent "not the default id" workload expected_release_label
 ;;
 
-let test_release_of_image_numeric_tag_quoted () =
-  let spec = { svc_spec with image = "sol-registry:5000/myapp/charge-svc:123" } in
-  let _, workload = render_spec_ok spec in
-  assert_contains
-    "numeric-looking release stays a quoted string"
-    workload
-    {|release: "123"|}
-;;
-
-(* OBS-019: sanitize_label_value applies uniformly to every taxonomy label
-   value, not just release. workspace/domain/service are already bounded
-   before render_spec ever reaches label rendering (namespace_result
-   validates their combined length/charset upstream, and service is
-   always a validated k8s_name here), so these can't be exercised through
-   the full render pipeline the way release's truncation/fixup tests are
-   above -- test the exposed sanitizer directly instead. *)
+(* OBS-019: sanitize_label_value still applies to every non-release taxonomy
+   label value. workspace/domain/service are already bounded before
+   render_spec ever reaches label rendering (namespace_result validates
+   their combined length/charset upstream, and service is always a validated
+   k8s_name here), so those can't be exercised through the full render
+   pipeline -- test the exposed sanitizer directly instead. `release` is
+   deliberately exempt (FEAT-069): it is label-safe by construction and is
+   written verbatim, so there is nothing here to sanitize. *)
 let test_sanitize_label_value_bounds_length () =
   let long = String.make 90 'a' in
   check_string
@@ -2420,21 +2443,17 @@ let () =
             `Quick
             test_taxonomy_labels_match_dashboard_link_normalization
         ; Alcotest.test_case
-            "malformed image -> unknown"
+            "label is the release id"
             `Quick
-            test_release_of_image_malformed
+            test_release_label_is_release_id
         ; Alcotest.test_case
-            "oversized tag truncated to 63 chars"
+            "label does not leak the image tag"
             `Quick
-            test_release_of_image_oversized_tag_truncated
+            test_release_label_does_not_leak_image_tag
         ; Alcotest.test_case
-            "trailing non-alnum after truncation fixed up"
+            "label is the supplied identity"
             `Quick
-            test_release_of_image_trailing_non_alnum_after_truncation
-        ; Alcotest.test_case
-            "numeric-looking tag stays quoted"
-            `Quick
-            test_release_of_image_numeric_tag_quoted
+            test_release_label_is_the_supplied_identity
         ; Alcotest.test_case
             "sanitize_label_value bounds length"
             `Quick

@@ -1,3 +1,7 @@
+let release_id_of_test =
+  Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
+;;
+
 let check_string = Alcotest.(check string)
 let check_int = Alcotest.(check int)
 let check_bool = Alcotest.(check bool)
@@ -99,6 +103,7 @@ let hosted_plan ?progressive_delivery () =
        | Error _ -> [])
   ; schema_subjects = []
   ; consumer_groups = []
+  ; release_id = release_id_of_test
   ; requested_scope = "workspace"
   }
 ;;

@@ -23,9 +23,10 @@ let cmd =
     (Cmd.info
        "releases"
        ~doc:
-         "List the release records the target's cluster holds for this workspace, newest \
-          first. Each row is a recorded deploy: id, commit, requested scope, time and \
-          target. Records are written by 'sol up' and 'sol deploy'.")
+         "List the release records the target's cluster holds for this workspace. Each \
+          row is a recorded release: its content-addressed id, the environment it \
+          targets, and the number of workloads it contains. Records are written by 'sol \
+          up' and 'sol deploy'.")
     Term.(
       const (fun target ->
         run

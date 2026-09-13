@@ -43,8 +43,8 @@ let dispatch_rendered ~ctx ~mode spec yaml =
 
 (* ── executors ───────────────────────────────────────────────────────────── *)
 
-let local ~ctx ~workspace ~dry_run spec =
-  match Sol_cli_deployment_render.render_spec ~workspace spec with
+let local ~ctx ~workspace ~release_id ~dry_run spec =
+  match Sol_cli_deployment_render.render_spec ~workspace ~release_id spec with
   | Error msg -> failwith msg
   | Ok yaml -> dispatch_rendered ~ctx ~mode:(if dry_run then Dry_run else Apply) spec yaml
 ;;
@@ -52,25 +52,52 @@ let local ~ctx ~workspace ~dry_run spec =
 let gitops
       ~ctx
       ~workspace
+      ~release_id
       ~dir
       ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder)
       spec
   =
-  match Sol_cli_deployment_render.render_spec ~workspace ~secret_backend spec with
+  match
+    Sol_cli_deployment_render.render_spec ~workspace ~release_id ~secret_backend spec
+  with
   | Error msg -> failwith msg
   | Ok yaml -> dispatch_rendered ~ctx ~mode:(Emit_to dir) spec yaml
 ;;
 
+(* FEAT-069: the emitted bundle carries the release artifact — the immutable
+   [sol-release-<id>] record and the current-release pointer — so the record
+   travels with the manifests it describes instead of being a CLI side effect.
+   [bundle_files] is pure in the plan's release identity, so re-emitting
+   identical content is an empty diff. *)
+let write_release_bundle ~dir plan =
+  (try Unix.mkdir dir 0o755 with
+   | Unix.Unix_error (Unix.EEXIST, _, _) -> ());
+  List.iter
+    (fun (name, contents) ->
+       let path = Filename.concat dir name in
+       let oc = open_out path in
+       Fun.protect
+         ~finally:(fun () -> close_out_noerr oc)
+         (fun () -> output_string oc contents))
+    (Sol_cli_release.bundle_files (Sol_cli_release.of_plan plan))
+;;
+
 (* ── plan-level executor ─────────────────────────────────────────────────── *)
 
+(* REFAC-089/FEAT-069: [run_plan] takes the *plan*, not a bare service list. Once
+   the plan carries release identity -- which materially affects rendering -- the
+   services alone are no longer the complete executable payload. Consuming the
+   plan also means the executor reads decisions rather than re-deriving them: it
+   must never reconstruct [release_id] from the plan. *)
 let run_plan
       (execution : Sol_cli_execution.context)
       ~mode
       ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder)
-      services
+      plan
   =
   let workspace = execution.workspace in
   let env = execution.env in
+  let services = plan.Sol_cli_deployment_plan.services in
   let backend =
     match mode with
     | Emit_to _ -> Sol_cli_manifest.Kubernetes_placeholder
@@ -84,6 +111,7 @@ let run_plan
            Sol_cli_deployment_render.render_spec
              ~workspace
              ?env
+             ~release_id:plan.Sol_cli_deployment_plan.release_id
              ~secret_backend:backend
              spec
          with
@@ -107,9 +135,14 @@ let run_plan
           | Error _ -> None)
         rendered
     in
-    Ok
-      (List.map
-         (fun ((spec : Sol_cli_deployment_plan.service_spec), yaml) ->
-            dispatch_rendered ~ctx:execution.cluster ~mode spec yaml)
-         pairs)
+    let results =
+      List.map
+        (fun ((spec : Sol_cli_deployment_plan.service_spec), yaml) ->
+           dispatch_rendered ~ctx:execution.cluster ~mode spec yaml)
+        pairs
+    in
+    (match mode with
+     | Emit_to dir -> write_release_bundle ~dir plan
+     | Dry_run | Apply -> ());
+    Ok results
 ;;

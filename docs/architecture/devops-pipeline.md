@@ -164,7 +164,7 @@ Pipeline:
 **Flags:**
 - `--image-tag TAG` — image tag produced by the CI build job
 - `--registry URL` — container registry prefix (e.g. ECR URL)
-- `--emit-to DIR` — GitOps mode: write one `<ns>-<name>.yaml` per service to DIR
+- `--emit-to DIR` — GitOps mode: write one `<ns>-<name>.yaml` per service to DIR, plus the release artifact (`sol-release-<id>.yaml` and `sol-current-release.yaml`, both derived from the plan's release id)
 - `--emit-plan-to FILE` — write plan JSON to FILE (experimental)
 - `--dry-run` — print YAML, no cluster contact
 - `--secret-backend` — `kubernetes-placeholder` (default) or `external-secrets`
@@ -200,6 +200,14 @@ emits one or both of:
 - A `kubectl logs -n <ns> -l app=<name> --follow` command/stream.
 - A Grafana Explore URL built by `Sol_cli_logs.grafana_explore_url` using LogQL
   `{namespace="<ns>",app="<name>"}`.
+
+`--release <id>` (FEAT-069) narrows to one released identity, adding
+`release="<id>"` to the selector — or using `{release="<id>"}` alone when no
+`--scope` is given, since the id is workspace-unique by construction. The
+outcome order is deliberate: a malformed id fails before the cluster is
+consulted; a well-formed id with no recorded release fails naming the target and
+recent releases; a known release whose query returns nothing is an empty
+success, never reported as an unknown release.
 
 **Reads:** live cluster via kubectl. **Writes:** nothing.
 
@@ -318,7 +326,7 @@ Sol_cli_change_set.build  [sol deploy path]
 Sol_cli_change_set.execute  /  Sol_cli_executor.local
           │
           ├─ Dry_run   → Sol_cli_manifest.apply ~dry_run:true  (prints YAML)
-          ├─ Emit_to   → Sol_cli_manifest.emit_to_dir         (write files)
+          ├─ Emit_to   → emit_to_dir + release record/pointer (write files)
           └─ Apply     → Sol_cli_manifest.apply ~dry_run:false (kubectl apply)
                               │
                               ▼ kubectl rollout status  [sol up: wait per service]

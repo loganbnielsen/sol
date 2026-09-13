@@ -1,3 +1,7 @@
+let release_id_of_test =
+  Sol_cli_release_id.of_content { workspace = "test"; environment = None; workloads = [] }
+;;
+
 (* Phase-oriented tests for the Sol deployment compiler.
    Documents the contract at each phase boundary so infra contributors can
    reason about plan generation, artifact rendering, GitOps emit, executor
@@ -170,6 +174,7 @@ let make_plan ?(env = customer_env) services : Sol_cli_deployment_plan.t =
   ; migrations = []
   ; schema_subjects = []
   ; consumer_groups = []
+  ; release_id = release_id_of_test
   ; requested_scope = "workspace"
   }
 ;;
@@ -462,6 +467,7 @@ let render_ok spec =
   match
     Sol_cli_deployment_render.render_spec
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
       spec
   with
@@ -478,7 +484,7 @@ let run_plan_ok ~mode ?secret_backend plan =
          ())
       ~mode
       ?secret_backend
-      plan.Sol_cli_deployment_plan.services
+      plan
   with
   | Ok rs -> rs
   | Error e -> Alcotest.fail ("run_plan failed: " ^ e)
@@ -614,7 +620,43 @@ let test_gitops_emit_one_file_per_service () =
     let plan = make_plan [ svc_spec; worker_spec ] in
     ignore (run_plan_ok ~mode:(Sol_cli_executor.Emit_to dir) plan);
     let files = Sys.readdir dir |> Array.to_list in
-    Alcotest.(check int) "one file per service" 2 (List.length files))
+    (* FEAT-069: the bundle also carries the release artifact — the immutable
+       record named by the plan's release id, plus the current-release pointer. *)
+    Alcotest.(check int) "two service files + two release files" 4 (List.length files);
+    let record = Sol_cli_release.(configmap_name (of_plan plan) ^ ".yaml") in
+    Alcotest.(check bool) "release record emitted" true (List.mem record files);
+    Alcotest.(check bool)
+      "current-release pointer emitted"
+      true
+      (List.mem "sol-current-release.yaml" files))
+;;
+
+(* The release artifact is a pure function of the plan's content: re-emitting an
+   identical plan leaves the record byte-identical, which is what keeps a GitOps
+   bundle an empty diff. *)
+let test_gitops_release_artifact_is_deterministic () =
+  with_temp_dir (fun dir_a ->
+    with_temp_dir (fun dir_b ->
+      let plan = make_plan [ svc_spec; worker_spec ] in
+      ignore (run_plan_ok ~mode:(Sol_cli_executor.Emit_to dir_a) plan);
+      ignore (run_plan_ok ~mode:(Sol_cli_executor.Emit_to dir_b) plan);
+      let record =
+        Sol_cli_release.configmap_name (Sol_cli_release.of_plan plan) ^ ".yaml"
+      in
+      let read dir name =
+        let ic = open_in (Filename.concat dir name) in
+        let s = In_channel.input_all ic in
+        close_in ic;
+        s
+      in
+      Alcotest.(check string)
+        "record bytes identical"
+        (read dir_a record)
+        (read dir_b record);
+      Alcotest.(check string)
+        "pointer bytes identical"
+        (read dir_a "sol-current-release.yaml")
+        (read dir_b "sol-current-release.yaml")))
 ;;
 
 (* ── Phase 5: executor commands ─────────────────────────────────────────── *)
@@ -624,6 +666,7 @@ let test_local_executor_result_fields () =
     Sol_cli_executor.local
       ~ctx:Sol_cli_kube_destination.local_context
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~dry_run:true
       svc_spec
   in
@@ -640,6 +683,7 @@ let test_direct_executor_result_fields () =
     Sol_cli_executor.local
       ~ctx:Sol_cli_kube_destination.local_context
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~dry_run:true
       svc_spec
   in
@@ -657,6 +701,7 @@ let test_gitops_executor_result_fields () =
       Sol_cli_executor.gitops
         ~ctx:Sol_cli_kube_destination.local_context
         ~workspace:"myapp"
+        ~release_id:release_id_of_test
         ~dir
         svc_spec
     in
@@ -676,6 +721,7 @@ let test_local_worker_executor_result_fields () =
     Sol_cli_executor.local
       ~ctx:Sol_cli_kube_destination.local_context
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~dry_run:true
       worker_spec
   in
@@ -691,6 +737,7 @@ let test_direct_fn_executor_result_fields () =
     Sol_cli_executor.local
       ~ctx:Sol_cli_kube_destination.local_context
       ~workspace:"myapp"
+      ~release_id:release_id_of_test
       ~dry_run:true
       fn_spec
   in
@@ -768,6 +815,7 @@ let test_local_and_direct_share_plan_type () =
       (Sol_cli_executor.local
          ~ctx:Sol_cli_kube_destination.local_context
          ~workspace:plan.Sol_cli_deployment_plan.workspace
+         ~release_id:plan.Sol_cli_deployment_plan.release_id
          ~dry_run:true)
       plan.Sol_cli_deployment_plan.services
   in
@@ -776,6 +824,7 @@ let test_local_and_direct_share_plan_type () =
       (Sol_cli_executor.local
          ~ctx:Sol_cli_kube_destination.local_context
          ~workspace:plan.Sol_cli_deployment_plan.workspace
+         ~release_id:plan.Sol_cli_deployment_plan.release_id
          ~dry_run:true)
       plan.Sol_cli_deployment_plan.services
   in
@@ -807,6 +856,7 @@ let test_gitops_shares_plan_type () =
         (Sol_cli_executor.gitops
            ~ctx:Sol_cli_kube_destination.local_context
            ~workspace:plan.Sol_cli_deployment_plan.workspace
+           ~release_id:plan.Sol_cli_deployment_plan.release_id
            ~dir)
         plan.Sol_cli_deployment_plan.services
     in
@@ -815,6 +865,7 @@ let test_gitops_shares_plan_type () =
         (Sol_cli_executor.local
            ~ctx:Sol_cli_kube_destination.local_context
            ~workspace:plan.Sol_cli_deployment_plan.workspace
+           ~release_id:plan.Sol_cli_deployment_plan.release_id
            ~dry_run:true)
         plan.Sol_cli_deployment_plan.services
     in
@@ -994,9 +1045,13 @@ let () =
             `Quick
             test_gitops_emit_uses_placeholder_backend
         ; Alcotest.test_case
-            "one file per service"
+            "one file per service + release artifact"
             `Quick
             test_gitops_emit_one_file_per_service
+        ; Alcotest.test_case
+            "release artifact deterministic"
+            `Quick
+            test_gitops_release_artifact_is_deterministic
         ] )
     ; ( "executor_commands"
       , [ Alcotest.test_case
