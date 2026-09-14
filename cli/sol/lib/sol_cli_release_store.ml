@@ -67,15 +67,6 @@ let list ~ctx ~(workspace : string) : (Sol_cli_release.t list, string) result =
        Error (Printf.sprintf "could not parse kubectl output: %s" msg))
 ;;
 
-let string_contains ~needle haystack =
-  let nlen = String.length needle in
-  let hlen = String.length haystack in
-  let rec go i =
-    i + nlen <= hlen && (String.sub haystack i nlen = needle || go (i + 1))
-  in
-  go 0
-;;
-
 let get ~ctx ~(workspace : string) ~(release_id : string)
   : (Sol_cli_release.t, string) result
   =
@@ -98,7 +89,7 @@ let get ~ctx ~(workspace : string) ~(release_id : string)
          then r.Sol_cli_process.stderr
          else r.Sol_cli_process.stdout
        in
-       if string_contains ~needle:"NotFound" detail
+       if Sol_cli_port_forward.string_contains ~needle:"NotFound" detail
        then
          Error (Printf.sprintf "release %s not found" (Sol_cli_release_id.to_string id))
        else Error (Printf.sprintf "kubectl get configmap failed: %s" (String.trim detail))

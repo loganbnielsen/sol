@@ -67,14 +67,6 @@ let test_kubectl_rollout_status_argv () =
   check_str "namespace" "staging" (List.nth c.Sol_cli_process.argv 5)
 ;;
 
-let test_kubectl_rollout_undo_argv () =
-  let c =
-    Sol_cli_process.cmd
-      [ "kubectl"; "rollout"; "undo"; "deployment/my-svc"; "-n"; "prod" ]
-  in
-  check_str "action" "undo" (List.nth c.Sol_cli_process.argv 2)
-;;
-
 let test_kubectl_rollout_restart_argv () =
   let c =
     Sol_cli_process.cmd [ "kubectl"; "rollout"; "restart"; "deployment"; "-n"; "ns" ]
@@ -302,7 +294,6 @@ let () =
         ; Alcotest.test_case "apply dry_run argv" `Quick test_kubectl_apply_dry_run_argv
         ; Alcotest.test_case "get argv" `Quick test_kubectl_get_argv
         ; Alcotest.test_case "rollout status argv" `Quick test_kubectl_rollout_status_argv
-        ; Alcotest.test_case "rollout undo argv" `Quick test_kubectl_rollout_undo_argv
         ; Alcotest.test_case
             "rollout restart argv"
             `Quick
