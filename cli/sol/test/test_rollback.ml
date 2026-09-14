@@ -1010,6 +1010,133 @@ let test_pointer_report_to_string_uses_canonical_name () =
   assert (not (contains (Str.regexp_string "CI_Smoke") msg))
 ;;
 
+(* ── FEAT-075: [execute]'s ordering ────────────────────────────────────────
+   The library owns the sequence, not the command: a recording [deps] lets
+   these assert both "no mutation on refusal" and "the pointer moves only
+   after workloads verify" without a cluster. [workloads = []] keeps the
+   reconstructed [specs] empty, so a bogus [live_workloads] entry is enough
+   to make the workload-set comparison disagree. *)
+
+let transaction_release ~apply_mode : Sol_cli_release.t =
+  { release_id = "r-3333333333333333"
+  ; workspace = "myapp"
+  ; environment = None
+  ; workloads = []
+  ; migrations = []
+  ; apply_mode
+  }
+;;
+
+let recording_deps ?(live = []) () =
+  let calls = ref [] in
+  let record name = calls := name :: !calls in
+  let deps : Sol_cli_rollback.transaction_deps =
+    { apply =
+        (fun _specs ->
+          record "apply";
+          Ok ())
+    ; live_workloads =
+        (fun () ->
+          record "live_workloads";
+          Ok live)
+    ; move_pointer =
+        (fun () ->
+          record "move_pointer";
+          Ok ())
+    ; verify_pointer =
+        (fun () ->
+          record "verify_pointer";
+          { Sol_cli_rollback.pointer_actual = "r-3333333333333333"; pointer_ok = true })
+    }
+  in
+  calls, deps
+;;
+
+let test_execute_success_calls_every_dep_in_order () =
+  let calls, deps = recording_deps () in
+  let release = transaction_release ~apply_mode:Sol_cli_release.Direct in
+  match
+    Sol_cli_rollback.execute
+      ~release
+      ~migrations_dir:"unused"
+      ~current_migrations:[]
+      ~deps
+  with
+  | Error msg -> Alcotest.fail msg
+  | Ok () ->
+    Alcotest.(check (list string))
+      "apply, then live_workloads, then move_pointer, then verify_pointer"
+      [ "apply"; "live_workloads"; "move_pointer"; "verify_pointer" ]
+      (List.rev !calls)
+;;
+
+let test_execute_apply_mode_refusal_calls_no_deps () =
+  let calls, deps = recording_deps () in
+  let release = transaction_release ~apply_mode:Sol_cli_release.Gitops in
+  match
+    Sol_cli_rollback.execute
+      ~release
+      ~migrations_dir:"unused"
+      ~current_migrations:[]
+      ~deps
+  with
+  | Ok () -> Alcotest.fail "expected a GitOps-owned release to be refused"
+  | Error msg ->
+    assert (contains (Str.regexp "GitOps") msg);
+    Alcotest.(check (list string)) "no dep was ever called" [] !calls
+;;
+
+let test_execute_migration_boundary_refusal_calls_no_deps () =
+  with_migrations_dir
+    [ "0001_init.sql", expand_sql; "0002_drop_col.sql", contract_sql ]
+    (fun migrations_dir ->
+       let calls, deps = recording_deps () in
+       let release =
+         { (transaction_release ~apply_mode:Sol_cli_release.Direct) with
+           migrations = [ "0001_init.sql" ]
+         }
+       in
+       match
+         Sol_cli_rollback.execute
+           ~release
+           ~migrations_dir
+           ~current_migrations:[ "0001_init.sql"; "0002_drop_col.sql" ]
+           ~deps
+       with
+       | Ok () -> Alcotest.fail "expected a contracting migration to block the rollback"
+       | Error msg ->
+         assert (contains (Str.regexp "0002_drop_col.sql") msg);
+         Alcotest.(check (list string)) "no dep was ever called" [] !calls)
+;;
+
+let test_execute_workload_mismatch_skips_pointer_move () =
+  let bogus_live : Sol_cli_rollback.workload_identity * string =
+    ( { Sol_cli_rollback.kind = Sol_cli_rollback.Live_deployment
+      ; namespace = "myapp-payments"
+      ; name = "ghost-svc"
+      }
+    , "r-3333333333333333" )
+  in
+  let calls, deps = recording_deps ~live:[ bogus_live ] () in
+  let release = transaction_release ~apply_mode:Sol_cli_release.Direct in
+  match
+    Sol_cli_rollback.execute
+      ~release
+      ~migrations_dir:"unused"
+      ~current_migrations:[]
+      ~deps
+  with
+  | Ok () ->
+    Alcotest.fail "expected the unexpected live workload to block the pointer move"
+  | Error msg ->
+    assert (contains (Str.regexp "ghost-svc") msg);
+    assert (contains (Str.regexp "pointer was left unchanged") msg);
+    Alcotest.(check (list string))
+      "apply and live_workloads ran; move_pointer/verify_pointer never did"
+      [ "apply"; "live_workloads" ]
+      (List.rev !calls)
+;;
+
 (* ── FEAT-073: --commit / --scope release selection ───────────────────────── *)
 
 let test_commit_matches_exact () =
@@ -1332,6 +1459,24 @@ let () =
             "names the canonical pointer ConfigMap"
             `Quick
             test_pointer_report_to_string_uses_canonical_name
+        ] )
+    ; ( "rollback_transaction"
+      , [ Alcotest.test_case
+            "success calls every dep in order"
+            `Quick
+            test_execute_success_calls_every_dep_in_order
+        ; Alcotest.test_case
+            "apply-mode refusal calls no dep"
+            `Quick
+            test_execute_apply_mode_refusal_calls_no_deps
+        ; Alcotest.test_case
+            "migration boundary refusal calls no dep"
+            `Quick
+            test_execute_migration_boundary_refusal_calls_no_deps
+        ; Alcotest.test_case
+            "workload mismatch skips pointer move"
+            `Quick
+            test_execute_workload_mismatch_skips_pointer_move
         ] )
     ; ( "commit_release_selection"
       , [ Alcotest.test_case "commit_matches: exact" `Quick test_commit_matches_exact
