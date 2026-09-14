@@ -18,19 +18,10 @@
     workloads use. Config values are part of the released state and are stored,
     because the record's content is what rederives the id. *)
 
-type workload =
-  { domain : string
-  ; name : string
-  ; primitive : string
-  ; image : string
-  ; config : (string * string) list
-  ; secrets : (string * string) list
-  ; schedule : string option
-  ; replicas : int
-  ; cpu : string
-  ; memory : string
-  ; extra_labels : (string * string) list
-  }
+(** The record's workload is the identity's workload (BUG-026): the record is the
+    serialized artifact of the released state, so it does not keep a second,
+    hand-mirrored copy of the projection that could drift from the id. *)
+type workload = Sol_cli_release_id.workload
 
 type t =
   { release_id : string

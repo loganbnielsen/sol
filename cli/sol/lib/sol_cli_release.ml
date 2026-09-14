@@ -13,19 +13,11 @@
    Config values are part of released state and are stored, because the id is
    derived from them. *)
 
-type workload =
-  { domain : string
-  ; name : string
-  ; primitive : string
-  ; image : string
-  ; config : (string * string) list
-  ; secrets : (string * string) list
-  ; schedule : string option
-  ; replicas : int
-  ; cpu : string
-  ; memory : string
-  ; extra_labels : (string * string) list
-  }
+(* BUG-026: the record's workload *is* the identity's workload. Keeping two
+   hand-mirrored records in step is what let the projection drift; the record is
+   the serialized artifact, so it shares the type and projects through
+   [Sol_cli_deployment_plan.release_workload_of_spec]. *)
+type workload = Sol_cli_release_id.workload
 
 type t =
   { release_id : string
@@ -80,30 +72,11 @@ let current_configmap_name ~(workspace : string) : string =
 
 (* ── building the canonical record ───────────────────────────────────────── *)
 
-let primitive_to_string (p : Sol_cli_deployment_plan.primitive) =
-  match p with
-  | Sol_cli_deployment_plan.Svc -> "svc"
-  | Sol_cli_deployment_plan.Worker -> "worker"
-  | Sol_cli_deployment_plan.Fn -> "fn"
-;;
-
-(* This mirrors the private projection in [Sol_cli_deployment_plan]'s
-   [of_services_result]. It is intentionally the *same* set of facts, so
-   [derived_release_id] on a record built here reproduces [plan.release_id];
-   the test [of_plan rederives the plan's identity] pins the two together. *)
+(* The projection is [Sol_cli_deployment_plan.release_workload_of_spec]: one
+   definition, so [derived_release_id] on a record built here reproduces
+   [plan.release_id] by construction rather than by two lists agreeing. *)
 let workload_of_spec (spec : Sol_cli_deployment_plan.service_spec) : workload =
-  { domain = spec.domain
-  ; name = spec.source_name
-  ; primitive = primitive_to_string spec.primitive
-  ; image = spec.image
-  ; config = spec.config
-  ; secrets = spec.secrets
-  ; schedule = spec.schedule
-  ; replicas = spec.replicas
-  ; cpu = Sol_cli_toml.cpu_quantity_to_string spec.cpu
-  ; memory = Sol_cli_toml.memory_quantity_to_string spec.memory
-  ; extra_labels = spec.extra_labels
-  }
+  Sol_cli_deployment_plan.release_workload_of_spec spec
 ;;
 
 let of_plan (plan : Sol_cli_deployment_plan.t) : t =
@@ -115,25 +88,7 @@ let of_plan (plan : Sol_cli_deployment_plan.t) : t =
 ;;
 
 let content_of_record (t : t) : Sol_cli_release_id.content =
-  { workspace = t.workspace
-  ; environment = t.environment
-  ; workloads =
-      List.map
-        (fun (w : workload) ->
-           { Sol_cli_release_id.domain = w.domain
-           ; name = w.name
-           ; primitive = w.primitive
-           ; image = w.image
-           ; config = w.config
-           ; secrets = w.secrets
-           ; schedule = w.schedule
-           ; replicas = w.replicas
-           ; cpu = w.cpu
-           ; memory = w.memory
-           ; extra_labels = w.extra_labels
-           })
-        t.workloads
-  }
+  { workspace = t.workspace; environment = t.environment; workloads = t.workloads }
 ;;
 
 let derived_release_id (t : t) : Sol_cli_release_id.t =
@@ -183,6 +138,29 @@ let compare_workload (a : workload) (b : workload) =
     if by_name <> 0 then by_name else String.compare a.primitive b.primitive)
 ;;
 
+(* Row tables (volumes, calls) are sets, so sort rows by the whole tuple: two
+   projections that differ only in source order must serialize to the same
+   bytes, or a record with the same id would churn the GitOps diff. *)
+let compare_row4 (a1, a2, a3, a4) (b1, b2, b3, b4) =
+  let c = String.compare a1 b1 in
+  if c <> 0
+  then c
+  else (
+    let c = String.compare a2 b2 in
+    if c <> 0
+    then c
+    else (
+      let c = String.compare a3 b3 in
+      if c <> 0 then c else String.compare a4 b4))
+;;
+
+let rows_to_json rows =
+  `List
+    (List.map
+       (fun (a, b, c, d) -> `List [ `String a; `String b; `String c; `String d ])
+       (List.sort compare_row4 rows))
+;;
+
 let workload_to_json (w : workload) : Yojson.Safe.t =
   `Assoc
     [ "domain", `String w.domain
@@ -199,6 +177,18 @@ let workload_to_json (w : workload) : Yojson.Safe.t =
     ; "cpu", `String w.cpu
     ; "memory", `String w.memory
     ; "extra_labels", pairs_to_assoc w.extra_labels
+    ; "volumes", rows_to_json w.volumes
+    ; "rollout", `String w.rollout
+    ; ( "ingress_host"
+      , match w.ingress_host with
+        | None -> `Null
+        | Some h -> `String h )
+    ; ( "ingress_path"
+      , match w.ingress_path with
+        | None -> `Null
+        | Some p -> `String p )
+    ; "cluster_issuer", `String w.cluster_issuer
+    ; "calls", rows_to_json w.calls
     ]
 ;;
 
@@ -258,6 +248,29 @@ let pairs key json =
   | _ -> []
 ;;
 
+let rows key json =
+  match mem key json with
+  | Some (`List rows) ->
+    List.map
+      (function
+        | `List cells ->
+          List.map
+            (function
+              | `String s -> s
+              | _ -> "")
+            cells
+        | _ -> [])
+      rows
+  | _ -> []
+;;
+
+(* A malformed row becomes an empty one, exactly as [str] yields [""]; the record
+   still fails closed in [validate] because its id stops rederiving. *)
+let row4 = function
+  | [ a; b; c; d ] -> a, b, c, d
+  | _ -> "", "", "", ""
+;;
+
 let workload_of_json (json : Yojson.Safe.t) : workload =
   { domain = str "domain" json
   ; name = str "name" json
@@ -270,6 +283,12 @@ let workload_of_json (json : Yojson.Safe.t) : workload =
   ; cpu = str "cpu" json
   ; memory = str "memory" json
   ; extra_labels = pairs "extra_labels" json
+  ; volumes = List.map row4 (rows "volumes" json)
+  ; rollout = str "rollout" json
+  ; ingress_host = string_option "ingress_host" json
+  ; ingress_path = string_option "ingress_path" json
+  ; cluster_issuer = str "cluster_issuer" json
+  ; calls = List.map row4 (rows "calls" json)
   }
 ;;
 

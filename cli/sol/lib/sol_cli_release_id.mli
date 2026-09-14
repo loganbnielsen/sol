@@ -18,11 +18,15 @@
 
     Only fields whose difference means {i this is a different running release}:
     the workspace, the environment, and per workload its identity, image,
-    config, secret {i references}, schedule, replicas, resources and extra
-    labels. Provenance (timestamp, commit, actor, output directory) is
-    deliberately absent — it belongs to the deployment event, and excluding it
-    here is what stops a field added to the plan from silently changing every
-    release identity.
+    config, secret {i references}, schedule, replicas, resources, extra labels,
+    volumes, the effective rollout strategy (canary steps included), ingress
+    host/path, cluster issuer, and the resolved service calls. That is every
+    resolved input the renderer turns into manifest content — a field that
+    changes the manifests but not the id would let a real change hide behind an
+    unchanged [release] label (BUG-026). Provenance (timestamp, commit, actor,
+    output directory) is deliberately absent — it belongs to the deployment
+    event, and excluding it here is what stops a field added to the plan from
+    silently changing every release identity.
 
     {b Environment identity counts.} A release is "this release of this
     workspace in this environment", so two environments whose resolved workload
@@ -48,6 +52,14 @@ type workload =
   ; cpu : string
   ; memory : string
   ; extra_labels : (string * string) list
+  ; volumes : (string * string * string * string) list
+    (** name, mount path, size, access mode *)
+  ; rollout : string (** effective strategy; canary steps included *)
+  ; ingress_host : string option
+  ; ingress_path : string option
+  ; cluster_issuer : string
+  ; calls : (string * string * string * string) list
+    (** env var, target domain, target k8s name, target namespace *)
   }
 
 type content =

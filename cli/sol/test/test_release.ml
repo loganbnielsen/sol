@@ -35,6 +35,12 @@ let sample_workload : R.workload =
   ; cpu = "100m"
   ; memory = "128Mi"
   ; extra_labels = [ "team", "payments" ]
+  ; volumes = [ "pgdata", "/var/lib/postgresql/data", "1Gi", "read_write_once" ]
+  ; rollout = "canary:w10,p30,w100"
+  ; ingress_host = Some "charge.example.com"
+  ; ingress_path = Some "/"
+  ; cluster_issuer = "letsencrypt-prod"
+  ; calls = [ "CHECKOUT_SVC_URL", "checkout", "checkout-svc", "myworkspace-checkout" ]
   }
 ;;
 
