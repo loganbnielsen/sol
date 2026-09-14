@@ -406,3 +406,126 @@ let check_migration_boundary
   in
   go new_migrations
 ;;
+
+(* FEAT-066: verification, the last step of the enforcement order. It reads
+   live cluster state on purpose -- verification is exactly the step that
+   checks whether the mutation just performed actually landed, which the
+   release record alone cannot answer. The two failure modes are reported
+   independently rather than collapsed into one "verification failed",
+   because one passing and the other failing is operationally meaningful
+   evidence: a workload mismatch with a correct pointer means the apply
+   partly failed; a pointer mismatch with correct workloads means the apply
+   worked but something raced the pointer move. *)
+
+type live_kind =
+  | Live_deployment
+  | Live_rollout
+  | Live_cronjob
+
+(* Mirrors sol_cli_manifest_yaml.ml's render_taxonomy_labels call sites: the
+   `release` label always lands in the pod template, never the object's own
+   top-level metadata, so each kind needs its own jsonpath into that
+   template. *)
+let live_resource_and_jsonpath = function
+  | Live_deployment -> "deployment", "{.spec.template.metadata.labels.release}"
+  | Live_rollout -> "rollout", "{.spec.template.metadata.labels.release}"
+  | Live_cronjob -> "cronjob", "{.spec.jobTemplate.spec.template.metadata.labels.release}"
+;;
+
+(* Deliberately not rollback_target_of_service: that function's No_op for [Fn]
+   encodes "no kubectl-rollout-undo history", which is irrelevant here -- a
+   CronJob still carries a `release` label worth verifying. *)
+let live_kind_of_service (s : Sol_cli_deployment_plan.service_spec) =
+  match s.Sol_cli_deployment_plan.primitive with
+  | Sol_cli_deployment_plan.Fn -> Live_cronjob
+  | Sol_cli_deployment_plan.Svc | Sol_cli_deployment_plan.Worker ->
+    (match s.progressive_delivery with
+     | Some _ -> Live_rollout
+     | None -> Live_deployment)
+;;
+
+let read_jsonpath ~ctx ~resource ~name ~namespace ~jsonpath =
+  match
+    Sol_cli_kubectl.get ~ctx ~resource ~name ~namespace ~output:("jsonpath=" ^ jsonpath)
+  with
+  | Ok r when r.Sol_cli_process.exit_code = 0 -> String.trim r.Sol_cli_process.stdout
+  | _ -> ""
+;;
+
+type workload_mismatch =
+  { namespace : string
+  ; name : string
+  ; actual : string (** ["" ] when the label or object could not be read at all. *)
+  }
+
+type verify_report =
+  { workload_mismatches : workload_mismatch list
+  ; pointer_actual : string
+  ; pointer_ok : bool
+  }
+
+let verify_ok (r : verify_report) = r.workload_mismatches = [] && r.pointer_ok
+
+let verify
+      ~ctx
+      ~(release : Sol_cli_release.t)
+      (specs : Sol_cli_deployment_plan.service_spec list)
+  : verify_report
+  =
+  let workload_mismatches =
+    List.filter_map
+      (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+         let namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace in
+         let name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name in
+         let resource, jsonpath =
+           live_resource_and_jsonpath (live_kind_of_service spec)
+         in
+         let actual = read_jsonpath ~ctx ~resource ~name ~namespace ~jsonpath in
+         if String.equal actual release.Sol_cli_release.release_id
+         then None
+         else Some { namespace; name; actual })
+      specs
+  in
+  let pointer_actual =
+    read_jsonpath
+      ~ctx
+      ~resource:"configmap"
+      ~name:
+        (Sol_cli_release.current_configmap_name
+           ~workspace:release.Sol_cli_release.workspace)
+      ~namespace:"default"
+      ~jsonpath:"{.data.release_id}"
+  in
+  { workload_mismatches
+  ; pointer_actual
+  ; pointer_ok = String.equal pointer_actual release.Sol_cli_release.release_id
+  }
+;;
+
+let display_actual actual = if String.equal actual "" then "<none>" else actual
+
+let verify_report_to_string ~(release : Sol_cli_release.t) (r : verify_report) : string =
+  let workload_lines =
+    List.map
+      (fun (m : workload_mismatch) ->
+         Printf.sprintf
+           "workload state mismatch: %s/%s carries release %s, expected %s"
+           m.namespace
+           m.name
+           (display_actual m.actual)
+           release.Sol_cli_release.release_id)
+      r.workload_mismatches
+  in
+  let pointer_line =
+    if r.pointer_ok
+    then []
+    else
+      [ Printf.sprintf
+          "pointer mismatch: sol-release-current-%s names %s, expected %s"
+          release.Sol_cli_release.workspace
+          (display_actual r.pointer_actual)
+          release.Sol_cli_release.release_id
+      ]
+  in
+  String.concat "\n" (workload_lines @ pointer_line)
+;;

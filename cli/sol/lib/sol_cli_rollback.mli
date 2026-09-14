@@ -98,3 +98,40 @@ val check_migration_boundary
   -> migrations_dir:string
   -> current_migrations:string list
   -> (unit, migration_check_error) result
+
+(** One workload whose live [release] label does not match the restored
+    release. [actual] is [""] when the label or the object itself could not
+    be read at all (never distinguished from an empty label — both mean
+    "not verified"). *)
+type workload_mismatch =
+  { namespace : string
+  ; name : string
+  ; actual : string
+  }
+
+(** The result of the last enforcement-order step: reading back live cluster
+    state after [apply] and the pointer move, so the two failure modes stay
+    independent — a workload mismatch with a correct pointer is a different
+    operational fact than a pointer mismatch with correct workloads. *)
+type verify_report =
+  { workload_mismatches : workload_mismatch list
+  ; pointer_actual : string
+  ; pointer_ok : bool
+  }
+
+val verify_ok : verify_report -> bool
+
+(** [verify ~ctx ~release specs] reads back, for every [spec], the live
+    `release` label Sol renders into that workload's pod template (a
+    Deployment or Rollout's [spec.template...], a CronJob's
+    [spec.jobTemplate.spec.template...]) and compares it to
+    [release.release_id]; and reads back the current-release pointer
+    ConfigMap's [data.release_id]. Never re-applies or "fixes" a mismatch —
+    only reports it. *)
+val verify
+  :  ctx:Sol_cli_kube_destination.context
+  -> release:Sol_cli_release.t
+  -> Sol_cli_deployment_plan.service_spec list
+  -> verify_report
+
+val verify_report_to_string : release:Sol_cli_release.t -> verify_report -> string

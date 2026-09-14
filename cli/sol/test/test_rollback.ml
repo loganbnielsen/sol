@@ -711,6 +711,78 @@ let test_migration_boundary_ignores_already_recorded_contract () =
        | Error e -> Alcotest.fail (Sol_cli_rollback.migration_check_error_to_string e))
 ;;
 
+(* ── verify_report ─────────────────────────────────────────────────────────
+   verify itself shells out to kubectl (untestable without a cluster, same as
+   Sol_cli_release_store.get/list/move_pointer) -- these cover the pure
+   report shape and its rendering. *)
+
+let verify_release : Sol_cli_release.t =
+  { release_id = "r-2222222222222222"
+  ; workspace = "myapp"
+  ; environment = None
+  ; workloads = []
+  ; migrations = []
+  }
+;;
+
+let test_verify_ok_when_everything_matches () =
+  let report : Sol_cli_rollback.verify_report =
+    { workload_mismatches = []; pointer_actual = "r-2222222222222222"; pointer_ok = true }
+  in
+  Alcotest.(check bool) "verify_ok" true (Sol_cli_rollback.verify_ok report)
+;;
+
+let test_verify_not_ok_on_workload_mismatch () =
+  let report : Sol_cli_rollback.verify_report =
+    { workload_mismatches =
+        [ { Sol_cli_rollback.namespace = "myapp-payments"
+          ; name = "billing-svc"
+          ; actual = "r-9999999999999999"
+          }
+        ]
+    ; pointer_actual = "r-2222222222222222"
+    ; pointer_ok = true
+    }
+  in
+  Alcotest.(check bool) "verify_ok" false (Sol_cli_rollback.verify_ok report);
+  let msg = Sol_cli_rollback.verify_report_to_string ~release:verify_release report in
+  assert (contains (Str.regexp "workload state mismatch") msg);
+  assert (contains (Str.regexp "myapp-payments/billing-svc") msg);
+  assert (contains (Str.regexp "r-9999999999999999") msg);
+  assert (not (contains (Str.regexp "pointer mismatch") msg))
+;;
+
+let test_verify_not_ok_on_pointer_mismatch () =
+  let report : Sol_cli_rollback.verify_report =
+    { workload_mismatches = []
+    ; pointer_actual = "r-8888888888888888"
+    ; pointer_ok = false
+    }
+  in
+  Alcotest.(check bool) "verify_ok" false (Sol_cli_rollback.verify_ok report);
+  let msg = Sol_cli_rollback.verify_report_to_string ~release:verify_release report in
+  assert (contains (Str.regexp "pointer mismatch") msg);
+  assert (contains (Str.regexp "sol-release-current-myapp") msg);
+  assert (contains (Str.regexp "r-8888888888888888") msg);
+  assert (not (contains (Str.regexp "workload state mismatch") msg))
+;;
+
+let test_verify_reports_missing_label_as_none () =
+  let report : Sol_cli_rollback.verify_report =
+    { workload_mismatches =
+        [ { Sol_cli_rollback.namespace = "myapp-payments"
+          ; name = "billing-svc"
+          ; actual = ""
+          }
+        ]
+    ; pointer_actual = "r-2222222222222222"
+    ; pointer_ok = true
+    }
+  in
+  let msg = Sol_cli_rollback.verify_report_to_string ~release:verify_release report in
+  assert (contains (Str.regexp "<none>") msg)
+;;
+
 let () =
   Alcotest.run
     "rollback"
@@ -794,6 +866,24 @@ let () =
             "already-recorded contract is ignored"
             `Quick
             test_migration_boundary_ignores_already_recorded_contract
+        ] )
+    ; ( "verify_report"
+      , [ Alcotest.test_case
+            "ok when everything matches"
+            `Quick
+            test_verify_ok_when_everything_matches
+        ; Alcotest.test_case
+            "not ok on workload mismatch"
+            `Quick
+            test_verify_not_ok_on_workload_mismatch
+        ; Alcotest.test_case
+            "not ok on pointer mismatch"
+            `Quick
+            test_verify_not_ok_on_pointer_mismatch
+        ; Alcotest.test_case
+            "missing label reported as <none>"
+            `Quick
+            test_verify_reports_missing_label_as_none
         ] )
     ]
 ;;
