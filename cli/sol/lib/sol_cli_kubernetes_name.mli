@@ -47,3 +47,11 @@ val sanitize_name : string -> string
     both the planner and rollback's decode of a recorded release share one
     definition (FEAT-066). *)
 val service_url : namespace:namespace -> k8s_name:k8s_name -> string
+
+(** [call_env_var source_name] is the environment variable name a caller uses
+    to reach [source_name]: uppercased, non-alphanumerics mapped to ['_'], with
+    an ["_URL"] suffix. A pure function of an already-resolved source name, so
+    it lives here rather than in the planner — both the planner's forward calls
+    and rollback's decode of a recorded release's [called_by] share one
+    definition (FEAT-066). *)
+val call_env_var : string -> string

@@ -41,3 +41,27 @@ val execute_rollback
   -> (unit, error) result
 
 val error_to_string : error -> string
+
+(** [service_specs_of_release release] reconstructs the resolved
+    [service_spec] list a deploy of [release] would have produced (FEAT-066).
+
+    This is a historical decode, not a planner: it depends exclusively on data
+    reachable from [release] plus pure deterministic helpers ([k8s_name_result],
+    [namespace_result], [service_url], [call_env_var], and the canonical
+    inverse decoders in {!Sol_cli_toml}) — never the workspace, [sol.toml]/
+    [sol.yml], the current environment, discovery, or current cluster state.
+
+    [called_by] is not a field of the stored record; it is derived purely from
+    every workload's own [calls] rows (matching by target namespace/name), using
+    the same [call_env_var] helper the forward planner uses. Reusing a stored
+    forward-edge env var here would preserve most of the call graph while
+    silently changing NetworkPolicy output.
+
+    Decode failures name the release, the workload and the offending fact —
+    e.g. ["cannot reconstruct release r-x: workload payments has an invalid
+    progressive delivery \"canary:bogus\""] — before any render or mutation, so
+    a corrupt historical artifact is distinguishable from a cluster refusing a
+    valid restoration. *)
+val service_specs_of_release
+  :  Sol_cli_release.t
+  -> (Sol_cli_deployment_plan.service_spec list, string) result

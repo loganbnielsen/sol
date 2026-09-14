@@ -109,6 +109,16 @@ let primitive_to_string = function
   | Fn -> "fn"
 ;;
 
+(* Canonical inverse of [primitive_to_string] (FEAT-066): rollback reconstructs
+   a recorded release's specs from the release record, which stores this value
+   in its canonical string form. *)
+let primitive_of_string = function
+  | "svc" -> Ok Svc
+  | "worker" -> Ok Worker
+  | "fn" -> Ok Fn
+  | s -> Error (Printf.sprintf "%S is not a primitive (expected svc, worker or fn)" s)
+;;
+
 let secret_backend_to_json backend =
   `String (Sol_cli_manifest.secret_backend_to_string backend)
 ;;
@@ -479,14 +489,10 @@ let primitive_of_manifest = function
   | Sol_cli_manifest.Fn -> Fn
 ;;
 
-let call_env_var source_name =
-  source_name
-  |> String.map (function
-    | 'a' .. 'z' as c -> Char.uppercase_ascii c
-    | ('A' .. 'Z' | '0' .. '9') as c -> c
-    | _ -> '_')
-  |> fun s -> s ^ "_URL"
-;;
+(* Delegates to the shared helper (FEAT-066): the naming rule has one
+   definition, so the planner and rollback's decode of a recorded release
+   cannot diverge. *)
+let call_env_var = Sol_cli_kubernetes_name.call_env_var
 
 (* Delegates to the shared helper (FEAT-066): the URL format has one definition,
    so the planner and rollback's decode of a recorded release cannot diverge. *)
