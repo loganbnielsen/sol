@@ -24,9 +24,25 @@ Record every release immutably in the target's cluster, and make `sol rollback` 
 *(The record itself and `sol releases` are FEAT-067. These bullets are the
 remaining slices 2–3; rollback reads the record FEAT-067 writes.)*
 
-- **`sol rollback <release-id>`**, plus `--commit` (ambiguous → list candidates and require a choice; always echo the resolution) and `--scope` as release *selection* only.
+- **`sol rollback <release-id>`** for an exact, unambiguous release id.
+  `--commit` (ambiguous → list candidates and require a choice; always echo
+  the resolution) and `--scope` as release *selection* only — **split out to
+  FEAT-073 (2026-09-14)**: resolving a commit to a release id is a reverse
+  lookup from provenance to identity, a different operation from restoring an
+  already-identified release, and the only existing provenance record
+  (FEAT-070's deployment event) is a Loki log line, not an authoritative
+  store. Ship the authoritative id-based path first rather than make Loki
+  authoritative for rollback selection.
 - **Migration boundary check:** refuse on a *contracting* migration between the target release and now, naming the release and the migration. No `--force`.
 - **Verify structurally** after restoration (configuration, digests, scope membership), and skip verification where a GitOps controller owns the resources — reporting that rather than claiming a match.
+  **Landed for the direct-apply (non-GitOps) path only**: `verify` reads back
+  the live `release` label per workload and the pointer, reported
+  independently. Digest verification is blocked on FEAT-050 (images are
+  tag-pinned until then). GitOps-mode rollback (content + pointer traveling in
+  one emitted commit, and skipping live-object verification since a
+  controller — not Sol — mutates the cluster there) is not yet designed or
+  ticketed; a future session should decide whether it needs its own ticket
+  before anyone relies on `sol rollback` for a GitOps-managed target.
 
 *(Lease/quiescence and retention moved to FEAT-072.)*
 
