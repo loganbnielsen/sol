@@ -467,9 +467,8 @@ RUN sudo apt-get update && sudo apt-get install -y \
     librdkafka-dev libpq-dev libssl-dev libgmp-dev pkg-config && \
     sudo rm -rf /var/lib/apt/lists/*
 # obs-eio/obs-loki-eio/obs-prometheus-eio/obs-tempo-eio/pg-eio/https-eio/
-# lambda-eio are extracted opam packages (see ~/Code/CLAUDE.md's repo
-# layout notes),
-# not vendored into vendor/framework, and not yet
+# lambda-eio are extracted opam packages: not vendored into vendor/framework,
+# and not yet
 # published to the public opam-repository -- every generated service's
 # bin/dune depends on some subset of them, so the build stage needs the
 # same opam pin this repo's own .github/workflows/ci.yml uses.

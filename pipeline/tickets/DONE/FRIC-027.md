@@ -16,3 +16,9 @@ Generated Dockerfiles reference the internal `~/Code/CLAUDE.md`
 **Remediation:** Replace the path reference with a self-contained explanation (or a public docs link) of why those packages are pinned; keep the valuable "observed: https-eio needing tls-eio >= 2.1.0" rationale, drop the local path.
 
 Related: FRIC-014 (Dockerfile template drift / example sync).
+
+## Completion notes
+
+- Rewrote the generated Dockerfile comment block to explain the extracted `*-eio` packages without pointing at the author-local `~/Code/CLAUDE.md`.
+- The two remaining `~/Code/CLAUDE.md` references (`.claude/CLAUDE.md`, `docs/architecture/contributing-map.md`) are internal contributor docs, where the path is correct — left as-is.
+- Verified by scaffolding a throwaway workspace: no generated Dockerfile contains the internal path. `dune build` clean. Examples' Dockerfiles do not carry this comment, so no example change applies.
