@@ -74,10 +74,10 @@ possible.
 
 1. `sol new workspace <name>` — scaffold
 2. `cd <name> && dune build` — build generated workspace
-3. `sol dev up` — provision or reconcile local substrate (k3d cluster)
+3. `sol local infra up` — provision or reconcile local substrate (k3d cluster)
 4. `sol up` — build Docker images, push, deploy
-5. `sol migrate --table <name>_migrations` — apply DB migrations
-6. `sol status` — check pods
+5. `sol migrate` — apply DB migrations
+6. `sol local status` — check pods
 7. `curl http://localhost:8080/health`
 8. `curl -X POST http://localhost:8080/charges -H 'Content-Type: application/json' -d '{"customer_id":"cus_dogfood","amount_cents":999,"currency":"usd"}'`
 9. Wait up to 10s for worker to consume, then `curl http://localhost:8080/notifications`
@@ -90,10 +90,18 @@ the Kafka path is proven.
 
 After step 4 (`sol up`), measure the wall-clock time from `sol new workspace`
 through first successful `curl /health`. Does it stay under two minutes on an
-existing substrate?
+existing substrate **with the image build cache warm**?
 
-Note: `sol dev up` on a fresh cluster takes ~5 min and is substrate
-bootstrap — it does not count against the two-minute claim.
+Two costs do not count against the claim, and both must be stated when measuring:
+
+- `sol local infra up` on a fresh cluster takes ~5 min and is substrate
+  bootstrap.
+- the **first-ever image build**. `sol up`'s Docker build pulls
+  `ocaml/opam:ubuntu-24.04-ocaml-5.4` and runs apt + `opam pin`/`opam install`
+  inside the image. Measured 2026-09-13 (FRIC-024): **5m34s** for the first
+  workspace versus **26s** end-to-end for the next fresh workspace once those
+  layers are cached. A genuinely first-time user therefore does *not* see two
+  minutes — report the cold number too, not only the warm one.
 
 ### 6. Write the report
 

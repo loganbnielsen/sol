@@ -170,7 +170,12 @@ let apply_service
   match spec.primitive with
   | Sol_cli_deployment_plan.Svc ->
     let local_port = 8080 in
-    if not (Sol_cli_port_forward.is_running exec.k8s_name)
+    (* FRIC-025: key port-forward state by namespace+service, not by service name
+       alone. Two workspaces both expose a `charge-svc`, so the old key made their
+       pid/log/script files collide on disk (and made `is_running` report the other
+       workspace's forward) independently of the :8080 bind conflict. *)
+    let pf_name = Printf.sprintf "%s-%s" exec.namespace exec.k8s_name in
+    if not (Sol_cli_port_forward.is_running pf_name)
     then (
       if
         Sol_cli_port_forward.detect_stale
@@ -180,13 +185,13 @@ let apply_service
       then Unix.sleepf 0.4;
       Sol_cli_port_forward.start
         ~ctx:Sol_cli_kube_destination.local_context
-        { name = exec.k8s_name
+        { name = pf_name
         ; namespace = exec.namespace
         ; target = "svc/" ^ exec.k8s_name
         ; local_port
         ; remote_port = 80
         });
-    let pf_alive = Sol_cli_port_forward.check_alive ~name:exec.k8s_name ~local_port in
+    let pf_alive = Sol_cli_port_forward.check_alive ~name:pf_name ~local_port in
     Printf.printf "  ✓  namespace %s  image %s\n%!" exec.namespace spec.image;
     if pf_alive
     then
@@ -278,7 +283,7 @@ let run_apply
     | Ok () ->
       let summary = Sol_cli_up_execution.post_deploy_summary ~cwd:(Sys.getcwd ()) plan in
       Printf.printf "Done. %d service(s) deployed.\n" summary.deployed_count;
-      Printf.printf "Run 'sol status' to check pod health.\n";
+      Printf.printf "Run 'sol local status' to check pod health.\n";
       if summary.pending_migrations > 0
       then
         Printf.printf

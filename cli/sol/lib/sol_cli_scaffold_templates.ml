@@ -46,15 +46,15 @@ dune build
 ## Run locally
 
 ```bash
-sol dev up      # provision local k3d cluster + Kafka + supporting infra (~5 min first run)
-sol dev run     # build images and run all services against local infra
+sol local infra up   # provision local k3d cluster + Kafka + supporting infra (~5 min first run)
+sol local run        # run all workspace services locally (dune exec, dev env vars)
 ```
 
 ## Deploy to cluster
 
 ```bash
 sol up          # build images and deploy to cluster
-sol status      # show running pods and endpoints
+sol local status   # show running pods and endpoints
 sol migrate     # apply database migrations
 sol rollback    # roll back all services to previous image
 ```
@@ -75,6 +75,11 @@ test/                     ← schema backward-compatibility CI gate
 .dockerignore             ← excludes _build/ and .git/ from Docker build context
 vendor/                   ← symlinks to Sol framework source (not committed)
 ```
+
+This workspace's directory, OCaml module names, and SQL identifiers use the
+OCaml-safe form `{{name}}` (lowercased, `-` → `_`). Kubernetes namespaces and
+object names use the hyphenated form (`_` → `-`), e.g. `{{name}}-payments`; the
+mapping is applied automatically.
 |tpl}
 ;;
 
@@ -450,7 +455,7 @@ jobs:
             --registry  "$REGISTRY"
 
       - name: Status
-        run: eval $(opam env) && sol status
+        run: eval $(opam env) && sol status --target "$SOL_TARGET"
 |tpl}
 ;;
 
@@ -462,9 +467,8 @@ RUN sudo apt-get update && sudo apt-get install -y \
     librdkafka-dev libpq-dev libssl-dev libgmp-dev pkg-config && \
     sudo rm -rf /var/lib/apt/lists/*
 # obs-eio/obs-loki-eio/obs-prometheus-eio/obs-tempo-eio/pg-eio/https-eio/
-# lambda-eio are extracted opam packages (see ~/Code/CLAUDE.md's repo
-# layout notes),
-# not vendored into vendor/framework, and not yet
+# lambda-eio are extracted opam packages: not vendored into vendor/framework,
+# and not yet
 # published to the public opam-repository -- every generated service's
 # bin/dune depends on some subset of them, so the build stage needs the
 # same opam pin this repo's own .github/workflows/ci.yml uses.
@@ -648,6 +652,10 @@ let ws_svc_handler_ml =
   {tpl|(* POST /charges  — publish Charged to Kafka
    GET  /health      — liveness probe
    GET  /notifications — list notifications written by notify_worker *)
+
+(* FRIC-026: seed the RNG once. Without this the charge id is a fixed
+   sequence per process start, so ids repeat across restarts. *)
+let () = Random.self_init ()
 
 let routes pool ~publish_charged ~obs = [
   Route.get "/health" ~auth:`Public (fun _req ->

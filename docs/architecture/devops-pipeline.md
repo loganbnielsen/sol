@@ -92,7 +92,7 @@ the rest of the factory targets.
 
 ---
 
-### `sol dev run`
+### `sol local run`
 
 **Module:** `cli/sol/bin/cmd_local.ml` → `dev_run`
 

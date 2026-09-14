@@ -54,7 +54,7 @@ let test_app_must_be_a_directory () =
 
 (* OBS-042: obs-tempo-eio in a dune file's libraries stanza should flip
    [tempo] the same way obs-loki-eio/obs-prometheus-eio already flip
-   [loki]/[prometheus] -- this is what lets `sol dev up` install Tempo only
+   [loki]/[prometheus] -- this is what lets `sol local infra up` install Tempo only
    for workspaces that actually wired a -svc up to it. *)
 let test_scan_detects_tempo () =
   with_tmpdir (fun tmpdir ->

@@ -1,6 +1,6 @@
 (** Reads shared platform-component desired state from
     [cli/platform/components/<component>/] (ADR 0001 / CODE_LAYER-005) so
-    [sol dev up] and [cli/platform/infra/base/main.tf]'s [helm_release]
+    [sol local infra up] and [cli/platform/infra/base/main.tf]'s [helm_release]
     resources stop hand-duplicating the same Helm values. *)
 
 (** [merged_values_yaml ~component ~profile] reads

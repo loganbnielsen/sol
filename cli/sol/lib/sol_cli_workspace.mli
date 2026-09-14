@@ -11,7 +11,7 @@ type infra_requirements =
 val pending_migration_count : dir:string -> int
 
 (** Walk all [dune] files under [dir] and detect which Sol infrastructure
-    libraries the workspace depends on. Used by [sol dev up] to start exactly
+    libraries the workspace depends on. Used by [sol local infra up] to start exactly
     the infra the workspace needs. *)
 val scan : dir:string -> infra_requirements
 

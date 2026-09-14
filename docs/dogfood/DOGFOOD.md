@@ -9,6 +9,11 @@ the product claim:
 
 > From a prepared Sol substrate, a developer can create, deploy, and reach a new
 > service in minutes without writing Kubernetes, Helm, Terraform, or CI glue.
+>
+> "Minutes" assumes the Docker image build cache is warm. The first `sol up` on a
+> machine that has never built the generated images also compiles the shared opam
+> dependencies inside the image and takes several minutes (measured ~5m34s for the
+> first workspace vs ~22s for the next one — see FRIC-024).
 
 Run reports live in `pipeline/dogfood/`. Each run produces one dated file there.
 
@@ -82,15 +87,50 @@ Tested versions — other versions may work but are not validated:
 | helm | **v3.21.0** |
 
 ```bash
-# k3d
-curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=v5.6.0 bash
-# helm
-curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | DESIRED_VERSION=v3.21.0 bash
+# All three install user-locally with no root; ~/.local/bin is on PATH on most
+# setups. Pin the tested versions.
+BIN="$HOME/.local/bin"; mkdir -p "$BIN"
+
+# k3d — release binary directly. The upstream install.sh targets /usr/local/bin
+# (root), and its K3D_INSTALL_DIR override has been observed to fall back to a
+# sudo prompt anyway (FRIC-019).
+curl -fsSL -o "$BIN/k3d" \
+  https://github.com/k3d-io/k3d/releases/download/v5.6.0/k3d-linux-amd64
+chmod +x "$BIN/k3d"
+
+# helm — the official get-helm-3 script likewise defaults to /usr/local/bin.
+curl -fsSL https://get.helm.sh/helm-v3.21.0-linux-amd64.tar.gz | tar xz -C /tmp
+install -m 0755 /tmp/linux-amd64/helm "$BIN/helm"
+
+# kubectl
+curl -fsSL -o "$BIN/kubectl" \
+  https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl
+chmod +x "$BIN/kubectl"
+
+hash -r
+which sol k3d helm kubectl   # sol must be the binary you built, not /usr/games/sol
 ```
+
+If Docker was installed via apt and your user is not yet in the `docker` group,
+either re-login or run `newgrp docker` before `sol local infra up` — otherwise
+every k3d/kubectl call fails to reach the daemon.
 
 k3d v5.6.0 is pinned because `sol local infra up` passes chart values tuned against
 that version (Redpanda CPU/replica settings, node-exporter disable flag). Older
 k3d versions may reject those values or install different chart defaults.
+
+Docker Engine 29 removed every Docker API below 1.44, while k3d v5.6.0's client
+still speaks 1.43. `sol local infra up` bridges that automatically: it pins
+`DOCKER_API_VERSION` to the daemon's minimum for its k3d calls (FRIC-017), so the
+combination in the table above works without any manual environment changes.
+
+`sol up` builds through BuildKit when the `docker-buildx` plugin is present
+(recommended: the generated Dockerfiles disable provenance/SBOM attestations,
+which some cloud container runtimes cannot pull). Stock Ubuntu `docker.io`
+ships no buildx plugin, so without it `sol up` falls back to Docker's legacy
+builder — which rejects the attestation flags outright — and prints a warning
+instead (FRIC-018). Installing the `docker-buildx` package or dropping the
+plugin into `~/.docker/cli-plugins/` restores the BuildKit path.
 
 Separately, know what this substrate does **not** do: the k3s it ships (v1.27.4)
 uses kube-router, which does not honour cross-namespace `namespaceSelector`
@@ -109,6 +149,42 @@ sync — update both by hand on any bump.
 ```
 sol  dune  docker  kubectl  k3d  helm
 ```
+
+**Watch for `/usr/games/sol`.** Ubuntu ships a solitaire game under that exact
+name, so if the built `sol` is not first on `PATH`, every `sol …` invocation
+silently runs the game — `sol --version` answers `Unknown option --version`, and
+`sol --help` shows an unrelated program. Check `which sol` before starting and
+fix the ordering (or use an absolute path / `alias sol=$SOL_HOME/.dogfood-bin/sol`).
+The same applies inside helper shells (`sg`, `sh -c`) that may not source your
+`PATH` setup (FRIC-028).
+
+### Building the CLI from source
+
+The `sol` binary is an OCaml 5.4+ project with eleven external `*-eio` opam
+dependencies, several of which are not on opam yet. From a fresh machine:
+
+```bash
+# 1. Refresh the opam index (a stale index does not know about OCaml 5.4.1).
+opam update
+
+# 2. Toolchain. `dune-project` requires OCaml >= 5.4.0, and a new switch has no dune.
+opam switch create 5.4.1
+eval $(opam env)
+opam install -y dune
+
+# 3. Pin the external packages from source, then install sol's dependency closure.
+for p in kafka-eio obs-eio obs-loki-eio obs-prometheus-eio obs-tempo-eio \
+         pg-eio aws-eio s3-eio dynamodb-eio lambda-eio https-eio; do
+  opam pin add -y "$p" "https://github.com/loganbnielsen/$p.git"
+done
+opam install -y --deps-only --with-test .
+
+# 4. Build the CLI.
+dune build cli/sol/bin/main.exe
+```
+
+`librdkafka-dev`, `libpq-dev`, and `libpq5` (above) are required for step 3 to
+compile the C stubs; `dune` alone is not enough.
 
 ### Sol checkout
 
@@ -175,13 +251,13 @@ Deploy services:
 Apply migrations:
 
 ```bash
-/usr/bin/time -f 'elapsed=%E' sol migrate --table <workspace-name>_migrations
+/usr/bin/time -f 'elapsed=%E' sol migrate
 ```
 
 Check status:
 
 ```bash
-sol status
+sol local status
 ```
 
 Exercise the service:
@@ -221,7 +297,27 @@ kubectl get pods -n <workspace>-payments
 kubectl get pods -n <workspace>-comms
 ```
 
-Logs:
+Application logs (Loki):
+
+A Sol service does **not** echo its structured logs to container stdout —
+`Sol_obs` pushes them straight to Loki. `kubectl logs` therefore shows only
+container-level output (startup crashes, panics), not the `charge event received`
+/ HTTP request lines. Use Loki for application logs:
+
+```bash
+# Prints a copyable Grafana Explore URL for the unit, then streams.
+sol local logs --scope comms/notify_worker --no-follow
+
+# Raw LogQL fallback. App-pushed streams carry a `service` label of the form
+# <workspace>_<domain>_<unit> (e.g. dogfood_2026_09_13-notify-worker), so match
+# on that rather than on `app`/`namespace`.
+curl -sG http://localhost:3100/loki/api/v1/query_range \
+  --data-urlencode 'query={service=~".*notify-worker.*"}' \
+  --data-urlencode 'limit=20' | jq -r '.data.result[].values[][1]'
+```
+
+`kubectl logs` is still the right tool when the container never starts
+(`CrashLoopBackOff`, image-pull errors, panics):
 
 ```bash
 kubectl logs -n <workspace>-payments deploy/charge-svc --tail=120
@@ -323,7 +419,7 @@ and reach all of these without editing generated files:
 - local substrate is healthy
 - `sol up` deploys all generated services
 - `sol migrate` applies migrations
-- `sol status` shows ready pods and a reachable URL
+- `sol local status` shows ready pods and a reachable URL
 - `curl /health` succeeds
 - `POST /charges` publishes a `Charged` Kafka event
 - `notify_worker` consumes the event and writes the notification row

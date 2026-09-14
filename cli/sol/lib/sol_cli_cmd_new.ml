@@ -74,12 +74,23 @@ let link_sol_sources workspace =
 (* ── Command implementations ─────────────────────────────────────────────── *)
 
 let new_workspace name =
+  let raw_name = name in
   let name = norm name in
   if Sys.file_exists name
   then (
     Printf.eprintf "error: %S already exists\n" name;
     exit 1);
   Printf.printf "\nScaffolding workspace %S ...\n\n" name;
+  if name <> raw_name
+  then (
+    let k8s_name = String.map (fun c -> if c = '_' then '-' else c) name in
+    Printf.printf
+      "note: %S is not a valid OCaml/SQL identifier, so it is normalized to %S\n\
+       (lowercased, '-' -> '_'). Kubernetes namespaces use the hyphenated form\n\
+       again, e.g. %s-payments.\n\n"
+      raw_name
+      name
+      k8s_name);
   let v = [ "name", name; "Name", cap name ] in
   (* root files *)
   write ~path:(name ^ "/.ocamlformat") ~content:tpl_ocamlformat;
@@ -161,10 +172,10 @@ Done. 28 files generated.
 
   cd %s
   eval $(opam env) && dune build   # verify the scaffold compiles
-  sol dev up           # provision local k3d cluster + infra (first time ~5 min)
-  sol up               # build images, push, deploy  (~1 min after first run)
+  sol local infra up   # provision local k3d cluster + infra (first time ~5 min)
+  sol up               # build images, push, deploy  (first build ~5 min if the image cache is cold, ~1 min after)
   sol migrate                          # apply DB migrations
-  sol status           # check pods + see port-forward hint for charge-svc
+  sol local status     # check pods + see port-forward hint for charge-svc
 
   CI/CD: set REGISTRY + REGISTRY_USER + REGISTRY_PASSWORD secrets in GitHub, then
          push to main — .github/workflows/sol-ci.yml handles build/test/deploy.

@@ -33,7 +33,7 @@ type span = Obs_eio.span
     added when [LOKI_URL] is a non-empty env var, Tempo when [TEMPO_URL] is.
     Logs fall back to stdout when [LOKI_URL] is unset (Sol's local-dev default —
     see the top-level CLAUDE.md's "dev mirrors prod" principle: the same
-    [of_env] call works unmodified against `sol dev up`'s real Loki/Tempo
+    [of_env] call works unmodified against `sol local infra up`'s real Loki/Tempo
     instances once those env vars are set by the platform). *)
 val of_env
   :  net:_ Eio.Net.t

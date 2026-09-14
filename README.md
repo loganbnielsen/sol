@@ -44,17 +44,38 @@ Sol owns the server lifecycle, graceful shutdown, structured logging, metrics, t
 curl -L https://github.com/loganbnielsen/sol/releases/latest/download/sol-vX.Y.Z-linux-x86_64.tar.gz | tar xz
 export PATH="$PWD/sol-vX.Y.Z-linux-x86_64/bin:$PATH"
 
-sol local up              # local cluster: Redpanda, PostgreSQL, Loki, Prometheus, Grafana
+sol local infra up        # local cluster: Redpanda, PostgreSQL, Loki, Prometheus, Grafana
 sol new workspace pluto
 cd pluto
 sol up                  # build + deploy
-sol status
+sol local status
 
 curl localhost:8080/health
 # ok
 ```
 
 That's a real HTTP service, backed by a Kafka worker and PostgreSQL, with logs and metrics already flowing. Continue with the **[Tutorial](docs/guides/TUTORIAL.md)** for the full walkthrough — publishing events, database migrations, Grafana dashboards, production deploys, and rollbacks.
+
+### Building from source (contributors)
+
+The tarball above is the supported install. Building `sol` from a checkout needs
+a little more, and none of it is covered by `dune build` alone:
+
+- **OCaml 5.4.1 or newer.** `dune-project` requires `ocaml >= 5.4.0`. Refresh the
+  opam index first (`opam update`) — a stale index does not know about 5.4.1 — then
+  `opam switch create 5.4.1` and `opam install dune` (a fresh switch has no dune).
+- **System packages:** `librdkafka-dev libpq-dev libpq5 build-essential pkg-config`.
+- **Eleven external `*-eio` packages.** `sol.opam` depends on `kafka-eio`,
+  `obs-eio`, `obs-loki-eio`, `obs-prometheus-eio`, `obs-tempo-eio`, `pg-eio`,
+  `aws-eio`, `s3-eio`, `dynamodb-eio`, `lambda-eio`, and `https-eio`. Several are
+  not on opam yet, so pin them from source first, e.g.
+  `opam pin add kafka-eio https://github.com/loganbnielsen/kafka-eio.git`
+  (repeat per package), then `opam install --deps-only --with-test .`.
+- **Build:** `dune build cli/sol/bin/main.exe`; the binary lands at
+  `_build/default/cli/sol/bin/main.exe`.
+
+**[`docs/dogfood/DOGFOOD.md`](docs/dogfood/DOGFOOD.md)** has the full
+local-substrate walkthrough, including the exact dependency commands.
 
 ---
 

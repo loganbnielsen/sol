@@ -222,7 +222,7 @@ let test_alloy_render_includes_basic_auth_when_set () =
     assert_contains "password" river "password = \"secret\"")
 ;;
 
-(* OBS-039: `sol dev up`'s own local-profile call -- reads the real
+(* OBS-039: `sol local infra up`'s own local-profile call -- reads the real
    cli/platform/infra/base/alloy/logs.alloy.tftpl (CODE_LAYER-006: the same
    file cli/platform/infra/base/main.tf's helm_release.alloy renders from).
    Sol_cli_cmd_new.infer_sol_home's ancestor walk from the test
@@ -245,7 +245,10 @@ let test_alloy_values_yaml_against_real_file () =
       yaml
       "__meta_kubernetes_pod_label_workspace";
     assert_contains "taxonomy label: release" yaml "__meta_kubernetes_pod_label_release";
-    check_bool "no basic_auth block for sol dev up" false (contains "basic_auth" yaml)
+    check_bool
+      "no basic_auth block for sol local infra up"
+      false
+      (contains "basic_auth" yaml)
 ;;
 
 (* CODE_LAYER-006: this is the exact regression class the "found along the

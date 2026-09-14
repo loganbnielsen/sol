@@ -91,7 +91,7 @@ cd audit_test
 eval $(opam env) && dune build 2>&1 | grep -i warning  # must be empty
 
 # 2. Bring up local infrastructure
-sol dev up
+sol local infra up
 # All port-forwards must appear before the command exits
 
 # 3. Verify each service address is reachable
@@ -104,8 +104,8 @@ KAFKA_BROKERS=localhost:9092 dune exec examples/local-demo/bin/demo.exe 2>&1 | g
 
 **Invariants:**
 * [ ] `dune build` produces zero warnings on a freshly scaffolded workspace
-* [ ] `sol dev up` is idempotent — running it twice must not error or duplicate resources
-* [ ] All health endpoints return `200` within 10 seconds of `sol dev up` completing
+* [ ] `sol local infra up` is idempotent — running it twice must not error or duplicate resources
+* [ ] All health endpoints return `200` within 10 seconds of `sol local infra up` completing
 * [ ] A message produced in the demo reaches the worker and is logged without decode errors
 
 ---
@@ -138,7 +138,7 @@ git checkout app/payments/charge_svc/Dockerfile
 ### 5.3 Observability Smoke Test
 
 ```bash
-# After sol dev up:
+# After sol local infra up:
 
 # Prometheus: verify worker metrics are registered
 curl -s http://localhost:9090/api/v1/label/__name__/values \

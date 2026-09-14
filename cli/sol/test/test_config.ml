@@ -964,7 +964,7 @@ let test_local_env_is_reserved () =
     | Ok _ -> Alcotest.fail "expected `local` to be rejected as an env name"
     | Error e ->
       assert (contains ~needle:"reserved" e.message);
-      assert (contains ~needle:"sol local up" e.message))
+      assert (contains ~needle:"sol local infra up" e.message))
 ;;
 
 (* REFAC-086: the name `local` is reserved, and so is the cluster behind it. A

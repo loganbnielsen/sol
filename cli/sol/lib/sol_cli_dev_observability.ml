@@ -51,7 +51,7 @@ datasources:
 ;;
 
 (* CODE_LAYER-007: cli/platform/infra/base/dashboards/*.json is now the single
-   source of Sol's four generic Grafana dashboards -- both `sol dev up`
+   source of Sol's four generic Grafana dashboards -- both `sol local infra up`
    (here) and cli/platform/infra/base/main.tf's `kubernetes_config_map.grafana_dashboards`
    (via Terraform's own `file(...)`) load from the same files, instead of
    a second, hand-synced OCaml copy per dashboard. Resolves SOL_HOME
@@ -133,7 +133,7 @@ let tempo_datasource_configmap_yaml ~namespace =
 
 (* OBS-039: loki-stack's bundled Grafana subchart auto-provisioned a "Loki"
    datasource itself (a chart-internal template, not just the generic
-   sidecar-ConfigMap convention). Now that `sol dev up` installs the
+   sidecar-ConfigMap convention). Now that `sol local infra up` installs the
    standalone `grafana` chart instead, that auto-provisioning is gone and
    must be replaced explicitly -- every dashboard above references a
    datasource named exactly "Loki". Matches
@@ -171,7 +171,7 @@ let loki_datasource_configmap_yaml ~namespace =
 ;;
 
 (* CODE_LAYER-006: cli/platform/infra/base/alloy/logs.alloy.tftpl is now the
-   single source of Alloy's River log-shipping config -- both `sol dev up`
+   single source of Alloy's River log-shipping config -- both `sol local infra up`
    (here) and cli/platform/infra/base/main.tf's `helm_release.alloy` (via
    Terraform's own `templatefile()`) render from that one file. This is a
    minimal, literal-substring templater for exactly the three constructs
@@ -293,8 +293,8 @@ let render_alloy_config
        ~replacement:loki_push_basic_auth_password
 ;;
 
-(* `sol dev up`'s local profile: push straight to the in-cluster Loki, no
-   basic auth (`sol dev up` has no "external backend" concept), the same
+(* `sol local infra up`'s local profile: push straight to the in-cluster Loki, no
+   basic auth (`sol local infra up` has no "external backend" concept), the same
    fixed taxonomy label set cli/platform/infra/base/main.tf's
    local.observability_taxonomy_labels passes for every profile.
    Resolves the Sol monorepo root itself (same resolution

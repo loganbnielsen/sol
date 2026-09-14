@@ -17,6 +17,41 @@ let require_tools () =
   check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/"
 ;;
 
+(* FRIC-017: k3d v5.6.0's embedded Docker client pins API 1.43, but Docker
+   Engine 29 removed every API below 1.44, so any k3d invocation fails with
+   "client version 1.43 is too old" on a current host. Ask the daemon for the
+   oldest API it still accepts and hand that to k3d via DOCKER_API_VERSION --
+   but never below k3d's own 1.43 floor, so older daemons keep working too. *)
+let k3d_client_api_floor = "1.43"
+
+let version_gt a b =
+  let parts s = String.split_on_char '.' s |> List.filter_map int_of_string_opt in
+  let rec cmp x y =
+    match x, y with
+    | [], [] -> 0
+    | x :: xs, y :: ys -> if x <> y then compare x y else cmp xs ys
+    | x :: _, [] -> compare x 0
+    | [], y :: _ -> compare 0 y
+  in
+  cmp (parts a) (parts b) > 0
+;;
+
+let k3d_env () =
+  match
+    Sol_cli_process.run
+      (Sol_cli_process.cmd
+         [ "docker"; "version"; "--format"; "{{.Server.MinAPIVersion}}" ])
+  with
+  | Ok r when r.Sol_cli_process.exit_code = 0 ->
+    let daemon_min = String.trim r.Sol_cli_process.stdout in
+    if daemon_min <> "" && version_gt daemon_min k3d_client_api_floor
+    then [ "DOCKER_API_VERSION", daemon_min ]
+    else []
+  | _ -> []
+;;
+
+let k3d args = Sol_cli_process.cmd ~env:(k3d_env ()) ("k3d" :: args)
+
 (* ── State file ─────────────────────────────────────────────────────────── *)
 
 let cluster_name = "sol-local"
@@ -24,7 +59,7 @@ let registry_port = 5000
 
 (* FEAT-042: host port the local ingress-nginx controller is port-forwarded
    to. Deliberately not 8080 -- that is where `sol up` forwards a service, so
-   the two would collide. Nothing else in `sol dev up` uses 8088. *)
+   the two would collide. Nothing else in `sol local infra up` uses 8088. *)
 let ingress_local_port = 8088
 
 (* ── Helm helpers ────────────────────────────────────────────────────────── *)
@@ -101,9 +136,7 @@ let dev_up () =
   (* 1. Cluster *)
   Printf.printf "\n[1/4] Provisioning cluster...\n%!";
   let cluster_exists =
-    match
-      Sol_cli_process.run (Sol_cli_process.cmd [ "k3d"; "cluster"; "get"; cluster_name ])
-    with
+    match Sol_cli_process.run (k3d [ "cluster"; "get"; cluster_name ]) with
     | Ok r -> r.Sol_cli_process.exit_code = 0
     | Error _ -> false
   in
@@ -121,10 +154,7 @@ let dev_up () =
        port-probe logic to narrow. *)
     let pre_rename_cluster_name = "sun-local" in
     let pre_rename_cluster_exists =
-      match
-        Sol_cli_process.run
-          (Sol_cli_process.cmd [ "k3d"; "cluster"; "get"; pre_rename_cluster_name ])
-      with
+      match Sol_cli_process.run (k3d [ "cluster"; "get"; pre_rename_cluster_name ]) with
       | Ok r -> r.Sol_cli_process.exit_code = 0
       | Error _ -> false
     in
@@ -148,9 +178,8 @@ let dev_up () =
     let create_result =
       Sol_cli_process.run
         ~echo:true
-        (Sol_cli_process.cmd
-           [ "k3d"
-           ; "cluster"
+        (k3d
+           [ "cluster"
            ; "create"
            ; cluster_name
            ; "--registry-create"
@@ -257,7 +286,7 @@ let dev_up () =
 
          INFRA-013: upstream retired the whole 5.x line from the
          charts.redpanda.com index in 2026-09, so `--version 5.9.15` no longer
-         resolves and a fresh `sol local up` could not install a substrate at
+         resolves and a fresh `sol local infra up` could not install a substrate at
          all. That removed the option FRIC-010 preserved, so the pin moves to
          26.1.11 (image v26.1.17): FRIC-010's evaluated target, one minor behind
          newest, within support, and confirmed to render cleanly against
@@ -353,7 +382,7 @@ let dev_up () =
         (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin *)
         (* CODE_LAYER-008: base/main.tf sets adminPassword explicitly
          (var.grafana_admin_password); left at the chart's own default here
-         previously, making sol dev up's Grafana login undocumented and
+         previously, making sol local infra up's Grafana login undocumented and
          chart-version-dependent. Fixed dev-only value, matching
          PostgreSQL's hardcoded "dev" password convention above. *)
       ~values:[ "adminPassword", Str "dev" ]
@@ -608,9 +637,7 @@ let dev_down delete_cluster =
   then (
     check_tool "k3d" "https://k3d.io/";
     Printf.printf "Deleting cluster %s...\n%!" cluster_name;
-    ignore
-      (Sol_cli_process.run
-         (Sol_cli_process.cmd [ "k3d"; "cluster"; "delete"; cluster_name ])))
+    ignore (Sol_cli_process.run (k3d [ "cluster"; "delete"; cluster_name ])))
   else Printf.printf "Port-forwards stopped. Cluster %s is still running.\n" cluster_name
 ;;
 
@@ -619,9 +646,7 @@ let dev_down delete_cluster =
 let dev_status () =
   check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/";
   let cluster_running =
-    match
-      Sol_cli_process.run (Sol_cli_process.cmd [ "k3d"; "cluster"; "get"; cluster_name ])
-    with
+    match Sol_cli_process.run (k3d [ "cluster"; "get"; cluster_name ]) with
     | Ok r -> r.Sol_cli_process.exit_code = 0
     | Error _ -> false
   in
@@ -672,7 +697,7 @@ let dev_status () =
 
 (* ── dev run ─────────────────────────────────────────────────────────────── *)
 
-(** Dev-local addresses matching the port-forwards from [sol dev up], mirroring
+(** Dev-local addresses matching the port-forwards from [sol local infra up], mirroring
     the cluster-internal addresses [sol up] injects but rewritten to localhost.
 *)
 let dev_env_vars =
