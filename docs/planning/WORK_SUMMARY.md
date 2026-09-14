@@ -1,5 +1,40 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: FEAT-070 — deployment-event identity (2026-09-13)
+
+The other half of the release model: a deployment is now its own object, so the
+release identity FEAT-069 landed stays stable while invocation provenance lives
+somewhere honest.
+
+- `Sol_cli_deployment_id` (new): a minted, sortable, collision-resistant id
+  `d-<YYYYMMDDtHHMMSSz>-<16 lowercase hex>`. Abstract `t`, validated `of_string`,
+  `to_string` only at boundaries; `create ~now ~entropy` is injectable so tests
+  pin it. Not content-derived — a no-op redeploy is a new event with a new id.
+- `Sol_cli_deployment` (new): the event record — `deployment_id`, `release_id`
+  (the release attempted), `workspace`, `environment`, `created_at`,
+  `git_commit`, `git_dirty`, `actor`, `target`, `mode`, `requested_scope` —
+  with deterministic JSON and the immutable `sol-deployment-<id>` ConfigMap.
+- `Sol_cli_deployment_store` (new): one immutable ConfigMap per event (no
+  pointer; history is append-only) and a workspace-scoped list. The cluster is
+  the authority; `sol deployments` reads the records and never reconstructs
+  history from telemetry.
+- `sol up` and `sol deploy` mint an id after a successful apply and record the
+  event (non-fatal, like the release record). `sol deployments` (and
+  `sol local deployments`) list them newest first: DEPLOYMENT / RELEASE / TIME /
+  COMMIT.
+- The OBS-037 Loki deploy marker gains a `deployment_id` logfmt *field* (not a
+  stream label — unbounded cardinality), so a Grafana timeline can join the
+  marker to the authoritative record by id.
+- Explicit non-goal, recorded on the ticket: the `release_id` audit classified
+  every such site as domain identity / display string / deployment-event id.
+  `Sol_cli_release_inspection.release_summary.release_id : string` stays a
+  display string until it participates in identity, at which point it becomes
+  `Release_id.t`.
+- Docs: TUTORIAL, devops-pipeline (`sol deployments`), observability identity
+  table (the `deployment_id` join). Tests: `test_deployment_id` (9),
+  `test_deployment` (10, incl. the two-deploys-one-release acceptance case), and
+  the deploy-event field assertion.
+
 ## Latest: FEAT-069 — release identity (2026-09-13)
 
 One content-addressed release identity now spans the deploy record and the

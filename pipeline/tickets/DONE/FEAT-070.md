@@ -154,3 +154,84 @@ inspect why.
 4. **Sizing.** One PR: the "rename" half no longer exists, so the load-bearing
    part is the new object plus persistence, and `sol deployments` is a thin
    reader over it.
+
+## Completion notes (2026-09-13)
+
+**Premise corrected, then built.** FEAT-069 had already deleted FEAT-067's
+provenance fields, so this landed as an *introduce*, not a rename: the
+Deployment object, minting, persistence, `sol deployments`, and the Loki join
+key. The release path (`Release_id.of_content`, `release_content`,
+`plan.release_id`, the `release` label, the canonical record, the
+render/store) was not touched — the boundary held.
+
+### What landed
+
+- `Sol_cli_deployment_id` — `d-<YYYYMMDDtHHMMSSz>-<16 lowercase hex>`, minted,
+  sortable, collision-resistant across actors. Abstract `t`, validated
+  `of_string`, `to_string` only at boundaries; `create ~now ~entropy` is
+  injectable so tests pin it (known vector
+  `d-20260101t000000z-900150983cd24fb0`). Lowercase time because the id is
+  embedded verbatim in the ConfigMap name and RFC 1123 names are lowercase.
+  `created_at` is the event's own field and is never reconstructed from the id.
+- `Sol_cli_deployment` — the event record: `deployment_id`, `release_id` (the
+  release attempted), `workspace`, `environment`, `created_at`, `git_commit`,
+  `git_dirty`, `actor` (`SOL_ACTOR`), `target`, `mode`, `requested_scope`.
+  Deterministic JSON; an immutable `sol-deployment-<id>` ConfigMap with
+  `sol.dev/type=deployment`, `sol.dev/workspace`, `sol.dev/release` and (when
+  known) `sol.dev/target` labels. `validate` checks the name, the id, and that
+  the release pointer parses.
+- `Sol_cli_deployment_store` — append-only immutables (no pointer; history is a
+  log, not a mutable "current deployment") plus a workspace-scoped list.
+- Wiring: `sol up` and `sol deploy` mint an id after a successful apply and
+  record the event, non-fatally, alongside the release record. `--dry-run` and
+  `--emit-to` record no event (nothing was applied). `sol deployments` and
+  `sol local deployments` list newest first.
+- OBS-037 marker: `Sol_cli_deploy_event` gained `deployment_id` as a logfmt
+  **field** — deliberately not a Loki stream label, because it varies per
+  invocation and would put unbounded cardinality into the index. The marker and
+  the record now join by id.
+
+### Acceptance criteria
+
+- **Two deploys of identical content → one release_id, two deployment_ids** —
+  `test_deployment`'s "two deploys, one release" builds one plan, mints two ids,
+  varies commit/dirty/actor/time, and asserts the release is unchanged.
+- **`sol deployments` shows both, with the shared release** — the table is
+  DEPLOYMENT / RELEASE / TIME / COMMIT, newest first ("table is newest first");
+  the command reads the ConfigMaps directly.
+- **`release_id` is unchanged by provenance-only differences** — pinned by the
+  same test at the id derivation, not by inspection.
+- **The emitted bundle is byte-identical for two identical releases** — the
+  deployment event is not in the bundle at all (cluster-side provenance);
+  FEAT-069's determinism tests still pass unchanged.
+- **Health is not part of the event record** — the ConfigMap is
+  `immutable: true` and nothing writes a status back to it;
+  `Sol_cli_deployment_state` remains the separate mutable "last applied" object.
+
+### `release_id` audit outcome
+
+- Domain identity, unchanged: `plan.release_id`, the render path, the `release`
+  label, `Sol_cli_release.t.release_id`, `sol logs --release`.
+- Display/serialization: `Sol_cli_deploy_event.release` (now with a
+  `deployment_id` sibling), and
+  `Sol_cli_release_inspection.release_summary.release_id : string` — **explicit
+  non-goal**, left a string because it has no production caller; it becomes
+  `Release_id.t` only when it participates in identity.
+- The new event's `release_id` is the one place a deployment points at a release.
+
+### Deviations / notes
+
+- The namespace is the target's `default`, matching the release record. That is
+  a convention, not a semantic requirement: if Sol later owns a `sol-system`
+  namespace, target metadata (release + deployment records) belongs there.
+- No pointer object for deployments: unlike "current release", there is no
+  "current deployment" to name — the log is the record.
+- Deployment ids are `d-<time>-<entropy>`, not the run-id
+  `<prefix>-<time>-<pid>` shape: pid is process-local and collides across
+  independent actors, which is the wrong uniqueness primitive for a durable id.
+
+### Verification
+
+`dune build`, `dune fmt` (clean), full `dune test` green; new tests
+`test_deployment_id` (9) and `test_deployment` (10), plus the deploy-event field
+assertion. Pre-commit's build+unit run passed on each commit.

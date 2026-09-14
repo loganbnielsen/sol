@@ -213,6 +213,28 @@ success, never reported as an unknown release.
 
 ---
 
+### `sol deployments`
+
+**Module:** `cli/sol/bin/cmd_deployments.ml`
+
+Lists the deployment events the target's cluster holds for the workspace, newest
+first: `DEPLOYMENT / RELEASE / TIME / COMMIT`. A deployment event (FEAT-070) is
+one deploy invocation — a minted `d-<YYYYMMDDtHHMMSSz>-<16 hex>` id, the
+content-addressed release it attempted, and provenance (`created_at`, git
+commit, dirty, actor, target). It is recorded as an immutable
+`sol-deployment-<deployment_id>` ConfigMap, so repeated no-op deploys of the same
+release appear as separate events rather than being collapsed.
+
+Two records, one join key: `sol releases` answers "what distinct released states
+exist?", `sol deployments` answers "what deploy events happened, and which
+release did each put in place?". The deploy marker pushed to Loki carries the
+same `deployment_id` as a field, so the observability timeline joins to the
+authoritative record; the record is never reconstructed from telemetry.
+
+**Reads:** the target cluster via kubectl. **Writes:** nothing.
+
+---
+
 ### `sol migrate`
 
 **Module:** `cli/sol/bin/cmd_migrate.ml`

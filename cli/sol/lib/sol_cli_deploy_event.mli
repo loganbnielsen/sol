@@ -7,12 +7,19 @@ type t =
   ; service : string
   ; primitive : string
   ; release : string
+  ; deployment_id : string
+    (** FEAT-070: the id of the deployment event this marker describes. It is a
+        logfmt *field*, deliberately not a Loki stream label — it varies per
+        invocation, and promoting it to a label would put unbounded cardinality
+        into Loki's index. It exists so a Grafana timeline can join the marker
+        to the authoritative [sol-deployment-<id>] record by id. *)
   }
 
 (** [fields t] is the field set pushed with the deploy-event log line:
     [event=deploy] plus [t]'s taxonomy fields, matching
     [Sol_cli_manifest_yaml.render_taxonomy_labels]'s label set so a release's
-    manifest labels and its deploy-event line agree. *)
+    manifest labels and its deploy-event line agree, plus [deployment_id] as the
+    FEAT-070 join key. *)
 val fields : t -> (string * string) list
 
 (** [message t] is the human-readable log line body. *)

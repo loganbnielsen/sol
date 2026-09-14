@@ -560,6 +560,7 @@ sol deploy TARGET [--scope DOMAIN[/UNIT]] [--image-tag TAG] [--registry URL]  de
 sol deploy TARGET --emit-to DIR [--image-tag TAG] ...  write YAML for Argo CD (GitOps mode)
 sol status [domain]                               show running pods and port-forward hints
 sol releases                                     list this workspace's recorded releases (id, environment, workloads)
+sol deployments                                  list this workspace's recorded deployment events, newest first (deployment id, release, time, commit)
 
 sol migrate [apply]                               apply pending migrations
 sol migrate status                                show per-file applied/pending table
@@ -700,6 +701,8 @@ For services using a standard `Deployment` (no `[infra.rollout]` in `sol.toml`),
 To inspect what a running service is doing, `sol logs --scope <domain>/<unit>` streams live output directly from the cluster pod, following Sol's namespace convention automatically.
 
 Every `sol up` and `sol deploy` also records a release in the target's cluster: `sol releases` lists the recorded releases (content-addressed id, environment, workload count). A record is an immutable Kubernetes ConfigMap, so history cannot be edited in place. The same id is rendered verbatim into every workload's `release` label, which is the join key from a deploy record to its logs (`sol logs --release <id>`) — identical released content is one release however many times it is deployed.
+
+`sol deployments` lists the other half: one row per deploy *invocation* (minted `d-…` id, the release it put in place, time, commit), newest first. Deployment events are recorded as immutable `sol-deployment-<id>` ConfigMaps, so two no-op deploys of the same release are two events pointing at one release rather than being collapsed. The same `deployment_id` is carried as a field on the deploy marker pushed to Loki, so a Grafana timeline can join an event to the authoritative record without telemetry ever being the system of record.
 
 ### Progressive delivery with Argo Rollouts
 

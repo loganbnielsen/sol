@@ -280,7 +280,7 @@ let run_emit ctx ~dir =
   Printf.printf "Commit and push to your GitOps repo, then Argo CD will apply them.\n"
 ;;
 
-let push_deploy_events ~ctx ~workspace ~target_cfg ~loki_push_url plan =
+let push_deploy_events ~ctx ~workspace ~target_cfg ~loki_push_url ~deployment_id plan =
   let backend =
     Option.bind
       target_cfg.Sol_cli_config.observability_backend
@@ -296,6 +296,7 @@ let push_deploy_events ~ctx ~workspace ~target_cfg ~loki_push_url plan =
          ; service = Sol_cli_kubernetes_name.k8s_name_to_string spec.k8s_name
          ; primitive = primitive_label (to_manifest_primitive spec.primitive)
          ; release = Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id
+         ; deployment_id
          })
       plan.Sol_cli_deployment_plan.services
   in
@@ -350,11 +351,34 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
   (match Sol_cli_release_store.record_plan ~ctx:ctx.execution.cluster plan with
    | Ok () -> ()
    | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);
+  (* FEAT-070: the deployment event is a separate, immutable record — minted id,
+     provenance, and the release it attempted. The same id rides the Loki marker
+     below, so the observability timeline joins to the authoritative record by
+     id. The release path above is untouched: provenance never enters it. *)
+  let now = Unix.gettimeofday () in
+  let deployment_id =
+    Sol_cli_deployment_id.create ~now ~entropy:(Sol_cli_deployment_id.random_entropy ())
+  in
+  (match
+     Sol_cli_deployment_store.record
+       ~ctx:ctx.execution.cluster
+       (Sol_cli_deployment.of_plan
+          ~deployment_id
+          ~now
+          ~git_commit:(Sol_cli_deployment.git_commit ())
+          ~git_dirty:(Sol_cli_deployment.git_dirty ())
+          ~actor:(Sys.getenv_opt "SOL_ACTOR")
+          ~target:(Some ctx.target_name)
+          plan)
+   with
+   | Ok () -> ()
+   | Error msg -> Printf.eprintf "warning: could not record deployment: %s\n%!" msg);
   push_deploy_events
     ~ctx:ctx.execution.cluster
     ~workspace:ctx.execution.workspace
     ~target_cfg:ctx.target_cfg
     ~loki_push_url
+    ~deployment_id:(Sol_cli_deployment_id.to_string deployment_id)
     plan
 ;;
 
