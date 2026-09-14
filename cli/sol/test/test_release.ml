@@ -74,7 +74,11 @@ let test_json_round_trip () =
       "secret reference preserved"
       "db-secret"
       (List.assoc "DATABASE_URL" w.secrets);
-    check_int "replicas preserved" 2 w.replicas
+    check_int "replicas preserved" 2 w.replicas;
+    Alcotest.(check (list string))
+      "migrations preserved"
+      [ "0001_notifications.sql" ]
+      r.migrations
 ;;
 
 (* The AC: an immutable, labelled ConfigMap named by the release id, whose
