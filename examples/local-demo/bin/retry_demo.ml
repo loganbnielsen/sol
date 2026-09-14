@@ -4,7 +4,7 @@
     "flakey" — they fail on the first attempt, exercising the Retry_topics
     strategy end-to-end:
 
-    1. Main consumer: handler returns Error _ for a flakey job. kafka_service
+    1. Main consumer: handler returns Worker.Retry _ for a flakey job. kafka_service
     intercepts it, publishes the raw bytes to sol-demo-jobs-retry with headers
     X-Sol-Attempt: 1 X-Sol-Retry-At: <now + 2 s> and commits the original offset
     immediately. The main partition keeps flowing — reliable jobs are never

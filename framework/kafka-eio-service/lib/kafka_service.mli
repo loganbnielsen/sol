@@ -40,6 +40,11 @@ module type MESSAGE = sig
   val decode : Yojson.Safe.t -> (t, string) result
 end
 
+type handler_error =
+  | Retry
+  | Dead_letter of string
+  | Kafka_error of Kafka.Error.t
+
 (** Schema compatibility checking against a live schema registry. Use in tests
     to catch breaking schema changes before deployment. *)
 module Schema : sig
@@ -96,6 +101,14 @@ module Retry_topics : sig
   (** Read and validate the [X-Sol-Attempt]/[X-Sol-Retry-At] headers off a
       message forwarded to a retry topic. *)
   val parse_retry_metadata : (string * string option) list -> (int * float, string) result
+
+  val action_of_handler_error
+    :  retry_topic:topic_name
+    -> dlq_topic:topic_name
+    -> max_attempts:int
+    -> attempt:int
+    -> handler_error
+    -> (retry_action, Kafka.Error.t) result
 
   (** Execute the side-effecting part of a retry decision: publish to the target
       topic (for [Forward_retry]/[Forward_dlq]) then [ack]. [Ack] skips straight
@@ -295,11 +308,6 @@ type consume_partitioned_error =
   (** Every partition that exhausted its retry budget, not just one —
           [kafka-eio]'s own [Handler_errors] list is preserved in full rather
           than collapsed to a single partition's error. Non-empty. *)
-
-type handler_error =
-  | Retry
-  | Dead_letter of string
-  | Kafka_error of Kafka.Error.t
 
 (** [consume_partitioned svc topic ~group_id ~sw ~clock ...] is like [consume]
     but routes each message to a dedicated per-partition fiber. A partition's

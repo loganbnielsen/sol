@@ -243,6 +243,49 @@ let test_retry_publish_failure_does_not_ack () =
   | _ -> Alcotest.fail "expected publish failure to be returned"
 ;;
 
+let test_dead_letter_handler_error_routes_to_dlq_and_acks () =
+  let retry_topic = Kafka_service.topic_name_exn "orders-retry" in
+  let dlq_topic = Kafka_service.topic_name_exn "orders-dlq" in
+  let acked = ref 0 in
+  let published = ref None in
+  let publish_raw ~target_topic ~attempt ~raw_bytes:_ ~headers:_ ~delay_s ~partition:_ =
+    published := Some (target_topic, attempt, delay_s);
+    Ok ()
+  in
+  let ack () =
+    incr acked;
+    Ok ()
+  in
+  match
+    Kafka_service.Retry_topics.action_of_handler_error
+      ~retry_topic
+      ~dlq_topic
+      ~max_attempts:3
+      ~attempt:1
+      (Kafka_service.Dead_letter "poison")
+  with
+  | Error e -> Alcotest.failf "unexpected kafka error: %s" (Kafka.Error.to_string e)
+  | Ok action ->
+    (match
+       Kafka_service.Retry_topics.execute_action
+         action
+         ~raw_msg:(raw_retry_msg ())
+         ~attempt:1
+         ~publish_raw
+         ~ack
+     with
+     | Error e -> Alcotest.failf "unexpected execute error: %s" (Kafka.Error.to_string e)
+     | Ok () ->
+       Alcotest.(check int) "acked once" 1 !acked;
+       Alcotest.(check (option (triple string int (float 0.0001))))
+         "published to dlq without retry delay"
+         (Some (Kafka_service.topic_name_to_string dlq_topic, 1, 0.0))
+         (Option.map
+            (fun (topic, attempt, delay_s) ->
+               Kafka_service.topic_name_to_string topic, attempt, delay_s)
+            !published))
+;;
+
 (* ------------------------------------------------------------------ *)
 (* Topic names                                                         *)
 (* ------------------------------------------------------------------ *)
@@ -394,6 +437,10 @@ let () =
             "publish failure does not ack"
             `Quick
             test_retry_publish_failure_does_not_ack
+        ; test_case
+            "dead-letter handler error routes to dlq and acks"
+            `Quick
+            test_dead_letter_handler_error_routes_to_dlq_and_acks
         ] )
     ; ( "topic_name"
       , [ test_case

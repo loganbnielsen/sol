@@ -125,6 +125,7 @@ module Retry_topics = struct
     | Forward_dlq of { target : topic_name }
 
   let parse_retry_metadata = Kafka_service_retry_topics.parse_retry_metadata
+  let action_of_handler_error = Kafka_service_retry_topics.action_of_handler_error
   let execute_action = Kafka_service_retry_topics.execute_action
 end
 
