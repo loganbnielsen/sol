@@ -278,7 +278,14 @@ let run_emit ctx ~dir =
   Printf.printf "Commit and push to your GitOps repo, then Argo CD will apply them.\n"
 ;;
 
-let push_deploy_events ~ctx ~workspace ~target_cfg ~loki_push_url ~deployment_id plan =
+let push_deploy_events
+      ~ctx
+      ~workspace
+      ~target_cfg
+      ~loki_push_url
+      ~(deployment_id : Sol_cli_deployment_id.t)
+      plan
+  =
   let backend =
     Option.bind
       target_cfg.Sol_cli_config.observability_backend
@@ -293,7 +300,7 @@ let push_deploy_events ~ctx ~workspace ~target_cfg ~loki_push_url ~deployment_id
          ; domain = spec.domain
          ; service = Sol_cli_kubernetes_name.k8s_name_to_string spec.k8s_name
          ; primitive = primitive_label (to_manifest_primitive spec.primitive)
-         ; release = Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id
+         ; release_id = plan.Sol_cli_deployment_plan.release_id
          ; deployment_id
          })
       plan.Sol_cli_deployment_plan.services
@@ -403,7 +410,7 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
       ~workspace:ctx.execution.workspace
       ~target_cfg:ctx.target_cfg
       ~loki_push_url
-      ~deployment_id:(Sol_cli_deployment_id.to_string deployment_id)
+      ~deployment_id
       plan;
   match applied with
   | Ok () -> ()

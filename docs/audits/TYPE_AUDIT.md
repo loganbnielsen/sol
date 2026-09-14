@@ -67,3 +67,6 @@ Findings are ticketed as `TYPE_AUDIT-<n>` and appended here.
   into `Sol_cli_deploy_event.t`, so both the fan-out and the event record stop
   distinguishing a deployment id from any other string. The edge is the logfmt
   payload inside `Sol_cli_deploy_event`. Filed as `TYPE_AUDIT-078`.
+  *Fixed 2026-09-14:* `push_deploy_events` and `Sol_cli_deploy_event.t` now carry
+  `Deployment_id.t` / `Release_id.t`; `to_string` happens only in the logfmt
+  field set, the message body, and the stream labels the pusher builds.
