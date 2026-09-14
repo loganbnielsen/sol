@@ -55,6 +55,32 @@ val check_migration_boundary
   -> current_migrations:string list
   -> (unit, migration_check_error) result
 
+(** Which live Kubernetes kind carries a workload's `release` label, and
+    where in that kind's pod template it lands. Exposed (rather than kept
+    private to {!verify}'s implementation) so a test can assert this mapping
+    directly, without a cluster: it is pure and deterministic, but wrong, it
+    would make every {!verify} call report a false workload mismatch, so it
+    needs its own regression coverage independent of {!verify}'s kubectl
+    calls. *)
+type live_kind =
+  | Live_deployment
+  | Live_rollout
+  | Live_cronjob
+
+(** [live_kind_of_service spec] — [Fn] is always [Live_cronjob] regardless of
+    [progressive_delivery] (unlike the deleted [rollback_target_of_service],
+    whose [Fn] meant "no kubectl-rollout-undo history"; a CronJob still
+    carries a `release` label worth verifying). [Svc]/[Worker] with
+    [progressive_delivery] set are [Live_rollout], otherwise
+    [Live_deployment]. *)
+val live_kind_of_service : Sol_cli_deployment_plan.service_spec -> live_kind
+
+(** [live_resource_and_jsonpath kind] is the [kubectl get] resource name and
+    the jsonpath expression for that kind's `release` label, mirroring where
+    {!Sol_cli_manifest_yaml}'s [render_taxonomy_labels] call sites actually
+    place it: the pod template, never the object's own top-level metadata. *)
+val live_resource_and_jsonpath : live_kind -> string * string
+
 (** One workload whose live [release] label does not match the restored
     release. [actual] is [""] when the label or the object itself could not
     be read at all (never distinguished from an empty label — both mean

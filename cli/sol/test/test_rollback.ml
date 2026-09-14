@@ -514,10 +514,97 @@ let test_migration_boundary_ignores_already_recorded_contract () =
        | Error e -> Alcotest.fail (Sol_cli_rollback.migration_check_error_to_string e))
 ;;
 
+(* ── live_kind_of_service / live_resource_and_jsonpath ────────────────────
+   Pure and deterministic -- no kubectl call -- so wrong here would make
+   every verify call report a false workload mismatch, silently, the moment
+   sol_cli_manifest_yaml.ml's label placement ever changed. Table-driven
+   against every primitive/progressive_delivery combination so a renderer
+   change that moves the `release` label has something to break. *)
+
+let progressive_canary = Some (Sol_cli_toml.Canary { steps = [] })
+let progressive_blue_green = Some Sol_cli_toml.Blue_green
+
+let live_kind_cases =
+  [ ( "svc, no progressive delivery"
+    , Sol_cli_deployment_plan.Svc
+    , None
+    , Sol_cli_rollback.Live_deployment )
+  ; ( "svc, canary"
+    , Sol_cli_deployment_plan.Svc
+    , progressive_canary
+    , Sol_cli_rollback.Live_rollout )
+  ; ( "svc, blue_green"
+    , Sol_cli_deployment_plan.Svc
+    , progressive_blue_green
+    , Sol_cli_rollback.Live_rollout )
+  ; ( "worker, no progressive delivery"
+    , Sol_cli_deployment_plan.Worker
+    , None
+    , Sol_cli_rollback.Live_deployment )
+  ; ( "worker, canary"
+    , Sol_cli_deployment_plan.Worker
+    , progressive_canary
+    , Sol_cli_rollback.Live_rollout )
+  ; ( "fn, no progressive delivery"
+    , Sol_cli_deployment_plan.Fn
+    , None
+    , Sol_cli_rollback.Live_cronjob )
+  ; (* Fn ignores progressive_delivery entirely -- always a CronJob. *)
+    ( "fn, canary (ignored)"
+    , Sol_cli_deployment_plan.Fn
+    , progressive_canary
+    , Sol_cli_rollback.Live_cronjob )
+  ]
+;;
+
+let test_live_kind_of_service_table () =
+  List.iter
+    (fun (label, primitive, progressive_delivery, expected) ->
+       let spec = { ledger_spec with primitive; progressive_delivery } in
+       let got = Sol_cli_rollback.live_kind_of_service spec in
+       Alcotest.(check bool) label true (got = expected))
+    live_kind_cases
+;;
+
+let live_kind_label = function
+  | Sol_cli_rollback.Live_deployment -> "deployment"
+  | Sol_cli_rollback.Live_rollout -> "rollout"
+  | Sol_cli_rollback.Live_cronjob -> "cronjob"
+;;
+
+(* Cross-checked by hand against sol_cli_manifest_yaml.ml: deployment_doc and
+   rollout_doc both put the `release` label at spec.template.metadata.labels
+   (8-space indent, same as extra_labels); cronjob_doc nests one level deeper
+   under spec.jobTemplate.spec.template.metadata.labels. If either renderer
+   ever moves that label, this table must move with it. *)
+let test_live_resource_and_jsonpath_table () =
+  List.iter
+    (fun (kind, expected_resource, expected_jsonpath) ->
+       let resource, jsonpath = Sol_cli_rollback.live_resource_and_jsonpath kind in
+       Alcotest.(check string)
+         (live_kind_label kind ^ " resource")
+         expected_resource
+         resource;
+       Alcotest.(check string)
+         (live_kind_label kind ^ " jsonpath")
+         expected_jsonpath
+         jsonpath)
+    [ ( Sol_cli_rollback.Live_deployment
+      , "deployment"
+      , "{.spec.template.metadata.labels.release}" )
+    ; Sol_cli_rollback.Live_rollout, "rollout", "{.spec.template.metadata.labels.release}"
+    ; ( Sol_cli_rollback.Live_cronjob
+      , "cronjob"
+      , "{.spec.jobTemplate.spec.template.metadata.labels.release}" )
+    ]
+;;
+
 (* ── verify_report ─────────────────────────────────────────────────────────
    verify itself shells out to kubectl (untestable without a cluster, same as
    Sol_cli_release_store.get/list/move_pointer) -- these cover the pure
-   report shape and its rendering. *)
+   report shape and its rendering; live_kind_of_service/
+   live_resource_and_jsonpath above are the pure parts of verify's logic and
+   have their own direct table above, not folded into "untestable". *)
 
 let verify_release : Sol_cli_release.t =
   { release_id = "r-2222222222222222"
@@ -626,6 +713,16 @@ let () =
             "already-recorded contract is ignored"
             `Quick
             test_migration_boundary_ignores_already_recorded_contract
+        ] )
+    ; ( "live_kind_of_service"
+      , [ Alcotest.test_case
+            "primitive/progressive_delivery table"
+            `Quick
+            test_live_kind_of_service_table
+        ; Alcotest.test_case
+            "resource + jsonpath table"
+            `Quick
+            test_live_resource_and_jsonpath_table
         ] )
     ; ( "verify_report"
       , [ Alcotest.test_case
