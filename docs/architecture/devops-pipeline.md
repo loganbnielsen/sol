@@ -363,6 +363,14 @@ entirely from the release record `sol up`/`sol deploy` write on every deploy
    `data.release_id`, reported independently of the workload report. Never
    re-applies or "fixes" a mismatch.
 
+Steps 2–8's ordering — refusal before mutation, pointer move only once the
+live set agrees — is `Sol_cli_rollback.execute` (FEAT-075), not inline logic
+in `cmd_rollback.ml`: the sequence is a tested library function taking steps
+5–8's cluster-touching parts (`apply`/`live_workloads`/`move_pointer`/
+`verify_pointer`) as injectable deps, so a reorder that put a mutation ahead
+of a refusal — or the pointer ahead of workload verification — fails a test
+rather than only a future incident.
+
 **Mutation boundary (FEAT-072).** Before any step below mutates anything,
 rollback acquires the workspace's boundary lease — the mutable
 `sol-boundary-lease-<workspace>` ConfigMap (`Sol_cli_boundary_lease`), the same

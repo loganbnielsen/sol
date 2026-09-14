@@ -654,6 +654,73 @@ let pointer_report_to_string ~(release : Sol_cli_release.t) (r : pointer_report)
     release.Sol_cli_release.release_id
 ;;
 
+(* FEAT-075: FEAT-066's load-bearing rollback ordering, extracted from
+   cmd_rollback.ml so its order is testable. [deps] carries every step that
+   touches the cluster or mutates anything; [execute] owns the sequence and
+   the refusal logic, so a caller cannot reorder a mutation ahead of a check
+   by construction -- only by choosing not to call [execute]. Reconstruction
+   ([service_specs_of_release]) and the two boundary checks stay direct calls
+   rather than deps: they are already pure/tested and take no cluster state
+   beyond what the caller passes in.
+
+   FEAT-074 (workload pruning) slots in as one more dep, called in the gap
+   between the workload-set verification below and [deps.move_pointer] --
+   never as a one-off path inside the command. *)
+type transaction_deps =
+  { apply : Sol_cli_deployment_plan.service_spec list -> (unit, string) result
+  ; live_workloads : unit -> ((workload_identity * string) list, string) result
+  ; move_pointer : unit -> (unit, string) result
+  ; verify_pointer : unit -> pointer_report
+  }
+
+let execute
+      ~(release : Sol_cli_release.t)
+      ~migrations_dir
+      ~current_migrations
+      ~(deps : transaction_deps)
+  : (unit, string) result
+  =
+  let* () =
+    match check_apply_mode ~release with
+    | Error e -> Error (apply_mode_check_error_to_string e)
+    | Ok () -> Ok ()
+  in
+  let* () =
+    match check_migration_boundary ~release ~migrations_dir ~current_migrations with
+    | Error e -> Error (migration_check_error_to_string e)
+    | Ok () -> Ok ()
+  in
+  let* specs = service_specs_of_release release in
+  let* () = deps.apply specs in
+  let* () =
+    match deps.live_workloads () with
+    | Error msg -> Error (Printf.sprintf "cannot verify rollback: %s" msg)
+    | Ok live ->
+      let report = verify_workloads ~release ~expected:specs ~live in
+      if workload_report_ok report
+      then Ok ()
+      else
+        Error
+          (Printf.sprintf
+             "%s\n\
+              rollback incomplete: live workloads do not match release %s; the \
+              current-release pointer was left unchanged"
+             (workload_report_to_string ~release report)
+             release.Sol_cli_release.release_id)
+  in
+  let* () = deps.move_pointer () in
+  let pointer = deps.verify_pointer () in
+  if pointer_report_ok pointer
+  then Ok ()
+  else
+    Error
+      (Printf.sprintf
+         "%s\n\
+          rollback incomplete: the pointer was moved but does not read back as the \
+          restored release; verify cluster state before relying on this rollback."
+         (pointer_report_to_string ~release pointer))
+;;
+
 (* FEAT-073: `sol rollback --commit <sha>` resolves against FEAT-070's
    deployment-event record — the authoritative store of (commit, release_id)
    provenance — never against the Loki deploy marker, which is telemetry. *)

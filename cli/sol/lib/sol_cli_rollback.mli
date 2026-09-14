@@ -166,6 +166,39 @@ val verify_pointer
 val pointer_report_ok : pointer_report -> bool
 val pointer_report_to_string : release:Sol_cli_release.t -> pointer_report -> string
 
+(** FEAT-075: the cluster-touching/mutating steps of a rollback, injectable so
+    [execute]'s order is testable without a cluster. [apply] renders and
+    applies the reconstructed workloads; [live_workloads] enumerates the live
+    set for verification; [move_pointer] and [verify_pointer] are the
+    current-release pointer's write and readback. *)
+type transaction_deps =
+  { apply : Sol_cli_deployment_plan.service_spec list -> (unit, string) result
+  ; live_workloads : unit -> ((workload_identity * string) list, string) result
+  ; move_pointer : unit -> (unit, string) result
+  ; verify_pointer : unit -> pointer_report
+  }
+
+(** [execute ~release ~migrations_dir ~current_migrations ~deps] is FEAT-066's
+    load-bearing rollback ordering: apply-mode refusal, then migration
+    boundary refusal, then reconstruction, then [deps.apply], then
+    [deps.live_workloads] compared against the reconstructed set, then —
+    only if that comparison agrees — [deps.move_pointer] and
+    [deps.verify_pointer]. Every check before [deps.apply] only reads;
+    [deps.move_pointer] is never called when the workload-set verification
+    disagrees. A caller gets this ordering by construction, not by
+    convention — it cannot call [deps.move_pointer] before [deps.apply]
+    without bypassing [execute] entirely.
+
+    FEAT-074 (workload pruning) is meant to become one more field on
+    {!transaction_deps}, called between the workload-set verification and
+    [deps.move_pointer] — not a one-off deletion path added elsewhere. *)
+val execute
+  :  release:Sol_cli_release.t
+  -> migrations_dir:string
+  -> current_migrations:string list
+  -> deps:transaction_deps
+  -> (unit, string) result
+
 (** FEAT-073: [sol rollback --commit] resolution, against FEAT-070's
     deployment-event record (never Loki, which is telemetry, not an
     authoritative store). *)
