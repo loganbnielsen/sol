@@ -1,5 +1,8 @@
 (* Pure parsing/summarizing of kubectl pod + event JSON for 'sol status'
-   rollout diagnosis. No I/O — callers fetch JSON via Sol_cli_kubectl. *)
+   rollout diagnosis. The parse_*/format_* functions below do no I/O —
+   callers fetch JSON via Sol_cli_kubectl and pass it in. The one exception is
+   [diagnose_service_live], which fetches cluster state itself; see its own
+   doc comment. *)
 
 type container_state =
   | Waiting of
@@ -110,11 +113,13 @@ val format_active_run_diagnosis
   -> event list
   -> string option
 
-(** Live diagnosis for a deployed workload in the cluster [ctx] names.
-    [Ephemeral] tries [format_active_run_diagnosis] first when a run is
-    currently active and its pod(s) can be fetched, falling back to
-    [format_cronjob_diagnosis] otherwise (no active run, or the active pod fetch
-    itself failed). *)
+(** Live diagnosis for a deployed workload in the cluster [ctx] names. Unlike
+    the rest of this module, this fetches cluster state itself (pods, events,
+    cronjob status) via [Sol_cli_kubectl.get_raw] rather than taking
+    already-fetched JSON. [Ephemeral] tries [format_active_run_diagnosis]
+    first when a run is currently active and its pod(s) can be fetched,
+    falling back to [format_cronjob_diagnosis] otherwise (no active run, or
+    the active pod fetch itself failed). *)
 val diagnose_service_live
   :  ctx:Sol_cli_kube_destination.context
   -> pod_expectation:pod_expectation
