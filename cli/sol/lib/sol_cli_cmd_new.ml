@@ -74,12 +74,23 @@ let link_sol_sources workspace =
 (* ── Command implementations ─────────────────────────────────────────────── *)
 
 let new_workspace name =
+  let raw_name = name in
   let name = norm name in
   if Sys.file_exists name
   then (
     Printf.eprintf "error: %S already exists\n" name;
     exit 1);
   Printf.printf "\nScaffolding workspace %S ...\n\n" name;
+  if name <> raw_name
+  then (
+    let k8s_name = String.map (fun c -> if c = '_' then '-' else c) name in
+    Printf.printf
+      "note: %S is not a valid OCaml/SQL identifier, so it is normalized to %S\n\
+       (lowercased, '-' -> '_'). Kubernetes namespaces use the hyphenated form\n\
+       again, e.g. %s-payments.\n\n"
+      raw_name
+      name
+      k8s_name);
   let v = [ "name", name; "Name", cap name ] in
   (* root files *)
   write ~path:(name ^ "/.ocamlformat") ~content:tpl_ocamlformat;

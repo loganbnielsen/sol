@@ -75,6 +75,11 @@ test/                     ← schema backward-compatibility CI gate
 .dockerignore             ← excludes _build/ and .git/ from Docker build context
 vendor/                   ← symlinks to Sol framework source (not committed)
 ```
+
+This workspace's directory, OCaml module names, and SQL identifiers use the
+OCaml-safe form `{{name}}` (lowercased, `-` → `_`). Kubernetes namespaces and
+object names use the hyphenated form (`_` → `-`), e.g. `{{name}}-payments`; the
+mapping is applied automatically.
 |tpl}
 ;;
 
