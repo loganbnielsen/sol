@@ -82,11 +82,33 @@ Tested versions — other versions may work but are not validated:
 | helm | **v3.21.0** |
 
 ```bash
-# k3d
-curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=v5.6.0 bash
-# helm
-curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | DESIRED_VERSION=v3.21.0 bash
+# All three install user-locally with no root; ~/.local/bin is on PATH on most
+# setups. Pin the tested versions.
+BIN="$HOME/.local/bin"; mkdir -p "$BIN"
+
+# k3d — release binary directly. The upstream install.sh targets /usr/local/bin
+# (root), and its K3D_INSTALL_DIR override has been observed to fall back to a
+# sudo prompt anyway (FRIC-019).
+curl -fsSL -o "$BIN/k3d" \
+  https://github.com/k3d-io/k3d/releases/download/v5.6.0/k3d-linux-amd64
+chmod +x "$BIN/k3d"
+
+# helm — the official get-helm-3 script likewise defaults to /usr/local/bin.
+curl -fsSL https://get.helm.sh/helm-v3.21.0-linux-amd64.tar.gz | tar xz -C /tmp
+install -m 0755 /tmp/linux-amd64/helm "$BIN/helm"
+
+# kubectl
+curl -fsSL -o "$BIN/kubectl" \
+  https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl
+chmod +x "$BIN/kubectl"
+
+hash -r
+which sol k3d helm kubectl   # sol must be the binary you built, not /usr/games/sol
 ```
+
+If Docker was installed via apt and your user is not yet in the `docker` group,
+either re-login or run `newgrp docker` before `sol local infra up` — otherwise
+every k3d/kubectl call fails to reach the daemon.
 
 k3d v5.6.0 is pinned because `sol local infra up` passes chart values tuned against
 that version (Redpanda CPU/replica settings, node-exporter disable flag). Older

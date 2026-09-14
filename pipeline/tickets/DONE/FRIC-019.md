@@ -21,3 +21,8 @@ On a non-root machine the k3d script fails and falls through to a `sudo` passwor
 **Remediation:** Document user-local installs: direct release binaries (or `K3D_INSTALL_DIR` / `HELM_INSTALL_DIR` pointed at `~/.local/bin`) plus the kubectl binary URL; and either verify/fix the k3d install script's `K3D_INSTALL_DIR` handling or stop recommending that script. Keep the pinned versions (k3d v5.6.0 / helm v3.21.0 / kubectl v1.29.0) so it stays reproducible.
 
 Related: FRIC-017 (k3d version choice), FRIC-009 (version sync with CI).
+
+## Completion notes
+
+- Replaced the root-requiring k3d/helm one-liners in `docs/dogfood/DOGFOOD.md` with user-local release-binary installs for k3d, helm, and kubectl (previously kubectl had no install command at all), and documented the observed k3d `K3D_INSTALL_DIR` → sudo fallback plus the docker-group requirement.
+- Doc-only; no generated/manifest surface, so no example/demo update applies.
