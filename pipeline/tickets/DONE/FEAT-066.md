@@ -241,3 +241,49 @@ Docs updated to match: `docs/guides/TUTORIAL.md`,
 `dune fmt` / `dune build` / `dune test` all green on every commit; pre-commit
 hook (build + full unit suite, plus kafka integration when the broker is up)
 passed on every commit.
+
+## Hardening round (2026-09-14, merged in #245)
+
+A second review pass against the *live-state transition* semantics — not only the
+reconstruction path — landed four fixes:
+
+1. **GitOps/controller-owned rollback could falsely verify.** `sol rollback`
+   direct-applied and immediately read the labels back, so against a
+   controller-managed cluster it could print `Verified` and exit 0, and the
+   controller could then revert the change. Nothing persisted distinguished a
+   GitOps release from a direct one. The record now carries `apply_mode`
+   (`direct` | `gitops`) as non-identity historical metadata (like
+   `migrations`); `Sol_cli_rollback.check_apply_mode` refuses a `gitops` record
+   before any mutation, and a missing/unknown `apply_mode` fails closed.
+2. **Verification was one-directional.** It checked the workloads the restored
+   release *mentioned* but never that no workload from the superseded release
+   was left running. It now enumerates the live Sol-owned workload set
+   (Deployment/Rollout/CronJob carrying the workspace taxonomy label) and
+   compares the whole set, reporting label mismatch, missing and **unexpected**
+   workloads, with the kind part of the identity. Detect-only: rollback does not
+   prune (FEAT-074 owns that). The pointer now moves only after the workload set
+   verifies, so a failure leaves the pointer unchanged.
+3. **The migration safety field was outside the integrity check.** `migrations`
+   is excluded from `release_id`, so `validate` alone could not see it altered.
+   The record now carries `data.record_digest`, a digest of the complete record
+   body, checked on read: missing → unsupported record format; mismatch →
+   integrity failure. It hashes the exact canonical bytes persisted and the read
+   side verifies those same stored bytes, so a later serializer or
+   canonicalization change cannot retroactively invalidate old records. The
+   canonical form (fixed member order; workloads by domain/name/primitive;
+   config/secrets/extra_labels by (key, value); volumes/calls by row tuple;
+   migrations by name) is documented and pinned by order-independence,
+   duplicate-key-total-order and known-vector tests. It is deliberately not
+   built on `Sol_cli_release_id.canonical_string`, whose encoding is a versioned
+   identity contract its own mli says may change. The release-ID encoder was
+   left alone; `enc_pairs`' parallel partial-order issue needs a separate,
+   deliberate identity-versioning decision.
+4. **Cleanups:** the unused `Sol_cli_toml.rollout_strategy_of_string` was
+   removed, and the pointer-mismatch message now names the ConfigMap via
+   `current_configmap_name`.
+
+Follow-ups filed on main: **FEAT-074** (general desired-workload-set
+reconcile/prune) and **FEAT-075** (pin the rollback orchestration order with a
+test). No demo/example change applies: the round changes the internal
+release-record format and rollback's refusal/verification behavior, not the
+generated manifests, `sol.toml`, a primitive, or a CLI command.
