@@ -654,6 +654,10 @@ let ws_svc_handler_ml =
    GET  /health      — liveness probe
    GET  /notifications — list notifications written by notify_worker *)
 
+(* FRIC-026: seed the RNG once. Without this the charge id is a fixed
+   sequence per process start, so ids repeat across restarts. *)
+let () = Random.self_init ()
+
 let routes pool ~publish_charged ~obs = [
   Route.get "/health" ~auth:`Public (fun _req ->
     Response.ok "ok"

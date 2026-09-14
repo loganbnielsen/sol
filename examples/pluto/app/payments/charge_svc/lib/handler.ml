@@ -3,6 +3,10 @@
    GET  /health         — liveness probe
    GET  /notifications  — list recent charges from DB *)
 
+(* FRIC-026: seed the RNG once. Without this the charge id is a fixed
+   sequence per process start, so ids repeat across restarts. *)
+let () = Random.self_init ()
+
 let checkout_quote ~env ~sw ~obs req =
   Sol_obs.with_span obs ?parent:req.Request.trace_ctx "checkout_quote" (fun span ->
     let trace_ctx = Sol_obs.current_trace_context span in

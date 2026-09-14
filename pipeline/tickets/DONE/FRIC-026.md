@@ -16,3 +16,9 @@ Generated example mints duplicate charge IDs (`Random.int` without `Random.self_
 **Remediation:** Seed the generator (`Random.self_init ()` at startup) or, better for a reference app, derive the id from a real source (DB sequence, UUID) so the example demonstrates a correct idempotency key. Update the scaffold template, the checked-in `examples/pluto` equivalents, and any test that pins the `ch_%06d` format.
 
 Related: FEAT-069/FEAT-070 (release/deployment identity), the repo's own emphasis on deterministic, non-colliding identities.
+
+## Completion notes
+
+- Added `let () = Random.self_init ()` to the scaffolded `handler.ml` template and to the checked-in `examples/pluto` handler (demo/example coverage rule), so the generated charge/event id no longer repeats across process restarts.
+- Seeding removes the observed collision with the smallest possible change; deriving the id from a real source (DB sequence/UUID) remains the better long-term fix if the example is meant to model idempotency keys. Noted, not done here.
+- Verified: full `dune build` (which compiles `examples/pluto`) is clean.
