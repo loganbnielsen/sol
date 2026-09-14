@@ -238,7 +238,7 @@ Deploy services:
 Apply migrations:
 
 ```bash
-/usr/bin/time -f 'elapsed=%E' sol migrate --table <workspace-name>_migrations
+/usr/bin/time -f 'elapsed=%E' sol migrate
 ```
 
 Check status:

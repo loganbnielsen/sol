@@ -76,7 +76,7 @@ possible.
 2. `cd <name> && dune build` — build generated workspace
 3. `sol local infra up` — provision or reconcile local substrate (k3d cluster)
 4. `sol up` — build Docker images, push, deploy
-5. `sol migrate --table <name>_migrations` — apply DB migrations
+5. `sol migrate` — apply DB migrations
 6. `sol local status` — check pods
 7. `curl http://localhost:8080/health`
 8. `curl -X POST http://localhost:8080/charges -H 'Content-Type: application/json' -d '{"customer_id":"cus_dogfood","amount_cents":999,"currency":"usd"}'`

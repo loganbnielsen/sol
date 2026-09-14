@@ -16,3 +16,8 @@ Documented `sol migrate --table <workspace>_migrations` diverges from the tool's
 **Remediation:** Drop the `--table` flag from the dogfood runbook/skill and use the default (the migration SQL itself is table-name-agnostic for the tracked table), or document the real default and when overriding it is legitimate. Add a runbook note that `--table` changes where the *tracking* rows live, not the schema.
 
 Related: FRIC-012 (migrations via one-shot Job from a target).
+
+## Completion notes
+
+- Removed the `--table <workspace>_migrations` override from `docs/dogfood/DOGFOOD.md` and `.claude/skills/dogfood/SKILL.md`; both now use the tool default (`sol_<workspace>_schema_migrations`), which the Tutorial already documents correctly. The `--table` flag remains available and documented for genuine overrides.
+- Doc-only; no example/demo update applies.
