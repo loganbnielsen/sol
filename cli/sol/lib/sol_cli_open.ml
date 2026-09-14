@@ -125,10 +125,9 @@ let logs_url ~base_url ~workspace scope =
        , Sol_cli_deployment_plan.k8s_name_result name )
      with
      | Error e, _ | _, Error e -> Error (Sol_cli_deployment_plan.plan_error_to_string e)
-     | Ok ns, Ok k8s_name ->
-       let ns = Sol_cli_deployment_plan.namespace_to_string ns in
+     | Ok _ns, Ok k8s_name ->
        let k8s_name = Sol_cli_deployment_plan.k8s_name_to_string k8s_name in
-       Ok (Sol_cli_logs.grafana_explore_url ~base_url ~ns ~k8s_name))
+       Ok (Sol_cli_logs.grafana_explore_url ~base_url ~k8s_name))
   | Resource (resource_type, _) ->
     (* Managed resources don't ship through Sol's own Loki pipeline -- no
        guessed logs view, matching Sol_cli_observability_url's philosophy

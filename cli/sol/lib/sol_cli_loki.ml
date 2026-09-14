@@ -32,11 +32,16 @@ let query_range_argv_logql ~base_url ~logql ~limit ~timeout_s ?curl_config ()
     ]
 ;;
 
-(* Service-scoped form, kept for 'sol logs' unit queries. *)
-let query_range_argv ~base_url ~ns ~k8s_name ~limit ~timeout_s ?curl_config () =
+(* Service-scoped form, kept for 'sol logs' unit queries. FRIC-029: neither
+   Loki stream Sol produces carries a "namespace"/"app" label pair -- the
+   app-pushed stream (obs-loki-eio) is keyed by "service"/"team", and the
+   Alloy pod-stdout stream doesn't carry the app's log lines at all
+   (FRIC-023). A substring match on "service" is what FRIC-023 verified
+   working live (`{service=~".*notify-worker.*"}`). *)
+let query_range_argv ~base_url ~k8s_name ~limit ~timeout_s ?curl_config () =
   query_range_argv_logql
     ~base_url
-    ~logql:(Printf.sprintf {|{namespace="%s",app="%s"}|} ns k8s_name)
+    ~logql:(Printf.sprintf {|{service=~".*%s.*"}|} k8s_name)
     ~limit
     ~timeout_s
     ?curl_config
@@ -235,10 +240,10 @@ let query_logql ~base_url ~logql ?credentials ?(limit = 100) ?(timeout_s = 5.0) 
            | Error msg -> Error (Other msg))))
 ;;
 
-let query ~base_url ~ns ~k8s_name ?credentials ?limit ?timeout_s () =
+let query ~base_url ~k8s_name ?credentials ?limit ?timeout_s () =
   query_logql
     ~base_url
-    ~logql:(Printf.sprintf {|{namespace="%s",app="%s"}|} ns k8s_name)
+    ~logql:(Printf.sprintf {|{service=~".*%s.*"}|} k8s_name)
     ?credentials
     ?limit
     ?timeout_s

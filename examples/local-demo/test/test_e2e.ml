@@ -406,9 +406,12 @@ let run_golden_path () =
       let ts_ns =
         Int64.to_string (Int64.of_float (Unix.gettimeofday () *. 1_000_000_000.))
       in
+      (* FRIC-029: the fixture stream carries the "service" label sol_cli_loki's
+         selector actually matches on -- Sol's real Loki streams never carry
+         "namespace"/"app". *)
       let body =
         Printf.sprintf
-          {|{"streams":[{"stream":{"namespace":"sol-e2e","app":"auth-read"},"values":[[%S,%S]]}]}|}
+          {|{"streams":[{"stream":{"service":"sol-e2e-auth-read"},"values":[[%S,%S]]}]}|}
           ts_ns
           "sol logs authenticated read e2e"
       in
@@ -431,7 +434,6 @@ let run_golden_path () =
         match
           Sol_cli_loki.query
             ~base_url:url
-            ~ns:"sol-e2e"
             ~k8s_name:"auth-read"
             ?credentials
             ~limit:5

@@ -168,7 +168,7 @@ let run_unit ~ctx ~target (options : log_options) scope : unit =
      Sol_cli_observability_url.resolve ~backend ?base_domain ?override:grafana_base_url ()
    with
    | Sol_cli_observability_url.Url base_url ->
-     let url = Sol_cli_logs.grafana_explore_url ~base_url ~ns ~k8s_name in
+     let url = Sol_cli_logs.grafana_explore_url ~base_url ~k8s_name in
      Printf.printf "Grafana logs: %s\n%!" url
    | Sol_cli_observability_url.No_url reason ->
      Printf.printf "Grafana logs: (%s)\n%!" reason);
@@ -224,13 +224,7 @@ let run_unit ~ctx ~target (options : log_options) scope : unit =
           exit 1
       in
       (match
-         Sol_cli_loki.query
-           ~base_url:loki_base_url
-           ~ns
-           ~k8s_name
-           ?credentials
-           ~limit:tail
-           ()
+         Sol_cli_loki.query ~base_url:loki_base_url ~k8s_name ?credentials ~limit:tail ()
        with
        | Ok [] ->
          Printf.printf

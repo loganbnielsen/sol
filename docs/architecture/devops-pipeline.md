@@ -199,7 +199,8 @@ emits one or both of:
 
 - A `kubectl logs -n <ns> -l app=<name> --follow` command/stream.
 - A Grafana Explore URL built by `Sol_cli_logs.grafana_explore_url` using LogQL
-  `{namespace="<ns>",app="<name>"}`.
+  `{service=~".*<name>.*"}` (FRIC-029: Sol's Loki streams are keyed by
+  `service`/`team`, never `namespace`/`app`).
 
 `--release <id>` (FEAT-069) narrows to one released identity, adding
 `release="<id>"` to the selector — or using `{release="<id>"}` alone when no
