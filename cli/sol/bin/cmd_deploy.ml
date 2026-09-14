@@ -226,18 +226,16 @@ let record_plan run_log plan =
    workspace, run log, target environment, destination, secret backend -- not a
    choice this execution makes, so listing them as labelled arguments unpacked
    [deploy_context] only to repack it. *)
+let run_plan_result ctx ~phase ~mode plan =
+  Sol_cli_run_log.run_task ctx.run_log ~name:phase (fun () ->
+    try
+      Sol_cli_factory.execute ctx.execution ~mode ~secret_backend:ctx.secret_backend plan
+    with
+    | Deploy_failed msg -> Error msg)
+;;
+
 let run_plan ctx ~phase ~mode plan =
-  match
-    Sol_cli_run_log.run_task ctx.run_log ~name:phase (fun () ->
-      try
-        Sol_cli_factory.execute
-          ctx.execution
-          ~mode
-          ~secret_backend:ctx.secret_backend
-          plan
-      with
-      | Deploy_failed msg -> Error msg)
-  with
+  match run_plan_result ctx ~phase ~mode plan with
   | Ok rs -> rs
   | Error msg ->
     Printf.eprintf "\nerror: %s\n" msg;
@@ -323,63 +321,95 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
   write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
   print_planned_services plan;
   record_plan ctx.run_log plan;
-  let results = run_plan ctx ~phase:"apply" ~mode:Sol_cli_executor.Apply plan in
-  List.iter
-    (fun (r : Sol_cli_executor.result) ->
-       Printf.printf
-         "  ✓  namespace %s  image %s\n\n%!"
-         r.Sol_cli_executor.namespace
-         r.Sol_cli_executor.image)
-    results;
-  Printf.printf "\nDone. %d service(s) deployed.\n" (List.length ctx.services);
-  print_service_urls ~ctx:ctx.execution.cluster results;
-  Printf.printf "Run 'sol status' to check pod health.\n";
-  Sol_cli_deployment_state.record_outcome
-    ~ctx:ctx.execution.cluster
-    ctx.execution.workspace
-    (Sol_cli_deployment_state.Applied
-       { namespace = "default"
-       ; name = ctx.execution.workspace
-       ; image = ctx.sha
-       ; consumer_groups =
-           List.map
-             Sol_cli_plan_ids.Consumer_group.to_string
-             plan.Sol_cli_deployment_plan.consumer_groups
-       });
-  (* FEAT-067: record the release after a successful apply. Non-fatal on
-     failure: the deploy happened, and the record is for later. *)
-  (match Sol_cli_release_store.record_plan ~ctx:ctx.execution.cluster plan with
-   | Ok () -> ()
-   | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);
-  (* FEAT-070: the deployment event is a separate, immutable record — minted id,
-     provenance, and the release it attempted. The same id rides the Loki marker
-     below, so the observability timeline joins to the authoritative record by
-     id. The release path above is untouched: provenance never enters it. *)
+  (* FEAT-071: the attempt starts here — mint its id before the apply, then
+     record the immutable event once, when the attempt finishes, whether or not
+     it succeeded. *)
   let now = Unix.gettimeofday () in
   let deployment_id =
     Sol_cli_deployment_id.create ~now ~entropy:(Sol_cli_deployment_id.random_entropy ())
   in
-  (match
-     Sol_cli_deployment_store.record
-       ~ctx:ctx.execution.cluster
-       (Sol_cli_deployment.of_plan
-          ~deployment_id
-          ~now
-          ~git_commit:(Sol_cli_deployment.git_commit ())
-          ~git_dirty:(Sol_cli_deployment.git_dirty ())
-          ~actor:(Sys.getenv_opt "SOL_ACTOR")
-          ~target:(Some ctx.target_name)
-          plan)
-   with
-   | Ok () -> ()
-   | Error msg -> Printf.eprintf "warning: could not record deployment: %s\n%!" msg);
-  push_deploy_events
-    ~ctx:ctx.execution.cluster
-    ~workspace:ctx.execution.workspace
-    ~target_cfg:ctx.target_cfg
-    ~loki_push_url
-    ~deployment_id:(Sol_cli_deployment_id.to_string deployment_id)
-    plan
+  let applied =
+    match run_plan_result ctx ~phase:"apply" ~mode:Sol_cli_executor.Apply plan with
+    | Ok results ->
+      List.iter
+        (fun (r : Sol_cli_executor.result) ->
+           Printf.printf
+             "  ✓  namespace %s  image %s\n\n%!"
+             r.Sol_cli_executor.namespace
+             r.Sol_cli_executor.image)
+        results;
+      Printf.printf "\nDone. %d service(s) deployed.\n" (List.length ctx.services);
+      print_service_urls ~ctx:ctx.execution.cluster results;
+      Printf.printf "Run 'sol status' to check pod health.\n";
+      Sol_cli_deployment_state.record_outcome
+        ~ctx:ctx.execution.cluster
+        ctx.execution.workspace
+        (Sol_cli_deployment_state.Applied
+           { namespace = "default"
+           ; name = ctx.execution.workspace
+           ; image = ctx.sha
+           ; consumer_groups =
+               List.map
+                 Sol_cli_plan_ids.Consumer_group.to_string
+                 plan.Sol_cli_deployment_plan.consumer_groups
+           });
+      (* The release record is only written when the apply succeeded: "the
+         release exists / was applied" is a claim a failed attempt cannot make. *)
+      (match Sol_cli_release_store.record_plan ~ctx:ctx.execution.cluster plan with
+       | Ok () -> ()
+       | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);
+      Ok ()
+    | Error msg -> Error msg
+  in
+  let outcome =
+    match applied with
+    | Ok () -> Sol_cli_deployment.Applied
+    | Error _ -> Sol_cli_deployment.Apply_failed
+  in
+  (* FEAT-070: the deployment event is a separate, immutable record — minted id,
+     provenance, the release it attempted, and its outcome. The release path
+     above is untouched: provenance never enters it. *)
+  let recorded =
+    match
+      Sol_cli_deployment_store.record
+        ~ctx:ctx.execution.cluster
+        (Sol_cli_deployment.of_plan
+           ~deployment_id
+           ~now
+           ~git_commit:(Sol_cli_deployment.git_commit ())
+           ~git_dirty:(Sol_cli_deployment.git_dirty ())
+           ~actor:(Sys.getenv_opt "SOL_ACTOR")
+           ~target:(Some ctx.target_name)
+           ~outcome
+           plan)
+    with
+    | Ok () -> true
+    | Error msg ->
+      Printf.eprintf "warning: could not record deployment: %s\n%!" msg;
+      false
+  in
+  (* FEAT-071: the Loki marker is a join key to the authoritative record, so it
+     is only pushed when that record exists and the apply succeeded (the marker
+     says "deployed"). *)
+  if
+    recorded
+    &&
+    match outcome with
+    | Sol_cli_deployment.Applied -> true
+    | _ -> false
+  then
+    push_deploy_events
+      ~ctx:ctx.execution.cluster
+      ~workspace:ctx.execution.workspace
+      ~target_cfg:ctx.target_cfg
+      ~loki_push_url
+      ~deployment_id:(Sol_cli_deployment_id.to_string deployment_id)
+      plan;
+  match applied with
+  | Ok () -> ()
+  | Error msg ->
+    Printf.eprintf "\nerror: %s\n" msg;
+    exit 1
 ;;
 
 let run (req : Sol_cli_command_request.deploy_request) =

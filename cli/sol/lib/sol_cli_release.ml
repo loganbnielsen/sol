@@ -351,33 +351,37 @@ let item_name item =
   | None -> ""
 ;;
 
-(* [kubectl get configmap -l ... -o json] -> the records it carries. An item
-   whose [data.record] is absent or malformed is skipped rather than failing
-   the whole listing; one that is present but does not validate is corruption,
-   and is likewise not surfaced as a usable record (see [validate]). *)
+(* [kubectl get configmap -l ... -o json] -> the records it carries. Fails closed
+   (FEAT-071): the store is authoritative release history, so a matching record
+   that is absent, unparseable, or does not [validate] is corruption and returns
+   an [Error] naming it — dropping it would print a partial list as if it were
+   the whole one. *)
 let parse_kubectl_list (json : Yojson.Safe.t) : (t list, string) result =
-  let items = list "items" json in
-  let records =
-    List.filter_map
-      (fun item ->
-         match mem "data" item with
-         | None -> None
-         | Some data ->
-           (match mem "record" data with
-            | Some (`String record) ->
-              (try
-                 match of_json (Yojson.Safe.from_string record) with
-                 | Ok r ->
-                   (match validate ~name:(item_name item) r with
-                    | Ok () -> Some r
-                    | Error _ -> None)
-                 | Error _ -> None
-               with
-               | _ -> None)
-            | _ -> None))
-      items
+  let corrupt label msg =
+    Error (Printf.sprintf "release history contains an invalid record: %s: %s" label msg)
   in
-  Ok records
+  let rec go acc = function
+    | [] -> Ok (List.rev acc)
+    | item :: rest ->
+      let name = item_name item in
+      let label = if String.equal name "" then "<unnamed configmap>" else name in
+      (match mem "data" item with
+       | None -> corrupt label "has no data"
+       | Some data ->
+         (match mem "record" data with
+          | Some (`String record) ->
+            (match Yojson.Safe.from_string record with
+             | exception _ -> corrupt label "data.record is not JSON"
+             | parsed ->
+               (match of_json parsed with
+                | Error msg -> corrupt label msg
+                | Ok r ->
+                  (match validate ~name r with
+                   | Error msg -> corrupt label msg
+                   | Ok () -> go (r :: acc) rest)))
+          | _ -> corrupt label "has no data.record"))
+  in
+  go [] (list "items" json)
 ;;
 
 let format_table (records : t list) : string =

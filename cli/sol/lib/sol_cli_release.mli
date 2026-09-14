@@ -88,9 +88,10 @@ val to_configmap_json : t -> string
     description, and the pointer is a claim about which one is selected. *)
 val to_current_configmap_json : t -> string
 
-(** Parse [kubectl get configmap -l … -o json]; items whose record is missing,
-    malformed, or fails {!validate} are skipped rather than failing the whole
-    listing. *)
+(** Parse [kubectl get configmap -l … -o json]. Fails closed (FEAT-071): a
+    matching record that is missing, malformed, or fails {!validate} is
+    corruption and returns an [Error] naming it, rather than a short list that
+    reads as the whole history. *)
 val parse_kubectl_list : Yojson.Safe.t -> (t list, string) result
 
 (** An aligned [ID / ENV / WORKLOADS] table, ordered by id. *)

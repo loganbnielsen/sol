@@ -247,59 +247,69 @@ let run_apply
   check_consumer_group_changes ~workspace ~confirm_group_change plan;
   record_plan run_log plan;
   let pf_failed = ref false in
-  (match
-     Sol_cli_run_log.run_task run_log ~name:"apply" (fun () ->
-       match prepare_context ~repo_root with
-       | Error msg -> Error msg
-       | Ok ctx_dir ->
-         (try
-            List.iter
-              (apply_service
-                 ~workspace
-                 ~ctx_dir
-                 ~sha
-                 ~pf_failed
-                 ~release_id:plan.Sol_cli_deployment_plan.release_id)
-              plan.Sol_cli_deployment_plan.services;
-            Sol_cli_up_execution.remove_build_context ~ctx_dir;
-            Ok ()
-          with
-          | Deploy_failed msg ->
-            Sol_cli_up_execution.remove_build_context ~ctx_dir;
-            Error msg))
-   with
-   | Ok () -> ()
-   | Error msg ->
-     Printf.eprintf "\nerror: %s\n" msg;
-     exit 1);
-  let summary = Sol_cli_up_execution.post_deploy_summary ~cwd:(Sys.getcwd ()) plan in
-  Printf.printf "Done. %d service(s) deployed.\n" summary.deployed_count;
-  Printf.printf "Run 'sol status' to check pod health.\n";
-  if summary.pending_migrations > 0
-  then
-    Printf.printf
-      "\n\
-       Note: %d migration file(s) found in db/migrations/ — run 'sol migrate' to apply.\n"
-      summary.pending_migrations;
-  Sol_cli_up_execution.record_applied
-    ~ctx:Sol_cli_kube_destination.local_context
-    ~workspace
-    ~sha
-    plan;
-  (* FEAT-067: record the release after a successful apply. A failure to record
-     is reported, not fatal — the deploy really did happen, and pretending it
-     did not would be worse than a missing record. *)
-  (match
-     Sol_cli_release_store.record_plan ~ctx:Sol_cli_kube_destination.local_context plan
-   with
-   | Ok () -> ()
-   | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);
-  (* FEAT-070: `sol up` is a deployment too, so it records the event as well.
-     Non-fatal like the release record; the release path above is untouched. *)
+  (* FEAT-071: the attempt starts here — mint its id before the apply, then
+     record the immutable event once, when the attempt finishes. *)
   let now = Unix.gettimeofday () in
   let deployment_id =
     Sol_cli_deployment_id.create ~now ~entropy:(Sol_cli_deployment_id.random_entropy ())
   in
+  let applied =
+    match
+      Sol_cli_run_log.run_task run_log ~name:"apply" (fun () ->
+        match prepare_context ~repo_root with
+        | Error msg -> Error msg
+        | Ok ctx_dir ->
+          (try
+             List.iter
+               (apply_service
+                  ~workspace
+                  ~ctx_dir
+                  ~sha
+                  ~pf_failed
+                  ~release_id:plan.Sol_cli_deployment_plan.release_id)
+               plan.Sol_cli_deployment_plan.services;
+             Sol_cli_up_execution.remove_build_context ~ctx_dir;
+             Ok ()
+           with
+           | Deploy_failed msg ->
+             Sol_cli_up_execution.remove_build_context ~ctx_dir;
+             Error msg))
+    with
+    | Ok () ->
+      let summary = Sol_cli_up_execution.post_deploy_summary ~cwd:(Sys.getcwd ()) plan in
+      Printf.printf "Done. %d service(s) deployed.\n" summary.deployed_count;
+      Printf.printf "Run 'sol status' to check pod health.\n";
+      if summary.pending_migrations > 0
+      then
+        Printf.printf
+          "\n\
+           Note: %d migration file(s) found in db/migrations/ — run 'sol migrate' to \
+           apply.\n"
+          summary.pending_migrations;
+      Sol_cli_up_execution.record_applied
+        ~ctx:Sol_cli_kube_destination.local_context
+        ~workspace
+        ~sha
+        plan;
+      (* The release record is only written when the apply succeeded: "the
+         release exists / was applied" is a claim a failed attempt cannot make. *)
+      (match
+         Sol_cli_release_store.record_plan
+           ~ctx:Sol_cli_kube_destination.local_context
+           plan
+       with
+       | Ok () -> ()
+       | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);
+      Ok ()
+    | Error msg -> Error msg
+  in
+  let outcome =
+    match applied with
+    | Ok () -> Sol_cli_deployment.Applied
+    | Error _ -> Sol_cli_deployment.Apply_failed
+  in
+  (* FEAT-070: `sol up` is a deployment too, so it records the event as well —
+     non-fatal like the release record, and the release path above is untouched. *)
   (match
      Sol_cli_deployment_store.record
        ~ctx:Sol_cli_kube_destination.local_context
@@ -310,11 +320,16 @@ let run_apply
           ~git_dirty:(Sol_cli_deployment.git_dirty ())
           ~actor:(Sys.getenv_opt "SOL_ACTOR")
           ~target:(Some "local")
+          ~outcome
           plan)
    with
    | Ok () -> ()
    | Error msg -> Printf.eprintf "warning: could not record deployment: %s\n%!" msg);
-  if !pf_failed then exit 1
+  match applied with
+  | Ok () -> if !pf_failed then exit 1
+  | Error msg ->
+    Printf.eprintf "\nerror: %s\n" msg;
+    exit 1
 ;;
 
 let run (req : Sol_cli_command_request.up_request) =

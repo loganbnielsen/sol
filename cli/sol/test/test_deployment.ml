@@ -19,10 +19,13 @@ let index_of needle haystack =
 
 let id_a = Sol_cli_deployment_id.create ~now:1767225600.0 ~entropy:"seed-a"
 let id_b = Sol_cli_deployment_id.create ~now:1767225700.0 ~entropy:"seed-b"
+let release_a = Result.get_ok (Sol_cli_release_id.of_string "r-0123456789abcdef")
+let id_a_string = Sol_cli_deployment_id.to_string id_a
+let release_a_string = Sol_cli_release_id.to_string release_a
 
 let sample : D.t =
-  { deployment_id = Sol_cli_deployment_id.to_string id_a
-  ; release_id = "r-0123456789abcdef"
+  { deployment_id = id_a
+  ; release_id = release_a
   ; workspace = "myworkspace"
   ; environment = Some "prod"
   ; created_at = "2026-01-01T00:00:00Z"
@@ -32,6 +35,7 @@ let sample : D.t =
   ; target = Some "prod/aws/us-east-1"
   ; mode = "customer_cloud"
   ; requested_scope = "payments"
+  ; outcome = D.Applied
   }
 ;;
 
@@ -41,8 +45,14 @@ let test_json_round_trip () =
   match D.of_json (D.to_json sample) with
   | Error msg -> Alcotest.fail msg
   | Ok r ->
-    check_string "deployment_id preserved" sample.deployment_id r.deployment_id;
-    check_string "release_id preserved" sample.release_id r.release_id;
+    check_string
+      "deployment_id preserved"
+      id_a_string
+      (Sol_cli_deployment_id.to_string r.deployment_id);
+    check_string
+      "release_id preserved"
+      release_a_string
+      (Sol_cli_release_id.to_string r.release_id);
     check_string "created_at preserved" sample.created_at r.created_at;
     check_string "git_commit preserved" "abc1234" r.git_commit;
     check_bool "git_dirty preserved" false r.git_dirty;
@@ -50,7 +60,8 @@ let test_json_round_trip () =
       "target preserved"
       "prod/aws/us-east-1"
       (Option.value r.target ~default:"");
-    check_string "mode preserved" "customer_cloud" r.mode
+    check_string "mode preserved" "customer_cloud" r.mode;
+    check_bool "outcome preserved" true (r.outcome = D.Applied)
 ;;
 
 let test_configmap_object () =
@@ -64,13 +75,13 @@ let test_configmap_object () =
     (member "metadata" json |> member "name" |> to_string);
   check_string
     "name mirrors the release convention"
-    ("sol-deployment-" ^ sample.deployment_id)
+    ("sol-deployment-" ^ id_a_string)
     (D.configmap_name sample);
   let labels = member "metadata" json |> member "labels" in
   check_string "type label" "deployment" (labels |> member "sol.dev/type" |> to_string);
   check_string
     "release label is the join key to the release"
-    sample.release_id
+    release_a_string
     (labels |> member "sol.dev/release" |> to_string);
   check_string
     "workspace label"
@@ -79,11 +90,12 @@ let test_configmap_object () =
   let data = member "data" json in
   check_string
     "deployment_id in data"
-    sample.deployment_id
+    id_a_string
     (member "deployment_id" data |> to_string);
   let record = member "record" data |> to_string in
-  check_bool "release id in body" true (contains sample.release_id record);
-  check_bool "git provenance in body" true (contains "abc1234" record)
+  check_bool "release id in body" true (contains release_a_string record);
+  check_bool "git provenance in body" true (contains "abc1234" record);
+  check_bool "outcome in body" true (contains "applied" record)
 ;;
 
 let test_json_is_deterministic () =
@@ -93,7 +105,7 @@ let test_json_is_deterministic () =
     (Yojson.Safe.to_string (D.to_json sample))
 ;;
 
-(* ── validating both directions ──────────────────────────────────────────── *)
+(* ── validating the read path ────────────────────────────────────────────── *)
 
 let test_validate_accepts_canonical_event () =
   match D.validate ~name:(D.configmap_name sample) sample with
@@ -104,34 +116,74 @@ let test_validate_accepts_canonical_event () =
 let test_validate_rejects_wrong_name () =
   match D.validate ~name:"sol-deployment-d-20260101t000000z-ffffffffffffffff" sample with
   | Ok () -> Alcotest.fail "expected a name-direction failure"
-  | Error msg -> check_bool "names the event" true (contains sample.deployment_id msg)
+  | Error msg -> check_bool "names the event" true (contains id_a_string msg)
 ;;
 
-(* A correctly named event that points at a release string which is not a release
-   id: the name alone would miss it. *)
-let test_validate_rejects_corrupt_release_pointer () =
-  let corrupt = { sample with release_id = "not-a-release" } in
-  match D.validate ~name:(D.configmap_name corrupt) corrupt with
-  | Ok () -> Alcotest.fail "expected a release-pointer failure"
-  | Error msg ->
-    check_bool "reports the bad release" true (contains "invalid release" msg)
+let with_field key value json =
+  match json with
+  | `Assoc kvs ->
+    `Assoc (List.map (fun (k, v) -> if String.equal k key then k, value else k, v) kvs)
+  | other -> other
+;;
+
+(* FEAT-071: ids are parsed at the boundary, so a malformed one is an error here
+   rather than a string that later reaches a name or a label. *)
+let test_of_json_rejects_a_bad_deployment_id () =
+  let bad = with_field "deployment_id" (`String "not-an-id") (D.to_json sample) in
+  match D.of_json bad with
+  | Ok _ -> Alcotest.fail "expected an invalid deployment id to be rejected"
+  | Error msg -> check_bool "names the problem" true (contains "invalid id" msg)
+;;
+
+let test_of_json_rejects_a_bad_release_id () =
+  let bad = with_field "release_id" (`String "nope") (D.to_json sample) in
+  match D.of_json bad with
+  | Ok _ -> Alcotest.fail "expected an invalid release id to be rejected"
+  | Error msg -> check_bool "names the problem" true (contains "invalid release id" msg)
+;;
+
+let test_of_json_rejects_unknown_outcome () =
+  let bad = with_field "outcome" (`String "maybe") (D.to_json sample) in
+  match D.of_json bad with
+  | Ok _ -> Alcotest.fail "expected an unknown outcome to be rejected"
+  | Error msg -> check_bool "names the outcome" true (contains "outcome" msg)
 ;;
 
 (* ── reading back ────────────────────────────────────────────────────────── *)
 
-let test_parse_kubectl_list_skips_invalid_items () =
-  let item ?(name = D.configmap_name sample) json =
-    `Assoc
-      [ "metadata", `Assoc [ "name", `String name ]
-      ; "data", `Assoc [ "record", `String json ]
-      ]
-  in
+let item ?(name = D.configmap_name sample) json =
+  `Assoc
+    [ "metadata", `Assoc [ "name", `String name ]
+    ; "data", `Assoc [ "record", `String json ]
+    ]
+;;
+
+let test_parse_kubectl_list_reads_valid_items () =
+  let failed = { sample with outcome = D.Apply_failed } in
   let json =
     `Assoc
       [ ( "items"
         , `List
             [ item (Yojson.Safe.to_string (D.to_json sample))
-            ; `Assoc []
+            ; item
+                ~name:(D.configmap_name failed)
+                (Yojson.Safe.to_string (D.to_json failed))
+            ] )
+      ]
+  in
+  match D.parse_kubectl_list json with
+  | Error msg -> Alcotest.fail msg
+  | Ok records -> check_int "both events" 2 (List.length records)
+;;
+
+(* FEAT-071: the store is authoritative, so a corrupt record is an error naming
+   it, never something silently dropped. *)
+let test_parse_kubectl_list_fails_closed_on_corrupt () =
+  let json =
+    `Assoc
+      [ ( "items"
+        , `List
+            [ item (Yojson.Safe.to_string (D.to_json sample))
             ; item "not json"
             ; item
                 ~name:"sol-deployment-d-20260101t000000z-ffffffffffffffff"
@@ -140,23 +192,30 @@ let test_parse_kubectl_list_skips_invalid_items () =
       ]
   in
   match D.parse_kubectl_list json with
-  | Error msg -> Alcotest.fail msg
-  | Ok records -> check_int "only the valid event" 1 (List.length records)
+  | Ok records ->
+    Alcotest.fail
+      (Printf.sprintf "expected an error, got %d records" (List.length records))
+  | Error msg ->
+    check_bool "names corruption" true (contains "invalid record" msg);
+    check_bool "names the record" true (contains "sol-deployment" msg)
 ;;
 
-let test_format_table_newest_first () =
+let test_format_table_newest_first_with_status () =
   let newer =
     { sample with
-      deployment_id = Sol_cli_deployment_id.to_string id_b
+      deployment_id = id_b
     ; created_at = "2026-01-01T00:10:00Z"
+    ; outcome = D.Apply_failed
     }
   in
   let older = sample in
   let table = D.format_table [ older; newer ] in
   check_bool "header" true (contains "DEPLOYMENT" table);
-  check_bool "release column" true (contains "RELEASE" table);
-  let i_newer = index_of newer.deployment_id table
-  and i_older = index_of older.deployment_id table in
+  check_bool "status column" true (contains "STATUS" table);
+  check_bool "applied shown" true (contains "applied" table);
+  check_bool "failed shown" true (contains "apply_failed" table);
+  let i_newer = index_of (Sol_cli_deployment_id.to_string id_b) table
+  and i_older = index_of id_a_string table in
   match i_newer, i_older with
   | Some a, Some b -> check_bool "newest first" true (a < b)
   | _ -> Alcotest.fail "both ids must appear in the table"
@@ -226,62 +285,52 @@ let with_plan f =
     | Ok plan -> f plan)
 ;;
 
+let of_plan plan ?(id = id_a) ?(now = 1767225600.0) ~outcome () =
+  D.of_plan
+    ~deployment_id:id
+    ~now
+    ~git_commit:"abc1234"
+    ~git_dirty:false
+    ~actor:(Some "ci")
+    ~target:(Some "prod/aws/us-east-1")
+    ~outcome
+    plan
+;;
+
 let test_event_points_at_the_plans_release () =
   with_plan (fun plan ->
-    let event =
-      D.of_plan
-        ~deployment_id:id_a
-        ~now:1767225600.0
-        ~git_commit:"abc1234"
-        ~git_dirty:false
-        ~actor:(Some "ci")
-        ~target:(Some "prod/aws/us-east-1")
-        plan
-    in
+    let event = of_plan plan ~outcome:D.Applied () in
     check_string
       "release_id is the plan's, consumed not rederived"
       (Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id)
-      event.release_id;
+      (Sol_cli_release_id.to_string event.release_id);
     check_string "workspace from the plan" "myworkspace" event.workspace;
     check_string "mode from the plan" "local" event.mode;
     check_string "requested scope from the plan" "payments" event.requested_scope)
 ;;
 
-(* The acceptance criterion: two deploys of identical content produce one
-   release_id and two deployment_ids, and provenance differences (commit, dirty,
-   actor, time) never move the release. *)
-let test_two_deploys_one_release () =
+(* FEAT-071: an attempt and a failed attempt are both events. Two attempts of
+   identical content produce one release_id and two deployment_ids; only the
+   outcome distinguishes them. *)
+let test_two_attempts_one_release () =
   with_plan (fun plan ->
-    let first =
-      D.of_plan
-        ~deployment_id:id_a
-        ~now:1767225600.0
-        ~git_commit:"aaa1111"
-        ~git_dirty:false
-        ~actor:(Some "ci")
-        ~target:(Some "prod/aws/us-east-1")
-        plan
-    and second =
-      D.of_plan
-        ~deployment_id:id_b
-        ~now:1767225700.0
-        ~git_commit:"bbb2222"
-        ~git_dirty:true
-        ~actor:(Some "alice")
-        ~target:(Some "prod/aws/us-east-1")
-        plan
-    in
-    check_string "one release" first.release_id second.release_id;
+    let applied = of_plan plan ~outcome:D.Applied () in
+    let failed = of_plan plan ~id:id_b ~now:1767225700.0 ~outcome:D.Apply_failed () in
+    check_bool
+      "one release"
+      true
+      (String.equal
+         (Sol_cli_release_id.to_string applied.release_id)
+         (Sol_cli_release_id.to_string failed.release_id));
     check_bool
       "two deployment ids"
       true
-      (not (String.equal first.deployment_id second.deployment_id));
-    check_bool
-      "provenance did not move the release"
-      true
-      (String.equal
-         first.release_id
-         (Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id)))
+      (not
+         (String.equal
+            (Sol_cli_deployment_id.to_string applied.deployment_id)
+            (Sol_cli_deployment_id.to_string failed.deployment_id)));
+    check_bool "first applied" true (applied.outcome = D.Applied);
+    check_bool "second failed" true (failed.outcome = D.Apply_failed))
 ;;
 
 let () =
@@ -302,16 +351,31 @@ let () =
             `Quick
             test_validate_rejects_wrong_name
         ; Alcotest.test_case
-            "rejects a corrupt release pointer"
+            "rejects a bad deployment id"
             `Quick
-            test_validate_rejects_corrupt_release_pointer
+            test_of_json_rejects_a_bad_deployment_id
+        ; Alcotest.test_case
+            "rejects a bad release id"
+            `Quick
+            test_of_json_rejects_a_bad_release_id
+        ; Alcotest.test_case
+            "rejects an unknown outcome"
+            `Quick
+            test_of_json_rejects_unknown_outcome
         ] )
     ; ( "read"
       , [ Alcotest.test_case
-            "parse skips invalid items"
+            "reads valid items"
             `Quick
-            test_parse_kubectl_list_skips_invalid_items
-        ; Alcotest.test_case "table is newest first" `Quick test_format_table_newest_first
+            test_parse_kubectl_list_reads_valid_items
+        ; Alcotest.test_case
+            "fails closed on corrupt records"
+            `Quick
+            test_parse_kubectl_list_fails_closed_on_corrupt
+        ; Alcotest.test_case
+            "table is newest first with status"
+            `Quick
+            test_format_table_newest_first_with_status
         ] )
     ; ( "of_plan"
       , [ Alcotest.test_case
@@ -319,9 +383,9 @@ let () =
             `Quick
             test_event_points_at_the_plans_release
         ; Alcotest.test_case
-            "two deploys, one release"
+            "two attempts, one release"
             `Quick
-            test_two_deploys_one_release
+            test_two_attempts_one_release
         ] )
     ]
 ;;

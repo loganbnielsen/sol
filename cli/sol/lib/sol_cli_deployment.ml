@@ -1,16 +1,27 @@
-(* The deployment event (FEAT-070): one deploy invocation, recorded immutably.
+(* The deployment event (FEAT-070, FEAT-071): one deploy *attempt*, recorded
+   immutably.
 
-   It points at the release it attempted (by [release_id]) and carries the
-   provenance around the attempt. It never defines a release, and provenance
-   never enters the release artifact or the pod template — that is what keeps a
-   no-op redeploy from changing the rendered manifests.
+   It points at the release the attempt tried to put in place (by [release_id])
+   and carries the provenance around the attempt — including its [outcome]. It
+   never defines a release, and provenance never enters the release artifact or
+   the pod template — that is what keeps a no-op redeploy from changing the
+   rendered manifests.
 
    The record is the authority; the Loki deploy marker carries the same
-   [deployment_id] only as a join key. *)
+   [deployment_id] only as a join key, and is only emitted once this record has
+   actually been persisted.
+
+   Both identities stay typed here (FEAT-071): [deployment_id] and [release_id]
+   are abstract ids, and [to_string]/[of_string] happen only at the JSON/YAML/
+   table boundary, exactly as on the release path. *)
+
+type outcome =
+  | Applied
+  | Apply_failed
 
 type t =
-  { deployment_id : string
-  ; release_id : string
+  { deployment_id : Sol_cli_deployment_id.t
+  ; release_id : Sol_cli_release_id.t
   ; workspace : string
   ; environment : string option
   ; created_at : string
@@ -20,7 +31,23 @@ type t =
   ; target : string option
   ; mode : string
   ; requested_scope : string
+  ; outcome : outcome
   }
+
+let outcome_to_string = function
+  | Applied -> "applied"
+  | Apply_failed -> "apply_failed"
+;;
+
+let outcome_of_string = function
+  | "applied" -> Ok Applied
+  | "apply_failed" -> Ok Apply_failed
+  | s ->
+    Error
+      (Printf.sprintf
+         "%S is not a deployment outcome (expected applied or apply_failed)"
+         s)
+;;
 
 (* UTC, second precision, lexicographically sortable. *)
 let rfc3339_utc (now : float) : string =
@@ -51,11 +78,12 @@ let of_plan
       ~(git_dirty : bool)
       ~(actor : string option)
       ~(target : string option)
+      ~(outcome : outcome)
       (plan : Sol_cli_deployment_plan.t)
   : t
   =
-  { deployment_id = Sol_cli_deployment_id.to_string deployment_id
-  ; release_id = Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id
+  { deployment_id
+  ; release_id = plan.Sol_cli_deployment_plan.release_id
   ; workspace = plan.Sol_cli_deployment_plan.workspace
   ; environment = plan.Sol_cli_deployment_plan.environment.Sol_cli_deployment_plan.env
   ; created_at = rfc3339_utc now
@@ -67,10 +95,11 @@ let of_plan
       deployment_mode_to_string
         plan.Sol_cli_deployment_plan.environment.Sol_cli_deployment_plan.mode
   ; requested_scope = plan.Sol_cli_deployment_plan.requested_scope
+  ; outcome
   }
 ;;
 
-(* Provenance is best-effort: outside a Git checkout these are ["de"] and clean,
+(* Provenance is best-effort: outside a Git checkout these are [""] and clean,
    not a failure to deploy. *)
 let run_git args =
   match Sol_cli_process.run (Sol_cli_process.cmd ("git" :: args)) with
@@ -82,37 +111,31 @@ let git_commit () = run_git [ "rev-parse"; "--short"; "HEAD" ]
 let git_dirty () = run_git [ "status"; "--porcelain" ] <> ""
 
 (* The id goes in verbatim: [d-...] is lowercase RFC 1123 by construction. *)
-let configmap_name (t : t) : string = Printf.sprintf "sol-deployment-%s" t.deployment_id
+let configmap_name (t : t) : string =
+  Printf.sprintf "sol-deployment-%s" (Sol_cli_deployment_id.to_string t.deployment_id)
+;;
 
+(* FEAT-071: constructing [t] (through [of_plan] or [of_json]) already
+   established both identities, so the only remaining invariant to check on the
+   read path is the name direction. A correctly named record is not corrupt. *)
 let validate ~(name : string) (t : t) : (unit, string) result =
-  match Sol_cli_deployment_id.of_string t.deployment_id with
-  | Error msg -> Error msg
-  | Ok _ ->
-    if not (String.equal name (configmap_name t))
-    then
-      Error
-        (Printf.sprintf
-           "%s is not the record for deployment %s (expected name %s)"
-           name
-           t.deployment_id
-           (configmap_name t))
-    else (
-      match Sol_cli_release_id.of_string t.release_id with
-      | Error msg ->
-        Error
-          (Printf.sprintf
-             "deployment record %s points at an invalid release: %s"
-             t.deployment_id
-             msg)
-      | Ok _ -> Ok ())
+  if String.equal name (configmap_name t)
+  then Ok ()
+  else
+    Error
+      (Printf.sprintf
+         "%s is not the record for deployment %s (expected name %s)"
+         name
+         (Sol_cli_deployment_id.to_string t.deployment_id)
+         (configmap_name t))
 ;;
 
 (* ── JSON ─────────────────────────────────────────────────────────────────── *)
 
 let to_json (t : t) : Yojson.Safe.t =
   `Assoc
-    [ "deployment_id", `String t.deployment_id
-    ; "release_id", `String t.release_id
+    [ "deployment_id", `String (Sol_cli_deployment_id.to_string t.deployment_id)
+    ; "release_id", `String (Sol_cli_release_id.to_string t.release_id)
     ; "workspace", `String t.workspace
     ; ( "environment"
       , match t.environment with
@@ -131,6 +154,7 @@ let to_json (t : t) : Yojson.Safe.t =
         | Some x -> `String x )
     ; "mode", `String t.mode
     ; "requested_scope", `String t.requested_scope
+    ; "outcome", `String (outcome_to_string t.outcome)
     ]
 ;;
 
@@ -164,25 +188,40 @@ let list key json =
   | _ -> []
 ;;
 
+(* FEAT-071: ids are parsed here, at the boundary, and stay typed in [t]. A
+   malformed id is an error, never a string that later reaches [configmap_name]
+   or a label. *)
 let of_json (json : Yojson.Safe.t) : (t, string) result =
+  let missing field = Error (Printf.sprintf "deployment record is missing %s" field) in
   match str "deployment_id" json, str "release_id" json, str "workspace" json with
-  | "", _, _ -> Error "deployment record is missing deployment_id"
-  | _, "", _ -> Error "deployment record is missing release_id"
-  | _, _, "" -> Error "deployment record is missing workspace"
-  | deployment_id, release_id, workspace ->
-    Ok
-      { deployment_id
-      ; release_id
-      ; workspace
-      ; environment = string_option "environment" json
-      ; created_at = str "created_at" json
-      ; git_commit = str "git_commit" json
-      ; git_dirty = bool "git_dirty" json
-      ; actor = string_option "actor" json
-      ; target = string_option "target" json
-      ; mode = str "mode" json
-      ; requested_scope = str "requested_scope" json
-      }
+  | "", _, _ -> missing "deployment_id"
+  | _, "", _ -> missing "release_id"
+  | _, _, "" -> missing "workspace"
+  | raw_deployment_id, raw_release_id, workspace ->
+    (match Sol_cli_deployment_id.of_string raw_deployment_id with
+     | Error msg -> Error (Printf.sprintf "deployment record has an invalid id: %s" msg)
+     | Ok deployment_id ->
+       (match Sol_cli_release_id.of_string raw_release_id with
+        | Error msg ->
+          Error (Printf.sprintf "deployment record has an invalid release id: %s" msg)
+        | Ok release_id ->
+          (match outcome_of_string (str "outcome" json) with
+           | Error msg -> Error msg
+           | Ok outcome ->
+             Ok
+               { deployment_id
+               ; release_id
+               ; workspace
+               ; environment = string_option "environment" json
+               ; created_at = str "created_at" json
+               ; git_commit = str "git_commit" json
+               ; git_dirty = bool "git_dirty" json
+               ; actor = string_option "actor" json
+               ; target = string_option "target" json
+               ; mode = str "mode" json
+               ; requested_scope = str "requested_scope" json
+               ; outcome
+               })))
 ;;
 
 (* ── Kubernetes objects ───────────────────────────────────────────────────── *)
@@ -194,7 +233,7 @@ let to_configmap_json (t : t) : string =
   let labels =
     [ "sol.dev/type", `String "deployment"
     ; "sol.dev/workspace", `String (Sol_cli_release.sanitize_label t.workspace)
-    ; "sol.dev/release", `String t.release_id
+    ; "sol.dev/release", `String (Sol_cli_release_id.to_string t.release_id)
     ]
     @
     match t.target with
@@ -214,7 +253,7 @@ let to_configmap_json (t : t) : string =
               ] )
         ; ( "data"
           , `Assoc
-              [ "deployment_id", `String t.deployment_id
+              [ "deployment_id", `String (Sol_cli_deployment_id.to_string t.deployment_id)
               ; "record", `String (Yojson.Safe.to_string (to_json t))
               ] )
         ])
@@ -228,29 +267,37 @@ let item_name item =
   | None -> ""
 ;;
 
+(* FEAT-071: fail closed. The store is authoritative deployment history, so a
+   matching ConfigMap that is unparseable, malformed, or does not validate is
+   corruption — silently dropping it would print a partial history as if it were
+   the whole one. The error names the record so an operator can find it. *)
 let parse_kubectl_list (json : Yojson.Safe.t) : (t list, string) result =
-  let items = list "items" json in
-  let records =
-    List.filter_map
-      (fun item ->
-         match mem "data" item with
-         | None -> None
-         | Some data ->
-           (match mem "record" data with
-            | Some (`String record) ->
-              (try
-                 match of_json (Yojson.Safe.from_string record) with
-                 | Ok r ->
-                   (match validate ~name:(item_name item) r with
-                    | Ok () -> Some r
-                    | Error _ -> None)
-                 | Error _ -> None
-               with
-               | _ -> None)
-            | _ -> None))
-      items
+  let corrupt label msg =
+    Error
+      (Printf.sprintf "deployment history contains an invalid record: %s: %s" label msg)
   in
-  Ok records
+  let rec go acc = function
+    | [] -> Ok (List.rev acc)
+    | item :: rest ->
+      let name = item_name item in
+      let label = if String.equal name "" then "<unnamed configmap>" else name in
+      (match mem "data" item with
+       | None -> corrupt label "has no data"
+       | Some data ->
+         (match mem "record" data with
+          | Some (`String record) ->
+            (match Yojson.Safe.from_string record with
+             | exception _ -> corrupt label "data.record is not JSON"
+             | parsed ->
+               (match of_json parsed with
+                | Error msg -> corrupt label msg
+                | Ok r ->
+                  (match validate ~name r with
+                   | Error msg -> corrupt label msg
+                   | Ok () -> go (r :: acc) rest)))
+          | _ -> corrupt label "has no data.record"))
+  in
+  go [] (list "items" json)
 ;;
 
 (* Newest first. [created_at] is the authority; the id breaks ties (and is itself
@@ -260,20 +307,26 @@ let format_table (records : t list) : string =
     List.sort
       (fun (a : t) (b : t) ->
          let by_time = String.compare b.created_at a.created_at in
-         if by_time <> 0 then by_time else String.compare b.deployment_id a.deployment_id)
+         if by_time <> 0
+         then by_time
+         else
+           String.compare
+             (Sol_cli_deployment_id.to_string b.deployment_id)
+             (Sol_cli_deployment_id.to_string a.deployment_id))
       records
   in
   let rows =
     List.map
       (fun (r : t) ->
-         [ r.deployment_id
-         ; r.release_id
+         [ Sol_cli_deployment_id.to_string r.deployment_id
+         ; Sol_cli_release_id.to_string r.release_id
          ; r.created_at
          ; (if String.equal r.git_commit "" then "-" else r.git_commit)
+         ; outcome_to_string r.outcome
          ])
       sorted
   in
-  let headers = [ "DEPLOYMENT"; "RELEASE"; "TIME"; "COMMIT" ] in
+  let headers = [ "DEPLOYMENT"; "RELEASE"; "TIME"; "COMMIT"; "STATUS" ] in
   let widths =
     List.mapi
       (fun i h ->
