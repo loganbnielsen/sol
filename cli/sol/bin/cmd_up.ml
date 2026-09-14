@@ -278,7 +278,7 @@ let run_apply
     | Ok () ->
       let summary = Sol_cli_up_execution.post_deploy_summary ~cwd:(Sys.getcwd ()) plan in
       Printf.printf "Done. %d service(s) deployed.\n" summary.deployed_count;
-      Printf.printf "Run 'sol status' to check pod health.\n";
+      Printf.printf "Run 'sol local status' to check pod health.\n";
       if summary.pending_migrations > 0
       then
         Printf.printf

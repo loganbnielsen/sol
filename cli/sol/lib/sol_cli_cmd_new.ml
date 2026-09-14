@@ -164,7 +164,7 @@ Done. 28 files generated.
   sol local infra up   # provision local k3d cluster + infra (first time ~5 min)
   sol up               # build images, push, deploy  (~1 min after first run)
   sol migrate                          # apply DB migrations
-  sol status           # check pods + see port-forward hint for charge-svc
+  sol local status     # check pods + see port-forward hint for charge-svc
 
   CI/CD: set REGISTRY + REGISTRY_USER + REGISTRY_PASSWORD secrets in GitHub, then
          push to main — .github/workflows/sol-ci.yml handles build/test/deploy.

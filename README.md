@@ -48,7 +48,7 @@ sol local infra up        # local cluster: Redpanda, PostgreSQL, Loki, Prometheu
 sol new workspace pluto
 cd pluto
 sol up                  # build + deploy
-sol status
+sol local status
 
 curl localhost:8080/health
 # ok

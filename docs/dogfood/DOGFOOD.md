@@ -244,7 +244,7 @@ Apply migrations:
 Check status:
 
 ```bash
-sol status
+sol local status
 ```
 
 Exercise the service:
@@ -386,7 +386,7 @@ and reach all of these without editing generated files:
 - local substrate is healthy
 - `sol up` deploys all generated services
 - `sol migrate` applies migrations
-- `sol status` shows ready pods and a reachable URL
+- `sol local status` shows ready pods and a reachable URL
 - `curl /health` succeeds
 - `POST /charges` publishes a `Charged` Kafka event
 - `notify_worker` consumes the event and writes the notification row

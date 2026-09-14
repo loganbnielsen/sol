@@ -54,7 +54,7 @@ sol local run        # run all workspace services locally (dune exec, dev env va
 
 ```bash
 sol up          # build images and deploy to cluster
-sol status      # show running pods and endpoints
+sol local status   # show running pods and endpoints
 sol migrate     # apply database migrations
 sol rollback    # roll back all services to previous image
 ```
@@ -450,7 +450,7 @@ jobs:
             --registry  "$REGISTRY"
 
       - name: Status
-        run: eval $(opam env) && sol status
+        run: eval $(opam env) && sol status --target "$SOL_TARGET"
 |tpl}
 ;;
 
