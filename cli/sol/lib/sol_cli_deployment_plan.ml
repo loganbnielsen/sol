@@ -488,9 +488,12 @@ let call_env_var source_name =
   |> fun s -> s ^ "_URL"
 ;;
 
+(* Delegates to the shared helper (FEAT-066): the URL format has one definition,
+   so the planner and rollback's decode of a recorded release cannot diverge. *)
 let service_url ~workspace ~domain ~k8s_name =
-  let ns = namespace_of_exn ~workspace ~domain |> namespace_to_string in
-  Printf.sprintf "http://%s.%s.svc.cluster.local" (k8s_name_to_string k8s_name) ns
+  Sol_cli_kubernetes_name.service_url
+    ~namespace:(namespace_of_exn ~workspace ~domain)
+    ~k8s_name
 ;;
 
 (* sol.yml scale (a min/max range) and sol.toml's replicas (a fixed count)

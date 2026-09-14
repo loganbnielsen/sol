@@ -116,3 +116,13 @@ let sanitize_name (s : string) : string =
   in
   if trimmed = "" then "none" else trimmed
 ;;
+
+(* A pure function of the two resolved names -- no workspace/config/env read --
+   shared by the planner and by rollback's decode of a recorded release, so the
+   two can never disagree about the URL format. *)
+let service_url ~(namespace : namespace) ~(k8s_name : k8s_name) : string =
+  Printf.sprintf
+    "http://%s.%s.svc.cluster.local"
+    (k8s_name_to_string k8s_name)
+    (namespace_to_string namespace)
+;;
