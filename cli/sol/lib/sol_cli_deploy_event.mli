@@ -1,13 +1,16 @@
 (* Structured Loki release-event line for `sol deploy` (OBS-037). *)
 
+(** A domain object, not the serialized form: both identities stay typed, and
+    [fields]/[message] (plus the stream labels the pusher builds) are the
+    serialization edge — TYPE_AUDIT-078. *)
 type t =
   { workspace : string
   ; env : string
   ; domain : string
   ; service : string
   ; primitive : string
-  ; release : string
-  ; deployment_id : string
+  ; release_id : Sol_cli_release_id.t
+  ; deployment_id : Sol_cli_deployment_id.t
     (** FEAT-070: the id of the deployment event this marker describes. It is a
         logfmt *field*, deliberately not a Loki stream label — it varies per
         invocation, and promoting it to a label would put unbounded cardinality

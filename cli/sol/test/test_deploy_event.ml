@@ -10,8 +10,10 @@ let sample =
   ; domain = "billing"
   ; service = "invoicer"
   ; primitive = "svc"
-  ; release = "a1b2c3d"
-  ; deployment_id = "d-20260101t000000z-0123456789abcdef"
+  ; release_id = Result.get_ok (Sol_cli_release_id.of_string "r-0123456789abcdef")
+  ; deployment_id =
+      Result.get_ok
+        (Sol_cli_deployment_id.of_string "d-20260101t000000z-0123456789abcdef")
   }
 ;;
 
@@ -37,7 +39,7 @@ let test_fields_matches_taxonomy_label_set () =
   check_bool "domain" true (List.mem ("domain", "billing") fields);
   check_bool "service" true (List.mem ("service", "invoicer") fields);
   check_bool "primitive" true (List.mem ("primitive", "svc") fields);
-  check_bool "release" true (List.mem ("release", "a1b2c3d") fields)
+  check_bool "release" true (List.mem ("release", "r-0123456789abcdef") fields)
 ;;
 
 (* ── message ─────────────────────────────────────────────────────────────── *)
@@ -52,7 +54,7 @@ let test_message_mentions_domain_service_and_release () =
   in
   check_bool "mentions domain" true (contains "billing" msg);
   check_bool "mentions service" true (contains "invoicer" msg);
-  check_bool "mentions release" true (contains "a1b2c3d" msg)
+  check_bool "mentions release" true (contains "r-0123456789abcdef" msg)
 ;;
 
 (* ── resolve_push_url ────────────────────────────────────────────────────── *)

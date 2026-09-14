@@ -7,14 +7,17 @@
    lines. Pure/testable; the actual HTTP push and Loki-reachability I/O live
    in cli/sol/bin/cmd_deploy_event.ml. *)
 
+(* Both identities stay typed (TYPE_AUDIT-078): this record is a domain object,
+   and the serialization edge is [fields]/[message] plus the stream labels the
+   pusher builds — not the record itself. *)
 type t =
   { workspace : string
   ; env : string
   ; domain : string
   ; service : string
   ; primitive : string
-  ; release : string
-  ; deployment_id : string
+  ; release_id : Sol_cli_release_id.t
+  ; deployment_id : Sol_cli_deployment_id.t
   }
 
 let fields t =
@@ -24,8 +27,8 @@ let fields t =
   ; "domain", t.domain
   ; "service", t.service
   ; "primitive", t.primitive
-  ; "release", t.release
-  ; "deployment_id", t.deployment_id
+  ; "release", Sol_cli_release_id.to_string t.release_id
+  ; "deployment_id", Sol_cli_deployment_id.to_string t.deployment_id
   ]
 ;;
 
@@ -35,8 +38,8 @@ let message t =
     t.domain
     t.service
     t.primitive
-    t.release
-    t.deployment_id
+    (Sol_cli_release_id.to_string t.release_id)
+    (Sol_cli_deployment_id.to_string t.deployment_id)
     t.workspace
     t.env
 ;;

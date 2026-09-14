@@ -179,7 +179,7 @@ let push_event ~net ~clock ~mono_clock ~url (event : Sol_cli_deploy_event.t) =
         [ "workspace", event.Sol_cli_deploy_event.workspace
         ; "domain", event.Sol_cli_deploy_event.domain
         ; "primitive", event.Sol_cli_deploy_event.primitive
-        ; "release", event.Sol_cli_deploy_event.release
+        ; "release", Sol_cli_release_id.to_string event.Sol_cli_deploy_event.release_id
         ]
     in
     Obs_eio.log_standalone
