@@ -17,6 +17,40 @@ let require_tools () =
   check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/"
 ;;
 
+(* FRIC-017: k3d v5.6.0's embedded Docker client pins API 1.43, but Docker
+   Engine 29 removed every API below 1.44, so any k3d invocation fails with
+   "client version 1.43 is too old" on a current host. Ask the daemon for the
+   oldest API it still accepts and hand that to k3d via DOCKER_API_VERSION --
+   but never below k3d's own 1.43 floor, so older daemons keep working too. *)
+let k3d_client_api_floor = "1.43"
+
+let version_gt a b =
+  let parts s = String.split_on_char '.' s |> List.filter_map int_of_string_opt in
+  let rec cmp x y =
+    match x, y with
+    | [], [] -> 0
+    | x :: xs, y :: ys -> if x <> y then compare x y else cmp xs ys
+    | x :: _, [] -> compare x 0
+    | [], y :: _ -> compare 0 y
+  in
+  cmp (parts a) (parts b) > 0
+;;
+
+let k3d_env () =
+  match
+    Sol_cli_process.run
+      (Sol_cli_process.cmd [ "docker"; "version"; "--format"; "{{.Server.MinAPIVersion}}" ])
+  with
+  | Ok r when r.Sol_cli_process.exit_code = 0 ->
+    let daemon_min = String.trim r.Sol_cli_process.stdout in
+    if daemon_min <> "" && version_gt daemon_min k3d_client_api_floor
+    then [ "DOCKER_API_VERSION", daemon_min ]
+    else []
+  | _ -> []
+;;
+
+let k3d args = Sol_cli_process.cmd ~env:(k3d_env ()) ("k3d" :: args)
+
 (* ── State file ─────────────────────────────────────────────────────────── *)
 
 let cluster_name = "sol-local"
@@ -102,7 +136,7 @@ let dev_up () =
   Printf.printf "\n[1/4] Provisioning cluster...\n%!";
   let cluster_exists =
     match
-      Sol_cli_process.run (Sol_cli_process.cmd [ "k3d"; "cluster"; "get"; cluster_name ])
+      Sol_cli_process.run (k3d [ "cluster"; "get"; cluster_name ])
     with
     | Ok r -> r.Sol_cli_process.exit_code = 0
     | Error _ -> false
@@ -123,7 +157,7 @@ let dev_up () =
     let pre_rename_cluster_exists =
       match
         Sol_cli_process.run
-          (Sol_cli_process.cmd [ "k3d"; "cluster"; "get"; pre_rename_cluster_name ])
+          (k3d [ "cluster"; "get"; pre_rename_cluster_name ])
       with
       | Ok r -> r.Sol_cli_process.exit_code = 0
       | Error _ -> false
@@ -148,9 +182,8 @@ let dev_up () =
     let create_result =
       Sol_cli_process.run
         ~echo:true
-        (Sol_cli_process.cmd
-           [ "k3d"
-           ; "cluster"
+        (k3d
+           [ "cluster"
            ; "create"
            ; cluster_name
            ; "--registry-create"
@@ -610,7 +643,7 @@ let dev_down delete_cluster =
     Printf.printf "Deleting cluster %s...\n%!" cluster_name;
     ignore
       (Sol_cli_process.run
-         (Sol_cli_process.cmd [ "k3d"; "cluster"; "delete"; cluster_name ])))
+         (k3d [ "cluster"; "delete"; cluster_name ])))
   else Printf.printf "Port-forwards stopped. Cluster %s is still running.\n" cluster_name
 ;;
 
@@ -620,7 +653,7 @@ let dev_status () =
   check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/";
   let cluster_running =
     match
-      Sol_cli_process.run (Sol_cli_process.cmd [ "k3d"; "cluster"; "get"; cluster_name ])
+      Sol_cli_process.run (k3d [ "cluster"; "get"; cluster_name ])
     with
     | Ok r -> r.Sol_cli_process.exit_code = 0
     | Error _ -> false
