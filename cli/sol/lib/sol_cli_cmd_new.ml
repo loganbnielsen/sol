@@ -173,7 +173,7 @@ Done. 28 files generated.
   cd %s
   eval $(opam env) && dune build   # verify the scaffold compiles
   sol local infra up   # provision local k3d cluster + infra (first time ~5 min)
-  sol up               # build images, push, deploy  (~1 min after first run)
+  sol up               # build images, push, deploy  (first build ~5 min if the image cache is cold, ~1 min after)
   sol migrate                          # apply DB migrations
   sol local status     # check pods + see port-forward hint for charge-svc
 

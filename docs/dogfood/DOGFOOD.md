@@ -9,6 +9,11 @@ the product claim:
 
 > From a prepared Sol substrate, a developer can create, deploy, and reach a new
 > service in minutes without writing Kubernetes, Helm, Terraform, or CI glue.
+>
+> "Minutes" assumes the Docker image build cache is warm. The first `sol up` on a
+> machine that has never built the generated images also compiles the shared opam
+> dependencies inside the image and takes several minutes (measured ~5m34s for the
+> first workspace vs ~22s for the next one — see FRIC-024).
 
 Run reports live in `pipeline/dogfood/`. Each run produces one dated file there.
 

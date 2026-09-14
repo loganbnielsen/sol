@@ -90,10 +90,18 @@ the Kafka path is proven.
 
 After step 4 (`sol up`), measure the wall-clock time from `sol new workspace`
 through first successful `curl /health`. Does it stay under two minutes on an
-existing substrate?
+existing substrate **with the image build cache warm**?
 
-Note: `sol local infra up` on a fresh cluster takes ~5 min and is substrate
-bootstrap — it does not count against the two-minute claim.
+Two costs do not count against the claim, and both must be stated when measuring:
+
+- `sol local infra up` on a fresh cluster takes ~5 min and is substrate
+  bootstrap.
+- the **first-ever image build**. `sol up`'s Docker build pulls
+  `ocaml/opam:ubuntu-24.04-ocaml-5.4` and runs apt + `opam pin`/`opam install`
+  inside the image. Measured 2026-09-13 (FRIC-024): **5m34s** for the first
+  workspace versus **26s** end-to-end for the next fresh workspace once those
+  layers are cached. A genuinely first-time user therefore does *not* see two
+  minutes — report the cold number too, not only the warm one.
 
 ### 6. Write the report
 

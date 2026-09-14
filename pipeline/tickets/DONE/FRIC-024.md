@@ -21,3 +21,9 @@ A warm redeploy of the same workspace is 4.35s. So the claim is true "after firs
 **Remediation:** Either (a) prebuild/publish a base image carrying the shared opam dependencies so a first workspace only compiles app code, or (b) state the cold-start cost explicitly and separate "substrate bootstrap", "first image build", and "deploy" in the claim/runbook. The generated Dockerfiles' comments already explain *why* the pins exist; they could also say the first build is expensive and cached afterwards.
 
 Related: FRIC-014 (Dockerfile template drift), FRIC-018 (buildx prerequisite for the same build path).
+
+## Completion notes
+
+- Took remediation (b): the claim is now stated honestly rather than re-engineered. `docs/dogfood/DOGFOOD.md`'s product claim carries a cold-image-build caveat; the dogfood skill's "Evaluate the two-minute claim" section now says "with the image build cache warm" and requires reporting the cold number too, with the measured 5m34s vs 26s; the scaffold's printed next-steps say `sol up` is ~5 min on a cold image cache.
+- Remediation (a), a prebuilt/published base image so a first workspace only compiles app code, remains open as the real fix — this ticket's docs change only stops the claim from overstating; it does not make the first build fast. Worth a follow-up FEAT/infra ticket if we want the claim to hold cold.
+- Doc/generated-artifact change; verified via a throwaway scaffold, full `dune build` clean.
