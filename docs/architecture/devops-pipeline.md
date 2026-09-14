@@ -309,36 +309,54 @@ deploy` write on every deploy (FEAT-067):
 
 1. **Resolve + load + validate** — `Sol_cli_release_store.get` fetches the
    `sol-release-<id>` ConfigMap, decodes it, and checks it both rederives its
-   own `release_id` and belongs to the calling workspace.
-2. **Migration boundary check** (`Sol_cli_rollback.check_migration_boundary`,
+   own `release_id` and belongs to the calling workspace. The record also
+   carries `data.record_digest`, a free digest of the complete record body:
+   a missing or mismatched digest is an unsupported/integrity failure, so the
+   non-identity safety fields (`migrations`, `apply_mode`) are as
+   tamper-evident as the id.
+2. **Refuse controller-owned releases** (`Sol_cli_rollback.check_apply_mode`) —
+   the record's `apply_mode` is `direct` or `gitops`. A `gitops` release's
+   resources belong to a controller, so a Sol direct apply plus immediate
+   readback would not establish a stable transition; rollback refuses before
+   touching anything. A controller-mediated rollback path does not exist yet.
+3. **Migration boundary check** (`Sol_cli_rollback.check_migration_boundary`,
    DEC-018) — refuses if any migration file that exists now but not at deploy
    time either declares a `Contract` disposition or fails to declare one at
    all. Every migration file must open with a `-- sol:disposition
    expand|contract` header (`Sol_cli_migration_disposition`); there is no
    "assume expand" fallback and no `--force`. This runs before any
    render/apply preparation, so a refusal leaves the cluster untouched.
-3. **Reconstruct** — `Sol_cli_rollback.service_specs_of_release` decodes the
+4. **Reconstruct** — `Sol_cli_rollback.service_specs_of_release` decodes the
    record's workloads back into `service_spec`s using only the record plus
    pure helpers (canonical inverse decoders, `k8s_name_result`,
    `namespace_result`, `service_url`, `call_env_var`) — never the workspace,
    `sol.toml`/`sol.yml`, the environment, or discovery. `called_by` is derived
    from the record's own `calls` rows, not a stored forward-edge env var.
-4. **Render + apply** — `Sol_cli_deployment_render.render_spec` per spec
+5. **Render + apply** — `Sol_cli_deployment_render.render_spec` per spec
    (`Kubernetes_live` secret backend — secret values, never persisted, are
    read from the process environment same as any direct apply), then
    `Sol_cli_manifest.apply`.
-5. **Pointer move** — `Sol_cli_release_store.move_pointer` writes only the
-   mutable `sol-release-current-<workspace>` ConfigMap; the immutable
-   per-release ConfigMap already exists and is not re-applied.
-6. **Verify** — `Sol_cli_rollback.verify` reads back the live `release` label
-   on each restored workload's pod template (Deployment/Rollout at
-   `spec.template...`, CronJob at `spec.jobTemplate.spec.template...`) and the
-   pointer's `data.release_id`, reporting workload-state and pointer mismatches
-   independently rather than reconciling them.
+6. **Verify the workload set** (`Sol_cli_rollback.live_workloads` +
+   `verify_workloads`) — enumerates every live Sol-owned workload for the
+   workspace (Deployment/Rollout/CronJob whose pod template carries the
+   `workspace` label) and compares that *set* to the restored release's
+   workloads: a wrong `release` label, a missing object, or an **unexpected**
+   object left over from the superseded release is reported and fails the
+   rollback. This runs *before* the pointer moves, so a mismatch leaves the
+   pointer unchanged rather than claiming a transition that did not happen.
+   Rollback does not prune stale workloads; detection only.
+7. **Pointer move** — `Sol_cli_release_store.move_pointer` writes only the
+   mutable `sol-release-current-<workspace>` ConfigMap, and only after the
+   live set agrees; the immutable per-release ConfigMap already exists and is
+   not re-applied.
+8. **Verify the pointer** (`Sol_cli_rollback.verify_pointer`) — reads back
+   `data.release_id`, reported independently of the workload report. Never
+   re-applies or "fixes" a mismatch.
 
 GitOps-mode rollback (content and pointer travelling in one emitted commit) and
 `--commit`/`--scope` release disambiguation are not yet implemented — this
-command only accepts an exact, unambiguous release id against a live cluster.
+command only accepts an exact, unambiguous release id against a live cluster,
+and refuses a release recorded as GitOps-owned.
 
 **State:** does **not** update `Sol_cli_deployment_state` after rollback. The
 consumer group guard on the next `sol up`/`sol deploy` will re-read the cluster

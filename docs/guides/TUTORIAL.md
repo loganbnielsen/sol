@@ -694,9 +694,9 @@ The generated files contain the full manifest (Namespace, ServiceAccount, Config
 
 ### Day-2 operations
 
-If a deploy introduces a regression, `sol rollback <release-id>` restores that recorded release boundary — find the id with `sol releases`. Rollback does not use `kubectl rollout undo`, which cannot restore config, volumes, or ingress; instead it reconstructs the target release's own resolved workloads from its immutable record and re-applies them, moves the current-release pointer, and verifies both independently.
+If a deploy introduces a regression, `sol rollback <release-id>` restores that recorded release boundary — find the id with `sol releases`. Rollback does not use `kubectl rollout undo`, which cannot restore config, volumes, or ingress; instead it reconstructs the target release's own resolved workloads from its immutable record, re-applies them, verifies the live workload set, and only then moves the current-release pointer and verifies it.
 
-Rollback refuses closed rather than mutating the cluster when: the release id doesn't resolve to a valid record; a migration applied since that release is a *contracting* change (or fails to declare an expand/contract disposition at all — see `-- sol:disposition` in each migration file); or post-apply verification finds the live workloads or the pointer don't actually name the restored release. There is no `--force` for the migration check.
+Rollback refuses closed rather than mutating the cluster when: the release id doesn't resolve to a valid record; the record was applied as controller/GitOps-owned (Sol does not own those resources, so a direct apply would not establish a stable transition); a migration applied since that release is a *contracting* change (or fails to declare an expand/contract disposition at all — see `-- sol:disposition` in each migration file); or verification finds the live workloads don't match the restored release — including a workload left over from the superseded release — or the pointer doesn't name it. Verification runs before the pointer moves, so a failure leaves the pointer unchanged. There is no `--force`.
 
 To inspect what a running service is doing, `sol logs --scope <domain>/<unit>` streams live output directly from the cluster pod, following Sol's namespace convention automatically.
 
