@@ -82,3 +82,35 @@ Restoration source: the release record, now complete (BUG-026). `sol rollback
 `kubectl rollout undo`, which cannot restore config, volumes or ingress.
 `--scope` is release *selection* only; `--commit` resolves an ambiguous release
 by listing candidates.
+
+**Order (a refused rollback must leave the cluster untouched).**
+
+```
+resolve target release
+  → load + validate record
+  → migration boundary check
+  → reconstruct
+  → render
+  → apply
+  → move pointer
+  → verify
+```
+
+The migration check runs before any mutation and, where the information is
+already available, before expensive apply preparation.
+
+**Reconstruction is a historical decode, not a planner (red line).** It may
+validate and decode recorded facts, but it must not resolve new release-defining
+facts. Leaf helpers (`k8s_name_result`, `namespace_result`, `service_url`,
+`cpu/memory_quantity_of_string`, the canonical enum decoders) are fine because
+they are pure functions of recorded facts; anything that reads the workspace,
+`sol.toml`/`sol.yml`, the environment, or discovery is not. In particular
+`called_by` is a pure derivation of the record's own recorded `calls` — never
+`recorded calls + today's discovery`.
+
+**Verification reports its two failures independently** — `workload state
+mismatch` and `pointer mismatch` — rather than collapsing them into one
+"verification failed", because one passing and the other failing is operationally
+meaningful evidence. The equivalence test
+`render(original plan) == render(reconstructed record)` is the load-bearing
+guardrail and starts as byte equality, since the renderer is already canonical.
