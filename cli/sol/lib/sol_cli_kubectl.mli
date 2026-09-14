@@ -42,12 +42,6 @@ val rollout_status
   -> namespace:string
   -> (Sol_cli_process.result, Sol_cli_process.error) result
 
-val rollout_undo
-  :  ctx:Sol_cli_kube_destination.context
-  -> kind_name:string
-  -> namespace:string
-  -> (Sol_cli_process.result, Sol_cli_process.error) result
-
 val rollout_restart
   :  ctx:Sol_cli_kube_destination.context
   -> kind:string
@@ -61,18 +55,6 @@ val patch
   -> namespace:string
   -> patch_type:string
   -> patch:string
-  -> (Sol_cli_process.result, Sol_cli_process.error) result
-
-val argo_rollout_undo
-  :  ctx:Sol_cli_kube_destination.context
-  -> namespace:string
-  -> name:string
-  -> (Sol_cli_process.result, Sol_cli_process.error) result
-
-val argo_rollout_status
-  :  ctx:Sol_cli_kube_destination.context
-  -> namespace:string
-  -> name:string
   -> (Sol_cli_process.result, Sol_cli_process.error) result
 
 val probe : ctx:Sol_cli_kube_destination.context -> args:string list -> bool

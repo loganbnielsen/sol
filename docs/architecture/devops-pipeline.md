@@ -295,28 +295,50 @@ derived from the workspace directory name. Override with `--table`.
 
 ---
 
-### `sol rollback`
+### `sol rollback` (FEAT-066, DEC-018)
 
 **Module:** `cli/sol/bin/cmd_rollback.ml` → `run`  
-**Library:** `cli/sol/lib/sol_cli_rollback.ml`
+**Library:** `cli/sol/lib/sol_cli_rollback.ml`, `sol_cli_release_store.ml`,
+`sol_cli_migration_disposition.ml`
 
-Rolls back the last Kubernetes deployment for one or all services. No manifest
-re-render; operates entirely through kubectl.
+Takes a required `RELEASE_ID` positional (`sol rollback <release-id>`, found via
+`sol releases`) and restores that recorded release boundary. Does not use
+`kubectl rollout undo` — that mechanism cannot restore config, volumes, or
+ingress. Restoration comes entirely from the release record `sol up`/`sol
+deploy` write on every deploy (FEAT-067):
 
-1. Discover services from `app/`.
-2. Load `sol.toml` for each service (to read `rollout_strategy` / `progressive_delivery`).
-3. Build a `service_spec` with minimal fields (no image, no config — only name,
-   namespace, primitive, progressive_delivery).
-4. `Sol_cli_rollback.rollback_target_of_service` selects the rollback strategy:
-   - `Fn` → `No_op` (CronJobs have no rollout history)
-   - `Svc` / `Worker` with `progressive_delivery` → `Argo_rollout`
-   - `Svc` / `Worker` without → `Standard_deployment`
-5. `execute_rollback`:
-   - `Standard_deployment`: `kubectl rollout undo deployment/<name> -n <ns>`, then
-     `kubectl rollout status` to wait for the previous revision to become healthy.
-   - `Argo_rollout`: requires `kubectl-argo-rollouts` plugin;
-     `kubectl argo rollouts undo <name> -n <ns>`, then wait for status.
-   - `No_op`: skip with a message.
+1. **Resolve + load + validate** — `Sol_cli_release_store.get` fetches the
+   `sol-release-<id>` ConfigMap, decodes it, and checks it both rederives its
+   own `release_id` and belongs to the calling workspace.
+2. **Migration boundary check** (`Sol_cli_rollback.check_migration_boundary`,
+   DEC-018) — refuses if any migration file that exists now but not at deploy
+   time either declares a `Contract` disposition or fails to declare one at
+   all. Every migration file must open with a `-- sol:disposition
+   expand|contract` header (`Sol_cli_migration_disposition`); there is no
+   "assume expand" fallback and no `--force`. This runs before any
+   render/apply preparation, so a refusal leaves the cluster untouched.
+3. **Reconstruct** — `Sol_cli_rollback.service_specs_of_release` decodes the
+   record's workloads back into `service_spec`s using only the record plus
+   pure helpers (canonical inverse decoders, `k8s_name_result`,
+   `namespace_result`, `service_url`, `call_env_var`) — never the workspace,
+   `sol.toml`/`sol.yml`, the environment, or discovery. `called_by` is derived
+   from the record's own `calls` rows, not a stored forward-edge env var.
+4. **Render + apply** — `Sol_cli_deployment_render.render_spec` per spec
+   (`Kubernetes_live` secret backend — secret values, never persisted, are
+   read from the process environment same as any direct apply), then
+   `Sol_cli_manifest.apply`.
+5. **Pointer move** — `Sol_cli_release_store.move_pointer` writes only the
+   mutable `sol-release-current-<workspace>` ConfigMap; the immutable
+   per-release ConfigMap already exists and is not re-applied.
+6. **Verify** — `Sol_cli_rollback.verify` reads back the live `release` label
+   on each restored workload's pod template (Deployment/Rollout at
+   `spec.template...`, CronJob at `spec.jobTemplate.spec.template...`) and the
+   pointer's `data.release_id`, reporting workload-state and pointer mismatches
+   independently rather than reconciling them.
+
+GitOps-mode rollback (content and pointer travelling in one emitted commit) and
+`--commit`/`--scope` release disambiguation are not yet implemented — this
+command only accepts an exact, unambiguous release id against a live cluster.
 
 **State:** does **not** update `Sol_cli_deployment_state` after rollback. The
 consumer group guard on the next `sol up`/`sol deploy` will re-read the cluster

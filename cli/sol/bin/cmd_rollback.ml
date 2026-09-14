@@ -1,120 +1,119 @@
-(* sol rollback — roll back the last deployment for one or all services *)
+(* sol rollback — restore a recorded release boundary (FEAT-066, DEC-018).
+
+   Boring orchestration on top of already-proven pieces: resolve the release
+   record, refuse on a contracting migration since that release, reconstruct
+   and re-render its own workloads, apply them, move the current-release
+   pointer, then verify both independently. Never `kubectl rollout undo`,
+   which cannot restore config, volumes or ingress -- restoration comes from
+   the release record.
+
+   A refused rollback (migration boundary, a corrupt/missing record) leaves
+   the cluster untouched: every check before "apply" only reads. *)
 
 open Cmdliner
-open Sol_cli_manifest
 
 let workspace_name () = Filename.basename (Sys.getcwd ())
+let migrations_dir = "db/migrations"
 
-let run ~ctx scope =
+let die fmt =
+  Printf.ksprintf
+    (fun msg ->
+       Printf.eprintf "error: %s\n%!" msg;
+       exit 1)
+    fmt
+;;
+
+let run ~ctx release_id =
   let workspace = workspace_name () in
-  let selected =
-    match Sol_cli_workload_selection.resolve scope (discover_services ()) with
-    | Ok selected -> selected
-    | Error message ->
-      Printf.eprintf "error: %s\n" message;
-      exit 1
+  (* resolve + load + validate *)
+  let release =
+    match Sol_cli_release_store.get ~ctx ~workspace ~release_id with
+    | Ok release -> release
+    | Error msg -> die "%s" msg
   in
-  let services = selected.Sol_cli_workload_selection.services in
-  if services = []
-  then (
-    Printf.eprintf "No services found in app/ with a Dockerfile.\n";
-    exit 1);
-  Printf.printf "\nWorkspace: %s\n\n%!" workspace;
-  let errors = ref 0 in
-  List.iter
-    (fun svc ->
-       Printf.printf "[%s] %s/%s\n%!" (primitive_label svc.primitive) svc.domain svc.name;
-       let k8s_name_val =
-         match Sol_cli_deployment_plan.k8s_name_result svc.name with
-         | Ok v -> v
-         | Error err ->
-           Printf.eprintf "error: %s\n" (Sol_cli_deployment_plan.plan_error_to_string err);
-           exit 1
-       in
-       let namespace_val =
-         match Sol_cli_deployment_plan.namespace_result ~workspace ~domain:svc.domain with
-         | Ok v -> v
-         | Error err ->
-           Printf.eprintf "error: %s\n" (Sol_cli_deployment_plan.plan_error_to_string err);
-           exit 1
-       in
-       let toml = Sol_cli_toml.load (Filename.concat svc.dir "sol.toml") in
-       let primitive =
-         match svc.primitive with
-         | Svc -> Sol_cli_deployment_plan.Svc
-         | Worker -> Sol_cli_deployment_plan.Worker
-         | Fn -> Sol_cli_deployment_plan.Fn
-       in
-       let default_cpu =
-         match Sol_cli_toml.cpu_quantity_of_string "100m" with
-         | Ok v -> v
-         | Error msg -> invalid_arg msg
-       in
-       let default_memory =
-         match Sol_cli_toml.memory_quantity_of_string "128Mi" with
-         | Ok v -> v
-         | Error msg -> invalid_arg msg
-       in
-       let spec : Sol_cli_deployment_plan.service_spec =
-         { domain = svc.domain
-         ; source_name = svc.name
-         ; k8s_name = k8s_name_val
-         ; namespace = namespace_val
-         ; primitive
-         ; source_dir = svc.dir
-         ; image = ""
-         ; config = []
-         ; secrets = []
-         ; volumes = toml.Sol_cli_toml.volumes
-         ; schedule = None
-         ; replicas = 1
-         ; cpu = default_cpu
-         ; memory = default_memory
-         ; rollout_strategy = toml.Sol_cli_toml.rollout_strategy
-         ; ingress_host = None
-         ; ingress_path = None
-         ; cluster_issuer = "letsencrypt-prod"
-         ; calls = []
-         ; called_by = []
-         ; extra_labels = []
-         ; progressive_delivery = toml.Sol_cli_toml.progressive_delivery
-         }
-       in
-       let target = Sol_cli_rollback.rollback_target_of_service spec in
-       (match Sol_cli_rollback.execute_rollback ~ctx target with
-        | Ok () ->
-          (match target with
-           | Sol_cli_rollback.No_op reason ->
-             Printf.printf "  skipped %s/%s (%s)\n%!" svc.domain svc.name reason
-           | Sol_cli_rollback.Argo_rollout _ ->
-             Printf.printf "  rolled back %s/%s (Argo Rollout)\n%!" svc.domain svc.name
-           | Sol_cli_rollback.Standard_deployment _ ->
-             Printf.printf "  rolled back %s/%s\n%!" svc.domain svc.name)
-        | Error err ->
-          Printf.eprintf "  error: %s\n%!" (Sol_cli_rollback.error_to_string err);
-          incr errors);
-       Printf.printf "\n%!")
-    services;
-  if !errors = 0
-  then Printf.printf "Done. %d service(s) processed.\n" (List.length services)
+  Printf.printf
+    "Rolling back %s to release %s\n%!"
+    workspace
+    release.Sol_cli_release.release_id;
+  (* migration boundary check -- refused rollback must not touch the cluster,
+     so this runs before any render/apply preparation. *)
+  let current_migrations =
+    List.map
+      Sol_cli_plan_ids.Migration_file.to_string
+      (Sol_cli_deployment_plan.discover_migrations ())
+  in
+  (match
+     Sol_cli_rollback.check_migration_boundary
+       ~release
+       ~migrations_dir
+       ~current_migrations
+   with
+   | Error e -> die "%s" (Sol_cli_rollback.migration_check_error_to_string e)
+   | Ok () -> ());
+  (* reconstruct: the proven historical decode, no ambient input. *)
+  let specs =
+    match Sol_cli_rollback.service_specs_of_release release with
+    | Ok specs -> specs
+    | Error msg -> die "%s" msg
+  in
+  let release_id_t =
+    match Sol_cli_release_id.of_string release.Sol_cli_release.release_id with
+    | Ok id -> id
+    | Error msg -> die "%s" msg
+  in
+  (* render + apply. Kubernetes_live: a real apply to a live cluster reads
+     secret values from this process's environment, exactly as sol up/sol
+     deploy do for a direct (non-GitOps) apply -- the release record only
+     ever carries secret key names, never values. GitOps-mode rollback
+     (content and pointer travelling in one emitted commit) is not this
+     pass's concern. *)
+  (try
+     List.iter
+       (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+          match
+            Sol_cli_deployment_render.render_spec
+              ~workspace:release.Sol_cli_release.workspace
+              ?env:release.Sol_cli_release.environment
+              ~release_id:release_id_t
+              ~secret_backend:Sol_cli_manifest.Kubernetes_live
+              spec
+          with
+          | Error msg -> raise (Sol_cli_manifest.Deploy_failed msg)
+          | Ok yaml ->
+            Sol_cli_manifest.apply ~ctx yaml ~dry_run:false;
+            Printf.printf
+              "  applied %s/%s\n%!"
+              (Sol_cli_deployment_plan.namespace_to_string spec.namespace)
+              (Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name))
+       specs
+   with
+   | Sol_cli_manifest.Deploy_failed msg -> die "%s" msg);
+  (* pointer move: only after every workload applied. *)
+  (match Sol_cli_release_store.move_pointer ~ctx release with
+   | Error msg -> die "%s" msg
+   | Ok () -> ());
+  (* verify: report, never reconcile. *)
+  let report = Sol_cli_rollback.verify ~ctx ~release specs in
+  if Sol_cli_rollback.verify_ok report
+  then
+    Printf.printf
+      "Verified: workloads and pointer both name release %s.\n%!"
+      release.Sol_cli_release.release_id
   else (
-    Printf.eprintf "%d rollback(s) failed — see errors above.\n" !errors;
+    Printf.eprintf "%s\n%!" (Sol_cli_rollback.verify_report_to_string ~release report);
     exit 1)
 ;;
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
 
-let scope_arg =
+let release_id_arg =
   Arg.(
-    value
-    & opt (some string) None
+    required
+    & pos 0 (some string) None
     & info
-        [ "scope" ]
-        ~docv:"DOMAIN[/UNIT]"
-        ~doc:
-          "Roll back one domain (`payments`) or one unit (`payments/charge_svc`). Omit \
-           to roll back every service in the workspace. A name that matches nothing \
-           fails closed and says what does, before any rollout is touched.")
+        []
+        ~docv:"RELEASE_ID"
+        ~doc:"The release id to restore, e.g. r-1a2b3c4d5e6f7890.")
 ;;
 
 let cmd =
@@ -122,17 +121,17 @@ let cmd =
     (Cmd.info
        "rollback"
        ~doc:
-         "Roll back the last deployment for one or all services. Runs 'kubectl rollout \
-          undo' for each matching service and waits for the previous revision to become \
-          healthy.")
+         "Restore a recorded release boundary. Refuses on a contracting migration since \
+          that release, reconstructs and re-applies its workloads, moves the \
+          current-release pointer, then verifies both independently.")
     Term.(
-      const (fun scope target ->
+      const (fun release_id target ->
         run
           ~ctx:
             (Cmd_destination.or_exit
                (Cmd_destination.resolve ~command:"rollback" ~local:false ~target))
-          scope)
-      $ scope_arg
+          release_id)
+      $ release_id_arg
       $ Cmd_destination.target_arg)
 ;;
 
@@ -140,8 +139,7 @@ let cmd =
    literally as Sol's own cluster instead of resolved from --target. *)
 let local_cmd =
   Cmd.v
-    (Cmd.info
-       "rollback"
-       ~doc:"Roll back the most recent deployment of a workload on the local cluster")
-    Term.(const (fun scope -> run ~ctx:Cmd_destination.local scope) $ scope_arg)
+    (Cmd.info "rollback" ~doc:"Restore a recorded release boundary on the local cluster.")
+    Term.(
+      const (fun release_id -> run ~ctx:Cmd_destination.local release_id) $ release_id_arg)
 ;;
