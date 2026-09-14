@@ -387,6 +387,12 @@ jobs:
             echo "::error::FEAT-070: deployment event points at '$listed_deployment_release', workload release is '$label_release'"
             exit 1
           fi
+          # FEAT-071: a successful apply records outcome=applied.
+          listed_status=$(awk 'NR==2 {print $5}' "$GITHUB_WORKSPACE/deployments.txt")
+          if [ "$listed_status" != "applied" ]; then
+            echo "::error::FEAT-071: successful sol up recorded status '$listed_status', expected applied"
+            exit 1
+          fi
           # The record's release link is its sol.dev/release label (the JSON body
           # carries it too); `sol deployments` must have listed the record that
           # claims this release, named by its deployment id.

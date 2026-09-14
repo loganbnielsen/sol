@@ -144,29 +144,45 @@ let test_validate_rejects_corrupt_content () =
 
 (* ── reading back ────────────────────────────────────────────────────────── *)
 
-let test_parse_kubectl_list_skips_invalid_items () =
-  let item ?(name = R.configmap_name sample_record) json =
-    `Assoc
-      [ "metadata", `Assoc [ "name", `String name ]
-      ; "data", `Assoc [ "record", `String json ]
-      ]
+let item ?(name = R.configmap_name sample_record) json =
+  `Assoc
+    [ "metadata", `Assoc [ "name", `String name ]
+    ; "data", `Assoc [ "record", `String json ]
+    ]
+;;
+
+let test_parse_kubectl_list_reads_valid_items () =
+  let json =
+    `Assoc [ "items", `List [ item (Yojson.Safe.to_string (R.to_json sample_record)) ] ]
   in
+  match R.parse_kubectl_list json with
+  | Error msg -> Alcotest.fail msg
+  | Ok records -> check_int "one record" 1 (List.length records)
+;;
+
+(* FEAT-071: the store is authoritative, so a corrupt record is an error naming
+   it, never something silently dropped. *)
+let test_parse_kubectl_list_fails_closed_on_corrupt () =
   let json =
     `Assoc
       [ ( "items"
         , `List
             [ item (Yojson.Safe.to_string (R.to_json sample_record))
-            ; `Assoc []
-            ; item "not json"
             ; item
                 ~name:"sol-release-r-deadbeefdeadbeef"
                 (Yojson.Safe.to_string (R.to_json sample_record))
+            ; item "not json"
+            ; `Assoc []
             ] )
       ]
   in
   match R.parse_kubectl_list json with
-  | Error msg -> Alcotest.fail msg
-  | Ok records -> check_int "only the valid record" 1 (List.length records)
+  | Ok records ->
+    Alcotest.fail
+      (Printf.sprintf "expected an error, got %d records" (List.length records))
+  | Error msg ->
+    check_bool "names corruption" true (contains "invalid record" msg);
+    check_bool "names the record" true (contains "sol-release" msg)
 ;;
 
 let test_format_table_lists_the_id () =
@@ -307,9 +323,13 @@ let () =
         ] )
     ; ( "read"
       , [ Alcotest.test_case
-            "parse skips invalid items"
+            "reads valid items"
             `Quick
-            test_parse_kubectl_list_skips_invalid_items
+            test_parse_kubectl_list_reads_valid_items
+        ; Alcotest.test_case
+            "fails closed on corrupt records"
+            `Quick
+            test_parse_kubectl_list_fails_closed_on_corrupt
         ; Alcotest.test_case "table lists the id" `Quick test_format_table_lists_the_id
         ] )
     ; ( "of_plan"
