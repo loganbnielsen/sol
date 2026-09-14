@@ -55,65 +55,113 @@ val check_migration_boundary
   -> current_migrations:string list
   -> (unit, migration_check_error) result
 
-(** Which live Kubernetes kind carries a workload's `release` label, and
-    where in that kind's pod template it lands. Exposed (rather than kept
-    private to {!verify}'s implementation) so a test can assert this mapping
-    directly, without a cluster: it is pure and deterministic, but wrong, it
-    would make every {!verify} call report a false workload mismatch, so it
-    needs its own regression coverage independent of {!verify}'s kubectl
-    calls. *)
+(** Which live Kubernetes kind carries a workload's taxonomy labels, and where
+    in that kind's pod template they land. Exposed (rather than kept private) so
+    a test can assert this mapping directly, without a cluster: it is pure and
+    deterministic, but wrong, it would make every verification report a false
+    mismatch, so it needs its own regression coverage. *)
 type live_kind =
   | Live_deployment
   | Live_rollout
   | Live_cronjob
 
 (** [live_kind_of_service spec] — [Fn] is always [Live_cronjob] regardless of
-    [progressive_delivery] (unlike the deleted [rollback_target_of_service],
-    whose [Fn] meant "no kubectl-rollout-undo history"; a CronJob still
-    carries a `release` label worth verifying). [Svc]/[Worker] with
-    [progressive_delivery] set are [Live_rollout], otherwise
-    [Live_deployment]. *)
+    [progressive_delivery]. [Svc]/[Worker] with [progressive_delivery] set are
+    [Live_rollout], otherwise [Live_deployment]. *)
 val live_kind_of_service : Sol_cli_deployment_plan.service_spec -> live_kind
 
-(** [live_resource_and_jsonpath kind] is the [kubectl get] resource name and
-    the jsonpath expression for that kind's `release` label, mirroring where
-    {!Sol_cli_manifest_yaml}'s [render_taxonomy_labels] call sites actually
-    place it: the pod template, never the object's own top-level metadata. *)
+(** [live_resource_and_jsonpath kind] is the [kubectl get] resource name and the
+    jsonpath expression for that kind's `release` label, derived from the single
+    pod-template label path also used by {!live_workloads}, so the read side and
+    the client-side walk cannot disagree about where the label lives. *)
 val live_resource_and_jsonpath : live_kind -> string * string
 
-(** One workload whose live [release] label does not match the restored
-    release. [actual] is [""] when the label or the object itself could not
-    be read at all (never distinguished from an empty label — both mean
-    "not verified"). *)
+(** Whether a release may be rolled back directly (FEAT-066). A [Gitops]-owned
+    release's resources belong to a controller, so a direct apply + immediate
+    readback would report a transition Sol does not control. *)
+type apply_mode_check_error = Gitops_owned of { release_id : string }
+
+val apply_mode_check_error_to_string : apply_mode_check_error -> string
+
+(** [check_apply_mode ~release] refuses a {!Sol_cli_release.Gitops} release (whose
+    non-identity [apply_mode] is recorded in the release record). *)
+val check_apply_mode : release:Sol_cli_release.t -> (unit, apply_mode_check_error) result
+
+(** A workload's live identity: its kind, and the namespace and object name Sol
+    derives from the recorded domain/name. Kind matters — a Deployment and a
+    Rollout for the same service are different objects, and a release that
+    switched between them leaves one behind. *)
+type workload_identity =
+  { kind : live_kind
+  ; namespace : string
+  ; name : string
+  }
+
+(** [live_workloads ~ctx ~workspace] enumerates the live Sol-owned workloads for
+    [workspace] — every Deployment/Rollout/CronJob whose pod template carries the
+    [workspace] taxonomy label — as (identity, `release` label) pairs. Fails
+    closed: a kind that cannot be enumerated (other than an absent Rollouts CRD)
+    is an [Error], never an assumed-empty set. *)
+val live_workloads
+  :  ctx:Sol_cli_kube_destination.context
+  -> workspace:string
+  -> ((workload_identity * string) list, string) result
+
+(** [workload_rows_of_payload ~kind ~workspace payload] extracts those pairs from
+    one [kubectl get <kind> -A -o json] payload. Pure, so the wire-path label
+    walk is testable without a cluster. [workspace] is the raw workspace name;
+    the `workspace` label is matched through
+    {!Sol_cli_kubernetes_name.sanitize_label_value}, the same transform the
+    renderer applies. *)
+val workload_rows_of_payload
+  :  kind:live_kind
+  -> workspace:string
+  -> Yojson.Safe.t
+  -> (workload_identity * string) list
+
+(** One workload whose live `release` label does not match the restored release. *)
 type workload_mismatch =
-  { namespace : string
+  { kind : live_kind
+  ; namespace : string
   ; name : string
   ; actual : string
   }
 
-(** The result of the last enforcement-order step: reading back live cluster
-    state after [apply] and the pointer move, so the two failure modes stay
-    independent — a workload mismatch with a correct pointer is a different
-    operational fact than a pointer mismatch with correct workloads. *)
-type verify_report =
-  { workload_mismatches : workload_mismatch list
-  ; pointer_actual : string
+(** The complete live-vs-recorded workload comparison: present-but-wrong labels,
+    expected-but-absent objects, and live objects the restored release does not
+    contain. Each mode is reported independently and never reconciled. *)
+type workload_report =
+  { mismatched : workload_mismatch list
+  ; missing : workload_identity list
+  ; unexpected : (workload_identity * string) list
+  }
+
+val workload_report_ok : workload_report -> bool
+
+(** [verify_workloads ~release ~expected ~live] is the pure comparison of the
+    restored release's expected workloads against the enumerated live set. *)
+val verify_workloads
+  :  release:Sol_cli_release.t
+  -> expected:Sol_cli_deployment_plan.service_spec list
+  -> live:(workload_identity * string) list
+  -> workload_report
+
+val workload_report_to_string : release:Sol_cli_release.t -> workload_report -> string
+
+(** The current-release pointer read back after the workload set is verified. *)
+type pointer_report =
+  { pointer_actual : string
   ; pointer_ok : bool
   }
 
-val verify_ok : verify_report -> bool
-
-(** [verify ~ctx ~release specs] reads back, for every [spec], the live
-    `release` label Sol renders into that workload's pod template (a
-    Deployment or Rollout's [spec.template...], a CronJob's
-    [spec.jobTemplate.spec.template...]) and compares it to
-    [release.release_id]; and reads back the current-release pointer
-    ConfigMap's [data.release_id]. Never re-applies or "fixes" a mismatch —
-    only reports it. *)
-val verify
+(** [verify_pointer ~ctx ~release] reads the pointer ConfigMap's [data.release_id]
+    and compares it to [release]; it never re-applies or "fixes" a mismatch.
+    Reported separately from the workload set so the two failure modes stay
+    independent. *)
+val verify_pointer
   :  ctx:Sol_cli_kube_destination.context
   -> release:Sol_cli_release.t
-  -> Sol_cli_deployment_plan.service_spec list
-  -> verify_report
+  -> pointer_report
 
-val verify_report_to_string : release:Sol_cli_release.t -> verify_report -> string
+val pointer_report_ok : pointer_report -> bool
+val pointer_report_to_string : release:Sol_cli_release.t -> pointer_report -> string

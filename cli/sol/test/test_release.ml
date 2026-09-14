@@ -53,6 +53,7 @@ let sample_record : R.t =
     ; environment = Some "dev"
     ; workloads = [ sample_workload ]
     ; migrations = [ "0001_notifications.sql" ]
+    ; apply_mode = R.Direct
     }
   in
   { placeholder with
@@ -102,6 +103,10 @@ let test_configmap_object () =
     sample_record.release_id
     (member "release_id" data |> to_string);
   let record = member "record" data |> to_string in
+  check_string
+    "digest is the record's own digest"
+    (R.record_digest sample_record)
+    (member "record_digest" data |> to_string);
   check_bool "workspace in body" true (contains "myworkspace" record);
   check_bool "workload in body" true (contains "charge_svc" record);
   check_bool "secret reference in body" true (contains "db-secret" record);
@@ -155,10 +160,15 @@ let test_validate_rejects_corrupt_content () =
 
 (* ── reading back ────────────────────────────────────────────────────────── *)
 
-let item ?(name = R.configmap_name sample_record) json =
+let item ?(name = R.configmap_name sample_record) ?digest json =
+  let digest =
+    match digest with
+    | Some d -> d
+    | None -> Digest.to_hex (Digest.string json)
+  in
   `Assoc
     [ "metadata", `Assoc [ "name", `String name ]
-    ; "data", `Assoc [ "record", `String json ]
+    ; "data", `Assoc [ "record", `String json; "record_digest", `String digest ]
     ]
 ;;
 
@@ -194,6 +204,95 @@ let test_parse_kubectl_list_fails_closed_on_corrupt () =
   | Error msg ->
     check_bool "names corruption" true (contains "invalid record" msg);
     check_bool "names the record" true (contains "sol-release" msg)
+;;
+
+(* FEAT-066: the full-record digest makes the *complete* body -- including the
+   non-identity [migrations]/[apply_mode] fields [release_id] cannot cover --
+   tamper-evident. A body altered after it was written (e.g. by editing the
+   ConfigMap) no longer matches the stored digest. *)
+let test_of_kubectl_item_accepts_canonical_record () =
+  match R.of_kubectl_item (item (R.record_json_string sample_record)) with
+  | Error msg -> Alcotest.fail msg
+  | Ok r -> check_string "round-trips the id" sample_record.release_id r.release_id
+;;
+
+let test_of_kubectl_item_rejects_missing_digest () =
+  let no_digest =
+    `Assoc
+      [ "metadata", `Assoc [ "name", `String (R.configmap_name sample_record) ]
+      ; "data", `Assoc [ "record", `String (R.record_json_string sample_record) ]
+      ]
+  in
+  match R.of_kubectl_item no_digest with
+  | Ok _ -> Alcotest.fail "expected a missing digest to fail closed"
+  | Error msg ->
+    check_bool "names the format problem" true (contains "missing integrity digest" msg)
+;;
+
+let test_of_kubectl_item_rejects_tampered_body () =
+  let tampered = { sample_record with migrations = [ "9999_evil.sql" ] } in
+  let record_string = R.record_json_string tampered in
+  (* The stored digest is the *original* record's, so the altered body's digest
+     no longer matches. *)
+  match
+    R.of_kubectl_item (item ~digest:(R.record_digest sample_record) record_string)
+  with
+  | Ok _ -> Alcotest.fail "expected a tampered body to fail closed"
+  | Error msg ->
+    check_bool "reports integrity failure" true (contains "integrity validation" msg)
+;;
+
+(* The precise finding: a change to [migrations] does not move [release_id], so
+   [validate] alone would accept it. The digest is what catches it -- the
+   safety-relevant field is not the one the identity protects. *)
+let test_migrations_tampering_is_caught_by_digest_not_validate () =
+  let tampered = { sample_record with migrations = [ "9999_evil.sql" ] } in
+  (match R.validate ~name:(R.configmap_name tampered) tampered with
+   | Ok () -> ()
+   | Error msg ->
+     Alcotest.fail ("a migrations-only change should still rederive the id: " ^ msg));
+  match
+    R.of_kubectl_item
+      (item ~digest:(R.record_digest sample_record) (R.record_json_string tampered))
+  with
+  | Ok _ -> Alcotest.fail "expected the digest to catch a migrations-only change"
+  | Error msg ->
+    check_bool "reports integrity failure" true (contains "integrity validation" msg)
+;;
+
+(* FEAT-066: apply_mode is required historical metadata; a record that omits it
+   or carries an unknown value fails closed rather than defaulting to Direct. *)
+let test_apply_mode_round_trips () =
+  match R.of_json (R.to_json { sample_record with apply_mode = R.Gitops }) with
+  | Error msg -> Alcotest.fail msg
+  | Ok r -> check_bool "gitops preserved" true (r.apply_mode = R.Gitops)
+;;
+
+let without_field key json =
+  match json with
+  | `Assoc kvs -> `Assoc (List.filter (fun (k, _) -> k <> key) kvs)
+  | other -> other
+;;
+
+let test_apply_mode_missing_fails_closed () =
+  match R.of_json (without_field "apply_mode" (R.to_json sample_record)) with
+  | Ok _ -> Alcotest.fail "expected a missing apply_mode to fail closed"
+  | Error msg -> check_bool "names the field" true (contains "apply_mode" msg)
+;;
+
+let test_apply_mode_unknown_fails_closed () =
+  let json =
+    match R.to_json sample_record with
+    | `Assoc kvs ->
+      `Assoc
+        (List.map
+           (fun (k, v) -> if k = "apply_mode" then k, `String "sideways" else k, v)
+           kvs)
+    | other -> other
+  in
+  match R.of_json json with
+  | Ok _ -> Alcotest.fail "expected an unknown apply_mode to fail closed"
+  | Error msg -> check_bool "names the field" true (contains "apply_mode" msg)
 ;;
 
 let test_format_table_lists_the_id () =
@@ -268,7 +367,7 @@ let with_plan ~requested_scope f =
 
 let test_of_plan_rederives_the_plan_identity () =
   with_plan ~requested_scope:"payments" (fun plan ->
-    let r = R.of_plan plan in
+    let r = R.of_plan ~apply_mode:R.Direct plan in
     check_string
       "record id is the plan id"
       (Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id)
@@ -288,8 +387,8 @@ let test_of_plan_rederives_the_plan_identity () =
 let test_same_content_same_record () =
   with_plan ~requested_scope:"payments" (fun plan_a ->
     with_plan ~requested_scope:"workspace" (fun plan_b ->
-      let a = R.of_plan plan_a
-      and b = R.of_plan plan_b in
+      let a = R.of_plan ~apply_mode:R.Direct plan_a
+      and b = R.of_plan ~apply_mode:R.Direct plan_b in
       check_string "same id" a.release_id b.release_id;
       check_string "same record bytes" (R.to_configmap_json a) (R.to_configmap_json b)))
 ;;
@@ -317,6 +416,15 @@ let () =
       , [ Alcotest.test_case "json round trip" `Quick test_json_round_trip
         ; Alcotest.test_case "configmap object" `Quick test_configmap_object
         ; Alcotest.test_case "pointer is minimal" `Quick test_current_pointer_is_minimal
+        ; Alcotest.test_case "apply_mode round-trips" `Quick test_apply_mode_round_trips
+        ; Alcotest.test_case
+            "missing apply_mode fails closed"
+            `Quick
+            test_apply_mode_missing_fails_closed
+        ; Alcotest.test_case
+            "unknown apply_mode fails closed"
+            `Quick
+            test_apply_mode_unknown_fails_closed
         ] )
     ; ( "validate"
       , [ Alcotest.test_case
@@ -341,6 +449,22 @@ let () =
             "fails closed on corrupt records"
             `Quick
             test_parse_kubectl_list_fails_closed_on_corrupt
+        ; Alcotest.test_case
+            "accepts a canonical item"
+            `Quick
+            test_of_kubectl_item_accepts_canonical_record
+        ; Alcotest.test_case
+            "rejects a missing integrity digest"
+            `Quick
+            test_of_kubectl_item_rejects_missing_digest
+        ; Alcotest.test_case
+            "rejects a tampered body"
+            `Quick
+            test_of_kubectl_item_rejects_tampered_body
+        ; Alcotest.test_case
+            "catches migrations tampering that validate misses"
+            `Quick
+            test_migrations_tampering_is_caught_by_digest_not_validate
         ; Alcotest.test_case "table lists the id" `Quick test_format_table_lists_the_id
         ] )
     ; ( "of_plan"

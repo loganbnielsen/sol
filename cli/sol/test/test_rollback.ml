@@ -186,7 +186,7 @@ let gate_plan : Sol_cli_deployment_plan.t =
   }
 ;;
 
-let gate_release = Sol_cli_release.of_plan gate_plan
+let gate_release = Sol_cli_release.of_plan ~apply_mode:Sol_cli_release.Direct gate_plan
 
 let reconstruct_ok () =
   match Sol_cli_rollback.service_specs_of_release gate_release with
@@ -355,6 +355,7 @@ let bad_workload_release update : Sol_cli_release.t =
   ; environment = Some "prod"
   ; workloads = [ update (Sol_cli_deployment_plan.release_workload_of_spec ledger_spec) ]
   ; migrations = []
+  ; apply_mode = Sol_cli_release.Direct
   }
 ;;
 
@@ -414,6 +415,7 @@ let migration_release ~migrations : Sol_cli_release.t =
   ; environment = None
   ; workloads = []
   ; migrations
+  ; apply_mode = Sol_cli_release.Direct
   }
 ;;
 
@@ -599,12 +601,9 @@ let test_live_resource_and_jsonpath_table () =
     ]
 ;;
 
-(* ── verify_report ─────────────────────────────────────────────────────────
-   verify itself shells out to kubectl (untestable without a cluster, same as
-   Sol_cli_release_store.get/list/move_pointer) -- these cover the pure
-   report shape and its rendering; live_kind_of_service/
-   live_resource_and_jsonpath above are the pure parts of verify's logic and
-   have their own direct table above, not folded into "untestable". *)
+(* ── apply_mode refusal ─────────────────────────────────────────────────────
+   A GitOps/controller-owned release must never be rolled back by direct apply,
+   so [check_apply_mode] refuses it before anything is touched. *)
 
 let verify_release : Sol_cli_release.t =
   { release_id = "r-2222222222222222"
@@ -612,65 +611,332 @@ let verify_release : Sol_cli_release.t =
   ; environment = None
   ; workloads = []
   ; migrations = []
+  ; apply_mode = Sol_cli_release.Direct
   }
 ;;
 
-let test_verify_ok_when_everything_matches () =
-  let report : Sol_cli_rollback.verify_report =
-    { workload_mismatches = []; pointer_actual = "r-2222222222222222"; pointer_ok = true }
-  in
-  Alcotest.(check bool) "verify_ok" true (Sol_cli_rollback.verify_ok report)
+let test_check_apply_mode_allows_direct () =
+  match Sol_cli_rollback.check_apply_mode ~release:verify_release with
+  | Ok () -> ()
+  | Error e -> Alcotest.fail (Sol_cli_rollback.apply_mode_check_error_to_string e)
 ;;
 
-let test_verify_not_ok_on_workload_mismatch () =
-  let report : Sol_cli_rollback.verify_report =
-    { workload_mismatches =
-        [ { Sol_cli_rollback.namespace = "myapp-payments"
-          ; name = "billing-svc"
-          ; actual = "r-9999999999999999"
-          }
-        ]
-    ; pointer_actual = "r-2222222222222222"
-    ; pointer_ok = true
-    }
+let test_check_apply_mode_refuses_gitops () =
+  let release = { verify_release with apply_mode = Sol_cli_release.Gitops } in
+  match Sol_cli_rollback.check_apply_mode ~release with
+  | Ok () -> Alcotest.fail "expected a GitOps-owned release to be refused"
+  | Error e ->
+    let msg = Sol_cli_rollback.apply_mode_check_error_to_string e in
+    assert (contains (Str.regexp "GitOps") msg);
+    assert (contains (Str.regexp release.release_id) msg)
+;;
+
+(* ── workload set verification ──────────────────────────────────────────────
+   Pure comparison of the restored release's expected workloads against the
+   live set, plus the wire-path extraction of a listed object's pod-template
+   labels. No cluster required. *)
+
+let id kind namespace name : Sol_cli_rollback.workload_identity =
+  { kind; namespace; name }
+;;
+
+let expected_specs = [ ledger_spec; billing_spec ]
+
+(* ledger_spec is a Deployment at myapp-payments/ledger-svc; billing_spec is a
+   Rollout (canary) at myapp-payments/billing-svc. *)
+let ledger_id = id Sol_cli_rollback.Live_deployment "myapp-payments" "ledger-svc"
+let billing_id = id Sol_cli_rollback.Live_rollout "myapp-payments" "billing-svc"
+
+let test_verify_workloads_ok_when_set_matches () =
+  let live =
+    [ ledger_id, verify_release.release_id; billing_id, verify_release.release_id ]
   in
-  Alcotest.(check bool) "verify_ok" false (Sol_cli_rollback.verify_ok report);
-  let msg = Sol_cli_rollback.verify_report_to_string ~release:verify_release report in
+  let report =
+    Sol_cli_rollback.verify_workloads
+      ~release:verify_release
+      ~expected:expected_specs
+      ~live
+  in
+  Alcotest.(check bool)
+    "workload set matches"
+    true
+    (Sol_cli_rollback.workload_report_ok report)
+;;
+
+(* The finding: a live workload the restored release does not contain (a
+   service added between releases, left running) must be reported, not ignored. *)
+let test_verify_workloads_reports_unexpected () =
+  let stale_id = id Sol_cli_rollback.Live_deployment "myapp-payments" "fraud-svc" in
+  let live =
+    [ ledger_id, verify_release.release_id
+    ; billing_id, verify_release.release_id
+    ; stale_id, "r-9999999999999999"
+    ]
+  in
+  let report =
+    Sol_cli_rollback.verify_workloads
+      ~release:verify_release
+      ~expected:expected_specs
+      ~live
+  in
+  Alcotest.(check bool) "not ok" false (Sol_cli_rollback.workload_report_ok report);
+  let msg = Sol_cli_rollback.workload_report_to_string ~release:verify_release report in
+  assert (contains (Str.regexp "unexpected workload") msg);
+  assert (contains (Str.regexp "fraud-svc") msg)
+;;
+
+let test_verify_workloads_reports_missing () =
+  let live = [ billing_id, verify_release.release_id ] in
+  let report =
+    Sol_cli_rollback.verify_workloads
+      ~release:verify_release
+      ~expected:expected_specs
+      ~live
+  in
+  Alcotest.(check bool) "not ok" false (Sol_cli_rollback.workload_report_ok report);
+  let msg = Sol_cli_rollback.workload_report_to_string ~release:verify_release report in
+  assert (contains (Str.regexp "workload missing") msg);
+  assert (contains (Str.regexp "ledger-svc") msg)
+;;
+
+let test_verify_workloads_reports_label_mismatch () =
+  let live = [ ledger_id, "r-9999999999999999"; billing_id, verify_release.release_id ] in
+  let report =
+    Sol_cli_rollback.verify_workloads
+      ~release:verify_release
+      ~expected:expected_specs
+      ~live
+  in
+  Alcotest.(check bool) "not ok" false (Sol_cli_rollback.workload_report_ok report);
+  let msg = Sol_cli_rollback.workload_report_to_string ~release:verify_release report in
   assert (contains (Str.regexp "workload state mismatch") msg);
-  assert (contains (Str.regexp "myapp-payments/billing-svc") msg);
-  assert (contains (Str.regexp "r-9999999999999999") msg);
-  assert (not (contains (Str.regexp "pointer mismatch") msg))
+  assert (contains (Str.regexp "r-9999999999999999") msg)
 ;;
 
-let test_verify_not_ok_on_pointer_mismatch () =
-  let report : Sol_cli_rollback.verify_report =
-    { workload_mismatches = []
-    ; pointer_actual = "r-8888888888888888"
-    ; pointer_ok = false
-    }
+(* A release that switched a service from Deployment to Rollout keeps the
+   namespace/name; the old object is a different identity and must be reported,
+   not matched against the Rollout's label. *)
+let test_verify_workloads_distinguishes_kind () =
+  let ledger_as_rollout =
+    id Sol_cli_rollback.Live_rollout "myapp-payments" "ledger-svc"
   in
-  Alcotest.(check bool) "verify_ok" false (Sol_cli_rollback.verify_ok report);
-  let msg = Sol_cli_rollback.verify_report_to_string ~release:verify_release report in
-  assert (contains (Str.regexp "pointer mismatch") msg);
+  let live =
+    [ ledger_as_rollout, verify_release.release_id
+    ; billing_id, verify_release.release_id
+    ]
+  in
+  let report =
+    Sol_cli_rollback.verify_workloads
+      ~release:verify_release
+      ~expected:expected_specs
+      ~live
+  in
+  Alcotest.(check bool) "not ok" false (Sol_cli_rollback.workload_report_ok report);
+  let msg = Sol_cli_rollback.workload_report_to_string ~release:verify_release report in
+  assert (contains (Str.regexp "workload missing") msg);
+  assert (contains (Str.regexp "unexpected workload") msg)
+;;
+
+(* The wire-path half: the pod-template label path [live_workloads] walks must
+   agree with where the renderer puts the taxonomy labels. Two items, one
+   workspace-matching and one not, plus one with no labels at all. *)
+let deployment_payload =
+  `Assoc
+    [ ( "items"
+      , `List
+          [ `Assoc
+              [ ( "metadata"
+                , `Assoc
+                    [ "namespace", `String "myapp-payments"
+                    ; "name", `String "ledger-svc"
+                    ] )
+              ; ( "spec"
+                , `Assoc
+                    [ ( "template"
+                      , `Assoc
+                          [ ( "metadata"
+                            , `Assoc
+                                [ ( "labels"
+                                  , `Assoc
+                                      [ "workspace", `String "myapp"
+                                      ; "release", `String "r-1"
+                                      ] )
+                                ] )
+                          ] )
+                    ] )
+              ]
+          ; `Assoc
+              [ ( "metadata"
+                , `Assoc
+                    [ "namespace", `String "myapp-payments"; "name", `String "other-svc" ]
+                )
+              ; ( "spec"
+                , `Assoc
+                    [ ( "template"
+                      , `Assoc
+                          [ ( "metadata"
+                            , `Assoc
+                                [ ( "labels"
+                                  , `Assoc
+                                      [ "workspace", `String "someoneelse"
+                                      ; "release", `String "r-9"
+                                      ] )
+                                ] )
+                          ] )
+                    ] )
+              ]
+          ; `Assoc
+              [ ( "metadata"
+                , `Assoc [ "namespace", `String "kube-system"; "name", `String "coredns" ]
+                )
+              ]
+          ] )
+    ]
+;;
+
+let test_workload_rows_of_payload_deployment () =
+  let rows =
+    Sol_cli_rollback.workload_rows_of_payload
+      ~kind:Sol_cli_rollback.Live_deployment
+      ~workspace:"myapp"
+      deployment_payload
+  in
+  Alcotest.(check int) "only the workspace-matching item" 1 (List.length rows);
+  let identity, release = List.hd rows in
+  Alcotest.(check bool) "kind" true (identity.kind = Sol_cli_rollback.Live_deployment);
+  Alcotest.(check string) "namespace" "myapp-payments" identity.namespace;
+  Alcotest.(check string) "name" "ledger-svc" identity.name;
+  Alcotest.(check string) "release label" "r-1" release
+;;
+
+(* A CronJob puts its pod template one level deeper; querying the Deployment
+   payload as a CronJob must therefore find nothing -- the path is load-bearing. *)
+let test_workload_rows_of_payload_cronjob_path () =
+  let as_deployment =
+    Sol_cli_rollback.workload_rows_of_payload
+      ~kind:Sol_cli_rollback.Live_cronjob
+      ~workspace:"myapp"
+      deployment_payload
+  in
+  Alcotest.(check int)
+    "deployment payload has no cronjob pod template"
+    0
+    (List.length as_deployment)
+;;
+
+(* The renderer writes `workspace` through sanitize_label_value, so the raw
+   workspace passed to the lister must be matched the same way -- otherwise a
+   mixed-case workspace matches nothing and every workload looks missing. *)
+let test_workload_rows_of_payload_sanitizes_workspace () =
+  let payload =
+    `Assoc
+      [ ( "items"
+        , `List
+            [ `Assoc
+                [ ( "metadata"
+                  , `Assoc
+                      [ "namespace", `String "myapp-payments"
+                      ; "name", `String "ledger-svc"
+                      ] )
+                ; ( "spec"
+                  , `Assoc
+                      [ ( "template"
+                        , `Assoc
+                            [ ( "metadata"
+                              , `Assoc
+                                  [ ( "labels"
+                                    , `Assoc
+                                        [ "workspace", `String "my-app"
+                                        ; "release", `String "r-1"
+                                        ] )
+                                  ] )
+                            ] )
+                      ] )
+                ]
+            ] )
+      ]
+  in
+  let rows =
+    Sol_cli_rollback.workload_rows_of_payload
+      ~kind:Sol_cli_rollback.Live_deployment
+      ~workspace:"My_App"
+      payload
+  in
+  Alcotest.(check int) "matches the sanitized workspace label" 1 (List.length rows)
+;;
+
+let test_workload_rows_of_payload_cronjob () =
+  let payload =
+    `Assoc
+      [ ( "items"
+        , `List
+            [ `Assoc
+                [ ( "metadata"
+                  , `Assoc
+                      [ "namespace", `String "myapp-billing"
+                      ; "name", `String "invoice-fn"
+                      ] )
+                ; ( "spec"
+                  , `Assoc
+                      [ ( "jobTemplate"
+                        , `Assoc
+                            [ ( "spec"
+                              , `Assoc
+                                  [ ( "template"
+                                    , `Assoc
+                                        [ ( "metadata"
+                                          , `Assoc
+                                              [ ( "labels"
+                                                , `Assoc
+                                                    [ "workspace", `String "myapp"
+                                                    ; "release", `String "r-2"
+                                                    ] )
+                                              ] )
+                                        ] )
+                                  ] )
+                            ] )
+                      ] )
+                ]
+            ] )
+      ]
+  in
+  let rows =
+    Sol_cli_rollback.workload_rows_of_payload
+      ~kind:Sol_cli_rollback.Live_cronjob
+      ~workspace:"myapp"
+      payload
+  in
+  Alcotest.(check int) "one cronjob row" 1 (List.length rows);
+  let identity, release = List.hd rows in
+  Alcotest.(check string) "name" "invoice-fn" identity.name;
+  Alcotest.(check string) "release label" "r-2" release
+;;
+
+(* ── pointer report ───────────────────────────────────────────────────────── *)
+
+let test_pointer_report_ok () =
+  Alcotest.(check bool)
+    "ok"
+    true
+    (Sol_cli_rollback.pointer_report_ok
+       { pointer_actual = verify_release.release_id; pointer_ok = true });
+  Alcotest.(check bool)
+    "not ok"
+    false
+    (Sol_cli_rollback.pointer_report_ok { pointer_actual = "r-x"; pointer_ok = false })
+;;
+
+(* The message must name the ConfigMap as it actually is: the pointer name goes
+   through the name sanitizer, so a raw workspace in the message is a bug. *)
+let test_pointer_report_to_string_uses_canonical_name () =
+  let report = { Sol_cli_rollback.pointer_actual = ""; pointer_ok = false } in
+  let msg = Sol_cli_rollback.pointer_report_to_string ~release:verify_release report in
   assert (contains (Str.regexp "sol-release-current-myapp") msg);
-  assert (contains (Str.regexp "r-8888888888888888") msg);
-  assert (not (contains (Str.regexp "workload state mismatch") msg))
-;;
-
-let test_verify_reports_missing_label_as_none () =
-  let report : Sol_cli_rollback.verify_report =
-    { workload_mismatches =
-        [ { Sol_cli_rollback.namespace = "myapp-payments"
-          ; name = "billing-svc"
-          ; actual = ""
-          }
-        ]
-    ; pointer_actual = "r-2222222222222222"
-    ; pointer_ok = true
-    }
-  in
-  let msg = Sol_cli_rollback.verify_report_to_string ~release:verify_release report in
-  assert (contains (Str.regexp "<none>") msg)
+  assert (contains (Str.regexp "<none>") msg);
+  let release = { verify_release with workspace = "CI_Smoke" } in
+  let msg = Sol_cli_rollback.pointer_report_to_string ~release report in
+  assert (contains (Str.regexp "sol-release-current-ci-smoke") msg);
+  assert (not (contains (Str.regexp_string "CI_Smoke") msg))
 ;;
 
 let () =
@@ -724,23 +990,54 @@ let () =
             `Quick
             test_live_resource_and_jsonpath_table
         ] )
-    ; ( "verify_report"
+    ; ( "apply_mode_refusal"
+      , [ Alcotest.test_case "allows Direct" `Quick test_check_apply_mode_allows_direct
+        ; Alcotest.test_case "refuses Gitops" `Quick test_check_apply_mode_refuses_gitops
+        ] )
+    ; ( "workload_set_verification"
       , [ Alcotest.test_case
-            "ok when everything matches"
+            "ok when the set matches"
             `Quick
-            test_verify_ok_when_everything_matches
+            test_verify_workloads_ok_when_set_matches
         ; Alcotest.test_case
-            "not ok on workload mismatch"
+            "reports an unexpected workload"
             `Quick
-            test_verify_not_ok_on_workload_mismatch
+            test_verify_workloads_reports_unexpected
         ; Alcotest.test_case
-            "not ok on pointer mismatch"
+            "reports a missing workload"
             `Quick
-            test_verify_not_ok_on_pointer_mismatch
+            test_verify_workloads_reports_missing
         ; Alcotest.test_case
-            "missing label reported as <none>"
+            "reports a label mismatch"
             `Quick
-            test_verify_reports_missing_label_as_none
+            test_verify_workloads_reports_label_mismatch
+        ; Alcotest.test_case
+            "distinguishes Deployment from Rollout"
+            `Quick
+            test_verify_workloads_distinguishes_kind
+        ; Alcotest.test_case
+            "wire path: deployment pod template"
+            `Quick
+            test_workload_rows_of_payload_deployment
+        ; Alcotest.test_case
+            "wire path: cronjob pod template"
+            `Quick
+            test_workload_rows_of_payload_cronjob
+        ; Alcotest.test_case
+            "wire path: cronjob path is load-bearing"
+            `Quick
+            test_workload_rows_of_payload_cronjob_path
+        ; Alcotest.test_case
+            "wire path: workspace label is sanitized"
+            `Quick
+            test_workload_rows_of_payload_sanitizes_workspace
+        ] )
+    ; ( "pointer_report"
+      , [ Alcotest.test_case "ok flag" `Quick test_pointer_report_ok
+        ; Alcotest.test_case
+            "names the canonical pointer ConfigMap"
+            `Quick
+            test_pointer_report_to_string_uses_canonical_name
         ] )
     ]
 ;;

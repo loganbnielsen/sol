@@ -301,6 +301,32 @@ let check_migration_boundary
   go new_migrations
 ;;
 
+(* FEAT-066 finding: a GitOps-emitted release's resources are owned by a
+   controller, not Sol. Direct-applying them and reading the labels back
+   immediately would report a transition Sol does not actually control -- the
+   controller can revert it right after the readback -- so Sol must refuse
+   outright rather than produce that false success. A controller-mediated
+   rollback is a separate, undesigned path. *)
+type apply_mode_check_error = Gitops_owned of { release_id : string }
+
+let apply_mode_check_error_to_string = function
+  | Gitops_owned { release_id } ->
+    Printf.sprintf
+      "cannot roll back to release %s: it was applied as a GitOps/controller-owned \
+       release, so Sol does not own the target resources. A direct apply + immediate \
+       readback would not establish a stable transition. Roll it back through the GitOps \
+       pipeline instead."
+      release_id
+;;
+
+let check_apply_mode ~(release : Sol_cli_release.t)
+  : (unit, apply_mode_check_error) result
+  =
+  match release.apply_mode with
+  | Sol_cli_release.Direct -> Ok ()
+  | Sol_cli_release.Gitops -> Error (Gitops_owned { release_id = release.release_id })
+;;
+
 (* FEAT-066: verification, the last step of the enforcement order. It reads
    live cluster state on purpose -- verification is exactly the step that
    checks whether the mutation just performed actually landed, which the
@@ -317,13 +343,21 @@ type live_kind =
   | Live_cronjob
 
 (* Mirrors sol_cli_manifest_yaml.ml's render_taxonomy_labels call sites: the
-   `release` label always lands in the pod template, never the object's own
-   top-level metadata, so each kind needs its own jsonpath into that
-   template. *)
-let live_resource_and_jsonpath = function
-  | Live_deployment -> "deployment", "{.spec.template.metadata.labels.release}"
-  | Live_rollout -> "rollout", "{.spec.template.metadata.labels.release}"
-  | Live_cronjob -> "cronjob", "{.spec.jobTemplate.spec.template.metadata.labels.release}"
+   taxonomy labels -- `workspace`, and the `release` label -- always land in the
+   pod template, never the object's own top-level metadata. This is the single
+   source for that path, used both to build a jsonpath for one label and to walk
+   a listed object's labels client-side, so a renderer change has one place to
+   break instead of two. *)
+let live_kind_path = function
+  | Live_deployment -> "deployment", [ "spec"; "template"; "metadata"; "labels" ]
+  | Live_rollout -> "rollout", [ "spec"; "template"; "metadata"; "labels" ]
+  | Live_cronjob ->
+    "cronjob", [ "spec"; "jobTemplate"; "spec"; "template"; "metadata"; "labels" ]
+;;
+
+let live_resource_and_jsonpath kind =
+  let resource, path = live_kind_path kind in
+  resource, "{." ^ String.concat "." path ^ ".release}"
 ;;
 
 (* Deliberately not rollback_target_of_service: that function's No_op for [Fn]
@@ -346,80 +380,276 @@ let read_jsonpath ~ctx ~resource ~name ~namespace ~jsonpath =
   | _ -> ""
 ;;
 
-type workload_mismatch =
-  { namespace : string
+(* ── live workload set ─────────────────────────────────────────────────────
+   Verification compares the *set* of live Sol-owned workloads against the
+   restored release's set, not only the workloads the release happens to
+   mention. A release that added or removed a workload would otherwise leave the
+   extra object running while the pointer claimed the restored release and
+   verification reported clean -- exactly the inconsistent state the ticket
+   requires be detectable. "Sol-owned" means "carries this workspace's taxonomy
+   `workspace` label in its pod template", which every Sol-rendered workload
+   does. No pruning: rollback reports the mismatch and refuses to claim success;
+   deleting absent workloads is a separate reconciliation capability. *)
+
+type workload_identity =
+  { kind : live_kind
+  ; namespace : string
   ; name : string
-  ; actual : string (** ["" ] when the label or object could not be read at all. *)
   }
 
-type verify_report =
-  { workload_mismatches : workload_mismatch list
-  ; pointer_actual : string
-  ; pointer_ok : bool
-  }
+(* Kind is part of the identity, not decoration: a release that switched a
+   service from Deployment to Rollout keeps the same namespace/name, and the old
+   Deployment is not pruned -- so an identity of (namespace, name) alone would
+   treat the stale object as "expected" and miss it. *)
+let same_identity a b =
+  a.kind = b.kind && String.equal a.namespace b.namespace && String.equal a.name b.name
+;;
 
-let verify_ok (r : verify_report) = r.workload_mismatches = [] && r.pointer_ok
-
-let verify
-      ~ctx
-      ~(release : Sol_cli_release.t)
-      (specs : Sol_cli_deployment_plan.service_spec list)
-  : verify_report
-  =
-  let workload_mismatches =
-    List.filter_map
-      (fun (spec : Sol_cli_deployment_plan.service_spec) ->
-         let namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace in
-         let name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name in
-         let resource, jsonpath =
-           live_resource_and_jsonpath (live_kind_of_service spec)
-         in
-         let actual = read_jsonpath ~ctx ~resource ~name ~namespace ~jsonpath in
-         if String.equal actual release.Sol_cli_release.release_id
-         then None
-         else Some { namespace; name; actual })
-      specs
-  in
-  let pointer_actual =
-    read_jsonpath
-      ~ctx
-      ~resource:"configmap"
-      ~name:
-        (Sol_cli_release.current_configmap_name
-           ~workspace:release.Sol_cli_release.workspace)
-      ~namespace:"default"
-      ~jsonpath:"{.data.release_id}"
-  in
-  { workload_mismatches
-  ; pointer_actual
-  ; pointer_ok = String.equal pointer_actual release.Sol_cli_release.release_id
+let identity_of_spec (spec : Sol_cli_deployment_plan.service_spec) : workload_identity =
+  { kind = live_kind_of_service spec
+  ; namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace
+  ; name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name
   }
 ;;
 
-let display_actual actual = if String.equal actual "" then "<none>" else actual
+let json_member key = function
+  | `Assoc kvs ->
+    (match List.assoc_opt key kvs with
+     | Some v -> v
+     | None -> `Null)
+  | _ -> `Null
+;;
 
-let verify_report_to_string ~(release : Sol_cli_release.t) (r : verify_report) : string =
-  let workload_lines =
+let json_at path json = List.fold_left (fun acc key -> json_member key acc) json path
+
+let string_at path json =
+  match json_at path json with
+  | `String s -> s
+  | _ -> ""
+;;
+
+(* The pod template's labels for a listed object, as an assoc list; [] when the
+   object has none (never a crash). *)
+let pod_template_labels kind item =
+  match json_at (snd (live_kind_path kind)) item with
+  | `Assoc kvs ->
+    List.filter_map
+      (fun (k, v) ->
+         match v with
+         | `String s -> Some (k, s)
+         | _ -> None)
+      kvs
+  | _ -> []
+;;
+
+(* A pure extraction of the (identity, release-label) pairs a
+   [kubectl get <kind> -A -o json] payload contributes for [workspace] -- the
+   wire-path half of {!live_workloads}, kept separate so it is testable without
+   a cluster. [workspace] is the *raw* workspace name; the label the renderer
+   writes goes through {!Sol_cli_kubernetes_name.sanitize_label_value}, so the
+   match must apply the same transform or a mixed-case workspace would match
+   nothing. *)
+let workload_rows_of_payload ~kind ~workspace (payload : Yojson.Safe.t) =
+  let wanted = Sol_cli_kubernetes_name.sanitize_label_value workspace in
+  let items =
+    match json_member "items" payload with
+    | `List l -> l
+    | _ -> []
+  in
+  List.filter_map
+    (fun item ->
+       let labels = pod_template_labels kind item in
+       match List.assoc_opt "workspace" labels with
+       | Some w when String.equal w wanted ->
+         let identity =
+           { kind
+           ; namespace = string_at [ "metadata"; "namespace" ] item
+           ; name = string_at [ "metadata"; "name" ] item
+           }
+         in
+         Some (identity, Option.value (List.assoc_opt "release" labels) ~default:"")
+       | _ -> None)
+    items
+;;
+
+let process_detail (r : Sol_cli_process.result) =
+  if not (String.equal r.Sol_cli_process.stderr "")
+  then r.Sol_cli_process.stderr
+  else r.stdout
+;;
+
+(* A cluster without the Rollouts CRD has no Rollout objects -- an empty set, not
+   a failure. Any other non-zero exit is a real error and fails closed: quietly
+   treating an uncountable kind as empty could hide a stale workload. *)
+let resource_type_absent (r : Sol_cli_process.result) =
+  let detail = process_detail r in
+  Sol_cli_port_forward.string_contains ~needle:"doesn't have a resource type" detail
+  || Sol_cli_port_forward.string_contains
+       ~needle:"could not find the requested resource"
+       detail
+;;
+
+(* List the live (identity, release-label) pairs for every Sol-owned workload in
+   [workspace], across the three kinds Sol renders. Fails closed: a kind that
+   cannot be enumerated (other than an absent Rollouts CRD) is an [Error], never
+   an assumed-empty set. *)
+let live_workloads ~(ctx : Sol_cli_kube_destination.context) ~(workspace : string)
+  : ((workload_identity * string) list, string) result
+  =
+  let rec go acc = function
+    | [] -> Ok (List.rev acc)
+    | kind :: rest ->
+      let resource, _ = live_kind_path kind in
+      (match
+         Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; resource; "-A"; "-o"; "json" ]
+       with
+       | Error e -> Error (Sol_cli_process.error_to_string e)
+       | Ok r when r.Sol_cli_process.exit_code = 0 ->
+         (match Yojson.Safe.from_string r.Sol_cli_process.stdout with
+          | exception Yojson.Json_error msg ->
+            Error
+              (Printf.sprintf "could not parse kubectl get %s output: %s" resource msg)
+          | payload ->
+            let rows = workload_rows_of_payload ~kind ~workspace payload in
+            go (List.rev_append rows acc) rest)
+       | Ok r ->
+         if kind = Live_rollout && resource_type_absent r
+         then go acc rest
+         else
+           Error
+             (Printf.sprintf
+                "kubectl get %s failed: %s"
+                resource
+                (String.trim (process_detail r))))
+  in
+  go [] [ Live_deployment; Live_rollout; Live_cronjob ]
+;;
+
+(* ── verification reports ─────────────────────────────────────────────────── *)
+
+type workload_mismatch =
+  { kind : live_kind
+  ; namespace : string
+  ; name : string
+  ; actual : string (** [""] when the label or object could not be read at all. *)
+  }
+
+type workload_report =
+  { mismatched : workload_mismatch list
+    (** Expected workloads that exist but carry the wrong `release` label. *)
+  ; missing : workload_identity list (** Expected workloads with no live object at all. *)
+  ; unexpected : (workload_identity * string) list
+    (** Live Sol-owned workloads that are not part of the restored release. *)
+  }
+
+let workload_report_ok (r : workload_report) =
+  r.mismatched = [] && r.missing = [] && r.unexpected = []
+;;
+
+let verify_workloads
+      ~(release : Sol_cli_release.t)
+      ~(expected : Sol_cli_deployment_plan.service_spec list)
+      ~(live : (workload_identity * string) list)
+  : workload_report
+  =
+  let expected_ids = List.map identity_of_spec expected in
+  let mismatched, missing =
+    List.fold_left
+      (fun (mismatched, missing) id ->
+         match List.find_opt (fun (i, _) -> same_identity i id) live with
+         | None -> mismatched, id :: missing
+         | Some (_, actual) ->
+           if String.equal actual release.Sol_cli_release.release_id
+           then mismatched, missing
+           else
+             ( { kind = id.kind; namespace = id.namespace; name = id.name; actual }
+               :: mismatched
+             , missing ))
+      ([], [])
+      expected_ids
+  in
+  let unexpected =
+    List.filter (fun (id, _) -> not (List.exists (same_identity id) expected_ids)) live
+  in
+  { mismatched = List.rev mismatched; missing = List.rev missing; unexpected }
+;;
+
+let display_actual actual = if String.equal actual "" then "<none>" else actual
+let kind_resource kind = fst (live_kind_path kind)
+
+let workload_report_to_string ~(release : Sol_cli_release.t) (r : workload_report)
+  : string
+  =
+  let mismatch_lines =
     List.map
       (fun (m : workload_mismatch) ->
          Printf.sprintf
-           "workload state mismatch: %s/%s carries release %s, expected %s"
+           "workload state mismatch: %s %s/%s carries release %s, expected %s"
+           (kind_resource m.kind)
            m.namespace
            m.name
            (display_actual m.actual)
            release.Sol_cli_release.release_id)
-      r.workload_mismatches
+      r.mismatched
   in
-  let pointer_line =
-    if r.pointer_ok
-    then []
-    else
-      [ Printf.sprintf
-          "pointer mismatch: sol-release-current-%s names %s, expected %s"
-          release.Sol_cli_release.workspace
-          (display_actual r.pointer_actual)
-          release.Sol_cli_release.release_id
-      ]
+  let missing_lines =
+    List.map
+      (fun (i : workload_identity) ->
+         Printf.sprintf
+           "workload missing: %s %s/%s is not present in the cluster"
+           (kind_resource i.kind)
+           i.namespace
+           i.name)
+      r.missing
   in
-  String.concat "\n" (workload_lines @ pointer_line)
+  let unexpected_lines =
+    List.map
+      (fun ((i : workload_identity), actual) ->
+         Printf.sprintf
+           "unexpected workload: %s %s/%s carries release %s but is not part of release \
+            %s"
+           (kind_resource i.kind)
+           i.namespace
+           i.name
+           (display_actual actual)
+           release.Sol_cli_release.release_id)
+      r.unexpected
+  in
+  String.concat "\n" (mismatch_lines @ missing_lines @ unexpected_lines)
+;;
+
+type pointer_report =
+  { pointer_actual : string
+  ; pointer_ok : bool
+  }
+
+(* [verify_pointer] reads the current-release pointer ConfigMap's
+   [data.release_id] and compares it to [release]. Never re-applies or "fixes" a
+   mismatch -- only reports it. *)
+let verify_pointer
+      ~(ctx : Sol_cli_kube_destination.context)
+      ~(release : Sol_cli_release.t)
+  : pointer_report
+  =
+  let pointer_actual =
+    read_jsonpath
+      ~ctx
+      ~resource:"configmap"
+      ~name:(Sol_cli_release.current_configmap_name ~workspace:release.workspace)
+      ~namespace:"default"
+      ~jsonpath:"{.data.release_id}"
+  in
+  { pointer_actual
+  ; pointer_ok = String.equal pointer_actual release.Sol_cli_release.release_id
+  }
+;;
+
+let pointer_report_ok (r : pointer_report) = r.pointer_ok
+
+let pointer_report_to_string ~(release : Sol_cli_release.t) (r : pointer_report) : string =
+  Printf.sprintf
+    "pointer mismatch: %s names %s, expected %s"
+    (Sol_cli_release.current_configmap_name ~workspace:release.workspace)
+    (display_actual r.pointer_actual)
+    release.Sol_cli_release.release_id
 ;;

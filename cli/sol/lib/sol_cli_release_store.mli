@@ -15,11 +15,15 @@ val record
   -> Sol_cli_release.t
   -> (unit, string) result
 
-(** [record_plan ~ctx plan] builds the canonical record from a deployment plan
-    — its id is [plan.release_id] — and writes it. This is the entry point both
-    [sol up] and [sol deploy] use. *)
+(** [record_plan ~ctx ~apply_mode plan] builds the canonical record from a
+    deployment plan — its id is [plan.release_id] — and writes it. This is the
+    entry point both [sol up] and [sol deploy] use. [~apply_mode] (FEAT-066)
+    records how this release is owned ([Direct] for a Sol apply, [Gitops] for an
+    emitted bundle), as non-identity historical metadata a rollback can refuse
+    on. *)
 val record_plan
   :  ctx:Sol_cli_kube_destination.context
+  -> apply_mode:Sol_cli_release.apply_mode
   -> Sol_cli_deployment_plan.t
   -> (unit, string) result
 

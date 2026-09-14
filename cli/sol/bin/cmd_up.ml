@@ -301,6 +301,7 @@ let run_apply
       (match
          Sol_cli_release_store.record_plan
            ~ctx:Sol_cli_kube_destination.local_context
+           ~apply_mode:Sol_cli_release.Direct
            plan
        with
        | Ok () -> ()

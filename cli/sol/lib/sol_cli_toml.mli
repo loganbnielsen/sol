@@ -55,8 +55,6 @@ val volume_access_mode_to_string : volume_access_mode -> string
     corresponding encoder and fails closed on anything it does not recognise. *)
 val volume_access_mode_of_string : string -> (volume_access_mode, string) result
 
-val rollout_strategy_of_string : string -> (rollout_strategy, string) result
-
 (** [effective_rollout_of_string s] decodes the record's single canonical
     effective-rollout string back into the [(rollout_strategy,
     progressive_delivery)] pair the renderer takes. [rolling_update] decodes to

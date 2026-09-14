@@ -1,14 +1,17 @@
 (* sol rollback — restore a recorded release boundary (FEAT-066, DEC-018).
 
    Boring orchestration on top of already-proven pieces: resolve the release
-   record, refuse on a contracting migration since that release, reconstruct
-   and re-render its own workloads, apply them, move the current-release
-   pointer, then verify both independently. Never `kubectl rollout undo`,
-   which cannot restore config, volumes or ingress -- restoration comes from
-   the release record.
+   record, refuse a controller-owned release, refuse on a contracting migration
+   since that release, reconstruct and re-render its own workloads, apply them,
+   verify the live workload set, and only then move the current-release pointer
+   and verify it. Never `kubectl rollout undo`, which cannot restore config,
+   volumes or ingress -- restoration comes from the release record.
 
-   A refused rollback (migration boundary, a corrupt/missing record) leaves
-   the cluster untouched: every check before "apply" only reads. *)
+   A refused rollback (GitOps-owned, migration boundary, a corrupt/missing
+   record) leaves the cluster untouched: every check before "apply" only reads.
+   The pointer moves only after the live workload set agrees with the restored
+   release, so a verification failure never leaves the pointer claiming a
+   transition that did not happen. *)
 
 open Cmdliner
 
@@ -35,6 +38,11 @@ let run ~ctx release_id =
     "Rolling back %s to release %s\n%!"
     workspace
     release.Sol_cli_release.release_id;
+  (* Ownership check first: a GitOps/controller-owned release is not something a
+     direct apply can safely roll back, so refuse before touching anything. *)
+  (match Sol_cli_rollback.check_apply_mode ~release with
+   | Error e -> die "%s" (Sol_cli_rollback.apply_mode_check_error_to_string e)
+   | Ok () -> ());
   (* migration boundary check -- refused rollback must not touch the cluster,
      so this runs before any render/apply preparation. *)
   let current_migrations =
@@ -88,19 +96,45 @@ let run ~ctx release_id =
        specs
    with
    | Sol_cli_manifest.Deploy_failed msg -> die "%s" msg);
-  (* pointer move: only after every workload applied. *)
+  (* Verify the live workload SET before declaring the pointer. The pointer is
+     the declaration "this is now the current release"; it must not be written
+     until the live workloads actually agree with it. A failure here therefore
+     leaves the pointer untouched and never claims a transition that did not
+     happen. Reported, never reconciled: rollback does not prune stale
+     workloads, it refuses to call a hybrid state a success. *)
+  (match
+     Sol_cli_rollback.live_workloads ~ctx ~workspace:release.Sol_cli_release.workspace
+   with
+   | Error msg -> die "cannot verify rollback: %s" msg
+   | Ok live ->
+     let report = Sol_cli_rollback.verify_workloads ~release ~expected:specs ~live in
+     if not (Sol_cli_rollback.workload_report_ok report)
+     then (
+       Printf.eprintf
+         "%s\n%!"
+         (Sol_cli_rollback.workload_report_to_string ~release report);
+       die
+         "rollback incomplete: live workloads do not match release %s; the \
+          current-release pointer was left unchanged"
+         release.Sol_cli_release.release_id));
+  (* pointer move: only after every workload applied and the live set agrees. *)
   (match Sol_cli_release_store.move_pointer ~ctx release with
    | Error msg -> die "%s" msg
    | Ok () -> ());
-  (* verify: report, never reconcile. *)
-  let report = Sol_cli_rollback.verify ~ctx ~release specs in
-  if Sol_cli_rollback.verify_ok report
+  (* pointer verify: reported independently, never reconciled. *)
+  let pointer = Sol_cli_rollback.verify_pointer ~ctx ~release in
+  if Sol_cli_rollback.pointer_report_ok pointer
   then
     Printf.printf
       "Verified: workloads and pointer both name release %s.\n%!"
       release.Sol_cli_release.release_id
   else (
-    Printf.eprintf "%s\n%!" (Sol_cli_rollback.verify_report_to_string ~release report);
+    Printf.eprintf
+      "%s\n\
+       rollback incomplete: the pointer was moved but does not read back as the restored \
+       release; verify cluster state before relying on this rollback.\n\
+       %!"
+      (Sol_cli_rollback.pointer_report_to_string ~release pointer);
     exit 1)
 ;;
 

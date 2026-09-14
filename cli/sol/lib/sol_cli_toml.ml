@@ -59,12 +59,6 @@ let volume_access_mode_of_string = function
          s)
 ;;
 
-let rollout_strategy_of_string = function
-  | "Recreate" -> Ok Recreate
-  | "RollingUpdate" -> Ok RollingUpdate
-  | s -> Error (Printf.sprintf "%S is not a rollout strategy" s)
-;;
-
 (* The release record stores one canonical *effective* rollout string; decode it
    back into the (rollout_strategy, progressive_delivery) pair the renderer
    takes. "rolling_update" is the effective default, so it decodes to no explicit

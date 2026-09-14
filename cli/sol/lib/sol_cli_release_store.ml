@@ -34,9 +34,16 @@ let record ~ctx (t : Sol_cli_release.t) : (unit, string) result =
 
 (* FEAT-069: the record is content-addressed, so it is built from the plan's
    own [release_id] and content — no invocation provenance is read or threaded
-   here. [sol up] and [sol deploy] therefore record the same artifact. *)
-let record_plan ~ctx (plan : Sol_cli_deployment_plan.t) : (unit, string) result =
-  record ~ctx (Sol_cli_release.of_plan plan)
+   here. [sol up] and [sol deploy] therefore record the same artifact. FEAT-066:
+   [~apply_mode] is the owning/application mode of *this* release (direct vs
+   GitOps-emitted), recorded as non-identity historical metadata. *)
+let record_plan
+      ~ctx
+      ~(apply_mode : Sol_cli_release.apply_mode)
+      (plan : Sol_cli_deployment_plan.t)
+  : (unit, string) result
+  =
+  record ~ctx (Sol_cli_release.of_plan ~apply_mode plan)
 ;;
 
 let list ~ctx ~(workspace : string) : (Sol_cli_release.t list, string) result =

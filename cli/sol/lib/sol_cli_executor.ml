@@ -69,7 +69,7 @@ let gitops
    travels with the manifests it describes instead of being a CLI side effect.
    [bundle_files] is pure in the plan's release identity, so re-emitting
    identical content is an empty diff. *)
-let write_release_bundle ~dir plan =
+let write_release_bundle ~dir ~(apply_mode : Sol_cli_release.apply_mode) plan =
   (try Unix.mkdir dir 0o755 with
    | Unix.Unix_error (Unix.EEXIST, _, _) -> ());
   List.iter
@@ -79,7 +79,7 @@ let write_release_bundle ~dir plan =
        Fun.protect
          ~finally:(fun () -> close_out_noerr oc)
          (fun () -> output_string oc contents))
-    (Sol_cli_release.bundle_files (Sol_cli_release.of_plan plan))
+    (Sol_cli_release.bundle_files (Sol_cli_release.of_plan ~apply_mode plan))
 ;;
 
 (* ── plan-level executor ─────────────────────────────────────────────────── *)
@@ -142,7 +142,7 @@ let run_plan
         pairs
     in
     (match mode with
-     | Emit_to dir -> write_release_bundle ~dir plan
+     | Emit_to dir -> write_release_bundle ~dir ~apply_mode:Sol_cli_release.Gitops plan
      | Dry_run | Apply -> ());
     Ok results
 ;;

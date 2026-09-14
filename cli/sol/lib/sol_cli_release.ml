@@ -19,6 +19,34 @@
    [Sol_cli_deployment_plan.release_workload_of_spec]. *)
 type workload = Sol_cli_release_id.workload
 
+(* FEAT-066: how this release was applied/owned, so a later rollback can refuse
+   to direct-mutate resources a controller owns. This is *historical per-release
+   truth*, not present-day target config: a target can switch between direct and
+   GitOps over its lifetime, so consulting today's config would misclassify an
+   older release. Like [migrations], it is deliberately excluded from the
+   content-addressed identity: the same desired workload applied directly or
+   emitted for GitOps is one release with one id, but carries different
+   ownership semantics -- so it lives in the body and is protected by the record
+   digest below, rather than entering [release_id]. *)
+type apply_mode =
+  | Direct
+  | Gitops
+
+let apply_mode_to_string = function
+  | Direct -> "direct"
+  | Gitops -> "gitops"
+;;
+
+let apply_mode_of_string = function
+  | "direct" -> Ok Direct
+  | "gitops" -> Ok Gitops
+  | s ->
+    Error
+      (Printf.sprintf
+         "%S is not a valid apply_mode (expected \"direct\" or \"gitops\")"
+         s)
+;;
+
 (* FEAT-066: which migration files existed at deploy time, so a later rollback
    can tell which migrations are *new since this release* and check their
    disposition. Deliberately not part of [Sol_cli_release_id.content]/the
@@ -35,6 +63,7 @@ type t =
   ; environment : string option
   ; workloads : workload list
   ; migrations : string list
+  ; apply_mode : apply_mode
   }
 
 (* Label/annotation *values* are constrained (<=63 chars, no '/'); the exact
@@ -90,12 +119,13 @@ let workload_of_spec (spec : Sol_cli_deployment_plan.service_spec) : workload =
   Sol_cli_deployment_plan.release_workload_of_spec spec
 ;;
 
-let of_plan (plan : Sol_cli_deployment_plan.t) : t =
+let of_plan ~(apply_mode : apply_mode) (plan : Sol_cli_deployment_plan.t) : t =
   { release_id = Sol_cli_release_id.to_string plan.release_id
   ; workspace = plan.workspace
   ; environment = plan.environment.Sol_cli_deployment_plan.env
   ; workloads = List.map workload_of_spec plan.services
   ; migrations = List.map Sol_cli_plan_ids.Migration_file.to_string plan.migrations
+  ; apply_mode
   }
 ;;
 
@@ -216,8 +246,31 @@ let to_json (t : t) : Yojson.Safe.t =
       , `List (List.map workload_to_json (List.sort compare_workload t.workloads)) )
     ; ( "migrations"
       , `List (List.map (fun m -> `String m) (List.sort String.compare t.migrations)) )
+    ; "apply_mode", `String (apply_mode_to_string t.apply_mode)
     ]
 ;;
+
+(* FEAT-066: the complete persisted record body, canonically serialized. This is
+   the exact string stored in the ConfigMap's [data.record] (and the string the
+   GitOps bundle writes), so hashing it covers every persisted field -- including
+   the non-identity ones ([migrations], [apply_mode]) that [release_id] cannot
+   protect, because they are deliberately outside the content-addressed
+   identity. *)
+let record_json_string (t : t) : string = Yojson.Safe.to_string (to_json t)
+
+(* A free digest the store records alongside the body and rechecks on read.
+   [release_id] proves the record's *content* is internally consistent; this
+   proves the *stored bytes* have not changed since they were written, so a
+   record whose body was altered (e.g. an inflated [migrations] list that would
+   silently defeat the migration boundary check) fails closed instead of being
+   read as trustworthy.
+
+   This is an integrity check, not a signature: it detects corruption and
+   inconsistent/partial writes, and makes the non-identity fields as
+   tamper-evident as the id. It does not defend against an actor who can rewrite
+   the whole ConfigMap, including the digest -- nothing stored in the record can,
+   since the digest is not keyed. *)
+let record_digest (t : t) : string = Digest.to_hex (Digest.string (record_json_string t))
 
 (* Safe accessors: a malformed cluster object must not crash a read-only list. *)
 let mem key = function
@@ -314,17 +367,32 @@ let string_list key json =
     (list key json)
 ;;
 
+(* FEAT-066: [apply_mode] is required and must be recognised. A missing or
+   unknown value fails closed rather than being defaulted to [Direct] -- Sol
+   cannot establish ownership it was never told, and guessing "direct" would
+   re-open the exact false-ownership path this field exists to close. *)
+let apply_mode_of_json (json : Yojson.Safe.t) : (apply_mode, string) result =
+  match mem "apply_mode" json with
+  | Some (`String s) -> apply_mode_of_string s
+  | Some _ -> Error "release record has a non-string apply_mode"
+  | None -> Error "release record is missing apply_mode"
+;;
+
 let of_json (json : Yojson.Safe.t) : (t, string) result =
   match str "release_id" json, str "workspace" json with
   | "", _ | _, "" -> Error "release record is missing release_id/workspace"
   | release_id, workspace ->
-    Ok
-      { release_id
-      ; workspace
-      ; environment = string_option "environment" json
-      ; workloads = List.map workload_of_json (list "workloads" json)
-      ; migrations = string_list "migrations" json
-      }
+    (match apply_mode_of_json json with
+     | Error msg -> Error msg
+     | Ok apply_mode ->
+       Ok
+         { release_id
+         ; workspace
+         ; environment = string_option "environment" json
+         ; workloads = List.map workload_of_json (list "workloads" json)
+         ; migrations = string_list "migrations" json
+         ; apply_mode
+         })
 ;;
 
 (* ── Kubernetes objects ───────────────────────────────────────────────────── *)
@@ -351,7 +419,8 @@ let to_configmap_json (t : t) : string =
         ; ( "data"
           , `Assoc
               [ "release_id", `String t.release_id
-              ; "record", `String (Yojson.Safe.to_string (to_json t))
+              ; "record", `String (record_json_string t)
+              ; "record_digest", `String (record_digest t)
               ] )
         ])
 ;;
@@ -408,15 +477,30 @@ let of_kubectl_item (item : Yojson.Safe.t) : (t, string) result =
   | Some data ->
     (match mem "record" data with
      | Some (`String record) ->
-       (match Yojson.Safe.from_string record with
-        | exception _ -> Error (Printf.sprintf "%s: data.record is not JSON" label)
-        | parsed ->
-          (match of_json parsed with
-           | Error msg -> Error (Printf.sprintf "%s: %s" label msg)
-           | Ok r ->
-             (match validate ~name r with
-              | Error msg -> Error msg
-              | Ok () -> Ok r)))
+       (* FEAT-066: check the body's integrity before trusting *any* field,
+          including the non-identity ones ([migrations], [apply_mode]) that
+          [validate]'s id-rederivation cannot see. A missing digest is a
+          schema/format problem (an old or hand-written object); a mismatched
+          digest is corruption. Both fail closed, with distinct messages. *)
+       (match mem "record_digest" data with
+        | Some (`String stored) when String.length stored > 0 ->
+          if not (String.equal (Digest.to_hex (Digest.string record)) stored)
+          then Error (Printf.sprintf "%s failed integrity validation" label)
+          else (
+            match Yojson.Safe.from_string record with
+            | exception _ -> Error (Printf.sprintf "%s: data.record is not JSON" label)
+            | parsed ->
+              (match of_json parsed with
+               | Error msg -> Error (Printf.sprintf "%s: %s" label msg)
+               | Ok r ->
+                 (match validate ~name r with
+                  | Error msg -> Error msg
+                  | Ok () -> Ok r)))
+        | _ ->
+          Error
+            (Printf.sprintf
+               "%s uses an unsupported record format: missing integrity digest"
+               label))
      | _ -> Error (Printf.sprintf "%s has no data.record" label))
 ;;
 
