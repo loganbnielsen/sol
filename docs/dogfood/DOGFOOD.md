@@ -284,7 +284,27 @@ kubectl get pods -n <workspace>-payments
 kubectl get pods -n <workspace>-comms
 ```
 
-Logs:
+Application logs (Loki):
+
+A Sol service does **not** echo its structured logs to container stdout —
+`Sol_obs` pushes them straight to Loki. `kubectl logs` therefore shows only
+container-level output (startup crashes, panics), not the `charge event received`
+/ HTTP request lines. Use Loki for application logs:
+
+```bash
+# Prints a copyable Grafana Explore URL for the unit, then streams.
+sol local logs --scope comms/notify_worker --no-follow
+
+# Raw LogQL fallback. App-pushed streams carry a `service` label of the form
+# <workspace>_<domain>_<unit> (e.g. dogfood_2026_09_13-notify-worker), so match
+# on that rather than on `app`/`namespace`.
+curl -sG http://localhost:3100/loki/api/v1/query_range \
+  --data-urlencode 'query={service=~".*notify-worker.*"}' \
+  --data-urlencode 'limit=20' | jq -r '.data.result[].values[][1]'
+```
+
+`kubectl logs` is still the right tool when the container never starts
+(`CrashLoopBackOff`, image-pull errors, panics):
 
 ```bash
 kubectl logs -n <workspace>-payments deploy/charge-svc --tail=120
