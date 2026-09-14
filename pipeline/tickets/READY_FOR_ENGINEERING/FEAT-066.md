@@ -114,3 +114,41 @@ mismatch` and `pointer mismatch` — rather than collapsing them into one
 meaningful evidence. The equivalence test
 `render(original plan) == render(reconstructed record)` is the load-bearing
 guardrail and starts as byte equality, since the renderer is already canonical.
+
+### Finding (2026-09-14): `called_by`'s `env_var` is the caller's, not the edge's
+
+`called_by` is derived from the release record's call graph, but its `env_var` is
+computed from the **caller's** source name (`call_env_var caller.source_name`),
+not copied from the stored forward-call edge (whose `env_var` is
+`call_env_var target.name`). Reconstruction must therefore reuse the same pure
+`call_env_var` helper as forward planning; reusing the stored edge env var would
+preserve most of the graph while silently changing NetworkPolicy output — a
+"passes most tests" failure mode.
+
+`call_env_var` is a deterministic naming function over already-resolved names, so
+it follows `service_url` out of the planner into a shared naming/domain module
+rather than being exported as a planner-private helper. No new persisted field
+is needed: the record already carries the whole call graph, so BUG-026 is not
+missing a fact here.
+
+### Reconstruction signature and the test trio
+
+```ocaml
+val service_specs_of_release : Sol_cli_release.t -> (service_spec list, string) result
+```
+
+No workspace/config/env parameters: the absence is the red line made structural.
+Decode failures name the release, the workload and the offending fact (e.g.
+`cannot reconstruct release r-X: workload payments has invalid progressive
+delivery "canary:..."`), so an operator can tell a corrupt historical artifact
+from a cluster refusing a valid restoration.
+
+1. **Identity equivalence** — record → reconstruct → canonical projection →
+   same `release_id`.
+2. **Render equivalence** — plan → record → reconstruct → render is byte-equal to
+   the original render, over the full manifest-affecting surface (rollout/canary,
+   volumes/access modes, calls/`called_by`, ingress, config, secret references).
+3. **Failure semantics** — a missing or invalid release-defining fact returns a
+   named `Error` before any render or mutation, including one case that is valid
+   JSON but semantically invalid (an unknown rollout encoding), proving
+   fail-closed lives in the domain decoder and not only in JSON parsing.
