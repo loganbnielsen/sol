@@ -7,6 +7,11 @@ output "kubeconfig_command" {
   value       = "gcloud container clusters get-credentials ${google_container_cluster.main.name} --region ${var.region} --project ${var.project_id}"
 }
 
+output "kube_context" {
+  description = "Kubernetes context name written by kubeconfig_command"
+  value       = "gke_${var.project_id}_${var.region}_${google_container_cluster.main.name}"
+}
+
 output "artifact_registry" {
   description = "Artifact Registry URL — pass as --registry to sol deploy"
   value       = "${var.region}-docker.pkg.dev/${var.project_id}/${var.cluster_name}"

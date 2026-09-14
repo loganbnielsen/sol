@@ -8,6 +8,7 @@ type target =
   ; cluster_issuer : string option
   ; cluster_name : string option
   ; kube_context : string option
+  ; kubeconfig : string option
   ; terraform_var_file : string option
   ; observability_backend : string option
   ; provider_fields : (string * (string * string) list) list
@@ -56,6 +57,7 @@ let target_empty =
   ; cluster_issuer = None
   ; cluster_name = None
   ; kube_context = None
+  ; kubeconfig = None
   ; terraform_var_file = None
   ; observability_backend = None
   ; provider_fields = []
@@ -201,6 +203,7 @@ type target_key =
   | Target_cluster_issuer
   | Target_cluster_name
   | Target_kube_context
+  | Target_kubeconfig
   | Target_terraform_var_file
   | Target_observability_backend
   | Target_provider_box of Sol_cli_provider.t
@@ -213,6 +216,7 @@ let target_key_of_string s =
   | "cluster_issuer" -> Target_cluster_issuer
   | "cluster_name" -> Target_cluster_name
   | "kube_context" -> Target_kube_context
+  | "kubeconfig" -> Target_kubeconfig
   | "terraform_var_file" -> Target_terraform_var_file
   | "observability_backend" -> Target_observability_backend
   | _ ->
@@ -227,6 +231,7 @@ let target_key_name = function
   | Target_cluster_issuer -> "cluster_issuer"
   | Target_cluster_name -> "cluster_name"
   | Target_kube_context -> "kube_context"
+  | Target_kubeconfig -> "kubeconfig"
   | Target_terraform_var_file -> "terraform_var_file"
   | Target_observability_backend -> "observability_backend"
   | Target_provider_box provider -> Sol_cli_provider.to_string provider
@@ -450,6 +455,9 @@ let load path =
                           | Target_kube_context ->
                             let* v = scalar k v in
                             Ok { current with kube_context = Some v }
+                          | Target_kubeconfig ->
+                            let* v = scalar k v in
+                            Ok { current with kubeconfig = Some v }
                           | Target_terraform_var_file ->
                             let* v = scalar k v in
                             Ok { current with terraform_var_file = Some v }
@@ -643,6 +651,7 @@ let merge_target a b =
   ; cluster_issuer = prefer a.cluster_issuer b.cluster_issuer
   ; cluster_name = prefer a.cluster_name b.cluster_name
   ; kube_context = prefer a.kube_context b.kube_context
+  ; kubeconfig = prefer a.kubeconfig b.kubeconfig
   ; terraform_var_file = prefer a.terraform_var_file b.terraform_var_file
   ; observability_backend = prefer a.observability_backend b.observability_backend
   ; provider_fields = merge_provider_fields a.provider_fields b.provider_fields
@@ -743,6 +752,7 @@ let target_of_path s =
           ; cluster_issuer = None
           ; cluster_name = None
           ; kube_context = None
+          ; kubeconfig = None
           ; terraform_var_file = None
           ; observability_backend = None
           ; provider_fields = []
@@ -933,7 +943,9 @@ let resolved_target base target_path =
     execution mode. *)
 let destination_of_target (target : target) =
   let* destination =
-    Sol_cli_kube_destination.of_context (Option.value target.kube_context ~default:"")
+    Sol_cli_kube_destination.of_context
+      ?kubeconfig:target.kubeconfig
+      (Option.value target.kube_context ~default:"")
   in
   let reserved = Sol_cli_kube_destination.local in
   if destination = reserved

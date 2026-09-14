@@ -10,7 +10,12 @@ output "cluster_endpoint" {
 
 output "kubeconfig_command" {
   description = "Command to update local kubeconfig"
-  value       = "aws eks update-kubeconfig --region ${var.region} --name ${module.eks.cluster_name}"
+  value       = "aws eks update-kubeconfig --region ${var.region} --name ${module.eks.cluster_name} --alias ${module.eks.cluster_name}"
+}
+
+output "kube_context" {
+  description = "Kubernetes context name written by kubeconfig_command"
+  value       = module.eks.cluster_name
 }
 
 output "ecr_registry" {

@@ -8,6 +8,7 @@ type target =
   ; cluster_issuer : string option
   ; cluster_name : string option
   ; kube_context : string option
+  ; kubeconfig : string option
   ; terraform_var_file : string option
   ; observability_backend : string option
   ; provider_fields : (string * (string * string) list) list

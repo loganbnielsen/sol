@@ -13,7 +13,7 @@ let provider () =
   | None -> Alcotest.fail "aws should be a known provider"
 ;;
 
-let target ?(kube_context = Some "prod-us-east-1") () : Sol_cli_config.target =
+let target ?(kube_context = Some "prod-us-east-1") ?kubeconfig () : Sol_cli_config.target =
   { name = "prod/aws/us-east-1"
   ; env = "prod"
   ; provider = provider ()
@@ -23,6 +23,7 @@ let target ?(kube_context = Some "prod-us-east-1") () : Sol_cli_config.target =
   ; cluster_issuer = None
   ; cluster_name = Some "acme-prod"
   ; kube_context
+  ; kubeconfig
   ; terraform_var_file = None
   ; observability_backend = None
   ; provider_fields = []
@@ -60,12 +61,19 @@ let test_configured_is_not_checked_and_hides_the_context () =
 
 let test_verbose_shows_the_context () =
   let rows =
-    Sol_cli_target_report.rows ~verbose:true (target ()) (Reachable "prod-us-east-1")
+    Sol_cli_target_report.rows
+      ~verbose:true
+      (target ~kubeconfig:".sol/kubeconfigs/prod.kubeconfig" ())
+      (Reachable "prod-us-east-1")
   in
   Alcotest.(check (option string))
     "raw context available when asked for"
     (Some "prod-us-east-1")
-    (value_of rows "kube context")
+    (value_of rows "kube context");
+  Alcotest.(check (option string))
+    "kubeconfig available when asked for"
+    (Some ".sol/kubeconfigs/prod.kubeconfig")
+    (value_of rows "kubeconfig")
 ;;
 
 let test_default_summary_never_names_the_context () =
