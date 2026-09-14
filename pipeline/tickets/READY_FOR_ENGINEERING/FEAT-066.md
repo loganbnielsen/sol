@@ -62,3 +62,23 @@ choice — ordered apply + verification, server-side apply, git-commit atomicity
 GitOps mode (where the content and the pointer travel in one commit, which is why
 the pointer belongs in the emitted bundle), or an explicit protocol. State which,
 and make inconsistent states detectable rather than silently reconciling them.
+
+## Implementation decision (2026-09-14, kickoff)
+
+**Enforcement: ordered apply + verification, with inconsistency made detectable.**
+
+1. Restore first: re-render the recorded release's manifests and apply them.
+2. Only then move the pointer to that release.
+3. Verify: the workloads Sol just applied carry the restored `release` label, and
+   the pointer names the same release. If either disagrees, fail loudly and
+   report the mismatch instead of re-applying or "fixing" it.
+
+This is exactly the narrow invariant the ticket allows, not atomicity. In GitOps
+mode the second step is free — the content and the pointer travel in one emitted
+commit — and the same verification runs against the bundle.
+
+Restoration source: the release record, now complete (BUG-026). `sol rollback
+<release-id>` renders from the record's workload content; it does not use
+`kubectl rollout undo`, which cannot restore config, volumes or ingress.
+`--scope` is release *selection* only; `--commit` resolves an ambiguous release
+by listing candidates.
