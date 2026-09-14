@@ -165,3 +165,42 @@ val verify_pointer
 
 val pointer_report_ok : pointer_report -> bool
 val pointer_report_to_string : release:Sol_cli_release.t -> pointer_report -> string
+
+(** FEAT-073: [sol rollback --commit] resolution, against FEAT-070's
+    deployment-event record (never Loki, which is telemetry, not an
+    authoritative store). *)
+
+(** Exposed for testing: whether a user-supplied commit and a stored
+    [git_commit] name the same commit. Case-insensitive, either direction (a
+    full sha resolving a stored short sha, or vice versa); empty on either
+    side never matches. *)
+val commit_matches : commit:string -> string -> bool
+
+type commit_resolution =
+  | Commit_invalid of string
+  | Commit_no_match
+  | Commit_ambiguous of (string * string) list (** (release_id, requested_scope) *)
+  | Commit_resolved of string (** release_id *)
+
+(** [resolve_commit ~commit ?scope ~target events] resolves [commit] to the
+    release id a successful (["Applied"]) deploy of it produced on [target],
+    optionally narrowed by [scope] (["DOMAIN"] or ["DOMAIN/UNIT"], matched
+    against the deployment event's recorded [requested_scope] exactly — never
+    "restore part of a release"; a release's workload list always restores
+    whole). More than one distinct release id matching is [Commit_ambiguous],
+    never guessed. *)
+val resolve_commit
+  :  commit:string
+  -> ?scope:string
+  -> target:string
+  -> Sol_cli_deployment.t list
+  -> commit_resolution
+
+(** Human-readable rendering of a {!commit_resolution}, for the CLI's error
+    and confirmation output. *)
+val commit_resolution_to_string
+  :  commit:string
+  -> target:string
+  -> ?scope:string
+  -> commit_resolution
+  -> string

@@ -302,11 +302,20 @@ derived from the workspace directory name. Override with `--table`.
 **Library:** `cli/sol/lib/sol_cli_rollback.ml`, `sol_cli_release_store.ml`,
 `sol_cli_migration_disposition.ml`
 
-Takes a required `RELEASE_ID` positional (`sol rollback <release-id>`, found via
-`sol releases`) and restores that recorded release boundary. Does not use
-`kubectl rollout undo` — that mechanism cannot restore config, volumes, or
-ingress. Restoration comes entirely from the release record `sol up`/`sol
-deploy` write on every deploy (FEAT-067):
+Takes a `RELEASE_ID` positional (`sol rollback <release-id>`, found via
+`sol releases`), or `--commit <sha>` (FEAT-073) to resolve that commit's
+successful deploy to a release id instead of naming one directly — always
+echoed before anything mutates, and refused (candidates listed) rather than
+guessed if the commit matches more than one release. `--scope DOMAIN[/UNIT]`
+narrows which of a commit's releases `--commit` resolves to when it deployed
+more than one (e.g. `payments` and the whole workspace as two separate
+releases); it is a *selector* only — a release's recorded workload set is
+always restored whole, never partially. `--commit` resolution is authoritative
+(FEAT-070's deployment-event record), never Loki. Either form restores that
+recorded release boundary. Does not use `kubectl rollout undo` — that
+mechanism cannot restore config, volumes, or ingress. Restoration comes
+entirely from the release record `sol up`/`sol deploy` write on every deploy
+(FEAT-067):
 
 1. **Resolve + load + validate** — `Sol_cli_release_store.get` fetches the
    `sol-release-<id>` ConfigMap, decodes it, and checks it both rederives its

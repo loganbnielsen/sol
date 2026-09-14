@@ -1010,6 +1010,221 @@ let test_pointer_report_to_string_uses_canonical_name () =
   assert (not (contains (Str.regexp_string "CI_Smoke") msg))
 ;;
 
+(* ── FEAT-073: --commit / --scope release selection ───────────────────────── *)
+
+let test_commit_matches_exact () =
+  Alcotest.(check bool)
+    "exact match"
+    true
+    (Sol_cli_rollback.commit_matches ~commit:"abc1234" "abc1234")
+;;
+
+let test_commit_matches_full_resolves_stored_short () =
+  Alcotest.(check bool)
+    "full sha resolves a short stored sha"
+    true
+    (Sol_cli_rollback.commit_matches
+       ~commit:"abc1234def5678900000000000000000000000"
+       "abc1234")
+;;
+
+let test_commit_matches_short_resolves_stored_full () =
+  Alcotest.(check bool)
+    "short input resolves a full stored sha"
+    true
+    (Sol_cli_rollback.commit_matches
+       ~commit:"abc1234"
+       "abc1234def5678900000000000000000000000")
+;;
+
+let test_commit_matches_case_insensitive () =
+  Alcotest.(check bool)
+    "case insensitive"
+    true
+    (Sol_cli_rollback.commit_matches ~commit:"ABC1234" "abc1234")
+;;
+
+let test_commit_matches_mismatch () =
+  Alcotest.(check bool)
+    "mismatch"
+    false
+    (Sol_cli_rollback.commit_matches ~commit:"abc1234" "def5678")
+;;
+
+let test_commit_matches_empty_never_matches () =
+  Alcotest.(check bool)
+    "empty commit"
+    false
+    (Sol_cli_rollback.commit_matches ~commit:"" "abc1234");
+  Alcotest.(check bool)
+    "empty stored"
+    false
+    (Sol_cli_rollback.commit_matches ~commit:"abc1234" "")
+;;
+
+let deployment_event
+      ?(release_id = "r-0123456789abcdef")
+      ?(git_commit = "abc1234")
+      ?(target = Some "prod/aws/us-east-1")
+      ?(requested_scope = "workspace")
+      ?(outcome = Sol_cli_deployment.Applied)
+      ?(entropy = "seed")
+      ()
+  : Sol_cli_deployment.t
+  =
+  { deployment_id = Sol_cli_deployment_id.create ~now:1767225600.0 ~entropy
+  ; release_id = Result.get_ok (Sol_cli_release_id.of_string release_id)
+  ; workspace = "myworkspace"
+  ; environment = Some "prod"
+  ; created_at = "2026-01-01T00:00:00Z"
+  ; git_commit
+  ; git_dirty = false
+  ; actor = Some "ci"
+  ; target
+  ; mode = "customer_cloud"
+  ; requested_scope
+  ; outcome
+  }
+;;
+
+let test_resolve_commit_no_match_is_no_match () =
+  match
+    Sol_cli_rollback.resolve_commit
+      ~commit:"abc1234"
+      ~target:"prod/aws/us-east-1"
+      [ deployment_event ~git_commit:"def5678" () ]
+  with
+  | Sol_cli_rollback.Commit_no_match -> ()
+  | _ -> Alcotest.fail "expected Commit_no_match"
+;;
+
+let test_resolve_commit_unambiguous_resolves () =
+  match
+    Sol_cli_rollback.resolve_commit
+      ~commit:"abc1234"
+      ~target:"prod/aws/us-east-1"
+      [ deployment_event ~release_id:"r-0123456789abcdef" () ]
+  with
+  | Sol_cli_rollback.Commit_resolved release_id ->
+    Alcotest.(check string) "resolved release id" "r-0123456789abcdef" release_id
+  | _ -> Alcotest.fail "expected Commit_resolved"
+;;
+
+(* Two distinct events for the same commit/target but different release ids
+   (e.g. deployed to both `payments` and the whole workspace) must refuse to
+   guess -- FEAT-073's central invariant. *)
+let test_resolve_commit_ambiguous_lists_candidates () =
+  match
+    Sol_cli_rollback.resolve_commit
+      ~commit:"abc1234"
+      ~target:"prod/aws/us-east-1"
+      [ deployment_event
+          ~release_id:"r-0123456789abcdef"
+          ~requested_scope:"workspace"
+          ~entropy:"a"
+          ()
+      ; deployment_event
+          ~release_id:"r-fedcba9876543210"
+          ~requested_scope:"payments"
+          ~entropy:"b"
+          ()
+      ]
+  with
+  | Sol_cli_rollback.Commit_ambiguous candidates ->
+    Alcotest.(check int) "two candidates" 2 (List.length candidates);
+    Alcotest.(check bool)
+      "both release ids present"
+      true
+      (List.mem_assoc "r-0123456789abcdef" candidates
+       && List.mem_assoc "r-fedcba9876543210" candidates)
+  | _ -> Alcotest.fail "expected Commit_ambiguous"
+;;
+
+(* Repeated deploys of the same commit to the same release must dedup to one
+   candidate, not be reported as ambiguous. *)
+let test_resolve_commit_repeated_deploys_dedup () =
+  match
+    Sol_cli_rollback.resolve_commit
+      ~commit:"abc1234"
+      ~target:"prod/aws/us-east-1"
+      [ deployment_event ~release_id:"r-0123456789abcdef" ~entropy:"a" ()
+      ; deployment_event ~release_id:"r-0123456789abcdef" ~entropy:"b" ()
+      ]
+  with
+  | Sol_cli_rollback.Commit_resolved release_id ->
+    Alcotest.(check string) "resolved release id" "r-0123456789abcdef" release_id
+  | _ -> Alcotest.fail "expected Commit_resolved (deduped)"
+;;
+
+let test_resolve_commit_scope_narrows_candidates () =
+  let events =
+    [ deployment_event
+        ~release_id:"r-0123456789abcdef"
+        ~requested_scope:"workspace"
+        ~entropy:"a"
+        ()
+    ; deployment_event
+        ~release_id:"r-fedcba9876543210"
+        ~requested_scope:"payments"
+        ~entropy:"b"
+        ()
+    ]
+  in
+  match
+    Sol_cli_rollback.resolve_commit
+      ~commit:"abc1234"
+      ~scope:"payments"
+      ~target:"prod/aws/us-east-1"
+      events
+  with
+  | Sol_cli_rollback.Commit_resolved release_id ->
+    Alcotest.(check string)
+      "resolved to the scoped release"
+      "r-fedcba9876543210"
+      release_id
+  | _ -> Alcotest.fail "expected Commit_resolved narrowed by scope"
+;;
+
+let test_resolve_commit_wrong_target_excluded () =
+  match
+    Sol_cli_rollback.resolve_commit
+      ~commit:"abc1234"
+      ~target:"staging/aws/us-east-1"
+      [ deployment_event ~target:(Some "prod/aws/us-east-1") () ]
+  with
+  | Sol_cli_rollback.Commit_no_match -> ()
+  | _ -> Alcotest.fail "expected Commit_no_match: different target"
+;;
+
+let test_resolve_commit_apply_failed_excluded () =
+  match
+    Sol_cli_rollback.resolve_commit
+      ~commit:"abc1234"
+      ~target:"prod/aws/us-east-1"
+      [ deployment_event ~outcome:Sol_cli_deployment.Apply_failed () ]
+  with
+  | Sol_cli_rollback.Commit_no_match -> ()
+  | _ -> Alcotest.fail "expected Commit_no_match: only Apply_failed events exist"
+;;
+
+let test_resolve_commit_invalid_scope () =
+  match
+    Sol_cli_rollback.resolve_commit
+      ~commit:"abc1234"
+      ~scope:"a/b/c"
+      ~target:"prod/aws/us-east-1"
+      []
+  with
+  | Sol_cli_rollback.Commit_invalid _ -> ()
+  | _ -> Alcotest.fail "expected Commit_invalid: malformed --scope"
+;;
+
+let test_resolve_commit_empty_commit_invalid () =
+  match Sol_cli_rollback.resolve_commit ~commit:"" ~target:"prod/aws/us-east-1" [] with
+  | Sol_cli_rollback.Commit_invalid _ -> ()
+  | _ -> Alcotest.fail "expected Commit_invalid: empty --commit"
+;;
+
 let () =
   Alcotest.run
     "rollback"
@@ -1117,6 +1332,59 @@ let () =
             "names the canonical pointer ConfigMap"
             `Quick
             test_pointer_report_to_string_uses_canonical_name
+        ] )
+    ; ( "commit_release_selection"
+      , [ Alcotest.test_case "commit_matches: exact" `Quick test_commit_matches_exact
+        ; Alcotest.test_case
+            "commit_matches: full resolves stored short"
+            `Quick
+            test_commit_matches_full_resolves_stored_short
+        ; Alcotest.test_case
+            "commit_matches: short resolves stored full"
+            `Quick
+            test_commit_matches_short_resolves_stored_full
+        ; Alcotest.test_case
+            "commit_matches: case insensitive"
+            `Quick
+            test_commit_matches_case_insensitive
+        ; Alcotest.test_case
+            "commit_matches: mismatch"
+            `Quick
+            test_commit_matches_mismatch
+        ; Alcotest.test_case
+            "commit_matches: empty never matches"
+            `Quick
+            test_commit_matches_empty_never_matches
+        ; Alcotest.test_case "no match" `Quick test_resolve_commit_no_match_is_no_match
+        ; Alcotest.test_case
+            "unambiguous resolves"
+            `Quick
+            test_resolve_commit_unambiguous_resolves
+        ; Alcotest.test_case
+            "ambiguous lists candidates"
+            `Quick
+            test_resolve_commit_ambiguous_lists_candidates
+        ; Alcotest.test_case
+            "repeated deploys dedup"
+            `Quick
+            test_resolve_commit_repeated_deploys_dedup
+        ; Alcotest.test_case
+            "--scope narrows candidates"
+            `Quick
+            test_resolve_commit_scope_narrows_candidates
+        ; Alcotest.test_case
+            "wrong target excluded"
+            `Quick
+            test_resolve_commit_wrong_target_excluded
+        ; Alcotest.test_case
+            "Apply_failed excluded"
+            `Quick
+            test_resolve_commit_apply_failed_excluded
+        ; Alcotest.test_case "invalid --scope" `Quick test_resolve_commit_invalid_scope
+        ; Alcotest.test_case
+            "empty --commit"
+            `Quick
+            test_resolve_commit_empty_commit_invalid
         ] )
     ]
 ;;

@@ -140,33 +140,109 @@ let run_locked ~ctx ~workspace release_id : (unit, string) result =
          (Sol_cli_rollback.pointer_report_to_string ~release pointer))
 ;;
 
-let run ~ctx release_id =
+(* FEAT-073: resolves RELEASE_ID/--commit/--scope down to one release id.
+   Always echoed before [run_locked] does anything, including the
+   unambiguous --commit case, so an operator can confirm before mutation. *)
+let resolve_release_id ~ctx ~workspace ~target_string release_id commit scope
+  : (string, string) result
+  =
+  match commit with
+  | None ->
+    (match scope with
+     | Some _ ->
+       Error
+         "--scope only narrows --commit candidate resolution; pass --commit too, or a \
+          release id directly."
+     | None ->
+       (match release_id with
+        | Some id -> Ok id
+        | None -> Error "pass a release id, or --commit <sha>."))
+  | Some commit ->
+    (match release_id with
+     | Some _ -> Error "pass either a release id or --commit, not both."
+     | None ->
+       let* events = Sol_cli_deployment_store.list ~ctx ~workspace in
+       let resolution =
+         Sol_cli_rollback.resolve_commit ~commit ?scope ~target:target_string events
+       in
+       (match resolution with
+        | Sol_cli_rollback.Commit_resolved release_id ->
+          Printf.printf
+            "%s\n%!"
+            (Sol_cli_rollback.commit_resolution_to_string
+               ~commit
+               ~target:target_string
+               ?scope
+               resolution);
+          Ok release_id
+        | Commit_invalid _ | Commit_no_match | Commit_ambiguous _ ->
+          Error
+            (Sol_cli_rollback.commit_resolution_to_string
+               ~commit
+               ~target:target_string
+               ?scope
+               resolution)))
+;;
+
+let run ~ctx ~target_string release_id commit scope =
   let workspace = workspace_name () in
-  match
-    Sol_cli_boundary_lease.with_boundary_lease
-      ~ctx
-      ~workspace
-      ~holder:Sol_cli_boundary_lease.Rollback
-      ~ttl:ttl_s
-      ~wait_s
-      (fun _lease -> run_locked ~ctx ~workspace release_id)
-  with
-  | Ok () -> ()
+  match resolve_release_id ~ctx ~workspace ~target_string release_id commit scope with
   | Error msg ->
     Printf.eprintf "error: %s\n%!" msg;
     exit 1
+  | Ok release_id ->
+    (match
+       Sol_cli_boundary_lease.with_boundary_lease
+         ~ctx
+         ~workspace
+         ~holder:Sol_cli_boundary_lease.Rollback
+         ~ttl:ttl_s
+         ~wait_s
+         (fun _lease -> run_locked ~ctx ~workspace release_id)
+     with
+     | Ok () -> ()
+     | Error msg ->
+       Printf.eprintf "error: %s\n%!" msg;
+       exit 1)
 ;;
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
 
 let release_id_arg =
   Arg.(
-    required
+    value
     & pos 0 (some string) None
     & info
         []
         ~docv:"RELEASE_ID"
-        ~doc:"The release id to restore, e.g. r-1a2b3c4d5e6f7890.")
+        ~doc:
+          "The release id to restore, e.g. r-1a2b3c4d5e6f7890. Omit when using --commit.")
+;;
+
+let commit_arg =
+  Arg.(
+    value
+    & opt (some string) None
+    & info
+        [ "commit" ]
+        ~docv:"SHA"
+        ~doc:
+          "Resolve to the release id a successful deploy of this commit produced on the \
+           target, instead of naming a release id directly (FEAT-073). Lists candidates \
+           and refuses to guess if more than one release matches.")
+;;
+
+let scope_arg =
+  Arg.(
+    value
+    & opt (some string) None
+    & info
+        [ "scope" ]
+        ~docv:"DOMAIN[/UNIT]"
+        ~doc:
+          "With --commit, narrows which of that commit's releases to resolve -- the same \
+           commit may have been deployed at more than one scope. Never means \"restore \
+           part of a release\": a release's workload set is always restored whole.")
 ;;
 
 let cmd =
@@ -178,13 +254,18 @@ let cmd =
           that release, reconstructs and re-applies its workloads, moves the \
           current-release pointer, then verifies both independently.")
     Term.(
-      const (fun release_id target ->
+      const (fun release_id commit scope target ->
         run
           ~ctx:
             (Cmd_destination.or_exit
                (Cmd_destination.resolve ~command:"rollback" ~local:false ~target))
-          release_id)
+          ~target_string:(Option.value target ~default:"local")
+          release_id
+          commit
+          scope)
       $ release_id_arg
+      $ commit_arg
+      $ scope_arg
       $ Cmd_destination.target_arg)
 ;;
 
@@ -194,5 +275,9 @@ let local_cmd =
   Cmd.v
     (Cmd.info "rollback" ~doc:"Restore a recorded release boundary on the local cluster.")
     Term.(
-      const (fun release_id -> run ~ctx:Cmd_destination.local release_id) $ release_id_arg)
+      const (fun release_id commit scope ->
+        run ~ctx:Cmd_destination.local ~target_string:"local" release_id commit scope)
+      $ release_id_arg
+      $ commit_arg
+      $ scope_arg)
 ;;

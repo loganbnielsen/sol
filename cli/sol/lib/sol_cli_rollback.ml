@@ -653,3 +653,119 @@ let pointer_report_to_string ~(release : Sol_cli_release.t) (r : pointer_report)
     (display_actual r.pointer_actual)
     release.Sol_cli_release.release_id
 ;;
+
+(* FEAT-073: `sol rollback --commit <sha>` resolves against FEAT-070's
+   deployment-event record — the authoritative store of (commit, release_id)
+   provenance — never against the Loki deploy marker, which is telemetry. *)
+
+(* Case-insensitive, either direction: a full sha resolving a stored short
+   sha, or a user-typed short prefix resolving a full one. Empty on either
+   side never matches -- a record with no captured commit (deployed outside a
+   git checkout) must not be treated as matching every query. *)
+let commit_matches ~commit stored =
+  let commit = String.lowercase_ascii (String.trim commit) in
+  let stored = String.lowercase_ascii (String.trim stored) in
+  if commit = "" || stored = ""
+  then false
+  else (
+    let is_prefix ~prefix s =
+      String.length prefix <= String.length s
+      && String.sub s 0 (String.length prefix) = prefix
+    in
+    is_prefix ~prefix:commit stored || is_prefix ~prefix:stored commit)
+;;
+
+type commit_resolution =
+  | Commit_invalid of string
+  | Commit_no_match
+  | Commit_ambiguous of (string * string) list (* (release_id, requested_scope) *)
+  | Commit_resolved of string (* release_id *)
+
+(* Only [Applied] deployment events name a release that was actually recorded
+   (FEAT-072: release records are written only on a successful apply) --
+   an [Apply_failed] attempt's [release_id] never has a corresponding release
+   record, so resolving to it would send [sol rollback] straight into a
+   "release not found" it could have refused up front. *)
+let resolve_matches ~commit ~target ~scope_string (events : Sol_cli_deployment.t list)
+  : commit_resolution
+  =
+  let matches =
+    List.filter
+      (fun (e : Sol_cli_deployment.t) ->
+         (match e.outcome with
+          | Applied -> true
+          | Apply_failed -> false)
+         && commit_matches ~commit e.git_commit
+         && (match e.target with
+             | Some t -> String.equal t target
+             | None -> false)
+         &&
+         match scope_string with
+         | None -> true
+         | Some wanted -> String.equal e.requested_scope wanted)
+      events
+  in
+  (* Dedup by release_id: retried/repeated deploys of the same commit to the
+     same scope name one release id more than once. *)
+  let by_release_id = Hashtbl.create 8 in
+  List.iter
+    (fun (e : Sol_cli_deployment.t) ->
+       let release_id = Sol_cli_release_id.to_string e.release_id in
+       if not (Hashtbl.mem by_release_id release_id)
+       then Hashtbl.add by_release_id release_id e.requested_scope)
+    matches;
+  match Hashtbl.fold (fun k v acc -> (k, v) :: acc) by_release_id [] with
+  | [] -> Commit_no_match
+  | [ (release_id, _) ] -> Commit_resolved release_id
+  | candidates ->
+    Commit_ambiguous (List.sort (fun (a, _) (b, _) -> String.compare a b) candidates)
+;;
+
+let resolve_commit ~commit ?scope ~target (events : Sol_cli_deployment.t list)
+  : commit_resolution
+  =
+  if String.trim commit = ""
+  then Commit_invalid "--commit must not be empty"
+  else (
+    let parsed_scope =
+      Option.map
+        (fun s -> Sol_cli_deployment_scope.parse_request ~what:"--scope" (Some s))
+        scope
+    in
+    match parsed_scope with
+    | Some (Error msg) -> Commit_invalid msg
+    | None -> resolve_matches ~commit ~target ~scope_string:None events
+    | Some (Ok request) ->
+      resolve_matches
+        ~commit
+        ~target
+        ~scope_string:(Some (Sol_cli_deployment_scope.request_to_string request))
+        events)
+;;
+
+let commit_resolution_to_string ~commit ~target ?scope resolution =
+  let where =
+    Printf.sprintf
+      "commit %s on target %s%s"
+      commit
+      target
+      (match scope with
+       | None -> ""
+       | Some s -> Printf.sprintf " (scope %s)" s)
+  in
+  match resolution with
+  | Commit_invalid msg -> msg
+  | Commit_no_match -> Printf.sprintf "no successful deploy found for %s" where
+  | Commit_ambiguous candidates ->
+    Printf.sprintf
+      "%s matches more than one release -- pass one explicitly:\n%s"
+      where
+      (String.concat
+         "\n"
+         (List.map
+            (fun (release_id, requested_scope) ->
+               Printf.sprintf "  %s  (requested scope: %s)" release_id requested_scope)
+            candidates))
+  | Commit_resolved release_id ->
+    Printf.sprintf "resolved %s to release %s" where release_id
+;;
