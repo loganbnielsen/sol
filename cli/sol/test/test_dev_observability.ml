@@ -245,7 +245,10 @@ let test_alloy_values_yaml_against_real_file () =
       yaml
       "__meta_kubernetes_pod_label_workspace";
     assert_contains "taxonomy label: release" yaml "__meta_kubernetes_pod_label_release";
-    check_bool "no basic_auth block for sol local infra up" false (contains "basic_auth" yaml)
+    check_bool
+      "no basic_auth block for sol local infra up"
+      false
+      (contains "basic_auth" yaml)
 ;;
 
 (* CODE_LAYER-006: this is the exact regression class the "found along the

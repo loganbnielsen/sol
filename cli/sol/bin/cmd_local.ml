@@ -39,7 +39,8 @@ let version_gt a b =
 let k3d_env () =
   match
     Sol_cli_process.run
-      (Sol_cli_process.cmd [ "docker"; "version"; "--format"; "{{.Server.MinAPIVersion}}" ])
+      (Sol_cli_process.cmd
+         [ "docker"; "version"; "--format"; "{{.Server.MinAPIVersion}}" ])
   with
   | Ok r when r.Sol_cli_process.exit_code = 0 ->
     let daemon_min = String.trim r.Sol_cli_process.stdout in
@@ -135,9 +136,7 @@ let dev_up () =
   (* 1. Cluster *)
   Printf.printf "\n[1/4] Provisioning cluster...\n%!";
   let cluster_exists =
-    match
-      Sol_cli_process.run (k3d [ "cluster"; "get"; cluster_name ])
-    with
+    match Sol_cli_process.run (k3d [ "cluster"; "get"; cluster_name ]) with
     | Ok r -> r.Sol_cli_process.exit_code = 0
     | Error _ -> false
   in
@@ -155,10 +154,7 @@ let dev_up () =
        port-probe logic to narrow. *)
     let pre_rename_cluster_name = "sun-local" in
     let pre_rename_cluster_exists =
-      match
-        Sol_cli_process.run
-          (k3d [ "cluster"; "get"; pre_rename_cluster_name ])
-      with
+      match Sol_cli_process.run (k3d [ "cluster"; "get"; pre_rename_cluster_name ]) with
       | Ok r -> r.Sol_cli_process.exit_code = 0
       | Error _ -> false
     in
@@ -641,9 +637,7 @@ let dev_down delete_cluster =
   then (
     check_tool "k3d" "https://k3d.io/";
     Printf.printf "Deleting cluster %s...\n%!" cluster_name;
-    ignore
-      (Sol_cli_process.run
-         (k3d [ "cluster"; "delete"; cluster_name ])))
+    ignore (Sol_cli_process.run (k3d [ "cluster"; "delete"; cluster_name ])))
   else Printf.printf "Port-forwards stopped. Cluster %s is still running.\n" cluster_name
 ;;
 
@@ -652,9 +646,7 @@ let dev_down delete_cluster =
 let dev_status () =
   check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/";
   let cluster_running =
-    match
-      Sol_cli_process.run (k3d [ "cluster"; "get"; cluster_name ])
-    with
+    match Sol_cli_process.run (k3d [ "cluster"; "get"; cluster_name ]) with
     | Ok r -> r.Sol_cli_process.exit_code = 0
     | Error _ -> false
   in

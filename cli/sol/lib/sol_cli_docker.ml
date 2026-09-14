@@ -30,8 +30,9 @@ let build ~tag ~dockerfile ~context =
     then [ "--provenance=false"; "--sbom=false" ]
     else (
       Printf.eprintf
-        "warning: docker buildx plugin not found; using the legacy builder \
-         (install docker-buildx for BuildKit builds).\n%!";
+        "warning: docker buildx plugin not found; using the legacy builder (install \
+         docker-buildx for BuildKit builds).\n\
+         %!";
       [])
   in
   run_ok
