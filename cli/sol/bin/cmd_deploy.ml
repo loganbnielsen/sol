@@ -121,6 +121,7 @@ type deploy_context =
   ; requested_scope : string
   ; target_name : string
   ; run_log : Sol_cli_run_log.t
+  ; keep_releases : int
   }
 
 let print_header ~workspace ~sha ?mode_line () =
@@ -226,14 +227,22 @@ let record_plan run_log plan =
    workspace, run log, target environment, destination, secret backend -- not a
    choice this execution makes, so listing them as labelled arguments unpacked
    [deploy_context] only to repack it. *)
-let run_plan_result ctx ~phase ~mode plan =
+let run_plan_result ctx ~phase ~mode ?before_apply plan =
   Sol_cli_run_log.run_task ctx.run_log ~name:phase (fun () ->
     try
-      Sol_cli_factory.execute ctx.execution ~mode ~secret_backend:ctx.secret_backend plan
+      Sol_cli_factory.execute
+        ctx.execution
+        ~mode
+        ~secret_backend:ctx.secret_backend
+        ?before_apply
+        plan
     with
     | Deploy_failed msg -> Error msg)
 ;;
 
+(* The dry-run/emit paths mutate no cluster, so they may fail at the edge; the
+   apply path below uses [run_plan_result] directly and never exits inside the
+   lease. *)
 let run_plan ctx ~phase ~mode plan =
   match run_plan_result ctx ~phase ~mode plan with
   | Ok rs -> rs
@@ -316,93 +325,76 @@ let push_deploy_events
       (Printexc.to_string exn)
 ;;
 
-let run_apply ctx ~confirm_group_change ~loki_push_url =
-  check_apply_environment ~services:ctx.services;
-  print_header ~workspace:ctx.execution.workspace ~sha:ctx.sha ();
-  let plan = build_plan ctx ~emit_to:None in
-  check_consumer_group_changes
+(* Read the release the pointer names now, warning rather than failing if it
+   cannot be read: it only feeds retention's "protect the previous release". *)
+let read_previous_release ctx =
+  match
+    Sol_cli_release_store.current
+      ~ctx:ctx.execution.cluster
+      ~workspace:ctx.execution.workspace
+  with
+  | Ok pointer -> pointer
+  | Error msg ->
+    Printf.eprintf "warning: could not read the current release pointer: %s\n%!" msg;
+    None
+;;
+
+(* Post-apply bookkeeping, non-fatal by construction: record the release, then
+   bound the workspace's history. A failure here warns; it never turns a
+   successful deploy into a failed one. *)
+let record_release_and_prune ctx ~previous plan =
+  let cluster = ctx.execution.cluster in
+  let workspace = ctx.execution.workspace in
+  match
+    Sol_cli_release_store.record_plan ~ctx:cluster ~apply_mode:Sol_cli_release.Direct plan
+  with
+  | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg
+  | Ok () ->
+    (match
+       Sol_cli_release_retention.prune
+         ~ctx:cluster
+         ~workspace
+         ~keep:ctx.keep_releases
+         ~current:(Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id)
+         ~previous
+     with
+     | Ok [] -> ()
+     | Ok pruned ->
+       Printf.printf
+         "Pruned %d release record(s) beyond the last %d.\n"
+         (List.length pruned)
+         ctx.keep_releases
+     | Error msg -> Printf.eprintf "warning: could not prune old releases: %s\n%!" msg)
+;;
+
+let report_apply_success ctx plan results =
+  List.iter
+    (fun (r : Sol_cli_executor.result) ->
+       Printf.printf
+         "  ✓  namespace %s  image %s\n\n%!"
+         r.Sol_cli_executor.namespace
+         r.Sol_cli_executor.image)
+    results;
+  Printf.printf "\nDone. %d service(s) deployed.\n" (List.length ctx.services);
+  print_service_urls ~ctx:ctx.execution.cluster results;
+  Printf.printf "Run 'sol status' to check pod health.\n";
+  Sol_cli_deployment_state.record_outcome
     ~ctx:ctx.execution.cluster
-    ~workspace:ctx.execution.workspace
-    ~confirm_group_change
-    plan;
-  write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
-  print_planned_services plan;
-  record_plan ctx.run_log plan;
-  (* FEAT-071: the attempt starts here — mint its id before the apply, then
-     record the immutable event once, when the attempt finishes, whether or not
-     it succeeded. *)
-  let now = Unix.gettimeofday () in
-  let deployment_id =
-    Sol_cli_deployment_id.create ~now ~entropy:(Sol_cli_deployment_id.random_entropy ())
-  in
-  let applied =
-    match run_plan_result ctx ~phase:"apply" ~mode:Sol_cli_executor.Apply plan with
-    | Ok results ->
-      List.iter
-        (fun (r : Sol_cli_executor.result) ->
-           Printf.printf
-             "  ✓  namespace %s  image %s\n\n%!"
-             r.Sol_cli_executor.namespace
-             r.Sol_cli_executor.image)
-        results;
-      Printf.printf "\nDone. %d service(s) deployed.\n" (List.length ctx.services);
-      print_service_urls ~ctx:ctx.execution.cluster results;
-      Printf.printf "Run 'sol status' to check pod health.\n";
-      Sol_cli_deployment_state.record_outcome
-        ~ctx:ctx.execution.cluster
-        ctx.execution.workspace
-        (Sol_cli_deployment_state.Applied
-           { namespace = "default"
-           ; name = ctx.execution.workspace
-           ; image = ctx.sha
-           ; consumer_groups =
-               List.map
-                 Sol_cli_plan_ids.Consumer_group.to_string
-                 plan.Sol_cli_deployment_plan.consumer_groups
-           });
-      (* The release record is only written when the apply succeeded: "the
-         release exists / was applied" is a claim a failed attempt cannot make. *)
-      (match
-         Sol_cli_release_store.record_plan
-           ~ctx:ctx.execution.cluster
-           ~apply_mode:Sol_cli_release.Direct
-           plan
-       with
-       | Ok () -> ()
-       | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);
-      Ok ()
-    | Error msg -> Error msg
-  in
-  let outcome =
-    match applied with
-    | Ok () -> Sol_cli_deployment.Applied
-    | Error _ -> Sol_cli_deployment.Apply_failed
-  in
-  (* FEAT-070: the deployment event is a separate, immutable record — minted id,
-     provenance, the release it attempted, and its outcome. The release path
-     above is untouched: provenance never enters it. *)
-  let recorded =
-    match
-      Sol_cli_deployment_store.record
-        ~ctx:ctx.execution.cluster
-        (Sol_cli_deployment.of_plan
-           ~deployment_id
-           ~now
-           ~git_commit:(Sol_cli_deployment.git_commit ())
-           ~git_dirty:(Sol_cli_deployment.git_dirty ())
-           ~actor:(Sys.getenv_opt "SOL_ACTOR")
-           ~target:(Some ctx.target_name)
-           ~outcome
-           plan)
-    with
-    | Ok () -> true
-    | Error msg ->
-      Printf.eprintf "warning: could not record deployment: %s\n%!" msg;
-      false
-  in
-  (* FEAT-071: the Loki marker is a join key to the authoritative record, so it
-     is only pushed when that record exists and the apply succeeded (the marker
-     says "deployed"). *)
+    ctx.execution.workspace
+    (Sol_cli_deployment_state.Applied
+       { namespace = "default"
+       ; name = ctx.execution.workspace
+       ; image = ctx.sha
+       ; consumer_groups =
+           List.map
+             Sol_cli_plan_ids.Consumer_group.to_string
+             plan.Sol_cli_deployment_plan.consumer_groups
+       })
+;;
+
+(* FEAT-071: the Loki marker is a join key to the authoritative event, so it is
+   emitted only when that event exists and the apply succeeded. *)
+let push_marker_if_deployed ctx ~loki_push_url ~recorded ~deployment_id outcome plan =
   if
     recorded
     &&
@@ -416,12 +408,74 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
       ~target_cfg:ctx.target_cfg
       ~loki_push_url
       ~deployment_id
-      plan;
-  match applied with
-  | Ok () -> ()
-  | Error msg ->
-    Printf.eprintf "\nerror: %s\n" msg;
-    exit 1
+      plan
+;;
+
+(* One deploy attempt: mint the id, apply (refreshing the lease between
+   workloads), derive the outcome, then record exactly one immutable event —
+   success or failure — and push the marker only if that event exists and the
+   apply succeeded. The release record is deliberately *not* written here: a
+   failed attempt cannot claim a release exists. *)
+let execute_deployment_attempt ctx ~before_apply ~loki_push_url plan =
+  let attempt = Sol_cli_deployment_attempt.start () in
+  let applied =
+    run_plan_result ctx ~phase:"apply" ~mode:Sol_cli_executor.Apply ~before_apply plan
+  in
+  let outcome = Sol_cli_deployment_attempt.outcome_of applied in
+  let recorded =
+    Sol_cli_deployment_attempt.record
+      ~ctx:ctx.execution.cluster
+      ~target:(Some ctx.target_name)
+      plan
+      attempt
+      outcome
+  in
+  push_marker_if_deployed
+    ctx
+    ~loki_push_url
+    ~recorded
+    ~deployment_id:(Sol_cli_deployment_attempt.deployment_id attempt)
+    outcome
+    plan;
+  Result.map (fun results -> attempt, results) applied
+;;
+
+(* The apply path, all under the workspace boundary lease. Returns a result; the
+   command edge turns an [Error] into the exit, so nothing here needs [exit] (or
+   the [at_exit] that used to compensate for it). *)
+let run_apply ctx ~confirm_group_change ~loki_push_url =
+  check_apply_environment ~services:ctx.services;
+  print_header ~workspace:ctx.execution.workspace ~sha:ctx.sha ();
+  let plan = build_plan ctx ~emit_to:None in
+  check_consumer_group_changes
+    ~ctx:ctx.execution.cluster
+    ~workspace:ctx.execution.workspace
+    ~confirm_group_change
+    plan;
+  write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
+  print_planned_services plan;
+  record_plan ctx.run_log plan;
+  Sol_cli_boundary_lease.with_boundary_lease
+    ~ctx:ctx.execution.cluster
+    ~workspace:ctx.execution.workspace
+    ~holder:Sol_cli_boundary_lease.Deploy
+    ~ttl:Sol_cli_boundary_lease.default_ttl_s
+    ~wait_s:0.
+    (fun lease ->
+       let previous = read_previous_release ctx in
+       match
+         execute_deployment_attempt
+           ctx
+           ~before_apply:(fun (_ : Sol_cli_deployment_plan.service_spec) ->
+             Sol_cli_boundary_lease.ensure_held lease)
+           ~loki_push_url
+           plan
+       with
+       | Error msg -> Error msg
+       | Ok (_attempt, results) ->
+         report_apply_success ctx plan results;
+         record_release_and_prune ctx ~previous plan;
+         Ok ())
 ;;
 
 let run (req : Sol_cli_command_request.deploy_request) =
@@ -514,16 +568,23 @@ let run (req : Sol_cli_command_request.deploy_request) =
     ; requested_scope
     ; target_name = req.target
     ; run_log
+    ; keep_releases = req.keep_releases
     }
   in
   match req.action with
   | Sol_cli_command_request.Deploy_dry_run { emit_to } -> run_dry_run ctx ~emit_to
   | Deploy_emit_to dir -> run_emit ctx ~dir
   | Deploy_apply ->
-    run_apply
-      ctx
-      ~confirm_group_change:req.confirm_group_change
-      ~loki_push_url:req.loki_push_url
+    (match
+       run_apply
+         ctx
+         ~confirm_group_change:req.confirm_group_change
+         ~loki_push_url:req.loki_push_url
+     with
+     | Ok () -> ()
+     | Error msg ->
+       Printf.eprintf "\nerror: %s\n" msg;
+       exit 1)
 ;;
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
@@ -740,6 +801,21 @@ let loki_push_url_arg =
            event at all. A push failure never fails the deploy.")
 ;;
 
+let keep_releases_arg =
+  Arg.(
+    value
+    & opt int Sol_cli_release_retention.default_keep
+    & info
+        [ "keep-releases" ]
+        ~docv:"N"
+        ~doc:
+          (Printf.sprintf
+             "Keep the last N release records after a successful deploy (default %d). \
+              The current and previous release are never pruned. Deployment-event \
+              history is not affected."
+             Sol_cli_release_retention.default_keep))
+;;
+
 let cmd =
   Cmd.v
     (Cmd.info
@@ -763,6 +839,7 @@ let cmd =
              secret_backend
              confirm_group_change
              loki_push_url
+             keep_releases
            ->
            match
              Sol_cli_command_request.make_deploy_request
@@ -776,6 +853,7 @@ let cmd =
                ~secret_backend
                ~confirm_group_change
                ~loki_push_url
+               ~keep_releases
                ~git_sha
            with
            | Ok req -> run req
@@ -791,5 +869,6 @@ let cmd =
       $ registry_arg
       $ secret_backend_term
       $ confirm_group_change_flag
-      $ loki_push_url_arg)
+      $ loki_push_url_arg
+      $ keep_releases_arg)
 ;;

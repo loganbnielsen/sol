@@ -61,6 +61,23 @@ let patch ~ctx ~resource ~name ~namespace ~patch_type ~patch =
        [ "patch"; resource; name; "-n"; namespace; "--type"; patch_type; "-p"; patch ])
 ;;
 
+(* FEAT-072: [create] accepts the raw result rather than folding a non-zero exit
+   into an error, because "AlreadyExists" is the atomic-acquire signal the
+   boundary lease relies on and is not a failure of the call itself. *)
+let create ~ctx ~file = Sol_cli_process.run (invocation ~ctx [ "create"; "-f"; file ])
+
+(* FEAT-072: [replace] returns the raw result so a conflict is visible to the
+   caller. Optimistic concurrency travels *in the object*: when [file] carries
+   [metadata.resourceVersion], the API server rejects a stale write. There is
+   deliberately no [--resource-version] flag — it is not present in every
+   kubectl (the CI runner's does not have it). *)
+let replace ~ctx ~file = Sol_cli_process.run (invocation ~ctx [ "replace"; "-f"; file ])
+
+let delete ~ctx ~resource ~name ~namespace =
+  Sol_cli_process.run_ok
+    (invocation ~ctx [ "delete"; resource; name; "-n"; namespace; "--ignore-not-found" ])
+;;
+
 (* A probe answers "is it reachable", and now also "and if not, what did kubectl
    say". The verdict is only half a diagnosis: the reason goes to stderr and used
    to be discarded here, which left `sol target show --check` able to report

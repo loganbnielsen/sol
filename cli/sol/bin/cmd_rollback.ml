@@ -17,32 +17,36 @@ open Cmdliner
 
 let workspace_name () = Filename.basename (Sys.getcwd ())
 let migrations_dir = "db/migrations"
+let ( let* ) = Result.bind
 
-let die fmt =
-  Printf.ksprintf
-    (fun msg ->
-       Printf.eprintf "error: %s\n%!" msg;
-       exit 1)
-    fmt
-;;
+(* FEAT-072: the mutation lease. Rollback first establishes quiescence: it
+   acquires the workspace's boundary lease, aborting and waiting out an in-flight
+   deploy rather than racing it (DEC-018: "abort, establish quiescence, then
+   restore"). The restoration runs under the lease, which the bracket releases
+   however this returns.
 
-let run ~ctx release_id =
-  let workspace = workspace_name () in
+   The sequence below returns a result rather than calling [exit]: only the
+   command edge turns a refusal into a process exit, so the lease is released by
+   [Fun.protect] on every path and no [at_exit] is needed. (Extracting this
+   sequence into an injectable transaction, so its order can be tested, is
+   FEAT-075.) *)
+let ttl_s = Sol_cli_boundary_lease.default_ttl_s
+let wait_s = Sol_cli_boundary_lease.rollback_wait_s
+
+let run_locked ~ctx ~workspace release_id : (unit, string) result =
   (* resolve + load + validate *)
-  let release =
-    match Sol_cli_release_store.get ~ctx ~workspace ~release_id with
-    | Ok release -> release
-    | Error msg -> die "%s" msg
-  in
+  let* release = Sol_cli_release_store.get ~ctx ~workspace ~release_id in
   Printf.printf
     "Rolling back %s to release %s\n%!"
     workspace
     release.Sol_cli_release.release_id;
   (* Ownership check first: a GitOps/controller-owned release is not something a
      direct apply can safely roll back, so refuse before touching anything. *)
-  (match Sol_cli_rollback.check_apply_mode ~release with
-   | Error e -> die "%s" (Sol_cli_rollback.apply_mode_check_error_to_string e)
-   | Ok () -> ());
+  let* () =
+    match Sol_cli_rollback.check_apply_mode ~release with
+    | Error e -> Error (Sol_cli_rollback.apply_mode_check_error_to_string e)
+    | Ok () -> Ok ()
+  in
   (* migration boundary check -- refused rollback must not touch the cluster,
      so this runs before any render/apply preparation. *)
   let current_migrations =
@@ -50,92 +54,107 @@ let run ~ctx release_id =
       Sol_cli_plan_ids.Migration_file.to_string
       (Sol_cli_deployment_plan.discover_migrations ())
   in
-  (match
-     Sol_cli_rollback.check_migration_boundary
-       ~release
-       ~migrations_dir
-       ~current_migrations
-   with
-   | Error e -> die "%s" (Sol_cli_rollback.migration_check_error_to_string e)
-   | Ok () -> ());
+  let* () =
+    match
+      Sol_cli_rollback.check_migration_boundary
+        ~release
+        ~migrations_dir
+        ~current_migrations
+    with
+    | Error e -> Error (Sol_cli_rollback.migration_check_error_to_string e)
+    | Ok () -> Ok ()
+  in
   (* reconstruct: the proven historical decode, no ambient input. *)
-  let specs =
-    match Sol_cli_rollback.service_specs_of_release release with
-    | Ok specs -> specs
-    | Error msg -> die "%s" msg
-  in
-  let release_id_t =
-    match Sol_cli_release_id.of_string release.Sol_cli_release.release_id with
-    | Ok id -> id
-    | Error msg -> die "%s" msg
-  in
+  let* specs = Sol_cli_rollback.service_specs_of_release release in
+  let* release_id_t = Sol_cli_release_id.of_string release.Sol_cli_release.release_id in
   (* render + apply. Kubernetes_live: a real apply to a live cluster reads
      secret values from this process's environment, exactly as sol up/sol
      deploy do for a direct (non-GitOps) apply -- the release record only
      ever carries secret key names, never values. GitOps-mode rollback
      (content and pointer travelling in one emitted commit) is not this
      pass's concern. *)
-  (try
-     List.iter
-       (fun (spec : Sol_cli_deployment_plan.service_spec) ->
-          match
-            Sol_cli_deployment_render.render_spec
-              ~workspace:release.Sol_cli_release.workspace
-              ?env:release.Sol_cli_release.environment
-              ~release_id:release_id_t
-              ~secret_backend:Sol_cli_manifest.Kubernetes_live
-              spec
-          with
-          | Error msg -> raise (Sol_cli_manifest.Deploy_failed msg)
-          | Ok yaml ->
-            Sol_cli_manifest.apply ~ctx yaml ~dry_run:false;
-            Printf.printf
-              "  applied %s/%s\n%!"
-              (Sol_cli_deployment_plan.namespace_to_string spec.namespace)
-              (Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name))
-       specs
-   with
-   | Sol_cli_manifest.Deploy_failed msg -> die "%s" msg);
+  let* () =
+    try
+      List.iter
+        (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+           match
+             Sol_cli_deployment_render.render_spec
+               ~workspace:release.Sol_cli_release.workspace
+               ?env:release.Sol_cli_release.environment
+               ~release_id:release_id_t
+               ~secret_backend:Sol_cli_manifest.Kubernetes_live
+               spec
+           with
+           | Error msg -> raise (Sol_cli_manifest.Deploy_failed msg)
+           | Ok yaml ->
+             Sol_cli_manifest.apply ~ctx yaml ~dry_run:false;
+             Printf.printf
+               "  applied %s/%s\n%!"
+               (Sol_cli_deployment_plan.namespace_to_string spec.namespace)
+               (Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name))
+        specs;
+      Ok ()
+    with
+    | Sol_cli_manifest.Deploy_failed msg -> Error msg
+  in
   (* Verify the live workload SET before declaring the pointer. The pointer is
      the declaration "this is now the current release"; it must not be written
      until the live workloads actually agree with it. A failure here therefore
      leaves the pointer untouched and never claims a transition that did not
      happen. Reported, never reconciled: rollback does not prune stale
      workloads, it refuses to call a hybrid state a success. *)
-  (match
-     Sol_cli_rollback.live_workloads ~ctx ~workspace:release.Sol_cli_release.workspace
-   with
-   | Error msg -> die "cannot verify rollback: %s" msg
-   | Ok live ->
-     let report = Sol_cli_rollback.verify_workloads ~release ~expected:specs ~live in
-     if not (Sol_cli_rollback.workload_report_ok report)
-     then (
-       Printf.eprintf
-         "%s\n%!"
-         (Sol_cli_rollback.workload_report_to_string ~release report);
-       die
-         "rollback incomplete: live workloads do not match release %s; the \
-          current-release pointer was left unchanged"
-         release.Sol_cli_release.release_id));
+  let* () =
+    match
+      Sol_cli_rollback.live_workloads ~ctx ~workspace:release.Sol_cli_release.workspace
+    with
+    | Error msg -> Error (Printf.sprintf "cannot verify rollback: %s" msg)
+    | Ok live ->
+      let report = Sol_cli_rollback.verify_workloads ~release ~expected:specs ~live in
+      if Sol_cli_rollback.workload_report_ok report
+      then Ok ()
+      else
+        Error
+          (Printf.sprintf
+             "%s\n\
+              rollback incomplete: live workloads do not match release %s; the \
+              current-release pointer was left unchanged"
+             (Sol_cli_rollback.workload_report_to_string ~release report)
+             release.Sol_cli_release.release_id)
+  in
   (* pointer move: only after every workload applied and the live set agrees. *)
-  (match Sol_cli_release_store.move_pointer ~ctx release with
-   | Error msg -> die "%s" msg
-   | Ok () -> ());
+  let* () = Sol_cli_release_store.move_pointer ~ctx release in
   (* pointer verify: reported independently, never reconciled. *)
   let pointer = Sol_cli_rollback.verify_pointer ~ctx ~release in
   if Sol_cli_rollback.pointer_report_ok pointer
-  then
+  then (
     Printf.printf
       "Verified: workloads and pointer both name release %s.\n%!"
-      release.Sol_cli_release.release_id
-  else (
-    Printf.eprintf
-      "%s\n\
-       rollback incomplete: the pointer was moved but does not read back as the restored \
-       release; verify cluster state before relying on this rollback.\n\
-       %!"
-      (Sol_cli_rollback.pointer_report_to_string ~release pointer);
-    exit 1)
+      release.Sol_cli_release.release_id;
+    Ok ())
+  else
+    Error
+      (Printf.sprintf
+         "%s\n\
+          rollback incomplete: the pointer was moved but does not read back as the \
+          restored release; verify cluster state before relying on this rollback."
+         (Sol_cli_rollback.pointer_report_to_string ~release pointer))
+;;
+
+let run ~ctx release_id =
+  let workspace = workspace_name () in
+  match
+    Sol_cli_boundary_lease.with_boundary_lease
+      ~ctx
+      ~workspace
+      ~holder:Sol_cli_boundary_lease.Rollback
+      ~ttl:ttl_s
+      ~wait_s
+      (fun _lease -> run_locked ~ctx ~workspace release_id)
+  with
+  | Ok () -> ()
+  | Error msg ->
+    Printf.eprintf "error: %s\n%!" msg;
+    exit 1
 ;;
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)

@@ -236,6 +236,88 @@ let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~services =
     exit 1
 ;;
 
+(* `sol up` is a deploy of the local cluster, so these mirror cmd_deploy's
+   helpers but always target the local destination. *)
+let cluster = Sol_cli_kube_destination.local_context
+
+let read_previous_release ~workspace =
+  match Sol_cli_release_store.current ~ctx:cluster ~workspace with
+  | Ok pointer -> pointer
+  | Error msg ->
+    Printf.eprintf "warning: could not read the current release pointer: %s\n%!" msg;
+    None
+;;
+
+(* Post-apply bookkeeping, non-fatal: record the release, then bound history. *)
+let record_release_and_prune ~workspace ~keep ~previous plan =
+  match
+    Sol_cli_release_store.record_plan ~ctx:cluster ~apply_mode:Sol_cli_release.Direct plan
+  with
+  | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg
+  | Ok () ->
+    (match
+       Sol_cli_release_retention.prune
+         ~ctx:cluster
+         ~workspace
+         ~keep
+         ~current:(Sol_cli_release_id.to_string plan.Sol_cli_deployment_plan.release_id)
+         ~previous
+     with
+     | Ok [] -> ()
+     | Ok pruned ->
+       Printf.printf
+         "Pruned %d release record(s) beyond the last %d.\n"
+         (List.length pruned)
+         keep
+     | Error msg -> Printf.eprintf "warning: could not prune old releases: %s\n%!" msg)
+;;
+
+(* Build the image context and apply every workload, refreshing the lease
+   between workloads and stopping cleanly if a rollback asks this up to abort.
+   Returns a result; a failed port-forward is tracked separately in [pf_failed]
+   because it does not invalidate the release that was applied. *)
+let apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
+  Sol_cli_run_log.run_task run_log ~name:"apply" (fun () ->
+    match prepare_context ~repo_root with
+    | Error msg -> Error msg
+    | Ok ctx_dir ->
+      (try
+         List.iter
+           (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+              (match Sol_cli_boundary_lease.ensure_held lease with
+               | Ok () -> ()
+               | Error msg -> raise (Deploy_failed msg));
+              apply_service
+                ~workspace
+                ~ctx_dir
+                ~sha
+                ~pf_failed
+                ~release_id:plan.Sol_cli_deployment_plan.release_id
+                spec)
+           plan.Sol_cli_deployment_plan.services;
+         Sol_cli_up_execution.remove_build_context ~ctx_dir;
+         Ok ()
+       with
+       | Deploy_failed msg ->
+         Sol_cli_up_execution.remove_build_context ~ctx_dir;
+         Error msg))
+;;
+
+let report_apply_success ~workspace ~sha plan =
+  let summary = Sol_cli_up_execution.post_deploy_summary ~cwd:(Sys.getcwd ()) plan in
+  Printf.printf "Done. %d service(s) deployed.\n" summary.deployed_count;
+  Printf.printf "Run 'sol local status' to check pod health.\n";
+  if summary.pending_migrations > 0
+  then
+    Printf.printf
+      "\n\
+       Note: %d migration file(s) found in db/migrations/ — run 'sol migrate' to apply.\n"
+      summary.pending_migrations;
+  Sol_cli_up_execution.record_applied ~ctx:cluster ~workspace ~sha plan
+;;
+
+(* The apply path, under the workspace boundary lease. Returns a result; the
+   command edge turns [Error] into the exit, so nothing here exits. *)
 let run_apply
       ~run_log
       ~requested_scope
@@ -244,6 +326,7 @@ let run_apply
       ~services
       ~repo_root
       ~confirm_group_change
+      ~keep_releases
   =
   check_contract ~services;
   ensure_postgres_url ();
@@ -252,90 +335,36 @@ let run_apply
   check_consumer_group_changes ~workspace ~confirm_group_change plan;
   record_plan run_log plan;
   let pf_failed = ref false in
-  (* FEAT-071: the attempt starts here — mint its id before the apply, then
-     record the immutable event once, when the attempt finishes. *)
-  let now = Unix.gettimeofday () in
-  let deployment_id =
-    Sol_cli_deployment_id.create ~now ~entropy:(Sol_cli_deployment_id.random_entropy ())
+  let result =
+    Sol_cli_boundary_lease.with_boundary_lease
+      ~ctx:cluster
+      ~workspace
+      ~holder:Sol_cli_boundary_lease.Deploy
+      ~ttl:Sol_cli_boundary_lease.default_ttl_s
+      ~wait_s:0.
+      (fun lease ->
+         let previous = read_previous_release ~workspace in
+         let attempt = Sol_cli_deployment_attempt.start () in
+         let applied =
+           apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan
+         in
+         ignore
+           (Sol_cli_deployment_attempt.record
+              ~ctx:cluster
+              ~target:(Some "local")
+              plan
+              attempt
+              (Sol_cli_deployment_attempt.outcome_of applied));
+         match applied with
+         | Error msg -> Error msg
+         | Ok () ->
+           report_apply_success ~workspace ~sha plan;
+           record_release_and_prune ~workspace ~keep:keep_releases ~previous plan;
+           Ok ())
   in
-  let applied =
-    match
-      Sol_cli_run_log.run_task run_log ~name:"apply" (fun () ->
-        match prepare_context ~repo_root with
-        | Error msg -> Error msg
-        | Ok ctx_dir ->
-          (try
-             List.iter
-               (apply_service
-                  ~workspace
-                  ~ctx_dir
-                  ~sha
-                  ~pf_failed
-                  ~release_id:plan.Sol_cli_deployment_plan.release_id)
-               plan.Sol_cli_deployment_plan.services;
-             Sol_cli_up_execution.remove_build_context ~ctx_dir;
-             Ok ()
-           with
-           | Deploy_failed msg ->
-             Sol_cli_up_execution.remove_build_context ~ctx_dir;
-             Error msg))
-    with
-    | Ok () ->
-      let summary = Sol_cli_up_execution.post_deploy_summary ~cwd:(Sys.getcwd ()) plan in
-      Printf.printf "Done. %d service(s) deployed.\n" summary.deployed_count;
-      Printf.printf "Run 'sol local status' to check pod health.\n";
-      if summary.pending_migrations > 0
-      then
-        Printf.printf
-          "\n\
-           Note: %d migration file(s) found in db/migrations/ — run 'sol migrate' to \
-           apply.\n"
-          summary.pending_migrations;
-      Sol_cli_up_execution.record_applied
-        ~ctx:Sol_cli_kube_destination.local_context
-        ~workspace
-        ~sha
-        plan;
-      (* The release record is only written when the apply succeeded: "the
-         release exists / was applied" is a claim a failed attempt cannot make. *)
-      (match
-         Sol_cli_release_store.record_plan
-           ~ctx:Sol_cli_kube_destination.local_context
-           ~apply_mode:Sol_cli_release.Direct
-           plan
-       with
-       | Ok () -> ()
-       | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);
-      Ok ()
-    | Error msg -> Error msg
-  in
-  let outcome =
-    match applied with
-    | Ok () -> Sol_cli_deployment.Applied
-    | Error _ -> Sol_cli_deployment.Apply_failed
-  in
-  (* FEAT-070: `sol up` is a deployment too, so it records the event as well —
-     non-fatal like the release record, and the release path above is untouched. *)
-  (match
-     Sol_cli_deployment_store.record
-       ~ctx:Sol_cli_kube_destination.local_context
-       (Sol_cli_deployment.of_plan
-          ~deployment_id
-          ~now
-          ~git_commit:(Sol_cli_deployment.git_commit ())
-          ~git_dirty:(Sol_cli_deployment.git_dirty ())
-          ~actor:(Sys.getenv_opt "SOL_ACTOR")
-          ~target:(Some "local")
-          ~outcome
-          plan)
-   with
-   | Ok () -> ()
-   | Error msg -> Printf.eprintf "warning: could not record deployment: %s\n%!" msg);
-  match applied with
-  | Ok () -> if !pf_failed then exit 1
-  | Error msg ->
-    Printf.eprintf "\nerror: %s\n" msg;
-    exit 1
+  match result with
+  | Error msg -> Error msg
+  | Ok () -> if !pf_failed then Error "one or more port-forwards failed" else Ok ()
 ;;
 
 let run (req : Sol_cli_command_request.up_request) =
@@ -367,14 +396,21 @@ let run (req : Sol_cli_command_request.up_request) =
     run_dry_run ~run_log ~requested_scope ~workspace ~sha ~services
   | Apply ->
     let repo_root = find_repo_root () in
-    run_apply
-      ~run_log
-      ~requested_scope
-      ~workspace
-      ~sha
-      ~services
-      ~repo_root
-      ~confirm_group_change:req.confirm_group_change
+    (match
+       run_apply
+         ~run_log
+         ~requested_scope
+         ~workspace
+         ~sha
+         ~services
+         ~repo_root
+         ~confirm_group_change:req.confirm_group_change
+         ~keep_releases:req.keep_releases
+     with
+     | Ok () -> ()
+     | Error msg ->
+       Printf.eprintf "\nerror: %s\n" msg;
+       exit 1)
 ;;
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
@@ -417,6 +453,21 @@ let confirm_group_change_flag =
         ~doc:"Acknowledge that consumer group IDs have changed and proceed with deploy")
 ;;
 
+let keep_releases_arg =
+  Arg.(
+    value
+    & opt int Sol_cli_release_retention.default_keep
+    & info
+        [ "keep-releases" ]
+        ~docv:"N"
+        ~doc:
+          (Printf.sprintf
+             "Keep the last N release records after a successful deploy (default %d). \
+              The current and previous release are never pruned. Deployment-event \
+              history is not affected."
+             Sol_cli_release_retention.default_keep))
+;;
+
 let cmd =
   Cmd.v
     (Cmd.info
@@ -425,13 +476,14 @@ let cmd =
          "Build images, synthesize k8s manifests, and deploy to the local cluster. \
           Local-only — no target concept, unlike 'sol deploy'.")
     Term.(
-      const (fun scope dry_run tag confirm_group_change ->
+      const (fun scope dry_run tag confirm_group_change keep_releases ->
         match
           Sol_cli_command_request.make_up_request
             ~scope
             ~dry_run
             ~tag
             ~confirm_group_change
+            ~keep_releases
             ~git_sha
         with
         | Ok req -> run req
@@ -441,5 +493,6 @@ let cmd =
       $ scope_arg
       $ dry_run_flag
       $ tag_arg
-      $ confirm_group_change_flag)
+      $ confirm_group_change_flag
+      $ keep_releases_arg)
 ;;

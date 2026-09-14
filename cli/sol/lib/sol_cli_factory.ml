@@ -27,8 +27,8 @@ let plan_of_services ~workspace ~env ?requested_scope ?resolved_config services 
   |> Result.map_error Sol_cli_deployment_plan.plan_error_to_string
 ;;
 
-let execute execution ~mode ?secret_backend plan =
-  Sol_cli_executor.run_plan execution ~mode ?secret_backend plan
+let execute execution ~mode ?secret_backend ?before_apply plan =
+  Sol_cli_executor.run_plan execution ~mode ?secret_backend ?before_apply plan
 ;;
 
 (* [services] is already resolved: selection happens once, at the command (or

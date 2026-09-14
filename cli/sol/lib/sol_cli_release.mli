@@ -144,5 +144,11 @@ val of_kubectl_item : Yojson.Safe.t -> (t, string) result
     reads as the whole history. *)
 val parse_kubectl_list : Yojson.Safe.t -> (t list, string) result
 
+(** The same parse, pairing each record with its cluster-assigned
+    [metadata.creationTimestamp]. The record itself deliberately carries no
+    timestamp (FEAT-069), so FEAT-072 retention orders by this instead; it is
+    object metadata and never enters [t], [to_json] or {!record_digest}. *)
+val parse_kubectl_list_with_creation : Yojson.Safe.t -> ((t * string) list, string) result
+
 (** An aligned [ID / ENV / WORKLOADS] table, ordered by id. *)
 val format_table : t list -> string

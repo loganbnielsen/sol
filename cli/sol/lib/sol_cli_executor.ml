@@ -93,6 +93,7 @@ let run_plan
       (execution : Sol_cli_execution.context)
       ~mode
       ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder)
+      ?before_apply
       plan
   =
   let workspace = execution.workspace in
@@ -135,14 +136,30 @@ let run_plan
           | Error _ -> None)
         rendered
     in
-    let results =
-      List.map
-        (fun ((spec : Sol_cli_deployment_plan.service_spec), yaml) ->
-           dispatch_rendered ~ctx:execution.cluster ~mode spec yaml)
-        pairs
+    (* FEAT-072: [before_apply] runs between rendered workloads so a caller can
+       refresh or lose a coordination lease before the next mutation; its error
+       stops the run before that service is applied. *)
+    let before_apply_result (spec : Sol_cli_deployment_plan.service_spec) =
+      match mode with
+      | Dry_run | Emit_to _ -> Ok ()
+      | Apply ->
+        (match before_apply with
+         | None -> Ok ()
+         | Some f -> f spec)
     in
-    (match mode with
-     | Emit_to dir -> write_release_bundle ~dir ~apply_mode:Sol_cli_release.Gitops plan
-     | Dry_run | Apply -> ());
-    Ok results
+    let rec execute acc = function
+      | [] -> Ok (List.rev acc)
+      | ((spec : Sol_cli_deployment_plan.service_spec), yaml) :: rest ->
+        (match before_apply_result spec with
+         | Error msg -> Error msg
+         | Ok () ->
+           execute (dispatch_rendered ~ctx:execution.cluster ~mode spec yaml :: acc) rest)
+    in
+    (match execute [] pairs with
+     | Error msg -> Error msg
+     | Ok results ->
+       (match mode with
+        | Emit_to dir -> write_release_bundle ~dir ~apply_mode:Sol_cli_release.Gitops plan
+        | Dry_run | Apply -> ());
+       Ok results)
 ;;

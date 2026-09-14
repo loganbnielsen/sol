@@ -46,7 +46,9 @@ let record_plan
   record ~ctx (Sol_cli_release.of_plan ~apply_mode plan)
 ;;
 
-let list ~ctx ~(workspace : string) : (Sol_cli_release.t list, string) result =
+let list_with_creation ~ctx ~(workspace : string)
+  : ((Sol_cli_release.t * string) list, string) result
+  =
   let selector =
     Printf.sprintf
       "sol.dev/type=release,sol.dev/workspace=%s"
@@ -67,11 +69,15 @@ let list ~ctx ~(workspace : string) : (Sol_cli_release.t list, string) result =
     Error (Printf.sprintf "kubectl get configmap failed: %s" (String.trim detail))
   | Ok r ->
     (try
-       Sol_cli_release.parse_kubectl_list
+       Sol_cli_release.parse_kubectl_list_with_creation
          (Yojson.Safe.from_string r.Sol_cli_process.stdout)
      with
      | Yojson.Json_error msg ->
        Error (Printf.sprintf "could not parse kubectl output: %s" msg))
+;;
+
+let list ~ctx ~(workspace : string) : (Sol_cli_release.t list, string) result =
+  list_with_creation ~ctx ~workspace |> Result.map (List.map fst)
 ;;
 
 let get ~ctx ~(workspace : string) ~(release_id : string)
@@ -121,6 +127,41 @@ let get ~ctx ~(workspace : string) ~(release_id : string)
                     (Sol_cli_release_id.to_string id)
                     record.Sol_cli_release.workspace
                     workspace))))
+;;
+
+(* FEAT-072: the pointer's [data.release_id], read without loading the record.
+   Retention needs the pre-transition "current" to protect it, and rollback
+   already has its own record reader. [None] means there is no pointer yet (or it
+   is empty), not an error: a workspace that has never deployed has no history to
+   protect. *)
+let current ~ctx ~(workspace : string) : (string option, string) result =
+  let name = Sol_cli_release.current_configmap_name ~workspace in
+  match
+    Sol_cli_kubectl.get
+      ~ctx
+      ~resource:"configmap"
+      ~name
+      ~namespace:"default"
+      ~output:"jsonpath={.data.release_id}"
+  with
+  | Error (Sol_cli_process.Non_zero { stderr; _ })
+    when Sol_cli_port_forward.string_contains ~needle:"NotFound" stderr -> Ok None
+  | Error e -> Error (Sol_cli_process.error_to_string e)
+  | Ok r ->
+    let value = String.trim r.Sol_cli_process.stdout in
+    if String.equal value "" then Ok None else Ok (Some value)
+;;
+
+(* FEAT-072: delete one release record. Only the immutable per-release ConfigMap
+   is touched, never the pointer. The id is validated first, so a malformed id
+   cannot reach an object name. *)
+let delete ~ctx ~(release_id : string) : (unit, string) result =
+  match Sol_cli_release_id.of_string release_id with
+  | Error msg -> Error msg
+  | Ok id ->
+    let name = Printf.sprintf "sol-release-%s" (Sol_cli_release_id.to_string id) in
+    Sol_cli_kubectl.delete ~ctx ~resource:"configmap" ~name ~namespace:"default"
+    |> Result.map_error Sol_cli_process.error_to_string
 ;;
 
 let move_pointer ~ctx (t : Sol_cli_release.t) : (unit, string) result =

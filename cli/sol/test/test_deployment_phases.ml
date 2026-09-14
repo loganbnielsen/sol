@@ -188,6 +188,7 @@ let test_up_request_uses_explicit_tag () =
       ~dry_run:false
       ~tag:(Some "v1.2.3")
       ~confirm_group_change:false
+      ~keep_releases:20
       ~git_sha:(fun () ->
         Alcotest.fail "git_sha should not be called when tag is explicit")
   in
@@ -204,6 +205,7 @@ let test_up_request_falls_back_to_git_sha () =
       ~dry_run:false
       ~tag:None
       ~confirm_group_change:false
+      ~keep_releases:20
       ~git_sha:(fun () -> "sha-deadbeef")
   in
   match r with
@@ -222,6 +224,7 @@ let test_up_request_preserves_mode () =
       ~dry_run:true
       ~tag:(Some "t")
       ~confirm_group_change:false
+      ~keep_releases:20
       ~git_sha:(fun () -> "")
   in
   match r with
@@ -248,6 +251,7 @@ let test_deploy_request_uses_explicit_tag () =
       ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
       ~confirm_group_change:false
       ~loki_push_url:None
+      ~keep_releases:20
       ~git_sha:(fun () -> Alcotest.fail "git_sha should not be called")
   in
   match r with
@@ -269,6 +273,7 @@ let test_deploy_request_local_mode_builds_request () =
       ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
       ~confirm_group_change:false
       ~loki_push_url:None
+      ~keep_releases:20
       ~git_sha:(fun () -> "")
   in
   match r with
@@ -295,6 +300,7 @@ let test_deploy_request_gitops_action () =
       ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
       ~confirm_group_change:false
       ~loki_push_url:None
+      ~keep_releases:20
       ~git_sha:(fun () -> "")
   in
   match r with
@@ -321,6 +327,7 @@ let test_deploy_request_dry_run_action_preserves_emit_to () =
       ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
       ~confirm_group_change:false
       ~loki_push_url:None
+      ~keep_releases:20
       ~git_sha:(fun () -> "")
   in
   match r with
@@ -350,6 +357,7 @@ let test_deploy_request_rejects_empty_target () =
       ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
       ~confirm_group_change:false
       ~loki_push_url:None
+      ~keep_releases:20
       ~git_sha:(fun () -> "")
   in
   Alcotest.(check bool) "empty target rejected" true (Result.is_error r)
@@ -371,6 +379,7 @@ let test_deploy_request_registry_omitted_stays_none () =
       ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
       ~confirm_group_change:false
       ~loki_push_url:None
+      ~keep_releases:20
       ~git_sha:(fun () -> "")
   in
   match r with
@@ -950,6 +959,40 @@ let test_up_execution_descriptor_uses_host_push_image () =
 
 (* ── entry point ─────────────────────────────────────────────────────────── *)
 
+(* FEAT-072: the retention window must be at least 1; a zero/negative value would
+   silently mean "prune everything prunable", which is not what a typo intended. *)
+let test_up_request_rejects_nonpositive_keep () =
+  let r =
+    Sol_cli_command_request.make_up_request
+      ~scope:None
+      ~dry_run:false
+      ~tag:(Some "t")
+      ~confirm_group_change:false
+      ~keep_releases:0
+      ~git_sha:(fun () -> "")
+  in
+  Alcotest.(check bool) "zero keep rejected" true (Result.is_error r)
+;;
+
+let test_deploy_request_rejects_nonpositive_keep () =
+  let r =
+    Sol_cli_command_request.make_deploy_request
+      ~target:"dev/aws/us-east-1"
+      ~scope:None
+      ~dry_run:false
+      ~emit_to:None
+      ~emit_plan_to:None
+      ~image_tag:(Some "tag")
+      ~registry:(Some "reg")
+      ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
+      ~confirm_group_change:false
+      ~loki_push_url:None
+      ~keep_releases:0
+      ~git_sha:(fun () -> "")
+  in
+  Alcotest.(check bool) "zero keep rejected" true (Result.is_error r)
+;;
+
 let () =
   Alcotest.run
     "deployment_phases"
@@ -987,6 +1030,14 @@ let () =
             "deploy: registry omitted stays None"
             `Quick
             test_deploy_request_registry_omitted_stays_none
+        ; Alcotest.test_case
+            "up: non-positive keep-releases rejected"
+            `Quick
+            test_up_request_rejects_nonpositive_keep
+        ; Alcotest.test_case
+            "deploy: non-positive keep-releases rejected"
+            `Quick
+            test_deploy_request_rejects_nonpositive_keep
         ] )
     ; ( "plan_construction"
       , [ Alcotest.test_case "local mode fields" `Quick test_plan_local_mode_fields

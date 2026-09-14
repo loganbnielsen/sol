@@ -35,11 +35,16 @@ val plan_of_services
     rendered manifest labels.
 
     FEAT-063: the destination is a required parameter and is never resolved
-    here; it arrives already resolved from the command or hosted boundary. *)
+    here; it arrives already resolved from the command or hosted boundary.
+
+    [before_apply] is forwarded to {!Sol_cli_executor.run_plan} (FEAT-072): it
+    runs before each applied workload so a caller can refresh or lose a
+    coordination lease mid-run. *)
 val execute
   :  Sol_cli_execution.context
   -> mode:Sol_cli_executor.mode
   -> ?secret_backend:Sol_cli_manifest.secret_backend
+  -> ?before_apply:(Sol_cli_deployment_plan.service_spec -> (unit, string) result)
   -> Sol_cli_deployment_plan.t
   -> (Sol_cli_executor.result list, string) result
 

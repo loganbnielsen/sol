@@ -1,5 +1,56 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: FEAT-072 — the rollback boundary is exclusive; release history is bounded (2026-09-14)
+
+The remaining DEC-018 rollback work. Its premise check found one bullet already
+delivered: FEAT-066 slice 2 rolls back by re-rendering from the record and
+applying *every* reconstructed spec, so `Fn` (CronJob) and `recreate` workloads
+are no longer skipped (the old `rollout undo`/`No_op` path is gone) — that claim
+is now pinned by a regression test instead of reimplemented. The real remaining
+work was the mutation boundary and retention.
+
+- **Boundary lease** (new `Sol_cli_boundary_lease`): one mutable
+  `sol-boundary-lease-<workspace>` ConfigMap per workspace, held by `sol
+  deploy`/`sol up` while applying and required by `sol rollback`. Acquisition is
+  an atomic `kubectl create`; a live holder is never stolen, a stale one
+  (heartbeat older than the TTL) is taken over with a `resourceVersion`
+  compare-and-swap. Rollback requests an abort from a live deploy and polls for
+  quiescence, refusing and naming the holder if it cannot establish it. Deploy
+  refreshes the heartbeat before each workload (via a new optional `before_apply`
+  hook on `Sol_cli_executor.run_plan`/`Sol_cli_factory.execute`) and stops
+  cleanly on an abort request. The lease is a bracket: `with_boundary_lease` runs
+  the caller's result-returning body under `Fun.protect` and guarantees release,
+  and a `held` value carries the context and run id so call sites write
+  `ensure_held lease` rather than threading `ctx`/`fst lease`/`run_id` by hand.
+- **Deploy orchestration** (review follow-up): the apply path is now a
+  result-returning orchestrator rather than one `exit`-interleaved function.
+  `cmd_deploy.run_apply` reads as lease bracket → read previous release → attempt
+  → report/record, with the attempt (`Sol_cli_deployment_attempt`: mint the id,
+  apply, derive the outcome, write exactly one event, then emit the Loki marker)
+  and the non-fatal record-release-and-prune bookkeeping extracted as units.
+  `cmd_up` mirrors that shape; `cmd_rollback.run_locked` returns a result too, so
+  no command calls `exit` inside the lease — the command edge is the only place
+  that exits, which is what let the `at_exit` + `Fun.protect` duplication go
+  away. Extracting rollback's sequence into a testable transaction is FEAT-075.
+- **Release retention** (new `Sol_cli_release_retention`): after a successful
+  deploy/up, keep the last `--keep-releases N` distinct release records (default
+  20, DEC-018), ordered by cluster `metadata.creationTimestamp`; the current
+  pointer target and the release it displaced are never pruned. Since release
+  records are written only on a successful apply, the store already *is* the
+  successful-release history. Non-fatal, like recording itself.
+- **`Sol_cli_kubectl`** gained `create` / `replace --resource-version` /
+  `delete` (raw results where `AlreadyExists`/conflict are control flow);
+  `Sol_cli_release_store` gained `current`, `delete`, and
+  `list_with_creation`; `Sol_cli_release` parses `creationTimestamp`.
+- Tests: `test_boundary_lease` (pure decisions + serialization),
+  `test_deployment_attempt`, new `test_release_retention` cases, plus Fn/recreate
+  and creation-timestamp regressions in `test_rollback`/`test_release` and
+  `--keep-releases` validation in `test_deployment_phases`.
+- Docs: `docs/architecture/devops-pipeline.md` (mutation boundary + retention).
+- No demo/example change applies: this changes coordination and internal
+  history retention, not generated manifests, `sol.toml`, a primitive, or a new
+  command.
+
 ## Latest: BUG-026 — the release identity covers everything the manifests do (2026-09-14)
 
 Found while checking FEAT-066's premise: the release projection omitted fields
