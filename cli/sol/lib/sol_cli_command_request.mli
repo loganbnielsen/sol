@@ -30,6 +30,10 @@ type up_request =
   ; mode : execution_mode
   ; image_tag : string
   ; confirm_group_change : bool
+  ; keep_releases : int
+    (** FEAT-072 retention window: how many distinct release records to keep
+          after a successful deploy. The current and the previous release are
+          never pruned. Validated as [>= 1]. *)
   }
 
 (** A validated request for [sol deploy]: deploy pre-built images (CI/CD path).
@@ -58,6 +62,10 @@ type deploy_request =
           [Sol_cli_deploy_event.resolve_push_url]. Only meaningful for a real
           apply (not [--dry-run]/[--emit-to], which push no deploy event at
           all). *)
+  ; keep_releases : int
+    (** FEAT-072 retention window: how many distinct release records to keep
+          after a successful deploy. The current and the previous release are
+          never pruned. Validated as [>= 1]. *)
   }
 
 (** Validate raw Cmdliner values for [sol up] into an [up_request]. [git_sha] is
@@ -68,6 +76,7 @@ val make_up_request
   -> dry_run:bool
   -> tag:string option
   -> confirm_group_change:bool
+  -> keep_releases:int
   -> git_sha:(unit -> string)
   -> (up_request, string) result
 
@@ -87,5 +96,6 @@ val make_deploy_request
   -> secret_backend:Sol_cli_manifest.secret_backend
   -> confirm_group_change:bool
   -> loki_push_url:string option
+  -> keep_releases:int
   -> git_sha:(unit -> string)
   -> (deploy_request, string) result

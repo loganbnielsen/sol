@@ -181,6 +181,38 @@ let test_parse_kubectl_list_reads_valid_items () =
   | Ok records -> check_int "one record" 1 (List.length records)
 ;;
 
+(* FEAT-072 retention orders by the cluster-assigned creation timestamp, which is
+   object metadata and never part of the record body. *)
+let test_parse_kubectl_list_with_creation () =
+  let record_body = Yojson.Safe.to_string (R.to_json sample_record) in
+  let json =
+    `Assoc
+      [ ( "items"
+        , `List
+            [ `Assoc
+                [ ( "metadata"
+                  , `Assoc
+                      [ "name", `String (R.configmap_name sample_record)
+                      ; "creationTimestamp", `String "2026-01-01T00:00:00Z"
+                      ] )
+                ; ( "data"
+                  , `Assoc
+                      [ "record", `String record_body
+                      ; ( "record_digest"
+                        , `String (Digest.to_hex (Digest.string record_body)) )
+                      ] )
+                ]
+            ] )
+      ]
+  in
+  match R.parse_kubectl_list_with_creation json with
+  | Error msg -> Alcotest.fail msg
+  | Ok [ (record, created_at) ] ->
+    check_string "record id" sample_record.R.release_id record.R.release_id;
+    check_string "creation timestamp" "2026-01-01T00:00:00Z" created_at
+  | Ok _ -> Alcotest.fail "expected exactly one record"
+;;
+
 (* FEAT-071: the store is authoritative, so a corrupt record is an error naming
    it, never something silently dropped. *)
 let test_parse_kubectl_list_fails_closed_on_corrupt () =
@@ -525,6 +557,10 @@ let () =
             "reads valid items"
             `Quick
             test_parse_kubectl_list_reads_valid_items
+        ; Alcotest.test_case
+            "reads creation timestamps (FEAT-072 retention)"
+            `Quick
+            test_parse_kubectl_list_with_creation
         ; Alcotest.test_case
             "fails closed on corrupt records"
             `Quick

@@ -56,10 +56,17 @@ val gitops
     then executes according to [mode]:
     - [Dry_run] — prints rendered YAML to stdout; no kubectl called.
     - [Emit_to dir] — writes YAML files under [dir]; no kubectl called.
-    - [Apply] — applies manifests to the cluster [ctx] names via kubectl. *)
+    - [Apply] — applies manifests to the cluster [ctx] names via kubectl.
+
+    [before_apply], when given, runs before each [Apply]-mode service (after all
+    specs have rendered), so a caller can refresh a coordination lease or abort
+    a run between workloads (FEAT-072). It is not called for [Dry_run]/[Emit_to],
+    which touch no cluster, and its [Error] stops the run before that service
+    mutates anything. *)
 val run_plan
   :  Sol_cli_execution.context
   -> mode:mode
   -> ?secret_backend:Sol_cli_manifest.secret_backend
+  -> ?before_apply:(Sol_cli_deployment_plan.service_spec -> (unit, string) Stdlib.result)
   -> Sol_cli_deployment_plan.t
   -> (result list, string) Stdlib.result

@@ -34,6 +34,13 @@ val list
   -> workspace:string
   -> (Sol_cli_release.t list, string) result
 
+(** The same records, each paired with its cluster [metadata.creationTimestamp],
+    which FEAT-072 retention orders by (the record itself has no timestamp). *)
+val list_with_creation
+  :  ctx:Sol_cli_kube_destination.context
+  -> workspace:string
+  -> ((Sol_cli_release.t * string) list, string) result
+
 (** [get ~ctx ~workspace ~release_id] loads and validates a single release
     record by id (FEAT-066's rollback resolve step). Fails closed: an
     unparseable [release_id], a missing ConfigMap, a corrupt record, or a
@@ -45,6 +52,21 @@ val get
   -> workspace:string
   -> release_id:string
   -> (Sol_cli_release.t, string) result
+
+(** The pointer's [data.release_id] without loading the record; [None] when no
+    pointer exists yet. FEAT-072 retention uses this to protect the release that
+    was current before a transition. *)
+val current
+  :  ctx:Sol_cli_kube_destination.context
+  -> workspace:string
+  -> (string option, string) result
+
+(** Delete one immutable release record by id (FEAT-072 retention). Never touches
+    the pointer, and a malformed id is an [Error] before it becomes a name. *)
+val delete
+  :  ctx:Sol_cli_kube_destination.context
+  -> release_id:string
+  -> (unit, string) result
 
 (** Write only the mutable current-release pointer for [t.workspace] to name
     [t.release_id] — unlike {!record}, does not (re-)apply the immutable

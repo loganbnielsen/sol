@@ -353,10 +353,42 @@ deploy` write on every deploy (FEAT-067):
    `data.release_id`, reported independently of the workload report. Never
    re-applies or "fixes" a mismatch.
 
+**Mutation boundary (FEAT-072).** Before any step below mutates anything,
+rollback acquires the workspace's boundary lease — the mutable
+`sol-boundary-lease-<workspace>` ConfigMap (`Sol_cli_boundary_lease`), the same
+lease `sol deploy`/`sol up` hold while applying. Acquisition is a `kubectl
+create`, so the API server is the arbiter and two processes cannot both believe
+they own the boundary. If a live deploy holds it, rollback asks it to abort and
+polls for the lease to go quiet; if it cannot establish quiescence within the
+wait window it refuses and names the holder rather than racing it. A second
+rollback refuses outright. A holder whose heartbeat is older than the TTL is
+treat as crashed and may be taken over with a `resourceVersion`
+compare-and-swap. The lease is acquired and released by a bracket
+(`Sol_cli_boundary_lease.with_boundary_lease`); the body it wraps — the whole
+apply path — returns a `result` rather than calling `exit`, so the lease is
+released exactly once on every path and the command edge is the only place a
+refusal becomes a process exit.
+
 GitOps-mode rollback (content and pointer travelling in one emitted commit) and
 `--commit`/`--scope` release disambiguation are not yet implemented — this
 command only accepts an exact, unambiguous release id against a live cluster,
 and refuses a release recorded as GitOps-owned.
+
+### Release retention (FEAT-072, DEC-018)
+
+**Module:** `cli/sol/lib/sol_cli_release_retention.ml`
+
+A successful `sol up`/`sol deploy` bounds the workspace's release history to the
+last `--keep-releases N` distinct release records (default 20, DEC-018). The
+current pointer target and the release the pointer named before the transition
+are never pruned, even when they fall outside the window. Order comes from each
+record's cluster-assigned `metadata.creationTimestamp` (the record itself
+deliberately carries no timestamp, FEAT-069); duplicate deploys of identical
+content collapse to one distinct release. Only the immutable `sol-release-<id>`
+ConfigMaps are deleted — the current-release pointer and the deployment-event
+history are untouched, since "how many releases are recent" and "what happened"
+are different retention questions. Pruning is best-effort/non-fatal: a pruning
+failure warns and does not turn a successful deploy into a failure.
 
 **State:** does **not** update `Sol_cli_deployment_state` after rollback. The
 consumer group guard on the next `sol up`/`sol deploy` will re-read the cluster

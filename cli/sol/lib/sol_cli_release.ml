@@ -499,6 +499,16 @@ let item_name item =
   | None -> ""
 ;;
 
+(* FEAT-072: the release record deliberately carries no timestamp (FEAT-069), so
+   retention orders records by the cluster-assigned [metadata.creationTimestamp]
+   instead. It is object metadata, not part of the record body, so it stays out
+   of [t]/[to_json]/[record_digest] and the content-addressed identity. *)
+let creation_timestamp_of_item item =
+  match mem "metadata" item with
+  | Some metadata -> str "creationTimestamp" metadata
+  | None -> ""
+;;
+
 (* One release ConfigMap ([kubectl get configmap ... -o json] on a single
    object, or one entry of a [-l ...] list's [items]) -> its record. Fails
    closed (FEAT-071): a record that is absent, unparseable, or does not
@@ -541,21 +551,28 @@ let of_kubectl_item (item : Yojson.Safe.t) : (t, string) result =
      | _ -> Error (Printf.sprintf "%s has no data.record" label))
 ;;
 
-(* [kubectl get configmap -l ... -o json] -> the records it carries. Fails closed
-   (FEAT-071): the store is authoritative release history, so a matching record
-   that is absent, unparseable, or does not [validate] is corruption and returns
-   an [Error] naming it — dropping it would print a partial list as if it were
-   the whole one. *)
-let parse_kubectl_list (json : Yojson.Safe.t) : (t list, string) result =
+(* [kubectl get configmap -l ... -o json] -> the records it carries, each paired
+   with its cluster [metadata.creationTimestamp] (FEAT-072 retention orders by
+   it). Fails closed (FEAT-071): the store is authoritative release history, so a
+   matching record that is absent, unparseable, or does not [validate] is
+   corruption and returns an [Error] naming it — dropping it would print a
+   partial list as if it were the whole one. *)
+let parse_kubectl_list_with_creation (json : Yojson.Safe.t)
+  : ((t * string) list, string) result
+  =
   let rec go acc = function
     | [] -> Ok (List.rev acc)
     | item :: rest ->
       (match of_kubectl_item item with
        | Error msg ->
          Error (Printf.sprintf "release history contains an invalid record: %s" msg)
-       | Ok r -> go (r :: acc) rest)
+       | Ok r -> go ((r, creation_timestamp_of_item item) :: acc) rest)
   in
   go [] (list "items" json)
+;;
+
+let parse_kubectl_list json =
+  parse_kubectl_list_with_creation json |> Result.map (List.map fst)
 ;;
 
 let format_table (records : t list) : string =

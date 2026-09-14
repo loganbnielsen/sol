@@ -737,6 +737,77 @@ let test_verify_workloads_distinguishes_kind () =
   assert (contains (Str.regexp "unexpected workload") msg)
 ;;
 
+(* FEAT-072 premise check, pinned: Fn and recreate workloads are not skipped by
+   rollback. FEAT-066 slice 2 replaced `kubectl rollout undo` with re-rendering
+   and re-applying every reconstructed spec, so a CronJob is restored and
+   verified like any other workload -- there is no native "previous revision"
+   concept it lacks. This test is the regression guard for that claim. *)
+let fn_spec : Sol_cli_deployment_plan.service_spec =
+  { ledger_spec with
+    source_name = "invoice_fn"
+  ; k8s_name = k8s_name "invoice-fn"
+  ; primitive = Sol_cli_deployment_plan.Fn
+  ; schedule = Some "0 * * * *"
+  ; replicas = 1
+  ; rollout_strategy = None
+  ; progressive_delivery = None
+  }
+;;
+
+let fn_release : Sol_cli_release.t =
+  { release_id = "r-3333333333333333"
+  ; workspace = "myapp"
+  ; environment = None
+  ; workloads = [ Sol_cli_deployment_plan.release_workload_of_spec fn_spec ]
+  ; migrations = []
+  ; apply_mode = Sol_cli_release.Direct
+  }
+;;
+
+let test_fn_reconstructs_and_verifies_as_cronjob () =
+  match Sol_cli_rollback.service_specs_of_release fn_release with
+  | Error msg -> Alcotest.fail msg
+  | Ok [ got ] ->
+    Alcotest.(check bool)
+      "primitive is still Fn"
+      true
+      (got.Sol_cli_deployment_plan.primitive = Sol_cli_deployment_plan.Fn);
+    Alcotest.(check (option string)) "schedule preserved" fn_spec.schedule got.schedule;
+    Alcotest.(check bool)
+      "live kind is CronJob"
+      true
+      (Sol_cli_rollback.live_kind_of_service got = Sol_cli_rollback.Live_cronjob);
+    let live =
+      [ ( id Sol_cli_rollback.Live_cronjob "myapp-payments" "invoice-fn"
+        , fn_release.release_id )
+      ]
+    in
+    let report =
+      Sol_cli_rollback.verify_workloads ~release:fn_release ~expected:[ got ] ~live
+    in
+    Alcotest.(check bool)
+      "a CronJob is part of the verified set, not skipped"
+      true
+      (Sol_cli_rollback.workload_report_ok report)
+  | Ok specs -> Alcotest.failf "expected 1 reconstructed spec, got %d" (List.length specs)
+;;
+
+(* The other half of the same premise: a `recreate` Deployment's strategy
+   survives reconstruction (the gate's render equality covers the bytes; this
+   names the fact). *)
+let test_recreate_strategy_reconstructs () =
+  let specs = reconstruct_ok () in
+  let ledger =
+    List.find
+      (fun (s : Sol_cli_deployment_plan.service_spec) -> s.source_name = "ledger_svc")
+      specs
+  in
+  Alcotest.(check bool)
+    "recreate preserved"
+    true
+    (ledger.rollout_strategy = Some Sol_cli_toml.Recreate)
+;;
+
 (* The wire-path half: the pod-template label path [live_workloads] walks must
    agree with where the renderer puts the taxonomy labels. Two items, one
    workspace-matching and one not, plus one with no labels at all. *)
@@ -1031,6 +1102,14 @@ let () =
             "wire path: workspace label is sanitized"
             `Quick
             test_workload_rows_of_payload_sanitizes_workspace
+        ; Alcotest.test_case
+            "Fn is reconstructed and verified as a CronJob, not skipped"
+            `Quick
+            test_fn_reconstructs_and_verifies_as_cronjob
+        ; Alcotest.test_case
+            "recreate strategy survives reconstruction"
+            `Quick
+            test_recreate_strategy_reconstructs
         ] )
     ; ( "pointer_report"
       , [ Alcotest.test_case "ok flag" `Quick test_pointer_report_ok

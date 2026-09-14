@@ -57,6 +57,33 @@ val patch
   -> patch:string
   -> (Sol_cli_process.result, Sol_cli_process.error) result
 
+(** [create] returns the raw result: a non-zero exit is not folded into an
+    error, because the boundary lease (FEAT-072) uses kubectl's "AlreadyExists"
+    as its atomic acquire signal and that outcome is not a failure of the call
+    itself. *)
+val create
+  :  ctx:Sol_cli_kube_destination.context
+  -> file:string
+  -> (Sol_cli_process.result, Sol_cli_process.error) result
+
+(** [replace ?resource_version] returns the raw result; [--resource-version]
+    turns the write into an optimistic compare-and-swap, so a lease held by a
+    live holder cannot be overwritten by a stale take-over candidate. *)
+val replace
+  :  ctx:Sol_cli_kube_destination.context
+  -> file:string
+  -> ?resource_version:string
+  -> unit
+  -> (Sol_cli_process.result, Sol_cli_process.error) result
+
+(** Delete an object, tolerating an absent one (["--ignore-not-found"]). *)
+val delete
+  :  ctx:Sol_cli_kube_destination.context
+  -> resource:string
+  -> name:string
+  -> namespace:string
+  -> (unit, Sol_cli_process.error) result
+
 val probe : ctx:Sol_cli_kube_destination.context -> args:string list -> bool
 
 (** The same probe, but keeping what kubectl said: the exit code and the reason

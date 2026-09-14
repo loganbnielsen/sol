@@ -54,6 +54,9 @@
   Sol_cli_status
   Sol_cli_migration_disposition
   Sol_cli_rollback
+  Sol_cli_boundary_lease
+  Sol_cli_release_retention
+  Sol_cli_deployment_attempt
   Sol_cli_docker
   Sol_cli_helm
   Sol_cli_platform_component
