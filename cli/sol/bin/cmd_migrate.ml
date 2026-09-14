@@ -129,7 +129,7 @@ let get_postgres_url ~ctx () =
     then auto_forward_pg ~ctx ()
     else (
       Printf.eprintf "error: POSTGRES_URL not set and no cluster postgres found.\n";
-      Printf.eprintf "  Run 'sol dev up' first, then retry.\n";
+      Printf.eprintf "  Run 'sol local infra up' first, then retry.\n";
       exit 1)
 ;;
 

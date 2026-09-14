@@ -58,7 +58,7 @@ let registry_port = 5000
 
 (* FEAT-042: host port the local ingress-nginx controller is port-forwarded
    to. Deliberately not 8080 -- that is where `sol up` forwards a service, so
-   the two would collide. Nothing else in `sol dev up` uses 8088. *)
+   the two would collide. Nothing else in `sol local infra up` uses 8088. *)
 let ingress_local_port = 8088
 
 (* ── Helm helpers ────────────────────────────────────────────────────────── *)
@@ -290,7 +290,7 @@ let dev_up () =
 
          INFRA-013: upstream retired the whole 5.x line from the
          charts.redpanda.com index in 2026-09, so `--version 5.9.15` no longer
-         resolves and a fresh `sol local up` could not install a substrate at
+         resolves and a fresh `sol local infra up` could not install a substrate at
          all. That removed the option FRIC-010 preserved, so the pin moves to
          26.1.11 (image v26.1.17): FRIC-010's evaluated target, one minor behind
          newest, within support, and confirmed to render cleanly against
@@ -386,7 +386,7 @@ let dev_up () =
         (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin *)
         (* CODE_LAYER-008: base/main.tf sets adminPassword explicitly
          (var.grafana_admin_password); left at the chart's own default here
-         previously, making sol dev up's Grafana login undocumented and
+         previously, making sol local infra up's Grafana login undocumented and
          chart-version-dependent. Fixed dev-only value, matching
          PostgreSQL's hardcoded "dev" password convention above. *)
       ~values:[ "adminPassword", Str "dev" ]
@@ -705,7 +705,7 @@ let dev_status () =
 
 (* ── dev run ─────────────────────────────────────────────────────────────── *)
 
-(** Dev-local addresses matching the port-forwards from [sol dev up], mirroring
+(** Dev-local addresses matching the port-forwards from [sol local infra up], mirroring
     the cluster-internal addresses [sol up] injects but rewritten to localhost.
 *)
 let dev_env_vars =

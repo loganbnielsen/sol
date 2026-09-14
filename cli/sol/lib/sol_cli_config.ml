@@ -725,7 +725,7 @@ let target_of_path s =
         ; message =
             Printf.sprintf
               "%S is reserved: it names Sol's own ephemeral cluster — the substrate `sol \
-               local up` brings up — not an environment. Name this target for the \
+               local infra up` brings up — not an environment. Name this target for the \
                cluster it points at (`dev`, `staging`, …), even when that cluster is \
                small and yours."
               env

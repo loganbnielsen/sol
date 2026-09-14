@@ -74,7 +74,7 @@ possible.
 
 1. `sol new workspace <name>` — scaffold
 2. `cd <name> && dune build` — build generated workspace
-3. `sol dev up` — provision or reconcile local substrate (k3d cluster)
+3. `sol local infra up` — provision or reconcile local substrate (k3d cluster)
 4. `sol up` — build Docker images, push, deploy
 5. `sol migrate --table <name>_migrations` — apply DB migrations
 6. `sol status` — check pods
@@ -92,7 +92,7 @@ After step 4 (`sol up`), measure the wall-clock time from `sol new workspace`
 through first successful `curl /health`. Does it stay under two minutes on an
 existing substrate?
 
-Note: `sol dev up` on a fresh cluster takes ~5 min and is substrate
+Note: `sol local infra up` on a fresh cluster takes ~5 min and is substrate
 bootstrap — it does not count against the two-minute claim.
 
 ### 6. Write the report

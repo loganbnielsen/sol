@@ -46,8 +46,8 @@ dune build
 ## Run locally
 
 ```bash
-sol dev up      # provision local k3d cluster + Kafka + supporting infra (~5 min first run)
-sol dev run     # build images and run all services against local infra
+sol local infra up   # provision local k3d cluster + Kafka + supporting infra (~5 min first run)
+sol local run        # run all workspace services locally (dune exec, dev env vars)
 ```
 
 ## Deploy to cluster

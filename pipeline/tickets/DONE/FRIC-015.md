@@ -24,3 +24,13 @@ Scaffold output, generated workspace README, and several docs still instruct use
 **Remediation:** Sweep every reference to the pre-REFAC-083 names to the current commands (`sol local infra up`, `sol local run`, `sol local status`, `sol migrate`). Add a regression check that the scaffold's printed next-steps and generated README contain no `sol dev` token (e.g. extend `cli/sol/test/test_workspace.ml`). Optionally add `sol dev` as a one-line tombstone that errors with a pointer, for stale muscle memory.
 
 Related: REFAC-083 (the rename), FRIC-014 (same drift class), FRIC-020 (`sol status` in the same next-steps block).
+
+## Completion notes
+
+- Swept the pre-REFAC-083 names out of every live surface: the scaffold's printed next-steps (`sol_cli_cmd_new.ml`), the generated workspace README (`sol_cli_scaffold_templates.ml`), the dogfood/ux-audit skills, `.claude/CLAUDE.md`, ROADMAP, devops-pipeline, the audit runbook, plus stale inline comments and one user-facing error string (`cmd_migrate.ml`: "Run 'sol dev up' first").
+- Historical records (`pipeline/tickets/DONE/*`, past `pipeline/dogfood/RUN_*`) were deliberately left untouched — they describe the state at the time. The one surviving mention in `sol_cli_secret.ml` is an explicit note about the REFAC-083 rename and should stay.
+- Verified by generating a throwaway workspace: both the printed next-steps and the generated `README.md` now say `sol local infra up` / `sol local run` and contain no `sol dev` token.
+- No example/demo file embedded these commands (checked `examples/` as part of the sweep), so no runnable-example update applies.
+
+- Also swept the **second-generation** stale name, `sol local up` (REFAC-083's target, itself since superseded): the README Quickstart, the reserved-env error message (`sol_cli_config.ml`) and its test assertion (`test_config.ml`), and a `cmd_local.ml` comment now all say `sol local infra up`.
+- Verified `test_config.exe` (49 tests) passes after the message/assertion pair changed, and a full `dune build` is clean.

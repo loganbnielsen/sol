@@ -372,7 +372,7 @@ locals {
 
   # ADR 0001 / CODE_LAYER-005: cli/platform/components/<name>/ is now the shared
   # source of truth for Helm values that used to be independently
-  # hand-duplicated here and in cmd_local.ml (sol dev up). "local" is the same
+  # hand-duplicated here and in cmd_local.ml (sol local infra up). "local" is the same
   # profile cmd_local.ml uses for its k3d cluster; "durable" is the
   # self_hosted_durable, S3-backed profile. Each component's values-common
   # + values-<profile>.json are read via jsondecode(file(...)) -- per the
@@ -497,7 +497,7 @@ resource "helm_release" "loki" {
   # storage/schema) now lives in
   # cli/platform/components/loki/{values-common,values-local,values-durable}.json
   # (ADR 0001 / CODE_LAYER-005) -- the same "local" profile file cmd_local.ml's
-  # `sol dev up` reads for its own Loki install, so this no longer needs a
+  # `sol local infra up` reads for its own Loki install, so this no longer needs a
   # parallel, independently-maintained copy (that's the exact gap BUG-016
   # found). See that directory's files for the current values and git blame
   # on this resource for the per-value history that used to live here.

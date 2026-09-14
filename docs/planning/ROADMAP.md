@@ -85,7 +85,7 @@ for full reports.
 - `sol logs`, `sol secret set/list/delete` all functional
 - `sol deploy --dry-run / --emit-plan-to / --emit-to` all functional
 - Loki logs from in-cluster workers are complete (trace/span IDs in logfmt line body)
-- Kafka external advertised listener correctly configured for `sol dev run` path
+- Kafka external advertised listener correctly configured for `sol local run` path
 
 **Follow-up tickets (captured, not blockers):**
 
@@ -106,7 +106,7 @@ shape.
 
 | Lane | Who owns infra? | User interface | Sol responsibility |
 |---|---|---|---|
-| Local Dev | Developer machine | `sol local infra up`, `sol dev run`, `sol up` | Provision local substrate, run app, expose logs/metrics |
+| Local Dev | Developer machine | `sol local infra up`, `sol local run`, `sol up` | Provision local substrate, run app, expose logs/metrics |
 | Managed Customer Cloud | Customer cloud account, Sol substrate shape | high-level env/provider/tier config | Provision/update Sol's standard substrate, deploy app, operate release workflow |
 | Exported Self-Managed | Customer | generated Terraform/manifests/GitOps artifacts | Generate artifacts and inspect releases; customer owns apply/drift/ops |
 | Future Sol Hosted | Sol | hosted UI/API plus CLI | Run the factory floor: builders, previews, deploys, secrets, observability, release history, RBAC, audit, billing |
@@ -156,7 +156,7 @@ The Dogfood Alpha milestone is complete when a fresh environment can run:
 sol new workspace acme
 cd acme
 sol local infra up
-sol dev run
+sol local run
 sol up
 sol status
 sol logs

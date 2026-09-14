@@ -45,8 +45,8 @@ Check all `pipeline/tickets/` subdirectories for existing EXP-* ticket files. A 
 - Check whether the generated README explains the project layout clearly enough without prior Sol knowledge
 
 **Stage 3 — Local Development:**
-- Check `README.md` or a linked guide for `sol dev up` and `sol dev run` instructions
-- Check whether `sol dev run` exists as a command
+- Check `README.md` or a linked guide for `sol local infra up` and `sol local run` instructions
+- Check whether `sol local run` exists as a command
 - Verify the guide explains how to observe the message flow end-to-end (Grafana URL, what to query)
 
 **Stage 4 — Cloud Setup:**
