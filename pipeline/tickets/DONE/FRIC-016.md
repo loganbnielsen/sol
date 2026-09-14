@@ -22,3 +22,8 @@ Working sequence, for reference: `opam update` â†’ `opam switch create 5.4.1` â†
 **Remediation:** Add a "Build from source" section to `README.md` and `DOGFOOD.md` with the full sequence and the OCaml/dune requirements (including `opam update`); publish or pin the six missing packages so they resolve without per-package manual work; ideally provide a single `sol dev bootstrap`-style command or a documented script.
 
 Related: the scaffolded workspace's own `README.md` already names `librdkafka-dev libpq-dev libpq5`, so the generated-artifact guidance is ahead of the top-level docs here.
+
+## Completion notes
+
+- Added a "Building from source (contributors)" section to `README.md` and a "Building the CLI from source" section to `docs/dogfood/DOGFOOD.md`, both with the verified sequence: `opam update`, `opam switch create 5.4.1`, `opam install dune`, pin the eleven external `*-eio` packages from GitHub, `opam install --deps-only --with-test .`, then `dune build cli/sol/bin/main.exe`.
+- Doc-only change; no generated/manifest surface, so no example/demo update applies.

@@ -123,6 +123,34 @@ sync — update both by hand on any bump.
 sol  dune  docker  kubectl  k3d  helm
 ```
 
+### Building the CLI from source
+
+The `sol` binary is an OCaml 5.4+ project with eleven external `*-eio` opam
+dependencies, several of which are not on opam yet. From a fresh machine:
+
+```bash
+# 1. Refresh the opam index (a stale index does not know about OCaml 5.4.1).
+opam update
+
+# 2. Toolchain. `dune-project` requires OCaml >= 5.4.0, and a new switch has no dune.
+opam switch create 5.4.1
+eval $(opam env)
+opam install -y dune
+
+# 3. Pin the external packages from source, then install sol's dependency closure.
+for p in kafka-eio obs-eio obs-loki-eio obs-prometheus-eio obs-tempo-eio \
+         pg-eio aws-eio s3-eio dynamodb-eio lambda-eio https-eio; do
+  opam pin add -y "$p" "https://github.com/loganbnielsen/$p.git"
+done
+opam install -y --deps-only --with-test .
+
+# 4. Build the CLI.
+dune build cli/sol/bin/main.exe
+```
+
+`librdkafka-dev`, `libpq-dev`, and `libpq5` (above) are required for step 3 to
+compile the C stubs; `dune` alone is not enough.
+
 ### Sol checkout
 
 `sol new workspace` infers the Sol checkout from the binary path via
