@@ -1,5 +1,27 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: BUG-026 — the release identity covers everything the manifests do (2026-09-14)
+
+Found while checking FEAT-066's premise: the release projection omitted fields
+that change the rendered manifests, so a real change could keep the previous
+`release_id` (and the record could not be restored from). Fixed.
+
+- The projection now includes, per workload, `volumes`, the effective
+  `rollout` strategy (canary steps included), `ingress_host`/`ingress_path`,
+  `cluster_issuer`, and the resolved service `calls` — every resolved input the
+  renderer turns into manifest content. `encoding_version` moved to
+  `sol-release-v2`, so every id changes deliberately; the known vector moved
+  from `r-f4db347c7c7a2d1b` to `r-e1ba38330c2dc9cc`.
+- `Sol_cli_deployment_plan.release_workload_of_spec` is now the *single*
+  projection, and `Sol_cli_release.workload` is `Sol_cli_release_id.workload`.
+  The hand-mirrored pair that let the two drift is gone, so a record built from
+  a plan rederives the plan's id by construction.
+- The record JSON carries the new fields, so `derived_release_id`/`validate`
+  still round-trip; volume and call order are canonicalised away, while canary
+  step order is semantic and counts.
+- Tests: one per manifest-affecting field proving it moves the id, plus
+  order-insensitivity for volumes/calls and order-sensitivity for canary steps.
+
 ## Latest: FEAT-071 — deployment attempts, typed identity, fail-closed reads (2026-09-14)
 
 Follow-up from the FEAT-070 review, tightening the deployment half of the model.

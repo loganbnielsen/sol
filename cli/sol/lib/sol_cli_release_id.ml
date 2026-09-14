@@ -30,6 +30,18 @@ type workload =
   ; cpu : string
   ; memory : string
   ; extra_labels : (string * string) list
+    (* BUG-026: every remaining resolved input that changes the rendered
+     manifests. Omitting these let a change of ingress, volume, rollout
+     strategy, progressive delivery, cluster issuer or service call keep the
+     previous release id while the manifests moved underneath it. *)
+  ; volumes : (string * string * string * string) list
+    (* name, mount path, size, access mode *)
+  ; rollout : string (* effective strategy; canary steps included *)
+  ; ingress_host : string option
+  ; ingress_path : string option
+  ; cluster_issuer : string
+  ; calls : (string * string * string * string) list
+    (* env var, target domain, target k8s name, target namespace *)
   }
 
 type content =
@@ -46,7 +58,9 @@ type t = string
 (* Bumping this is a deliberate identity change: it makes every release hash
    differently, which is exactly what you want when the projection's meaning
    changes, and exactly what you must not do accidentally. *)
-let encoding_version = "sol-release-v1"
+(* BUG-026 extended the projection to cover every manifest-affecting input, so
+   every release identity changes with this version. *)
+let encoding_version = "sol-release-v2"
 
 (* Length-prefixed encoding. The length prefix is not decoration: with a bare
    separator, workloads ("ab", "c") and ("a", "bc") would encode identically and
@@ -75,6 +89,31 @@ let enc_pairs b pairs =
        enc_string b k;
        enc_string b v)
     pairs
+;;
+
+(* A *table* canonicalises a set of rows (volumes, calls): row order is not
+   semantic, so sort by the whole row. Each row is itself length-prefixed, which
+   keeps ([a;b], [c]) distinct from ([a], [b;c]). *)
+let compare4 (a1, a2, a3, a4) (b1, b2, b3, b4) =
+  let c = String.compare a1 b1 in
+  if c <> 0
+  then c
+  else (
+    let c = String.compare a2 b2 in
+    if c <> 0
+    then c
+    else (
+      let c = String.compare a3 b3 in
+      if c <> 0 then c else String.compare a4 b4))
+;;
+
+let enc_table b rows =
+  enc_int b (List.length rows);
+  List.iter
+    (fun row ->
+       enc_int b (List.length row);
+       List.iter (enc_string b) row)
+    rows
 ;;
 
 let canonical_string (content : content) =
@@ -108,7 +147,17 @@ let canonical_string (content : content) =
        enc_int b w.replicas;
        enc_string b w.cpu;
        enc_string b w.memory;
-       enc_pairs b w.extra_labels)
+       enc_pairs b w.extra_labels;
+       enc_table
+         b
+         (List.map (fun (n, m, s, a) -> [ n; m; s; a ]) (List.sort compare4 w.volumes));
+       enc_string b w.rollout;
+       enc_option enc_string b w.ingress_host;
+       enc_option enc_string b w.ingress_path;
+       enc_string b w.cluster_issuer;
+       enc_table
+         b
+         (List.map (fun (e, d, n, ns) -> [ e; d; n; ns ]) (List.sort compare4 w.calls)))
     workloads;
   Buffer.contents b
 ;;

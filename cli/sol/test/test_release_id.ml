@@ -20,6 +20,12 @@ let wl
       ?(cpu = "100m")
       ?(memory = "128Mi")
       ?(extra_labels = [])
+      ?(volumes = [])
+      ?(rollout = "rolling_update")
+      ?(ingress_host = None)
+      ?(ingress_path = None)
+      ?(cluster_issuer = "letsencrypt-prod")
+      ?(calls = [])
       name
       image
   =
@@ -34,6 +40,12 @@ let wl
   ; cpu
   ; memory
   ; extra_labels
+  ; volumes
+  ; rollout
+  ; ingress_host
+  ; ingress_path
+  ; cluster_issuer
+  ; calls
   }
 ;;
 
@@ -232,7 +244,9 @@ let test_of_string_round_trips_and_validates () =
 let test_known_vector () =
   check_string
     "known id for a fixed content"
-    "r-f4db347c7c7a2d1b"
+    (* BUG-026: sol-release-v2 widens the projection to every manifest-affecting
+       input, so the vector moved deliberately. *)
+    "r-e1ba38330c2dc9cc"
     (id
        (content
           [ wl
@@ -275,6 +289,60 @@ let test_environment_identity_counts_not_just_resolved_state () =
     true
     (id (content ~environment:None same_state)
      <> id (content ~environment:(Some "prod") same_state))
+;;
+
+(* BUG-026: every input the renderer turns into manifest content must move the
+   identity. Each of these was previously invisible to it, so a real change kept
+   the previous [release] label. *)
+let test_manifest_affecting_fields_change_identity () =
+  let base = id (content [ wl "charge_svc" "acme/charge:1" ]) in
+  let moved label other = check_bool label true (base <> id (content [ other ])) in
+  moved
+    "volume change"
+    (wl
+       ~volumes:[ "data", "/data", "1Gi", "read_write_once" ]
+       "charge_svc"
+       "acme/charge:1");
+  moved "rollout change" (wl ~rollout:"recreate" "charge_svc" "acme/charge:1");
+  moved "canary steps change" (wl ~rollout:"canary:w10,w100" "charge_svc" "acme/charge:1");
+  moved
+    "ingress host change"
+    (wl ~ingress_host:(Some "charge.example.com") "charge_svc" "acme/charge:1");
+  moved
+    "ingress path change"
+    (wl ~ingress_path:(Some "/api") "charge_svc" "acme/charge:1");
+  moved
+    "cluster issuer change"
+    (wl ~cluster_issuer:"other-issuer" "charge_svc" "acme/charge:1");
+  moved
+    "service call change"
+    (wl ~calls:[ "X_URL", "x", "x-svc", "ns-x" ] "charge_svc" "acme/charge:1")
+;;
+
+(* A canary's step *sequence* is the strategy, so it is semantic — unlike the
+   set-like tables below. *)
+let test_canary_step_order_is_semantic () =
+  check_bool
+    "canary step order changes identity"
+    true
+    (id (content [ wl ~rollout:"canary:w10,w100" "charge_svc" "acme/charge:1" ])
+     <> id (content [ wl ~rollout:"canary:w100,w10" "charge_svc" "acme/charge:1" ]))
+;;
+
+(* Volume and call order is not semantic, so it must be canonicalised away. *)
+let test_volume_and_call_order_is_not_semantic () =
+  let v1 = "a", "/a", "1Gi", "read_write_once"
+  and v2 = "b", "/b", "2Gi", "read_only_many" in
+  check_string
+    "volume order does not change identity"
+    (id (content [ wl ~volumes:[ v1; v2 ] "charge_svc" "acme/charge:1" ]))
+    (id (content [ wl ~volumes:[ v2; v1 ] "charge_svc" "acme/charge:1" ]));
+  let c1 = "A_URL", "a", "a-svc", "ns-a"
+  and c2 = "B_URL", "b", "b-svc", "ns-b" in
+  check_string
+    "call order does not change identity"
+    (id (content [ wl ~calls:[ c1; c2 ] "charge_svc" "acme/charge:1" ]))
+    (id (content [ wl ~calls:[ c2; c1 ] "charge_svc" "acme/charge:1" ]))
 ;;
 
 let () =
@@ -324,6 +392,18 @@ let () =
             "environment identity counts, not just resolved state"
             `Quick
             test_environment_identity_counts_not_just_resolved_state
+        ; Alcotest.test_case
+            "manifest-affecting fields change identity"
+            `Quick
+            test_manifest_affecting_fields_change_identity
+        ; Alcotest.test_case
+            "canary step order is semantic"
+            `Quick
+            test_canary_step_order_is_semantic
+        ; Alcotest.test_case
+            "volume and call order is not semantic"
+            `Quick
+            test_volume_and_call_order_is_not_semantic
         ] )
     ; ( "value"
       , [ Alcotest.test_case

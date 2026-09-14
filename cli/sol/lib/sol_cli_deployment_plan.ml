@@ -145,6 +145,73 @@ let effective_rollout_strategy_to_string = function
 let k8s_name_to_string = Sol_cli_kubernetes_name.k8s_name_to_string
 let namespace_to_string = Sol_cli_kubernetes_name.namespace_to_string
 
+(* BUG-026: the single projection from a resolved workload to its contribution
+   to the release identity. It is exported so [Sol_cli_release]'s record builder
+   calls it rather than hand-mirroring it — two mirrored projections drift, and
+   the drift is exactly how a manifest-affecting field stops moving the id.
+   Every input the renderer turns into manifest content must appear here. *)
+let progressive_steps_to_string steps =
+  String.concat
+    ","
+    (List.map
+       (function
+         | Sol_cli_toml.Weight n -> Printf.sprintf "w%d" n
+         | Sol_cli_toml.Pause None -> "p"
+         | Sol_cli_toml.Pause (Some s) -> Printf.sprintf "p%d" s)
+       steps)
+;;
+
+(* The effective strategy, so [None] and [Some RollingUpdate] are one release.
+   Canary steps are part of the identity: changing them changes the Rollout. *)
+let release_rollout_to_string (spec : service_spec) =
+  match spec.progressive_delivery with
+  | Some (Sol_cli_toml.Canary { steps }) -> "canary:" ^ progressive_steps_to_string steps
+  | Some Sol_cli_toml.Blue_green -> "blue_green"
+  | None ->
+    (match spec.rollout_strategy with
+     | Some Sol_cli_toml.Recreate -> "recreate"
+     | Some Sol_cli_toml.RollingUpdate | None -> "rolling_update")
+;;
+
+let release_workload_of_spec (spec : service_spec) : Sol_cli_release_id.workload =
+  { Sol_cli_release_id.domain = spec.domain
+  ; name = spec.source_name
+  ; primitive =
+      (match spec.primitive with
+       | Svc -> "svc"
+       | Worker -> "worker"
+       | Fn -> "fn")
+  ; image = spec.image
+  ; config = spec.config
+  ; secrets = spec.secrets
+  ; schedule = spec.schedule
+  ; replicas = spec.replicas
+  ; cpu = Sol_cli_toml.cpu_quantity_to_string spec.cpu
+  ; memory = Sol_cli_toml.memory_quantity_to_string spec.memory
+  ; extra_labels = spec.extra_labels
+  ; volumes =
+      List.map
+        (fun (v : Sol_cli_toml.volume) ->
+           ( v.name
+           , v.mount_path
+           , v.size
+           , Sol_cli_toml.volume_access_mode_to_string v.access_mode ))
+        spec.volumes
+  ; rollout = release_rollout_to_string spec
+  ; ingress_host = Option.map Sol_cli_toml.hostname_to_string spec.ingress_host
+  ; ingress_path = Option.map Sol_cli_toml.ingress_path_to_string spec.ingress_path
+  ; cluster_issuer = spec.cluster_issuer
+  ; calls =
+      List.map
+        (fun (c : service_call) ->
+           ( c.env_var
+           , c.target_domain
+           , k8s_name_to_string c.target_name
+           , namespace_to_string c.target_namespace ))
+        spec.calls
+  }
+;;
+
 let canary_step_to_json = function
   | Sol_cli_toml.Weight n -> `Assoc [ "setWeight", `Int n ]
   | Sol_cli_toml.Pause None -> `Assoc [ "pause", `Assoc [] ]
@@ -618,29 +685,11 @@ let of_services_result
      derived once from the canonical projection (which deliberately excludes
      provenance: timestamps, commit, output directory) and stored on the plan;
      downstream code must consume [plan.release_id] rather than recompute it. *)
-  let workload_of_spec (spec : service_spec) : Sol_cli_release_id.workload =
-    { Sol_cli_release_id.domain = spec.domain
-    ; name = spec.source_name
-    ; primitive =
-        (match spec.primitive with
-         | Svc -> "svc"
-         | Worker -> "worker"
-         | Fn -> "fn")
-    ; image = spec.image
-    ; config = spec.config
-    ; secrets = spec.secrets
-    ; schedule = spec.schedule
-    ; replicas = spec.replicas
-    ; cpu = Sol_cli_toml.cpu_quantity_to_string spec.cpu
-    ; memory = Sol_cli_toml.memory_quantity_to_string spec.memory
-    ; extra_labels = spec.extra_labels
-    }
-  in
   let release_id =
     Sol_cli_release_id.of_content
       { workspace
       ; environment = env.env
-      ; workloads = List.map workload_of_spec resolved_services
+      ; workloads = List.map release_workload_of_spec resolved_services
       }
   in
   Ok

@@ -138,6 +138,13 @@ val effective_rollout_strategy : service_spec -> effective_rollout_strategy
     summaries. *)
 val effective_rollout_strategy_to_string : effective_rollout_strategy -> string
 
+(** [release_workload_of_spec spec] is [spec]'s contribution to the release
+    identity (BUG-026). It is the single projection: [Sol_cli_release] calls it
+    rather than mirroring the fields, so the record's rewritten identity always
+    matches the plan's. Every input that changes the rendered manifests must
+    appear here — otherwise a real change keeps the previous [release_id]. *)
+val release_workload_of_spec : service_spec -> Sol_cli_release_id.workload
+
 (** Serialize a deployment plan to JSON (experimental format — schema not
     frozen). Config values are included; secret keys are included but secret
     values are omitted. *)
