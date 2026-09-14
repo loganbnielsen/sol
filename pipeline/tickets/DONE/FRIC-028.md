@@ -16,3 +16,8 @@ Ubuntu's `/usr/games/sol` shadows the CLI when PATH isn't set correctly
 **Remediation:** Name the collision explicitly in `DOGFOOD.md`'s "Required on PATH" step (with a suggested `alias sol=...` or absolute path), and/or have `sol --version` print enough identity that it's obvious which binary answered.
 
 Related: FRIC-019 (tool install/PATH hygiene).
+
+## Completion notes
+
+- Added an explicit `/usr/games/sol` warning to `docs/dogfood/DOGFOOD.md`'s "Required on PATH" section, naming the observed symptom (`Unknown option --version`) and the helper-shell (`sg`, `sh -c`) PATH gotcha.
+- Doc-only; no example/demo update applies.

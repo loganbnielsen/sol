@@ -150,6 +150,14 @@ sync — update both by hand on any bump.
 sol  dune  docker  kubectl  k3d  helm
 ```
 
+**Watch for `/usr/games/sol`.** Ubuntu ships a solitaire game under that exact
+name, so if the built `sol` is not first on `PATH`, every `sol …` invocation
+silently runs the game — `sol --version` answers `Unknown option --version`, and
+`sol --help` shows an unrelated program. Check `which sol` before starting and
+fix the ordering (or use an absolute path / `alias sol=$SOL_HOME/.dogfood-bin/sol`).
+The same applies inside helper shells (`sg`, `sh -c`) that may not source your
+`PATH` setup (FRIC-028).
+
 ### Building the CLI from source
 
 The `sol` binary is an OCaml 5.4+ project with eleven external `*-eio` opam
