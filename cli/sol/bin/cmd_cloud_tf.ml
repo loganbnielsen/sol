@@ -92,29 +92,145 @@ let terraform_output_string infra_dir key =
      | _ -> None)
 ;;
 
+(* Not Sol_cli_scaffold.mkdir_p: that one hardcodes 0o755, fine for generated
+   source but wrong here -- .sol/kubeconfigs/ holds live cluster credentials,
+   so the directory itself must not be world-readable/traversable. *)
+let mkdir_p path =
+  let rec loop dir =
+    if dir = "" || dir = "." || Sys.file_exists dir
+    then ()
+    else (
+      loop (Filename.dirname dir);
+      Unix.mkdir dir 0o700)
+  in
+  loop path
+;;
+
+let write_file path content =
+  let oc = open_out path in
+  Fun.protect ~finally:(fun () -> close_out_noerr oc) (fun () -> output_string oc content)
+;;
+
+let read_file path =
+  let ic = open_in path in
+  Fun.protect
+    ~finally:(fun () -> close_in_noerr ic)
+    (fun () ->
+       let len = in_channel_length ic in
+       really_input_string ic len)
+;;
+
+let target_kubeconfig_path target =
+  let safe =
+    target
+    |> String.map (function
+      | '/' -> '-'
+      | c -> c)
+  in
+  Filename.concat ".sol" (Filename.concat "kubeconfigs" (safe ^ ".kubeconfig"))
+;;
+
+let print_target_destination_lines ~target_file ~kube_context ~kubeconfig =
+  Printf.printf
+    "  Add these lines under `target:` in %s:\n\
+    \    kube_context: %s\n\
+    \    kubeconfig: %s\n\
+     %!"
+    target_file
+    kube_context
+    kubeconfig
+;;
+
+let contains ~needle s =
+  let nlen = String.length needle in
+  let slen = String.length s in
+  let rec loop i = i + nlen <= slen && (String.sub s i nlen = needle || loop (i + 1)) in
+  nlen = 0 || loop 0
+;;
+
+let record_target_destination (target : Sol_cli_config.target) ~kube_context ~kubeconfig =
+  let target_file = Sol_cli_config.target_file target in
+  if
+    (not (Sys.file_exists target_file))
+    || contains ~needle:"kube_context:" (read_file target_file)
+    || contains ~needle:"kubeconfig:" (read_file target_file)
+  then print_target_destination_lines ~target_file ~kube_context ~kubeconfig
+  else (
+    let content = read_file target_file in
+    let lines = String.split_on_char '\n' content in
+    let rec insert acc = function
+      | [] -> None
+      | line :: rest when String.trim line = "target:" ->
+        Some
+          (String.concat
+             "\n"
+             (List.rev_append
+                acc
+                (line
+                 :: ("  kube_context: " ^ kube_context)
+                 :: ("  kubeconfig: " ^ kubeconfig)
+                 :: rest)))
+      | line :: rest -> insert (line :: acc) rest
+    in
+    match insert [] lines with
+    | None -> print_target_destination_lines ~target_file ~kube_context ~kubeconfig
+    | Some updated ->
+      write_file target_file updated;
+      Printf.printf
+        "  Recorded Kubernetes destination in %s (%s).\n%!"
+        target_file
+        kube_context)
+;;
+
 (* EXP-028 (originally EXP-023, reverted 2026-06-13): a printed
    kubeconfig_command line is easy to miss, leaving kubectl unconfigured and
    every subsequent sol status/deploy/migrate failing with a cryptic
    connection error. Run it automatically; on failure, fall back to printing
    an explicit instruction rather than leaving the user to notice the
    original output line on their own. *)
-let configure_kubectl infra_dir =
+let configure_kubectl infra_dir (target : Sol_cli_config.target) =
   match terraform_output_string infra_dir "kubeconfig_command" with
   | None -> ()
   | Some kubeconfig_command ->
+    let kubeconfig = target_kubeconfig_path target.Sol_cli_config.name in
+    mkdir_p (Filename.dirname kubeconfig);
     Printf.printf "\nConfiguring kubectl...\n%!";
-    (match Sol_cli_process.run_shell kubeconfig_command with
+    (match
+       Sol_cli_process.run
+         (Sol_cli_process.cmd
+            ~env:[ "KUBECONFIG", kubeconfig ]
+            [ "sh"; "-c"; kubeconfig_command ])
+     with
      | Ok r when r.Sol_cli_process.exit_code = 0 ->
+       let kube_context =
+         terraform_output_string infra_dir "kube_context"
+         |> Option.value
+              ~default:
+                (Option.value target.Sol_cli_config.cluster_name ~default:target.name)
+       in
+       record_target_destination target ~kube_context ~kubeconfig;
        Printf.printf
-         "  kubectl configured -- sol status/deploy/migrate can reach this cluster now.\n\
+         "  kubectl configured for this target -- sol status/deploy/migrate will use the \
+          recorded destination.\n\
           %!"
      | _ ->
        Printf.printf
-         "  (could not auto-configure kubectl -- run this yourself before using sol \
-          status/deploy/migrate:)\n\
-         \  %s\n\
+         "  (could not auto-configure kubectl -- run this yourself, then add the target \
+          destination lines printed below:)\n\
+         \  KUBECONFIG=%s %s\n\
           %!"
-         kubeconfig_command)
+         kubeconfig
+         kubeconfig_command;
+       let kube_context =
+         terraform_output_string infra_dir "kube_context"
+         |> Option.value
+              ~default:
+                (Option.value target.Sol_cli_config.cluster_name ~default:target.name)
+       in
+       print_target_destination_lines
+         ~target_file:(Sol_cli_config.target_file target)
+         ~kube_context
+         ~kubeconfig)
 ;;
 
 (* ── cloud apply/plan ───────────────────────────────────────────────────── *)
@@ -235,13 +351,6 @@ let resolved_var key ~var_files ~vars ~default =
     (match List.find_map (var_file_value key) var_files with
      | Some _ as v -> v
      | None -> default)
-;;
-
-let contains ~needle s =
-  let nlen = String.length needle in
-  let slen = String.length s in
-  let rec loop i = i + nlen <= slen && (String.sub s i nlen = needle || loop (i + 1)) in
-  nlen = 0 || loop 0
 ;;
 
 let aws_absent ~region ~kind ~missing_marker ~argv =
@@ -365,156 +474,129 @@ let aws_no_load_balancers ~region ~cluster_name =
    verify_aws_destroy's post-destroy check below is the hard gate that
    actually fails the command if a load balancer is genuinely left behind. *)
 let delete_loadbalancer_services ~region ~cluster_name =
-  let previous_context =
-    match
-      Sol_cli_process.run (Sol_cli_process.cmd [ "kubectl"; "config"; "current-context" ])
-    with
-    | Ok r when r.Sol_cli_process.exit_code = 0 ->
-      Some (String.trim r.Sol_cli_process.stdout)
-    | _ -> None
-  in
-  let update_ok =
-    match
-      Sol_cli_process.run
-        (Sol_cli_process.cmd
-           ~timeout_s:30.
-           [ "aws"
-           ; "eks"
-           ; "update-kubeconfig"
-           ; "--name"
-           ; cluster_name
-           ; "--region"
-           ; region
-           ])
-    with
-    | Ok r -> r.Sol_cli_process.exit_code = 0
-    | Error _ -> false
-  in
-  if not update_ok
-  then
-    Printf.printf
-      "  (could not reach cluster %s to remove LoadBalancer Services first -- skipping; \
-       verifying no load balancer is left behind after destroy instead)\n\
-       %!"
-      cluster_name
-  else (
-    (* aws eks update-kubeconfig (no --alias) names the context/cluster/user
-       entries identically to whatever it just printed as current-context --
-       capture that name so cleanup below removes exactly what this call
-       added, not anything the operator already had configured. *)
-    let temp_context =
-      match
-        Sol_cli_process.run
-          (Sol_cli_process.cmd [ "kubectl"; "config"; "current-context" ])
-      with
-      | Ok r when r.Sol_cli_process.exit_code = 0 ->
-        Some (String.trim r.Sol_cli_process.stdout)
-      | _ -> None
-    in
-    (match temp_context with
-     | None -> ()
-     | Some context ->
-       (* Kubernetes' field selectors on core/v1 Service only support
-          metadata.name/metadata.namespace -- "spec.type=LoadBalancer" is
-          rejected outright by every API server (confirmed live against a
-          real cluster; this is standard apiserver behavior, not
-          version-specific). Filter inside the jsonpath range expression
-          instead, which does support arbitrary field predicates. *)
-       (match
-          Sol_cli_process.run
-            ~echo:false
-            (Sol_cli_process.cmd
-               ~timeout_s:20.
-               [ "kubectl"
-               ; "--context"
-               ; context
-               ; "get"
-               ; "svc"
-               ; "-A"
-               ; "-o"
-               ; {|jsonpath={range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.namespace} {.metadata.name}
+  let kubeconfig = Filename.temp_file "sol-cloud-destroy-" ".kubeconfig" in
+  Fun.protect
+    ~finally:(fun () ->
+      try Sys.remove kubeconfig with
+      | Sys_error _ -> ())
+    (fun () ->
+       let env = [ "KUBECONFIG", kubeconfig ] in
+       let update_ok =
+         match
+           Sol_cli_process.run
+             (Sol_cli_process.cmd
+                ~env
+                ~timeout_s:30.
+                [ "aws"
+                ; "eks"
+                ; "update-kubeconfig"
+                ; "--name"
+                ; cluster_name
+                ; "--region"
+                ; region
+                ; "--alias"
+                ; cluster_name
+                ])
+         with
+         | Ok r -> r.Sol_cli_process.exit_code = 0
+         | Error _ -> false
+       in
+       if not update_ok
+       then
+         Printf.printf
+           "  (could not reach cluster %s to remove LoadBalancer Services first -- \
+            skipping; verifying no load balancer is left behind after destroy instead)\n\
+            %!"
+           cluster_name
+       else (
+         (* Kubernetes' field selectors on core/v1 Service only support
+           metadata.name/metadata.namespace -- "spec.type=LoadBalancer" is
+           rejected outright by every API server (confirmed live against a
+           real cluster; this is standard apiserver behavior, not
+           version-specific). Filter inside the jsonpath range expression
+           instead, which does support arbitrary field predicates. *)
+         match
+           Sol_cli_process.run
+             ~echo:false
+             (Sol_cli_process.cmd
+                ~env
+                ~timeout_s:20.
+                [ "kubectl"
+                ; "--context"
+                ; cluster_name
+                ; "get"
+                ; "svc"
+                ; "-A"
+                ; "-o"
+                ; {|jsonpath={range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.namespace} {.metadata.name}
 {end}|}
-               ])
-        with
-        | Ok r when r.Sol_cli_process.exit_code = 0 ->
-          let services =
-            String.split_on_char '\n' r.Sol_cli_process.stdout
-            |> List.filter_map (fun line ->
-              match String.split_on_char ' ' (String.trim line) with
-              | [ ns; name ] when ns <> "" && name <> "" -> Some (ns, name)
-              | _ -> None)
-          in
-          if services <> []
-          then (
-            Printf.printf
-              "  Deleting %d LoadBalancer Service(s) before terraform destroy \
-               (AUDIT-064) -- their AWS load balancer isn't tracked by Terraform and \
-               must be removed first:\n\
-               %!"
-              (List.length services);
-            List.iter
-              (fun (ns, name) ->
-                 Printf.printf "    %s/%s\n%!" ns name;
-                 ignore
-                   (Sol_cli_process.run
-                      (Sol_cli_process.cmd
-                         ~timeout_s:90.
-                         [ "kubectl"
-                         ; "--context"
-                         ; context
-                         ; "delete"
-                         ; "svc"
-                         ; name
-                         ; "-n"
-                         ; ns
-                         ; "--wait=true"
-                         ; "--timeout=60s"
-                         ])))
-              services;
-            (* kubectl delete on a LoadBalancer Service returns once the k8s
-               object is gone, but AWS deprovisions the actual ELB/NLB
-               asynchronously. Poll the same tag-based check
-               verify_aws_destroy uses (bounded, same shape as
-               cmd_migrate.ml's FRIC-012 Job-completion poll) rather than a
-               fixed sleep, which either wastes time or -- worse -- isn't
-               long enough under AWS API backpressure or a slow NLB
-               deprovision. *)
-            let rec wait_for_lbs_gone n =
-              if n = 0
-              then
-                Printf.printf
-                  "  (warning: load balancer(s) may still be deprovisioning after ~2min \
-                   -- proceeding to terraform destroy anyway; the post-destroy check \
-                   will catch it if one is still there)\n\
-                   %!"
-              else (
-                match load_balancers_gone ~region ~cluster_name with
-                | Some true -> ()
-                | Some false | None ->
-                  Unix.sleepf 5.;
-                  wait_for_lbs_gone (n - 1))
-            in
-            wait_for_lbs_gone 24 (* ~120s at 5s/poll *))
-        | _ ->
-          Printf.printf
-            "  (could not list Services in cluster %s -- skipping LoadBalancer cleanup)\n\
-             %!"
-            cluster_name);
-       ignore
-         (Sol_cli_process.run
-            (Sol_cli_process.cmd [ "kubectl"; "config"; "delete-context"; context ]));
-       ignore
-         (Sol_cli_process.run
-            (Sol_cli_process.cmd [ "kubectl"; "config"; "delete-cluster"; context ]));
-       ignore
-         (Sol_cli_process.run
-            (Sol_cli_process.cmd [ "kubectl"; "config"; "delete-user"; context ])));
-    match previous_context with
-    | Some ctx ->
-      ignore
-        (Sol_cli_process.run
-           (Sol_cli_process.cmd [ "kubectl"; "config"; "use-context"; ctx ]))
-    | None -> ())
+                ])
+         with
+         | Ok r when r.Sol_cli_process.exit_code = 0 ->
+           let services =
+             String.split_on_char '\n' r.Sol_cli_process.stdout
+             |> List.filter_map (fun line ->
+               match String.split_on_char ' ' (String.trim line) with
+               | [ ns; name ] when ns <> "" && name <> "" -> Some (ns, name)
+               | _ -> None)
+           in
+           if services <> []
+           then (
+             Printf.printf
+               "  Deleting %d LoadBalancer Service(s) before terraform destroy \
+                (AUDIT-064) -- their AWS load balancer isn't tracked by Terraform and \
+                must be removed first:\n\
+                %!"
+               (List.length services);
+             List.iter
+               (fun (ns, name) ->
+                  Printf.printf "    %s/%s\n%!" ns name;
+                  ignore
+                    (Sol_cli_process.run
+                       (Sol_cli_process.cmd
+                          ~env
+                          ~timeout_s:90.
+                          [ "kubectl"
+                          ; "--context"
+                          ; cluster_name
+                          ; "delete"
+                          ; "svc"
+                          ; name
+                          ; "-n"
+                          ; ns
+                          ; "--wait=true"
+                          ; "--timeout=60s"
+                          ])))
+               services;
+             (* kubectl delete on a LoadBalancer Service returns once the k8s
+                object is gone, but AWS deprovisions the actual ELB/NLB
+                asynchronously. Poll the same tag-based check
+                verify_aws_destroy uses (bounded, same shape as
+                cmd_migrate.ml's FRIC-012 Job-completion poll) rather than a
+                fixed sleep, which either wastes time or -- worse -- isn't
+                long enough under AWS API backpressure or a slow NLB
+                deprovision. *)
+             let rec wait_for_lbs_gone n =
+               if n = 0
+               then
+                 Printf.printf
+                   "  (warning: load balancer(s) may still be deprovisioning after ~2min \
+                    -- proceeding to terraform destroy anyway; the post-destroy check \
+                    will catch it if one is still there)\n\
+                    %!"
+               else (
+                 match load_balancers_gone ~region ~cluster_name with
+                 | Some true -> ()
+                 | Some false | None ->
+                   Unix.sleepf 5.;
+                   wait_for_lbs_gone (n - 1))
+             in
+             wait_for_lbs_gone 24 (* ~120s at 5s/poll *))
+         | _ ->
+           Printf.printf
+             "  (could not list Services in cluster %s -- skipping LoadBalancer cleanup)\n\
+              %!"
+             cluster_name))
 ;;
 
 let verify_aws_destroy ~var_files ~vars =
@@ -567,7 +649,7 @@ let run_terraform_init run_log infra_dir =
 
 let config_vars ~strict target =
   match target with
-  | None -> [], None
+  | None -> [], None, None
   | Some target_path ->
     (match Sol_cli_config.load_for_target ~target:target_path with
      | Error e ->
@@ -600,7 +682,8 @@ let config_vars ~strict target =
              exit 1
            | Ok vars ->
              ( Sol_cli_terraform.kv_args vars
-             , resolved_target.Sol_cli_config.terraform_var_file ))))
+             , resolved_target.Sol_cli_config.terraform_var_file
+             , Some resolved_target ))))
 ;;
 
 let cloud_init ~target ~var_file ~vars ~action () =
@@ -611,7 +694,9 @@ let cloud_init ~target ~var_file ~vars ~action () =
   (* Check the target before terraform-init, same order cloud_destroy
      already uses -- a typo'd target should fail fast, not after a
      terraform init that does nothing wrong but wastes the run. *)
-  let config_vars, config_var_file = config_vars ~strict:(action = Apply) (Some target) in
+  let config_vars, config_var_file, target_cfg =
+    config_vars ~strict:(action = Apply) (Some target)
+  in
   Printf.printf "\nInitializing cloud infrastructure (%s)...\n%!" pname;
   run_terraform_init run_log infra_dir;
   let var_file =
@@ -637,7 +722,9 @@ let cloud_init ~target ~var_file ~vars ~action () =
          Sol_cli_terraform.apply ~chdir:infra_dir ~var_files ~vars));
     Printf.printf "\nProvisioned endpoints:\n%!";
     print_outputs infra_dir;
-    configure_kubectl infra_dir;
+    (match target_cfg with
+     | Some target -> configure_kubectl infra_dir target
+     | None -> ());
     Printf.printf "\nDone.\n%!"
 ;;
 
@@ -646,7 +733,9 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
   let provider = provider_of_target_path target in
   let pname, infra_dir = infra_dir provider in
   let run_log = Sol_cli_run_log.create ~prefix:"cloud-destroy" () in
-  let config_vars, config_var_file = config_vars ~strict:(action = Apply) (Some target) in
+  let config_vars, config_var_file, _target_cfg =
+    config_vars ~strict:(action = Apply) (Some target)
+  in
   let var_file =
     match var_file with
     | Some _ -> var_file

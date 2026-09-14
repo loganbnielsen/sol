@@ -89,6 +89,7 @@ let rows ~verbose (target : Sol_cli_config.target) kubernetes =
     @ [ "env", target.env
       ; "target", target.name
       ; "kube context", Option.value target.kube_context ~default:"(none set)"
+      ; "kubeconfig", Option.value target.kubeconfig ~default:"(none set)"
       ]
 ;;
 

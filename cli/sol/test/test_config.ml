@@ -723,6 +723,34 @@ target:
            (Sol_cli_kube_destination.kubectl_args destination)))
 ;;
 
+let test_destination_includes_scoped_kubeconfig () =
+  with_temp_dir (fun () ->
+    write_base ();
+    mkdir_p "sol/prod/aws";
+    write
+      "sol/prod/aws/us-east-1.yml"
+      {|
+target:
+  kube_context: sol-prod-us-east-1
+  kubeconfig: .sol/kubeconfigs/prod-aws-us-east-1.kubeconfig
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      let target = Option.get (Sol_cli_config.target cfg) in
+      (match Sol_cli_config.destination_of_target target with
+       | Error message -> Alcotest.fail message
+       | Ok destination ->
+         check_str_opt
+           "the scoped kubeconfig comes from the target"
+           (Some ".sol/kubeconfigs/prod-aws-us-east-1.kubeconfig")
+           destination.kubeconfig;
+         Alcotest.(check (list (pair string string)))
+           "the child env scopes kubectl to that kubeconfig"
+           [ "KUBECONFIG", ".sol/kubeconfigs/prod-aws-us-east-1.kubeconfig" ]
+           (Sol_cli_kube_destination.environment destination)))
+;;
+
 (* An unconfigured destination fails closed rather than falling back to whatever
    kubectl is pointed at — the reason the field exists at all, and the property
    that keeps the ambient context out of the deploy path. *)
@@ -1042,6 +1070,10 @@ let () =
             "destination comes from the target"
             `Quick
             test_destination_comes_from_the_target
+        ; Alcotest.test_case
+            "destination includes scoped kubeconfig"
+            `Quick
+            test_destination_includes_scoped_kubeconfig
         ; Alcotest.test_case
             "missing destination fails closed"
             `Quick
