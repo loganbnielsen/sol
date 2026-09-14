@@ -92,6 +92,19 @@ k3d v5.6.0 is pinned because `sol local infra up` passes chart values tuned agai
 that version (Redpanda CPU/replica settings, node-exporter disable flag). Older
 k3d versions may reject those values or install different chart defaults.
 
+Docker Engine 29 removed every Docker API below 1.44, while k3d v5.6.0's client
+still speaks 1.43. `sol local infra up` bridges that automatically: it pins
+`DOCKER_API_VERSION` to the daemon's minimum for its k3d calls (FRIC-017), so the
+combination in the table above works without any manual environment changes.
+
+`sol up` builds through BuildKit when the `docker-buildx` plugin is present
+(recommended: the generated Dockerfiles disable provenance/SBOM attestations,
+which some cloud container runtimes cannot pull). Stock Ubuntu `docker.io`
+ships no buildx plugin, so without it `sol up` falls back to Docker's legacy
+builder — which rejects the attestation flags outright — and prints a warning
+instead (FRIC-018). Installing the `docker-buildx` package or dropping the
+plugin into `~/.docker/cli-plugins/` restores the BuildKit path.
+
 Separately, know what this substrate does **not** do: the k3s it ships (v1.27.4)
 uses kube-router, which does not honour cross-namespace `namespaceSelector`
 NetworkPolicy rules — `ipBlock` rules work, `namespaceSelector` rules never do,
