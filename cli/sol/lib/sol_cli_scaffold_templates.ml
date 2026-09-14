@@ -1021,7 +1021,7 @@ let worker_lib_dune =
  (name {{lib}})
  (wrapped false)
  (modules {{Mod}})
- (libraries kafka_eio_service yojson))
+ (libraries sol_worker kafka_eio_service yojson))
 |tpl}
 ;;
 

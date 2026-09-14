@@ -176,7 +176,7 @@ val consume_partitioned
   -> ?retry_strategy:retry_strategy
   -> ?on_retry:(partition:int32 -> attempt:int -> delay_s:float -> unit)
   -> ?ot:Obs_eio.t
-  -> handler:('a -> ack:(unit -> (unit, Kafka_error.t) result) -> trace_ctx:Obs_trace.t option -> Kafka_error.t Kafka_consumer.handler_result)
+  -> handler:('a -> ack:(unit -> (unit, Kafka_error.t) result) -> trace_ctx:Obs_trace.t option -> Kafka_service.handler_error Kafka_consumer.handler_result)
   -> unit
   -> (unit, Kafka_error.t) result
 ```
