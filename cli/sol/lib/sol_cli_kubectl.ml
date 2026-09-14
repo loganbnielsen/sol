@@ -66,20 +66,12 @@ let patch ~ctx ~resource ~name ~namespace ~patch_type ~patch =
    boundary lease relies on and is not a failure of the call itself. *)
 let create ~ctx ~file = Sol_cli_process.run (invocation ~ctx [ "create"; "-f"; file ])
 
-(* FEAT-072: [replace] accepts an optional [--resource-version] compare-and-swap,
-   so a stale lease can be taken over without clobbering a holder that refreshed
-   in the meantime. Like [create], the raw result is returned so a conflict is
-   visible to the caller rather than indistinguishable from a real error. *)
-let replace ~ctx ~file ?resource_version () =
-  let args =
-    [ "replace"; "-f"; file ]
-    @
-    match resource_version with
-    | None -> []
-    | Some rv -> [ "--resource-version"; rv ]
-  in
-  Sol_cli_process.run (invocation ~ctx args)
-;;
+(* FEAT-072: [replace] returns the raw result so a conflict is visible to the
+   caller. Optimistic concurrency travels *in the object*: when [file] carries
+   [metadata.resourceVersion], the API server rejects a stale write. There is
+   deliberately no [--resource-version] flag — it is not present in every
+   kubectl (the CI runner's does not have it). *)
+let replace ~ctx ~file = Sol_cli_process.run (invocation ~ctx [ "replace"; "-f"; file ])
 
 let delete ~ctx ~resource ~name ~namespace =
   Sol_cli_process.run_ok

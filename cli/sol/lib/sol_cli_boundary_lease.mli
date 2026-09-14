@@ -74,7 +74,11 @@ val deploy_decision : now:float -> ttl:float -> t option -> decision
     over. *)
 val rollback_decision : now:float -> ttl:float -> t option -> decision
 
-val to_configmap_json : t -> string
+(** The lease as a ConfigMap. [resource_version], when given, is written into
+    [metadata.resourceVersion] so the API server rejects a stale replace — the
+    compare-and-swap is carried in the object, since not every kubectl supports
+    [replace --resource-version]. *)
+val to_configmap_json : ?resource_version:string -> t -> string
 
 (** Parse one ConfigMap object, returning the lease and its [resourceVersion]. *)
 val of_configmap_item : Yojson.Safe.t -> (t * string, string) result

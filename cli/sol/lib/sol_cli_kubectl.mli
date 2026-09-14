@@ -66,14 +66,13 @@ val create
   -> file:string
   -> (Sol_cli_process.result, Sol_cli_process.error) result
 
-(** [replace ?resource_version] returns the raw result; [--resource-version]
-    turns the write into an optimistic compare-and-swap, so a lease held by a
-    live holder cannot be overwritten by a stale take-over candidate. *)
+(** [replace] returns the raw result. Optimistic concurrency travels in the
+    object: when the file carries [metadata.resourceVersion], the API server
+    rejects a stale write with a conflict. There is deliberately no
+    [--resource-version] flag — not every kubectl has one. *)
 val replace
   :  ctx:Sol_cli_kube_destination.context
   -> file:string
-  -> ?resource_version:string
-  -> unit
   -> (Sol_cli_process.result, Sol_cli_process.error) result
 
 (** Delete an object, tolerating an absent one (["--ignore-not-found"]). *)

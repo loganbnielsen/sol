@@ -159,22 +159,30 @@ let to_data_json t =
     ]
 ;;
 
-let to_configmap_json t =
+(* [resource_version], when given, is written into the object's metadata so the
+   API server rejects the write if the stored version has moved (FEAT-072's
+   optimistic take-over). The compare-and-swap lives in the object rather than in
+   a kubectl flag, because not every kubectl has [replace --resource-version]. *)
+let to_configmap_json ?resource_version t =
+  let metadata =
+    [ "name", `String (configmap_name ~workspace:t.boundary)
+    ; "namespace", `String "default"
+    ; ( "labels"
+      , `Assoc
+          [ "sol.dev/type", `String "boundary-lease"
+          ; "sol.dev/workspace", `String (Sol_cli_release.sanitize_label t.boundary)
+          ] )
+    ]
+    @
+    match resource_version with
+    | None | Some "" -> []
+    | Some rv -> [ "resourceVersion", `String rv ]
+  in
   Yojson.Safe.pretty_to_string
     (`Assoc
         [ "apiVersion", `String "v1"
         ; "kind", `String "ConfigMap"
-        ; ( "metadata"
-          , `Assoc
-              [ "name", `String (configmap_name ~workspace:t.boundary)
-              ; "namespace", `String "default"
-              ; ( "labels"
-                , `Assoc
-                    [ "sol.dev/type", `String "boundary-lease"
-                    ; ( "sol.dev/workspace"
-                      , `String (Sol_cli_release.sanitize_label t.boundary) )
-                    ] )
-              ] )
+        ; "metadata", `Assoc metadata
         ; "data", to_data_json t
         ])
 ;;
@@ -253,8 +261,8 @@ let create_object ~ctx t =
 ;;
 
 let replace_object ~ctx t ~resource_version =
-  with_temp_json (to_configmap_json t) (fun path ->
-    match Sol_cli_kubectl.replace ~ctx ~file:path ~resource_version () with
+  with_temp_json (to_configmap_json ~resource_version t) (fun path ->
+    match Sol_cli_kubectl.replace ~ctx ~file:path with
     | Error e -> Error (Other (Sol_cli_process.error_to_string e))
     | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
     | Ok r ->
@@ -264,6 +272,7 @@ let replace_object ~ctx t ~resource_version =
         || Sol_cli_port_forward.string_contains
              ~needle:"Operation cannot be fulfilled"
              detail
+        || Sol_cli_port_forward.string_contains ~needle:"please apply your changes" detail
       then Error Conflict
       else Error (Other detail))
 ;;

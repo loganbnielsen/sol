@@ -144,6 +144,27 @@ let test_serialization_round_trip () =
       (Sol_cli_boundary_lease.configmap_name ~workspace:"My_App")
 ;;
 
+(* FEAT-072: the optimistic take-over's compare-and-swap travels in the object
+   ([metadata.resourceVersion]), because [kubectl replace --resource-version] is
+   not present in every kubectl. *)
+let test_replace_carries_resource_version () =
+  let lease =
+    Sol_cli_boundary_lease.create ~boundary:"myapp" ~holder:Deploy ~run_id:"r" ~now:1.
+  in
+  let json resource_version =
+    Yojson.Safe.from_string
+      (Sol_cli_boundary_lease.to_configmap_json ~resource_version lease)
+  in
+  (match Sol_cli_boundary_lease.of_configmap_item (json "42") with
+   | Ok (_, resource_version) ->
+     Alcotest.(check string) "resourceVersion carried" "42" resource_version
+   | Error msg -> Alcotest.fail msg);
+  match Sol_cli_boundary_lease.of_configmap_item (json "") with
+  | Ok (_, resource_version) ->
+    Alcotest.(check string) "an empty version is omitted" "" resource_version
+  | Error msg -> Alcotest.fail msg
+;;
+
 let test_parse_fails_closed () =
   assert (Result.is_error (Sol_cli_boundary_lease.of_configmap_item (`Assoc [])));
   assert (
@@ -189,6 +210,10 @@ let () =
         ] )
     ; ( "serialization"
       , [ Alcotest.test_case "round trip" `Quick test_serialization_round_trip
+        ; Alcotest.test_case
+            "replace carries resourceVersion"
+            `Quick
+            test_replace_carries_resource_version
         ; Alcotest.test_case "fails closed" `Quick test_parse_fails_closed
         ] )
     ]
