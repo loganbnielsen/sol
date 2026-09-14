@@ -1,8 +1,8 @@
 ---
-id: INFRA-006
+id: INFRA-014
 type: feature
 severity: low
-source: architecture discussion 2026-09-09 (ingress/egress cost review, Cloudflare edge question)
+source: architecture discussion 2026-09-09 (ingress/egress cost review, Cloudflare edge question); renumbered from a colliding INFRA-006 on 2026-09-14 — a different, already-DONE ticket (CI dune-fmt guardrail) held that id first
 ---
 
 **Depends on:** None.
