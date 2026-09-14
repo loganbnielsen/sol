@@ -255,11 +255,11 @@ end) = struct
     (match Config.pool with
      | Some pool -> ignore (Notification.insert pool ...)
      | None -> ());
-    Ok ()
+    Worker.Ack
 end
 ```
 
-`module Message = Charged` tells Sol which Kafka topic and schema this worker consumes. `group_id` is the Kafka consumer group name. `handle` is called once per message with the decoded payload — there's no `ack` to call; Sol commits the offset for you, only after `handle` returns `Ok ()`.
+`module Message = Charged` tells Sol which Kafka topic and schema this worker consumes. `group_id` is the Kafka consumer group name. `handle` is called once per message with the decoded payload — there's no `ack` to call; Sol commits the offset for you, only after `handle` returns `Worker.Ack`. Return `Worker.Retry reason` for retryable failures or `Worker.Dead_letter reason` for poison messages.
 
 The `Make(Config)` functor pattern lets you inject the database pool and observability handle without module-level mutable state. Sol's worker runtime (`Worker.Make(W).run`) manages the Kafka connection lifecycle, acknowledgement, graceful shutdown, and per-message metrics.
 

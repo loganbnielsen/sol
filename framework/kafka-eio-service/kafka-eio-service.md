@@ -176,7 +176,7 @@ val consume_partitioned
   -> ?retry_strategy:retry_strategy
   -> ?on_retry:(partition:int32 -> attempt:int -> delay_s:float -> unit)
   -> ?ot:Obs_eio.t
-  -> handler:('a -> ack:(unit -> (unit, Kafka_error.t) result) -> trace_ctx:Obs_trace.t option -> Kafka_error.t Kafka_consumer.handler_result)
+  -> handler:('a -> ack:(unit -> (unit, Kafka_error.t) result) -> trace_ctx:Obs_trace.t option -> Kafka_service.handler_error Kafka_consumer.handler_result)
   -> unit
   -> (unit, Kafka_error.t) result
 ```
@@ -189,11 +189,12 @@ type retry_strategy =
     (* Exponential back-off sleep inside the partition fiber. Simple, zero infra.
        Vulnerable to rebalance preempting the sleep window. *)
   | Retry_topics of { max_attempts : int }
-    (* On failure: publish raw bytes to <topic>-retry with X-Sol-Attempt /
+    (* On Retry: publish raw bytes to <topic>-retry with X-Sol-Attempt /
        X-Sol-Retry-At headers; commit original offset immediately.
        A background retry consumer (group <group_id>-sol-retry) delays until
-       X-Sol-Retry-At then re-runs the handler. After max_attempts failures
-       the message is routed to <topic>-dlq. Both topics are auto-provisioned. *)
+       X-Sol-Retry-At then re-runs the handler. After max_attempts failures,
+       or on Dead_letter, the message is routed to <topic>-dlq. Both topics are
+       auto-provisioned. *)
 
 val default_retry_strategy : retry_strategy
 (* In_memory with exponential backoff starting at 1s, capped at 10min, infinite retries. *)

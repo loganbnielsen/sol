@@ -27,13 +27,13 @@ struct
         ~amount_cents:msg.amount_cents
         ~currency:msg.currency
     with
-    | Ok () -> Ok ()
+    | Ok () -> Worker.Ack
     | Error e ->
       Obs_eio.log_standalone
         Config.ot
         Obs_eio.Error
         ~fields:[ "error", Pg_error.to_string e ]
         "db insert failed";
-      Error (Pg_error.to_string e)
+      Worker.Retry (Pg_error.to_string e)
   ;;
 end

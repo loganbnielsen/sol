@@ -633,7 +633,7 @@ let test_ancestor_walk_skips_build_context () =
        check_bool "ancestor walk skips _build/default" true (result = Some tmpdir))
 ;;
 
-(* The framework acknowledges automatically after handle returns Ok (); a
+(* The framework acknowledges automatically after handle returns Worker.Ack; a
    generated worker must have no ~ack param to call, misorder, or forget. *)
 let test_worker_has_no_ack_param () =
   in_temp_dir
@@ -643,7 +643,7 @@ let test_worker_has_no_ack_param () =
   check_bool "generated worker does not reference ~ack" false (contains lib "~ack");
   assert_contains "worker lib" lib "~trace_ctx";
   assert_contains "worker lib" lib "Printf.printf";
-  assert_contains "worker lib" lib "Ok ()"
+  assert_contains "worker lib" lib "Worker.Ack"
 ;;
 
 (* ── pending_migration_count tests ──────────────────────────────────────── *)

@@ -384,7 +384,7 @@ let test_consume_partitioned_reports_partition_error () =
                 ~clock:env#clock
                 ~retry_strategy
                 ~handler:(fun _msg ~ack:_ ~trace_ctx:_ ->
-                  Kafka.Consumer.Error Kafka.Error.Application)
+                  Kafka.Consumer.Error Kafka_service.Retry)
                 ()))
        in
        (match result with

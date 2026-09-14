@@ -51,7 +51,7 @@ struct
         msg.Message.customer_id
         msg.Message.amount_cents
         msg.Message.currency;
-      Ok ()
-    | Error _ as error -> error
+      Worker.Ack
+    | Error msg -> Worker.Retry msg
   ;;
 end

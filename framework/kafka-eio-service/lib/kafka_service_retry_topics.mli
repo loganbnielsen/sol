@@ -16,6 +16,14 @@ type retry_action =
     forwarded to a retry topic. *)
 val parse_retry_metadata : (string * string option) list -> (int * float, string) result
 
+val action_of_handler_error
+  :  retry_topic:Kafka_service_intf.topic_name
+  -> dlq_topic:Kafka_service_intf.topic_name
+  -> max_attempts:int
+  -> attempt:int
+  -> Kafka_service_intf.handler_error
+  -> (retry_action, Kafka.Error.t) result
+
 (** Execute the side-effecting part of a retry decision: publish to the target
     topic (for [Forward_retry]/[Forward_dlq]) then [ack]. [Ack] skips straight
     to acking. *)
@@ -52,6 +60,6 @@ val consume
        ('a
         -> ack:(unit -> (unit, Kafka.Error.t) result)
         -> trace_ctx:Obs_trace.t option
-        -> Kafka.Error.t Kafka.Consumer.handler_result)
+        -> Kafka_service_intf.handler_error Kafka.Consumer.handler_result)
   -> unit
   -> (unit, Kafka_service_intf.consume_partitioned_error) result

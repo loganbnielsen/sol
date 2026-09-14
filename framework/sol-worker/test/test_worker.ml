@@ -45,7 +45,7 @@ module OkWorker = struct
 
   let handle msg ~trace_ctx:_ =
     ignore msg;
-    Ok ()
+    Worker.Ack
   ;;
 end
 
@@ -54,7 +54,14 @@ module ErrWorker = struct
   module Message = TestMsg
 
   let group_id = "test-err"
-  let handle _msg ~trace_ctx:_ = Error "something went wrong"
+  let handle _msg ~trace_ctx:_ = Worker.Retry "something went wrong"
+end
+
+module DlqWorker = struct
+  module Message = TestMsg
+
+  let group_id = "test-dlq"
+  let handle _msg ~trace_ctx:_ = Worker.Dead_letter "poison"
 end
 
 (* ── Single-message consume loop ─────────────────────────────────────── *)
@@ -109,8 +116,20 @@ let test_handle_error_returns_consumer_error () =
     W.run ~env ~config:fake_config ~test_consume_loop:(one_message_result msg result_r) ()
     |> run_ok;
     match !result_r with
-    | Some (Kafka.Consumer.Error Kafka.Error.Application) -> ()
-    | _ -> Alcotest.fail "expected handler error to become Kafka.Consumer.Error")
+    | Some (Kafka.Consumer.Error Kafka_service.Retry) -> ()
+    | _ -> Alcotest.fail "expected handler retry to become Kafka.Consumer.Error")
+;;
+
+let test_handle_dead_letter_returns_consumer_error () =
+  Eio_main.run (fun env ->
+    let msg = TestMsg.{ id = "msg-dlq" } in
+    let module W = Worker.For_testing.Make (DlqWorker) in
+    let result_r = ref None in
+    W.run ~env ~config:fake_config ~test_consume_loop:(one_message_result msg result_r) ()
+    |> run_ok;
+    match !result_r with
+    | Some (Kafka.Consumer.Error (Kafka_service.Dead_letter "poison")) -> ()
+    | _ -> Alcotest.fail "expected handler dead-letter to become Kafka.Consumer.Error")
 ;;
 
 let test_metrics_ok_counter () =
@@ -300,7 +319,7 @@ let test_stop_flag_stops_after_current_message () =
 
       let handle _msg ~trace_ctx:_ =
         incr processed;
-        Ok ()
+        Worker.Ack
       ;;
     end
     in
@@ -328,7 +347,7 @@ let test_max_messages_stops_cleanly () =
 
       let handle _msg ~trace_ctx:_ =
         incr processed;
-        Ok ()
+        Worker.Ack
       ;;
     end
     in
@@ -406,7 +425,7 @@ let test_ack_failure_fatal_escalates () =
       ()
     |> run_ok;
     match !result_r with
-    | Some (Kafka.Consumer.Error e) ->
+    | Some (Kafka.Consumer.Error (Kafka_service.Kafka_error e)) ->
       Alcotest.(check bool) "escalated error is fatal" true (Kafka.Error.is_fatal e)
     | _ -> Alcotest.fail "expected the handler to return Error for a fatal ack failure")
 ;;
@@ -423,7 +442,7 @@ let test_external_stop_flag_skips_messages () =
 
       let handle _msg ~trace_ctx:_ =
         incr processed;
-        Ok ()
+        Worker.Ack
       ;;
     end
     in
@@ -443,6 +462,10 @@ let () =
             "handle error returns Error"
             `Quick
             test_handle_error_returns_consumer_error
+        ; Alcotest.test_case
+            "handle dead-letter returns Error"
+            `Quick
+            test_handle_dead_letter_returns_consumer_error
         ; Alcotest.test_case "no ot — no crash" `Quick test_no_metrics_without_ot
         ; Alcotest.test_case
             "two messages both processed"

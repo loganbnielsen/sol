@@ -4,6 +4,7 @@
  (modules Notification Notify_worker)
  (libraries
   venus_payments_events
+  sol_worker
   pg-eio
   obs-eio
   caqti

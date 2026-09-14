@@ -241,7 +241,7 @@ let run_golden_path () =
           in
           (match FulfilledOrders.insert pool row with
            | Ok () | Error _ -> ()));
-      Ok ()
+      Worker.Ack
     ;;
   end
   in

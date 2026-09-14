@@ -1,3 +1,8 @@
+type outcome =
+  | Ack
+  | Retry of string
+  | Dead_letter of string
+
 module type WORKER = sig
   module Message : Kafka_service.MESSAGE
 
@@ -10,17 +15,16 @@ module type WORKER = sig
       [Obs_eio.with_span] to link spans.
 
       The worker acknowledges (commits the offset) itself, only after [handle]
-      returns [Ok ()] — there is no [ack] to call or forget. A failed commit is
+      returns [Ack] — there is no [ack] to call or forget. A failed commit is
       logged and counted as [sol_worker_messages_total{status="ack_failed"}]
       rather than treated as a processing failure (see [run]'s note on ack
       failure semantics), since the side effect already happened and retrying it
       here could duplicate it.
 
-      Return [Error msg] to signal a retryable failure (nothing is
-      acknowledged). The worker retries the same message using the [retry]
-      policy passed to [Make(W).run]. Once [max_attempts] is exhausted (if
-      non-negative), the worker stops and [Make(W).run] returns [Error]. *)
-  val handle : Message.t -> trace_ctx:Obs_trace.t option -> (unit, string) result
+      Return [Ack] to commit the offset, [Retry reason] to route through the
+      configured retry strategy, or [Dead_letter reason] to skip retry and send
+      the message to the DLQ when [Retry_topics] is configured. *)
+  val handle : Message.t -> trace_ctx:Obs_trace.t option -> outcome
 end
 
 type retry_policy = Kafka.Consumer.retry_policy =
@@ -63,12 +67,12 @@ module Make (W : WORKER) : sig
     -> ?ot:Sol_obs.t
          (** Observability handle. When provided,
           [sol_worker_messages_total{status}] (labels: [ok], [retry], [error],
-          [ack_failed]) and [sol_worker_message_duration_seconds] are emitted
+          [dead_letter], [ack_failed]) and [sol_worker_message_duration_seconds] are emitted
           per message, and the worker exposes [GET /metrics] on [metrics_port]
           for Prometheus scraping.
 
           [ack_failed] is distinct from [error]: it means [W.handle] returned
-          [Ok ()] but the subsequent offset commit failed, so the side effect
+          [Ack] but the subsequent offset commit failed, so the side effect
           already happened — logged at [Warn], and the message is left
           uncommitted for natural redelivery rather than retried immediately.
           Escalates to [Error] (stopping the worker) only when the commit
@@ -114,7 +118,7 @@ module For_testing : sig
               (W.Message.t
                -> ack:(unit -> (unit, Kafka.Error.t) result)
                -> trace_ctx:Obs_trace.t option
-               -> Kafka.Error.t Kafka.Consumer.handler_result)
+               -> Kafka_service.handler_error Kafka.Consumer.handler_result)
             -> unit
             -> unit)
       -> unit

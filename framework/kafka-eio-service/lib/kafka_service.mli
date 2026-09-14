@@ -40,6 +40,11 @@ module type MESSAGE = sig
   val decode : Yojson.Safe.t -> (t, string) result
 end
 
+type handler_error =
+  | Retry
+  | Dead_letter of string
+  | Kafka_error of Kafka.Error.t
+
 (** Schema compatibility checking against a live schema registry. Use in tests
     to catch breaking schema changes before deployment. *)
 module Schema : sig
@@ -96,6 +101,14 @@ module Retry_topics : sig
   (** Read and validate the [X-Sol-Attempt]/[X-Sol-Retry-At] headers off a
       message forwarded to a retry topic. *)
   val parse_retry_metadata : (string * string option) list -> (int * float, string) result
+
+  val action_of_handler_error
+    :  retry_topic:topic_name
+    -> dlq_topic:topic_name
+    -> max_attempts:int
+    -> attempt:int
+    -> handler_error
+    -> (retry_action, Kafka.Error.t) result
 
   (** Execute the side-effecting part of a retry decision: publish to the target
       topic (for [Forward_retry]/[Forward_dlq]) then [ack]. [Ack] skips straight
@@ -323,6 +336,6 @@ val consume_partitioned
        ('a
         -> ack:(unit -> (unit, Kafka.Error.t) result)
         -> trace_ctx:Obs_trace.t option
-        -> Kafka.Error.t Kafka.Consumer.handler_result)
+        -> handler_error Kafka.Consumer.handler_result)
   -> unit
   -> (unit, consume_partitioned_error) result

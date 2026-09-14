@@ -4,7 +4,7 @@
 
 `sol-worker` is the Kafka consumer primitive. A `-worker` is a long-running process that subscribes to a topic, processes each message, and emits per-message metrics automatically.
 
-The abstraction is the handler — `handle : Message.t -> trace_ctx:Obs_trace.t option -> (unit, string) result`. Sol handles the consumer lifecycle, schema registration, acknowledgement, graceful shutdown, and observability wiring.
+The abstraction is the handler — `handle : Message.t -> trace_ctx:Obs_trace.t option -> outcome`. Sol handles the consumer lifecycle, schema registration, acknowledgement, retry/DLQ routing, graceful shutdown, and observability wiring.
 
 ## Module type
 
@@ -12,13 +12,18 @@ The abstraction is the handler — `handle : Message.t -> trace_ctx:Obs_trace.t 
 module type WORKER = sig
   module Message : Kafka_service.MESSAGE
   val group_id : string
-  val handle : Message.t -> trace_ctx:Obs_trace.t option -> (unit, string) result
+  val handle : Message.t -> trace_ctx:Obs_trace.t option -> outcome
 end
+
+type outcome =
+  | Ack
+  | Retry of string
+  | Dead_letter of string
 ```
 
 - `Message` — the event contract. Defines topic name, JSON schema, encode/decode.
 - `group_id` — Kafka consumer group ID. Must be stable across restarts.
-- `handle` — called once per decoded message. `trace_ctx` carries the upstream W3C `traceparent` header from the Kafka message — pass it as `?parent:trace_ctx` to `Obs_eio.with_span` to link spans. Return `Ok ()` to continue, `Error msg` to retry (see retry strategy). There is no `ack` to call — see [ack semantics](#ack-semantics).
+- `handle` — called once per decoded message. `trace_ctx` carries the upstream W3C `traceparent` header from the Kafka message — pass it as `?parent:trace_ctx` to `Obs_eio.with_span` to link spans. Return `Ack` to commit, `Retry reason` to route through the retry strategy, or `Dead_letter reason` to skip retry and send to the DLQ when `Retry_topics` is configured. There is no `ack` to call — see [ack semantics](#ack-semantics).
 
 ## Entrypoint
 
@@ -46,9 +51,9 @@ module Make (W : WORKER) : sig
     -> ?max_messages:int
     (** Stop cleanly after this many successfully processed messages. Useful in tests. *)
     -> ?retry_strategy:retry_strategy
-    (** How to handle Error results from W.handle. Defaults to In_memory default_retry. *)
+    (** How to handle Retry results from W.handle. Defaults to In_memory default_retry. *)
     -> ?_consume_loop:
-         (handler:(W.Message.t -> ack:(unit -> (unit, Kafka_error.t) result) -> trace_ctx:Obs_trace.t option -> Kafka_error.t Kafka_consumer.handler_result)
+         (handler:(W.Message.t -> ack:(unit -> (unit, Kafka_error.t) result) -> trace_ctx:Obs_trace.t option -> Kafka_service.handler_error Kafka_consumer.handler_result)
           -> unit -> unit)
     (** Test injection: replace the real per-partition consume loop with a stub. *)
     -> unit
@@ -56,7 +61,7 @@ module Make (W : WORKER) : sig
 end
 ```
 
-`Make(W).run` owns the full lifecycle: `Kafka_service.create` → `register` → `consume_partitioned`. It returns when the stop flag is set, `max_messages` is reached, `W.handle` fails beyond the retry budget, or a shutdown signal is received (SIGTERM or SIGINT).
+`Make(W).run` owns the full lifecycle: `Kafka_service.create` → `register` → `consume_partitioned`. It returns when the stop flag is set, `max_messages` is reached, `W.handle` retries beyond the budget, or a shutdown signal is received (SIGTERM or SIGINT).
 
 ## Retry strategy
 
@@ -75,9 +80,9 @@ type retry_strategy =
     (* Exponential back-off sleep inside the partition fiber. Simple, zero infra.
        Vulnerable to rebalance preempting the sleep window. *)
   | Retry_topics of { max_attempts : int }
-    (* On failure: publish raw bytes to <topic>-retry; commit original offset immediately.
+    (* On Retry: publish raw bytes to <topic>-retry; commit original offset immediately.
        A background retry consumer delays until X-Sol-Retry-At then re-runs W.handle.
-       After max_attempts failures the message is moved to <topic>-dlq. *)
+       After max_attempts failures, or on Dead_letter, the message is moved to <topic>-dlq. *)
 
 val default_retry_strategy : retry_strategy
 (* In_memory default_retry — in-process exponential backoff, infinite retries. *)
@@ -103,8 +108,9 @@ Make(W).run ~env ~config ?ot ?retry_strategy ()
             per-partition fiber per message:
               if stop_flag → Stop         (graceful drain)
               else W.handle msg ~trace_ctx
-                Error _ → metrics error, retry per strategy; after budget exhausted → Stop + raise
-                Ok ()   → ack () (the framework's, not W.handle's)
+                Retry _       → metrics error, retry per strategy; after budget exhausted → Stop + raise
+                Dead_letter _ → metrics dead_letter, route to DLQ if Retry_topics is configured
+                Ack           → ack () (the framework's, not W.handle's)
                             Ok ()                    → metrics ok, Continue
                             Error e, is_fatal e       → metrics ack_failed, Error e (Stop + raise)
                             Error e, not is_fatal e   → metrics ack_failed, Continue
@@ -131,10 +137,10 @@ When `?ot` is provided:
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `sol_worker_messages_total` | counter | `status` | Messages processed (`ok`, `retry`, `error`, or `ack_failed`) |
+| `sol_worker_messages_total` | counter | `status` | Messages processed (`ok`, `retry`, `error`, `dead_letter`, or `ack_failed`) |
 | `sol_worker_message_duration_seconds` | histogram | — | Per-message processing latency |
 
-`ack_failed` is distinct from `error`: `W.handle` returned `Ok ()` (the side effect happened) but the offset commit itself failed. See [ack semantics](#ack-semantics).
+`ack_failed` is distinct from `error`: `W.handle` returned `Ack` (the side effect happened) but the offset commit itself failed. See [ack semantics](#ack-semantics).
 
 Metrics are registered once at startup. Emitter functions are called in the handler closure on each message.
 
@@ -148,8 +154,8 @@ module BroadcastWorker = struct
 
   let handle msg ~trace_ctx:_ =
     match Comms.send_push_notification msg with
-    | Ok ()   -> Ok ()
-    | Error e -> Error e
+    | Ok ()   -> Worker.Ack
+    | Error e -> Worker.Retry e
 end
 
 let () =
@@ -166,7 +172,7 @@ let () =
 
 ## ack semantics
 
-`W.handle` does not receive (or call) an `ack`. `Make(W).run` commits the Kafka offset itself, and only after `W.handle` returns `Ok ()` — never before, and never on `Error`. This removes an entire class of app-level bugs: forgetting to ack, acking in the wrong branch, or acking before a side effect that can still fail. For at-least-once semantics this is the correct default; at-exactly-once is not supported in v1.
+`W.handle` does not receive (or call) an `ack`. `Make(W).run` commits the Kafka offset itself, and only after `W.handle` returns `Ack` — never before, and never on `Retry`. This removes an entire class of app-level bugs: forgetting to ack, acking in the wrong branch, or acking before a side effect that can still fail. For at-least-once semantics this is the correct default; at-exactly-once is not supported in v1.
 
 A failed commit is **not** treated like a handler failure. The side effect in `W.handle` already succeeded, so retrying it (as an `Error` from `W.handle` would) risks duplicating it. Instead:
 
@@ -176,8 +182,9 @@ A failed commit is **not** treated like a handler failure. The side effect in `W
 
 ## Error handling
 
-- `W.handle` returning `Error msg` triggers the retry strategy. After the retry budget is exhausted, `run` returns `Error`.
-- `W.handle` returning `Ok ()` but the subsequent ack failing: see [ack semantics](#ack-semantics) above — handled separately from retry, via `ack_failed`.
+- `W.handle` returning `Retry msg` triggers the retry strategy. After the retry budget is exhausted, `run` returns `Error`.
+- `W.handle` returning `Dead_letter msg` skips retries and routes the raw message to `<topic>-dlq` when `Retry_topics` is configured. With in-memory retry configured, it is logged and acked because no DLQ topic exists.
+- `W.handle` returning `Ack` but the subsequent ack failing: see [ack semantics](#ack-semantics) above — handled separately from retry, via `ack_failed`.
 - Decode errors: default behavior from `Kafka_service.consume_partitioned` — logs to stderr, acks the message, continues. Override via `on_decode_error` by calling `Kafka_service.consume_partitioned` directly.
 - Lifecycle errors (`create`, `register`, Kafka error) are returned as `run_error` values.
 

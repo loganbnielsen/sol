@@ -811,12 +811,12 @@ end) = struct
     match Notification.insert Config.pool
             ~charge_id:msg.id ~customer_id:msg.customer_id
             ~amount_cents:msg.amount_cents ~currency:msg.currency with
-    | Ok ()   -> Ok ()
+    | Ok ()   -> Worker.Ack
     | Error e ->
       Sol_obs.log_error Config.obs
         ~fields:[("error", Pg_error.to_string e)]
         "db insert failed";
-      Error (Pg_error.to_string e)
+      Worker.Retry (Pg_error.to_string e)
 
 end
 |tpl}
@@ -830,7 +830,7 @@ let ws_worker_lib_dune =
  (modules Notify_worker)
  (libraries
   {{name}}_storage {{name}}_payments_events
-  kafka_eio_service sol_obs pg-eio))
+  sol_worker kafka_eio_service sol_obs pg-eio))
 |tpl}
 ;;
 
@@ -1008,10 +1008,10 @@ let group_id = "{{domain}}-{{name}}-worker"
 
 let handle (msg : Message.t) ~trace_ctx:_ =
   Printf.printf "[{{name}}-worker] received id=%s\n%!" msg.id;
-  (* Add side effects here, then return Ok (). The worker acknowledges
-     (commits the offset) for you, only after this returns Ok — there is no
-     ack to call. Returning Error causes the message to be retried. *)
-  Ok ()
+  (* Add side effects here, then return Worker.Ack. The worker acknowledges
+     (commits the offset) for you, only after this returns Worker.Ack — there is
+     no ack to call. Returning Worker.Retry causes the message to be retried. *)
+  Worker.Ack
 |tpl}
 ;;
 
@@ -1021,7 +1021,7 @@ let worker_lib_dune =
  (name {{lib}})
  (wrapped false)
  (modules {{Mod}})
- (libraries kafka_eio_service yojson))
+ (libraries sol_worker kafka_eio_service yojson))
 |tpl}
 ;;
 

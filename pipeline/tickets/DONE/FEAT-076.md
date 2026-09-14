@@ -25,7 +25,7 @@ app author reinvents by hand.
   ```ocaml
   type outcome =
     | Ack
-    | Retry of Duration.t
+    | Retry of string
     | Dead_letter of string
   ```
 - Document the ordering and duplicate-delivery implications of
@@ -48,3 +48,18 @@ app author reinvents by hand.
   `sol-worker`/`kafka-eio-service` spec doc.
 - Demo/example coverage per repo convention: update `examples/local-demo`
   (or state why not applicable) to show retry/DLQ usage.
+
+## Completion notes
+
+Implemented in FEAT-076 branch:
+
+- `Worker.WORKER.handle` now returns explicit `Ack | Retry of string |
+  Dead_letter of string`.
+- `Kafka_service.consume_partitioned` maps `Retry` through the selected retry
+  strategy and maps `Dead_letter` directly to `<topic>-dlq` when
+  `Retry_topics` is configured.
+- Existing retry/DLQ topic machinery remains Kafka-only; no SQS/RabbitMQ/
+  ElasticMQ/Pulsar/backend enum was added.
+- `examples/local-demo/bin/retry_demo.ml`, generated worker templates, and
+  worker docs now show the explicit outcome contract.
+- Verified with `dune build @check @runtest`.
