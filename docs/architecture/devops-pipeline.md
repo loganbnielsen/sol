@@ -218,18 +218,26 @@ success, never reported as an unknown release.
 **Module:** `cli/sol/bin/cmd_deployments.ml`
 
 Lists the deployment events the target's cluster holds for the workspace, newest
-first: `DEPLOYMENT / RELEASE / TIME / COMMIT`. A deployment event (FEAT-070) is
-one deploy invocation — a minted `d-<YYYYMMDDtHHMMSSz>-<16 hex>` id, the
-content-addressed release it attempted, and provenance (`created_at`, git
-commit, dirty, actor, target). It is recorded as an immutable
-`sol-deployment-<deployment_id>` ConfigMap, so repeated no-op deploys of the same
-release appear as separate events rather than being collapsed.
+first: `DEPLOYMENT / RELEASE / TIME / COMMIT / STATUS`. A deployment event
+(FEAT-070) is one deploy *attempt* — a minted `d-<YYYYMMDDtHHMMSSz>-<16 hex>` id,
+the content-addressed release it tried to put in place, provenance (`created_at`,
+git commit, dirty, actor, target), and its outcome (`applied` / `apply_failed`).
+It is recorded as an immutable `sol-deployment-<deployment_id>` ConfigMap, so
+repeated no-op deploys of the same release appear as separate attempts rather
+than being collapsed.
+
+An event is an attempt, not a success (FEAT-071): a failed apply still records an
+event and still exits non-zero, but the release record — which says the release
+exists — is written only when the apply succeeded. Health is a third fact, read
+from the live workload / Argo, never written back into the record.
 
 Two records, one join key: `sol releases` answers "what distinct released states
-exist?", `sol deployments` answers "what deploy events happened, and which
-release did each put in place?". The deploy marker pushed to Loki carries the
-same `deployment_id` as a field, so the observability timeline joins to the
-authoritative record; the record is never reconstructed from telemetry.
+exist?", `sol deployments` answers "what deploy attempts happened, and which
+release did each put in place?". Both readers fail closed on a corrupt matching
+record rather than printing a partial list as if it were the whole history. The
+deploy marker pushed to Loki carries the same `deployment_id` as a field, and is
+only emitted once the record has actually been persisted, so the observability
+timeline can never advertise a join to a record that does not exist.
 
 **Reads:** the target cluster via kubectl. **Writes:** nothing.
 

@@ -1,5 +1,29 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: FEAT-071 — deployment attempts, typed identity, fail-closed reads (2026-09-14)
+
+Follow-up from the FEAT-070 review, tightening the deployment half of the model.
+
+- **Attempt semantics.** A deployment event is one deploy *attempt*: the id is
+  minted when the attempt starts and the immutable event is written when it
+  finishes, with `outcome = applied | apply_failed`. A failed apply still
+  records an event and still exits non-zero; the release record (which claims
+  the release exists) is written only on success. `sol deployments` gained a
+  `STATUS` column.
+- **Identity stays typed.** `Sol_cli_deployment.t` carries
+  `deployment_id : Sol_cli_deployment_id.t` and
+  `release_id : Sol_cli_release_id.t`; `to_string`/`of_string` happen only at
+  the JSON/YAML/table boundary. `of_json` rejects a malformed id, and
+  `configmap_name` can no longer receive one.
+- **Fail closed on corruption.** `parse_kubectl_list` for both the deployment
+  and release stores returns an error naming the record instead of silently
+  skipping it and printing a partial history as if it were complete.
+- **No orphan markers.** The OBS-037 Loki marker is pushed only after the
+  authoritative deployment record has been persisted (and the apply succeeded),
+  so `deployment_id` never joins to a record that does not exist.
+- Tests: `test_deployment` grew the attempt/outcome, bad-id, and fail-closed
+  cases; `test_release`'s reader test flips from "skips" to "fails closed".
+
 ## Latest: FEAT-070 — deployment-event identity (2026-09-13)
 
 The other half of the release model: a deployment is now its own object, so the

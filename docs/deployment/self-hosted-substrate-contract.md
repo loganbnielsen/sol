@@ -293,9 +293,11 @@ bundle byte-identical and the diff empty.
 Invocation provenance is *not* in the bundle: `sol up` and `sol deploy` record a
 separate immutable `sol-deployment-<deployment_id>` ConfigMap in the target's
 cluster (minted id, the release attempted, timestamp, commit, dirty, actor,
-target), listed by `sol deployments`. Keeping it out of the release artifact is
-what lets two deploys of identical content share one release record and one
-empty GitOps diff while still being two auditable events.
+target, outcome), listed by `sol deployments`. One event per deploy *attempt*,
+success or failure; the release record is written only on success. Keeping
+provenance out of the release artifact is what lets two deploys of identical
+content share one release record and one empty GitOps diff while still being two
+auditable attempts.
 
 ---
 
