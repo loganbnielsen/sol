@@ -40,11 +40,13 @@ let explore_url ~base_url ~logql =
 
 (* Build a Grafana Explore URL scoped to one service.
    base_url: e.g. "http://localhost:3000"
-   ns:       Kubernetes namespace
    k8s_name: service k8s name (hyphens, lowercase)
-   Returns a URL the operator can paste directly into a browser. *)
-let grafana_explore_url ~base_url ~ns ~k8s_name =
-  explore_url ~base_url ~logql:(Printf.sprintf {|{namespace="%s",app="%s"}|} ns k8s_name)
+   Returns a URL the operator can paste directly into a browser.
+   FRIC-029: matches on "service" (a substring match, since the emitted value
+   is "<workspace>_<unit>"-shaped), not "namespace"/"app" -- Sol's Loki
+   streams never carry that label pair. *)
+let grafana_explore_url ~base_url ~k8s_name =
+  explore_url ~base_url ~logql:(Printf.sprintf {|{service=~".*%s.*"}|} k8s_name)
 ;;
 
 (* FEAT-069: a release-scoped query. The release id is workspace-unique by
@@ -52,8 +54,8 @@ let grafana_explore_url ~base_url ~ns ~k8s_name =
    so the exact [release] label is the whole selector when no unit narrows it. *)
 let release_logql ~release_id = Printf.sprintf {|{release="%s"}|} release_id
 
-let unit_release_logql ~ns ~k8s_name ~release_id =
-  Printf.sprintf {|{namespace="%s",app="%s",release="%s"}|} ns k8s_name release_id
+let unit_release_logql ~k8s_name ~release_id =
+  Printf.sprintf {|{service=~".*%s.*",release="%s"}|} k8s_name release_id
 ;;
 
 type release_query =
@@ -88,7 +90,7 @@ let release_query ~release ~target ~known ?scope () =
       let logql =
         match scope with
         | None -> release_logql ~release_id
-        | Some (ns, k8s_name) -> unit_release_logql ~ns ~k8s_name ~release_id
+        | Some (_ns, k8s_name) -> unit_release_logql ~k8s_name ~release_id
       in
       Release_logs { release_id; logql })
 ;;

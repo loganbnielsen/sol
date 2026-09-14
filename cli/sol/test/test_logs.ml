@@ -67,13 +67,8 @@ let test_encode_hash () =
 
 (* ── grafana_explore_url ────────────────────────────────────────────────── *)
 
-let make_url
-      ?(base_url = "http://localhost:3000")
-      ?(ns = "myapp-payments")
-      ?(k8s_name = "charge-svc")
-      ()
-  =
-  Sol_cli_logs.grafana_explore_url ~base_url ~ns ~k8s_name
+let make_url ?(base_url = "http://localhost:3000") ?(k8s_name = "charge-svc") () =
+  Sol_cli_logs.grafana_explore_url ~base_url ~k8s_name
 ;;
 
 let test_url_contains_base_url () =
@@ -86,12 +81,15 @@ let test_url_contains_base_url () =
      && String.sub url 0 (String.length prefix) = prefix)
 ;;
 
-let test_url_contains_namespace () =
-  let url = make_url ~ns:"acme-orders" () in
+(* FRIC-029: the selector matches on "service" (a substring regex), not
+   "namespace" -- Sol's Loki streams never carry a "namespace"/"app" label
+   pair. *)
+let test_url_contains_service_selector () =
+  let url = make_url () in
   check_bool
-    "namespace appears in URL"
+    "service selector appears in URL"
     true
-    (let re = Str.regexp "acme-orders" in
+    (let re = Str.regexp "service" in
      try
        ignore (Str.search_forward re url 0);
        true
@@ -147,10 +145,7 @@ let test_url_no_raw_double_quotes () =
 
 let test_url_default_base () =
   let url =
-    Sol_cli_logs.grafana_explore_url
-      ~base_url:"http://localhost:3000"
-      ~ns:"ws-dom"
-      ~k8s_name:"my-svc"
+    Sol_cli_logs.grafana_explore_url ~base_url:"http://localhost:3000" ~k8s_name:"my-svc"
   in
   check_bool
     "starts with default base"
@@ -261,7 +256,7 @@ let test_release_query_scoped_selector_narrows_to_the_unit () =
   | Sol_cli_logs.Release_logs { logql; _ } ->
     check_string
       "selector adds release to the unit selector"
-      {|{namespace="myapp-payments",app="charge-svc",release="r-0123456789abcdef"}|}
+      {|{service=~".*charge-svc.*",release="r-0123456789abcdef"}|}
       logql
   | _ -> Alcotest.fail "expected Release_logs"
 ;;
@@ -286,7 +281,10 @@ let () =
         ] )
     ; ( "grafana_explore_url"
       , [ Alcotest.test_case "contains base_url" `Quick test_url_contains_base_url
-        ; Alcotest.test_case "contains namespace" `Quick test_url_contains_namespace
+        ; Alcotest.test_case
+            "contains service selector"
+            `Quick
+            test_url_contains_service_selector
         ; Alcotest.test_case "contains k8s_name" `Quick test_url_contains_k8s_name
         ; Alcotest.test_case "no raw braces in query" `Quick test_url_no_raw_braces
         ; Alcotest.test_case "= encoded as %3D" `Quick test_url_no_raw_equals_in_logql

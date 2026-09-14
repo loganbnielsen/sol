@@ -17,12 +17,12 @@ type credentials =
   }
 
 (** Build the curl argv for a Loki range query over
-    [{namespace="<ns>",app="<k8s_name>"}], adding [--config <path>] when
+    [{service=~".*<k8s_name>.*"}] (FRIC-029: Sol's Loki streams carry
+    "service"/"team", never "namespace"/"app"), adding [--config <path>] when
     [curl_config] is given. The config file may contain credentials, so only its
     path is present in argv. Exposed for testing. *)
 val query_range_argv
   :  base_url:string
-  -> ns:string
   -> k8s_name:string
   -> limit:int
   -> timeout_s:float
@@ -82,7 +82,6 @@ val resolve_credentials
     shipping configured yet — not treated as a Loki failure). *)
 val query
   :  base_url:string
-  -> ns:string
   -> k8s_name:string
   -> ?credentials:credentials
   -> ?limit:int

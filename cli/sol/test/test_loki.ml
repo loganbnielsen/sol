@@ -101,11 +101,13 @@ let test_classify_other () =
 
 (* ── query_range_argv ───────────────────────────────────────────────── *)
 
+(* FRIC-029: the selector matches on "service" (a substring regex against
+   k8s_name), not "namespace"/"app" -- Sol's Loki streams never carry that
+   label pair. *)
 let test_query_range_argv_contains_logql_labels () =
   let argv =
     L.query_range_argv
       ~base_url:"http://localhost:3100"
-      ~ns:"acme-payments"
       ~k8s_name:"charge-svc"
       ~limit:50
       ~timeout_s:5.0
@@ -113,22 +115,12 @@ let test_query_range_argv_contains_logql_labels () =
   in
   let joined = String.concat " " argv in
   check_int
-    "mentions namespace label"
+    "mentions service selector"
     1
     (if
        try
-         ignore (Str.search_forward (Str.regexp_string "acme-payments") joined 0);
-         true
-       with
-       | Not_found -> false
-     then 1
-     else 0);
-  check_int
-    "mentions app label"
-    1
-    (if
-       try
-         ignore (Str.search_forward (Str.regexp_string "charge-svc") joined 0);
+         ignore
+           (Str.search_forward (Str.regexp_string {|service=~".*charge-svc.*"|}) joined 0);
          true
        with
        | Not_found -> false
@@ -140,7 +132,6 @@ let test_query_range_argv_no_config_omits_config_flag () =
   let argv =
     L.query_range_argv
       ~base_url:"http://localhost:3100"
-      ~ns:"acme-payments"
       ~k8s_name:"charge-svc"
       ~limit:50
       ~timeout_s:5.0
@@ -153,7 +144,6 @@ let test_query_range_argv_config_adds_config_path_not_secret () =
   let argv =
     L.query_range_argv
       ~base_url:"http://localhost:3100"
-      ~ns:"acme-payments"
       ~k8s_name:"charge-svc"
       ~limit:50
       ~timeout_s:5.0
