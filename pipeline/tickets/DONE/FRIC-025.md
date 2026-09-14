@@ -22,3 +22,9 @@ Deploying a second workspace while the first's forward is alive cannot start its
 **Remediation:** Key the pid/log/script filenames by workspace+service (or namespace+service) and detect an already-bound port, failing with a message naming the owning workspace. Expose a `sol local forwards` (or fold into `sol local status`) listing active forwards, and make `sol local infra down` clean up stale ones.
 
 Related: FRIC-024 (local infra/status surface), REFAC-088 (destination seam for kube operations).
+
+## Completion notes
+
+- Keyed the per-service port-forward state by `namespace-service` in `cmd_up.ml` instead of the bare service name, so two workspaces' `charge-svc` forwards no longer overwrite each other's `pf-charge-svc.pid/.sh/.log`. Infra forwards (`kafka`, `postgres`, …) keep their fixed names — they are shared substrate, not per-workspace. `detect_stale` already reclaims `:8080` from a kubectl forward bound to a different namespace/target, so a second workspace now knowingly replaces the first rather than colliding.
+- Not done in this pass (follow-ups, not required for the collision): a `sol local forwards` listing and workspace-scoped cleanup. `stop_all` remains global, which is correct for `sol local infra down` semantics.
+- Verified by build; the end-to-end reclaim is exercised in the run's verification pass.
