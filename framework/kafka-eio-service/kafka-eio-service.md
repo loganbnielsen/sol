@@ -189,12 +189,20 @@ type retry_strategy =
     (* Exponential back-off sleep inside the partition fiber. Simple, zero infra.
        Vulnerable to rebalance preempting the sleep window. *)
   | Retry_topics of { max_attempts : int }
-    (* On Retry: publish raw bytes to <topic>-retry with X-Sol-Attempt /
-       X-Sol-Retry-At headers; commit original offset immediately.
-       A background retry consumer (group <group_id>-sol-retry) delays until
-       X-Sol-Retry-At then re-runs the handler. After max_attempts failures,
-       or on Dead_letter, the message is routed to <topic>-dlq. Both topics are
-       auto-provisioned. *)
+    (* On Retry: publish raw bytes (with the original message's key -- BUG-027,
+       so a retried message hashes to the same partition on <topic>-retry that
+       it would on the source topic, both sharing the same partition count)
+       to <topic>-retry with X-Sol-Attempt / X-Sol-Retry-At headers; commit
+       original offset immediately.
+       A background retry consumer (group <group_id>-sol-retry), itself routed
+       through consume_partitioned, delays until X-Sol-Retry-At then re-runs
+       the handler -- so the backoff sleep blocks only its own partition, not
+       the whole retry topic. After max_attempts failures, or on Dead_letter,
+       the message is routed to <topic>-dlq. Both topics are auto-provisioned.
+       What this does NOT give you: two messages sharing a key still serialize,
+       same as the source topic -- that's Kafka's ordering model, not a bug,
+       and is the reason a leased-job primitive (DEC-021) exists for workloads
+       that need independent per-message retry regardless of key. *)
 
 val default_retry_strategy : retry_strategy
 (* In_memory with exponential backoff starting at 1s, capped at 10min, infinite retries. *)

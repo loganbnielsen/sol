@@ -152,11 +152,11 @@ let test_config_of_env_rejects_unknown_security_protocol () =
 (* Retry topic control flow                                            *)
 (* ------------------------------------------------------------------ *)
 
-let raw_retry_msg ?(headers = []) () : Kafka.Consumer.message =
+let raw_retry_msg ?(headers = []) ?key () : Kafka.Consumer.message =
   { topic = "orders-retry"
   ; partition = 0l
   ; offset = 0L
-  ; key = None
+  ; key
   ; value = Some (Bytes.of_string "payload")
   ; timestamp = None
   ; headers
@@ -189,6 +189,7 @@ let test_retry_publish_then_ack_failure_is_error () =
         ~target_topic:_
         ~attempt:_
         ~raw_bytes:_
+        ~key:_
         ~headers:_
         ~delay_s:_
         ~partition:_
@@ -219,6 +220,7 @@ let test_retry_publish_failure_does_not_ack () =
         ~target_topic:_
         ~attempt:_
         ~raw_bytes:_
+        ~key:_
         ~headers:_
         ~delay_s:_
         ~partition:_
@@ -248,7 +250,15 @@ let test_dead_letter_handler_error_routes_to_dlq_and_acks () =
   let dlq_topic = Kafka_service.topic_name_exn "orders-dlq" in
   let acked = ref 0 in
   let published = ref None in
-  let publish_raw ~target_topic ~attempt ~raw_bytes:_ ~headers:_ ~delay_s ~partition:_ =
+  let publish_raw
+        ~target_topic
+        ~attempt
+        ~raw_bytes:_
+        ~key:_
+        ~headers:_
+        ~delay_s
+        ~partition:_
+    =
     published := Some (target_topic, attempt, delay_s);
     Ok ()
   in
@@ -284,6 +294,42 @@ let test_dead_letter_handler_error_routes_to_dlq_and_acks () =
             (fun (topic, attempt, delay_s) ->
                Kafka_service.topic_name_to_string topic, attempt, delay_s)
             !published))
+;;
+
+(* BUG-027: a retried message's key must travel with it to the retry/DLQ
+   topic, so it hashes to the same partition there that it would on the
+   source topic (both topics share the same partition count). *)
+let test_retry_publish_preserves_key () =
+  let published_key = ref `Not_called in
+  let publish_raw
+        ~target_topic:_
+        ~attempt:_
+        ~raw_bytes:_
+        ~key
+        ~headers:_
+        ~delay_s:_
+        ~partition:_
+    =
+    published_key := `Called key;
+    Ok ()
+  in
+  let ack () = Ok () in
+  let target = Kafka_service.topic_name_exn "orders-retry" in
+  let action = Kafka_service.Retry_topics.Forward_retry { target; delay_s = 1.0 } in
+  let raw_msg = raw_retry_msg ~key:(Bytes.of_string "order-42") () in
+  match
+    Kafka_service.Retry_topics.execute_action action ~raw_msg ~attempt:1 ~publish_raw ~ack
+  with
+  | Error e -> Alcotest.failf "unexpected execute error: %s" (Kafka.Error.to_string e)
+  | Ok () ->
+    (match !published_key with
+     | `Not_called -> Alcotest.fail "publish_raw was never called"
+     | `Called None -> Alcotest.fail "expected the original message's key, got None"
+     | `Called (Some key) ->
+       Alcotest.(check string)
+         "key preserved on republish"
+         "order-42"
+         (Bytes.to_string key))
 ;;
 
 (* ------------------------------------------------------------------ *)
@@ -441,6 +487,10 @@ let () =
             "dead-letter handler error routes to dlq and acks"
             `Quick
             test_dead_letter_handler_error_routes_to_dlq_and_acks
+        ; test_case
+            "retry publish preserves the message key"
+            `Quick
+            test_retry_publish_preserves_key
         ] )
     ; ( "topic_name"
       , [ test_case

@@ -26,7 +26,9 @@ val action_of_handler_error
 
 (** Execute the side-effecting part of a retry decision: publish to the target
     topic (for [Forward_retry]/[Forward_dlq]) then [ack]. [Ack] skips straight
-    to acking. *)
+    to acking. The message's key travels with it (BUG-027), so a retried
+    message hashes to the same partition on the target topic that its key
+    would hash to on the source topic. *)
 val execute_action
   :  retry_action
   -> raw_msg:Kafka.Consumer.message
@@ -35,6 +37,7 @@ val execute_action
        (target_topic:Kafka_service_intf.topic_name
         -> attempt:int
         -> raw_bytes:bytes option
+        -> key:bytes option
         -> headers:(string * string option) list
         -> delay_s:float
         -> partition:int32
