@@ -163,7 +163,7 @@ sol logs
 sol secret set DATABASE_URL --env local --value ...
 sol migrate
 sol deploy dev/aws/us-east-1 --dry-run  # requires sol/dev/aws/us-east-1.yml with a registry set
-sol rollback
+sol rollback <release-id>  # find one with `sol releases`
 ```
 
 and the same workspace has a documented path to customer-owned infrastructure

@@ -21,6 +21,7 @@
   test_deployment_phases
   test_factory
   test_rollback
+  test_migration_disposition
   test_secret_strategy
   test_rollout_diagnosis
   test_loki

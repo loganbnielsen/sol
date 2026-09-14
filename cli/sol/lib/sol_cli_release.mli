@@ -23,11 +23,36 @@
     hand-mirrored copy of the projection that could drift from the id. *)
 type workload = Sol_cli_release_id.workload
 
+(** How a release was applied/owned (FEAT-066): [Direct] when Sol applied the
+    manifests itself, [Gitops] when it emitted a bundle a controller owns. This
+    is historical per-release truth — a target can switch modes over time, so it
+    cannot be inferred from present-day target config. Like {!t.migrations} it is
+    excluded from the content-addressed identity (the same desired workload has
+    one [release_id] either way) but is protected by {!record_digest}. A rollback
+    refuses a [Gitops] release: direct mutation does not establish stable
+    controller-owned success. *)
+type apply_mode =
+  | Direct
+  | Gitops
+
+val apply_mode_to_string : apply_mode -> string
+val apply_mode_of_string : string -> (apply_mode, string) result
+
+(** Migration filenames known to exist at deploy time (FEAT-066), so a later
+    rollback can tell which migrations are new since this release and check
+    their disposition. Deliberately excluded from the content-addressed
+    identity ({!derived_release_id}): a migration appearing on disk renders no
+    manifest, so it must not change [release_id] and force a rollout that
+    substantively changed nothing — but it is still recorded in, and
+    authoritative from, the body, because "is this the same running state"
+    and "what had happened by this point" are different questions. *)
 type t =
   { release_id : string
   ; workspace : string
   ; environment : string option
   ; workloads : workload list
+  ; migrations : string list
+  ; apply_mode : apply_mode
   }
 
 (** Lowercase a value and replace anything a Kubernetes label value forbids, so
@@ -42,8 +67,9 @@ val current_configmap_name : workspace:string -> string
 (** Build the canonical record from a deployment plan. The id is
     [plan.release_id], consumed rather than recomputed, while the body is the
     resolved content that id is derived from — which is what lets a reader
-    validate the record in both directions. *)
-val of_plan : Sol_cli_deployment_plan.t -> t
+    validate the record in both directions. [~apply_mode] is recorded as
+    non-identity historical metadata (FEAT-066). *)
+val of_plan : apply_mode:apply_mode -> Sol_cli_deployment_plan.t -> t
 
 (** [content_of_record t] is the {!Sol_cli_release_id.content} the record
     describes, so a reader can recompute the identity from the stored record
@@ -65,6 +91,29 @@ val validate : name:string -> t -> (unit, string) result
 val to_json : t -> Yojson.Safe.t
 val of_json : Yojson.Safe.t -> (t, string) result
 
+(** The canonical serialized record body — the exact string stored in the
+    ConfigMap's [data.record] and in a GitOps bundle, and the representation
+    {!record_digest} is defined over. It is canonical: object members are in a
+    fixed order and every map/set-like list (workloads, config, secrets, extra
+    labels, volumes, calls, migrations) is sorted to a total order, so it is a
+    function of the record and not of the order a caller built it in. Its
+    stability is pinned by a known vector in the release tests. *)
+val record_json_string : t -> string
+
+(** [record_digest t] is the free integrity digest of the complete record body,
+    stored alongside it as [data.record_digest] and rechecked on read. It makes
+    every persisted field tamper-evident, including the non-identity fields
+    ([migrations], [apply_mode]) that [release_id] cannot protect. It is an
+    integrity check, not a signature: it detects corruption and inconsistent
+    writes, not an actor who can rewrite the whole ConfigMap.
+
+    The read side hashes the stored bytes rather than re-deriving them, so a
+    record stays verifiable however the canonical encoder or the JSON serializer
+    evolves later. It is deliberately not defined over
+    {!Sol_cli_release_id.canonical_string}, whose encoding is a versioned
+    identity contract that may change. *)
+val record_digest : t -> string
+
 (** [(filename, contents)] for the release artifacts a GitOps bundle carries:
     the immutable [sol-release-<id>.yaml] record and the mutable
     [sol-current-release.yaml] pointer. A pure function of [t], so identical
@@ -78,6 +127,16 @@ val to_configmap_json : t -> string
     Its payload is [release_id] only: the record is the one authoritative
     description, and the pointer is a claim about which one is selected. *)
 val to_current_configmap_json : t -> string
+
+(** Parse a single release ConfigMap object, as returned by
+    [kubectl get configmap <name> -o json] or one entry of a list's [items].
+    Fails closed (FEAT-071): a record that is missing, malformed, or fails
+    {!validate} is corruption and returns an [Error] naming it. FEAT-066 also
+    checks {!record_digest} here first: a body without a digest is an
+    unsupported record format, and a body whose digest does not match is
+    corruption — so the non-identity safety fields are as tamper-evident as the
+    id. Shared by {!parse_kubectl_list} and a single-release lookup (FEAT-066). *)
+val of_kubectl_item : Yojson.Safe.t -> (t, string) result
 
 (** Parse [kubectl get configmap -l … -o json]. Fails closed (FEAT-071): a
     matching record that is missing, malformed, or fails {!validate} is

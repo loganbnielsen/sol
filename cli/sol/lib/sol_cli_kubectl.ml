@@ -50,10 +50,6 @@ let rollout_status ~ctx ~kind_name ~namespace =
     (invocation ~ctx [ "rollout"; "status"; kind_name; "-n"; namespace ])
 ;;
 
-let rollout_undo ~ctx ~kind_name ~namespace =
-  Sol_cli_process.run (invocation ~ctx [ "rollout"; "undo"; kind_name; "-n"; namespace ])
-;;
-
 let rollout_restart ~ctx ~kind ~namespace =
   Sol_cli_process.run (invocation ~ctx [ "rollout"; "restart"; kind; "-n"; namespace ])
 ;;
@@ -63,17 +59,6 @@ let patch ~ctx ~resource ~name ~namespace ~patch_type ~patch =
     (invocation
        ~ctx
        [ "patch"; resource; name; "-n"; namespace; "--type"; patch_type; "-p"; patch ])
-;;
-
-let argo_rollout_undo ~ctx ~namespace ~name =
-  Sol_cli_process.run
-    ~echo:true
-    (invocation ~ctx [ "argo"; "rollouts"; "undo"; name; "-n"; namespace ])
-;;
-
-let argo_rollout_status ~ctx ~namespace ~name =
-  Sol_cli_process.run
-    (invocation ~ctx [ "argo"; "rollouts"; "status"; name; "-n"; namespace ])
 ;;
 
 (* A probe answers "is it reachable", and now also "and if not, what did kubectl

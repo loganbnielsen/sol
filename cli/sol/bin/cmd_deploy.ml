@@ -362,7 +362,12 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
            });
       (* The release record is only written when the apply succeeded: "the
          release exists / was applied" is a claim a failed attempt cannot make. *)
-      (match Sol_cli_release_store.record_plan ~ctx:ctx.execution.cluster plan with
+      (match
+         Sol_cli_release_store.record_plan
+           ~ctx:ctx.execution.cluster
+           ~apply_mode:Sol_cli_release.Direct
+           plan
+       with
        | Ok () -> ()
        | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg);
       Ok ()

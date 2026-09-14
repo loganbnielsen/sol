@@ -1662,6 +1662,61 @@ let test_taxonomy_labels_fn () =
   assert_contains "release label" workload expected_release_label
 ;;
 
+(* FEAT-066: rollback's verifier reads the `release` label through a fixed
+   jsonpath per kind (Sol_cli_rollback.live_resource_and_jsonpath). This pins the
+   renderer's half of that contract: the label must sit at exactly the YAML
+   nesting the verifier's own jsonpath implies. The substring tests above would
+   all still pass if the renderer moved the label out of the pod template, which
+   would make every rollback verification read "" and report a false mismatch. *)
+let assert_release_label_at_verifier_path label kind workload release_id =
+  let _, jsonpath = Sol_cli_rollback.live_resource_and_jsonpath kind in
+  (* "{.spec.template.metadata.labels.release}" -> 5 keys -> 2*(5-1) = 8 spaces. *)
+  let inner = String.sub jsonpath 2 (String.length jsonpath - 3) in
+  let depth = List.length (String.split_on_char '.' inner) in
+  let expected =
+    String.make (2 * (depth - 1)) ' ' ^ {|release: "|} ^ release_id ^ {|"|}
+  in
+  let release_lines =
+    String.split_on_char '\n' workload
+    |> List.filter (fun line ->
+      let t = String.trim line in
+      String.length t >= 8 && String.equal (String.sub t 0 8) "release:")
+  in
+  Alcotest.(check int) (label ^ ": one release label line") 1 (List.length release_lines);
+  Alcotest.(check string)
+    (label ^ ": release label sits at the verifier's jsonpath")
+    expected
+    (List.hd release_lines)
+;;
+
+let test_release_label_lives_at_the_verifier_jsonpath () =
+  let release_id = Sol_cli_release_id.to_string release_id_of_test in
+  let _, svc_workload = render_spec_ok svc_spec in
+  assert_release_label_at_verifier_path
+    "svc/deployment"
+    Sol_cli_rollback.Live_deployment
+    svc_workload
+    release_id;
+  let rollout_spec =
+    { svc_spec with
+      progressive_delivery =
+        Some (Sol_cli_toml.Canary { steps = [ Sol_cli_toml.Weight 50 ] })
+    }
+  in
+  let _, rollout_workload = render_spec_ok rollout_spec in
+  assert_release_label_at_verifier_path
+    "svc/rollout"
+    Sol_cli_rollback.Live_rollout
+    rollout_workload
+    release_id;
+  let _, fn_workload = render_spec_ok fn_spec in
+  assert_release_label_at_verifier_path
+    "fn/cronjob"
+    Sol_cli_rollback.Live_cronjob
+    fn_workload
+    release_id
+;;
+
 (* matchLabels/selector must stay app-only -- changing selector labels would
    orphan running pods on the next rollout. The taxonomy labels only belong
    in the pod template's own labels block, rendered separately below this. *)
@@ -2437,6 +2492,10 @@ let () =
       , [ Alcotest.test_case "svc" `Quick test_taxonomy_labels_svc
         ; Alcotest.test_case "worker" `Quick test_taxonomy_labels_worker
         ; Alcotest.test_case "fn" `Quick test_taxonomy_labels_fn
+        ; Alcotest.test_case
+            "release label sits at the verifier's jsonpath"
+            `Quick
+            test_release_label_lives_at_the_verifier_jsonpath
         ; Alcotest.test_case "not in selector" `Quick test_taxonomy_labels_not_in_selector
         ; Alcotest.test_case
             "matches sol open dashboard link normalization"

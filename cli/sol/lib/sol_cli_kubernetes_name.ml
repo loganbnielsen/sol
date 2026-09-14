@@ -116,3 +116,26 @@ let sanitize_name (s : string) : string =
   in
   if trimmed = "" then "none" else trimmed
 ;;
+
+(* A pure function of the two resolved names -- no workspace/config/env read --
+   shared by the planner and by rollback's decode of a recorded release, so the
+   two can never disagree about the URL format. *)
+let service_url ~(namespace : namespace) ~(k8s_name : k8s_name) : string =
+  Printf.sprintf
+    "http://%s.%s.svc.cluster.local"
+    (k8s_name_to_string k8s_name)
+    (namespace_to_string namespace)
+;;
+
+(* A pure function of an already-resolved source name -- moved here from the
+   planner (FEAT-066) alongside [service_url] because it is deterministic
+   naming, not planner policy, so both the planner and rollback's decode of a
+   recorded release's [called_by] can share one definition. *)
+let call_env_var source_name =
+  source_name
+  |> String.map (function
+    | 'a' .. 'z' as c -> Char.uppercase_ascii c
+    | ('A' .. 'Z' | '0' .. '9') as c -> c
+    | _ -> '_')
+  |> fun s -> s ^ "_URL"
+;;

@@ -41,6 +41,72 @@ let volume_access_mode_to_string = function
   | ReadWriteMany -> "ReadWriteMany"
 ;;
 
+(* Canonical inverses (FEAT-066). Rollback reconstructs a recorded release's
+   service_specs from the release record, which stores these values in their
+   canonical string forms. Decoding must be exact: an unparsable value fails
+   closed rather than guessing, because a wrong decode would restore a state the
+   release never had. *)
+
+let volume_access_mode_of_string = function
+  | "ReadWriteOnce" -> Ok ReadWriteOnce
+  | "ReadOnlyMany" -> Ok ReadOnlyMany
+  | "ReadWriteMany" -> Ok ReadWriteMany
+  | s ->
+    Error
+      (Printf.sprintf
+         "%S is not a volume access mode (expected ReadWriteOnce, ReadOnlyMany or \
+          ReadWriteMany)"
+         s)
+;;
+
+(* The release record stores one canonical *effective* rollout string; decode it
+   back into the (rollout_strategy, progressive_delivery) pair the renderer
+   takes. "rolling_update" is the effective default, so it decodes to no explicit
+   strategy -- the same state the default renders. *)
+let effective_rollout_of_string s =
+  match s with
+  | "rolling_update" -> Ok (None, None)
+  | "recreate" -> Ok (Some Recreate, None)
+  | "blue_green" -> Ok (None, Some Blue_green)
+  | s ->
+    (match String.split_on_char ':' s with
+     | [ "canary"; steps ] ->
+       let ok_steps steps = Ok (None, Some (Canary { steps })) in
+       if steps = ""
+       then ok_steps []
+       else (
+         let parse_step step =
+           let len = String.length step in
+           if len = 0
+           then Error "empty canary step"
+           else (
+             match step.[0] with
+             | 'p' when len = 1 -> Ok (Pause None)
+             | ('w' | 'p') as kind ->
+               let n = String.sub step 1 (len - 1) in
+               (match int_of_string_opt n with
+                | None -> Error (Printf.sprintf "%S is not a canary step" step)
+                | Some n -> if kind = 'w' then Ok (Weight n) else Ok (Pause (Some n)))
+             | _ -> Error (Printf.sprintf "%S is not a canary step" step))
+         in
+         let rec go acc = function
+           | [] -> Ok (List.rev acc)
+           | step :: rest ->
+             (match parse_step step with
+              | Error msg -> Error msg
+              | Ok step -> go (step :: acc) rest)
+         in
+         match go [] (String.split_on_char ',' steps) with
+         | Error msg -> Error msg
+         | Ok steps -> ok_steps steps)
+     | _ ->
+       Error
+         (Printf.sprintf
+            "%S is not an effective rollout (expected rolling_update, recreate, \
+             blue_green or canary:<steps>)"
+            s))
+;;
+
 type t =
   { replicas : int option
   ; cpu : cpu_quantity option

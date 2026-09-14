@@ -168,3 +168,76 @@ from a cluster refusing a valid restoration.
    named `Error` before any render or mutation, including one case that is valid
    JSON but semantically invalid (an unknown rollout encoding), proving
    fail-closed lives in the domain decoder and not only in JSON parsing.
+
+## Completion notes (2026-09-14)
+
+Slice 2 landed in full for the direct-apply (non-GitOps) path, as a sequence
+of independently green commits on `FEAT-066/rollback-recorded-boundary`:
+
+1. **Reconstruction gate** (`59accc3b`) — `service_specs_of_release`
+   implemented and proven via the A → B → C trio (decode/identity/render
+   equivalence) plus failure-semantics tests, per the milestone this ticket
+   required before any mutation code could be written. `call_env_var` moved
+   into `Sol_cli_kubernetes_name` alongside `service_url`.
+2. **Migration disposition** (`6bb71bb6`) — `Sol_cli_migration_disposition`:
+   the DEC-018 expand/contract tag, authored as a `-- sol:disposition
+   expand|contract` header comment on a migration file's first non-blank
+   line (explicit product decision — see the file's own doc comment for the
+   alternatives considered and why). No `Unknown` disposition: missing or
+   malformed both fail closed.
+3. **Migration boundary check + release plumbing** (`b74930be`) —
+   `Sol_cli_release.t` gained a `migrations : string list` field (recorded,
+   deliberately excluded from the content-addressed identity, since a
+   migration file existing doesn't change what's running);
+   `Sol_cli_release_store.get`/`move_pointer` for single-release lookup and
+   pointer-only writes; `Sol_cli_rollback.check_migration_boundary`
+   implementing the DEC-018 refusal rule (a migration new since the target
+   release that is `Contract`, or fails to declare a disposition at all,
+   blocks — no "assume expand").
+4. **Verification** (`42dc8b20`) — `Sol_cli_rollback.verify` reads back the
+   live `release` label per restored workload (Deployment/Rollout at
+   `spec.template...`, CronJob at `spec.jobTemplate.spec.template...`) and
+   the pointer's `data.release_id`, reporting the two failure modes
+   independently per this ticket's carry-forward decision.
+5. **`sol rollback <release-id>`** (`8b484ab7`) — `cmd_rollback.ml` rewritten
+   entirely to run resolve → load+validate → migration boundary check →
+   reconstruct → render → apply → move pointer → verify, replacing the old
+   `kubectl rollout undo`/Argo Rollouts mechanism outright (deleted, no
+   compat shim, per repo policy). A refused rollback leaves the cluster
+   untouched. Secret backend is `Kubernetes_live` for this pass (a real
+   apply reads secret values from the process environment, same as any
+   direct `sol up`/`sol deploy` apply).
+6. **Adversarial review loop** (`890429c2`, `ae59062c`, `ae1ceffa`) — four
+   rounds of fresh, independent subagent review against the full branch
+   diff (correctness, the reconstruction red line, architecture/layer
+   boundaries, OCaml type-safety idioms, test adequacy, docs accuracy).
+   Found and fixed: a duplicated `string_contains` helper, an orphaned test
+   for the deleted `kubectl rollout undo` mechanism, a JSON round-trip test
+   that never asserted the new `migrations` field survived, and a pure
+   resource-kind/jsonpath mapping (`verify`'s dependency) that was untested
+   and fully private (now exposed and table-tested). Round 4 found nothing
+   actionable — converged.
+
+**Deferred, not dropped:**
+
+- `--commit`/`--scope` release selection — **split to FEAT-073**
+  (2026-09-14): resolving a commit SHA to a release id is a reverse lookup
+  from provenance to identity, and the only existing provenance record
+  (FEAT-070's deployment event) is Loki telemetry, not an authoritative
+  store. Shipped the authoritative exact-id path first rather than make
+  Loki authoritative for rollback selection.
+- **GitOps-mode rollback** (content + pointer traveling in one emitted
+  commit; skipping live-object verification since a controller, not Sol,
+  mutates the cluster there) — not yet designed or ticketed. `sol rollback`
+  in its current form only supports a direct-apply target; a future session
+  should decide whether this needs its own ticket before anyone relies on
+  `sol rollback` against a GitOps-managed target.
+- **Digest verification** — blocked on FEAT-050 (images are tag-pinned, not
+  digest-pinned, until it lands).
+
+Docs updated to match: `docs/guides/TUTORIAL.md`,
+`docs/architecture/devops-pipeline.md`, `docs/planning/ROADMAP.md`.
+
+`dune fmt` / `dune build` / `dune test` all green on every commit; pre-commit
+hook (build + full unit suite, plus kafka integration when the broker is up)
+passed on every commit.

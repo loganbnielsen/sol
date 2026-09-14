@@ -34,9 +34,16 @@ let record ~ctx (t : Sol_cli_release.t) : (unit, string) result =
 
 (* FEAT-069: the record is content-addressed, so it is built from the plan's
    own [release_id] and content — no invocation provenance is read or threaded
-   here. [sol up] and [sol deploy] therefore record the same artifact. *)
-let record_plan ~ctx (plan : Sol_cli_deployment_plan.t) : (unit, string) result =
-  record ~ctx (Sol_cli_release.of_plan plan)
+   here. [sol up] and [sol deploy] therefore record the same artifact. FEAT-066:
+   [~apply_mode] is the owning/application mode of *this* release (direct vs
+   GitOps-emitted), recorded as non-identity historical metadata. *)
+let record_plan
+      ~ctx
+      ~(apply_mode : Sol_cli_release.apply_mode)
+      (plan : Sol_cli_deployment_plan.t)
+  : (unit, string) result
+  =
+  record ~ctx (Sol_cli_release.of_plan ~apply_mode plan)
 ;;
 
 let list ~ctx ~(workspace : string) : (Sol_cli_release.t list, string) result =
@@ -65,4 +72,57 @@ let list ~ctx ~(workspace : string) : (Sol_cli_release.t list, string) result =
      with
      | Yojson.Json_error msg ->
        Error (Printf.sprintf "could not parse kubectl output: %s" msg))
+;;
+
+let get ~ctx ~(workspace : string) ~(release_id : string)
+  : (Sol_cli_release.t, string) result
+  =
+  match Sol_cli_release_id.of_string release_id with
+  | Error msg -> Error msg
+  | Ok id ->
+    let name = Printf.sprintf "sol-release-%s" (Sol_cli_release_id.to_string id) in
+    (match
+       Sol_cli_kubectl.get
+         ~ctx
+         ~resource:"configmap"
+         ~name
+         ~namespace:"default"
+         ~output:"json"
+     with
+     | Error e -> Error (Sol_cli_process.error_to_string e)
+     | Ok r when r.Sol_cli_process.exit_code <> 0 ->
+       let detail =
+         if r.Sol_cli_process.stderr <> ""
+         then r.Sol_cli_process.stderr
+         else r.Sol_cli_process.stdout
+       in
+       if Sol_cli_port_forward.string_contains ~needle:"NotFound" detail
+       then
+         Error (Printf.sprintf "release %s not found" (Sol_cli_release_id.to_string id))
+       else Error (Printf.sprintf "kubectl get configmap failed: %s" (String.trim detail))
+     | Ok r ->
+       (match
+          match Yojson.Safe.from_string r.Sol_cli_process.stdout with
+          | json -> Ok json
+          | exception Yojson.Json_error msg ->
+            Error (Printf.sprintf "could not parse kubectl output: %s" msg)
+        with
+        | Error e -> Error e
+        | Ok json ->
+          (match Sol_cli_release.of_kubectl_item json with
+           | Error msg -> Error msg
+           | Ok record ->
+             if String.equal record.Sol_cli_release.workspace workspace
+             then Ok record
+             else
+               Error
+                 (Printf.sprintf
+                    "release %s belongs to workspace %S, not %S"
+                    (Sol_cli_release_id.to_string id)
+                    record.Sol_cli_release.workspace
+                    workspace))))
+;;
+
+let move_pointer ~ctx (t : Sol_cli_release.t) : (unit, string) result =
+  apply_json ~ctx (Sol_cli_release.to_current_configmap_json t)
 ;;

@@ -288,7 +288,10 @@ Alongside the manifests, Sol writes `sol-release-<id>.yaml` (named by the plan's
 content-addressed release id — the same id every workload carries as its
 `release` label) and a `sol-current-release.yaml` pointer. Both are pure
 functions of the released content, so re-deploying identical content leaves the
-bundle byte-identical and the diff empty.
+bundle byte-identical and the diff empty. The emitted record is marked
+`apply_mode: gitops`: a controller, not Sol, owns those resources, so
+`sol rollback` refuses a GitOps-owned release instead of direct-applying against
+the controller (see the rollback section of the pipeline doc).
 
 Invocation provenance is *not* in the bundle: `sol up` and `sol deploy` record a
 separate immutable `sol-deployment-<deployment_id>` ConfigMap in the target's

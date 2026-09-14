@@ -130,6 +130,11 @@ val derive_consumer_groups
 val mode_to_string : deployment_mode -> string
 val primitive_to_string : primitive -> string
 
+(** Inverse of {!primitive_to_string} (FEAT-066): rollback reconstructs a
+    recorded release's specs from the release record, which stores this value
+    in its canonical string form. Fails closed on anything else. *)
+val primitive_of_string : string -> (primitive, string) result
+
 (** Resolve the deployment strategy that applies after progressive delivery
     settings have taken precedence over Deployment rollout settings. *)
 val effective_rollout_strategy : service_spec -> effective_rollout_strategy

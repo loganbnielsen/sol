@@ -566,7 +566,7 @@ sol migrate [apply]                               apply pending migrations
 sol migrate status                                show per-file applied/pending table
 sol migrate rollback                              roll back the last applied migration
 
-sol rollback [--scope DOMAIN[/UNIT]]              roll back last deploy for one or all services
+sol rollback RELEASE_ID                           restore a recorded release boundary (see `sol releases` for ids)
 sol logs --scope DOMAIN/UNIT [--release RELEASE_ID] [--no-follow] [--tail=N]  stream logs from a deployed service
 sol open logs [SCOPE] [--links]                   open Grafana Explore logs (browser unless --links)
 sol open metrics [SCOPE] [--links]                open Grafana metrics dashboard
@@ -647,7 +647,7 @@ the local forms need no target at all:
 ```bash
 sol local status
 sol local logs charge_svc
-sol local rollback charge_svc
+sol local rollback r-1a2b3c4d5e6f7890
 sol local migrate
 ```
 
@@ -694,9 +694,9 @@ The generated files contain the full manifest (Namespace, ServiceAccount, Config
 
 ### Day-2 operations
 
-If a deploy introduces a regression, `sol rollback --scope <domain>[/<unit>]` rolls back that domain or unit (omit `--scope` for every service) and waits for the previous revision to become healthy — no kubectl knowledge required.
+If a deploy introduces a regression, `sol rollback <release-id>` restores that recorded release boundary — find the id with `sol releases`. Rollback does not use `kubectl rollout undo`, which cannot restore config, volumes, or ingress; instead it reconstructs the target release's own resolved workloads from its immutable record, re-applies them, verifies the live workload set, and only then moves the current-release pointer and verifies it.
 
-For services using a standard `Deployment` (no `[infra.rollout]` in `sol.toml`), this calls `kubectl rollout undo deployment/<name>`. For services configured with `[infra.rollout]` (Argo Rollouts), `sol rollback` automatically calls `kubectl argo rollouts undo <name>` instead. This requires the [Argo Rollouts kubectl plugin](https://argoproj.github.io/argo-rollouts/installation/#kubectl-plugin); if the plugin is not installed, `sol rollback` prints the manual command and exits 1.
+Rollback refuses closed rather than mutating the cluster when: the release id doesn't resolve to a valid record; the record was applied as controller/GitOps-owned (Sol does not own those resources, so a direct apply would not establish a stable transition); a migration applied since that release is a *contracting* change (or fails to declare an expand/contract disposition at all — see `-- sol:disposition` in each migration file); or verification finds the live workloads don't match the restored release — including a workload left over from the superseded release — or the pointer doesn't name it. Verification runs before the pointer moves, so a failure leaves the pointer unchanged. There is no `--force`.
 
 To inspect what a running service is doing, `sol logs --scope <domain>/<unit>` streams live output directly from the cluster pod, following Sol's namespace convention automatically.
 

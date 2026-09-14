@@ -623,7 +623,10 @@ let test_gitops_emit_one_file_per_service () =
     (* FEAT-069: the bundle also carries the release artifact — the immutable
        record named by the plan's release id, plus the current-release pointer. *)
     Alcotest.(check int) "two service files + two release files" 4 (List.length files);
-    let record = Sol_cli_release.(configmap_name (of_plan plan) ^ ".yaml") in
+    let record =
+      Sol_cli_release.(
+        configmap_name (of_plan ~apply_mode:Sol_cli_release.Gitops plan) ^ ".yaml")
+    in
     Alcotest.(check bool) "release record emitted" true (List.mem record files);
     Alcotest.(check bool)
       "current-release pointer emitted"
@@ -641,7 +644,9 @@ let test_gitops_release_artifact_is_deterministic () =
       ignore (run_plan_ok ~mode:(Sol_cli_executor.Emit_to dir_a) plan);
       ignore (run_plan_ok ~mode:(Sol_cli_executor.Emit_to dir_b) plan);
       let record =
-        Sol_cli_release.configmap_name (Sol_cli_release.of_plan plan) ^ ".yaml"
+        Sol_cli_release.configmap_name
+          (Sol_cli_release.of_plan ~apply_mode:Sol_cli_release.Gitops plan)
+        ^ ".yaml"
       in
       let read dir name =
         let ic = open_in (Filename.concat dir name) in
