@@ -189,6 +189,40 @@ variable "thanos_irsa_role_arn" {
   default     = ""
 }
 
+# ── self_hosted_durable (GCP) — from cli/platform/infra/gcp's outputs ──────── #
+# INFRA-005: GCP counterpart to the AWS block above. Same manual cross-state
+# wiring (no automatic remote-state link between infra/gcp and infra/base).
+# Workload Identity supplies credentials the same ambient way IRSA does on
+# AWS -- no access keys ever flow through these variables or into Kubernetes
+# config. Plumbing only: the precondition below still requires
+# cloud_provider == "aws" for self_hosted_durable, so these variables are
+# accepted and wired but the GCP path cannot actually be selected until a
+# live GCP cluster validates it and that precondition is relaxed.
+
+variable "loki_gcs_bucket" {
+  description = "GCS bucket for durable Loki storage. From cli/platform/infra/gcp's loki_gcs_bucket output."
+  type        = string
+  default     = ""
+}
+
+variable "loki_workload_identity_sa_email" {
+  description = "GCP service account email for Loki's GCS access (Workload Identity). From cli/platform/infra/gcp's loki_workload_identity_sa_email output."
+  type        = string
+  default     = ""
+}
+
+variable "thanos_gcs_bucket" {
+  description = "GCS bucket for durable Prometheus/Thanos storage. From cli/platform/infra/gcp's thanos_gcs_bucket output."
+  type        = string
+  default     = ""
+}
+
+variable "thanos_workload_identity_sa_email" {
+  description = "GCP service account email for Thanos's GCS access (Workload Identity). From cli/platform/infra/gcp's thanos_workload_identity_sa_email output."
+  type        = string
+  default     = ""
+}
+
 variable "prometheus_raw_retention_days" {
   description = "Retention in days for raw Prometheus samples in Thanos compactor."
   type        = number

@@ -85,18 +85,38 @@ resource "terraform_data" "observability_backend_validation" {
     }
 
     precondition {
-      condition = var.observability_backend != "self_hosted_durable" || (
+      condition = var.observability_backend != "self_hosted_durable" || var.cloud_provider != "aws" || (
         trimspace(var.loki_s3_bucket) != "" &&
         trimspace(var.loki_irsa_role_arn) != "" &&
         trimspace(var.thanos_s3_bucket) != "" &&
         trimspace(var.thanos_irsa_role_arn) != ""
       )
-      error_message = "observability_backend = \"self_hosted_durable\" requires loki_s3_bucket, loki_irsa_role_arn, thanos_s3_bucket, and thanos_irsa_role_arn."
+      error_message = "observability_backend = \"self_hosted_durable\" on AWS requires loki_s3_bucket, loki_irsa_role_arn, thanos_s3_bucket, and thanos_irsa_role_arn."
     }
 
+    # INFRA-005: GCP counterpart to the AWS precondition above -- kept even
+    # though the gate below still blocks cloud_provider == "gcp" entirely, so
+    # the requirement is already correct and doesn't need revisiting the day
+    # that gate is relaxed.
+    precondition {
+      condition = var.observability_backend != "self_hosted_durable" || var.cloud_provider != "gcp" || (
+        trimspace(var.loki_gcs_bucket) != "" &&
+        trimspace(var.loki_workload_identity_sa_email) != "" &&
+        trimspace(var.thanos_gcs_bucket) != "" &&
+        trimspace(var.thanos_workload_identity_sa_email) != ""
+      )
+      error_message = "observability_backend = \"self_hosted_durable\" on GCP requires loki_gcs_bucket, loki_workload_identity_sa_email, thanos_gcs_bucket, and thanos_workload_identity_sa_email."
+    }
+
+    # INFRA-005: this is the one remaining, deliberate gate. Everything else
+    # in this module now accepts and wires GCP's durable-observability
+    # inputs the same way it does AWS's, but the Helm-values GCS path has
+    # only been validated statically (terraform validate/fmt), never against
+    # a live GKE cluster -- see INFRA-005's ticket for why. Relax this once
+    # that live validation has actually happened, not before.
     precondition {
       condition     = var.observability_backend != "self_hosted_durable" || var.cloud_provider == "aws"
-      error_message = "observability_backend = \"self_hosted_durable\" is currently supported only on AWS/EKS because it uses IRSA. GCP support requires Workload Identity wiring."
+      error_message = "observability_backend = \"self_hosted_durable\" is currently supported only on AWS/EKS: the GCP Workload Identity path is wired but not yet validated against a live GKE cluster (INFRA-005)."
     }
   }
 }
@@ -450,7 +470,48 @@ locals {
   # addressing confirmed via `helm show values grafana-community/loki
   # --version 18.12.1`; loki_s3_bucket/aws_region/loki_irsa_role_arn come
   # from cli/platform/infra/aws's outputs (OBS-006).
-  loki_infra_bindings = {
+  #
+  # INFRA-005: the GCP branch fully overrides storage (type: gcs, not s3) and
+  # schemaConfig.configs (object_store: gcs) rather than patching just the
+  # bucket name -- Helm's chart-values merge replaces lists wholesale rather
+  # than merging elements, so schemaConfig.configs must be provided complete
+  # whenever overridden. The two branches are kept as separately yamlencode'd
+  # strings, chosen by a ternary between the two encoded strings rather than
+  # between the two source objects: they have different attribute shapes
+  # (storage.s3 vs storage.gcs/schemaConfig), and Terraform's `?:` fails type
+  # unification across differently-shaped object literals, whereas the
+  # yamlencode'd strings always unify. AWS's branch is byte-for-byte what
+  # this local produced before this change.
+  loki_infra_bindings_gcs_yaml = yamlencode({
+    loki = {
+      storage = {
+        type = "gcs"
+        bucketNames = {
+          chunks = var.loki_gcs_bucket
+          ruler  = var.loki_gcs_bucket
+        }
+        gcs = {}
+      }
+      schemaConfig = {
+        configs = [
+          {
+            from         = "2024-01-01"
+            store        = "tsdb"
+            object_store = "gcs"
+            schema       = "v13"
+            index        = { prefix = "index_", period = "24h" }
+          }
+        ]
+      }
+    }
+    serviceAccount = {
+      annotations = {
+        "iam.gke.io/gcp-service-account" = var.loki_workload_identity_sa_email
+      }
+    }
+  })
+
+  loki_infra_bindings_s3_yaml = yamlencode({
     loki = {
       storage = {
         bucketNames = {
@@ -468,7 +529,9 @@ locals {
         "eks.amazonaws.com/role-arn" = var.loki_irsa_role_arn
       }
     }
-  }
+  })
+
+  loki_infra_bindings = var.cloud_provider == "gcp" ? local.loki_infra_bindings_gcs_yaml : local.loki_infra_bindings_s3_yaml
 }
 
 # Loki-only chart (community-maintained, replacing the deprecated
@@ -517,7 +580,7 @@ resource "helm_release" "loki" {
 
   values = concat(
     local.loki_component_values,
-    var.observability_backend == "self_hosted_durable" ? [yamlencode(local.loki_infra_bindings)] : []
+    var.observability_backend == "self_hosted_durable" ? [local.loki_infra_bindings] : []
   )
 
   depends_on = [terraform_data.observability_backend_validation]
@@ -914,11 +977,17 @@ locals {
   # reasoning as loki_infra_bindings above: a `cond ? {...} : {}` ternary
   # between object literals with different attribute sets fails Terraform's
   # type unification, but list(string) branches never do.
+  # INFRA-005: a dynamic map key (not a dual-branch object literal, unlike
+  # loki_infra_bindings above) is enough here -- this is the only
+  # provider-specific field in an otherwise identical object, so there's no
+  # type-unification problem to route around.
   prometheus_thanos_server_fields = {
     server = {
       serviceAccount = {
         annotations = {
-          "eks.amazonaws.com/role-arn" = var.thanos_irsa_role_arn
+          (var.cloud_provider == "gcp" ? "iam.gke.io/gcp-service-account" : "eks.amazonaws.com/role-arn") = (
+            var.cloud_provider == "gcp" ? var.thanos_workload_identity_sa_email : var.thanos_irsa_role_arn
+          )
         }
       }
       service = {
@@ -1056,7 +1125,13 @@ locals {
 }
 
 # Thanos's object-store config file, mounted into the sidecar and Bitnami
-# Thanos components. IRSA supplies credentials; no access keys in this config.
+# Thanos components. IRSA/Workload Identity supplies credentials; no access
+# keys in this config either way.
+#
+# INFRA-005: the two branches are separately yamlencode'd (S3's config has
+# bucket/endpoint/region, GCS's just bucket -- genuinely different shapes),
+# chosen by a ternary between the encoded strings rather than the source
+# objects, same reasoning as loki_infra_bindings above.
 resource "kubernetes_secret" "thanos_objstore_config" {
   count = local.prometheus_thanos_enabled ? 1 : 0
 
@@ -1066,7 +1141,12 @@ resource "kubernetes_secret" "thanos_objstore_config" {
   }
 
   data = {
-    "objstore.yml" = yamlencode({
+    "objstore.yml" = var.cloud_provider == "gcp" ? yamlencode({
+      type = "GCS"
+      config = {
+        bucket = var.thanos_gcs_bucket
+      }
+      }) : yamlencode({
       type = "S3"
       config = {
         bucket   = var.thanos_s3_bucket
@@ -1175,13 +1255,25 @@ resource "helm_release" "thanos" {
     name  = "compactor.retentionResolution1h"
     value = "${var.thanos_retention_1h_days}d"
   }
+  # INFRA-005: `set`'s name/value are ordinary string expressions, so a
+  # ternary works here the same as everywhere else in this file -- the dotted
+  # annotation key is escaped either way (Helm's --set path syntax), just a
+  # different key/value pair per provider.
   set {
-    name  = "storegateway.serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
-    value = var.thanos_irsa_role_arn
+    name = (
+      var.cloud_provider == "gcp"
+      ? "storegateway.serviceAccount.annotations.iam\\.gke\\.io/gcp-service-account"
+      : "storegateway.serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    )
+    value = var.cloud_provider == "gcp" ? var.thanos_workload_identity_sa_email : var.thanos_irsa_role_arn
   }
   set {
-    name  = "compactor.serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
-    value = var.thanos_irsa_role_arn
+    name = (
+      var.cloud_provider == "gcp"
+      ? "compactor.serviceAccount.annotations.iam\\.gke\\.io/gcp-service-account"
+      : "compactor.serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    )
+    value = var.cloud_provider == "gcp" ? var.thanos_workload_identity_sa_email : var.thanos_irsa_role_arn
   }
   set {
     name  = "receive.enabled"
