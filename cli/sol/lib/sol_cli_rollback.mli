@@ -65,3 +65,36 @@ val error_to_string : error -> string
 val service_specs_of_release
   :  Sol_cli_release.t
   -> (Sol_cli_deployment_plan.service_spec list, string) result
+
+(** DEC-018's migration boundary check. Unlike {!service_specs_of_release},
+    this legitimately reads ambient state — comparing the target release's
+    recorded migration set against what exists now is, by definition, not
+    something the release record alone can answer. *)
+type migration_check_error =
+  | Contracting_migration of
+      { release_id : string
+      ; migration : string
+      }
+  | Undeclared_disposition of
+      { release_id : string
+      ; migration : string
+      ; reason : string
+      }
+
+val migration_check_error_to_string : migration_check_error -> string
+
+(** [check_migration_boundary ~release ~migrations_dir ~current_migrations]
+    refuses only on a migration that is both new since [release] (present in
+    [current_migrations] but not [release.migrations]) and either declares a
+    [Contract] disposition, or fails to declare one at all (missing/malformed
+    header) — there is no "assume expand" fallback for an undeclared
+    migration, because that would silently accept the exact risk this check
+    exists to catch. An [Expand] migration never blocks. [migrations_dir] and
+    [current_migrations] are caller-supplied (rather than discovered here) so
+    the check stays testable and the caller controls where "now" comes
+    from. *)
+val check_migration_boundary
+  :  release:Sol_cli_release.t
+  -> migrations_dir:string
+  -> current_migrations:string list
+  -> (unit, migration_check_error) result

@@ -551,6 +551,7 @@ let bad_workload_release update : Sol_cli_release.t =
   ; workspace = "myapp"
   ; environment = Some "prod"
   ; workloads = [ update (Sol_cli_deployment_plan.release_workload_of_spec ledger_spec) ]
+  ; migrations = []
   }
 ;;
 
@@ -582,6 +583,132 @@ let test_gate_failure_invalid_cpu () =
   | Error msg ->
     assert (contains (Str.regexp "ledger_svc") msg);
     assert (contains (Str.regexp (Str.quote "not-a-cpu-quantity")) msg)
+;;
+
+(* ── DEC-018 migration boundary check ─────────────────────────────────────── *)
+
+let with_migrations_dir files f =
+  let dir = Filename.temp_file "sol-migrations-" "" in
+  Sys.remove dir;
+  Unix.mkdir dir 0o700;
+  Fun.protect
+    ~finally:(fun () ->
+      List.iter (fun (name, _) -> Sys.remove (Filename.concat dir name)) files;
+      Unix.rmdir dir)
+    (fun () ->
+       List.iter
+         (fun (name, content) ->
+            let oc = open_out (Filename.concat dir name) in
+            output_string oc content;
+            close_out oc)
+         files;
+       f dir)
+;;
+
+let migration_release ~migrations : Sol_cli_release.t =
+  { release_id = "r-1111111111111111"
+  ; workspace = "myapp"
+  ; environment = None
+  ; workloads = []
+  ; migrations
+  }
+;;
+
+let expand_sql = "-- sol:disposition expand\nALTER TABLE t ADD COLUMN c INT;"
+let contract_sql = "-- sol:disposition contract\nALTER TABLE t DROP COLUMN c;"
+let undeclared_sql = "ALTER TABLE t ADD COLUMN c INT;"
+
+let test_migration_boundary_no_new_migrations_passes () =
+  with_migrations_dir
+    [ "0001_init.sql", expand_sql ]
+    (fun migrations_dir ->
+       let release = migration_release ~migrations:[ "0001_init.sql" ] in
+       match
+         Sol_cli_rollback.check_migration_boundary
+           ~release
+           ~migrations_dir
+           ~current_migrations:[ "0001_init.sql" ]
+       with
+       | Ok () -> ()
+       | Error e -> Alcotest.fail (Sol_cli_rollback.migration_check_error_to_string e))
+;;
+
+let test_migration_boundary_new_expand_passes () =
+  with_migrations_dir
+    [ "0001_init.sql", expand_sql; "0002_add_col.sql", expand_sql ]
+    (fun migrations_dir ->
+       let release = migration_release ~migrations:[ "0001_init.sql" ] in
+       match
+         Sol_cli_rollback.check_migration_boundary
+           ~release
+           ~migrations_dir
+           ~current_migrations:[ "0001_init.sql"; "0002_add_col.sql" ]
+       with
+       | Ok () -> ()
+       | Error e -> Alcotest.fail (Sol_cli_rollback.migration_check_error_to_string e))
+;;
+
+let test_migration_boundary_new_contract_blocks () =
+  with_migrations_dir
+    [ "0001_init.sql", expand_sql; "0002_drop_col.sql", contract_sql ]
+    (fun migrations_dir ->
+       let release = migration_release ~migrations:[ "0001_init.sql" ] in
+       match
+         Sol_cli_rollback.check_migration_boundary
+           ~release
+           ~migrations_dir
+           ~current_migrations:[ "0001_init.sql"; "0002_drop_col.sql" ]
+       with
+       | Ok () -> Alcotest.fail "expected a contracting migration to block the rollback"
+       | Error (Sol_cli_rollback.Contracting_migration { release_id; migration }) ->
+         Alcotest.(check string) "release_id" "r-1111111111111111" release_id;
+         Alcotest.(check string) "migration" "0002_drop_col.sql" migration
+       | Error (Sol_cli_rollback.Undeclared_disposition _ as e) ->
+         Alcotest.failf
+           "expected Contracting_migration, got: %s"
+           (Sol_cli_rollback.migration_check_error_to_string e))
+;;
+
+let test_migration_boundary_undeclared_new_migration_blocks () =
+  with_migrations_dir
+    [ "0001_init.sql", expand_sql; "0002_mystery.sql", undeclared_sql ]
+    (fun migrations_dir ->
+       let release = migration_release ~migrations:[ "0001_init.sql" ] in
+       match
+         Sol_cli_rollback.check_migration_boundary
+           ~release
+           ~migrations_dir
+           ~current_migrations:[ "0001_init.sql"; "0002_mystery.sql" ]
+       with
+       | Ok () ->
+         Alcotest.fail "expected an undeclared disposition to block the rollback closed"
+       | Error (Sol_cli_rollback.Undeclared_disposition { release_id; migration; reason })
+         ->
+         Alcotest.(check string) "release_id" "r-1111111111111111" release_id;
+         Alcotest.(check string) "migration" "0002_mystery.sql" migration;
+         assert (contains (Str.regexp "sol:disposition") reason)
+       | Error (Sol_cli_rollback.Contracting_migration _ as e) ->
+         Alcotest.failf
+           "expected Undeclared_disposition, got: %s"
+           (Sol_cli_rollback.migration_check_error_to_string e))
+;;
+
+(* An already-recorded contracting migration (present in release.migrations)
+   never re-triggers the check -- only migrations *new since the release*
+   matter, per the whole point of expand/contract discipline. *)
+let test_migration_boundary_ignores_already_recorded_contract () =
+  with_migrations_dir
+    [ "0001_drop_col.sql", contract_sql ]
+    (fun migrations_dir ->
+       let release = migration_release ~migrations:[ "0001_drop_col.sql" ] in
+       match
+         Sol_cli_rollback.check_migration_boundary
+           ~release
+           ~migrations_dir
+           ~current_migrations:[ "0001_drop_col.sql" ]
+       with
+       | Ok () -> ()
+       | Error e -> Alcotest.fail (Sol_cli_rollback.migration_check_error_to_string e))
 ;;
 
 let () =
@@ -645,6 +772,28 @@ let () =
             "failure: invalid cpu quantity"
             `Quick
             test_gate_failure_invalid_cpu
+        ] )
+    ; ( "migration_boundary_check"
+      , [ Alcotest.test_case
+            "no new migrations passes"
+            `Quick
+            test_migration_boundary_no_new_migrations_passes
+        ; Alcotest.test_case
+            "new expand migration passes"
+            `Quick
+            test_migration_boundary_new_expand_passes
+        ; Alcotest.test_case
+            "new contract migration blocks"
+            `Quick
+            test_migration_boundary_new_contract_blocks
+        ; Alcotest.test_case
+            "new undeclared migration blocks"
+            `Quick
+            test_migration_boundary_undeclared_new_migration_blocks
+        ; Alcotest.test_case
+            "already-recorded contract is ignored"
+            `Quick
+            test_migration_boundary_ignores_already_recorded_contract
         ] )
     ]
 ;;

@@ -29,3 +29,26 @@ val list
   :  ctx:Sol_cli_kube_destination.context
   -> workspace:string
   -> (Sol_cli_release.t list, string) result
+
+(** [get ~ctx ~workspace ~release_id] loads and validates a single release
+    record by id (FEAT-066's rollback resolve step). Fails closed: an
+    unparseable [release_id], a missing ConfigMap, a corrupt record, or a
+    record whose own [workspace] does not match the one requested (a defense
+    against restoring the wrong workspace's release) are all [Error], never a
+    default or a best-effort partial record. *)
+val get
+  :  ctx:Sol_cli_kube_destination.context
+  -> workspace:string
+  -> release_id:string
+  -> (Sol_cli_release.t, string) result
+
+(** Write only the mutable current-release pointer for [t.workspace] to name
+    [t.release_id] — unlike {!record}, does not (re-)apply the immutable
+    per-release ConfigMap, which for a rollback already exists (it is the
+    record being restored from). Used by rollback's pointer-move step, kept
+    separate from the apply of the restored workloads' manifests so the two
+    can be sequenced with verification in between (FEAT-066). *)
+val move_pointer
+  :  ctx:Sol_cli_kube_destination.context
+  -> Sol_cli_release.t
+  -> (unit, string) result

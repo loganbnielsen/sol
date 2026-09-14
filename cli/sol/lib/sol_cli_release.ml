@@ -19,11 +19,22 @@
    [Sol_cli_deployment_plan.release_workload_of_spec]. *)
 type workload = Sol_cli_release_id.workload
 
+(* FEAT-066: which migration files existed at deploy time, so a later rollback
+   can tell which migrations are *new since this release* and check their
+   disposition. Deliberately not part of [Sol_cli_release_id.content]/the
+   content-addressed identity: unlike a workload field, a migration file
+   appearing on disk does not change what is *running* (it renders no
+   manifest), so it must not change [release_id] and force a rollout that
+   substantively changed nothing. It is still recorded in the body -- and
+   still authoritative for the migration boundary check -- because the
+   identity and the record body answer different questions ("is this the same
+   running state" vs "what do we know happened by this point"). *)
 type t =
   { release_id : string
   ; workspace : string
   ; environment : string option
   ; workloads : workload list
+  ; migrations : string list
   }
 
 (* Label/annotation *values* are constrained (<=63 chars, no '/'); the exact
@@ -84,6 +95,7 @@ let of_plan (plan : Sol_cli_deployment_plan.t) : t =
   ; workspace = plan.workspace
   ; environment = plan.environment.Sol_cli_deployment_plan.env
   ; workloads = List.map workload_of_spec plan.services
+  ; migrations = List.map Sol_cli_plan_ids.Migration_file.to_string plan.migrations
   }
 ;;
 
@@ -202,6 +214,8 @@ let to_json (t : t) : Yojson.Safe.t =
         | Some e -> `String e )
     ; ( "workloads"
       , `List (List.map workload_to_json (List.sort compare_workload t.workloads)) )
+    ; ( "migrations"
+      , `List (List.map (fun m -> `String m) (List.sort String.compare t.migrations)) )
     ]
 ;;
 
@@ -292,6 +306,14 @@ let workload_of_json (json : Yojson.Safe.t) : workload =
   }
 ;;
 
+let string_list key json =
+  List.filter_map
+    (function
+      | `String s -> Some s
+      | _ -> None)
+    (list key json)
+;;
+
 let of_json (json : Yojson.Safe.t) : (t, string) result =
   match str "release_id" json, str "workspace" json with
   | "", _ | _, "" -> Error "release record is missing release_id/workspace"
@@ -301,6 +323,7 @@ let of_json (json : Yojson.Safe.t) : (t, string) result =
       ; workspace
       ; environment = string_option "environment" json
       ; workloads = List.map workload_of_json (list "workloads" json)
+      ; migrations = string_list "migrations" json
       }
 ;;
 
@@ -370,35 +393,46 @@ let item_name item =
   | None -> ""
 ;;
 
+(* One release ConfigMap ([kubectl get configmap ... -o json] on a single
+   object, or one entry of a [-l ...] list's [items]) -> its record. Fails
+   closed (FEAT-071): a record that is absent, unparseable, or does not
+   [validate] is corruption and returns an [Error] naming it. Shared by
+   {!parse_kubectl_list} and a single-release lookup (FEAT-066's rollback
+   resolve step), so the two can never disagree about what makes a record
+   valid. *)
+let of_kubectl_item (item : Yojson.Safe.t) : (t, string) result =
+  let name = item_name item in
+  let label = if String.equal name "" then "<unnamed configmap>" else name in
+  match mem "data" item with
+  | None -> Error (Printf.sprintf "%s has no data" label)
+  | Some data ->
+    (match mem "record" data with
+     | Some (`String record) ->
+       (match Yojson.Safe.from_string record with
+        | exception _ -> Error (Printf.sprintf "%s: data.record is not JSON" label)
+        | parsed ->
+          (match of_json parsed with
+           | Error msg -> Error (Printf.sprintf "%s: %s" label msg)
+           | Ok r ->
+             (match validate ~name r with
+              | Error msg -> Error msg
+              | Ok () -> Ok r)))
+     | _ -> Error (Printf.sprintf "%s has no data.record" label))
+;;
+
 (* [kubectl get configmap -l ... -o json] -> the records it carries. Fails closed
    (FEAT-071): the store is authoritative release history, so a matching record
    that is absent, unparseable, or does not [validate] is corruption and returns
    an [Error] naming it — dropping it would print a partial list as if it were
    the whole one. *)
 let parse_kubectl_list (json : Yojson.Safe.t) : (t list, string) result =
-  let corrupt label msg =
-    Error (Printf.sprintf "release history contains an invalid record: %s: %s" label msg)
-  in
   let rec go acc = function
     | [] -> Ok (List.rev acc)
     | item :: rest ->
-      let name = item_name item in
-      let label = if String.equal name "" then "<unnamed configmap>" else name in
-      (match mem "data" item with
-       | None -> corrupt label "has no data"
-       | Some data ->
-         (match mem "record" data with
-          | Some (`String record) ->
-            (match Yojson.Safe.from_string record with
-             | exception _ -> corrupt label "data.record is not JSON"
-             | parsed ->
-               (match of_json parsed with
-                | Error msg -> corrupt label msg
-                | Ok r ->
-                  (match validate ~name r with
-                   | Error msg -> corrupt label msg
-                   | Ok () -> go (r :: acc) rest)))
-          | _ -> corrupt label "has no data.record"))
+      (match of_kubectl_item item with
+       | Error msg ->
+         Error (Printf.sprintf "release history contains an invalid record: %s" msg)
+       | Ok r -> go (r :: acc) rest)
   in
   go [] (list "items" json)
 ;;

@@ -330,3 +330,79 @@ let service_specs_of_release (release : Sol_cli_release.t) =
   let* specs = go [] release.workloads in
   Ok (with_called_by specs)
 ;;
+
+(* FEAT-066 / DEC-018: the migration boundary check. Unlike reconstruction,
+   this step legitimately reads ambient state (today's migration files) --
+   its whole job is comparing the target release's recorded migration set
+   against what exists now, which by definition cannot be done from the
+   release record alone. [current_migrations] and [migrations_dir] are taken
+   as arguments rather than read internally so the check stays testable and
+   the caller controls where "now" comes from. *)
+
+type migration_check_error =
+  | Contracting_migration of
+      { release_id : string
+      ; migration : string
+      }
+  | Undeclared_disposition of
+      { release_id : string
+      ; migration : string
+      ; reason : string
+      }
+
+let migration_check_error_to_string = function
+  | Contracting_migration { release_id; migration } ->
+    Printf.sprintf
+      "cannot roll back to release %s: %s is a contracting migration applied since that \
+       release -- restoring %s could run its old application code against a schema it no \
+       longer supports. No override: resolve the incompatibility forward instead."
+      release_id
+      migration
+      release_id
+  | Undeclared_disposition { release_id; migration; reason } ->
+    Printf.sprintf
+      "cannot roll back to release %s: migration %s %s -- declare a sol:disposition \
+       before rolling back across it."
+      release_id
+      migration
+      reason
+;;
+
+(* DEC-018: refuse only on a *contracting* migration between the target release
+   and now. An [Expand] migration never blocks a rollback -- expand/contract
+   discipline is exactly what keeps old application code working against a
+   newer schema. A migration this check cannot classify (missing or malformed
+   disposition) blocks just as hard as a declared [Contract] -- there is no
+   "assume expand" fallback, because that would silently accept the exact risk
+   this check exists to catch. *)
+let check_migration_boundary
+      ~(release : Sol_cli_release.t)
+      ~(migrations_dir : string)
+      ~(current_migrations : string list)
+  : (unit, migration_check_error) result
+  =
+  let new_migrations =
+    List.filter
+      (fun m -> not (List.mem m release.Sol_cli_release.migrations))
+      current_migrations
+    |> List.sort String.compare
+  in
+  let rec go = function
+    | [] -> Ok ()
+    | migration :: rest ->
+      (match
+         Sol_cli_migration_disposition.read_file
+           ~path:(Filename.concat migrations_dir migration)
+       with
+       | Error reason ->
+         Error
+           (Undeclared_disposition
+              { release_id = release.Sol_cli_release.release_id; migration; reason })
+       | Ok Sol_cli_migration_disposition.Contract ->
+         Error
+           (Contracting_migration
+              { release_id = release.Sol_cli_release.release_id; migration })
+       | Ok Sol_cli_migration_disposition.Expand -> go rest)
+  in
+  go new_migrations
+;;

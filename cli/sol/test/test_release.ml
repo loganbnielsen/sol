@@ -52,6 +52,7 @@ let sample_record : R.t =
     ; workspace = "myworkspace"
     ; environment = Some "dev"
     ; workloads = [ sample_workload ]
+    ; migrations = [ "0001_notifications.sql" ]
     }
   in
   { placeholder with

@@ -23,11 +23,20 @@
     hand-mirrored copy of the projection that could drift from the id. *)
 type workload = Sol_cli_release_id.workload
 
+(** Migration filenames known to exist at deploy time (FEAT-066), so a later
+    rollback can tell which migrations are new since this release and check
+    their disposition. Deliberately excluded from the content-addressed
+    identity ({!derived_release_id}): a migration appearing on disk renders no
+    manifest, so it must not change [release_id] and force a rollout that
+    substantively changed nothing — but it is still recorded in, and
+    authoritative from, the body, because "is this the same running state"
+    and "what had happened by this point" are different questions. *)
 type t =
   { release_id : string
   ; workspace : string
   ; environment : string option
   ; workloads : workload list
+  ; migrations : string list
   }
 
 (** Lowercase a value and replace anything a Kubernetes label value forbids, so
@@ -78,6 +87,13 @@ val to_configmap_json : t -> string
     Its payload is [release_id] only: the record is the one authoritative
     description, and the pointer is a claim about which one is selected. *)
 val to_current_configmap_json : t -> string
+
+(** Parse a single release ConfigMap object, as returned by
+    [kubectl get configmap <name> -o json] or one entry of a list's [items].
+    Fails closed (FEAT-071): a record that is missing, malformed, or fails
+    {!validate} is corruption and returns an [Error] naming it. Shared by
+    {!parse_kubectl_list} and a single-release lookup (FEAT-066). *)
+val of_kubectl_item : Yojson.Safe.t -> (t, string) result
 
 (** Parse [kubectl get configmap -l … -o json]. Fails closed (FEAT-071): a
     matching record that is missing, malformed, or fails {!validate} is
