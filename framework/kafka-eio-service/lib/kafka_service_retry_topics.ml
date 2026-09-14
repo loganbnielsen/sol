@@ -184,12 +184,18 @@ let consume
       | Ok retry_consumer ->
         let decode_retry raw_msg ~ack ~attempt =
           match Kafka_service_schema.decode_message topic raw_msg with
-          | Error (e, raw_bytes) -> on_decode_error e ~raw_bytes ~ack
+          | Error (e, raw_bytes) ->
+            (match on_decode_error e ~raw_bytes ~ack with
+             | Kafka.Consumer.Continue -> Kafka.Consumer.Continue
+             | Kafka.Consumer.Stop -> Kafka.Consumer.Stop
+             | Kafka.Consumer.Error e -> Kafka.Consumer.Error e)
           | Ok (msg, trace_ctx) ->
             (match handler msg ~ack ~trace_ctx with
              | Kafka.Consumer.Continue -> Kafka.Consumer.Continue
              | Kafka.Consumer.Stop -> Kafka.Consumer.Stop
-             | Kafka.Consumer.Error _ ->
+             | Kafka.Consumer.Error (Kafka_service_intf.Kafka_error e) ->
+               Kafka.Consumer.Error e
+             | Kafka.Consumer.Error Kafka_service_intf.Retry ->
                let next = attempt + 1 in
                let action =
                  decide_action
@@ -199,6 +205,12 @@ let consume
                    ~attempt:next
                in
                (match execute_action action ~raw_msg ~attempt:next ~publish_raw ~ack with
+                | Ok () -> Kafka.Consumer.Continue
+                | Error e -> Kafka.Consumer.Error e)
+             | Kafka.Consumer.Error (Kafka_service_intf.Dead_letter reason) ->
+               Printf.eprintf "sol-worker: DEAD_LETTER reason=%S\n%!" reason;
+               let action = Forward_dlq { target = dlq_topic_name } in
+               (match execute_action action ~raw_msg ~attempt ~publish_raw ~ack with
                 | Ok () -> Kafka.Consumer.Continue
                 | Error e -> Kafka.Consumer.Error e))
         in
@@ -252,12 +264,18 @@ let consume
     in
     let decode_and_handle raw_msg ~ack =
       match Kafka_service_schema.decode_message topic raw_msg with
-      | Error (e, raw_bytes) -> on_decode_error e ~raw_bytes ~ack
+      | Error (e, raw_bytes) ->
+        (match on_decode_error e ~raw_bytes ~ack with
+         | Kafka.Consumer.Continue -> Kafka.Consumer.Continue
+         | Kafka.Consumer.Stop -> Kafka.Consumer.Stop
+         | Kafka.Consumer.Error e -> Kafka.Consumer.Error e)
       | Ok (msg, trace_ctx) ->
         (match handler msg ~ack ~trace_ctx with
          | Kafka.Consumer.Continue -> Kafka.Consumer.Continue
          | Kafka.Consumer.Stop -> Kafka.Consumer.Stop
-         | Kafka.Consumer.Error _ ->
+         | Kafka.Consumer.Error (Kafka_service_intf.Kafka_error e) ->
+           Kafka.Consumer.Error e
+         | Kafka.Consumer.Error Kafka_service_intf.Retry ->
            let action =
              decide_action
                ~retry_topic:retry_topic_name
@@ -265,6 +283,12 @@ let consume
                ~max_attempts
                ~attempt:1
            in
+           (match execute_action action ~raw_msg ~attempt:1 ~publish_raw ~ack with
+            | Ok () -> Kafka.Consumer.Continue
+            | Error e -> Kafka.Consumer.Error e)
+         | Kafka.Consumer.Error (Kafka_service_intf.Dead_letter reason) ->
+           Printf.eprintf "sol-worker: DEAD_LETTER reason=%S\n%!" reason;
+           let action = Forward_dlq { target = dlq_topic_name } in
            (match execute_action action ~raw_msg ~attempt:1 ~publish_raw ~ack with
             | Ok () -> Kafka.Consumer.Continue
             | Error e -> Kafka.Consumer.Error e))

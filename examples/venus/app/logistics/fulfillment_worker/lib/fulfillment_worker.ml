@@ -10,5 +10,5 @@ let handle (msg : Message.t) ~trace_ctx:_ =
     msg.Message.customer_id
     msg.Message.amount_cents
     msg.Message.currency;
-  Ok ()
+  Worker.Ack
 ;;

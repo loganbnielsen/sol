@@ -52,6 +52,6 @@ val consume
        ('a
         -> ack:(unit -> (unit, Kafka.Error.t) result)
         -> trace_ctx:Obs_trace.t option
-        -> Kafka.Error.t Kafka.Consumer.handler_result)
+        -> Kafka_service_intf.handler_error Kafka.Consumer.handler_result)
   -> unit
   -> (unit, Kafka_service_intf.consume_partitioned_error) result

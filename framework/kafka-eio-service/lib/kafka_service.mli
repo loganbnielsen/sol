@@ -296,6 +296,11 @@ type consume_partitioned_error =
           [kafka-eio]'s own [Handler_errors] list is preserved in full rather
           than collapsed to a single partition's error. Non-empty. *)
 
+type handler_error =
+  | Retry
+  | Dead_letter of string
+  | Kafka_error of Kafka.Error.t
+
 (** [consume_partitioned svc topic ~group_id ~sw ~clock ...] is like [consume]
     but routes each message to a dedicated per-partition fiber. A partition's
     in-memory retry sleep blocks only that partition; other partitions continue
@@ -323,6 +328,6 @@ val consume_partitioned
        ('a
         -> ack:(unit -> (unit, Kafka.Error.t) result)
         -> trace_ctx:Obs_trace.t option
-        -> Kafka.Error.t Kafka.Consumer.handler_result)
+        -> handler_error Kafka.Consumer.handler_result)
   -> unit
   -> (unit, consume_partitioned_error) result

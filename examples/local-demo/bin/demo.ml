@@ -360,7 +360,7 @@ let () =
         then (
           try Eio.Promise.resolve worker_done_r () with
           | _ -> ()));
-      Ok ()
+      Worker.Ack
     ;;
   end
   in

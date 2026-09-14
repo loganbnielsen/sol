@@ -82,6 +82,11 @@ type consume_partitioned_error = Kafka_service_intf.consume_partitioned_error =
   | Consumer_error of Kafka.Error.t
   | Partition_errors of (int32 * Kafka.Error.t) list
 
+type handler_error = Kafka_service_intf.handler_error =
+  | Retry
+  | Dead_letter of string
+  | Kafka_error of Kafka.Error.t
+
 module Schema = struct
   let check ~net ~clock ~registry_url (module M : MESSAGE) =
     let topic = M.topic_name in
@@ -337,7 +342,11 @@ let consume_partitioned
      | Ok consumer ->
        let decode_and_handle raw_msg ~ack =
          match Kafka_service_schema.decode_message topic raw_msg with
-         | Error (e, raw_bytes) -> on_decode_error e ~raw_bytes ~ack
+         | Error (e, raw_bytes) ->
+           (match on_decode_error e ~raw_bytes ~ack with
+            | Kafka.Consumer.Continue -> Kafka.Consumer.Continue
+            | Kafka.Consumer.Stop -> Kafka.Consumer.Stop
+            | Kafka.Consumer.Error e -> Kafka.Consumer.Error (Kafka_error e))
          | Ok (msg, trace_ctx) -> handler msg ~ack ~trace_ctx
        in
        let result =
@@ -347,7 +356,19 @@ let consume_partitioned
            ~clock
            ~retry
            ~on_retry
-           ~handler:decode_and_handle
+           ~handler:(fun raw_msg ~ack ->
+             match decode_and_handle raw_msg ~ack with
+             | Kafka.Consumer.Continue -> Kafka.Consumer.Continue
+             | Kafka.Consumer.Stop -> Kafka.Consumer.Stop
+             | Kafka.Consumer.Error Retry -> Kafka.Consumer.Error Kafka.Error.Application
+             | Kafka.Consumer.Error (Kafka_error e) -> Kafka.Consumer.Error e
+             | Kafka.Consumer.Error (Dead_letter reason) ->
+               Printf.eprintf
+                 "sol-worker: DEAD_LETTER without Retry_topics configured reason=%S\n%!"
+                 reason;
+               (match ack () with
+                | Ok () -> Kafka.Consumer.Continue
+                | Error e -> Kafka.Consumer.Error e))
            ()
          |> Result.map_error (function
            | Kafka.Consumer.Handler_errors errs -> Partition_errors errs

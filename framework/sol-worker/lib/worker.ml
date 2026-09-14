@@ -1,8 +1,13 @@
+type outcome =
+  | Ack
+  | Retry of string
+  | Dead_letter of string
+
 module type WORKER = sig
   module Message : Kafka_service.MESSAGE
 
   val group_id : string
-  val handle : Message.t -> trace_ctx:Obs_trace.t option -> (unit, string) result
+  val handle : Message.t -> trace_ctx:Obs_trace.t option -> outcome
 end
 
 type retry_policy = Kafka.Consumer.retry_policy =
@@ -125,14 +130,17 @@ module Make_with_test_seam (W : WORKER) = struct
           else (
             let t0 = Eio.Time.now env#clock in
             match W.handle msg ~trace_ctx with
-            | Error _ ->
+            | Retry _ ->
               (match msg_count with
                | Some c -> c ~labels:[ "status", "error" ] 1
                | None -> ());
-              (* Signal consume_partitioned to retry with backoff.
-                 For the test_consume_loop test path this propagates as a Failure. *)
-              Kafka.Consumer.Error Kafka.Error.Application
-            | Ok () ->
+              Kafka.Consumer.Error Kafka_service.Retry
+            | Dead_letter reason ->
+              (match msg_count with
+               | Some c -> c ~labels:[ "status", "dead_letter" ] 1
+               | None -> ());
+              Kafka.Consumer.Error (Kafka_service.Dead_letter reason)
+            | Ack ->
               let dt = Eio.Time.now env#clock -. t0 in
               (match msg_duration with
                | Some h -> h dt
@@ -170,7 +178,9 @@ module Make_with_test_seam (W : WORKER) = struct
                        else
                          "sol-worker: ack failed, offset not committed; message eligible \
                           for redelivery"));
-                 if Kafka.Error.is_fatal e then Kafka.Consumer.Error e else advance ()))
+                 if Kafka.Error.is_fatal e
+                 then Kafka.Consumer.Error (Kafka_service.Kafka_error e)
+                 else advance ()))
         in
         let ( let* ) = Result.bind in
         match test_consume_loop with
