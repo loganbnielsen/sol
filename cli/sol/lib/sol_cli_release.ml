@@ -164,8 +164,20 @@ let validate ~(name : string) (t : t) : (unit, string) result =
 (* ── JSON ─────────────────────────────────────────────────────────────────── *)
 
 (* Ordering is not semantic: sort every map-like list so the same content
-   serializes to the same bytes, which is what makes the bundle idempotent. *)
-let sorted_pairs pairs = List.sort (fun (a, _) (b, _) -> String.compare a b) pairs
+   serializes to the same bytes, which is what makes the bundle idempotent *and*
+   what makes the record digest a function of the record rather than of the order
+   the caller happened to build its maps in.
+
+   The order is total (key, then value): key alone is not a total order, so two
+   entries with the same key would fall back on [List.sort]'s stability, which
+   OCaml does not guarantee -- a canonical form must not depend on that. *)
+let sorted_pairs pairs =
+  List.sort
+    (fun (a, av) (b, bv) ->
+       let by_key = String.compare a b in
+       if by_key <> 0 then by_key else String.compare av bv)
+    pairs
+;;
 
 let pairs_to_assoc pairs =
   `Assoc (List.map (fun (k, v) -> k, `String v) (sorted_pairs pairs))
@@ -250,12 +262,32 @@ let to_json (t : t) : Yojson.Safe.t =
     ]
 ;;
 
-(* FEAT-066: the complete persisted record body, canonically serialized. This is
-   the exact string stored in the ConfigMap's [data.record] (and the string the
-   GitOps bundle writes), so hashing it covers every persisted field -- including
-   the non-identity ones ([migrations], [apply_mode]) that [release_id] cannot
+(* FEAT-066: the canonical serialization of the complete record -- the single
+   representation the digest is defined over. Its stability is what the digest
+   means, so the rules are deliberate and pinned by
+   [test_release.test_record_digest_known_vector]:
+
+   - object members are written in a fixed order ([to_json]'s field order), never
+     the order a caller built its records in;
+   - every set/map-like list is sorted to a total order before writing: workloads
+     by (domain, name, primitive), [config]/[secrets]/[extra_labels] by
+     (key, value), [volumes]/[calls] rows by the whole tuple, [migrations] by
+     name;
+   - [Yojson.Safe.to_string] then emits that tree compactly.
+
+   This is the exact string stored in the ConfigMap's [data.record] and in a
+   GitOps bundle, so hashing it covers every persisted field -- including the
+   non-identity ones ([migrations], [apply_mode]) that [release_id] cannot
    protect, because they are deliberately outside the content-addressed
-   identity. *)
+   identity.
+
+   Deliberately *not* built on {!Sol_cli_release_id.canonical_string}: that
+   encoding is a versioned contract of the *identity* and its own mli says it
+   may change with [encoding_version]. A digest defined over it would become
+   unverifiable for already-written records the moment the identity encoding
+   changed. Keeping the digest over this representation, and verifying it
+   byte-for-byte on read (never re-encoding), means a record written today stays
+   verifiable however [to_json] or the JSON serializer evolves later. *)
 let record_json_string (t : t) : string = Yojson.Safe.to_string (to_json t)
 
 (* A free digest the store records alongside the body and rechecks on read.
@@ -264,6 +296,11 @@ let record_json_string (t : t) : string = Yojson.Safe.to_string (to_json t)
    record whose body was altered (e.g. an inflated [migrations] list that would
    silently defeat the migration boundary check) fails closed instead of being
    read as trustworthy.
+
+   [record_digest] is a pure function of [record_json_string], so the write side
+   and any independent re-computation agree; the read side ({!of_kubectl_item})
+   instead hashes the stored bytes directly, so verification never depends on
+   re-serializing an existing record.
 
    This is an integrity check, not a signature: it detects corruption and
    inconsistent/partial writes, and makes the non-identity fields as

@@ -260,6 +260,86 @@ let test_migrations_tampering_is_caught_by_digest_not_validate () =
     check_bool "reports integrity failure" true (contains "integrity validation" msg)
 ;;
 
+(* ── canonicalization ──────────────────────────────────────────────────────
+   The digest is only meaningful if the body it hashes is a total function of
+   the record. These pin that: order-independence, a total order even for
+   duplicate keys, and a known vector so a change to the canonical rules or the
+   serializer is a deliberate, reviewed decision. *)
+
+let shuffled_workload : R.workload =
+  { sample_workload with
+    config = [ "B", "2"; "A", "1" ]
+  ; secrets = [ "Y", "y"; "X", "x" ]
+  ; extra_labels = [ "z", "26"; "a", "1" ]
+  ; volumes = [ "v2", "/2", "2Gi", "ReadWriteMany"; "v1", "/1", "1Gi", "ReadWriteOnce" ]
+  ; calls = [ "Z_URL", "z", "z-svc", "ns-z"; "A_URL", "a", "a-svc", "ns-a" ]
+  }
+;;
+
+let ordered_workload : R.workload =
+  { shuffled_workload with
+    config = [ "A", "1"; "B", "2" ]
+  ; secrets = [ "X", "x"; "Y", "y" ]
+  ; extra_labels = [ "a", "1"; "z", "26" ]
+  ; volumes = [ "v1", "/1", "1Gi", "ReadWriteOnce"; "v2", "/2", "2Gi", "ReadWriteMany" ]
+  ; calls = [ "A_URL", "a", "a-svc", "ns-a"; "Z_URL", "z", "z-svc", "ns-z" ]
+  }
+;;
+
+(* A second workload whose name sorts before [sample_workload]'s, so workload
+   list order can be reversed too. *)
+let earlier_workload : R.workload =
+  { sample_workload with name = "aaa_svc"; image = "reg/myworkspace/aaa-svc:abc1234" }
+;;
+
+let test_record_digest_is_order_independent () =
+  let forward =
+    { sample_record with
+      workloads = [ shuffled_workload; earlier_workload ]
+    ; migrations = [ "0002_b.sql"; "0001_a.sql" ]
+    }
+  in
+  let reversed =
+    { sample_record with
+      workloads = [ earlier_workload; ordered_workload ]
+    ; migrations = [ "0001_a.sql"; "0002_b.sql" ]
+    }
+  in
+  check_string
+    "canonical body is order-independent"
+    (R.record_json_string forward)
+    (R.record_json_string reversed);
+  check_string
+    "canonical digest is order-independent"
+    (R.record_digest forward)
+    (R.record_digest reversed)
+;;
+
+(* Key-only ordering is not a total order: duplicate keys would fall back on
+   [List.sort]'s (unspecified) stability, so the canonical form must break the
+   tie on the value. Mostly the planner rejects collisions, but maps are not
+   sets and the encoder may not assume it. *)
+let test_record_digest_is_total_for_duplicate_keys () =
+  let with_config config =
+    { sample_record with workloads = [ { sample_workload with config } ] }
+  in
+  check_string
+    "duplicate-key order is total"
+    (R.record_digest (with_config [ "K", "a"; "K", "b" ]))
+    (R.record_digest (with_config [ "K", "b"; "K", "a" ]))
+;;
+
+(* A known vector for the canonical serialization. If this changes, the
+   canonical rules (or the JSON serializer) changed: either is a deliberate
+   decision that must be made here, not a silent redefinition of every stored
+   record's digest. *)
+let test_record_digest_known_vector () =
+  check_string
+    "known canonical digest"
+    "eb8a340422f0f1e6b020f8ac953d2e9f"
+    (R.record_digest sample_record)
+;;
+
 (* FEAT-066: apply_mode is required historical metadata; a record that omits it
    or carries an unknown value fails closed rather than defaulting to Direct. *)
 let test_apply_mode_round_trips () =
@@ -466,6 +546,20 @@ let () =
             `Quick
             test_migrations_tampering_is_caught_by_digest_not_validate
         ; Alcotest.test_case "table lists the id" `Quick test_format_table_lists_the_id
+        ] )
+    ; ( "canonicalization"
+      , [ Alcotest.test_case
+            "digest is order-independent"
+            `Quick
+            test_record_digest_is_order_independent
+        ; Alcotest.test_case
+            "duplicate keys are totally ordered"
+            `Quick
+            test_record_digest_is_total_for_duplicate_keys
+        ; Alcotest.test_case
+            "known canonical digest"
+            `Quick
+            test_record_digest_known_vector
         ] )
     ; ( "of_plan"
       , [ Alcotest.test_case

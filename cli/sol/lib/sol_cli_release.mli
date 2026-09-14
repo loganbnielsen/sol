@@ -92,7 +92,12 @@ val to_json : t -> Yojson.Safe.t
 val of_json : Yojson.Safe.t -> (t, string) result
 
 (** The canonical serialized record body — the exact string stored in the
-    ConfigMap's [data.record] and in a GitOps bundle. *)
+    ConfigMap's [data.record] and in a GitOps bundle, and the representation
+    {!record_digest} is defined over. It is canonical: object members are in a
+    fixed order and every map/set-like list (workloads, config, secrets, extra
+    labels, volumes, calls, migrations) is sorted to a total order, so it is a
+    function of the record and not of the order a caller built it in. Its
+    stability is pinned by a known vector in the release tests. *)
 val record_json_string : t -> string
 
 (** [record_digest t] is the free integrity digest of the complete record body,
@@ -100,7 +105,13 @@ val record_json_string : t -> string
     every persisted field tamper-evident, including the non-identity fields
     ([migrations], [apply_mode]) that [release_id] cannot protect. It is an
     integrity check, not a signature: it detects corruption and inconsistent
-    writes, not an actor who can rewrite the whole ConfigMap. *)
+    writes, not an actor who can rewrite the whole ConfigMap.
+
+    The read side hashes the stored bytes rather than re-deriving them, so a
+    record stays verifiable however the canonical encoder or the JSON serializer
+    evolves later. It is deliberately not defined over
+    {!Sol_cli_release_id.canonical_string}, whose encoding is a versioned
+    identity contract that may change. *)
 val record_digest : t -> string
 
 (** [(filename, contents)] for the release artifacts a GitOps bundle carries:
