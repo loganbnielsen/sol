@@ -315,14 +315,25 @@ jobs:
             # Case B's own pods by poll_max_running_fn_pods's job-name-
             # prefix match, which has no per-case scoping of its own.
             local wait_until=$(( $(date +%s) + 90 ))
+            local still_running=1
             while [ "$(date +%s)" -lt "$wait_until" ]; do
-              local still_running
               still_running=$(kubectl -n "$fn_ns" get pods -o jsonpath='{range .items[?(@.status.phase!="Succeeded")]}{.metadata.labels.job-name}{"\n"}{end}' 2>/dev/null \
                 | grep -c "^${fn_cronjob}-manual-" || true)
               [ "$still_running" -eq 0 ] && break
               sleep 3
             done
-            echo "case $label burst pods drained (or 90s wait exhausted)"
+            if [ "$still_running" -ne 0 ]; then
+              # A timed-out drain is not "probably fine" -- it means case
+              # isolation is not actually established, so any verdict
+              # poll_max_running_fn_pods computes for the *next* case could
+              # be silently contaminated by this case's still-running pods.
+              # Don't let this be a warning a reader can skim past: fail
+              # the experiment rather than produce a verdict that can't be
+              # trusted.
+              echo "::error::case $label: ${still_running} burst pod(s) still not Succeeded after 90s drain wait -- case isolation not established, refusing to run the next case"
+              exit 1
+            fi
+            echo "case $label burst pods fully drained"
           }
 
           run_case "A (correctly configured)" "100m" "128Mi" 3 /tmp/case_a.txt
