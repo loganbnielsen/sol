@@ -20,13 +20,48 @@ same finite node capacity.
 
 ## Blocked On
 
-Real `-fn` production usage that demonstrates this contention actually
-happens. Nothing in the codebase demonstrates the need today — `-fn` has no
-resource-consumption story explicit enough to even measure this against
-(see FEAT-079) — and the fix, if built prematurely, adds real operational
-surface (a second node pool, taints/tolerations, an infra-profile flag) for
-a problem that may never occur at the scale Sol's early users run at. Do not
-promote to `READY_FOR_ENGINEERING` until a workload demonstrates it.
+INFRA-016 (done) ran a pre-registered shared-node-pool isolation
+experiment — the "wait for a workload to demonstrate it" gate below is
+now `superseded by INFRA-016`'s actual result, not merely aspirational.
+
+**INFRA-016 did not demonstrate material `-fn` → `-svc` interference under
+the preregistered conditions.** With a moderate, correctly-configured
+burst (Case A: 3 × 100m/128Mi), all 3 function Pods ran concurrently while
+`charge-svc` p99 stayed at 1.39x baseline (below the 1.5x threshold) and
+the service remained fully `Ready`. With an aggressive-but-valid burst
+(Case B: 4 × 500m/512Mi, collectively exceeding the node's spare CPU
+request headroom), Kubernetes' own scheduler admitted only 1 of 4 function
+Pods into `Running` concurrently — it serialized the excess demand rather
+than letting it pile onto the node — and `charge-svc` again stayed fully
+`Ready` with p99 at 1.36x baseline. In both cases, correctly specified
+Kubernetes resource requests (FEAT-079/BUG-031) were doing real
+protective work without any dedicated isolation mechanism.
+
+Dedicated `-fn` node-pool isolation therefore **remains unproven as
+necessary**. Do not promote to `READY_FOR_ENGINEERING` — keep this ticket
+gated — pending evidence from larger-scale or materially different
+workloads. Explicitly not established by INFRA-016 (do not treat this
+gate as closed just because one experiment ran clean):
+
+- behavior at larger node/cluster scale
+- memory-pressure behavior (only CPU was exercised)
+- CPU-throttling behavior — `container_cpu_cfs_throttled_periods_total`
+  was unavailable from this cluster's Prometheus in both runs, so that
+  preregistered failure criterion produced no signal either way
+- behavior with incorrect or missing resource requests (the whole point
+  of Level 1/FEAT-079 is making requests explicit — an app that skips
+  that protection was not tested)
+- dependency-level interference (DB/Kafka contention) — explicitly out of
+  INFRA-016's scope from the start
+- latency behavior when the co-deployed `-svc` itself is under much
+  higher baseline utilization than this spike's near-idle `charge-svc`
+
+One incidental product-documentation finding from Case B worth carrying
+into `sol-fn.md` separately: `sol fn run` requests execution, it does not
+guarantee immediate execution — an aggressive manual burst can legitimately
+sit `Pending` behind Kubernetes' own CPU-request admission before it
+starts, which is a different mental model than Lambda's "the platform's
+capacity pool is never yours to contend for."
 
 ## Problem
 
