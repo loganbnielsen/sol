@@ -1,7 +1,9 @@
-(** comms / notify-worker — Worker.WORKER implementation. Consumes Charged
-    events, logs them via Obs, and records a notification in PostgreSQL. The
-    pool and observability handle are injected via functor so the module itself
-    has no mutable state. *)
+(** comms / notify-worker — Worker.RETRYABLE_WORKER implementation (it can
+    return Worker.Retry on a DB failure, so it isn't Ack-only). Consumes
+    Charged events, logs them via Obs, and records a notification in
+    PostgreSQL. The pool and observability handle are injected via functor
+    so the module itself has no mutable state. Run via Worker.Make_with_retry
+    with an explicit ~retry_strategy (FEAT-078: no implicit fallback). *)
 
 module Make (Config : sig
     val pool : Pg_db.pool option
@@ -12,7 +14,7 @@ struct
 
   let group_id = "comms-notify-worker"
 
-  let handle (msg : Message.t) ~trace_ctx =
+  let handle (msg : Message.t) ~trace_ctx : Worker.outcome =
     Obs_eio.with_span Config.ot ?parent:trace_ctx "record_notification" (fun span ->
       Obs_eio.log
         span

@@ -41,7 +41,7 @@ val retry_produce
 val action_of_handler_error
   :  retry_topic:Kafka_service_intf.topic_name
   -> dlq_topic:Kafka_service_intf.topic_name
-  -> max_attempts:int
+  -> retry_policy:Kafka.Consumer.retry_policy
   -> attempt:int
   -> Kafka_service_intf.handler_error
   -> (retry_action, Kafka.Error.t) result
@@ -145,7 +145,7 @@ val consume
   -> group_id:string
   -> sw:Eio.Switch.t
   -> clock:_ Eio.Time.clock
-  -> max_attempts:int
+  -> retry_policy:Kafka.Consumer.retry_policy
   -> on_ready:(unit -> unit)
   -> on_decode_error:
        (string

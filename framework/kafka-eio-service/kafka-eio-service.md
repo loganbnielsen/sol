@@ -173,7 +173,7 @@ val consume_partitioned
   -> clock:_ Eio.Time.clock
   -> ?on_ready:(unit -> unit)
   -> ?on_decode_error:(string -> raw_bytes:bytes -> ack:(unit -> (unit, Kafka_error.t) result) -> Kafka_error.t Kafka_consumer.handler_result)
-  -> ?retry_strategy:retry_strategy
+  -> retry_strategy:retry_strategy
   -> ?on_retry:(partition:int32 -> attempt:int -> delay_s:float -> unit)
   -> ?ot:Obs_eio.t
   -> handler:('a -> ack:(unit -> (unit, Kafka_error.t) result) -> trace_ctx:Obs_trace.t option -> Kafka_service.handler_error Kafka_consumer.handler_result)
@@ -186,15 +186,26 @@ val consume_partitioned
 ```ocaml
 type retry_strategy =
   | In_memory    of Kafka_consumer.retry_policy
-    (* Exponential back-off sleep inside the partition fiber. Simple, zero infra.
-       Pauses that Kafka partition for the retry delay. Vulnerable to rebalance
-       preempting the sleep window. *)
-  | Retry_topics of { max_attempts : int }
-    (* On Retry: publish raw bytes (with the original message's key -- BUG-027,
+    (* Exponential back-off sleep inside the partition fiber (delay =
+       base_delay_s * 2^(attempt-1), jittered by jitter_ratio, clamped to
+       max_delay_s). Simple, zero infra. Pauses that Kafka partition for the
+       retry delay. Vulnerable to rebalance preempting the sleep window. On
+       exhaustion, or on Dead_letter (In_memory has no DLQ to route it to):
+       terminal handler failure -- the message is left unacknowledged
+       (FEAT-078). *)
+  | Retry_topics of Kafka_consumer.retry_policy
+    (* Both variants share this one retry_policy vocabulary (FEAT-078) but
+       are not feature-equivalent -- exhaustion disposition below is
+       strategy-specific by design.
+       On Retry: publish raw bytes (with the original message's key -- BUG-027,
        so a retried message hashes to the same partition on the retry topic
        that it would on the source topic, both sharing the same partition
        count) to <source>.<canonical-group>.retry with X-Sol-Attempt /
-       X-Sol-Retry-At headers; commit original offset immediately.
+       X-Sol-Retry-At headers; commit original offset immediately. The retry
+       delay is retry_policy.base_delay_s * 2^(attempt-1), jittered by
+       retry_policy.jitter_ratio and clamped to retry_policy.max_delay_s --
+       the same computation In_memory uses (Kafka.Consumer.backoff_s), not
+       just the same type.
        Retry and DLQ topic names are group-scoped (BUG-030): both are
        <source>.<canonical-group>.<retry|dlq>, where <canonical-group> is
        group_id sanitized to alphanumerics and '-' (Kafka's metrics/JMX
@@ -218,11 +229,13 @@ type retry_strategy =
        Republish also gives the retry a later Kafka offset, so it can execute
        after records that originally followed it on the source partition,
        including records with the same key.
-       In steady state the extra head-of-line delay is bounded roughly by the
-       configured max retry backoff; under backlog or overload Kafka is the
-       buffer, so observed delay is unbounded. After max_attempts failures, or
-       on Dead_letter, the message is routed to the DLQ topic. Both topics are
-       auto-provisioned.
+       In steady state the extra head-of-line delay is bounded roughly by
+       retry_policy.max_delay_s; under backlog or overload Kafka is the
+       buffer, so observed delay is unbounded. After retry_policy.max_attempts
+       failures, or on Dead_letter, the message is routed to the DLQ topic
+       and the retry offset acked only once that publish succeeds. Both
+       topics are auto-provisioned. retry_policy.max_attempts must be at
+       least 1.
        If a retry record cannot be decoded, the retry path does not call
        on_decode_error; it publishes the raw retry record and original headers
        to the DLQ topic with decode diagnostics, then acks only after that
@@ -231,10 +244,13 @@ type retry_strategy =
        invariant. Retry_topics does not preserve strict source-partition or
        per-key ordering; workloads that need independent per-message retry
        regardless of key need a leased-job primitive (DEC-021). *)
-
-val default_retry_strategy : retry_strategy
-(* In_memory with exponential backoff starting at 1s, capped at 10min, infinite retries. *)
 ```
+
+There is no `default_retry_strategy` (removed, FEAT-078): `retry_strategy` is a
+mandatory argument to `consume_partitioned`, never an implicit fallback. A
+missing retry strategy must never be discovered only after a message first
+fails to process -- see `sol-worker.md`'s `WORKER`/`RETRYABLE_WORKER` split,
+which enforces this at the type level one layer up.
 
 Ack/drop behavior follows the
 [`sol-worker` acknowledgement ownership invariant](../sol-worker/sol-worker.md#acknowledgement-ownership-invariant).

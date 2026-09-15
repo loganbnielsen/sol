@@ -103,7 +103,9 @@ let () =
   let t0 = ref (stamp ()) in
   Printf.printf "\n%s\n" sep;
   Printf.printf "  Sol Retry-Topics Demo\n";
-  Printf.printf "  strategy: Retry_topics { max_attempts = 3 }\n";
+  Printf.printf
+    "  strategy: Retry_topics { base_delay_s = 2.0; max_delay_s = 10.0; max_attempts = \
+     3; jitter_ratio = 0.1 }\n";
   Printf.printf
     "  jobs: %d total (%d flakey, fail once then recover)\n"
     total_jobs
@@ -132,7 +134,7 @@ let () =
 
     let group_id = "sol-demo-retry-worker"
 
-    let handle msg ~trace_ctx:_ =
+    let handle msg ~trace_ctx:_ : Worker.outcome =
       let call_n = record_call msg.Message.id in
       let ts = stamp () -. !t0 in
       if is_flakey msg.Message.id && call_n = 0
@@ -158,11 +160,17 @@ let () =
   in
   Eio.Fiber.fork_daemon ~sw (fun () ->
     (try
-       let module WR = Worker.Make (W) in
+       let module WR = Worker.Make_with_retry (W) in
        WR.run
          ~env
          ~config:kafka_config
-         ~retry_strategy:(Worker.Retry_topics { max_attempts = 3 })
+         ~retry_strategy:
+           (Worker.Retry_topics
+              { base_delay_s = 2.0
+              ; max_delay_s = 10.0
+              ; max_attempts = 3
+              ; jitter_ratio = 0.1
+              })
          ~on_ready:(fun () ->
            Printf.printf "\n[worker] partition assigned — ready\n%!";
            try Eio.Promise.resolve worker_ready_r () with

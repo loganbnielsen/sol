@@ -371,7 +371,7 @@ let test_consume_partitioned_reports_partition_error () =
        in
        let retry_strategy =
          Kafka_service.In_memory
-           { base_delay_s = 0.0; max_delay_s = 0.0; max_attempts = 1 }
+           { base_delay_s = 0.0; max_delay_s = 0.0; max_attempts = 1; jitter_ratio = 0.0 }
        in
        let result =
          Eio.Time.with_timeout env#clock 20.0 (fun () ->
@@ -397,6 +397,70 @@ let test_consume_partitioned_reports_partition_error () =
             (Kafka.Error.to_string e)
         | Ok (Error (Kafka_service.Partition_errors errs)) ->
           Alcotest.(check bool) "at least one partition error reported" true (errs <> [])))
+;;
+
+(* FEAT-078: In_memory has no DLQ to route Dead_letter to. Acking it anyway
+   would be an acknowledge-and-discard with no durable destination, exactly
+   the shape BUG-028's invariant forbids. It must fail closed: surfaced as a
+   Partition_errors failure (like an exhausted Retry), never silently acked. *)
+let test_consume_partitioned_dead_letter_without_retry_topics_fails_closed () =
+  Eio_main.run
+  @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
+  match Kafka_service.create (make_config ()) ~sw with
+  | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
+  | Ok svc ->
+    (match
+       Kafka_service.register
+         svc
+         ~net:env#net
+         ~clock:env#clock
+         (module PartitionFailEvent)
+     with
+     | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
+     | Ok topic ->
+       (match
+          Eio.Promise.await (Kafka_service.publish svc topic PartitionFailEvent.{ n = 1 })
+        with
+        | Error e -> Alcotest.failf "publish failed: %s" (Kafka.Error.to_string e)
+        | Ok () -> ());
+       let group_id =
+         Printf.sprintf "sol-test-dlqclosed-%d-%d" (Unix.getpid ()) (Random.int 9999)
+       in
+       let retry_strategy =
+         Kafka_service.In_memory
+           { base_delay_s = 0.0; max_delay_s = 0.0; max_attempts = 1; jitter_ratio = 0.0 }
+       in
+       let result =
+         Eio.Time.with_timeout env#clock 20.0 (fun () ->
+           Ok
+             (Kafka_service.consume_partitioned
+                svc
+                topic
+                ~group_id
+                ~sw
+                ~clock:env#clock
+                ~retry_strategy
+                ~handler:(fun _msg ~ack:_ ~trace_ctx:_ ->
+                  Kafka.Consumer.Error (Kafka_service.Dead_letter "poison"))
+                ()))
+       in
+       (match result with
+        | Error `Timeout ->
+          Alcotest.fail "timed out waiting for the dead-lettered partition to fail closed"
+        | Ok (Ok ()) ->
+          Alcotest.fail
+            "Dead_letter under In_memory must not silently succeed (ack-and-drop)"
+        | Ok (Error (Kafka_service.Consumer_error e)) ->
+          Alcotest.failf
+            "expected Partition_errors, got Consumer_error: %s"
+            (Kafka.Error.to_string e)
+        | Ok (Error (Kafka_service.Partition_errors errs)) ->
+          Alcotest.(check bool)
+            "dead-letter without a DLQ is reported as a partition failure, not acked"
+            true
+            (errs <> [])))
 ;;
 
 (* ------------------------------------------------------------------ *)
@@ -508,6 +572,10 @@ let () =
             "reports partition error, not a collapsed single error"
             `Slow
             test_consume_partitioned_reports_partition_error
+        ; test_case
+            "dead-letter without Retry_topics fails closed, not acked"
+            `Slow
+            test_consume_partitioned_dead_letter_without_retry_topics_fails_closed
         ] )
     ; ( "error_handling"
       , [ test_case

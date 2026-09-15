@@ -273,9 +273,7 @@ let publish svc topic ?trace_ctx msg =
 
 type retry_strategy =
   | In_memory of Kafka.Consumer.retry_policy
-  | Retry_topics of { max_attempts : int }
-
-let default_retry_strategy = In_memory Kafka.Consumer.default_retry
+  | Retry_topics of Kafka.Consumer.retry_policy
 
 let default_on_decode_error e ~raw_bytes:_ ~ack =
   Printf.eprintf "sol-worker: DECODE_ERROR skip=true error=%S\n%!" e;
@@ -332,7 +330,7 @@ let consume_partitioned
       ~clock
       ?(on_ready = ignore)
       ?(on_decode_error = default_on_decode_error)
-      ?(retry_strategy = default_retry_strategy)
+      ~retry_strategy
       ?(on_retry = fun ~partition:_ ~attempt:_ ~delay_s:_ -> ())
       ?(on_relay_publish = fun ~partition:_ ~attempt:_ ~outcome:_ -> ())
       ?ot
@@ -383,12 +381,22 @@ let consume_partitioned
              | Kafka.Consumer.Error Retry -> Kafka.Consumer.Error Kafka.Error.Application
              | Kafka.Consumer.Error (Kafka_error e) -> Kafka.Consumer.Error e
              | Kafka.Consumer.Error (Dead_letter reason) ->
+               (* FEAT-078: In_memory has no DLQ to route to, so Dead_letter
+                  cannot get its own destination the way Retry_topics gives
+                  it one. Treating this as an ack-and-drop would violate the
+                  acknowledgement ownership invariant (BUG-028) -- "no durable
+                  destination -> ack -> gone" is forbidden regardless of
+                  which outcome constructor asked for it. Fail closed by
+                  running it through the same retry-then-exhaust path as an
+                  ordinary handler failure: the message stays unacknowledged
+                  either way, and this reuses the existing exhaustion/failure
+                  reporting instead of inventing a second one. *)
                Printf.eprintf
-                 "sol-worker: DEAD_LETTER without Retry_topics configured reason=%S\n%!"
+                 "sol-worker: DEAD_LETTER without Retry_topics configured (no DLQ \
+                  available) reason=%S -- failing closed, not acking\n\
+                  %!"
                  reason;
-               (match ack () with
-                | Ok () -> Kafka.Consumer.Continue
-                | Error e -> Kafka.Consumer.Error e))
+               Kafka.Consumer.Error Kafka.Error.Application)
            ()
          |> Result.map_error (function
            | Kafka.Consumer.Handler_errors errs -> Partition_errors errs
@@ -397,14 +405,14 @@ let consume_partitioned
        in
        Kafka.Consumer.close consumer;
        result)
-  | Retry_topics { max_attempts } ->
+  | Retry_topics retry_policy ->
     Kafka_service_retry_topics.consume
       svc
       topic
       ~group_id
       ~sw
       ~clock
-      ~max_attempts
+      ~retry_policy
       ~on_ready
       ~on_decode_error
       ~on_retry

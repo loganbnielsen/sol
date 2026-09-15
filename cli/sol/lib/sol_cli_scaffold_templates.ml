@@ -790,10 +790,14 @@ let ws_svc_bin_dune =
 |tpl}
 ;;
 
-(* app/comms/notify_worker/lib/notify_worker.ml — satisfies Worker.WORKER *)
+(* app/comms/notify_worker/lib/notify_worker.ml — satisfies
+   Worker.RETRYABLE_WORKER (it can return Worker.Retry on a DB failure, so
+   it isn't Ack-only). Run via Worker.Make_with_retry with an explicit
+   ~retry_strategy. *)
 let ws_worker_ml =
   {tpl|(* Inject pool and observability handle via functor so there's no mutable state.
-   Worker.Make requires module Message, group_id, and handle inside the functor. *)
+   Worker.Make_with_retry requires module Message, group_id, and handle inside
+   the functor. *)
 module Make (Config : sig
   val pool : Pg_db.pool
   val obs  : Sol_obs.t
@@ -803,7 +807,7 @@ end) = struct
 
   let group_id = "{{name}}-comms-notify-worker"
 
-  let handle (msg : Message.t) ~trace_ctx:_ =
+  let handle (msg : Message.t) ~trace_ctx:_ : Worker.outcome =
     Sol_obs.log_info Config.obs
       ~fields:[("charge_id", msg.id); ("customer_id", msg.customer_id);
                ("amount_cents", string_of_int msg.amount_cents)]
@@ -862,8 +866,9 @@ let () =
     let pool = pool
     let obs  = obs
   end) in
-  let module WR = Worker.Make(W) in
+  let module WR = Worker.Make_with_retry(W) in
   WR.run ~env ~config:kafka_config
+    ~retry_strategy:(Worker.In_memory Kafka.Consumer.default_retry)
     ~ot:obs ()
   |> Result.map_error Worker.run_error_to_string
   |> function Ok () -> () | Error msg -> fatal msg
@@ -1010,7 +1015,13 @@ let handle (msg : Message.t) ~trace_ctx:_ =
   Printf.printf "[{{name}}-worker] received id=%s\n%!" msg.id;
   (* Add side effects here, then return Worker.Ack. The worker acknowledges
      (commits the offset) for you, only after this returns Worker.Ack — there is
-     no ack to call. Returning Worker.Retry causes the message to be retried. *)
+     no ack to call.
+     This is an Ack-only worker: it has no retry capability, so a failed side
+     effect here has nowhere to go but a raised exception. If you need retry
+     or dead-letter handling, change Message.t's module to implement
+     Worker.RETRYABLE_WORKER (handle returning Worker.outcome, i.e.
+     Worker.Ack | Worker.Retry _ | Worker.Dead_letter _) and run it with
+     Worker.Make_with_retry, which requires an explicit ~retry_strategy. *)
   Worker.Ack
 |tpl}
 ;;
