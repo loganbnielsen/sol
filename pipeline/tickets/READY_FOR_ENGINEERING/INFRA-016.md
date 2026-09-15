@@ -52,6 +52,28 @@ fact by eyeballing a percentile that moved:
 Any one of these three counts as "material interference" — the experiment
 does not require all three.
 
+**A clean verdict must distinguish "the scheduler declined to place the
+burst" from "fn and svc genuinely shared compute and svc stayed healthy
+anyway."** These are different findings:
+
+```text
+fn burst arrives → Kubernetes can't schedule fn pods → svc stays healthy
+```
+is not the same result as
+```text
+fn burst is actually Running → fn and svc genuinely share/saturate
+compute → svc stays healthy
+```
+
+The first may be a perfectly acceptable safety property in its own right
+(admission control protected reserved service capacity), but it answers a
+different question than "does shared-pool execution provide adequate
+isolation under real concurrency." A "no material interference" verdict is
+only evidence of the latter if the fired `-fn` invocations were actually
+observed `Running` concurrently during the sampling window — report how
+many were, alongside the latency/throttling signals, and say explicitly
+when a clean result might instead mean the burst was mostly `Pending`.
+
 **Two test cases, not one:**
 
 - **Case A — correctly configured:** `-fn` requests/limits sized to fit
@@ -135,6 +157,11 @@ report, not a merge gate):
   cluster and produce recorded numbers, not simulated/assumed ones.
 - A clear verdict for each case: material interference detected or not,
   against the pre-registered criteria.
+- Each case's verdict reports how many of the fired `-fn` invocations were
+  observed `Running` concurrently during the sampling window, and a "no
+  interference" verdict explicitly says whether that reflects genuine
+  compute sharing or a burst the scheduler mostly left `Pending` — never
+  reported as a bare "adequate isolation" without that distinction.
 - If interference is detected in either case, the report names the
   cheapest candidate mechanism that would plausibly close the gap, not
   just "build INFRA-015."
