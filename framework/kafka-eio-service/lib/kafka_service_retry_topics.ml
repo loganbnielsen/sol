@@ -2,6 +2,55 @@ let backoff_s n = Float.min (1.0 *. (2. ** Float.of_int n)) 600.0
 let hdr_attempt = "X-Sol-Attempt"
 let hdr_retry_at = "X-Sol-Retry-At"
 
+(* BUG-029: bounded in-process retry for the relay's own producer calls
+   (retry/DLQ publication), so a single transient produce failure self-heals
+   instead of immediately exhausting consume_partitioned's zero-tolerance
+   policy below. These are internal constants, not the user-facing
+   retry_policy vocabulary FEAT-078 will introduce -- this only protects the
+   relay's plumbing, not application-level retry semantics. *)
+let produce_max_attempts = 5
+let produce_base_delay_s = 0.1
+let produce_max_delay_s = 5.0
+let produce_jitter_ratio = 0.2
+
+(* Scoped to this module, not process-wide like Obs_trace's rng_state, but
+   mutex-protected for the same reason: Random.State.t mutation is not
+   domain-safe, and this state is shared across every partition fiber's
+   publish_raw calls. Never the global Random module (this repo has been
+   bitten twice by that). *)
+let produce_rng = Random.State.make_self_init ()
+let produce_rng_mutex = Mutex.create ()
+
+let produce_backoff_s attempt =
+  let raw = produce_base_delay_s *. (2. ** Float.of_int (attempt - 1)) in
+  let jitter_unit =
+    Mutex.lock produce_rng_mutex;
+    Fun.protect
+      ~finally:(fun () -> Mutex.unlock produce_rng_mutex)
+      (fun () -> Random.State.float produce_rng (2.0 *. produce_jitter_ratio))
+  in
+  let jittered = raw *. (1.0 +. (jitter_unit -. produce_jitter_ratio)) in
+  Float.min produce_max_delay_s (Float.max 0.0 jittered)
+;;
+
+(** [retry_produce ~max_attempts ~backoff_s ~sleep ~on_retry ~produce ()] retries
+    [produce] (a single attempt, side-effecting) up to [max_attempts] times,
+    calling [on_retry ~attempt ~error] and [sleep (backoff_s attempt)] between
+    attempts. [produce]/[sleep]/[on_retry] are injected so this is testable
+    without a live broker or a real clock. Exposed for testing (BUG-029). *)
+let retry_produce ~max_attempts ~backoff_s ~sleep ~on_retry ~produce () =
+  let rec go attempt =
+    match produce () with
+    | Ok () -> Ok ()
+    | Error e when attempt >= max_attempts -> Error e
+    | Error e ->
+      on_retry ~attempt ~error:e;
+      sleep (backoff_s attempt);
+      go (attempt + 1)
+  in
+  go 1
+;;
+
 let parse_int_hdr key headers =
   match Option.join (List.assoc_opt key headers) with
   | None -> Error (Printf.sprintf "missing %s" key)
@@ -105,6 +154,7 @@ let consume
       ~on_ready
       ~on_decode_error
       ~on_retry
+      ~on_relay_publish
       ~handler
       ()
   =
@@ -147,24 +197,47 @@ let consume
       :: (hdr_retry_at, Some (string_of_float retry_at))
       :: strip_sol_hdrs headers
     in
-    match
-      Eio.Promise.await
-        (Kafka.Producer.produce_await
-           svc.producer
-           ~topic:(topic_name_to_string target_topic)
-           ~value:raw_bytes
-           ?key
-           ~headers:new_headers
-           ())
-    with
-    | Ok () -> Ok ()
-    | Error e ->
-      Printf.eprintf
-        "sol-worker: PUBLISH_FAILED target=%s attempt=%d error=%s — not acking\n%!"
-        (topic_name_to_string target_topic)
-        attempt
-        (Kafka.Error.to_string e);
-      Error e
+    (* BUG-029: bounded retry around the produce call itself -- a single
+       transient failure here must not be the thing that reaches
+       consume_partitioned's exhaustion policy below. *)
+    let result =
+      retry_produce
+        ~max_attempts:produce_max_attempts
+        ~backoff_s:produce_backoff_s
+        ~sleep:(Eio.Time.sleep clock)
+        ~on_retry:(fun ~attempt:produce_attempt ~error:e ->
+          Printf.eprintf
+            "warn: kafka_service: PUBLISH_RETRY target=%s attempt=%d produce_attempt=%d \
+             error=%s\n\
+             %!"
+            (topic_name_to_string target_topic)
+            attempt
+            produce_attempt
+            (Kafka.Error.to_string e))
+        ~produce:(fun () ->
+          Eio.Promise.await
+            (Kafka.Producer.produce_await
+               svc.producer
+               ~topic:(topic_name_to_string target_topic)
+               ~value:raw_bytes
+               ?key
+               ~headers:new_headers
+               ()))
+        ()
+    in
+    (match result with
+     | Error e ->
+       Printf.eprintf
+         "error: kafka_service: PUBLISH_FAILED target=%s attempt=%d produce_attempts=%d \
+          error=%s -- exhausted in-process produce retries, not acking\n\
+          %!"
+         (topic_name_to_string target_topic)
+         attempt
+         produce_max_attempts
+         (Kafka.Error.to_string e);
+       on_relay_publish ~partition ~attempt ~outcome:`Failed
+     | Ok () -> on_relay_publish ~partition ~attempt ~outcome:`Published);
+    result
   in
   let consumer_cfg : Kafka.Consumer.config =
     { brokers = svc.brokers
@@ -178,6 +251,17 @@ let consume
   in
   let no_retry : Kafka.Consumer.retry_policy =
     { base_delay_s = 0.0; max_delay_s = 0.0; max_attempts = 0 }
+  in
+  (* BUG-029: the relay (retry-topic consumer) forks off and previously had no
+     way to make its own failure visible to this function's return value --
+     it would log to stderr and the source consumer would keep running,
+     looking healthy, while retry delivery was silently dead. Set from the
+     forked relay fiber below; read once the source consumer stops, so a
+     relay failure is never reported as an overall Ok result. Plain [ref] is
+     safe here: both readers/writers are Eio fibers on the same domain, never
+     OS threads, so there is no data race to guard against. *)
+  let relay_failure : Kafka_service_intf.consume_partitioned_error option ref =
+    ref None
   in
   match Kafka.Consumer.create ~on_ready ~clock consumer_cfg ~sw with
   | Error e -> Error (Kafka_service_intf.Consumer_error e)
@@ -276,12 +360,21 @@ let consume
                List.iter
                  (fun (partition, e) ->
                     Printf.eprintf
-                      "warn: kafka_service: retry consumer partition %ld: %s\n%!"
+                      "error: kafka_service: RETRY_RELAY_STOPPED partition=%ld error=%s \
+                       -- retry delivery for this partition has stopped (BUG-029)\n\
+                       %!"
                       partition
                       (Kafka.Error.to_string e))
-                 errs
+                 errs;
+               relay_failure := Some (Kafka_service_intf.Partition_errors errs)
              | Error (Kafka.Consumer.Invalid_config msg) ->
-               Printf.eprintf "warn: kafka_service: retry consumer config: %s\n%!" msg
+               Printf.eprintf
+                 "error: kafka_service: RETRY_RELAY_STOPPED config=%s -- retry delivery \
+                  has stopped (BUG-029)\n\
+                  %!"
+                 msg;
+               relay_failure
+               := Some (Kafka_service_intf.Consumer_error (Kafka.Error.Config_error msg))
            with
            | Eio.Cancel.Cancelled _ -> ());
           Kafka.Consumer.close retry_consumer);
@@ -330,6 +423,21 @@ let consume
         | Kafka.Consumer.Handler_errors errs -> Kafka_service_intf.Partition_errors errs
         | Kafka.Consumer.Invalid_config msg ->
           Kafka_service_intf.Consumer_error (Kafka.Error.Config_error msg))
+    in
+    (* BUG-029: an already-failed source consumer keeps its own error; a
+       healthy-looking source result must not mask an earlier relay failure
+       -- that is exactly the silent-degradation shape this ticket exists to
+       close. This is the documented exhaustion policy: a stopped retry
+       relay fails the worker rather than leaving it running degraded. *)
+    let result =
+      match result, !relay_failure with
+      | Ok (), Some relay_err ->
+        Printf.eprintf
+          "error: kafka_service: failing -- the retry relay stopped earlier and never \
+           recovered (BUG-029)\n\
+           %!";
+        Error relay_err
+      | (Ok () | Error _), _ -> result
     in
     Kafka.Consumer.close consumer;
     result

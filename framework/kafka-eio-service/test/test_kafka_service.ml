@@ -332,6 +332,103 @@ let test_retry_publish_preserves_key () =
          (Bytes.to_string key))
 ;;
 
+(* BUG-029: the relay's produce backoff schedule -- bounded, non-negative, and
+   the cap is exact once jitter can no longer push a large raw delay under it. *)
+let test_produce_backoff_s_early_attempt_within_jittered_bounds () =
+  let v = Kafka_service.Retry_topics.produce_backoff_s 1 in
+  Alcotest.(check bool)
+    "attempt 1 backoff is within +-20% of 0.1s"
+    true
+    (v >= 0.08 && v <= 0.12)
+;;
+
+let test_produce_backoff_s_caps_at_max_delay () =
+  (* raw = 0.1 * 2^9 = 51.2s, far past the 5s cap even at the low end of
+     jitter -- the cap must be exact regardless of the random draw. *)
+  Alcotest.(check (float 0.0))
+    "large attempt clamps to the cap"
+    5.0
+    (Kafka_service.Retry_topics.produce_backoff_s 10)
+;;
+
+let test_produce_backoff_s_never_negative () =
+  Alcotest.(check bool)
+    "attempt 1 backoff is non-negative"
+    true
+    (Kafka_service.Retry_topics.produce_backoff_s 1 >= 0.0)
+;;
+
+(* BUG-029: retry_produce's control flow, fully deterministic via stubbed
+   produce/sleep/backoff_s/on_retry -- no live broker, no real clock. *)
+let test_retry_produce_succeeds_immediately_without_retrying () =
+  let produce_calls = ref 0 in
+  let sleeps = ref [] in
+  let retries = ref [] in
+  match
+    Kafka_service.Retry_topics.retry_produce
+      ~max_attempts:5
+      ~backoff_s:(fun n -> Float.of_int n)
+      ~sleep:(fun s -> sleeps := s :: !sleeps)
+      ~on_retry:(fun ~attempt ~error -> retries := (attempt, error) :: !retries)
+      ~produce:(fun () ->
+        incr produce_calls;
+        Ok ())
+      ()
+  with
+  | Error _ -> Alcotest.fail "expected immediate success"
+  | Ok () ->
+    Alcotest.(check int) "produce called once" 1 !produce_calls;
+    Alcotest.(check int) "no sleeps" 0 (List.length !sleeps);
+    Alcotest.(check int) "no retries reported" 0 (List.length !retries)
+;;
+
+let test_retry_produce_recovers_after_transient_failures () =
+  let attempts_seen = ref [] in
+  let sleeps = ref [] in
+  let call_count = ref 0 in
+  match
+    Kafka_service.Retry_topics.retry_produce
+      ~max_attempts:5
+      ~backoff_s:(fun n -> Float.of_int n *. 0.01)
+      ~sleep:(fun s -> sleeps := s :: !sleeps)
+      ~on_retry:(fun ~attempt ~error:_ -> attempts_seen := attempt :: !attempts_seen)
+      ~produce:(fun () ->
+        incr call_count;
+        if !call_count < 3 then Error "boom" else Ok ())
+      ()
+  with
+  | Error _ -> Alcotest.fail "expected eventual success"
+  | Ok () ->
+    Alcotest.(check int) "produce called 3 times" 3 !call_count;
+    Alcotest.(check (list int)) "retried after attempts 1 and 2" [ 2; 1 ] !attempts_seen;
+    Alcotest.(check (list (float 0.0001)))
+      "slept with backoff_s(1) then backoff_s(2)"
+      [ 0.02; 0.01 ]
+      !sleeps
+;;
+
+let test_retry_produce_gives_up_after_max_attempts () =
+  let call_count = ref 0 in
+  let retries = ref 0 in
+  match
+    Kafka_service.Retry_topics.retry_produce
+      ~max_attempts:3
+      ~backoff_s:(fun _ -> 0.0)
+      ~sleep:(fun _ -> ())
+      ~on_retry:(fun ~attempt:_ ~error:_ -> incr retries)
+      ~produce:(fun () ->
+        incr call_count;
+        Error "always fails")
+      ()
+  with
+  | Ok () -> Alcotest.fail "expected exhaustion"
+  | Error e ->
+    Alcotest.(check string) "final error surfaces" "always fails" e;
+    Alcotest.(check int) "produce called exactly max_attempts times" 3 !call_count;
+    (* on_retry fires between attempts, never on the final give-up. *)
+    Alcotest.(check int) "on_retry called max_attempts - 1 times" 2 !retries
+;;
+
 (* ------------------------------------------------------------------ *)
 (* Topic names                                                         *)
 (* ------------------------------------------------------------------ *)
@@ -491,6 +588,30 @@ let () =
             "retry publish preserves the message key"
             `Quick
             test_retry_publish_preserves_key
+        ; test_case
+            "produce backoff: early attempt within jittered bounds"
+            `Quick
+            test_produce_backoff_s_early_attempt_within_jittered_bounds
+        ; test_case
+            "produce backoff: caps at max delay"
+            `Quick
+            test_produce_backoff_s_caps_at_max_delay
+        ; test_case
+            "produce backoff: never negative"
+            `Quick
+            test_produce_backoff_s_never_negative
+        ; test_case
+            "retry_produce: succeeds immediately without retrying"
+            `Quick
+            test_retry_produce_succeeds_immediately_without_retrying
+        ; test_case
+            "retry_produce: recovers after transient failures"
+            `Quick
+            test_retry_produce_recovers_after_transient_failures
+        ; test_case
+            "retry_produce: gives up after max attempts"
+            `Quick
+            test_retry_produce_gives_up_after_max_attempts
         ] )
     ; ( "topic_name"
       , [ test_case

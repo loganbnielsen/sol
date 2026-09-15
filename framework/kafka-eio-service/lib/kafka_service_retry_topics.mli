@@ -16,6 +16,28 @@ type retry_action =
     forwarded to a retry topic. *)
 val parse_retry_metadata : (string * string option) list -> (int * float, string) result
 
+(** BUG-029: backoff (with jitter, capped) for the relay's in-process produce
+    retry, keyed by produce attempt number (1-based). Not the user-facing
+    retry_policy vocabulary FEAT-078 will introduce -- this only bounds the
+    relay's own producer resilience. Exposed for testing the shape of the
+    schedule (monotonic growth, cap, non-negativity), not its exact jittered
+    value. *)
+val produce_backoff_s : int -> float
+
+(** [retry_produce ~max_attempts ~backoff_s ~sleep ~on_retry ~produce ()] retries
+    [produce] up to [max_attempts] times, calling [on_retry ~attempt ~error] and
+    [sleep (backoff_s attempt)] between attempts. Exposed so the retry-count and
+    give-up behavior can be tested with stubbed [produce]/[sleep], without a
+    live broker or a real clock (BUG-029). *)
+val retry_produce
+  :  max_attempts:int
+  -> backoff_s:(int -> float)
+  -> sleep:(float -> unit)
+  -> on_retry:(attempt:int -> error:'e -> unit)
+  -> produce:(unit -> (unit, 'e) result)
+  -> unit
+  -> (unit, 'e) result
+
 val action_of_handler_error
   :  retry_topic:Kafka_service_intf.topic_name
   -> dlq_topic:Kafka_service_intf.topic_name
@@ -45,6 +67,11 @@ val execute_action
   -> ack:(unit -> (unit, Kafka.Error.t) result)
   -> (unit, Kafka.Error.t) result
 
+(** [on_relay_publish] fires after each attempt to publish to the retry/DLQ
+    topic itself resolves -- [`Published] once (after in-process produce
+    retries succeed), [`Failed] once if they're exhausted (BUG-029). Distinct
+    from [on_retry], which fires once per record when a retry is *scheduled*,
+    before publication is attempted. *)
 val consume
   :  Kafka_service_intf.t
   -> 'a Kafka_service_intf.topic
@@ -59,6 +86,8 @@ val consume
         -> ack:(unit -> (unit, Kafka.Error.t) result)
         -> Kafka.Error.t Kafka.Consumer.handler_result)
   -> on_retry:(partition:int32 -> attempt:int -> delay_s:float -> unit)
+  -> on_relay_publish:
+       (partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit)
   -> handler:
        ('a
         -> ack:(unit -> (unit, Kafka.Error.t) result)
