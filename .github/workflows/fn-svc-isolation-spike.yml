@@ -189,6 +189,31 @@ jobs:
             kubectl -n "$svc_ns" get deployment charge-svc -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0"
           }
 
+          # A Job object existing (kubectl create job succeeding) is not
+          # evidence its Pod ever ran -- the scheduler may simply queue it
+          # Pending if the node is genuinely full, which is a *different*,
+          # weaker finding than "fn and svc actually shared/saturated
+          # compute and svc stayed healthy anyway". Poll how many of the
+          # manually-fired burst Pods (job-name starting with
+          # "<k8s_name>-manual-", distinguishing them from the CronJob
+          # controller's own scheduled Pods) are concurrently Running
+          # during the same window load_gen samples, and track the max
+          # observed -- run this backgrounded alongside load_gen, not
+          # sequentially, so both observe the same burst window.
+          poll_max_running_fn_pods() {
+            local duration=$1 out=$2
+            local max=0
+            local until=$(( $(date +%s) + duration ))
+            while [ "$(date +%s)" -lt "$until" ]; do
+              local running
+              running=$(kubectl -n "$fn_ns" get pods -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.labels.job-name}{"\n"}{end}' 2>/dev/null \
+                | grep -c "^${fn_cronjob}-manual-" || true)
+              [ "$running" -gt "$max" ] && max=$running
+              sleep 2
+            done
+            echo "$max" > "$out"
+          }
+
           echo ""
           echo "==================== BASELINE ===================="
           load_gen /tmp/baseline.txt 20
@@ -227,23 +252,29 @@ jobs:
             done
 
             # Give the burst a moment to actually land as Running pods
-            # before sampling starts, then measure the -svc under load for
-            # the same duration the burst fn instances are CPU-burning.
+            # before sampling starts, then measure the -svc under load AND
+            # how many burst pods are concurrently Running, over the same
+            # window the burst fn instances are CPU-burning. Both
+            # backgrounded so they observe the identical window, not
+            # sequential ones.
             sleep 3
-            load_gen "$out" 25
+            local running_out="${out}.running"
+            load_gen "$out" 25 &
+            poll_max_running_fn_pods 25 "$running_out" &
             wait
 
             jobs_after=$(kubectl -n "$fn_ns" get jobs -o name | wc -l)
             echo "jobs created: $((jobs_after - jobs_before))"
 
-            local p50 p95 p99 throttle ready desired
+            local p50 p95 p99 throttle ready desired max_running
             p50=$(percentile "$out" 50)
             p95=$(percentile "$out" 95)
             p99=$(percentile "$out" 99)
             throttle=$(throttle_rate)
             ready=$(svc_replicas_ready)
             desired=$(svc_replicas_desired)
-            echo "case $label: p50=${p50}s p95=${p95}s p99=${p99}s throttle_rate=${throttle} ready=${ready}/${desired}"
+            max_running=$(cat "$running_out" 2>/dev/null || echo "0")
+            echo "case $label: p50=${p50}s p95=${p95}s p99=${p99}s throttle_rate=${throttle} ready=${ready}/${desired} max_concurrently_running_fn_pods=${max_running}/${fn_count}"
 
             local verdict="no material interference detected"
             local threshold
@@ -259,6 +290,21 @@ jobs:
             fi
             if [ "$ready" != "$desired" ]; then
               verdict="$verdict; INTERFERENCE: only ${ready}/${desired} charge-svc replicas Ready during burst"
+            fi
+            # A clean verdict answers "did fn and svc genuinely share
+            # compute without harm" only if the fn pods actually ran
+            # concurrently. If most/all of them were still Pending when
+            # sampled, "no interference" instead means "the scheduler
+            # declined to place the burst" -- a real, possibly acceptable,
+            # but *different* safety property than the one this experiment
+            # is trying to characterize. Flag that distinction explicitly
+            # rather than let a clean verdict quietly mean either.
+            if [ "$verdict" = "no material interference detected" ]; then
+              if [ "$max_running" -lt "$fn_count" ]; then
+                verdict="$verdict, BUT only ${max_running}/${fn_count} burst pods were ever observed Running concurrently -- this may reflect the scheduler declining to place the full burst rather than fn/svc genuinely sharing saturated compute without harm. Not the same finding as adequate isolation under real concurrency."
+              else
+                verdict="$verdict, with all ${fn_count}/${fn_count} burst pods observed Running concurrently -- genuine compute sharing, not scheduling backpressure."
+              fi
             fi
             echo "VERDICT $label: $verdict"
           }
