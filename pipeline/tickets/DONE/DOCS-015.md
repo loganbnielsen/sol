@@ -53,3 +53,10 @@ that Kafka partition for the retry delay.
 
 - Documenting retry buckets, Postgres-backed retries, or `sol-jobs` (none exist).
 - Changing runtime behavior — this is documentation only.
+
+## Completion notes
+
+- Documented Retry_topics ordering/head-of-line tradeoffs in `kafka-eio-service.md`
+  and linked the worker docs to that source of truth.
+- Demo/example change does not apply: this is documentation-only and changes no app
+  author runtime contract.

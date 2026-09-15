@@ -40,14 +40,20 @@ type retry_policy = Kafka.Consumer.retry_policy =
 (** How the worker should handle transient failures from [W.handle].
 
     - [In_memory retry] (default) — exponential back-off sleep in the partition
-      fiber. Backoff survives in-process but is lost on rebalance.
+      fiber, pausing that Kafka partition for the retry delay. Backoff survives
+      in-process but is lost on rebalance.
 
     - [Retry_topics { max_attempts }] — the raw message bytes are published to
       [<topic>-retry] and the original offset is committed immediately. A
       background retry consumer (group [<group_id>-sol-retry]) delays until the
       scheduled [X-Sol-Retry-At] timestamp, then re-runs [W.handle]. After
       [max_attempts] total failures the message is moved to [<topic>-dlq]. Both
-      topics are auto-provisioned on startup. *)
+      topics are auto-provisioned on startup.
+
+      Retry topics are at-least-once, not order-preserving: the delay blocks
+      every later record sharing the retry partition, republishing gives the
+      retry a later Kafka offset, and backlog or overload makes observed delay
+      unbounded. *)
 type retry_strategy = Kafka_service.retry_strategy =
   | In_memory of retry_policy
   | Retry_topics of { max_attempts : int }
