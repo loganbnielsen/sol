@@ -91,10 +91,10 @@ scratch dir `/tmp/sol-walk`. Evidence is command + observed result.
 | baseline scaffold | `sol new workspace walkapp` | PASS (OCaml) — 28 files; `.ml`/`dune`/`.ocamlformat`; next steps `eval $(opam env) && dune build`. No TS variant |
 | TS declaration layer | `sol check` in `examples/pluto` | PASS — the TS units (`app/demo_ts/*/sol.toml`) are ordinary units, identical in shape to the OCaml ones; the toml schema has no language field |
 | `sol local up` (infra) | `sol local status` | **PASS — platform-native** — k3d cluster `sol-local` (v5.6.0) already present; logs `healthy`, metrics endpoint unreachable. Infra was not re-provisioned this pass |
-| `sol up` (TS units) | `sol up --scope=demo_ts` | **FAIL — bug** — build context resolved to `/home/lbendtly/Code/sun.docker-ctx/app`, which does not exist, so the docker build failed. Filed as **BUG-034** |
-| TS svc + worker running | — | **not reached** — blocked by the row above |
-| health / metrics / traces / logs | — | **not reached** — blocked by the row above |
-| `sol deploy --target …` | — | **not run this pass** |
+| `sol up` (TS units) | `sol up --scope=demo_ts` | **FAIL — bug** (this pass) — build context resolved to `/home/lbendtly/Code/sun.docker-ctx/app`, which does not exist, so the docker build failed. Filed and fixed as **BUG-034**; see the resume log below |
+| TS svc + worker running | — | **not reached** — see resume log |
+| health / metrics / traces / logs | — | **not reached** — see resume log |
+| `sol deploy --target …` | — | **not run yet** |
 
 Per-step classification (the distinction that actually answers FEAT-036):
 
@@ -103,6 +103,11 @@ Per-step classification (the distinction that actually answers FEAT-036):
   bespoke knowledge. *Not* a golden-path pass — a candidate for FEAT-084 /
   `@sol-fab/*`.
 - **FAIL — capability missing** / **FAIL — bug**.
+- **FAIL — missing supported distribution/install path**: the workspace cannot
+  obtain an *existing* Sol package through normal external dependency
+  resolution; the fixture only worked because it sat inside Sol's source
+  repository. A real golden-path failure, but **not** evidence for new
+  framework abstractions — see the resume log.
 
 Findings so far:
 
@@ -124,8 +129,70 @@ Findings so far:
    use `/.docker-ctx`. Filed as **BUG-034**. Because it blocked the build, this
    pass did not reach the svc/worker/observability steps.
 
-Still unevidenced: `sol up` for a TS unit that actually builds, the running
-svc + worker, and health/metrics/traces/logs.
+Still unevidenced after the first pass: `sol up` for a TS unit that actually
+builds, the running svc + worker, and health/metrics/traces/logs.
+
+## Resume log — 2026-09-15 (after BUG-034 / PR #271)
+
+Run from `_build/default/cli/sol/bin/main.exe` at `163e04a1` in `examples/pluto`,
+**fixture left unmodified** — the obstacle below is the evidence, not something
+to "help" past.
+
+```text
+$ sol up --scope=demo_ts
+Workspace: pluto  tag: 163e04a1
+Preparing build context...
+[svc] demo_ts/order_svc
+  packaging localhost:5000/pluto/order-svc:163e04a1...
+[apply] FAILED (1.7s)
+  docker build failed: app/demo_ts/order_svc
+  ERROR: ... failed to compute cache key:
+    "/examples/pluto/app/demo_ts/order_svc": not found
+```
+
+| Journey step | Result |
+| --- | --- |
+| workspace resolution | **PASS — platform-native** — `Workspace: pluto` resolved from `sol.yml` despite no Dune marker (BUG-034 fixed) |
+| TS unit discovery | **PASS — platform-native** — both `demo_ts` units discovered; the domain scope selected them |
+| build-context construction | **PASS — platform-native** — context prepared at the workspace root (`examples/pluto.docker-ctx`), cleaned up after the failure |
+| TS unit build | **FAIL — missing supported distribution/install path** — every Dockerfile under `examples/pluto` assumes the **Sun monorepo root** as the docker build context (OCaml: `COPY . /workspace` + `dune build examples/pluto/...`; TS: `COPY package.json packages/sol-kafka packages/sol-obs examples/pluto/...`). Under DEC-024 the context is the workspace root, so those paths do not exist |
+| TS svc + worker running | **not reached** |
+| health / metrics / traces / logs | **not reached** |
+| `sol deploy` | **not reached** |
+
+**Classification of this step.** The TS Dockerfile cannot reach
+`packages/sol-kafka` / `packages/sol-obs` because they live outside the Sol
+workspace. That proves the *current TS dependency/distribution mechanism* is
+incompatible with an independent Sol workspace. It does **not** prove FEAT-036
+needs `@sol-fab/http` or `@sol-fab/worker`: `@sol-fab/kafka` and `@sol-fab/obs`
+are already legitimate Sol capabilities, and the fixture merely obtains them
+through monorepo-relative source access a real user cannot perform. This is
+**DEC-023** territory (distribution/install), not evidence for new framework
+abstractions.
+
+**Do not fix this by** widening the Docker context back to the enclosing Sol
+repository or teaching workspace builds about `../../packages` — that would undo
+the boundary BUG-034 established.
+
+A second, sharper finding: `examples/pluto` and `examples/venus` have **no
+`dune-project`** and are subtrees of the Sun repo's Dune project, so they are not
+independently buildable *as workspaces* at all. The repo-root Dockerfile context
+is a symptom of that, not merely a stale path — making them workspace-contained
+is not a path rewrite, the workspace itself has to become self-contained. Filed
+as **FEAT-085**.
+
+## Golden-path boundary (post-DEC-024)
+
+DEC-024 established: *a workspace is independently located by `sol.yml`.*
+
+FEAT-082 now asks: **can that workspace actually obtain everything required to
+build and run its units without knowledge of the Sol source repository
+containing it?** An independent workspace must resolve its dependencies through
+normal external mechanisms (registry / package manager), from a build context
+that contains only the workspace plus that resolution. If copying the workspace
+out of Sol's repository breaks it, the golden path is not yet real. The concrete
+test: `sol new workspace foo` → copy the result to `/tmp/foo` → build, deploy,
+and observe successfully with no reference to the Sol checkout.
 
 ## Evidence bar for the resumed walk
 
@@ -163,18 +230,27 @@ worker* — that is FEAT-036 evidence. Classify each step with the legend above;
 ## Dependency chain
 
 ```text
-DEC-024   defines the workspace contract   (accepted, awaiting implementation)
+DEC-024   defines the workspace contract            (DONE)
    v
-BUG-034   implements it
+BUG-034   implements it                             (DONE, PR #271)
    v
-FEAT-082  exercises the resulting platform  <- resume here
+DEC-023   supported install path for @sol-fab/*     <- now on the critical path
+   v
+FEAT-085  example workspaces independently buildable
+   v
+FEAT-082  completes the golden-path walk            <- blocked until then
    v
 FEAT-036  conclusion: is a TS framework surface needed?
    v
 FEAT-084  scaffold design
 ```
 
-DEC-024 does not depend on BUG-034; it is decided and pending implementation.
+DEC-024/BUG-034 are done. The original plan had FEAT-082 establish the golden
+path *before* DEC-023 published anything. The resume falsified that ordering:
+FEAT-082 cannot represent the external-developer path while its only route to
+`@sol-fab/kafka`/`@sol-fab/obs` is sitting inside Sol's own source repository.
+The interim install path must therefore land **before** the walk can complete,
+which is a sequencing change to DEC-023, not a new framework abstraction.
 FEAT-084 must not start before FEAT-036 has an empirical answer.
 
 ## Demo/example coverage
