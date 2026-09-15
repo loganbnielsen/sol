@@ -31,6 +31,9 @@ per-key serialization as the limitation. It does not state the three facts below
 3. **The head-of-line bound is a steady-state bound.** In steady state, extra delay is
    bounded roughly by the configured maximum retry backoff. Under backlog or overload,
    actual delay is unbounded, because Kafka itself is the buffer.
+4. **Point at the acknowledgement ownership invariant** in `framework/sol-worker/sol-worker.md`
+   wherever ack/drop behavior is described, rather than restating it — the invariant is the
+   single source of truth for the retry, dead-letter, decode-failure, and exhaustion paths.
 
 `In_memory` documentation must also state explicitly that a retry pauses processing of
 that Kafka partition for the retry delay.
@@ -41,6 +44,8 @@ that Kafka partition for the retry delay.
 - `sol-worker.md` states the ordering and duplicate-delivery tradeoffs, or links to the
   `kafka-eio-service.md` section that does.
 - The `In_memory` partition-pause behavior is stated where `In_memory` is documented.
+- Ack/drop behavior in the retry docs links to the acknowledgement ownership invariant
+  rather than re-describing it.
 - No doc implies precise scheduling, preserved per-partition ordering, or a bounded
   delay under overload.
 

@@ -148,7 +148,8 @@ explicit-capability boundary this ticket establishes. The two strategies are int
 not feature-equivalent: `In_memory` is the simple/dev/explicitly-accepted option, and
 `Retry_topics` is the production Kafka-native one.
 
-The invariant both must satisfy:
+The invariant both must satisfy is the acknowledgement ownership invariant stated once in
+`framework/sol-worker/sol-worker.md` — restated here for the exhaustion path:
 
 > Retry exhaustion must never acknowledge a message unless responsibility has durably
 > transferred to another destination. "No durable destination → ack → gone" is forbidden.
