@@ -1,8 +1,19 @@
 import { createServer } from "node:http";
 import { Kafka } from "kafkajs";
 import { Pushgateway } from "prom-client";
+import type { SpanContext } from "@opentelemetry/api";
 
-import { wrapEachMessage, wireCrashListener } from "@sol/kafka";
+import {
+  ACK,
+  kafkaRetryRelay,
+  provisionRelayTopics,
+  retry as retryOutcome,
+  runRetryRelayConsumer,
+  wireCrashListener,
+  wrapEachRetryableMessage,
+  type Outcome,
+  type RetryStrategy,
+} from "@sol/kafka";
 import { makeLokiPusher } from "@sol/obs";
 import { decodeOrderPlaced } from "./wire.js";
 import { initTracing, startChildSpan } from "./tracing.js";
@@ -27,21 +38,78 @@ const LOKI_URL = process.env.LOKI_URL;
 const TEMPO_URL = process.env.TEMPO_URL;
 const POSTGRES_URL = process.env.POSTGRES_URL;
 
+// Application *policy*, not Kafka mechanics: a DB failure is retryable, and
+// the retry budget is a product decision. How `Retry` is routed, what the
+// retry/DLQ topics are called, and when an offset may commit are @sol/kafka's
+// job — the demo never names a header or a topic here.
+const RETRY_STRATEGY: RetryStrategy = {
+  kind: "retry-topics",
+  policy: { baseDelayS: 1, maxDelayS: 60, maxAttempts: 5, jitterRatio: 0.1 },
+};
+
 const log = makeLokiPusher(LOKI_URL, "fulfillment-worker-ts");
 const { tracer, shutdown: shutdownTracing } = initTracing("fulfillment-worker-ts", TEMPO_URL);
 const { register: metricsRegister, messagesTotal, decodeErrorsTotal, messageDuration } = makeWorkerMetrics();
 
+// The application handler, shared by the source path and the retry path: it
+// returns Sol outcomes and knows nothing about retry topics, headers, or
+// offset transfer.
+async function handleOrder(
+  order: ReturnType<typeof decodeOrderPlaced>,
+  traceContext: SpanContext | undefined,
+  attempt: number,
+): Promise<Outcome> {
+  const start = process.hrtime.bigint();
+  const span = startChildSpan(tracer, "fulfill_order", traceContext);
+  try {
+    log("info", "fulfilling order", {
+      order_id: order.order_id,
+      item: order.item,
+      quantity: String(order.quantity),
+      attempt: String(attempt),
+    });
+
+    if (db) {
+      try {
+        await db.insertFulfilled(order);
+      } catch (err) {
+        // A downstream DB failure is retryable on an otherwise-valid message.
+        // "retry" is worker.ml's vocabulary for exactly this; decode failures
+        // are the separate counter wired below.
+        messagesTotal.inc({ status: "retry" });
+        return retryOutcome(`db: ${String(err)}`);
+      }
+    }
+
+    console.log(`[worker] fulfilled  order=${order.order_id}  item=${order.item}`);
+    messagesTotal.inc({ status: "ok" });
+    return ACK;
+  } finally {
+    span.end();
+    messageDuration.observe(Number(process.hrtime.bigint() - start) / 1e9);
+  }
+}
+
+let db: Awaited<ReturnType<typeof makeDb>> | undefined;
+
 async function main() {
-  const db = POSTGRES_URL ? await makeDb(POSTGRES_URL) : undefined;
+  db = POSTGRES_URL ? await makeDb(POSTGRES_URL) : undefined;
   if (!db) console.log("[fulfillment-worker-ts] POSTGRES_URL not set — skipping DB storage");
 
   const kafka = new Kafka({ clientId: "fulfillment-worker-ts", brokers: KAFKA_BROKERS });
+
+  // The relay owns the retry topology: the demo *asks* for retry-topic delivery
+  // and @sol/kafka provisions, publishes, and consumes the retry/DLQ topics.
+  const producer = kafka.producer();
+  await producer.connect();
+  const relay = kafkaRetryRelay(producer);
+  await provisionRelayTopics({ kafka, sourceTopic: TOPIC_NAME, groupId: GROUP_ID });
+
   const consumer = kafka.consumer({ groupId: GROUP_ID });
-  // @sol/kafka's wireCrashListener encodes Sol's exit policy: kafkajs
-  // already self-heals from retriable errors (payload.restart=true,
-  // rescheduling start() itself after a backoff) -- only exit when kafkajs
-  // itself has given up, so k8s restarts the pod instead of it quietly
-  // stopping progress forever.
+  // @sol/kafka's wireCrashListener encodes Sol's exit policy: kafkajs already
+  // self-heals from retriable errors (payload.restart=true, rescheduling
+  // start() itself after a backoff) -- only exit when kafkajs itself has given
+  // up, so k8s restarts the pod instead of it quietly stopping progress.
   wireCrashListener(consumer, {
     onCrash: (error) => console.error(`[fulfillment-worker-ts] consumer crashed: ${String(error)}`),
   });
@@ -63,47 +131,36 @@ async function main() {
     console.log(`[fulfillment-worker-ts] metrics on :${METRICS_PORT}`);
   });
 
-  // @sol/kafka's wrapEachMessage encodes Sol's decode/reject/retry policy:
-  // a decode/validation failure is a rejection (never retried, counted on
-  // decodeErrorsTotal, never reaches the handler below); a handler failure
-  // on an otherwise-valid message rethrows so kafkajs retries it. The two
-  // failure classes can no longer be conflated by construction.
+  const onDecodeError = (err: unknown) => {
+    console.error(`[worker] rejected message: ${String(err)}`);
+    log("error", "rejected message", { error: String(err) });
+  };
+
+  // Source path: decode + handle, expressing retry via the configured strategy.
   await consumer.run({
-    eachMessage: wrapEachMessage({
+    eachMessage: wrapEachRetryableMessage({
       decode: decodeOrderPlaced,
       decodeErrorCounter: decodeErrorsTotal,
-      onDecodeError: (err) => {
-        console.error(`[worker] rejected message: ${String(err)}`);
-        log("error", "rejected message", { error: String(err) });
-      },
-      handler: async ({ message: order, traceContext }) => {
-        const start = process.hrtime.bigint();
-        const span = startChildSpan(tracer, "fulfill_order", traceContext);
-        try {
-          log("info", "fulfilling order", {
-            order_id: order.order_id,
-            item: order.item,
-            quantity: String(order.quantity),
-          });
-
-          try {
-            if (db) await db.insertFulfilled(order);
-          } catch (err) {
-            // "error" is worker.ml's real vocabulary for "handler failed on
-            // an otherwise-valid message" — decode/validation failures are
-            // the only thing split out separately (decodeErrorsTotal above).
-            messagesTotal.inc({ status: "error" });
-            throw err;
-          }
-
-          console.log(`[worker] fulfilled  order=${order.order_id}  item=${order.item}`);
-          messagesTotal.inc({ status: "ok" });
-        } finally {
-          span.end();
-          messageDuration.observe(Number(process.hrtime.bigint() - start) / 1e9);
-        }
-      },
+      onDecodeError,
+      retryStrategy: RETRY_STRATEGY,
+      groupId: GROUP_ID,
+      sourceTopic: TOPIC_NAME,
+      relay,
+      handler: ({ message, traceContext, attempt }) => handleOrder(message, traceContext, attempt),
     }),
+  });
+
+  // Retry path: the same application handler, re-run when a retry record comes
+  // due. @sol/kafka owns the delayed consumption and the offset transfer.
+  const relayConsumer = await runRetryRelayConsumer({
+    kafka,
+    sourceTopic: TOPIC_NAME,
+    groupId: GROUP_ID,
+    retryStrategy: RETRY_STRATEGY,
+    decode: decodeOrderPlaced,
+    relay,
+    onDecodeError,
+    handler: ({ message, traceContext, attempt }) => handleOrder(message, traceContext, attempt),
   });
 
   const pushgatewayUrl = process.env.PUSHGATEWAY_URL;
@@ -122,6 +179,8 @@ async function main() {
     console.log("[fulfillment-worker-ts] draining...");
     if (pushInterval) clearInterval(pushInterval);
     await consumer.disconnect();
+    await relayConsumer.disconnect();
+    await producer.disconnect();
     metricsServer.close();
     if (db) await db.close();
     await shutdownTracing();
