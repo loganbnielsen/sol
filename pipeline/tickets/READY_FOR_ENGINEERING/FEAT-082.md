@@ -80,6 +80,36 @@ own. So a TypeScript developer hits Sol through a demo, not a scaffold.
 - The child tickets reference DEC-022 so they inherit the parity
   definition rather than re-litigating it.
 
+## Walk log — 2026-09-15 (in progress)
+
+Run from a built CLI (`_build/default/cli/sol/bin/main.exe`, commit `e0678f71`);
+scratch dir `/tmp/sol-walk`. Evidence is command + observed result.
+
+| Journey step | Command | Result |
+| --- | --- | --- |
+| entry point | `sol new my-app --language typescript` | **FAIL** — `unknown command my-app`; no `--language` flag on any `sol new` subcommand; zero `typescript`/`--language` matches in `cli/sol/` |
+| baseline scaffold | `sol new workspace walkapp` | PASS (OCaml) — 28 files; `.ml`/`dune`/`.ocamlformat`; next steps `eval $(opam env) && dune build`. No TS variant |
+| TS declaration layer | `sol check` in `examples/pluto` | PASS — the TS units (`app/demo_ts/*/sol.toml`) are ordinary units, identical in shape to the OCaml ones; the toml schema has no language field |
+| `sol local up` | — | **not run this pass** — needs k3d + Docker (~5 min provision); recorded as unverified, not as a pass |
+| `sol deploy --target …` | — | **not run this pass** — needs a cluster/target |
+| health / metrics / traces / logs | — | **not run this pass** — depends on the two above |
+
+Findings so far:
+
+1. **No TypeScript entry point.** `sol new --language typescript` does not exist
+   and the CLI has no language concept. Filed as **FEAT-084**.
+2. The journey text in this ticket does not match the real CLI surface: the
+   scaffold's own next-steps are `sol local infra up` then `sol up`, not
+   `sol local up`. Low severity, but this umbrella's acceptance test should use
+   the real command names.
+3. Language-neutrality at the *declaration* layer already holds — `sol.toml` and
+   `sol check` handle TypeScript units with no changes — so the fix is additive
+   (a scaffold), not a manifest/schema change.
+
+Still unevidenced (the umbrella's open work): `sol local up` / `sol up` /
+`sol deploy` and health/metrics/traces/logs for a TS unit. Those need a k3d
+cluster + Docker.
+
 ## Demo/example coverage
 
 This ticket's output is the gap analysis and child tickets; the child
