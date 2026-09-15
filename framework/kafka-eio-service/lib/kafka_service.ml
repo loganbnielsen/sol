@@ -125,6 +125,8 @@ module Retry_topics = struct
     | Forward_dlq of { target : topic_name }
 
   let parse_retry_metadata = Kafka_service_retry_topics.parse_retry_metadata
+  let produce_backoff_s = Kafka_service_retry_topics.produce_backoff_s
+  let retry_produce = Kafka_service_retry_topics.retry_produce
   let action_of_handler_error = Kafka_service_retry_topics.action_of_handler_error
   let execute_action = Kafka_service_retry_topics.execute_action
 end
@@ -316,6 +318,7 @@ let consume_partitioned
       ?(on_decode_error = default_on_decode_error)
       ?(retry_strategy = default_retry_strategy)
       ?(on_retry = fun ~partition:_ ~attempt:_ ~delay_s:_ -> ())
+      ?(on_relay_publish = fun ~partition:_ ~attempt:_ ~outcome:_ -> ())
       ?ot
       ~handler
       ()
@@ -389,6 +392,7 @@ let consume_partitioned
       ~on_ready
       ~on_decode_error
       ~on_retry
+      ~on_relay_publish
       ~handler
       ()
 ;;

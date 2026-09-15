@@ -73,7 +73,9 @@ module Make (W : WORKER) : sig
     -> ?ot:Sol_obs.t
          (** Observability handle. When provided,
           [sol_worker_messages_total{status}] (labels: [ok], [retry], [error],
-          [dead_letter], [ack_failed]) and [sol_worker_message_duration_seconds] are emitted
+          [dead_letter], [ack_failed], [relay_published], [relay_failed] --
+          the last two [Retry_topics]-only, BUG-029) and
+          [sol_worker_message_duration_seconds] are emitted
           per message, and the worker exposes [GET /metrics] on [metrics_port]
           for Prometheus scraping.
 

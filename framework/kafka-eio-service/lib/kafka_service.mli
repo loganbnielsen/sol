@@ -102,6 +102,26 @@ module Retry_topics : sig
       message forwarded to a retry topic. *)
   val parse_retry_metadata : (string * string option) list -> (int * float, string) result
 
+  (** BUG-029: backoff (with jitter, capped) for the relay's in-process produce
+      retry, keyed by produce attempt number (1-based). Not the user-facing
+      retry_policy vocabulary FEAT-078 will introduce -- this only bounds the
+      relay's own producer resilience. *)
+  val produce_backoff_s : int -> float
+
+  (** [retry_produce ~max_attempts ~backoff_s ~sleep ~on_retry ~produce ()]
+      retries [produce] up to [max_attempts] times, calling
+      [on_retry ~attempt ~error] and [sleep (backoff_s attempt)] between
+      attempts. Exposed so the retry-count and give-up behavior can be tested
+      with stubbed [produce]/[sleep] (BUG-029). *)
+  val retry_produce
+    :  max_attempts:int
+    -> backoff_s:(int -> float)
+    -> sleep:(float -> unit)
+    -> on_retry:(attempt:int -> error:'e -> unit)
+    -> produce:(unit -> (unit, 'e) result)
+    -> unit
+    -> (unit, 'e) result
+
   val action_of_handler_error
     :  retry_topic:topic_name
     -> dlq_topic:topic_name
@@ -326,7 +346,10 @@ type consume_partitioned_error =
     so no messages accumulate in its stream buffer.
 
     [retry_strategy] selects the failure-handling mode; see [retry_strategy].
-    Pass [on_retry] to emit metrics on each retry event regardless of mode. *)
+    Pass [on_retry] to emit metrics on each retry event regardless of mode.
+    [on_relay_publish] (Retry_topics only, BUG-029) distinguishes a scheduled
+    retry ([on_retry]) from the relay's own publish to the retry/DLQ topic
+    actually succeeding or being exhausted -- see {!Retry_topics}'s doc. *)
 val consume_partitioned
   :  t
   -> 'a topic
@@ -341,6 +364,8 @@ val consume_partitioned
         -> Kafka.Error.t Kafka.Consumer.handler_result)
   -> ?retry_strategy:retry_strategy
   -> ?on_retry:(partition:int32 -> attempt:int -> delay_s:float -> unit)
+  -> ?on_relay_publish:
+       (partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit)
   -> ?ot:Obs_eio.t
   -> handler:
        ('a

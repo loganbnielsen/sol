@@ -145,10 +145,12 @@ When `?ot` is provided:
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `sol_worker_messages_total` | counter | `status` | Messages processed (`ok`, `retry`, `error`, `dead_letter`, or `ack_failed`) |
+| `sol_worker_messages_total` | counter | `status` | Messages processed (`ok`, `retry`, `error`, `dead_letter`, `ack_failed`, `relay_published`, or `relay_failed`) |
 | `sol_worker_message_duration_seconds` | histogram | — | Per-message processing latency |
 
 `ack_failed` is distinct from `error`: `W.handle` returned `Ack` (the side effect happened) but the offset commit itself failed. See [ack semantics](#ack-semantics).
+
+`relay_published`/`relay_failed` (`Retry_topics` only, BUG-029) are distinct from `retry`: `retry` counts a record for which a retry was *scheduled*, before publication is attempted; `relay_published`/`relay_failed` count whether the retry-topic relay's own publish of that record actually succeeded or was exhausted after in-process backoff retries. A sustained run of `relay_failed` without a matching drop in `retry` is the metric-level signal for the silent-degradation failure BUG-029 fixed — the relay is dying even though messages keep getting scheduled for retry.
 
 Metrics are registered once at startup. Emitter functions are called in the handler closure on each message.
 
