@@ -2,6 +2,7 @@
 id: FEAT-081
 type: feature
 severity: medium
+title: "@sol/kafka retry/DLQ parity (Ack/Retry/Dead_letter + retry-topic relay)"
 source: FEAT-080 reconciliation 2026-09-15 — the capability table's one
   confirmed gap
 ---

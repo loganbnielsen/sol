@@ -2,6 +2,7 @@
 id: FEAT-080
 type: feature
 severity: low
+title: Reconcile the TypeScript-parity inventory against what has shipped
 source: user observation 2026-09-15 (recent framework growth -- FEAT-077/078/079 --
   had no counterpart update against the TS dogfood spike's own recommendations);
   refreshed 2026-09-15 after review found the premise stale in both directions
