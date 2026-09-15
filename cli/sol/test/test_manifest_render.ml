@@ -1961,6 +1961,9 @@ let in_temp_workspace f =
 let with_charge_svc_workspace f =
   in_temp_workspace
   @@ fun () ->
+  (* DEC-024: the temp directory becomes a Sol workspace with sol.yml. *)
+  let marker = open_out "sol.yml" in
+  close_out marker;
   let dir = "app/payments/charge_svc" in
   ignore (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote dir)));
   let oc = open_out (Filename.concat dir "Dockerfile") in

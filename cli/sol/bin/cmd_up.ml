@@ -3,7 +3,18 @@ open Sol_cli_manifest
 
 (* ── Workspace / git helpers ─────────────────────────────────────────────── *)
 
-let workspace_name () = Filename.basename (Sys.getcwd ())
+(* DEC-024: the workspace is the nearest ancestor containing a sol.yml. Resolve
+   it once, from any descendant directory, and make it the process cwd so
+   discovery, sol.toml and the build context are all workspace-root relative.
+   A missing (or nested) boundary fails closed instead of silently using the
+   invocation cwd -- the bug BUG-034 exposed. *)
+let enter_workspace () =
+  match Sol_cli_workspace.enter ~dir:(Sys.getcwd ()) with
+  | Ok root -> root
+  | Error e ->
+    Printf.eprintf "sol: %s\n" (Sol_cli_workspace.workspace_error_to_string e);
+    exit 1
+;;
 
 let git_sha () =
   match
@@ -12,19 +23,6 @@ let git_sha () =
   | Ok r when r.Sol_cli_process.exit_code = 0 && r.Sol_cli_process.stdout <> "" ->
     r.Sol_cli_process.stdout
   | _ -> "dev"
-;;
-
-let find_repo_root () =
-  let rec go dir =
-    if Sys.file_exists (Filename.concat dir "dune-workspace")
-    then dir
-    else if Sys.file_exists (Filename.concat dir "dune-project")
-    then dir
-    else (
-      let parent = Filename.dirname dir in
-      if parent = dir then dir else go parent)
-  in
-  go (Sys.getcwd ())
 ;;
 
 (* ── Pipeline ────────────────────────────────────────────────────────────── *)
@@ -403,7 +401,8 @@ let run_apply
 ;;
 
 let run (req : Sol_cli_command_request.up_request) =
-  let workspace = workspace_name () in
+  let repo_root = enter_workspace () in
+  let workspace = Sol_cli_workspace.workspace_name ~root:repo_root in
   let sha = req.image_tag in
   let selected =
     match Sol_cli_workload_selection.resolve req.scope (discover_services ()) with
@@ -430,7 +429,6 @@ let run (req : Sol_cli_command_request.up_request) =
   | Sol_cli_command_request.Dry_run ->
     run_dry_run ~run_log ~requested_scope ~workspace ~sha ~services
   | Apply ->
-    let repo_root = find_repo_root () in
     (match
        run_apply
          ~run_log

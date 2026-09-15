@@ -13,6 +13,11 @@ type post_deploy_summary =
   }
 
 let push_registry = "localhost:5000"
+
+(* [repo_root] is the workspace root resolved by DEC-024's [find_root] (the
+   directory containing sol.yml), not the invocation cwd and not a Dune
+   project root. The context is a sibling of the workspace so the rsync below
+   can never copy the context into itself. *)
 let build_context_dir ~repo_root = repo_root ^ ".docker-ctx"
 
 let local_plan ~requested_scope ~workspace ~sha services =

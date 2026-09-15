@@ -6,16 +6,47 @@ type infra_requirements =
   ; tempo : bool
   }
 
-let read_file path = In_channel.with_open_text path In_channel.input_all
+(* ── Workspace identity (DEC-024) ────────────────────────────────────────── *)
 
-let has_app_dir dir =
-  let app_dir = Filename.concat dir "app" in
-  Sys.file_exists app_dir && Sys.is_directory app_dir
+(** The manifest whose *presence* establishes a workspace boundary. Its
+    contents define optional workspace configuration; existence alone is what
+    makes the directory a Sol workspace. *)
+let workspace_file = "sol.yml"
+
+type workspace_error =
+  | Not_in_workspace
+  | Nested_workspace of
+      { outer : string
+      ; inner : string
+      }
+
+let workspace_error_to_string = function
+  | Not_in_workspace ->
+    "not inside a Sol workspace (no sol.yml found)\n\n\
+     A Sol workspace is identified by sol.yml.\n\
+     Run this command from an existing Sol workspace, or create one with\n\
+     `sol new workspace <name>`."
+  | Nested_workspace { outer; inner } ->
+    Printf.sprintf
+      "nested Sol workspace is not supported\n\n\
+       workspace:        %s\n\
+       nested workspace: %s\n\n\
+       Use sibling workspaces instead."
+      outer
+      inner
 ;;
 
+let has_workspace_file dir =
+  let path = Filename.concat dir workspace_file in
+  Sys.file_exists path && not (Sys.is_directory path)
+;;
+
+(* Cheap, deterministic upward walk: the first ancestor whose sol.yml is the
+   workspace root. No ecosystem marker is consulted -- not dune-project, not
+   package.json, not .git (DEC-024 clause 5). *)
 let find_root ~dir =
   let rec go dir =
-    if has_app_dir dir
+    if has_workspace_file dir
     then Some dir
     else (
       let parent = Filename.dirname dir in
@@ -23,6 +54,111 @@ let find_root ~dir =
   in
   go dir
 ;;
+
+let resolve ~dir =
+  match find_root ~dir with
+  | Some root -> Ok root
+  | None -> Error Not_in_workspace
+;;
+
+(* Join a workspace-root-relative path to the resolved workspace root, so a
+   command that did not chdir (e.g. `sol deploy`, which must keep the
+   invocation cwd for `--emit-to` paths) still reads workspace files from the
+   same place regardless of where it was invoked. Falls back to the path as
+   given when there is no workspace: callers either fail closed first or are
+   operating on explicitly supplied paths (e.g. tests under _build). *)
+let at_root path =
+  match find_root ~dir:(Sys.getcwd ()) with
+  | Some root -> Filename.concat root path
+  | None -> path
+;;
+
+let workspace_name ~root = Filename.basename root
+
+(* The workspace name for the process cwd. Commands that key deployments by
+   workspace use this instead of [Filename.basename (Sys.getcwd ())], so a
+   command run in a descendant directory names the same workspace as one run
+   from the root (DEC-024 clause 4). When there is no workspace at all this
+   falls back to the cwd basename; commands that must fail closed do so through
+   [resolve]/[load_for_target] before the name matters. *)
+let current_name () =
+  match find_root ~dir:(Sys.getcwd ()) with
+  | Some root -> workspace_name ~root
+  | None -> Filename.basename (Sys.getcwd ())
+;;
+
+(* Directories that are never part of the workspace's own application tree.
+   Skipping [vendor] avoids walking a vendored copy of another project whose
+   own sol.yml would be a false nested-boundary report. *)
+let ignored_dir name =
+  name = "_build" || name = "node_modules" || name = "vendor" || name = "dist"
+;;
+
+let is_symlink path =
+  match Unix.lstat path with
+  | { Unix.st_kind = Unix.S_LNK; _ } -> true
+  | _ -> false
+  | exception Unix.Unix_error _ -> false
+;;
+
+(* Nested-boundary validation (DEC-024 clause 2). Deliberately separate from
+   [find_root]: resolution stays a cheap upward walk, while discovery and the
+   command boundary pay for the recursive scan only where the invariant must
+   be enforced. Never follows symlinks, so a vendored checkout is not scanned.
+   Reports both boundaries rather than silently shadowing. *)
+let validate ~root =
+  let rec go dir =
+    let entries =
+      try Sys.readdir dir with
+      | Sys_error _ -> [||]
+    in
+    Array.fold_left
+      (fun found entry ->
+         match found with
+         | Some _ -> found
+         | None ->
+           if entry = "" || entry.[0] = '.' || ignored_dir entry
+           then None
+           else (
+             let path = Filename.concat dir entry in
+             if is_symlink path
+             then None
+             else if has_workspace_file path
+             then Some path
+             else if Sys.is_directory path
+             then go path
+             else None))
+      None
+      entries
+  in
+  match go root with
+  | None -> Ok ()
+  | Some inner -> Error (Nested_workspace { outer = root; inner })
+;;
+
+let resolve_validated ~dir =
+  match resolve ~dir with
+  | Error _ as e -> e
+  | Ok root ->
+    (match validate ~root with
+     | Ok () -> Ok root
+     | Error _ as e -> e)
+;;
+
+(* Resolve the workspace and make it the process cwd, so every relative path
+   inside the workspace (discovery, sol.toml, the build context) is workspace
+   root relative no matter which descendant directory the command started in.
+   [sol up]/[sol check]/[sol logs] run from any descendant and act on the
+   workspace, per DEC-024 clause 4. *)
+let enter ~dir =
+  match resolve_validated ~dir with
+  | Error _ as e -> e
+  | Ok root ->
+    Sys.chdir root;
+    Ok root
+;;
+
+let read_file path = In_channel.with_open_text path In_channel.input_all
 
 (** Count .sql files in [dir]/db/migrations. Returns 0 if the directory does not
     exist. Used by [sol up] to warn users about unapplied migrations. *)

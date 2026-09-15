@@ -8,17 +8,27 @@
 let available_target_paths () =
   let open Sol_cli_fs_walk in
   let join = Filename.concat in
-  match dirs "sol" with
+  (* DEC-024: target discovery reads the workspace root's sol/, not the
+     invocation cwd, so `sol target show` lists the same targets from any
+     descendant directory. *)
+  let root =
+    match Sol_cli_workspace.find_root ~dir:(Sys.getcwd ()) with
+    | Some root -> root
+    | None -> "."
+  in
+  let sol_dir = join root "sol" in
+  match dirs sol_dir with
   | Error _ -> []
   | Ok envs ->
     envs
     |> List.concat_map (fun env ->
-      match dirs (join "sol" env) with
+      let env_dir = join sol_dir env in
+      match dirs env_dir with
       | Error _ -> []
       | Ok providers ->
         providers
         |> List.concat_map (fun provider ->
-          match files (join (join "sol" env) provider) with
+          match files (join env_dir provider) with
           | Error _ -> []
           | Ok files ->
             files
@@ -97,6 +107,20 @@ let show target verbose json check =
           Printf.eprintf "target %s did not resolve to a target configuration\n" target;
           exit 1
         | Some target_config ->
+          (* DEC-024: sol.yml is always present now, so its existence alone can
+             no longer be what makes a target real. `sol target show` is an
+             inspection of a *declared* target, so a well-shaped path with no
+             sol/<env>/<provider>/<region>.yml overlay fails closed and lists
+             what does exist. ([load_for_target] stays permissive by design;
+             cmd_deploy enforces the same file for its mutating guarantee.) *)
+          if not (Sys.file_exists (Sol_cli_config.target_file target_config))
+          then (
+            Printf.eprintf
+              "target %s is not declared (no %s)\\n\\n"
+              target
+              (Sol_cli_config.target_file target_config);
+            print_available ();
+            exit 1);
           let status = kubernetes_status ~check target_config in
           if json
           then

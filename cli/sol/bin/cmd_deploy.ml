@@ -5,7 +5,9 @@
 open Cmdliner
 open Sol_cli_manifest
 
-let workspace_name () = Filename.basename (Sys.getcwd ())
+(* DEC-024: the workspace name comes from the resolved root, so it is the same
+   from any descendant directory. *)
+let workspace_name = Sol_cli_workspace.current_name
 
 let git_sha () =
   match

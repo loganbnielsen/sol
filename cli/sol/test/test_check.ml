@@ -24,6 +24,10 @@ let with_tmp f =
          ~finally:(fun () -> Sys.chdir cwd)
          (fun () ->
             Sys.chdir root;
+            (* DEC-024: a fixture is a Sol workspace only once it has the
+               boundary marker; discovery resolves the root instead of the
+               invocation cwd. *)
+            write "sol.yml" "";
             f root))
 ;;
 
@@ -44,7 +48,22 @@ let test_missing_app_result () =
   with_tmp (fun _ ->
     match Sol_cli_manifest.discover_services_result () with
     | Error Sol_cli_manifest.Missing_app_dir -> ()
+    | Error (Sol_cli_manifest.Workspace_error _) ->
+      Alcotest.fail "expected Missing_app_dir, got a workspace error"
     | Ok _ -> Alcotest.fail "expected missing app error")
+;;
+
+(* DEC-024: outside a workspace, discovery fails closed with the
+   workspace-identity error, not a missing-app-dir one. *)
+let test_not_in_workspace_result () =
+  with_tmp (fun _ ->
+    Sys.remove "sol.yml";
+    match Sol_cli_manifest.discover_services_result () with
+    | Error (Sol_cli_manifest.Workspace_error Sol_cli_workspace.Not_in_workspace) -> ()
+    | Error e ->
+      Alcotest.fail
+        ("expected not-in-workspace, got: " ^ Sol_cli_manifest.discover_error_to_string e)
+    | Ok _ -> Alcotest.fail "expected discovery to fail outside a workspace")
 ;;
 
 let test_discover_valid_service () =
@@ -136,6 +155,10 @@ let () =
     "sol_cli_check"
     [ ( "discover"
       , [ Alcotest.test_case "missing app returns error" `Quick test_missing_app_result
+        ; Alcotest.test_case
+            "outside a workspace returns error"
+            `Quick
+            test_not_in_workspace_result
         ; Alcotest.test_case "valid service" `Quick test_discover_valid_service
         ; Alcotest.test_case
             "typed scan facts"

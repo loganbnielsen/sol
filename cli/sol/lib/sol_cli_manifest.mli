@@ -44,7 +44,9 @@ type workspace_scan =
   ; unexpected : unexpected list
   }
 
-type discover_error = Missing_app_dir
+type discover_error =
+  | Missing_app_dir
+  | Workspace_error of Sol_cli_workspace.workspace_error
 
 val workload_fact_to_service : workload_fact -> service
 

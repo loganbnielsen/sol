@@ -1,6 +1,8 @@
 open Cmdliner
 
-let workspace_name () = Filename.basename (Sys.getcwd ())
+(* DEC-024: the workspace name comes from the resolved root, so it is the same
+   from any descendant directory. *)
+let workspace_name = Sol_cli_workspace.current_name
 
 let namespace_or_exit ~workspace ~domain =
   match Sol_cli_deployment_plan.namespace_result ~workspace ~domain with
