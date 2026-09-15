@@ -90,9 +90,19 @@ scratch dir `/tmp/sol-walk`. Evidence is command + observed result.
 | entry point | `sol new my-app --language typescript` | **FAIL** — `unknown command my-app`; no `--language` flag on any `sol new` subcommand; zero `typescript`/`--language` matches in `cli/sol/` |
 | baseline scaffold | `sol new workspace walkapp` | PASS (OCaml) — 28 files; `.ml`/`dune`/`.ocamlformat`; next steps `eval $(opam env) && dune build`. No TS variant |
 | TS declaration layer | `sol check` in `examples/pluto` | PASS — the TS units (`app/demo_ts/*/sol.toml`) are ordinary units, identical in shape to the OCaml ones; the toml schema has no language field |
-| `sol local up` | — | **not run this pass** — needs k3d + Docker (~5 min provision); recorded as unverified, not as a pass |
-| `sol deploy --target …` | — | **not run this pass** — needs a cluster/target |
-| health / metrics / traces / logs | — | **not run this pass** — depends on the two above |
+| `sol local up` (infra) | `sol local status` | **PASS — platform-native** — k3d cluster `sol-local` (v5.6.0) already present; logs `healthy`, metrics endpoint unreachable. Infra was not re-provisioned this pass |
+| `sol up` (TS units) | `sol up --scope=demo_ts` | **FAIL — bug** — build context resolved to `/home/lbendtly/Code/sun.docker-ctx/app`, which does not exist, so the docker build failed. Filed as **BUG-034** |
+| TS svc + worker running | — | **not reached** — blocked by the row above |
+| health / metrics / traces / logs | — | **not reached** — blocked by the row above |
+| `sol deploy --target …` | — | **not run this pass** |
+
+Per-step classification (the distinction that actually answers FEAT-036):
+
+- **PASS — platform-native**: Sol supports it; no app-side knowledge required.
+- **PASS — app boilerplate required**: works only because the fixture carries
+  bespoke knowledge. *Not* a golden-path pass — a candidate for FEAT-084 /
+  `@sol-fab/*`.
+- **FAIL — capability missing** / **FAIL — bug**.
 
 Findings so far:
 
@@ -105,10 +115,23 @@ Findings so far:
 3. Language-neutrality at the *declaration* layer already holds — `sol.toml` and
    `sol check` handle TypeScript units with no changes — so the fix is additive
    (a scaffold), not a manifest/schema change.
+4. **`sol up` fails for a workspace with no dune markers.** `find_repo_root`
+   (`cmd_up.ml:17-28`) keys on `dune-project`/`dune-workspace`;
+   `examples/pluto` has neither (only `sol.yml`), so the context landed at
+   `<repo>.docker-ctx` — outside the workspace — and the build died on
+   `lstat .../app`. This is a **language-neutrality defect**, not fixture
+   hygiene: a TypeScript-only workspace would walk to the filesystem root and
+   use `/.docker-ctx`. Filed as **BUG-034**. Because it blocked the build, this
+   pass did not reach the svc/worker/observability steps.
 
-Still unevidenced (the umbrella's open work): `sol local up` / `sol up` /
-`sol deploy` and health/metrics/traces/logs for a TS unit. Those need a k3d
-cluster + Docker.
+Still unevidenced: `sol up` for a TS unit that actually builds, the running
+svc + worker, and health/metrics/traces/logs.
+
+**Next step:** re-run the fixture after BUG-034 (or from a workspace that has a
+root `dune-project`), then annotate every successful step with the
+platform-native vs app-boilerplate distinction above. That distinction — not
+merely "a knowledgeable Sol developer can make TS work" — is what answers
+FEAT-036 and tells FEAT-084 what the scaffold must provide.
 
 ## Demo/example coverage
 
