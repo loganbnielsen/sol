@@ -4,7 +4,7 @@
 
 # Sol
 
-Sol is an open-source software factory for backend systems. Write domain logic in OCaml (the first-class, encouraged path) or TypeScript; Sol scaffolds, builds, packages, observes, and deploys it — no hand-written Dockerfiles, Kubernetes YAML, CI glue, or infrastructure wiring. Its conventions are regular enough that AI coding agents produce correct output without touching Kubernetes internals, and OCaml's type system (no null, errors as values, exhaustive pattern matching, Eio's structured concurrency) catches entire classes of bugs before they ship.
+Sol is an open-source software factory for backend systems. Write domain logic in **OCaml or TypeScript** — both are first-class application languages on one language-neutral platform. Sol scaffolds, builds, packages, observes, and deploys either, against a single contract: the same schema-registry conventions, trace propagation, metric vocabulary, retry/DLQ semantics, and deploy lifecycle, in every language. OCaml is the deepest-supported path and where Sol's architecture is proven; TypeScript is the broadest on-ramp for backend developers. (Sol's own CLI and platform are written in OCaml, and are language-neutral in what they do.) Its conventions are regular enough that AI coding agents produce correct output without touching Kubernetes internals, and OCaml's type system (no null, errors as values, exhaustive pattern matching, Eio's structured concurrency) catches entire classes of bugs before they ship.
 
 ---
 
@@ -112,12 +112,15 @@ See [Product Architecture](docs/architecture/PRODUCT_ARCHITECTURE.md) for the fu
 
 ### TypeScript
 
-The same application model and operational conventions are available to
-TypeScript services through two in-tree npm packages:
+TypeScript is a first-class application language: the same application model
+and operational conventions, implemented idiomatically on the Node ecosystem
+(`kafkajs`, `pg`, Fastify, `prom-client`) with Sol supplying only the
+semantics and integration glue those libraries do not. Today that layer is:
 
 - [`@sol/kafka`](packages/sol-kafka/README.md) — Kafka policy layer over
   `kafkajs`: schema-registry ordering/fatality, explicit topic provisioning,
-  the Confluent wire format, decode/retry/crash routing, and trace propagation.
+  the Confluent wire format, decode/retry/crash routing, retry/DLQ record
+  conventions, and trace propagation.
 - [`@sol/obs`](packages/sol-obs/README.md) — metric names, label vocabularies,
   Loki push shape, and W3C `traceparent` propagation, so TS and OCaml workloads
   land in the same Grafana panels and Tempo traces.
@@ -125,9 +128,13 @@ TypeScript services through two in-tree npm packages:
 The runnable showcase is
 [`examples/pluto/app/demo_ts`](examples/pluto/app/demo_ts/README.md): a
 TypeScript `-svc` and `-worker` deployed by the same Sol CLI and Kubernetes
-machinery, exercising a live cross-service, trace-linked Kafka run. Both
-packages are built in-tree and not yet published to npm — the same
-extraction pattern used for the OCaml `*-eio` packages.
+machinery, exercising a live cross-service, trace-linked Kafka run.
+
+TypeScript is the adoption on-ramp, and it is being built out to a complete
+golden path (`sol new --language typescript` → `sol local up` → `sol deploy`),
+not just packages. The two packages above are built in-tree and not yet
+published to npm — the same extraction pattern used for the OCaml `*-eio`
+packages; distribution is tracked separately.
 
 ---
 
