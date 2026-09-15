@@ -14,7 +14,26 @@ Encodes five conventions that [FEAT-033](../../pipeline/tickets/DONE/FEAT-033.md
 
 - Not a general-purpose Kafka framework. `kafkajs` remains the transport — this package never wraps or hides it.
 - Not a reimplementation of the Confluent Schema Registry HTTP client beyond what Sol's own policy needs.
-- `traceparentOf`/`extractTraceparent` live here temporarily. `@sol/obs` (FEAT-035) is the intended long-term home for general tracing/metrics primitives — move these there once it exists, rather than duplicating the logic.
+- `traceparentOf`/`extractTraceparent` are re-exported from `@sol/obs`, which now owns the tracing primitives (deduped in FEAT-038). This package carries no second copy.
+
+## Retry / DLQ record conventions
+
+`retry.ts` owns Sol's retry policy and on-the-wire record shape, matching the
+OCaml worker side exactly rather than approximating it:
+
+- `RetryPolicy` + `backoffS` — mirrors kafka-eio's `Kafka.Consumer.backoff_s`
+  (exponential, symmetric jitter applied before the `maxDelayS` clamp; an
+  injectable RNG for deterministic tests).
+- `relayTopicName` / `canonicalGroupSegment` — `<source>.<canonical-group>.retry|dlq`,
+  the BUG-030 group-scoping (sanitize to `[a-zA-Z0-9-]`, truncate + MD5 suffix
+  past 64 chars).
+- `retryRecordHeaders` / `deadLetterHeaders` / `retryDecodeFailureHeaders` —
+  the `X-Sol-Attempt` / `X-Sol-Retry-At` / `X-Sol-Decode-Error` /
+  `X-Sol-Origin-Group` conventions.
+- `decideAction` — retry-topic vs DLQ routing at the retry budget boundary.
+
+FEAT-081 is wiring the consumer side (`Ack`/`Retry`/`Dead_letter` outcome,
+`In_memory`/`Retry_topics`) onto these primitives.
 
 ## Usage
 
