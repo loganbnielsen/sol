@@ -138,6 +138,17 @@ type workload_report =
 
 val workload_report_ok : workload_report -> bool
 
+(** [unexpected_workloads ~expected ~live] is the live Sol-owned workloads
+    that are not part of [expected] -- the pure surplus computation
+    {!verify_workloads} uses internally, exposed directly (FEAT-074) so
+    [sol deploy]/[sol up] can report drift without a full release-comparison
+    report, which needs a recorded release {!verify_workloads} has and a
+    forward deploy doesn't. *)
+val unexpected_workloads
+  :  expected:Sol_cli_deployment_plan.service_spec list
+  -> live:(workload_identity * string) list
+  -> (workload_identity * string) list
+
 (** [verify_workloads ~release ~expected ~live] is the pure comparison of the
     restored release's expected workloads against the enumerated live set. *)
 val verify_workloads
@@ -147,6 +158,22 @@ val verify_workloads
   -> workload_report
 
 val workload_report_to_string : release:Sol_cli_release.t -> workload_report -> string
+
+(** The [kubectl]/human-readable resource name for a {!live_kind}
+    ("deployment", "rollout", "cronjob"). *)
+val kind_resource : live_kind -> string
+
+(** [prune_workloads ~ctx surplus] deletes each surplus workload's live
+    object (FEAT-074) -- the primary Deployment/Rollout/CronJob only; see the
+    [.ml] comment on why associated ConfigMap/Secret/PVC/Service/Ingress/
+    NetworkPolicy/ServiceAccount objects are deliberately left alone. Attempts
+    every deletion even if one fails, so one failure does not leave unrelated
+    surplus objects behind; aggregates any failures into one error naming
+    each. *)
+val prune_workloads
+  :  ctx:Sol_cli_kube_destination.context
+  -> (workload_identity * string) list
+  -> (unit, string) result
 
 (** The current-release pointer read back after the workload set is verified. *)
 type pointer_report =
@@ -169,11 +196,13 @@ val pointer_report_to_string : release:Sol_cli_release.t -> pointer_report -> st
 (** FEAT-075: the cluster-touching/mutating steps of a rollback, injectable so
     [execute]'s order is testable without a cluster. [apply] renders and
     applies the reconstructed workloads; [live_workloads] enumerates the live
-    set for verification; [move_pointer] and [verify_pointer] are the
-    current-release pointer's write and readback. *)
+    set for verification; [prune] (FEAT-074) deletes a purely-[unexpected]
+    surplus; [move_pointer] and [verify_pointer] are the current-release
+    pointer's write and readback. *)
 type transaction_deps =
   { apply : Sol_cli_deployment_plan.service_spec list -> (unit, string) result
   ; live_workloads : unit -> ((workload_identity * string) list, string) result
+  ; prune : (workload_identity * string) list -> (unit, string) result
   ; move_pointer : unit -> (unit, string) result
   ; verify_pointer : unit -> pointer_report
   }
@@ -181,17 +210,16 @@ type transaction_deps =
 (** [execute ~release ~migrations_dir ~current_migrations ~deps] is FEAT-066's
     load-bearing rollback ordering: apply-mode refusal, then migration
     boundary refusal, then reconstruction, then [deps.apply], then
-    [deps.live_workloads] compared against the reconstructed set, then —
-    only if that comparison agrees — [deps.move_pointer] and
-    [deps.verify_pointer]. Every check before [deps.apply] only reads;
-    [deps.move_pointer] is never called when the workload-set verification
-    disagrees. A caller gets this ordering by construction, not by
-    convention — it cannot call [deps.move_pointer] before [deps.apply]
-    without bypassing [execute] entirely.
-
-    FEAT-074 (workload pruning) is meant to become one more field on
-    {!transaction_deps}, called between the workload-set verification and
-    [deps.move_pointer] — not a one-off deletion path added elsewhere. *)
+    [deps.live_workloads] compared against the reconstructed set. A
+    mismatched or missing workload refuses outright — neither is fixable by
+    deleting something. Otherwise (FEAT-074) [deps.prune] is called with
+    whatever [unexpected] surplus the comparison found (possibly none), and
+    only once that succeeds do [deps.move_pointer] and [deps.verify_pointer]
+    run. Every check before [deps.apply] only reads; [deps.move_pointer] is
+    never called when the workload-set verification disagrees or pruning
+    fails. A caller gets this ordering by construction, not by convention —
+    it cannot call [deps.move_pointer] before [deps.apply] without bypassing
+    [execute] entirely. *)
 val execute
   :  release:Sol_cli_release.t
   -> migrations_dir:string

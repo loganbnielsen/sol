@@ -303,6 +303,40 @@ let apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
          Error msg))
 ;;
 
+(* FEAT-074: report-only, and only for a whole-workspace deploy -- a scoped
+   deploy's [plan.services] is a subset of the workspace, so comparing it
+   against every live Sol-owned workload would flag out-of-scope services as
+   false surplus. Never deletes: unlike [sol rollback], a deploy has no
+   recorded release boundary backing the claim "this is exactly what should
+   exist", only what it was asked to deploy this run. Best-effort -- a
+   failure here must not fail an otherwise-successful deploy. *)
+let report_surplus_workloads ~workspace (plan : Sol_cli_deployment_plan.t) =
+  if String.equal plan.requested_scope "workspace"
+  then (
+    match Sol_cli_rollback.live_workloads ~ctx:cluster ~workspace with
+    | Error _ -> ()
+    | Ok live ->
+      let surplus = Sol_cli_rollback.unexpected_workloads ~expected:plan.services ~live in
+      if surplus <> []
+      then (
+        Printf.printf
+          "\nNote: %d live workload(s) in this workspace are not part of this deploy:\n"
+          (List.length surplus);
+        List.iter
+          (fun ((id : Sol_cli_rollback.workload_identity), _) ->
+             Printf.printf
+               "  %s %s/%s\n"
+               (Sol_cli_rollback.kind_resource id.kind)
+               id.namespace
+               id.name)
+          surplus;
+        Printf.printf
+          "These may be stale from a removed/renamed service. 'sol rollback' prunes them \
+           automatically when restoring a recorded release; delete them by hand if you \
+           want them gone now.\n\
+           %!"))
+;;
+
 let report_apply_success ~workspace ~sha plan =
   let summary = Sol_cli_up_execution.post_deploy_summary ~cwd:(Sys.getcwd ()) plan in
   Printf.printf "Done. %d service(s) deployed.\n" summary.deployed_count;
@@ -313,6 +347,7 @@ let report_apply_success ~workspace ~sha plan =
       "\n\
        Note: %d migration file(s) found in db/migrations/ — run 'sol migrate' to apply.\n"
       summary.pending_migrations;
+  report_surplus_workloads ~workspace plan;
   Sol_cli_up_execution.record_applied ~ctx:cluster ~workspace ~sha plan
 ;;
 

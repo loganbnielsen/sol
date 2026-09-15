@@ -350,26 +350,48 @@ entirely from the release record `sol up`/`sol deploy` write on every deploy
    `verify_workloads`) — enumerates every live Sol-owned workload for the
    workspace (Deployment/Rollout/CronJob whose pod template carries the
    `workspace` label) and compares that *set* to the restored release's
-   workloads: a wrong `release` label, a missing object, or an **unexpected**
-   object left over from the superseded release is reported and fails the
-   rollback. This runs *before* the pointer moves, so a mismatch leaves the
-   pointer unchanged rather than claiming a transition that did not happen.
-   Rollback does not prune stale workloads; detection only.
-7. **Pointer move** — `Sol_cli_release_store.move_pointer` writes only the
+   workloads: a wrong `release` label or a missing object still fails the
+   rollback outright — neither is fixable by deleting something. An
+   **unexpected** object left over from the superseded release is different
+   (FEAT-074): see the next step. This runs *before* the pointer moves, so a
+   mismatch leaves the pointer unchanged rather than claiming a transition
+   that did not happen.
+7. **Prune surplus workloads** (`Sol_cli_rollback.prune_workloads`, FEAT-074)
+   — only reached once step 6's mismatched/missing modes are clean. Deletes
+   exactly the workloads step 6 found unexpected (possibly none) — the
+   primary Deployment/Rollout/CronJob object only, not the removed service's
+   other rendered objects (ConfigMap/Secret/PVC/Service/Ingress/
+   NetworkPolicy/ServiceAccount): deleting a PVC automatically risks real
+   data loss, and cleaning up the rest needs its own ownership/ordering
+   design this ticket did not attempt. A prune failure leaves the pointer
+   unchanged, same as a step-6 refusal.
+8. **Pointer move** — `Sol_cli_release_store.move_pointer` writes only the
    mutable `sol-release-current-<workspace>` ConfigMap, and only after the
-   live set agrees; the immutable per-release ConfigMap already exists and is
-   not re-applied.
-8. **Verify the pointer** (`Sol_cli_rollback.verify_pointer`) — reads back
+   live set agrees and any surplus is pruned; the immutable per-release
+   ConfigMap already exists and is not re-applied.
+9. **Verify the pointer** (`Sol_cli_rollback.verify_pointer`) — reads back
    `data.release_id`, reported independently of the workload report. Never
    re-applies or "fixes" a mismatch.
 
-Steps 2–8's ordering — refusal before mutation, pointer move only once the
-live set agrees — is `Sol_cli_rollback.execute` (FEAT-075), not inline logic
-in `cmd_rollback.ml`: the sequence is a tested library function taking steps
-5–8's cluster-touching parts (`apply`/`live_workloads`/`move_pointer`/
-`verify_pointer`) as injectable deps, so a reorder that put a mutation ahead
-of a refusal — or the pointer ahead of workload verification — fails a test
-rather than only a future incident.
+Steps 2–9's ordering — refusal before mutation, pruning only once the
+mismatched/missing modes are clean, pointer move only once pruning succeeds —
+is `Sol_cli_rollback.execute` (FEAT-075), not inline logic in
+`cmd_rollback.ml`: the sequence is a tested library function taking steps
+5/6/7/8/9's cluster-touching parts (`apply`/`live_workloads`/`prune`/
+`move_pointer`/`verify_pointer`) as injectable deps, so a reorder that put a
+mutation ahead of a refusal — or the pointer ahead of workload verification
+or pruning — fails a test rather than only a future incident.
+
+**`sol up`/`sol deploy` report the same surplus, but never delete it**
+(FEAT-074): after a successful whole-workspace apply, both compare the live
+Sol-owned workload set against the plan's `services` (reusing
+`Sol_cli_rollback.unexpected_workloads`, the same pure diff `verify_workloads`
+uses) and print a note listing anything surplus. A `--scope`d deploy skips
+this — its plan is only part of the workspace, so comparing it against every
+live workload would flag out-of-scope services as false surplus. Unlike
+rollback, a deploy has no recorded release boundary backing "this is exactly
+what should exist", only what it was asked to deploy this run, so it never
+prunes automatically; the note points at `sol rollback` for that.
 
 **Mutation boundary (FEAT-072).** Before any step below mutates anything,
 rollback acquires the workspace's boundary lease — the mutable

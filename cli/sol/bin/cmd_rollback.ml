@@ -85,6 +85,7 @@ let run_locked ~ctx ~workspace release_id : (unit, string) result =
           Sol_cli_rollback.live_workloads
             ~ctx
             ~workspace:release.Sol_cli_release.workspace)
+    ; prune = (fun surplus -> Sol_cli_rollback.prune_workloads ~ctx surplus)
     ; move_pointer = (fun () -> Sol_cli_release_store.move_pointer ~ctx release)
     ; verify_pointer = (fun () -> Sol_cli_rollback.verify_pointer ~ctx ~release)
     }
