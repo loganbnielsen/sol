@@ -230,7 +230,7 @@ jobs:
           echo "baseline p50=${baseline_p50}s p95=${baseline_p95}s p99=${baseline_p99}s throttle_rate=${baseline_throttle}"
 
           run_case() {
-            local label=$1 fn_cpu=$2 fn_memory=$3 fn_count=$4 out=$5
+            local label=$1 fn_cpu=$2 fn_memory=$3 fn_count=$4 out=$5 is_final=$6
 
             echo ""
             echo "==================== CASE $label (fn cpu=$fn_cpu memory=$fn_memory count=$fn_count) ===================="
@@ -320,6 +320,14 @@ jobs:
             # time past its nominal 25s) can never be mistaken for one of
             # Case B's own pods by poll_max_running_fn_pods's job-name-
             # prefix match, which has no per-case scoping of its own.
+            # This drain has two different meanings depending on whether
+            # another case follows: between cases it's a PRECONDITION for
+            # the next case's measurement validity (a timeout there really
+            # does mean "don't trust what comes next"); after the final
+            # case it's just CLEANUP -- the measurements already printed
+            # above are already valid, a slow-to-finish pod here doesn't
+            # retroactively contaminate them, so a timeout is a warning to
+            # investigate, not a reason to mark the whole run invalid.
             local wait_until=$(( $(date +%s) + 90 ))
             local still_running=1
             while [ "$(date +%s)" -lt "$wait_until" ]; do
@@ -329,21 +337,26 @@ jobs:
               sleep 3
             done
             if [ "$still_running" -ne 0 ]; then
-              # A timed-out drain is not "probably fine" -- it means case
-              # isolation is not actually established, so any verdict
-              # poll_max_running_fn_pods computes for the *next* case could
-              # be silently contaminated by this case's still-running pods.
-              # Don't let this be a warning a reader can skim past: fail
-              # the experiment rather than produce a verdict that can't be
-              # trusted.
-              echo "::error::case $label: ${still_running} burst pod(s) still not Succeeded after 90s drain wait -- case isolation not established, refusing to run the next case"
-              exit 1
+              if [ "$is_final" = "true" ]; then
+                echo "::warning::case $label: ${still_running} burst pod(s) still not Succeeded after 90s drain wait -- this is the final case so no later case's isolation is at risk; the measurements and verdict already reported above remain valid. Leftover pod(s) will finish on their own."
+              else
+                # A timed-out drain here is not "probably fine" -- it means
+                # case isolation is not actually established, so any verdict
+                # poll_max_running_fn_pods computes for the *next* case could
+                # be silently contaminated by this case's still-running pods.
+                # Don't let this be a warning a reader can skim past: fail
+                # the experiment rather than produce a verdict that can't be
+                # trusted.
+                echo "::error::case $label: ${still_running} burst pod(s) still not Succeeded after 90s drain wait -- case isolation not established, refusing to run the next case"
+                exit 1
+              fi
+            else
+              echo "case $label burst pods fully drained"
             fi
-            echo "case $label burst pods fully drained"
           }
 
-          run_case "A (correctly configured)" "100m" "128Mi" 3 /tmp/case_a.txt
-          run_case "B (aggressive but valid)" "500m" "512Mi" 4 /tmp/case_b.txt
+          run_case "A (correctly configured)" "100m" "128Mi" 3 /tmp/case_a.txt false
+          run_case "B (aggressive but valid)" "500m" "512Mi" 4 /tmp/case_b.txt true
 
       - name: Dump cluster diagnostics
         if: always()
