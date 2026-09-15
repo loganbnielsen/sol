@@ -28,7 +28,12 @@ type http_fields =
   }
 
 type worker_fields = { deployment : deployment_fields }
-type fn_fields = { schedule : string }
+
+type fn_fields =
+  { schedule : string
+  ; cpu : Sol_cli_toml.cpu_quantity
+  ; memory : Sol_cli_toml.memory_quantity
+  }
 
 type render_workload =
   | Render_svc of http_fields
@@ -282,7 +287,7 @@ let render
                ~ingress_path:"/"
                ~cluster_issuer:"letsencrypt-prod"
                ~deployment
-           | Render_fn { schedule } ->
+           | Render_fn { schedule; cpu; memory } ->
              [ cronjob_doc
                  ~secret_keys:(List.map fst secrets)
                  ?env
@@ -290,6 +295,8 @@ let render
                  ~name
                  ~image:img
                  ~schedule
+                 ~cpu:(Sol_cli_toml.cpu_quantity_to_string cpu)
+                 ~memory:(Sol_cli_toml.memory_quantity_to_string memory)
                  ~workspace
                  ~domain
                  ~release_id
@@ -348,7 +355,7 @@ let render_spec
     | Worker -> Render_worker { deployment }
     | Fn ->
       let schedule = Option.value s.schedule ~default:"0 * * * *" in
-      Render_fn { schedule }
+      Render_fn { schedule; cpu = s.cpu; memory = s.memory }
   in
   render ~workspace ?env ~image ~release_id ~secret_backend { common; workload }
 ;;
