@@ -88,7 +88,19 @@ jobs:
           # this takes LONGER than 25s of wall-clock to finish -- a second,
           # log-visible throttling signal alongside the Prometheus query
           # below). stdlib Sys only, no extra library dependency.
-          cat > app/ops/burst_fn/lib/burst_fn_fn.ml <<'FN_EOF'
+          #
+          # IMPORTANT: the scaffold's own lib module is app/ops/burst_fn/lib/
+          # burst_fn.ml (component_module Function "burst" = "Burst_fn",
+          # cli/sol/lib/sol_cli_cmd_new.ml) with lib/dune's (modules Burst_fn)
+          # naming it explicitly -- overwrite that exact file. A sibling
+          # burst_fn_fn.ml would be an orphan dune silently never compiles
+          # into the library (verified: an unlisted .ml file in a library
+          # with an explicit (modules ...) stanza builds clean with no
+          # warning and is simply never linked), so the deployed -fn would
+          # keep running the original one-line scaffold stub instead of
+          # this busy loop -- and the experiment would report "no
+          # interference" for the wrong reason (no load was ever generated).
+          cat > app/ops/burst_fn/lib/burst_fn.ml <<'FN_EOF'
           let trigger = Fn.Cron "0 * * * *"
 
           let run () =
@@ -156,11 +168,18 @@ jobs:
               --data-urlencode "query=rate(container_cpu_cfs_throttled_periods_total{namespace=\"$svc_ns\",container=\"charge-svc\"}[1m])" \
               2>/dev/null || true)
             if [ -z "$resp" ]; then echo "unavailable"; return; fi
-            local status value
+            local status result_count value
             status=$(echo "$resp" | jq -r '.status // "error"')
             if [ "$status" != "success" ]; then echo "unavailable"; return; fi
+            # Prometheus returns HTTP 200/status:success with an EMPTY
+            # result array when the metric name has no series at all (the
+            # realistic "this cluster's Prometheus chart doesn't scrape
+            # cAdvisor the way we assumed" case) -- that is not the same as
+            # a genuine zero rate and must not collapse into "0".
+            result_count=$(echo "$resp" | jq -r '.data.result | length')
+            if [ "$result_count" = "0" ]; then echo "unavailable"; return; fi
             value=$(echo "$resp" | jq -r '.data.result[0].value[1] // empty')
-            [ -z "$value" ] && echo "0" || echo "$value"
+            [ -z "$value" ] && echo "unavailable" || echo "$value"
           }
 
           svc_replicas_ready() {
