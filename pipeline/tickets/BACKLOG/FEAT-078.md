@@ -132,10 +132,30 @@ type retry_strategy =
 `max_attempts` means maximum handler invocations, including the initial invocation: with
 `max_attempts = 5`, the handler runs 5 times total (initial + 4 retries). A negative value
 means retry indefinitely, matching the existing `In_memory` policy; `max_attempts = 1`
-means no retry. The count is unified, but the *disposition on exhaustion* currently
-differs by strategy and must be documented: `Retry_topics` routes the message to the DLQ,
-whereas `In_memory` records a partition error and stops the worker (no DLQ). Decide
-whether that asymmetry is intended; do not leave it implicit.
+means no retry.
+
+**Exhaustion is strategy-specific by design.** `max_attempts` controls when Sol stops
+retrying; it does not promise a terminal DLQ on every strategy.
+
+- `Retry_topics`: exhausted → publish to the configured DLQ → ack the retry offset only
+  after the publish succeeds.
+- `In_memory`: exhausted → terminal handler failure → the partition/worker fails under
+  normal consumer semantics (no DLQ).
+
+`In_memory` does not provision or depend on a DLQ. Forcing it to dead-letter on exhaustion
+would make `In_memory policy` silently acquire a DLQ capability, muddying exactly the
+explicit-capability boundary this ticket establishes. The two strategies are intentionally
+not feature-equivalent: `In_memory` is the simple/dev/explicitly-accepted option, and
+`Retry_topics` is the production Kafka-native one.
+
+The invariant both must satisfy:
+
+> Retry exhaustion must never acknowledge a message unless responsibility has durably
+> transferred to another destination. "No durable destination → ack → gone" is forbidden.
+
+`In_memory` satisfies this by leaving the offset unacknowledged (the worker stops; the
+message is redelivered on restart). `Dead_letter` with no configured DLQ is the same
+forbidden shape and must fail closed — see the `Dead_letter` section above.
 
 **Backoff:** `delay = base_delay_s × 2^(attempt - 1)`, subject to jitter and
 `max_delay_s`. This is a **user-visible behavior change** for existing `Retry_topics`
@@ -213,6 +233,15 @@ Two meanings of "default" are distinct:
 > When durable asynchronous retry is explicitly enabled, `Retry_topics` is the
 > recommended/default retry implementation.
 
+The resulting capability ladder is deliberate — three levels, each opt-in:
+
+```text
+Kafka worker
+    ├─ no retry capability   → plain Kafka behavior
+    ├─ In_memory             → explicit simple/dev retry; no durable retry/DLQ promise
+    └─ Retry_topics          → production Kafka-native; durable retry + DLQ
+```
+
 Do not introduce a retry-backend enum or a Postgres-backed retry strategy.
 
 ## Handler metadata
@@ -252,9 +281,11 @@ per-message retry policy; or hide Kafka's ordering/delivery semantics.
 - `Retry_topics` uses the same retry-policy vocabulary as `In_memory`.
 - Backoff includes configured jitter with an injectable RNG, and no policy-generated
   delay exceeds `max_delay_s` (or falls below 0).
-- `max_attempts` has one documented interpretation across both strategies, and the
-  disposition on exhaustion (`Retry_topics` → DLQ vs `In_memory` → worker stops) is
-  documented or unified.
+- `max_attempts` has one documented counting interpretation across both strategies, with
+  the strategy-specific exhaustion disposition (`Retry_topics` → DLQ; `In_memory` →
+  unacknowledged terminal failure) documented as intentional.
+- Retry exhaustion never acknowledges a message without a durable destination
+  (`In_memory` leaves the offset unacked; `Dead_letter` with no DLQ fails closed).
 - The `Ack`-only vs retry-capable split's compatibility impact on FEAT-076 workers is
   documented.
 - The backoff-schedule change for existing `Retry_topics` users is in the changelog.
