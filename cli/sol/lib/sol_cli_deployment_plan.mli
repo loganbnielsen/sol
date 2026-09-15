@@ -55,6 +55,8 @@ type service_spec =
   ; secrets : (string * string) list
   ; volumes : Sol_cli_toml.volume list
   ; schedule : string option
+  ; scheduled_concurrency : Sol_cli_toml.scheduled_concurrency
+  ; backoff_limit : int
   ; replicas : int
   ; cpu : Sol_cli_toml.cpu_quantity
   ; memory : Sol_cli_toml.memory_quantity

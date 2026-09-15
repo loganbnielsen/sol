@@ -889,6 +889,8 @@ let cronjob_doc
       ~name
       ~image
       ~schedule
+      ~concurrency_policy
+      ~backoff_limit
       ~cpu
       ~memory
       ~workspace
@@ -917,9 +919,10 @@ metadata:
   namespace: %s
 spec:
   schedule: "%s"
+  concurrencyPolicy: %s
   jobTemplate:
     spec:
-      backoffLimit: 3
+      backoffLimit: %d
       template:
         metadata:
           labels:
@@ -957,6 +960,8 @@ spec:
     name
     ns
     schedule
+    concurrency_policy
+    backoff_limit
     name
     taxonomy_labels_section
     name

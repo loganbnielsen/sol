@@ -142,6 +142,8 @@ let svc_spec : Sol_cli_deployment_plan.service_spec =
   ; secrets = []
   ; volumes = []
   ; schedule = None
+  ; scheduled_concurrency = Sol_cli_toml.Allow
+  ; backoff_limit = 3
   ; replicas = 2
   ; cpu = cpu "200m"
   ; memory = memory "256Mi"
@@ -162,6 +164,8 @@ let worker_spec : Sol_cli_deployment_plan.service_spec =
   ; k8s_name = k8s_name "notify-worker"
   ; namespace = namespace ~workspace:"myapp" ~domain:"comms"
   ; primitive = Sol_cli_deployment_plan.Worker
+  ; scheduled_concurrency = Sol_cli_toml.Allow
+  ; backoff_limit = 3
   ; source_dir = "app/comms/notify_worker"
   ; image = "sol-registry:5000/myapp/notify-worker:abc123"
   ; config = []
@@ -194,6 +198,8 @@ let fn_spec : Sol_cli_deployment_plan.service_spec =
   ; secrets = []
   ; volumes = []
   ; schedule = Some "0 9 * * 1"
+  ; scheduled_concurrency = Sol_cli_toml.Allow
+  ; backoff_limit = 3
   ; replicas = 1
   ; cpu = cpu "100m"
   ; memory = memory "128Mi"
@@ -700,6 +706,38 @@ let test_fn_cpu_memory_request_equals_limit () =
     "memory: 1Gi appears twice (requests and limits)"
     2
     (count_occurrences "memory: 1Gi" cronjob_block)
+;;
+
+(* FEAT-079: concurrencyPolicy/backoffLimit were previously unset by Sol at
+   all (silently defaulting to Kubernetes' Allow) or hardcoded (backoffLimit:
+   3 regardless of configuration). Both are now explicit fields. *)
+let test_fn_scheduled_concurrency_configurable () =
+  let spec = { fn_spec with scheduled_concurrency = Sol_cli_toml.Forbid } in
+  let _ns, workload = render_spec_ok spec in
+  let cronjob_block = extract_kind_block workload "kind: CronJob" in
+  assert_contains "fn concurrencyPolicy: Forbid" cronjob_block "concurrencyPolicy: Forbid"
+;;
+
+let test_fn_scheduled_concurrency_default_is_allow () =
+  let _ns, workload = render_spec_ok fn_spec in
+  let cronjob_block = extract_kind_block workload "kind: CronJob" in
+  assert_contains
+    "fn default concurrencyPolicy: Allow"
+    cronjob_block
+    "concurrencyPolicy: Allow"
+;;
+
+let test_fn_backoff_limit_configurable () =
+  let spec = { fn_spec with backoff_limit = 7 } in
+  let _ns, workload = render_spec_ok spec in
+  let cronjob_block = extract_kind_block workload "kind: CronJob" in
+  assert_contains "fn backoffLimit: 7" cronjob_block "backoffLimit: 7"
+;;
+
+let test_fn_backoff_limit_default_is_three () =
+  let _ns, workload = render_spec_ok fn_spec in
+  let cronjob_block = extract_kind_block workload "kind: CronJob" in
+  assert_contains "fn default backoffLimit: 3" cronjob_block "backoffLimit: 3"
 ;;
 
 (* ── Escape-hatch tests ──────────────────────────────────────────────────── *)
@@ -2328,6 +2366,22 @@ let () =
             "cpu/memory request equals limit (BUG-031)"
             `Quick
             test_fn_cpu_memory_request_equals_limit
+        ; Alcotest.test_case
+            "scheduled_concurrency configurable (FEAT-079)"
+            `Quick
+            test_fn_scheduled_concurrency_configurable
+        ; Alcotest.test_case
+            "scheduled_concurrency default is Allow (FEAT-079)"
+            `Quick
+            test_fn_scheduled_concurrency_default_is_allow
+        ; Alcotest.test_case
+            "backoff_limit configurable (FEAT-079)"
+            `Quick
+            test_fn_backoff_limit_configurable
+        ; Alcotest.test_case
+            "backoff_limit default is 3 (FEAT-079)"
+            `Quick
+            test_fn_backoff_limit_default_is_three
         ] )
     ; ( "escape_hatches"
       , [ Alcotest.test_case "rollout Recreate" `Quick test_rollout_recreate

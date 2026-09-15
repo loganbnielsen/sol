@@ -49,6 +49,8 @@ type service_spec =
   ; secrets : (string * string) list
   ; volumes : Sol_cli_toml.volume list
   ; schedule : string option
+  ; scheduled_concurrency : Sol_cli_toml.scheduled_concurrency
+  ; backoff_limit : int
   ; replicas : int
   ; cpu : Sol_cli_toml.cpu_quantity
   ; memory : Sol_cli_toml.memory_quantity
@@ -134,6 +136,11 @@ let default_memory =
   | Ok memory -> memory
   | Error message -> invalid_arg message
 ;;
+
+(* FEAT-079: -fn's pre-FEAT-079 hardcoded behavior, now the explicit default
+   when scheduled_concurrency/backoff_limit are unset in sol.toml. *)
+let default_scheduled_concurrency = Sol_cli_toml.Allow
+let default_backoff_limit = 3
 
 let effective_rollout_strategy s =
   match s.progressive_delivery with
@@ -629,6 +636,12 @@ let of_services_result
     ; secrets = List.map (fun key -> key, "") toml.Sol_cli_toml.secret_keys
     ; volumes = toml.Sol_cli_toml.volumes
     ; schedule
+    ; scheduled_concurrency =
+        Option.value
+          toml.Sol_cli_toml.scheduled_concurrency
+          ~default:default_scheduled_concurrency
+    ; backoff_limit =
+        Option.value toml.Sol_cli_toml.backoff_limit ~default:default_backoff_limit
     ; replicas =
         (match
            sol_yml_replicas_override

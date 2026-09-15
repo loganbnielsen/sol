@@ -5,6 +5,15 @@ type rollout_strategy =
   | Recreate
   | RollingUpdate
 
+(* FEAT-079: named for exactly what it constrains -- overlap between the
+   CronJob controller's own scheduled runs (Kubernetes' concurrencyPolicy).
+   A manual invocation (`sol fn run`) is not a scheduled run and is never
+   constrained by this value; do not let this type's name imply otherwise. *)
+type scheduled_concurrency =
+  | Allow
+  | Forbid
+  | Replace
+
 type canary_step =
   | Weight of int
   | Pause of int option
@@ -120,6 +129,8 @@ type t =
   ; extra_labels : (string * string) list
   ; progressive_delivery : progressive_delivery option
   ; schedule : string option
+  ; scheduled_concurrency : scheduled_concurrency option
+  ; backoff_limit : int option
   ; calls : string list
   ; topics : string list
   }
@@ -137,6 +148,8 @@ let empty =
   ; extra_labels = []
   ; progressive_delivery = None
   ; schedule = None
+  ; scheduled_concurrency = None
+  ; backoff_limit = None
   ; calls = []
   ; topics = []
   }
@@ -329,6 +342,20 @@ let parse_rollout_strategy path s =
       (Printf.sprintf
          "sol.toml: unsupported rollout_strategy %S — valid values are \"Recreate\" and \
           \"RollingUpdate\""
+         other)
+;;
+
+let parse_scheduled_concurrency path s =
+  match s with
+  | "allow" -> Ok Allow
+  | "forbid" -> Ok Forbid
+  | "replace" -> Ok Replace
+  | other ->
+    validation_error
+      path
+      (Printf.sprintf
+         "sol.toml: unsupported scheduled_concurrency %S — valid values are \"allow\", \
+          \"forbid\", and \"replace\""
          other)
 ;;
 
@@ -697,6 +724,18 @@ let load_result path =
       in
       (* [service] *)
       let schedule = Otoml.Helpers.find_string_opt doc [ "service"; "schedule" ] in
+      let* scheduled_concurrency =
+        match
+          Otoml.Helpers.find_string_opt doc [ "service"; "scheduled_concurrency" ]
+        with
+        | None -> Ok None
+        | Some s ->
+          let* c = parse_scheduled_concurrency path s in
+          Ok (Some c)
+      in
+      let backoff_limit =
+        Otoml.Helpers.find_integer_opt doc [ "service"; "backoff_limit" ]
+      in
       let* calls =
         match Otoml.find_opt doc Otoml.get_value [ "service"; "calls" ] with
         | None -> Ok []
@@ -732,6 +771,8 @@ let load_result path =
         ; extra_labels
         ; progressive_delivery
         ; schedule
+        ; scheduled_concurrency
+        ; backoff_limit
         ; calls
         ; topics
         }

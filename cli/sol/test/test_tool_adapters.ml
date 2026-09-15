@@ -74,6 +74,31 @@ let test_kubectl_rollout_restart_argv () =
   check_str "action" "restart" (List.nth c.Sol_cli_process.argv 2)
 ;;
 
+(* FEAT-079: `sol fn run`'s primitive -- copies the deployed CronJob's
+   jobTemplate into a new ad-hoc Job via --from=cronjob, rather than Sol
+   reconstructing the job spec itself. *)
+let test_kubectl_create_job_from_cronjob_argv () =
+  let c =
+    Sol_cli_process.cmd
+      [ "kubectl"
+      ; "create"
+      ; "job"
+      ; "invoice-fn-manual-1700000000"
+      ; "--from=cronjob/invoice-fn"
+      ; "-n"
+      ; "myapp-billing"
+      ]
+  in
+  check_str "subcommand" "create" (List.nth c.Sol_cli_process.argv 1);
+  check_str "resource" "job" (List.nth c.Sol_cli_process.argv 2);
+  check_str "job name" "invoice-fn-manual-1700000000" (List.nth c.Sol_cli_process.argv 3);
+  check_str
+    "--from=cronjob/"
+    "--from=cronjob/invoice-fn"
+    (List.nth c.Sol_cli_process.argv 4);
+  check_str "namespace" "myapp-billing" (List.nth c.Sol_cli_process.argv 6)
+;;
+
 let test_kubectl_patch_argv () =
   let c =
     Sol_cli_process.cmd
@@ -299,6 +324,10 @@ let () =
             `Quick
             test_kubectl_rollout_restart_argv
         ; Alcotest.test_case "patch argv" `Quick test_kubectl_patch_argv
+        ; Alcotest.test_case
+            "create job from cronjob argv"
+            `Quick
+            test_kubectl_create_job_from_cronjob_argv
         ] )
     ; ( "kubectl_failures"
       , [ Alcotest.test_case "apply propagates error" `Quick test_kubectl_apply_failure

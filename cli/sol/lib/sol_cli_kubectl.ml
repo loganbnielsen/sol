@@ -73,6 +73,13 @@ let create ~ctx ~file = Sol_cli_process.run (invocation ~ctx [ "create"; "-f"; f
    kubectl (the CI runner's does not have it). *)
 let replace ~ctx ~file = Sol_cli_process.run (invocation ~ctx [ "replace"; "-f"; file ])
 
+let create_job_from_cronjob ~ctx ~cronjob ~job_name ~namespace =
+  Sol_cli_process.run
+    (invocation
+       ~ctx
+       [ "create"; "job"; job_name; "--from=cronjob/" ^ cronjob; "-n"; namespace ])
+;;
+
 let delete ~ctx ~resource ~name ~namespace =
   Sol_cli_process.run_ok
     (invocation ~ctx [ "delete"; resource; name; "-n"; namespace; "--ignore-not-found" ])

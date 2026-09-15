@@ -75,6 +75,19 @@ val replace
   -> file:string
   -> (Sol_cli_process.result, Sol_cli_process.error) result
 
+(** FEAT-079: [sol fn run]'s primitive — [kubectl create job
+    --from=cronjob/<cronjob>]. Copies the deployed [CronJob]'s [jobTemplate]
+    verbatim into a new ad-hoc [Job] named [job_name]; this is the substrate
+    mechanism that makes a manual invocation run the exact definition a
+    scheduled one would, without Sol reconstructing or storing a second copy
+    of it. *)
+val create_job_from_cronjob
+  :  ctx:Sol_cli_kube_destination.context
+  -> cronjob:string
+  -> job_name:string
+  -> namespace:string
+  -> (Sol_cli_process.result, Sol_cli_process.error) result
+
 (** Delete an object, tolerating an absent one (["--ignore-not-found"]). *)
 val delete
   :  ctx:Sol_cli_kube_destination.context
