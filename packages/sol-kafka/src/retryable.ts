@@ -1,5 +1,5 @@
 /**
- * The retry-capable consumer wrapper — Sol's `RETRYABLE_WORKER` tier
+ * The retry-capable *source* consumer wrapper — Sol's `RETRYABLE_WORKER` tier
  * (FEAT-078) on the TypeScript side. The Ack-only tier is the existing
  * `wrapEachMessage`: its handler returns `void`, so it cannot express
  * `Retry`/`Dead_letter` at all, and there is no retry strategy to select.
@@ -10,8 +10,9 @@
  * missing destination is a construction error, never a per-message runtime
  * surprise discovered the first time something fails.
  *
- * The routing/record-shape logic lives here and is exercised by unit tests
- * through an injected `RetryRelay`; the kafkajs wiring is in `relay.ts`.
+ * The routing decision itself lives in `routing.ts` (shared with the retry
+ * relay), and the kafkajs wiring in `relay.ts`; this module owns only the
+ * source-consumer lifecycle.
  */
 import type { EachMessagePayload } from "kafkajs";
 import { extractTraceparent } from "@sol/obs";
@@ -20,43 +21,16 @@ import type { DecodeErrorCounter, MessageHandlerContext } from "./consume.js";
 import type { Outcome } from "./outcome.js";
 import {
   backoffS,
-  deadLetterHeaders,
-  decideAction,
-  relayTopicName,
-  retryRecordHeaders,
   retryTopicsPolicyError,
   solHeadersOf,
   type RetryStrategy,
   type Rng,
-  type SolHeaders,
 } from "./retry.js";
+import { routeOutcome, type RawRecord, type RetryRelay, type RetryMetrics } from "./routing.js";
 
-/** A record to publish to a retry/DLQ topic: the source record's bytes + key. */
-export interface RelayRecord {
-  readonly topic: string;
-  readonly key?: Buffer;
-  readonly value: Buffer;
-  readonly headers: SolHeaders;
-}
-
-/**
- * The publication side, injected so routing is unit-testable without a
- * broker. `publish` rejecting means the durable transfer failed — the offset
- * must then be left uncommitted (fail closed), never acked.
- */
-export interface RetryRelay {
-  publish(record: RelayRecord): Promise<void>;
-}
-
-export interface RetryMetrics {
-  /** `retry` status: a retry was scheduled (before publication is attempted). */
-  onSchedule?: (info: { readonly attempt: number; readonly delayS: number }) => void;
-  /** `relay_published` / `relay_failed`: did the relay's own publish land? */
-  onRelayPublish?: (info: {
-    readonly attempt: number;
-    readonly outcome: "published" | "failed";
-  }) => void;
-}
+// Re-exported so consumers (and tests) can name the relay contract without
+// reaching into routing.ts directly.
+export type { RelayRecord, RetryRelay, RetryMetrics } from "./routing.js";
 
 export interface RetryableMessageOptions<T> {
   decode: (json: unknown) => T;
@@ -79,88 +53,6 @@ export interface RetryableMessageOptions<T> {
 
 const defaultSleep = (seconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, Math.max(0, seconds) * 1000));
-
-/** The decoded record plus its raw bytes/headers, for re-routing. */
-export interface RawRecord {
-  readonly key?: Buffer;
-  readonly value: Buffer;
-  readonly headers: SolHeaders;
-}
-
-/**
- * Route one non-Ack outcome, mirroring `Kafka_service_retry_topics.execute_action`.
- * Returns `true` when the message was durably handled (and may be acked),
- * `false` when it must fail closed (nothing durable to transfer to).
- *
- * Exported so the retry-topic relay (`relay.ts`) reuses this decision rather
- * than re-deriving it — the relay and the source path must not drift.
- */
-export async function routeOutcome(
-  strategy: RetryStrategy,
-  relay: RetryRelay | undefined,
-  groupId: string,
-  sourceTopic: string,
-  raw: RawRecord,
-  attempt: number,
-  outcome: Outcome,
-  metrics: RetryMetrics | undefined,
-  nowS: () => number,
-  rng: Rng | undefined,
-): Promise<boolean> {
-  if (strategy.kind === "in-memory") {
-    // In_memory has no DLQ: a Dead_letter, or an exhausted retry, fails
-    // closed — never acknowledged-and-discarded (acknowledgement-ownership).
-    return false;
-  }
-  const retryTopic = relayTopicName(sourceTopic, groupId, "retry");
-  const dlqTopic = relayTopicName(sourceTopic, groupId, "dlq");
-  const decision =
-    outcome.kind === "dead-letter"
-      ? ({ kind: "forward-dlq", target: dlqTopic } as const)
-      : decideAction({ retryTopic, dlqTopic, policy: strategy.policy, attempt, rng });
-
-  // decideAction forwards or dead-letters; it never acks (attempt is always
-  // >= 1, and at/after maxAttempts it dead-letters). Narrow for the compiler.
-  if (decision.kind === "ack") return true;
-
-  const record: RelayRecord =
-    decision.kind === "forward-retry"
-      ? {
-          topic: decision.target,
-          key: raw.key,
-          value: raw.value,
-          headers: retryRecordHeaders({
-            originalHeaders: raw.headers,
-            attempt,
-            delayS: decision.delayS,
-            nowS: nowS(),
-          }),
-        }
-      : {
-          topic: decision.target,
-          key: raw.key,
-          value: raw.value,
-          headers: deadLetterHeaders({
-            originalHeaders: raw.headers,
-            attempt,
-            groupId,
-            nowS: nowS(),
-          }),
-        };
-  if (decision.kind === "forward-retry") {
-    metrics?.onSchedule?.({ attempt, delayS: decision.delayS });
-  }
-
-  if (!relay) return false; // construction guard below prevents this
-  try {
-    await relay.publish(record);
-    metrics?.onRelayPublish?.({ attempt, outcome: "published" });
-    return true;
-  } catch {
-    metrics?.onRelayPublish?.({ attempt, outcome: "failed" });
-    return false;
-  }
-}
 
 function assertStrategyUsable(opts: { retryStrategy: RetryStrategy; relay?: RetryRelay }): void {
   if (opts.retryStrategy.kind !== "retry-topics") return;

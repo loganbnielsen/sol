@@ -28,7 +28,7 @@ import {
   type RetryStrategy,
   type Rng,
 } from "./retry.js";
-import { routeOutcome, type RawRecord, type RetryRelay, type RetryMetrics } from "./retryable.js";
+import { routeOutcome, type RawRecord, type RetryRelay, type RetryMetrics } from "./routing.js";
 
 export interface ProvisionRelayTopicsOptions {
   kafka: Kafka;
@@ -124,9 +124,14 @@ export async function handleRetryRecord<T>(
   const attempt = parseAttemptHeader(raw.headers);
   const retryAt = parseRetryAtHeader(raw.headers);
 
-  // Unreadable retry metadata: dead-letter it. `max 1 maxAttempts` is the
-  // out-of-band terminal attempt kafka_service_retry_topics.retry_handler
-  // uses on this path, so the record is not re-scheduled.
+  // POLICY, deliberate: unreadable retry metadata (`X-Sol-Attempt` /
+  // `X-Sol-Retry-At` missing or malformed) is defined as terminal and is
+  // dead-lettered rather than re-scheduled. We cannot know the real attempt
+  // count, so the alternative — treating it as attempt 1 — risks an unbounded
+  // retry loop on a record nobody can make progress on. The attempt stamped on
+  // the DLQ record is the out-of-band terminal value `max 1 maxAttempts`
+  // (matching kafka_service_retry_topics.retry_handler); it is a policy
+  // choice, not arithmetic that "proves" the budget was exhausted.
   if (attempt === undefined || retryAt === undefined) {
     const terminalAttempt = Math.max(1, opts.retryStrategy.policy.maxAttempts);
     const published = await routeOutcome(

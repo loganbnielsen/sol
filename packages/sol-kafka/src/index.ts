@@ -38,7 +38,9 @@ export type {
 export { ACK, deadLetter, retry } from "./outcome.js";
 export type { Outcome } from "./outcome.js";
 export { wrapEachRetryableMessage } from "./retryable.js";
-export type { RelayRecord, RetryRelay, RetryMetrics, RetryableMessageOptions } from "./retryable.js";
+export type { RetryableMessageOptions } from "./retryable.js";
+export type { RawRecord, RelayRecord, RetryMetrics, RetryRelay } from "./routing.js";
+export type { RetryRelayProcessorOptions } from "./relay.js";
 export {
   handleRetryRecord,
   kafkaRetryRelay,
