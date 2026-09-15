@@ -191,10 +191,25 @@ type retry_strategy =
        preempting the sleep window. *)
   | Retry_topics of { max_attempts : int }
     (* On Retry: publish raw bytes (with the original message's key -- BUG-027,
-       so a retried message hashes to the same partition on <topic>-retry that
-       it would on the source topic, both sharing the same partition count)
-       to <topic>-retry with X-Sol-Attempt / X-Sol-Retry-At headers; commit
-       original offset immediately.
+       so a retried message hashes to the same partition on the retry topic
+       that it would on the source topic, both sharing the same partition
+       count) to <source>.<canonical-group>.retry with X-Sol-Attempt /
+       X-Sol-Retry-At headers; commit original offset immediately.
+       Retry and DLQ topic names are group-scoped (BUG-030): both are
+       <source>.<canonical-group>.<retry|dlq>, where <canonical-group> is
+       group_id sanitized to alphanumerics and '-' (Kafka's metrics/JMX
+       naming treats '.' and '_' as interchangeable, so unsanitized ids risk
+       metric-name collisions) and, if long enough to risk Kafka's 249-byte
+       topic name limit, truncated with a content-hash suffix. Retry and DLQ
+       destinations belong to the logical consumer group whose processing
+       responsibility they receive -- dead-lettering is a statement about
+       that group's processing attempt, not an intrinsic property of the
+       source event, so two independent groups consuming the same source
+       topic get fully isolated retry/DLQ topics rather than racing on a
+       shared <topic>-retry/<topic>-dlq pair (DEC-021). Every DLQ record
+       still carries an X-Sol-Origin-Group header naming the group that
+       dead-lettered it, as provenance -- not needed for routing, since the
+       topic name already encodes it.
        A background retry consumer (group <group_id>-sol-retry), itself routed
        through consume_partitioned, delays until X-Sol-Retry-At then re-runs
        the handler. That sleep blocks the retry partition, not the whole retry
@@ -206,12 +221,12 @@ type retry_strategy =
        In steady state the extra head-of-line delay is bounded roughly by the
        configured max retry backoff; under backlog or overload Kafka is the
        buffer, so observed delay is unbounded. After max_attempts failures, or
-       on Dead_letter, the message is routed to <topic>-dlq. Both topics are
+       on Dead_letter, the message is routed to the DLQ topic. Both topics are
        auto-provisioned.
        If a retry record cannot be decoded, the retry path does not call
        on_decode_error; it publishes the raw retry record and original headers
-       to <topic>-dlq with decode diagnostics, then acks only after that publish
-       succeeds (BUG-028).
+       to the DLQ topic with decode diagnostics, then acks only after that
+       publish succeeds (BUG-028).
        Ack/drop behavior follows sol-worker.md's acknowledgement ownership
        invariant. Retry_topics does not preserve strict source-partition or
        per-key ordering; workloads that need independent per-message retry
@@ -225,7 +240,7 @@ Ack/drop behavior follows the
 [`sol-worker` acknowledgement ownership invariant](../sol-worker/sol-worker.md#acknowledgement-ownership-invariant).
 
 **Relay resilience and exhaustion policy (BUG-029).** The retry consumer's own
-publish to `<topic>-retry`/`<topic>-dlq` is retried in-process, with backoff
+publish to the retry/DLQ topic is retried in-process, with backoff
 and jitter, before it's treated as a failure at all — a single transient
 produce error self-heals rather than reaching `consume_partitioned`'s own
 zero-tolerance retry policy for the relay. If those in-process attempts are

@@ -1,6 +1,8 @@
 let backoff_s n = Float.min (1.0 *. (2. ** Float.of_int n)) 600.0
 let hdr_attempt = "X-Sol-Attempt"
 let hdr_retry_at = "X-Sol-Retry-At"
+let hdr_decode_error = "X-Sol-Decode-Error"
+let hdr_origin_group = "X-Sol-Origin-Group"
 
 (* BUG-029: bounded in-process retry for the relay's own producer calls
    (retry/DLQ publication), so a single transient produce failure self-heals
@@ -16,7 +18,7 @@ let produce_jitter_ratio = 0.2
 (* Scoped to this module, not process-wide like Obs_trace's rng_state, but
    mutex-protected for the same reason: Random.State.t mutation is not
    domain-safe, and this state is shared across every partition fiber's
-   publish_raw calls. Never the global Random module (this repo has been
+   publish calls. Never the global Random module (this repo has been
    bitten twice by that). *)
 let produce_rng = Random.State.make_self_init ()
 let produce_rng_mutex = Mutex.create ()
@@ -82,6 +84,58 @@ let strip_sol_hdrs headers =
   List.filter (fun (k, _) -> k <> hdr_attempt && k <> hdr_retry_at) headers
 ;;
 
+(** A relay command: publish [source] to some target topic, carrying the
+    already-fully-resolved [headers] to send (no further header policy is
+    decided at publish time) plus [attempt]/[delay_s] for metrics
+    ([on_retry]/[on_relay_publish]) — not for serialization. Built exclusively
+    by [retry_message]/[dead_letter_message]/[retry_decode_failure_message]
+    below; nothing else should construct one by hand. *)
+type relay =
+  { source : Kafka.Consumer.message
+  ; headers : (string * string option) list
+  ; attempt : int
+  ; delay_s : float
+  }
+
+(** A scheduled retry: strips any stale [X-Sol-*] headers from [raw_msg] and
+    stamps fresh [X-Sol-Attempt]/[X-Sol-Retry-At] ([delay_s] from now). *)
+let retry_message ~raw_msg ~attempt ~delay_s =
+  let retry_at = Unix.gettimeofday () +. delay_s in
+  let headers =
+    (hdr_attempt, Some (string_of_int attempt))
+    :: (hdr_retry_at, Some (string_of_float retry_at))
+    :: strip_sol_hdrs raw_msg.Kafka.Consumer.headers
+  in
+  { source = raw_msg; headers; attempt; delay_s }
+;;
+
+(** Retry budget exhausted: a [retry_message] with [delay_s = 0.0] (dead
+    letters are immediate, not scheduled), plus [X-Sol-Origin-Group] (BUG-030:
+    dead-lettering is a statement about [group_id]'s processing attempt, not
+    an intrinsic property of the source event -- the DLQ topic is already
+    scoped to [group_id], but the header keeps the record self-describing if
+    it's ever exported or inspected independently of its topic name). *)
+let dead_letter_message ~raw_msg ~attempt ~group_id =
+  let base = retry_message ~raw_msg ~attempt ~delay_s:0.0 in
+  { base with headers = (hdr_origin_group, Some group_id) :: base.headers }
+;;
+
+(** A retry record that couldn't even be decoded: preserves [raw_msg]'s
+    existing headers untouched (including whatever [X-Sol-Attempt]/
+    [X-Sol-Retry-At] it already carried — this is not another scheduled
+    attempt), and appends a decode diagnostic plus [X-Sol-Origin-Group]
+    (BUG-030, see {!dead_letter_message}). *)
+let retry_decode_failure_message ~raw_msg ~attempt ~decode_error ~group_id =
+  { source = raw_msg
+  ; headers =
+      (hdr_decode_error, Some decode_error)
+      :: (hdr_origin_group, Some group_id)
+      :: raw_msg.Kafka.Consumer.headers
+  ; attempt
+  ; delay_s = 0.0
+  }
+;;
+
 (** Typed outcome for a single retry-routing decision. *)
 type retry_action =
   | Ack
@@ -109,54 +163,90 @@ let action_of_handler_error ~retry_topic ~dlq_topic ~max_attempts ~attempt = fun
   | Kafka_service_intf.Dead_letter _ -> Ok (Forward_dlq { target = dlq_topic })
 ;;
 
-(** Execute the side-effecting part of a retry action: publish then ack.
-    [raw_msg]'s key travels with it, so a retried message hashes to the same
-    partition on the target topic that its key would hash to on the source
-    topic (BUG-027: both topics share [svc.partitions]). *)
-let execute_action ?headers action ~raw_msg ~attempt ~publish_raw ~ack =
-  let headers = Option.value headers ~default:raw_msg.Kafka.Consumer.headers in
+(** Execute the side-effecting part of a retry action: build the relay
+    command, publish it, then ack. [raw_msg]'s key travels with it (via
+    [relay.source]), so a retried message hashes to the same partition on the
+    target topic that its key would hash to on the source topic (BUG-027:
+    both topics share [svc.partitions]). *)
+let execute_action ~group_id action ~raw_msg ~attempt ~publish ~ack =
   match action with
   | Ack -> ack ()
   | Forward_retry { target; delay_s } ->
-    (match
-       publish_raw
-         ~target_topic:target
-         ~attempt
-         ~raw_bytes:raw_msg.Kafka.Consumer.value
-         ~key:raw_msg.Kafka.Consumer.key
-         ~headers
-         ~delay_s
-         ~partition:raw_msg.Kafka.Consumer.partition
-     with
+    (match publish ~target_topic:target (retry_message ~raw_msg ~attempt ~delay_s) with
      | Ok () -> ack ()
      | Error e -> Error e)
   | Forward_dlq { target } ->
     (match
-       publish_raw
-         ~target_topic:target
-         ~attempt
-         ~raw_bytes:raw_msg.Kafka.Consumer.value
-         ~key:raw_msg.Kafka.Consumer.key
-         ~headers
-         ~delay_s:0.0
-         ~partition:raw_msg.Kafka.Consumer.partition
+       publish ~target_topic:target (dead_letter_message ~raw_msg ~attempt ~group_id)
      with
      | Ok () -> ack ()
      | Error e -> Error e)
 ;;
 
-let route_retry_decode_error ~dlq_topic ~raw_msg ~attempt ~decode_error ~publish_raw ~ack =
+(** A retry record that couldn't even be decoded always goes to the DLQ; it
+    doesn't need [execute_action]'s [retry_action] dispatch, so it builds its
+    own relay command and publishes directly. *)
+let route_retry_decode_error
+      ~dlq_topic
+      ~raw_msg
+      ~attempt
+      ~decode_error
+      ~group_id
+      ~publish
+      ~ack
+  =
   Printf.eprintf "sol-worker: RETRY_DECODE_ERROR to_dlq=true error=%S\n%!" decode_error;
-  let headers =
-    ("X-Sol-Decode-Error", Some decode_error) :: raw_msg.Kafka.Consumer.headers
+  match
+    publish
+      ~target_topic:dlq_topic
+      (retry_decode_failure_message ~raw_msg ~attempt ~decode_error ~group_id)
+  with
+  | Ok () -> ack ()
+  | Error e -> Error e
+;;
+
+(* BUG-030: retry/DLQ topic identity must include both source-topic and
+   consumer-group identity, or independent consumer groups on the same source
+   topic can consume each other's retries/dead-letters. Group ids are
+   sanitized to alphanumerics and '-' only -- never left free to contain '.'
+   or '_', which Kafka's own metrics/JMX naming treats as interchangeable, so
+   two differently-punctuated group ids could otherwise collide at the
+   metrics layer even while remaining distinct topic-name strings. Kafka
+   topic names cap at 249 bytes; a group id long enough to risk that limit is
+   truncated and given a short content-hash suffix, always (not only when a
+   collision is detected -- there is no registry of every other group id to
+   check against, so "would collide" is read conservatively as "truncation
+   happened at all"), so two different overlong ids can never truncate to the
+   same canonical segment. *)
+let max_group_segment_len = 64
+
+let sanitize_group_id group_id =
+  let sanitized =
+    String.map
+      (function
+        | ('a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '-') as c -> c
+        | _ -> '-')
+      group_id
   in
-  execute_action
-    ~headers
-    (Forward_dlq { target = dlq_topic })
-    ~raw_msg
-    ~attempt
-    ~publish_raw
-    ~ack
+  if sanitized = "" then "unscoped" else sanitized
+;;
+
+let canonical_group_segment group_id =
+  let sanitized = sanitize_group_id group_id in
+  if String.length sanitized <= max_group_segment_len
+  then sanitized
+  else (
+    let hash_suffix = String.sub (Digest.to_hex (Digest.string group_id)) 0 8 in
+    let prefix_len = max_group_segment_len - String.length hash_suffix - 1 in
+    String.sub sanitized 0 prefix_len ^ "-" ^ hash_suffix)
+;;
+
+(** The one canonical retry/DLQ topic name: [<source>.<canonical-group>.<suffix>]
+    ([suffix] is ["retry"] or ["dlq"]). Used by topic provisioning and the
+    retry consumer alike -- never reconstruct a retry/DLQ topic name any other
+    way (BUG-030). *)
+let relay_topic_name ~source ~group_id ~suffix =
+  Printf.sprintf "%s.%s.%s" source (canonical_group_segment group_id) suffix
 ;;
 
 let consume
@@ -182,12 +272,13 @@ let consume
     then Error (config_error "Retry_topics max_attempts must be >= 1")
     else Ok ()
   in
+  let source = topic_name_to_string topic.name in
   let* retry_topic_name =
-    Kafka_service_intf.topic_name (topic_name_to_string topic.name ^ "-retry")
+    Kafka_service_intf.topic_name (relay_topic_name ~source ~group_id ~suffix:"retry")
     |> Result.map_error config_error
   in
   let* dlq_topic_name =
-    Kafka_service_intf.topic_name (topic_name_to_string topic.name ^ "-dlq")
+    Kafka_service_intf.topic_name (relay_topic_name ~source ~group_id ~suffix:"dlq")
     |> Result.map_error config_error
   in
   let* () =
@@ -204,26 +295,12 @@ let consume
       ~partitions:svc.partitions
     |> Result.map_error (fun e -> Kafka_service_intf.Consumer_error e)
   in
-  let publish_raw_with
-        ~rewrite_retry_headers
-        ~target_topic
-        ~attempt
-        ~raw_bytes
-        ~key
-        ~headers
-        ~delay_s
-        ~partition
-    =
-    on_retry ~partition ~attempt ~delay_s;
-    let retry_at = Unix.gettimeofday () +. delay_s in
-    let new_headers =
-      if rewrite_retry_headers
-      then
-        (hdr_attempt, Some (string_of_int attempt))
-        :: (hdr_retry_at, Some (string_of_float retry_at))
-        :: strip_sol_hdrs headers
-      else headers
-    in
+  (* The relay's headers are already fully resolved by whichever smart
+     constructor built [msg] -- this function knows nothing about retry vs.
+     decode-failure header policy, only how to publish a relay command. *)
+  let publish ~target_topic (msg : relay) =
+    let partition = msg.source.Kafka.Consumer.partition in
+    on_retry ~partition ~attempt:msg.attempt ~delay_s:msg.delay_s;
     (* BUG-029: bounded retry around the produce call itself -- a single
        transient failure here must not be the thing that reaches
        consume_partitioned's exhaustion policy below. *)
@@ -238,7 +315,7 @@ let consume
              error=%s\n\
              %!"
             (topic_name_to_string target_topic)
-            attempt
+            msg.attempt
             produce_attempt
             (Kafka.Error.to_string e))
         ~produce:(fun () ->
@@ -246,9 +323,9 @@ let consume
             (Kafka.Producer.produce_await
                svc.producer
                ~topic:(topic_name_to_string target_topic)
-               ~value:raw_bytes
-               ?key
-               ~headers:new_headers
+               ~value:msg.source.Kafka.Consumer.value
+               ?key:msg.source.Kafka.Consumer.key
+               ~headers:msg.headers
                ()))
         ()
     in
@@ -259,15 +336,13 @@ let consume
           error=%s -- exhausted in-process produce retries, not acking\n\
           %!"
          (topic_name_to_string target_topic)
-         attempt
+         msg.attempt
          produce_max_attempts
          (Kafka.Error.to_string e);
-       on_relay_publish ~partition ~attempt ~outcome:`Failed
-     | Ok () -> on_relay_publish ~partition ~attempt ~outcome:`Published);
+       on_relay_publish ~partition ~attempt:msg.attempt ~outcome:`Failed
+     | Ok () -> on_relay_publish ~partition ~attempt:msg.attempt ~outcome:`Published);
     result
   in
-  let publish_raw = publish_raw_with ~rewrite_retry_headers:true in
-  let publish_raw_preserving_headers = publish_raw_with ~rewrite_retry_headers:false in
   let consumer_cfg : Kafka.Consumer.config =
     { brokers = svc.brokers
     ; group_id
@@ -321,7 +396,8 @@ let consume
                  ~raw_msg
                  ~attempt
                  ~decode_error:e
-                 ~publish_raw:publish_raw_preserving_headers
+                 ~group_id
+                 ~publish
                  ~ack
              with
              | Ok () -> Kafka.Consumer.Continue
@@ -350,7 +426,7 @@ let consume
                 | Error e -> Kafka.Consumer.Error e
                 | Ok action ->
                   (match
-                     execute_action action ~raw_msg ~attempt:next ~publish_raw ~ack
+                     execute_action ~group_id action ~raw_msg ~attempt:next ~publish ~ack
                    with
                    | Ok () -> Kafka.Consumer.Continue
                    | Error e -> Kafka.Consumer.Error e)))
@@ -367,10 +443,11 @@ let consume
             let action = Forward_dlq { target = dlq_topic_name } in
             (match
                execute_action
+                 ~group_id
                  action
                  ~raw_msg
                  ~attempt:(max 1 max_attempts)
-                 ~publish_raw
+                 ~publish
                  ~ack
              with
              | Ok () -> Kafka.Consumer.Continue
@@ -443,7 +520,9 @@ let consume
             with
             | Error e -> Kafka.Consumer.Error e
             | Ok action ->
-              (match execute_action action ~raw_msg ~attempt:1 ~publish_raw ~ack with
+              (match
+                 execute_action ~group_id action ~raw_msg ~attempt:1 ~publish ~ack
+               with
                | Ok () -> Kafka.Consumer.Continue
                | Error e -> Kafka.Consumer.Error e)))
     in

@@ -124,12 +124,27 @@ module Retry_topics = struct
         }
     | Forward_dlq of { target : topic_name }
 
+  type relay = Kafka_service_retry_topics.relay =
+    { source : Kafka.Consumer.message
+    ; headers : (string * string option) list
+    ; attempt : int
+    ; delay_s : float
+    }
+
   let parse_retry_metadata = Kafka_service_retry_topics.parse_retry_metadata
   let produce_backoff_s = Kafka_service_retry_topics.produce_backoff_s
   let retry_produce = Kafka_service_retry_topics.retry_produce
+  let retry_message = Kafka_service_retry_topics.retry_message
+  let dead_letter_message = Kafka_service_retry_topics.dead_letter_message
+
+  let retry_decode_failure_message =
+    Kafka_service_retry_topics.retry_decode_failure_message
+  ;;
+
   let action_of_handler_error = Kafka_service_retry_topics.action_of_handler_error
   let execute_action = Kafka_service_retry_topics.execute_action
   let route_retry_decode_error = Kafka_service_retry_topics.route_retry_decode_error
+  let relay_topic_name = Kafka_service_retry_topics.relay_topic_name
 end
 
 module Admin = struct

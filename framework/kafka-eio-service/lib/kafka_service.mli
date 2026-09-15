@@ -130,44 +130,86 @@ module Retry_topics : sig
     -> handler_error
     -> (retry_action, Kafka.Error.t) result
 
-  (** Execute the side-effecting part of a retry decision: publish to the target
-      topic (for [Forward_retry]/[Forward_dlq]) then [ack]. [Ack] skips straight
-      to acking. The message's key travels with it (BUG-027), so a retried
-      message hashes to the same partition on the target topic that its key
-      would hash to on the source topic. *)
+  (** A relay command: publish [source] to some target topic, carrying the
+      already-fully-resolved [headers] to send (no further header policy is
+      decided at publish time) plus [attempt]/[delay_s] for metrics
+      ([on_retry]/[on_relay_publish]) — not for serialization. Built
+      exclusively by [retry_message]/[dead_letter_message]/
+      [retry_decode_failure_message] below; nothing else should construct one
+      by hand. *)
+  type relay =
+    { source : Kafka.Consumer.message
+    ; headers : (string * string option) list
+    ; attempt : int
+    ; delay_s : float
+    }
+
+  (** A scheduled retry: strips any stale [X-Sol-*] headers from [raw_msg] and
+      stamps fresh [X-Sol-Attempt]/[X-Sol-Retry-At] ([delay_s] from now). *)
+  val retry_message
+    :  raw_msg:Kafka.Consumer.message
+    -> attempt:int
+    -> delay_s:float
+    -> relay
+
+  (** Retry budget exhausted: a {!retry_message} with [delay_s = 0.0] (dead
+      letters are immediate, not scheduled), plus [X-Sol-Origin-Group]
+      (BUG-030: dead-lettering is a statement about [group_id]'s processing
+      attempt, not an intrinsic property of the source event). *)
+  val dead_letter_message
+    :  raw_msg:Kafka.Consumer.message
+    -> attempt:int
+    -> group_id:string
+    -> relay
+
+  (** A retry record that couldn't even be decoded: preserves [raw_msg]'s
+      existing headers untouched (this is not another scheduled attempt), and
+      appends a decode diagnostic plus [X-Sol-Origin-Group] (BUG-030, see
+      {!dead_letter_message}). *)
+  val retry_decode_failure_message
+    :  raw_msg:Kafka.Consumer.message
+    -> attempt:int
+    -> decode_error:string
+    -> group_id:string
+    -> relay
+
+  (** Execute the side-effecting part of a retry decision: build the relay
+      command for the chosen action (for [Forward_retry]/[Forward_dlq]),
+      [publish] it, then [ack]. [Ack] skips straight to acking. [group_id] is
+      only used on the [Forward_dlq] path (BUG-030's [X-Sol-Origin-Group]). *)
   val execute_action
-    :  ?headers:(string * string option) list
+    :  group_id:string
     -> retry_action
     -> raw_msg:Kafka.Consumer.message
     -> attempt:int
-    -> publish_raw:
-         (target_topic:topic_name
-          -> attempt:int
-          -> raw_bytes:bytes option
-          -> key:bytes option
-          -> headers:(string * string option) list
-          -> delay_s:float
-          -> partition:int32
-          -> (unit, Kafka.Error.t) result)
+    -> publish:(target_topic:topic_name -> relay -> (unit, Kafka.Error.t) result)
     -> ack:(unit -> (unit, Kafka.Error.t) result)
     -> (unit, Kafka.Error.t) result
 
+  (** On a retry-topic decode failure, publish the raw retry record (with
+      decode diagnostics attached) to the DLQ rather than reaching the
+      source-path [on_decode_error] skip-and-ack contract (BUG-028). Always
+      targets the DLQ, so it builds its own relay command rather than going
+      through {!execute_action}'s [retry_action] dispatch. *)
   val route_retry_decode_error
     :  dlq_topic:topic_name
     -> raw_msg:Kafka.Consumer.message
     -> attempt:int
     -> decode_error:string
-    -> publish_raw:
-         (target_topic:topic_name
-          -> attempt:int
-          -> raw_bytes:bytes option
-          -> key:bytes option
-          -> headers:(string * string option) list
-          -> delay_s:float
-          -> partition:int32
-          -> (unit, Kafka.Error.t) result)
+    -> group_id:string
+    -> publish:(target_topic:topic_name -> relay -> (unit, Kafka.Error.t) result)
     -> ack:(unit -> (unit, Kafka.Error.t) result)
     -> (unit, Kafka.Error.t) result
+
+  (** The one canonical retry/DLQ topic name: [<source>.<canonical-group>.<suffix>]
+      ([suffix] is ["retry"] or ["dlq"]). [group_id] is sanitized to
+      alphanumerics and ['-'] and, if long enough to risk Kafka's 249-byte
+      topic name limit, truncated with a content-hash suffix (BUG-030: retry
+      and DLQ topic identity must include consumer-group identity, or
+      independent groups on the same source topic consume each other's
+      retries/dead letters). Never reconstruct a retry/DLQ topic name any
+      other way. *)
+  val relay_topic_name : source:string -> group_id:string -> suffix:string -> string
 end
 
 (** Redpanda admin API topic-metadata parsing, backing [register]'s

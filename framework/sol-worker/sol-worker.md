@@ -81,9 +81,12 @@ type retry_strategy =
        Pauses that Kafka partition for the retry delay. Vulnerable to rebalance
        preempting the sleep window. *)
   | Retry_topics of { max_attempts : int }
-    (* On Retry: publish raw bytes to <topic>-retry; commit original offset immediately.
-       A background retry consumer delays until X-Sol-Retry-At then re-runs W.handle.
-       After max_attempts failures, or on Dead_letter, the message is moved to <topic>-dlq. *)
+    (* On Retry: publish raw bytes to the group-scoped retry topic
+       (<source>.<canonical-group>.retry, BUG-030); commit original offset
+       immediately. A background retry consumer delays until X-Sol-Retry-At
+       then re-runs W.handle. After max_attempts failures, or on Dead_letter,
+       the message is moved to the group-scoped DLQ topic
+       (<source>.<canonical-group>.dlq). *)
 
 val default_retry_strategy : retry_strategy
 (* In_memory default_retry — in-process exponential backoff, infinite retries. *)
@@ -203,7 +206,7 @@ A failed commit is **not** treated like a handler failure. The side effect in `W
 ## Error handling
 
 - `W.handle` returning `Retry msg` triggers the retry strategy. After the retry budget is exhausted, `run` returns `Error`; ack/drop behavior follows the [acknowledgement ownership invariant](#acknowledgement-ownership-invariant).
-- `W.handle` returning `Dead_letter msg` skips retries and routes the raw message to `<topic>-dlq` when `Retry_topics` is configured. With in-memory retry configured, it is logged and acked because no DLQ topic exists — a **known violation** of the [acknowledgement ownership invariant](#acknowledgement-ownership-invariant), tracked by FEAT-078.
+- `W.handle` returning `Dead_letter msg` skips retries and routes the raw message to the group-scoped DLQ topic (BUG-030) when `Retry_topics` is configured. With in-memory retry configured, it is logged and acked because no DLQ topic exists — a **known violation** of the [acknowledgement ownership invariant](#acknowledgement-ownership-invariant), tracked by FEAT-078.
 - `W.handle` returning `Ack` but the subsequent ack failing: see [ack semantics](#ack-semantics) above — handled separately from retry, via `ack_failed`.
 - Decode errors on the source topic: default behavior from `Kafka_service.consume_partitioned` logs to stderr, acks the message, and continues. Override via `on_decode_error` by calling `Kafka_service.consume_partitioned` directly. Source-topic skip-and-ack is permitted by the invariant above because the message was never accepted. Retry-topic decode errors are different: `Retry_topics` publishes the raw retry record to the DLQ with decode diagnostics and only then acks it.
 - Lifecycle errors (`create`, `register`, Kafka error) are returned as `run_error` values.
