@@ -7,11 +7,31 @@ source: architecture discussion 2026-09-07 following FEAT-033 — the same "prot
 
 **Depends on:** FEAT-034 in practice — the natural trigger for this ticket is FEAT-034 actually getting built, which would be the second real consumer needed to validate the boundary (see below). Not a hard code dependency.
 
-Split `integrations/kafka/kafka-eio-service/` into a generic Confluent Schema Registry protocol client and Sol's opinionated policy layer — once there's a second real consumer of the protocol-only piece, not preemptively.
+Split `framework/kafka-eio-service/` into a generic Confluent Schema Registry protocol client and Sol's opinionated policy layer — once there's a second real consumer of the protocol-only piece, not preemptively.
 
-## Blocked on
+## Status — premise refreshed 2026-09-15
 
-**No second consumer exists yet.** This repo's own established practice — `kafka-eio`, `obs-eio`, and `pg-eio` were all extracted into standalone packages *after* real usage existed and proved where the boundary actually was, not designed upfront (the one documented exception, `aws-eio`, was a deliberate foundation-layer bet, not the default). Splitting `kafka-eio-service` now, with exactly one consumer (Sol's own OCaml services), would be exactly the kind of premature abstraction that practice argues against. Do not start this speculatively; wait for FEAT-034 (or any other real second consumer) to exist.
+**The stated trigger has fired: a second real consumer now exists.** This
+ticket was blocked on "wait for FEAT-034 (or any other real second
+consumer) to exist." FEAT-034's `@sol/kafka` was built, merged and
+dogfooded (FEAT-038) — and its two adversarial-review rounds are exactly
+the evidence this ticket cites for the protocol/policy split: the Confluent
+wire format (protocol half) ported correctly first try, while the
+registration order/fatality and retry/crash routing (policy half) were
+wrong twice.
+
+The original rationale — "exactly one consumer, do not preemptively
+abstract" — was about the OCaml side alone. `@sol/kafka` is an independent
+*re-derivation* rather than a consumer of the OCaml module, so it does not
+literally call `kafka_service.ml`; but it is independent evidence of where
+the boundary is, which is what the ticket was waiting for.
+
+**This is not a promotion.** A blocking premise disappearing is not the
+same as "build this now": the split still competes for priority against
+everything else, and this ticket stays in `BACKLOG` until someone
+consciously prioritises it. Treat "belongs/actionable" and "should be done
+next" as separate decisions. What this section removes is only the *false*
+claim that the work cannot be scoped yet.
 
 ## The distinction this ticket is about
 
@@ -26,9 +46,9 @@ FEAT-033 is direct evidence this distinction is real and not academic: building 
 
 1. Extract the protocol-generic pieces (schema registration, compatibility check/set, Confluent wire format) into their own package or clearly separated module boundary with its own `.mli` — decide standalone-opam-package vs. in-repo module split based on whether the second consumer (from FEAT-034 or elsewhere) is in-tree or genuinely external.
 2. `kafka_service.ml`'s `register` orchestration and `kafka_service_retry_topics.ml` stay as Sol's policy layer, now visibly built *on* the protocol module rather than interleaved with it.
-3. Before implementing the protocol-generic piece from scratch again: check whether a generic OCaml Confluent-Schema-Registry client already exists in the opam ecosystem, and separately whether the TS side of FEAT-034 found or should use an existing generic npm equivalent — if one exists on either side, that's evidence for what the OCaml module's actual public shape should be, not just an implementation detail to match.
+3. Before implementing the protocol-generic piece from scratch again: check whether a generic OCaml Confluent-Schema-Registry client already exists in the opam ecosystem, and separately whether the TS side of FEAT-034 found or should use an existing generic npm equivalent — if one exists on either side, that's evidence for what the OCaml module's actual public shape should be, not just an implementation detail to match. (FEAT-034 shipped without this check, because this ticket was blocked at the time; close that loop explicitly rather than assuming it was done.)
 
 ## Non-goals
 
 - Not a rewrite of `kafka_service.ml`'s actual behavior — same registration order, same fatality semantics, same retry/crash routing. This is a module-boundary change, not a policy change.
-- Not blocking or gating FEAT-034 — FEAT-034 can and should proceed (when its own gate clears) using `kafka_service_schema.ml` as a reference to port from, whether or not this split has happened yet.
+- Not blocking or gating FEAT-034 — it has since shipped (`@sol/kafka` ported from `kafka_service_schema.ml` as a reference) without this split having happened, exactly as intended.
