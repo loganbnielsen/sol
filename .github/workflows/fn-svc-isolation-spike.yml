@@ -1,0 +1,347 @@
+name: fn/svc isolation spike (INFRA-016)
+
+# INFRA-016: characterizes whether a bursty -fn workload can materially
+# degrade a long-lived -svc sharing the same node pool -- not a merge gate,
+# run on demand. See pipeline/tickets/ for the full experimental design and
+# the failure criteria this job checks against (defined before this job was
+# written, not fitted to whatever numbers come out).
+on:
+  workflow_dispatch: {}
+
+jobs:
+  spike:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y librdkafka-dev libpq-dev libpq5
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.4.1
+
+      - name: Cache opam download cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.opam/download-cache
+          key: opam-download-${{ runner.os }}-${{ hashFiles('.github/actions/pin-opam-packages/action.yml', 'dune-project', 'sol.opam') }}
+          restore-keys: |
+            opam-download-${{ runner.os }}-
+
+      - name: Pin extracted opam packages
+        timeout-minutes: 10
+        uses: ./.github/actions/pin-opam-packages
+
+      - name: Install OCaml dependencies
+        timeout-minutes: 20
+        run: opam install . --deps-only --with-test -y
+
+      - name: Build
+        run: opam exec -- dune build
+
+      - name: Install k3d/kubectl/helm (pinned versions — same as golden-path-smoke)
+        timeout-minutes: 5
+        run: |
+          curl -fsSL -o k3d "https://github.com/k3d-io/k3d/releases/download/v5.6.0/k3d-linux-amd64"
+          chmod +x k3d
+          sudo mv k3d /usr/local/bin/k3d
+
+          curl -fsSL "https://get.helm.sh/helm-v3.21.0-linux-amd64.tar.gz" | tar -xz -C /tmp
+          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
+
+          curl -fsSL -o kubectl "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+
+      - name: Scaffold and deploy the spike workspace
+        timeout-minutes: 18
+        run: |
+          set -eo pipefail
+          export SOL_HOME="$GITHUB_WORKSPACE"
+          mkdir -p "$SOL_HOME/.ci-bin"
+          ln -sf "$SOL_HOME/_build/default/cli/sol/bin/main.exe" "$SOL_HOME/.ci-bin/sol"
+          export PATH="$SOL_HOME/.ci-bin:$PATH"
+          hash -r
+
+          sol new workspace spike_ws
+          cd spike_ws
+
+          # Sizing assumption, stated up front rather than tuned after seeing
+          # results: GitHub-hosted ubuntu-22.04 runners are documented at 2
+          # vCPU. charge-svc gets a modest, realistic request (200m). The
+          # burst fn's request is deliberately different between the two
+          # cases run later in this job -- see the case-specific sed edits
+          # below, not here.
+          sed -i -E \
+            -e 's/^#? *cpu *=.*/cpu = "200m"/' \
+            -e 's/^#? *memory *=.*/memory = "256Mi"/' \
+            app/payments/charge_svc/sol.toml
+
+          sol new fn ops/burst
+          # -fn's default scaffold handler just prints and returns in well
+          # under a second -- no genuine resource pressure. Replace it with
+          # a real CPU-bound busy loop for a fixed wall-clock-adjacent
+          # duration (Sys.time is *process CPU time*, so under throttling
+          # this takes LONGER than 25s of wall-clock to finish -- a second,
+          # log-visible throttling signal alongside the Prometheus query
+          # below). stdlib Sys only, no extra library dependency.
+          #
+          # IMPORTANT: the scaffold's own lib module is app/ops/burst_fn/lib/
+          # burst_fn.ml (component_module Function "burst" = "Burst_fn",
+          # cli/sol/lib/sol_cli_cmd_new.ml) with lib/dune's (modules Burst_fn)
+          # naming it explicitly -- overwrite that exact file. A sibling
+          # burst_fn_fn.ml would be an orphan dune silently never compiles
+          # into the library (verified: an unlisted .ml file in a library
+          # with an explicit (modules ...) stanza builds clean with no
+          # warning and is simply never linked), so the deployed -fn would
+          # keep running the original one-line scaffold stub instead of
+          # this busy loop -- and the experiment would report "no
+          # interference" for the wrong reason (no load was ever generated).
+          cat > app/ops/burst_fn/lib/burst_fn.ml <<'FN_EOF'
+          let trigger = Fn.Cron "0 * * * *"
+
+          let run () =
+            let wall_start = Unix.gettimeofday () in
+            Printf.printf "[burst-fn] burning ~25s of CPU time\n%!";
+            let deadline = Sys.time () +. 25.0 in
+            let x = ref 0.0 in
+            while Sys.time () < deadline do
+              x := !x +. sqrt (!x +. 1.0)
+            done;
+            Printf.printf
+              "[burst-fn] done: %.1fs wall-clock to burn 25.0s CPU time (x=%.3f)\n%!"
+              (Unix.gettimeofday () -. wall_start)
+              !x;
+            Ok ()
+          FN_EOF
+          # Sys.time/Unix.gettimeofday need the unix library; the fn scaffold
+          # only links sol_fn by default.
+          sed -i 's/(libraries sol_fn)/(libraries sol_fn unix)/' app/ops/burst_fn/lib/dune
+
+          eval $(opam env)
+          dune build
+
+          sol local infra up
+          sol up
+
+          fn_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-ops$' | head -1)
+          svc_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-payments$' | head -1)
+          fn_cronjob=$(kubectl -n "$fn_ns" get cronjob -o name | sed 's|cronjob.batch/||' | head -1)
+          echo "fn_ns=$fn_ns svc_ns=$svc_ns fn_cronjob=$fn_cronjob"
+
+          kubectl describe node | grep -A 5 "Allocated resources"
+
+          # ── Load generator ──────────────────────────────────────────────
+          # Plain curl timing, no new dependency. Appends one wall-clock
+          # seconds sample per line to $1 for the duration ($2) given.
+          load_gen() {
+            local out=$1 duration=$2
+            local until=$(( $(date +%s) + duration ))
+            : > "$out"
+            while [ "$(date +%s)" -lt "$until" ]; do
+              curl -s -o /dev/null -w '%{time_total}\n' "http://localhost:8080/health" >> "$out" || true
+            done
+          }
+
+          percentile() {
+            # $1 = file of sorted-later numeric samples, $2 = percentile (0-100)
+            local file=$1 pct=$2
+            local n
+            n=$(wc -l < "$file")
+            if [ "$n" -eq 0 ]; then echo "NaN"; return; fi
+            local idx=$(( (n * pct + 99) / 100 ))
+            [ "$idx" -lt 1 ] && idx=1
+            [ "$idx" -gt "$n" ] && idx=$n
+            sort -n "$file" | sed -n "${idx}p"
+          }
+
+          throttle_rate() {
+            # Returns the Prometheus-reported per-second CPU throttling rate
+            # for charge-svc's container over the last 1m, or "unavailable"
+            # if the query itself errors/returns no data -- distinct from a
+            # genuine zero, per this ticket's acceptance criteria.
+            local resp
+            resp=$(curl -s 'http://localhost:9090/api/v1/query' \
+              --data-urlencode "query=rate(container_cpu_cfs_throttled_periods_total{namespace=\"$svc_ns\",container=\"charge-svc\"}[1m])" \
+              2>/dev/null || true)
+            if [ -z "$resp" ]; then echo "unavailable"; return; fi
+            local status result_count value
+            status=$(echo "$resp" | jq -r '.status // "error"')
+            if [ "$status" != "success" ]; then echo "unavailable"; return; fi
+            # Prometheus returns HTTP 200/status:success with an EMPTY
+            # result array when the metric name has no series at all (the
+            # realistic "this cluster's Prometheus chart doesn't scrape
+            # cAdvisor the way we assumed" case) -- that is not the same as
+            # a genuine zero rate and must not collapse into "0".
+            result_count=$(echo "$resp" | jq -r '.data.result | length')
+            if [ "$result_count" = "0" ]; then echo "unavailable"; return; fi
+            value=$(echo "$resp" | jq -r '.data.result[0].value[1] // empty')
+            [ -z "$value" ] && echo "unavailable" || echo "$value"
+          }
+
+          svc_replicas_ready() {
+            kubectl -n "$svc_ns" get deployment charge-svc -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0"
+          }
+          svc_replicas_desired() {
+            kubectl -n "$svc_ns" get deployment charge-svc -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0"
+          }
+
+          # A Job object existing (kubectl create job succeeding) is not
+          # evidence its Pod ever ran -- the scheduler may simply queue it
+          # Pending if the node is genuinely full, which is a *different*,
+          # weaker finding than "fn and svc actually shared/saturated
+          # compute and svc stayed healthy anyway". Poll how many of the
+          # manually-fired burst Pods (job-name starting with
+          # "<k8s_name>-manual-", distinguishing them from the CronJob
+          # controller's own scheduled Pods) are concurrently Running
+          # during the same window load_gen samples, and track the max
+          # observed -- run this backgrounded alongside load_gen, not
+          # sequentially, so both observe the same burst window.
+          poll_max_running_fn_pods() {
+            local duration=$1 out=$2
+            local max=0
+            local until=$(( $(date +%s) + duration ))
+            while [ "$(date +%s)" -lt "$until" ]; do
+              local running
+              running=$(kubectl -n "$fn_ns" get pods -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.labels.job-name}{"\n"}{end}' 2>/dev/null \
+                | grep -c "^${fn_cronjob}-manual-" || true)
+              [ "$running" -gt "$max" ] && max=$running
+              sleep 2
+            done
+            echo "$max" > "$out"
+          }
+
+          echo ""
+          echo "==================== BASELINE ===================="
+          load_gen /tmp/baseline.txt 20
+          baseline_p50=$(percentile /tmp/baseline.txt 50)
+          baseline_p95=$(percentile /tmp/baseline.txt 95)
+          baseline_p99=$(percentile /tmp/baseline.txt 99)
+          baseline_throttle=$(throttle_rate)
+          echo "baseline p50=${baseline_p50}s p95=${baseline_p95}s p99=${baseline_p99}s throttle_rate=${baseline_throttle}"
+
+          run_case() {
+            local label=$1 fn_cpu=$2 fn_memory=$3 fn_count=$4 out=$5
+
+            echo ""
+            echo "==================== CASE $label (fn cpu=$fn_cpu memory=$fn_memory count=$fn_count) ===================="
+            # Spacing-tolerant and idempotent across repeated calls (case A
+            # then case B on the same file): matches whether the line is
+            # still commented from the scaffold template or was already
+            # uncommented by a prior call, regardless of internal spacing.
+            sed -i -E \
+              -e "s/^#? *cpu *=.*/cpu = \"$fn_cpu\"/" \
+              -e "s/^#? *memory *=.*/memory = \"$fn_memory\"/" \
+              app/ops/burst_fn/sol.toml
+            cat app/ops/burst_fn/sol.toml
+            sol up
+
+            jobs_before=$(kubectl -n "$fn_ns" get jobs -o name | wc -l)
+            # BUG-032: sol fn run's generated Job name has only one-second
+            # resolution, so firing it more than once per second collides.
+            # 1.1s stagger works around that here without meaningfully
+            # reducing overlap -- each fn instance burns CPU for ~25s, so a
+            # few seconds of staggered starts still leaves them running
+            # concurrently for the bulk of the window.
+            for i in $(seq 1 "$fn_count"); do
+              sol local fn run "ops/burst_fn" &
+              sleep 1.1
+            done
+
+            # Give the burst a moment to actually land as Running pods
+            # before sampling starts, then measure the -svc under load AND
+            # how many burst pods are concurrently Running, over the same
+            # window the burst fn instances are CPU-burning. Both
+            # backgrounded so they observe the identical window, not
+            # sequential ones.
+            sleep 3
+            local running_out="${out}.running"
+            load_gen "$out" 25 &
+            poll_max_running_fn_pods 25 "$running_out" &
+            wait
+
+            jobs_after=$(kubectl -n "$fn_ns" get jobs -o name | wc -l)
+            echo "jobs created: $((jobs_after - jobs_before))"
+
+            local p50 p95 p99 throttle ready desired max_running
+            p50=$(percentile "$out" 50)
+            p95=$(percentile "$out" 95)
+            p99=$(percentile "$out" 99)
+            throttle=$(throttle_rate)
+            ready=$(svc_replicas_ready)
+            desired=$(svc_replicas_desired)
+            max_running=$(cat "$running_out" 2>/dev/null || echo "0")
+            echo "case $label: p50=${p50}s p95=${p95}s p99=${p99}s throttle_rate=${throttle} ready=${ready}/${desired} max_concurrently_running_fn_pods=${max_running}/${fn_count}"
+
+            local verdict="no material interference detected"
+            local threshold
+            threshold=$(awk -v b="$baseline_p99" 'BEGIN { print b * 1.5 }')
+            if awk -v p="$p99" -v t="$threshold" 'BEGIN { exit !(p > t) }'; then
+              verdict="INTERFERENCE: p99 ${p99}s exceeds 1.5x baseline (${threshold}s)"
+            fi
+            if [ "$throttle" != "unavailable" ] && [ "$throttle" != "0" ] && [ "$baseline_throttle" = "0" ]; then
+              verdict="$verdict; INTERFERENCE: nonzero CPU throttling (baseline was zero)"
+            fi
+            if [ "$throttle" = "unavailable" ]; then
+              verdict="$verdict; CPU throttling signal UNAVAILABLE (not the same as zero)"
+            fi
+            if [ "$ready" != "$desired" ]; then
+              verdict="$verdict; INTERFERENCE: only ${ready}/${desired} charge-svc replicas Ready during burst"
+            fi
+            # A clean verdict answers "did fn and svc genuinely share
+            # compute without harm" only if the fn pods actually ran
+            # concurrently. If most/all of them were still Pending when
+            # sampled, "no interference" instead means "the scheduler
+            # declined to place the burst" -- a real, possibly acceptable,
+            # but *different* safety property than the one this experiment
+            # is trying to characterize. Flag that distinction explicitly
+            # rather than let a clean verdict quietly mean either.
+            if [ "$verdict" = "no material interference detected" ]; then
+              if [ "$max_running" -lt "$fn_count" ]; then
+                verdict="$verdict, BUT only ${max_running}/${fn_count} burst pods were ever observed Running concurrently -- this may reflect the scheduler declining to place the full burst rather than fn/svc genuinely sharing saturated compute without harm. Not the same finding as adequate isolation under real concurrency."
+              else
+                verdict="$verdict, with all ${fn_count}/${fn_count} burst pods observed Running concurrently -- genuine compute sharing, not scheduling backpressure."
+              fi
+            fi
+            echo "VERDICT $label: $verdict"
+
+            # Wait for this case's manually-fired burst pods to reach a
+            # terminal phase before returning, so a slow-to-finish Case A
+            # pod (CPU throttling can stretch the busy loop's wall-clock
+            # time past its nominal 25s) can never be mistaken for one of
+            # Case B's own pods by poll_max_running_fn_pods's job-name-
+            # prefix match, which has no per-case scoping of its own.
+            local wait_until=$(( $(date +%s) + 90 ))
+            local still_running=1
+            while [ "$(date +%s)" -lt "$wait_until" ]; do
+              still_running=$(kubectl -n "$fn_ns" get pods -o jsonpath='{range .items[?(@.status.phase!="Succeeded")]}{.metadata.labels.job-name}{"\n"}{end}' 2>/dev/null \
+                | grep -c "^${fn_cronjob}-manual-" || true)
+              [ "$still_running" -eq 0 ] && break
+              sleep 3
+            done
+            if [ "$still_running" -ne 0 ]; then
+              # A timed-out drain is not "probably fine" -- it means case
+              # isolation is not actually established, so any verdict
+              # poll_max_running_fn_pods computes for the *next* case could
+              # be silently contaminated by this case's still-running pods.
+              # Don't let this be a warning a reader can skim past: fail
+              # the experiment rather than produce a verdict that can't be
+              # trusted.
+              echo "::error::case $label: ${still_running} burst pod(s) still not Succeeded after 90s drain wait -- case isolation not established, refusing to run the next case"
+              exit 1
+            fi
+            echo "case $label burst pods fully drained"
+          }
+
+          run_case "A (correctly configured)" "100m" "128Mi" 3 /tmp/case_a.txt
+          run_case "B (aggressive but valid)" "500m" "512Mi" 4 /tmp/case_b.txt
+
+      - name: Dump cluster diagnostics
+        if: always()
+        run: |
+          kubectl get pods -A -o wide || true
+          kubectl top nodes || true
+          kubectl top pods -A || true
