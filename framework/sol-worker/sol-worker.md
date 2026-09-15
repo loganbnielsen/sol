@@ -180,12 +180,22 @@ A failed commit is **not** treated like a handler failure. The side effect in `W
 - If `Kafka_error.is_fatal e` — a broken consumer, not a transient hiccup — it escalates to `Kafka_consumer.Error e`, stopping the worker the same way an exhausted retry budget would.
 - Otherwise, the worker continues. The offset was never committed, so the message remains eligible for natural redelivery — no immediate duplicate side effect, no lost message.
 
+### Acknowledgement ownership invariant
+
+> **Sol must not acknowledge failed work unless responsibility for that work has durably transferred to another valid destination.**
+>
+> This applies uniformly to retry, dead-letter, decode-failure, and retry-exhaustion paths. If the required durable transfer fails or no valid destination exists, the message remains unacknowledged and the failure is surfaced.
+>
+> Valid transfer includes successfully publishing a retry record to the retry topic or a terminal record to the DLQ. Logging an error, exhausting retries, or deciding not to process a message does not itself constitute durable transfer.
+
+"Failed work" is the deliberate scope: a source-topic decode error may still skip-and-ack a message that was never accepted, and that is not a violation.
+
 ## Error handling
 
 - `W.handle` returning `Retry msg` triggers the retry strategy. After the retry budget is exhausted, `run` returns `Error`.
-- `W.handle` returning `Dead_letter msg` skips retries and routes the raw message to `<topic>-dlq` when `Retry_topics` is configured. With in-memory retry configured, it is logged and acked because no DLQ topic exists.
+- `W.handle` returning `Dead_letter msg` skips retries and routes the raw message to `<topic>-dlq` when `Retry_topics` is configured. With in-memory retry configured, it is logged and acked because no DLQ topic exists — a **known violation** of the acknowledgement ownership invariant above, tracked by FEAT-078.
 - `W.handle` returning `Ack` but the subsequent ack failing: see [ack semantics](#ack-semantics) above — handled separately from retry, via `ack_failed`.
-- Decode errors: default behavior from `Kafka_service.consume_partitioned` — logs to stderr, acks the message, continues. Override via `on_decode_error` by calling `Kafka_service.consume_partitioned` directly.
+- Decode errors: default behavior from `Kafka_service.consume_partitioned` — logs to stderr, acks the message, continues. Override via `on_decode_error` by calling `Kafka_service.consume_partitioned` directly. Source-topic skip-and-ack is permitted by the invariant above; the retry-topic decode path's current ack-and-drop is a separate **known violation** tracked by BUG-028.
 - Lifecycle errors (`create`, `register`, Kafka error) are returned as `run_error` values.
 
 ## Test injection
