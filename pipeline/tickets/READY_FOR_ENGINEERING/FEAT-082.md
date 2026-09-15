@@ -127,11 +127,55 @@ Findings so far:
 Still unevidenced: `sol up` for a TS unit that actually builds, the running
 svc + worker, and health/metrics/traces/logs.
 
-**Next step:** re-run the fixture after BUG-034 (or from a workspace that has a
-root `dune-project`), then annotate every successful step with the
-platform-native vs app-boilerplate distinction above. That distinction — not
-merely "a knowledgeable Sol developer can make TS work" — is what answers
-FEAT-036 and tells FEAT-084 what the scaffold must provide.
+## Evidence bar for the resumed walk
+
+**Resume at the exact failed command** (`cd examples/pluto && sol up
+--scope=demo_ts`) after BUG-034 lands, and do **not** "help" the fixture past
+problems prematurely — each obstacle is the evidence.
+
+"Pod starts and an HTTP request returns 200" is **not** sufficient for the TS
+golden path. The bar:
+
+```text
+TS svc                          TS worker
+  builds                          builds
+  deploys locally                 deploys locally
+  becomes healthy                 consumes Kafka
+  handles a request               uses Sol retry/DLQ semantics
+  emits expected metrics          emits expected metrics/traces/logs
+  emits expected traces           drains/terminates correctly
+  logs visible through Sol
+  drains/terminates correctly
+```
+
+Not a formal suite yet — the point is to **observe the path before designing the
+abstraction**.
+
+**What counts as a gap, and what doesn't.** Ordinary application/framework code
+tells us nothing (writing a Fastify route, calling `kafkajs` directly). The
+signal is **Sol-specific knowledge leaking into application code**: if every TS
+service must know exactly how Sol expects SIGTERM draining, health readiness,
+metrics lifecycle, trace propagation and shutdown ordering — or if a worker must
+hand-assemble a particular lifecycle protocol to behave correctly *as a Sol
+worker* — that is FEAT-036 evidence. Classify each step with the legend above;
+"a knowledgeable Sol developer can make TS work" is not a pass.
+
+## Dependency chain
+
+```text
+DEC-024   defines the workspace contract   (accepted, awaiting implementation)
+   v
+BUG-034   implements it
+   v
+FEAT-082  exercises the resulting platform  <- resume here
+   v
+FEAT-036  conclusion: is a TS framework surface needed?
+   v
+FEAT-084  scaffold design
+```
+
+DEC-024 does not depend on BUG-034; it is decided and pending implementation.
+FEAT-084 must not start before FEAT-036 has an empirical answer.
 
 ## Demo/example coverage
 
