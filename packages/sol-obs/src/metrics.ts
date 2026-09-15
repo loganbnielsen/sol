@@ -24,15 +24,29 @@ export const SOL_WORKER_MESSAGES_TOTAL = "sol_worker_messages_total";
 export const SOL_WORKER_MESSAGE_DURATION_SECONDS = "sol_worker_message_duration_seconds";
 
 /**
- * The full, exact status vocabulary for sol_worker_messages_total{status}.
- * Decode/validation failures are deliberately NOT a member of this type --
- * they never reach the handler and are never counted here at all (see
- * SOL_WORKER_DECODE_ERRORS_TOTAL below). FEAT-033's first draft invented
- * "decode_error"/"db_error" status values here; both were wrong for
- * different reasons -- decode errors belong on the separate counter, and a
- * downstream DB failure is exactly what the "retry" status is for.
+ * The full, exact status vocabulary for sol_worker_messages_total{status},
+ * matching framework/sol-worker/lib/worker.ml. Decode/validation failures are
+ * deliberately NOT a member of this type -- they never reach the handler and
+ * are never counted here at all (see SOL_WORKER_DECODE_ERRORS_TOTAL below).
+ * FEAT-033's first draft invented "decode_error"/"db_error" status values
+ * here; both were wrong for different reasons -- decode errors belong on the
+ * separate counter, and a downstream DB failure is exactly what the "retry"
+ * status is for.
+ *
+ * FEAT-076/078 added `dead_letter`, `relay_published` and `relay_failed`
+ * (worker.ml, `Retry_topics` only): `retry` counts a record for which a retry
+ * was *scheduled*, while `relay_published`/`relay_failed` count whether the
+ * relay's own publish of it actually landed. A cross-language dashboard must
+ * include them, or a TS worker's retry/DLQ outcomes go uncounted.
  */
-export type WorkerMessageStatus = "ok" | "error" | "retry" | "ack_failed";
+export type WorkerMessageStatus =
+  | "ok"
+  | "error"
+  | "retry"
+  | "dead_letter"
+  | "ack_failed"
+  | "relay_published"
+  | "relay_failed";
 
 export const SOL_WORKER_DECODE_ERRORS_TOTAL = "sol_worker_decode_errors_total";
 

@@ -10,8 +10,16 @@ import {
 } from "../src/metrics.js";
 import type { WorkerMessageStatus } from "../src/metrics.js";
 
-test("worker message status vocabulary is exactly {ok,error,retry,ack_failed}", () => {
-  const valid: WorkerMessageStatus[] = ["ok", "error", "retry", "ack_failed"];
+test("worker message status vocabulary matches worker.ml (incl. FEAT-076/078 retry/DLQ statuses)", () => {
+  const valid: WorkerMessageStatus[] = [
+    "ok",
+    "error",
+    "retry",
+    "dead_letter",
+    "ack_failed",
+    "relay_published",
+    "relay_failed",
+  ];
   // This is a compile-time guarantee (the type itself), but assert something
   // runtime-checkable too: decode errors are never one of these values --
   // they live on a wholly separate, differently-named counter.

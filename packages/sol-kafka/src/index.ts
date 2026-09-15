@@ -5,3 +5,33 @@ export type { RegisterTopicOptions, RegisteredTopic } from "./register.js";
 export { wrapEachMessage, wireCrashListener } from "./consume.js";
 export type { DecodeErrorCounter, MessageHandlerContext } from "./consume.js";
 export { traceparentOf, extractTraceparent } from "@sol/obs";
+export {
+  DEFAULT_RETRY_POLICY,
+  HDR_ATTEMPT,
+  HDR_DECODE_ERROR,
+  HDR_ORIGIN_GROUP,
+  HDR_RETRY_AT,
+  MAX_GROUP_SEGMENT_LEN,
+  backoffS,
+  canonicalGroupSegment,
+  deadLetterHeaders,
+  decideAction,
+  epochSeconds,
+  parseAttemptHeader,
+  parseRetryAtHeader,
+  relayTopicName,
+  retryConsumerGroupId,
+  retryDecodeFailureHeaders,
+  retryRecordHeaders,
+  retryTopicsPolicyError,
+  sanitizeGroupId,
+  solHeadersOf,
+} from "./retry.js";
+export type {
+  RetryAction,
+  RetryPolicy,
+  RetryRecordOptions,
+  RetryStrategy,
+  Rng,
+  SolHeaders,
+} from "./retry.js";
