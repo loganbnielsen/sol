@@ -307,6 +307,22 @@ jobs:
               fi
             fi
             echo "VERDICT $label: $verdict"
+
+            # Wait for this case's manually-fired burst pods to reach a
+            # terminal phase before returning, so a slow-to-finish Case A
+            # pod (CPU throttling can stretch the busy loop's wall-clock
+            # time past its nominal 25s) can never be mistaken for one of
+            # Case B's own pods by poll_max_running_fn_pods's job-name-
+            # prefix match, which has no per-case scoping of its own.
+            local wait_until=$(( $(date +%s) + 90 ))
+            while [ "$(date +%s)" -lt "$wait_until" ]; do
+              local still_running
+              still_running=$(kubectl -n "$fn_ns" get pods -o jsonpath='{range .items[?(@.status.phase!="Succeeded")]}{.metadata.labels.job-name}{"\n"}{end}' 2>/dev/null \
+                | grep -c "^${fn_cronjob}-manual-" || true)
+              [ "$still_running" -eq 0 ] && break
+              sleep 3
+            done
+            echo "case $label burst pods drained (or 90s wait exhausted)"
           }
 
           run_case "A (correctly configured)" "100m" "128Mi" 3 /tmp/case_a.txt
