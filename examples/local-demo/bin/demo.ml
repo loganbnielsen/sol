@@ -19,7 +19,17 @@
      fulfillment-worker  (sol-worker, Sol_obs)
          │  Loki span: "fulfill_order"  ·  Prometheus: worker message metrics
          │  Tempo trace: "fulfill_order", child of "receive_order"
-         │  records fulfilled order in PostgreSQL  (pg-eio)
+         │  one Postgres transaction (pg-eio):
+         │    records fulfilled order
+         │    + enqueues a send-confirmation-email job (sol-jobs, FEAT-077) --
+         │      transactional enqueue: the job exists iff the order does
+         ▼
+     sol_jobs table (PostgreSQL)
+         │
+         ▼
+     jobs-worker  (sol-jobs hosted by a -worker, Sol_obs)
+         │  claims the job (FOR UPDATE SKIP LOCKED), "sends" the email,
+         │  deletes the job row on success
          ▼
      Loki (logs) · Prometheus (metrics) · Tempo (traces) · PostgreSQL (storage)
      Grafana  http://localhost:3000
@@ -211,6 +221,31 @@ end
 
 module FulfilledOrders = Pg_table.Make (FulfilledOrderSchema)
 
+(* ── Confirmation-email job (sol-jobs, FEAT-077/DEC-021) ─────────────────
+   Independent unit of work fanned out from the fulfillment worker's own
+   Kafka handler -- deliberately NOT another Kafka message: nothing about
+   "send order-123's confirmation email" needs stream/partition ordering
+   relative to any other order's email, it just needs to happen, durably,
+   with retry. Enqueued in the same Postgres transaction as the
+   fulfilled_orders insert below, demonstrating the one thing a Kafka
+   publish structurally cannot offer: the job exists if and only if the
+   fulfilled-order row does. *)
+module EmailJobCodec = struct
+  type t = { order_id : string }
+
+  let kind (_ : t) = "send_confirmation_email"
+
+  let encode (t : t) =
+    Printf.sprintf {|{"order_id":%s}|} (Yojson.Safe.to_string (`String t.order_id))
+  ;;
+
+  let decode s =
+    match Yojson.Safe.from_string s with
+    | `Assoc [ ("order_id", `String order_id) ] -> Ok { order_id }
+    | _ | (exception _) -> Error ("invalid EmailJob payload: " ^ s)
+  ;;
+end
+
 (* ── Main ───────────────────────────────────────────────────────────────── *)
 
 let () =
@@ -258,11 +293,22 @@ let () =
       ~service:"fulfillment-worker"
       ()
   in
-  (* order-svc and fulfillment-worker each carry their own Prometheus
-     registry (like two real, separately-scraped services) — the demo's
-     own snapshot/assertions render both and stitch them together. *)
+  let jobs_obs =
+    Sol_obs.of_env
+      ~net:env#net
+      ~clock:env#clock
+      ~mono_clock:env#mono_clock
+      ~service:"jobs-worker"
+      ()
+  in
+  (* order-svc, fulfillment-worker, and jobs-worker each carry their own
+     Prometheus registry (like three real, separately-scraped services) —
+     the demo's own snapshot/assertions render all three and stitch them
+     together. *)
   let render () =
-    Sol_obs.metrics_renderer svc_obs () ^ Sol_obs.metrics_renderer worker_obs ()
+    Sol_obs.metrics_renderer svc_obs ()
+    ^ Sol_obs.metrics_renderer worker_obs ()
+    ^ Sol_obs.metrics_renderer jobs_obs ()
   in
   Eio.Switch.run
   @@ fun sw ->
@@ -297,6 +343,40 @@ let () =
             Printf.printf "\n  DB -> Postgres  (migrations applied)\n%!";
             Some pool))
   in
+  (* ── Confirmation-email jobs worker (sol-jobs, FEAT-077/DEC-021) ─────────
+     Defined before the fulfillment worker below, since its handler enqueues
+     into this via Jobs.enqueue. No on_ready-style race to guard against the
+     way the Kafka worker's partition assignment needs one -- sol-jobs is a
+     polling claim loop, so it simply picks up whatever is enqueued on its
+     next poll tick regardless of exactly when this fiber starts. (jobs_obs
+     itself is defined earlier, alongside svc_obs/worker_obs, so render()
+     can include it from the start.) *)
+  let jobs_done_p, jobs_done_r = Eio.Promise.create () in
+  let jobs_processed = Hashtbl.create orders_count in
+  let module EmailJob = struct
+    include EmailJobCodec
+
+    let handle ({ order_id } : t) =
+      Printf.printf "[jobs]   sent confirmation email  order=%-12s\n%!" order_id;
+      if List.mem order_id order_ids
+      then (
+        Hashtbl.replace jobs_processed order_id ();
+        if Hashtbl.length jobs_processed = orders_count
+        then (
+          try Eio.Promise.resolve jobs_done_r () with
+          | _ -> ()));
+      Ok ()
+    ;;
+  end
+  in
+  let module Jobs = Sol_jobs.Make (EmailJob) in
+  (match db_pool with
+   | Some _ -> ()
+   | None ->
+     (* Nothing will ever enqueue a job without Postgres -- resolve
+        immediately so the "wait for jobs" step below doesn't hang. *)
+     (try Eio.Promise.resolve jobs_done_r () with
+      | _ -> ()));
   (* ── Shared Kafka handle ────────────────────────────────────────────────── *)
   say
     "registering topic %S ..."
@@ -346,7 +426,18 @@ let () =
              ; correlation_id = msg.Message.correlation_id
              }
          in
-         (match FulfilledOrders.insert pool row with
+         (* One Postgres transaction: the fulfilled-order row and its
+            confirmation-email job are inserted together, or neither is --
+            the transactional-enqueue guarantee sol-jobs exists for
+            (FEAT-077). A Kafka publish here instead could never join this
+            transaction. *)
+         let result =
+           Pg_db.transaction pool (fun pool ->
+             let ( let* ) = Result.bind in
+             let* () = FulfilledOrders.insert pool row in
+             Jobs.enqueue pool EmailJobCodec.{ order_id = msg.Message.order_id })
+         in
+         (match result with
           | Ok () -> ()
           | Error e -> Printf.eprintf "[worker] db error: %s\n%!" (Pg_error.to_string e)));
       Printf.printf
@@ -386,6 +477,29 @@ let () =
     (try Eio.Promise.resolve worker_done_r () with
      | _ -> ());
     `Stop_daemon);
+  (match db_pool with
+   | None -> ()
+   | Some pool ->
+     Eio.Fiber.fork_daemon ~sw (fun () ->
+       (try
+          Jobs.run
+            ~env
+            ~pool
+            ~ot:jobs_obs
+            ~metrics_port:0
+            ~poll_interval_s:0.2
+            ~on_ready:(fun () -> Printf.printf "[jobs]   ready\n%!")
+            ~max_jobs:orders_count
+            ()
+          |> Result.map_error Sol_jobs.run_error_to_string
+          |> function
+          | Ok () -> ()
+          | Error msg -> failwith msg
+        with
+        | Failure msg -> Printf.eprintf "[jobs]   error: %s\n%!" msg);
+       (try Eio.Promise.resolve jobs_done_r () with
+        | _ -> ());
+       `Stop_daemon));
   (* ── Order svc ─────────────────────────────────────────────────────────── *)
   let handle_order req =
     let corr_id =
@@ -504,6 +618,22 @@ let () =
      exit 1
    | Ok () -> ());
   say "all %d messages processed." orders_count;
+  (* ── Wait for jobs-worker to finish ───────────────────────────────────────
+     Each confirmation-email job was enqueued transactionally as part of the
+     fulfillment worker's own handler above, so all of them already exist by
+     the time worker_done_p resolved -- this just waits for the sol-jobs
+     claim loop to drain them. *)
+  say
+    "waiting for jobs-worker to process all %d confirmation emails (up to 20s) ..."
+    orders_count;
+  (match
+     Eio.Time.with_timeout env#clock 20.0 (fun () -> Ok (Eio.Promise.await jobs_done_p))
+   with
+   | Error `Timeout ->
+     Printf.eprintf "[demo] timed out waiting for jobs-worker\n%!";
+     exit 1
+   | Ok () -> ());
+  say "all %d confirmation email jobs processed." orders_count;
   (* ── PostgreSQL results ─────────────────────────────────────────────────── *)
   (match db_pool with
    | None -> ()
@@ -566,6 +696,20 @@ let () =
     "Prometheus: sol_worker_messages_total > 0"
     (metric_nonzero metrics_text "sol_worker_messages_total")
     "metric absent or zero";
+  (match db_pool with
+   | None -> ()
+   | Some _ ->
+     check
+       "Prometheus: sol_jobs_processed_total > 0"
+       (metric_nonzero metrics_text "sol_jobs_processed_total")
+       "metric absent or zero";
+     check
+       "sol-jobs: all confirmation-email jobs completed"
+       (Hashtbl.length jobs_processed = orders_count)
+       (Printf.sprintf
+          "only %d/%d processed"
+          (Hashtbl.length jobs_processed)
+          orders_count));
   (match loki_url with
    | None -> ()
    | Some url ->
