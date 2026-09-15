@@ -583,3 +583,63 @@ jobs:
 
       - name: Build ${{ matrix.dockerfile }}
         run: docker build --no-cache -f ${{ matrix.dockerfile }} .
+
+  # DEC-022: OCaml and TypeScript are both first-class application languages, so
+  # a first-class language's framework tests must gate CI. Before this job, CI
+  # ran *zero* TypeScript tests -- the `test` job is dune-only and
+  # demo-ts-dockerfile-smoke only builds Dockerfiles, leaving the @sol/kafka /
+  # @sol/obs suites (and FEAT-081's broker-backed retry/DLQ tests) as local-only
+  # evidence. Redpanda here is test infrastructure for those broker-backed
+  # tests, not the point of the job.
+  ts-tests:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install workspace
+        run: npm ci
+
+      # Separate from the broker steps below on purpose: a failure here is a
+      # TypeScript build/unit failure, not broker infrastructure.
+      - name: Build and typecheck
+        run: npm run build -w @sol/obs -w @sol/kafka -w order-svc -w fulfillment-worker
+
+      - name: Unit tests (no broker; broker-backed tests self-skip)
+        run: npm test -w @sol/obs -w @sol/kafka
+
+      # Pinned deliberately -- never float to :latest, so CI behaviour cannot
+      # change underneath us. Bump the tag in its own change when intended.
+      - name: Start Redpanda (test infrastructure)
+        run: |
+          docker run -d --name redpanda -p 9092:9092 \
+            redpandadata/redpanda:v24.2.7 \
+            redpanda start --overprovisioned --smp 1 --memory 1G --reserve-memory 0M \
+              --node-id 0 --check=false \
+              --kafka-addr PLAINTEXT://0.0.0.0:9092 \
+              --advertise-kafka-addr PLAINTEXT://127.0.0.1:9092
+
+      # A real broker operation, not just "port 9092 accepted TCP" -- rpk
+      # actually talking to the cluster is the readiness signal.
+      - name: Wait for broker readiness
+        run: |
+          for _ in $(seq 1 30); do
+            if docker exec redpanda rpk cluster info >/dev/null 2>&1; then
+              echo "broker ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Redpanda did not become ready"
+          docker logs redpanda
+          exit 1
+
+      - name: Broker-backed tests (retry/DLQ ownership transfer)
+        env:
+          KAFKA_BROKERS: localhost:9092
+        run: npm test -w @sol/kafka
