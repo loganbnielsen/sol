@@ -83,11 +83,16 @@ jobs:
           sol new fn ops/burst
           # -fn's default scaffold handler just prints and returns in well
           # under a second -- no genuine resource pressure. Replace it with
-          # a real CPU-bound busy loop for a fixed wall-clock-adjacent
-          # duration (Sys.time is *process CPU time*, so under throttling
-          # this takes LONGER than 25s of wall-clock to finish -- a second,
-          # log-visible throttling signal alongside the Prometheus query
-          # below). stdlib Sys only, no extra library dependency.
+          # a real CPU-bound busy loop sized to a fixed WALL-CLOCK duration
+          # (Unix.gettimeofday, not Sys.time -- Sys.time is *process CPU
+          # time*, so under a tight CPU limit a Sys.time-bounded loop takes
+          # far longer than the intended window to finish: measured live,
+          # a 25-CPU-second loop under a 100m limit took ~250s wall-clock
+          # and tripped run_case's 90s drain-wait guard, which correctly
+          # refused to proceed to the next case rather than losing case
+          # isolation). Sizing to wall-clock keeps the burst's lifetime
+          # close to the intended window regardless of throttling. stdlib
+          # Unix only, no extra library dependency.
           #
           # IMPORTANT: the scaffold's own lib module is app/ops/burst_fn/lib/
           # burst_fn.ml (component_module Function "burst" = "Burst_fn",
@@ -105,15 +110,16 @@ jobs:
 
           let run () =
             let wall_start = Unix.gettimeofday () in
-            Printf.printf "[burst-fn] burning ~25s of CPU time\n%!";
-            let deadline = Sys.time () +. 25.0 in
+            Printf.printf "[burst-fn] burning CPU for ~25s wall-clock\n%!";
+            let deadline = wall_start +. 25.0 in
             let x = ref 0.0 in
-            while Sys.time () < deadline do
+            while Unix.gettimeofday () < deadline do
               x := !x +. sqrt (!x +. 1.0)
             done;
             Printf.printf
-              "[burst-fn] done: %.1fs wall-clock to burn 25.0s CPU time (x=%.3f)\n%!"
+              "[burst-fn] done: %.1fs wall-clock, %.1fs CPU time (x=%.3f)\n%!"
               (Unix.gettimeofday () -. wall_start)
+              (Sys.time ())
               !x;
             Ok ()
           FN_EOF
