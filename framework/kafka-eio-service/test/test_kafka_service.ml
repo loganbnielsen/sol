@@ -185,17 +185,7 @@ let test_retry_metadata_rejects_malformed_headers () =
 
 let test_retry_publish_then_ack_failure_is_error () =
   let acked = ref 0 in
-  let publish_raw
-        ~target_topic:_
-        ~attempt:_
-        ~raw_bytes:_
-        ~key:_
-        ~headers:_
-        ~delay_s:_
-        ~partition:_
-    =
-    Ok ()
-  in
+  let publish ~target_topic:_ (_ : Kafka_service.Retry_topics.relay) = Ok () in
   let ack () =
     incr acked;
     Error Kafka.Error.Application
@@ -207,7 +197,7 @@ let test_retry_publish_then_ack_failure_is_error () =
       action
       ~raw_msg:(raw_retry_msg ())
       ~attempt:1
-      ~publish_raw
+      ~publish
       ~ack
   with
   | Error Kafka.Error.Application -> Alcotest.(check int) "ack attempted once" 1 !acked
@@ -216,15 +206,7 @@ let test_retry_publish_then_ack_failure_is_error () =
 
 let test_retry_publish_failure_does_not_ack () =
   let acked = ref false in
-  let publish_raw
-        ~target_topic:_
-        ~attempt:_
-        ~raw_bytes:_
-        ~key:_
-        ~headers:_
-        ~delay_s:_
-        ~partition:_
-    =
+  let publish ~target_topic:_ (_ : Kafka_service.Retry_topics.relay) =
     Error Kafka.Error.Transport
   in
   let ack () =
@@ -238,7 +220,7 @@ let test_retry_publish_failure_does_not_ack () =
       action
       ~raw_msg:(raw_retry_msg ())
       ~attempt:1
-      ~publish_raw
+      ~publish
       ~ack
   with
   | Error Kafka.Error.Transport -> Alcotest.(check bool) "ack skipped" false !acked
@@ -250,16 +232,8 @@ let test_dead_letter_handler_error_routes_to_dlq_and_acks () =
   let dlq_topic = Kafka_service.topic_name_exn "orders-dlq" in
   let acked = ref 0 in
   let published = ref None in
-  let publish_raw
-        ~target_topic
-        ~attempt
-        ~raw_bytes:_
-        ~key:_
-        ~headers:_
-        ~delay_s
-        ~partition:_
-    =
-    published := Some (target_topic, attempt, delay_s);
+  let publish ~target_topic (msg : Kafka_service.Retry_topics.relay) =
+    published := Some (target_topic, msg.attempt, msg.delay_s);
     Ok ()
   in
   let ack () =
@@ -281,7 +255,7 @@ let test_dead_letter_handler_error_routes_to_dlq_and_acks () =
          action
          ~raw_msg:(raw_retry_msg ())
          ~attempt:1
-         ~publish_raw
+         ~publish
          ~ack
      with
      | Error e -> Alcotest.failf "unexpected execute error: %s" (Kafka.Error.to_string e)
@@ -301,16 +275,8 @@ let test_dead_letter_handler_error_routes_to_dlq_and_acks () =
    source topic (both topics share the same partition count). *)
 let test_retry_publish_preserves_key () =
   let published_key = ref `Not_called in
-  let publish_raw
-        ~target_topic:_
-        ~attempt:_
-        ~raw_bytes:_
-        ~key
-        ~headers:_
-        ~delay_s:_
-        ~partition:_
-    =
-    published_key := `Called key;
+  let publish ~target_topic:_ (msg : Kafka_service.Retry_topics.relay) =
+    published_key := `Called msg.source.Kafka.Consumer.key;
     Ok ()
   in
   let ack () = Ok () in
@@ -318,12 +284,12 @@ let test_retry_publish_preserves_key () =
   let action = Kafka_service.Retry_topics.Forward_retry { target; delay_s = 1.0 } in
   let raw_msg = raw_retry_msg ~key:(Bytes.of_string "order-42") () in
   match
-    Kafka_service.Retry_topics.execute_action action ~raw_msg ~attempt:1 ~publish_raw ~ack
+    Kafka_service.Retry_topics.execute_action action ~raw_msg ~attempt:1 ~publish ~ack
   with
   | Error e -> Alcotest.failf "unexpected execute error: %s" (Kafka.Error.to_string e)
   | Ok () ->
     (match !published_key with
-     | `Not_called -> Alcotest.fail "publish_raw was never called"
+     | `Not_called -> Alcotest.fail "publish was never called"
      | `Called None -> Alcotest.fail "expected the original message's key, got None"
      | `Called (Some key) ->
        Alcotest.(check string)
@@ -443,8 +409,8 @@ let test_retry_decode_error_routes_to_dlq_and_acks_after_publish () =
         ]
       ()
   in
-  let publish_raw ~target_topic ~attempt ~raw_bytes ~key ~headers ~delay_s ~partition:_ =
-    published := Some (target_topic, attempt, raw_bytes, key, headers, delay_s, !acked);
+  let publish ~target_topic (msg : Kafka_service.Retry_topics.relay) =
+    published := Some (target_topic, msg, !acked);
     Ok ()
   in
   let ack () =
@@ -457,60 +423,52 @@ let test_retry_decode_error_routes_to_dlq_and_acks_after_publish () =
       ~raw_msg
       ~attempt:2
       ~decode_error:"bad json"
-      ~publish_raw
+      ~publish
       ~ack
   with
   | Error e -> Alcotest.failf "unexpected execute error: %s" (Kafka.Error.to_string e)
   | Ok () ->
     Alcotest.(check int) "acked once" 1 !acked;
     (match !published with
-     | None -> Alcotest.fail "publish_raw was never called"
-     | Some (target_topic, attempt, raw_bytes, key, headers, delay_s, acked_before) ->
+     | None -> Alcotest.fail "publish was never called"
+     | Some (target_topic, (msg : Kafka_service.Retry_topics.relay), acked_before) ->
        Alcotest.(check string)
          "target"
          "orders-dlq"
          (Kafka_service.topic_name_to_string target_topic);
-       Alcotest.(check int) "attempt preserved" 2 attempt;
+       Alcotest.(check int) "attempt preserved" 2 msg.attempt;
        Alcotest.(check (option string))
          "raw payload preserved"
          (Some "payload")
-         (Option.map Bytes.to_string raw_bytes);
+         (Option.map Bytes.to_string msg.source.Kafka.Consumer.value);
        Alcotest.(check (option string))
          "key preserved"
          (Some "order-42")
-         (Option.map Bytes.to_string key);
+         (Option.map Bytes.to_string msg.source.Kafka.Consumer.key);
        Alcotest.(check (option string))
          "original header preserved"
          (Some "kept")
-         (List.assoc_opt "app-header" headers |> Option.join);
+         (List.assoc_opt "app-header" msg.headers |> Option.join);
        Alcotest.(check (option string))
          "attempt header preserved"
          (Some "2")
-         (List.assoc_opt "X-Sol-Attempt" headers |> Option.join);
+         (List.assoc_opt "X-Sol-Attempt" msg.headers |> Option.join);
        Alcotest.(check (option string))
          "retry-at header preserved"
          (Some "123.5")
-         (List.assoc_opt "X-Sol-Retry-At" headers |> Option.join);
+         (List.assoc_opt "X-Sol-Retry-At" msg.headers |> Option.join);
        Alcotest.(check (option string))
          "decode diagnostic header"
          (Some "bad json")
-         (List.assoc_opt "X-Sol-Decode-Error" headers |> Option.join);
-       Alcotest.(check (float 0.0001)) "dlq delay" 0.0 delay_s;
+         (List.assoc_opt "X-Sol-Decode-Error" msg.headers |> Option.join);
+       Alcotest.(check (float 0.0001)) "dlq delay" 0.0 msg.delay_s;
        Alcotest.(check int) "publish happened before ack" 0 acked_before)
 ;;
 
 let test_retry_decode_error_publish_failure_does_not_ack () =
   let dlq_topic = Kafka_service.topic_name_exn "orders-dlq" in
   let acked = ref false in
-  let publish_raw
-        ~target_topic:_
-        ~attempt:_
-        ~raw_bytes:_
-        ~key:_
-        ~headers:_
-        ~delay_s:_
-        ~partition:_
-    =
+  let publish ~target_topic:_ (_ : Kafka_service.Retry_topics.relay) =
     Error Kafka.Error.Transport
   in
   let ack () =
@@ -523,7 +481,7 @@ let test_retry_decode_error_publish_failure_does_not_ack () =
       ~raw_msg:(raw_retry_msg ())
       ~attempt:1
       ~decode_error:"bad json"
-      ~publish_raw
+      ~publish
       ~ack
   with
   | Error Kafka.Error.Transport -> Alcotest.(check bool) "ack skipped" false !acked
