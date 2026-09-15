@@ -80,8 +80,8 @@ export interface RetryableMessageOptions<T> {
 const defaultSleep = (seconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, Math.max(0, seconds) * 1000));
 
-/** Internal: the decoded record plus its raw bytes/headers, for re-routing. */
-interface RawRecord {
+/** The decoded record plus its raw bytes/headers, for re-routing. */
+export interface RawRecord {
   readonly key?: Buffer;
   readonly value: Buffer;
   readonly headers: SolHeaders;
@@ -91,8 +91,11 @@ interface RawRecord {
  * Route one non-Ack outcome, mirroring `Kafka_service_retry_topics.execute_action`.
  * Returns `true` when the message was durably handled (and may be acked),
  * `false` when it must fail closed (nothing durable to transfer to).
+ *
+ * Exported so the retry-topic relay (`relay.ts`) reuses this decision rather
+ * than re-deriving it — the relay and the source path must not drift.
  */
-async function route(
+export async function routeOutcome(
   strategy: RetryStrategy,
   relay: RetryRelay | undefined,
   groupId: string,
@@ -204,7 +207,7 @@ export function wrapEachRetryableMessage<T>(opts: RetryableMessageOptions<T>) {
       if (outcome.kind === "ack") return;
 
       if (opts.retryStrategy.kind === "retry-topics") {
-        const acked = await route(
+        const acked = await routeOutcome(
           opts.retryStrategy, opts.relay, opts.groupId, opts.sourceTopic,
           raw, attempt, outcome, opts.metrics, nowS, opts.rng,
         );
