@@ -162,9 +162,9 @@ val consume
 
 ```ocaml
 (** Like consume but routes each message to a dedicated per-partition fiber.
-    A partition's in-memory retry sleep blocks only that partition; other partitions
-    continue unaffected. During the sleep the partition is paused at the librdkafka
-    level so no messages accumulate in its stream buffer. *)
+    A partition's in-memory retry sleep pauses that Kafka partition for the retry
+    delay; other partitions continue unaffected. During the sleep the partition is
+    paused at the librdkafka level so no messages accumulate in its stream buffer. *)
 val consume_partitioned
   :  t
   -> 'a topic
@@ -187,7 +187,8 @@ val consume_partitioned
 type retry_strategy =
   | In_memory    of Kafka_consumer.retry_policy
     (* Exponential back-off sleep inside the partition fiber. Simple, zero infra.
-       Vulnerable to rebalance preempting the sleep window. *)
+       Pauses that Kafka partition for the retry delay. Vulnerable to rebalance
+       preempting the sleep window. *)
   | Retry_topics of { max_attempts : int }
     (* On Retry: publish raw bytes (with the original message's key -- BUG-027,
        so a retried message hashes to the same partition on <topic>-retry that
@@ -196,17 +197,28 @@ type retry_strategy =
        original offset immediately.
        A background retry consumer (group <group_id>-sol-retry), itself routed
        through consume_partitioned, delays until X-Sol-Retry-At then re-runs
-       the handler -- so the backoff sleep blocks only its own partition, not
-       the whole retry topic. After max_attempts failures, or on Dead_letter,
-       the message is routed to <topic>-dlq. Both topics are auto-provisioned.
-       What this does NOT give you: two messages sharing a key still serialize,
-       same as the source topic -- that's Kafka's ordering model, not a bug,
-       and is the reason a leased-job primitive (DEC-021) exists for workloads
-       that need independent per-message retry regardless of key. *)
+       the handler. That sleep blocks the retry partition, not the whole retry
+       topic; every later record assigned to that retry partition waits behind
+       it, including unrelated keys that hashed to the same partition.
+       Republish also gives the retry a later Kafka offset, so it can execute
+       after records that originally followed it on the source partition,
+       including records with the same key.
+       In steady state the extra head-of-line delay is bounded roughly by the
+       configured max retry backoff; under backlog or overload Kafka is the
+       buffer, so observed delay is unbounded. After max_attempts failures, or
+       on Dead_letter, the message is routed to <topic>-dlq. Both topics are
+       auto-provisioned.
+       Ack/drop behavior follows sol-worker.md's acknowledgement ownership
+       invariant. Retry_topics does not preserve strict source-partition or
+       per-key ordering; workloads that need independent per-message retry
+       regardless of key need a leased-job primitive (DEC-021). *)
 
 val default_retry_strategy : retry_strategy
 (* In_memory with exponential backoff starting at 1s, capped at 10min, infinite retries. *)
 ```
+
+Ack/drop behavior follows the
+[`sol-worker` acknowledgement ownership invariant](../sol-worker/sol-worker.md#acknowledgement-ownership-invariant).
 
 ### Schema compatibility checking
 

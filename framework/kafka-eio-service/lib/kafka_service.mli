@@ -281,13 +281,20 @@ val consume
 
     - [In_memory retry] (default) — exponential back-off sleep inside the
       partition fiber with the given [retry_policy]. Simple, zero infra.
-      Vulnerable to rebalance preempting the sleep window.
+      Pauses that Kafka partition for the retry delay; vulnerable to rebalance
+      preempting the sleep window.
 
     - [Retry_topics { max_attempts }] — on failure the raw message bytes are
       published to [<topic>-retry] with [X-Sol-Attempt] / [X-Sol-Retry-At]
       headers, and the original offset is immediately committed. A background
       retry consumer (group [<group_id>-sol-retry]) subscribes to
       [<topic>-retry], waits until [X-Sol-Retry-At], then re-runs the handler.
+      That wait blocks every later record sharing the retry partition, including
+      unrelated keys. Republishing gives the retry a later Kafka offset, so it
+      can execute after records that originally followed it, including records
+      with the same key. In steady state the extra head-of-line delay is bounded
+      roughly by the max retry backoff; under backlog or overload it is
+      unbounded.
       After [max_attempts] total failures the message is routed to
       [<topic>-dlq]. [max_attempts] must be at least 1. Both topics are
       auto-provisioned before consumption starts; provisioning or retry-consumer
