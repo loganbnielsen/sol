@@ -133,3 +133,10 @@ rather than a separate synthetic Postgres integration-test target.
 `sol-worker.md` updated: removed its now-stale "sol-jobs remains a
 separate future primitive" line (FEAT-077 is done) in favor of pointing
 at `sol-jobs.md` for independent-work semantics.
+
+**TS parity:** Not included in FEAT-077. `sol-jobs` introduces a new
+language-facing programming model — durable leased jobs alongside Kafka's
+stream consumption (DEC-021) — so TypeScript parity should be evaluated as
+its own capability rather than implicitly assumed from the OCaml
+implementation. Recorded for the cross-language inventory in FEAT-080; this
+defers the question, it does not answer it.
