@@ -200,3 +200,59 @@ correct by the time this ticket starts). `scheduled_concurrency` and
   demonstrates a non-default `scheduled_concurrency`/`backoff_limit`, and
   `sol fn run` is exercised against it (golden-path smoke or an equivalent
   existing example, not a new demo app if an existing one suffices).
+
+## Completion notes (2026-09-14)
+
+**A. Manifest semantics.** Added `scheduled_concurrency` (`allow`/`forbid`/
+`replace`) and `backoff_limit` (int) to `Sol_cli_toml.t`'s `[service]` table,
+alongside `schedule` (which already lives there). Threaded through
+`Sol_cli_deployment_plan.service_spec` (defaults: `Allow`/`3`, matching
+pre-FEAT-079 behavior exactly) and `Sol_cli_deployment_render.fn_fields`
+into `cronjob_doc`, which now renders `CronJob.spec.concurrencyPolicy` and
+`jobTemplate.spec.backoffLimit` from configuration instead of a silently
+absent field and a hardcoded `3`. `sol_cli_rollback.ml`'s release
+reconstruction uses the same defaults for both fields, since no release
+predating this ticket ever recorded them.
+
+**B. Manual invocation.** Added `sol fn run <domain>/<name> [--target ...]`
+and `sol local fn run <domain>/<name>` (new `cli/sol/bin/cmd_fn.ml`),
+following `cmd_logs.ml`/`cmd_rollback.ml`'s established
+resolve-workload/destination pattern. A new
+`Sol_cli_kubectl.create_job_from_cronjob` wraps `kubectl create job
+--from=cronjob/...`. `resolve_fn` refuses (with a clear error) a selector
+that resolves to a `-svc`/`-worker` rather than a `-fn`.
+
+**Naming decisions honored exactly as specified:** `scheduled_concurrency`
+(not `concurrency`) and `backoff_limit` (not `max_attempts`) — both kept
+substrate-shaped per the ticket's Design section. `sol fn run` does not
+check for or block on an in-flight scheduled run; this is documented in
+`--help` and `sol-fn.md`, not silently omitted.
+
+**Demo/example coverage.** No `-fn` app existed anywhere in this repo's
+examples or the full-workspace scaffold before this ticket (confirmed: `sol
+new workspace` ships exactly one `-svc` plus one `-worker`). Rather than
+add a new hand-authored example app, extended the existing golden-path-smoke
+CI job (`.github/workflows/ci.yml`) — which already stands up a real k3d
+cluster and already adds a throwaway second `-svc` the same way — to also
+run `sol new fn ops/heartbeat_fn`, set non-default `scheduled_concurrency =
+"forbid"` / `backoff_limit = 5` in its `sol.toml`, deploy it in the same
+`sol up` pass as everything else, then verify both fields actually rendered
+into the live `CronJob` and that `sol local fn run` creates a real
+standalone `Job` (asserted to have no `ownerReferences`, distinguishing it
+from a CronJob-controller-created scheduled run) from that `CronJob`'s
+template. Also added the illustrative commented-out fields to the
+incremental `sol new fn` scaffold template (`sol_cli_scaffold_templates.ml`)
+so an app author sees them. This CI addition could not be executed against
+a live cluster during implementation (this environment has no k3d/live
+cluster); it follows the script's existing conventions as closely as
+possible (suffix-based namespace derivation, no added health-wait polling
+since CronJob/Job creation are synchronous kubectl operations) but should be
+watched on this PR's first real CI run and fixed forward if it doesn't
+behave as written.
+
+Unit-level coverage: `test_manifest_render.ml` gained 4 tests
+(`scheduled_concurrency`/`backoff_limit` configurable and default-preserved);
+`test_tool_adapters.ml` gained an argv-shape test for
+`create_job_from_cronjob`, matching this file's existing convention (no
+failure-propagation test for `create`-style raw-result kubectl wrappers,
+since a non-zero exit is not folded into `Error` for those).

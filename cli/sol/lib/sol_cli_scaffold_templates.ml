@@ -108,6 +108,10 @@ let tpl_fn_sol_toml =
 
 [service]
 schedule = "0 * * * *"   # cron schedule (default: every hour)
+# scheduled_concurrency = "forbid"  # allow (default) | forbid | replace -- overlap
+                                     # between scheduled runs only; a manual
+                                     # `sol fn run` is never constrained by this.
+# backoff_limit = 3                 # Kubernetes Job retries before giving up (default: 3)
 
 [infra.scale]
 # cpu    = "100m"

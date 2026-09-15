@@ -210,6 +210,20 @@ jobs:
           sol new svc checkout/checkout
           printf '\n[service]\ncalls = ["checkout/checkout_svc"]\n' >> app/payments/charge_svc/sol.toml
 
+          # FEAT-079: no -fn app exists anywhere in the scaffold or examples
+          # yet, and this is the only place a real cluster is already up --
+          # add one here (rather than a whole new example app) to exercise
+          # scheduled_concurrency/backoff_limit rendering and `sol fn run`
+          # against a real deployed CronJob, in the same sol up pass as
+          # everything else so this doesn't need its own health-wait cycle.
+          sol new fn ops/heartbeat_fn
+          # [service] is already open at the top of the generated file (it
+          # holds `schedule`); appending a second [service] header at EOF
+          # would be a duplicate-table TOML error, so insert into the
+          # existing block instead, right after `schedule = ...`.
+          sed -i '/^schedule = /a scheduled_concurrency = "forbid"\nbackoff_limit = 5' \
+            app/ops/heartbeat_fn/sol.toml
+
           eval $(opam env)
           dune build
 
@@ -406,6 +420,50 @@ jobs:
             exit 1
           fi
           echo "deployment event written, listed, joined to its release and immutable OK"
+
+          # FEAT-079: scheduled_concurrency/backoff_limit render into the
+          # deployed CronJob, and `sol fn run` creates a real ad-hoc Job from
+          # it. Both are fast kubectl reads/creates -- no health-wait loop
+          # needed, unlike the HTTP-serving workloads above.
+          fn_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-ops$' | head -1 || true)
+          if [ -z "$fn_ns" ]; then
+            echo "::error::FEAT-079: could not locate the heartbeat_fn namespace"
+            exit 1
+          fi
+          fn_cronjob=$(kubectl -n "$fn_ns" get cronjob -o name | sed 's|cronjob.batch/||' | head -1 || true)
+          if [ -z "$fn_cronjob" ]; then
+            echo "::error::FEAT-079: no CronJob found in namespace $fn_ns"
+            exit 1
+          fi
+          fn_spec=$(kubectl -n "$fn_ns" get cronjob "$fn_cronjob" -o yaml)
+          case "$fn_spec" in
+            *"concurrencyPolicy: Forbid"*) ;;
+            *) echo "::error::FEAT-079: CronJob $fn_cronjob is missing concurrencyPolicy: Forbid"; exit 1 ;;
+          esac
+          case "$fn_spec" in
+            *"backoffLimit: 5"*) ;;
+            *) echo "::error::FEAT-079: CronJob $fn_cronjob is missing backoffLimit: 5"; exit 1 ;;
+          esac
+          echo "scheduled_concurrency/backoff_limit rendered into the deployed CronJob OK"
+
+          jobs_before=$(kubectl -n "$fn_ns" get jobs -o name | wc -l)
+          sol local fn run "ops/heartbeat_fn"
+          jobs_after=$(kubectl -n "$fn_ns" get jobs -o name | wc -l)
+          if [ "$jobs_after" -le "$jobs_before" ]; then
+            echo "::error::FEAT-079: 'sol local fn run' did not create a new Job in $fn_ns"
+            exit 1
+          fi
+          manual_job=$(kubectl -n "$fn_ns" get jobs -o name | sed 's|job.batch/||' | grep -- '-manual-' | head -1 || true)
+          if [ -z "$manual_job" ]; then
+            echo "::error::FEAT-079: no manually-created Job found in $fn_ns"
+            exit 1
+          fi
+          job_owner=$(kubectl -n "$fn_ns" get job "$manual_job" -o jsonpath='{.metadata.ownerReferences}')
+          case "$job_owner" in
+            "") ;;
+            *) echo "::error::FEAT-079: manual Job $manual_job has an ownerReference (should be a standalone Job, not CronJob-controller-owned)"; exit 1 ;;
+          esac
+          echo "'sol fn run' created a standalone Job ($manual_job) from the deployed CronJob OK"
 
       # `sol up` blocks on an un-timed-out `kubectl rollout status`
       # internally, so a crash-looping pod (this job's whole reason to

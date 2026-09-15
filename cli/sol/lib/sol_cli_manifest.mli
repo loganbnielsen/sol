@@ -195,6 +195,8 @@ val cronjob_doc
   -> name:string
   -> image:string
   -> schedule:string
+  -> concurrency_policy:string
+  -> backoff_limit:int
   -> cpu:string
   -> memory:string
   -> workspace:string

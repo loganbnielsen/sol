@@ -158,6 +158,11 @@ let decode_workload ~release_id ~workspace (w : Sol_cli_release.workload) =
     ; secrets = w.secrets
     ; volumes
     ; schedule = w.schedule
+    ; (* FEAT-079: not recorded on any release predating this field; a
+         restored release always gets the same default a fresh deploy with
+         no explicit config would. *)
+      scheduled_concurrency = Sol_cli_toml.Allow
+    ; backoff_limit = 3
     ; replicas = w.replicas
     ; cpu
     ; memory

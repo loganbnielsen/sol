@@ -7,6 +7,19 @@ not a full commit log — see `git log` and `pipeline/tickets/DONE/` for that.
 
 ## Unreleased
 
+- **New (FEAT-079):** `-fn`'s `sol.toml` gains `scheduled_concurrency`
+  (`allow`/`forbid`/`replace`, default `allow`) and `backoff_limit` (default
+  `3`), rendered as the deployed `CronJob`'s `concurrencyPolicy` and
+  `jobTemplate.spec.backoffLimit`. Both previously had no Sol-level
+  representation — `concurrencyPolicy` silently defaulted to Kubernetes'
+  `Allow`, and `backoffLimit` was hardcoded to `3`. Omitting either field
+  preserves that exact prior behavior.
+- **New (FEAT-079):** `sol fn run <domain>/<name> [--target ...]` and `sol
+  local fn run <domain>/<name>` manually invoke a deployed `-fn` by creating
+  a Kubernetes `Job` from its deployed `CronJob`'s `jobTemplate` — the same
+  execution definition a scheduled run would use. Not constrained by
+  `scheduled_concurrency`, which only governs overlap between the CronJob
+  controller's own scheduled runs.
 - **Behavior change (BUG-031):** `-fn`'s generated `CronJob` now honors
   `sol.toml`'s `cpu`/`memory` fields, which were previously parsed but
   silently discarded in favor of hardcoded values. For a `-fn` app that

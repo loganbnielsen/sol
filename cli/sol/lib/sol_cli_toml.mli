@@ -2,6 +2,15 @@ type rollout_strategy =
   | Recreate
   | RollingUpdate
 
+(** [-fn]'s [CronJob.spec.concurrencyPolicy] (FEAT-079). Named for exactly
+    what it constrains: overlap between the CronJob controller's own
+    scheduled runs. A manual invocation ([sol fn run]) is not a scheduled
+    run and is never constrained by this value. *)
+type scheduled_concurrency =
+  | Allow
+  | Forbid
+  | Replace
+
 (** A single step in an Argo Rollouts canary strategy. [Weight n] sets the
     traffic weight percentage to [n]. [Pause None] pauses indefinitely (requires
     manual promotion). [Pause (Some s)] pauses for [s] seconds then
@@ -78,6 +87,15 @@ type t =
     (** Cron schedule for [-fn] services, e.g. ["0 * * * *"]. Read from
           [[service] schedule] in sol.toml. [None] means "use default". *)
   ; schedule : string option
+    (** [-fn]'s [CronJob.spec.concurrencyPolicy] (FEAT-079). Read from
+          [[service] scheduled_concurrency] in sol.toml. [None] means "use
+          default" ([Allow], preserving pre-FEAT-079 behavior). *)
+  ; scheduled_concurrency : scheduled_concurrency option
+    (** [-fn]'s retry-count limit (FEAT-079), rendered as
+          [jobTemplate.spec.backoffLimit]. Read from [[service]
+          backoff_limit] in sol.toml. [None] means "use default" ([3],
+          preserving pre-FEAT-079 behavior). *)
+  ; backoff_limit : int option
     (** Kafka topic names owned by this event/service directory. Read from
           [[service] topics] in sol.toml. Used by [discover_topics] to collect
           topics without scanning OCaml source files. *)

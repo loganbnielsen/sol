@@ -33,6 +33,8 @@ type fn_fields =
   { schedule : string
   ; cpu : Sol_cli_toml.cpu_quantity
   ; memory : Sol_cli_toml.memory_quantity
+  ; scheduled_concurrency : Sol_cli_toml.scheduled_concurrency
+  ; backoff_limit : int
   }
 
 type render_workload =
@@ -287,7 +289,13 @@ let render
                ~ingress_path:"/"
                ~cluster_issuer:"letsencrypt-prod"
                ~deployment
-           | Render_fn { schedule; cpu; memory } ->
+           | Render_fn { schedule; cpu; memory; scheduled_concurrency; backoff_limit } ->
+             let concurrency_policy =
+               match scheduled_concurrency with
+               | Sol_cli_toml.Allow -> "Allow"
+               | Sol_cli_toml.Forbid -> "Forbid"
+               | Sol_cli_toml.Replace -> "Replace"
+             in
              [ cronjob_doc
                  ~secret_keys:(List.map fst secrets)
                  ?env
@@ -295,6 +303,8 @@ let render
                  ~name
                  ~image:img
                  ~schedule
+                 ~concurrency_policy
+                 ~backoff_limit
                  ~cpu:(Sol_cli_toml.cpu_quantity_to_string cpu)
                  ~memory:(Sol_cli_toml.memory_quantity_to_string memory)
                  ~workspace
@@ -355,7 +365,13 @@ let render_spec
     | Worker -> Render_worker { deployment }
     | Fn ->
       let schedule = Option.value s.schedule ~default:"0 * * * *" in
-      Render_fn { schedule; cpu = s.cpu; memory = s.memory }
+      Render_fn
+        { schedule
+        ; cpu = s.cpu
+        ; memory = s.memory
+        ; scheduled_concurrency = s.scheduled_concurrency
+        ; backoff_limit = s.backoff_limit
+        }
   in
   render ~workspace ?env ~image ~release_id ~secret_backend { common; workload }
 ;;

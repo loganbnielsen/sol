@@ -18,6 +18,7 @@ let () =
       ; Cmd_deploy.cmd
       ; Cmd_status.cmd
       ; Cmd_logs.cmd
+      ; Cmd_fn.cmd
       ; Cmd_open.cmd
       ; Cmd_migrate.cmd
       ; Cmd_rollback.cmd

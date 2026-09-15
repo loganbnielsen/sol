@@ -60,6 +60,8 @@ let service
   ; secrets = [ "DATABASE_URL", "postgres://secret" ]
   ; volumes = []
   ; schedule = None
+  ; scheduled_concurrency = Sol_cli_toml.Allow
+  ; backoff_limit = 3
   ; replicas = 2
   ; cpu = cpu "250m"
   ; memory = memory "256Mi"

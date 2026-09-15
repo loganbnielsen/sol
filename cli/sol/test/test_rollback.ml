@@ -104,6 +104,8 @@ let ledger_spec : Sol_cli_deployment_plan.service_spec =
   ; secrets = [ "DB_PASSWORD", "" ]
   ; volumes = []
   ; schedule = None
+  ; scheduled_concurrency = Sol_cli_toml.Allow
+  ; backoff_limit = 3
   ; replicas = 2
   ; cpu = cpu "250m"
   ; memory = memory "256Mi"
@@ -141,6 +143,8 @@ let billing_spec : Sol_cli_deployment_plan.service_spec =
         }
       ]
   ; schedule = None
+  ; scheduled_concurrency = Sol_cli_toml.Allow
+  ; backoff_limit = 3
   ; replicas = 3
   ; cpu = cpu "500m"
   ; memory = memory "512Mi"
@@ -748,6 +752,8 @@ let fn_spec : Sol_cli_deployment_plan.service_spec =
   ; k8s_name = k8s_name "invoice-fn"
   ; primitive = Sol_cli_deployment_plan.Fn
   ; schedule = Some "0 * * * *"
+  ; scheduled_concurrency = Sol_cli_toml.Allow
+  ; backoff_limit = 3
   ; replicas = 1
   ; rollout_strategy = None
   ; progressive_delivery = None

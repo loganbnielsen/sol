@@ -32,6 +32,7 @@
   cmd_deploy_event
   cmd_status
   cmd_logs
+  cmd_fn
   cmd_open
   cmd_migrate
   cmd_rollback
