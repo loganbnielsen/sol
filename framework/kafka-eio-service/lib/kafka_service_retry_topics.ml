@@ -2,6 +2,7 @@ let backoff_s n = Float.min (1.0 *. (2. ** Float.of_int n)) 600.0
 let hdr_attempt = "X-Sol-Attempt"
 let hdr_retry_at = "X-Sol-Retry-At"
 let hdr_decode_error = "X-Sol-Decode-Error"
+let hdr_origin_group = "X-Sol-Origin-Group"
 
 (* BUG-029: bounded in-process retry for the relay's own producer calls
    (retry/DLQ publication), so a single transient produce failure self-heals
@@ -109,16 +110,27 @@ let retry_message ~raw_msg ~attempt ~delay_s =
 ;;
 
 (** Retry budget exhausted: a [retry_message] with [delay_s = 0.0] (dead
-    letters are immediate, not scheduled). *)
-let dead_letter_message ~raw_msg ~attempt = retry_message ~raw_msg ~attempt ~delay_s:0.0
+    letters are immediate, not scheduled), plus [X-Sol-Origin-Group] (BUG-030:
+    dead-lettering is a statement about [group_id]'s processing attempt, not
+    an intrinsic property of the source event -- the DLQ topic is already
+    scoped to [group_id], but the header keeps the record self-describing if
+    it's ever exported or inspected independently of its topic name). *)
+let dead_letter_message ~raw_msg ~attempt ~group_id =
+  let base = retry_message ~raw_msg ~attempt ~delay_s:0.0 in
+  { base with headers = (hdr_origin_group, Some group_id) :: base.headers }
+;;
 
 (** A retry record that couldn't even be decoded: preserves [raw_msg]'s
     existing headers untouched (including whatever [X-Sol-Attempt]/
     [X-Sol-Retry-At] it already carried — this is not another scheduled
-    attempt) and appends a decode diagnostic. *)
-let retry_decode_failure_message ~raw_msg ~attempt ~decode_error =
+    attempt), and appends a decode diagnostic plus [X-Sol-Origin-Group]
+    (BUG-030, see {!dead_letter_message}). *)
+let retry_decode_failure_message ~raw_msg ~attempt ~decode_error ~group_id =
   { source = raw_msg
-  ; headers = (hdr_decode_error, Some decode_error) :: raw_msg.Kafka.Consumer.headers
+  ; headers =
+      (hdr_decode_error, Some decode_error)
+      :: (hdr_origin_group, Some group_id)
+      :: raw_msg.Kafka.Consumer.headers
   ; attempt
   ; delay_s = 0.0
   }
@@ -156,7 +168,7 @@ let action_of_handler_error ~retry_topic ~dlq_topic ~max_attempts ~attempt = fun
     [relay.source]), so a retried message hashes to the same partition on the
     target topic that its key would hash to on the source topic (BUG-027:
     both topics share [svc.partitions]). *)
-let execute_action action ~raw_msg ~attempt ~publish ~ack =
+let execute_action ~group_id action ~raw_msg ~attempt ~publish ~ack =
   match action with
   | Ack -> ack ()
   | Forward_retry { target; delay_s } ->
@@ -164,7 +176,9 @@ let execute_action action ~raw_msg ~attempt ~publish ~ack =
      | Ok () -> ack ()
      | Error e -> Error e)
   | Forward_dlq { target } ->
-    (match publish ~target_topic:target (dead_letter_message ~raw_msg ~attempt) with
+    (match
+       publish ~target_topic:target (dead_letter_message ~raw_msg ~attempt ~group_id)
+     with
      | Ok () -> ack ()
      | Error e -> Error e)
 ;;
@@ -172,15 +186,67 @@ let execute_action action ~raw_msg ~attempt ~publish ~ack =
 (** A retry record that couldn't even be decoded always goes to the DLQ; it
     doesn't need [execute_action]'s [retry_action] dispatch, so it builds its
     own relay command and publishes directly. *)
-let route_retry_decode_error ~dlq_topic ~raw_msg ~attempt ~decode_error ~publish ~ack =
+let route_retry_decode_error
+      ~dlq_topic
+      ~raw_msg
+      ~attempt
+      ~decode_error
+      ~group_id
+      ~publish
+      ~ack
+  =
   Printf.eprintf "sol-worker: RETRY_DECODE_ERROR to_dlq=true error=%S\n%!" decode_error;
   match
     publish
       ~target_topic:dlq_topic
-      (retry_decode_failure_message ~raw_msg ~attempt ~decode_error)
+      (retry_decode_failure_message ~raw_msg ~attempt ~decode_error ~group_id)
   with
   | Ok () -> ack ()
   | Error e -> Error e
+;;
+
+(* BUG-030: retry/DLQ topic identity must include both source-topic and
+   consumer-group identity, or independent consumer groups on the same source
+   topic can consume each other's retries/dead-letters. Group ids are
+   sanitized to alphanumerics and '-' only -- never left free to contain '.'
+   or '_', which Kafka's own metrics/JMX naming treats as interchangeable, so
+   two differently-punctuated group ids could otherwise collide at the
+   metrics layer even while remaining distinct topic-name strings. Kafka
+   topic names cap at 249 bytes; a group id long enough to risk that limit is
+   truncated and given a short content-hash suffix, always (not only when a
+   collision is detected -- there is no registry of every other group id to
+   check against, so "would collide" is read conservatively as "truncation
+   happened at all"), so two different overlong ids can never truncate to the
+   same canonical segment. *)
+let max_group_segment_len = 64
+
+let sanitize_group_id group_id =
+  let sanitized =
+    String.map
+      (function
+        | ('a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '-') as c -> c
+        | _ -> '-')
+      group_id
+  in
+  if sanitized = "" then "unscoped" else sanitized
+;;
+
+let canonical_group_segment group_id =
+  let sanitized = sanitize_group_id group_id in
+  if String.length sanitized <= max_group_segment_len
+  then sanitized
+  else (
+    let hash_suffix = String.sub (Digest.to_hex (Digest.string group_id)) 0 8 in
+    let prefix_len = max_group_segment_len - String.length hash_suffix - 1 in
+    String.sub sanitized 0 prefix_len ^ "-" ^ hash_suffix)
+;;
+
+(** The one canonical retry/DLQ topic name: [<source>.<canonical-group>.<suffix>]
+    ([suffix] is ["retry"] or ["dlq"]). Used by topic provisioning and the
+    retry consumer alike -- never reconstruct a retry/DLQ topic name any other
+    way (BUG-030). *)
+let relay_topic_name ~source ~group_id ~suffix =
+  Printf.sprintf "%s.%s.%s" source (canonical_group_segment group_id) suffix
 ;;
 
 let consume
@@ -206,12 +272,13 @@ let consume
     then Error (config_error "Retry_topics max_attempts must be >= 1")
     else Ok ()
   in
+  let source = topic_name_to_string topic.name in
   let* retry_topic_name =
-    Kafka_service_intf.topic_name (topic_name_to_string topic.name ^ "-retry")
+    Kafka_service_intf.topic_name (relay_topic_name ~source ~group_id ~suffix:"retry")
     |> Result.map_error config_error
   in
   let* dlq_topic_name =
-    Kafka_service_intf.topic_name (topic_name_to_string topic.name ^ "-dlq")
+    Kafka_service_intf.topic_name (relay_topic_name ~source ~group_id ~suffix:"dlq")
     |> Result.map_error config_error
   in
   let* () =
@@ -329,6 +396,7 @@ let consume
                  ~raw_msg
                  ~attempt
                  ~decode_error:e
+                 ~group_id
                  ~publish
                  ~ack
              with
@@ -357,7 +425,9 @@ let consume
                 with
                 | Error e -> Kafka.Consumer.Error e
                 | Ok action ->
-                  (match execute_action action ~raw_msg ~attempt:next ~publish ~ack with
+                  (match
+                     execute_action ~group_id action ~raw_msg ~attempt:next ~publish ~ack
+                   with
                    | Ok () -> Kafka.Consumer.Continue
                    | Error e -> Kafka.Consumer.Error e)))
         in
@@ -372,7 +442,13 @@ let consume
             Printf.eprintf "warn: kafka_service: retry metadata: %s\n%!" e;
             let action = Forward_dlq { target = dlq_topic_name } in
             (match
-               execute_action action ~raw_msg ~attempt:(max 1 max_attempts) ~publish ~ack
+               execute_action
+                 ~group_id
+                 action
+                 ~raw_msg
+                 ~attempt:(max 1 max_attempts)
+                 ~publish
+                 ~ack
              with
              | Ok () -> Kafka.Consumer.Continue
              | Error e -> Kafka.Consumer.Error e)
@@ -444,7 +520,9 @@ let consume
             with
             | Error e -> Kafka.Consumer.Error e
             | Ok action ->
-              (match execute_action action ~raw_msg ~attempt:1 ~publish ~ack with
+              (match
+                 execute_action ~group_id action ~raw_msg ~attempt:1 ~publish ~ack
+               with
                | Ok () -> Kafka.Consumer.Continue
                | Error e -> Kafka.Consumer.Error e)))
     in

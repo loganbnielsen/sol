@@ -194,6 +194,7 @@ let test_retry_publish_then_ack_failure_is_error () =
   let action = Kafka_service.Retry_topics.Forward_retry { target; delay_s = 1.0 } in
   match
     Kafka_service.Retry_topics.execute_action
+      ~group_id:"test-group"
       action
       ~raw_msg:(raw_retry_msg ())
       ~attempt:1
@@ -217,6 +218,7 @@ let test_retry_publish_failure_does_not_ack () =
   let action = Kafka_service.Retry_topics.Forward_dlq { target } in
   match
     Kafka_service.Retry_topics.execute_action
+      ~group_id:"test-group"
       action
       ~raw_msg:(raw_retry_msg ())
       ~attempt:1
@@ -233,7 +235,7 @@ let test_dead_letter_handler_error_routes_to_dlq_and_acks () =
   let acked = ref 0 in
   let published = ref None in
   let publish ~target_topic (msg : Kafka_service.Retry_topics.relay) =
-    published := Some (target_topic, msg.attempt, msg.delay_s);
+    published := Some (target_topic, msg);
     Ok ()
   in
   let ack () =
@@ -252,6 +254,7 @@ let test_dead_letter_handler_error_routes_to_dlq_and_acks () =
   | Ok action ->
     (match
        Kafka_service.Retry_topics.execute_action
+         ~group_id:"test-group"
          action
          ~raw_msg:(raw_retry_msg ())
          ~attempt:1
@@ -261,13 +264,17 @@ let test_dead_letter_handler_error_routes_to_dlq_and_acks () =
      | Error e -> Alcotest.failf "unexpected execute error: %s" (Kafka.Error.to_string e)
      | Ok () ->
        Alcotest.(check int) "acked once" 1 !acked;
-       Alcotest.(check (option (triple string int (float 0.0001))))
-         "published to dlq without retry delay"
-         (Some (Kafka_service.topic_name_to_string dlq_topic, 1, 0.0))
-         (Option.map
-            (fun (topic, attempt, delay_s) ->
-               Kafka_service.topic_name_to_string topic, attempt, delay_s)
-            !published))
+       (match !published with
+        | None -> Alcotest.fail "publish was never called"
+        | Some (target_topic, (msg : Kafka_service.Retry_topics.relay)) ->
+          Alcotest.(check (triple string int (float 0.0001)))
+            "published to dlq without retry delay"
+            (Kafka_service.topic_name_to_string dlq_topic, 1, 0.0)
+            (Kafka_service.topic_name_to_string target_topic, msg.attempt, msg.delay_s);
+          Alcotest.(check (option string))
+            "origin-group header (BUG-030)"
+            (Some "test-group")
+            (List.assoc_opt "X-Sol-Origin-Group" msg.headers |> Option.join)))
 ;;
 
 (* BUG-027: a retried message's key must travel with it to the retry/DLQ
@@ -284,7 +291,13 @@ let test_retry_publish_preserves_key () =
   let action = Kafka_service.Retry_topics.Forward_retry { target; delay_s = 1.0 } in
   let raw_msg = raw_retry_msg ~key:(Bytes.of_string "order-42") () in
   match
-    Kafka_service.Retry_topics.execute_action action ~raw_msg ~attempt:1 ~publish ~ack
+    Kafka_service.Retry_topics.execute_action
+      ~group_id:"test-group"
+      action
+      ~raw_msg
+      ~attempt:1
+      ~publish
+      ~ack
   with
   | Error e -> Alcotest.failf "unexpected execute error: %s" (Kafka.Error.to_string e)
   | Ok () ->
@@ -423,6 +436,7 @@ let test_retry_decode_error_routes_to_dlq_and_acks_after_publish () =
       ~raw_msg
       ~attempt:2
       ~decode_error:"bad json"
+      ~group_id:"test-group"
       ~publish
       ~ack
   with
@@ -461,6 +475,10 @@ let test_retry_decode_error_routes_to_dlq_and_acks_after_publish () =
          "decode diagnostic header"
          (Some "bad json")
          (List.assoc_opt "X-Sol-Decode-Error" msg.headers |> Option.join);
+       Alcotest.(check (option string))
+         "origin-group header (BUG-030)"
+         (Some "test-group")
+         (List.assoc_opt "X-Sol-Origin-Group" msg.headers |> Option.join);
        Alcotest.(check (float 0.0001)) "dlq delay" 0.0 msg.delay_s;
        Alcotest.(check int) "publish happened before ack" 0 acked_before)
 ;;
@@ -481,11 +499,90 @@ let test_retry_decode_error_publish_failure_does_not_ack () =
       ~raw_msg:(raw_retry_msg ())
       ~attempt:1
       ~decode_error:"bad json"
+      ~group_id:"test-group"
       ~publish
       ~ack
   with
   | Error Kafka.Error.Transport -> Alcotest.(check bool) "ack skipped" false !acked
   | _ -> Alcotest.fail "expected publish failure to be returned"
+;;
+
+(* BUG-030: retry/DLQ topic names must be scoped by consumer group, or
+   independent groups on the same source topic consume each other's
+   retries/dead-letters. *)
+let test_relay_topic_name_scopes_by_group () =
+  Alcotest.(check string)
+    "canonical shape"
+    "orders.payments.retry"
+    (Kafka_service.Retry_topics.relay_topic_name
+       ~source:"orders"
+       ~group_id:"payments"
+       ~suffix:"retry");
+  Alcotest.(check bool)
+    "two groups on the same source topic get distinct topic names"
+    true
+    (String.equal
+       (Kafka_service.Retry_topics.relay_topic_name
+          ~source:"orders"
+          ~group_id:"payments"
+          ~suffix:"dlq")
+       (Kafka_service.Retry_topics.relay_topic_name
+          ~source:"orders"
+          ~group_id:"analytics"
+          ~suffix:"dlq")
+     |> not)
+;;
+
+let test_relay_topic_name_sanitizes_invalid_characters () =
+  Alcotest.(check string)
+    "dots and slashes become hyphens"
+    "orders.pay-ments-v1-eu-west-1.retry"
+    (Kafka_service.Retry_topics.relay_topic_name
+       ~source:"orders"
+       ~group_id:"pay.ments/v1_eu:west-1"
+       ~suffix:"retry")
+;;
+
+let test_relay_topic_name_empty_group_id_is_unscoped () =
+  Alcotest.(check string)
+    "empty group id"
+    "orders.unscoped.retry"
+    (Kafka_service.Retry_topics.relay_topic_name
+       ~source:"orders"
+       ~group_id:""
+       ~suffix:"retry")
+;;
+
+let test_relay_topic_name_truncates_overlong_group_ids_deterministically () =
+  let long_group = String.make 200 'g' in
+  let name1 =
+    Kafka_service.Retry_topics.relay_topic_name
+      ~source:"orders"
+      ~group_id:long_group
+      ~suffix:"retry"
+  in
+  let name2 =
+    Kafka_service.Retry_topics.relay_topic_name
+      ~source:"orders"
+      ~group_id:long_group
+      ~suffix:"retry"
+  in
+  Alcotest.(check string) "deterministic for the same group id" name1 name2;
+  Alcotest.(check bool)
+    "stays well under Kafka's 249-byte limit"
+    true
+    (String.length name1 < 249);
+  let other_long_group = String.make 200 'h' in
+  let name3 =
+    Kafka_service.Retry_topics.relay_topic_name
+      ~source:"orders"
+      ~group_id:other_long_group
+      ~suffix:"retry"
+  in
+  Alcotest.(check bool)
+    "two different overlong group ids never truncate to the same name"
+    true
+    (not (String.equal name1 name3))
 ;;
 
 (* ------------------------------------------------------------------ *)
@@ -679,6 +776,22 @@ let () =
             "retry decode error publish failure does not ack"
             `Quick
             test_retry_decode_error_publish_failure_does_not_ack
+        ; test_case
+            "relay topic name scopes by group"
+            `Quick
+            test_relay_topic_name_scopes_by_group
+        ; test_case
+            "relay topic name sanitizes invalid characters"
+            `Quick
+            test_relay_topic_name_sanitizes_invalid_characters
+        ; test_case
+            "relay topic name: empty group id is unscoped"
+            `Quick
+            test_relay_topic_name_empty_group_id_is_unscoped
+        ; test_case
+            "relay topic name truncates overlong group ids deterministically"
+            `Quick
+            test_relay_topic_name_truncates_overlong_group_ids_deterministically
         ] )
     ; ( "topic_name"
       , [ test_case

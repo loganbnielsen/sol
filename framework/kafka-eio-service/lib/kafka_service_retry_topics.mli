@@ -68,23 +68,33 @@ val retry_message
   -> relay
 
 (** Retry budget exhausted: a {!retry_message} with [delay_s = 0.0] (dead
-    letters are immediate, not scheduled). *)
-val dead_letter_message : raw_msg:Kafka.Consumer.message -> attempt:int -> relay
+    letters are immediate, not scheduled), plus [X-Sol-Origin-Group] (BUG-030:
+    dead-lettering is a statement about [group_id]'s processing attempt, not
+    an intrinsic property of the source event). *)
+val dead_letter_message
+  :  raw_msg:Kafka.Consumer.message
+  -> attempt:int
+  -> group_id:string
+  -> relay
 
 (** A retry record that couldn't even be decoded: preserves [raw_msg]'s
-    existing headers untouched (this is not another scheduled attempt) and
-    appends a decode diagnostic. *)
+    existing headers untouched (this is not another scheduled attempt), and
+    appends a decode diagnostic plus [X-Sol-Origin-Group] (BUG-030, see
+    {!dead_letter_message}). *)
 val retry_decode_failure_message
   :  raw_msg:Kafka.Consumer.message
   -> attempt:int
   -> decode_error:string
+  -> group_id:string
   -> relay
 
 (** Execute the side-effecting part of a retry decision: build the relay
     command for the chosen action (for [Forward_retry]/[Forward_dlq]),
-    [publish] it, then [ack]. [Ack] skips straight to acking. *)
+    [publish] it, then [ack]. [Ack] skips straight to acking. [group_id] is
+    only used on the [Forward_dlq] path (BUG-030's [X-Sol-Origin-Group]). *)
 val execute_action
-  :  retry_action
+  :  group_id:string
+  -> retry_action
   -> raw_msg:Kafka.Consumer.message
   -> attempt:int
   -> publish:
@@ -105,12 +115,24 @@ val route_retry_decode_error
   -> raw_msg:Kafka.Consumer.message
   -> attempt:int
   -> decode_error:string
+  -> group_id:string
   -> publish:
        (target_topic:Kafka_service_intf.topic_name
         -> relay
         -> (unit, Kafka.Error.t) result)
   -> ack:(unit -> (unit, Kafka.Error.t) result)
   -> (unit, Kafka.Error.t) result
+
+(** The one canonical retry/DLQ topic name: [<source>.<canonical-group>.<suffix>]
+    ([suffix] is ["retry"] or ["dlq"]). [group_id] is sanitized to
+    alphanumerics and ['-'] and, if long enough to risk Kafka's 249-byte topic
+    name limit, truncated with a content-hash suffix (BUG-030: retry/DLQ
+    topic identity must include consumer-group identity, or independent
+    groups on the same source topic consume each other's retries/dead
+    letters). Exposed for direct testing of sanitization, truncation, and
+    cross-group distinctness; never reconstruct a retry/DLQ topic name any
+    other way. *)
+val relay_topic_name : source:string -> group_id:string -> suffix:string -> string
 
 (** [on_relay_publish] fires after each attempt to publish to the retry/DLQ
     topic itself resolves -- [`Published] once (after in-process produce

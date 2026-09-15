@@ -144,6 +144,7 @@ module Retry_topics = struct
   let action_of_handler_error = Kafka_service_retry_topics.action_of_handler_error
   let execute_action = Kafka_service_retry_topics.execute_action
   let route_retry_decode_error = Kafka_service_retry_topics.route_retry_decode_error
+  let relay_topic_name = Kafka_service_retry_topics.relay_topic_name
 end
 
 module Admin = struct
