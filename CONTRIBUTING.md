@@ -41,6 +41,19 @@ A pre-commit hook runs the build and unit suites; install it with
 `bash cli/platform/local/scripts/install-hooks.sh`. It also enforces that
 `pipeline/tickets/` is only edited from the main checkout.
 
+## Commits and branch protection
+
+Changes that touch no product source — pipeline planning/bookkeeping under
+`pipeline/`, documentation (`*.md`), and the perf baseline — may be committed
+directly to `main` by maintainers. Source-code changes follow the normal branch
+→ pull request → required checks → merge workflow. **Mixed changes must use the
+pull-request workflow**: a ticket or doc file riding along with a source change
+does not make the source change direct-pushable.
+
+This matches what the pre-commit hook already treats as bookkeeping — it runs
+the test suite only when a staged file is not a ticket, not a `*.md`, and not
+the perf baseline.
+
 ## Trademarks
 
 The "Sol" name and logo are **not** covered by the Apache-2.0 licence — see
