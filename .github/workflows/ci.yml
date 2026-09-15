@@ -463,12 +463,18 @@ jobs:
             echo "::error::FEAT-079: no manually-created Job found in $fn_ns"
             exit 1
           fi
-          job_owner=$(kubectl -n "$fn_ns" get job "$manual_job" -o jsonpath='{.metadata.ownerReferences}')
-          case "$job_owner" in
-            "") ;;
-            *) echo "::error::FEAT-079: manual Job $manual_job has an ownerReference (should be a standalone Job, not CronJob-controller-owned)"; exit 1 ;;
-          esac
-          echo "'sol fn run' created a standalone Job ($manual_job) from the deployed CronJob OK"
+          # `kubectl create job --from=cronjob/X` sets an ownerReference back
+          # to the source CronJob (confirmed by this job's own run) -- the
+          # positive check that actually matters is that the reference names
+          # the *right* CronJob, proving `sol fn run` really did copy from
+          # the deployed one rather than some other source.
+          job_owner_kind=$(kubectl -n "$fn_ns" get job "$manual_job" -o jsonpath='{.metadata.ownerReferences[0].kind}')
+          job_owner_name=$(kubectl -n "$fn_ns" get job "$manual_job" -o jsonpath='{.metadata.ownerReferences[0].name}')
+          if [ "$job_owner_kind" != "CronJob" ] || [ "$job_owner_name" != "$fn_cronjob" ]; then
+            echo "::error::FEAT-079: manual Job $manual_job's owner is '$job_owner_kind/$job_owner_name', expected 'CronJob/$fn_cronjob'"
+            exit 1
+          fi
+          echo "'sol fn run' created Job $manual_job from the deployed CronJob $fn_cronjob OK"
 
       # `sol up` blocks on an un-timed-out `kubectl rollout status`
       # internally, so a crash-looping pod (this job's whole reason to
