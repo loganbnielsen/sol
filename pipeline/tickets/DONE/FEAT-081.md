@@ -120,10 +120,50 @@ FEAT-076 / FEAT-078.
   (`In_memory` leaves the offset unacknowledged).
 - `@sol/obs` `WorkerMessageStatus` includes `dead_letter`,
   `relay_published`, `relay_failed`.
-- A cross-language test (or live round-trip) demonstrates TS↔OCaml
-  retry-record interop, not just TS unit tests.
+- Broker-backed TS test (env-gated on `KAFKA_BROKERS`), plus the convention
+  fixtures, demonstrate the real ownership transfer — not merely that kafkajs
+  can produce/consume. (Corrected 2026-09-15: the original wording asked for a
+  TS↔OCaml live interop test. Retry/DLQ is group-scoped and internal to the
+  owning worker, so there is no cross-language hand-off to test — see DEC-022
+  and the FEAT-080 reconciliation. What must match across languages is the
+  *convention* — topic naming, headers, backoff — which the fixtures pin.)
 - `demo_ts` exercises the retryable tier (or the exemption is recorded), and
   the stale README note is fixed.
+
+## Completion notes (2026-09-15)
+
+- `retry.ts` — retry policy + `backoffS` (mirrors kafka-eio's
+  `Kafka.Consumer.backoff_s`, incl. the zero-jitter fast path), BUG-030
+  group-scoped relay topic naming (sanitize + MD5 truncation), the `X-Sol-*`
+  record-header builders, `parseAttemptHeader`/`parseRetryAtHeader`,
+  `decideAction`.
+- `outcome.ts` — `Ack | Retry reason | Dead_letter reason`; the reason is
+  diagnostic text only.
+- `routing.ts` — the *single* retry/DLQ routing decision, shared by the source
+  path and the relay so they cannot drift.
+- `retryable.ts` — `wrapEachRetryableMessage`: declared capability
+  (retry-topics requires a relay and `maxAttempts >= 1` at construction, so a
+  missing destination is a construction error), `in-memory` sleep/re-run,
+  retry-topics forward-then-commit, fail-closed.
+- `relay.ts` — transport only: `provisionRelayTopics`, `kafkaRetryRelay`,
+  `runRetryRelayConsumer` (group `<group>-sol-retry`). Publish-before-commit;
+  a failed publish throws (input uncommitted); an undecodable retry record is
+  transferred to the DLQ before commit; malformed retry metadata is
+  deliberately terminal (documented as policy, not arithmetic).
+- `@sol/obs` — `WorkerMessageStatus` gained `dead_letter`,
+  `relay_published`, `relay_failed`.
+- `demo_ts/fulfillment_worker` — migrated onto the retryable API; the app
+  expresses outcomes and policy only, never headers/topics/offsets.
+
+**Tests:** 42 `@sol/kafka` unit + 12 `@sol/obs` (3 broker tests skipped with no
+broker); 45/45 with `KAFKA_BROKERS=localhost:9092` against Redpanda. CI skips
+the integration trio (the `test` job has no broker), matching `run_kafka()`.
+
+**Demo/example coverage:** satisfied — `demo_ts/fulfillment_worker` migrated
+to the retryable tier, exercising the API end to end.
+
+**Language-parity impact:** this *is* the `@sol/kafka` retry/DLQ parity; the
+remaining `-fn`/`sol-jobs` verdicts are tracked in FEAT-080.
 
 If implementation shows this is too large for one PR, split item 5 (the
 `@sol/obs` vocabulary change) out as its own small ticket rather than growing
