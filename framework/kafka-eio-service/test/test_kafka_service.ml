@@ -429,6 +429,107 @@ let test_retry_produce_gives_up_after_max_attempts () =
     Alcotest.(check int) "on_retry called max_attempts - 1 times" 2 !retries
 ;;
 
+let test_retry_decode_error_routes_to_dlq_and_acks_after_publish () =
+  let dlq_topic = Kafka_service.topic_name_exn "orders-dlq" in
+  let acked = ref 0 in
+  let published = ref None in
+  let raw_msg =
+    raw_retry_msg
+      ~key:(Bytes.of_string "order-42")
+      ~headers:
+        [ "X-Sol-Attempt", Some "2"
+        ; "X-Sol-Retry-At", Some "123.5"
+        ; "app-header", Some "kept"
+        ]
+      ()
+  in
+  let publish_raw ~target_topic ~attempt ~raw_bytes ~key ~headers ~delay_s ~partition:_ =
+    published := Some (target_topic, attempt, raw_bytes, key, headers, delay_s, !acked);
+    Ok ()
+  in
+  let ack () =
+    incr acked;
+    Ok ()
+  in
+  match
+    Kafka_service.Retry_topics.route_retry_decode_error
+      ~dlq_topic
+      ~raw_msg
+      ~attempt:2
+      ~decode_error:"bad json"
+      ~publish_raw
+      ~ack
+  with
+  | Error e -> Alcotest.failf "unexpected execute error: %s" (Kafka.Error.to_string e)
+  | Ok () ->
+    Alcotest.(check int) "acked once" 1 !acked;
+    (match !published with
+     | None -> Alcotest.fail "publish_raw was never called"
+     | Some (target_topic, attempt, raw_bytes, key, headers, delay_s, acked_before) ->
+       Alcotest.(check string)
+         "target"
+         "orders-dlq"
+         (Kafka_service.topic_name_to_string target_topic);
+       Alcotest.(check int) "attempt preserved" 2 attempt;
+       Alcotest.(check (option string))
+         "raw payload preserved"
+         (Some "payload")
+         (Option.map Bytes.to_string raw_bytes);
+       Alcotest.(check (option string))
+         "key preserved"
+         (Some "order-42")
+         (Option.map Bytes.to_string key);
+       Alcotest.(check (option string))
+         "original header preserved"
+         (Some "kept")
+         (List.assoc_opt "app-header" headers |> Option.join);
+       Alcotest.(check (option string))
+         "attempt header preserved"
+         (Some "2")
+         (List.assoc_opt "X-Sol-Attempt" headers |> Option.join);
+       Alcotest.(check (option string))
+         "retry-at header preserved"
+         (Some "123.5")
+         (List.assoc_opt "X-Sol-Retry-At" headers |> Option.join);
+       Alcotest.(check (option string))
+         "decode diagnostic header"
+         (Some "bad json")
+         (List.assoc_opt "X-Sol-Decode-Error" headers |> Option.join);
+       Alcotest.(check (float 0.0001)) "dlq delay" 0.0 delay_s;
+       Alcotest.(check int) "publish happened before ack" 0 acked_before)
+;;
+
+let test_retry_decode_error_publish_failure_does_not_ack () =
+  let dlq_topic = Kafka_service.topic_name_exn "orders-dlq" in
+  let acked = ref false in
+  let publish_raw
+        ~target_topic:_
+        ~attempt:_
+        ~raw_bytes:_
+        ~key:_
+        ~headers:_
+        ~delay_s:_
+        ~partition:_
+    =
+    Error Kafka.Error.Transport
+  in
+  let ack () =
+    acked := true;
+    Ok ()
+  in
+  match
+    Kafka_service.Retry_topics.route_retry_decode_error
+      ~dlq_topic
+      ~raw_msg:(raw_retry_msg ())
+      ~attempt:1
+      ~decode_error:"bad json"
+      ~publish_raw
+      ~ack
+  with
+  | Error Kafka.Error.Transport -> Alcotest.(check bool) "ack skipped" false !acked
+  | _ -> Alcotest.fail "expected publish failure to be returned"
+;;
+
 (* ------------------------------------------------------------------ *)
 (* Topic names                                                         *)
 (* ------------------------------------------------------------------ *)
@@ -612,6 +713,14 @@ let () =
             "retry_produce: gives up after max attempts"
             `Quick
             test_retry_produce_gives_up_after_max_attempts
+        ; test_case
+            "retry decode error routes to dlq and acks after publish"
+            `Quick
+            test_retry_decode_error_routes_to_dlq_and_acks_after_publish
+        ; test_case
+            "retry decode error publish failure does not ack"
+            `Quick
+            test_retry_decode_error_publish_failure_does_not_ack
         ] )
     ; ( "topic_name"
       , [ test_case

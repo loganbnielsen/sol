@@ -136,9 +136,27 @@ module Retry_topics : sig
       message hashes to the same partition on the target topic that its key
       would hash to on the source topic. *)
   val execute_action
-    :  retry_action
+    :  ?headers:(string * string option) list
+    -> retry_action
     -> raw_msg:Kafka.Consumer.message
     -> attempt:int
+    -> publish_raw:
+         (target_topic:topic_name
+          -> attempt:int
+          -> raw_bytes:bytes option
+          -> key:bytes option
+          -> headers:(string * string option) list
+          -> delay_s:float
+          -> partition:int32
+          -> (unit, Kafka.Error.t) result)
+    -> ack:(unit -> (unit, Kafka.Error.t) result)
+    -> (unit, Kafka.Error.t) result
+
+  val route_retry_decode_error
+    :  dlq_topic:topic_name
+    -> raw_msg:Kafka.Consumer.message
+    -> attempt:int
+    -> decode_error:string
     -> publish_raw:
          (target_topic:topic_name
           -> attempt:int

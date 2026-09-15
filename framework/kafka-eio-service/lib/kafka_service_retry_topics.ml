@@ -113,7 +113,8 @@ let action_of_handler_error ~retry_topic ~dlq_topic ~max_attempts ~attempt = fun
     [raw_msg]'s key travels with it, so a retried message hashes to the same
     partition on the target topic that its key would hash to on the source
     topic (BUG-027: both topics share [svc.partitions]). *)
-let execute_action action ~raw_msg ~attempt ~publish_raw ~ack =
+let execute_action ?headers action ~raw_msg ~attempt ~publish_raw ~ack =
+  let headers = Option.value headers ~default:raw_msg.Kafka.Consumer.headers in
   match action with
   | Ack -> ack ()
   | Forward_retry { target; delay_s } ->
@@ -123,7 +124,7 @@ let execute_action action ~raw_msg ~attempt ~publish_raw ~ack =
          ~attempt
          ~raw_bytes:raw_msg.Kafka.Consumer.value
          ~key:raw_msg.Kafka.Consumer.key
-         ~headers:raw_msg.Kafka.Consumer.headers
+         ~headers
          ~delay_s
          ~partition:raw_msg.Kafka.Consumer.partition
      with
@@ -136,12 +137,26 @@ let execute_action action ~raw_msg ~attempt ~publish_raw ~ack =
          ~attempt
          ~raw_bytes:raw_msg.Kafka.Consumer.value
          ~key:raw_msg.Kafka.Consumer.key
-         ~headers:raw_msg.Kafka.Consumer.headers
+         ~headers
          ~delay_s:0.0
          ~partition:raw_msg.Kafka.Consumer.partition
      with
      | Ok () -> ack ()
      | Error e -> Error e)
+;;
+
+let route_retry_decode_error ~dlq_topic ~raw_msg ~attempt ~decode_error ~publish_raw ~ack =
+  Printf.eprintf "sol-worker: RETRY_DECODE_ERROR to_dlq=true error=%S\n%!" decode_error;
+  let headers =
+    ("X-Sol-Decode-Error", Some decode_error) :: raw_msg.Kafka.Consumer.headers
+  in
+  execute_action
+    ~headers
+    (Forward_dlq { target = dlq_topic })
+    ~raw_msg
+    ~attempt
+    ~publish_raw
+    ~ack
 ;;
 
 let consume
@@ -189,13 +204,25 @@ let consume
       ~partitions:svc.partitions
     |> Result.map_error (fun e -> Kafka_service_intf.Consumer_error e)
   in
-  let publish_raw ~target_topic ~attempt ~raw_bytes ~key ~headers ~delay_s ~partition =
+  let publish_raw_with
+        ~rewrite_retry_headers
+        ~target_topic
+        ~attempt
+        ~raw_bytes
+        ~key
+        ~headers
+        ~delay_s
+        ~partition
+    =
     on_retry ~partition ~attempt ~delay_s;
     let retry_at = Unix.gettimeofday () +. delay_s in
     let new_headers =
-      (hdr_attempt, Some (string_of_int attempt))
-      :: (hdr_retry_at, Some (string_of_float retry_at))
-      :: strip_sol_hdrs headers
+      if rewrite_retry_headers
+      then
+        (hdr_attempt, Some (string_of_int attempt))
+        :: (hdr_retry_at, Some (string_of_float retry_at))
+        :: strip_sol_hdrs headers
+      else headers
     in
     (* BUG-029: bounded retry around the produce call itself -- a single
        transient failure here must not be the thing that reaches
@@ -239,6 +266,8 @@ let consume
      | Ok () -> on_relay_publish ~partition ~attempt ~outcome:`Published);
     result
   in
+  let publish_raw = publish_raw_with ~rewrite_retry_headers:true in
+  let publish_raw_preserving_headers = publish_raw_with ~rewrite_retry_headers:false in
   let consumer_cfg : Kafka.Consumer.config =
     { brokers = svc.brokers
     ; group_id
@@ -285,10 +314,18 @@ let consume
         let decode_retry raw_msg ~ack ~attempt =
           match Kafka_service_schema.decode_message topic raw_msg with
           | Error (e, raw_bytes) ->
-            (match on_decode_error e ~raw_bytes ~ack with
-             | Kafka.Consumer.Continue -> Kafka.Consumer.Continue
-             | Kafka.Consumer.Stop -> Kafka.Consumer.Stop
-             | Kafka.Consumer.Error e -> Kafka.Consumer.Error e)
+            ignore raw_bytes;
+            (match
+               route_retry_decode_error
+                 ~dlq_topic:dlq_topic_name
+                 ~raw_msg
+                 ~attempt
+                 ~decode_error:e
+                 ~publish_raw:publish_raw_preserving_headers
+                 ~ack
+             with
+             | Ok () -> Kafka.Consumer.Continue
+             | Error e -> Kafka.Consumer.Error e)
           | Ok (msg, trace_ctx) ->
             (match handler msg ~ack ~trace_ctx with
              | Kafka.Consumer.Continue -> Kafka.Consumer.Continue
