@@ -181,6 +181,48 @@ val consume_partitioned
   -> (unit, Kafka_error.t) result
 ```
 
+### Message ordering
+
+Kafka gives Sol one ordering guarantee, and it is easy to accidentally
+expect two more that it doesn't:
+
+- **A. Log order (Kafka provides this).** Records within a single
+  partition are delivered to a consumer in exactly the order they were
+  appended to that partition's log. There is **no** ordering guarantee
+  across partitions — two records with different keys (or the same topic,
+  different partitions) have no relative order at all. `kafka-eio`'s
+  producer runs with `enable.idempotence = true`
+  (`kafka_producer.ml`), which closes the other classic hole: without it,
+  producer-side retries can reorder in-flight writes within a partition
+  even before a consumer ever sees them.
+- **B. Domain order (Kafka does not provide this).** Kafka only orders
+  what it received, in the order it received it. If a producer publishes
+  domain events `v3, v1, v2, v4` (upstream concurrency, retried publishes,
+  multiple producers racing), Kafka faithfully stores and delivers
+  `v3, v1, v2, v4` — it has no notion that `v1` was logically supposed to
+  precede `v3`. A handler that requires domain-sequential processing
+  (e.g. an entity's version history) must enforce or reconcile that
+  itself — versioning, idempotency, compare-and-set against stored state —
+  Kafka's log order is necessary for this but not sufficient.
+- **C. Completion order (`Retry_topics` deliberately does not preserve
+  this).** Even when Kafka delivers `1, 2, 3, 4` in order, a failed
+  message on `Retry_topics` is republished at a later offset rather than
+  blocking its partition, so it can complete *after* messages that
+  originally followed it — including same-key messages. `In_memory`
+  instead blocks its partition for the retry sleep, preserving completion
+  order at the cost of pausing later messages on that partition. See
+  DEC-021's "Ordering consequence" section for the full reasoning and the
+  `sol-jobs` (FEAT-077) escape hatch for workloads that need independent
+  per-message retry regardless of key.
+
+**The practical rule:** if a handler's correctness depends on strict
+processing order (B or C), that's a real constraint to design for
+explicitly — partition by the key that must stay ordered, and choose
+`In_memory` (or a leased-job primitive once one exists) over
+`Retry_topics`. If the events a handler processes are genuinely
+independent of each other, don't manufacture an ordering requirement Kafka
+never promised in the first place.
+
 ### Retry strategy
 
 ```ocaml
