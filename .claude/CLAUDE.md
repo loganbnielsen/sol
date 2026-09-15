@@ -122,6 +122,7 @@ sol/
     sol-svc/lib/                ← REST API service (routes, auth, metrics)
     sol-worker/lib/             ← Kafka consumer (schema registration, per-message metrics)
     sol-fn/lib/                 ← Scheduled function (Pushgateway push, invocation metrics)
+    sol-jobs/lib/               ← Postgres-backed leased job library, hosted by a -worker (FEAT-077)
     sol-*/sol-*.md              ← per-package spec docs
     kafka-eio-service/lib/      ← schema registry + service orchestration, depends on `kafka-eio.*`
     kafka-eio-service/test/
