@@ -388,8 +388,10 @@ let read_jsonpath ~ctx ~resource ~name ~namespace ~jsonpath =
    verification reported clean -- exactly the inconsistent state the ticket
    requires be detectable. "Sol-owned" means "carries this workspace's taxonomy
    `workspace` label in its pod template", which every Sol-rendered workload
-   does. No pruning: rollback reports the mismatch and refuses to claim success;
-   deleting absent workloads is a separate reconciliation capability. *)
+   does. A mismatched or missing workload still refuses outright -- pruning
+   never runs unless those are clean, since neither is fixable by deleting
+   something (FEAT-074): only a purely-[unexpected] surplus is ever pruned,
+   by [execute], between this verification and the pointer move. *)
 
 type workload_identity =
   { kind : live_kind
@@ -546,6 +548,18 @@ let workload_report_ok (r : workload_report) =
   r.mismatched = [] && r.missing = [] && r.unexpected = []
 ;;
 
+(* FEAT-074: the pure surplus computation, factored out of [verify_workloads]
+   so [sol deploy]/[sol up] can reuse the exact same diff to report drift --
+   one shared primitive for "what's live that isn't desired", not two
+   implementations that can disagree. *)
+let unexpected_workloads
+      ~(expected : Sol_cli_deployment_plan.service_spec list)
+      ~(live : (workload_identity * string) list)
+  =
+  let expected_ids = List.map identity_of_spec expected in
+  List.filter (fun (id, _) -> not (List.exists (same_identity id) expected_ids)) live
+;;
+
 let verify_workloads
       ~(release : Sol_cli_release.t)
       ~(expected : Sol_cli_deployment_plan.service_spec list)
@@ -568,14 +582,62 @@ let verify_workloads
       ([], [])
       expected_ids
   in
-  let unexpected =
-    List.filter (fun (id, _) -> not (List.exists (same_identity id) expected_ids)) live
-  in
-  { mismatched = List.rev mismatched; missing = List.rev missing; unexpected }
+  { mismatched = List.rev mismatched
+  ; missing = List.rev missing
+  ; unexpected = unexpected_workloads ~expected ~live
+  }
 ;;
 
 let display_actual actual = if String.equal actual "" then "<none>" else actual
 let kind_resource kind = fst (live_kind_path kind)
+
+(* FEAT-074: delete each surplus workload's live object. Ownership is already
+   established by construction -- every entry came from [live_workloads],
+   which only enumerates objects carrying this workspace's own taxonomy
+   label -- so no further ownership check is needed here. Scope is
+   deliberately narrow: only the primary Deployment/Rollout/CronJob object,
+   the one kind [live_workloads]/[verify_workloads] track. A removed
+   service's other rendered objects (ConfigMap, Secret, PVC, Service,
+   Ingress, NetworkPolicy, ServiceAccount) are left alone -- deleting a PVC
+   automatically risks real data loss, and safely cleaning up the rest needs
+   its own ownership/ordering design this ticket does not attempt. Each
+   deletion is independent (no object here owns another via
+   ownerReferences), so there is no ordering hazard among them; every
+   deletion is attempted even if one fails, so one failure does not leave
+   unrelated surplus objects behind for no reason. *)
+let prune_workloads ~(ctx : Sol_cli_kube_destination.context) surplus
+  : (unit, string) result
+  =
+  let errors =
+    List.filter_map
+      (fun ((id : workload_identity), _actual) ->
+         match
+           Sol_cli_kubectl.delete
+             ~ctx
+             ~resource:(kind_resource id.kind)
+             ~name:id.name
+             ~namespace:id.namespace
+         with
+         | Ok () -> None
+         | Error e ->
+           Some
+             (Printf.sprintf
+                "%s %s/%s: %s"
+                (kind_resource id.kind)
+                id.namespace
+                id.name
+                (Sol_cli_process.error_to_string e)))
+      surplus
+  in
+  match errors with
+  | [] -> Ok ()
+  | _ ->
+    Error
+      (Printf.sprintf
+         "could not prune %d surplus workload(s):\n%s"
+         (List.length errors)
+         (String.concat "\n" errors))
+;;
 
 let workload_report_to_string ~(release : Sol_cli_release.t) (r : workload_report)
   : string
@@ -663,12 +725,14 @@ let pointer_report_to_string ~(release : Sol_cli_release.t) (r : pointer_report)
    rather than deps: they are already pure/tested and take no cluster state
    beyond what the caller passes in.
 
-   FEAT-074 (workload pruning) slots in as one more dep, called in the gap
-   between the workload-set verification below and [deps.move_pointer] --
-   never as a one-off path inside the command. *)
+   [prune] (FEAT-074) is called in the gap between the workload-set
+   verification below and [deps.move_pointer], and only when that
+   verification's mismatched/missing modes are clean -- neither is fixable by
+   deleting something, so pruning never runs while either is present. *)
 type transaction_deps =
   { apply : Sol_cli_deployment_plan.service_spec list -> (unit, string) result
   ; live_workloads : unit -> ((workload_identity * string) list, string) result
+  ; prune : (workload_identity * string) list -> (unit, string) result
   ; move_pointer : unit -> (unit, string) result
   ; verify_pointer : unit -> pointer_report
   }
@@ -697,9 +761,8 @@ let execute
     | Error msg -> Error (Printf.sprintf "cannot verify rollback: %s" msg)
     | Ok live ->
       let report = verify_workloads ~release ~expected:specs ~live in
-      if workload_report_ok report
-      then Ok ()
-      else
+      if report.mismatched <> [] || report.missing <> []
+      then
         Error
           (Printf.sprintf
              "%s\n\
@@ -707,6 +770,16 @@ let execute
               current-release pointer was left unchanged"
              (workload_report_to_string ~release report)
              release.Sol_cli_release.release_id)
+      else (
+        match deps.prune report.unexpected with
+        | Ok () -> Ok ()
+        | Error msg ->
+          Error
+            (Printf.sprintf
+               "%s\n\
+                rollback incomplete: could not prune surplus workloads; the \
+                current-release pointer was left unchanged"
+               msg))
   in
   let* () = deps.move_pointer () in
   let pointer = deps.verify_pointer () in

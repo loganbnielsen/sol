@@ -1027,8 +1027,9 @@ let transaction_release ~apply_mode : Sol_cli_release.t =
   }
 ;;
 
-let recording_deps ?(live = []) () =
+let recording_deps ?(live = []) ?(prune_result = Ok ()) () =
   let calls = ref [] in
+  let pruned = ref None in
   let record name = calls := name :: !calls in
   let deps : Sol_cli_rollback.transaction_deps =
     { apply =
@@ -1039,6 +1040,11 @@ let recording_deps ?(live = []) () =
         (fun () ->
           record "live_workloads";
           Ok live)
+    ; prune =
+        (fun surplus ->
+          record "prune";
+          pruned := Some surplus;
+          prune_result)
     ; move_pointer =
         (fun () ->
           record "move_pointer";
@@ -1049,11 +1055,11 @@ let recording_deps ?(live = []) () =
           { Sol_cli_rollback.pointer_actual = "r-3333333333333333"; pointer_ok = true })
     }
   in
-  calls, deps
+  calls, pruned, deps
 ;;
 
 let test_execute_success_calls_every_dep_in_order () =
-  let calls, deps = recording_deps () in
+  let calls, pruned, deps = recording_deps () in
   let release = transaction_release ~apply_mode:Sol_cli_release.Direct in
   match
     Sol_cli_rollback.execute
@@ -1065,13 +1071,14 @@ let test_execute_success_calls_every_dep_in_order () =
   | Error msg -> Alcotest.fail msg
   | Ok () ->
     Alcotest.(check (list string))
-      "apply, then live_workloads, then move_pointer, then verify_pointer"
-      [ "apply"; "live_workloads"; "move_pointer"; "verify_pointer" ]
-      (List.rev !calls)
+      "apply, then live_workloads, then prune, then move_pointer, then verify_pointer"
+      [ "apply"; "live_workloads"; "prune"; "move_pointer"; "verify_pointer" ]
+      (List.rev !calls);
+    Alcotest.(check int) "prune ran with no surplus" 0 (List.length (Option.get !pruned))
 ;;
 
 let test_execute_apply_mode_refusal_calls_no_deps () =
-  let calls, deps = recording_deps () in
+  let calls, _pruned, deps = recording_deps () in
   let release = transaction_release ~apply_mode:Sol_cli_release.Gitops in
   match
     Sol_cli_rollback.execute
@@ -1090,7 +1097,7 @@ let test_execute_migration_boundary_refusal_calls_no_deps () =
   with_migrations_dir
     [ "0001_init.sql", expand_sql; "0002_drop_col.sql", contract_sql ]
     (fun migrations_dir ->
-       let calls, deps = recording_deps () in
+       let calls, _pruned, deps = recording_deps () in
        let release =
          { (transaction_release ~apply_mode:Sol_cli_release.Direct) with
            migrations = [ "0001_init.sql" ]
@@ -1109,7 +1116,10 @@ let test_execute_migration_boundary_refusal_calls_no_deps () =
          Alcotest.(check (list string)) "no dep was ever called" [] !calls)
 ;;
 
-let test_execute_workload_mismatch_skips_pointer_move () =
+(* FEAT-074: a purely-[unexpected] live workload (no mismatched/missing) is no
+   longer a hard refusal -- [prune] gets a chance to remove it, and a
+   successful prune lets the rollback complete. *)
+let test_execute_unexpected_workload_triggers_prune_then_completes () =
   let bogus_live : Sol_cli_rollback.workload_identity * string =
     ( { Sol_cli_rollback.kind = Sol_cli_rollback.Live_deployment
       ; namespace = "myapp-payments"
@@ -1117,7 +1127,7 @@ let test_execute_workload_mismatch_skips_pointer_move () =
       }
     , "r-3333333333333333" )
   in
-  let calls, deps = recording_deps ~live:[ bogus_live ] () in
+  let calls, pruned, deps = recording_deps ~live:[ bogus_live ] () in
   let release = transaction_release ~apply_mode:Sol_cli_release.Direct in
   match
     Sol_cli_rollback.execute
@@ -1126,15 +1136,106 @@ let test_execute_workload_mismatch_skips_pointer_move () =
       ~current_migrations:[]
       ~deps
   with
+  | Error msg -> Alcotest.fail msg
   | Ok () ->
-    Alcotest.fail "expected the unexpected live workload to block the pointer move"
+    Alcotest.(check (list string))
+      "apply, live_workloads, prune, move_pointer, verify_pointer all ran"
+      [ "apply"; "live_workloads"; "prune"; "move_pointer"; "verify_pointer" ]
+      (List.rev !calls);
+    (match !pruned with
+     | None -> Alcotest.fail "prune was never called"
+     | Some surplus ->
+       Alcotest.(check int)
+         "exactly the bogus workload was pruned"
+         1
+         (List.length surplus);
+       let id, _ = List.hd surplus in
+       Alcotest.(check string) "pruned name" "ghost-svc" id.Sol_cli_rollback.name)
+;;
+
+(* A prune failure must not move the pointer -- pruning failed, so the cluster
+   does not yet match the restored release. *)
+let test_execute_prune_failure_skips_pointer_move () =
+  let bogus_live : Sol_cli_rollback.workload_identity * string =
+    ( { Sol_cli_rollback.kind = Sol_cli_rollback.Live_deployment
+      ; namespace = "myapp-payments"
+      ; name = "ghost-svc"
+      }
+    , "r-3333333333333333" )
+  in
+  let calls, _pruned, deps =
+    recording_deps ~live:[ bogus_live ] ~prune_result:(Error "boom") ()
+  in
+  let release = transaction_release ~apply_mode:Sol_cli_release.Direct in
+  match
+    Sol_cli_rollback.execute
+      ~release
+      ~migrations_dir:"unused"
+      ~current_migrations:[]
+      ~deps
+  with
+  | Ok () -> Alcotest.fail "expected the prune failure to block the pointer move"
   | Error msg ->
-    assert (contains (Str.regexp "ghost-svc") msg);
+    assert (contains (Str.regexp "boom") msg);
     assert (contains (Str.regexp "pointer was left unchanged") msg);
     Alcotest.(check (list string))
-      "apply and live_workloads ran; move_pointer/verify_pointer never did"
-      [ "apply"; "live_workloads" ]
+      "apply, live_workloads, prune ran; move_pointer/verify_pointer never did"
+      [ "apply"; "live_workloads"; "prune" ]
       (List.rev !calls)
+;;
+
+(* A release with a real recorded workload, for the missing/mismatched cases
+   below -- [transaction_release]'s empty [workloads] can never produce either,
+   since both are computed against the reconstructed [expected] set. *)
+let transaction_release_with_ledger ~apply_mode : Sol_cli_release.t =
+  { (transaction_release ~apply_mode) with
+    workloads = [ Sol_cli_deployment_plan.release_workload_of_spec ledger_spec ]
+  }
+;;
+
+(* Missing is not fixable by deleting anything -- pruning must never run. *)
+let test_execute_missing_workload_skips_prune_and_pointer_move () =
+  let calls, pruned, deps = recording_deps ~live:[] () in
+  let release = transaction_release_with_ledger ~apply_mode:Sol_cli_release.Direct in
+  match
+    Sol_cli_rollback.execute
+      ~release
+      ~migrations_dir:"unused"
+      ~current_migrations:[]
+      ~deps
+  with
+  | Ok () -> Alcotest.fail "expected the missing workload to block the pointer move"
+  | Error msg ->
+    assert (contains (Str.regexp "ledger-svc") msg);
+    assert (contains (Str.regexp "pointer was left unchanged") msg);
+    Alcotest.(check (list string))
+      "apply and live_workloads ran; prune/move_pointer/verify_pointer never did"
+      [ "apply"; "live_workloads" ]
+      (List.rev !calls);
+    Alcotest.(check bool) "prune never called" true (!pruned = None)
+;;
+
+(* Neither is a label mismatch -- the object exists but claims the wrong
+   release, so pruning (which only deletes surplus) cannot fix it either. *)
+let test_execute_mismatched_workload_skips_prune_and_pointer_move () =
+  let calls, pruned, deps = recording_deps ~live:[ ledger_id, "r-9999999999999999" ] () in
+  let release = transaction_release_with_ledger ~apply_mode:Sol_cli_release.Direct in
+  match
+    Sol_cli_rollback.execute
+      ~release
+      ~migrations_dir:"unused"
+      ~current_migrations:[]
+      ~deps
+  with
+  | Ok () -> Alcotest.fail "expected the label mismatch to block the pointer move"
+  | Error msg ->
+    assert (contains (Str.regexp "ledger-svc") msg);
+    assert (contains (Str.regexp "pointer was left unchanged") msg);
+    Alcotest.(check (list string))
+      "apply and live_workloads ran; prune/move_pointer/verify_pointer never did"
+      [ "apply"; "live_workloads" ]
+      (List.rev !calls);
+    Alcotest.(check bool) "prune never called" true (!pruned = None)
 ;;
 
 (* ── FEAT-073: --commit / --scope release selection ───────────────────────── *)
@@ -1474,9 +1575,21 @@ let () =
             `Quick
             test_execute_migration_boundary_refusal_calls_no_deps
         ; Alcotest.test_case
-            "workload mismatch skips pointer move"
+            "unexpected workload triggers prune then completes"
             `Quick
-            test_execute_workload_mismatch_skips_pointer_move
+            test_execute_unexpected_workload_triggers_prune_then_completes
+        ; Alcotest.test_case
+            "prune failure skips pointer move"
+            `Quick
+            test_execute_prune_failure_skips_pointer_move
+        ; Alcotest.test_case
+            "missing workload skips prune and pointer move"
+            `Quick
+            test_execute_missing_workload_skips_prune_and_pointer_move
+        ; Alcotest.test_case
+            "mismatched workload skips prune and pointer move"
+            `Quick
+            test_execute_mismatched_workload_skips_prune_and_pointer_move
         ] )
     ; ( "commit_release_selection"
       , [ Alcotest.test_case "commit_matches: exact" `Quick test_commit_matches_exact

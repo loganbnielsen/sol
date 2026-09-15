@@ -367,6 +367,44 @@ let record_release_and_prune ctx ~previous plan =
      | Error msg -> Printf.eprintf "warning: could not prune old releases: %s\n%!" msg)
 ;;
 
+(* FEAT-074: report-only, and only for a whole-workspace deploy -- see
+   cmd_up.ml's identical rationale (a scoped deploy's [plan.services] is a
+   subset of the workspace, so comparing it against every live Sol-owned
+   workload would false-flag out-of-scope services; a deploy never deletes,
+   since it has no recorded release boundary the way [sol rollback] does).
+   Best-effort -- a failure here must not fail an otherwise-successful
+   deploy. *)
+let report_surplus_workloads ctx (plan : Sol_cli_deployment_plan.t) =
+  if String.equal ctx.requested_scope "workspace"
+  then (
+    match
+      Sol_cli_rollback.live_workloads
+        ~ctx:ctx.execution.cluster
+        ~workspace:ctx.execution.workspace
+    with
+    | Error _ -> ()
+    | Ok live ->
+      let surplus = Sol_cli_rollback.unexpected_workloads ~expected:plan.services ~live in
+      if surplus <> []
+      then (
+        Printf.printf
+          "\nNote: %d live workload(s) in this workspace are not part of this deploy:\n"
+          (List.length surplus);
+        List.iter
+          (fun ((id : Sol_cli_rollback.workload_identity), _) ->
+             Printf.printf
+               "  %s %s/%s\n"
+               (Sol_cli_rollback.kind_resource id.kind)
+               id.namespace
+               id.name)
+          surplus;
+        Printf.printf
+          "These may be stale from a removed/renamed service. 'sol rollback' prunes them \
+           automatically when restoring a recorded release; delete them by hand if you \
+           want them gone now.\n\
+           %!"))
+;;
+
 let report_apply_success ctx plan results =
   List.iter
     (fun (r : Sol_cli_executor.result) ->
@@ -378,6 +416,7 @@ let report_apply_success ctx plan results =
   Printf.printf "\nDone. %d service(s) deployed.\n" (List.length ctx.services);
   print_service_urls ~ctx:ctx.execution.cluster results;
   Printf.printf "Run 'sol status' to check pod health.\n";
+  report_surplus_workloads ctx plan;
   Sol_cli_deployment_state.record_outcome
     ~ctx:ctx.execution.cluster
     ctx.execution.workspace
