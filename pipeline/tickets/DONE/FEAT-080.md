@@ -202,3 +202,35 @@ When this is prioritised:
   it protected (the build decision was still pending) no longer holds.
   This ticket records the inventory; it does not mandate building
   `@sol/http`, `@sol/jobs`, or any other package.
+
+## Completion notes (2026-09-15)
+
+Reconciliation landed as a dated addendum:
+`pipeline/dogfood/2026-09-07_typescript_demo_spike.md` → "Addendum —
+capability-driven parity reconciliation (2026-09-15, FEAT-080)".
+
+- Every capability from the 2026-09-07 table, plus FEAT-076/077/078/079's
+  new conventions, now carries exactly one verdict (implemented / already
+  equivalent / intentionally deferred / not applicable). No row is silent.
+- The spike's recommendation items 1 (`@sol/kafka`) and 2 (`@sol/obs`) are
+  recorded as built (FEAT-034/035/038/039/DOCS-010); item 3 —
+  `@sol/http`/`@sol/worker` — remains FEAT-036, intentionally deferred.
+- `sol-jobs` gets its own row: **intentionally deferred** (a second
+  programming model per DEC-021; the mechanism likely has an npm ecosystem
+  equivalent, and only the metric/topology convention is Sol-specific).
+- `-fn` `scheduled_concurrency`/`backoff_limit` + `sol fn run` get
+  **not applicable** (deploy-side/CLI surface, language-neutral).
+- The `Ack | Retry | Dead_letter` / retry-and-DLQ-topic convention was
+  checked against `@sol/kafka`: confirmed as the one real gap.
+  `wrapEachMessage` exposes neither the outcome nor the retry/DLQ topology,
+  and inherits `kafkajs`'s implicit retry — the "implicit substrate
+  behavior" FEAT-078 removed on the OCaml side. `@sol/obs`'s
+  `WorkerMessageStatus` also predates FEAT-076/078 (missing `dead_letter`,
+  `relay_published`, `relay_failed`). Follow-up filed as FEAT-081.
+
+**Demo/example coverage:** exempt — pure documentation (a dated addendum to
+an existing findings doc); nothing an app author runs or imports changes.
+
+**TS-parity impact:** none — this ticket *is* the TS-parity inventory; it
+changes no convention and introduces no framework concept.
+
