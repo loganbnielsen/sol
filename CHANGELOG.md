@@ -7,6 +7,13 @@ not a full commit log — see `git log` and `pipeline/tickets/DONE/` for that.
 
 ## Unreleased
 
+- **Behavior change (BUG-031):** `-fn`'s generated `CronJob` now honors
+  `sol.toml`'s `cpu`/`memory` fields, which were previously parsed but
+  silently discarded in favor of hardcoded values. For a `-fn` app that
+  does not set `cpu`/`memory`, the generated `resources.limits` changes
+  from `250m`/`256Mi` to `100m`/`128Mi` — now equal to `resources.requests`,
+  matching `-svc`/`-worker`'s existing convention (no request-to-limit
+  multiplier) instead of preserving the old, undocumented 2.5x/2x ratio.
 - **Breaking (FEAT-078):** `Worker.WORKER` is now Ack-only — `handle` returns
   `ack_outcome` (`Ack` only), not the full `outcome`. A worker whose `handle`
   needs to return `Retry`/`Dead_letter` must implement the new
