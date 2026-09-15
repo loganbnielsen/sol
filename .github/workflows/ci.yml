@@ -216,7 +216,12 @@ jobs:
           # scheduled_concurrency/backoff_limit rendering and `sol fn run`
           # against a real deployed CronJob, in the same sol up pass as
           # everything else so this doesn't need its own health-wait cycle.
-          sol new fn ops/heartbeat_fn
+          # `sol new fn` appends _fn to the given name itself (the same way
+          # `sol new svc checkout/checkout` above produced checkout_svc), so
+          # passing "heartbeat" here (not "heartbeat_fn") is what actually
+          # lands at app/ops/heartbeat_fn/ -- confirmed by this job's first
+          # real run, which instead produced app/ops/heartbeat_fn_fn/.
+          sol new fn ops/heartbeat
           # [service] is already open at the top of the generated file (it
           # holds `schedule`); appending a second [service] header at EOF
           # would be a duplicate-table TOML error, so insert into the
