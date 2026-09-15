@@ -369,7 +369,9 @@ let aws_absent ~region ~kind ~missing_marker ~argv =
     false
 ;;
 
-let workspace_name () = Filename.basename (Sys.getcwd ())
+(* DEC-024: the workspace name comes from the resolved root, so it is the same
+   from any descendant directory. *)
+let workspace_name = Sol_cli_workspace.current_name
 
 let aws_no_ecr_repositories ~region ~workspace_name =
   let prefix = workspace_name ^ "/" in

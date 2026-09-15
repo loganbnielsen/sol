@@ -95,6 +95,9 @@ let new_workspace name =
   (* root files *)
   write ~path:(name ^ "/.ocamlformat") ~content:tpl_ocamlformat;
   write ~path:(name ^ "/dune-project") ~content:tpl_dune_project;
+  (* DEC-024: the workspace boundary. Presence alone makes this a Sol
+     workspace; no name or settings are required for the file to be valid. *)
+  write ~path:(name ^ "/sol.yml") ~content:tpl_sol_yml;
   write ~path:(name ^ "/README.md") ~content:(subst v tpl_readme);
   write
     ~path:(name ^ "/.github/workflows/deploy.yml")
@@ -168,7 +171,7 @@ let new_workspace name =
   let linked = link_sol_sources name in
   Printf.printf
     {|
-Done. 28 files generated.
+Done. 29 files generated.
 
   cd %s
   eval $(opam env) && dune build   # verify the scaffold compiles

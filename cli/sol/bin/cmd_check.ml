@@ -15,6 +15,12 @@ let fail message =
    is on disk rather than from what the user typed -- and it goes through the
    same [Sol_cli_workload_selection] every other command uses (FEAT-065). *)
 let run scope =
+  (* DEC-024: resolve the workspace boundary and make it the cwd, so `sol
+     check` acts on the workspace from any descendant directory (discovery and
+     the per-unit file checks are all workspace-root relative). *)
+  (match Sol_cli_workspace.enter ~dir:(Sys.getcwd ()) with
+   | Ok _ -> ()
+   | Error e -> fail (Sol_cli_workspace.workspace_error_to_string e));
   let findings =
     match scope with
     | None -> Sol_cli_check.run ()
@@ -22,8 +28,7 @@ let run scope =
       let services =
         match Sol_cli_manifest.discover_services_result () with
         | Ok services -> services
-        | Error _ ->
-          fail "--scope needs a workspace to resolve against (no app/ directory here)"
+        | Error e -> fail (Sol_cli_manifest.discover_error_to_string e)
       in
       let selected =
         match

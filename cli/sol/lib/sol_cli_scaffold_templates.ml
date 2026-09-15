@@ -11,6 +11,22 @@ let tpl_dune_project =
 |tpl}
 ;;
 
+(* DEC-024: the workspace manifest. Its presence is what makes this directory a
+   Sol workspace -- `sol` resolves the root by walking up to the nearest
+   sol.yml, so it must exist even when the workspace needs no settings. *)
+let tpl_sol_yml =
+  {tpl|# Sol workspace manifest.
+#
+# A directory containing this file is a Sol workspace. `sol` finds the
+# workspace root by walking up from the current directory to the nearest
+# sol.yml, so commands work from anywhere inside the workspace.
+#
+# Workspace-level configuration (project, resources, services) belongs here.
+# The file is valid with no settings at all -- its presence is what
+# establishes the boundary.
+|tpl}
+;;
+
 let tpl_readme =
   {tpl|# {{Name}}
 
@@ -62,6 +78,7 @@ sol rollback    # roll back all services to previous image
 ## Project layout
 
 ```
+sol.yml                   ← workspace manifest (identifies this as a Sol workspace)
 events/payments/          ← Charged event contract (payments team owns)
 app/payments/charge_svc/  ← HTTP service (publishes Charged on POST /charges)
 app/comms/notify_worker/  ← Kafka consumer (subscribes to Charged)

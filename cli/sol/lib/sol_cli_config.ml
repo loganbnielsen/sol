@@ -770,7 +770,22 @@ let target_of_path s =
       { path = s; line = 0; message = "target must look like <env>/<provider>/<region>" }
 ;;
 
-let target_file target =
+(* Config and target paths resolve relative to the resolved workspace root, not
+   the invocation cwd, so `sol plan`/`sol deploy` work from any descendant
+   directory (DEC-024 clause 4). [find_root] is cheap and marker-free; when
+   there is no workspace the command has already failed closed in
+   [load_for_target], so target-name-only formatting falls back to a
+   root-relative path. *)
+let workspace_root () =
+  match Sol_cli_workspace.find_root ~dir:(Sys.getcwd ()) with
+  | Some root -> root
+  | None -> "."
+;;
+
+let rooted path = Filename.concat (workspace_root ()) path
+
+(* [sol/<env>/<provider>/<region>.yml], relative to the workspace root. *)
+let relative_target_file target =
   Filename.concat
     "sol"
     (Filename.concat
@@ -780,6 +795,7 @@ let target_file target =
           (target.region ^ ".yml")))
 ;;
 
+let target_file target = rooted (relative_target_file target)
 let active_resources cfg = List.filter (fun (r : resource) -> not r.omit) cfg.resources
 let active_services cfg = List.filter (fun (s : service) -> not s.omit) cfg.services
 
@@ -798,10 +814,11 @@ let discover_target_paths () =
       if !failure = None then failure := Some e;
       []
   in
+  let sol_dir = rooted "sol" in
   let paths =
-    read "sol" Sol_cli_fs_walk.dirs
+    read sol_dir Sol_cli_fs_walk.dirs
     |> List.concat_map (fun env ->
-      let env_dir = Filename.concat "sol" env in
+      let env_dir = Filename.concat sol_dir env in
       read env_dir Sol_cli_fs_walk.dirs
       |> List.concat_map (fun provider ->
         let provider_dir = Filename.concat env_dir provider in
@@ -1012,24 +1029,21 @@ let validate_no_same_cluster base (selected : target) =
 
 let load_for_target ~target =
   let* target = target_of_path target in
-  let file = target_file target in
-  let* () =
-    if Sys.file_exists "sol.yml" || Sys.file_exists file
-    then Ok ()
-    else
+  (* DEC-024: the workspace is the nearest ancestor with a sol.yml, and both
+     sol.yml and the target overlay resolve relative to that root -- not the
+     invocation cwd. Absence fails closed and names the fix. *)
+  let* root =
+    match Sol_cli_workspace.resolve_validated ~dir:(Sys.getcwd ()) with
+    | Ok root -> Ok root
+    | Error e ->
       Error
-        { path = target.name
+        { path = "sol.yml"
         ; line = 0
-        ; message =
-            Printf.sprintf
-              "target %S resolves to neither a sol.yml nor a \
-               sol/<env>/<provider>/<region>.yml in this directory — at least one must \
-               exist for a target to be real, not just shaped like \
-               <env>/<provider>/<region>"
-              target.name
+        ; message = Sol_cli_workspace.workspace_error_to_string e
         }
   in
-  let* base = load "sol.yml" in
+  let file = Filename.concat root (relative_target_file target) in
+  let* base = load (Filename.concat root "sol.yml") in
   let* overlay = load file in
   let base_target =
     match base.target with
@@ -1060,16 +1074,17 @@ let services cfg = active_services cfg
    from one target may still be deployed to another and needs its own
    repository either way.
 
-   discover_services requires an app/ directory and exits the process if
-   one isn't found -- appropriate for the top-level CLI commands it was
-   written for, but terraform_vars must stay callable (e.g. from tests, or
-   any future caller) without an app/ directory in cwd, so this degrades to
-   "no auto-detected repositories" instead of inheriting that exit. *)
+   discover_services resolves the workspace boundary and exits the process
+   when there is none -- appropriate for the top-level CLI commands it was
+   written for, but terraform_vars must stay callable (e.g. from tests, or any
+   future caller) without a workspace in cwd, so this uses the result-returning
+   form and degrades to "no auto-detected repositories" instead of inheriting
+   that exit. *)
 let ecr_repositories_var () =
   let services =
-    if Sys.file_exists "app" && Sys.is_directory "app"
-    then Sol_cli_manifest.discover_services ()
-    else []
+    match Sol_cli_manifest.discover_services_result () with
+    | Ok services -> services
+    | Error _ -> []
   in
   services
   |> List.filter_map (fun (s : Sol_cli_manifest.service) ->

@@ -601,29 +601,21 @@ let test_parent_target_path_fails () =
     | Error e -> check_str "message" "target path must not contain '..'" e.message)
 ;;
 
-(* FEAT-026 round 1: load_for_target requires at least one of sol.yml or
-   the target file to exist -- a target that's neither declared in a
-   sol.yml nor has its own overlay file is just a well-shaped path
-   (e.g. a known-provider target like dev/aws/us-west-2), not a real
-   target. *)
-let test_target_with_neither_file_fails () =
+(* DEC-024 supersedes FEAT-026's "at least one of sol.yml or the target file"
+   rule: a sol.yml is now the workspace boundary, so there is no such thing as
+   a real target outside a workspace. Absence fails closed and names the fix;
+   inside a workspace a target may legitimately rely on sol.yml alone
+   (test_target_with_only_sol_yml_succeeds). *)
+let test_target_outside_a_workspace_fails_closed () =
   with_temp_dir (fun () ->
     (* deliberately no write_base (), no sol.yml, no target file *)
     match Sol_cli_config.load_for_target ~target:"dev/aws/us-west-2" with
-    | Ok _ -> Alcotest.fail "expected target with no sol.yml and no target file to fail"
+    | Ok _ -> Alcotest.fail "expected load_for_target to fail outside a workspace"
     | Error e ->
       check_bool
-        "message names the target"
+        "message names the fix"
         true
-        (let needle = "dev/aws/us-west-2"
-         and s = e.message in
-         let n = String.length needle
-         and l = String.length s in
-         let found = ref false in
-         for i = 0 to l - n do
-           if String.sub s i n = needle then found := true
-         done;
-         !found))
+        (contains ~needle:"sol new workspace" e.message))
 ;;
 
 let test_target_with_only_sol_yml_succeeds () =
@@ -1051,9 +1043,9 @@ let () =
             `Quick
             test_parent_target_path_fails
         ; Alcotest.test_case
-            "target with neither sol.yml nor overlay fails"
+            "target outside a workspace fails closed"
             `Quick
-            test_target_with_neither_file_fails
+            test_target_outside_a_workspace_fails_closed
         ; Alcotest.test_case
             "target with only sol.yml succeeds"
             `Quick

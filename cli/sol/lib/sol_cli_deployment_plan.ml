@@ -537,7 +537,13 @@ let of_services_result
   let loaded =
     List.map
       (fun svc ->
-         Sol_cli_toml.load_result (Filename.concat svc.Sol_cli_manifest.dir "sol.toml")
+         (* DEC-024: [svc.dir] is workspace-root relative; join it to the
+            resolved root so this read is correct even when the command was
+            invoked from a descendant directory (and `sol deploy` keeps the
+            invocation cwd for relative --emit-to paths). *)
+         Sol_cli_toml.load_result
+           (Sol_cli_workspace.at_root
+              (Filename.concat svc.Sol_cli_manifest.dir "sol.toml"))
          |> Result.map_error (fun err -> Toml_error err)
          |> Result.map (fun toml -> svc, toml))
       services
@@ -621,7 +627,7 @@ let of_services_result
       | Fn ->
         Some
           (Sol_cli_manifest.extract_schedule
-             ~dir:svc.Sol_cli_manifest.dir
+             ~dir:(Sol_cli_workspace.at_root svc.Sol_cli_manifest.dir)
              ~name:svc.Sol_cli_manifest.name)
       | _ -> None
     in

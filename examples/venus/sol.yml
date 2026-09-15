@@ -1,0 +1,9 @@
+# Sol workspace manifest.
+#
+# A directory containing this file is a Sol workspace. `sol` finds the
+# workspace root by walking up from the current directory to the nearest
+# sol.yml, so commands work from anywhere inside the workspace.
+#
+# Workspace-level configuration (project, resources, services) belongs here.
+# The file is valid with no settings at all -- its presence is what
+# establishes the boundary.

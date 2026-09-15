@@ -130,10 +130,11 @@ cd pluto
 >
 > The CLI uses `SOL_HOME` to locate the framework and create the vendor symlinks automatically.
 
-This generates 28 files. Here is what was created and why:
+This generates 29 files. Here is what was created and why:
 
 ```
 pluto/
+  sol.yml                         ← workspace manifest (identifies this directory as a Sol workspace)
   dune-project                    ← root dune project (required)
   .ocamlformat                    ← OCaml formatter config
   .dockerignore                   ← excludes _build/ and .git/ from Docker build context

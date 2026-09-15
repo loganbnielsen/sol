@@ -62,7 +62,8 @@ val error_to_string : error -> string
 val load_for_target : target:string -> (t, error) result
 
 (** [target_file target] is the target file path a resolved [target] was (or
-    would be) overlaid from: [sol/<env>/<provider>/<region>.yml].
+    would be) overlaid from, resolved against the workspace root (DEC-024):
+    [<root>/sol/<env>/<provider>/<region>.yml].
     [load_for_target] itself tolerates this file being absent (a target can
     legitimately rely on [sol.yml] alone) -- callers that mutate real
     infrastructure and need the stronger guarantee that this exact target was

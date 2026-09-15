@@ -35,10 +35,13 @@ let primitive_of_suffix name =
   else None
 ;;
 
-type discover_error = Missing_app_dir
+type discover_error =
+  | Missing_app_dir
+  | Workspace_error of Sol_cli_workspace.workspace_error
 
 let discover_error_to_string = function
   | Missing_app_dir -> "'app/' not found — run from the workspace root."
+  | Workspace_error e -> Sol_cli_workspace.workspace_error_to_string e
 ;;
 
 (* CODE_LAYER-019: one scan produces typed workspace facts instead of each
@@ -72,30 +75,38 @@ let has_dockerfile dir = Sys.file_exists (Filename.concat dir "Dockerfile")
    identical to an empty workspace, which is exactly the confusion the strict
    selector removes. *)
 let scan_workspace () =
-  let app_dir = "app" in
-  if not (Sys.file_exists app_dir && Sys.is_directory app_dir)
-  then Error Missing_app_dir
-  else (
-    let workloads = ref [] in
-    let unexpected = ref [] in
-    Array.iter
-      (fun domain ->
-         let dp = Filename.concat app_dir domain in
-         if domain.[0] <> '.' && Sys.is_directory dp
-         then
-           Array.iter
-             (fun name ->
-                let dir = Filename.concat dp name in
-                if name.[0] <> '.' && Sys.is_directory dir
-                then (
-                  match primitive_of_suffix name with
-                  | Some primitive ->
-                    let svc = { domain; name; primitive; dir } in
-                    workloads := (svc, has_dockerfile dir) :: !workloads
-                  | None -> unexpected := (domain, name, dir) :: !unexpected))
-             (Sys.readdir dp))
-      (Sys.readdir app_dir);
-    Ok { workloads = List.rev !workloads; unexpected = List.rev !unexpected })
+  match Sol_cli_workspace.resolve_validated ~dir:(Sys.getcwd ()) with
+  | Error e -> Error (Workspace_error e)
+  | Ok root ->
+    let app_dir = Filename.concat root "app" in
+    if not (Sys.file_exists app_dir && Sys.is_directory app_dir)
+    then Error Missing_app_dir
+    else (
+      let workloads = ref [] in
+      let unexpected = ref [] in
+      Array.iter
+        (fun domain ->
+           let dp = Filename.concat app_dir domain in
+           if domain.[0] <> '.' && Sys.is_directory dp
+           then
+             Array.iter
+               (fun name ->
+                  let full = Filename.concat dp name in
+                  if name.[0] <> '.' && Sys.is_directory full
+                  then (
+                    (* [dir] stays workspace-root relative: it becomes the
+                       plan's [source_dir], which is always combined with the
+                       build context (itself derived from the root), never with
+                       the invocation cwd. *)
+                    let dir = Filename.concat "app" (Filename.concat domain name) in
+                    match primitive_of_suffix name with
+                    | Some primitive ->
+                      let svc = { domain; name; primitive; dir } in
+                      workloads := (svc, has_dockerfile full) :: !workloads
+                    | None -> unexpected := (domain, name, dir) :: !unexpected))
+               (Sys.readdir dp))
+        (Sys.readdir app_dir);
+      Ok { workloads = List.rev !workloads; unexpected = List.rev !unexpected })
 ;;
 
 let discover_services_result () =

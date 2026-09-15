@@ -24,6 +24,8 @@ let with_tmp f =
          ~finally:(fun () -> Sys.chdir cwd)
          (fun () ->
             Sys.chdir root;
+            (* DEC-024: the fixture is a Sol workspace. *)
+            write "sol.yml" "";
             f root))
 ;;
 
@@ -82,6 +84,8 @@ let test_discover_missing_app () =
   with_tmp (fun _ ->
     match Sol_cli_manifest.discover_services_result () with
     | Error Sol_cli_manifest.Missing_app_dir -> ()
+    | Error (Sol_cli_manifest.Workspace_error _) ->
+      Alcotest.fail "expected Missing_app_dir, got a workspace error"
     | Ok _ -> Alcotest.fail "expected missing app error")
 ;;
 

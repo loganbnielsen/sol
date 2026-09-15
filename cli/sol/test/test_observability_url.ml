@@ -115,6 +115,8 @@ let with_temp_dir f =
     ~finally:(fun () -> Sys.chdir cwd)
     (fun () ->
        Sys.chdir dir;
+       (* DEC-024: the fixture directory is a Sol workspace. *)
+       write "sol.yml" "";
        f ())
 ;;
 
