@@ -609,11 +609,7 @@ let () =
             (fun () ->
                if r.db_rows = 0
                then () (* POSTGRES_URL not set — skip *)
-               else
-                 Alcotest.(check int)
-                   "3 jobs processed"
-                   3
-                   r.jobs_processed)
+               else Alcotest.(check int) "3 jobs processed" 3 r.jobs_processed)
         ] )
     ]
 ;;
