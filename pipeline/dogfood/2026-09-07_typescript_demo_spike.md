@@ -475,8 +475,8 @@ failure this reconciliation exists to prevent.
 | **`Ack \| Retry \| Dead_letter` outcome + declared retry capability** | `worker.ml` two tiers | **absent** | **GAP** |
 | **`In_memory`/`Retry_topics`, group-scoped `<source>.<group>.retry`/`.dlq`, `X-Sol-Retry-At`, ack only after durable publish, `Dead_letter` fails closed with no DLQ** | `kafka_service*.ml`, `kafka_service_retry_topics.ml` | **absent** — `kafkajs`'s implicit retry only | **GAP** |
 | **Worker retry metric statuses `dead_letter`/`relay_published`/`relay_failed`** | `worker.ml` | `@sol/obs` enum is `{ok,error,retry,ack_failed}` only | **GAP** (small) |
-| `-fn` `scheduled_concurrency`/`backoff_limit` + `sol fn run` | `sol.toml` → `CronJob`; CLI | n/a | not applicable |
-| `sol-jobs` durable leased jobs + `sol_jobs_*` metrics | `framework/sol-jobs` (FEAT-077) | none | intentionally deferred |
+| `-fn` `scheduled_concurrency`/`backoff_limit` + `sol fn run` | `sol.toml` → `CronJob`; CLI | n/a for the deploy surface; the runtime invocation contract is app-facing | not applicable (deploy-side); **re-verdict 2026-09-15:** the `-fn` runtime contract is app-facing → carried by FEAT-082 |
+| `sol-jobs` durable leased jobs + `sol_jobs_*` metrics | `framework/sol-jobs` (FEAT-077) | none yet | **re-verdict 2026-09-15 (DEC-022):** intentionally deferred but a *real parity obligation* — sequenced after FEAT-082; TS must implement the stabilised Sol Jobs contract, not mirror the first OCaml API |
 
 ### The one confirmed capability gap
 
@@ -514,20 +514,27 @@ real and where it is.
 
 ### Explicitly not gaps
 
-- **`-fn` resources / concurrency / retry — not applicable.** FEAT-079
-  landed `scheduled_concurrency`/`backoff_limit` as `sol.toml` fields
-  rendered into the Kubernetes `CronJob` by the CLI, plus `sol fn run`. That
-  surface is language-neutral: a TypeScript `-fn` is a run-once process, and
-  Sol renders its manifest from `sol.toml` whatever language is in the
-  image. No app-author TS code contract to port.
-- **`sol-jobs` — intentionally deferred.** A genuine second programming
-  model (DEC-021), not a refinement of the Kafka conventions above. The
-  *mechanism* (Postgres leased jobs, `FOR UPDATE SKIP LOCKED`, transactional
-  enqueue) very likely has a suitable npm ecosystem equivalent — unlike the
-  schema-registry/wire-format gap, which had none — and the Sol-specific
-  residue is the `sol_jobs_*` metric vocabulary plus the "hosted by a
-  `-worker`, not a new primitive" topology. Revisit on a real TypeScript
-  workload that needs transactional enqueue; do not build speculatively.
+- **`-fn` resources / concurrency / retry — mostly not applicable, split under
+  DEC-022 (re-verdict 2026-09-15).** FEAT-079 landed
+  `scheduled_concurrency`/`backoff_limit` as `sol.toml` fields rendered into
+  the Kubernetes `CronJob` by the CLI, plus `sol fn run`. That *deploy* surface
+  stays language-neutral and not applicable: Sol renders the manifest from
+  `sol.toml` whatever language is in the image. But the `-fn` **runtime
+  invocation contract** — how a TypeScript `-fn` handler is invoked (entry
+  point, input/output shape, context) — *is* app-facing, so it is **not** "not
+  applicable". It is carried by FEAT-082's golden path; if a TS `-fn` author
+  must reverse-engineer the invocation contract, that is a real gap to record.
+- **`sol-jobs` — intentionally deferred, but a real parity obligation
+  (re-verdict 2026-09-15, DEC-022).** A genuine second programming model
+  (DEC-021), not a refinement of the Kafka conventions above. The original
+  reasoning — the mechanism (Postgres leased jobs, `FOR UPDATE SKIP LOCKED`,
+  transactional enqueue) "very likely has a suitable npm ecosystem
+  equivalent" — applied the wrong test: ecosystem-equivalence answers "can a
+  library do this", not "does Sol's own durable-jobs contract have a TS
+  implementation". DEC-021 made this a Sol programming model, so a TS surface
+  is owed. It is deliberately not designed yet: the TS implementation must
+  implement the **stabilised** Sol Jobs contract, not mirror whichever OCaml
+  API emerges first. Sequenced after FEAT-082.
 - **`@sol/http`/`@sol/worker` — intentionally deferred** (FEAT-036). The
   spike's own weakest case; the demo hand-rolls only ~15 non-obvious lines
   (the bounded drain race).
