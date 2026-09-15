@@ -2,6 +2,7 @@
 id: FEAT-082
 type: feature
 severity: medium
+title: TypeScript golden path — sol new --language typescript through sol deploy (umbrella)
 source: DEC-022 (application-language strategy) 2026-09-15 — the
   adoption-critical consequence
 ---
