@@ -216,11 +216,24 @@ capability-driven parity reconciliation (2026-09-15, FEAT-080)".
 - The spike's recommendation items 1 (`@sol/kafka`) and 2 (`@sol/obs`) are
   recorded as built (FEAT-034/035/038/039/DOCS-010); item 3 —
   `@sol/http`/`@sol/worker` — remains FEAT-036, intentionally deferred.
-- `sol-jobs` gets its own row: **intentionally deferred** (a second
-  programming model per DEC-021; the mechanism likely has an npm ecosystem
-  equivalent, and only the metric/topology convention is Sol-specific).
-- `-fn` `scheduled_concurrency`/`backoff_limit` + `sol fn run` get
-  **not applicable** (deploy-side/CLI surface, language-neutral).
+- `sol-jobs` gets its own row: **intentionally deferred, and recorded as a
+  real parity obligation** (re-verdict 2026-09-15 under DEC-022). The original
+  wording — "the mechanism likely has an npm ecosystem equivalent" — applied
+  the wrong test: ecosystem-equivalence answers "can a library do this", not
+  "does Sol's own durable-jobs contract have a TS implementation". DEC-021
+  made this a Sol programming model (durable leased jobs alongside Kafka's
+  stream consumption), so a TS surface is owed. It is deliberately *not*
+  designed yet: the TS implementation must implement the stabilised Sol Jobs
+  contract, not mirror whichever OCaml API emerges first. Sequenced after
+  FEAT-082.
+- `-fn` needs splitting (re-verdict 2026-09-15 under DEC-022):
+  `scheduled_concurrency`/`backoff_limit` + `sol fn run` remain **not
+  applicable** (deploy-side/CLI surface, language-neutral) — but the `-fn`
+  **runtime invocation contract** (how a TS `-fn` handler is invoked: entry
+  point, input/output shape, context) is app-facing, so it is **not** "not
+  applicable". It is carried by FEAT-082's golden path; if a TS `-fn` author
+  has to reverse-engineer the invocation contract, that is a real gap to
+  record, not a deploy-side detail.
 - The `Ack | Retry | Dead_letter` / retry-and-DLQ-topic convention was
   checked against `@sol/kafka`: confirmed as the one real gap.
   `wrapEachMessage` exposes neither the outcome nor the retry/DLQ topology,
