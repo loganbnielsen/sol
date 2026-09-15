@@ -195,6 +195,8 @@ val cronjob_doc
   -> name:string
   -> image:string
   -> schedule:string
+  -> cpu:string
+  -> memory:string
   -> workspace:string
   -> domain:string
   -> release_id:Sol_cli_release_id.t

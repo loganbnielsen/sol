@@ -889,6 +889,8 @@ let cronjob_doc
       ~name
       ~image
       ~schedule
+      ~cpu
+      ~memory
       ~workspace
       ~domain
       ~release_id
@@ -947,11 +949,11 @@ spec:
                 name: %s-secrets
             resources:
               requests:
-                cpu: 100m
-                memory: 128Mi
+                cpu: %s
+                memory: %s
               limits:
-                cpu: 250m
-                memory: 256Mi|}
+                cpu: %s
+                memory: %s|}
     name
     ns
     schedule
@@ -963,4 +965,8 @@ spec:
     secret_env_section
     name
     name
+    cpu
+    memory
+    cpu
+    memory
 ;;

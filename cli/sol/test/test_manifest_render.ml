@@ -664,6 +664,44 @@ let test_fn_cronjob_pod_template_has_app_label () =
   assert_contains "fn cronjob pod template app label" cronjob_block "app: invoice-fn"
 ;;
 
+(* BUG-031: sol.toml's cpu/memory were parsed for every primitive, including
+   Fn, but Render_fn discarded them and rendered a hardcoded resource shape
+   regardless of what was configured. A function asking for far more (or
+   less) than the hardcoded 100m/128Mi got silently overridden. *)
+let test_fn_cpu_memory_configurable () =
+  let spec = { fn_spec with cpu = cpu "2"; memory = memory "4Gi" } in
+  let _ns, workload = render_spec_ok spec in
+  let cronjob_block = extract_kind_block workload "kind: CronJob" in
+  assert_contains "fn configured cpu request" cronjob_block "cpu: 2";
+  assert_contains "fn configured memory request" cronjob_block "memory: 4Gi"
+;;
+
+(* Request and limit are rendered equal, the same convention
+   deployment_doc/rollout_doc already use for -svc/-worker -- no
+   Sol-invented limit multiplier on top of a configured value. *)
+let test_fn_cpu_memory_request_equals_limit () =
+  let spec = { fn_spec with cpu = cpu "500m"; memory = memory "1Gi" } in
+  let _ns, workload = render_spec_ok spec in
+  let cronjob_block = extract_kind_block workload "kind: CronJob" in
+  let count_occurrences needle haystack =
+    let n = String.length needle
+    and s = String.length haystack in
+    let count = ref 0 in
+    for i = 0 to s - n do
+      if String.sub haystack i n = needle then incr count
+    done;
+    !count
+  in
+  Alcotest.(check int)
+    "cpu: 500m appears twice (requests and limits)"
+    2
+    (count_occurrences "cpu: 500m" cronjob_block);
+  Alcotest.(check int)
+    "memory: 1Gi appears twice (requests and limits)"
+    2
+    (count_occurrences "memory: 1Gi" cronjob_block)
+;;
+
 (* ── Escape-hatch tests ──────────────────────────────────────────────────── *)
 
 let test_rollout_recreate () =
@@ -2282,6 +2320,14 @@ let () =
             "pod template has app label (AUDIT-040)"
             `Quick
             test_fn_cronjob_pod_template_has_app_label
+        ; Alcotest.test_case
+            "cpu/memory configurable (BUG-031)"
+            `Quick
+            test_fn_cpu_memory_configurable
+        ; Alcotest.test_case
+            "cpu/memory request equals limit (BUG-031)"
+            `Quick
+            test_fn_cpu_memory_request_equals_limit
         ] )
     ; ( "escape_hatches"
       , [ Alcotest.test_case "rollout Recreate" `Quick test_rollout_recreate
