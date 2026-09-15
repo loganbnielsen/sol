@@ -131,6 +131,23 @@ end
 
 module FulfilledOrders = Pg_table.Make (FulfilledOrderSchema)
 
+(* ── Confirmation-email job (sol-jobs, FEAT-077 -- matches demo.ml) ──────── *)
+module EmailJobCodec = struct
+  type t = { order_id : string }
+
+  let kind (_ : t) = "send_confirmation_email"
+
+  let encode (t : t) =
+    Printf.sprintf {|{"order_id":%s}|} (Yojson.Safe.to_string (`String t.order_id))
+  ;;
+
+  let decode s =
+    match Yojson.Safe.from_string s with
+    | `Assoc [ ("order_id", `String order_id) ] -> Ok { order_id }
+    | _ | (exception _) -> Error ("invalid EmailJob payload: " ^ s)
+  ;;
+end
+
 (* ── Golden path result ───────────────────────────────────────────────────── *)
 type result =
   { http_statuses : int list
@@ -139,6 +156,7 @@ type result =
   ; loki_resp : string option
   ; loki_cli_lines : int option
   ; db_rows : int
+  ; jobs_processed : int
   }
 
 (* ── Run golden path ──────────────────────────────────────────────────────── *)
@@ -185,11 +203,21 @@ let run_golden_path () =
       ~service:"fulfillment-worker"
       ()
   in
-  (* Each carries its own Prometheus registry (like two real, separately
-     scraped services) — this test's own assertions render and stitch
-     both together, same as examples/local-demo/bin/demo.ml. *)
+  let jobs_obs =
+    Sol_obs.of_env
+      ~net:env#net
+      ~clock:env#clock
+      ~mono_clock:env#mono_clock
+      ~service:"jobs-worker"
+      ()
+  in
+  (* Each carries its own Prometheus registry (like three real, separately
+     scraped services) — this test's own assertions render and stitch them
+     together, same as examples/local-demo/bin/demo.ml. *)
   let render () =
-    Sol_obs.metrics_renderer svc_obs () ^ Sol_obs.metrics_renderer worker_obs ()
+    Sol_obs.metrics_renderer svc_obs ()
+    ^ Sol_obs.metrics_renderer worker_obs ()
+    ^ Sol_obs.metrics_renderer jobs_obs ()
   in
   let svc_ot = Sol_obs.obs_eio svc_obs in
   (* Storage *)
@@ -204,6 +232,30 @@ let run_golden_path () =
           | Error _ -> None
           | Ok () -> Some pool))
   in
+  (* Confirmation-email jobs worker (sol-jobs, FEAT-077 -- matches demo.ml).
+     Defined before W below, since W's handler enqueues into this via
+     Jobs.enqueue. *)
+  let jobs_done_p, jobs_done_r = Eio.Promise.create () in
+  let jobs_processed = ref 0 in
+  let module EmailJob = struct
+    include EmailJobCodec
+
+    let handle ({ order_id = _ } : t) =
+      incr jobs_processed;
+      if !jobs_processed >= orders_count
+      then (
+        try Eio.Promise.resolve jobs_done_r () with
+        | _ -> ());
+      Ok ()
+    ;;
+  end
+  in
+  let module Jobs = Sol_jobs.Make (EmailJob) in
+  (match db_pool with
+   | Some _ -> ()
+   | None ->
+     (try Eio.Promise.resolve jobs_done_r () with
+      | _ -> ()));
   (* Kafka *)
   let svc =
     match Kafka_service.create kafka_config ~sw with
@@ -239,7 +291,13 @@ let run_golden_path () =
               ; correlation_id = msg.Message.correlation_id
               }
           in
-          (match FulfilledOrders.insert pool row with
+          let result =
+            Pg_db.transaction pool (fun pool ->
+              let ( let* ) = Result.bind in
+              let* () = FulfilledOrders.insert pool row in
+              Jobs.enqueue pool EmailJobCodec.{ order_id = msg.Message.order_id })
+          in
+          (match result with
            | Ok () | Error _ -> ()));
       Worker.Ack
     ;;
@@ -266,6 +324,27 @@ let run_golden_path () =
      | Failure _ -> ());
     try Eio.Promise.resolve worker_done_r () with
     | _ -> ());
+  (match db_pool with
+   | None -> ()
+   | Some pool ->
+     Eio.Fiber.fork ~sw (fun () ->
+       (try
+          Jobs.run
+            ~env
+            ~pool
+            ~ot:jobs_obs
+            ~metrics_port:0
+            ~poll_interval_s:0.2
+            ~max_jobs:orders_count
+            ()
+          |> Result.map_error Sol_jobs.run_error_to_string
+          |> function
+          | Ok () -> ()
+          | Error msg -> failwith msg
+        with
+        | Failure _ -> ());
+       try Eio.Promise.resolve jobs_done_r () with
+       | _ -> ()));
   (* Service *)
   let handle_order req =
     let corr_id =
@@ -387,6 +466,12 @@ let run_golden_path () =
    with
    | Error `Timeout -> failwith "timed out waiting for worker to process messages"
    | Ok () -> ());
+  (* Wait for jobs-worker done (sol-jobs, FEAT-077) *)
+  (match
+     Eio.Time.with_timeout env#clock 20.0 (fun () -> Ok (Eio.Promise.await jobs_done_p))
+   with
+   | Error `Timeout -> failwith "timed out waiting for jobs-worker to process jobs"
+   | Ok () -> ());
   (* Collect results *)
   let metrics_text = render () in
   let loki_resp =
@@ -451,7 +536,14 @@ let run_golden_path () =
        | Error _ -> 0
        | Ok rows -> List.length rows)
   in
-  { http_statuses; metrics_text; worker_metrics_http; loki_resp; loki_cli_lines; db_rows }
+  { http_statuses
+  ; metrics_text
+  ; worker_metrics_http
+  ; loki_resp
+  ; loki_cli_lines
+  ; db_rows
+  ; jobs_processed = !jobs_processed
+  }
 ;;
 
 (* ── Tests ────────────────────────────────────────────────────────────────── *)
@@ -481,6 +573,11 @@ let () =
             | Some resp ->
               if not (metric_nonzero resp "sol_worker_messages_total")
               then Alcotest.fail "worker /metrics did not include worker metrics")
+        ; Alcotest.test_case "sol_jobs_processed_total > 0" `Quick (fun () ->
+            if r.jobs_processed = 0
+            then () (* POSTGRES_URL not set — skip *)
+            else if not (metric_nonzero r.metrics_text "sol_jobs_processed_total")
+            then Alcotest.fail "metric absent or zero")
         ] )
     ; ( "loki"
       , [ Alcotest.test_case "logs received for service=order-svc" `Quick (fun () ->
@@ -504,6 +601,19 @@ let () =
             if r.db_rows = 0
             then () (* POSTGRES_URL not set — skip *)
             else Alcotest.(check int) "3 rows stored" 3 r.db_rows)
+        ] )
+    ; ( "jobs"
+      , [ Alcotest.test_case
+            "confirmation-email jobs claimed and completed (sol-jobs, FEAT-077)"
+            `Quick
+            (fun () ->
+               if r.db_rows = 0
+               then () (* POSTGRES_URL not set — skip *)
+               else
+                 Alcotest.(check int)
+                   "3 jobs processed"
+                   3
+                   r.jobs_processed)
         ] )
     ]
 ;;

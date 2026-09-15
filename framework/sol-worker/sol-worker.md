@@ -9,7 +9,7 @@ There are two tiers, split at the type level (FEAT-078) rather than by a runtime
 - **`WORKER`** (`Make`) — a plain Kafka worker: consume, handle, ack. `handle` returns `ack_outcome`, whose only case is `Ack` — it cannot express `Retry`/`Dead_letter` at all, so there is no retry strategy to configure and none to omit by accident.
 - **`RETRYABLE_WORKER`** (`Make_with_retry`) — a worker whose `handle` can return `Ack`, `Retry reason`, or `Dead_letter reason`. Its `run` *requires* `~retry_strategy` — there is no implicit default. A missing retry strategy is a compile error here, never a runtime surprise discovered the first time a message fails.
 
-Kafka processing is the default worker behavior; when durable asynchronous retry is explicitly enabled, `Retry_topics` is the recommended production implementation. Neither tier requires Postgres, a job scheduler, or an implicit retry mechanism — `sol-jobs` remains a separate future primitive (DEC-021/FEAT-077).
+Kafka processing is the default worker behavior; when durable asynchronous retry is explicitly enabled, `Retry_topics` is the recommended production implementation. Neither tier requires Postgres or an implicit retry mechanism — for independent units of work rather than ordered stream processing, see `sol-jobs` (DEC-021/FEAT-077), a library hosted by an ordinary `-worker` binary rather than a Kafka-specific concern of this module.
 
 ## Module types
 

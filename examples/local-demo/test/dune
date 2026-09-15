@@ -11,6 +11,7 @@
   sol_cli
   sol_svc
   sol_worker
+  sol_jobs
   pg-eio
   caqti
   caqti-eio

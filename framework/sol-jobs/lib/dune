@@ -1,0 +1,13 @@
+(library
+ (name sol_jobs)
+ (wrapped false)
+ (libraries
+  eio
+  eio.unix
+  obs-eio
+  obs-prometheus-eio
+  pg-eio
+  caqti
+  sol_env
+  sol_obs
+  sol_runtime))
