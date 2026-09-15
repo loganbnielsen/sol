@@ -426,3 +426,114 @@ was never "can TypeScript deploy on Sol" (it already could, unmodified),
 it's specifically the schema-registry and trace-propagation conventions
 that have no ecosystem equivalent and are undocumented outside OCaml
 source.
+
+---
+
+## Addendum — capability-driven parity reconciliation (2026-09-15, FEAT-080)
+
+Everything above is the 2026-09-07 snapshot, kept as the record of what the
+spike measured. This addendum re-judges each capability against what has
+actually shipped on both sides since, and gives every one exactly one
+verdict — **implemented** / **already equivalent** / **intentionally
+deferred** / **not applicable**. A capability left with no verdict is the
+failure this reconciliation exists to prevent.
+
+### What changed since the snapshot
+
+- **TS side — the recommendation above was carried out.** `@sol/kafka`
+  (FEAT-034) and `@sol/obs` (FEAT-035) shipped in `packages/`, were
+  dogfooded by migrating `demo_ts` onto them and deleting the hand-rolled
+  files (FEAT-038), then got CI coverage (FEAT-039) and docs (DOCS-010).
+  The "build, in this order, if/when…" recommendation is no longer a
+  proposal: its items 1 and 2 were built; item 3 (`@sol/http`/`@sol/worker`)
+  was not and is tracked as FEAT-036.
+- **OCaml side — four conventions this table never saw.** FEAT-076
+  (`Ack | Retry | Dead_letter`), FEAT-078 (type-level `WORKER` /
+  `RETRYABLE_WORKER` split, mandatory `retry_strategy`, shared
+  `retry_policy` with `jitter_ratio`), FEAT-077 (`sol-jobs`, a second
+  programming model, DEC-021) and FEAT-079 (`-fn`
+  `scheduled_concurrency`/`backoff_limit` + `sol fn run`).
+
+### Verdicts
+
+| Capability | OCaml (current) | TS (current) | Verdict |
+|---|---|---|---|
+| HTTP routing | `sol-svc` | Fastify | already equivalent |
+| `/healthz` | automatic | ~3 lines in the demo | already equivalent — trivial; FEAT-036 is sugar only |
+| Prometheus exposition | automatic | `prom-client` | already equivalent |
+| svc metric naming (`sol_svc_requests_total`, route/`status_class` labels, `unmatched`) | `service.ml` | `@sol/obs` constants/helpers | implemented (FEAT-035) |
+| Graceful HTTP drain (bounded) | `service.ml`, bounded by `drain_timeout_s` | hand-rolled `Promise.race` in the demo | intentionally deferred (FEAT-036) |
+| Kafka transport | `kafka-eio` | `kafkajs` | already equivalent |
+| Kafka topic provisioning | `ensure_topic` | `registerTopic` | implemented (FEAT-034) |
+| Schema registration order/fatality | `kafka_service.ml` `register` | `registerTopic` | implemented |
+| Confluent wire format | `Confluent_wire` | `encodeWire`/`decodeWire` | implemented |
+| Decode-reject vs. handler-retry vs. crash | `wrap_on_decode_error` | `wrapEachMessage`/`wireCrashListener` | implemented |
+| W3C `traceparent` propagation | `sol-obs` | `@sol/obs` | implemented (dedup'd in FEAT-038) |
+| PostgreSQL | `pg-eio` | `pg` | already equivalent |
+| Loki push shape/labels | `sol-obs` | `@sol/obs makeLokiPusher` | implemented |
+| Structured-log formatting | — | plain console | already equivalent — `pino` added no value |
+| **`Ack \| Retry \| Dead_letter` outcome + declared retry capability** | `worker.ml` two tiers | **absent** | **GAP** |
+| **`In_memory`/`Retry_topics`, group-scoped `<source>.<group>.retry`/`.dlq`, `X-Sol-Retry-At`, ack only after durable publish, `Dead_letter` fails closed with no DLQ** | `kafka_service*.ml`, `kafka_service_retry_topics.ml` | **absent** — `kafkajs`'s implicit retry only | **GAP** |
+| **Worker retry metric statuses `dead_letter`/`relay_published`/`relay_failed`** | `worker.ml` | `@sol/obs` enum is `{ok,error,retry,ack_failed}` only | **GAP** (small) |
+| `-fn` `scheduled_concurrency`/`backoff_limit` + `sol fn run` | `sol.toml` → `CronJob`; CLI | n/a | not applicable |
+| `sol-jobs` durable leased jobs + `sol_jobs_*` metrics | `framework/sol-jobs` (FEAT-077) | none | intentionally deferred |
+
+### The one confirmed capability gap
+
+The three GAP rows are one concern, and they are the only place the TS side
+is *missing a Sol convention* rather than using an ecosystem library: **a
+TypeScript worker cannot participate in Sol's retry/DLQ machinery.**
+
+- `wrapEachMessage` predates FEAT-076/078. Its contract is the older
+  two-way split — decode failure = reject, handler failure = let `kafkajs`
+  retry — with no way to return `Retry reason` or `Dead_letter reason`, and
+  no `retry_strategy` to select.
+- It inherits `kafkajs`'s implicit retry as the fallback, which is exactly
+  the "implicit default substrate behavior standing in for an explicit Sol
+  decision" FEAT-078 removed on the OCaml side. The tiers do not line up:
+  OCaml has *Ack-only* and *retry-capable-is-declared*; TS has a single
+  always-retrying wrapper.
+- None of FEAT-076/078's topology exists on the TS side: group-scoped
+  `<source>.<group>.retry` / `.dlq` topics, `X-Sol-Retry-At`, backoff with
+  `jitter_ratio`, ack-only-after-durable-publish, and `Dead_letter` failing
+  closed when no DLQ is configured (the acknowledgement-ownership
+  invariant).
+
+This is cross-language interop, not sugar: a TS worker and an OCaml
+`sol-worker` on the same topic currently behave differently under failure,
+and a TS service cannot hand work to Sol's retry/DLQ topics. The 2026-09-07
+spike already flagged the hand-rolled version as "bare minimum … not the
+full forward-retry/DLQ machinery … real, non-trivial future work if
+`@sol/kafka` gets built."
+
+**Follow-up:** FEAT-081 (filed) — consumer outcome + retry/DLQ parity in
+`@sol/kafka`, the `@sol/obs` status-vocabulary completion, `demo_ts` moved
+to the retryable tier, and a cross-language test. Whether to build it is a
+separate, prioritised decision; this verdict only records that the gap is
+real and where it is.
+
+### Explicitly not gaps
+
+- **`-fn` resources / concurrency / retry — not applicable.** FEAT-079
+  landed `scheduled_concurrency`/`backoff_limit` as `sol.toml` fields
+  rendered into the Kubernetes `CronJob` by the CLI, plus `sol fn run`. That
+  surface is language-neutral: a TypeScript `-fn` is a run-once process, and
+  Sol renders its manifest from `sol.toml` whatever language is in the
+  image. No app-author TS code contract to port.
+- **`sol-jobs` — intentionally deferred.** A genuine second programming
+  model (DEC-021), not a refinement of the Kafka conventions above. The
+  *mechanism* (Postgres leased jobs, `FOR UPDATE SKIP LOCKED`, transactional
+  enqueue) very likely has a suitable npm ecosystem equivalent — unlike the
+  schema-registry/wire-format gap, which had none — and the Sol-specific
+  residue is the `sol_jobs_*` metric vocabulary plus the "hosted by a
+  `-worker`, not a new primitive" topology. Revisit on a real TypeScript
+  workload that needs transactional enqueue; do not build speculatively.
+- **`@sol/http`/`@sol/worker` — intentionally deferred** (FEAT-036). The
+  spike's own weakest case; the demo hand-rolls only ~15 non-obvious lines
+  (the bounded drain race).
+- **Doc nit (no verdict needed):** `@sol/kafka`'s README still says the
+  traceparent helpers live there "temporarily … move these to `@sol/obs`
+  once it exists" — they were moved and deduped in FEAT-038 and `@sol/kafka`
+  now re-exports from `@sol/obs`. Worth folding into the next `@sol/kafka`
+  change.
+
