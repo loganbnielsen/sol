@@ -64,6 +64,12 @@ module DlqWorker = struct
   let handle _msg ~trace_ctx:_ = Worker.Dead_letter "poison"
 end
 
+(* Arbitrary but valid: these tests drive the handler via test_consume_loop,
+   which bypasses Kafka_service.consume_partitioned entirely, so the actual
+   strategy value is never consulted -- Make_with_retry just requires one be
+   named (FEAT-078: no implicit default). *)
+let unused_retry_strategy = Worker.In_memory Kafka.Consumer.default_retry
+
 (* ── Single-message consume loop ─────────────────────────────────────── *)
 
 let one_message msg ~handler () =
@@ -111,9 +117,14 @@ let test_handle_ok () =
 let test_handle_error_returns_consumer_error () =
   Eio_main.run (fun env ->
     let msg = TestMsg.{ id = "msg-err" } in
-    let module W = Worker.For_testing.Make (ErrWorker) in
+    let module W = Worker.For_testing.Make_with_retry (ErrWorker) in
     let result_r = ref None in
-    W.run ~env ~config:fake_config ~test_consume_loop:(one_message_result msg result_r) ()
+    W.run
+      ~env
+      ~config:fake_config
+      ~retry_strategy:unused_retry_strategy
+      ~test_consume_loop:(one_message_result msg result_r)
+      ()
     |> run_ok;
     match !result_r with
     | Some (Kafka.Consumer.Error Kafka_service.Retry) -> ()
@@ -123,9 +134,14 @@ let test_handle_error_returns_consumer_error () =
 let test_handle_dead_letter_returns_consumer_error () =
   Eio_main.run (fun env ->
     let msg = TestMsg.{ id = "msg-dlq" } in
-    let module W = Worker.For_testing.Make (DlqWorker) in
+    let module W = Worker.For_testing.Make_with_retry (DlqWorker) in
     let result_r = ref None in
-    W.run ~env ~config:fake_config ~test_consume_loop:(one_message_result msg result_r) ()
+    W.run
+      ~env
+      ~config:fake_config
+      ~retry_strategy:unused_retry_strategy
+      ~test_consume_loop:(one_message_result msg result_r)
+      ()
     |> run_ok;
     match !result_r with
     | Some (Kafka.Consumer.Error (Kafka_service.Dead_letter "poison")) -> ()
@@ -190,11 +206,12 @@ let test_metrics_error_counter () =
     in
     let render = Sol_obs.metrics_renderer obs in
     let msg = TestMsg.{ id = "msg-err-metrics" } in
-    let module W = Worker.For_testing.Make (ErrWorker) in
+    let module W = Worker.For_testing.Make_with_retry (ErrWorker) in
     ignore
       (W.run
          ~env
          ~config:fake_config
+         ~retry_strategy:unused_retry_strategy
          ~ot:obs
          ~metrics_port:0
          ~test_consume_loop:(one_message msg)
@@ -425,7 +442,7 @@ let test_ack_failure_fatal_escalates () =
       ()
     |> run_ok;
     match !result_r with
-    | Some (Kafka.Consumer.Error (Kafka_service.Kafka_error e)) ->
+    | Some (Kafka.Consumer.Error e) ->
       Alcotest.(check bool) "escalated error is fatal" true (Kafka.Error.is_fatal e)
     | _ -> Alcotest.fail "expected the handler to return Error for a fatal ack failure")
 ;;

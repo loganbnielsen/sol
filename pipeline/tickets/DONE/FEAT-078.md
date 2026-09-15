@@ -295,3 +295,58 @@ per-message retry policy; or hide Kafka's ordering/delivery semantics.
 - Full-workspace scaffolding does not make Postgres appear mandatory for the worker
   abstraction.
 - No Postgres retry backend, RabbitMQ backend, or generic backend enum is introduced.
+
+## Completion notes (2026-09-14)
+
+Implemented option 1 from "Retry capability must be declared, not discovered at
+runtime": `Worker.WORKER`'s `handle` now returns a new `ack_outcome` type whose
+only case is `Ack` — it cannot express `Retry`/`Dead_letter` at all. A new
+`Worker.RETRYABLE_WORKER` module type (`handle` returns the full `outcome`)
+pairs with a new `Worker.Make_with_retry` functor whose `run` requires
+`~retry_strategy:retry_strategy` (mandatory, not optional). `Worker.Make`
+(Ack-only) takes no `retry_strategy` parameter at all — there's nothing for
+one to select. `Kafka_service.default_retry_strategy` is removed, and
+`Kafka_service.consume_partitioned`'s `~retry_strategy` is now a mandatory
+labeled argument, so the "no implicit fallback" property holds at both layers.
+
+- A newly generated basic worker (`sol new worker`) has no Postgres
+  dependency and is Ack-only (unchanged — it already only ever returned
+  `Worker.Ack`; the comment claiming `Worker.Retry` was possible has been
+  corrected to explain the two-tier split and point at
+  `RETRYABLE_WORKER`/`Make_with_retry`).
+- Missing retry configuration cannot produce a poison-message crash/redelivery
+  loop: a compile error now, not a runtime discovery.
+- `Retry_topics`'s case changed from `{ max_attempts : int }` to a full
+  `Kafka.Consumer.retry_policy`, the same type `In_memory` already used.
+  Backoff for both strategies now goes through the identical
+  `Kafka.Consumer.backoff_s` computation (kafka-eio bumped to `0.3.0` to add
+  `jitter_ratio` and this function) — one shared computation, not just one
+  shared type. Jitter is applied before the `max_delay_s` clamp per the
+  ticket's algorithm; `backoff_s`'s own tests (in both `kafka-eio` and here)
+  assert the delay never exceeds `max_delay_s` or falls below `0`, and is
+  deterministic given an injected `Random.State.t` (never the bare global
+  `Random` module).
+- `Dead_letter` under `In_memory` (no DLQ to route to) now fails closed:
+  routed through the same retry-then-exhaust path as an ordinary handler
+  failure rather than logged-and-acked. Covered by a new integration test
+  (`test_kafka_service_integration.ml`) that would have failed under the old
+  ack-and-drop behavior.
+- Exhaustion disposition is documented as strategy-specific by design in
+  `sol-worker.md` and `kafka-eio-service.md`'s `retry_strategy` doc comments,
+  not left as an implicit asymmetry.
+- Migration/compatibility impact and the backoff-schedule change are recorded
+  in the new root `CHANGELOG.md`, plus a `WORK_SUMMARY.md` entry per the repo's
+  documentation protocol.
+- Updated to the new split: both `comms/notify_worker` app examples (pluto,
+  venus — both return `Retry` on a DB failure, so both are
+  `RETRYABLE_WORKER`), `examples/venus/bin/run.ml`'s combined entrypoint,
+  `examples/local-demo/bin/retry_demo.ml`, the full-workspace scaffold
+  template, `docs/guides/TUTORIAL.md`. `examples/venus/app/logistics/fulfillment_worker`
+  and `examples/local-demo/bin/demo.ml` needed no changes — already Ack-only.
+- No demo/example update beyond the above: this ticket only changes the
+  worker retry contract, already demonstrated by the updated examples; no new
+  `sol.toml` field, CLI command, or generated-manifest shape was added.
+- Non-goals honored: no retry buckets, no Postgres-backed Kafka retry, no
+  `sol-jobs`, no RabbitMQ/generic backend, `Worker.handle`'s signature
+  unchanged (only its return type's *name* split in two), `Retry of string`'s
+  payload is still never inspected by the runtime.

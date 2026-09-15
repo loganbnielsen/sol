@@ -246,7 +246,8 @@ let test_dead_letter_handler_error_routes_to_dlq_and_acks () =
     Kafka_service.Retry_topics.action_of_handler_error
       ~retry_topic
       ~dlq_topic
-      ~max_attempts:3
+      ~retry_policy:
+        { base_delay_s = 1.0; max_delay_s = 60.0; max_attempts = 3; jitter_ratio = 0.0 }
       ~attempt:1
       (Kafka_service.Dead_letter "poison")
   with
@@ -275,6 +276,57 @@ let test_dead_letter_handler_error_routes_to_dlq_and_acks () =
             "origin-group header (BUG-030)"
             (Some "test-group")
             (List.assoc_opt "X-Sol-Origin-Group" msg.headers |> Option.join)))
+;;
+
+(* FEAT-078: a Retry within budget schedules a delay via the same jittered
+   backoff In_memory uses (Kafka.Consumer.backoff_s), bounded by the shared
+   retry_policy's max_delay_s -- and exhausting the budget still routes to
+   the DLQ, exactly as before the retry_policy unification. *)
+let test_retry_within_budget_schedules_jittered_bounded_delay () =
+  let retry_topic = Kafka_service.topic_name_exn "orders-retry" in
+  let dlq_topic = Kafka_service.topic_name_exn "orders-dlq" in
+  let retry_policy : Kafka.Consumer.retry_policy =
+    { base_delay_s = 1.0; max_delay_s = 5.0; max_attempts = 5; jitter_ratio = 0.3 }
+  in
+  for attempt = 1 to retry_policy.max_attempts - 1 do
+    match
+      Kafka_service.Retry_topics.action_of_handler_error
+        ~retry_topic
+        ~dlq_topic
+        ~retry_policy
+        ~attempt
+        Kafka_service.Retry
+    with
+    | Error e -> Alcotest.failf "unexpected kafka error: %s" (Kafka.Error.to_string e)
+    | Ok (Kafka_service.Retry_topics.Forward_retry { target; delay_s }) ->
+      Alcotest.(check string)
+        "targets the retry topic"
+        "orders-retry"
+        (Kafka_service.topic_name_to_string target);
+      Alcotest.(check bool)
+        (Printf.sprintf "attempt %d delay within [0, max_delay_s]" attempt)
+        true
+        (delay_s >= 0.0 && delay_s <= retry_policy.max_delay_s)
+    | Ok _ -> Alcotest.failf "attempt %d: expected Forward_retry, not Forward_dlq" attempt
+  done;
+  match
+    Kafka_service.Retry_topics.action_of_handler_error
+      ~retry_topic
+      ~dlq_topic
+      ~retry_policy
+      ~attempt:retry_policy.max_attempts
+      Kafka_service.Retry
+  with
+  | Ok (Kafka_service.Retry_topics.Forward_dlq { target }) ->
+    Alcotest.(check string)
+      "exhausted budget routes to the dlq topic"
+      "orders-dlq"
+      (Kafka_service.topic_name_to_string target)
+  | Ok (Kafka_service.Retry_topics.Forward_retry _) ->
+    Alcotest.fail "expected the exhausted attempt to route to the dlq, not retry again"
+  | Ok Kafka_service.Retry_topics.Ack ->
+    Alcotest.fail "expected the exhausted attempt to route to the dlq, not ack"
+  | Error e -> Alcotest.failf "unexpected kafka error: %s" (Kafka.Error.to_string e)
 ;;
 
 (* BUG-027: a retried message's key must travel with it to the retry/DLQ
@@ -740,6 +792,10 @@ let () =
             "dead-letter handler error routes to dlq and acks"
             `Quick
             test_dead_letter_handler_error_routes_to_dlq_and_acks
+        ; test_case
+            "retry within budget schedules jittered bounded delay"
+            `Quick
+            test_retry_within_budget_schedules_jittered_bounded_delay
         ; test_case
             "retry publish preserves the message key"
             `Quick

@@ -202,10 +202,11 @@ let () =
   in
   Eio.Fiber.fork ~sw (fun () ->
     (try
-       let module WR = Worker.Make (W) in
+       let module WR = Worker.Make_with_retry (W) in
        WR.run
          ~env
          ~config:kafka_config
+         ~retry_strategy:(Worker.In_memory Kafka.Consumer.default_retry)
          ~ot:worker_obs
          ~metrics_port:0
          ~on_ready:(fun () ->

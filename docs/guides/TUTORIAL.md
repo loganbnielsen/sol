@@ -259,9 +259,11 @@ end) = struct
 end
 ```
 
-`module Message = Charged` tells Sol which Kafka topic and schema this worker consumes. `group_id` is the Kafka consumer group name. `handle` is called once per message with the decoded payload — there's no `ack` to call; Sol commits the offset for you, only after `handle` returns `Worker.Ack`. Return `Worker.Retry reason` for retryable failures or `Worker.Dead_letter reason` for poison messages.
+`module Message = Charged` tells Sol which Kafka topic and schema this worker consumes. `group_id` is the Kafka consumer group name. `handle` is called once per message with the decoded payload — there's no `ack` to call; Sol commits the offset for you, only after `handle` returns `Worker.Ack`.
 
-The `Make(Config)` functor pattern lets you inject the database pool and observability handle without module-level mutable state. Sol's worker runtime (`Worker.Make(W).run`) manages the Kafka connection lifecycle, acknowledgement, graceful shutdown, and per-message metrics.
+A worker whose `handle` can only ever return `Worker.Ack` implements `Worker.WORKER` and runs under `Worker.Make(W).run` — no retry strategy to configure, because there's nothing for one to select. A worker that can return `Worker.Retry reason` (retryable failures) or `Worker.Dead_letter reason` (poison messages) instead implements `Worker.RETRYABLE_WORKER` — `handle`'s return type annotated as `Worker.outcome` — and runs under `Worker.Make_with_retry(W).run ~retry_strategy:...`, which requires the strategy explicitly: there's no implicit default. `notify_worker` above returns `Worker.Retry` on a DB failure elsewhere in `handle`, so it's the retryable kind.
+
+The `Make(Config)` functor pattern lets you inject the database pool and observability handle without module-level mutable state. Sol's worker runtime manages the Kafka connection lifecycle, acknowledgement, graceful shutdown, and per-message metrics either way.
 
 ### The shared storage module
 

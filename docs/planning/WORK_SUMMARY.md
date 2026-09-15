@@ -1,5 +1,33 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: FEAT-078 — explicit retry capability, unified retry policy (2026-09-14)
+
+Closed out the trio started by BUG-028/029/030: made retry an explicit,
+type-enforced capability instead of an implicit fallback, and unified the
+retry-policy vocabulary across both strategies.
+
+- `Worker.WORKER` is now Ack-only (`handle` returns `ack_outcome = Ack`); a
+  new `Worker.RETRYABLE_WORKER` module type (`handle` returns the full
+  `outcome`) pairs with a new `Worker.Make_with_retry` functor whose `run`
+  *requires* `~retry_strategy` — no implicit default anywhere in the stack.
+  `Kafka_service.default_retry_strategy` is removed;
+  `consume_partitioned`'s `~retry_strategy` is now mandatory. A missing
+  retry strategy is now a compile error, not a runtime poison-message loop.
+- `Kafka_service.retry_strategy`'s `Retry_topics` case now carries a full
+  `Kafka.Consumer.retry_policy` (`base_delay_s`, `max_delay_s`,
+  `max_attempts`, `jitter_ratio`) instead of a bare `max_attempts`, matching
+  `In_memory`. Both now compute their backoff via the same
+  `Kafka.Consumer.backoff_s` (bumped `kafka-eio` to `0.3.0` to add
+  `jitter_ratio` and jittered backoff there) — one shared computation, not
+  just one shared type.
+- `Dead_letter` under `In_memory` (which has no DLQ) now fails closed
+  (message left unacknowledged, terminal failure) instead of the previous
+  ack-and-drop — closing the one acknowledgement-ownership-invariant gap
+  BUG-028/029/030 didn't cover.
+- Updated the full-workspace and incremental worker scaffolds, and both
+  `comms/notify_worker` app examples, to the new module-type split. Full
+  details, including the backoff-schedule behavior change: `CHANGELOG.md`.
+
 ## Latest: FEAT-072 — the rollback boundary is exclusive; release history is bounded (2026-09-14)
 
 The remaining DEC-018 rollback work. Its premise check found one bullet already

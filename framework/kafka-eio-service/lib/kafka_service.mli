@@ -125,7 +125,7 @@ module Retry_topics : sig
   val action_of_handler_error
     :  retry_topic:topic_name
     -> dlq_topic:topic_name
-    -> max_attempts:int
+    -> retry_policy:Kafka.Consumer.retry_policy
     -> attempt:int
     -> handler_error
     -> (retry_action, Kafka.Error.t) result
@@ -357,37 +357,45 @@ val consume
   -> unit
   -> (unit, Kafka.Error.t) result
 
-(** How [consume_partitioned] should handle transient handler failures.
+(** How [consume_partitioned] should handle transient handler failures. Both
+    variants share one [retry_policy] vocabulary (FEAT-078) — [base_delay_s],
+    [max_delay_s], [max_attempts], [jitter_ratio] — but are not
+    feature-equivalent: exhaustion disposition is strategy-specific by
+    design (see each variant below), and there is no implicit default —
+    every call site must state which strategy, and which policy, it wants.
 
-    - [In_memory retry] (default) — exponential back-off sleep inside the
-      partition fiber with the given [retry_policy]. Simple, zero infra.
-      Pauses that Kafka partition for the retry delay; vulnerable to rebalance
-      preempting the sleep window.
+    - [In_memory retry] — exponential back-off sleep inside the partition
+      fiber with the given [retry_policy] (delay = [base_delay_s *
+      2^(attempt-1)], jittered by [jitter_ratio], clamped to [max_delay_s]).
+      Simple, zero infra. Pauses that Kafka partition for the retry delay;
+      vulnerable to rebalance preempting the sleep window. On exhaustion (or
+      on a handler's [Dead_letter], which [In_memory] cannot route to a DLQ
+      it doesn't have): terminal failure, the message is left unacknowledged,
+      and the partition/worker fails under normal consumer semantics — never
+      acknowledged-and-discarded (BUG-028's invariant, restated for
+      FEAT-078's [Dead_letter]-without-DLQ case).
 
-    - [Retry_topics { max_attempts }] — on failure the raw message bytes are
-      published to [<topic>-retry] with [X-Sol-Attempt] / [X-Sol-Retry-At]
-      headers, and the original offset is immediately committed. A background
-      retry consumer (group [<group_id>-sol-retry]) subscribes to
-      [<topic>-retry], waits until [X-Sol-Retry-At], then re-runs the handler.
-      That wait blocks every later record sharing the retry partition, including
-      unrelated keys. Republishing gives the retry a later Kafka offset, so it
-      can execute after records that originally followed it, including records
-      with the same key. In steady state the extra head-of-line delay is bounded
-      roughly by the max retry backoff; under backlog or overload it is
-      unbounded.
-      After [max_attempts] total failures the message is routed to
-      [<topic>-dlq]. [max_attempts] must be at least 1. Both topics are
-      auto-provisioned before consumption starts; provisioning or retry-consumer
-      startup failures return [Consumer_error] instead of running with a
-      partially installed retry strategy. *)
+    - [Retry_topics retry] — on failure the raw message bytes are published
+      to the group-scoped retry topic (BUG-030) with [X-Sol-Attempt] /
+      [X-Sol-Retry-At] headers, and the original offset is immediately
+      committed. A background retry consumer (group [<group_id>-sol-retry])
+      subscribes to that topic, waits until [X-Sol-Retry-At], then re-runs
+      the handler. That wait blocks every later record sharing the retry
+      partition, including unrelated keys. Republishing gives the retry a
+      later Kafka offset, so it can execute after records that originally
+      followed it, including records with the same key. In steady state the
+      extra head-of-line delay is bounded roughly by [max_delay_s]; under
+      backlog or overload it is unbounded.
+      After [retry.max_attempts] total failures, or on a handler's
+      [Dead_letter], the message is routed to the group-scoped DLQ topic and
+      the retry offset is acked only once that publish succeeds.
+      [retry.max_attempts] must be at least 1. Both topics are
+      auto-provisioned before consumption starts; provisioning or
+      retry-consumer startup failures return [Consumer_error] instead of
+      running with a partially installed retry strategy. *)
 type retry_strategy =
   | In_memory of Kafka.Consumer.retry_policy
-  | Retry_topics of { max_attempts : int }
-
-(** [In_memory Kafka.Consumer.default_retry] — in-process exponential backoff,
-    indefinite retries. Suitable for transient failures in low-traffic topics.
-*)
-val default_retry_strategy : retry_strategy
+  | Retry_topics of Kafka.Consumer.retry_policy
 
 type consume_partitioned_error =
   | Consumer_error of Kafka.Error.t
@@ -406,6 +414,8 @@ type consume_partitioned_error =
     so no messages accumulate in its stream buffer.
 
     [retry_strategy] selects the failure-handling mode; see [retry_strategy].
+    Mandatory, not optional (FEAT-078): a missing retry strategy must never
+    become an implicit fallback discovered only when a handler first fails.
     Pass [on_retry] to emit metrics on each retry event regardless of mode.
     [on_relay_publish] (Retry_topics only, BUG-029) distinguishes a scheduled
     retry ([on_retry]) from the relay's own publish to the retry/DLQ topic
@@ -422,7 +432,7 @@ val consume_partitioned
         -> raw_bytes:bytes option
         -> ack:(unit -> (unit, Kafka.Error.t) result)
         -> Kafka.Error.t Kafka.Consumer.handler_result)
-  -> ?retry_strategy:retry_strategy
+  -> retry_strategy:retry_strategy
   -> ?on_retry:(partition:int32 -> attempt:int -> delay_s:float -> unit)
   -> ?on_relay_publish:
        (partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit)

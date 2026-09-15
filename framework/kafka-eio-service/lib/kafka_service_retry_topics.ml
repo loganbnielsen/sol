@@ -1,4 +1,19 @@
-let backoff_s n = Float.min (1.0 *. (2. ** Float.of_int n)) 600.0
+(* FEAT-078: message-retry delay for Forward_retry, using kafka-eio's shared
+   jittered backoff (Kafka.Consumer.backoff_s) so In_memory and Retry_topics
+   apply the exact same computation over the exact same retry_policy fields,
+   not just the same type. Mutex-protected self-seeded rng -- never the bare
+   global Random module -- mirroring produce_rng below, shared across every
+   partition fiber's retry decision. *)
+let message_rng = Random.State.make_self_init ()
+let message_rng_mutex = Mutex.create ()
+
+let message_backoff_s (policy : Kafka.Consumer.retry_policy) attempt =
+  Mutex.lock message_rng_mutex;
+  Fun.protect
+    ~finally:(fun () -> Mutex.unlock message_rng_mutex)
+    (fun () -> Kafka.Consumer.backoff_s ~rng:message_rng policy attempt)
+;;
+
 let hdr_attempt = "X-Sol-Attempt"
 let hdr_retry_at = "X-Sol-Retry-At"
 let hdr_decode_error = "X-Sol-Decode-Error"
@@ -150,16 +165,23 @@ let topic_name_to_string = Kafka_service_intf.topic_name_to_string
 (** Decide where a failed message should go after [attempt] attempts. [attempt]
     is the attempt number that will be committed to the target topic (i.e. the
     already-incremented counter). *)
-let decide_action ~retry_topic ~dlq_topic ~max_attempts ~attempt =
-  if attempt >= max_attempts
+let decide_action
+      ~retry_topic
+      ~dlq_topic
+      ~(retry_policy : Kafka.Consumer.retry_policy)
+      ~attempt
+  =
+  if attempt >= retry_policy.max_attempts
   then Forward_dlq { target = dlq_topic }
-  else Forward_retry { target = retry_topic; delay_s = backoff_s attempt }
+  else
+    Forward_retry
+      { target = retry_topic; delay_s = message_backoff_s retry_policy attempt }
 ;;
 
-let action_of_handler_error ~retry_topic ~dlq_topic ~max_attempts ~attempt = function
+let action_of_handler_error ~retry_topic ~dlq_topic ~retry_policy ~attempt = function
   | Kafka_service_intf.Kafka_error e -> Error e
   | Kafka_service_intf.Retry ->
-    Ok (decide_action ~retry_topic ~dlq_topic ~max_attempts ~attempt)
+    Ok (decide_action ~retry_topic ~dlq_topic ~retry_policy ~attempt)
   | Kafka_service_intf.Dead_letter _ -> Ok (Forward_dlq { target = dlq_topic })
 ;;
 
@@ -255,7 +277,7 @@ let consume
       ~group_id
       ~sw
       ~clock
-      ~max_attempts
+      ~(retry_policy : Kafka.Consumer.retry_policy)
       ~on_ready
       ~on_decode_error
       ~on_retry
@@ -268,8 +290,8 @@ let consume
     Kafka_service_intf.Consumer_error (Kafka.Error.Config_error msg)
   in
   let* () =
-    if max_attempts < 1
-    then Error (config_error "Retry_topics max_attempts must be >= 1")
+    if retry_policy.max_attempts < 1
+    then Error (config_error "Retry_topics retry_policy.max_attempts must be >= 1")
     else Ok ()
   in
   let source = topic_name_to_string topic.name in
@@ -354,7 +376,7 @@ let consume
     }
   in
   let no_retry : Kafka.Consumer.retry_policy =
-    { base_delay_s = 0.0; max_delay_s = 0.0; max_attempts = 0 }
+    { base_delay_s = 0.0; max_delay_s = 0.0; max_attempts = 0; jitter_ratio = 0.0 }
   in
   (* BUG-029: the relay (retry-topic consumer) forks off and previously had no
      way to make its own failure visible to this function's return value --
@@ -419,7 +441,7 @@ let consume
                   action_of_handler_error
                     ~retry_topic:retry_topic_name
                     ~dlq_topic:dlq_topic_name
-                    ~max_attempts
+                    ~retry_policy
                     ~attempt:next
                     handler_error
                 with
@@ -446,7 +468,7 @@ let consume
                  ~group_id
                  action
                  ~raw_msg
-                 ~attempt:(max 1 max_attempts)
+                 ~attempt:(max 1 retry_policy.max_attempts)
                  ~publish
                  ~ack
              with
@@ -514,7 +536,7 @@ let consume
               action_of_handler_error
                 ~retry_topic:retry_topic_name
                 ~dlq_topic:dlq_topic_name
-                ~max_attempts
+                ~retry_policy
                 ~attempt:1
                 handler_error
             with

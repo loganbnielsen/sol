@@ -42,8 +42,17 @@ let () =
       let ot = Sol_obs.obs_eio obs
     end)
   in
-  let module WR = Worker.Make (W) in
-  WR.run ~env ~config:kafka_config ~ot:obs ()
+  let module WR = Worker.Make_with_retry (W) in
+  (* Explicit, matching this worker's pre-FEAT-078 implicit behavior: a
+     transient DB failure retries in-process rather than being routed to a
+     DLQ. No implicit default exists any more -- every retry-capable worker
+     must name its strategy. *)
+  WR.run
+    ~env
+    ~config:kafka_config
+    ~retry_strategy:(Worker.In_memory Kafka.Consumer.default_retry)
+    ~ot:obs
+    ()
   |> Result.map_error Worker.run_error_to_string
   |> function
   | Ok () -> ()
