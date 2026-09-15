@@ -62,6 +62,35 @@ and the customer is the user. **Hosting them on a customer's behalf** is the cas
 AGPL §13 addresses, so it belongs in the same review as Redpanda — and it is
 independent of the licence Sol's own code carries.
 
+## TypeScript packages published to npm (`@sol-fab/*`)
+
+The two TypeScript framework packages are extracted to their own repositories
+and published under the `@sol-fab` npm scope:
+
+- [`@sol-fab/obs`](https://github.com/loganbnielsen/sol-obs) — observability
+  naming/shape conventions.
+- [`@sol-fab/kafka`](https://github.com/loganbnielsen/sol-kafka) — Kafka policy
+  layer on top of `kafkajs`.
+
+Both are **Apache-2.0**, as is everything they *ship* (their compiled `dist/`)
+and everything consumers install at runtime:
+
+| Package | Kind | Licence |
+| --- | --- | --- |
+| `@sol-fab/obs` | shipped source | Apache-2.0 |
+| `@sol-fab/kafka` | shipped source | Apache-2.0 |
+| `@opentelemetry/api` (peer of both) | runtime | Apache-2.0 |
+| `kafkajs` (peer of `@sol-fab/kafka`) | runtime | MIT |
+| `@sol-fab/obs` (dependency of `@sol-fab/kafka`) | runtime | Apache-2.0 |
+
+Build/test-only dependencies (not distributed, listed for completeness):
+`typescript` (Apache-2.0), `tsx` + `esbuild` + `undici-types` + `@types/node`
+(MIT). No copyleft component is shipped or required at runtime.
+
+This closes the npm half of INFRA-007's "dependency licence audit" for the
+packages being externally distributed. A licence scan in CI for these two
+repositories is still worth adding on top of the manual inventory.
+
 ## Verifying a component
 
 Chart licence — which is *not* necessarily the software's:
@@ -75,9 +104,12 @@ is distributed and supported. Redpanda is the live example of the two differing.
 
 ## Not yet inventoried
 
-- **OCaml (opam) and npm dependencies.** No licence scan runs in CI. This needs
-  doing before either is published externally, since distribution is what
-  triggers licence obligations.
+- **OCaml (opam) dependencies.** No licence scan runs in CI; this needs doing
+  before the OCaml packages are published externally. (The npm runtime trees of
+  the `@sol-fab/*` packages being distributed are inventoried above.)
 - **Base images in generated Dockerfiles.**
 - **Vendored or adapted code** inside `examples/` or `integration/` that may
   originate elsewhere.
+- **Automated licence scanning in CI** for the two `@sol-fab/*` repositories —
+  the manual inventory above is a point-in-time check, not a standing gate.
+

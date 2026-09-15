@@ -40,3 +40,5 @@ The first version also asserted that the sign-off "preserves the ability to reli
 The AGPL observability stack (Grafana, Loki, Tempo) is documented as the third item: fine to deploy into a customer-operated cluster, and squarely in the same review for the hosted tier.
 
 **Not done, and stated in the document:** the opam and npm dependency graphs are not inventoried — no licence scan runs in CI. That has to happen before either is published, since distribution is what triggers the obligations. Left as an explicit gap rather than implied coverage.
+
+**Addendum (2026-09-15):** the npm runtime trees of the two packages now being distributed externally (`@sol-fab/obs`, `@sol-fab/kafka`, extracted to `loganbnielsen/sol-obs` and `loganbnielsen/sol-kafka`) are inventoried in `docs/legal/third-party-licenses.md` — Apache-2.0 for the packages and `@opentelemetry/api`, MIT for `kafkajs`; no copyleft is shipped or required at runtime. The opam graph and a standing CI licence scan remain open.
