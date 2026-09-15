@@ -208,6 +208,10 @@ type retry_strategy =
        buffer, so observed delay is unbounded. After max_attempts failures, or
        on Dead_letter, the message is routed to <topic>-dlq. Both topics are
        auto-provisioned.
+       If a retry record cannot be decoded, the retry path does not call
+       on_decode_error; it publishes the raw retry record and original headers
+       to <topic>-dlq with decode diagnostics, then acks only after that publish
+       succeeds (BUG-028).
        Ack/drop behavior follows sol-worker.md's acknowledgement ownership
        invariant. Retry_topics does not preserve strict source-partition or
        per-key ordering; workloads that need independent per-message retry

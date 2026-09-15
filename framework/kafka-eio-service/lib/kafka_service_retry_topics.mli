@@ -52,9 +52,31 @@ val action_of_handler_error
     message hashes to the same partition on the target topic that its key
     would hash to on the source topic. *)
 val execute_action
-  :  retry_action
+  :  ?headers:(string * string option) list
+  -> retry_action
   -> raw_msg:Kafka.Consumer.message
   -> attempt:int
+  -> publish_raw:
+       (target_topic:Kafka_service_intf.topic_name
+        -> attempt:int
+        -> raw_bytes:bytes option
+        -> key:bytes option
+        -> headers:(string * string option) list
+        -> delay_s:float
+        -> partition:int32
+        -> (unit, Kafka.Error.t) result)
+  -> ack:(unit -> (unit, Kafka.Error.t) result)
+  -> (unit, Kafka.Error.t) result
+
+(** On a retry-topic decode failure, publish the raw retry record (with decode
+    diagnostics attached) to the DLQ rather than reaching the source-path
+    [on_decode_error] skip-and-ack contract (BUG-028: that contract would
+    ack-drop the last durable copy of the message). *)
+val route_retry_decode_error
+  :  dlq_topic:Kafka_service_intf.topic_name
+  -> raw_msg:Kafka.Consumer.message
+  -> attempt:int
+  -> decode_error:string
   -> publish_raw:
        (target_topic:Kafka_service_intf.topic_name
         -> attempt:int
