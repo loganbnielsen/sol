@@ -169,3 +169,78 @@ report, not a merge gate):
   mechanism (not necessarily a dedicated node pool) if interference was
   found, or left in `BACKLOG` with the evidence recorded if isolation was
   found adequate.
+
+## Completion notes
+
+Workflow: `.github/workflows/fn-svc-isolation-spike.yml`, merged in
+#263 (`749922e7`). Two real runs against a GitHub Actions `ubuntu-22.04`
+k3d cluster:
+
+- **Run 34997975897** (first real run): found a genuine validity bug —
+  the burst handler's busy loop measured its 25s target with
+  `Sys.time()` (process CPU time), so under the Case A 100m CPU limit it
+  took ~250s of wall-clock to actually finish. Case A's own drain-wait
+  correctly timed out at 90s and the experiment correctly refused to run
+  Case B without established case isolation (`::error::` + exit 1) —
+  validating the drain-wait guard's fail-closed design. Fixed by
+  switching the deadline check to `Unix.gettimeofday()` (wall-clock),
+  commit `e5e36fe3`.
+- **Run 35000364561** (after the fix): both cases executed and produced
+  real numbers.
+
+  | | p50 | p95 | p99 | throttle | svc ready | fn pods concurrently Running |
+  |---|---|---|---|---|---|---|
+  | Baseline | 3.215ms | 4.070ms | 5.517ms | unavailable | — | — |
+  | Case A (100m/128Mi × 3) | 3.362ms | 5.345ms | 7.679ms (1.39x baseline) | unavailable | 1/1 | 3/3 |
+  | Case B (500m/512Mi × 4) | 3.347ms | 5.369ms | 7.490ms (1.36x baseline) | unavailable | 1/1 | 1/4 |
+
+  **Case A** (`VERDICT A: no material interference detected, with all
+  3/3 burst pods observed Running concurrently`): genuine concurrent
+  compute sharing occurred and stayed under the 1.5x p99 threshold —
+  the clean result this ticket was designed to look for.
+
+  **Case B** (`VERDICT B: no material interference detected, BUT only
+  1/4 burst pods were ever observed Running concurrently`): the node
+  was already at ~3210m/~4000m (80%) CPU requests before the burst;
+  Case B's additional 2000m (4x500m) request had nowhere near enough
+  spare headroom, so Kubernetes' scheduler admitted only one 500m fn Pod
+  into `Running` at a time rather than overcommitting the node. `svc`
+  stayed fully `Ready` and within threshold, but per this ticket's own
+  acceptance criteria this is reported as scheduler-serialized
+  admission protecting the service, not as proof that genuine 4-way
+  concurrent sharing is safe — those are different findings and this
+  result only establishes the former.
+
+  Case B's own post-measurement drain-wait then timed out (1 of 4 pods
+  still finishing) — this did **not** affect the measurements or
+  verdict above (Case B was the final case, so no subsequent case's
+  isolation was at risk from a slow drain). That drain-wait is a
+  precondition between cases but pure cleanup after the last one; the
+  guard didn't distinguish the two, so it failed the whole job on a
+  timeout that had already happened after both real results were in.
+  Fixed by adding an `is_final` flag so a last-case drain timeout logs
+  a warning instead of failing the run, commit `91a2a93b`. Not re-run
+  after this fix — it only changes exit-code/reporting behavior after
+  the measurement window, not the measurements themselves, and another
+  ~20min CI run to turn a check green would not have taught anything
+  new about Sol.
+
+  CPU throttling (`container_cpu_cfs_throttled_periods_total`) was
+  `unavailable` from this cluster's Prometheus in every window sampled
+  (baseline, Case A, Case B) — reported as unavailable rather than a
+  false "0" throughout, per this ticket's own requirement; that
+  preregistered failure criterion produced no signal either way in
+  this experiment.
+
+**Result:** no material `-fn` → `-svc` interference detected under
+either preregistered case. INFRA-015 updated to record this result and
+remains gated in `BACKLOG` — dedicated node-pool isolation is unproven
+as necessary at the tested scale; the untested dimensions (larger
+scale, memory pressure, missing resource requests, dependency-side
+contention, a busier baseline `-svc`) are recorded there explicitly so
+the gate isn't mistaken for permanently closed.
+
+Demo/example coverage: not applicable — this is a disposable
+`workflow_dispatch` spike scaffolding its own throwaway workspace in CI,
+not a change to any framework primitive, CLI command, or generated
+manifest an app author would use.
