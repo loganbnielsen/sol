@@ -16,12 +16,21 @@ the same transaction as the application state change that caused it), which
 Kafka cannot offer since a message publish can't join a Postgres
 transaction.
 
-## Blocked On
+## Status
 
-A concrete workload that needs leased job semantics and can't be served by
-`sol-worker`'s Kafka retry/DLQ topics (FEAT-076). Nothing in the codebase
-demonstrates this need today — do not promote to `READY_FOR_ENGINEERING`
-until one does.
+Not blocked on a concrete workload. Durable independent background work is
+a generic backend capability within Sol's intended platform scope;
+DEC-021 establishes the semantic distinction from Kafka stream processing
+(`sol-worker`/Kafka: "this happened"; `sol-jobs`/Postgres: "this must
+happen"). A concrete workload's role going forward is **validation, not
+permission**: it can still confirm the designed API is good and expose
+missing requirements once this is built, but the platform doesn't need one
+to justify the capability existing at all.
+
+(Previously gated on "a concrete workload demonstrates this need" —
+that premise question is resolved; the remaining question was only ever
+prioritization against other work, which this promotion to
+`READY_FOR_ENGINEERING` now answers.)
 
 ## Design (recorded now so it doesn't need re-deriving later)
 
