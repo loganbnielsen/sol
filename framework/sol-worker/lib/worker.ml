@@ -108,6 +108,19 @@ module Make_with_test_seam (W : WORKER) = struct
       | Some c -> c ~labels:[ "status", "retry" ] 1
       | None -> ()
     in
+    (* BUG-029: distinct from on_retry (fires once per record when a retry is
+       *scheduled*, before publication is attempted) -- this fires once the
+       relay's own publish to the retry/DLQ topic resolves, so "retry" in
+       sol_worker_messages_total no longer conflates "we decided to retry"
+       with "the retry was actually durably published". *)
+    let on_relay_publish ~partition:_ ~attempt:_ ~outcome =
+      match msg_count with
+      | None -> ()
+      | Some c ->
+        (match outcome with
+         | `Published -> c ~labels:[ "status", "relay_published" ] 1
+         | `Failed -> c ~labels:[ "status", "relay_failed" ] 1)
+    in
     let result =
       Eio.Switch.run (fun sw ->
         Sol_runtime.install_signal_handler ~sw signal_stop_r;
@@ -205,6 +218,7 @@ module Make_with_test_seam (W : WORKER) = struct
             ?on_ready
             ~retry_strategy
             ~on_retry
+            ~on_relay_publish
             ?ot
             ~handler
             ()
