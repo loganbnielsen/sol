@@ -43,16 +43,45 @@ A pre-commit hook runs the build and unit suites; install it with
 
 ## Commits and branch protection
 
-Changes that touch no product source — pipeline planning/bookkeeping under
-`pipeline/`, documentation (`*.md`), and the perf baseline — may be committed
-directly to `main` by maintainers. Source-code changes follow the normal branch
-→ pull request → required checks → merge workflow. **Mixed changes must use the
-pull-request workflow**: a ticket or doc file riding along with a source change
-does not make the source change direct-pushable.
+**Every change reaches `main` through a pull request.** There is no exception,
+including pipeline/planning/bookkeeping under `pipeline/`, documentation
+(`*.md`), and the perf baseline.
 
-This matches what the pre-commit hook already treats as bookkeeping — it runs
-the test suite only when a staged file is not a ticket, not a `*.md`, and not
-the perf baseline.
+```text
+branch → push → pull request → required checks green → review → merge
+```
+
+`main` is protected with required status check `test`, one approving review,
+strict (branch must be up to date), and admin enforcement enabled — so the rule
+binds maintainers and administrators too, not only contributors. Direct pushes
+to `main` are rejected by GitHub:
+
+```text
+remote: error: GH006: Protected branch update failed for refs/heads/main.
+remote: - Changes must be made through a pull request.
+remote: - Required status check "test" is expected.
+```
+
+### Why there is no bookkeeping exception
+
+An earlier revision of this file allowed maintainers to commit
+non-source changes — tickets, `*.md`, the perf baseline — directly to `main`.
+That exception was withdrawn after it was used, in practice, for *everything*:
+25 consecutive commits on `main`, including a large refactor and the change that
+broke `main`'s CI, all landed by direct push. A gate that is bypassed for
+convenience is not a gate, and the failure mode is silent — `main` stayed red
+across ~10 further commits before anyone noticed.
+
+Evidence-only pull requests are cheap and immediately mergeable. That is a
+better trade than discovering hours later that the authoritative branch has been
+broken for a dozen commits.
+
+### The pre-commit hook is not the gate
+
+The hook (`cli/platform/local/scripts/install-hooks.sh`) still skips the test
+suite for staged bookkeeping-only changes, which is a useful local speed-up. It
+is **not** a substitute for CI: run CI on the pull request, and do not treat "the
+hook was quiet" as evidence a change is safe. CI is the gate.
 
 ## Trademarks
 
