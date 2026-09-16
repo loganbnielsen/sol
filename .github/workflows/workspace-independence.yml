@@ -1,0 +1,98 @@
+name: workspace-independence
+
+# DEC-024 / DEC-025 / FEAT-085.
+#
+# The strongest of the three boundaries:
+#
+#   ci.yml              -> does the code work?
+#   ci.yml bootstrap    -> can Sol establish its package boundary from scratch?
+#   this workflow       -> can an application survive without the repository
+#                          that created it?
+#
+# Deliberately NOT on every pull request: the OCaml job creates a fresh switch and
+# compiles the whole dependency universe (~20-40 min). It runs on a schedule and on
+# demand, so it stays a real test rather than a ritual that gets skipped, and so a
+# regression (someone adding another ../../cli/... path, a local pin, or a
+# vendor-style symlink) is caught within a week instead of being rediscovered by
+# hand six months later.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 1'   # Mondays, 04:17 UTC
+  push:
+    branches: [main]
+    paths:
+      - 'examples/**'
+      - 'cli/platform/local/scripts/prove-workspace-independence.sh'
+      - '.github/workflows/workspace-independence.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  # Proves the OCaml half: a copied workspace builds in a switch that has no pin
+  # pointing back at this checkout. The script asserts that explicitly, because a
+  # proof that reads the wrong environment passes for the wrong reason -- the
+  # manual run of this proof nearly did exactly that.
+  ocaml-workspace-copy-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install opam
+        # Deliberately NOT ocaml/setup-ocaml: that creates and populates a default
+        # switch, and this job needs a *fresh* one to be meaningful.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y opam
+          opam --version
+
+      - name: Prove examples/pluto builds without this repository
+        run: bash cli/platform/local/scripts/prove-workspace-independence.sh examples/pluto
+
+      - name: Prove examples/venus builds without this repository
+        run: PROOF_SWITCH=sol-workspace-proof bash cli/platform/local/scripts/prove-workspace-independence.sh examples/venus
+
+  # Proves the TypeScript half. Cheap: the workspace resolves @sol-fab/* from npm
+  # as ordinary semver dependencies, so there is no compiler toolchain and no git
+  # protocol involved -- which is itself the property being asserted.
+  ts-workspace-copy-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Copy the TypeScript workspace out of the repository
+        run: |
+          mkdir -p /tmp/sol-proof/ts-workspace
+          tar -c --exclude=node_modules --exclude=dist -C examples/pluto/app/demo_ts . \
+            | tar -x -C /tmp/sol-proof/ts-workspace
+
+      - name: Assert nothing reaches back into the repository
+        run: |
+          cd /tmp/sol-proof/ts-workspace
+          fail=0
+          check() { if [ "$1" -ne 0 ]; then echo "FAIL: $2 (found $1)"; fail=1; else echo "ok:   $2"; fi; }
+          check "$(find . -type l | wc -l)" "no symlinks"
+          check "$(grep -rl -e '\.\./sol-' -e "$GITHUB_WORKSPACE" . 2>/dev/null | wc -l)" "no references to the Sol checkout or sibling repos"
+          # Framework dependencies must be ordinary published versions, not git or
+          # local paths -- that is the whole point of the npm distribution boundary.
+          check "$(grep -rhoE '"@sol-fab/[a-z]+": "(git|file|link)[^"]*"' package.json */package.json 2>/dev/null | wc -l)" \
+                "framework deps are semver, not git/file/link"
+          exit $fail
+
+      - name: Install and build in isolation
+        working-directory: /tmp/sol-proof/ts-workspace
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build -w order-svc
+          npm run build -w fulfillment-worker
+
+      - name: Report
+        if: success()
+        run: echo "PASS — the copied TypeScript workspace installs and builds with no dependence on this repository."
