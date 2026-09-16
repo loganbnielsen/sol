@@ -15,6 +15,7 @@ import {
   type RetryStrategy,
 } from "@sol-fab/kafka";
 import { makeLokiPusher } from "@sol-fab/obs";
+import { runWorker } from "@sol-fab/worker";
 import { decodeOrderPlaced } from "./wire.js";
 import { initTracing, startChildSpan } from "./tracing.js";
 import { makeWorkerMetrics } from "./metrics.js";
@@ -172,22 +173,30 @@ async function main() {
       }, 3000)
     : undefined;
 
-  let shuttingDown = false;
-  const shutdown = async () => {
-    if (shuttingDown) return; // SIGTERM/SIGINT can both fire; don't drain twice concurrently
-    shuttingDown = true;
-    console.log("[fulfillment-worker-ts] draining...");
-    if (pushInterval) clearInterval(pushInterval);
-    await consumer.disconnect();
-    await relayConsumer.disconnect();
-    await producer.disconnect();
-    metricsServer.close();
-    if (db) await db.close();
-    await shutdownTracing();
-    process.exit(0);
-  };
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+  // @sol-fab/worker owns the lifecycle contract (idempotent SIGTERM/SIGINT,
+  // an unbounded drain -- sol-worker's worker.mli has no drain_timeout_s,
+  // unlike sol-svc) that framework/sol-worker/lib/worker.ml defines; this
+  // app only supplies what to drain and what to close afterwards.
+  runWorker({
+    drain: async () => {
+      await consumer.disconnect();
+      await relayConsumer.disconnect();
+    },
+    onDrainStart: () => {
+      console.log("[fulfillment-worker-ts] draining...");
+      if (pushInterval) clearInterval(pushInterval);
+    },
+    shutdownHooks: [
+      () => producer.disconnect(),
+      async () => {
+        metricsServer.close();
+      },
+      async () => {
+        if (db) await db.close();
+      },
+      () => shutdownTracing(),
+    ],
+  });
 }
 
 main().catch((err) => {
