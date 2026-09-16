@@ -532,3 +532,117 @@ feed the lifecycle-ownership decision.
 
 **Not yet run** (the remaining two behavioural experiments): the SIGTERM/drain
 test with the worker mid-flight, and retry → exhaustion → DLQ.
+
+## #2 SIGTERM with a message in flight — forced-shutdown semantics (2026-09-16)
+
+The message was made genuinely in-flight without touching the fixture: an
+`ACCESS EXCLUSIVE` lock on `fulfilled_orders_ts` blocks the worker's `INSERT`, so
+its `eachMessage` stays open.
+
+Proof it was in-flight, not merely slow:
+
+```text
+marker drain-1789589779 sent → POST /orders 202
+[worker] fulfilled for marker:        0        (handler still inside insertFulfilled)
+sol-demo-ts-orders partition 0:  current-offset 3, log-end-offset 4, TOTAL-LAG 1
+```
+
+i.e. consumed, not committed. Then a graceful pod delete:
+
+```text
+terminationGracePeriodSeconds: 30
+terminated after:              31s      → SIGKILLed at the grace boundary
+offset after termination:      current-offset 3, log-end-offset 4   (still uncommitted)
+```
+
+**What happens at the forced-shutdown boundary (the case that matters):** the
+process does not exit early and does not commit work it did not finish. It is
+SIGKILLed at the grace period with the offset uncommitted, and Kafka **redelivers
+to the replacement instance** once the group rebalances. The replacement then
+completed it:
+
+```text
+[worker] fulfilled  order=drain-1789589779  item=widget      (replacement pod)
+final: current-offset 4 = log-end-offset 4, TOTAL-LAG 0
+```
+
+So **no work is lost by force-cancelling an uncommitted message** — at-least-once
+is preserved by Kafka, not by the application. That is a concrete semantic
+available to a lifecycle abstraction.
+
+Two observations, recorded rather than concluded:
+
+- **The worker has no drain timeout of its own.** `order_svc` has
+  `DRAIN_TIMEOUT_MS = 30_000` and races `app.close()` against it; the worker simply
+  `await consumer.disconnect()`s and relies on Kubernetes' grace period to
+  eventually SIGKILL it. Two units in one workspace model the same Sol boundary in
+  two different ways, one of them implicitly.
+- **The handler appears to have run twice** (two `fulfilled` log lines for the
+  marker) while the database holds **one** row, because `insertFulfilled` is
+  `ON CONFLICT (order_id) DO NOTHING`. So idempotency is currently
+  **application-owned** — the app provided it, not Sol.
+
+**Unverified, stated as such:** whether the `[fulfillment-worker-ts] draining...`
+path actually ran before the SIGKILL. I queried the pod's logs *after* the delete,
+when they are no longer retrievable, so the ordering between "stop taking new work"
+and "finish the in-flight message" is **not** established by this run. That is the
+next thing to instrument, and it is arguably more architecturally important than
+the eventual API shape.
+
+## #3 Retry → exhaustion → DLQ — PASS, with no application orchestration
+
+Induced reversibly: `ALTER TABLE fulfilled_orders_ts RENAME TO …_hidden` makes
+`insertFulfilled` throw, and the app's own policy (a DB failure is retryable)
+returns Sol's `retry` outcome. Restored immediately afterwards.
+
+```text
+handler returns retryOutcome("db: …")
+  → @sol-fab/kafka publishes to sol-demo-ts-orders.sol-demo-ts-fulfillment-worker.retry
+  → retries, incrementing attempt
+  → exhausts at maxAttempts 5
+  → publishes to …fulfillment-worker.dlq
+  → source offset committed, responsibility transferred
+```
+
+Evidence:
+
+```text
+sol_worker_messages_total{status="retry"} 5          (== RETRY_STRATEGY.policy.maxAttempts)
+retry topic:  record for the marker, wire-encoded, 3 attempts visible
+dlq topic:    {"order_id":"dlq-1789589087","item":"widget","quantity":1,
+               "correlation_id":"dlq-1789589087"}      ← payload intact
+source group: TOTAL-LAG 0, current-offset 3 = log-end-offset 3   ← transferred
+```
+
+The application never names a topic, a header, or an offset: it returns an
+outcome, and `@sol-fab/kafka` owns publishing, delay, attempt accounting,
+exhaustion, DLQ publication and offset transfer.
+
+## The contrast, and what it implies for FEAT-036
+
+| Sol-specific semantic | Owner today | Evidence |
+| --- | --- | --- |
+| Kafka retry / exhaustion / DLQ | `@sol-fab/kafka` | #3, zero app orchestration |
+| offset / responsibility transfer | `@sol-fab/kafka` | #3, lag 0 after DLQ |
+| trace propagation across services | `@sol-fab/kafka` + `@sol-fab/obs` | child span of the producer span |
+| runtime endpoint discovery | Sol platform | 6 vars via ConfigMap |
+| metrics conventions | `@sol-fab/obs` | `sol_svc_*` / `sol_worker_*` |
+| HTTP draining | application | `app.close()` |
+| signal handling | application | `process.on(SIGTERM/SIGINT)` |
+| **Sol's 30s drain policy** | application | `DRAIN_TIMEOUT_MS = 30_000` |
+| forced-shutdown semantics | *implicit* — k8s grace period | #2: no worker-side timeout |
+| OTel flush ordering | application | `shutdownTracing()` |
+| resource shutdown ordering | application | `metricsServer.close()` → `db.close()` |
+| **idempotency** | application | `ON CONFLICT DO NOTHING` |
+
+The principle this supports: **applications decide what happened to their work;
+Sol owns the mechanics required to execute that decision safely.** #3 shows that
+principle already realised for Kafka's hard part; #2 shows it is not realised for
+process lifecycle. That is a conclusion from behaviour, not from aesthetics, and
+it does not imply Sol should own Fastify or KafkaJS.
+
+**Separately, for FEAT-036 to weigh, not evidence in itself:** the application
+knows `sol-svc`'s OCaml `drain_timeout_s` default and reproduces it by hand. If Sol
+promises consistent drain/shutdown behaviour across supported languages, an
+application should not have to know an OCaml implementation detail to implement
+the contract correctly.
