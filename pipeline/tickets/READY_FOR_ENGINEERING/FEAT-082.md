@@ -400,3 +400,86 @@ anyone reports a config-injection gap from that command.
 (`body must have required property 'order_id'`, then 400 again with `order_id`
 supplied). The exact request schema was not determined, so no traced request was
 ever completed. Determining it is the next step for evaluating traces.
+
+## One successful transaction, followed end to end (2026-09-16)
+
+The request contract was read from source rather than probed: `POST /orders`
+requires `{order_id, item, quantity}` (Fastify's AJV body schema, `required:
+["order_id", "item", "quantity"]`). Both earlier probes had 400'd *before the
+handler ran* — which is why they produced no span.
+
+One order, marker `e2e-1789583116`:
+
+```text
+POST /orders  {"order_id":"e2e-1789583116","item":"widget","quantity":3}
+  → 202 {"accepted":true}
+  → order-svc-ts  produced to sol-demo-ts-orders (wire-encoded, schemaId, traceparent header)
+  → fulfillment-worker-ts  consumed it
+  → [worker] fulfilled  order=e2e-1789583116  item=widget
+  → Postgres fulfilled_orders_ts: e2e-1789583116|widget|3|e2e-1789583116
+```
+
+**PASS — the whole data path works**, including the correlation id surviving from
+the HTTP header through the Kafka record into the stored row.
+
+**Traces WORK — correcting the previous "unresolved".** There had simply never been
+a request that reached the handler, so Tempo was legitimately empty. For this
+transaction:
+
+```text
+order-svc-ts           receive_order  SPAN_KIND_PRODUCER  span=zS3WRWPF  parent=<root>
+fulfillment-worker-ts  fulfill_order  SPAN_KIND_CONSUMER  span=W+lXmXrz  parent=zS3WRWPF
+```
+
+The worker's span is a **child of the service's span**, propagated through the
+Kafka `traceparent` header. Cross-service propagation is demonstrated, not
+inferred — the trace ID's timestamp matches the request exactly.
+
+**PASS — metrics:** `sol_svc_requests_total{method="POST",route="/orders",status_class="2xx"} 1`.
+
+**PASS, and better than expected — retry topology provisioned automatically.**
+`@sol-fab/kafka` created a second consumer group and its retry topic without the
+application naming either:
+
+```text
+group sol-demo-ts-fulfillment-worker          ← sol-demo-ts-orders[0]
+group sol-demo-ts-fulfillment-worker-sol-retry ← sol-demo-ts-orders.sol-demo-ts-fulfillment-worker.retry[0]
+```
+
+**Still unresolved — logs in Loki.** Loki holds streams for `service=order-svc`,
+but the newest is 18:04 and this 18:25 transaction is absent, and those entries are
+logfmt while `@sol-fab/obs`'s `log()` emits JSON
+(`console.log(JSON.stringify({service, level, msg, ...fields}))`) *and* pushes to
+Loki directly (`src/loki.ts`). So the streams found are probably not this
+application's. Needs a focused look at how TS logs reach Loki — direct push versus
+stdout collection — rather than a general debugging session.
+
+## FEAT-036 evidence: what the app hand-writes today
+
+Read, not modified. This is the observation FEAT-036 should decide on, and it is
+more than runtime config — the runtime *contract* is injected, but the **lifecycle
+is hand-written and mirrors OCaml implementation details**:
+
+`order_svc/src/index.ts`:
+
+```text
+const DRAIN_TIMEOUT_MS = 30_000; // matches sol-svc's default drain_timeout_s (service.ml)
+const shutdown = async () => {
+  if (shuttingDown) return; // SIGTERM/SIGINT can both fire; don't drain twice
+  ... // races app.close() against drainTimeout,
+      // "sol-svc races the drain against drain_timeout_s and force-cancels"
+  await shutdownTracing();
+};
+process.on("SIGTERM", shutdown);  process.on("SIGINT", shutdown);
+```
+
+`fulfillment_worker/src/index.ts`: the same idempotence guard, plus
+`metricsServer.close()`, `db.close()`, `shutdownTracing()` in order.
+
+So the app currently reimplements: drain timeout matching an OCaml default,
+idempotent signal handling, forced cancellation, ordered resource shutdown, and
+OpenTelemetry flush. Recorded as **evidence**, not as a decision — the question for
+FEAT-036 is whether that is framework-owned or legitimately application policy.
+Note also that the retry/DLQ outcome machinery *is* already framework-owned
+(`@sol-fab/kafka` provisioned the retry topology with no application involvement),
+so the boilerplate is not uniform across concerns.
