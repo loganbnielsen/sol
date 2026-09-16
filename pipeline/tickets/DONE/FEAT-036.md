@@ -93,3 +93,50 @@ units to it via a local path first; publishing is a mechanical follow-up,
 not a blocker on this ticket's engineering work.
 
 Moving to `READY_FOR_ENGINEERING`.
+
+## Final outcome (2026-09-16) — corrects the decision above
+
+The decision above was superseded during design review, before any repo
+was created, and this ticket was merged straight to `DONE` (PR #275)
+without the correction landing in the file itself — a repo hook
+correctly blocks a plain content edit to an already-DONE ticket from a
+worktree branch, so the correction is recorded here instead, after the
+fact, as its own documentation-only change.
+
+**Rejected:** a public `@sol-fab/lifecycle` package. The premise above —
+that `order_svc` (has a drain timeout) and `fulfillment_worker` (doesn't)
+were inconsistent implementations of one boundary — was wrong.
+`framework/sol-worker/lib/worker.mli`'s `Worker.Make.run` has no
+`drain_timeout_s` at all, unlike `sol-svc`'s `service.mli`. The
+difference is correct parity with each unit's OCaml counterpart, not a
+TS-only inconsistency.
+
+**Accepted:** [`loganbnielsen/sol-typescript`](https://github.com/loganbnielsen/sol-typescript),
+two packages named after the Sol programming model each implements,
+with shared signal/hook plumbing kept internal to each rather than
+factored into a third package:
+
+- `@sol-fab/svc` — bounded drain (`drainTimeoutMs`, default 30_000,
+  matching `drain_timeout_s`).
+- `@sol-fab/worker` — unbounded drain, matching `worker.mli` having no
+  such parameter.
+
+**Evidence:** both APIs were exercised against a scratch copy of
+`examples/pluto/app/demo_ts`'s `order_svc`/`fulfillment_worker` (packed
+tarballs, not committed fixture dependencies) — both typecheck cleanly,
+and what disappeared from each app was exactly the Sol-specific
+knowledge this ticket set out to remove (the hand-copied `30_000`, the
+re-entrancy guard), leaving each app owning only its own resources.
+
+**Deferred:** `@sol-fab/fn` — `sol-fn`'s OCaml contract (run once,
+return) has no in-flight-drain complexity and no TS `-fn` example exists
+to measure a gap against; capability parity, not package symmetry
+(DEC-022).
+
+**Follow-up, not done here:** publish `@sol-fab/svc`/`@sol-fab/worker` to
+npm (same manual 2FA bootstrap `sol-kafka`/`sol-obs` went through), then
+replace Pluto's hand-rolled shutdown code with the published packages and
+rerun the golden path — that run is a different proof than the scratch
+experiment above: the scratch run showed the *API boundary* is right,
+the Pluto run would show the *distributed packages* work in the
+independent-workspace golden path (DEC-024/DEC-025).
