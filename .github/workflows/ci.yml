@@ -542,6 +542,16 @@ jobs:
   # monorepo root, matching how a real checkout of this repo would build
   # them (these examples live inside sol itself, unlike a real user's
   # scaffolded workspace, which is self-contained).
+  #
+  # FEAT-085 closed this for the TypeScript demo (see demo-ts-dockerfile-smoke
+  # below, which now builds from the Sol workspace root). The OCaml examples are
+  # the remaining half and are NOT yet self-contained: there is no dune-project
+  # or .opam under examples/, so their services are libraries of this repo's root
+  # dune project, and a workspace-root build would need the `sol` framework
+  # available outside the repository -- i.e. published to opam. INFRA-007 still
+  # records the opam dependency graph as uninventoried, so that distribution
+  # decision has not been made yet. Until it is, this job keeps the monorepo-root
+  # context deliberately rather than pretending the examples are standalone.
   example-dockerfile-smoke:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
@@ -560,38 +570,45 @@ jobs:
       - name: Build ${{ matrix.dockerfile }}
         run: docker build --no-cache -f ${{ matrix.dockerfile }} .
 
-  # FEAT-039: example-dockerfile-smoke above deliberately excludes
+  # FEAT-039/FEAT-085: example-dockerfile-smoke above deliberately excludes
   # examples/pluto/app/demo_ts/ (hand-maintained, no Sol template to drift
-  # from). But its two Dockerfiles still need *some* ongoing build check --
-  # FEAT-038 rewrote them to depend on the in-tree npm workspace packages
-  # (packages/sol-kafka, packages/sol-obs), and a broken workspace
-  # reference in any of the three package.json files would otherwise go
-  # unnoticed until someone tried to run the demo by hand. This job is a
-  # plain build-success check, not a drift check -- no template to diff
-  # against here.
+  # from). Its two Dockerfiles still need an ongoing build check, and since
+  # FEAT-085 they build from the *Sol workspace root* (examples/pluto, the
+  # directory holding sol.yml) rather than from the Sol repository root: the
+  # demo_ts TypeScript project (app/demo_ts) resolves @sol-fab/obs and
+  # @sol-fab/kafka from npm, so the workspace is self-contained. This job builds
+  # them exactly the way the README tells a user to, which is what makes it
+  # meaningful -- it fails if the workspace ever starts needing the enclosing
+  # repository again.
   demo-ts-dockerfile-smoke:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        dockerfile:
-          - examples/pluto/app/demo_ts/order_svc/Dockerfile
-          - examples/pluto/app/demo_ts/fulfillment_worker/Dockerfile
+        service: [order_svc, fulfillment_worker]
     steps:
       - uses: actions/checkout@v5
 
-      - name: Build ${{ matrix.dockerfile }}
-        run: docker build --no-cache -f ${{ matrix.dockerfile }} .
+      - name: Build app/demo_ts/${{ matrix.service }}/Dockerfile
+        working-directory: examples/pluto
+        run: docker build --no-cache -f app/demo_ts/${{ matrix.service }}/Dockerfile .
 
   # DEC-022: OCaml and TypeScript are both first-class application languages, so
-  # a first-class language's framework tests must gate CI. Before this job, CI
-  # ran *zero* TypeScript tests -- the `test` job is dune-only and
-  # demo-ts-dockerfile-smoke only builds Dockerfiles, leaving the @sol/kafka /
-  # @sol/obs suites (and FEAT-081's broker-backed retry/DLQ tests) as local-only
-  # evidence. Redpanda here is test infrastructure for those broker-backed
-  # tests, not the point of the job.
+  # a first-class language's demo must build in CI.
+  #
+  # FEAT-085: this job consumes @sol-fab/* the way an external developer's
+  # workspace would -- from npm, with examples/pluto/app/demo_ts as the npm
+  # project root and no Sol repository npm workspace involved.
+  #
+  # The @sol-fab/obs and @sol-fab/kafka *suites* are deliberately no longer run
+  # here. Their authoritative CI is the standalone repositories
+  # (loganbnielsen/sol-obs, loganbnielsen/sol-kafka), which is also where the
+  # real-Redpanda retry/DLQ tests live -- Redpanda has therefore left this job
+  # entirely. The Sol repo verifies *consumption* of the published packages, not
+  # their internals; re-running those suites from here blurred ownership.
   ts-tests:
+    name: TypeScript demo (install + build/typecheck)
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
@@ -601,45 +618,14 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          # There is no Sol-repository npm project any more; the lockfile that
+          # matters is the demo's own.
+          cache-dependency-path: examples/pluto/app/demo_ts/package-lock.json
 
-      - name: Install workspace
+      - name: Install (demo_ts project root only)
+        working-directory: examples/pluto/app/demo_ts
         run: npm ci
 
-      # Separate from the broker steps below on purpose: a failure here is a
-      # TypeScript build/unit failure, not broker infrastructure.
-      - name: Build and typecheck
-        run: npm run build -w @sol/obs -w @sol/kafka -w order-svc -w fulfillment-worker
-
-      - name: Unit tests (no broker; broker-backed tests self-skip)
-        run: npm test -w @sol/obs -w @sol/kafka
-
-      # Pinned deliberately -- never float to :latest, so CI behaviour cannot
-      # change underneath us. Bump the tag in its own change when intended.
-      - name: Start Redpanda (test infrastructure)
-        run: |
-          docker run -d --name redpanda -p 9092:9092 \
-            redpandadata/redpanda:v24.2.7 \
-            redpanda start --overprovisioned --smp 1 --memory 1G --reserve-memory 0M \
-              --node-id 0 --check=false \
-              --kafka-addr PLAINTEXT://0.0.0.0:9092 \
-              --advertise-kafka-addr PLAINTEXT://127.0.0.1:9092
-
-      # A real broker operation, not just "port 9092 accepted TCP" -- rpk
-      # actually talking to the cluster is the readiness signal.
-      - name: Wait for broker readiness
-        run: |
-          for _ in $(seq 1 30); do
-            if docker exec redpanda rpk cluster info >/dev/null 2>&1; then
-              echo "broker ready"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::Redpanda did not become ready"
-          docker logs redpanda
-          exit 1
-
-      - name: Broker-backed tests (retry/DLQ ownership transfer)
-        env:
-          KAFKA_BROKERS: localhost:9092
-        run: npm test -w @sol/kafka
+      - name: Build and typecheck both services
+        working-directory: examples/pluto/app/demo_ts
+        run: npm run build -w order-svc -w fulfillment-worker

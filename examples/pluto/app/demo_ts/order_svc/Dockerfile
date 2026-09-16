@@ -1,29 +1,37 @@
-# Build context is the monorepo root (docker build -f .../Dockerfile .),
-# matching the convention this repo's OCaml example Dockerfiles already use
-# -- since FEAT-038, this service depends on the in-tree npm workspace
-# packages @sol/kafka/@sol/obs (packages/sol-kafka, packages/sol-obs), not
-# just its own directory, so a self-contained single-directory build
-# context can no longer resolve them.
+# Build context is the Sol workspace root -- examples/pluto, the directory that
+# holds sol.yml -- not the enclosing Sol repository, and not this service's own
+# directory. app/demo_ts owns its own package.json/package-lock.json and resolves
+# @sol-fab/kafka and @sol-fab/obs from npm, so nothing outside this workspace is
+# required to build the image.
+#
+#   cd examples/pluto
+#   docker build -f app/demo_ts/order_svc/Dockerfile .
+#
+# Earlier revisions used the Sol repository root as the build context and copied
+# packages/sol-kafka and packages/sol-obs straight out of the monorepo, because
+# the two services depended on the in-tree npm workspace. FEAT-085 removed that
+# coupling: DEC-024 puts the Sol workspace boundary at sol.yml, and a Sol
+# workspace must not require an enclosing JavaScript workspace.
 FROM node:22-alpine AS build
-WORKDIR /workspace
-COPY package.json package-lock.json ./
-COPY packages/sol-kafka/package.json ./packages/sol-kafka/package.json
-COPY packages/sol-obs/package.json ./packages/sol-obs/package.json
-COPY examples/pluto/app/demo_ts/order_svc/package.json ./examples/pluto/app/demo_ts/order_svc/package.json
+WORKDIR /workspace/app/demo_ts
+
+# Manifests only, so the npm layer stays cached until a manifest actually changes.
+COPY app/demo_ts/package.json app/demo_ts/package-lock.json ./
+COPY app/demo_ts/order_svc/package.json ./order_svc/package.json
+COPY app/demo_ts/fulfillment_worker/package.json ./fulfillment_worker/package.json
 RUN npm ci
-COPY packages/sol-kafka ./packages/sol-kafka
-COPY packages/sol-obs ./packages/sol-obs
-COPY examples/pluto/app/demo_ts/order_svc ./examples/pluto/app/demo_ts/order_svc
-RUN npm run build -w @sol/obs -w @sol/kafka -w order-svc
+
+COPY app/demo_ts ./
+RUN npm run build -w order-svc
 
 FROM node:22-alpine
 WORKDIR /app
-COPY --from=build /workspace/node_modules ./node_modules
-COPY --from=build /workspace/packages/sol-kafka/dist ./node_modules/@sol/kafka/dist
-COPY --from=build /workspace/packages/sol-kafka/package.json ./node_modules/@sol/kafka/package.json
-COPY --from=build /workspace/packages/sol-obs/dist ./node_modules/@sol/obs/dist
-COPY --from=build /workspace/packages/sol-obs/package.json ./node_modules/@sol/obs/package.json
-COPY --from=build /workspace/examples/pluto/app/demo_ts/order_svc/dist ./dist
-COPY --from=build /workspace/examples/pluto/app/demo_ts/order_svc/package.json ./package.json
+# The workspace's single shared install, plus only this service's tree -- the
+# sibling service is deliberately not shipped. node_modules holds a workspace
+# symlink per service, and this one resolves because the service sits at the
+# matching relative path; the sibling's symlink dangles, which is inert since
+# nothing resolves it at runtime.
+COPY --from=build /workspace/app/demo_ts/node_modules ./node_modules
+COPY --from=build /workspace/app/demo_ts/order_svc ./order_svc
 USER 65534
-CMD ["node", "dist/index.js"]
+CMD ["node", "order_svc/dist/index.js"]

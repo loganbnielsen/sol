@@ -13,8 +13,8 @@ import {
   wrapEachRetryableMessage,
   type Outcome,
   type RetryStrategy,
-} from "@sol/kafka";
-import { makeLokiPusher } from "@sol/obs";
+} from "@sol-fab/kafka";
+import { makeLokiPusher } from "@sol-fab/obs";
 import { decodeOrderPlaced } from "./wire.js";
 import { initTracing, startChildSpan } from "./tracing.js";
 import { makeWorkerMetrics } from "./metrics.js";
@@ -40,7 +40,7 @@ const POSTGRES_URL = process.env.POSTGRES_URL;
 
 // Application *policy*, not Kafka mechanics: a DB failure is retryable, and
 // the retry budget is a product decision. How `Retry` is routed, what the
-// retry/DLQ topics are called, and when an offset may commit are @sol/kafka's
+// retry/DLQ topics are called, and when an offset may commit are @sol-fab/kafka's
 // job — the demo never names a header or a topic here.
 const RETRY_STRATEGY: RetryStrategy = {
   kind: "retry-topics",
@@ -99,14 +99,14 @@ async function main() {
   const kafka = new Kafka({ clientId: "fulfillment-worker-ts", brokers: KAFKA_BROKERS });
 
   // The relay owns the retry topology: the demo *asks* for retry-topic delivery
-  // and @sol/kafka provisions, publishes, and consumes the retry/DLQ topics.
+  // and @sol-fab/kafka provisions, publishes, and consumes the retry/DLQ topics.
   const producer = kafka.producer();
   await producer.connect();
   const relay = kafkaRetryRelay(producer);
   await provisionRelayTopics({ kafka, sourceTopic: TOPIC_NAME, groupId: GROUP_ID });
 
   const consumer = kafka.consumer({ groupId: GROUP_ID });
-  // @sol/kafka's wireCrashListener encodes Sol's exit policy: kafkajs already
+  // @sol-fab/kafka's wireCrashListener encodes Sol's exit policy: kafkajs already
   // self-heals from retriable errors (payload.restart=true, rescheduling
   // start() itself after a backoff) -- only exit when kafkajs itself has given
   // up, so k8s restarts the pod instead of it quietly stopping progress.
@@ -151,7 +151,7 @@ async function main() {
   });
 
   // Retry path: the same application handler, re-run when a retry record comes
-  // due. @sol/kafka owns the delayed consumption and the offset transfer.
+  // due. @sol-fab/kafka owns the delayed consumption and the offset transfer.
   const relayConsumer = await runRetryRelayConsumer({
     kafka,
     sourceTopic: TOPIC_NAME,

@@ -1,3 +1,5 @@
 _build/
 .git/
 *.docker-ctx/
+**/node_modules/
+app/demo_ts/*/dist/

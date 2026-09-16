@@ -4,8 +4,8 @@ import { Pushgateway } from "prom-client";
 import { SpanStatusCode } from "@opentelemetry/api";
 import { randomBytes } from "node:crypto";
 
-import { encodeWire, registerTopic } from "@sol/kafka";
-import { traceparentOf, routeLabel, statusClassOf, makeLokiPusher } from "@sol/obs";
+import { encodeWire, registerTopic } from "@sol-fab/kafka";
+import { traceparentOf, routeLabel, statusClassOf, makeLokiPusher } from "@sol-fab/obs";
 import { initTracing, SpanKind } from "./tracing.js";
 import { makeSvcMetrics } from "./metrics.js";
 
@@ -46,10 +46,11 @@ async function main() {
 
   const kafka = new Kafka({ clientId: "order-svc-ts", brokers: KAFKA_BROKERS });
 
-  // @sol/kafka's registerTopic is the single entry point for provisioning
+  // @sol-fab/kafka's registerTopic is the single entry point for provisioning
   // the topic and registering its schema in Sol's exact order/fatality
   // policy (provision -> register schema, fatal -> set compatibility,
-  // non-fatal) -- see packages/sol-kafka/src/register.ts for why this is
+  // non-fatal) -- see @sol-fab/kafka's src/register.ts
+  // (github.com/loganbnielsen/sol-kafka) for why this is
   // one function rather than three independently-callable steps.
   const { schemaId } = await registerTopic({
     kafka,
@@ -71,7 +72,7 @@ async function main() {
   // recording inline in the handler (an earlier version of this file did)
   // silently drops metrics for any request that throws.
   app.addHook("onResponse", async (req, reply) => {
-    // routeLabel/statusClassOf are @sol/obs's exact port of service.ml's
+    // routeLabel/statusClassOf are @sol-fab/obs's exact port of service.ml's
     // label derivation, including the fixed "unmatched" default for any
     // request that never matched a route -- an unbounded, caller-controlled
     // path as a label value is a Prometheus cardinality bomb under real

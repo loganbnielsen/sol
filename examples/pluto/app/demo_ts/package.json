@@ -1,0 +1,10 @@
+{
+  "name": "demo-ts",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "Sol's TypeScript showcase: an order service and a fulfillment worker consuming the published @sol-fab/obs and @sol-fab/kafka packages from npm. This directory is deliberately its own npm project root (own package.json and package-lock.json, no dependence on an enclosing JavaScript workspace) -- it is the conformance fixture proving a Sol workspace can consume the published packages with nothing but the workspace itself. See DEC-023/DEC-024 and FEAT-085.",
+  "workspaces": [
+    "order_svc",
+    "fulfillment_worker"
+  ]
+}
