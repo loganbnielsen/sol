@@ -30,6 +30,10 @@ let ws_opam =
 # its own. The workspace owns this choice; Docker only reconstructs it.
 opam-version: "2.0"
 synopsis: "{{Name}} -- a Sol workspace"
+# TODO(you): fill these in before publishing this workspace anywhere. They are
+# left as TODOs rather than guessed, the same way the rest of this scaffold
+# leaves your project's identity to you.
+maintainer: "TODO(your-email@example.com)"
 depends: [
   "ocaml" {>= "5.4.0"}
   "dune" {>= "3.0"}
@@ -55,6 +59,20 @@ pin-depends: [
   [ "sol-worker.dev"        "git+https://github.com/loganbnielsen/sol.git#main" ]
   [ "sol-fn.dev"            "git+https://github.com/loganbnielsen/sol.git#main" ]
   [ "sol-jobs.dev"          "git+https://github.com/loganbnielsen/sol.git#main" ]
+
+  # The framework's own dependencies that are not yet in the public
+  # opam-repository. opam does NOT apply a dependency's pin-depends transitively,
+  # so a workspace tracking an unreleased framework channel has to name them
+  # itself -- that is part of what choosing this channel costs. Once RELEASE-005
+  # publishes these packages, delete this block; the workspace then no longer
+  # needs to know anything about them.
+  #
+  # Pinned by immutable commit SHA rather than a branch: unlike the channel
+  # choice above, these carry no "track development" intent.
+  [ "obs-loki-eio.0.1.0"  "git+https://github.com/loganbnielsen/obs-loki-eio.git#20ff330a8f03aedf71c600f113e2bf0f8a14f205" ]
+  [ "obs-tempo-eio.0.1.0" "git+https://github.com/loganbnielsen/obs-tempo-eio.git#31fd441cbae2a3fc5435539248524f00a6c6fd3d" ]
+  [ "pg-eio.0.1.0"        "git+https://github.com/loganbnielsen/pg-eio.git#16d8c66e111f345b672d51e4dcf8dd5b4368e5d2" ]
+  [ "lambda-eio.0.1.0"    "git+https://github.com/loganbnielsen/lambda-eio.git#c07c367b0f8919ae6efb9c3af2cd39d9061b1fdd" ]
 ]
 |tpl}
 ;;
