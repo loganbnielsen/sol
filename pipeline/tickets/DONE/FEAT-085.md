@@ -141,3 +141,70 @@ The remaining work:
 - `sol up` in `examples/pluto` reaches the running-svc/worker step, which is the
   next obstacle in FEAT-082's walk.
 - CI's example Dockerfile smoke matrix builds with the workspace root as context.
+
+## Outcome (2026-09-16) — DONE
+
+DEC-025 chose public opam packages as the framework's distribution mechanism and
+immutable git pins as the interim. The representation change landed as one commit
+(`08853eee`), followed by CI bootstrap wiring and the standalone examples.
+
+**What the workspace boundary is now:**
+
+```text
+workspace → declared opam dependency → installed package
+```
+
+`sol new` no longer symlinks framework source into the generated workspace. That
+symlink made the framework's Dune files part of the *consumer's* Dune project,
+which is both the coupling DEC-024 forbids and provably incompatible with the
+framework being a package at all: any `(public_name ...)` needs a package at the
+project root. Each workspace now has its own `dune-project` and `<name>.opam`,
+uses the public hyphenated library names, and the generated/example Dockerfiles
+reproduce the declared environment with `opam install . --deps-only` — they carry
+no dependency list and no Sol repository list.
+
+**Evidence.**
+
+Isolated copied-workspace proof, `/tmp/sol-proof/`, copied files only:
+
+| Check | Result |
+| --- | --- |
+| Symlinks in the copied OCaml workspace | 0 |
+| Absolute refs to the Sol checkout | 0 |
+| `$SOL_HOME` / `vendor/framework` refs | 0 |
+| Pins in the fresh switch **before** dependency setup | 0 |
+| Pins resolving into the original checkout **after** setup | **0** |
+| Framework resolution | `git+https://github.com/loganbnielsen/sol.git#main` |
+| `dune build` in the copy, fresh switch (`sol-proof`, OCaml 5.4.1) | exit 0 |
+| TS copy: refs to `../sol-obs`/`../sol-kafka`/checkout | 0 |
+| TS copy: `npm ci` + `npm run build -w order-svc` | exit 0 |
+
+CI proves a different property — that Sol can *establish* its package boundary from
+scratch — and is green across all 10 jobs (`09c6eadc`). Neither proof substitutes
+for the other.
+
+**Acceptance criteria:**
+
+- Both language paths survive being copied outside the Sol checkout — **met**.
+- No Dockerfile under `examples/pluto` references a path outside the workspace —
+  **met** for build paths; the two `terraform_var_file` references found by the
+  proof are *deployment* configuration and are filed as BUG-035.
+- `sol new workspace`'s emitted workspace is self-contained by the same mechanism
+  — **met**, and enforced by the scaffold compile guard, which now resolves the
+  framework through installed packages rather than a vendored symlink.
+- CI's example Dockerfile smoke matrix builds with the workspace root as context —
+  **met** (per-workspace context, so the job fails if a workspace starts needing
+  the enclosing repository again).
+- `sol up` in `examples/pluto` reaches the running-svc/worker step — **reassigned
+  to FEAT-082's walk**, which is where that step lives and what it exists to
+  exercise. It is a golden-path capability, not a workspace-independence property.
+
+**Found and fixed along the way**, each invisible to a green local suite and all
+caught by CI's clean environment: an unsubstituted `{{basename}}` that made every
+generated Dockerfile unbuildable; opam not applying a dependency's `pin-depends`
+transitively; published `*-eio` releases lagging the framework; and `dune subst`
+failing because `dune-project` has no `(name ...)`.
+
+**Follow-ups:** RELEASE-005 (publish the framework and its dependencies, which
+retires the interim pins entirely, and carries INFRA-007's opam inventory);
+BUG-035 (Pluto's deploy targets reach back into the Sol repository).
