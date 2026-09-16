@@ -258,3 +258,85 @@ FEAT-084 must not start before FEAT-036 has an empirical answer.
 This ticket's output is the gap analysis and child tickets; the child
 tickets carry their own demo/example coverage. If the only change here is
 filing tickets, record that one-line exemption in the completion notes.
+
+## Walk result — `sol up --scope=demo_ts` (2026-09-16)
+
+Run against `examples/pluto` after DEC-025/FEAT-085 made both examples real
+standalone workspaces, so a failure here finally reflects the golden path rather
+than examples secretly living inside the monorepo.
+
+**Sol-owned stages all passed.** The run reached "waiting for rollout":
+
+```text
+Run: up-20260916T175301Z-65863
+Workspace: pluto  tag: cf75d54c
+Preparing build context...
+[svc] demo_ts/order_svc
+  packaging localhost:5000/pluto/order-svc:cf75d54c...
+  pushing...
+  waiting for rollout...
+```
+
+The deployment plan was computed correctly for both units, including migrations,
+schema subjects and the consumer group:
+
+```text
+[svc]    demo_ts/order_svc           rolling_update -> sol-registry:5000/pluto/order-svc:cf75d54c
+[worker] demo_ts/fulfillment_worker  rolling_update -> sol-registry:5000/pluto/fulfillment-worker:cf75d54c
+migrations: 0001_notifications.sql
+schema subjects: payments.Charged
+consumer groups: pluto.demo_ts.fulfillment_worker
+```
+
+So: workspace discovery, build context, TypeScript image build, registry push and
+manifest apply are all working for the TS path. `fulfillment_worker` was not
+attempted because `sol up` waits for `order_svc`'s rollout first — correct
+sequencing.
+
+**Outcome: BLOCKED BY ENVIRONMENT, not a golden-path failure.**
+
+`order-svc` lands in `CrashLoopBackOff` because it cannot reach Redpanda:
+
+```text
+{"logger":"kafkajs","message":"[Connection] Connection error: connect ECONNREFUSED 10.42.0.127:9093",
+ "broker":"redpanda.redpanda.svc.cluster.local:9093"}
+[order-svc-ts] fatal: KafkaJSNonRetriableError (KafkaJSNumberOfRetriesExceeded)
+```
+
+The broker is not merely slow — **`redpanda-0` was already crashlooping before this
+walk**, 295 restarts over ~25h, exiting `132` (SIGILL, i.e. an illegal
+instruction). Forcing a fresh pod did not help: it restarted 4 times without ever
+becoming ready. That is a local k3d/WSL2 CPU-compatibility problem with the broker
+image, independent of Sol — the Redpanda-backed tests pass in CI, which runs a
+real Redpanda v24.2.7 under `sol-kafka`.
+
+**Therefore this walk is not evidence of a TS golden-path gap in either
+direction.** It is a prerequisite failure: the walk cannot be evaluated until the
+broker runs. Re-run it once `redpanda-0` is healthy before drawing any conclusion.
+
+**Recorded as observation, not a conclusion** (for FEAT-036 to weigh later): the
+TS service treats broker unavailability at startup as fatal and exits, which turns
+a dependency outage into `CrashLoopBackOff`. Whether a Sol TS service is expected
+to survive that is a real question — but a Fastify/KafkaJS app exiting when its
+broker is down is ordinary application code, and this run is not evidence that Sol
+needs to own it.
+
+**Incidental finding from running the walk — `sol up` leaves a build context
+behind.** It created `examples/pluto.docker-ctx/`, a full copy of the workspace,
+and left it on disk afterwards. Because Pluto is nested inside this repository,
+that copy made the root Dune project see the `pluto` package twice and broke
+`dune build`:
+
+```text
+Error: The package "pluto" is defined more than once:
+- examples/pluto.docker-ctx/pluto.opam:1
+- examples/pluto/pluto.opam:1
+```
+
+Removed, and `*.docker-ctx/` is now in `.gitignore` so it cannot be committed.
+Two separate issues to weigh, neither evaluated here because the walk itself is
+blocked: (a) the materialisation still happens for every `sol up`, even for a
+workspace with nothing to materialise — the "resolve symlinks into the build
+context" step that DEC-025 was meant to retire; and (b) it leaves the copy behind
+rather than cleaning up, which for an app whose workspace sits inside another Dune
+project is a build breakage rather than untidiness.

@@ -22,3 +22,6 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+
+# sol up materialises a build context next to the workspace
+*.docker-ctx/
