@@ -3,7 +3,6 @@ open Sol_cli_scaffold_templates
 
 let subst = Sol_cli_scaffold.subst
 let write = Sol_cli_scaffold.write_file
-let link = Sol_cli_scaffold.link_dir
 let norm = Sol_cli_scaffold.normalize
 let cap = Sol_cli_scaffold.capitalize_name
 
@@ -61,15 +60,14 @@ let infer_sol_home () =
   | Some _ -> None (* invalid SOL_HOME — NOTE in new_workspace covers this *)
 ;;
 
-let link_sol_sources workspace =
-  match infer_sol_home () with
-  | None -> false
-  | Some sol_home ->
-    link
-      ~path:(workspace ^ "/vendor/framework")
-      ~target:(Filename.concat sol_home "framework");
-    true
-;;
+(* DEC-025: `sol new` used to symlink the framework source into the generated
+   workspace (vendor/framework). That made the framework's Dune files part of the
+   *consumer's* Dune project, which is precisely the coupling DEC-024 forbids --
+   and which is provably incompatible with the framework being an installed
+   package at all (any `public_name` requires a package at the project root).
+   The workspace now declares its framework dependency in its own .opam file
+   instead, and the switch provides it. See
+   cli/platform/local/scripts/prepare-framework-deps.sh. *)
 
 (* ── Command implementations ─────────────────────────────────────────────── *)
 
@@ -91,7 +89,7 @@ let new_workspace name =
       raw_name
       name
       k8s_name);
-  let v = [ "name", name; "Name", cap name ] in
+  let v = [ "name", name; "Name", cap name; "basename", Filename.basename name ] in
   (* root files *)
   write ~path:(name ^ "/.ocamlformat") ~content:tpl_ocamlformat;
   write ~path:(name ^ "/dune-project") ~content:tpl_dune_project;
@@ -168,10 +166,11 @@ let new_workspace name =
   (* schema compatibility test *)
   write ~path:(name ^ "/test/test_schemas.ml") ~content:(subst v ws_test_schemas_ml);
   write ~path:(name ^ "/test/dune") ~content:(subst v ws_test_dune);
-  let linked = link_sol_sources name in
+  (* DEC-025: the workspace owns its framework dependency. *)
+  write ~path:(name ^ "/" ^ Filename.basename name ^ ".opam") ~content:(subst v ws_opam);
   Printf.printf
     {|
-Done. 29 files generated.
+Done. 30 files generated.
 
   cd %s
   eval $(opam env) && dune build   # verify the scaffold compiles
@@ -180,27 +179,23 @@ Done. 29 files generated.
   sol migrate                          # apply DB migrations
   sol local status     # check pods + see port-forward hint for charge-svc
 
+  Framework dependency: this workspace declares the Sol framework packages in
+  %s.opam and resolves them from your opam switch. Nothing is vendored here.
+  In development, install the framework from your Sol checkout with:
+
+    bash cli/platform/local/scripts/prepare-framework-deps.sh
+
+  (released users instead declare a version in %s.opam and let opam resolve it).
+
   CI/CD: set REGISTRY + REGISTRY_USER + REGISTRY_PASSWORD secrets in GitHub, then
          push to main — .github/workflows/sol-ci.yml handles build/test/deploy.
          sol/prod/aws/us-east-1.yml is a placeholder deploy target — rename
          it to your real <env>/<provider>/<region> and set the SOL_TARGET
          repository variable to match before your first 'sol deploy'.
 |}
-    name;
-  if not linked
-  then
-    Printf.printf
-      {|
-NOTE: Sol framework source not found — vendor/ link was not created.
-  Set SOL_HOME to your Sol checkout and re-run sol new workspace, or
-  create the link manually:
-
-    export SOL_HOME=/path/to/sol
-    ln -sf $SOL_HOME/framework %s/vendor/framework
-
-  Without this link, dune build will fail with "Library not found".
-|}
-      name
+    name
+    name
+    name
 ;;
 
 let parse_domain_name arg =
@@ -396,7 +391,7 @@ let new_event arg =
  (name {{lib}})
  (wrapped false)
  (modules {{Mod}})
- (libraries kafka_eio_service yojson))
+ (libraries kafka-eio-service yojson))
 |tpl});
   (* Leave an existing sol.toml intact (operator may have added more topics);
      a new one lists just this event's default topic. *)

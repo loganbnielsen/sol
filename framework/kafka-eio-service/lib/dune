@@ -1,5 +1,6 @@
 (library
  (name kafka_eio_service)
+ (public_name kafka-eio-service)
  (wrapped false)
  (modules
   kafka_service

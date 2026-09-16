@@ -258,7 +258,7 @@ let test_existing_files_still_generated () =
     ; "testapp/.dockerignore"
     ; "testapp/dune-project"
     ; "testapp/README.md"
-    ; "testapp/vendor/framework"
+    ; "testapp/testapp.opam"
     ; "testapp/events/payments/charged.ml"
     ; "testapp/events/payments/dune"
     ; "testapp/lib/notification.ml"
@@ -346,18 +346,23 @@ let test_readme_migrate_hint_substituted () =
   check_bool "README has no template placeholder" false (contains content "{{name}}")
 ;;
 
-let test_sol_sources_linked () =
+(* DEC-025: `sol new` must NOT vendor framework source into the workspace. The
+   workspace owns its framework dependency through its own .opam declaration and
+   resolves it from the opam switch. A vendored copy would make the framework's
+   Dune files part of the *consumer's* Dune project -- the coupling DEC-024
+   forbids, and provably incompatible with the framework being a package at all. *)
+let test_framework_dependency_declared_not_vendored () =
   in_temp_dir
   @@ fun () ->
   Sol_cli_cmd_new.new_workspace "testapp";
   check_bool
-    "framework source linked"
-    true
-    (Sys.file_exists "testapp/vendor/framework/sol-svc/lib/dune");
-  check_bool
-    "kafka-eio-service source linked"
-    true
-    (Sys.file_exists "testapp/vendor/framework/kafka-eio-service/lib/dune")
+    "no vendor/ directory is created"
+    false
+    (Sys.file_exists "testapp/vendor");
+  let opam = read_file "testapp/testapp.opam" in
+  List.iter
+    (fun pkg -> assert_contains "workspace .opam declares framework dep" opam pkg)
+    [ "sol-svc"; "sol-worker"; "sol-fn"; "sol-jobs"; "sol-obs"; "kafka-eio-service" ]
 ;;
 
 (* Regression test: the scaffold templates compiled to string literals in
@@ -746,6 +751,7 @@ let test_golden_dockerfile () =
     Sol_cli_scaffold.subst
       [ "name", "testapp"
       ; "Name", "Testapp"
+      ; "basename", "testapp"
       ; "repo_dir", "app/payments/charge_svc"
       ; "binary", "testapp-charge-svc"
       ]
@@ -974,7 +980,7 @@ let () =
             "README hints substituted"
             `Quick
             test_readme_migrate_hint_substituted
-        ; Alcotest.test_case "Sol sources linked" `Quick test_sol_sources_linked
+        ; Alcotest.test_case "framework dep declared, not vendored" `Quick test_framework_dependency_declared_not_vendored
         ; Alcotest.test_case "scaffold actually compiles" `Quick test_scaffold_compiles
         ; Alcotest.test_case
             "bare fn library compiles"

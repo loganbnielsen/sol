@@ -195,7 +195,7 @@ let scan ~dir =
                  let content = read_file path in
                  if
                    Sol_cli_port_forward.string_contains
-                     ~needle:"kafka_eio_service"
+                     ~needle:"kafka-eio-service"
                      content
                  then kafka := true;
                  if Sol_cli_port_forward.string_contains ~needle:"pg-eio" content

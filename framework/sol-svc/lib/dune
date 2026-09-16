@@ -1,5 +1,6 @@
 (library
  (name sol_svc)
+ (public_name sol-svc)
  (wrapped false)
  (private_modules auth_internal route_internal)
  (libraries

@@ -1,4 +1,5 @@
 (library
  (name sol_runtime)
+ (public_name sol-runtime)
  (wrapped false)
  (libraries eio eio.unix))

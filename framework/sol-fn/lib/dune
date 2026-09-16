@@ -1,5 +1,6 @@
 (library
  (name sol_fn)
+ (public_name sol-fn)
  (wrapped false)
  (libraries
   eio

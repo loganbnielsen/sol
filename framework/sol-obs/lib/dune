@@ -1,4 +1,5 @@
 (library
  (name sol_obs)
+ (public_name sol-obs)
  (wrapped false)
  (libraries eio obs-eio obs-loki-eio obs-prometheus-eio obs-tempo-eio))

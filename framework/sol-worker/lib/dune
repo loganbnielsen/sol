@@ -1,5 +1,6 @@
 (library
  (name sol_worker)
+ (public_name sol-worker)
  (wrapped false)
  (libraries
   eio

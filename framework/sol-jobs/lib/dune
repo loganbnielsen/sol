@@ -1,5 +1,6 @@
 (library
  (name sol_jobs)
+ (public_name sol-jobs)
  (wrapped false)
  (libraries
   eio

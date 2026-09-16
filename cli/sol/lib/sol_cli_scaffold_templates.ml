@@ -11,6 +11,54 @@ let tpl_dune_project =
 |tpl}
 ;;
 
+(* DEC-025: the workspace's own dependency declaration. This is what makes the
+   workspace the owner of its framework dependency -- `sol new` writes it, the
+   developer's opam switch satisfies it, and the Docker build reproduces it. The
+   generated Dockerfile deliberately carries no framework repository list.
+
+   The framework version is intentionally unconstrained here: in development the
+   switch provides the framework (see
+   cli/platform/local/scripts/prepare-framework-deps.sh), while a pinned or
+   released setup constrains it in this file. Choosing the channel is a workspace
+   decision, not one the CLI makes. *)
+let ws_opam =
+  {tpl|# Workspace dependency declaration (DEC-025).
+#
+# The Sol framework packages this workspace consumes. `dune build` resolves them
+# from the current opam switch, and the generated Dockerfile reproduces them with
+# `opam install . --deps-only` -- so the Dockerfile carries no repository list of
+# its own. The workspace owns this choice; Docker only reconstructs it.
+opam-version: "2.0"
+synopsis: "{{Name}} -- a Sol workspace"
+depends: [
+  "ocaml" {>= "5.4.0"}
+  "dune" {>= "3.0"}
+  "sol-svc"
+  "sol-worker"
+  "sol-fn"
+  "sol-jobs"
+  "sol-obs"
+  "kafka-eio-service"
+]
+
+# DEVELOPMENT CHANNEL: track the framework's main branch. Its exact revision is
+# whatever main was when you last updated. For a released or reproducible setup,
+# constrain the versions in `depends` above and delete this block. Replacing
+# `#main` with a tag or commit is strictly more reproducible and needs no other
+# change -- see DEC-025's development/release channel policy.
+pin-depends: [
+  [ "sol-runtime.dev"       "git+https://github.com/loganbnielsen/sol.git#main" ]
+  [ "sol-env.dev"           "git+https://github.com/loganbnielsen/sol.git#main" ]
+  [ "sol-obs.dev"           "git+https://github.com/loganbnielsen/sol.git#main" ]
+  [ "kafka-eio-service.dev" "git+https://github.com/loganbnielsen/sol.git#main" ]
+  [ "sol-svc.dev"           "git+https://github.com/loganbnielsen/sol.git#main" ]
+  [ "sol-worker.dev"        "git+https://github.com/loganbnielsen/sol.git#main" ]
+  [ "sol-fn.dev"            "git+https://github.com/loganbnielsen/sol.git#main" ]
+  [ "sol-jobs.dev"          "git+https://github.com/loganbnielsen/sol.git#main" ]
+]
+|tpl}
+;;
+
 (* DEC-024: the workspace manifest. Its presence is what makes this directory a
    Sol workspace -- `sol` resolves the root by walking up to the nearest
    sol.yml, so it must exist even when the workspace needs no settings. *)
@@ -40,17 +88,22 @@ System packages required before building:
 sudo apt-get install -y librdkafka-dev libpq-dev libpq5
 ```
 
-`vendor/framework` is a symlink into the Sol source tree.
-`sol new workspace` creates it automatically.
+The Sol framework is an ordinary opam dependency, declared in `{{basename}}.opam`
+alongside the rest of this workspace's dependencies. Nothing is vendored into
+this directory, and the workspace has no knowledge of where Sol's source lives.
 
-- **Release tarball install:** The bundle includes framework source — no extra steps needed.
-- **Source checkout install:** Set `SOL_HOME` once (in `~/.bashrc` or `~/.zshrc`), then
-  `sol new workspace` creates the link automatically.
-  If you cloned the repo but the symlink is missing:
+- **Released framework:** `opam install . --deps-only` resolves the version you
+  declare in `{{basename}}.opam`.
+- **Development framework (tracking Sol `main`):** install the framework from a
+  Sol checkout, which makes your switch satisfy the declared dependency:
+
   ```bash
-  export SOL_HOME=/path/to/sol
-  ln -sf $SOL_HOME/framework vendor/framework
+  bash /path/to/sol/cli/platform/local/scripts/prepare-framework-deps.sh
   ```
+
+  That is Sol's own bootstrap — the same one the Sol repository's CI runs — so
+  there is one definition of the development switch rather than a list of pins
+  copied into every workspace.
 
 ## Build
 
@@ -90,7 +143,7 @@ test/                     ← schema backward-compatibility CI gate
   test_schemas.ml
   dune
 .dockerignore             ← excludes _build/ and .git/ from Docker build context
-vendor/                   ← symlinks to Sol framework source (not committed)
+{{basename}}.opam              ← declares the Sol framework dependency (DEC-025)
 ```
 
 This workspace's directory, OCaml module names, and SQL identifiers use the
@@ -482,48 +535,28 @@ jobs:
 
 let tpl_dockerfile =
   {tpl|# Stage 1: compile inside ubuntu-24.04 so the binary links against glibc 2.39.
-# sol up resolves vendor/ symlinks into the build context before running docker build.
+# Dependencies are NOT listed in this file. The image reproduces the environment
+# the workspace declares in {{basename}}.opam -- `opam install . --deps-only` -- so the
+# workspace owns its dependency choices (including which framework channel it
+# tracks) and the build merely reconstructs them. Framework packages carry their
+# own pin-depends for anything not yet in the public opam-repository (DEC-025), so
+# no Sol repository needs to appear in a generated Dockerfile.
 FROM ocaml/opam:ubuntu-24.04-ocaml-5.4 AS build
 RUN sudo apt-get update && sudo apt-get install -y \
     librdkafka-dev libpq-dev libssl-dev libgmp-dev pkg-config && \
     sudo rm -rf /var/lib/apt/lists/*
-# obs-eio/obs-loki-eio/obs-prometheus-eio/obs-tempo-eio/pg-eio/https-eio/
-# lambda-eio are extracted opam packages: not vendored into vendor/framework,
-# and not yet
-# published to the public opam-repository -- every generated service's
-# bin/dune depends on some subset of them, so the build stage needs the
-# same opam pin this repo's own .github/workflows/ci.yml uses.
-# `opam repository set-url` first: the ocaml/opam base image's default
-# remote is a local git+file:// checkout frozen at whatever
-# opam-repository snapshot existed when the image was built, which can
-# predate a version https-eio's #main branch now requires (observed:
-# https-eio needing tls-eio >= 2.1.0, unsatisfiable against the frozen
-# local snapshot even after `opam update`, since there's no upstream for
-# a local remote to fetch from). Pointing at the real opam.ocaml.org
-# resolves it. Pin before the plain `opam install` below -- pinning
-# https-eio after a plain install already resolved a lower tls-eio fails,
-# since a pin alone doesn't upgrade an already-installed package's
-# already-installed dependencies. CI doesn't hit any of this since
-# ocaml/setup-ocaml always initializes a fresh index. Tracking #main,
-# matching CI, until these packages settle and cut real releases.
-RUN opam repository set-url default https://opam.ocaml.org && \
-    opam update && \
-    opam pin add https-eio https://github.com/loganbnielsen/https-eio.git#main -y && \
-    opam pin add kafka-eio https://github.com/loganbnielsen/kafka-eio.git#main -y && \
-    opam pin add obs-eio https://github.com/loganbnielsen/obs-eio.git#main -y && \
-    opam pin add obs-loki-eio https://github.com/loganbnielsen/obs-loki-eio.git#main -y && \
-    opam pin add obs-prometheus-eio https://github.com/loganbnielsen/obs-prometheus-eio.git#main -y && \
-    opam pin add obs-tempo-eio https://github.com/loganbnielsen/obs-tempo-eio.git#main -y && \
-    opam pin add pg-eio https://github.com/loganbnielsen/pg-eio.git#main -y && \
-    opam pin add lambda-eio https://github.com/loganbnielsen/lambda-eio.git#main -y
-# http/jose: framework/sol-svc/lib/dune's own real (published) opam
-# dependencies for its HTTP server and JWT auth verification -- missing
-# from this list entirely before, so any generated -svc failed to build
-# with "Library \"jose\" not found" the moment its Dockerfile actually ran.
-RUN opam install -y --no-self-upgrade \
-    eio eio_main cohttp-eio http yojson cmdliner base64 uri cstruct mtime \
-    tls-eio x509 domain-name ptime otoml jose \
-    caqti-eio caqti-driver-postgresql
+# `opam repository set-url` first: the ocaml/opam base image's default remote is a
+# local git+file:// checkout frozen at whatever opam-repository snapshot existed
+# when the image was built, which can predate a version a dependency requires
+# (observed: https-eio needing tls-eio >= 2.1.0, unsatisfiable against the frozen
+# snapshot even after `opam update`). Pointing at the real opam.ocaml.org resolves
+# it. CI does not hit this -- ocaml/setup-ocaml initializes a fresh index.
+RUN opam repository set-url default https://opam.ocaml.org && opam update
+# Only the dependency declaration is copied before installing, so the dependency
+# layer is cached independently of workspace source changes.
+COPY --chown=opam:opam {{basename}}.opam /workspace/
+WORKDIR /workspace
+RUN opam install -y --no-self-upgrade --deps-only .
 COPY --chown=opam:opam . /workspace
 WORKDIR /workspace
 RUN opam exec -- dune build {{repo_dir}}/bin/main.exe
@@ -629,7 +662,7 @@ let ws_events_dune =
  (name {{name}}_payments_events)
  (wrapped false)
  (modules Charged)
- (libraries kafka_eio_service yojson))
+ (libraries kafka-eio-service yojson))
 |tpl}
 ;;
 
@@ -754,7 +787,7 @@ let ws_svc_lib_dune =
  (name {{name}}_payments_charge_svc)
  (wrapped false)
  (modules Handler)
- (libraries {{name}}_storage {{name}}_payments_events sol_svc sol_obs yojson))
+ (libraries {{name}}_storage {{name}}_payments_events sol-svc sol-obs yojson))
 |tpl}
 ;;
 
@@ -805,7 +838,7 @@ let ws_svc_bin_dune =
  (name main)
  (libraries
   {{name}}_payments_charge_svc
-  sol_svc kafka_eio_service sol_obs
+  sol-svc kafka-eio-service sol-obs
   pg-eio caqti-eio caqti-eio.unix caqti-driver-postgresql
   eio_main))
 |tpl}
@@ -855,7 +888,7 @@ let ws_worker_lib_dune =
  (modules Notify_worker)
  (libraries
   {{name}}_storage {{name}}_payments_events
-  sol_worker kafka_eio_service sol_obs pg-eio))
+  sol-worker kafka-eio-service sol-obs pg-eio))
 |tpl}
 ;;
 
@@ -901,7 +934,7 @@ let ws_worker_bin_dune =
   {tpl|(executable
  (name main)
  (libraries
-  {{name}}_comms_notify sol_worker kafka_eio_service sol_obs
+  {{name}}_comms_notify sol-worker kafka-eio-service sol-obs
   pg-eio caqti-eio caqti-eio.unix caqti-driver-postgresql
   eio_main))
 |tpl}
@@ -956,7 +989,7 @@ let () =
 let ws_test_dune =
   {tpl|(executable
  (name test_schemas)
- (libraries kafka_eio_service eio_main {{name}}_payments_events))
+ (libraries kafka-eio-service eio_main {{name}}_payments_events))
 |tpl}
 ;;
 
@@ -978,7 +1011,7 @@ let svc_lib_dune =
  (name {{lib}})
  (wrapped false)
  (modules Handler)
- (libraries sol_svc))
+ (libraries sol-svc))
 |tpl}
 ;;
 
@@ -1003,7 +1036,7 @@ let () = Eio_main.run @@ fun env ->
 let svc_bin_dune =
   {tpl|(executable
  (name main)
- (libraries {{lib}} sol_svc sol_obs eio_main))
+ (libraries {{lib}} sol-svc sol-obs eio_main))
 |tpl}
 ;;
 
@@ -1053,7 +1086,7 @@ let worker_lib_dune =
  (name {{lib}})
  (wrapped false)
  (modules {{Mod}})
- (libraries sol_worker kafka_eio_service yojson))
+ (libraries sol-worker kafka-eio-service yojson))
 |tpl}
 ;;
 
@@ -1084,7 +1117,7 @@ let () = Eio_main.run @@ fun env ->
 let worker_bin_dune =
   {tpl|(executable
  (name main)
- (libraries {{lib}} sol_worker kafka_eio_service sol_obs eio_main))
+ (libraries {{lib}} sol-worker kafka-eio-service sol-obs eio_main))
 |tpl}
 ;;
 
@@ -1103,7 +1136,7 @@ let fn_lib_dune =
   {tpl|(library
  (name {{lib}})
  (wrapped false)
- (libraries sol_fn)
+ (libraries sol-fn)
  (modules {{Mod}}))
 |tpl}
 ;;
@@ -1131,7 +1164,7 @@ let () = Eio_main.run @@ fun env ->
 let fn_bin_dune =
   {tpl|(executable
  (name main)
- (libraries {{lib}} sol_fn sol_obs eio_main))
+ (libraries {{lib}} sol-fn sol-obs eio_main))
 |tpl}
 ;;
 
