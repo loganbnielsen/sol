@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 
 import { encodeWire, registerTopic } from "@sol-fab/kafka";
 import { traceparentOf, routeLabel, statusClassOf, makeLokiPusher } from "@sol-fab/obs";
+import { runService } from "@sol-fab/svc";
 import { initTracing, SpanKind } from "./tracing.js";
 import { makeSvcMetrics } from "./metrics.js";
 
@@ -187,30 +188,17 @@ async function main() {
       }, 3000)
     : undefined;
 
-  const DRAIN_TIMEOUT_MS = 30_000; // matches sol-svc's default drain_timeout_s (service.ml)
-  let shuttingDown = false;
-  const shutdown = async () => {
-    if (shuttingDown) return; // SIGTERM/SIGINT can both fire; don't drain twice concurrently
-    shuttingDown = true;
-    console.log("[order-svc-ts] draining...");
-    if (pushInterval) clearInterval(pushInterval);
-    // sol-svc races the drain against drain_timeout_s and force-cancels
-    // (Drain_timeout, service.ml:290-303) rather than hanging forever on a
-    // client holding a connection open — app.close() alone has no such bound.
-    const drainTimeout = new Promise<void>((resolve) => {
-      const t = setTimeout(() => {
-        console.error("[order-svc-ts] drain timeout reached, forcing shutdown");
-        resolve();
-      }, DRAIN_TIMEOUT_MS);
-      t.unref();
-    });
-    await Promise.race([app.close(), drainTimeout]);
-    await producer.disconnect();
-    await shutdownTracing();
-    process.exit(0);
-  };
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+  // @sol-fab/svc owns the lifecycle contract (idempotent SIGTERM/SIGINT, the
+  // drain bound, forced cancellation) that sol-svc's service.ml defines --
+  // this app only supplies what to drain and what to close afterwards.
+  runService({
+    drain: () => app.close(),
+    onDrainStart: () => {
+      console.log("[order-svc-ts] draining...");
+      if (pushInterval) clearInterval(pushInterval);
+    },
+    shutdownHooks: [() => producer.disconnect(), () => shutdownTracing()],
+  });
 }
 
 main().catch((err) => {

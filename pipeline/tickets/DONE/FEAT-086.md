@@ -36,3 +36,34 @@ This ticket *is* the example/demo update (`examples/pluto/app/demo_ts`) — the 
 ## TypeScript-parity note (DEC-022)
 
 No new capability or convention introduced — this replaces an in-app copy of an already-decided contract (FEAT-036) with the published package implementing it. No cross-language action needed.
+
+## Completion notes (2026-09-16) — PASS
+
+Both units rewired and verified against the real published packages, not
+a scratch copy:
+
+- `order_svc`/`fulfillment_worker` `package.json`: `"@sol-fab/svc":
+  "^0.1.0"` / `"@sol-fab/worker": "^0.1.0"` added. `demo_ts`'s
+  `package-lock.json` (the workspace's real lockfile — `order_svc`/
+  `fulfillment_worker` are npm workspaces of `demo_ts`, not independent
+  npm projects) pins both to the real registry tarball
+  (`registry.npmjs.org/@sol-fab/svc/-/svc-0.1.0.tgz` etc.), not a local
+  path.
+- `npm run build --workspace=order_svc` / `--workspace=fulfillment_worker`
+  (`tsc`) both clean.
+- Real golden path, `sol up --scope=demo_ts` against the local cluster:
+  both pods rolled out `Running 1/1`, 0 restarts, no `CrashLoopBackOff`.
+- Full transaction, marker `feat086-e2e-1`: `POST /orders` → `202
+  {"accepted":true}` → Kafka → `[worker] fulfilled order=feat086-e2e-1
+  item=widget` → Postgres row confirmed by direct query
+  (`feat086-e2e-1|widget|2|dedaf186`).
+- Metrics intact: `sol_svc_requests_total{method="POST",route="/orders",status_class="2xx"} 1`.
+- Graceful shutdown: deleted the `order-svc` pod with a 30s grace
+  period; the replacement came up `Running 1/1` with 0 restarts on
+  either pod and no `CrashLoopBackOff` — `@sol-fab/svc`'s drain path
+  didn't hang or force-kill under normal (no in-flight-request) load.
+
+This is the distributed-package proof FEAT-036 deferred: the scratch/
+typecheck validation showed the API boundary was right; this run shows
+the *published* packages work in the actual golden path, not just in
+isolation.
