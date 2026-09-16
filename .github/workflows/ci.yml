@@ -7,20 +7,89 @@ on:
   pull_request:
 
 jobs:
+  # Classifies the diff ONCE for the whole run. Every job consumes this output;
+  # none of them carries its own path list. The definition itself lives in
+  # devtools/ci/classify-changes.sh, shared with the local pre-commit hook, and
+  # its semantics are pinned by devtools/ci/test_classify_changes.sh.
+  #
+  # continue-on-error: classification must never be able to fail the workflow.
+  # If this job dies, `kind` is empty, and every consumer's condition
+  # (`!= "docs-only"`) is TRUE, so the full suite runs. Uncertainty costs
+  # compute, never coverage.
+  #
+  # NOTE: `test` below is a REQUIRED check, so it must always run. That is why it
+  # uses `needs: classify` together with `if: always()` and branches inside the
+  # job, rather than a job-level condition. A job-level `if` on a required check
+  # leaves the check unreported and the pull request stuck on "Expected —
+  # Waiting for status to be reported", which is worse than the cost this is
+  # here to remove. The same rule applies to any job that later becomes
+  # required: never give a required check a path or classification condition.
+  classify:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    continue-on-error: true
+    outputs:
+      kind: ${{ steps.classify.outputs.kind }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The three-dot diff needs both endpoints in the object database.
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: classify
+        run: |
+          # Pushes to main are always full CI: post-merge verification is
+          # authoritative, and only pull-request execution is optimised.
+          kind="source"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            kind="$(devtools/ci/classify-changes.sh --range "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" || echo source)"
+          fi
+          case "$kind" in
+            docs-only|source) ;;
+            *) kind="source" ;;
+          esac
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          echo "Classification for ${{ github.event_name }}: $kind"
+
   test:
     runs-on: ubuntu-22.04
+    needs: classify
+    # always(): a `needs` edge would otherwise SKIP this job whenever the
+    # classify job fails, and a skipped required check blocks the PR forever.
+    if: always()
     steps:
       - uses: actions/checkout@v5
 
+      # The required check must be VISIBLY intentional when the suite is
+      # skipped -- not a job that merely looks like every step failed to run.
+      - name: Docs-only change -- full suite deliberately not run
+        if: needs.classify.outputs.kind == 'docs-only'
+        run: |
+          echo "::notice::Classification: docs-only -- every changed path is in the safe allowlist, so the full suite was not run."
+          {
+            echo "### Classification: docs-only"
+            echo ""
+            echo "The required \`test\` check is green because **every** changed path is in the"
+            echo "safe allowlist (\`docs/**\`, \`pipeline/tickets/**\`, \`*.md\` outside"
+            echo "\`.github/**\`, \`devtools/perf/perf_baseline.json\`)."
+            echo ""
+            echo "The full suite was deliberately not run. Classification semantics are pinned by"
+            echo "\`devtools/ci/test_classify_changes.sh\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Install system dependencies
+        if: needs.classify.outputs.kind != 'docs-only'
         run: sudo apt-get install -y librdkafka-dev libpq-dev libpq5
 
       - name: Set up OCaml
+        if: needs.classify.outputs.kind != 'docs-only'
         uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: 5.4.1
 
       - name: Cache opam download cache
+        if: needs.classify.outputs.kind != 'docs-only'
         # INFRA-008: setup-ocaml caches the switch (~/.opam) keyed on the
         # switch files, so a key change — or a cold cache on a new branch —
         # re-fetches every source. The download cache is content-addressed and
@@ -36,9 +105,11 @@ jobs:
             opam-download-${{ runner.os }}-
 
       - name: Pin extracted opam packages
+        if: needs.classify.outputs.kind != 'docs-only'
         uses: ./.github/actions/pin-opam-packages
 
       - name: Install OCaml dependencies
+        if: needs.classify.outputs.kind != 'docs-only'
         timeout-minutes: 20
         # INFRA-008: retry a transient upstream fetch failure before failing
         # the job, and name the unreachable host when the failure is permanent.
@@ -57,6 +128,7 @@ jobs:
           exit 1
 
       - name: Prepare Sol framework packages (DEC-025)
+        if: needs.classify.outputs.kind != 'docs-only'
         timeout-minutes: 20
         # THE canonical bootstrap — the same script documented for developers, so
         # there is one definition of the Sol development switch rather than a pin
@@ -69,9 +141,11 @@ jobs:
         run: bash cli/platform/local/scripts/prepare-framework-deps.sh
 
       - name: Build
+        if: needs.classify.outputs.kind != 'docs-only'
         run: opam exec -- dune build
 
       - name: Unit tests (no broker/Postgres/Loki required)
+        if: needs.classify.outputs.kind != 'docs-only'
         # framework/kafka-eio-service/ excluded: its test/dune also builds a
         # broker-requiring integration suite (see run_tests.sh's run_kafka()).
         run: opam exec -- dune test framework/sol-env/ framework/sol-fn/ framework/sol-obs/ framework/sol-runtime/ framework/sol-svc/ framework/sol-worker/ cli/sol/test/
@@ -81,15 +155,27 @@ jobs:
       # makes the CLI tests' SOL_HOME ancestor walk resolve to _build/default
       # instead of the source checkout.
       - name: Install formatter
+        if: needs.classify.outputs.kind != 'docs-only'
         run: opam install ocamlformat.0.29.0 -y
 
       - name: Format check
+        if: needs.classify.outputs.kind != 'docs-only'
         run: opam exec -- dune fmt --preview
 
       - name: Platform-component drift guardrail (ADR 0001 / CODE_LAYER-005)
+        if: needs.classify.outputs.kind != 'docs-only'
         run: devtools/ci/check_platform_component_drift.sh
 
+      - name: Change-classification semantics (devtools/ci/classify-changes.sh)
+        # The classifier decides whether the expensive suite runs, so it is part
+        # of the gate rather than a convenience. Its boundaries are pinned here
+        # so a future refactor cannot silently widen the docs-only allowlist --
+        # "skip expensive CI" quietly becoming "skip CI for something important"
+        # would not be visible in a normal review of the diff.
+        run: bash devtools/ci/test_classify_changes.sh
+
       - name: Signal-handler duplication guardrail (REFAC-081)
+        if: needs.classify.outputs.kind != 'docs-only'
         run: devtools/ci/check_signal_handler_duplication.sh
 
   # FRIC-009: smallest check that would have caught a regression like
@@ -110,6 +196,15 @@ jobs:
   # compatibility). No automated drift check between the two files exists
   # yet; update both by hand on any bump.
   golden-path-smoke:
+    # Not a required check, so a job-level condition is safe here: skipping it
+    # cannot leave a required status unreported. Consumes the SAME classifier
+    # output as `test` rather than carrying its own path list. If `kind` is empty
+    # (classify failed) this is TRUE and the job runs -- fail-closed.
+    #
+    # RULE: a job with this condition must never be added to the required status
+    # checks without revisiting the design above.
+    needs: classify
+    if: always() && needs.classify.outputs.kind != 'docs-only'
     runs-on: ubuntu-22.04
     # Outer safety net only — per-step timeouts below do the real fail-fast
     # work. Generous on purpose: a job-level timeout cancels the whole job,
@@ -564,6 +659,15 @@ jobs:
   # fails if a workspace ever starts needing the enclosing repository again.
   #
   example-dockerfile-smoke:
+    # Not a required check, so a job-level condition is safe here: skipping it
+    # cannot leave a required status unreported. Consumes the SAME classifier
+    # output as `test` rather than carrying its own path list. If `kind` is empty
+    # (classify failed) this is TRUE and the job runs -- fail-closed.
+    #
+    # RULE: a job with this condition must never be added to the required status
+    # checks without revisiting the design above.
+    needs: classify
+    if: always() && needs.classify.outputs.kind != 'docs-only'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     strategy:
@@ -597,6 +701,15 @@ jobs:
   # meaningful -- it fails if the workspace ever starts needing the enclosing
   # repository again.
   demo-ts-dockerfile-smoke:
+    # Not a required check, so a job-level condition is safe here: skipping it
+    # cannot leave a required status unreported. Consumes the SAME classifier
+    # output as `test` rather than carrying its own path list. If `kind` is empty
+    # (classify failed) this is TRUE and the job runs -- fail-closed.
+    #
+    # RULE: a job with this condition must never be added to the required status
+    # checks without revisiting the design above.
+    needs: classify
+    if: always() && needs.classify.outputs.kind != 'docs-only'
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     strategy:
@@ -624,6 +737,15 @@ jobs:
   # entirely. The Sol repo verifies *consumption* of the published packages, not
   # their internals; re-running those suites from here blurred ownership.
   ts-tests:
+    # Not a required check, so a job-level condition is safe here: skipping it
+    # cannot leave a required status unreported. Consumes the SAME classifier
+    # output as `test` rather than carrying its own path list. If `kind` is empty
+    # (classify failed) this is TRUE and the job runs -- fail-closed.
+    #
+    # RULE: a job with this condition must never be added to the required status
+    # checks without revisiting the design above.
+    needs: classify
+    if: always() && needs.classify.outputs.kind != 'docs-only'
     name: TypeScript demo (install + build/typecheck)
     runs-on: ubuntu-22.04
     timeout-minutes: 15

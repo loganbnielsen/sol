@@ -89,20 +89,21 @@ if [ -f "$GIT_DIR/MERGE_HEAD" ]; then
 fi
 
 # ── Bookkeeping commit: skip test run ─────────────────────────────────────────
-# If every staged file is a ticket markdown, a doc, or the perf baseline,
-# there is no code change to verify.
-OTHER_FILES="$(git diff --cached --name-only \
-  | grep -v '^pipeline/tickets/' \
-  | grep -v '\.md$' \
-  | grep -v '^devtools/perf/perf_baseline.json$' \
-  || true)"
-if [ -z "$OTHER_FILES" ]; then
+# CI makes the same decision from the same definition: this hook and
+# .github/workflows/ci.yml both call devtools/ci/classify-changes.sh, so there is
+# one definition of "docs/tickets only" rather than two path lists that drift
+# apart. Its pinned semantics live in devtools/ci/test_classify_changes.sh.
+#
+# Fail-closed: a mixed diff, an unrecognised path, or a classifier that cannot
+# run at all all yield something other than `docs-only`, and the suite runs. The
+# command substitution is empty if the script is missing, which is not
+# `docs-only` either — so the failure mode is "run the tests", never "skip".
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+if [ "$("$REPO_ROOT/devtools/ci/classify-changes.sh" --staged)" = "docs-only" ]; then
   echo ""
-  echo "  (no source code staged — skipping test suite)"
+  echo "  (docs/tickets only — skipping test suite)"
   exit 0
 fi
-
-REPO_ROOT="$(git rev-parse --show-toplevel)"
 RUNNER="$REPO_ROOT/cli/platform/local/scripts/run_tests.sh"
 
 if [ ! -x "$RUNNER" ]; then
