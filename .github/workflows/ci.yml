@@ -56,6 +56,18 @@ jobs:
           echo "::error::opam install failed after 3 attempts${host:+ — unreachable host: ${host}}"
           exit 1
 
+      - name: Prepare Sol framework packages (DEC-025)
+        timeout-minutes: 20
+        # THE canonical bootstrap — the same script documented for developers, so
+        # there is one definition of the Sol development switch rather than a pin
+        # list copied per consumer.
+        #
+        # This is what makes the clean-environment test meaningful: the scaffold
+        # compile guard below must resolve the framework through INSTALLED
+        # packages. A green local suite does not prove that on its own, because a
+        # developer's switch already has the framework pinned to their checkout.
+        run: bash cli/platform/local/scripts/prepare-framework-deps.sh
+
       - name: Build
         run: opam exec -- dune build
 
@@ -155,6 +167,13 @@ jobs:
           host="$(grep -oE 'Fetch_fail\("[^"]+' "$log" | tail -1 | sed -E 's/.*"//; s|^https?://||; s|/.*||' || true)"
           echo "::error::opam install failed after 3 attempts${host:+ — unreachable host: ${host}}"
           exit 1
+
+      - name: Prepare Sol framework packages (DEC-025)
+        timeout-minutes: 20
+        # Same canonical bootstrap as the test job: this job scaffolds a real
+        # workspace and builds it, so it too must resolve the framework through
+        # installed packages rather than a vendored copy.
+        run: bash cli/platform/local/scripts/prepare-framework-deps.sh
 
       - name: Build sol CLI
         timeout-minutes: 5
