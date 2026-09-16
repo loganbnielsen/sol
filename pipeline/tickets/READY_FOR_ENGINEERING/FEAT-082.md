@@ -340,3 +340,63 @@ workspace with nothing to materialise — the "resolve symlinks into the build
 context" step that DEC-025 was meant to retire; and (b) it leaves the copy behind
 rather than cleaning up, which for an app whose workspace sits inside another Dune
 project is a build breakage rather than untidiness.
+
+## Walk re-run on a recreated substrate (2026-09-16) — deployment PASSES
+
+The previous run was blocked by a 25-hour-old broken broker. Following that
+classification, the local substrate was recreated (`sol local infra down
+--cluster` then `up`) and the command re-run **unchanged** — no application or
+Sol changes — so the only difference was the environmental prerequisite.
+
+The falsifiable question was answered first: **a freshly created Sol local
+substrate produces a healthy broker** (`redpanda-0` Running/Ready, 0 restarts;
+`rpk cluster info` and `rpk topic list` both work). So the 295-restart crashloop
+was ambient machine rot, not a Sol local-infrastructure defect.
+
+```text
+sol up --scope=demo_ts
+  [svc]    demo_ts/order_svc           ✓  rolled out, → http://localhost:8080
+  [worker] demo_ts/fulfillment_worker  ✓  rolled out
+  [apply] ok (36.4s)   Done. 2 service(s) deployed.
+```
+
+**PASS — platform-native:**
+
+| Check | Result |
+| --- | --- |
+| Both pods | `Running 1/1`, 0 restarts |
+| Health | `GET /healthz` → 200 (only liveness path; no `/readyz` or `/livez`) |
+| Metrics | `GET /metrics` → Sol's `sol_svc_*` names, route-labelled counters incrementing |
+| Kafka topic | `sol-demo-ts-orders` provisioned |
+| Schema registry | app logged `schema registered, id=1` |
+| Consumer group | `pluto.demo_ts.fulfillment_worker` in the plan |
+| Runtime contract | deployment `envFrom`s `order-svc-env`, injecting `KAFKA_BROKERS`, `SCHEMA_REGISTRY_URL`, `TEMPO_URL`, `LOKI_URL`, `PUSHGATEWAY_URL`, `REDPANDA_ADMIN_URL` |
+| App log output | on pod stderr, visible via `kubectl logs` |
+
+**Notable:** the TS app reads exactly those six variables
+(`process.env.{KAFKA_BROKERS,LOKI_URL,ORDERS_TOPIC,POSTGRES_URL,PUSHGATEWAY_URL,SCHEMA_REGISTRY_URL,TEMPO_URL}`)
+and Sol injects them all. The platform supplies the runtime contract; the app does
+not hand-reconstruct it. No application boilerplate was required to get a TS
+service deployed and serving.
+
+**UNRESOLVED — do not classify as gaps yet.** Both were chased far enough to rule
+out the obvious causes, but not to a conclusion:
+
+- **Traces.** Tempo reports 0 traces, yet `TEMPO_URL` is injected correctly and the
+  app builds an `OTLPTraceExporter` from it. Could be application-side (batch
+  exporter/sampling) or a real gap. Not claimed either way — the probing requests
+  never produced a *successful* traced request (see below).
+- **Logs in Loki.** 0 streams, queried both by namespace and by the labels Loki
+  actually exposes (`service`, `service_name`), while Alloy is running and pod logs
+  demonstrably exist. May be an Alloy pipeline/config question.
+
+**Caution recorded:** the first check of the deployment showed an empty `env` array
+and looked like "Sol never injects the observability endpoints" — a plausible and
+wrong FEAT-082 finding. The variables arrive via `envFrom` → ConfigMap, which
+`kubectl get deploy -o jsonpath='...env[*]'` does not show. Worth knowing before
+anyone reports a config-injection gap from that command.
+
+**Probe payloads were wrong, not Sol:** `POST /orders` returned 400 twice
+(`body must have required property 'order_id'`, then 400 again with `order_id`
+supplied). The exact request schema was not determined, so no traced request was
+ever completed. Determining it is the next step for evaluating traces.
