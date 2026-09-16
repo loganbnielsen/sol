@@ -355,10 +355,7 @@ let test_framework_dependency_declared_not_vendored () =
   in_temp_dir
   @@ fun () ->
   Sol_cli_cmd_new.new_workspace "testapp";
-  check_bool
-    "no vendor/ directory is created"
-    false
-    (Sys.file_exists "testapp/vendor");
+  check_bool "no vendor/ directory is created" false (Sys.file_exists "testapp/vendor");
   let opam = read_file "testapp/testapp.opam" in
   List.iter
     (fun pkg -> assert_contains "workspace .opam declares framework dep" opam pkg)
@@ -813,6 +810,8 @@ let component_vars ~suffix ~mod_ =
   ; "domain", "comms"
   ; "Mod", mod_
   ; "binary", "notify-" ^ suffix
+    (* DEC-025: mirrors component_scaffold's v -- the workspace .opam basename. *)
+  ; "basename", ws
   ]
 ;;
 
@@ -980,7 +979,10 @@ let () =
             "README hints substituted"
             `Quick
             test_readme_migrate_hint_substituted
-        ; Alcotest.test_case "framework dep declared, not vendored" `Quick test_framework_dependency_declared_not_vendored
+        ; Alcotest.test_case
+            "framework dep declared, not vendored"
+            `Quick
+            test_framework_dependency_declared_not_vendored
         ; Alcotest.test_case "scaffold actually compiles" `Quick test_scaffold_compiles
         ; Alcotest.test_case
             "bare fn library compiles"

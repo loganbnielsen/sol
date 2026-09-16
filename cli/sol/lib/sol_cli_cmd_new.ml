@@ -255,6 +255,10 @@ let component_scaffold kind ~ws ~domain ~name =
     ; "domain", domain
     ; "Mod", mod_
     ; "binary", binary
+      (* DEC-025: the workspace's dependency declaration is <workspace>.opam at the
+       workspace root, which is the Docker build context. `ws` may be a path, so
+       the basename is what names the file. *)
+    ; "basename", Filename.basename ws
     ]
   in
   let files =
