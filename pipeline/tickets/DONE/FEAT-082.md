@@ -646,3 +646,109 @@ knows `sol-svc`'s OCaml `drain_timeout_s` default and reproduces it by hand. If 
 promises consistent drain/shutdown behaviour across supported languages, an
 application should not have to know an OCaml implementation detail to implement
 the contract correctly.
+
+## #2b SIGTERM ordering — MEASURED (2026-09-16)
+
+The previous run left the ordering unmeasured because I read pod logs after
+deleting the pod. Re-run with a live `kubectl logs -f` follow and a table lock
+that releases *within* the 30s grace period, so graceful completion is actually
+possible. SIGTERM issued at 20:21:26; the old pod's own log, in order:
+
+```text
+[fulfillment-worker-ts] draining...                                  ← handler ran
+[worker] fulfilled  order=ordA-1789590073  item=alpha                ← in-flight A completed
+{"logger":"kafkajs","message":"[Consumer] Stopped","groupId":"…fulfillment-worker"}
+{"logger":"kafkajs","message":"[Runner] consumer not running, exiting","groupId":"…-sol-retry"}
+{"logger":"kafkajs","message":"[Consumer] Stopped","groupId":"…-sol-retry"}
+```
+
+Message B was published immediately *after* SIGTERM, while A was still in flight:
+
+| Question | Measured answer |
+| --- | --- |
+| Did the drain handler run? | yes — `draining…` immediately after SIGTERM |
+| Did the in-flight message finish? | yes — `ordA` fulfilled, row present in Postgres |
+| Did the draining pod accept **new** work? | **no** — B was never fulfilled by the old pod |
+| Who handled B? | the **replacement** pod (`ordB-1789590073|beta` in Postgres) |
+| Did the process exit cleanly? | **yes** — `[Consumer] Stopped` for both groups, exit ≈18s after SIGTERM, i.e. inside the 30s grace period, no SIGKILL |
+| Was any work stranded? | no — `TOTAL-LAG 0`, current-offset 6 = log-end-offset 6 |
+
+**The ordering is therefore: stop fetching → finish in-flight → close resources →
+exit 0.** `consumer.disconnect()` is called at SIGTERM and does not return until the
+in-flight message has completed (that is why `[Consumer] Stopped` appears *after*
+`ordA` was fulfilled). New work is not fetched during the drain, which is what
+makes B's delivery to the replacement correct rather than accidental.
+
+**The measured lifecycle contract, complete:**
+
+```text
+SIGTERM
+  → stop accepting/fetching new work            MEASURED
+  → in-flight work allowed to finish            MEASURED
+  → Kafka responsibility settled correctly      MEASURED (offset committed on completion)
+  → telemetry flushed / resources closed        SOURCE-READ, not instrumented
+  → exit 0 within the grace period              MEASURED (~18s of 30s)
+grace period exceeded
+  → SIGKILLed with the offset uncommitted       MEASURED (previous run: 31s)
+  → Kafka redelivers to the replacement         MEASURED (no work lost)
+```
+
+**Measured vs source-read — keep these distinct:**
+
+| Claim | Basis |
+| --- | --- |
+| stop-fetch → drain → close → exit ordering | **measured** |
+| in-flight work is not abandoned on SIGTERM | **measured** |
+| forced shutdown does not lose work (redelivery) | **measured** |
+| clean exit inside the grace period | **measured** |
+| OTel flush ordering, `metricsServer.close()` → `db.close()` order | **source-read only** |
+| idempotency (`ON CONFLICT DO NOTHING`) masking a double delivery | **source-read + one observed duplicate log line** |
+
+None of the source-read rows were instrumented, so they are ownership
+observations, not established behaviour.
+
+## The `order_svc` / `fulfillment_worker` distinction, recorded as a finding
+
+These are **not** one coherent lifecycle contract today, and should not be assumed
+to be:
+
+| | `order_svc` | `fulfillment_worker` |
+| --- | --- | --- |
+| drain timeout | explicit `DRAIN_TIMEOUT_MS = 30_000`, races `app.close()` against it | **none** — awaits `consumer.disconnect()` |
+| forced termination | app-imposed (it cancels its own drain and exits) | **implicit** — relies on Kubernetes' 30s `terminationGracePeriodSeconds` |
+| comment in source | "matches sol-svc's default drain_timeout_s (service.ml)" | — |
+
+So the same Sol boundary is expressed two different ways by two units in one
+workspace, one of them depending on a platform setting the application never
+mentions. Whether that is one contract with two implementations or two contracts is
+exactly what FEAT-036 must decide — **from the measured behaviour above, not from
+the current code.**
+
+## Outcome — FEAT-082 closes
+
+The TypeScript golden path is demonstrated, not inferred:
+
+| Stage | State |
+| --- | --- |
+| workspace / discovery | PASS |
+| TS dependency resolution + build | PASS |
+| Docker packaging, registry push | PASS |
+| Kubernetes deployment (svc + worker) | PASS |
+| Sol runtime config injection | PASS (6 vars via ConfigMap) |
+| health (`/healthz`), metrics (`sol_svc_*`) | PASS |
+| Kafka topic + schema registry provisioning | PASS |
+| one successful request end to end | PASS (HTTP 202 → Kafka → worker → Postgres row) |
+| traces + cross-service propagation | PASS (worker span is a child of the service span) |
+| Kafka retry → exhaustion → DLQ, no app orchestration | PASS |
+| graceful drain ordering | PASS (measured) |
+| forced-shutdown safety (redelivery, no loss) | PASS (measured) |
+
+**Not part of this ticket, filed separately and not to be fixed inline:**
+BUG-035 (Pluto deploy targets reach outside the workspace), BUG-036 (`sol up`
+leaves a persistent `<workspace>.docker-ctx` copy), BUG-037 (`@sol-fab/obs` push
+ignores non-2xx). RELEASE-005 (public opam publication) remains separately tracked
+and non-blocking.
+
+**Unresolved but explicitly out of scope:** TS logs not queryable in the local Loki
+— traced to the local Loki's in-cluster ingest dropping accepted writes, below the
+application contract. Environment, not application or platform.
