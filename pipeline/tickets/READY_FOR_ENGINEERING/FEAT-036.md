@@ -53,3 +53,43 @@ FEAT-033's core finding was that Sol's real value-add is *policy nobody could ot
 
 - Not `@sol/kafka` (FEAT-034) or `@sol/obs` (FEAT-035).
 - Not a routing framework — wrap Fastify/Express, don't replace them.
+
+## Decision (2026-09-16) — build it, scoped to lifecycle only
+
+FEAT-082's measured evidence answers the "Re-framed 2026-09-15" acceptance
+test: the golden path does need this. Specifically:
+
+- The app hand-copies **Sol's own drain-timeout policy**
+  (`DRAIN_TIMEOUT_MS = 30_000`, commented "matches sol-svc's default
+  drain_timeout_s") — an OCaml implementation detail the app should never
+  have needed to know.
+- The same lifecycle boundary is implemented two inconsistent ways across
+  one workspace's two units: `order_svc` self-imposes a drain timeout and
+  force-cancels; `fulfillment_worker` has none and relies implicitly on
+  Kubernetes' `terminationGracePeriodSeconds`.
+
+Scope stays exactly what the non-goals above already say no further than:
+a minimal `@sol-fab/lifecycle` package owning only —
+
+- idempotent `SIGTERM`/`SIGINT` handling (both apps hand-roll the same
+  re-entrancy guard today),
+- one drain-timeout default, shared instead of copied, matching
+  `sol-svc`'s `drain_timeout_s`,
+- forced-cancellation past that timeout (mirrors OCaml's `Drain_timeout`),
+- an ordered shutdown-hook list, so "metrics server, then DB, then tracing
+  flush" lives in one place instead of per-app.
+
+Carried forward as non-goals: not wrapping Fastify/KafkaJS, not
+idempotency (`ON CONFLICT DO NOTHING` stays application policy — Sol
+cannot know business-level dedup semantics), not retry/DLQ (already
+`@sol-fab/kafka`, per FEAT-082 #3).
+
+Package mechanics follow the `sol-kafka`/`sol-obs` precedent (DEC-023):
+own GitHub repo, own CI, npm publish under `@sol-fab/*` once ready — but
+the npm bootstrap (2FA-gated token, `npm trust` flip) is a manual,
+interactive step done once per new package, not something to attempt
+unattended. Land the package with real tests and wire both `demo_ts`
+units to it via a local path first; publishing is a mechanical follow-up,
+not a blocker on this ticket's engineering work.
+
+Moving to `READY_FOR_ENGINEERING`.
