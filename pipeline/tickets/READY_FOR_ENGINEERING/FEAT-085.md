@@ -93,26 +93,38 @@ independently located by `sol.yml`.
 
 **Do not** vendor the framework, widen the Docker context, or add
 `../../packages`-style paths to "finish" this ticket. Each relabels the coupling
-rather than removing it. The OCaml units stay on the monorepo-root context, with
-the reason recorded in `.github/workflows/ci.yml` beside the job, until DEC-025
-decides how a workspace obtains the framework.
+rather than removing it.
 
-Once DEC-025 lands, the remaining work is:
+**DEC-025 is now decided (2026-09-16)**, so the mechanism no longer needs
+discovering — public application-facing opam packages (`sol-svc`, `sol-worker`,
+`sol-fn`, `sol-jobs`, `sol-obs`, `kafka-eio-service`; `sol-runtime`/`sol-env`
+private), reached initially through **immutable tag/commit-pinned git opam
+dependencies**. Public-opam publication is tracked as RELEASE-005 and does not
+gate this ticket.
 
-1. Make `examples/pluto` (and `examples/venus`, if it remains a workspace) build
-   against the framework by that mechanism — its own `dune-project` project root,
-   with the framework obtained as an ordinary dependency rather than a link into a
-   Sol install.
-2. Migrate the OCaml Dockerfiles to workspace-root-relative paths (`COPY .
-   /workspace`, `dune build app/...`), dropping the `examples/<name>/` prefixes.
-3. Update `example-dockerfile-smoke` to build with the workspace root as context,
+The remaining work:
+
+1. Give the framework public opam package definitions and publishable library
+   names (DEC-025's shape; `sol-obs` stays one package).
+2. Make `sol new workspace` emit **workspace-owned opam metadata** declaring the
+   framework dependencies, and stop creating the `vendor/framework` symlink.
+3. Make `sol up` stop materialising framework source into the Docker build
+   context, and stop emitting `#main` pins in generated Dockerfiles — a mutable
+   branch pin is forbidden by DEC-025's invariants.
+4. Make `examples/pluto` (and `examples/venus`, if it remains a workspace)
+   ordinary workspaces under that mechanism: their own `dune-project` project
+   root, the framework obtained as a declared dependency, and workspace-root
+   Dockerfiles (`COPY . /workspace`, `dune build app/...`) with the
+   `examples/<name>/` prefixes dropped.
+5. Update `example-dockerfile-smoke` to build with the workspace root as context,
    so CI validates the context `sol up` actually uses.
-4. Confirm the Sun root `dune build` still behaves once the examples are no longer
-   part of the root dune project.
+6. Confirm the Sun root `dune build` still behaves once the examples are no
+   longer part of the root dune project.
 
 ### Then
 
-5. Resume FEAT-082's walk (`sol up --scope=demo_ts`) at the next obstacle.
+7. Run the `/tmp/foo` proof and resume FEAT-082's walk
+   (`sol up --scope=demo_ts`) at the next obstacle.
 
 ## Acceptance criteria
 
