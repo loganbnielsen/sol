@@ -52,6 +52,19 @@ jobs:
           # waste ~10 minutes compiling OCaml and muddy what "fresh" means.
           opam init -y --bare --disable-sandboxing
 
+      - name: Install system dependencies
+        # The framework's dependency graph reaches system libraries: sol-svc ->
+        # jose -> zarith needs libgmp-dev/pkg-config, and the Kafka and Postgres
+        # bindings need librdkafka-dev/libpq-dev/libssl-dev. Without them opam
+        # stops at its depext prompt and exits 10 rather than resolving.
+        #
+        # Same list the generated Dockerfile installs -- the proof's host has to
+        # provide what the container does, or the two are not comparable.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            librdkafka-dev libpq-dev libssl-dev libgmp-dev pkg-config
+
       - name: Prove examples/pluto builds without this repository
         run: bash cli/platform/local/scripts/prove-workspace-independence.sh examples/pluto
 
