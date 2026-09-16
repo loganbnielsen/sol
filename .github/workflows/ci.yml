@@ -555,51 +555,36 @@ jobs:
   # FEAT-033 TypeScript spike) is hand-maintained with no Sol template to
   # drift from, so it's out of scope here.
   #
-  # Build context is the monorepo root, not the example's own directory:
-  # each of these Dockerfiles' build stage runs `dune build
-  # examples/<workspace>/app/.../bin/main.exe`, a path relative to the
-  # monorepo root, matching how a real checkout of this repo would build
-  # them (these examples live inside sol itself, unlike a real user's
-  # scaffolded workspace, which is self-contained).
+  # Build context is each workspace's OWN root (the directory holding sol.yml),
+  # which is exactly what `sol up` and the README use. These examples are now
+  # ordinary Sol workspaces: DEC-025 removed the coupling where `sol new`
+  # symlinked framework source into the generated workspace, so each has its own
+  # dune-project and .opam and resolves the framework through INSTALLED opam
+  # packages. The context is deliberately no longer this repository, so the job
+  # fails if a workspace ever starts needing the enclosing repository again.
   #
-  # FEAT-085 closed this for the TypeScript demo (see demo-ts-dockerfile-smoke
-  # below, which now builds from the Sol workspace root). The OCaml examples are
-  # the remaining half and are NOT yet self-contained: there is no dune-project
-  # or .opam under examples/, so their services are libraries of this repo's root
-  # dune project, and a workspace-root build would need Sol's application
-  # framework (sol-svc / sol-worker / sol-obs) available without the Sol source
-  # checkout. Today it is not available that way: `sol new workspace` links
-  # vendor/framework to $SOL_HOME, so every scaffolded workspace depends on a Sol
-  # install.
-  #
-  # What replaces that is an open decision and deliberately not this job's to
-  # make -- DEC-025. Opam is the obvious candidate, since the *-eio libraries are
-  # already opam packages, but it is a candidate rather than a consequence: it
-  # brings its own questions (framework package granularity, which libraries need
-  # publishing first, and the opam licence/dependency inventory INFRA-007 still
-  # records as not done). Vendoring the framework, widening this context back to
-  # the repo root, or adding ../../packages-style paths would relabel the coupling
-  # rather than remove it.
-  #
-  # Until DEC-025 lands, this job keeps the monorepo-root context deliberately
-  # rather than pretending the examples are standalone.
   example-dockerfile-smoke:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        dockerfile:
-          - examples/pluto/app/payments/charge_svc/Dockerfile
-          - examples/pluto/app/checkout/checkout_svc/Dockerfile
-          - examples/pluto/app/comms/notify_worker/Dockerfile
-          - examples/venus/app/comms/notify_worker/Dockerfile
-          - examples/venus/app/logistics/fulfillment_worker/Dockerfile
+        include:
+          - dockerfile: examples/pluto/app/payments/charge_svc/Dockerfile
+            context: examples/pluto
+          - dockerfile: examples/pluto/app/checkout/checkout_svc/Dockerfile
+            context: examples/pluto
+          - dockerfile: examples/pluto/app/comms/notify_worker/Dockerfile
+            context: examples/pluto
+          - dockerfile: examples/venus/app/comms/notify_worker/Dockerfile
+            context: examples/venus
+          - dockerfile: examples/venus/app/logistics/fulfillment_worker/Dockerfile
+            context: examples/venus
     steps:
       - uses: actions/checkout@v5
 
       - name: Build ${{ matrix.dockerfile }}
-        run: docker build --no-cache -f ${{ matrix.dockerfile }} .
+        run: docker build --no-cache -f ${{ matrix.dockerfile }} ${{ matrix.context }}
 
   # FEAT-039/FEAT-085: example-dockerfile-smoke above deliberately excludes
   # examples/pluto/app/demo_ts/ (hand-maintained, no Sol template to drift

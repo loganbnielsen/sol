@@ -2,10 +2,10 @@
  (name main)
  (libraries
   pluto_comms_notify
-  sol_worker
-  kafka_eio_service
+  sol-worker
+  kafka-eio-service
   obs-eio
-  sol_obs
+  sol-obs
   pg-eio
   caqti-eio
   caqti-eio.unix

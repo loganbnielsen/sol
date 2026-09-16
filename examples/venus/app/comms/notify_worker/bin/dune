@@ -2,11 +2,11 @@
  (name main)
  (libraries
   venus_comms_notify
-  kafka_eio_service
-  sol_worker
+  kafka-eio-service
+  sol-worker
   pg-eio
   obs-eio
-  sol_obs
+  sol-obs
   caqti-eio
   caqti-eio.unix
   caqti-driver-postgresql

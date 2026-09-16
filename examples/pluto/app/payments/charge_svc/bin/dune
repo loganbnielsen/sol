@@ -2,8 +2,8 @@
  (name main)
  (libraries
   pluto_payments_charge_svc
-  sol_svc
-  sol_obs
+  sol-svc
+  sol-obs
   pg-eio
   caqti-eio
   caqti-eio.unix

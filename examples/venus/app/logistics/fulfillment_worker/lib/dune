@@ -2,4 +2,4 @@
  (name venus_logistics_fulfillment_worker)
  (wrapped false)
  (modules Fulfillment_worker)
- (libraries venus_billing_events sol_worker kafka_eio_service))
+ (libraries venus_billing_events sol-worker kafka-eio-service))

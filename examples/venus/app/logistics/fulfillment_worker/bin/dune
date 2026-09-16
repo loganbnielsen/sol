@@ -2,7 +2,7 @@
  (name main)
  (libraries
   venus_logistics_fulfillment_worker
-  sol_worker
-  kafka_eio_service
-  sol_obs
+  sol-worker
+  kafka-eio-service
+  sol-obs
   eio_main))

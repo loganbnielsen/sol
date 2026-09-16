@@ -5,7 +5,7 @@
  (libraries
   pluto_storage
   pluto_payments_events
-  sol_worker
-  kafka_eio_service
+  sol-worker
+  kafka-eio-service
   obs-eio
   pg-eio))

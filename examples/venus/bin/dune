@@ -8,10 +8,10 @@
   eio.unix
   obs-eio
   obs-prometheus-eio
-  sol_obs
-  kafka_eio_service
-  sol_svc
-  sol_worker
+  sol-obs
+  kafka-eio-service
+  sol-svc
+  sol-worker
   pg-eio
   caqti
   caqti-eio
