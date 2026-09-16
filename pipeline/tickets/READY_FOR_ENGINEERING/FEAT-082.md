@@ -483,3 +483,52 @@ FEAT-036 is whether that is framework-owned or legitimately application policy.
 Note also that the retry/DLQ outcome machinery *is* already framework-owned
 (`@sol-fab/kafka` provisioned the retry topology with no application involvement),
 so the boilerplate is not uniform across concerns.
+
+## Loki investigation — resolved to the platform, not the application (2026-09-16)
+
+Question asked: which ingestion path does the platform actually intend, and which
+streams were being observed?
+
+**There is exactly one authoritative path, chosen by configuration.**
+`@sol-fab/obs`'s `makeLokiPusher(lokiUrl, service)`:
+
+```text
+LOKI_URL unset  → console.log(JSON.stringify({service, level, msg, ...fields}))   # stdout
+LOKI_URL set    → fetch(`${lokiUrl}/loki/api/v1/push`, stream {service})          # direct
+```
+
+`sol up` injects `LOKI_URL` (via the workspace ConfigMap), so the deployed
+application takes the **direct-push** branch and emits logfmt lines — the same
+shape the OCaml `Sol_obs` facade uses internally. The stdout JSON form is a
+fallback for local/unspecified runs, not a competing strategy. So the "two
+authoritative ingestion strategies" concern does not hold: they are alternatives,
+and the platform picks one.
+
+The entries previously found in Loki at `service=order-svc` were logfmt with
+`span=receive_order`, i.e. the OCaml facade's shape, not this application's — hence
+`order-svc-ts` was absent from the label index.
+
+**The failure is in the local Loki, not in the application or in Sol.** Verified
+from both directions against the single `loki-0` instance:
+
+| Probe | Result |
+| --- | --- |
+| `POST` to `http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push` **from inside the pod** | `204 Accepted` — and never queryable |
+| `POST` to `http://localhost:3100/loki/api/v1/push` **through the port-forward** | `204` — queryable immediately (only stream present) |
+| Pod → Loki `GET /ready` | `200` |
+
+So the application can reach Loki, chooses the intended path, and its pushes are
+accepted; the in-cluster write is then silently discarded. One `loki-0` pod exists,
+so this is not two instances disagreeing.
+
+Note also that `fetch` only rejects on *network* errors, never on an HTTP error
+status, so this class of failure is invisible to the application's
+`.catch(err => console.error(...))`. That is worth knowing generally, but it is not
+the cause here — the status was a genuine `204`.
+
+**Conclusion:** environment/observability-infrastructure, not application
+lifecycle or API boilerplate. Per FEAT-036's framing this therefore does **not**
+feed the lifecycle-ownership decision.
+
+**Not yet run** (the remaining two behavioural experiments): the SIGTERM/drain
+test with the worker mid-flight, and retry → exhaustion → DLQ.
