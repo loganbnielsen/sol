@@ -6,13 +6,17 @@ title: Example workspaces are not independently buildable under the DEC-024 work
 source: FEAT-082 resumed golden-path walk 2026-09-15 (after BUG-034 / PR #271)
 ---
 
-**Depends on:** None.
+**Depends on:** DEC-025 (how an OCaml workspace obtains the Sol framework outside
+the Sol source tree). The OCaml half cannot be made self-contained until that
+mechanism exists.
 
-The OCaml/structural half of this ticket is independent. Its TypeScript half is
-gated by DEC-023 (install path for `@sol-fab/*`), recorded under **Related**
-rather than on the `Depends on` line on purpose.
+The TypeScript half is **done** and was gated by DEC-023, recorded under
+**Related** rather than on the `Depends on` line on purpose. The OCaml half now
+has an explicit dependency of its own — DEC-025 — rather than being tracked as an
+unspecified blockage here, because it is blocked on a product/distribution
+decision that does not yet exist, not on engineering effort.
 
-**Related:** FEAT-082, DEC-024, DEC-023, BUG-034, FEAT-084.
+**Related:** FEAT-082, DEC-024, DEC-023, DEC-025, BUG-034, FEAT-084, INFRA-007.
 
 ## Finding (real run — see FEAT-082's resume log)
 
@@ -61,30 +65,67 @@ teach workspace builds about `../../packages` to work around that.
 
 ## Remediation
 
-1. Make `examples/pluto` a standalone project, mirroring what
-   `sol new workspace` emits: a project root (`dune-project`), and
-   `vendor/framework` linked to the Sol framework source so the in-tree
-   `sol_svc`/`sol_worker` libraries resolve exactly as they do in a scaffolded
-   workspace. Do the same for `examples/venus` if it remains a workspace.
-2. Migrate every Dockerfile under those examples to workspace-root-relative
-   paths (`COPY . /workspace`, `dune build app/...`), and drop the
-   `examples/<name>/` prefixes.
-3. Update `.github/workflows/ci.yml`'s `example-dockerfile-smoke` /
-   `demo-ts-dockerfile-smoke` matrices to build with the **workspace root** as
-   context (`cd examples/pluto && docker build -f app/.../Dockerfile .`), so CI
-   validates the context `sol up` actually uses rather than the old monorepo
-   context.
-4. Confirm the Sun root `dune build` still behaves once the examples are
-   separate projects (they should simply no longer be part of the root project).
-5. Leave the TypeScript units red until DEC-023 lands the install path, then
-   resume FEAT-082's walk (`sol up --scope=demo_ts`) at the next obstacle.
+### TypeScript half — DONE (2026-09-16, commit `cfd954be`)
+
+`@sol-fab/kafka` and `@sol-fab/obs` were extracted to standalone public
+repositories and published to npm (DEC-023), then this repo cut over:
+
+- `packages/sol-obs` and `packages/sol-kafka`, plus the root npm workspace that
+  existed only to wire them to the demo, were removed.
+- `examples/pluto/app/demo_ts` is now its own npm project root, with its own
+  `package.json`/`package-lock.json`, resolving `@sol-fab/*` from the registry.
+- Both demo Dockerfiles build with the **workspace root** (`examples/pluto`) as
+  context and install from npm instead of copying `packages/*/dist` out of the
+  monorepo.
+- CI: `demo-ts-dockerfile-smoke` builds from `examples/pluto`; `ts-tests` installs
+  and builds from the demo's own project root. The `@sol-fab/*` suites and the
+  Redpanda steps left this repo — their authoritative CI is the standalone
+  repositories, which is also where the real-broker retry/DLQ tests run.
+
+### OCaml half — BLOCKED on DEC-025
+
+**Original step 1 is superseded.** It said to make `examples/pluto` standalone by
+linking `vendor/framework` to the Sol framework source. That was faithful to what
+`sol new workspace` emits, but it is the same coupling DEC-023 explicitly rejected
+for TypeScript (`vendor/ts`, `../../packages/...`, widening the build context back
+to the enclosing repo), and it contradicts DEC-024's contract that a workspace is
+independently located by `sol.yml`.
+
+**Do not** vendor the framework, widen the Docker context, or add
+`../../packages`-style paths to "finish" this ticket. Each relabels the coupling
+rather than removing it. The OCaml units stay on the monorepo-root context, with
+the reason recorded in `.github/workflows/ci.yml` beside the job, until DEC-025
+decides how a workspace obtains the framework.
+
+Once DEC-025 lands, the remaining work is:
+
+1. Make `examples/pluto` (and `examples/venus`, if it remains a workspace) build
+   against the framework by that mechanism — its own `dune-project` project root,
+   with the framework obtained as an ordinary dependency rather than a link into a
+   Sol install.
+2. Migrate the OCaml Dockerfiles to workspace-root-relative paths (`COPY .
+   /workspace`, `dune build app/...`), dropping the `examples/<name>/` prefixes.
+3. Update `example-dockerfile-smoke` to build with the workspace root as context,
+   so CI validates the context `sol up` actually uses.
+4. Confirm the Sun root `dune build` still behaves once the examples are no longer
+   part of the root dune project.
+
+### Then
+
+5. Resume FEAT-082's walk (`sol up --scope=demo_ts`) at the next obstacle.
 
 ## Acceptance criteria
 
-- `examples/pluto` builds from a **copy of itself alone**, with no enclosing Sun
-  checkout: `docker build` with the workspace root as context succeeds for the
-  OCaml units, and for the TS units once DEC-023 has landed.
+- **Both language paths** must survive being physically copied outside the Sol
+  checkout: `examples/pluto` copied to a directory with no enclosing Sun checkout
+  builds, for the OCaml units (after DEC-025) and the TS units (already true).
+  This is the executable form of DEC-024 — *a Sol workspace's buildability does
+  not depend on its location inside the Sol source repository* — and it is a
+  stronger check than `find_root` resolving `sol.yml` correctly.
 - No Dockerfile under `examples/pluto` references a path outside the workspace.
+- `sol new workspace`'s emitted workspace is itself self-contained by the same
+  mechanism (per DEC-025's acceptance criteria); if the examples are the proof
+  fixture, the scaffold is what they must match.
 - `sol up` in `examples/pluto` reaches the running-svc/worker step, which is the
   next obstacle in FEAT-082's walk.
 - CI's example Dockerfile smoke matrix builds with the workspace root as context.

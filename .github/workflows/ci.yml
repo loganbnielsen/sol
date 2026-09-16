@@ -547,11 +547,23 @@ jobs:
   # below, which now builds from the Sol workspace root). The OCaml examples are
   # the remaining half and are NOT yet self-contained: there is no dune-project
   # or .opam under examples/, so their services are libraries of this repo's root
-  # dune project, and a workspace-root build would need the `sol` framework
-  # available outside the repository -- i.e. published to opam. INFRA-007 still
-  # records the opam dependency graph as uninventoried, so that distribution
-  # decision has not been made yet. Until it is, this job keeps the monorepo-root
-  # context deliberately rather than pretending the examples are standalone.
+  # dune project, and a workspace-root build would need Sol's application
+  # framework (sol-svc / sol-worker / sol-obs) available without the Sol source
+  # checkout. Today it is not available that way: `sol new workspace` links
+  # vendor/framework to $SOL_HOME, so every scaffolded workspace depends on a Sol
+  # install.
+  #
+  # What replaces that is an open decision and deliberately not this job's to
+  # make -- DEC-025. Opam is the obvious candidate, since the *-eio libraries are
+  # already opam packages, but it is a candidate rather than a consequence: it
+  # brings its own questions (framework package granularity, which libraries need
+  # publishing first, and the opam licence/dependency inventory INFRA-007 still
+  # records as not done). Vendoring the framework, widening this context back to
+  # the repo root, or adding ../../packages-style paths would relabel the coupling
+  # rather than remove it.
+  #
+  # Until DEC-025 lands, this job keeps the monorepo-root context deliberately
+  # rather than pretending the examples are standalone.
   example-dockerfile-smoke:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
