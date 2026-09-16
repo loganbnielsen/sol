@@ -6,7 +6,8 @@
 # tracks, and the build merely reconstructs them (DEC-025). The build context is
 # the workspace root, which is exactly what 'sol up' uses.
 FROM ocaml/opam:ubuntu-24.04-ocaml-5.4 AS build
-RUN sudo apt-get update && sudo apt-get install -y librdkafka-dev libpq-dev libssl-dev && \
+RUN sudo apt-get update && sudo apt-get install -y \
+    librdkafka-dev libpq-dev libssl-dev libgmp-dev pkg-config && \
     sudo rm -rf /var/lib/apt/lists/*
 # The base image's default remote is a local git+file:// checkout frozen at
 # whatever opam-repository snapshot existed when the image was built, which can

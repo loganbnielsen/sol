@@ -47,6 +47,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y opam
           opam --version
+          # --bare: initialise opam WITHOUT creating a default switch. The proof
+          # script creates its own fresh switch, and a default switch would both
+          # waste ~10 minutes compiling OCaml and muddy what "fresh" means.
+          opam init -y --bare --disable-sandboxing
 
       - name: Prove examples/pluto builds without this repository
         run: bash cli/platform/local/scripts/prove-workspace-independence.sh examples/pluto
