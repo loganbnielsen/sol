@@ -20,6 +20,5 @@ depends: [
   "sol-env" "sol-obs" "sol-runtime"
 ]
 build: [
-  [ "dune" "subst" ] {dev}
   [ "dune" "build" "-p" name "-j" jobs "@install" "@runtest" {with-test} ]
 ]

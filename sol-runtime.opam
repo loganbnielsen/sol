@@ -15,6 +15,5 @@ homepage: "https://github.com/loganbnielsen/sol"
 bug-reports: "https://github.com/loganbnielsen/sol/issues"
 depends: [ "ocaml" {>= "5.4.0"} "dune" {>= "3.0"} "eio" ]
 build: [
-  [ "dune" "subst" ] {dev}
   [ "dune" "build" "-p" name "-j" jobs "@install" "@runtest" {with-test} ]
 ]

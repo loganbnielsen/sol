@@ -19,6 +19,5 @@ depends: [
   "cstruct" "eio" "http" "https-eio" "kafka-eio" "obs-eio" "uri" "yojson"
 ]
 build: [
-  [ "dune" "subst" ] {dev}
   [ "dune" "build" "-p" name "-j" jobs "@install" "@runtest" {with-test} ]
 ]

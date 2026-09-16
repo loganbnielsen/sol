@@ -23,6 +23,5 @@ pin-depends: [
   [ "lambda-eio.0.1.0" "git+https://github.com/loganbnielsen/lambda-eio.git#c07c367b0f8919ae6efb9c3af2cd39d9061b1fdd" ]
 ]
 build: [
-  [ "dune" "subst" ] {dev}
   [ "dune" "build" "-p" name "-j" jobs "@install" "@runtest" {with-test} ]
 ]

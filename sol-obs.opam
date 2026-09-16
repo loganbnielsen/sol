@@ -23,6 +23,5 @@ pin-depends: [
   [ "obs-tempo-eio.0.1.0" "git+https://github.com/loganbnielsen/obs-tempo-eio.git#31fd441cbae2a3fc5435539248524f00a6c6fd3d" ]
 ]
 build: [
-  [ "dune" "subst" ] {dev}
   [ "dune" "build" "-p" name "-j" jobs "@install" "@runtest" {with-test} ]
 ]
