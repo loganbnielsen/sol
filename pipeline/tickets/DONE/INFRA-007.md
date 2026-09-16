@@ -42,3 +42,23 @@ The AGPL observability stack (Grafana, Loki, Tempo) is documented as the third i
 **Not done, and stated in the document:** the opam and npm dependency graphs are not inventoried — no licence scan runs in CI. That has to happen before either is published, since distribution is what triggers the obligations. Left as an explicit gap rather than implied coverage.
 
 **Addendum (2026-09-15):** the npm runtime trees of the two packages now being distributed externally (`@sol-fab/obs`, `@sol-fab/kafka`, extracted to `loganbnielsen/sol-obs` and `loganbnielsen/sol-kafka`) are inventoried in `docs/legal/third-party-licenses.md` — Apache-2.0 for the packages and `@opentelemetry/api`, MIT for `kafkajs`; no copyleft is shipped or required at runtime. The opam graph and a standing CI licence scan remain open.
+
+**Addendum (2026-09-16): the obligation is now live, and the npm half of the standing scan is closed.**
+
+`@sol-fab/obs@0.1.0` and `@sol-fab/kafka@0.1.0` are published to npm — the
+prospective obligation this ticket tracked is now an actual one:
+
+- Both carry `"license": "Apache-2.0"` in their published registry metadata, and
+  the assembled tarballs are runnable, so the inventory describes the artifacts
+  actually distributed rather than the intended ones.
+- **@sol-fab/obs** ships zero runtime dependencies (`@opentelemetry/api` is a peer).
+- **@sol-fab/kafka** ships `@sol-fab/obs@^0.1.0` (Apache-2.0) and peers
+  `kafkajs` (MIT) / `@opentelemetry/api` (Apache-2.0) — no transitive copyleft.
+- A **standing CI licence gate now runs** in both repos:
+  `license-checker --production --onlyAllow "MIT;Apache-2.0"`, verified green
+  against the real resolved tree in sol-kafka.
+- `docs/legal/third-party-licenses.md` remains the inventory of record.
+
+Still open, unchanged: the **opam** graph is not inventoried, and no licence scan
+runs for the OCaml side. The Grafana/Loki/Tempo AGPL question still belongs to the
+hosted-tier legal review, not here.
