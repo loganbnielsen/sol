@@ -73,6 +73,18 @@ pin-depends: [
   [ "obs-tempo-eio.0.1.0" "git+https://github.com/loganbnielsen/obs-tempo-eio.git#31fd441cbae2a3fc5435539248524f00a6c6fd3d" ]
   [ "pg-eio.0.1.0"        "git+https://github.com/loganbnielsen/pg-eio.git#16d8c66e111f345b672d51e4dcf8dd5b4368e5d2" ]
   [ "lambda-eio.0.1.0"    "git+https://github.com/loganbnielsen/lambda-eio.git#c07c367b0f8919ae6efb9c3af2cd39d9061b1fdd" ]
+
+  # These are published, but the published releases LAG what the framework needs
+  # (concretely: obs-loki-eio requires obs-eio >= 0.1.1, which is not in
+  # opam-repository). opam can only see the versions the registry offers, so a
+  # consumer of an unreleased framework channel has to point at the same sources
+  # the framework itself does. Commit-pinned, since this is not a "track
+  # development" choice. All of it disappears when RELEASE-005 publishes the
+  # framework and its dependencies.
+  [ "https-eio.0.1.1"           "git+https://github.com/loganbnielsen/https-eio.git#e548f47cd8cc607e4781638fa3f4aec996b60d60" ]
+  [ "kafka-eio.0.3.0"           "git+https://github.com/loganbnielsen/kafka-eio.git#ed5621dcc08ce7ca30684210a70a6f4daa97f7cb" ]
+  [ "obs-eio.0.1.2"             "git+https://github.com/loganbnielsen/obs-eio.git#b425c55eba8b1bc65378d7fc7d6c77a573001fb4" ]
+  [ "obs-prometheus-eio.0.1.0"  "git+https://github.com/loganbnielsen/obs-prometheus-eio.git#5f443342fd20a36551336f27f7dbb93ab90e73bb" ]
 ]
 |tpl}
 ;;
