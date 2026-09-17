@@ -7,7 +7,7 @@ source: code inspection 2026-09-15 — an unstated replicas/volume combination w
   the evidence, not the whole problem
 ---
 
-**Depends on:** None.
+**Depends on:** DEC-026.
 
 **Related:** CODE_LAYER-016 (per-workload volume rendering), DEC-022.
 
@@ -89,6 +89,10 @@ ticket is the right container either way) that states:
 3. the valid/invalid combination matrix, enforced fail-closed with messages that
    name the valid alternative.
 
+This decision supplies the portable persistence semantics used by the production
+profile. It does not decide Postgres/Kafka durability, cloud storage classes or
+provider topology; AUDIT-078 owns those target-side guarantees.
+
 ## Acceptance criteria
 
 - A render test **first** pins today's behaviour for `replicas > 1` + a declared
@@ -100,6 +104,8 @@ ticket is the right container either way) that states:
   genuinely driver-dependent — instead of silently deferring to the CSI.
 - The Deployment-vs-StatefulSet boundary is documented where volumes are
   declared.
+- DEC-026 can map every admitted persistence semantic to target capabilities and
+  conformance evidence without referring to a Kubernetes object kind.
 
 ## Non-goals
 
