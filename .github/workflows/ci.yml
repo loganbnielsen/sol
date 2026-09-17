@@ -12,9 +12,15 @@ jobs:
   # devtools/ci/classify-changes.sh, shared with the local pre-commit hook, and
   # its semantics are pinned by devtools/ci/test_classify_changes.sh.
   #
+  # It also decides `run_suite`: false for a docs-only change, and false when an
+  # earlier run already passed on byte-identical tested code with the same
+  # support-package commits (devtools/ci/ci-evidence.sh, pinned by
+  # test_ci_evidence.sh). A pull request updated from main is the usual case.
+  # Every full pull-request run records the evidence a later run may reuse.
+  #
   # continue-on-error: classification must never be able to fail the workflow.
-  # If this job dies, `kind` is empty, and every consumer's condition
-  # (`!= "docs-only"`) is TRUE, so the full suite runs. Uncertainty costs
+  # If this job dies, `run_suite` is empty, and every consumer's condition
+  # (`!= "false"`) is TRUE, so the full suite runs. Uncertainty costs
   # compute, never coverage.
   #
   # NOTE: `test` below is a REQUIRED check, so it must always run. That is why it
@@ -28,8 +34,14 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     continue-on-error: true
+    permissions:
+      contents: read
+      actions: read
     outputs:
       kind: ${{ steps.classify.outputs.kind }}
+      run_suite: ${{ steps.decide.outputs.run_suite }}
+      reused_run: ${{ steps.evidence.outputs.run }}
+      support_refs: ${{ steps.refs.outputs.refs }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -51,6 +63,77 @@ jobs:
           esac
           echo "kind=$kind" >> "$GITHUB_OUTPUT"
           echo "Classification for ${{ github.event_name }}: $kind"
+
+      # Every job pins these commits, so one run builds against one set of
+      # support packages and a later run can tell whether it would too. If they
+      # cannot be resolved, jobs pin #main and nothing is reused or recorded.
+      - name: Resolve support-package commits
+        id: refs
+        run: |
+          if devtools/ci/ci-evidence.sh resolve > "$RUNNER_TEMP/support-refs"; then
+            {
+              echo "refs<<SUPPORT_REFS"
+              cat "$RUNNER_TEMP/support-refs"
+              echo "SUPPORT_REFS"
+            } >> "$GITHUB_OUTPUT"
+          else
+            : > "$RUNNER_TEMP/support-refs"
+          fi
+
+      - name: Look for a passing run of identical code
+        id: evidence
+        if: github.event_name == 'pull_request' && steps.classify.outputs.kind == 'source'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          run="$(devtools/ci/ci-evidence.sh find --repo "$REPO" --workflow ci.yml \
+            --branch "$HEAD_REF" --base-tip "origin/$BASE_REF" \
+            --base "$BASE_SHA" --head "$HEAD_SHA" \
+            --refs "$RUNNER_TEMP/support-refs" --exclude-run "$RUN_ID")"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          if [ -n "$run" ]; then
+            echo "::notice::Run $run already passed on identical code with the same support-package commits; the suite is not re-run."
+          fi
+
+      - name: Decide whether the suite runs
+        id: decide
+        env:
+          KIND: ${{ steps.classify.outputs.kind }}
+          REUSED: ${{ steps.evidence.outputs.run }}
+        run: |
+          if [ "$KIND" = docs-only ] || [ -n "$REUSED" ]; then
+            echo "run_suite=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_suite=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Record this run's evidence
+        id: record
+        if: github.event_name == 'pull_request' && steps.decide.outputs.run_suite == 'true'
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          devtools/ci/ci-evidence.sh record --base "$BASE_SHA" --head "$HEAD_SHA" \
+            --refs "$RUNNER_TEMP/support-refs" > "$RUNNER_TEMP/ci-evidence.txt"
+
+      # Uploaded here, before any job runs pull-request code: ci-evidence.sh
+      # rejects an artifact created after this job finished.
+      - name: Upload this run's evidence
+        if: steps.record.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-evidence
+          path: ${{ runner.temp }}/ci-evidence.txt
+          retention-days: 30
 
   test:
     runs-on: ubuntu-22.04
@@ -78,18 +161,34 @@ jobs:
             echo "\`devtools/ci/test_classify_changes.sh\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Identical code already passed -- full suite deliberately not run
+        if: needs.classify.outputs.reused_run != ''
+        env:
+          REUSED: ${{ needs.classify.outputs.reused_run }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ needs.classify.outputs.reused_run }}
+        run: |
+          echo "::notice::Run $REUSED already passed on identical code; the full suite was not run."
+          {
+            echo "### Identical code already passed"
+            echo ""
+            echo "The required \`test\` check is green because [run $REUSED]($RUN_URL) passed on"
+            echo "byte-identical tested code, built against the same support-package commits."
+            echo ""
+            echo "The conditions are pinned by \`devtools/ci/test_ci_evidence.sh\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Install system dependencies
-        if: needs.classify.outputs.kind != 'docs-only'
+        if: needs.classify.outputs.run_suite != 'false'
         run: sudo apt-get install -y librdkafka-dev libpq-dev libpq5
 
       - name: Set up OCaml
-        if: needs.classify.outputs.kind != 'docs-only'
+        if: needs.classify.outputs.run_suite != 'false'
         uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: 5.4.1
 
       - name: Cache opam download cache
-        if: needs.classify.outputs.kind != 'docs-only'
+        if: needs.classify.outputs.run_suite != 'false'
         # INFRA-008: setup-ocaml caches the switch (~/.opam) keyed on the
         # switch files, so a key change — or a cold cache on a new branch —
         # re-fetches every source. The download cache is content-addressed and
@@ -100,16 +199,18 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.opam/download-cache
-          key: opam-download-${{ runner.os }}-${{ hashFiles('.github/actions/pin-opam-packages/action.yml', 'dune-project', 'sol.opam') }}
+          key: opam-download-${{ runner.os }}-${{ hashFiles('.github/actions/pin-opam-packages/action.yml', '.github/actions/pin-opam-packages/packages.txt', 'dune-project', 'sol.opam') }}
           restore-keys: |
             opam-download-${{ runner.os }}-
 
       - name: Pin extracted opam packages
-        if: needs.classify.outputs.kind != 'docs-only'
+        if: needs.classify.outputs.run_suite != 'false'
         uses: ./.github/actions/pin-opam-packages
+        with:
+          refs: ${{ needs.classify.outputs.support_refs }}
 
       - name: Install OCaml dependencies
-        if: needs.classify.outputs.kind != 'docs-only'
+        if: needs.classify.outputs.run_suite != 'false'
         timeout-minutes: 20
         # INFRA-008: retry a transient upstream fetch failure before failing
         # the job, and name the unreachable host when the failure is permanent.
@@ -128,7 +229,7 @@ jobs:
           exit 1
 
       - name: Prepare Sol framework packages (DEC-025)
-        if: needs.classify.outputs.kind != 'docs-only'
+        if: needs.classify.outputs.run_suite != 'false'
         timeout-minutes: 20
         # THE canonical bootstrap — the same script documented for developers, so
         # there is one definition of the Sol development switch rather than a pin
@@ -141,11 +242,11 @@ jobs:
         run: bash cli/platform/local/scripts/prepare-framework-deps.sh
 
       - name: Build
-        if: needs.classify.outputs.kind != 'docs-only'
+        if: needs.classify.outputs.run_suite != 'false'
         run: opam exec -- dune build
 
       - name: Unit tests (no broker/Postgres/Loki required)
-        if: needs.classify.outputs.kind != 'docs-only'
+        if: needs.classify.outputs.run_suite != 'false'
         # framework/kafka-eio-service/ excluded: its test/dune also builds a
         # broker-requiring integration suite (see run_tests.sh's run_kafka()).
         run: opam exec -- dune test framework/sol-env/ framework/sol-fn/ framework/sol-obs/ framework/sol-runtime/ framework/sol-svc/ framework/sol-worker/ cli/sol/test/
@@ -155,15 +256,15 @@ jobs:
       # makes the CLI tests' SOL_HOME ancestor walk resolve to _build/default
       # instead of the source checkout.
       - name: Install formatter
-        if: needs.classify.outputs.kind != 'docs-only'
+        if: needs.classify.outputs.run_suite != 'false'
         run: opam install ocamlformat.0.29.0 -y
 
       - name: Format check
-        if: needs.classify.outputs.kind != 'docs-only'
+        if: needs.classify.outputs.run_suite != 'false'
         run: opam exec -- dune fmt --preview
 
       - name: Platform-component drift guardrail (ADR 0001 / CODE_LAYER-005)
-        if: needs.classify.outputs.kind != 'docs-only'
+        if: needs.classify.outputs.run_suite != 'false'
         run: devtools/ci/check_platform_component_drift.sh
 
       - name: Change-classification semantics (devtools/ci/classify-changes.sh)
@@ -174,12 +275,17 @@ jobs:
         # would not be visible in a normal review of the diff.
         run: bash devtools/ci/test_classify_changes.sh
 
+      - name: CI evidence reuse semantics (devtools/ci/ci-evidence.sh)
+        # Decides whether the whole suite may be skipped; every disqualifying
+        # condition is pinned by its own case.
+        run: bash devtools/ci/test_ci_evidence.sh
+
       - name: Ticket-state transition guard
-        if: needs.classify.outputs.kind != 'docs-only'
+        if: needs.classify.outputs.run_suite != 'false'
         run: bash devtools/ci/test_ticket_transitions.sh
 
       - name: Signal-handler duplication guardrail (REFAC-081)
-        if: needs.classify.outputs.kind != 'docs-only'
+        if: needs.classify.outputs.run_suite != 'false'
         run: devtools/ci/check_signal_handler_duplication.sh
 
   # FRIC-009: smallest check that would have caught a regression like
@@ -208,7 +314,7 @@ jobs:
     # RULE: a job with this condition must never be added to the required status
     # checks without revisiting the design above.
     needs: classify
-    if: always() && needs.classify.outputs.kind != 'docs-only'
+    if: always() && needs.classify.outputs.run_suite != 'false'
     runs-on: ubuntu-22.04
     # Outer safety net only — per-step timeouts below do the real fail-fast
     # work. Generous on purpose: a job-level timeout cancels the whole job,
@@ -232,13 +338,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.opam/download-cache
-          key: opam-download-${{ runner.os }}-${{ hashFiles('.github/actions/pin-opam-packages/action.yml', 'dune-project', 'sol.opam') }}
+          key: opam-download-${{ runner.os }}-${{ hashFiles('.github/actions/pin-opam-packages/action.yml', '.github/actions/pin-opam-packages/packages.txt', 'dune-project', 'sol.opam') }}
           restore-keys: |
             opam-download-${{ runner.os }}-
 
       - name: Pin extracted opam packages
         timeout-minutes: 10
         uses: ./.github/actions/pin-opam-packages
+        with:
+          refs: ${{ needs.classify.outputs.support_refs }}
 
       - name: Install OCaml dependencies
         timeout-minutes: 20
@@ -671,7 +779,7 @@ jobs:
     # RULE: a job with this condition must never be added to the required status
     # checks without revisiting the design above.
     needs: classify
-    if: always() && needs.classify.outputs.kind != 'docs-only'
+    if: always() && needs.classify.outputs.run_suite != 'false'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     strategy:
@@ -713,7 +821,7 @@ jobs:
     # RULE: a job with this condition must never be added to the required status
     # checks without revisiting the design above.
     needs: classify
-    if: always() && needs.classify.outputs.kind != 'docs-only'
+    if: always() && needs.classify.outputs.run_suite != 'false'
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     strategy:
@@ -749,7 +857,7 @@ jobs:
     # RULE: a job with this condition must never be added to the required status
     # checks without revisiting the design above.
     needs: classify
-    if: always() && needs.classify.outputs.kind != 'docs-only'
+    if: always() && needs.classify.outputs.run_suite != 'false'
     name: TypeScript demo (install + build/typecheck)
     runs-on: ubuntu-22.04
     timeout-minutes: 15
@@ -799,7 +907,7 @@ jobs:
   # should gate merges.
   golden-path-smoke-ts:
     needs: classify
-    if: always() && needs.classify.outputs.kind != 'docs-only'
+    if: always() && needs.classify.outputs.run_suite != 'false'
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
@@ -817,13 +925,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.opam/download-cache
-          key: opam-download-${{ runner.os }}-${{ hashFiles('.github/actions/pin-opam-packages/action.yml', 'dune-project', 'sol.opam') }}
+          key: opam-download-${{ runner.os }}-${{ hashFiles('.github/actions/pin-opam-packages/action.yml', '.github/actions/pin-opam-packages/packages.txt', 'dune-project', 'sol.opam') }}
           restore-keys: |
             opam-download-${{ runner.os }}-
 
       - name: Pin extracted opam packages
         timeout-minutes: 10
         uses: ./.github/actions/pin-opam-packages
+        with:
+          refs: ${{ needs.classify.outputs.support_refs }}
 
       - name: Install OCaml dependencies
         timeout-minutes: 20
