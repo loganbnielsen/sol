@@ -38,8 +38,9 @@ dune build && dune test && dune fmt --preview
 ```
 
 A pre-commit hook runs the build and unit suites; install it with
-`bash cli/platform/local/scripts/install-hooks.sh`. It also enforces that
-`pipeline/tickets/` is only edited from the main checkout.
+`bash cli/platform/local/scripts/install-hooks.sh`. It also validates ticket
+state transitions: ticket creation and correction happen on ordinary PR
+branches, while deletion is only allowed as a same-ID state move.
 
 ## Commits and branch protection
 

@@ -174,6 +174,10 @@ jobs:
         # would not be visible in a normal review of the diff.
         run: bash devtools/ci/test_classify_changes.sh
 
+      - name: Ticket-state transition guard
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: bash devtools/ci/test_ticket_transitions.sh
+
       - name: Signal-handler duplication guardrail (REFAC-081)
         if: needs.classify.outputs.kind != 'docs-only'
         run: devtools/ci/check_signal_handler_duplication.sh
