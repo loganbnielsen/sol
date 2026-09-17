@@ -338,10 +338,12 @@ the profile is unsatisfiable until Sol can establish every guarantee it requires
 | Workload credential posture | always |
 | Workload availability | any service or worker |
 | Postgres durability | migrations or a `postgres` resource |
-| Kafka durability | topics, schemas, any worker, or a `kafka` resource |
+| Kafka durability | topics declared in `events/` `sol.toml`, or a `kafka` resource |
 
-A worker counts as Kafka use because the plan cannot distinguish a
-`sol-jobs`-only worker from a Kafka consumer.
+Only declared dependencies make a guarantee applicable. A worker's shape
+implies nothing: it may consume Kafka or host `sol-jobs`. A worker that
+consumes Kafka without a declared topic or `kafka` resource is not detected
+yet, so declare every Kafka dependency.
 
 A deploy that passes preflight carries `production-single-region/v1` in its plan
 (`--emit-plan-to`, with the guarantees as `evidence_requirements`) and in its

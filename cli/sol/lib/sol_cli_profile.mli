@@ -47,13 +47,14 @@ val capability_to_string : capability -> string
 (** Human description of the guarantee, e.g. ["immutable artifact identity"]. *)
 val capability_description : capability -> string
 
-(** What a plan's workloads use. A guarantee applies only when the workload uses
-    the corresponding capability (DEC-026). *)
-type usage =
-  { long_running_workloads : bool (** Any service or worker. *)
-  ; postgres : bool
-  ; kafka : bool
-  }
+(** A capability the plan's workloads positively use. Each must come from
+    declared, language-neutral evidence: a workload's runtime shape says nothing
+    about its dependencies. *)
+type workload_capability =
+  | Long_running (** A service or worker, the subject of availability tiers. *)
+  | Postgres
+  | Kafka
 
-(** The guarantees [t] requires for [usage], in a fixed order. *)
-val requirements : t -> usage -> capability list
+(** The guarantees [t] requires when the workloads use [uses]: the target-level
+    guarantees always, plus one guarantee per used capability, in a fixed order. *)
+val requirements : t -> workload_capability list -> capability list

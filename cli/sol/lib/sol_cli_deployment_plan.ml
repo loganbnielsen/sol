@@ -549,35 +549,47 @@ let sol_yml_replicas_override ~resolved_config ~service_name =
      | Some { Sol_cli_config.scale_min; _ } -> scale_min)
 ;;
 
-(* The profile is target-selected, so only a target-resolved plan carries one.
-   Usage is read from what the plan can see: a worker may host sol-jobs alone,
-   but the plan cannot tell that apart from a Kafka consumer, so every worker
-   counts as Kafka use. *)
-let profile_claim ~resolved_config ~services ~topics ~migrations ~schema_subjects =
+(* Only positive, language-neutral evidence counts. A worker may consume Kafka
+   or host sol-jobs (DEC-021), so its shape implies no dependency; schema
+   subjects are not evidence either, being discovered from OCaml event
+   modules. *)
+let workload_capabilities ~resolved_config ~services ~topics ~migrations =
+  let declares typ =
+    match resolved_config with
+    | None -> false
+    | Some cfg ->
+      List.exists
+        (fun (r : Sol_cli_config.resource) -> r.typ = Some typ)
+        (Sol_cli_config.resources cfg)
+  in
+  let long_running =
+    List.exists
+      (fun (s : service_spec) ->
+         match s.primitive with
+         | Svc | Worker -> true
+         | Fn -> false)
+      services
+  in
+  List.filter_map
+    (fun (used, capability) -> if used then Some capability else None)
+    [ long_running, Sol_cli_profile.Long_running
+    ; migrations <> [] || declares "postgres", Sol_cli_profile.Postgres
+    ; topics <> [] || declares "kafka", Sol_cli_profile.Kafka
+    ]
+;;
+
+let profile_claim ~resolved_config ~services ~topics ~migrations =
   match Option.bind resolved_config Sol_cli_config.target with
   | None -> None
   | Some target ->
     Option.map
       (fun profile ->
-         let has primitive =
-           List.exists (fun (s : service_spec) -> s.primitive = primitive) services
-         in
-         let declares typ =
-           match resolved_config with
-           | None -> false
-           | Some cfg ->
-             List.exists
-               (fun (r : Sol_cli_config.resource) -> r.typ = Some typ)
-               (Sol_cli_config.resources cfg)
-         in
-         let usage =
-           { Sol_cli_profile.long_running_workloads = has Svc || has Worker
-           ; postgres = migrations <> [] || declares "postgres"
-           ; kafka =
-               topics <> [] || schema_subjects <> [] || has Worker || declares "kafka"
-           }
-         in
-         { profile; requirements = Sol_cli_profile.requirements profile usage })
+         { profile
+         ; requirements =
+             Sol_cli_profile.requirements
+               profile
+               (workload_capabilities ~resolved_config ~services ~topics ~migrations)
+         })
       target.Sol_cli_config.profile
 ;;
 
@@ -788,12 +800,7 @@ let of_services_result
     ; consumer_groups = derive_consumer_groups workspace resolved_services
     ; requested_scope
     ; profile =
-        profile_claim
-          ~resolved_config
-          ~services:resolved_services
-          ~topics
-          ~migrations
-          ~schema_subjects
+        profile_claim ~resolved_config ~services:resolved_services ~topics ~migrations
     }
 ;;
 

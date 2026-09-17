@@ -64,24 +64,26 @@ let capability_description = function
   | Kafka_durability -> "Kafka durability"
 ;;
 
-type usage =
-  { long_running_workloads : bool
-  ; postgres : bool
-  ; kafka : bool
-  }
+type workload_capability =
+  | Long_running
+  | Postgres
+  | Kafka
 
-let requirements Production_single_region usage =
-  [ Some Qualified_substrate
-  ; Some Qualified_versions
-  ; Some Direct_apply_authority
-  ; Some Remote_state
-  ; Some Scoped_operator_identities
-  ; Some Alert_delivery
-  ; Some Immutable_artifacts
-  ; Some Credential_posture
-  ; (if usage.long_running_workloads then Some Workload_availability else None)
-  ; (if usage.postgres then Some Postgres_durability else None)
-  ; (if usage.kafka then Some Kafka_durability else None)
+let guarantee_of_use = function
+  | Long_running -> Workload_availability
+  | Postgres -> Postgres_durability
+  | Kafka -> Kafka_durability
+;;
+
+let requirements Production_single_region uses =
+  [ Qualified_substrate
+  ; Qualified_versions
+  ; Direct_apply_authority
+  ; Remote_state
+  ; Scoped_operator_identities
+  ; Alert_delivery
+  ; Immutable_artifacts
+  ; Credential_posture
   ]
-  |> List.filter_map Fun.id
+  @ List.map guarantee_of_use (List.sort_uniq compare uses)
 ;;

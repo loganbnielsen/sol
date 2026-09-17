@@ -105,9 +105,19 @@ profile concept, so the work was still missing.
 
 - DEC-026 §2's TypeScript rejection has no language-neutral signal to check.
   Recorded on FEAT-088, which must define an explicit compatibility input.
-- A worker counts as Kafka use, because the plan cannot tell a
-  `sol-jobs`-only worker apart from a Kafka consumer. This is the fail-closed
-  direction, and it matches DEC-026 §3's open question about non-Kafka workers.
+- **Kafka dependency declaration.** Guarantees apply only on positive,
+  language-neutral evidence:
+  - declared `events/` topics or a `kafka` resource for Kafka durability;
+  - migrations or a `postgres` resource for Postgres durability;
+  - a service or worker for workload availability, the shape DEC-026 §3
+    defines tiers for.
+
+  A worker's shape implies no dependency: DEC-021 and `sol-jobs.md` make
+  runtime topology and programming model separate axes. Schema subjects are
+  not evidence either, because they are discovered from OCaml event modules.
+  A Kafka consumer can still exist with neither signal (its topic lives in
+  code and is created at runtime). That missing capability declaration is
+  handed to AUDIT-078.
 - `sol rollback` runs no profile preflight. Deciding which releases are
   compatible to restore on a profile target stays with AUDIT-069 and FEAT-050,
   which can now read the claim from deployment events.

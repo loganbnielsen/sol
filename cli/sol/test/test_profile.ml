@@ -98,14 +98,11 @@ let test_requirements_follow_usage () =
     ; "credential_posture"
     ]
   in
+  check_strs "no used capabilities: target-level guarantees only" always (names []);
   check_strs
-    "fn-only workspace with no data services"
-    always
-    (names { long_running_workloads = false; postgres = false; kafka = false });
-  check_strs
-    "every capability used"
+    "each used capability once, in a fixed order"
     (always @ [ "workload_availability"; "postgres_durability"; "kafka_durability" ])
-    (names { long_running_workloads = true; postgres = true; kafka = true })
+    (names [ P.Kafka; P.Long_running; P.Postgres; P.Kafka ])
 ;;
 
 (* ── Selection ───────────────────────────────────────────────────────────── *)
@@ -190,18 +187,18 @@ let env : Sol_cli_deployment_plan.env_config =
   }
 ;;
 
-let services : Sol_cli_manifest.service list =
-  [ { domain = "payments"
-    ; name = "charge_svc"
-    ; primitive = Sol_cli_manifest.Svc
-    ; dir = "app/payments/charge_svc"
-    }
-  ]
+let unit ~domain ~name primitive : Sol_cli_manifest.service =
+  { domain; name; primitive; dir = Printf.sprintf "app/%s/%s" domain name }
 ;;
 
-let plan_for target =
-  mkdir_p "app/payments/charge_svc";
-  write "app/payments/charge_svc/sol.toml" "";
+let charge_svc = unit ~domain:"payments" ~name:"charge_svc" Sol_cli_manifest.Svc
+
+let plan_for ?(services = [ charge_svc ]) target =
+  List.iter
+    (fun (s : Sol_cli_manifest.service) ->
+       mkdir_p s.dir;
+       write (Filename.concat s.dir "sol.toml") "")
+    services;
   match
     Sol_cli_deployment_plan.of_services_result
       ~workspace:"pluto"
@@ -211,6 +208,12 @@ let plan_for target =
   with
   | Ok plan -> plan
   | Error e -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string e)
+;;
+
+let requirements_of plan =
+  match plan.Sol_cli_deployment_plan.profile with
+  | None -> Alcotest.fail "expected a profile claim"
+  | Some claim -> claim.requirements
 ;;
 
 let test_plan_carries_claim_and_requirements () =
@@ -263,6 +266,55 @@ let test_declared_data_resources_make_durability_applicable () =
         "kafka resource requires Kafka durability"
         true
         (List.mem P.Kafka_durability claim.requirements))
+;;
+
+let notify_worker = unit ~domain:"comms" ~name:"notify_worker" Sol_cli_manifest.Worker
+
+let test_worker_shape_does_not_imply_kafka () =
+  with_workspace (fun () ->
+    write_target prod_aws selecting;
+    (* An OCaml event module is language-specific source, not a declaration. *)
+    mkdir_p "events/comms";
+    write "events/comms/email_requested.ml" "";
+    let requirements =
+      requirements_of (plan_for ~services:[ notify_worker ] "prod/aws/us-east-1")
+    in
+    check_bool
+      "a worker is still long-running"
+      true
+      (List.mem P.Workload_availability requirements);
+    check_bool
+      "an undeclared worker requires no Kafka durability"
+      false
+      (List.mem P.Kafka_durability requirements))
+;;
+
+let test_jobs_worker_requires_postgres_not_kafka () =
+  with_workspace (fun () ->
+    write_target prod_aws selecting;
+    mkdir_p "db/migrations";
+    write "db/migrations/001_jobs.sql" "";
+    let requirements =
+      requirements_of (plan_for ~services:[ notify_worker ] "prod/aws/us-east-1")
+    in
+    check_bool
+      "migrations require Postgres durability"
+      true
+      (List.mem P.Postgres_durability requirements);
+    check_bool "no Kafka durability" false (List.mem P.Kafka_durability requirements))
+;;
+
+let test_declared_topics_require_kafka () =
+  with_workspace (fun () ->
+    write_target prod_aws selecting;
+    mkdir_p "events/comms";
+    write "events/comms/sol.toml" "[service]\ntopics = [\"comms-emails\"]\n";
+    check_bool
+      "a declared topic requires Kafka durability"
+      true
+      (List.mem
+         P.Kafka_durability
+         (requirements_of (plan_for ~services:[ notify_worker ] "prod/aws/us-east-1"))))
 ;;
 
 let test_plan_without_profile_is_unchanged () =
@@ -497,6 +549,18 @@ let () =
             "declared data resources make durability applicable"
             `Quick
             test_declared_data_resources_make_durability_applicable
+        ; Alcotest.test_case
+            "worker shape does not imply Kafka"
+            `Quick
+            test_worker_shape_does_not_imply_kafka
+        ; Alcotest.test_case
+            "jobs worker requires Postgres, not Kafka"
+            `Quick
+            test_jobs_worker_requires_postgres_not_kafka
+        ; Alcotest.test_case
+            "declared topics require Kafka"
+            `Quick
+            test_declared_topics_require_kafka
         ; Alcotest.test_case
             "no profile, unchanged plan"
             `Quick

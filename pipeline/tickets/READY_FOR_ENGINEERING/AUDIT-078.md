@@ -30,6 +30,22 @@ and whether the first profile claims AZ tolerance. FEAT-083 defines portable
 workload-volume semantics. This ticket must not turn replication factor,
 Multi-AZ or a CSI mode into the public API.
 
+## Input from FEAT-089: Kafka use has no declaration
+
+The production profile makes Kafka durability applicable only on positive,
+language-neutral evidence: topics declared in `events/` `sol.toml`, or a
+`kafka` resource in `sol.yml`. A worker's shape implies nothing, since DEC-021
+lets a `-worker` host `sol-jobs` instead of a Kafka consumer. But a Kafka
+consumer can exist with neither signal: its topic is named in code and created
+at runtime.
+
+Before Kafka durability can be established, this ticket must define how a
+workload declares its Kafka dependency, so the profile cannot miss one. The
+declaration must be language-neutral; inferring Kafka use from worker shape or
+from language source files is not acceptable. The existing `derive_consumer_groups`
+convention, which assigns a consumer group to every worker, makes the same
+shape-based assumption and should be reconciled with that declaration.
+
 ## Implementation scope
 
 - Derive Kafka topic durability from target capability/policy and fail closed
