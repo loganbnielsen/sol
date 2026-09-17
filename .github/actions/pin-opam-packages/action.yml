@@ -1,21 +1,18 @@
 name: Pin opam packages
 description: >
-  Pin every extracted -eio/https-eio support package listed in packages.txt,
-  at the commit given in `refs` or at #main otherwise, retrying each
-  pin a bounded number of times so a brief upstream tarball-host outage
-  (INFRA-008) does not fail a pull request that changes no dependencies.
-  Single source of truth for both CI jobs that need a full build (test and
-  golden-path-smoke) so the pin list and its ordering constraint never drift
-  out of sync between them.
+  Pin every extracted -eio/https-eio support package listed in packages.txt at
+  the commit given in `refs`, retrying each pin a bounded number of times so a
+  brief upstream tarball-host outage (INFRA-008) does not fail a pull request
+  that changes no dependencies. Shared by every job that needs a full build, so
+  the pin list and its ordering constraint never drift apart.
 inputs:
   refs:
     description: >
-      Newline-separated "<package> <commit>" lines resolved once for the whole
-      workflow run (devtools/ci/ci-evidence.sh resolve), so every job builds
-      against the same support-package commits. A package without a line is
-      pinned at #main.
-    required: false
-    default: ""
+      Newline-separated "<package> <commit>" lines from
+      devtools/ci/resolve-support-packages.sh, resolved once per workflow run so
+      every job builds against one dependency snapshot. Every package in
+      packages.txt must have a line; there is no per-job fallback to #main.
+    required: true
 runs:
   using: composite
   steps:
@@ -27,11 +24,10 @@ runs:
         # pipeline's status coming from opam, not from the trailing `tee`.
         set -o pipefail
 
-        # Tracking #main on every support package during active parallel
-        # development across all of them — sol should build against their
-        # latest code, not a tag that's fallen behind. Revert to tagged
-        # pins once these settle and cut real releases. packages.txt holds
-        # the list and its required order.
+        # Support packages track main during active parallel development,
+        # snapshotted once per workflow run (refs). Replace with released
+        # versions once they exist (RELEASE-005). packages.txt holds the list
+        # and its required order.
         #
         # INFRA-008: a pin installs immediately, so it can fetch a transitive
         # source from a non-GitHub host (observed: mtime from erratique.ch).
@@ -63,5 +59,9 @@ runs:
         while read -r -u 3 pkg url; do
           case "$pkg" in ''|'#'*) continue ;; esac
           ref="$(printf '%s\n' "$REFS" | awk -v p="$pkg" '$1 == p { print $2; exit }')"
-          retry_pin "$pkg" "${url}#${ref:-main}"
+          if ! [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::no resolved commit for support package ${pkg}. The workflow's support-refs job must resolve every package in packages.txt; see its log."
+            exit 1
+          fi
+          retry_pin "$pkg" "${url}#${ref}"
         done 3< "${{ github.action_path }}/packages.txt"

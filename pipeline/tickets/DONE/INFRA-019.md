@@ -102,3 +102,14 @@ one run's evidence to vouch for another run's untrusted CI.
     evidence.
   - `fn-svc-isolation-spike.yml` calls the pin action without `refs` and still
     pins `#main`.
+
+## Withdrawn (2026-09-17)
+
+The historical-run reuse shipped in #289 and was removed by INFRA-020 before it
+ever reused a run. It worked, but it made a custom evidence system part of the
+merge-safety boundary: historical run lookup, artifact timing, merge-tree
+reconstruction and CI-definition trust checks. That complexity outweighed an
+occasional 7–20 minute rerun. A new pull-request head reruns its CI.
+
+Kept from this ticket: the single `packages.txt` list, and one support-package
+snapshot per workflow run.
