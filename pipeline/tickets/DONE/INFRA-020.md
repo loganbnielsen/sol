@@ -47,3 +47,18 @@ Capability-aware job selection is filed separately in BACKLOG.
 **Demo/example coverage:** Not applicable; CI internals.
 
 **TypeScript parity:** No language impact.
+
+## Completion notes (2026-09-17)
+
+- **Removed:** `ci-evidence.sh`, `test_ci_evidence.sh`, and the evidence steps,
+  outputs and summary. Diffed against the pre-INFRA-019 workflow, `ci.yml` now
+  differs only by the `support-refs` job, the `needs`/`refs` wiring on the
+  three building jobs, the resolver test step, and `packages.txt` in the opam
+  download-cache key.
+- **Resolver:** `resolve-support-packages.sh` (about 20 lines) has two tests.
+  Run against the real list, it resolved all 11 packages.
+- **Pin action, checked locally** by running its loop with `opam` stubbed out:
+  - a complete snapshot pins every package at its resolved commit;
+  - removing one package fails with the "no resolved commit" error.
+- **Other callers:** `fn-svc-isolation-spike.yml` now resolves its own snapshot.
+  `release.yml` keeps its separate `#main` pins, which stay with RELEASE-005.
