@@ -771,3 +771,288 @@ jobs:
       - name: Build and typecheck both services
         working-directory: examples/pluto/app/demo_ts
         run: npm run build -w order-svc -w fulfillment-worker
+
+  # FEAT-087: `golden-path-smoke` (OCaml) is the only job that proves a real
+  # deploy works end to end -- `ts-tests`/`demo-ts-dockerfile-smoke` above stop
+  # at typecheck and `docker build`. TypeScript is a first-class Sol
+  # application language (DEC-022), so it gets the same platform-contract
+  # proof: deploy `demo_ts` to a real cluster, confirm it's Ready, confirm
+  # `/healthz`, and run one real transaction through Kafka into Postgres.
+  #
+  # Deliberately narrow -- this is NOT a reproduction of FEAT-082's lifecycle
+  # experiments (SIGTERM-mid-flight ordering, retry/DLQ exhaustion). Those
+  # already have a recorded evidence trail; this job answers a different,
+  # narrower question: can a real TypeScript Sol application go from
+  # published-package dependency through the platform and actually work.
+  #
+  # Version boundary (see FEAT-087): this job never touches the
+  # `loganbnielsen/sol-typescript` repository. It resolves `@sol-fab/svc`/
+  # `@sol-fab/worker` from the public npm registry, at whatever version
+  # `examples/pluto/app/demo_ts/package-lock.json` pins -- exactly what an
+  # external developer's `npm ci` would do. Bumping that pin is an ordinary
+  # PR in this repo (see FEAT-086), the same way `golden-path-smoke` bumps its
+  # opam-pinned `*-eio` versions rather than building them from sibling
+  # source checkouts.
+  #
+  # Not a required check yet (matches `golden-path-smoke`'s own bring-up
+  # precedent) -- get it stable first, then decide separately whether it
+  # should gate merges.
+  golden-path-smoke-ts:
+    needs: classify
+    if: always() && needs.classify.outputs.kind != 'docs-only'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y librdkafka-dev libpq-dev libpq5
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.4.1
+
+      - name: Cache opam download cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.opam/download-cache
+          key: opam-download-${{ runner.os }}-${{ hashFiles('.github/actions/pin-opam-packages/action.yml', 'dune-project', 'sol.opam') }}
+          restore-keys: |
+            opam-download-${{ runner.os }}-
+
+      - name: Pin extracted opam packages
+        timeout-minutes: 10
+        uses: ./.github/actions/pin-opam-packages
+
+      - name: Install OCaml dependencies
+        timeout-minutes: 20
+        # Same retry/host-naming pattern as `test`/`golden-path-smoke` --
+        # INFRA-008.
+        run: |
+          set -o pipefail
+          log="$(mktemp)"
+          for attempt in 1 2 3; do
+            if opam install . --deps-only --with-test -y 2>&1 | tee "$log"; then
+              exit 0
+            fi
+            echo "::warning::opam install failed (attempt ${attempt}/3); retrying in $((attempt * 10))s"
+            sleep $((attempt * 10))
+          done
+          host="$(grep -oE 'Fetch_fail\("[^"]+' "$log" | tail -1 | sed -E 's/.*"//; s|^https?://||; s|/.*||' || true)"
+          echo "::error::opam install failed after 3 attempts${host:+ — unreachable host: ${host}}"
+          exit 1
+
+      - name: Prepare Sol framework packages (DEC-025)
+        timeout-minutes: 20
+        run: bash cli/platform/local/scripts/prepare-framework-deps.sh
+
+      - name: Build sol CLI
+        timeout-minutes: 5
+        run: opam exec -- dune build cli/sol/bin/main.exe
+
+      - name: Install k3d/kubectl/helm (pinned versions — docs/dogfood/DOGFOOD.md)
+        timeout-minutes: 5
+        run: |
+          curl -fsSL -o k3d "https://github.com/k3d-io/k3d/releases/download/v5.6.0/k3d-linux-amd64"
+          chmod +x k3d
+          sudo mv k3d /usr/local/bin/k3d
+
+          curl -fsSL "https://get.helm.sh/helm-v3.21.0-linux-amd64.tar.gz" | tar -xz -C /tmp
+          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
+
+          curl -fsSL -o kubectl "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+
+      - name: TypeScript golden-path smoke test
+        timeout-minutes: 18
+        run: |
+          set -eo pipefail
+          export SOL_HOME="$GITHUB_WORKSPACE"
+          mkdir -p "$SOL_HOME/.ci-bin"
+          ln -sf "$SOL_HOME/_build/default/cli/sol/bin/main.exe" "$SOL_HOME/.ci-bin/sol"
+          export PATH="$SOL_HOME/.ci-bin:$PATH"
+          hash -r
+
+          cd examples/pluto
+
+          sol local infra up
+          sol up --scope=demo_ts
+
+          demo_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-demo-ts$' | head -1)
+
+          # fulfillment_worker subscribes with `fromBeginning: false`
+          # (app code, out of scope to change here). For a genuinely new
+          # consumer group -- exactly what a fresh cluster's first-ever
+          # deploy creates -- that means "start from the tail": a message
+          # produced before the group finishes joining is not delayed, it
+          # is invisible to it forever. This job's first real run hit
+          # exactly this: POST /orders succeeded at a timestamp 8.8s
+          # *before* the worker's own log showed "[ConsumerGroup] Consumer
+          # has joined the group", so the message landed in a topic no
+          # consumer had subscribed to yet, and no retry budget on the
+          # Postgres check downstream could ever have found it.
+          #
+          # A Kubernetes-level `kubectl wait --for=condition=ready` cannot
+          # establish this (verified experimentally, see git history on
+          # this file): the worker Deployment has no readiness probe, so
+          # that condition means "container started," nothing more. The
+          # only real signal is the application's own evidence that it
+          # joined -- so wait on that directly, the same "poll for the
+          # actual observed effect" pattern `probe()` below uses for HTTP.
+          # The wait itself must not be fragile. This step runs under
+          # `set -o pipefail`, and `kubectl logs ... | grep -q PATTERN`
+          # reports *no match* whenever PATTERN appears early in a stream
+          # larger than the pipe buffer: `grep -q` exits at the first match,
+          # kubectl keeps writing into a now-closed pipe, and pipefail
+          # propagates kubectl's SIGPIPE exit (141) out of the whole
+          # pipeline -- so the success case reads as a miss. Reproduced
+          # locally: a 2,000,000-line producer with the pattern on line 2
+          # returned NOMATCH. Capture the logs first, then match with a
+          # herestring, so no pipeline is involved and no exit status can
+          # come from anything but grep.
+          wait_for_consumer_join() {
+            local i logs
+            for i in $(seq 1 30); do
+              logs=$(kubectl logs -n "$demo_ns" -l app=fulfillment-worker --all-containers 2>/dev/null || true)
+              if grep -Fq '"message":"[ConsumerGroup] Consumer has joined the group","groupId":"sol-demo-ts-fulfillment-worker"' <<< "$logs"; then
+                echo "fulfillment-worker consumer group joined OK"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "::error::TS golden-path smoke test: fulfillment-worker's consumer group never reported joining within the timeout"
+            return 1
+          }
+          wait_for_consumer_join
+
+          probe() {
+            local path=$1
+            local i
+            for i in $(seq 1 30); do
+              if curl -sf "http://localhost:8080${path}" > /dev/null; then
+                echo "${path} OK"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "::error::TS golden-path smoke test: ${path} never became reachable"
+            return 1
+          }
+
+          probe /healthz
+
+          # One real transaction through the whole path: HTTP -> order_svc ->
+          # Kafka -> fulfillment_worker -> Postgres. Marker is unique per run
+          # so a re-run (or a flaky retry) can't misread a stale row from a
+          # previous attempt as this run's evidence.
+          marker="ci-ts-golden-$(date +%s)-${RANDOM}"
+          http_code=$(curl -s -o /tmp/order_response.json -w '%{http_code}' \
+            -X POST http://localhost:8080/orders \
+            -H 'Content-Type: application/json' \
+            -d "{\"order_id\":\"${marker}\",\"item\":\"widget\",\"quantity\":1}")
+          if [ "$http_code" != "202" ]; then
+            echo "::error::TS golden-path smoke test: POST /orders returned $http_code, expected 202 ($(cat /tmp/order_response.json))"
+            exit 1
+          fi
+          echo "POST /orders OK (202, marker=${marker})"
+
+          # fulfilled_orders_ts is created by fulfillment_worker itself
+          # (CREATE TABLE IF NOT EXISTS in db.ts) -- no Sol migration owns
+          # this table, so there is nothing to `sol migrate` here.
+          #
+          # POSTGRES_URL comes from fulfillment_worker's own injected Secret
+          # (the exact credential the app itself uses), not the Postgres
+          # Helm chart's internal secret path -- decoupled from that chart's
+          # own implementation, which this job has no reason to know about.
+          pg_url=$(kubectl get secret -n "$demo_ns" fulfillment-worker-secrets -o jsonpath='{.data.POSTGRES_URL}' | base64 -d)
+          pg_pod=$(kubectl get pods -n postgresql -l app.kubernetes.io/name=postgresql -o jsonpath='{.items[0].metadata.name}')
+          row_found=0
+          # With the consumer-join wait above having closed the cold-start
+          # window, what remains is genuine in-flight latency (publish ->
+          # broker -> handler -> Postgres), so this stays an eventual
+          # assertion with an outer deadline rather than a fixed sleep.
+          # It is also the assertion that actually matters: the contract
+          # under test is "an accepted order is eventually fulfilled", not
+          # "Kafka group membership became ready". 90*2s=3min is a generous
+          # but bounded ceiling so CI cannot hang forever, not an assumption
+          # about how long startup should take.
+          for i in $(seq 1 90); do
+            row=$(kubectl exec -n postgresql "$pg_pod" -- psql "$pg_url" -tAc \
+              "SELECT order_id FROM fulfilled_orders_ts WHERE order_id = '${marker}';" 2>/dev/null || true)
+            if [ "$row" = "$marker" ]; then
+              row_found=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$row_found" -ne 1 ]; then
+            echo "::error::TS golden-path smoke test: order ${marker} never reached fulfilled_orders_ts (Kafka -> worker -> Postgres path did not complete)"
+            exit 1
+          fi
+          echo "Postgres row for ${marker} confirmed OK -- HTTP -> Kafka -> worker -> Postgres path proven"
+
+          # Coarse liveness check, not a reproduction of FEAT-082's
+          # forced-shutdown/redelivery experiments: a graceful pod delete
+          # must produce a clean replacement, not a CrashLoopBackOff.
+          order_pod=$(kubectl get pods -n "$demo_ns" -l app=order-svc -o jsonpath='{.items[0].metadata.name}')
+          kubectl delete pod -n "$demo_ns" "$order_pod" --grace-period=30 --wait=false
+          replacement_ok=0
+          for i in $(seq 1 30); do
+            new_pod=$(kubectl get pods -n "$demo_ns" -l app=order-svc -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+            phase=$(kubectl get pod "$new_pod" -n "$demo_ns" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+            restarts=$(kubectl get pod "$new_pod" -n "$demo_ns" -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || true)
+            if [ -n "$new_pod" ] && [ "$new_pod" != "$order_pod" ] && [ "$phase" = "Running" ] && [ "$restarts" = "0" ]; then
+              replacement_ok=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$replacement_ok" -ne 1 ]; then
+            echo "::error::TS golden-path smoke test: order-svc replacement pod did not come up cleanly after a graceful delete"
+            exit 1
+          fi
+          echo "graceful pod delete OK -- clean replacement, 0 restarts"
+
+      # Same rationale as golden-path-smoke's own diagnostics step: `sol up`
+      # blocks on an un-timed-out rollout wait, so a crash-looping pod hangs
+      # this job until GitHub Actions kills it at the job timeout, bypassing
+      # in-step error handling. `if: always()` catches that case too.
+      - name: Dump cluster diagnostics
+        if: always()
+        run: |
+          echo "=== k3d clusters ==="
+          k3d cluster list || true
+          echo "=== all pods ==="
+          kubectl get pods -A -o wide || true
+          echo "=== recent events ==="
+          kubectl get events -A --sort-by=.lastTimestamp || true
+
+          # Always dump demo_ts's own app logs, unconditionally -- a plain
+          # worker Deployment has no readiness probe, so Kubernetes reports
+          # it Ready (and the loop below would skip it) well before its
+          # Kafka consumer has actually joined a group. The first real run
+          # of this job needed exactly this evidence and didn't have it.
+          demo_ns_diag=$(kubectl get ns -o name 2>/dev/null | sed 's|namespace/||' | grep -- '-demo-ts$' | head -1 || true)
+          if [ -n "$demo_ns_diag" ]; then
+            for app in order-svc fulfillment-worker; do
+              echo "=== logs $demo_ns_diag/$app (app=$app, current) ==="
+              kubectl logs -n "$demo_ns_diag" -l "app=$app" --all-containers --tail=200 || true
+            done
+          fi
+
+          for ns in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+            for pod in $(kubectl get pods -n "$ns" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+              phase=$(kubectl get pod "$pod" -n "$ns" -o jsonpath='{.status.phase}' 2>/dev/null) || true
+              ready=$(kubectl get pod "$pod" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null) || true
+              if [ "$phase" != "Running" ] || [ "$ready" != "True" ]; then
+                echo "=== describe $ns/$pod ==="
+                kubectl describe pod "$pod" -n "$ns" || true
+                echo "=== logs $ns/$pod (current) ==="
+                kubectl logs "$pod" -n "$ns" --all-containers || true
+                echo "=== logs $ns/$pod (previous, if crash-looped) ==="
+                kubectl logs "$pod" -n "$ns" --all-containers --previous || true
+              fi
+            done
+          done
