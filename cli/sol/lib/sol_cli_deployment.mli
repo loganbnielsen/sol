@@ -45,6 +45,10 @@ type t =
   ; target : string option
   ; mode : string
   ; requested_scope : string
+  ; profile : Sol_cli_profile.t option
+    (** The profile this attempt passed preflight under (FEAT-089). A profile
+        is a claim about a target, so it lives on the event that put a release
+        on that target, never in the content-addressed release record. *)
   ; outcome : outcome
   }
 

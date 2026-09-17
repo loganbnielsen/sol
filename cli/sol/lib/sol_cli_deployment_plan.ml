@@ -64,6 +64,11 @@ type service_spec =
   ; progressive_delivery : Sol_cli_toml.progressive_delivery option
   }
 
+type profile_claim =
+  { profile : Sol_cli_profile.t
+  ; requirements : Sol_cli_profile.capability list
+  }
+
 type t =
   { workspace : string
   ; release_id : Sol_cli_release_id.t
@@ -82,6 +87,7 @@ type t =
           ["workspace"], a domain, or ["domain/unit"]. The concrete resolved
           set is [services]; the pair is intent plus reproducibility, and
           DEC-018's release record needs both. *)
+  ; profile : profile_claim option
   }
 
 type plan_error =
@@ -371,6 +377,18 @@ let to_json t =
           (List.map
              (fun s -> `String (Sol_cli_plan_ids.Consumer_group.to_string s))
              t.consumer_groups) )
+    ; ( "profile"
+      , match t.profile with
+        | None -> `Null
+        | Some (claim : profile_claim) ->
+          `Assoc
+            [ "id", `String (Sol_cli_profile.to_string claim.profile)
+            ; ( "evidence_requirements"
+              , `List
+                  (List.map
+                     (fun c -> `String (Sol_cli_profile.capability_to_string c))
+                     claim.requirements) )
+            ] )
     ]
 ;;
 
@@ -381,6 +399,10 @@ let pp_summary fmt t =
   Format.fprintf fmt "environment: %s (%s)@\n" env.name (mode_to_string env.mode);
   Format.fprintf fmt "registry:    %s@\n" env.registry;
   Format.fprintf fmt "tag:         %s@\n" env.image_tag;
+  Option.iter
+    (fun (claim : profile_claim) ->
+       Format.fprintf fmt "profile:     %s@\n" (Sol_cli_profile.to_string claim.profile))
+    t.profile;
   Format.fprintf fmt "@\n";
   Format.fprintf fmt "services:@\n";
   List.iter
@@ -525,6 +547,38 @@ let sol_yml_replicas_override ~resolved_config ~service_name =
      | None -> None
      | Some { Sol_cli_config.scale_max = Some _ as scale_max; _ } -> scale_max
      | Some { Sol_cli_config.scale_min; _ } -> scale_min)
+;;
+
+(* The profile is target-selected, so only a target-resolved plan carries one.
+   Usage is read from what the plan can see: a worker may host sol-jobs alone,
+   but the plan cannot tell that apart from a Kafka consumer, so every worker
+   counts as Kafka use. *)
+let profile_claim ~resolved_config ~services ~topics ~migrations ~schema_subjects =
+  match Option.bind resolved_config Sol_cli_config.target with
+  | None -> None
+  | Some target ->
+    Option.map
+      (fun profile ->
+         let has primitive =
+           List.exists (fun (s : service_spec) -> s.primitive = primitive) services
+         in
+         let declares typ =
+           match resolved_config with
+           | None -> false
+           | Some cfg ->
+             List.exists
+               (fun (r : Sol_cli_config.resource) -> r.typ = Some typ)
+               (Sol_cli_config.resources cfg)
+         in
+         let usage =
+           { Sol_cli_profile.long_running_workloads = has Svc || has Worker
+           ; postgres = migrations <> [] || declares "postgres"
+           ; kafka =
+               topics <> [] || schema_subjects <> [] || has Worker || declares "kafka"
+           }
+         in
+         { profile; requirements = Sol_cli_profile.requirements profile usage })
+      target.Sol_cli_config.profile
 ;;
 
 let of_services_result
@@ -720,16 +774,26 @@ let of_services_result
       ; workloads = List.map release_workload_of_spec resolved_services
       }
   in
+  let topics = discover_topics () in
+  let migrations = discover_migrations () in
+  let schema_subjects = discover_schema_subjects () in
   Ok
     { workspace
     ; release_id
     ; environment = env
     ; services = resolved_services
-    ; topics = discover_topics ()
-    ; migrations = discover_migrations ()
-    ; schema_subjects = discover_schema_subjects ()
+    ; topics
+    ; migrations
+    ; schema_subjects
     ; consumer_groups = derive_consumer_groups workspace resolved_services
     ; requested_scope
+    ; profile =
+        profile_claim
+          ~resolved_config
+          ~services:resolved_services
+          ~topics
+          ~migrations
+          ~schema_subjects
     }
 ;;
 

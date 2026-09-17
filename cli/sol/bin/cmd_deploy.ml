@@ -177,10 +177,30 @@ let build_plan ctx ~emit_to =
       ~resolved_config:ctx.resolved_config
       ctx.services
   with
-  | Ok plan -> plan
   | Error msg ->
     Printf.eprintf "error: %s\n" msg;
     exit 1
+  | Ok plan ->
+    (* FEAT-089: the profile preflight runs once, here, because every deploy
+       path (dry-run, --emit-to, apply) builds its plan through this function
+       before any lease, cluster mutation or emitted file. *)
+    let apply_mode =
+      match emit_to with
+      | Some _ -> Sol_cli_release.Gitops
+      | None -> Sol_cli_release.Direct
+    in
+    (match Sol_cli_profile_preflight.check ~target:ctx.target_cfg ~apply_mode plan with
+     | Error (profile, findings) ->
+       prerr_string (Sol_cli_profile_preflight.report profile findings);
+       exit 1
+     | Ok () ->
+       Option.iter
+         (fun (claim : Sol_cli_deployment_plan.profile_claim) ->
+            Printf.printf
+              "Profile: %s (preflight passed)\n%!"
+              (Sol_cli_profile.to_string claim.profile))
+         plan.Sol_cli_deployment_plan.profile;
+       plan)
 ;;
 
 let write_plan_if_requested ~emit_plan_to plan =

@@ -31,6 +31,7 @@ type t =
   ; target : string option
   ; mode : string
   ; requested_scope : string
+  ; profile : Sol_cli_profile.t option
   ; outcome : outcome
   }
 
@@ -95,6 +96,10 @@ let of_plan
       deployment_mode_to_string
         plan.Sol_cli_deployment_plan.environment.Sol_cli_deployment_plan.mode
   ; requested_scope = plan.Sol_cli_deployment_plan.requested_scope
+  ; profile =
+      Option.map
+        (fun (claim : Sol_cli_deployment_plan.profile_claim) -> claim.profile)
+        plan.Sol_cli_deployment_plan.profile
   ; outcome
   }
 ;;
@@ -154,6 +159,10 @@ let to_json (t : t) : Yojson.Safe.t =
         | Some x -> `String x )
     ; "mode", `String t.mode
     ; "requested_scope", `String t.requested_scope
+    ; ( "profile"
+      , match t.profile with
+        | None -> `Null
+        | Some p -> `String (Sol_cli_profile.to_string p) )
     ; "outcome", `String (outcome_to_string t.outcome)
     ]
 ;;
@@ -205,9 +214,19 @@ let of_json (json : Yojson.Safe.t) : (t, string) result =
         | Error msg ->
           Error (Printf.sprintf "deployment record has an invalid release id: %s" msg)
         | Ok release_id ->
-          (match outcome_of_string (str "outcome" json) with
-           | Error msg -> Error msg
-           | Ok outcome ->
+          let profile =
+            match mem "profile" json with
+            | None | Some `Null -> Ok None
+            | Some (`String raw) ->
+              Sol_cli_profile.of_string raw
+              |> Result.map Option.some
+              |> Result.map_error
+                   (Printf.sprintf "deployment record has an invalid profile: %s")
+            | Some _ -> Error "deployment record has an invalid profile: not a string"
+          in
+          (match outcome_of_string (str "outcome" json), profile with
+           | Error msg, _ | _, Error msg -> Error msg
+           | Ok outcome, Ok profile ->
              Ok
                { deployment_id
                ; release_id
@@ -220,6 +239,7 @@ let of_json (json : Yojson.Safe.t) : (t, string) result =
                ; target = string_option "target" json
                ; mode = str "mode" json
                ; requested_scope = str "requested_scope" json
+               ; profile
                ; outcome
                })))
 ;;

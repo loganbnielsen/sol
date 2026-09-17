@@ -15,6 +15,7 @@
   Sol_cli_manifest_yaml
   Sol_cli_manifest
   Sol_cli_provider
+  Sol_cli_profile
   Sol_cli_config
   Sol_cli_toml
   Sol_cli_plan_ids
@@ -26,6 +27,7 @@
   Sol_cli_release
   Sol_cli_release_id
   Sol_cli_release_store
+  Sol_cli_profile_preflight
   Sol_cli_deployment
   Sol_cli_deployment_id
   Sol_cli_deployment_store

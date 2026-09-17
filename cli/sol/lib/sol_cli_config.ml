@@ -11,6 +11,7 @@ type target =
   ; kubeconfig : string option
   ; terraform_var_file : string option
   ; observability_backend : string option
+  ; profile : Sol_cli_profile.t option
   ; provider_fields : (string * (string * string) list) list
   }
 
@@ -60,6 +61,7 @@ let target_empty =
   ; kubeconfig = None
   ; terraform_var_file = None
   ; observability_backend = None
+  ; profile = None
   ; provider_fields = []
   }
 ;;
@@ -206,6 +208,7 @@ type target_key =
   | Target_kubeconfig
   | Target_terraform_var_file
   | Target_observability_backend
+  | Target_profile
   | Target_provider_box of Sol_cli_provider.t
   | Target_unknown of string
 
@@ -219,6 +222,7 @@ let target_key_of_string s =
   | "kubeconfig" -> Target_kubeconfig
   | "terraform_var_file" -> Target_terraform_var_file
   | "observability_backend" -> Target_observability_backend
+  | "profile" -> Target_profile
   | _ ->
     (match Sol_cli_provider.of_string s with
      | Some provider -> Target_provider_box provider
@@ -234,6 +238,7 @@ let target_key_name = function
   | Target_kubeconfig -> "kubeconfig"
   | Target_terraform_var_file -> "terraform_var_file"
   | Target_observability_backend -> "observability_backend"
+  | Target_profile -> "profile"
   | Target_provider_box provider -> Sol_cli_provider.to_string provider
   | Target_unknown s -> s
 ;;
@@ -464,6 +469,11 @@ let load path =
                           | Target_observability_backend ->
                             let* v = scalar k v in
                             Ok { current with observability_backend = Some v }
+                          | Target_profile ->
+                            let* v = scalar k v in
+                            (match Sol_cli_profile.of_selection v with
+                             | Ok profile -> Ok { current with profile = Some profile }
+                             | Error msg -> fail msg)
                           | Target_provider_box _ | Target_unknown _ -> assert false
                         in
                         section := Target;
@@ -654,6 +664,7 @@ let merge_target a b =
   ; kubeconfig = prefer a.kubeconfig b.kubeconfig
   ; terraform_var_file = prefer a.terraform_var_file b.terraform_var_file
   ; observability_backend = prefer a.observability_backend b.observability_backend
+  ; profile = prefer a.profile b.profile
   ; provider_fields = merge_provider_fields a.provider_fields b.provider_fields
   }
 ;;
@@ -755,6 +766,7 @@ let target_of_path s =
           ; kubeconfig = None
           ; terraform_var_file = None
           ; observability_backend = None
+          ; profile = None
           ; provider_fields = []
           }
       | None ->
@@ -922,6 +934,23 @@ let validate_uses cfg =
     validate_services (active_services cfg)
 ;;
 
+(* A profile is a claim one target makes about itself (DEC-026). sol.yml's
+   target section is inherited by every target, so a profile there would opt
+   every environment in without any target file saying so. *)
+let reject_shared_profile ~path (base : t) =
+  match base.target with
+  | Some { profile = Some _; _ } ->
+    Error
+      { path
+      ; line = 0
+      ; message =
+          "profile must be selected in a target file \
+           (sol/<env>/<provider>/<region>.yml), not in sol.yml, whose target section \
+           every target inherits"
+      }
+  | _ -> Ok ()
+;;
+
 let resolved_target base target_path =
   let* target = target_of_path target_path in
   let* overlay = load (target_file target) in
@@ -1043,7 +1072,9 @@ let load_for_target ~target =
         }
   in
   let file = Filename.concat root (relative_target_file target) in
-  let* base = load (Filename.concat root "sol.yml") in
+  let sol_yml = Filename.concat root "sol.yml" in
+  let* base = load sol_yml in
+  let* () = reject_shared_profile ~path:sol_yml base in
   let* overlay = load file in
   let base_target =
     match base.target with

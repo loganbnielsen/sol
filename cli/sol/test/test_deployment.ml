@@ -35,6 +35,7 @@ let sample : D.t =
   ; target = Some "prod/aws/us-east-1"
   ; mode = "customer_cloud"
   ; requested_scope = "payments"
+  ; profile = None
   ; outcome = D.Applied
   }
 ;;

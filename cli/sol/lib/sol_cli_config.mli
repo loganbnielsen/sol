@@ -11,6 +11,9 @@ type target =
   ; kubeconfig : string option
   ; terraform_var_file : string option
   ; observability_backend : string option
+  ; profile : Sol_cli_profile.t option
+    (** The production profile this target explicitly selects (DEC-026). Only a
+        target file may set it; an environment name never implies one. *)
   ; provider_fields : (string * (string * string) list) list
   }
 
