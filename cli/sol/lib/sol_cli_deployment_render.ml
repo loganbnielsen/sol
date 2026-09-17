@@ -18,6 +18,8 @@ type deployment_fields =
   ; extra_labels : (string * string) list
   ; progressive_delivery : Sol_cli_toml.progressive_delivery option
   ; volumes : Sol_cli_toml.volume list
+  ; availability : Sol_cli_availability.t
+  ; consumes_kafka : bool
   }
 
 type http_fields =
@@ -161,6 +163,8 @@ let render
                ; extra_labels
                ; progressive_delivery
                ; volumes
+               ; availability
+               ; consumes_kafka
                }
              =
              deployment
@@ -175,6 +179,8 @@ let render
                    ~extra_labels
                    ~secret_keys:(List.map fst secrets)
                    ~volumes
+                   ~availability
+                   ~consumes_kafka
                    ~config_hash:cfg_hash
                    ?env
                    ~shape
@@ -236,6 +242,8 @@ let render
                    ~config_hash:cfg_hash
                    ~secret_keys:(List.map fst secrets)
                    ~volumes
+                   ~availability
+                   ~consumes_kafka
                    ?env
                    ~shape
                    ~replicas
@@ -251,8 +259,16 @@ let render
                    ()
                ]
            in
+           (* AUDIT-080: the voluntary-disruption budget is what makes the
+              node-failure-tolerant claim survive a node drain, not just an
+              unplanned loss. Rendered only for that claim. *)
+           let pdb =
+             if Sol_cli_availability.is_node_failure_tolerant availability
+             then [ Sol_cli_manifest_yaml.pdb_doc ~ns ~name ~replicas ]
+             else []
+           in
            let pvcs = if volumes = [] then [] else [ pvc_docs ~ns ~name volumes ] in
-           pvcs @ workload_resources
+           pvcs @ pdb @ workload_resources
          in
          let resources =
            match workload with
@@ -351,6 +367,8 @@ let render_spec
     ; extra_labels = s.extra_labels
     ; progressive_delivery = s.progressive_delivery
     ; volumes = s.volumes
+    ; availability = s.availability
+    ; consumes_kafka = s.consumes_kafka
     }
   in
   let workload =

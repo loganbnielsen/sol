@@ -349,6 +349,12 @@ spec:
        volumes)
 ;;
 
+(* AUDIT-080: the framework drain timeout is 30s (sol-svc/sol-worker), and
+   Kubernetes' own default grace is 30s -- the two race. Sol renders a grace
+   that is strictly larger than the drain bound so SIGTERM always has room to
+   finish, independent of the primitive. *)
+let default_termination_grace_seconds = 45
+
 let deployment_doc
       ?(rollout_strategy = Sol_cli_toml.RollingUpdate)
       ?(extra_labels = [])
@@ -356,6 +362,8 @@ let deployment_doc
       ?(volumes = [])
       ?env
       ?(config_hash = "")
+      ?(availability = Sol_cli_availability.Single)
+      ?(consumes_kafka = false)
       ~shape
       ~replicas
       ~cpu
@@ -380,10 +388,23 @@ let deployment_doc
         - containerPort: 9090
 |}
   in
+  (* AUDIT-080: the probes a workload can honestly claim. An HTTP service is
+     healthy when it answers; a Kafka consumer is *ready* when its partitions
+     are assigned and *live* while it keeps polling, which is a different
+     statement from "the process is up" -- a hung consumer must be replaced. A
+     worker that consumes nothing has no observable consumer state, so Sol
+     renders no liveness/readiness claim rather than a default that asserts
+     nothing. *)
   let probe_section =
-    if shape = Http_service
-    then
-      {|        livenessProbe:
+    match shape, consumes_kafka with
+    | Http_service, _ ->
+      {|        startupProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          failureThreshold: 30
+          periodSeconds: 5
+        livenessProbe:
           httpGet:
             path: /healthz
             port: 8080
@@ -396,7 +417,26 @@ let deployment_doc
           initialDelaySeconds: 5
           periodSeconds: 10
 |}
-    else ""
+    | Background_worker, true ->
+      {|        startupProbe:
+          httpGet:
+            path: /readyz
+            port: 9090
+          failureThreshold: 60
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 9090
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /livez
+            port: 9090
+          periodSeconds: 10
+          failureThreshold: 3
+|}
+    | Background_worker, false -> ""
   in
   let strategy_type =
     match rollout_strategy with
@@ -409,6 +449,28 @@ let deployment_doc
   let secret_env_section = render_secret_key_refs ~name secret_keys in
   let volume_mounts_section = render_volume_mounts volumes in
   let pod_volumes_section = render_pod_volumes ~name volumes in
+  (* AUDIT-080: spread a node-failure-tolerant workload across nodes, so losing
+     one node cannot take every replica with it. The pod anti-affinity is
+     expressed as a hard spread: the claim is a guarantee, not a preference. *)
+  let availability_section =
+    if Sol_cli_availability.is_node_failure_tolerant availability
+    then
+      f
+        {|      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: %s
+|}
+        name
+    else ""
+  in
+  let grace_section =
+    f "      terminationGracePeriodSeconds: %d\n" default_termination_grace_seconds
+  in
+  let pod_spec_extras = grace_section ^ availability_section ^ pod_volumes_section in
   let taxonomy_labels_section =
     render_taxonomy_labels ?env ~workspace ~domain ~service:name ~primitive ~release_id ()
   in
@@ -479,7 +541,7 @@ spec:
     config_hash
     prometheus_annotations
     name
-    pod_volumes_section
+    pod_spec_extras
     name
     image
     ports_section
@@ -492,6 +554,29 @@ spec:
     cpu
     memory
     probe_section
+;;
+
+(* AUDIT-080: a node-failure-tolerant workload gets a voluntary-disruption
+   budget so a drain cannot evict every ready replica at once. Rendered only for
+   that claim -- a [single] workload has no tolerance to protect. *)
+let pdb_doc ~ns ~name ~replicas =
+  f
+    {|---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  minAvailable: %d
+  selector:
+    matchLabels:
+      app: %s
+|}
+    name
+    ns
+    (max 1 (replicas - 1))
+    name
 ;;
 
 (* ── Argo Rollouts helpers ────────────────────────────────────────────────── *)
@@ -534,6 +619,8 @@ let rollout_doc
       ?(volumes = [])
       ?(config_hash = "")
       ?env
+      ?(availability = Sol_cli_availability.Single)
+      ?(consumes_kafka = false)
       ~shape
       ~replicas
       ~cpu
@@ -559,10 +646,18 @@ let rollout_doc
         - containerPort: 9090
 |}
   in
+  (* AUDIT-080: identical probe policy to [deployment_doc] -- a progressive
+     rollout must not weaken the availability claim the app declared. *)
   let probe_section =
-    if shape = Http_service
-    then
-      {|        livenessProbe:
+    match shape, consumes_kafka with
+    | Http_service, _ ->
+      {|        startupProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          failureThreshold: 30
+          periodSeconds: 5
+        livenessProbe:
           httpGet:
             path: /healthz
             port: 8080
@@ -575,7 +670,26 @@ let rollout_doc
           initialDelaySeconds: 5
           periodSeconds: 10
 |}
-    else ""
+    | Background_worker, true ->
+      {|        startupProbe:
+          httpGet:
+            path: /readyz
+            port: 9090
+          failureThreshold: 60
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 9090
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /livez
+            port: 9090
+          periodSeconds: 10
+          failureThreshold: 3
+|}
+    | Background_worker, false -> ""
   in
   let extra_labels_section =
     if extra_labels = [] then "" else "\n" ^ render_extra_labels extra_labels
@@ -583,6 +697,25 @@ let rollout_doc
   let secret_env_section = render_secret_key_refs ~name secret_keys in
   let volume_mounts_section = render_volume_mounts volumes in
   let pod_volumes_section = render_pod_volumes ~name volumes in
+  let availability_section =
+    if Sol_cli_availability.is_node_failure_tolerant availability
+    then
+      f
+        {|      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: %s
+|}
+        name
+    else ""
+  in
+  let grace_section =
+    f "      terminationGracePeriodSeconds: %d\n" default_termination_grace_seconds
+  in
+  let pod_spec_extras = grace_section ^ availability_section ^ pod_volumes_section in
   let taxonomy_labels_section =
     render_taxonomy_labels ?env ~workspace ~domain ~service:name ~primitive ~release_id ()
   in
@@ -657,7 +790,7 @@ spec:
     config_hash
     prometheus_annotations
     name
-    pod_volumes_section
+    pod_spec_extras
     name
     image
     ports_section

@@ -49,6 +49,8 @@ type workload =
   ; secrets : (string * string) list
   ; schedule : string option
   ; replicas : int
+  ; availability : string
+  ; consumes_kafka : bool
   ; cpu : string
   ; memory : string
   ; extra_labels : (string * string) list

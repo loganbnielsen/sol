@@ -20,3 +20,6 @@ target:
   alert_receiver_url: https://alerts.example.com/sol/webhook
   alert_owner: pluto-oncall
   alert_runbook_url: https://runbooks.example.com/sol
+  # AUDIT-080: one spare node's capacity per node-failure-tolerant workload.
+  # notify_worker declares node-failure-tolerant, so this must be >= 1.
+  node_failure_headroom_nodes: 1

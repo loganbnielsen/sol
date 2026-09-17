@@ -74,6 +74,7 @@ val effective_rollout_of_string
 
 type t =
   { replicas : int option
+  ; availability : Sol_cli_availability.t option
   ; cpu : cpu_quantity option
   ; memory : memory_quantity option
   ; env_config : (string * string) list

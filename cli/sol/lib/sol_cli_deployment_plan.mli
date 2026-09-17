@@ -58,6 +58,11 @@ type service_spec =
   ; scheduled_concurrency : Sol_cli_toml.scheduled_concurrency
   ; backoff_limit : int
   ; replicas : int
+  ; availability : Sol_cli_availability.t
+  ; consumes_kafka : bool
+    (** Whether this workload consumes Kafka (AUDIT-080/AUDIT-078): readiness is
+        its consumer-join state and liveness its poll cadence, so only a real
+        consumer gets those probes. *)
   ; language : Sol_cli_compat.language option
   ; cpu : Sol_cli_toml.cpu_quantity
   ; memory : Sol_cli_toml.memory_quantity
@@ -106,6 +111,10 @@ type t =
 type plan_error =
   | Toml_error of Sol_cli_toml.parse_error
   | Invalid_persistence of
+      { workload : string
+      ; message : string
+      }
+  | Unsupported_availability of
       { workload : string
       ; message : string
       }
@@ -184,6 +193,11 @@ val plan_error_to_string : plan_error -> string
 
 (** Reject persistence combinations whose semantics Sol does not define. *)
 val validate_persistence : service_spec -> (unit, plan_error) result
+
+(** Reject an availability claim the workload cannot satisfy (AUDIT-080): a
+    node-failure-tolerant function, a volume-backed workload, or fewer than two
+    replicas. Names a supported alternative. *)
+val validate_availability : service_spec -> (unit, plan_error) result
 
 (** Normalize and validate a service source name as a Kubernetes DNS label. *)
 val k8s_name_result : string -> (k8s_name, plan_error) result

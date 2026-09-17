@@ -189,7 +189,45 @@ let establish
        (match cidr with
         | Ok _ -> Established
         | Error reason -> Unmet (Target, reason)))
-  | Workload_availability | Postgres_durability | Kafka_durability -> not_yet_established
+  | Workload_availability ->
+    (* AUDIT-080: the plan already refuses an availability claim a workload
+       cannot satisfy ([validate_availability]: functions, volume-backed
+       workloads, fewer than two replicas). What remains is the cluster's
+       ability to place and restore those replicas: the target must declare one
+       spare node's capacity per node-failure-tolerant workload, so a lost node
+       can be replaced inside the DEC-026 §3 bound. *)
+    let required =
+      List.length
+        (List.filter
+           (fun (s : Sol_cli_deployment_plan.service_spec) ->
+              Sol_cli_availability.is_node_failure_tolerant s.availability)
+           plan.Sol_cli_deployment_plan.services)
+    in
+    if required = 0
+    then Established
+    else (
+      match target.node_failure_headroom_nodes with
+      | Some declared when declared >= required -> Established
+      | Some declared ->
+        Unmet
+          ( Target
+          , Printf.sprintf
+              "`node_failure_headroom_nodes` is %d but %d node-failure-tolerant \
+               workload(s) each need one spare node's capacity; raise it to at least %d \
+               (DEC-026 §3)"
+              declared
+              required
+              required )
+      | None ->
+        Unmet
+          ( Target
+          , Printf.sprintf
+              "declare `node_failure_headroom_nodes` >= %d: %d node-failure-tolerant \
+               workload(s) need one spare node's capacity each so a lost node's replicas \
+               can be restored (DEC-026 §3)"
+              required
+              required ))
+  | Postgres_durability | Kafka_durability -> not_yet_established
 ;;
 
 let check ?establish:establish_opt ~target ~apply_mode (plan : Sol_cli_deployment_plan.t) =

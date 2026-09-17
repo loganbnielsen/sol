@@ -280,6 +280,9 @@ let consume
       ~clock
       ~(retry_policy : Kafka.Consumer.retry_policy)
       ~on_ready
+      ~on_assigned
+      ~on_revoked
+      ~on_poll
       ~on_decode_error
       ~on_retry
       ~on_relay_publish
@@ -417,7 +420,16 @@ let consume
   let relay_failure : Kafka_service_intf.consume_partitioned_error option ref =
     ref None
   in
-  match Kafka.Consumer.create ~on_ready ~clock consumer_cfg ~sw with
+  match
+    Kafka.Consumer.create
+      ~on_ready
+      ~on_assigned
+      ~on_revoked
+      ~on_poll
+      ~clock
+      consumer_cfg
+      ~sw
+  with
   | Error e -> Error (Kafka_service_intf.Consumer_error e)
   | Ok consumer ->
     let retry_consumer_cfg : Kafka.Consumer.config =

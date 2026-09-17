@@ -104,6 +104,14 @@ The command's exit status proves the route is configured and reachable; the
 delivered-and-acknowledged result is HARDEN-002's live evidence. Runbooks for
 each required alert are in `docs/deployment/alert-runbooks.md`.
 
+Availability is declared, not inferred from replica count (AUDIT-080).
+`notify_worker` declares `availability = "node-failure-tolerant"` (with two
+replicas and a consumer readiness/liveness pair on `/readyz`//`livez`), so Sol
+renders a topology spread, a PodDisruptionBudget and an explicit drain grace for
+it; `charge_svc` stays `single` and is reported honestly as such. The pilot and
+prod targets declare the fixed `node_failure_headroom_nodes` the claim needs.
+See `docs/deployment/workload-availability.md`.
+
 See the "Production Profile" section of
 `docs/deployment/self-hosted-substrate-contract.md` in the Sol repository.
 

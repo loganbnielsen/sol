@@ -316,6 +316,9 @@ let consume
       ~sw
       ~clock
       ?(on_ready = ignore)
+      ?(on_assigned = ignore)
+      ?(on_revoked = ignore)
+      ?(on_poll = ignore)
       ?(on_decode_error = default_on_decode_error)
       ?ot
       ~handler
@@ -337,7 +340,16 @@ let consume
     ; properties = []
     }
   in
-  match Kafka.Consumer.create ~on_ready ~clock consumer_cfg ~sw with
+  match
+    Kafka.Consumer.create
+      ~on_ready
+      ~on_assigned
+      ~on_revoked
+      ~on_poll
+      ~clock
+      consumer_cfg
+      ~sw
+  with
   | Error e -> Error e
   | Ok consumer ->
     let decode_and_handle raw_msg ~ack =
@@ -358,6 +370,9 @@ let consume_partitioned
       ~net
       ~clock
       ?(on_ready = ignore)
+      ?(on_assigned = ignore)
+      ?(on_revoked = ignore)
+      ?(on_poll = ignore)
       ?(on_decode_error = default_on_decode_error)
       ~retry_strategy
       ?(on_retry = fun ~partition:_ ~attempt:_ ~delay_s:_ -> ())
@@ -384,7 +399,16 @@ let consume_partitioned
       ; properties = []
       }
     in
-    (match Kafka.Consumer.create ~on_ready ~clock consumer_cfg ~sw with
+    (match
+       Kafka.Consumer.create
+         ~on_ready
+         ~on_assigned
+         ~on_revoked
+         ~on_poll
+         ~clock
+         consumer_cfg
+         ~sw
+     with
      | Error e -> Error (Consumer_error e)
      | Ok consumer ->
        let decode_and_handle raw_msg ~ack =
@@ -444,6 +468,9 @@ let consume_partitioned
       ~clock
       ~retry_policy
       ~on_ready
+      ~on_assigned
+      ~on_revoked
+      ~on_poll
       ~on_decode_error
       ~on_retry
       ~on_relay_publish
