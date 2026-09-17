@@ -75,3 +75,30 @@ one run's evidence to vouch for another run's untrusted CI.
 **Demo/example coverage:** Not applicable; CI internals with no app-author surface.
 
 **TypeScript parity:** No language impact; both golden paths benefit equally.
+
+## Completion notes (2026-09-17)
+
+- **Shipped:** the pieces in Design above. Specifically:
+  - `devtools/ci/ci-evidence.sh`, with `resolve`, `record` and `find`;
+  - `.github/actions/pin-opam-packages/packages.txt`, which the pin action now
+    reads, with an optional `refs` input;
+  - `classify` in `ci.yml` resolves the support-package commits, looks for
+    evidence, decides `run_suite`, and records evidence;
+  - every expensive job is gated on `run_suite != 'false'`, which stays true
+    whenever classification fails.
+- **Verification:**
+  - `devtools/ci/test_ci_evidence.sh` has 22 checks and runs in the `test` job.
+  - Each guard was mutated in turn, and every mutation but one fails the
+    suite. The exception is the `git diff` failure branch of the "touches CI"
+    check, which cannot trigger: both commits it compares are verified to
+    exist first.
+  - The assumption that git's merge matches GitHub's test merge is checked on
+    every run: no reuse unless git reproduces the checked-out tree.
+- **Live proof pending:** this PR edits `.github/` and `devtools/ci/`, so its
+  own runs never reuse evidence. The first reuse will happen on a later pull
+  request that is updated from `main` after a green run.
+- **Not changed:**
+  - `release.yml` keeps its own `#main` pin list; releases do not reuse CI
+    evidence.
+  - `fn-svc-isolation-spike.yml` calls the pin action without `refs` and still
+    pins `#main`.

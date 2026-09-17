@@ -1,5 +1,18 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: INFRA-019 — reuse a passing CI run for identical tested code (2026-09-17)
+
+PR #288 re-ran its whole suite after a no-op update from `main`. The
+classifier was correct; every new head of a source PR simply ran everything.
+
+- `classify` now resolves each support package's `main` commit once, and every
+  job pins those commits.
+- Every full pull-request run records a `ci-evidence` artifact.
+- A later run skips the expensive suite only when an earlier run passed on a
+  byte-identical tested tree with the same commits, and neither change touched
+  `.github/` or `devtools/ci/`. Anything uncertain runs the full suite.
+- Conditions are pinned by `devtools/ci/test_ci_evidence.sh`.
+
 ## Latest: FEAT-089 — production profile selection and preflight (2026-09-17)
 
 First implementation ticket of the maturity-A production program, after
