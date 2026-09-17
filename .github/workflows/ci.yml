@@ -878,6 +878,51 @@ jobs:
 
           demo_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-demo-ts$' | head -1)
 
+          # fulfillment_worker subscribes with `fromBeginning: false`
+          # (app code, out of scope to change here). For a genuinely new
+          # consumer group -- exactly what a fresh cluster's first-ever
+          # deploy creates -- that means "start from the tail": a message
+          # produced before the group finishes joining is not delayed, it
+          # is invisible to it forever. This job's first real run hit
+          # exactly this: POST /orders succeeded at a timestamp 8.8s
+          # *before* the worker's own log showed "[ConsumerGroup] Consumer
+          # has joined the group", so the message landed in a topic no
+          # consumer had subscribed to yet, and no retry budget on the
+          # Postgres check downstream could ever have found it.
+          #
+          # A Kubernetes-level `kubectl wait --for=condition=ready` cannot
+          # establish this (verified experimentally, see git history on
+          # this file): the worker Deployment has no readiness probe, so
+          # that condition means "container started," nothing more. The
+          # only real signal is the application's own evidence that it
+          # joined -- so wait on that directly, the same "poll for the
+          # actual observed effect" pattern `probe()` below uses for HTTP.
+          # The wait itself must not be fragile. This step runs under
+          # `set -o pipefail`, and `kubectl logs ... | grep -q PATTERN`
+          # reports *no match* whenever PATTERN appears early in a stream
+          # larger than the pipe buffer: `grep -q` exits at the first match,
+          # kubectl keeps writing into a now-closed pipe, and pipefail
+          # propagates kubectl's SIGPIPE exit (141) out of the whole
+          # pipeline -- so the success case reads as a miss. Reproduced
+          # locally: a 2,000,000-line producer with the pattern on line 2
+          # returned NOMATCH. Capture the logs first, then match with a
+          # herestring, so no pipeline is involved and no exit status can
+          # come from anything but grep.
+          wait_for_consumer_join() {
+            local i logs
+            for i in $(seq 1 30); do
+              logs=$(kubectl logs -n "$demo_ns" -l app=fulfillment-worker --all-containers 2>/dev/null || true)
+              if grep -Fq '"message":"[ConsumerGroup] Consumer has joined the group","groupId":"sol-demo-ts-fulfillment-worker"' <<< "$logs"; then
+                echo "fulfillment-worker consumer group joined OK"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "::error::TS golden-path smoke test: fulfillment-worker's consumer group never reported joining within the timeout"
+            return 1
+          }
+          wait_for_consumer_join
+
           probe() {
             local path=$1
             local i
@@ -920,20 +965,14 @@ jobs:
           pg_url=$(kubectl get secret -n "$demo_ns" fulfillment-worker-secrets -o jsonpath='{.data.POSTGRES_URL}' | base64 -d)
           pg_pod=$(kubectl get pods -n postgresql -l app.kubernetes.io/name=postgresql -o jsonpath='{.items[0].metadata.name}')
           row_found=0
-          # This whole check IS the synchronization -- an eventual assertion
-          # with an outer deadline, not a fixed startup delay. The pipeline
-          # (HTTP -> Kafka publish -> broker -> group assignment -> consumer
-          # -> handler -> Postgres) has no cheaper true readiness signal to
-          # wait on: a worker Deployment has no readiness/liveness probe at
-          # all (sol_cli_manifest_yaml.ml's deployment_doc renders one only
-          # for Http_service), so Kubernetes' own Ready condition means
-          # "container started," not "consumer joined its group" -- verified
-          # experimentally: `kubectl wait --for=condition=ready` on a
-          # freshly-deleted worker pod returned in ~1s, while the real
-          # consumer-group join in the same run's logs didn't complete until
-          # ~11.5s after pod start. A Kubernetes-level wait cannot close this
-          # gap; only observing the actual downstream effect can. 90*2s=3min
-          # is a generous but bounded ceiling on that, not an assumption
+          # With the consumer-join wait above having closed the cold-start
+          # window, what remains is genuine in-flight latency (publish ->
+          # broker -> handler -> Postgres), so this stays an eventual
+          # assertion with an outer deadline rather than a fixed sleep.
+          # It is also the assertion that actually matters: the contract
+          # under test is "an accepted order is eventually fulfilled", not
+          # "Kafka group membership became ready". 90*2s=3min is a generous
+          # but bounded ceiling so CI cannot hang forever, not an assumption
           # about how long startup should take.
           for i in $(seq 1 90); do
             row=$(kubectl exec -n postgresql "$pg_pod" -- psql "$pg_url" -tAc \
