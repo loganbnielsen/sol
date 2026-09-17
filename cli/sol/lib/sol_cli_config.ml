@@ -1260,12 +1260,21 @@ let terraform_vars ~workspace cfg =
       | None -> Fun.id
       | Some v -> fun xs -> (k, v) :: xs
     in
+    (* HARDEN-002 (run 1): these are the variables of the *provider* root
+       (`cli/platform/infra/<provider>`), which is what `sol cloud plan/apply/
+       destroy` drives. A target field must only appear here if that root
+       declares it — otherwise terraform fails the whole command with "a variable
+       named X was assigned on the command line, but the root module does not
+       declare a variable of that name", which is what `cluster_issuer` used to
+       do. `cluster_issuer` (and the other base-platform settings) belong to
+       `cli/platform/infra/base`, applied separately with its own variables; the
+       Renderer consumes the target value for ingress annotations, so the field
+       stays meaningful without being routed to the provider root. *)
     let vars =
       []
       |> add_opt "region" (Some target.region)
       |> add_opt "cluster_name" target.cluster_name
       |> add_opt "base_domain" target.base_domain
-      |> add_opt "cluster_issuer" target.cluster_issuer
       |> add_opt "alert_receiver_type" target.alert_receiver_type
       |> add_opt "alert_receiver_url" target.alert_receiver_url
       |> add_opt "alert_owner" target.alert_owner

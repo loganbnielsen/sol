@@ -1052,6 +1052,37 @@ let test_production_profile_enables_rds_multi_az () =
          check_str_opt "RDS Multi-AZ" (Some "true") (List.assoc_opt "rds_multi_az" vars)))
 ;;
 
+(* HARDEN-002 (run 1): cluster_issuer is a cli/platform/infra/base variable. It
+   used to be sent to the provider root too, and terraform aborts the whole
+   command when a variable is assigned that the root does not declare:
+   "A variable named \"cluster_issuer\" was assigned on the command line, but the
+   root module does not declare a variable of that name." A documented target
+   using it must still provision through sol cloud apply. *)
+let test_terraform_vars_route_cluster_issuer_to_the_base_layer () =
+  with_temp_dir (fun () ->
+    write
+      "sol.yml"
+      {|
+target:
+  cluster_issuer: letsencrypt-staging
+  cluster_endpoint_cidr: 203.0.113.0/24
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+       | Error msg -> Alcotest.fail msg
+       | Ok vars ->
+         check_bool
+           "cluster_issuer is not routed to the provider root"
+           false
+           (List.mem_assoc "cluster_issuer" vars);
+         check_str_opt
+           "a provider-root variable the root does declare is still routed"
+           (Some "203.0.113.0/24")
+           (List.assoc_opt "cluster_endpoint_cidr" vars)))
+;;
+
 let test_terraform_vars_ecr_repositories_empty_without_app_dir () =
   with_temp_dir (fun () ->
     write
@@ -1313,6 +1344,10 @@ let () =
             "production profile enables RDS Multi-AZ"
             `Quick
             test_production_profile_enables_rds_multi_az
+        ; Alcotest.test_case
+            "terraform vars: cluster_issuer stays in the base layer"
+            `Quick
+            test_terraform_vars_route_cluster_issuer_to_the_base_layer
         ; Alcotest.test_case
             "terraform vars: ecr_repositories empty without app/"
             `Quick

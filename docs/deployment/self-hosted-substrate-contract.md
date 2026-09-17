@@ -321,10 +321,15 @@ A target that selects `production-single-region` goes through a preflight on
 every `sol deploy` (including `--dry-run`) before any cluster call, lease or
 emitted file. The preflight checks each guarantee the profile requires for the
 workloads being deployed and refuses if any is unmet. Each unmet guarantee is
-named along with who must act: the application, the target, or Sol itself
-(`[sol]` means Sol cannot establish that guarantee for any target yet, so no
-target change will satisfy it). There is no "accepted but unverified" outcome:
-the profile is unsatisfiable until Sol can establish every guarantee it requires.
+named along with who must act: the application, the target, or Sol itself.
+There is no "accepted but unverified" outcome: the profile is unsatisfiable
+until Sol can establish every guarantee it requires.
+
+Every guarantee now has a real establishment branch — none is staged
+(`not_yet_established` no longer exists). Preflight establishes only what is
+observable offline: a declaration, a rendered configuration, or a
+profile-derived setting. It never claims live behaviour; the failure and
+recovery behaviour behind the numeric DEC-026 bounds is HARDEN-002's evidence.
 
 | Guarantee | Required when |
 |---|---|

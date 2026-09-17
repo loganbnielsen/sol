@@ -714,6 +714,93 @@ let test_unqualified_provider_is_a_target_finding () =
 
 (* SEC-004: credential posture is a Sol-owned property of the renderer, so the
    guarantee is established for every plan regardless of target/application. *)
+(* HARDEN-002 (run 1): the profile's durability guarantees were mapped to
+   not_yet_established, so every profile target failed preflight and no deploy
+   could run. They are now established from the configuration evidence the plan
+   and target actually carry -- never from live behaviour, which is HARDEN-002's
+   to measure. *)
+
+let kafka_consumer_plan plan =
+  { plan with
+    Sol_cli_deployment_plan.services =
+      List.map
+        (fun (s : Sol_cli_deployment_plan.service_spec) ->
+           { s with
+             consumes_kafka = true
+           ; config = ("SOL_KAFKA_DURABILITY", "single-broker-loss") :: s.config
+           })
+        plan.Sol_cli_deployment_plan.services
+  }
+;;
+
+let test_durability_established_for_a_qualified_target () =
+  with_workspace (fun () ->
+    write_target prod_aws selecting;
+    let plan = kafka_consumer_plan (plan_for "prod/aws/us-east-1") in
+    let target = target_of (load "prod/aws/us-east-1") in
+    check_bool
+      "Postgres durability is established by the profile-derived Multi-AZ configuration"
+      true
+      (Pre.establish
+         ~target
+         ~apply_mode:Sol_cli_release.Direct
+         ~plan
+         P.Postgres_durability
+       = Pre.Established);
+    check_bool
+      "Kafka durability is established by the rendered durability requirement"
+      true
+      (Pre.establish ~target ~apply_mode:Sol_cli_release.Direct ~plan P.Kafka_durability
+       = Pre.Established))
+;;
+
+let test_durability_fails_closed_for_an_unqualified_provider () =
+  with_workspace (fun () ->
+    write_target prod_aws selecting;
+    let plan = kafka_consumer_plan (plan_for "prod/aws/us-east-1") in
+    let target =
+      { (target_of (load "prod/aws/us-east-1")) with
+        Sol_cli_config.provider = Sol_cli_provider.Gcp
+      }
+    in
+    let unmet capability =
+      match Pre.establish ~target ~apply_mode:Sol_cli_release.Direct ~plan capability with
+      | Pre.Unmet (Pre.Target, _) -> true
+      | _ -> false
+    in
+    check_bool "Postgres durability fails closed" true (unmet P.Postgres_durability);
+    check_bool "Kafka durability fails closed" true (unmet P.Kafka_durability))
+;;
+
+let test_kafka_durability_requires_the_rendered_requirement () =
+  with_workspace (fun () ->
+    write_target prod_aws selecting;
+    (* A declared Kafka consumer whose plan does not carry the qualified
+       durability requirement must not pass. *)
+    let plan =
+      { (plan_for "prod/aws/us-east-1") with
+        Sol_cli_deployment_plan.services =
+          List.map
+            (fun (s : Sol_cli_deployment_plan.service_spec) ->
+               { s with
+                 consumes_kafka = true
+               ; config = List.remove_assoc "SOL_KAFKA_DURABILITY" s.config
+               })
+            (plan_for "prod/aws/us-east-1").Sol_cli_deployment_plan.services
+      }
+    in
+    let target = target_of (load "prod/aws/us-east-1") in
+    match
+      Pre.establish ~target ~apply_mode:Sol_cli_release.Direct ~plan P.Kafka_durability
+    with
+    | Pre.Unmet (Pre.Application, reason) ->
+      check_bool
+        "names the missing durability requirement"
+        true
+        (contains ~needle:"SOL_KAFKA_DURABILITY" reason)
+    | _ -> Alcotest.fail "expected an application finding for a consumer without it")
+;;
+
 let test_credential_posture_is_established () =
   with_workspace (fun () ->
     write_target prod_aws selecting;
@@ -1049,6 +1136,18 @@ let () =
             "unroutable alert receiver is a target finding"
             `Quick
             test_unroutable_alert_receiver_is_a_target_finding
+        ; Alcotest.test_case
+            "durability established for a qualified target"
+            `Quick
+            test_durability_established_for_a_qualified_target
+        ; Alcotest.test_case
+            "durability fails closed for an unqualified provider"
+            `Quick
+            test_durability_fails_closed_for_an_unqualified_provider
+        ; Alcotest.test_case
+            "kafka durability requires the rendered requirement"
+            `Quick
+            test_kafka_durability_requires_the_rendered_requirement
         ; Alcotest.test_case
             "credential posture is established"
             `Quick

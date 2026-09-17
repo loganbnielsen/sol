@@ -123,3 +123,43 @@ stale, `terraform force-unlock <lock-id>` is the operator's explicit override.
 - the ordinary operator path does not use the cluster-creator credential;
 - one infrastructure and one application mutation are attributed to their named
   principal in retained audit evidence.
+
+## Credentials and Terraform variable ownership
+
+Two things learned by qualifying a real target (HARDEN-002 run 1), both now
+enforced in code rather than in an operator's memory.
+
+**The database master password is supplied out of band.** The provider root
+creates the RDS instance, so it needs a master password before any workload
+exists. Supply it through the environment, never as a Terraform variable on the
+command line:
+
+```bash
+TF_VAR_db_password="$(your-secret-tool get sol-db-password)" \
+  sol cloud apply prod/aws/us-east-1 --apply
+```
+
+Sol refuses an apply that would create Postgres with no credential source, and
+refuses a password passed with `--var` — the run log records the terraform
+command line verbatim, so the value would be written to a file. The module
+carries the same precondition on `aws_db_instance.postgres`, so the constraint
+holds even when terraform is driven directly. Nothing writes the password to a
+plan, an output, a log or a release record; the module's `postgres_url` output
+(which does contain it) is `sensitive`, and it exists so an operator can place
+the connection string in their secret store for the runtime Secret that
+workloads read as `POSTGRES_URL`.
+
+**`cluster_issuer` belongs to the base platform layer.** `sol cloud plan/apply/
+destroy` drive `cli/platform/infra/<provider>` and pass that root only the
+variables it declares. `cluster_issuer` names a cert-manager `ClusterIssuer`,
+which `cli/platform/infra/base` owns, so it is applied there:
+
+```bash
+terraform -chdir=cli/platform/infra/base apply -var="cluster_issuer=letsencrypt-prod" ...
+```
+
+It remains a target field (`sol deploy` uses it for ingress annotations). Passing
+it to the provider root, as it used to be, made terraform abort with "a variable
+named cluster_issuer was assigned on the command line, but the root module does
+not declare a variable of that name" — so a documented target using it could not
+provision at all.

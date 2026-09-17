@@ -231,6 +231,25 @@ resource "aws_db_instance" "postgres" {
   skip_final_snapshot     = !var.rds_deletion_protection
 
   tags = var.tags
+
+  lifecycle {
+    # HARDEN-002 (run 1): the module's db_password default is empty, so a
+    # create_rds = true apply used to send an empty master password to AWS and
+    # fail the whole run with "InvalidParameterValue: Invalid master password"
+    # *after* the cluster had already been built. Fail here instead, where the
+    # message can name the real fix, and independently of which caller runs
+    # terraform. Evaluated at plan time, so an unusable password is reported
+    # before anything is created.
+    precondition {
+      condition = (
+        length(var.db_password) >= 8
+        && !strcontains(var.db_password, "/")
+        && !strcontains(var.db_password, "@")
+        && !strcontains(var.db_password, "\"")
+      )
+      error_message = "db_password must be at least 8 characters and must not contain /, @ or a double quote (RDS master-password rules) when create_rds = true. Supply it out of band from your secret store, e.g. TF_VAR_db_password=... -- never with -var, because Sol records the terraform command line in its run log."
+    }
+  }
 }
 
 # ── Managed resource dashboards (CloudWatch) — OBS-044 ───────────────────── #
