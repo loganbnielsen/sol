@@ -1,5 +1,23 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: AUDIT-069 — migration ordering enforced across the deploy path (2026-09-17)
+
+A production deploy now verifies, after the static preflight and before any
+workload mutation, that every migration in the workspace's `db/migrations` is
+present in the authoritative `sol_<workspace>_schema_migrations` table
+(`required ⊆ applied`). The required set is the repository revision itself — no
+target/`sol.yml` declaration of "which migrations matter", so `db/migrations`,
+the deployment record and `schema_migrations` cannot disagree. The check reuses
+the in-cluster model: a short-lived **read-only** Job runs `sol migrate status
+--json` (SELECT only) and is removed either way; an unsatisfied prerequisite
+fails with the `sol migrate apply` instruction, and an unreadable table fails
+closed. `--dry-run`/`--emit-to` create nothing and report the prerequisite as not
+verified. The release-safety criteria that already existed (a failed rollout
+never advances the release pointer, rollback verifies live state, idempotent
+re-deploy, DEC-027 imperative drift reporting via `unexpected_workloads`) are
+pinned by their existing suites rather than rebuilt. Contract:
+`docs/deployment/migration-ordering.md`; live evidence is HARDEN-002's.
+
 ## Latest: AUDIT-080 — explicit workload availability semantics (2026-09-17)
 
 A workload declares the failure it must tolerate (`[infra.scale] availability =

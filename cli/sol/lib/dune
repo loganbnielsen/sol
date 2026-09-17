@@ -59,6 +59,7 @@
   Sol_cli_open
   Sol_cli_status
   Sol_cli_migration_disposition
+  Sol_cli_migration
   Sol_cli_rollback
   Sol_cli_boundary_lease
   Sol_cli_release_retention

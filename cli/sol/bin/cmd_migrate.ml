@@ -330,7 +330,11 @@ data:
     entries
 ;;
 
-let render_job ~name ~namespace ~image ~table ~configmap_name =
+(* Args are rendered as a JSON list, so a value with a comma or quote cannot
+   change the argument structure. *)
+let render_job_args args = "[" ^ String.concat ", " (List.map yaml_dq args) ^ "]"
+
+let render_job ~name ~namespace ~image ~args ~configmap_name =
   Printf.sprintf
     {|apiVersion: batch/v1
 kind: Job
@@ -345,7 +349,7 @@ spec:
       containers:
         - name: migrate
           image: %s
-          args: ["migrate", "apply", "--dir", "/migrations", "--table", %s]
+          args: %s
           envFrom:
             - secretRef:
                 name: %s
@@ -360,9 +364,23 @@ spec:
     name
     namespace
     image
-    (yaml_dq table)
+    (render_job_args args)
     Sol_cli_manifest.runtime_secret_name
     configmap_name
+;;
+
+(* AUDIT-069: the read-only sibling of the apply Job. It runs `migrate status`
+   -- a SELECT against schema_migrations, never an apply -- so the deploy can
+   learn the authoritative applied set without a second source of truth and
+   without mutating anything. [yaml_dq] already quotes/escapes the value, and
+   the args list is JSON, so the table name cannot break out of the arg. *)
+let render_status_job ~name ~namespace ~image ~table ~configmap_name =
+  render_job
+    ~name
+    ~namespace
+    ~image
+    ~args:[ "migrate"; "status"; "--json"; "--dir"; "/migrations"; "--table"; table ]
+    ~configmap_name
 ;;
 
 (* Migrations aren't domain-scoped, so any already-deployed domain's
@@ -494,7 +512,12 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
          let job_yaml =
            write_temp_file
              ~suffix:".yaml"
-             (render_job ~name:job_name ~namespace ~image ~table ~configmap_name)
+             (render_job
+                ~name:job_name
+                ~namespace
+                ~image
+                ~args:[ "migrate"; "apply"; "--dir"; "/migrations"; "--table"; table ]
+                ~configmap_name)
          in
          Printf.printf
            "Submitting migration Job %s in namespace %s...\n%!"
@@ -591,9 +614,244 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
            exit 1)))
 ;;
 
+(* ── AUDIT-069: the deploy's read-only migration prerequisite ─────────────── *)
+
+(* Build and push the migration runner image -- the Sol CLI itself, which
+   carries `sol migrate`. The same image, registry and tag the apply path uses,
+   so the read-only status Job runs exactly the code that would apply
+   migrations. The deploy path fails closed on [Error] rather than accidentally
+   skipping the check. *)
+let push_runner_image ~workspace ~k8s_name ~registry =
+  match Sol_cli_cmd_new.infer_sol_home () with
+  | None ->
+    Error
+      "cannot locate the Sol checkout to build the migration runner image -- set \
+       SOL_HOME."
+  | Some sol_home ->
+    let image =
+      Sol_cli_deployment_plan.image_ref
+        ~registry
+        ~workspace
+        ~k8s_name
+        ~tag:"sol-cli-migrate"
+    in
+    let dockerfile = write_temp_file ~suffix:".Dockerfile" sol_cli_dockerfile in
+    let result =
+      match Sol_cli_docker.build ~tag:image ~dockerfile ~context:sol_home with
+      | Error e ->
+        Error (Printf.sprintf "docker build: %s" (Sol_cli_process.error_to_string e))
+      | Ok () ->
+        Printf.printf "Pushing %s...\n%!" image;
+        (match Sol_cli_docker.push ~image_ref:image with
+         | Error e ->
+           Error (Printf.sprintf "docker push: %s" (Sol_cli_process.error_to_string e))
+         | Ok () -> Ok image)
+    in
+    (try Sys.remove dockerfile with
+     | _ -> ());
+    result
+;;
+
+(* The result of the live prerequisite check. [Unavailable] and [Unsatisfied]
+   both stop the deploy before workload mutation; [Unavailable] is the
+   fail-closed answer when the check itself could not be performed. *)
+type migration_verification =
+  | No_migrations
+  | Satisfied of int list
+  | Unsatisfied of Sol_cli_migration.prerequisite list
+  | Unavailable of string
+
+(* Read the authoritative applied set from the target cluster with a
+   short-lived, read-only Job. The Job runs `migrate status --json`, which only
+   reads schema_migrations. Any failure to run the Job or read the table is an
+   [Error] the caller treats as [Unavailable] -- never a reason to assume the
+   schema is compatible. *)
+let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table =
+  match Sol_cli_config.load_for_target ~target with
+  | Error e -> Error (Sol_cli_config.error_to_string e)
+  | Ok cfg ->
+    (match Sol_cli_config.target cfg with
+     | None -> Error (Printf.sprintf "target %S not found" target)
+     | Some target_cfg ->
+       let registry =
+         match target_cfg.Sol_cli_config.registry with
+         | Some r -> Ok r
+         | None ->
+           (Error
+              "no registry configured for this target -- set target.registry in sol.yml."
+            : (string, string) result)
+       in
+       (match registry with
+        | Error _ as e -> e
+        | Ok registry ->
+          let namespace, k8s_name = pick_namespace_and_service ~workspace in
+          (match push_runner_image ~workspace ~k8s_name ~registry with
+           | Error _ as e -> e
+           | Ok image ->
+             let files = read_migration_files dir in
+             let run_id = Printf.sprintf "%.0f" (Unix.gettimeofday () *. 1000.) in
+             let job_name = Printf.sprintf "sol-migrate-status-%s" run_id in
+             let configmap_name = Printf.sprintf "sol-migrate-status-files-%s" run_id in
+             (* Read-only and short-lived: the Job and its ConfigMap are removed
+                whether the check succeeds or fails, so a deploy never leaves
+                cluster objects behind for a check that only reads. *)
+             let cleanup () =
+               ignore
+                 (run_kubectl
+                    ~ctx
+                    [ "delete"
+                    ; "job"
+                    ; job_name
+                    ; "-n"
+                    ; namespace
+                    ; "--ignore-not-found"
+                    ; "--wait=false"
+                    ]);
+               ignore
+                 (run_kubectl
+                    ~ctx
+                    [ "delete"
+                    ; "configmap"
+                    ; configmap_name
+                    ; "-n"
+                    ; namespace
+                    ; "--ignore-not-found"
+                    ])
+             in
+             let configmap_yaml =
+               write_temp_file
+                 ~suffix:".yaml"
+                 (render_configmap ~name:configmap_name ~namespace files)
+             in
+             let job_yaml =
+               write_temp_file
+                 ~suffix:".yaml"
+                 (render_status_job
+                    ~name:job_name
+                    ~namespace
+                    ~image
+                    ~table
+                    ~configmap_name)
+             in
+             let applied =
+               match run_kubectl ~ctx [ "apply"; "-f"; configmap_yaml ] with
+               | Ok r when r.Sol_cli_process.exit_code = 0 ->
+                 (match run_kubectl ~ctx [ "apply"; "-f"; job_yaml ] with
+                  | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
+                  | Ok r ->
+                    Error
+                      (Printf.sprintf
+                         "kubectl apply (status job) failed: %s"
+                         (String.trim r.Sol_cli_process.stderr))
+                  | Error e ->
+                    Error
+                      (Printf.sprintf
+                         "kubectl apply (status job): %s"
+                         (Sol_cli_process.error_to_string e)))
+               | Ok r ->
+                 Error
+                   (Printf.sprintf
+                      "kubectl apply (status configmap) failed: %s"
+                      (String.trim r.Sol_cli_process.stderr))
+               | Error e ->
+                 Error
+                   (Printf.sprintf
+                      "kubectl apply (status configmap): %s"
+                      (Sol_cli_process.error_to_string e))
+             in
+             (try Sys.remove configmap_yaml with
+              | _ -> ());
+             (try Sys.remove job_yaml with
+              | _ -> ());
+             let result =
+               match applied with
+               | Error _ as e -> e
+               | Ok () ->
+                 (* Same bounded poll as the apply path: `kubectl wait` does not
+                    return on a failed Job, so the status fields are polled
+                    directly. *)
+                 let job_field field =
+                   match
+                     run_kubectl
+                       ~ctx
+                       ~timeout_s:15.
+                       [ "get"
+                       ; "job"
+                       ; job_name
+                       ; "-n"
+                       ; namespace
+                       ; "-o"
+                       ; Printf.sprintf "jsonpath={.status.%s}" field
+                       ]
+                   with
+                   | Ok r -> String.trim r.Sol_cli_process.stdout
+                   | Error _ -> ""
+                 in
+                 let rec wait n =
+                   if n = 0
+                   then `Timed_out
+                   else if job_field "succeeded" = "1"
+                   then `Succeeded
+                   else if
+                     match job_field "failed" with
+                     | "" | "0" -> false
+                     | _ -> true
+                   then `Failed
+                   else (
+                     Unix.sleepf 2.;
+                     wait (n - 1))
+                 in
+                 (match wait 60 with
+                  | `Timed_out ->
+                    Error "migration-status Job did not complete within 120s"
+                  | `Failed -> Error "migration-status Job failed -- see the Job logs"
+                  | `Succeeded ->
+                    (match
+                       run_kubectl
+                         ~ctx
+                         ~timeout_s:30.
+                         [ "logs"; Printf.sprintf "job/%s" job_name; "-n"; namespace ]
+                     with
+                     | Error e ->
+                       Error
+                         (Printf.sprintf
+                            "could not read migration-status Job logs: %s"
+                            (Sol_cli_process.error_to_string e))
+                     | Ok r ->
+                       (* The Job prints only the JSON body, but take the first
+                          `{`..last `}` so a stray log line cannot break the
+                          parse of an otherwise valid report. *)
+                       let text = String.trim r.Sol_cli_process.stdout in
+                       let text =
+                         match String.index_opt text '{', String.rindex_opt text '}' with
+                         | Some i, Some j when j > i -> String.sub text i (j - i + 1)
+                         | _ -> text
+                       in
+                       Sol_cli_migration.parse_status_json text))
+             in
+             cleanup ();
+             result)))
+;;
+
+(* The prerequisite check the deploy path runs after the static preflight and
+   before any workload mutation. *)
+let verify_migration_prerequisite ~ctx ~target ~workspace ~dir =
+  match Sol_cli_migration.required ~dir with
+  | Error e -> Unavailable e
+  | Ok [] -> No_migrations
+  | Ok required ->
+    let table = Sol_cli_migration.table_name ~workspace in
+    (match read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table with
+     | Error e -> Unavailable e
+     | Ok applied ->
+       (match Sol_cli_migration.unsatisfied ~required ~applied with
+        | [] -> Satisfied applied
+        | missing -> Unsatisfied missing))
+;;
+
 (* ── status ──────────────────────────────────────────────────────────────── *)
 
-let run_status ~ctx dir table () =
+let run_status ~ctx ?(json = false) dir table () =
   let url = get_postgres_url ~ctx () in
   with_pool url (fun ~fs pool ->
     match Migration.status ~table pool ~dir ~fs with
@@ -601,16 +859,25 @@ let run_status ~ctx dir table () =
       Printf.eprintf "error: %s\n" (Pg_error.to_string e);
       exit 1
     | Ok rows ->
-      Printf.printf "%-6s  %-30s  %s\n" "VER" "NAME" "APPLIED AT";
-      Printf.printf "%s\n" (String.make 60 '-');
-      List.iter
-        (fun (s : Migration.status) ->
-           Printf.printf
-             "%-6d  %-30s  %s\n"
-             s.version
-             s.name
-             (Option.value ~default:"(pending)" s.applied_at))
-        rows)
+      if json
+      then
+        print_endline
+          (Sol_cli_migration.status_json
+             ~table
+             (List.map
+                (fun (s : Migration.status) -> s.version, s.name, s.applied_at)
+                rows))
+      else (
+        Printf.printf "%-6s  %-30s  %s\n" "VER" "NAME" "APPLIED AT";
+        Printf.printf "%s\n" (String.make 60 '-');
+        List.iter
+          (fun (s : Migration.status) ->
+             Printf.printf
+               "%-6d  %-30s  %s\n"
+               s.version
+               s.name
+               (Option.value ~default:"(pending)" s.applied_at))
+          rows))
 ;;
 
 (* ── rollback ────────────────────────────────────────────────────────────── *)
@@ -716,13 +983,26 @@ let apply_cmd =
       $ registry_arg)
 ;;
 
+let json_flag =
+  Arg.(
+    value
+    & flag
+    & info
+        [ "json" ]
+        ~doc:
+          "Emit the status as JSON (the machine-readable form the deploy path's \
+           read-only prerequisite check consumes)")
+;;
+
 let status_cmd =
   Cmd.v
     (Cmd.info "status" ~doc:"Show per-file applied/pending status")
     Term.(
-      const (fun dir table -> run_status ~ctx:Cmd_destination.local dir table ())
+      const (fun dir table json ->
+        run_status ~ctx:Cmd_destination.local ~json dir table ())
       $ dir_arg
-      $ table_arg)
+      $ table_arg
+      $ json_flag)
 ;;
 
 let rollback_cmd =
