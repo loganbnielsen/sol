@@ -286,3 +286,38 @@ variable "managed_resource_dashboards" {
   }))
   default = {}
 }
+
+# ── Alerting (OBS-043) ──────────────────────────────────────────────────────
+# The provider-neutral alert-delivery contract. A production target declares
+# these in its target file; `sol deploy`'s preflight validates them and
+# `sol alert test` sends a synthetic alert through the configured receiver.
+# Apply base with the same values so the Alertmanager route matches what the
+# target claims. Empty values keep the deliberate dev null receiver (OBS-040).
+
+variable "alert_receiver_type" {
+  description = "Alert receiver adapter. \"webhook\" is the maturity-A reference mechanism; empty keeps the dev null receiver."
+  type        = string
+  default     = ""
+  validation {
+    condition     = contains(["", "webhook"], var.alert_receiver_type)
+    error_message = "alert_receiver_type must be \"\" or \"webhook\" (the qualified maturity-A receiver adapter)."
+  }
+}
+
+variable "alert_receiver_url" {
+  description = "Endpoint the Alertmanager route delivers to when alert_receiver_type is set. Never a secret Sol stores; keep routing credentials in the receiver URL out of committed files."
+  type        = string
+  default     = ""
+}
+
+variable "alert_owner" {
+  description = "Accountable owner attached to every required maturity-A alert."
+  type        = string
+  default     = ""
+}
+
+variable "alert_runbook_url" {
+  description = "First-response runbook linked from every required maturity-A alert."
+  type        = string
+  default     = ""
+}

@@ -11,6 +11,10 @@ type target =
   ; kubeconfig : string option
   ; terraform_var_file : string option
   ; observability_backend : string option
+  ; alert_receiver_type : string option
+  ; alert_receiver_url : string option
+  ; alert_owner : string option
+  ; alert_runbook_url : string option
   ; profile : Sol_cli_profile.t option
     (** The production profile this target explicitly selects (DEC-026). Only a
         target file may set it; an environment name never implies one. *)

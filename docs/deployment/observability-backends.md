@@ -140,7 +140,7 @@ it.
 cluster. This pass is still static Terraform/Helm validation only; run a real
 AWS deploy before depending on it in production.
 
-## Alerting (OBS-040)
+## Alerting (OBS-040, extended by OBS-043)
 
 All three profiles ship the same starter Alertmanager + rule set — Sol uses
 the plain `prometheus-community/prometheus` chart (`server` +
@@ -159,17 +159,30 @@ today:
   older chart versions used a different key, `alertmanagerFiles`, which
   this pinned version does not read).
 
-### Starter rules
+### Starter and maturity-A rules
 
-Both rules use Sol's label taxonomy
+Every rule uses Sol's label taxonomy
 (`workspace`/`env`/`domain`/`service`/`primitive`) or standard
 kube-state-metrics labels — never a hardcoded domain/service — so they
-apply workspace-wide to every deployed service by default.
+apply workspace-wide to every deployed service by default. Every rule carries
+its accountable `owner` and a `runbook_url`, both taken from the target's
+alert-delivery declaration.
 
-| Alert | Signal | Threshold |
-|---|---|---|
-| `SolHighErrorRate` | `sol_svc_requests_total{status_class="5xx"}` vs total, from `-svc`'s auto-metrics (same metric as the "5xx error rate by service" dashboard panel) | 5xx ratio > 5%, sustained 5 minutes, grouped by `workspace, env, domain, service` |
-| `SolPodRestartLoop` | `kube_pod_container_status_restarts_total` (kube-state-metrics, bundled and scraped by this chart by default) | more than 3 restarts in 15 minutes, sustained 5 minutes, per `namespace, pod, container` |
+OBS-040 shipped the first two. **OBS-043 adds the five threshold indicators
+DEC-026 §8 names for maturity A** — failed rollout, node loss, Postgres
+dependency loss/restore, Kafka lag/broker loss, telemetry loss — with
+one-page runbooks in [`alert-runbooks.md`](alert-runbooks.md).
+
+| Alert | Indicator | Signal | Threshold |
+|---|---|---|---|
+| `SolHighErrorRate` | (starter) | `sol_svc_requests_total{status_class="5xx"}` vs total, from `-svc`'s auto-metrics | 5xx ratio > 5%, sustained 5 minutes, grouped by `workspace, env, domain, service` |
+| `SolPodRestartLoop` | (starter) | `kube_pod_container_status_restarts_total` | > 3 restarts in 15 minutes, sustained 5 minutes, per `namespace, pod, container` |
+| `SolRolloutFailed` | failed rollout | `kube_deployment_status_replicas_available / clamp_min(kube_deployment_spec_replicas, 1) < 1` | sustained 10 minutes |
+| `SolNodeNotReady` | node loss | `kube_node_status_condition{condition="Ready",status="true"} == 0` | sustained 5 minutes |
+| `SolPostgresUnavailable` | Postgres dependency | `pg_up == 0` | sustained 5 minutes, `critical` |
+| `SolKafkaConsumerLagHigh` | Kafka lag | `redpanda_kafka_consumer_group_lag` | > 10000, sustained 10 minutes |
+| `SolKafkaBrokerDown` | Kafka broker loss | `up{job=~".*redpanda.*"} == 0` | sustained 5 minutes, `critical` |
+| `SolTelemetryTargetDown` | telemetry loss | `up{namespace="monitoring"} == 0` | sustained 10 minutes |
 
 `SolPodRestartLoop` alerts on kube-state-metrics' own `namespace`/`pod`/
 `container` labels rather than Sol's taxonomy labels directly — those live
@@ -181,61 +194,83 @@ For an exact `service`/`primitive` breakdown, join with the
 `metricLabelsAllowlist` for pod labels — not configured by default, since
 it isn't needed for the alert itself).
 
-**Deploy-failure alert: skipped for v1.** `OBS-037` added `sol deploy`'s
-release-event line, but it's a *Loki log line*
-(`cli/sol/lib/sol_cli_deploy_event.ml`), not a Prometheus metric —
-Prometheus alerting rules can't query Loki. There is currently no metric
-derived from deploy events (no Pushgateway push, no counter), so there's
-no Prometheus-queryable signal to alert on yet. Revisit once a deploy
-health metric exists (e.g. a Pushgateway push from `sol deploy` on
-rollout success/failure); until then, use `sol logs` or a Grafana Loki
-panel to check deploy outcomes manually.
+**Postgres and Kafka signals are scrape-dependent.** The platform does not
+scrape a Postgres exporter or Redpanda's metrics by default, so
+`SolPostgresUnavailable` and the Kafka pair are *silent* (never a false
+positive) until the target exposes them. Managed RDS reports through OBS-044's
+CloudWatch integration instead. Confirm the scrape exists as part of the
+pre-pilot checklist if a target depends on those indicators.
 
-### No receiver configured by default
+**Operator-visible deploy failure is a runbook, not a metric.** The failed
+rollout indicator above is Prometheus-queryable (kube-state-metrics), so the
+OBS-040 "skipped for v1" gap is closed without needing OBS-037's Loki-only
+release-event line: `SolRolloutFailed` catches a rollout that never becomes
+available, and `sol deployments` / `sol logs` remain the detail view.
 
-Alertmanager ships with a `null` receiver and no `route.receiver` pointing
-anywhere real — alerts fire and are visible in Alertmanager's own UI/API,
-but nothing is notified. This is deliberate: Sol doesn't know your Slack
-webhook, PagerDuty key, or on-call email, so it doesn't guess one.
+### The provider-neutral receiver contract (OBS-043)
 
-To wire up a real receiver, override `alertmanager.config` in
-`cli/platform/infra/base/main.tf`'s `local.prometheus_alertmanager_config` (or
-pass an additional `helm_release.prometheus` `values` entry that
-deep-merges over it) with the shape the `alertmanager` chart expects — see
-`helm show values prometheus-community/alertmanager --version 1.10.0` for
-the full schema. For example, a Slack receiver:
+The maturity-A profile requires a **configured, routable, non-null receiver
+with owner metadata** — not a vendor. DEC-026 §8 makes "requiring PagerDuty
+specifically" a non-goal, and the Sol-level semantic is a receiver Sol can
+wire, not a product. The first adapter is a **generic webhook**; Slack,
+PagerDuty and email are documented adapters over the same contract.
 
-```hcl
-receivers = [
-  { name = "null" },
-  {
-    name = "slack"
-    slack_configs = [{
-      api_url    = var.slack_webhook_url
-      channel    = "#alerts"
-      send_resolved = true
-    }]
-  }
-]
-route = {
-  receiver = "slack" # was "null"
-  # ...
-}
+A target declares it in the target file:
+
+```yaml
+target:
+  profile: production-single-region
+  alert_receiver_type: webhook
+  alert_receiver_url: https://alerts.example.com/sol/webhook
+  alert_owner: payments-oncall
+  alert_runbook_url: https://runbooks.example.com/sol
 ```
 
-PagerDuty (`pagerduty_configs`) and email (`email_configs`) receivers
-follow the same `alertmanager.config.receivers[].<type>_configs` shape.
-None of these are built here — this is the extension point, not a shipped
-integration (see OBS-040's ticket non-goals).
+- `sol deploy`'s preflight (`alert_delivery`) fails closed unless the
+  declaration is complete and the URL is a routable http(s) endpoint — missing
+  or unroutable receiver, missing owner or runbook, and an unqualified receiver
+  type each name the target-side fix.
+- Applying `cli/platform/infra/base` with the same values makes
+  `local.prometheus_alertmanager_config` route to a
+  `webhook_configs` receiver instead of the dev `null` one. Empty values keep
+  the deliberate OBS-040 null receiver, so local/dev is unchanged.
+- Never commit routing credentials: keep the receiver URL's secret behind your
+  secret store, and prefer a URL the receiver itself authenticates.
+
+Deviation: if you keep a Slack/PagerDuty receiver, the *contract* is still
+"configured, routable, owned" — override `alertmanager.config` as before. None
+of those adapters is shipped.
+
+### Proving the route: `sol alert test`
+
+```bash
+kubectl -n monitoring port-forward svc/prometheus-alertmanager 9093:9093 &
+sol alert test --target pilot/aws/us-east-1
+```
+
+It validates the same contract preflight does, then injects one synthetic alert
+into Alertmanager's v2 API, which routes it exactly like a fired rule.
+`--dry-run` prints the alert without sending it. This proves the *mechanism*:
+the route is configured and accepts the alert.
+
+What it cannot assert is that the named human received and **acknowledged** it —
+DEC-026 §8 requires a delivered-and-acknowledged synthetic alert, and that is
+HARDEN-002's live evidence, not a CLI exit status.
+
+### Telemetry loss is a degraded mode, not a data-durability claim
+
+`SolTelemetryTargetDown` states the operating mode explicitly: diagnostics are
+degraded while the business data path is unaffected (DEC-026 §5). It must not be
+escalated as if it shared Postgres/Kafka's RPO/RTO.
 
 ### Extending the rule set
 
 Add more alerting rules the same way: extend
 `local.prometheus_alerting_rules.groups[0].rules` (or add another group)
 in `cli/platform/infra/base/main.tf`. Multi-window burn-rate alerting and
-SLO-based rules are a deliberate non-goal for this starter set — Sol has
-no per-service SLO target concept today: revisit only if the simple
-threshold rules above prove insufficient in practice.
+SLO-based rules remain a deliberate non-goal — the maturity-A indicators are
+threshold rules on purpose (OBS-043), and Sol has no per-service SLO target
+concept: revisit only if the simple threshold rules prove insufficient.
 
 ## Dashboards (OBS-011, OBS-036, OBS-038)
 

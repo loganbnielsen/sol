@@ -410,15 +410,15 @@ let test_unestablished_guarantees_fail_closed () =
       ]
       (capabilities fs);
     check_bool
-      "target guarantees are attributed to Sol; the artifact and version guarantees to \
-       the application"
+      "Sol-owned guarantees are attributed to Sol, the artifact and version guarantees \
+       to the application, and the alert guarantee to the target"
       true
       (List.for_all
          (fun (f : Pre.finding) ->
-            f.side
-            = Pre.Platform
-            = (f.capability <> P.Immutable_artifacts
-               && f.capability <> P.Qualified_versions))
+            match f.capability with
+            | P.Alert_delivery -> f.side = Pre.Target
+            | P.Immutable_artifacts | P.Qualified_versions -> f.side = Pre.Application
+            | _ -> f.side = Pre.Platform)
          fs))
 ;;
 
@@ -509,6 +509,61 @@ let test_typescript_is_not_qualified () =
         "names the language and the alternative"
         true
         (contains ~needle:"typescript" f.reason))
+;;
+
+let test_missing_alert_receiver_is_a_target_finding () =
+  with_workspace (fun () ->
+    write_target prod_aws selecting;
+    let fs =
+      findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
+    in
+    match List.find_opt (fun (f : Pre.finding) -> f.capability = P.Alert_delivery) fs with
+    | None -> Alcotest.fail "expected an alert-delivery finding"
+    | Some f ->
+      check_bool "target side" true (f.side = Pre.Target);
+      check_bool
+        "names the receiver declaration"
+        true
+        (contains ~needle:"alert_receiver_type" f.reason))
+;;
+
+let test_complete_alert_contract_establishes_delivery () =
+  with_workspace (fun () ->
+    write_target
+      prod_aws
+      "target:\n\
+      \  profile: production-single-region\n\
+      \  alert_receiver_type: webhook\n\
+      \  alert_receiver_url: https://hooks.example.com/sol-alerts\n\
+      \  alert_owner: payments-oncall\n\
+      \  alert_runbook_url: https://runbooks.example.com/sol\n";
+    let fs =
+      findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
+    in
+    check_bool
+      "a complete receiver/owner/runbook declaration establishes delivery"
+      false
+      (List.exists (fun (f : Pre.finding) -> f.capability = P.Alert_delivery) fs))
+;;
+
+let test_unroutable_alert_receiver_is_a_target_finding () =
+  with_workspace (fun () ->
+    write_target
+      prod_aws
+      "target:\n\
+      \  profile: production-single-region\n\
+      \  alert_receiver_type: webhook\n\
+      \  alert_receiver_url: not-a-url\n\
+      \  alert_owner: payments-oncall\n\
+      \  alert_runbook_url: https://runbooks.example.com/sol\n";
+    let fs =
+      findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
+    in
+    match List.find_opt (fun (f : Pre.finding) -> f.capability = P.Alert_delivery) fs with
+    | None -> Alcotest.fail "expected an unroutable-receiver finding"
+    | Some f ->
+      check_bool "target side" true (f.side = Pre.Target);
+      check_bool "explains routability" true (contains ~needle:"routable" f.reason))
 ;;
 
 let test_unqualified_provider_is_a_target_finding () =
@@ -754,6 +809,18 @@ let () =
             `Quick
             test_unqualified_provider_is_a_target_finding
         ; Alcotest.test_case "emit-to rejected" `Quick test_emit_to_rejected_for_profile
+        ; Alcotest.test_case
+            "missing alert receiver is a target finding"
+            `Quick
+            test_missing_alert_receiver_is_a_target_finding
+        ; Alcotest.test_case
+            "complete alert contract establishes delivery"
+            `Quick
+            test_complete_alert_contract_establishes_delivery
+        ; Alcotest.test_case
+            "unroutable alert receiver is a target finding"
+            `Quick
+            test_unroutable_alert_receiver_is_a_target_finding
         ; Alcotest.test_case
             "Kafka dependency declaration required"
             `Quick

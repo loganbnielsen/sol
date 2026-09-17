@@ -4,9 +4,19 @@
 # `sol deploy pilot/aws/us-east-1 --dry-run --image-tag <tag>` runs the profile
 # preflight, which refuses until this target establishes every guarantee the
 # profile requires, listing each unmet guarantee and who must act.
+#
+# The alert-delivery contract (OBS-043): a provider-neutral receiver, an
+# accountable owner and a first-response runbook. `sol alert test --target
+# pilot/aws/us-east-1` sends a synthetic alert through this route. The URL below
+# is a placeholder — replace it with your real receiver endpoint (never commit
+# routing credentials; put them in the receiver URL behind your secret store).
 target:
   profile: production-single-region
   cluster_name: pluto-pilot
   base_domain: pluto.example.com
   kube_context: pluto-pilot
   registry: 123456789012.dkr.ecr.us-east-1.amazonaws.com
+  alert_receiver_type: webhook
+  alert_receiver_url: https://alerts.example.com/sol/webhook
+  alert_owner: pluto-oncall
+  alert_runbook_url: https://runbooks.example.com/sol

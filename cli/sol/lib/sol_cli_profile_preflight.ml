@@ -66,6 +66,19 @@ let establish
         , "every workload must deploy an immutable reference; pass --image-ref \
            <service>=<repo>@sha256:<digest> (or a single --image-ref \
            <repo>@sha256:<digest> with a one-service scope) instead of a mutable tag" )
+  | Alert_delivery ->
+    (* OBS-043: the receiver, owner and runbook are target declarations. Preflight
+       asserts the declaration is complete and syntactically routable; delivered-
+       and-acknowledged evidence is HARDEN-002's. *)
+    (match
+       Sol_cli_alerting.validate
+         ~receiver_type:target.alert_receiver_type
+         ~receiver_url:target.alert_receiver_url
+         ~owner:target.alert_owner
+         ~runbook_url:target.alert_runbook_url
+     with
+     | Ok () -> Established
+     | Error reason -> Unmet (Target, reason))
   | Qualified_versions ->
     (* FEAT-088: the enforceable compatibility input is the declared framework
        language. Every workload must state one, and the profile must qualify it;
@@ -113,7 +126,6 @@ let establish
              (Sol_cli_profile.to_string profile) ))
   | Remote_state
   | Scoped_operator_identities
-  | Alert_delivery
   | Credential_posture
   | Workload_availability
   | Postgres_durability
