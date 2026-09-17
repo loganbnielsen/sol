@@ -354,6 +354,13 @@ applied, and the resolved digest is what the release record — and therefore a
 later rollback — uses, so a moved tag cannot change what a recorded release
 runs.
 
+The qualified version set is a declared framework language per workload.
+Declare `language: ocaml` (or `typescript`) in the service's `sol.yml` entry;
+the profile's initial compatibility matrix qualifies OCaml only, so a
+TypeScript workload fails preflight with that reason. The exact supported CLI,
+language, Kubernetes, provider-module and chart versions are published in
+[`compatibility.md`](compatibility.md).
+
 The Postgres and Kafka durability guarantees have a written operator
 procedure — backup, restore, failover and integrity verification — in
 [`application-data-recovery.md`](application-data-recovery.md). Qualification

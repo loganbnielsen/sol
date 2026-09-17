@@ -63,6 +63,7 @@ let service
   ; scheduled_concurrency = Sol_cli_toml.Allow
   ; backoff_limit = 3
   ; replicas = 2
+  ; language = None
   ; cpu = cpu "250m"
   ; memory = memory "256Mi"
   ; rollout_strategy = None

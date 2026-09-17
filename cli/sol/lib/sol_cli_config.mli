@@ -45,6 +45,9 @@ type service =
   ; uses : string list
   ; scale_min : int option
   ; scale_max : int option
+  ; language : Sol_cli_compat.language option
+    (** FEAT-088: the declared framework language for this workload. The
+          production profile qualifies only OCaml. *)
   ; omit : bool
   }
 

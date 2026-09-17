@@ -52,6 +52,7 @@ type service_spec =
   ; scheduled_concurrency : Sol_cli_toml.scheduled_concurrency
   ; backoff_limit : int
   ; replicas : int
+  ; language : Sol_cli_compat.language option
   ; cpu : Sol_cli_toml.cpu_quantity
   ; memory : Sol_cli_toml.memory_quantity
   ; rollout_strategy : Sol_cli_toml.rollout_strategy option
@@ -610,6 +611,21 @@ let sol_yml_replicas_override ~resolved_config ~service_name =
      | Some { Sol_cli_config.scale_min; _ } -> scale_min)
 ;;
 
+(* FEAT-088: the declared framework language, straight from [sol.yml]'s service
+   entry. Nothing infers it from the build system (DEC-022 §7). *)
+let sol_yml_language ~resolved_config ~service_name =
+  match resolved_config with
+  | None -> None
+  | Some cfg ->
+    (match
+       List.find_opt
+         (fun (s : Sol_cli_config.service) -> s.Sol_cli_config.name = service_name)
+         cfg.Sol_cli_config.services
+     with
+     | None -> None
+     | Some s -> s.Sol_cli_config.language)
+;;
+
 (* Only positive, language-neutral evidence counts. A worker may consume Kafka
    or host sol-jobs (DEC-021), so its shape implies no dependency; schema
    subjects are not evidence either, being discovered from OCaml event
@@ -815,6 +831,9 @@ let of_services_result
     let service_config =
       List.remove_assoc "SOL_KAFKA_DURABILITY" toml.Sol_cli_toml.env_config
     in
+    let language =
+      sol_yml_language ~resolved_config ~service_name:svc.Sol_cli_manifest.name
+    in
     let spec =
       { domain = svc.Sol_cli_manifest.domain
       ; source_name = svc.Sol_cli_manifest.name
@@ -837,6 +856,7 @@ let of_services_result
       ; backoff_limit =
           Option.value toml.Sol_cli_toml.backoff_limit ~default:default_backoff_limit
       ; replicas
+      ; language
       ; cpu = Option.value toml.Sol_cli_toml.cpu ~default:default_cpu
       ; memory = Option.value toml.Sol_cli_toml.memory ~default:default_memory
       ; rollout_strategy = toml.Sol_cli_toml.rollout_strategy

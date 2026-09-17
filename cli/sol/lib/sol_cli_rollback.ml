@@ -163,7 +163,12 @@ let decode_workload ~release_id ~workspace (w : Sol_cli_release.workload) =
          no explicit config would. *)
       scheduled_concurrency = Sol_cli_toml.Allow
     ; backoff_limit = 3
-    ; replicas = w.replicas
+    ; replicas =
+        w.replicas
+        (* FEAT-088: language is a plan-time declaration, deliberately not part of
+         the release record (DEC-022 §7), so a reconstructed release carries
+         none. *)
+    ; language = None
     ; cpu
     ; memory
     ; rollout_strategy

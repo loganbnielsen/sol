@@ -38,6 +38,10 @@ type service =
   ; uses : string list
   ; scale_min : int option
   ; scale_max : int option
+  ; language : Sol_cli_compat.language option
+    (** FEAT-088: the framework language implementing this workload, declared in
+          [sol.yml]. The production profile qualifies only OCaml; this is an
+          explicit input, never inferred from build metadata. *)
   ; omit : bool
   }
 
@@ -195,6 +199,7 @@ let service_empty name =
   ; uses = []
   ; scale_min = None
   ; scale_max = None
+  ; language = None
   ; omit = false
   }
 ;;
@@ -534,6 +539,10 @@ let load path =
                              (match parse_list v with
                               | Ok uses -> Ok { s with uses }
                               | Error msg -> fail (msg ^ " for uses"))
+                           | "language" ->
+                             (match Sol_cli_compat.of_string v with
+                              | Ok language -> Ok { s with language = Some language }
+                              | Error msg -> fail (msg ^ " for language"))
                            | "omit" ->
                              (match parse_bool v with
                               | Ok omit -> Ok { s with omit }
@@ -687,6 +696,7 @@ let merge_service (a : service) (b : service) =
   ; uses = prefer_list a.uses b.uses
   ; scale_min = prefer a.scale_min b.scale_min
   ; scale_max = prefer a.scale_max b.scale_max
+  ; language = prefer a.language b.language
   ; omit = b.omit || a.omit
   }
 ;;

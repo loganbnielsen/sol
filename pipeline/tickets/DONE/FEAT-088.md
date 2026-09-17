@@ -63,3 +63,45 @@ the published matrix and builds outside this checkout.
 
 **TypeScript parity:** Resolved explicitly by DEC-026 and recorded in the matrix;
 silence is not an acceptable verdict.
+
+## Outcome (2026-09-17)
+
+The profile's qualified version set is now a real preflight check backed by an
+explicit, language-neutral input, and the supported set is published.
+
+- **The explicit compatibility input is the declared language.** Each `sol.yml`
+  service entry may declare `language: ocaml` or `language: typescript`
+  (`Sol_cli_compat`). Nothing infers it from Dockerfiles, paths or package
+  metadata — DEC-022 §7 keeps language out of deployment identity, so a guess
+  would be the same wrong abstraction the ticket rejects. An unknown value fails
+  `sol.yml` parsing with the supported values.
+- **Preflight enforces it.** `Qualified_versions` is established only when every
+  deployed workload declares a language and the profile qualifies it. An
+  undeclared language, or `typescript`, is reported as an application-side
+  finding naming the fix; DEC-026 §2's TypeScript rejection now has the signal
+  FEAT-089 was missing.
+- **The matrix is published.** `docs/deployment/compatibility.md` records the
+  supported OCaml and staged-TypeScript verdicts (with the qualification
+  trigger), and the pinned CLI, OCaml, Kubernetes, AWS provider-module and
+  platform-chart versions, each with its pin location. The profile contract and
+  the pluto README link to it.
+- **Reproducible metadata already exists** and is referenced rather than
+  duplicated: DEC-025 workspace-owned immutable opam pins, the chart pins in
+  `cli/platform/infra/base/main.tf`, and the workspace-independence CI proof.
+- One exact supported set is deliberate; N/N-1 upgrades and broad provider
+  matrices stay out of maturity A.
+
+Premise check: `Sol_cli_profile_preflight.establish` reported
+`Qualified_versions` as `not_yet_established` for every target, and no
+`language` input existed in `sol.yml`/`Sol_cli_config`, so the finding was
+actionable.
+
+**Demo/example coverage:** `examples/pluto/sol.yml` declares `language: ocaml`
+for its OCaml services and `language: typescript` for the `app/demo_ts` pair, so
+the pilot target demonstrates the preflight reporting TypeScript as not yet
+qualified. `examples/pluto/README.md` explains the declaration and links the
+matrix.
+
+**TypeScript parity:** TypeScript is explicitly recorded as staged (not
+qualified) for the first profile, with DEC-026 §2's triggers, rather than
+silently omitted.

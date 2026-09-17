@@ -11,13 +11,29 @@ services:
   checkout_svc:
     type: http
     path: app/checkout/checkout_svc
+    language: ocaml
 
   charge_svc:
     type: http
     path: app/payments/charge_svc
     uses: [app_db, events]
+    language: ocaml
 
   notify_worker:
     type: worker
     path: app/comms/notify_worker
     uses: [app_db, events]
+    language: ocaml
+
+  # The TypeScript demo pair. They declare their language explicitly; the
+  # production profile's preflight reports TypeScript as not yet qualified
+  # (DEC-026 §2), which is the honest state until the TS parity triggers fire.
+  order_svc:
+    type: http
+    path: app/demo_ts/order_svc
+    language: typescript
+
+  fulfillment_worker:
+    type: worker
+    path: app/demo_ts/fulfillment_worker
+    language: typescript

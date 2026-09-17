@@ -410,12 +410,15 @@ let test_unestablished_guarantees_fail_closed () =
       ]
       (capabilities fs);
     check_bool
-      "the platform-owned guarantees are attributed to the platform, and the artifact \
-       guarantee to the application"
+      "target guarantees are attributed to Sol; the artifact and version guarantees to \
+       the application"
       true
       (List.for_all
          (fun (f : Pre.finding) ->
-            f.side = Pre.Platform = (f.capability <> P.Immutable_artifacts))
+            f.side
+            = Pre.Platform
+            = (f.capability <> P.Immutable_artifacts
+               && f.capability <> P.Qualified_versions))
          fs))
 ;;
 
@@ -456,6 +459,56 @@ let test_digest_plan_establishes_artifact_guarantee () =
     | [ spec ] ->
       check_str "plan image is the digest" digest spec.Sol_cli_deployment_plan.image
     | _ -> Alcotest.fail "expected exactly one planned service")
+;;
+
+let finding_for capability fs =
+  List.find_opt (fun (f : Pre.finding) -> f.capability = capability) fs
+;;
+
+let test_undeclared_language_is_an_application_finding () =
+  with_workspace (fun () ->
+    write_target prod_aws selecting;
+    let fs =
+      findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
+    in
+    match finding_for P.Qualified_versions fs with
+    | None -> Alcotest.fail "expected an undeclared-language finding"
+    | Some f ->
+      check_bool "application side" true (f.side = Pre.Application);
+      check_bool
+        "names the language declaration"
+        true
+        (contains ~needle:"language" f.reason))
+;;
+
+let test_declared_ocaml_establishes_versions () =
+  with_workspace (fun () ->
+    write "sol.yml" "project: pluto\nservices:\n  charge_svc:\n    language: ocaml\n";
+    write_target prod_aws selecting;
+    let fs =
+      findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
+    in
+    check_bool
+      "a declared OCaml workload establishes the version guarantee"
+      false
+      (List.exists (fun (f : Pre.finding) -> f.capability = P.Qualified_versions) fs))
+;;
+
+let test_typescript_is_not_qualified () =
+  with_workspace (fun () ->
+    write "sol.yml" "project: pluto\nservices:\n  charge_svc:\n    language: typescript\n";
+    write_target prod_aws selecting;
+    let fs =
+      findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
+    in
+    match finding_for P.Qualified_versions fs with
+    | None -> Alcotest.fail "expected a TypeScript-not-qualified finding"
+    | Some f ->
+      check_bool "application side" true (f.side = Pre.Application);
+      check_bool
+        "names the language and the alternative"
+        true
+        (contains ~needle:"typescript" f.reason))
 ;;
 
 let test_unqualified_provider_is_a_target_finding () =
@@ -684,6 +737,18 @@ let () =
             "unestablished guarantees fail closed"
             `Quick
             test_unestablished_guarantees_fail_closed
+        ; Alcotest.test_case
+            "undeclared language is an application finding"
+            `Quick
+            test_undeclared_language_is_an_application_finding
+        ; Alcotest.test_case
+            "declared OCaml establishes the version guarantee"
+            `Quick
+            test_declared_ocaml_establishes_versions
+        ; Alcotest.test_case
+            "TypeScript is not qualified"
+            `Quick
+            test_typescript_is_not_qualified
         ; Alcotest.test_case
             "unqualified provider is a target finding"
             `Quick
