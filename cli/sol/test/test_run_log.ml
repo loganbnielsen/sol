@@ -117,12 +117,38 @@ let test_runs_to_prune_under_limit () =
   check_int
     "nothing to prune"
     0
-    (List.length (R.runs_to_prune ~all_run_ids:[ "a-1"; "a-2" ] ~keep:20))
+    (List.length (R.runs_to_prune ~all_run_ids:[ "a-1"; "a-2" ] ~keep:20 ()))
+;;
+
+(* HARDEN-002 regression: pruning ordered whole run ids lexicographically, so a
+   fresh run whose command prefix sorted early ("cloud-apply-…" < "deploy-…") was
+   pruned as if it were the oldest -- deleting the directory create had just
+   made, and leaving the phase-log write to fail with an uncaught Sys_error. *)
+let test_runs_to_prune_orders_by_timestamp_across_prefixes () =
+  let older = List.init 20 (fun i -> Printf.sprintf "deploy-20260917T1911%02dZ-1" i) in
+  let fresh = "cloud-apply-20260917T205351Z-20714" in
+  let pruned = R.runs_to_prune ~all_run_ids:(older @ [ fresh ]) ~keep:20 () in
+  check_int "prunes exactly the overflow" 1 (List.length pruned);
+  check_bool "never prunes the newest run" false (List.mem fresh pruned);
+  check_bool
+    "prunes the oldest by timestamp"
+    true
+    (List.mem "deploy-20260917T191100Z-1" pruned)
+;;
+
+(* A run must never be a pruning candidate for itself, whatever the ordering. *)
+let test_runs_to_prune_excludes_the_new_run () =
+  let fresh = "cloud-apply-20260917T205351Z-20714" in
+  let older = List.init 20 (fun i -> Printf.sprintf "deploy-20260917T1911%02dZ-1" i) in
+  let pruned =
+    R.runs_to_prune ~exclude:[ fresh ] ~all_run_ids:(older @ [ fresh ]) ~keep:20 ()
+  in
+  check_bool "excluded run is never pruned" false (List.mem fresh pruned)
 ;;
 
 let test_runs_to_prune_keeps_most_recent () =
   let ids = List.init 25 (fun i -> Printf.sprintf "run-%02d" i) in
-  let pruned = R.runs_to_prune ~all_run_ids:ids ~keep:20 in
+  let pruned = R.runs_to_prune ~all_run_ids:ids ~keep:20 () in
   check_int "prunes the oldest 5" 5 (List.length pruned);
   check_bool "prunes run-00 (oldest)" true (List.mem "run-00" pruned);
   check_bool "keeps run-24 (newest)" false (List.mem "run-24" pruned)
@@ -160,6 +186,14 @@ let () =
             "keeps most recent"
             `Quick
             test_runs_to_prune_keeps_most_recent
+        ; Alcotest.test_case
+            "orders by timestamp across prefixes"
+            `Quick
+            test_runs_to_prune_orders_by_timestamp_across_prefixes
+        ; Alcotest.test_case
+            "never prunes the excluded run"
+            `Quick
+            test_runs_to_prune_excludes_the_new_run
         ] )
     ]
 ;;

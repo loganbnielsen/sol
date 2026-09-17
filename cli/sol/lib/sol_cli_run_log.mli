@@ -26,10 +26,20 @@ val format_phase_line : name:string -> elapsed_s:float -> ok:bool -> string
     a deploy after the terminal that ran it is gone. *)
 val format_failure_report : run_id:string -> log_path:string -> tail:string -> string
 
-(** Given all existing run ids (lexicographically sortable timestamps) and how
-    many to [keep], returns the ids that should be pruned (oldest first). Pure —
-    [create] uses this to decide what to delete. *)
-val runs_to_prune : all_run_ids:string list -> keep:int -> string list
+(** Given all existing run ids and how many to [keep], returns the ids that
+    should be pruned (oldest first). Pure — [create] uses this to decide what to
+    delete.
+
+    Ordering is by the timestamp embedded in the id, not by the whole id: the
+    prefix differs per command, so whole-id order is not chronological
+    ("cloud-apply-…" sorts before "deploy-…" regardless of when each ran).
+    [exclude] ids are never returned, so a run can never prune itself. *)
+val runs_to_prune
+  :  ?exclude:string list
+  -> all_run_ids:string list
+  -> keep:int
+  -> unit
+  -> string list
 
 type t
 
