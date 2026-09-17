@@ -334,7 +334,7 @@ the profile is unsatisfiable until Sol can establish every guarantee it requires
 | Recoverable remote infrastructure state | always |
 | Scoped operator identity | always |
 | Alert delivery to an owner | always |
-| Immutable artifact identity | always |
+| Immutable artifact identity | always — every workload deploys by `--image-ref <service>=<repo>@sha256:<digest>` |
 | Workload credential posture | always |
 | Workload availability | any service or worker |
 | Postgres durability | migrations or a `postgres` resource |
@@ -344,6 +344,15 @@ Only declared dependencies make a guarantee applicable. A worker's shape
 implies nothing: it may consume Kafka or host `sol-jobs`. A worker that
 consumes Kafka without a declared topic or `kafka` resource is not detected
 yet, so declare every Kafka dependency.
+
+The artifact guarantee is satisfied by how the application deploys:
+`sol deploy --image-ref <service>=<repo>@sha256:<digest>` pins each workload to
+immutable bytes, and the preflight rejects a mutable tag. A bare
+`--image-ref <repo>@sha256:<digest>` is accepted when the scope selects exactly
+one service. Each reference is checked against its registry before anything is
+applied, and the resolved digest is what the release record — and therefore a
+later rollback — uses, so a moved tag cannot change what a recorded release
+runs.
 
 The Postgres and Kafka durability guarantees have a written operator
 procedure — backup, restore, failover and integrity verification — in

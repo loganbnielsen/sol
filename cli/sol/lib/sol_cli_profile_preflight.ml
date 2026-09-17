@@ -22,7 +22,12 @@ let not_yet_established =
 (* Each [not_yet_established] branch is replaced by a real check as the
    production program implements that guarantee; none may be relaxed to pass
    before it can be established. *)
-let establish ~(target : Sol_cli_config.target) ~apply_mode capability =
+let establish
+      ~(target : Sol_cli_config.target)
+      ~apply_mode
+      ~(plan : Sol_cli_deployment_plan.t)
+      capability
+  =
   match (capability : Sol_cli_profile.capability) with
   | Qualified_substrate ->
     if List.mem target.provider qualified_providers
@@ -44,11 +49,27 @@ let establish ~(target : Sol_cli_config.target) ~apply_mode capability =
          ( Target
          , "--emit-to hands reconciliation to a GitOps controller; this profile requires \
             Sol's direct apply" ))
+  | Immutable_artifacts ->
+    (* FEAT-050: a tag can move under a recorded release, so the profile accepts
+       only content digests. This is the application's choice of reference, not
+       a property of the target. *)
+    let images =
+      List.map
+        (fun (spec : Sol_cli_deployment_plan.service_spec) -> spec.image)
+        plan.Sol_cli_deployment_plan.services
+    in
+    if Sol_cli_image_ref.plan_is_immutable images
+    then Established
+    else
+      Unmet
+        ( Application
+        , "every workload must deploy an immutable reference; pass --image-ref \
+           <service>=<repo>@sha256:<digest> (or a single --image-ref \
+           <repo>@sha256:<digest> with a one-service scope) instead of a mutable tag" )
   | Qualified_versions
   | Remote_state
   | Scoped_operator_identities
   | Alert_delivery
-  | Immutable_artifacts
   | Credential_posture
   | Workload_availability
   | Postgres_durability
@@ -59,7 +80,9 @@ let check ?establish:establish_opt ~target ~apply_mode (plan : Sol_cli_deploymen
   match plan.profile with
   | None -> Ok ()
   | Some (claim : Sol_cli_deployment_plan.profile_claim) ->
-    let establish = Option.value establish_opt ~default:(establish ~target ~apply_mode) in
+    let establish =
+      Option.value establish_opt ~default:(establish ~target ~apply_mode ~plan)
+    in
     let application_status capability =
       match List.assoc_opt capability claim.application_findings with
       | Some reason -> Some (Unmet (Application, reason))

@@ -40,7 +40,8 @@
   test_status
   test_profile
   test_workspace
-  test_platform_component)
+  test_platform_component
+  test_image_ref)
  (libraries sol_cli alcotest unix yojson str))
 
 (rule

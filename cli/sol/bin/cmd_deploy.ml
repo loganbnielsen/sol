@@ -111,6 +111,26 @@ let check_apply_environment ~services =
   ensure_postgres_url ()
 ;;
 
+(* FEAT-050: a supplied artifact reference must resolve before anything is
+   mutated, and a missing digest names the reference rather than surfacing
+   later as an opaque image-pull failure. Apply-only by design: --dry-run and
+   --emit-to are offline paths that touch no registry. *)
+let verify_image_refs_exist ~image_refs =
+  List.iter
+    (fun (service, ref) ->
+       if not (Sol_cli_docker.manifest_exists ~image_ref:ref)
+       then (
+         Printf.eprintf
+           "error: --image-ref for service %s was not found in its registry: %s\n\
+           \  (docker manifest inspect failed; check the repository, digest and registry \
+            credentials)\n\
+           \  Nothing was applied.\n"
+           service
+           ref;
+         exit 1))
+    image_refs
+;;
+
 type deploy_context =
   { execution : Sol_cli_execution.context
   ; sha : string
@@ -120,6 +140,10 @@ type deploy_context =
   ; target_cfg : Sol_cli_config.target
   ; resolved_config : Sol_cli_config.t
   ; services : Sol_cli_manifest.service list
+  ; image_refs : (string * string) list
+    (** FEAT-050: resolved per-service immutable references for this
+          invocation, [service_name -> repo@sha256:<digest>]. Empty when no
+          [--image-ref] was supplied, which keeps the tag path unchanged. *)
   ; requested_scope : string
   ; target_name : string
   ; run_log : Sol_cli_run_log.t
@@ -175,6 +199,7 @@ let build_plan ctx ~emit_to =
       ~env
       ~requested_scope:ctx.requested_scope
       ~resolved_config:ctx.resolved_config
+      ~image_refs:ctx.image_refs
       ctx.services
   with
   | Error msg ->
@@ -506,6 +531,7 @@ let execute_deployment_attempt ctx ~before_apply ~loki_push_url plan =
    the [at_exit] that used to compensate for it). *)
 let run_apply ctx ~confirm_group_change ~loki_push_url =
   check_apply_environment ~services:ctx.services;
+  verify_image_refs_exist ~image_refs:ctx.image_refs;
   print_header ~workspace:ctx.execution.workspace ~sha:ctx.sha ();
   let plan = build_plan ctx ~emit_to:None in
   check_consumer_group_changes
@@ -554,6 +580,20 @@ let run (req : Sol_cli_command_request.deploy_request) =
   in
   let requested_scope = Sol_cli_deployment_scope.request_to_string selected.request in
   let services = selected.Sol_cli_workload_selection.services in
+  (* FEAT-050: resolve supplied artifact references against the services this
+     invocation actually selected, so a name typo or an ambiguous bare
+     reference fails before the target or registry is even resolved. *)
+  let image_refs =
+    match
+      Sol_cli_image_ref.resolve
+        ~service_names:(List.map (fun (s : Sol_cli_manifest.service) -> s.name) services)
+        req.image_refs
+    with
+    | Ok refs -> refs
+    | Error msg ->
+      Printf.eprintf "error: %s\n" msg;
+      exit 1
+  in
   let resolved_config, target_cfg =
     match Sol_cli_config.load_for_target ~target:req.target with
     | Error e ->
@@ -626,6 +666,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
     ; target_cfg
     ; resolved_config
     ; services
+    ; image_refs
     ; requested_scope
     ; target_name = req.target
     ; run_log
@@ -718,6 +759,20 @@ let image_tag_arg =
         ~doc:
           "Image tag to deploy (default: short git SHA). In CI, pass the exact SHA built \
            by the preceding job.")
+;;
+
+let image_ref_arg =
+  Arg.(
+    value
+    & opt_all string []
+    & info
+        [ "image-ref" ]
+        ~docv:"[SERVICE=]REPO@sha256:DIGEST"
+        ~doc:
+          "Deploy a pre-built immutable artifact instead of a mutable tag. Repeatable. A \
+           <service>= prefix pins one service; a bare reference requires exactly one \
+           selected service. Every reference must be a digest. A target that selects \
+           production-single-region requires one for every deployed workload.")
 ;;
 
 let registry_arg =
@@ -896,6 +951,7 @@ let cmd =
              emit_to
              emit_plan_to
              image_tag
+             raw_image_refs
              registry
              secret_backend
              confirm_group_change
@@ -910,6 +966,7 @@ let cmd =
                ~emit_to
                ~emit_plan_to
                ~image_tag
+               ~image_refs:(List.map Sol_cli_image_ref.split_flag_value raw_image_refs)
                ~registry
                ~secret_backend
                ~confirm_group_change
@@ -927,6 +984,7 @@ let cmd =
       $ emit_to_arg
       $ emit_plan_to_arg
       $ image_tag_arg
+      $ image_ref_arg
       $ registry_arg
       $ secret_backend_term
       $ confirm_group_change_flag

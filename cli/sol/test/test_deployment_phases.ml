@@ -254,6 +254,7 @@ let test_deploy_request_uses_explicit_tag () =
       ~emit_to:None
       ~emit_plan_to:None
       ~image_tag:(Some "sha-abc")
+      ~image_refs:[]
       ~registry:(Some "reg.example.com")
       ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
       ~confirm_group_change:false
@@ -276,6 +277,7 @@ let test_deploy_request_local_mode_builds_request () =
       ~emit_to:None
       ~emit_plan_to:None
       ~image_tag:(Some "v2")
+      ~image_refs:[]
       ~registry:(Some "gcr.io/myproject")
       ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
       ~confirm_group_change:false
@@ -303,6 +305,7 @@ let test_deploy_request_gitops_action () =
       ~emit_to:(Some "/tmp/gitops")
       ~emit_plan_to:None
       ~image_tag:(Some "tag")
+      ~image_refs:[]
       ~registry:(Some "reg")
       ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
       ~confirm_group_change:false
@@ -330,6 +333,7 @@ let test_deploy_request_dry_run_action_preserves_emit_to () =
       ~emit_to:(Some "/tmp/gitops")
       ~emit_plan_to:None
       ~image_tag:(Some "tag")
+      ~image_refs:[]
       ~registry:(Some "reg")
       ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
       ~confirm_group_change:false
@@ -360,6 +364,7 @@ let test_deploy_request_rejects_empty_target () =
       ~emit_to:None
       ~emit_plan_to:None
       ~image_tag:(Some "tag")
+      ~image_refs:[]
       ~registry:(Some "reg")
       ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
       ~confirm_group_change:false
@@ -382,6 +387,7 @@ let test_deploy_request_registry_omitted_stays_none () =
       ~emit_to:None
       ~emit_plan_to:None
       ~image_tag:(Some "tag")
+      ~image_refs:[]
       ~registry:None
       ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
       ~confirm_group_change:false
@@ -396,6 +402,55 @@ let test_deploy_request_registry_omitted_stays_none () =
       None
       req.Sol_cli_command_request.registry
   | Error msg -> Alcotest.fail msg
+;;
+
+(* FEAT-050: --image-ref values are carried as parsed (service, digest) pairs
+   and a mutable reference is rejected before any deploy logic runs. *)
+let test_deploy_request_accepts_image_refs () =
+  let digest = "reg.example.com/ws/svc@sha256:" ^ String.make 64 'a' in
+  let r =
+    Sol_cli_command_request.make_deploy_request
+      ~target:"dev/aws/us-east-1"
+      ~scope:None
+      ~dry_run:false
+      ~emit_to:None
+      ~emit_plan_to:None
+      ~image_tag:(Some "unused")
+      ~image_refs:[ Some "svc", digest ]
+      ~registry:(Some "reg")
+      ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
+      ~confirm_group_change:false
+      ~loki_push_url:None
+      ~keep_releases:20
+      ~git_sha:(fun () -> "")
+  in
+  match r with
+  | Ok req ->
+    Alcotest.(check int)
+      "one reference carried"
+      1
+      (List.length req.Sol_cli_command_request.image_refs)
+  | Error msg -> Alcotest.fail msg
+;;
+
+let test_deploy_request_rejects_mutable_image_ref () =
+  let r =
+    Sol_cli_command_request.make_deploy_request
+      ~target:"dev/aws/us-east-1"
+      ~scope:None
+      ~dry_run:false
+      ~emit_to:None
+      ~emit_plan_to:None
+      ~image_tag:(Some "unused")
+      ~image_refs:[ None, "reg.example.com/ws/svc:latest" ]
+      ~registry:(Some "reg")
+      ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
+      ~confirm_group_change:false
+      ~loki_push_url:None
+      ~keep_releases:20
+      ~git_sha:(fun () -> "")
+  in
+  Alcotest.(check bool) "mutable reference rejected" true (Result.is_error r)
 ;;
 
 (* ── Phase 2: plan construction ─────────────────────────────────────────── *)
@@ -1016,6 +1071,7 @@ let test_deploy_request_rejects_nonpositive_keep () =
       ~emit_to:None
       ~emit_plan_to:None
       ~image_tag:(Some "tag")
+      ~image_refs:[]
       ~registry:(Some "reg")
       ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
       ~confirm_group_change:false
@@ -1063,6 +1119,14 @@ let () =
             "deploy: registry omitted stays None"
             `Quick
             test_deploy_request_registry_omitted_stays_none
+        ; Alcotest.test_case
+            "deploy: image refs carried"
+            `Quick
+            test_deploy_request_accepts_image_refs
+        ; Alcotest.test_case
+            "deploy: mutable image ref rejected"
+            `Quick
+            test_deploy_request_rejects_mutable_image_ref
         ; Alcotest.test_case
             "up: non-positive keep-releases rejected"
             `Quick

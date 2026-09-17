@@ -59,13 +59,29 @@ Cert-manager uses the configured cluster issuer for TLS.
 `sol/prod/aws/us-east-1.yml` deliberately does not, because an environment's name
 never makes a production claim.
 
+A production target deploys immutable artifacts, not mutable tags. Pin each
+workload to the digest the build pushed:
+
 ```bash
-sol deploy pilot/aws/us-east-1 --dry-run --image-tag "$SHA"
+REGISTRY=123456789012.dkr.ecr.us-east-1.amazonaws.com
+sol deploy pilot/aws/us-east-1 \
+  --image-ref charge_svc="$REGISTRY/pluto/charge-svc@sha256:$CHARGE_DIGEST"
 ```
 
-This runs the profile preflight before anything touches a cluster. It refuses
-until the target establishes every guarantee the profile requires, and lists
-each unmet guarantee with who must act. See the "Production Profile" section of
+A bare `--image-ref <ref>` is accepted when the scope selects exactly one
+service; a whole-workspace deploy needs one `<service>=<ref>` per workload (the
+`app/demo_ts` services deploy the same way). `sol deploy` verifies each
+reference exists in its registry before it applies anything.
+
+```bash
+sol deploy pilot/aws/us-east-1 --scope payments/charge_svc --dry-run \
+  --image-ref charge_svc="$REGISTRY/pluto/charge-svc@sha256:$CHARGE_DIGEST"
+```
+
+Either form runs the profile preflight before anything touches a cluster. It
+refuses until the target establishes every guarantee the profile requires — a
+tag reference is itself one unmet guarantee — and lists each unmet guarantee
+with who must act. See the "Production Profile" section of
 `docs/deployment/self-hosted-substrate-contract.md` in the Sol repository.
 
 ## CLI commands

@@ -44,6 +44,18 @@ let build ~tag ~dockerfile ~context =
 
 let push ~image_ref = run_ok (cmd [ "docker"; "push"; image_ref ])
 
+(* FEAT-050: confirm a supplied digest reference actually exists in its
+   registry before anything is applied. [docker manifest inspect] resolves the
+   reference against the registry (using the already-configured docker
+   credentials) and exits non-zero when it cannot. A reference that does not
+   exist is a caller error, not a transient one, so the caller treats a false
+   result as fail-closed. *)
+let manifest_exists ~image_ref =
+  match run (cmd [ "docker"; "manifest"; "inspect"; image_ref ]) with
+  | Ok r -> r.Sol_cli_process.exit_code = 0
+  | Error _ -> false
+;;
+
 let inspect_digest ~image_ref =
   match
     run (cmd [ "docker"; "inspect"; "--format"; "{{index .RepoDigests 0}}"; image_ref ])
