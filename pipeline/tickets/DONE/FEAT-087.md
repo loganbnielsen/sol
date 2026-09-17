@@ -83,3 +83,75 @@ N/A — this ticket adds CI coverage for an existing example (`demo_ts`); it doe
 ## TypeScript-parity note (DEC-022)
 
 This directly closes a parity gap: OCaml has automated golden-path coverage, TypeScript didn't. No new capability is introduced to the framework itself.
+
+## Completion notes (2026-09-17) — PASS
+
+`golden-path-smoke-ts` is green on a real CI run — run
+[35168274352](https://github.com/loganbnielsen/sol/actions/runs/35168274352),
+commit `29430562`, all 12 jobs passing.
+
+Bring-up took four real runs, and the first diagnosis was wrong in a way only a
+real run could show. The sequence is the interesting part:
+
+- **Run 1** failed because the worker pod was ~2s old when the transaction
+  fired: a plain worker Deployment renders no readiness probe, so Kubernetes
+  considers it Ready the instant the container starts.
+- **The first fix — an explicit `kubectl wait --for=condition=ready` on the
+  worker — was a no-op and was removed.** Measured: that wait returned in ~1.1s
+  against a freshly deleted worker pod, while the same pod's own logs showed its
+  consumer joining ~11.5s after start. It waited on exactly the signal the bug
+  report says is insufficient.
+- **The real cause was message loss, not slowness.** `fulfillment_worker`
+  subscribes with `fromBeginning: false`, so on a brand-new consumer group a
+  message produced before the group finishes joining is not delayed — it is
+  invisible to that consumer permanently. Measured on a real run: `POST /orders`
+  at `00:31:43.978Z`, the worker's own `[ConsumerGroup] Consumer has joined the
+  group` at `00:31:52.778Z`, 8.8s later. No retry budget on the downstream
+  Postgres poll could ever have recovered that message.
+- **The shipped fix** waits for that join line — the application's own evidence,
+  the same "poll for the observed effect" pattern `probe()` uses for HTTP —
+  before sending traffic, then asserts the Postgres row with a 3-minute outer
+  deadline. On the green run the ordering is exactly right: join logged
+  `01:01:04.325Z`, detected `01:01:04.600Z`, `POST /orders` `01:01:04.829Z`, row
+  confirmed `01:01:05.358Z`.
+
+Two implementation details worth keeping:
+
+- The join wait captures `kubectl logs` output into a variable before matching,
+  rather than piping into `grep -q`. Under the step's `set -o pipefail`,
+  `kubectl logs … | grep -q PATTERN` reports *no match even when PATTERN is
+  present*: `grep -q` exits at the first match, kubectl keeps writing into a
+  closed pipe, and pipefail propagates kubectl's SIGPIPE exit (141). Reproduced
+  locally before fixing — it would have failed in precisely the success case the
+  wait exists to detect.
+- The diagnostics step now dumps `order-svc`/`fulfillment-worker` app logs
+  unconditionally. The previous dump only logged pods Kubernetes considered
+  unhealthy, so a worker that was k8s-Ready but not yet consuming produced no
+  application-log evidence on failure — the exact case that cost a run to
+  diagnose.
+
+Deliberately **not** changed here, and filed separately as **DEC-028** (BACKLOG):
+whether Sol should model worker application readiness at all. Today `svc` Ready
+means its `/healthz` probe passes, while `worker` Ready means only that the
+container started — `sol_cli_manifest.mli` documents the probe asymmetry,
+`sol_cli_up_execution.ml` waits on `kubectl rollout status` for `Svc` and
+`Worker` alike, and `sol_cli_rollout_diagnosis.ml` reads the same `ready` flag
+for both. The semantically correct event already exists on the OCaml side
+(`Sol_worker.Worker.run`'s `?on_ready`, fired on partition assignment) and is
+surfaced nowhere. That is platform-contract territory and a deliberate decision,
+not a side effect of making one CI job green.
+
+Acceptance criteria:
+
+- ✅ A new CI job deploys `demo_ts` to a real k3d cluster and asserts pod health,
+  `/healthz`, and one real transaction through Postgres.
+- ✅ Resolves `@sol-fab/*` from npm via `demo_ts`'s own lockfile — no checkout,
+  build, or reference to `loganbnielsen/sol-typescript`.
+- ✅ Not a required status check initially (matches `golden-path-smoke`'s own
+  bring-up precedent).
+- ✅ A real CI run demonstrates the job passing — run 35168274352.
+
+The optional coarse liveness assertion was included and passes: a graceful
+`order-svc` pod delete produces a clean replacement with 0 restarts. FEAT-082's
+forced-shutdown/redelivery/retry-exhaustion experiments remain out of scope, as
+the ticket specifies.
