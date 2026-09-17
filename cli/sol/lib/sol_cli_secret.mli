@@ -21,7 +21,13 @@ val secret_manifest
 
 val redacted_result : action_result -> string
 
-(** FEAT-063: each operation runs against the cluster [ctx] names. *)
+(** FEAT-063: each operation runs against the cluster [ctx] names.
+
+    SEC-004: [set] is also the rotation path. Because workloads receive secrets
+    as environment variables, a running pod never observes a new value, so [set]
+    restarts every live workload in the namespace and waits for [rollout status]
+    to confirm it returned to healthy state. A workload that never becomes
+    healthy fails the whole operation rather than reporting a silent success. *)
 val set
   :  ctx:Sol_cli_kube_destination.context
   -> env:string

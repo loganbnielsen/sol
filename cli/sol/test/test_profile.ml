@@ -399,13 +399,13 @@ let test_unestablished_guarantees_fail_closed () =
       findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
     in
     check_strs
-      "every guarantee that is not yet established is unmet"
+      "every guarantee that is not yet established is unmet (credential posture is now \
+       established by the renderer)"
       [ "qualified_versions"
       ; "remote_state"
       ; "scoped_operator_identities"
       ; "alert_delivery"
       ; "immutable_artifacts"
-      ; "credential_posture"
       ; "workload_availability"
       ]
       (capabilities fs);
@@ -579,6 +579,23 @@ let test_unqualified_provider_is_a_target_finding () =
     | Some f ->
       check_bool "target side" true (f.side = Pre.Target);
       check_bool "names the provider" true (contains ~needle:"gcp" f.reason))
+;;
+
+(* SEC-004: credential posture is a Sol-owned property of the renderer, so the
+   guarantee is established for every plan regardless of target/application. *)
+let test_credential_posture_is_established () =
+  with_workspace (fun () ->
+    write_target prod_aws selecting;
+    let plan = plan_for "prod/aws/us-east-1" in
+    check_bool
+      "the renderer guarantees no ambient Kubernetes credential"
+      true
+      (Pre.establish
+         ~target:(target_of (load "prod/aws/us-east-1"))
+         ~apply_mode:Sol_cli_release.Direct
+         ~plan
+         P.Credential_posture
+       = Pre.Established))
 ;;
 
 let test_emit_to_rejected_for_profile () =
@@ -821,6 +838,10 @@ let () =
             "unroutable alert receiver is a target finding"
             `Quick
             test_unroutable_alert_receiver_is_a_target_finding
+        ; Alcotest.test_case
+            "credential posture is established"
+            `Quick
+            test_credential_posture_is_established
         ; Alcotest.test_case
             "Kafka dependency declaration required"
             `Quick

@@ -631,6 +631,38 @@ let test_worker_has_deployment () =
   assert_contains "worker Deployment" workload "kind: Deployment"
 ;;
 
+(* SEC-004: no workload gets an ambient Kubernetes credential. The
+   ServiceAccount disables token automount, and nothing re-enables it on the
+   pod spec. *)
+let test_service_account_disables_token_automount () =
+  let ns_yaml, workload = render_spec_ok worker_spec in
+  let rendered = ns_yaml ^ workload in
+  assert_contains "ServiceAccount rendered" rendered "kind: ServiceAccount";
+  assert_contains "automount disabled" rendered "automountServiceAccountToken: false";
+  assert_absent
+    "pod does not re-enable automount"
+    workload
+    "automountServiceAccountToken: true"
+;;
+
+let test_svc_service_account_disables_token_automount () =
+  let ns_yaml, workload = render_spec_ok svc_spec in
+  let rendered = ns_yaml ^ workload in
+  assert_contains "svc ServiceAccount rendered" rendered "kind: ServiceAccount";
+  assert_contains "svc automount disabled" rendered "automountServiceAccountToken: false";
+  assert_absent
+    "svc pod does not re-enable automount"
+    workload
+    "automountServiceAccountToken: true"
+;;
+
+let test_fn_service_account_disables_token_automount () =
+  let ns_yaml, workload = render_spec_ok fn_spec in
+  let rendered = ns_yaml ^ workload in
+  assert_contains "fn ServiceAccount rendered" rendered "kind: ServiceAccount";
+  assert_contains "fn automount disabled" rendered "automountServiceAccountToken: false"
+;;
+
 (* ── Fn tests ────────────────────────────────────────────────────────────── *)
 
 let test_fn_namespace () =
@@ -2336,6 +2368,18 @@ let () =
         ; Alcotest.test_case "no Service/Ingress" `Quick test_worker_no_service_resource
         ; Alcotest.test_case "metrics containerPort" `Quick test_worker_metrics_port
         ; Alcotest.test_case "has Deployment" `Quick test_worker_has_deployment
+        ; Alcotest.test_case
+            "ServiceAccount disables token automount"
+            `Quick
+            test_service_account_disables_token_automount
+        ; Alcotest.test_case
+            "svc ServiceAccount disables token automount"
+            `Quick
+            test_svc_service_account_disables_token_automount
+        ; Alcotest.test_case
+            "fn ServiceAccount disables token automount"
+            `Quick
+            test_fn_service_account_disables_token_automount
         ; Alcotest.test_case
             "user secret key in Secret resource"
             `Quick
