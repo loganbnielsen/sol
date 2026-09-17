@@ -585,6 +585,37 @@ target:
         (Option.get target.observability_backend))
 ;;
 
+(* OBS-043: the provider-neutral alert-delivery declaration. *)
+let test_target_alert_delivery_parsed () =
+  with_temp_dir (fun () ->
+    write_base ();
+    mkdir_p "sol/prod/aws";
+    write
+      "sol/prod/aws/us-east-1.yml"
+      {|
+target:
+  base_domain: pluto.example.com
+  alert_receiver_type: webhook
+  alert_receiver_url: https://hooks.example.com/sol-alerts
+  alert_owner: payments-oncall
+  alert_runbook_url: https://runbooks.example.com/sol
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      let target = Option.get (Sol_cli_config.target cfg) in
+      check_str "receiver type" "webhook" (Option.get target.alert_receiver_type);
+      check_str
+        "receiver url"
+        "https://hooks.example.com/sol-alerts"
+        (Option.get target.alert_receiver_url);
+      check_str "owner" "payments-oncall" (Option.get target.alert_owner);
+      check_str
+        "runbook"
+        "https://runbooks.example.com/sol"
+        (Option.get target.alert_runbook_url))
+;;
+
 let test_target_observability_backend_absent_when_unset () =
   with_temp_dir (fun () ->
     write_base ();
@@ -1073,6 +1104,10 @@ let () =
             "observability_backend absent when unset"
             `Quick
             test_target_observability_backend_absent_when_unset
+        ; Alcotest.test_case
+            "alert delivery declaration parsed"
+            `Quick
+            test_target_alert_delivery_parsed
         ; Alcotest.test_case "bad target path fails" `Quick test_bad_target_path_fails
         ; Alcotest.test_case
             "unknown target provider fails"

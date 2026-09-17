@@ -39,6 +39,7 @@
   test_open
   test_status
   test_profile
+  test_alerting
   test_workspace
   test_platform_component
   test_image_ref)

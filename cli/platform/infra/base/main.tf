@@ -1044,9 +1044,24 @@ locals {
 #     already uses for `kube-state-metrics.enabled` below), shaped as
 #     `alertmanager` 1.10.0's own `config.route`/`config.receivers` block.
 locals {
-  # Both rules use Sol's own label taxonomy (docs/architecture/
-  # observability-design.md) rather than a hardcoded domain/service, so
-  # they apply workspace-wide to every deployed service by default.
+  # OBS-043: the provider-neutral alert-delivery contract. A target that selects
+  # the production profile must declare a receiver/owner/runbook (validated by
+  # sol deploy's preflight); applying base with the same values wires the
+  # Alertmanager route. Empty values keep the deliberate dev-only null receiver
+  # (OBS-040), so local/dev behaves exactly as before.
+  alerting_configured = var.alert_receiver_type == "webhook" && var.alert_receiver_url != ""
+
+  # Every required production alert carries its accountable owner and a link to
+  # its first-response runbook (OBS-043). Empty in dev, where nothing pages.
+  alert_annotations = {
+    owner       = var.alert_owner
+    runbook_url = var.alert_runbook_url
+  }
+
+  # Every rule uses Sol's own label taxonomy (docs/architecture/
+  # observability-design.md) or standard kube-state-metrics labels — never a
+  # hardcoded domain/service — so the set applies workspace-wide to every
+  # deployed workload by default.
   prometheus_alerting_rules = {
     groups = [
       {
@@ -1056,9 +1071,9 @@ locals {
             # sol_svc_requests_total / status_class come from sol-svc's own
             # auto-metrics (framework/sol-svc/lib/service.ml) and carry the
             # workspace/env/domain/service taxonomy labels via pod-label
-            # scraping (Sol_cli_manifest_yaml.render_taxonomy_labels) --
-            # same metric and label set as the "5xx error rate by service"
-            # panel in dashboards/domain-overview.json.
+            # scraping (Sol_cli_manifest_yaml.render_taxonomy_labels) -- same
+            # metric and label set as the "5xx error rate by service" panel in
+            # dashboards/domain-overview.json.
             alert = "SolHighErrorRate"
             expr = join(" ", [
               "(sum by (workspace, env, domain, service) (rate(sol_svc_requests_total{status_class=\"5xx\"}[5m]))",
@@ -1069,49 +1084,157 @@ locals {
             labels = {
               severity = "warning"
             }
-            annotations = {
+            annotations = merge({
               summary     = "High 5xx error rate for {{ $labels.service }} ({{ $labels.domain }}/{{ $labels.workspace }})"
               description = "{{ $labels.service }} in domain {{ $labels.domain }} (workspace {{ $labels.workspace }}, env {{ $labels.env }}) has served a 5xx rate of {{ $value | humanizePercentage }} over the last 5 minutes."
-            }
+            }, local.alert_annotations)
           },
           {
             # kube_pod_container_status_restarts_total comes from
-            # kube-state-metrics, bundled and enabled by default in this
-            # chart's own subchart defaults (confirmed via `helm show
-            # values`: `kube-state-metrics.enabled: true`, not overridden
-            # anywhere in this file) and reachable via the chart's default
-            # `kubernetes-service-endpoints` scrape job. This metric
-            # carries kube-state-metrics' own namespace/pod/container
-            # labels, not Sol's taxonomy labels directly (those live on
-            # the monitored pod, not on kube-state-metrics' pod) -- Sol
-            # namespaces are named `<workspace>-<domain>` (see
-            # Sol_cli_kubernetes_name.namespace_of_parts), so the alert is
-            # still workspace/domain-identifiable via namespace/pod
-            # without a hardcoded value. No `by (...)` grouping needed:
-            # the source metric is already per-pod/per-container, not an
-            # aggregate.
+            # kube-state-metrics, bundled and enabled by default in this chart's
+            # own subchart defaults (confirmed via `helm show values`:
+            # `kube-state-metrics.enabled: true`, not overridden anywhere in this
+            # file) and reachable via the chart's default
+            # `kubernetes-service-endpoints` scrape job. This metric carries
+            # kube-state-metrics' own namespace/pod/container labels, not Sol's
+            # taxonomy labels directly (those live on the monitored pod, not on
+            # kube-state-metrics' pod) -- Sol namespaces are named
+            # `<workspace>-<domain>` (see
+            # Sol_cli_kubernetes_name.namespace_of_parts), so the alert is still
+            # workspace/domain-identifiable via namespace/pod without a
+            # hardcoded value. No `by (...)` grouping needed: the source metric
+            # is already per-pod/per-container, not an aggregate.
             alert = "SolPodRestartLoop"
             expr  = "increase(kube_pod_container_status_restarts_total[15m]) > 3"
             for   = "5m"
             labels = {
               severity = "warning"
             }
-            annotations = {
+            annotations = merge({
               summary     = "Pod {{ $labels.pod }} restarting repeatedly"
               description = "Container {{ $labels.container }} in pod {{ $labels.pod }} (namespace {{ $labels.namespace }}) restarted {{ $value }} times in the last 15 minutes. Namespace is `<workspace>-<domain>`; join with `kube_pod_labels` for an exact workspace/domain/service breakdown."
+            }, local.alert_annotations)
+          },
+          {
+            # OBS-043 indicator 1/5: failed rollout. A Deployment whose available
+            # replicas stay below its desired count is either stuck or failing to
+            # become ready; `for` keeps an ordinary in-progress rollout from
+            # firing. kube-state-metrics, already scraped.
+            alert = "SolRolloutFailed"
+            expr  = "kube_deployment_status_replicas_available / clamp_min(kube_deployment_spec_replicas, 1) < 1"
+            for   = "10m"
+            labels = {
+              severity = "warning"
             }
+            annotations = merge({
+              summary     = "Rollout stuck for {{ $labels.namespace }}/{{ $labels.deployment }}"
+              description = "Deployment {{ $labels.deployment }} in namespace {{ $labels.namespace }} has had fewer available replicas than desired for 10 minutes."
+            }, local.alert_annotations)
+          },
+          {
+            # OBS-043 indicator 2/5: node loss. A node reporting Ready=false (or
+            # NotReady) means its workloads are being rescheduled; the
+            # `node-failure-tolerant` availability tier assumes enough headroom
+            # to absorb this. kube-state-metrics, already scraped.
+            alert = "SolNodeNotReady"
+            expr  = "kube_node_status_condition{condition=\"Ready\",status=\"true\"} == 0"
+            for   = "5m"
+            labels = {
+              severity = "warning"
+            }
+            annotations = merge({
+              summary     = "Node {{ $labels.node }} not ready"
+              description = "Node {{ $labels.node }} has reported Ready=false for 5 minutes. Confirm the `node-failure-tolerant` workloads' headroom is absorbing the loss."
+            }, local.alert_annotations)
+          },
+          {
+            # OBS-043 indicator 5/5: telemetry loss. DEC-026 §5 makes telemetry
+            # the deliberately weakest contract, so this alert states an explicit
+            # degraded mode: alerting/dashboards are compromised while the
+            # business data path is not. Any monitoring-namespace scrape target
+            # being down is the signal.
+            alert = "SolTelemetryTargetDown"
+            expr  = "up{namespace=\"monitoring\"} == 0"
+            for   = "10m"
+            labels = {
+              severity = "warning"
+            }
+            annotations = merge({
+              summary     = "Telemetry target down in monitoring"
+              description = "Scrape target {{ $labels.job }} ({{ $labels.instance }}) in the monitoring namespace has been down for 10 minutes. Diagnostics are degraded; business-data durability is unaffected (DEC-026 §5)."
+            }, local.alert_annotations)
+          },
+          {
+            # OBS-043 indicator 3/5: Postgres dependency loss/restore. Requires a
+            # target-provided Postgres exporter (`pg_up`); silent, never a false
+            # positive, when no such target is scraped. The managed-RDS path
+            # exports via OBS-044's CloudWatch integration rather than this rule.
+            alert = "SolPostgresUnavailable"
+            expr  = "pg_up == 0"
+            for   = "5m"
+            labels = {
+              severity = "critical"
+            }
+            annotations = merge({
+              summary     = "Postgres dependency unavailable"
+              description = "The monitored Postgres target has been down for 5 minutes. Restore/failover runbook applies; application writes may be failing."
+            }, local.alert_annotations)
+          },
+          {
+            # OBS-043 indicator 4/5: Kafka lag/broker loss (two signals). Both
+            # are Redpanda's own metrics; silent when Redpanda is not scraped.
+            # The thresholds are deliberately conservative starting points.
+            alert = "SolKafkaConsumerLagHigh"
+            expr  = "redpanda_kafka_consumer_group_lag > 10000"
+            for   = "10m"
+            labels = {
+              severity = "warning"
+            }
+            annotations = merge({
+              summary     = "Kafka consumer lag high for group {{ $labels.group }}"
+              description = "Consumer group {{ $labels.group }} on topic {{ $labels.topic }} has been more than 10000 messages behind for 10 minutes."
+            }, local.alert_annotations)
+          },
+          {
+            alert = "SolKafkaBrokerDown"
+            expr  = "up{job=~\".*redpanda.*\"} == 0"
+            for   = "5m"
+            labels = {
+              severity = "critical"
+            }
+            annotations = merge({
+              summary     = "Kafka broker scrape target down"
+              description = "A Redpanda broker scrape target ({{ $labels.instance }}) has been down for 5 minutes. The `single-broker-loss` durability contract tolerates one broker; more than one is outside the profile."
+            }, local.alert_annotations)
           }
         ]
       }
     ]
   }
 
-  # No notification receiver by default -- a "null" receiver (declared,
-  # zero configs) still shows fired/resolved alerts in Alertmanager's own
-  # UI/API, it just sends nothing anywhere. Pointing this at a real
-  # Slack/PagerDuty/email receiver is documented as a per-user override in
-  # docs/deployment/observability-backends.md, not shipped here.
-  prometheus_alertmanager_config = {
+  # Null receiver by default (OBS-040): a "null" receiver (declared, zero
+  # configs) still shows fired/resolved alerts in Alertmanager's own UI/API, it
+  # just sends nothing anywhere. When the target declares the OBS-043 webhook
+  # contract, route every alert to it. Slack/PagerDuty/email remain documented
+  # adapters over the same provider-neutral contract; none is the Sol semantic.
+  prometheus_alertmanager_config = local.alerting_configured ? {
+    route = {
+      receiver        = "sol-receiver"
+      group_by        = ["alertname", "workspace", "domain", "service"]
+      group_wait      = "30s"
+      group_interval  = "5m"
+      repeat_interval = "4h"
+    }
+    receivers = [
+      {
+        name = "sol-receiver"
+        webhook_configs = [{
+          url           = var.alert_receiver_url
+          send_resolved = true
+        }]
+      }
+    ]
+    } : {
     route = {
       receiver        = "null"
       group_by        = ["alertname", "workspace", "domain", "service"]

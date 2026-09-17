@@ -91,6 +91,19 @@ The exact supported set — CLI, OCaml version, Kubernetes, provider module and
 chart versions — is published in
 `docs/deployment/compatibility.md` in the Sol repository.
 
+The pilot target declares the alert-delivery contract
+(`alert_receiver_type`/`alert_receiver_url`/`alert_owner`/`alert_runbook_url`).
+Exercise that route without a real incident:
+
+```bash
+kubectl -n monitoring port-forward svc/prometheus-alertmanager 9093:9093 &
+sol alert test --target pilot/aws/us-east-1
+```
+
+The command's exit status proves the route is configured and reachable; the
+delivered-and-acknowledged result is HARDEN-002's live evidence. Runbooks for
+each required alert are in `docs/deployment/alert-runbooks.md`.
+
 See the "Production Profile" section of
 `docs/deployment/self-hosted-substrate-contract.md` in the Sol repository.
 

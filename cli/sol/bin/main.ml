@@ -26,6 +26,7 @@ let () =
       ; Cmd_target.cmd
       ; Cmd_releases.cmd
       ; Cmd_deployments.cmd
+      ; Cmd_alert.cmd
       ; Cmd_cloud.cmd
       ]
   in

@@ -1,5 +1,17 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: OBS-043 — close the production alert-to-owner response loop (2026-09-17)
+
+Alert delivery is now a provider-neutral contract (`Sol_cli_alerting`): a
+target declares a receiver type (only `webhook` qualified), a routable
+endpoint, an owner and a runbook; preflight's `Alert_delivery` fails closed
+otherwise, and applying `cli/platform/infra/base` wires the Alertmanager route.
+The five maturity-A threshold indicators — failed rollout, node loss, Postgres
+dependency, Kafka lag/broker loss, telemetry loss — ship as rules with one-page
+runbooks (`docs/deployment/alert-runbooks.md`), and `sol alert test` injects a
+synthetic alert to prove the route. Delivered-and-acknowledged evidence is
+HARDEN-002's.
+
 ## Latest: AUDIT-078 — application-data durability and recovery (2026-09-17)
 
 The production profile's Postgres and Kafka guarantees gained a

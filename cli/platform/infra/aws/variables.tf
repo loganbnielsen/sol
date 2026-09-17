@@ -134,3 +134,27 @@ variable "loki_retention_days" {
     error_message = "loki_retention_days must be a whole number of days >= 1."
   }
 }
+
+# ── Alerting (OBS-043) ──────────────────────────────────────────────────────
+# Consumed by cli/platform/infra/base (the Alertmanager route), declared here
+# too so a target passing the alert_* contract through `sol cloud tf` does not
+# fail on an undeclared variable in this layer. This layer ignores them.
+variable "alert_receiver_type" {
+  type    = string
+  default = ""
+}
+
+variable "alert_receiver_url" {
+  type    = string
+  default = ""
+}
+
+variable "alert_owner" {
+  type    = string
+  default = ""
+}
+
+variable "alert_runbook_url" {
+  type    = string
+  default = ""
+}

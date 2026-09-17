@@ -11,6 +11,10 @@ type target =
   ; kubeconfig : string option
   ; terraform_var_file : string option
   ; observability_backend : string option
+  ; alert_receiver_type : string option
+  ; alert_receiver_url : string option
+  ; alert_owner : string option
+  ; alert_runbook_url : string option
   ; profile : Sol_cli_profile.t option
   ; provider_fields : (string * (string * string) list) list
   }
@@ -65,6 +69,10 @@ let target_empty =
   ; kubeconfig = None
   ; terraform_var_file = None
   ; observability_backend = None
+  ; alert_receiver_type = None
+  ; alert_receiver_url = None
+  ; alert_owner = None
+  ; alert_runbook_url = None
   ; profile = None
   ; provider_fields = []
   }
@@ -213,6 +221,10 @@ type target_key =
   | Target_kubeconfig
   | Target_terraform_var_file
   | Target_observability_backend
+  | Target_alert_receiver_type
+  | Target_alert_receiver_url
+  | Target_alert_owner
+  | Target_alert_runbook_url
   | Target_profile
   | Target_provider_box of Sol_cli_provider.t
   | Target_unknown of string
@@ -227,6 +239,10 @@ let target_key_of_string s =
   | "kubeconfig" -> Target_kubeconfig
   | "terraform_var_file" -> Target_terraform_var_file
   | "observability_backend" -> Target_observability_backend
+  | "alert_receiver_type" -> Target_alert_receiver_type
+  | "alert_receiver_url" -> Target_alert_receiver_url
+  | "alert_owner" -> Target_alert_owner
+  | "alert_runbook_url" -> Target_alert_runbook_url
   | "profile" -> Target_profile
   | _ ->
     (match Sol_cli_provider.of_string s with
@@ -243,6 +259,10 @@ let target_key_name = function
   | Target_kubeconfig -> "kubeconfig"
   | Target_terraform_var_file -> "terraform_var_file"
   | Target_observability_backend -> "observability_backend"
+  | Target_alert_receiver_type -> "alert_receiver_type"
+  | Target_alert_receiver_url -> "alert_receiver_url"
+  | Target_alert_owner -> "alert_owner"
+  | Target_alert_runbook_url -> "alert_runbook_url"
   | Target_profile -> "profile"
   | Target_provider_box provider -> Sol_cli_provider.to_string provider
   | Target_unknown s -> s
@@ -474,6 +494,18 @@ let load path =
                           | Target_observability_backend ->
                             let* v = scalar k v in
                             Ok { current with observability_backend = Some v }
+                          | Target_alert_receiver_type ->
+                            let* v = scalar k v in
+                            Ok { current with alert_receiver_type = Some v }
+                          | Target_alert_receiver_url ->
+                            let* v = scalar k v in
+                            Ok { current with alert_receiver_url = Some v }
+                          | Target_alert_owner ->
+                            let* v = scalar k v in
+                            Ok { current with alert_owner = Some v }
+                          | Target_alert_runbook_url ->
+                            let* v = scalar k v in
+                            Ok { current with alert_runbook_url = Some v }
                           | Target_profile ->
                             let* v = scalar k v in
                             (match Sol_cli_profile.of_selection v with
@@ -673,6 +705,10 @@ let merge_target a b =
   ; kubeconfig = prefer a.kubeconfig b.kubeconfig
   ; terraform_var_file = prefer a.terraform_var_file b.terraform_var_file
   ; observability_backend = prefer a.observability_backend b.observability_backend
+  ; alert_receiver_type = prefer a.alert_receiver_type b.alert_receiver_type
+  ; alert_receiver_url = prefer a.alert_receiver_url b.alert_receiver_url
+  ; alert_owner = prefer a.alert_owner b.alert_owner
+  ; alert_runbook_url = prefer a.alert_runbook_url b.alert_runbook_url
   ; profile = prefer a.profile b.profile
   ; provider_fields = merge_provider_fields a.provider_fields b.provider_fields
   }
@@ -776,6 +812,10 @@ let target_of_path s =
           ; kubeconfig = None
           ; terraform_var_file = None
           ; observability_backend = None
+          ; alert_receiver_type = None
+          ; alert_receiver_url = None
+          ; alert_owner = None
+          ; alert_runbook_url = None
           ; profile = None
           ; provider_fields = []
           }
@@ -1151,6 +1191,10 @@ let terraform_vars ~workspace cfg =
       |> add_opt "cluster_name" target.cluster_name
       |> add_opt "base_domain" target.base_domain
       |> add_opt "cluster_issuer" target.cluster_issuer
+      |> add_opt "alert_receiver_type" target.alert_receiver_type
+      |> add_opt "alert_receiver_url" target.alert_receiver_url
+      |> add_opt "alert_owner" target.alert_owner
+      |> add_opt "alert_runbook_url" target.alert_runbook_url
       |> add_opt "workspace_name" (Some workspace)
     in
     let vars =
