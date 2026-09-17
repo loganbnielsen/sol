@@ -193,7 +193,7 @@ let unit ~domain ~name primitive : Sol_cli_manifest.service =
 
 let charge_svc = unit ~domain:"payments" ~name:"charge_svc" Sol_cli_manifest.Svc
 
-let plan_for ?(services = [ charge_svc ]) target =
+let plan_for ?(services = [ charge_svc ]) ?(image_refs = []) target =
   List.iter
     (fun (s : Sol_cli_manifest.service) ->
        mkdir_p s.dir;
@@ -204,6 +204,7 @@ let plan_for ?(services = [ charge_svc ]) target =
       ~workspace:"pluto"
       ~env
       ~resolved_config:(load target)
+      ~image_refs
       services
   with
   | Ok plan -> plan
@@ -368,8 +369,8 @@ let test_profile_does_not_change_release_identity () =
 
 (* ── Preflight ───────────────────────────────────────────────────────────── *)
 
-let preflight ?establish ~apply_mode target =
-  let plan = plan_for target in
+let preflight ?establish ?plan ~apply_mode target =
+  let plan = Option.value plan ~default:(plan_for target) in
   Pre.check ?establish ~target:(target_of (load target)) ~apply_mode plan
 ;;
 
@@ -398,7 +399,7 @@ let test_unestablished_guarantees_fail_closed () =
       findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
     in
     check_strs
-      "every guarantee Sol cannot establish yet is unmet"
+      "every guarantee that is not yet established is unmet"
       [ "qualified_versions"
       ; "remote_state"
       ; "scoped_operator_identities"
@@ -409,9 +410,52 @@ let test_unestablished_guarantees_fail_closed () =
       ]
       (capabilities fs);
     check_bool
-      "all attributed to the platform, not the user"
+      "the platform-owned guarantees are attributed to the platform, and the artifact \
+       guarantee to the application"
       true
-      (List.for_all (fun (f : Pre.finding) -> f.side = Pre.Platform) fs))
+      (List.for_all
+         (fun (f : Pre.finding) ->
+            f.side = Pre.Platform = (f.capability <> P.Immutable_artifacts))
+         fs))
+;;
+
+let test_mutable_tag_is_an_application_finding () =
+  with_workspace (fun () ->
+    write_target prod_aws selecting;
+    let fs =
+      findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
+    in
+    match
+      List.find_opt (fun (f : Pre.finding) -> f.capability = P.Immutable_artifacts) fs
+    with
+    | None -> Alcotest.fail "expected an artifact finding for a tag image"
+    | Some f ->
+      check_bool "application side" true (f.side = Pre.Application);
+      check_bool
+        "names the --image-ref fix"
+        true
+        (contains ~needle:"--image-ref" f.reason))
+;;
+
+let test_digest_plan_establishes_artifact_guarantee () =
+  with_workspace (fun () ->
+    write_target prod_aws selecting;
+    let digest =
+      "123456789012.dkr.ecr.us-east-1.amazonaws.com/pluto/charge-svc@sha256:"
+      ^ String.make 64 'a'
+    in
+    let plan = plan_for ~image_refs:[ "charge_svc", digest ] "prod/aws/us-east-1" in
+    let fs =
+      findings (preflight ~plan ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
+    in
+    check_bool
+      "no artifact finding when every workload is a digest"
+      false
+      (List.exists (fun (f : Pre.finding) -> f.capability = P.Immutable_artifacts) fs);
+    match plan.services with
+    | [ spec ] ->
+      check_str "plan image is the digest" digest spec.Sol_cli_deployment_plan.image
+    | _ -> Alcotest.fail "expected exactly one planned service")
 ;;
 
 let test_unqualified_provider_is_a_target_finding () =
@@ -653,6 +697,14 @@ let () =
             "Postgres resource declaration required"
             `Quick
             test_postgres_resource_declaration_required
+        ; Alcotest.test_case
+            "mutable tag is an application finding"
+            `Quick
+            test_mutable_tag_is_an_application_finding
+        ; Alcotest.test_case
+            "digest plan establishes the artifact guarantee"
+            `Quick
+            test_digest_plan_establishes_artifact_guarantee
         ; Alcotest.test_case "all established passes" `Quick test_all_established_passes
         ; Alcotest.test_case
             "report speaks in guarantees"

@@ -27,6 +27,7 @@ val plan_of_services
   -> env:Sol_cli_deployment_plan.env_config
   -> ?requested_scope:string
   -> ?resolved_config:Sol_cli_config.t
+  -> ?image_refs:(string * string) list
   -> Sol_cli_manifest.service list
   -> (Sol_cli_deployment_plan.t, string) result
 

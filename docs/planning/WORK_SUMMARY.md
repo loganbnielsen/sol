@@ -19,6 +19,16 @@ language-neutral declaration and a fail-closed enforcement path.
 - Operator recovery procedures live in
   `docs/deployment/application-data-recovery.md`; HARDEN-002 records evidence.
 
+## Latest: FEAT-050 — immutable workload artifacts for the production profile (2026-09-17)
+
+`sol deploy --image-ref <service>=<repo>@sha256:<digest>` deploys pre-built
+artifacts by digest; a bare reference works when the scope selects one service.
+Non-digest references are rejected up front, the plan and release record carry
+the digest, and rollback reconstructs from the recorded digest. The profile
+preflight's `Immutable_artifacts` guarantee is now a real application-side
+check, and the apply path confirms each reference exists in its registry before
+mutating anything. Tag-based deploys are unchanged.
+
 ## Latest: FEAT-083 — explicit workload persistence semantics (2026-09-17)
 
 Services and workers remain interchangeable Deployments. A declared workload

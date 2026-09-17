@@ -230,11 +230,16 @@ val of_services
     its [sol.yml] entry's [scale_max] (falling back to [scale_min]) when a
     service of the same name sets either. A service with no matching [sol.yml]
     entry, or no [resolved_config] at all, keeps [sol.toml]'s [replicas]
-    unchanged. *)
+    unchanged.
+
+    [image_refs], when given, maps a service name to the fully-qualified
+    immutable reference to deploy for it (FEAT-050). A service with no entry
+    keeps the registry/workspace/tag image. *)
 val of_services_result
   :  workspace:string
   -> env:env_config
   -> ?requested_scope:string
   -> ?resolved_config:Sol_cli_config.t
+  -> ?image_refs:(string * string) list
   -> Sol_cli_manifest.service list
   -> (t, plan_error) result

@@ -24,11 +24,13 @@ type finding =
   ; reason : string
   }
 
-(** The real establishment check for one guarantee against the resolved target
-    and the apply path this invocation would use. *)
+(** The real establishment check for one guarantee against the resolved target,
+    the apply path this invocation would use, and the plan itself (FEAT-050's
+    artifact guarantee is a property of the plan's resolved images). *)
 val establish
   :  target:Sol_cli_config.target
   -> apply_mode:Sol_cli_release.apply_mode
+  -> plan:Sol_cli_deployment_plan.t
   -> Sol_cli_profile.capability
   -> status
 

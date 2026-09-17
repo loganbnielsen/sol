@@ -51,3 +51,37 @@ references; local examples may continue using tags.
 
 **TypeScript parity:** No framework change; artifact identity applies equally to
 all workload languages.
+
+## Outcome (2026-09-17)
+
+`sol deploy` accepts immutable artifact references and the profile enforces
+them.
+
+- `sol deploy --image-ref <service>=<repo>@sha256:<digest>` pins a workload to
+  a digest; repeatable. A bare `--image-ref <ref>` is accepted when the scope
+  selects exactly one service. Any non-digest reference is rejected in
+  `make_deploy_request`, before target or registry resolution.
+- The plan uses the supplied reference verbatim as the service image, so the
+  rendered manifests and the content-addressed release record carry the digest.
+  Rollback already reconstructs each workload from the record's `image`, so a
+  recorded release runs the recorded digest regardless of later tag movement.
+- The profile preflight's `Immutable_artifacts` guarantee is now a real
+  application-side check: it is established only when every planned workload
+  deploys a digest, and reports the `--image-ref` fix otherwise.
+- On the apply path, `docker manifest inspect` confirms each reference exists
+  before anything is mutated; a missing digest names the service and reference.
+  `--dry-run`/`--emit-to` stay offline.
+- Without `--image-ref`, behaviour is unchanged (`sol up` and tag-based
+  `sol deploy` keep working).
+
+Premise check: no `--image-ref`/digest-acceptance path existed in
+`cli/sol` at pickup (`rg image-ref` found only `Sol_cli_deployment_plan.image_ref`,
+the registry-ref builder), so the finding was actionable.
+
+**Demo/example coverage:** `examples/pluto/README.md`'s production-profile
+section now shows `--image-ref` digest deploys (scoped and whole-workspace) and
+states that a tag is itself an unmet guarantee. Local examples keep using tags.
+
+**TypeScript parity:** No language-specific change. `--image-ref` and the
+preflight are language-neutral; the `app/demo_ts` workloads deploy through the
+same path.

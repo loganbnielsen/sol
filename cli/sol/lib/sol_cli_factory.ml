@@ -17,12 +17,20 @@ type execution =
   ; results : Sol_cli_executor.result list
   }
 
-let plan_of_services ~workspace ~env ?requested_scope ?resolved_config services =
+let plan_of_services
+      ~workspace
+      ~env
+      ?requested_scope
+      ?resolved_config
+      ?image_refs
+      services
+  =
   Sol_cli_deployment_plan.of_services_result
     ~workspace
     ~env
     ?requested_scope
     ?resolved_config
+    ?image_refs
     services
   |> Result.map_error Sol_cli_deployment_plan.plan_error_to_string
 ;;

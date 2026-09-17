@@ -688,6 +688,7 @@ let of_services_result
       ~env
       ?(requested_scope = "workspace")
       ?resolved_config
+      ?(image_refs = [])
       services
   =
   let loaded =
@@ -751,7 +752,13 @@ let of_services_result
     let* k8s_name = k8s_name_result svc.Sol_cli_manifest.name in
     let* namespace = namespace_result ~workspace ~domain:svc.Sol_cli_manifest.domain in
     let image =
-      image_ref ~registry:env.registry ~workspace ~k8s_name ~tag:env.image_tag
+      match List.assoc_opt svc.Sol_cli_manifest.name image_refs with
+      | Some ref ->
+        (* FEAT-050: a supplied artifact reference is used verbatim. It is a
+           fully-qualified digest, so the registry/workspace/tag defaults do
+           not apply to it. *)
+        ref
+      | None -> image_ref ~registry:env.registry ~workspace ~k8s_name ~tag:env.image_tag
     in
     let primitive = primitive_of_manifest svc.Sol_cli_manifest.primitive in
     let* calls =

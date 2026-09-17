@@ -47,6 +47,11 @@ type deploy_request =
   ; action : deploy_action
   ; emit_plan_to : string option
   ; image_tag : string
+  ; image_refs : (string option * string) list
+    (** FEAT-050: raw [--image-ref] values, validated as digest references. Each
+          entry is [Some service, ref] for [<service>=<ref>] or [None, ref] for
+          a bare reference; resolution against the selected services happens in
+          [cmd_deploy.ml] once the scope is known. *)
   ; registry : string option
     (** Raw [--registry] value, unresolved. [None] means "use the target
           file's registry, or fail if it has none" — that resolution (no
@@ -84,7 +89,8 @@ val make_up_request
     [git_sha] is a thunk so callers can inject a real or stub implementation.
     Returns [Error msg] if validation fails — including [target] being empty
     (cmdliner's [required] should already prevent this, but this constructor
-    doesn't assume its caller enforced that). *)
+    doesn't assume its caller enforced that) and any [image_refs] entry not
+    being a digest reference (FEAT-050). *)
 val make_deploy_request
   :  target:string
   -> scope:string option
@@ -92,6 +98,7 @@ val make_deploy_request
   -> emit_to:string option
   -> emit_plan_to:string option
   -> image_tag:string option
+  -> image_refs:(string option * string) list
   -> registry:string option
   -> secret_backend:Sol_cli_manifest.secret_backend
   -> confirm_group_change:bool
