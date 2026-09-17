@@ -27,6 +27,7 @@ type workload =
   ; secrets : (string * string) list
   ; schedule : string option
   ; replicas : int
+  ; availability : string
   ; cpu : string
   ; memory : string
   ; extra_labels : (string * string) list
@@ -59,8 +60,10 @@ type t = string
    differently, which is exactly what you want when the projection's meaning
    changes, and exactly what you must not do accidentally. *)
 (* BUG-026 extended the projection to cover every manifest-affecting input, so
-   every release identity changes with this version. *)
-let encoding_version = "sol-release-v2"
+   every release identity changes with this version. AUDIT-080 added the declared
+   availability, which changes the rendered placement/disruption budget/probes,
+   so it is part of the projection too and the vector moves again. *)
+let encoding_version = "sol-release-v3"
 
 (* Length-prefixed encoding. The length prefix is not decoration: with a bare
    separator, workloads ("ab", "c") and ("a", "bc") would encode identically and
@@ -145,6 +148,7 @@ let canonical_string (content : content) =
        enc_pairs b w.secrets;
        enc_option enc_string b w.schedule;
        enc_int b w.replicas;
+       enc_string b w.availability;
        enc_string b w.cpu;
        enc_string b w.memory;
        enc_pairs b w.extra_labels;

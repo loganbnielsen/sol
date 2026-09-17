@@ -358,6 +358,9 @@ val consume
   -> sw:Eio.Switch.t
   -> clock:_ Eio.Time.clock
   -> ?on_ready:(unit -> unit)
+  -> ?on_assigned:(unit -> unit)
+  -> ?on_revoked:(unit -> unit)
+  -> ?on_poll:(unit -> unit)
   -> ?on_decode_error:
        (string
         -> raw_bytes:bytes option
@@ -443,6 +446,9 @@ val consume_partitioned
   -> net:_ Eio.Net.t
   -> clock:_ Eio.Time.clock
   -> ?on_ready:(unit -> unit)
+  -> ?on_assigned:(unit -> unit)
+  -> ?on_revoked:(unit -> unit)
+  -> ?on_poll:(unit -> unit)
   -> ?on_decode_error:
        (string
         -> raw_bytes:bytes option

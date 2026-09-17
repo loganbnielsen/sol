@@ -144,6 +144,8 @@ let test_k8s_name_rejects_invalid_characters () =
     Alcotest.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
     Alcotest.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
+    Alcotest.fail "expected name error"
 ;;
 
 let test_k8s_name_rejects_empty () =
@@ -155,6 +157,8 @@ let test_k8s_name_rejects_empty () =
   | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
     Alcotest.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
+    Alcotest.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
     Alcotest.fail "expected name error"
 ;;
 
@@ -169,6 +173,8 @@ let test_k8s_name_rejects_overlong () =
   | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
     Alcotest.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
+    Alcotest.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
     Alcotest.fail "expected name error"
 ;;
 
@@ -186,6 +192,8 @@ let test_namespace_rejects_invalid_domain () =
     Alcotest.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
     Alcotest.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
+    Alcotest.fail "expected name error"
 ;;
 
 let test_namespace_rejects_overlong () =
@@ -202,6 +210,8 @@ let test_namespace_rejects_overlong () =
   | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
     Alcotest.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
+    Alcotest.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
     Alcotest.fail "expected name error"
 ;;
 
@@ -269,6 +279,7 @@ let sample_plan () : Sol_cli_deployment_plan.t =
     ; scheduled_concurrency = Sol_cli_toml.Allow
     ; backoff_limit = 3
     ; replicas = 2
+    ; availability = Sol_cli_availability.Single
     ; language = None
     ; cpu = cpu "250m"
     ; memory = memory "256Mi"
@@ -753,6 +764,7 @@ let make_worker_spec name domain =
   ; scheduled_concurrency = Sol_cli_toml.Allow
   ; backoff_limit = 3
   ; replicas = 1
+  ; availability = Sol_cli_availability.Single
   ; language = None
   ; cpu = cpu "100m"
   ; memory = memory "128Mi"
@@ -1088,7 +1100,9 @@ let test_of_services_result_surfaces_toml_parse_error () =
     | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
       Alcotest.fail "expected TOML error, got service call error"
     | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
-      Alcotest.fail "expected TOML error, got persistence error")
+      Alcotest.fail "expected TOML error, got persistence error"
+    | Error (Sol_cli_deployment_plan.Unsupported_availability _) ->
+      Alcotest.fail "expected TOML error, got availability error")
 ;;
 
 (* ── BUG-004: sol.yml scale overrides sol.toml replicas ──────────────────── *)

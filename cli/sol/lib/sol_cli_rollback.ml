@@ -169,6 +169,13 @@ let decode_workload ~release_id ~workspace (w : Sol_cli_release.workload) =
          the release record (DEC-022 §7), so a reconstructed release carries
          none. *)
     ; language = None
+    ; (* AUDIT-080: availability changes the rendered placement, disruption
+         budget and probes, so it *is* recorded and a restored release keeps the
+         claim it was rendered with. *)
+      availability =
+        (match Sol_cli_availability.of_string w.availability with
+         | Ok a -> a
+         | Error _ -> Sol_cli_availability.Single)
     ; cpu
     ; memory
     ; rollout_strategy
@@ -183,6 +190,14 @@ let decode_workload ~release_id ~workspace (w : Sol_cli_release.workload) =
   in
   let* () =
     Sol_cli_deployment_plan.validate_persistence spec
+    |> Result.map_error (fun err ->
+      reconstruct_error
+        ~release_id
+        ~workload:w.name
+        ~fact:(Sol_cli_deployment_plan.plan_error_to_string err))
+  in
+  let* () =
+    Sol_cli_deployment_plan.validate_availability spec
     |> Result.map_error (fun err ->
       reconstruct_error
         ~release_id

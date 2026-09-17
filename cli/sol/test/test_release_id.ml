@@ -17,6 +17,7 @@ let wl
       ?(secrets = [])
       ?(schedule = None)
       ?(replicas = 1)
+      ?(availability = "single")
       ?(cpu = "100m")
       ?(memory = "128Mi")
       ?(extra_labels = [])
@@ -37,6 +38,7 @@ let wl
   ; secrets
   ; schedule
   ; replicas
+  ; availability
   ; cpu
   ; memory
   ; extra_labels
@@ -245,8 +247,9 @@ let test_known_vector () =
   check_string
     "known id for a fixed content"
     (* BUG-026: sol-release-v2 widens the projection to every manifest-affecting
-       input, so the vector moved deliberately. *)
-    "r-e1ba38330c2dc9cc"
+       input, so the vector moved deliberately. AUDIT-080 adds the declared
+       availability, moving it again to sol-release-v3. *)
+    "r-817d3ed0b6d5388b"
     (id
        (content
           [ wl

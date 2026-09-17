@@ -228,6 +228,7 @@ let workload_to_json (w : workload) : Yojson.Safe.t =
         | None -> `Null
         | Some s -> `String s )
     ; "replicas", `Int w.replicas
+    ; "availability", `String w.availability
     ; "cpu", `String w.cpu
     ; "memory", `String w.memory
     ; "extra_labels", pairs_to_assoc w.extra_labels
@@ -384,6 +385,12 @@ let workload_of_json (json : Yojson.Safe.t) : workload =
   ; secrets = pairs "secrets" json
   ; schedule = string_option "schedule" json
   ; replicas = int "replicas" json
+  ; availability =
+      (* Records written before AUDIT-080 have no availability; they were
+         rendered as [single]. *)
+      (match Yojson.Safe.Util.member "availability" json with
+       | `String s -> s
+       | _ -> "single")
   ; cpu = str "cpu" json
   ; memory = str "memory" json
   ; extra_labels = pairs "extra_labels" json
