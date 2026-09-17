@@ -454,10 +454,36 @@ let test_plan_service_primitives () =
 ;;
 
 let test_plan_consumer_groups_derived_from_workers () =
+  let resolved_config : Sol_cli_config.t =
+    { project = Some "myapp"
+    ; target = None
+    ; resources =
+        [ { name = "events"
+          ; typ = Some "kafka"
+          ; partition_key = None
+          ; sort_key = None
+          ; indexes = []
+          ; size = None
+          ; omit = false
+          }
+        ]
+    ; services =
+        [ { name = "notify_worker"
+          ; typ = None
+          ; path = None
+          ; uses = [ "events" ]
+          ; scale_min = None
+          ; scale_max = None
+          ; omit = false
+          }
+        ]
+    }
+  in
   let plan =
     { (make_plan [ svc_spec; worker_spec ]) with
       consumer_groups =
         Sol_cli_deployment_plan.derive_consumer_groups
+          ~resolved_config
           "myapp"
           (make_plan [ svc_spec; worker_spec ]).Sol_cli_deployment_plan.services
     }

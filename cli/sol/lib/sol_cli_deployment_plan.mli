@@ -78,6 +78,7 @@ type service_spec =
 type profile_claim =
   { profile : Sol_cli_profile.t
   ; requirements : Sol_cli_profile.capability list
+  ; application_findings : (Sol_cli_profile.capability * string) list
   }
 
 type t =
@@ -136,12 +137,13 @@ val discover_migrations : unit -> Sol_cli_plan_ids.Migration_file.t list
     Returns [[]] when the [events/] directory does not exist. *)
 val discover_schema_subjects : unit -> Sol_cli_plan_ids.Schema_subject.t list
 
-(** [derive_consumer_groups workspace services] returns validated
-    {!Sol_cli_plan_ids.Consumer_group.t} values for all [Worker] entries in
-    [services], sorted and deduplicated. Convention:
+(** [derive_consumer_groups ~resolved_config workspace services] returns validated
+    {!Sol_cli_plan_ids.Consumer_group.t} values for [Worker] entries that
+    declare use of a Kafka resource, sorted and deduplicated. Convention:
     ["<workspace>.<domain>.<worker_name>"]. *)
 val derive_consumer_groups
-  :  string
+  :  ?resolved_config:Sol_cli_config.t
+  -> string
   -> service_spec list
   -> Sol_cli_plan_ids.Consumer_group.t list
 

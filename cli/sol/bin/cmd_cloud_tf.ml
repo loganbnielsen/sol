@@ -706,7 +706,15 @@ let cloud_init ~target ~var_file ~vars ~action () =
     | Some _ -> var_file
     | None -> config_var_file
   in
-  let vars = config_vars @ vars in
+  (* Profile-derived invariants are not operator-tunable escape hatches. Keep
+     the existing CLI-over-config precedence for ordinary targets, but put a
+     selected profile's generated values last so neither --var nor a var file
+     can disable requirements such as RDS Multi-AZ. *)
+  let vars =
+    match target_cfg with
+    | Some { Sol_cli_config.profile = Some _; _ } -> vars @ config_vars
+    | _ -> config_vars @ vars
+  in
   let var_files =
     match var_file with
     | None -> []

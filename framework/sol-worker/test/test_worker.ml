@@ -31,6 +31,7 @@ let fake_config : Kafka_service.config =
   ; admin_url = "http://127.0.0.1:1"
   ; linger_ms = 5
   ; partitions = 1
+  ; topic_durability = Kafka_service.Broker_default
   ; security = Kafka.Security.default
   }
 ;;

@@ -126,8 +126,43 @@ let make_config () : Kafka_service.config =
   ; admin_url
   ; linger_ms = 5
   ; partitions = 1
+  ; topic_durability = Kafka_service.Broker_default
   ; security = Kafka.Security.default
   }
+;;
+
+let test_single_broker_loss_rejects_under_replicated_topic () =
+  Eio_main.run
+  @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
+  let create config =
+    match Kafka_service.create config ~sw with
+    | Ok service -> service
+    | Error e -> Alcotest.fail (Kafka_service.error_to_string e)
+  in
+  let broker_default = create (make_config ()) in
+  (match
+     Kafka_service.register
+       broker_default
+       ~net:env#net
+       ~clock:env#clock
+       (module RawTestEvent)
+   with
+   | Ok _ -> ()
+   | Error e -> Alcotest.fail (Kafka_service.error_to_string e));
+  let durable =
+    create { (make_config ()) with topic_durability = Kafka_service.Single_broker_loss }
+  in
+  match
+    Kafka_service.register durable ~net:env#net ~clock:env#clock (module RawTestEvent)
+  with
+  | Error (Kafka_service.Insufficient_replication { current = 1; required = 3; _ }) -> ()
+  | Error e ->
+    Alcotest.failf
+      "expected insufficient replication, got %s"
+      (Kafka_service.error_to_string e)
+  | Ok _ -> Alcotest.fail "under-replicated existing topic was accepted"
 ;;
 
 (* ------------------------------------------------------------------ *)
@@ -381,6 +416,7 @@ let test_consume_partitioned_reports_partition_error () =
                 topic
                 ~group_id
                 ~sw
+                ~net:env#net
                 ~clock:env#clock
                 ~retry_strategy
                 ~handler:(fun _msg ~ack:_ ~trace_ctx:_ ->
@@ -440,6 +476,7 @@ let test_consume_partitioned_dead_letter_without_retry_topics_fails_closed () =
                 topic
                 ~group_id
                 ~sw
+                ~net:env#net
                 ~clock:env#clock
                 ~retry_strategy
                 ~handler:(fun _msg ~ack:_ ~trace_ctx:_ ->
@@ -567,6 +604,12 @@ let () =
         ] )
     ; ( "roundtrip"
       , [ test_case "publish and consume" `Slow test_publish_consume_roundtrip ] )
+    ; ( "durability"
+      , [ test_case
+            "under-replicated existing topic is rejected"
+            `Slow
+            test_single_broker_loss_rejects_under_replicated_topic
+        ] )
     ; ( "consume_partitioned"
       , [ test_case
             "reports partition error, not a collapsed single error"

@@ -81,6 +81,7 @@ type config = {
   admin_url           : string;       (* Redpanda admin API, e.g. "http://localhost:9644" *)
   linger_ms           : int;          (* batch window; 50ms recommended *)
   partitions          : int;          (* partition count for auto-provisioned topics *)
+  topic_durability    : topic_durability;
   security            : Kafka_security.t;
   (* Transport security. Use Kafka_security.default for local dev.
      In production, set KAFKA_SECURITY_PROTOCOL=sasl_ssl and supply SASL credentials. *)
@@ -95,6 +96,7 @@ val config_of_env : unit -> config
    KAFKA_BROKERS           — comma-separated broker addresses (default: ["localhost:9092"])
    SCHEMA_REGISTRY_URL     — schema registry HTTP URL (default: "http://localhost:8081")
    REDPANDA_ADMIN_URL      — Redpanda admin API URL   (default: "http://localhost:9644")
+   SOL_KAFKA_DURABILITY    — "broker-default" | "single-broker-loss"
    KAFKA_SECURITY_PROTOCOL — "plaintext" | "ssl" | "sasl_plaintext" | "sasl_ssl"
    KAFKA_SSL_CA_LOCATION   — path to CA cert bundle (optional)
    KAFKA_SASL_MECHANISM    — e.g. "SCRAM-SHA-256" (optional)
@@ -103,7 +105,10 @@ val config_of_env : unit -> config
 ```
 
 `config_of_env` is the standard path for Sol workers and services; the generated
-`bin/main.ml` template already calls it.
+`bin/main.ml` template already calls it. A production-profile deployment sets
+`single-broker-loss` for services that declare a Kafka resource in `uses`; the
+framework then creates topics with replication factor three and rejects an
+existing topic whose Redpanda metadata shows fewer replicas.
 
 ## Public API
 

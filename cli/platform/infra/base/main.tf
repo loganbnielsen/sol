@@ -285,6 +285,7 @@ resource "helm_release" "redpanda" {
     local.redpanda_component_values,
     [yamlencode({
       statefulset = { replicas = var.redpanda_replicas }
+      config      = { cluster = { write_caching_default = false } }
       resources = {
         cpu    = { cores = var.redpanda_cpu_cores }
         memory = { container = { max = var.redpanda_memory } }

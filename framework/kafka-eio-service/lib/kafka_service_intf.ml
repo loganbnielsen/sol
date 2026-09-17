@@ -32,12 +32,17 @@ type 'a topic =
   ; decode : Yojson.Safe.t -> ('a, string) result
   }
 
+type topic_durability =
+  | Broker_default
+  | Single_broker_loss
+
 type config =
   { brokers : string list
   ; schema_registry_url : string
   ; admin_url : string
   ; linger_ms : int
   ; partitions : int
+  ; topic_durability : topic_durability
   ; security : Kafka.Security.t
   }
 
@@ -47,6 +52,7 @@ type t =
   ; schema_registry_url : string
   ; admin_url : string
   ; partitions : int
+  ; topic_durability : topic_durability
   ; security : Kafka.Security.t
   }
 
@@ -59,9 +65,14 @@ type handler_error =
   | Dead_letter of string
   | Kafka_error of Kafka.Error.t
 
-let ensure_topic producer ~topic_name ~partitions =
+let ensure_topic producer ~topic_name ~partitions ~topic_durability =
+  let replication_factor =
+    match topic_durability with
+    | Broker_default -> 1
+    | Single_broker_loss -> 3
+  in
   match
-    Kafka.Producer.create_topic producer ~topic_name ~partitions ~replication_factor:1
+    Kafka.Producer.create_topic producer ~topic_name ~partitions ~replication_factor
   with
   | Ok () -> Ok ()
   | Error e -> Error e
@@ -69,7 +80,18 @@ let ensure_topic producer ~topic_name ~partitions =
 
 type topic_partition_metadata =
   | Topic_not_found
-  | Topic_partitions of int
+  | Topic_partitions of
+      { partitions : int
+      ; replication_factor : int
+      }
+
+let topic_has_required_replication topic_durability = function
+  | Topic_not_found -> true
+  | Topic_partitions { replication_factor; _ } ->
+    (match topic_durability with
+     | Broker_default -> true
+     | Single_broker_loss -> replication_factor >= 3)
+;;
 
 type topic_partition_error =
   | Topic_admin_request_failed of string
@@ -86,13 +108,25 @@ let topic_partition_error_to_string = function
 let decode_topic_partitions body =
   try
     match Yojson.Safe.from_string body with
-    | `Assoc fields ->
-      (match List.assoc_opt "partitions" fields with
-       | Some (`List parts) -> Ok (Topic_partitions (List.length parts))
-       | _ -> Error (Topic_admin_malformed_response body))
+    | `List (_ :: _ as parts) ->
+      let replicas =
+        List.map
+          (function
+            | `Assoc fields ->
+              (match List.assoc_opt "replicas" fields with
+               | Some (`List replicas) -> List.length replicas
+               | _ -> raise Exit)
+            | _ -> raise Exit)
+          parts
+      in
+      Ok
+        (Topic_partitions
+           { partitions = List.length parts
+           ; replication_factor = List.fold_left min max_int replicas
+           })
     | _ -> Error (Topic_admin_malformed_response body)
   with
-  | Yojson.Json_error _ -> Error (Topic_admin_malformed_response body)
+  | Yojson.Json_error _ | Exit -> Error (Topic_admin_malformed_response body)
 ;;
 
 let query_topic_partitions net ~clock ~admin_url ~topic_name =
@@ -101,7 +135,7 @@ let query_topic_partitions net ~clock ~admin_url ~topic_name =
       net
       ~clock
       ~base_url:admin_url
-      ~path:(Printf.sprintf "/v1/topics/%s" topic_name)
+      ~path:(Printf.sprintf "/v1/partitions/kafka/%s" topic_name)
   with
   | Error e -> Error (Topic_admin_request_failed e)
   | Ok (404, _) -> Ok Topic_not_found

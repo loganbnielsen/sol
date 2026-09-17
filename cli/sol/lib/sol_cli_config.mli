@@ -82,7 +82,8 @@ val services : t -> service list
 val format_use_ref : string -> string
 
 (** Neutral key/value Terraform variables derived from the target
-    (region/cluster_name/base_domain, active provider fields, create_rds) plus
+    (region/cluster_name/base_domain, active provider fields, create_rds,
+    profile-required RDS HA) plus
     [workspace_name] (the given [workspace]) and [ecr_repositories]
     (auto-derived from every service discovered under [app/], if present in the
     current directory). Terraform CLI syntax ("key=value", "-var=...") is not

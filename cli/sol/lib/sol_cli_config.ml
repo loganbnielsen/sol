@@ -1153,6 +1153,10 @@ let terraform_vars ~workspace cfg =
     in
     Ok
       (("create_rds", string_of_bool has_postgres)
+       :: ( "rds_multi_az"
+          , string_of_bool
+              (has_postgres
+               && target.profile = Some Sol_cli_profile.Production_single_region) )
        :: ("ecr_repositories", ecr_repositories_var ())
        :: vars)
 ;;

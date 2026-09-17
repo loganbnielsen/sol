@@ -27,12 +27,17 @@ type 'a topic =
   ; decode : Yojson.Safe.t -> ('a, string) result
   }
 
+type topic_durability =
+  | Broker_default
+  | Single_broker_loss
+
 type config =
   { brokers : string list
   ; schema_registry_url : string
   ; admin_url : string
   ; linger_ms : int
   ; partitions : int
+  ; topic_durability : topic_durability
   ; security : Kafka.Security.t
   }
 
@@ -42,6 +47,7 @@ type t =
   ; schema_registry_url : string
   ; admin_url : string
   ; partitions : int
+  ; topic_durability : topic_durability
   ; security : Kafka.Security.t
   }
 
@@ -60,12 +66,18 @@ val ensure_topic
   :  Kafka.Producer.t
   -> topic_name:string
   -> partitions:int
+  -> topic_durability:topic_durability
   -> (unit, Kafka.Error.t) result
 
 (** Partition count for an existing topic, or [Topic_not_found] (HTTP 404). *)
 type topic_partition_metadata =
   | Topic_not_found
-  | Topic_partitions of int
+  | Topic_partitions of
+      { partitions : int
+      ; replication_factor : int
+      }
+
+val topic_has_required_replication : topic_durability -> topic_partition_metadata -> bool
 
 (** Opaque — every case is a distinct admin-API failure shape; callers only ever
     need [topic_partition_error_to_string], never to match a specific case. *)
@@ -78,7 +90,8 @@ val decode_topic_partitions
   :  string
   -> (topic_partition_metadata, topic_partition_error) result
 
-(** [GET {admin_url}/v1/topics/{topic_name}], then [decode_topic_partitions]. *)
+(** [GET {admin_url}/v1/partitions/kafka/{topic_name}], then
+    [decode_topic_partitions]. *)
 val query_topic_partitions
   :  _ Eio.Net.t
   -> clock:_ Eio.Time.clock

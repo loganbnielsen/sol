@@ -17,6 +17,11 @@ type error =
       ; current : int
       ; requested : int
       }
+  | Insufficient_replication of
+      { topic_name : topic_name
+      ; current : int
+      ; required : int
+      }
   | Provision_topic of topic_name * Kafka.Error.t
   | Schema_registry of topic_name * string
 
@@ -219,7 +224,10 @@ module Admin : sig
   (** Partition count for an existing topic, or [Topic_not_found] (HTTP 404). *)
   type topic_partition_metadata =
     | Topic_not_found
-    | Topic_partitions of int
+    | Topic_partitions of
+        { partitions : int
+        ; replication_factor : int
+        }
 
   (** Opaque — every case is a distinct admin-API failure shape; callers only
       ever need [topic_partition_error_to_string], never to match a specific
@@ -238,12 +246,17 @@ end
     [register]. Carries the schema ID for wire-format encoding. *)
 type 'a topic
 
+type topic_durability =
+  | Broker_default
+  | Single_broker_loss
+
 type config =
   { brokers : string list
   ; schema_registry_url : string (** e.g. "http://localhost:8081" *)
   ; admin_url : string (** Redpanda admin API, e.g. "http://localhost:9644" *)
   ; linger_ms : int (** produce batch window in ms; 50 is a good default *)
   ; partitions : int (** partition count for auto-provisioned topics *)
+  ; topic_durability : topic_durability
   ; security : Kafka.Security.t
     (** Transport security for broker connections. Use
           [Kafka.Security.default] for local dev. Production: set
@@ -280,6 +293,8 @@ end
       ["http://localhost:8081"])
     - [REDPANDA_ADMIN_URL] — Redpanda admin API URL (default:
       ["http://localhost:9644"])
+    - [SOL_KAFKA_DURABILITY] — ["broker-default" | "single-broker-loss"]
+      (default: ["broker-default"])
     - [KAFKA_SECURITY_PROTOCOL] —
       ["plaintext" | "ssl" | "sasl_plaintext" | "sasl_ssl"] (default:
       ["plaintext"])
@@ -407,7 +422,7 @@ type consume_partitioned_error =
           [kafka-eio]'s own [Handler_errors] list is preserved in full rather
           than collapsed to a single partition's error. Non-empty. *)
 
-(** [consume_partitioned svc topic ~group_id ~sw ~clock ...] is like [consume]
+(** [consume_partitioned svc topic ~group_id ~sw ~net ~clock ...] is like [consume]
     but routes each message to a dedicated per-partition fiber. A partition's
     in-memory retry sleep blocks only that partition; other partitions continue
     unaffected. During the sleep the partition is paused at the librdkafka level
@@ -425,6 +440,7 @@ val consume_partitioned
   -> 'a topic
   -> group_id:string
   -> sw:Eio.Switch.t
+  -> net:_ Eio.Net.t
   -> clock:_ Eio.Time.clock
   -> ?on_ready:(unit -> unit)
   -> ?on_decode_error:
