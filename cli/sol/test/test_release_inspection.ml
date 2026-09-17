@@ -107,6 +107,7 @@ let hosted_plan ?progressive_delivery () =
   ; consumer_groups = []
   ; release_id = release_id_of_test
   ; requested_scope = "workspace"
+  ; profile = None
   }
 ;;
 

@@ -53,6 +53,21 @@ name, run `sol deploy customer_cloud/aws/us-east-1`, then create an
 `A`/`CNAME` record for that host pointing at the ingress load balancer.
 Cert-manager uses the configured cluster issuer for TLS.
 
+## Production profile
+
+`sol/pilot/aws/us-east-1.yml` selects the `production-single-region` profile;
+`sol/prod/aws/us-east-1.yml` deliberately does not, because an environment's name
+never makes a production claim.
+
+```bash
+sol deploy pilot/aws/us-east-1 --dry-run --image-tag "$SHA"
+```
+
+This runs the profile preflight before anything touches a cluster. It refuses
+until the target establishes every guarantee the profile requires, and lists
+each unmet guarantee with who must act. See the "Production Profile" section of
+`docs/deployment/self-hosted-substrate-contract.md` in the Sol repository.
+
 ## CLI commands
 
 ```bash

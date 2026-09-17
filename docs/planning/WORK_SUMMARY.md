@@ -1,5 +1,30 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: FEAT-089 — production profile selection and preflight (2026-09-17)
+
+First implementation ticket of the maturity-A production program, after
+DEC-026 (the `production-single-region` contract) and DEC-027 (direct apply
+is the production reconciliation authority).
+
+- A target file can select `profile: production-single-region`. An
+  environment name never implies it, and `sol.yml` may not set it.
+- The plan carries the claim (`production-single-region/v1`) and the
+  guarantees it requires for the plan's workloads. `sol deploy` runs one
+  preflight on every path (dry-run, `--emit-to`, apply) before any cluster
+  call, lease or emitted file, and refuses on any unmet guarantee.
+- The preflight fails closed. Sol can currently establish only the qualified
+  provider (AWS) and direct apply authority (`--emit-to` is refused), so every
+  profile-selecting target is refused until the remaining guarantee tickets
+  land: AUDIT-072, OBS-043, FEAT-050, FEAT-088, AUDIT-080, AUDIT-078 and
+  SEC-004.
+- **DEC-026 corrected:** the profile claim is recorded on the deployment event,
+  not the content-addressed release record. Release identity is unchanged.
+- **Open, handed to FEAT-088:** DEC-026 §2's TypeScript rejection has no
+  language-neutral signal to check. FEAT-088 must define an explicit
+  compatibility input.
+- Example: `examples/pluto/sol/pilot/aws/us-east-1.yml` selects the profile and
+  shows the refusal; Pluto's `prod` target still claims nothing.
+
 ## Latest: FEAT-078 — explicit retry capability, unified retry policy (2026-09-14)
 
 Closed out the trio started by BUG-028/029/030: made retry an explicit,

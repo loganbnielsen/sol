@@ -70,6 +70,16 @@ type service_spec =
   ; progressive_delivery : Sol_cli_toml.progressive_delivery option
   }
 
+(** A target's profile claim as carried through the plan (FEAT-089): the
+    selected profile and the guarantees it requires for this plan's workloads —
+    the evidence a conformant deploy must establish. It is not part of release
+    identity: two targets may deploy the same release while only one claims a
+    profile. *)
+type profile_claim =
+  { profile : Sol_cli_profile.t
+  ; requirements : Sol_cli_profile.capability list
+  }
+
 type t =
   { workspace : string
   ; release_id : Sol_cli_release_id.t
@@ -87,6 +97,8 @@ type t =
           ["workspace"], a domain, or ["domain/unit"]. [services] is the
           concrete resolved set; [to_json] emits both, because intent and exact
           membership are different facts (DEC-018's release record needs both). *)
+  ; profile : profile_claim option
+    (** [Some] only when the resolved target selects a profile. *)
   }
 
 type plan_error =

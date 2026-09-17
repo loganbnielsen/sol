@@ -43,6 +43,21 @@ golden-path coverage if DEC-026 includes TypeScript in the first profile.
 - If TypeScript is included by DEC-026, FEAT-087's deployed golden path is green;
   if deferred, the matrix says so and records the qualification trigger.
 
+## Unresolved input: how language qualification is represented
+
+DEC-026 §2 says a profile-selecting target containing a TypeScript workload fails
+preflight. FEAT-089 found that nothing in the plan, manifest, `sol.toml` or
+release identity says what language a workload is implemented in. DEC-022 §7
+deliberately keeps language out of deployment identity, and FEAT-089 must not
+inspect language-specific build metadata. FEAT-089 therefore implements no
+language check: its `qualified_versions` guarantee stays unmet for every target
+until this ticket establishes it.
+
+This ticket must define an explicit compatibility input if production
+qualification has to distinguish language/framework combinations. Inferring the
+language from Dockerfiles, paths, package metadata or other build details is
+the wrong abstraction and is not an acceptable resolution.
+
 **Demo/example coverage:** The production-profile example pins only versions in
 the published matrix and builds outside this checkout.
 

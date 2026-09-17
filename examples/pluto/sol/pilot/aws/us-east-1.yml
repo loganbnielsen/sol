@@ -1,0 +1,12 @@
+# Selects the production-single-region profile explicitly. An environment's
+# name never does: sol/prod/ claims no profile.
+#
+# `sol deploy pilot/aws/us-east-1 --dry-run --image-tag <tag>` runs the profile
+# preflight, which refuses until this target establishes every guarantee the
+# profile requires, listing each unmet guarantee and who must act.
+target:
+  profile: production-single-region
+  cluster_name: pluto-pilot
+  base_domain: pluto.example.com
+  kube_context: pluto-pilot
+  registry: 123456789012.dkr.ecr.us-east-1.amazonaws.com

@@ -108,6 +108,7 @@ let make_plan services =
   ; consumer_groups = []
   ; release_id = release_id_of_test
   ; requested_scope = "workspace"
+  ; profile = None
   }
 ;;
 

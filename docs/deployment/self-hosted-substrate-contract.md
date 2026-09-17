@@ -302,6 +302,55 @@ provenance out of the release artifact is what lets two deploys of identical
 content share one release record and one empty GitOps diff while still being two
 auditable attempts.
 
+### Production Profile
+
+A target claims a production contract only by selecting one in its own target
+file. An environment named `prod` claims nothing.
+
+```yaml
+# sol/<env>/<provider>/<region>.yml
+target:
+  profile: production-single-region
+```
+
+`profile` is accepted only in a target file. `sol.yml`'s `target:` section is
+inherited by every target, so a profile there is rejected rather than opting
+every environment in.
+
+A target that selects `production-single-region` goes through a preflight on
+every `sol deploy` (including `--dry-run`) before any cluster call, lease or
+emitted file. The preflight checks each guarantee the profile requires for the
+workloads being deployed and refuses if any is unmet. Each unmet guarantee is
+named along with who must act: the application, the target, or Sol itself
+(`[sol]` means Sol cannot establish that guarantee for any target yet, so no
+target change will satisfy it). There is no "accepted but unverified" outcome:
+the profile is unsatisfiable until Sol can establish every guarantee it requires.
+
+| Guarantee | Required when |
+|---|---|
+| Qualified provider/substrate (AWS) | always |
+| Qualified version set | always |
+| Direct apply reconciliation authority | always — `--emit-to` is refused |
+| Recoverable remote infrastructure state | always |
+| Scoped operator identity | always |
+| Alert delivery to an owner | always |
+| Immutable artifact identity | always |
+| Workload credential posture | always |
+| Workload availability | any service or worker |
+| Postgres durability | migrations or a `postgres` resource |
+| Kafka durability | topics declared in `events/` `sol.toml`, or a `kafka` resource |
+
+Only declared dependencies make a guarantee applicable. A worker's shape
+implies nothing: it may consume Kafka or host `sol-jobs`. A worker that
+consumes Kafka without a declared topic or `kafka` resource is not detected
+yet, so declare every Kafka dependency.
+
+A deploy that passes preflight carries `production-single-region/v1` in its plan
+(`--emit-plan-to`, with the guarantees as `evidence_requirements`) and in its
+deployment event. The claim is never written into the release record: a release
+is content, and two targets may deploy the same release while only one of them
+claims the profile.
+
 ---
 
 ## Summary

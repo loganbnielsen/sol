@@ -187,6 +187,7 @@ let gate_plan : Sol_cli_deployment_plan.t =
   ; schema_subjects = []
   ; consumer_groups = []
   ; requested_scope = "workspace"
+  ; profile = None
   }
 ;;
 
@@ -1317,6 +1318,7 @@ let deployment_event
   ; target
   ; mode = "customer_cloud"
   ; requested_scope
+  ; profile = None
   ; outcome
   }
 ;;

@@ -31,6 +31,13 @@ the application contract.
 - There is no placement/spread or startup-probe contract, and replicas sharing a
   volume have undefined portable behavior (FEAT-083).
 
+## Input from FEAT-089: which workers consume Kafka
+
+DEC-026 §3 defines worker readiness for a worker that consumes Kafka. Sol has
+no declaration yet that says which workers do. The Kafka durability ticket owns
+that declaration; this ticket should use it rather than treating every worker
+as a Kafka consumer.
+
 ## Implementation scope
 
 - Add the smallest plan-level availability semantic approved by DEC-026.

@@ -280,6 +280,7 @@ let sample_plan () : Sol_cli_deployment_plan.t =
   ; consumer_groups = []
   ; release_id = release_id_of_test
   ; requested_scope = "workspace"
+  ; profile = None
   }
 ;;
 
@@ -366,6 +367,7 @@ let test_to_json_mode_strings () =
       ; consumer_groups = []
       ; release_id = release_id_of_test
       ; requested_scope = "workspace"
+      ; profile = None
       }
     in
     let s = Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan) in
