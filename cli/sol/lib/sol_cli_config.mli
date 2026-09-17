@@ -15,6 +15,22 @@ type target =
   ; alert_receiver_url : string option
   ; alert_owner : string option
   ; alert_runbook_url : string option
+  ; state_bucket : string option
+    (** AUDIT-072: the encrypted, versioned remote Terraform state bucket. Sol
+        provisions a conformant one by default (cli/platform/infra/bootstrap);
+        an operator may bring their own by declaring it here. *)
+  ; state_lock_table : string option
+    (** The state-locking table ([aws_dynamodb_table]) that serializes
+        concurrent infrastructure mutations. *)
+  ; provisioner_role_arn : string option
+    (** AUDIT-072: named identities distinct from the cluster-creator admin.
+        Sol generates the least-privilege policy contracts; the operator
+        supplies the role ARNs. *)
+  ; deploy_role_arn : string option
+  ; operator_role_arn : string option
+  ; cluster_endpoint_cidr : string option
+    (** The single CIDR allowed to reach the public Kubernetes API endpoint. A
+        production profile requires an explicit, non-world-reachable value. *)
   ; profile : Sol_cli_profile.t option
     (** The production profile this target explicitly selects (DEC-026). Only a
         target file may set it; an environment name never implies one. *)

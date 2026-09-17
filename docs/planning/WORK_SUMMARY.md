@@ -1,5 +1,18 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: AUDIT-072 — recoverable production state and scoped identities (2026-09-17)
+
+A new `cli/platform/infra/bootstrap` root provisions the conformant remote state
+backend (versioned, encrypted, public-access-blocked S3 + DynamoDB lock) and
+emits three least-privilege IAM policy contracts; the operator supplies the role
+ARNs. Target declarations (`state_bucket`/`state_lock_table`, the three role
+ARNs, `cluster_endpoint_cidr`) drive the now-real `remote_state` and
+`scoped_operator_identities` preflight guarantees. The AWS module no longer
+grants standing cluster-creator admin by default and restricts the public API
+endpoint by CIDR. Exact bootstrap/recovery commands live in
+`docs/deployment/production-bootstrap.md`; destructive recovery and
+authorization checks are HARDEN-002's.
+
 ## Latest: SEC-004 — production workload credential posture and verified rotation (2026-09-17)
 
 Every Sol-rendered ServiceAccount disables token automount, so a default workload

@@ -15,6 +15,12 @@ type target =
   ; alert_receiver_url : string option
   ; alert_owner : string option
   ; alert_runbook_url : string option
+  ; state_bucket : string option
+  ; state_lock_table : string option
+  ; provisioner_role_arn : string option
+  ; deploy_role_arn : string option
+  ; operator_role_arn : string option
+  ; cluster_endpoint_cidr : string option
   ; profile : Sol_cli_profile.t option
   ; provider_fields : (string * (string * string) list) list
   }
@@ -73,6 +79,12 @@ let target_empty =
   ; alert_receiver_url = None
   ; alert_owner = None
   ; alert_runbook_url = None
+  ; state_bucket = None
+  ; state_lock_table = None
+  ; provisioner_role_arn = None
+  ; deploy_role_arn = None
+  ; operator_role_arn = None
+  ; cluster_endpoint_cidr = None
   ; profile = None
   ; provider_fields = []
   }
@@ -225,6 +237,12 @@ type target_key =
   | Target_alert_receiver_url
   | Target_alert_owner
   | Target_alert_runbook_url
+  | Target_state_bucket
+  | Target_state_lock_table
+  | Target_provisioner_role_arn
+  | Target_deploy_role_arn
+  | Target_operator_role_arn
+  | Target_cluster_endpoint_cidr
   | Target_profile
   | Target_provider_box of Sol_cli_provider.t
   | Target_unknown of string
@@ -243,6 +261,12 @@ let target_key_of_string s =
   | "alert_receiver_url" -> Target_alert_receiver_url
   | "alert_owner" -> Target_alert_owner
   | "alert_runbook_url" -> Target_alert_runbook_url
+  | "state_bucket" -> Target_state_bucket
+  | "state_lock_table" -> Target_state_lock_table
+  | "provisioner_role_arn" -> Target_provisioner_role_arn
+  | "deploy_role_arn" -> Target_deploy_role_arn
+  | "operator_role_arn" -> Target_operator_role_arn
+  | "cluster_endpoint_cidr" -> Target_cluster_endpoint_cidr
   | "profile" -> Target_profile
   | _ ->
     (match Sol_cli_provider.of_string s with
@@ -263,6 +287,12 @@ let target_key_name = function
   | Target_alert_receiver_url -> "alert_receiver_url"
   | Target_alert_owner -> "alert_owner"
   | Target_alert_runbook_url -> "alert_runbook_url"
+  | Target_state_bucket -> "state_bucket"
+  | Target_state_lock_table -> "state_lock_table"
+  | Target_provisioner_role_arn -> "provisioner_role_arn"
+  | Target_deploy_role_arn -> "deploy_role_arn"
+  | Target_operator_role_arn -> "operator_role_arn"
+  | Target_cluster_endpoint_cidr -> "cluster_endpoint_cidr"
   | Target_profile -> "profile"
   | Target_provider_box provider -> Sol_cli_provider.to_string provider
   | Target_unknown s -> s
@@ -506,6 +536,24 @@ let load path =
                           | Target_alert_runbook_url ->
                             let* v = scalar k v in
                             Ok { current with alert_runbook_url = Some v }
+                          | Target_state_bucket ->
+                            let* v = scalar k v in
+                            Ok { current with state_bucket = Some v }
+                          | Target_state_lock_table ->
+                            let* v = scalar k v in
+                            Ok { current with state_lock_table = Some v }
+                          | Target_provisioner_role_arn ->
+                            let* v = scalar k v in
+                            Ok { current with provisioner_role_arn = Some v }
+                          | Target_deploy_role_arn ->
+                            let* v = scalar k v in
+                            Ok { current with deploy_role_arn = Some v }
+                          | Target_operator_role_arn ->
+                            let* v = scalar k v in
+                            Ok { current with operator_role_arn = Some v }
+                          | Target_cluster_endpoint_cidr ->
+                            let* v = scalar k v in
+                            Ok { current with cluster_endpoint_cidr = Some v }
                           | Target_profile ->
                             let* v = scalar k v in
                             (match Sol_cli_profile.of_selection v with
@@ -709,6 +757,12 @@ let merge_target a b =
   ; alert_receiver_url = prefer a.alert_receiver_url b.alert_receiver_url
   ; alert_owner = prefer a.alert_owner b.alert_owner
   ; alert_runbook_url = prefer a.alert_runbook_url b.alert_runbook_url
+  ; state_bucket = prefer a.state_bucket b.state_bucket
+  ; state_lock_table = prefer a.state_lock_table b.state_lock_table
+  ; provisioner_role_arn = prefer a.provisioner_role_arn b.provisioner_role_arn
+  ; deploy_role_arn = prefer a.deploy_role_arn b.deploy_role_arn
+  ; operator_role_arn = prefer a.operator_role_arn b.operator_role_arn
+  ; cluster_endpoint_cidr = prefer a.cluster_endpoint_cidr b.cluster_endpoint_cidr
   ; profile = prefer a.profile b.profile
   ; provider_fields = merge_provider_fields a.provider_fields b.provider_fields
   }
@@ -816,6 +870,12 @@ let target_of_path s =
           ; alert_receiver_url = None
           ; alert_owner = None
           ; alert_runbook_url = None
+          ; state_bucket = None
+          ; state_lock_table = None
+          ; provisioner_role_arn = None
+          ; deploy_role_arn = None
+          ; operator_role_arn = None
+          ; cluster_endpoint_cidr = None
           ; profile = None
           ; provider_fields = []
           }
@@ -1195,6 +1255,7 @@ let terraform_vars ~workspace cfg =
       |> add_opt "alert_receiver_url" target.alert_receiver_url
       |> add_opt "alert_owner" target.alert_owner
       |> add_opt "alert_runbook_url" target.alert_runbook_url
+      |> add_opt "cluster_endpoint_cidr" target.cluster_endpoint_cidr
       |> add_opt "workspace_name" (Some workspace)
     in
     let vars =

@@ -30,6 +30,12 @@ let target ?(kube_context = Some "prod-us-east-1") ?kubeconfig () : Sol_cli_conf
   ; alert_receiver_url = None
   ; alert_owner = None
   ; alert_runbook_url = None
+  ; state_bucket = None
+  ; state_lock_table = None
+  ; provisioner_role_arn = None
+  ; deploy_role_arn = None
+  ; operator_role_arn = None
+  ; cluster_endpoint_cidr = None
   ; profile = None
   ; provider_fields = []
   }
