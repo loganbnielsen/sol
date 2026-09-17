@@ -52,6 +52,12 @@ type service_spec =
   ; scheduled_concurrency : Sol_cli_toml.scheduled_concurrency
   ; backoff_limit : int
   ; replicas : int
+  ; availability : Sol_cli_availability.t
+  ; consumes_kafka : bool
+    (* AUDIT-080: a consumer's readiness is its join state and its liveness is
+       its poll cadence, so only a workload that actually consumes Kafka gets
+       those probes. Derived from the declared [kafka] resource/`events/` topics
+       (AUDIT-078's declaration), never guessed from the primitive. *)
   ; language : Sol_cli_compat.language option
   ; cpu : Sol_cli_toml.cpu_quantity
   ; memory : Sol_cli_toml.memory_quantity
@@ -95,6 +101,10 @@ type t =
 type plan_error =
   | Toml_error of Sol_cli_toml.parse_error
   | Invalid_persistence of
+      { workload : string
+      ; message : string
+      }
+  | Unsupported_availability of
       { workload : string
       ; message : string
       }
@@ -215,6 +225,8 @@ let release_workload_of_spec (spec : service_spec) : Sol_cli_release_id.workload
   ; secrets = spec.secrets
   ; schedule = spec.schedule
   ; replicas = spec.replicas
+  ; availability = Sol_cli_availability.to_string spec.availability
+  ; consumes_kafka = spec.consumes_kafka
   ; cpu = Sol_cli_toml.cpu_quantity_to_string spec.cpu
   ; memory = Sol_cli_toml.memory_quantity_to_string spec.memory
   ; extra_labels = spec.extra_labels
@@ -537,6 +549,8 @@ let namespace_of_exn ~workspace ~domain =
          Printf.sprintf "service %S calls %S: %s" service ref message
        | Invalid_persistence { workload; message } ->
          Printf.sprintf "workload %S has invalid persistence: %s" workload message
+       | Unsupported_availability { workload; message } ->
+         Printf.sprintf "workload %S has unsupported availability: %s" workload message
        | Toml_error toml -> Sol_cli_toml.parse_error_to_string toml)
 ;;
 
@@ -548,6 +562,8 @@ let plan_error_to_string = function
   | Toml_error err -> Sol_cli_toml.parse_error_to_string err
   | Invalid_persistence { workload; message } ->
     Printf.sprintf "workload %S has invalid persistence: %s" workload message
+  | Unsupported_availability { workload; message } ->
+    Printf.sprintf "workload %S has unsupported availability: %s" workload message
   | Invalid_service_call { service; ref; message } ->
     Printf.sprintf "service %S calls %S: %s" service ref message
   | Invalid_kubernetes_name { field; value; message } ->
@@ -572,6 +588,45 @@ let validate_persistence (spec : service_spec) =
               or use managed storage shared outside the workload"
          })
   | (Svc | Worker), _ -> Ok ()
+;;
+
+(* AUDIT-080: a declared failure tolerance must be satisfiable before render.
+   A node-failure-tolerant claim needs at least two replicas; a volume pins one
+   writable attachment (FEAT-083) and functions are scheduled jobs. Anything
+   unsupported fails here -- before any manifest exists -- and names a supported
+   alternative, so the operator never gets a rendered claim Sol cannot keep. *)
+let validate_availability (spec : service_spec) =
+  if not (Sol_cli_availability.is_node_failure_tolerant spec.availability)
+  then Ok ()
+  else (
+    match spec.primitive, spec.volumes, spec.replicas with
+    | Fn, _, _ ->
+      Error
+        (Unsupported_availability
+           { workload = spec.source_name
+           ; message =
+               "functions are scheduled jobs; availability is not applicable — remove \
+                `availability` or declare `availability = \"single\"`"
+           })
+    | (Svc | Worker), _ :: _, _ ->
+      Error
+        (Unsupported_availability
+           { workload = spec.source_name
+           ; message =
+               "a persistent volume pins one writable attachment, so a volume-backed \
+                workload cannot be node-failure-tolerant; declare `availability = \
+                \"single\"` or use managed storage"
+           })
+    | (Svc | Worker), [], replicas when replicas < 2 ->
+      Error
+        (Unsupported_availability
+           { workload = spec.source_name
+           ; message =
+               "node-failure-tolerant requires at least two replicas on distinct nodes; \
+                set `[infra.scale] replicas = 2` (or more) or declare `availability = \
+                \"single\"`"
+           })
+    | (Svc | Worker), [], _ -> Ok ())
 ;;
 
 let primitive_of_manifest = function
@@ -834,6 +889,13 @@ let of_services_result
     let language =
       sol_yml_language ~resolved_config ~service_name:svc.Sol_cli_manifest.name
     in
+    (* AUDIT-080: the Kafka-consumer declaration AUDIT-078 put in the plan, not a
+       guess from the primitive. A declared `kafka` resource or `events/` topic
+       makes this a consumer. *)
+    let consumes_kafka =
+      toml.Sol_cli_toml.topics <> []
+      || service_uses_resource_type resolved_config svc.Sol_cli_manifest.name "kafka"
+    in
     let spec =
       { domain = svc.Sol_cli_manifest.domain
       ; source_name = svc.Sol_cli_manifest.name
@@ -856,6 +918,9 @@ let of_services_result
       ; backoff_limit =
           Option.value toml.Sol_cli_toml.backoff_limit ~default:default_backoff_limit
       ; replicas
+      ; availability =
+          Option.value toml.Sol_cli_toml.availability ~default:Sol_cli_availability.Single
+      ; consumes_kafka
       ; language
       ; cpu = Option.value toml.Sol_cli_toml.cpu ~default:default_cpu
       ; memory = Option.value toml.Sol_cli_toml.memory ~default:default_memory
@@ -870,6 +935,7 @@ let of_services_result
       }
     in
     let* () = validate_persistence spec in
+    let* () = validate_availability spec in
     Ok spec
   in
   let rec collect acc = function

@@ -21,6 +21,7 @@ type target =
   ; deploy_role_arn : string option
   ; operator_role_arn : string option
   ; cluster_endpoint_cidr : string option
+  ; node_failure_headroom_nodes : int option
   ; profile : Sol_cli_profile.t option
   ; provider_fields : (string * (string * string) list) list
   }
@@ -85,6 +86,7 @@ let target_empty =
   ; deploy_role_arn = None
   ; operator_role_arn = None
   ; cluster_endpoint_cidr = None
+  ; node_failure_headroom_nodes = None
   ; profile = None
   ; provider_fields = []
   }
@@ -243,6 +245,7 @@ type target_key =
   | Target_deploy_role_arn
   | Target_operator_role_arn
   | Target_cluster_endpoint_cidr
+  | Target_node_failure_headroom_nodes
   | Target_profile
   | Target_provider_box of Sol_cli_provider.t
   | Target_unknown of string
@@ -267,6 +270,7 @@ let target_key_of_string s =
   | "deploy_role_arn" -> Target_deploy_role_arn
   | "operator_role_arn" -> Target_operator_role_arn
   | "cluster_endpoint_cidr" -> Target_cluster_endpoint_cidr
+  | "node_failure_headroom_nodes" -> Target_node_failure_headroom_nodes
   | "profile" -> Target_profile
   | _ ->
     (match Sol_cli_provider.of_string s with
@@ -293,6 +297,7 @@ let target_key_name = function
   | Target_deploy_role_arn -> "deploy_role_arn"
   | Target_operator_role_arn -> "operator_role_arn"
   | Target_cluster_endpoint_cidr -> "cluster_endpoint_cidr"
+  | Target_node_failure_headroom_nodes -> "node_failure_headroom_nodes"
   | Target_profile -> "profile"
   | Target_provider_box provider -> Sol_cli_provider.to_string provider
   | Target_unknown s -> s
@@ -554,6 +559,13 @@ let load path =
                           | Target_cluster_endpoint_cidr ->
                             let* v = scalar k v in
                             Ok { current with cluster_endpoint_cidr = Some v }
+                          | Target_node_failure_headroom_nodes ->
+                            let* v = scalar k v in
+                            (match parse_int v with
+                             | Ok (Some n) ->
+                               Ok { current with node_failure_headroom_nodes = Some n }
+                             | _ ->
+                               fail "expected integer for node_failure_headroom_nodes")
                           | Target_profile ->
                             let* v = scalar k v in
                             (match Sol_cli_profile.of_selection v with
@@ -763,6 +775,8 @@ let merge_target a b =
   ; deploy_role_arn = prefer a.deploy_role_arn b.deploy_role_arn
   ; operator_role_arn = prefer a.operator_role_arn b.operator_role_arn
   ; cluster_endpoint_cidr = prefer a.cluster_endpoint_cidr b.cluster_endpoint_cidr
+  ; node_failure_headroom_nodes =
+      prefer a.node_failure_headroom_nodes b.node_failure_headroom_nodes
   ; profile = prefer a.profile b.profile
   ; provider_fields = merge_provider_fields a.provider_fields b.provider_fields
   }
@@ -876,6 +890,7 @@ let target_of_path s =
           ; deploy_role_arn = None
           ; operator_role_arn = None
           ; cluster_endpoint_cidr = None
+          ; node_failure_headroom_nodes = None
           ; profile = None
           ; provider_fields = []
           }

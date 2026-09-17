@@ -5,6 +5,8 @@
  (libraries
   eio
   eio.unix
+  cohttp-eio
+  http
   obs-eio
   obs-prometheus-eio
   kafka_eio_service

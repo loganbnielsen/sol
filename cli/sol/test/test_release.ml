@@ -32,6 +32,8 @@ let sample_workload : R.workload =
   ; secrets = [ "DATABASE_URL", "db-secret" ]
   ; schedule = None
   ; replicas = 2
+  ; availability = "single"
+  ; consumes_kafka = false
   ; cpu = "100m"
   ; memory = "128Mi"
   ; extra_labels = [ "team", "payments" ]
@@ -364,11 +366,12 @@ let test_record_digest_is_total_for_duplicate_keys () =
 (* A known vector for the canonical serialization. If this changes, the
    canonical rules (or the JSON serializer) changed: either is a deliberate
    decision that must be made here, not a silent redefinition of every stored
-   record's digest. *)
+   record's digest. AUDIT-080 added the workload availability string to the
+   record, so this vector moved deliberately. *)
 let test_record_digest_known_vector () =
   check_string
     "known canonical digest"
-    "eb8a340422f0f1e6b020f8ac953d2e9f"
+    "cc3f3694daa7847f57190a7bee17c417"
     (R.record_digest sample_record)
 ;;
 

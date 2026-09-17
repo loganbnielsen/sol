@@ -118,6 +118,7 @@ let effective_rollout_of_string s =
 
 type t =
   { replicas : int option
+  ; availability : Sol_cli_availability.t option
   ; cpu : cpu_quantity option
   ; memory : memory_quantity option
   ; env_config : (string * string) list
@@ -137,6 +138,7 @@ type t =
 
 let empty =
   { replicas = None
+  ; availability = None
   ; cpu = None
   ; memory = None
   ; env_config = []
@@ -623,6 +625,13 @@ let load_result path =
       let replicas =
         Otoml.Helpers.find_integer_opt doc [ "infra"; "scale"; "replicas" ]
       in
+      (* AUDIT-080: the app-declared failure tolerance. The error names the
+         supported values; the matrix (which primitives/volumes may claim what)
+         is enforced by the plan and preflight, not here. *)
+      let* availability =
+        Otoml.Helpers.find_string_opt doc [ "infra"; "scale"; "availability" ]
+        |> validate_opt path Sol_cli_availability.of_string
+      in
       let* cpu =
         Otoml.Helpers.find_string_opt doc [ "infra"; "scale"; "cpu" ]
         |> validate_opt path cpu_quantity_of_string
@@ -760,6 +769,7 @@ let load_result path =
       in
       Ok
         { replicas
+        ; availability
         ; cpu
         ; memory
         ; env_config

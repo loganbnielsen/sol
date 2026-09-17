@@ -63,6 +63,8 @@ let service
   ; scheduled_concurrency = Sol_cli_toml.Allow
   ; backoff_limit = 3
   ; replicas = 2
+  ; availability = Sol_cli_availability.Single
+  ; consumes_kafka = false
   ; language = None
   ; cpu = cpu "250m"
   ; memory = memory "256Mi"

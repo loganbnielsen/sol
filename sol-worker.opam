@@ -17,6 +17,7 @@ depends: [
   "ocaml" {>= "5.4.0"}
   "dune" {>= "3.0"}
   "eio" "kafka-eio" "kafka-eio-service" "obs-eio" "obs-prometheus-eio"
+  "cohttp-eio" "http"
   "sol-env" "sol-obs" "sol-runtime"
 ]
 build: [

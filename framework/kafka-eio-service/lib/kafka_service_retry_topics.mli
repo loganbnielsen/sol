@@ -148,6 +148,9 @@ val consume
   -> clock:_ Eio.Time.clock
   -> retry_policy:Kafka.Consumer.retry_policy
   -> on_ready:(unit -> unit)
+  -> on_assigned:(unit -> unit)
+  -> on_revoked:(unit -> unit)
+  -> on_poll:(unit -> unit)
   -> on_decode_error:
        (string
         -> raw_bytes:bytes option
