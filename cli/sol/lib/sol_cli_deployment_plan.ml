@@ -92,6 +92,10 @@ type t =
 
 type plan_error =
   | Toml_error of Sol_cli_toml.parse_error
+  | Invalid_persistence of
+      { workload : string
+      ; message : string
+      }
   | Invalid_service_call of
       { service : string
       ; ref : string
@@ -497,6 +501,8 @@ let namespace_of_exn ~workspace ~domain =
          Printf.sprintf "invalid Kubernetes %s %S: %s" field value message
        | Invalid_service_call { service; ref; message } ->
          Printf.sprintf "service %S calls %S: %s" service ref message
+       | Invalid_persistence { workload; message } ->
+         Printf.sprintf "workload %S has invalid persistence: %s" workload message
        | Toml_error toml -> Sol_cli_toml.parse_error_to_string toml)
 ;;
 
@@ -506,10 +512,32 @@ let image_ref ~registry ~workspace ~k8s_name ~tag =
 
 let plan_error_to_string = function
   | Toml_error err -> Sol_cli_toml.parse_error_to_string err
+  | Invalid_persistence { workload; message } ->
+    Printf.sprintf "workload %S has invalid persistence: %s" workload message
   | Invalid_service_call { service; ref; message } ->
     Printf.sprintf "service %S calls %S: %s" service ref message
   | Invalid_kubernetes_name { field; value; message } ->
     Printf.sprintf "invalid Kubernetes %s %S: %s" field value message
+;;
+
+let validate_persistence (spec : service_spec) =
+  match spec.primitive, spec.volumes with
+  | _, [] -> Ok ()
+  | Fn, _ ->
+    Error
+      (Invalid_persistence
+         { workload = spec.source_name
+         ; message = "function volumes are unsupported; use managed storage"
+         })
+  | (Svc | Worker), _ when spec.replicas <> 1 ->
+    Error
+      (Invalid_persistence
+         { workload = spec.source_name
+         ; message =
+             "volumes belong to one interchangeable workload instance; set replicas = 1, \
+              or use managed storage shared outside the workload"
+         })
+  | (Svc | Worker), _ -> Ok ()
 ;;
 
 let primitive_of_manifest = function
@@ -697,43 +725,46 @@ let of_services_result
              ~name:svc.Sol_cli_manifest.name)
       | _ -> None
     in
-    { domain = svc.Sol_cli_manifest.domain
-    ; source_name = svc.Sol_cli_manifest.name
-    ; k8s_name
-    ; namespace
-    ; primitive
-    ; source_dir = svc.Sol_cli_manifest.dir
-    ; image
-    ; config = toml.Sol_cli_toml.env_config @ List.map (fun c -> c.env_var, c.url) calls
-    ; secrets = List.map (fun key -> key, "") toml.Sol_cli_toml.secret_keys
-    ; volumes = toml.Sol_cli_toml.volumes
-    ; schedule
-    ; scheduled_concurrency =
-        Option.value
-          toml.Sol_cli_toml.scheduled_concurrency
-          ~default:default_scheduled_concurrency
-    ; backoff_limit =
-        Option.value toml.Sol_cli_toml.backoff_limit ~default:default_backoff_limit
-    ; replicas =
-        (match
-           sol_yml_replicas_override
-             ~resolved_config
-             ~service_name:svc.Sol_cli_manifest.name
-         with
-         | Some replicas -> replicas
-         | None -> Option.value toml.Sol_cli_toml.replicas ~default:1)
-    ; cpu = Option.value toml.Sol_cli_toml.cpu ~default:default_cpu
-    ; memory = Option.value toml.Sol_cli_toml.memory ~default:default_memory
-    ; rollout_strategy = toml.Sol_cli_toml.rollout_strategy
-    ; ingress_host = toml.Sol_cli_toml.ingress_host
-    ; ingress_path = toml.Sol_cli_toml.ingress_path
-    ; cluster_issuer = env.cluster_issuer
-    ; calls
-    ; called_by = []
-    ; extra_labels = toml.Sol_cli_toml.extra_labels
-    ; progressive_delivery = toml.Sol_cli_toml.progressive_delivery
-    }
-    |> Result.ok
+    let replicas =
+      match
+        sol_yml_replicas_override ~resolved_config ~service_name:svc.Sol_cli_manifest.name
+      with
+      | Some replicas -> replicas
+      | None -> Option.value toml.Sol_cli_toml.replicas ~default:1
+    in
+    let spec =
+      { domain = svc.Sol_cli_manifest.domain
+      ; source_name = svc.Sol_cli_manifest.name
+      ; k8s_name
+      ; namespace
+      ; primitive
+      ; source_dir = svc.Sol_cli_manifest.dir
+      ; image
+      ; config = toml.Sol_cli_toml.env_config @ List.map (fun c -> c.env_var, c.url) calls
+      ; secrets = List.map (fun key -> key, "") toml.Sol_cli_toml.secret_keys
+      ; volumes = toml.Sol_cli_toml.volumes
+      ; schedule
+      ; scheduled_concurrency =
+          Option.value
+            toml.Sol_cli_toml.scheduled_concurrency
+            ~default:default_scheduled_concurrency
+      ; backoff_limit =
+          Option.value toml.Sol_cli_toml.backoff_limit ~default:default_backoff_limit
+      ; replicas
+      ; cpu = Option.value toml.Sol_cli_toml.cpu ~default:default_cpu
+      ; memory = Option.value toml.Sol_cli_toml.memory ~default:default_memory
+      ; rollout_strategy = toml.Sol_cli_toml.rollout_strategy
+      ; ingress_host = toml.Sol_cli_toml.ingress_host
+      ; ingress_path = toml.Sol_cli_toml.ingress_path
+      ; cluster_issuer = env.cluster_issuer
+      ; calls
+      ; called_by = []
+      ; extra_labels = toml.Sol_cli_toml.extra_labels
+      ; progressive_delivery = toml.Sol_cli_toml.progressive_delivery
+      }
+    in
+    let* () = validate_persistence spec in
+    Ok spec
   in
   let rec collect acc = function
     | [] -> Ok (List.rev acc)

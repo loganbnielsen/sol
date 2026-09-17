@@ -1,5 +1,14 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: FEAT-083 — explicit workload persistence semantics (2026-09-17)
+
+Services and workers remain interchangeable Deployments. A declared workload
+volume belongs to one instance and is supported only at `replicas = 1`; shared
+filesystems and stable per-replica volumes are separate, deferred capabilities.
+Functions reject volumes rather than silently omitting their mounts. The shared
+validation runs after `sol.yml` scale resolution and during historical rollback
+reconstruction, before rendering, and names managed storage as the alternative.
+
 ## Latest: INFRA-020 — CI evidence reuse withdrawn; one support-package snapshot per run (2026-09-17)
 
 INFRA-019's reuse of earlier CI runs was removed as too complex for its value:

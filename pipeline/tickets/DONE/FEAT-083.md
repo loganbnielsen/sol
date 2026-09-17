@@ -113,3 +113,18 @@ provider topology; AUDIT-078 owns those target-side guarantees.
 - Not implementing a stateful/member workload kind here unless the decision says
   so.
 - Not StorageClass/snapshot management (out of scope per CODE_LAYER-016).
+
+## Outcome (2026-09-17)
+
+Sol keeps `svc` and `worker` replicas interchangeable and admits one persistence
+semantic: a workload-owned filesystem on a single replica. Plan construction now
+rejects volumes after final replica resolution unless replicas equal one, and
+rejects function volumes that the CronJob renderer previously ignored. Rollback
+reconstruction applies the same rule before rendering. Shared
+filesystems, per-replica identity/volumes, and a stateful workload kind remain
+deferred until an application requires those distinct contracts.
+
+The existing manifest test pins the former `replicas = 2` plus one-PVC render;
+regressions now cover target scale overrides, zero replicas, functions, and
+historical rollback. The supported matrix and alternatives are documented in the
+`sol.toml` reference.

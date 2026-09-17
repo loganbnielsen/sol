@@ -103,6 +103,10 @@ type t =
 
 type plan_error =
   | Toml_error of Sol_cli_toml.parse_error
+  | Invalid_persistence of
+      { workload : string
+      ; message : string
+      }
   | Invalid_service_call of
       { service : string
       ; ref : string
@@ -174,6 +178,9 @@ val pp_summary : Format.formatter -> t -> unit
 
 (** Render a deployment-plan construction error for CLI output. *)
 val plan_error_to_string : plan_error -> string
+
+(** Reject persistence combinations whose semantics Sol does not define. *)
+val validate_persistence : service_spec -> (unit, plan_error) result
 
 (** Normalize and validate a service source name as a Kubernetes DNS label. *)
 val k8s_name_result : string -> (k8s_name, plan_error) result

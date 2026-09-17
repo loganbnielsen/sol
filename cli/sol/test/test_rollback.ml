@@ -145,7 +145,7 @@ let billing_spec : Sol_cli_deployment_plan.service_spec =
   ; schedule = None
   ; scheduled_concurrency = Sol_cli_toml.Allow
   ; backoff_limit = 3
-  ; replicas = 3
+  ; replicas = 1
   ; cpu = cpu "500m"
   ; memory = memory "512Mi"
   ; rollout_strategy = None
@@ -797,6 +797,23 @@ let test_fn_reconstructs_and_verifies_as_cronjob () =
       true
       (Sol_cli_rollback.workload_report_ok report)
   | Ok specs -> Alcotest.failf "expected 1 reconstructed spec, got %d" (List.length specs)
+;;
+
+let test_reconstruction_rejects_invalid_persistence () =
+  let workload = List.hd gate_release.workloads in
+  let invalid =
+    { gate_release with
+      workloads =
+        [ { workload with
+            replicas = 2
+          ; volumes = [ "data", "/data", "10Gi", "ReadWriteOnce" ]
+          }
+        ]
+    }
+  in
+  match Sol_cli_rollback.service_specs_of_release invalid with
+  | Ok _ -> Alcotest.fail "expected rollback reconstruction to reject persistence"
+  | Error msg -> assert (contains (Str.regexp "set replicas = 1") msg)
 ;;
 
 (* The other half of the same premise: a `recreate` Deployment's strategy
@@ -1479,6 +1496,10 @@ let () =
             "failure: invalid cpu quantity"
             `Quick
             test_gate_failure_invalid_cpu
+        ; Alcotest.test_case
+            "failure: invalid persistence"
+            `Quick
+            test_reconstruction_rejects_invalid_persistence
         ] )
     ; ( "migration_boundary_check"
       , [ Alcotest.test_case

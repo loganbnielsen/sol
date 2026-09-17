@@ -142,6 +142,8 @@ let test_k8s_name_rejects_invalid_characters () =
   | Error (Sol_cli_deployment_plan.Toml_error _) -> Alcotest.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
     Alcotest.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
+    Alcotest.fail "expected name error"
 ;;
 
 let test_k8s_name_rejects_empty () =
@@ -151,6 +153,8 @@ let test_k8s_name_rejects_empty () =
   | Ok _ -> Alcotest.fail "expected empty k8s name to fail"
   | Error (Sol_cli_deployment_plan.Toml_error _) -> Alcotest.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
+    Alcotest.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
     Alcotest.fail "expected name error"
 ;;
 
@@ -163,6 +167,8 @@ let test_k8s_name_rejects_overlong () =
   | Ok _ -> Alcotest.fail "expected overlong k8s name to fail"
   | Error (Sol_cli_deployment_plan.Toml_error _) -> Alcotest.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
+    Alcotest.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
     Alcotest.fail "expected name error"
 ;;
 
@@ -178,6 +184,8 @@ let test_namespace_rejects_invalid_domain () =
   | Error (Sol_cli_deployment_plan.Toml_error _) -> Alcotest.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
     Alcotest.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
+    Alcotest.fail "expected name error"
 ;;
 
 let test_namespace_rejects_overlong () =
@@ -192,6 +200,8 @@ let test_namespace_rejects_overlong () =
   | Ok _ -> Alcotest.fail "expected overlong namespace"
   | Error (Sol_cli_deployment_plan.Toml_error _) -> Alcotest.fail "expected name error"
   | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
+    Alcotest.fail "expected name error"
+  | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
     Alcotest.fail "expected name error"
 ;;
 
@@ -1030,7 +1040,9 @@ let test_of_services_result_surfaces_toml_parse_error () =
     | Error (Sol_cli_deployment_plan.Invalid_kubernetes_name _) ->
       Alcotest.fail "expected TOML error, got Kubernetes name error"
     | Error (Sol_cli_deployment_plan.Invalid_service_call _) ->
-      Alcotest.fail "expected TOML error, got service call error")
+      Alcotest.fail "expected TOML error, got service call error"
+    | Error (Sol_cli_deployment_plan.Invalid_persistence _) ->
+      Alcotest.fail "expected TOML error, got persistence error")
 ;;
 
 (* ── BUG-004: sol.yml scale overrides sol.toml replicas ──────────────────── *)
@@ -1188,6 +1200,84 @@ let test_toml_volumes_carry_into_service_spec () =
               (volume.Sol_cli_toml.access_mode = Sol_cli_toml.ReadWriteOnce)
           | _ -> Alcotest.fail "expected exactly one volume")
        | _ -> Alcotest.fail "expected exactly one service"))
+;;
+
+let test_multi_replica_volume_fails_after_scale_resolution () =
+  let tmp = Filename.temp_dir "sol_test_plan_volume_replicas" "" in
+  with_cwd tmp (fun () ->
+    mkdirs "app/payments/charge_svc";
+    write_file
+      "app/payments/charge_svc/sol.toml"
+      "[infra.volumes.data]\nmount_path = \"/data\"\nsize = \"10Gi\"\n";
+    let resolved_config =
+      resolved_config_with_scale ~name:"charge_svc" ~scale_min:None ~scale_max:(Some 2)
+    in
+    match
+      Sol_cli_deployment_plan.of_services_result
+        ~workspace:"myworkspace"
+        ~env:deploy_env
+        ~resolved_config
+        [ charge_svc_service ]
+    with
+    | Ok _ -> Alcotest.fail "expected a multi-replica volume to fail"
+    | Error err ->
+      Alcotest.(check string)
+        "names the valid alternatives"
+        "workload \"charge_svc\" has invalid persistence: volumes belong to one \
+         interchangeable workload instance; set replicas = 1, or use managed storage \
+         shared outside the workload"
+        (Sol_cli_deployment_plan.plan_error_to_string err))
+;;
+
+let test_zero_replica_volume_fails () =
+  let tmp = Filename.temp_dir "sol_test_plan_zero_volume_replicas" "" in
+  with_cwd tmp (fun () ->
+    mkdirs "app/payments/charge_svc";
+    write_file
+      "app/payments/charge_svc/sol.toml"
+      "[infra.scale]\n\
+       replicas = 0\n\
+       [infra.volumes.data]\n\
+       mount_path = \"/data\"\n\
+       size = \"10Gi\"\n";
+    match
+      Sol_cli_deployment_plan.of_services_result
+        ~workspace:"myworkspace"
+        ~env:deploy_env
+        [ charge_svc_service ]
+    with
+    | Ok _ -> Alcotest.fail "expected a zero-replica volume to fail"
+    | Error (Sol_cli_deployment_plan.Invalid_persistence _) -> ()
+    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
+;;
+
+let test_function_volume_fails () =
+  let tmp = Filename.temp_dir "sol_test_plan_fn_volume" "" in
+  with_cwd tmp (fun () ->
+    mkdirs "app/payments/charge_fn";
+    write_file
+      "app/payments/charge_fn/sol.toml"
+      "[infra.volumes.data]\nmount_path = \"/data\"\nsize = \"10Gi\"\n";
+    let fn =
+      { charge_svc_service with
+        name = "charge_fn"
+      ; primitive = Sol_cli_manifest.Fn
+      ; dir = "app/payments/charge_fn"
+      }
+    in
+    match
+      Sol_cli_deployment_plan.of_services_result
+        ~workspace:"myworkspace"
+        ~env:deploy_env
+        [ fn ]
+    with
+    | Ok _ -> Alcotest.fail "expected a function volume to fail"
+    | Error err ->
+      Alcotest.(check string)
+        "names the supported alternative"
+        "workload \"charge_fn\" has invalid persistence: function volumes are \
+         unsupported; use managed storage"
+        (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
 
 let test_service_calls_resolve_to_env_and_reverse_edge () =
@@ -1592,6 +1682,15 @@ let () =
             "sol.toml volumes carry into service spec"
             `Quick
             test_toml_volumes_carry_into_service_spec
+        ; Alcotest.test_case
+            "multi-replica volumes fail after scale resolution"
+            `Quick
+            test_multi_replica_volume_fails_after_scale_resolution
+        ; Alcotest.test_case
+            "zero-replica volumes fail"
+            `Quick
+            test_zero_replica_volume_fails
+        ; Alcotest.test_case "function volumes fail" `Quick test_function_volume_fails
         ; Alcotest.test_case
             "service calls resolve"
             `Quick

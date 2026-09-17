@@ -77,6 +77,33 @@ contract.
 | `cpu`      | string  | `"100m"`  | CPU request and limit (same value)       |
 | `memory`   | string  | `"128Mi"` | Memory request and limit (same value)    |
 
+### `[infra.volumes.<name>]`
+
+Each entry declares one durable filesystem belonging to one `-svc` or `-worker`
+instance:
+
+```toml
+[infra.volumes.data]
+mount_path = "/var/lib/data"
+size = "10Gi"
+access_mode = "ReadWriteOnce"
+```
+
+Sol's `-svc` and `-worker` replicas are interchangeable Deployments. A workload
+volume does not give replicas stable identities and is therefore supported only
+with `replicas = 1`. Shared filesystems and per-replica volumes are not yet Sol
+capabilities; use managed storage outside the workload when multiple replicas
+need durable data. Functions do not support workload volumes.
+
+| Workload | Replicas | Volume support |
+|----------|----------|----------------|
+| `-svc`, `-worker` | `1` | One PVC per declared workload volume |
+| `-svc`, `-worker` | Any value other than `1` | Rejected before rendering |
+| `-fn` | n/a | Rejected before rendering |
+
+`access_mode` accepts `ReadWriteOnce`, `ReadOnlyMany`, or `ReadWriteMany`, but
+describes the generated PVC only; it does not opt into a shared-volume semantic.
+
 ### `[infra.env]`
 
 | Key      | Type          | Default | Description                                      |
