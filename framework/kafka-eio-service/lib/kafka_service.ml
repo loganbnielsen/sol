@@ -12,6 +12,11 @@ type error =
       ; current : int
       ; requested : int
       }
+  | Insufficient_replication of
+      { topic_name : topic_name
+      ; current : int
+      ; required : int
+      }
   | Provision_topic of topic_name * Kafka.Error.t
   | Schema_registry of topic_name * string
 
@@ -33,6 +38,13 @@ let error_to_string = function
       (topic_name_to_string topic_name)
       current
       requested
+  | Insufficient_replication { topic_name; current; required } ->
+    Printf.sprintf
+      "topic '%s' has replication factor %d; %d is required for single-broker-loss \
+       durability"
+      (topic_name_to_string topic_name)
+      current
+      required
   | Provision_topic (topic, e) ->
     Printf.sprintf
       "could not provision topic %s: %s"
@@ -60,12 +72,17 @@ type 'a topic = 'a Kafka_service_intf.topic =
   ; decode : Yojson.Safe.t -> ('a, string) result
   }
 
+type topic_durability = Kafka_service_intf.topic_durability =
+  | Broker_default
+  | Single_broker_loss
+
 type config = Kafka_service_intf.config =
   { brokers : string list
   ; schema_registry_url : string
   ; admin_url : string
   ; linger_ms : int
   ; partitions : int
+  ; topic_durability : topic_durability
   ; security : Kafka.Security.t
   }
 
@@ -75,6 +92,7 @@ type t = Kafka_service_intf.t =
   ; schema_registry_url : string
   ; admin_url : string
   ; partitions : int
+  ; topic_durability : topic_durability
   ; security : Kafka.Security.t
   }
 
@@ -150,7 +168,10 @@ end
 module Admin = struct
   type topic_partition_metadata = Kafka_service_intf.topic_partition_metadata =
     | Topic_not_found
-    | Topic_partitions of int
+    | Topic_partitions of
+        { partitions : int
+        ; replication_factor : int
+        }
 
   type topic_partition_error = Kafka_service_intf.topic_partition_error
 
@@ -182,6 +203,7 @@ let create (cfg : config) ~sw =
       ; schema_registry_url = cfg.schema_registry_url
       ; admin_url = cfg.admin_url
       ; partitions = cfg.partitions
+      ; topic_durability = cfg.topic_durability
       ; security = cfg.security
       }
 ;;
@@ -210,12 +232,17 @@ let register
         (Topic_metadata
            (M.topic_name, Kafka_service_intf.topic_partition_error_to_string e))
     | Ok Kafka_service_intf.Topic_not_found -> Ok ()
-    | Ok (Kafka_service_intf.Topic_partitions current) when current <= svc.partitions ->
-      Ok ()
-    | Ok (Kafka_service_intf.Topic_partitions current) ->
+    | Ok (Kafka_service_intf.Topic_partitions { partitions = current; _ })
+      when current > svc.partitions ->
       Error
         (Partition_count_reduction
            { topic_name = M.topic_name; current; requested = svc.partitions })
+    | Ok (Kafka_service_intf.Topic_partitions { replication_factor; _ })
+      when svc.topic_durability = Single_broker_loss && replication_factor < 3 ->
+      Error
+        (Insufficient_replication
+           { topic_name = M.topic_name; current = replication_factor; required = 3 })
+    | Ok (Kafka_service_intf.Topic_partitions _) -> Ok ()
   in
   let* () = partition_guard () in
   let* () =
@@ -223,6 +250,7 @@ let register
       svc.producer
       ~topic_name:raw_topic_name
       ~partitions:svc.partitions
+      ~topic_durability:svc.topic_durability
     |> Result.map_error (fun msg -> Provision_topic (M.topic_name, msg))
   in
   let* schema_id =
@@ -327,6 +355,7 @@ let consume_partitioned
       topic
       ~group_id
       ~sw
+      ~net
       ~clock
       ?(on_ready = ignore)
       ?(on_decode_error = default_on_decode_error)
@@ -411,6 +440,7 @@ let consume_partitioned
       topic
       ~group_id
       ~sw
+      ~net
       ~clock
       ~retry_policy
       ~on_ready

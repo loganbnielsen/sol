@@ -1,5 +1,24 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: AUDIT-078 — application-data durability and recovery (2026-09-17)
+
+The production profile's Postgres and Kafka guarantees gained a
+language-neutral declaration and a fail-closed enforcement path.
+
+- A service declares Kafka use with `uses: [<kafka resource>]`. Only those
+  services receive `SOL_KAFKA_DURABILITY=single-broker-loss`, and consumer
+  groups are derived only for workers that declare it (the old shape-based
+  assumption is gone). A target with Kafka evidence but no declaring service
+  fails preflight on the application side.
+- `Kafka_service.topic_durability` is a semantic policy: the qualified path
+  creates RF-3 topics and rejects existing under-replicated topics with
+  `Insufficient_replication` before schema registration. The admin partition
+  query now reads Redpanda's `/v1/partitions/kafka/<topic>` for replica counts.
+- AWS RDS gained `rds_multi_az`, derived true by the profile; profile-derived
+  Terraform vars override operator `--var`/var-file values.
+- Operator recovery procedures live in
+  `docs/deployment/application-data-recovery.md`; HARDEN-002 records evidence.
+
 ## Latest: FEAT-083 — explicit workload persistence semantics (2026-09-17)
 
 Services and workers remain interchangeable Deployments. A declared workload

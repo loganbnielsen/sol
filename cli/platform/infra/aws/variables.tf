@@ -99,6 +99,12 @@ variable "rds_deletion_protection" {
   default     = true
 }
 
+variable "rds_multi_az" {
+  description = "Run RDS with a synchronous standby in another availability zone."
+  type        = bool
+  default     = false
+}
+
 # Route53
 variable "create_route53_zone" {
   description = "Create a new Route53 hosted zone for base_domain. Set false if the zone already exists."

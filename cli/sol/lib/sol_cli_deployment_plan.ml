@@ -67,6 +67,7 @@ type service_spec =
 type profile_claim =
   { profile : Sol_cli_profile.t
   ; requirements : Sol_cli_profile.capability list
+  ; application_findings : (Sol_cli_profile.capability * string) list
   }
 
 type t =
@@ -461,11 +462,43 @@ let discover_schema_subjects = Sol_cli_workspace_scan.discover_schema_subjects
 let discover_topics = Sol_cli_workspace_scan.discover_topics
 let discover_migrations = Sol_cli_workspace_scan.discover_migrations
 
-let derive_consumer_groups workspace services =
+let resource_name_of_ref ref =
+  match String.split_on_char '/' ref |> List.filter (( <> ) "") |> List.rev with
+  | name :: _ -> Some name
+  | [] -> None
+;;
+
+let service_uses_resource_type resolved_config service_name typ =
+  match resolved_config with
+  | None -> false
+  | Some cfg ->
+    let resources = Sol_cli_config.resources cfg in
+    (match
+       List.find_opt
+         (fun (service : Sol_cli_config.service) -> service.name = service_name)
+         (Sol_cli_config.services cfg)
+     with
+     | None -> false
+     | Some service ->
+       List.exists
+         (fun ref ->
+            match resource_name_of_ref ref with
+            | None -> false
+            | Some name ->
+              List.exists
+                (fun (resource : Sol_cli_config.resource) ->
+                   resource.name = name && resource.typ = Some typ)
+                resources)
+         service.uses)
+;;
+
+let derive_consumer_groups ?resolved_config workspace services =
   List.filter_map
     (fun (s : service_spec) ->
-       match s.primitive with
-       | Worker -> Some (s.domain, s.source_name)
+       match
+         s.primitive, service_uses_resource_type resolved_config s.source_name "kafka"
+       with
+       | Worker, true -> Some (s.domain, s.source_name)
        | _ -> None)
     services
   |> Sol_cli_workspace_scan.derive_consumer_groups workspace
@@ -612,11 +645,40 @@ let profile_claim ~resolved_config ~services ~topics ~migrations =
   | Some target ->
     Option.map
       (fun profile ->
+         let requirements =
+           Sol_cli_profile.requirements
+             profile
+             (workload_capabilities ~resolved_config ~services ~topics ~migrations)
+         in
+         let declares typ =
+           match resolved_config with
+           | None -> false
+           | Some cfg ->
+             List.exists
+               (fun (resource : Sol_cli_config.resource) -> resource.typ = Some typ)
+               (Sol_cli_config.resources cfg)
+         in
+         let service_uses typ =
+           List.exists
+             (fun (service : service_spec) ->
+                service_uses_resource_type resolved_config service.source_name typ)
+             services
+         in
          { profile
-         ; requirements =
-             Sol_cli_profile.requirements
-               profile
-               (workload_capabilities ~resolved_config ~services ~topics ~migrations)
+         ; requirements
+         ; application_findings =
+             List.filter_map
+               (fun (missing, capability, reason) ->
+                  if missing && List.mem capability requirements
+                  then Some (capability, reason)
+                  else None)
+               [ ( not (declares "postgres")
+                 , Sol_cli_profile.Postgres_durability
+                 , "declare a postgres resource for database migrations" )
+               ; ( not (service_uses "kafka")
+                 , Sol_cli_profile.Kafka_durability
+                 , "declare each Kafka-using service with uses: [<kafka resource>]" )
+               ]
          })
       target.Sol_cli_config.profile
 ;;
@@ -732,6 +794,20 @@ let of_services_result
       | Some replicas -> replicas
       | None -> Option.value toml.Sol_cli_toml.replicas ~default:1
     in
+    let kafka_durability_config =
+      match resolved_config with
+      | Some cfg
+        when Option.bind (Sol_cli_config.target cfg) (fun target -> target.profile)
+             = Some Sol_cli_profile.Production_single_region
+             && service_uses_resource_type
+                  resolved_config
+                  svc.Sol_cli_manifest.name
+                  "kafka" -> [ "SOL_KAFKA_DURABILITY", "single-broker-loss" ]
+      | _ -> []
+    in
+    let service_config =
+      List.remove_assoc "SOL_KAFKA_DURABILITY" toml.Sol_cli_toml.env_config
+    in
     let spec =
       { domain = svc.Sol_cli_manifest.domain
       ; source_name = svc.Sol_cli_manifest.name
@@ -740,7 +816,10 @@ let of_services_result
       ; primitive
       ; source_dir = svc.Sol_cli_manifest.dir
       ; image
-      ; config = toml.Sol_cli_toml.env_config @ List.map (fun c -> c.env_var, c.url) calls
+      ; config =
+          kafka_durability_config
+          @ service_config
+          @ List.map (fun c -> c.env_var, c.url) calls
       ; secrets = List.map (fun key -> key, "") toml.Sol_cli_toml.secret_keys
       ; volumes = toml.Sol_cli_toml.volumes
       ; schedule
@@ -828,7 +907,8 @@ let of_services_result
     ; topics
     ; migrations
     ; schema_subjects
-    ; consumer_groups = derive_consumer_groups workspace resolved_services
+    ; consumer_groups =
+        derive_consumer_groups ?resolved_config workspace resolved_services
     ; requested_scope
     ; profile =
         profile_claim ~resolved_config ~services:resolved_services ~topics ~migrations

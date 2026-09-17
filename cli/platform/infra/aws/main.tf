@@ -214,6 +214,7 @@ resource "aws_db_instance" "postgres" {
   vpc_security_group_ids = [aws_security_group.rds[0].id]
 
   backup_retention_period = 7
+  multi_az                = var.rds_multi_az
   deletion_protection     = var.rds_deletion_protection
   skip_final_snapshot     = !var.rds_deletion_protection
 

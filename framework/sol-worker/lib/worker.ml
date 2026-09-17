@@ -365,6 +365,7 @@ module Make_with_retry_and_test_seam (W : RETRYABLE_WORKER) = struct
                 topic
                 ~group_id:W.group_id
                 ~sw
+                ~net:env#net
                 ~clock:env#clock
                 ?on_ready
                 ~retry_strategy

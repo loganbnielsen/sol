@@ -769,9 +769,42 @@ let make_svc_spec name domain =
   { (make_worker_spec name domain) with primitive = Sol_cli_deployment_plan.Svc }
 ;;
 
+let kafka_config service_names : Sol_cli_config.t =
+  { project = Some "ws"
+  ; target = None
+  ; resources =
+      [ { name = "events"
+        ; typ = Some "kafka"
+        ; partition_key = None
+        ; sort_key = None
+        ; indexes = []
+        ; size = None
+        ; omit = false
+        }
+      ]
+  ; services =
+      List.map
+        (fun name ->
+           { Sol_cli_config.name
+           ; typ = None
+           ; path = None
+           ; uses = [ "events" ]
+           ; scale_min = None
+           ; scale_max = None
+           ; omit = false
+           })
+        service_names
+  }
+;;
+
 let test_consumer_groups_derived () =
   let worker = make_worker_spec "notify_worker" "comms" in
-  let groups = Sol_cli_deployment_plan.derive_consumer_groups "myworkspace" [ worker ] in
+  let groups =
+    Sol_cli_deployment_plan.derive_consumer_groups
+      ~resolved_config:(kafka_config [ "notify_worker" ])
+      "myworkspace"
+      [ worker ]
+  in
   check_ids
     "worker produces consumer group"
     Sol_cli_plan_ids.Consumer_group.to_string
@@ -782,14 +815,24 @@ let test_consumer_groups_derived () =
 let test_consumer_groups_excludes_svc () =
   let worker = make_worker_spec "notify_worker" "comms" in
   let svc = make_svc_spec "charge_svc" "payments" in
-  let groups = Sol_cli_deployment_plan.derive_consumer_groups "ws" [ worker; svc ] in
+  let groups =
+    Sol_cli_deployment_plan.derive_consumer_groups
+      ~resolved_config:(kafka_config [ "notify_worker"; "charge_svc" ])
+      "ws"
+      [ worker; svc ]
+  in
   Alcotest.(check int) "only one group (worker only)" 1 (List.length groups)
 ;;
 
 let test_consumer_groups_sorted () =
   let w1 = make_worker_spec "b_worker" "comms" in
   let w2 = make_worker_spec "a_worker" "comms" in
-  let groups = Sol_cli_deployment_plan.derive_consumer_groups "ws" [ w1; w2 ] in
+  let groups =
+    Sol_cli_deployment_plan.derive_consumer_groups
+      ~resolved_config:(kafka_config [ "a_worker"; "b_worker" ])
+      "ws"
+      [ w1; w2 ]
+  in
   check_ids
     "consumer groups sorted"
     Sol_cli_plan_ids.Consumer_group.to_string

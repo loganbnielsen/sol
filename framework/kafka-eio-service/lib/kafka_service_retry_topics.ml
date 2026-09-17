@@ -276,6 +276,7 @@ let consume
       (topic : 'a Kafka_service_intf.topic)
       ~group_id
       ~sw
+      ~net
       ~clock
       ~(retry_policy : Kafka.Consumer.retry_policy)
       ~on_ready
@@ -303,18 +304,45 @@ let consume
     Kafka_service_intf.topic_name (relay_topic_name ~source ~group_id ~suffix:"dlq")
     |> Result.map_error config_error
   in
+  let verify_existing topic_name =
+    match
+      Kafka_service_intf.query_topic_partitions
+        net
+        ~clock
+        ~admin_url:svc.admin_url
+        ~topic_name:(topic_name_to_string topic_name)
+    with
+    | Error e ->
+      Error (config_error (Kafka_service_intf.topic_partition_error_to_string e))
+    | Ok Kafka_service_intf.Topic_not_found -> Ok ()
+    | Ok metadata
+      when Kafka_service_intf.topic_has_required_replication svc.topic_durability metadata
+      -> Ok ()
+    | Ok (Kafka_service_intf.Topic_partitions { replication_factor; _ }) ->
+      Error
+        (config_error
+           (Printf.sprintf
+              "topic '%s' has replication factor %d; 3 is required for \
+               single-broker-loss durability"
+              (topic_name_to_string topic_name)
+              replication_factor))
+  in
+  let* () = verify_existing retry_topic_name in
   let* () =
     Kafka_service_intf.ensure_topic
       svc.producer
       ~topic_name:(topic_name_to_string retry_topic_name)
       ~partitions:svc.partitions
+      ~topic_durability:svc.topic_durability
     |> Result.map_error (fun e -> Kafka_service_intf.Consumer_error e)
   in
+  let* () = verify_existing dlq_topic_name in
   let* () =
     Kafka_service_intf.ensure_topic
       svc.producer
       ~topic_name:(topic_name_to_string dlq_topic_name)
       ~partitions:svc.partitions
+      ~topic_durability:svc.topic_durability
     |> Result.map_error (fun e -> Kafka_service_intf.Consumer_error e)
   in
   (* The relay's headers are already fully resolved by whichever smart

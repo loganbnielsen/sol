@@ -84,3 +84,48 @@ persistent workload volumes.
 
 **TypeScript parity:** Kafka durability is a platform capability and must hold for
 both language implementations included by DEC-026.
+
+## Outcome (2026-09-17)
+
+The profile's application-data guarantees now become applicable through one
+language-neutral declaration and fail closed when the substrate cannot meet
+them.
+
+- **Kafka use is declared, not inferred.** A service declares a Kafka
+  dependency by listing a `kafka` resource in its `uses:`. The plan sets
+  `SOL_KAFKA_DURABILITY=single-broker-loss` only for those services, and
+  `derive_consumer_groups` now derives a consumer group only for workers that
+  make that declaration — reconciling the old shape-based assumption. A target
+  with a `kafka` resource or an `events/` topic but no service declaring its use
+  fails preflight on the application side, naming the `uses:` fix.
+- **Kafka durability is a semantic policy, not a knob.** `Kafka_service` grew
+  `topic_durability` (`Broker_default` / `Single_broker_loss`). The qualified
+  path creates topics with replication factor 3 and rejects an existing topic
+  whose Redpanda metadata reports fewer replicas with `Insufficient_replication`,
+  before schema registration. Redpanda itself refuses RF 3 on a substrate with
+  too few brokers, so a target that cannot provide the guarantee fails rather
+  than silently downgrading. The admin partition query moved to Redpanda's
+  `/v1/partitions/kafka/<topic>` (the old `/v1/topics/<topic>` is 404), which is
+  what exposes each partition's replica count.
+- **Postgres HA follows the profile.** The AWS RDS module gained `rds_multi_az`;
+  the production profile derives it `true`, and profile-derived Terraform
+  variables are applied after operator `--var`/var-file values so a profile
+  invariant is not an escape hatch.
+- **Recovery is written down.** `docs/deployment/application-data-recovery.md`
+  defines the Postgres PITR/failover and Redpanda broker-loss operator
+  procedures plus the admitted volume semantic (single-AZ, replace from the
+  application artifact, no backup claim). HARDEN-002 records the qualification
+  evidence.
+
+Premise check: on pickup, `kafka_service_intf.ensure_topic` still pinned
+`replication_factor:1` and the AWS RDS module had no Multi-AZ variable, so the
+finding was still actionable.
+
+**Demo/example coverage:** `examples/pluto` already declares the `events` Kafka
+resource and lists it in `charge_svc`/`notify_worker` `uses`, so the pilot
+target exercises the supported Postgres/Kafka path. DEC-026 admits a workload
+volume only at `single` with no backup claim, so no volume example is added.
+
+**TypeScript parity:** Kafka durability is a platform capability, but
+TypeScript is staged behind DEC-026 §2's triggers and `@sol-fab/worker` does not
+create topics today, so no TypeScript change is in scope for maturity A.

@@ -144,6 +144,7 @@ val consume
   -> 'a Kafka_service_intf.topic
   -> group_id:string
   -> sw:Eio.Switch.t
+  -> net:_ Eio.Net.t
   -> clock:_ Eio.Time.clock
   -> retry_policy:Kafka.Consumer.retry_policy
   -> on_ready:(unit -> unit)

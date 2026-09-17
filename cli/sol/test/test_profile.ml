@@ -289,6 +289,30 @@ let test_worker_shape_does_not_imply_kafka () =
       (List.mem P.Kafka_durability requirements))
 ;;
 
+let test_declared_kafka_use_applies_durability_policy () =
+  with_workspace (fun () ->
+    write
+      "sol.yml"
+      "project: pluto\n\
+       resources:\n\
+      \  events:\n\
+      \    type: kafka\n\
+       services:\n\
+      \  notify_worker:\n\
+      \    uses: [events]\n";
+    write_target prod_aws selecting;
+    let plan = plan_for ~services:[ notify_worker ] "prod/aws/us-east-1" in
+    let worker = List.hd plan.services in
+    check_str
+      "semantic durability policy"
+      "single-broker-loss"
+      (List.assoc "SOL_KAFKA_DURABILITY" worker.config);
+    Alcotest.(check int)
+      "declared Kafka worker group"
+      1
+      (List.length plan.consumer_groups))
+;;
+
 let test_jobs_worker_requires_postgres_not_kafka () =
   with_workspace (fun () ->
     write_target prod_aws selecting;
@@ -418,6 +442,42 @@ let test_emit_to_rejected_for_profile () =
          (fun (f : Pre.finding) ->
             f.capability = P.Direct_apply_authority && f.side = Pre.Target)
          fs))
+;;
+
+let test_kafka_dependency_declaration_required () =
+  with_workspace (fun () ->
+    write "sol.yml" "project: pluto\nresources:\n  events:\n    type: kafka\n";
+    write_target prod_aws selecting;
+    let fs =
+      findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
+    in
+    match
+      List.find_opt (fun (f : Pre.finding) -> f.capability = P.Kafka_durability) fs
+    with
+    | None -> Alcotest.fail "expected an undeclared Kafka dependency finding"
+    | Some finding ->
+      check_bool "application side" true (finding.side = Pre.Application);
+      check_bool "names uses" true (contains ~needle:"uses:" finding.reason))
+;;
+
+let test_postgres_resource_declaration_required () =
+  with_workspace (fun () ->
+    write_target prod_aws selecting;
+    mkdir_p "db/migrations";
+    write "db/migrations/001.sql" "select 1;\n";
+    let fs =
+      findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
+    in
+    match
+      List.find_opt (fun (f : Pre.finding) -> f.capability = P.Postgres_durability) fs
+    with
+    | None -> Alcotest.fail "expected a missing Postgres resource finding"
+    | Some finding ->
+      check_bool "application side" true (finding.side = Pre.Application);
+      check_bool
+        "names resource declaration"
+        true
+        (contains ~needle:"resource" finding.reason))
 ;;
 
 let test_all_established_passes () =
@@ -554,6 +614,10 @@ let () =
             `Quick
             test_worker_shape_does_not_imply_kafka
         ; Alcotest.test_case
+            "declared Kafka use applies durability policy"
+            `Quick
+            test_declared_kafka_use_applies_durability_policy
+        ; Alcotest.test_case
             "jobs worker requires Postgres, not Kafka"
             `Quick
             test_jobs_worker_requires_postgres_not_kafka
@@ -581,6 +645,14 @@ let () =
             `Quick
             test_unqualified_provider_is_a_target_finding
         ; Alcotest.test_case "emit-to rejected" `Quick test_emit_to_rejected_for_profile
+        ; Alcotest.test_case
+            "Kafka dependency declaration required"
+            `Quick
+            test_kafka_dependency_declaration_required
+        ; Alcotest.test_case
+            "Postgres resource declaration required"
+            `Quick
+            test_postgres_resource_declaration_required
         ; Alcotest.test_case "all established passes" `Quick test_all_established_passes
         ; Alcotest.test_case
             "report speaks in guarantees"

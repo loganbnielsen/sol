@@ -148,6 +148,25 @@ let test_config_of_env_rejects_unknown_security_protocol () =
         (contains (Kafka_service.error_to_string e) "KAFKA_SECURITY_PROTOCOL"))
 ;;
 
+let test_config_of_env_topic_durability () =
+  with_env "SOL_KAFKA_DURABILITY" "single-broker-loss" (fun () ->
+    match Kafka_service.config_of_env () with
+    | Error e -> Alcotest.fail (Kafka_service.error_to_string e)
+    | Ok config ->
+      Alcotest.(check bool)
+        "semantic policy"
+        true
+        (config.topic_durability = Kafka_service.Single_broker_loss));
+  with_env "SOL_KAFKA_DURABILITY" "unsupported" (fun () ->
+    match Kafka_service.config_of_env () with
+    | Ok _ -> Alcotest.fail "expected invalid durability policy to fail"
+    | Error e ->
+      Alcotest.(check bool)
+        "clear durability error"
+        true
+        (contains (Kafka_service.error_to_string e) "SOL_KAFKA_DURABILITY"))
+;;
+
 (* ------------------------------------------------------------------ *)
 (* Retry topic control flow                                            *)
 (* ------------------------------------------------------------------ *)
@@ -722,10 +741,11 @@ let test_decode_registration_response_errors () =
 let test_decode_topic_partitions () =
   match
     Kafka_service.Admin.decode_topic_partitions
-      {|{"partitions":[{"id":0},{"id":1},{"id":2}]}|}
+      {|[{"partition_id":0,"replicas":[{"node_id":0},{"node_id":1},{"node_id":2}]},{"partition_id":1,"replicas":[{"node_id":1},{"node_id":2},{"node_id":0}]}]|}
   with
-  | Ok (Kafka_service.Admin.Topic_partitions partitions) ->
-    Alcotest.(check int) "partition count" 3 partitions
+  | Ok (Kafka_service.Admin.Topic_partitions { partitions; replication_factor }) ->
+    Alcotest.(check int) "partition count" 2 partitions;
+    Alcotest.(check int) "replication factor" 3 replication_factor
   | Ok Kafka_service.Admin.Topic_not_found ->
     Alcotest.fail "decoder should not return Topic_not_found for HTTP 200"
   | Error e ->
@@ -744,9 +764,10 @@ let test_decode_topic_partitions_errors () =
         ("malformed admin API topic response: " ^ body)
         (Kafka_service.Admin.topic_partition_error_to_string e)
   in
-  check_error "missing partitions" {|{"name":"orders"}|};
-  check_error "partitions not list" {|{"partitions":3}|};
-  check_error "malformed json" {|{"partitions":|}
+  check_error "object instead of list" {|{"name":"orders"}|};
+  check_error "missing replicas" {|[{"partition_id":0}]|};
+  check_error "empty partitions" {|[]|};
+  check_error "malformed json" {|[{"partition_id":|}
 ;;
 
 (* ------------------------------------------------------------------ *)
@@ -774,6 +795,7 @@ let () =
             "unknown security protocol fails clearly"
             `Quick
             test_config_of_env_rejects_unknown_security_protocol
+        ; test_case "topic durability" `Quick test_config_of_env_topic_durability
         ] )
     ; ( "retry_topics"
       , [ test_case

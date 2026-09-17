@@ -60,10 +60,17 @@ let check ?establish:establish_opt ~target ~apply_mode (plan : Sol_cli_deploymen
   | None -> Ok ()
   | Some (claim : Sol_cli_deployment_plan.profile_claim) ->
     let establish = Option.value establish_opt ~default:(establish ~target ~apply_mode) in
+    let application_status capability =
+      match List.assoc_opt capability claim.application_findings with
+      | Some reason -> Some (Unmet (Application, reason))
+      | None -> None
+    in
     let findings =
       List.filter_map
         (fun capability ->
-           match establish capability with
+           match
+             Option.value (application_status capability) ~default:(establish capability)
+           with
            | Established -> None
            | Unmet (side, reason) -> Some { capability; side; reason })
         claim.requirements

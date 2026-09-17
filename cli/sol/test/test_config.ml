@@ -940,6 +940,20 @@ target:
               (contains ~needle:"spike-fn" ecr))))
 ;;
 
+let test_production_profile_enables_rds_multi_az () =
+  with_temp_dir (fun () ->
+    write_base ();
+    mkdir_p "sol/prod/aws";
+    write "sol/prod/aws/us-east-1.yml" "target:\n  profile: production-single-region\n";
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+       | Error msg -> Alcotest.fail msg
+       | Ok vars ->
+         check_str_opt "RDS Multi-AZ" (Some "true") (List.assoc_opt "rds_multi_az" vars)))
+;;
+
 let test_terraform_vars_ecr_repositories_empty_without_app_dir () =
   with_temp_dir (fun () ->
     write
@@ -1184,6 +1198,10 @@ let () =
             "terraform vars: workspace_name + ecr_repositories"
             `Quick
             test_terraform_vars_workspace_name_and_ecr_repositories
+        ; Alcotest.test_case
+            "production profile enables RDS Multi-AZ"
+            `Quick
+            test_production_profile_enables_rds_multi_az
         ; Alcotest.test_case
             "terraform vars: ecr_repositories empty without app/"
             `Quick

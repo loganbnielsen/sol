@@ -345,6 +345,12 @@ implies nothing: it may consume Kafka or host `sol-jobs`. A worker that
 consumes Kafka without a declared topic or `kafka` resource is not detected
 yet, so declare every Kafka dependency.
 
+The Postgres and Kafka durability guarantees have a written operator
+procedure — backup, restore, failover and integrity verification — in
+[`application-data-recovery.md`](application-data-recovery.md). Qualification
+evidence for those procedures belongs to HARDEN-002; the runbook is the
+procedure, not proof a target passed.
+
 A deploy that passes preflight carries `production-single-region/v1` in its plan
 (`--emit-plan-to`, with the guarantees as `evidence_requirements`) and in its
 deployment event. The claim is never written into the release record: a release
