@@ -3535,6 +3535,30 @@
           "commit": "44588a24",
           "duration_s": 3.514,
           "baseline": true
+        },
+        {
+          "date": "2026-09-17",
+          "commit": "9e7c966a",
+          "duration_s": 2.285,
+          "baseline": true
+        },
+        {
+          "date": "2026-09-17",
+          "commit": "6ba94415",
+          "duration_s": 2.310,
+          "baseline": true
+        },
+        {
+          "date": "2026-09-17",
+          "commit": "ee1878b7",
+          "duration_s": 2.290,
+          "baseline": true
+        },
+        {
+          "date": "2026-09-17",
+          "commit": "a3dc8039",
+          "duration_s": 2.291,
+          "baseline": true
         }
       ]
     },
@@ -6397,6 +6421,30 @@
           "commit": "44588a24",
           "duration_s": 1.232,
           "baseline": true
+        },
+        {
+          "date": "2026-09-17",
+          "commit": "9e7c966a",
+          "duration_s": 1.278,
+          "baseline": true
+        },
+        {
+          "date": "2026-09-17",
+          "commit": "6ba94415",
+          "duration_s": 1.285,
+          "baseline": true
+        },
+        {
+          "date": "2026-09-17",
+          "commit": "ee1878b7",
+          "duration_s": 1.279,
+          "baseline": true
+        },
+        {
+          "date": "2026-09-17",
+          "commit": "a3dc8039",
+          "duration_s": 1.295,
+          "baseline": true
         }
       ]
     },
@@ -9046,6 +9094,30 @@
           "date": "2026-09-15",
           "commit": "44588a24",
           "duration_s": 1.229,
+          "baseline": true
+        },
+        {
+          "date": "2026-09-17",
+          "commit": "9e7c966a",
+          "duration_s": 1.277,
+          "baseline": true
+        },
+        {
+          "date": "2026-09-17",
+          "commit": "6ba94415",
+          "duration_s": 1.282,
+          "baseline": true
+        },
+        {
+          "date": "2026-09-17",
+          "commit": "ee1878b7",
+          "duration_s": 1.283,
+          "baseline": true
+        },
+        {
+          "date": "2026-09-17",
+          "commit": "a3dc8039",
+          "duration_s": 1.283,
           "baseline": true
         }
       ]
