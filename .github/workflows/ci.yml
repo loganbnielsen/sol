@@ -56,7 +56,11 @@ jobs:
   # exactly these commits, so one run tests one dependency set. Deliberately
   # NOT continue-on-error: if any package cannot be resolved, every building job
   # fails at its pin step with a pointer here, rather than floating on #main.
+  # Skipped for docs-only changes, which build nothing; always() keeps a failed
+  # classification (empty kind) on the full-run path.
   support-refs:
+    needs: classify
+    if: always() && needs.classify.outputs.kind != 'docs-only'
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     permissions:

@@ -60,5 +60,9 @@ Capability-aware job selection is filed separately in BACKLOG.
 - **Pin action, checked locally** by running its loop with `opam` stubbed out:
   - a complete snapshot pins every package at its resolved commit;
   - removing one package fails with the "no resolved commit" error.
+- **Docs-only changes:** `support-refs` is gated on classification like the
+  other expensive jobs, so a docs-only change resolves nothing, and the
+  required `test` check stays a lightweight success. A failed classification
+  still resolves and runs everything.
 - **Other callers:** `fn-svc-isolation-spike.yml` now resolves its own snapshot.
   `release.yml` keeps its separate `#main` pins, which stay with RELEASE-005.

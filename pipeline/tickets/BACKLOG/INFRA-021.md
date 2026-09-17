@@ -26,8 +26,8 @@ that precondition is met.
   and OCaml example smokes.
 - `typescript`: TypeScript packages or demo only. Runs the TypeScript golden
   path and TypeScript smokes.
-- `platform`/`shared`: CLI, platform, manifests, infrastructure, or anything
-  shared. Runs everything.
+- `platform/shared`: CLI, platform, manifests, infrastructure, or anything
+  shared by both languages. Runs everything.
 - **Fail closed:** anything unknown or mixed, and any change to `.github/` or
   `devtools/ci/`, runs everything.
 
@@ -38,7 +38,7 @@ that precondition is met.
 - Keep the classification defined once, in `devtools/ci/classify-changes.sh`,
   with its semantics pinned by its test.
 - The path-to-class mapping must be an explicit allowlist per class. Unlisted
-  paths are `platform`.
+  paths are `platform/shared`.
 
 **Demo/example coverage:** Not applicable; CI internals.
 
