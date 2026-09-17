@@ -12,7 +12,15 @@ opam-repository.
 opam graph — still not inventoried; distribution is what triggers the
 obligations, so this gates publication).
 
-**Related:** DEC-025, DEC-013, FEAT-085, INFRA-007.
+**Related:** DEC-025, DEC-013, FEAT-085, FEAT-088, INFRA-007.
+
+## Maturity-A program disposition
+
+Public-opam publication is the durable release channel, but it is not
+automatically on the maturity-A critical path. FEAT-088 may qualify DEC-025's
+immutable, workspace-owned interim for the first exact compatibility set. Keep
+this ticket in backlog unless DEC-026 concludes that public-opam availability is
+itself part of the first production support promise.
 
 **Problem:** DEC-025 chose opam as the canonical distribution mechanism for the
 Sol OCaml framework, and accepted immutable git opam pins (tag or commit) as the
