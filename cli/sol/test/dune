@@ -42,7 +42,8 @@
   test_alerting
   test_workspace
   test_platform_component
-  test_image_ref)
+  test_image_ref
+  test_migration)
  (libraries sol_cli alcotest unix yojson str))
 
 (rule
