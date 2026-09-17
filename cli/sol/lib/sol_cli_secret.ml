@@ -211,10 +211,6 @@ let apply_to_named_secret ~ctx ~secret_name ~namespace ~key ~value =
   apply_manifest ~ctx yaml
 ;;
 
-let rollout_restart ~ctx namespace =
-  ignore (Sol_cli_kubectl.rollout_restart ~ctx ~kind:"deployment" ~namespace)
-;;
-
 let hosted_stub _env =
   Error
     "hosted secret management will use the Sol control-plane API; no hosted endpoint is \
@@ -244,6 +240,63 @@ let fold_namespaces namespaces ~init ~f =
   List.fold_left (fun acc ns -> Result.bind acc (fun x -> f x ns)) (Ok init) namespaces
 ;;
 
+(* SEC-004: rotation must be verified, not assumed. The env-var secret contract
+   means a running pod never observes a rotated value, so the restart is what
+   makes the new value take effect; waiting for `rollout status` is what lets Sol
+   claim the workload returned to healthy state. A workload that never becomes
+   healthy is an error, not a silent success. *)
+let list_live_workloads ~ctx ~kind ~namespace =
+  match
+    Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; kind; "-n"; namespace; "-o"; "name" ]
+  with
+  | Error _ -> []
+  | Ok r when r.Sol_cli_process.exit_code <> 0 -> []
+  | Ok r ->
+    String.split_on_char '\n' r.Sol_cli_process.stdout
+    |> List.map String.trim
+    |> List.filter (fun name -> name <> "")
+;;
+
+(* Rollouts only exist when progressive delivery is enabled; an absent CRD
+   yields an empty list rather than a failure, so listing tolerates it. *)
+let restart_and_verify ~ctx ~namespace =
+  let names =
+    list_live_workloads ~ctx ~kind:"deployment" ~namespace
+    @ list_live_workloads ~ctx ~kind:"rollout" ~namespace
+  in
+  let* () =
+    iter_namespaces names ~f:(fun name ->
+      let* () =
+        match Sol_cli_kubectl.rollout_restart ~ctx ~kind:name ~namespace with
+        | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
+        | Ok r ->
+          Error
+            (Printf.sprintf
+               "could not restart %s in %s: %s"
+               name
+               namespace
+               (String.trim r.Sol_cli_process.stderr))
+        | Error e -> Error (Sol_cli_process.error_to_string e)
+      in
+      match
+        Sol_cli_kubectl.rollout_status_with_timeout
+          ~ctx
+          ~kind_name:name
+          ~namespace
+          ~timeout_s:120
+      with
+      | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
+      | Ok r ->
+        Error
+          (Printf.sprintf
+             "%s did not become healthy after the rotation restart: %s"
+             name
+             (String.trim r.Sol_cli_process.stderr))
+      | Error e -> Error (Sol_cli_process.error_to_string e))
+  in
+  Ok names
+;;
+
 let patch_workload_secrets ~ctx ~namespace ~key ~value =
   list_workload_secrets ~ctx namespace
   |> List.map (fun secret_name ->
@@ -268,7 +321,7 @@ let set ~ctx ~env ~workspace:_ ~namespaces ~key ~value =
          (which mount <svc>-secrets, not sol-secrets) see the updated value
          immediately on next restart. *)
       let* () = patch_workload_secrets ~ctx ~namespace ~key ~value in
-      rollout_restart ~ctx namespace;
+      let* _names = restart_and_verify ~ctx ~namespace in
       Ok ())
   in
   Ok (Applied namespaces)
@@ -328,7 +381,7 @@ let delete ~ctx ~env ~workspace:_ ~namespaces ~key =
         iter_namespaces (list_workload_secrets ~ctx namespace) ~f:(fun secret_name ->
           remove_from namespace secret_name)
       in
-      rollout_restart ~ctx namespace;
+      let* _names = restart_and_verify ~ctx ~namespace in
       Ok ())
   in
   Ok (Deleted namespaces)

@@ -50,6 +50,19 @@ let rollout_status ~ctx ~kind_name ~namespace =
     (invocation ~ctx [ "rollout"; "status"; kind_name; "-n"; namespace ])
 ;;
 
+let rollout_status_with_timeout ~ctx ~kind_name ~namespace ~timeout_s =
+  Sol_cli_process.run
+    (invocation
+       ~ctx
+       [ "rollout"
+       ; "status"
+       ; kind_name
+       ; "-n"
+       ; namespace
+       ; Printf.sprintf "--timeout=%ds" timeout_s
+       ])
+;;
+
 let rollout_restart ~ctx ~kind ~namespace =
   Sol_cli_process.run (invocation ~ctx [ "rollout"; "restart"; kind; "-n"; namespace ])
 ;;

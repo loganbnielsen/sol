@@ -345,6 +345,11 @@ implies nothing: it may consume Kafka or host `sol-jobs`. A worker that
 consumes Kafka without a declared topic or `kafka` resource is not detected
 yet, so declare every Kafka dependency.
 
+The workload credential posture is a Sol-owned renderer property: every workload
+gets no mounted service-account token, and runtime credentials rotate by
+`sol secret set` followed by a verified restart. See
+[`credential-rotation.md`](credential-rotation.md).
+
 The artifact guarantee is satisfied by how the application deploys:
 `sol deploy --image-ref <service>=<repo>@sha256:<digest>` pins each workload to
 immutable bytes, and the preflight rejects a mutable tag. A bare

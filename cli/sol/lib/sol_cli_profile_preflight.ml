@@ -79,6 +79,15 @@ let establish
      with
      | Ok () -> Established
      | Error reason -> Unmet (Target, reason))
+  | Credential_posture ->
+    (* SEC-004: the renderer disables ServiceAccount token automount for every
+       workload it generates (Sol_cli_manifest_yaml.service_account_doc), so no
+       plan can contain a workload with an ambient Kubernetes credential. This is
+       a Sol-owned property of the rendered plan, not a target or application
+       choice. Runtime secret rotation is the command-level behaviour of
+       `sol secret set` (in-place update + verified restart), proven end-to-end by
+       HARDEN-002. *)
+    Established
   | Qualified_versions ->
     (* FEAT-088: the enforceable compatibility input is the declared framework
        language. Every workload must state one, and the profile must qualify it;
@@ -126,7 +135,6 @@ let establish
              (Sol_cli_profile.to_string profile) ))
   | Remote_state
   | Scoped_operator_identities
-  | Credential_posture
   | Workload_availability
   | Postgres_durability
   | Kafka_durability -> not_yet_established

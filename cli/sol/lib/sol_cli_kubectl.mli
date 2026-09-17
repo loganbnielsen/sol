@@ -42,6 +42,16 @@ val rollout_status
   -> namespace:string
   -> (Sol_cli_process.result, Sol_cli_process.error) result
 
+(** Like {!rollout_status} but bounded by [timeout_s]
+    ([kubectl rollout status --timeout=<n>s]), so a rotation that never becomes
+    healthy fails instead of hanging. *)
+val rollout_status_with_timeout
+  :  ctx:Sol_cli_kube_destination.context
+  -> kind_name:string
+  -> namespace:string
+  -> timeout_s:int
+  -> (Sol_cli_process.result, Sol_cli_process.error) result
+
 val rollout_restart
   :  ctx:Sol_cli_kube_destination.context
   -> kind:string
