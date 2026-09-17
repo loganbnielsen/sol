@@ -146,7 +146,7 @@ let decode_workload ~release_id ~workspace (w : Sol_cli_release.workload) =
       w.ingress_path
   in
   let* calls = decode_calls ~release_id ~workload_name:w.name w.calls in
-  Ok
+  let spec =
     { Sol_cli_deployment_plan.domain = w.domain
     ; source_name = w.name
     ; k8s_name
@@ -175,6 +175,16 @@ let decode_workload ~release_id ~workspace (w : Sol_cli_release.workload) =
     ; extra_labels = w.extra_labels
     ; progressive_delivery
     }
+  in
+  let* () =
+    Sol_cli_deployment_plan.validate_persistence spec
+    |> Result.map_error (fun err ->
+      reconstruct_error
+        ~release_id
+        ~workload:w.name
+        ~fact:(Sol_cli_deployment_plan.plan_error_to_string err))
+  in
+  Ok spec
 ;;
 
 (* Second pass: [called_by] describes the CALLER, so it cannot be decoded from
