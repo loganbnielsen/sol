@@ -1,5 +1,17 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: SEC-004 — production workload credential posture and verified rotation (2026-09-17)
+
+Every Sol-rendered ServiceAccount disables token automount, so a default workload
+has no ambient Kubernetes API credential; the profile preflight's
+`credential_posture` guarantee is now established by construction. Runtime
+rotation is `sol secret set` (in-place Secret update) followed by a
+Sol-triggered restart of every live workload and a bounded
+`kubectl rollout status` wait that fails the operation if any doesn't return to
+healthy. Maturity A adds no Kubernetes-API-access capability. Live rotation
+evidence is HARDEN-002's; the contract is in
+`docs/deployment/credential-rotation.md`.
+
 ## Latest: OBS-043 — close the production alert-to-owner response loop (2026-09-17)
 
 Alert delivery is now a provider-neutral contract (`Sol_cli_alerting`): a

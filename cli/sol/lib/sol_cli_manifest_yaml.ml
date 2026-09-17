@@ -80,11 +80,17 @@ metadata:
     ns
 ;;
 
+(* SEC-004: a production workload gets no ambient Kubernetes credential. Every
+   Sol-rendered workload uses this ServiceAccount, so disabling token automount
+   here means no pod receives a mounted service-account token. Maturity A offers
+   no opt-back-in capability: a meaningful least-privilege Kubernetes-API
+   permission model is deferred until a concrete workload needs one. *)
 let service_account_doc ~ns ~name =
   f
     {|---
 apiVersion: v1
 kind: ServiceAccount
+automountServiceAccountToken: false
 metadata:
   name: %s
   namespace: %s|}
