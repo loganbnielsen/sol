@@ -58,6 +58,7 @@ type service_spec =
   ; scheduled_concurrency : Sol_cli_toml.scheduled_concurrency
   ; backoff_limit : int
   ; replicas : int
+  ; language : Sol_cli_compat.language option
   ; cpu : Sol_cli_toml.cpu_quantity
   ; memory : Sol_cli_toml.memory_quantity
   ; rollout_strategy : Sol_cli_toml.rollout_strategy option

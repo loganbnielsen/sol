@@ -66,7 +66,51 @@ let establish
         , "every workload must deploy an immutable reference; pass --image-ref \
            <service>=<repo>@sha256:<digest> (or a single --image-ref \
            <repo>@sha256:<digest> with a one-service scope) instead of a mutable tag" )
-  | Qualified_versions
+  | Qualified_versions ->
+    (* FEAT-088: the enforceable compatibility input is the declared framework
+       language. Every workload must state one, and the profile must qualify it;
+       nothing is inferred from build metadata (DEC-022 §7). The pinned
+       CLI/substrate/chart versions are recorded in
+       docs/deployment/compatibility.md. *)
+    let profile =
+      match plan.Sol_cli_deployment_plan.profile with
+      | Some claim -> claim.profile
+      | None -> Sol_cli_profile.Production_single_region
+    in
+    let services = plan.Sol_cli_deployment_plan.services in
+    let unstated =
+      List.filter
+        (fun (s : Sol_cli_deployment_plan.service_spec) -> s.language = None)
+        services
+    in
+    let unsupported =
+      List.filter_map
+        (fun (s : Sol_cli_deployment_plan.service_spec) ->
+           match s.language with
+           | Some language
+             when not (Sol_cli_compat.is_supported_by_profile profile language) ->
+             Some (s.source_name, language)
+           | _ -> None)
+        services
+    in
+    (match unstated, unsupported with
+     | [], [] -> Established
+     | first :: _, _ ->
+       Unmet
+         ( Application
+         , Printf.sprintf
+             "service %S does not declare a language; add `language: ocaml` (or \
+              `typescript`) to its entry in sol.yml"
+             first.source_name )
+     | [], (name, language) :: _ ->
+       Unmet
+         ( Application
+         , Printf.sprintf
+             "service %S declares language %s, which %s does not qualify; the first \
+              profile is OCaml-only (DEC-026 §2)"
+             name
+             (Sol_cli_compat.to_string language)
+             (Sol_cli_profile.to_string profile) ))
   | Remote_state
   | Scoped_operator_identities
   | Alert_delivery

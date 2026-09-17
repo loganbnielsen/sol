@@ -269,6 +269,7 @@ let sample_plan () : Sol_cli_deployment_plan.t =
     ; scheduled_concurrency = Sol_cli_toml.Allow
     ; backoff_limit = 3
     ; replicas = 2
+    ; language = None
     ; cpu = cpu "250m"
     ; memory = memory "256Mi"
     ; rollout_strategy = None
@@ -752,6 +753,7 @@ let make_worker_spec name domain =
   ; scheduled_concurrency = Sol_cli_toml.Allow
   ; backoff_limit = 3
   ; replicas = 1
+  ; language = None
   ; cpu = cpu "100m"
   ; memory = memory "128Mi"
   ; rollout_strategy = None
@@ -791,6 +793,7 @@ let kafka_config service_names : Sol_cli_config.t =
            ; uses = [ "events" ]
            ; scale_min = None
            ; scale_max = None
+           ; language = None
            ; omit = false
            })
         service_names
@@ -1116,7 +1119,16 @@ let resolved_config_with_scale ~name ~scale_min ~scale_max : Sol_cli_config.t =
   ; target = None
   ; resources = []
   ; services =
-      [ { name; typ = None; path = None; uses = []; scale_min; scale_max; omit = false } ]
+      [ { name
+        ; typ = None
+        ; path = None
+        ; uses = []
+        ; scale_min
+        ; scale_max
+        ; language = None
+        ; omit = false
+        }
+      ]
   }
 ;;
 

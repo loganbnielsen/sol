@@ -164,6 +164,32 @@ services:
     expect_load_error "unknown service key \"typo\"")
 ;;
 
+(* FEAT-088: the explicit, language-neutral compatibility input. *)
+let test_service_language_parses () =
+  with_temp_dir (fun () ->
+    write "sol.yml" "services:\n  api:\n    language: ocaml\n";
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      let service = List.hd (Sol_cli_config.services cfg) in
+      check_bool
+        "language parsed"
+        true
+        (service.Sol_cli_config.language = Some Sol_cli_compat.Ocaml))
+;;
+
+let test_unknown_service_language_fails () =
+  with_temp_dir (fun () ->
+    write "sol.yml" "services:\n  api:\n    language: rust\n";
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Ok _ -> Alcotest.fail "expected an unknown language to fail"
+    | Error e ->
+      check_bool
+        "names the supported languages"
+        true
+        (contains ~needle:"supported: ocaml, typescript" e.message))
+;;
+
 let test_duplicate_top_level_section_fails () =
   with_temp_dir (fun () ->
     write
@@ -1093,6 +1119,11 @@ let () =
             `Quick
             test_duplicate_resource_fails
         ; Alcotest.test_case "unknown key fails" `Quick test_unknown_key_fails
+        ; Alcotest.test_case "service language parses" `Quick test_service_language_parses
+        ; Alcotest.test_case
+            "unknown service language fails"
+            `Quick
+            test_unknown_service_language_fails
         ; Alcotest.test_case
             "duplicate top-level section fails"
             `Quick

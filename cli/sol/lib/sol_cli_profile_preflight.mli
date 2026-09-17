@@ -26,7 +26,8 @@ type finding =
 
 (** The real establishment check for one guarantee against the resolved target,
     the apply path this invocation would use, and the plan itself (FEAT-050's
-    artifact guarantee is a property of the plan's resolved images). *)
+    artifact guarantee is a property of the plan's resolved images; FEAT-088's
+    compatibility check reads the plan's declared workload languages). *)
 val establish
   :  target:Sol_cli_config.target
   -> apply_mode:Sol_cli_release.apply_mode

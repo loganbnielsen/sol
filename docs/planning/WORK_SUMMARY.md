@@ -29,6 +29,17 @@ preflight's `Immutable_artifacts` guarantee is now a real application-side
 check, and the apply path confirms each reference exists in its registry before
 mutating anything. Tag-based deploys are unchanged.
 
+## Latest: FEAT-088 — publish and enforce the maturity-A compatibility contract (2026-09-17)
+
+A workload declares its framework language in `sol.yml` (`language: ocaml` /
+`typescript`); nothing infers it. The profile preflight's `Qualified_versions`
+guarantee is now real: every deployed workload must declare a language the
+profile qualifies, and TypeScript is reported as staged (DEC-026 §2) rather
+than silently admitted. The supported set — CLI, OCaml, Kubernetes, AWS
+provider module and platform-chart versions — is published in
+`docs/deployment/compatibility.md`, and the pluto example demonstrates both
+verdicts.
+
 ## Latest: FEAT-083 — explicit workload persistence semantics (2026-09-17)
 
 Services and workers remain interchangeable Deployments. A declared workload

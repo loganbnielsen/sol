@@ -81,7 +81,17 @@ sol deploy pilot/aws/us-east-1 --scope payments/charge_svc --dry-run \
 Either form runs the profile preflight before anything touches a cluster. It
 refuses until the target establishes every guarantee the profile requires — a
 tag reference is itself one unmet guarantee — and lists each unmet guarantee
-with who must act. See the "Production Profile" section of
+with who must act.
+
+Every workload declares its framework language in `sol.yml`. This workspace's
+OCaml services declare `language: ocaml`; the `app/demo_ts` pair declares
+`language: typescript`, so the preflight reports TypeScript as not yet
+qualified for the first profile (DEC-026 §2) rather than silently admitting it.
+The exact supported set — CLI, OCaml version, Kubernetes, provider module and
+chart versions — is published in
+`docs/deployment/compatibility.md` in the Sol repository.
+
+See the "Production Profile" section of
 `docs/deployment/self-hosted-substrate-contract.md` in the Sol repository.
 
 ## CLI commands
