@@ -133,11 +133,63 @@ let establish
              name
              (Sol_cli_compat.to_string language)
              (Sol_cli_profile.to_string profile) ))
-  | Remote_state
-  | Scoped_operator_identities
-  | Workload_availability
-  | Postgres_durability
-  | Kafka_durability -> not_yet_established
+  | Remote_state ->
+    (* AUDIT-072: control state must be encrypted, versioned and locked, and a
+       local backend is never conformant. Sol provisions a conformant backend by
+       default (cli/platform/infra/bootstrap); an operator may bring their own by
+       declaring it. Preflight asserts the declaration; the destructive recovery
+       and concurrency checks are HARDEN-002's. *)
+    (match target.state_bucket, target.state_lock_table with
+     | Some bucket, Some lock when String.trim bucket <> "" && String.trim lock <> "" ->
+       Established
+     | _ ->
+       Unmet
+         ( Target
+         , "declare an encrypted, versioned remote Terraform state backend with locking: \
+            set `state_bucket` and `state_lock_table` (Sol provisions a conformant one \
+            via `cli/platform/infra/bootstrap`)" ))
+  | Scoped_operator_identities ->
+    (* AUDIT-072: named provisioning/deploy/operator identities, distinct from
+       the cluster-creator admin, plus an explicitly restricted public endpoint.
+       Sol generates the least-privilege policy contracts; the operator supplies
+       the role ARNs. *)
+    let present = function
+      | Some s -> String.trim s <> ""
+      | None -> false
+    in
+    let missing_roles =
+      List.filter_map
+        (fun (name, value) -> if present value then None else Some name)
+        [ "provisioner_role_arn", target.provisioner_role_arn
+        ; "deploy_role_arn", target.deploy_role_arn
+        ; "operator_role_arn", target.operator_role_arn
+        ]
+    in
+    let cidr =
+      match target.cluster_endpoint_cidr with
+      | Some c when String.trim c = "0.0.0.0/0" ->
+        Error
+          "`cluster_endpoint_cidr` is 0.0.0.0/0; a production target must restrict the \
+           public Kubernetes API endpoint to a specific CIDR"
+      | Some c when String.trim c <> "" -> Ok (String.trim c)
+      | _ ->
+        Error
+          "`cluster_endpoint_cidr` is missing; declare the one CIDR allowed to reach the \
+           public Kubernetes API endpoint"
+    in
+    (match missing_roles with
+     | _ :: _ ->
+       Unmet
+         ( Target
+         , Printf.sprintf
+             "declare the named identities distinct from the cluster-creator admin: %s \
+              (Sol generates the least-privilege policy contracts; supply the role ARNs)"
+             (String.concat ", " missing_roles) )
+     | [] ->
+       (match cidr with
+        | Ok _ -> Established
+        | Error reason -> Unmet (Target, reason)))
+  | Workload_availability | Postgres_durability | Kafka_durability -> not_yet_established
 ;;
 
 let check ?establish:establish_opt ~target ~apply_mode (plan : Sol_cli_deployment_plan.t) =

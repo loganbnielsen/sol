@@ -350,6 +350,13 @@ gets no mounted service-account token, and runtime credentials rotate by
 `sol secret set` followed by a verified restart. See
 [`credential-rotation.md`](credential-rotation.md).
 
+Recoverable state and scoped identities are target declarations: a locked,
+versioned, encrypted remote state backend (`state_bucket`/`state_lock_table`,
+which Sol provisions by default via `cli/platform/infra/bootstrap`) and the named
+provisioning/deploy/operator role ARNs plus a restricted public-endpoint CIDR.
+See [`production-bootstrap.md`](production-bootstrap.md) for the exact commands
+and recovery procedure.
+
 The artifact guarantee is satisfied by how the application deploys:
 `sol deploy --image-ref <service>=<repo>@sha256:<digest>` pins each workload to
 immutable bytes, and the preflight rejects a mutable tag. A bare

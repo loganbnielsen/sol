@@ -410,15 +410,110 @@ let test_unestablished_guarantees_fail_closed () =
       ]
       (capabilities fs);
     check_bool
-      "Sol-owned guarantees are attributed to Sol, the artifact and version guarantees \
-       to the application, and the alert guarantee to the target"
+      "Sol-owned guarantees are attributed to Sol; the artifact and version guarantees \
+       to the application; alert, state and identity to the target"
       true
       (List.for_all
          (fun (f : Pre.finding) ->
             match f.capability with
-            | P.Alert_delivery -> f.side = Pre.Target
+            | P.Alert_delivery | P.Remote_state | P.Scoped_operator_identities ->
+              f.side = Pre.Target
             | P.Immutable_artifacts | P.Qualified_versions -> f.side = Pre.Application
             | _ -> f.side = Pre.Platform)
+         fs))
+;;
+
+let test_remote_state_requires_a_backend () =
+  with_workspace (fun () ->
+    write_target prod_aws selecting;
+    let fs =
+      findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
+    in
+    match List.find_opt (fun (f : Pre.finding) -> f.capability = P.Remote_state) fs with
+    | None -> Alcotest.fail "expected a remote-state finding"
+    | Some f ->
+      check_bool "target side" true (f.side = Pre.Target);
+      check_bool "names the declarations" true (contains ~needle:"state_bucket" f.reason))
+;;
+
+let test_remote_state_established_by_declaration () =
+  with_workspace (fun () ->
+    write_target
+      prod_aws
+      "target:\n\
+      \  profile: production-single-region\n\
+      \  state_bucket: acme-tfstate\n\
+      \  state_lock_table: acme-tflock\n";
+    let fs =
+      findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
+    in
+    check_bool
+      "a declared bucket and lock table establish remote state"
+      false
+      (List.exists (fun (f : Pre.finding) -> f.capability = P.Remote_state) fs))
+;;
+
+let test_scoped_identities_require_roles_and_cidr () =
+  with_workspace (fun () ->
+    write_target prod_aws selecting;
+    let fs =
+      findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
+    in
+    match
+      List.find_opt
+        (fun (f : Pre.finding) -> f.capability = P.Scoped_operator_identities)
+        fs
+    with
+    | None -> Alcotest.fail "expected a scoped-identity finding"
+    | Some f ->
+      check_bool "target side" true (f.side = Pre.Target);
+      check_bool
+        "names the missing identity"
+        true
+        (contains ~needle:"provisioner_role_arn" f.reason))
+;;
+
+let test_world_reachable_endpoint_is_rejected () =
+  with_workspace (fun () ->
+    write_target
+      prod_aws
+      "target:\n\
+      \  profile: production-single-region\n\
+      \  provisioner_role_arn: arn:aws:iam::1:role/provisioner\n\
+      \  deploy_role_arn: arn:aws:iam::1:role/deploy\n\
+      \  operator_role_arn: arn:aws:iam::1:role/operator\n\
+      \  cluster_endpoint_cidr: 0.0.0.0/0\n";
+    let fs =
+      findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
+    in
+    match
+      List.find_opt
+        (fun (f : Pre.finding) -> f.capability = P.Scoped_operator_identities)
+        fs
+    with
+    | None -> Alcotest.fail "expected a scoped-identity finding for 0.0.0.0/0"
+    | Some f ->
+      check_bool "explains the restriction" true (contains ~needle:"0.0.0.0/0" f.reason))
+;;
+
+let test_scoped_identities_established () =
+  with_workspace (fun () ->
+    write_target
+      prod_aws
+      "target:\n\
+      \  profile: production-single-region\n\
+      \  provisioner_role_arn: arn:aws:iam::1:role/provisioner\n\
+      \  deploy_role_arn: arn:aws:iam::1:role/deploy\n\
+      \  operator_role_arn: arn:aws:iam::1:role/operator\n\
+      \  cluster_endpoint_cidr: 203.0.113.0/24\n";
+    let fs =
+      findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
+    in
+    check_bool
+      "named identities and a restricted CIDR establish the identity guarantee"
+      false
+      (List.exists
+         (fun (f : Pre.finding) -> f.capability = P.Scoped_operator_identities)
          fs))
 ;;
 
@@ -842,6 +937,26 @@ let () =
             "credential posture is established"
             `Quick
             test_credential_posture_is_established
+        ; Alcotest.test_case
+            "remote state requires a backend"
+            `Quick
+            test_remote_state_requires_a_backend
+        ; Alcotest.test_case
+            "remote state established by declaration"
+            `Quick
+            test_remote_state_established_by_declaration
+        ; Alcotest.test_case
+            "scoped identities require roles and cidr"
+            `Quick
+            test_scoped_identities_require_roles_and_cidr
+        ; Alcotest.test_case
+            "world-reachable endpoint is rejected"
+            `Quick
+            test_world_reachable_endpoint_is_rejected
+        ; Alcotest.test_case
+            "scoped identities established"
+            `Quick
+            test_scoped_identities_established
         ; Alcotest.test_case
             "Kafka dependency declaration required"
             `Quick

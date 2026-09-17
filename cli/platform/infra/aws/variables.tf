@@ -158,3 +158,17 @@ variable "alert_runbook_url" {
   type    = string
   default = ""
 }
+
+# ── AUDIT-072: recoverable state and scoped identities ──────────────────────
+
+variable "cluster_endpoint_cidr" {
+  description = "The single CIDR allowed to reach the public Kubernetes API endpoint. Empty leaves the module default (0.0.0.0/0) for non-production clusters; a production-single-region target must set a specific value (enforced by sol deploy's preflight)."
+  type        = string
+  default     = ""
+}
+
+variable "enable_cluster_creator_admin" {
+  description = "Grant the cluster-creator identity standing EKS admin. Default false: the normal production path uses the named identities from the target file, and bootstrapping/break-glass is a documented, scoped exception (AUDIT-072)."
+  type        = bool
+  default     = false
+}

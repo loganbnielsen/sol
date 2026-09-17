@@ -616,6 +616,47 @@ target:
         (Option.get target.alert_runbook_url))
 ;;
 
+(* AUDIT-072: recoverable state and scoped identities are target declarations. *)
+let test_target_recoverable_state_and_identities_parsed () =
+  with_temp_dir (fun () ->
+    write_base ();
+    mkdir_p "sol/prod/aws";
+    write
+      "sol/prod/aws/us-east-1.yml"
+      {|
+target:
+  base_domain: pluto.example.com
+  state_bucket: acme-tfstate
+  state_lock_table: acme-tflock
+  provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+  deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
+  operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
+  cluster_endpoint_cidr: 203.0.113.0/24
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      let target = Option.get (Sol_cli_config.target cfg) in
+      check_str "state_bucket" "acme-tfstate" (Option.get target.state_bucket);
+      check_str "state_lock_table" "acme-tflock" (Option.get target.state_lock_table);
+      check_str
+        "provisioner_role_arn"
+        "arn:aws:iam::111122223333:role/sol-provisioner"
+        (Option.get target.provisioner_role_arn);
+      check_str
+        "deploy_role_arn"
+        "arn:aws:iam::111122223333:role/sol-deploy"
+        (Option.get target.deploy_role_arn);
+      check_str
+        "operator_role_arn"
+        "arn:aws:iam::111122223333:role/sol-operator"
+        (Option.get target.operator_role_arn);
+      check_str
+        "cluster_endpoint_cidr"
+        "203.0.113.0/24"
+        (Option.get target.cluster_endpoint_cidr))
+;;
+
 let test_target_observability_backend_absent_when_unset () =
   with_temp_dir (fun () ->
     write_base ();
@@ -1108,6 +1149,10 @@ let () =
             "alert delivery declaration parsed"
             `Quick
             test_target_alert_delivery_parsed
+        ; Alcotest.test_case
+            "recoverable state and identities parsed"
+            `Quick
+            test_target_recoverable_state_and_identities_parsed
         ; Alcotest.test_case "bad target path fails" `Quick test_bad_target_path_fails
         ; Alcotest.test_case
             "unknown target provider fails"
