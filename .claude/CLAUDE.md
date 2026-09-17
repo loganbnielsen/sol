@@ -29,9 +29,18 @@ pipeline/tickets/
   DONE/                     ← merged
 ```
 
-**State machine (REFAC-077):** `READY_FOR_ENGINEERING` → `DONE`, full stop. There is no separate "in progress," "in review," "ready to merge," or "blocked by performance" directory any more.
+**Implementation state machine (REFAC-077):** `READY_FOR_ENGINEERING` → `DONE`.
+Triage may promote or demote between `BACKLOG` and `READY_FOR_ENGINEERING`, and
+reverting a merged implementation returns `DONE` to `READY_FOR_ENGINEERING`.
+There is no separate "in progress," "in review," "ready to merge," or
+"blocked by performance" directory any more.
 
-`pipeline/tickets/` is normally only ever modified in the `main` checkout — never inside a worktree branch — **with one deliberate exception**: the `READY_FOR_ENGINEERING → DONE` move itself is committed *on the ticket's own PR branch*, as the worker's own final implementation commit. That's what makes `gh pr merge --squash` carry the ticket's completion into `main` inside the very same commit as the code, instead of needing a separate commit on `main` for it. A `BACKLOG → READY_FOR_ENGINEERING` move (e.g. an audit materialising a new finding) still only ever happens in the main checkout, same as before.
+Every `pipeline/tickets/` change goes through a PR. New findings are created in
+`BACKLOG/` or `READY_FOR_ENGINEERING/` on the audit/filing branch; promotions,
+corrections, and other bookkeeping use their own branches. An implementation
+branch moves its own ticket from `READY_FOR_ENGINEERING/` to `DONE/` in the
+final commit, so `gh pr merge --squash` carries the code and ticket completion
+into `main` atomically. Reverting that squash commit reverses the move too.
 
 Review and merge readiness live entirely on the PR, not on a ticket directory: `soldev pipeline review <ticket-id>` leaves its verdict as a plain PR comment either way — a `SOLDEV-REVIEW: PASS`-marked comment on pass, an ordinary violations comment on fail. It's a comment rather than a formal GitHub review because this is a solo-owned repo: the `gh` identity is always the PR's own author, and GitHub refuses to let an author formally approve their own PR. A bounce just means another commit on the same open PR, this repo's established convention, never a ticket-directory round trip. `soldev pipeline merge` checks the PR for that pass-marker comment and green CI directly against GitHub before it will act, then runs `gh pr merge --squash --delete-branch --admin` — the `--admin` bypasses branch protection's separate 1-approval requirement (which, for the same self-approval reason, this repo can never satisfy natively); required status checks still gate the merge for real. A post-merge regression is handled by reverting that one squash commit, which un-does the code *and* the ticket's `DONE` move together (they were always the same commit) — the ticket lands back in `READY_FOR_ENGINEERING` automatically, with no separate "blocked" state to move it out of.
 
