@@ -298,11 +298,79 @@ let run_plan ctx ~phase ~mode plan =
     exit 1
 ;;
 
+(* ── AUDIT-069: the migration prerequisite ───────────────────────────────────
+
+   The production profile's release-safety contract includes "application code
+   is not rolled out against a known-incompatible database migration state". The
+   deployable revision defines the schema it expects: every migration in the
+   workspace's [db/migrations] must already be applied (required ⊆ applied,
+   verified against the authoritative [schema_migrations] table). There is no
+   second Sol-side record of "which migrations matter".
+
+   The order is deliberate: static preflight -> live migration-status
+   verification -> workload mutation. [--dry-run] and [--emit-to] are
+   side-effect free, so they create no Job and report the prerequisite as
+   requiring live verification -- never as established. A non-production deploy
+   (no selected profile) makes no such claim and is not checked. *)
+let check_migration_prerequisite ~ctx ~plan ~live =
+  match plan.Sol_cli_deployment_plan.profile with
+  | None -> ()
+  | Some _ ->
+    let dir = Sol_cli_migration.default_dir in
+    if not live
+    then (
+      (* Side-effect free: report honestly instead of creating anything. *)
+      match Sol_cli_migration.required ~dir with
+      | Ok [] | Error _ -> ()
+      | Ok _ ->
+        Printf.printf
+          "Migrations: NOT verified -- a side-effect-free run creates no status Job. The \
+           applied migration set is only checked against the live cluster by a real \
+           deploy (before any workload moves).\n\
+           %!")
+    else (
+      match
+        Cmd_migrate.verify_migration_prerequisite
+          ~ctx:ctx.execution.cluster
+          ~target:ctx.target_name
+          ~workspace:ctx.execution.workspace
+          ~dir
+      with
+      | Cmd_migrate.No_migrations -> ()
+      | Cmd_migrate.Satisfied applied ->
+        Printf.printf
+          "Migrations: OK -- %d declared migration(s) present in schema_migrations\n%!"
+          (List.length applied)
+      | Cmd_migrate.Unsatisfied missing ->
+        Printf.eprintf
+          "\n\
+           error: the required migration set is not applied. Missing: %s\n\
+          \  Run `sol migrate apply %s`, then deploy again.\n\
+           %!"
+          (String.concat ", " (List.map Sol_cli_migration.to_string missing))
+          ctx.target_name;
+        exit 1
+      | Cmd_migrate.Unavailable reason ->
+        Printf.eprintf
+          "\n\
+           error: cannot verify the required migration state: %s\n\
+          \  A deploy against the production profile fails closed rather than assume the \
+           schema is compatible. Run `sol migrate apply %s` (which reports the applied \
+           set) and deploy again.\n\
+           %!"
+          reason
+          ctx.target_name;
+        exit 1)
+;;
+
 let run_dry_run ctx ~emit_to =
   print_header ~workspace:ctx.execution.workspace ~sha:ctx.sha ~mode_line:"(dry-run)" ();
   let plan = build_plan ctx ~emit_to in
   write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
   print_planned_services plan;
+  (* AUDIT-069: side-effect free, so the prerequisite is reported as not
+     verified rather than checked against the cluster. *)
+  check_migration_prerequisite ~ctx ~plan ~live:false;
   record_plan ctx.run_log plan;
   ignore (run_plan ctx ~phase:"dry-run" ~mode:Sol_cli_executor.Dry_run plan)
 ;;
@@ -316,6 +384,9 @@ let run_emit ctx ~dir =
   let plan = build_plan ctx ~emit_to:(Some dir) in
   write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
   print_planned_services plan;
+  (* AUDIT-069: emitting manifests is side-effect free for this cluster, so the
+     live prerequisite is not established here. *)
+  check_migration_prerequisite ~ctx ~plan ~live:false;
   record_plan ctx.run_log plan;
   let results = run_plan ctx ~phase:"emit" ~mode:(Sol_cli_executor.Emit_to dir) plan in
   List.iter
@@ -541,6 +612,9 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
     plan;
   write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
   print_planned_services plan;
+  (* AUDIT-069: static preflight -> live migration-status verification ->
+     workload mutation. This is the last gate before the lease and any apply. *)
+  check_migration_prerequisite ~ctx ~plan ~live:true;
   record_plan ctx.run_log plan;
   Sol_cli_boundary_lease.with_boundary_lease
     ~ctx:ctx.execution.cluster

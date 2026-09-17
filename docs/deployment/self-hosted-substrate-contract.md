@@ -365,6 +365,14 @@ makes restoration possible. Sol refuses a claim the workload cannot satisfy
 fails the preflight when the headroom is missing. See
 [`workload-availability.md`](workload-availability.md).
 
+Migration ordering is enforced live: a production deploy verifies that every
+migration in the workspace's `db/migrations` is present in the authoritative
+`schema_migrations` table (read-only, via a short-lived in-cluster Job) after the
+static preflight and before any workload mutation, failing closed when the check
+cannot be performed. `--dry-run`/`--emit-to` create nothing and report the
+prerequisite as not verified. See
+[`migration-ordering.md`](migration-ordering.md).
+
 The artifact guarantee is satisfied by how the application deploys:
 `sol deploy --image-ref <service>=<repo>@sha256:<digest>` pins each workload to
 immutable bytes, and the preflight rejects a mutable tag. A bare

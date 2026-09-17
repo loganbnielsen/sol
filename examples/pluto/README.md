@@ -112,6 +112,20 @@ it; `charge_svc` stays `single` and is reported honestly as such. The pilot and
 prod targets declare the fixed `node_failure_headroom_nodes` the claim needs.
 See `docs/deployment/workload-availability.md`.
 
+A production deploy refuses to roll code out against an unapplied migration
+(AUDIT-069). This workspace has one migration, `db/migrations/0001_notifications.sql`,
+so the two cases are:
+
+- **Compatible** — after `sol migrate apply prod/aws/us-east-1`, `sol deploy
+  prod/aws/us-east-1` verifies `0001_notifications` against the authoritative
+  `schema_migrations` table and proceeds.
+- **Deliberately blocked** — drop a new file in (say `0002_add_index.sql`)
+  without running `sol migrate apply`: the deploy fails before any workload
+  moves, naming the missing migration and the command to fix it. `--dry-run`
+  stays side-effect free and reports the prerequisite as not verified.
+
+See `docs/deployment/migration-ordering.md`.
+
 See the "Production Profile" section of
 `docs/deployment/self-hosted-substrate-contract.md` in the Sol repository.
 
