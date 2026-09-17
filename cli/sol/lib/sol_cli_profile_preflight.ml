@@ -15,13 +15,10 @@ type finding =
 
 let qualified_providers = [ Sol_cli_provider.Aws ]
 
-let not_yet_established =
-  Unmet (Platform, "Sol cannot establish this guarantee for any target yet")
-;;
-
-(* Each [not_yet_established] branch is replaced by a real check as the
-   production program implements that guarantee; none may be relaxed to pass
-   before it can be established. *)
+(* Every capability in the profile now has a real establishment branch: none is
+   staged or assumed. Each branch asserts only what is observable offline (a
+   declaration, a rendered configuration, a profile-derived setting); the live
+   behavioural evidence behind a guarantee is HARDEN-002's. *)
 let establish
       ~(target : Sol_cli_config.target)
       ~apply_mode
@@ -227,7 +224,79 @@ let establish
                can be restored (DEC-026 §3)"
               required
               required ))
-  | Postgres_durability | Kafka_durability -> not_yet_established
+  | Postgres_durability ->
+    (* AUDIT-078: this capability is only in [requirements] when the plan uses
+       Postgres (migrations or a declared `postgres` resource), and the
+       missing-declaration case is already an application finding reported
+       ahead of this branch. What preflight establishes here is the
+       *configuration* consistency DEC-026 §4 asks a profile target to declare:
+       for exactly this (Postgres in use + profile selected) pair Sol drives the
+       provider root with `create_rds = true` and `rds_multi_az = true`
+       (Sol_cli_config.terraform_vars derives the latter from the profile), and
+       that module renders encrypted storage with a 7-day PITR window. What
+       preflight cannot observe, and therefore must not claim: that a failover
+       or a point-in-time restore has actually been performed or met its bound.
+       The RPO/RTO numbers in DEC-026 §5 are measured live by HARDEN-002. A
+       provider without such a module fails closed rather than being assumed
+       equivalent. *)
+    if List.mem target.provider qualified_providers
+    then Established
+    else
+      Unmet
+        ( Target
+        , Printf.sprintf
+            "provider %s does not implement this profile's Postgres durability \
+             configuration (profile-derived Multi-AZ, encrypted storage, 7-day PITR \
+             window); qualified: %s"
+            (Sol_cli_provider.to_string target.provider)
+            (qualified_providers
+             |> List.map Sol_cli_provider.to_string
+             |> String.concat ", ") )
+  | Kafka_durability ->
+    (* AUDIT-078: likewise applicable only when the plan *positively declares*
+       Kafka use (topics declared or a `kafka` resource used) — never inferred
+       from a worker's shape — and the missing-declaration case is an
+       application finding reported ahead of this branch. The qualified path
+       requires RF >= 3 with `acks=all` and write caching disabled, and the
+       plan records that requirement on every Kafka-consuming workload as
+       `SOL_KAFKA_DURABILITY=single-broker-loss`, which `kafka-eio-service`
+       verifies against the broker before the workload uses the topic. Preflight
+       asserts that rendered requirement is present for every such workload and
+       that the provider implements the path. The zero-loss-on-broker-loss
+       behaviour and the consumer-resume bound are HARDEN-002's live evidence. *)
+    let consumers =
+      List.filter
+        (fun (s : Sol_cli_deployment_plan.service_spec) -> s.consumes_kafka)
+        plan.Sol_cli_deployment_plan.services
+    in
+    let missing =
+      List.filter
+        (fun (s : Sol_cli_deployment_plan.service_spec) ->
+           not (List.mem_assoc "SOL_KAFKA_DURABILITY" s.config))
+        consumers
+    in
+    if not (List.mem target.provider qualified_providers)
+    then
+      Unmet
+        ( Target
+        , Printf.sprintf
+            "provider %s does not implement this profile's qualified Kafka durability \
+             path (RF >= 3, acks=all, write caching disabled); qualified: %s"
+            (Sol_cli_provider.to_string target.provider)
+            (qualified_providers
+             |> List.map Sol_cli_provider.to_string
+             |> String.concat ", ") )
+    else (
+      match missing with
+      | first :: _ ->
+        Unmet
+          ( Application
+          , Printf.sprintf
+              "Kafka-consuming workload %S is not rendered with the qualified durability \
+               requirement (SOL_KAFKA_DURABILITY); a workload that reads or writes Kafka \
+               under this profile must carry it"
+              first.source_name )
+      | [] -> Established)
 ;;
 
 let check ?establish:establish_opt ~target ~apply_mode (plan : Sol_cli_deployment_plan.t) =

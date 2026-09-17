@@ -139,3 +139,119 @@ edited, and the check was not bypassed.
 Alert delivery (G1–G3) is accepted as blocked by decision: no real
 production-profile receiver exists in this environment, and a local sink does not
 qualify the target (DEC-026 §8).
+
+## Remediation (2026-09-17) — run 1 blockers fixed, before spending on run 2
+
+Run 1 stands as a valid non-conformant qualification run; its scenario evidence is
+preserved. The production-path defects it exposed are now fixed, with offline
+regression coverage for each.
+
+### 1. `Postgres_durability` / `Kafka_durability` preflight (was: the blocker)
+
+Both guarantees now have real establishment branches; `not_yet_established` is
+gone and every one of the profile's eleven capabilities is established from
+observable evidence.
+
+The distinction is explicit and load-bearing:
+
+- **Preflight establishes configuration consistency only.** Postgres: the plan uses
+  Postgres, so Sol drives the provider root with `create_rds = true` and
+  `rds_multi_az = true` (profile-derived) and that module renders encrypted
+  storage with a 7-day PITR window. Kafka: the plan *positively declares* Kafka
+  use, and every Kafka-consuming workload carries the rendered
+  `SOL_KAFKA_DURABILITY=single-broker-loss` requirement that `kafka-eio-service`
+  verifies against the broker. A provider that does not implement the path fails
+  closed, naming what is missing.
+- **HARDEN-002 establishes the behaviour.** Failover, PITR restore, zero acked-message
+  loss on a broker loss and the resume bound remain live scenarios; preflight does
+  not observe and does not claim them.
+
+Missing-declaration cases stay fail-closed through the existing application
+findings (a plan with migrations but no `postgres` resource; a Kafka-using service
+without a `kafka` resource), which are reported ahead of these branches.
+
+### 2. `cluster_issuer` routing
+
+`Sol_cli_config.terraform_vars` no longer sends `cluster_issuer` to the provider
+root — it is a `cli/platform/infra/base` variable, applied with its own variables
+(the split the smoke harness already used). A documented target using it can
+provision again. Covered by a regression test asserting the field is not routed to
+the provider root while provider-root variables still are.
+
+### 3. Fresh production Postgres provisioning
+
+`create_rds = true` can no longer send an empty master password to AWS:
+
+- `Sol_cli_db_credential` (pure, unit-tested) refuses an apply that would create
+  Postgres with no credential source, and refuses a password passed with `--var`
+  because the run log records the terraform command line;
+- the credential comes from `TF_VAR_db_password` (environment, from the operator's
+  secret store), which Sol never logs, and `sol cloud apply` fails before terraform
+  runs at all;
+- `aws_db_instance.postgres` carries its own precondition on password strength, so
+  the constraint holds when terraform is driven directly;
+- nothing writes the value to a plan, output, log or release record; the module's
+  `postgres_url` output was already `sensitive`.
+
+**Deliberate non-decision, flagged for the user:** Sol does *not* yet own
+generating or storing this credential (e.g. AWS Secrets Manager, or writing it
+into the runtime Secret). Today the operator supplies it and Sol transports it out
+of band. Whether Sol should own that lifecycle is a real architectural choice and
+is *not* decided here.
+
+### 4. `qualified_versions` stays fail-closed
+
+Untouched. The TypeScript rejection is a valid negative case under the OCaml-only
+`v1` qualification (re-verified after remediation). The conformant run uses an
+OCaml-only representative workload — `examples/pluto` minus its two TypeScript
+services — rather than weakening FEAT-088.
+
+### Offline coverage added (before any second AWS run)
+
+| Defect | Coverage |
+|---|---|
+| Empty/insecure RDS credential reaching AWS | `test_db_credential.ml` (8 cases: missing, empty env, argv refusal, argv refusal even with env set, non-Postgres provider, source) |
+| `cluster_issuer` routed to the provider root | `test_config.ml`: `terraform vars: cluster_issuer stays in the base layer` |
+| Durability guarantees unestablishable | `test_profile.ml`: established for a qualified target, Unmet for an unqualified provider, Unmet(Application) for a consumer missing the rendered requirement |
+| Module-side password guard | `check_production_infra.sh` runtest: structural precondition check + `terraform fmt -check` (offline HCL parse) |
+
+### Acceptance check (offline, no AWS spend)
+
+- Production-profile `--dry-run` with the OCaml-only workload and per-service
+  `--image-ref …@sha256:…` references: **passes** (exit 0, no unmet guarantees).
+- Fail-closed properties re-verified: a TypeScript workload still fails
+  `qualified_versions`; a mutable tag still fails `immutable_artifacts`; a
+  password-less RDS apply is refused before terraform runs.
+
+### Run-1 evidence review (what survives, what is superseded)
+
+| Run-1 evidence | Status |
+|---|---|
+| Scoped-identity deny/allow proof (deploy identity allowed `eks:DescribeCluster`/`ListClusters`; denied `ec2:*`, `iam:*`, `eks:CreateCluster`) | **Valid** — the bootstrap-generated policies and the attached roles are unchanged by this remediation |
+| Remote state: versioned/encrypted/public-access-blocked bucket + DynamoDB lock, 12 versions deleted at teardown | **Valid** — the bootstrap module is unchanged |
+| Live substrate facts: EKS ACTIVE reporting Kubernetes 1.36; 4 nodes; 73 resources destroyed; teardown independently verified | **Valid** — substrate evidence, unaffected |
+| TypeScript fails `qualified_versions`; mutable tag fails `immutable_artifacts` | **Valid** — re-verified after remediation |
+| Preflight refusal on `postgres_durability`/`kafka_durability` (`40-preflight-probe.log`) | **Superseded as current behaviour, retained as defect evidence** — those capabilities are now established |
+| `sol cloud apply` aborting on `cluster_issuer` (finding 2) | **Invalidated as behaviour** (routing changed); retained as defect evidence, now covered by a regression test |
+| RDS creation failing on the empty password (finding 3) | **Invalidated as behaviour** (input now refused earlier); retained as defect evidence, now covered by tests |
+| `sol cloud apply` run-log self-prune crash (finding 1) | Already fixed and merged (#302) |
+
+### Proposed run-2 matrix delta
+
+1. **Workload**: the OCaml-only qualification workload (pluto minus `demo_ts`), so
+   the OCaml scope is conformant; the TypeScript rejection stays a recorded
+   negative case rather than being part of the conformant plan.
+2. **Provisioning**: supply `TF_VAR_db_password` from a secret at apply time; do not
+   set `cluster_issuer` on the provider-root apply (pass it to the base module).
+3. **Postgres**: add the fail-closed negative first (apply without the credential
+   must refuse before terraform), then the positive path; then E1's Multi-AZ
+   inspection, and E2/E3/E4 measurements.
+4. **Kafka**: E7 now also records the rendered `SOL_KAFKA_DURABILITY` requirement
+   on each consuming workload (the thing preflight asserts) alongside the live RF
+   check, so the config assertion and the behavioural proof are visibly distinct.
+5. **New rows worth adding**: (a) `sol cloud plan` on a target that sets
+   `cluster_issuer` completes without a terraform variable error (the routing
+   regression, live); (b) an apply that would create Postgres with `--var
+   db_password=…` is refused (leak guard, live).
+6. **Unchanged**: the DEC-026 numeric targets, the alert-delivery rows (still
+   blocked for lack of a real receiver), and the evidence-bundle schema.

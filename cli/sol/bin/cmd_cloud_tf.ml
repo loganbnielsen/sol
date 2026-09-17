@@ -699,8 +699,6 @@ let cloud_init ~target ~var_file ~vars ~action () =
   let config_vars, config_var_file, target_cfg =
     config_vars ~strict:(action = Apply) (Some target)
   in
-  Printf.printf "\nInitializing cloud infrastructure (%s)...\n%!" pname;
-  run_terraform_init run_log infra_dir;
   let var_file =
     match var_file with
     | Some _ -> var_file
@@ -720,6 +718,21 @@ let cloud_init ~target ~var_file ~vars ~action () =
     | None -> []
     | Some f -> [ normalize_var_file f ]
   in
+  (* HARDEN-002 (run 1): refuse an unusable database credential before terraform
+     runs at all -- not merely before it mutates AWS. An argv-supplied password is
+     refused too, because the run log records the terraform command line. *)
+  (match
+     Sol_cli_db_credential.check
+       ~provider
+       ~vars
+       ~tf_var_env:(Sys.getenv_opt "TF_VAR_db_password")
+   with
+   | Ok () -> ()
+   | Error msg ->
+     Printf.eprintf "\nerror: %s\n%!" msg;
+     exit 1);
+  Printf.printf "\nInitializing cloud infrastructure (%s)...\n%!" pname;
+  run_terraform_init run_log infra_dir;
   match action with
   | Plan ->
     require_terraform_success
