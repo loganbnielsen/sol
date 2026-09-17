@@ -876,18 +876,7 @@ jobs:
           sol local infra up
           sol up --scope=demo_ts
 
-          # `sol up` reports success as soon as the rollout's Kubernetes
-          # readiness condition is met -- for order_svc that's gated on its
-          # HTTP readiness probe, but a plain worker Deployment has no
-          # readiness probe at all, so Kubernetes considers the pod Ready
-          # the instant the container starts, well before the Node process
-          # has actually connected to Kafka and joined its consumer group.
-          # First real run of this job hit exactly this race: the worker
-          # pod was ~2s old when the transaction below fired. Wait for it
-          # explicitly rather than relying on the transaction-check retry
-          # budget alone to paper over a cold start.
           demo_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-demo-ts$' | head -1)
-          kubectl wait --for=condition=ready pod -l app=fulfillment-worker -n "$demo_ns" --timeout=120s
 
           probe() {
             local path=$1
@@ -931,12 +920,21 @@ jobs:
           pg_url=$(kubectl get secret -n "$demo_ns" fulfillment-worker-secrets -o jsonpath='{.data.POSTGRES_URL}' | base64 -d)
           pg_pod=$(kubectl get pods -n postgresql -l app.kubernetes.io/name=postgresql -o jsonpath='{.items[0].metadata.name}')
           row_found=0
-          # 90*2s=3min, not the 60s this job's first real run shipped with --
-          # that run measured the worker's pod age at 2s when the transaction
-          # fired (the `kubectl wait` above now prevents that specific race),
-          # but consumer-group join time on a just-started broker is still
-          # real, variable latency this retry budget should absorb rather
-          # than assume away.
+          # This whole check IS the synchronization -- an eventual assertion
+          # with an outer deadline, not a fixed startup delay. The pipeline
+          # (HTTP -> Kafka publish -> broker -> group assignment -> consumer
+          # -> handler -> Postgres) has no cheaper true readiness signal to
+          # wait on: a worker Deployment has no readiness/liveness probe at
+          # all (sol_cli_manifest_yaml.ml's deployment_doc renders one only
+          # for Http_service), so Kubernetes' own Ready condition means
+          # "container started," not "consumer joined its group" -- verified
+          # experimentally: `kubectl wait --for=condition=ready` on a
+          # freshly-deleted worker pod returned in ~1s, while the real
+          # consumer-group join in the same run's logs didn't complete until
+          # ~11.5s after pod start. A Kubernetes-level wait cannot close this
+          # gap; only observing the actual downstream effect can. 90*2s=3min
+          # is a generous but bounded ceiling on that, not an assumption
+          # about how long startup should take.
           for i in $(seq 1 90); do
             row=$(kubectl exec -n postgresql "$pg_pod" -- psql "$pg_url" -tAc \
               "SELECT order_id FROM fulfilled_orders_ts WHERE order_id = '${marker}';" 2>/dev/null || true)
