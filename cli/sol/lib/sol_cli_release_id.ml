@@ -28,6 +28,7 @@ type workload =
   ; schedule : string option
   ; replicas : int
   ; availability : string
+  ; consumes_kafka : bool
   ; cpu : string
   ; memory : string
   ; extra_labels : (string * string) list
@@ -149,6 +150,7 @@ let canonical_string (content : content) =
        enc_option enc_string b w.schedule;
        enc_int b w.replicas;
        enc_string b w.availability;
+       enc_int b (if w.consumes_kafka then 1 else 0);
        enc_string b w.cpu;
        enc_string b w.memory;
        enc_pairs b w.extra_labels;

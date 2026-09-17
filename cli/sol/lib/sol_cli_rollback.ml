@@ -176,6 +176,7 @@ let decode_workload ~release_id ~workspace (w : Sol_cli_release.workload) =
         (match Sol_cli_availability.of_string w.availability with
          | Ok a -> a
          | Error _ -> Sol_cli_availability.Single)
+    ; consumes_kafka = w.consumes_kafka
     ; cpu
     ; memory
     ; rollout_strategy

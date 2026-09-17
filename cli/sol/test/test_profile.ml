@@ -217,6 +217,43 @@ let requirements_of plan =
   | Some claim -> claim.requirements
 ;;
 
+(* AUDIT-080: a node-failure-tolerant workload needs at least two replicas; the
+   preflight then checks the target declares enough headroom to restore them. *)
+let node_failure_tolerant_plan target =
+  mkdir_p charge_svc.dir;
+  write
+    (Filename.concat charge_svc.dir "sol.toml")
+    "[infra.scale]\nreplicas = 2\navailability = \"node-failure-tolerant\"\n";
+  match
+    Sol_cli_deployment_plan.of_services_result
+      ~workspace:"pluto"
+      ~env
+      ~resolved_config:(load target)
+      [ charge_svc ]
+  with
+  | Ok plan -> plan
+  | Error e -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string e)
+;;
+
+(* AUDIT-080: an availability claim the workload cannot satisfy is refused
+   before render, naming a supported alternative. *)
+let availability_rejection service ~toml =
+  mkdir_p service.Sol_cli_manifest.dir;
+  write (Filename.concat service.Sol_cli_manifest.dir "sol.toml") toml;
+  match
+    Sol_cli_deployment_plan.of_services_result
+      ~workspace:"pluto"
+      ~env
+      ~resolved_config:(load "prod/aws/us-east-1")
+      [ service ]
+  with
+  | Ok _ -> Alcotest.fail "expected the availability claim to be refused"
+  | Error (Sol_cli_deployment_plan.Unsupported_availability { message; _ }) -> message
+  | Error e -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string e)
+;;
+
+let charge_fn = unit ~domain:"payments" ~name:"charge_fn" Sol_cli_manifest.Fn
+
 let test_plan_carries_claim_and_requirements () =
   with_workspace (fun () ->
     write_target prod_aws selecting;
@@ -406,7 +443,6 @@ let test_unestablished_guarantees_fail_closed () =
       ; "scoped_operator_identities"
       ; "alert_delivery"
       ; "immutable_artifacts"
-      ; "workload_availability"
       ]
       (capabilities fs);
     check_bool
@@ -693,6 +729,70 @@ let test_credential_posture_is_established () =
        = Pre.Established))
 ;;
 
+(* AUDIT-080: a declared node-failure-tolerant workload fails closed until the
+   target declares enough headroom to restore its replicas. *)
+let test_node_failure_tolerant_requires_headroom () =
+  with_workspace (fun () ->
+    write_target prod_aws selecting;
+    let plan = node_failure_tolerant_plan "prod/aws/us-east-1" in
+    let fs =
+      findings (preflight ~plan ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
+    in
+    match
+      List.find_opt (fun (f : Pre.finding) -> f.capability = P.Workload_availability) fs
+    with
+    | None -> Alcotest.fail "expected a workload-availability finding"
+    | Some f ->
+      check_bool "target side" true (f.side = Pre.Target);
+      check_bool
+        "names the headroom declaration"
+        true
+        (contains ~needle:"node_failure_headroom_nodes" f.reason))
+;;
+
+let test_node_failure_tolerant_established_with_headroom () =
+  with_workspace (fun () ->
+    write_target
+      prod_aws
+      "target:\n  profile: production-single-region\n  node_failure_headroom_nodes: 1\n";
+    let plan = node_failure_tolerant_plan "prod/aws/us-east-1" in
+    let fs =
+      findings (preflight ~plan ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
+    in
+    check_bool
+      "declared headroom establishes the availability guarantee"
+      false
+      (List.exists (fun (f : Pre.finding) -> f.capability = P.Workload_availability) fs))
+;;
+
+let test_availability_rejects_one_replica () =
+  with_workspace (fun () ->
+    write_target prod_aws selecting;
+    let message =
+      availability_rejection
+        charge_svc
+        ~toml:"[infra.scale]\nreplicas = 1\navailability = \"node-failure-tolerant\"\n"
+    in
+    check_bool
+      "names the supported alternative"
+      true
+      (contains ~needle:"replicas = 2" message))
+;;
+
+let test_availability_rejects_a_function () =
+  with_workspace (fun () ->
+    write_target prod_aws selecting;
+    let message =
+      availability_rejection
+        charge_fn
+        ~toml:"[infra.scale]\navailability = \"node-failure-tolerant\"\n"
+    in
+    check_bool
+      "explains functions are scheduled jobs"
+      true
+      (contains ~needle:"scheduled jobs" message))
+;;
+
 let test_emit_to_rejected_for_profile () =
   with_workspace (fun () ->
     write_target prod_aws selecting;
@@ -921,6 +1021,22 @@ let () =
             `Quick
             test_unqualified_provider_is_a_target_finding
         ; Alcotest.test_case "emit-to rejected" `Quick test_emit_to_rejected_for_profile
+        ; Alcotest.test_case
+            "node-failure-tolerant requires headroom"
+            `Quick
+            test_node_failure_tolerant_requires_headroom
+        ; Alcotest.test_case
+            "node-failure-tolerant established with headroom"
+            `Quick
+            test_node_failure_tolerant_established_with_headroom
+        ; Alcotest.test_case
+            "availability rejects one replica"
+            `Quick
+            test_availability_rejects_one_replica
+        ; Alcotest.test_case
+            "availability rejects a function"
+            `Quick
+            test_availability_rejects_a_function
         ; Alcotest.test_case
             "missing alert receiver is a target finding"
             `Quick

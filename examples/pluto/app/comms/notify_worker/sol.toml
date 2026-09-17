@@ -1,7 +1,13 @@
 # Sol service configuration — all fields are optional.
 
 [infra.scale]
-# replicas = 1
+# AUDIT-080: declare the failure this workload must tolerate. `single` (the
+# default, as charge_svc demonstrates) claims nothing; `node-failure-tolerant`
+# requires at least two replicas and makes Sol render the placement, disruption
+# budget, startup/readiness/liveness probes and drain grace that keep the claim
+# true. The target must also declare `node_failure_headroom_nodes`.
+replicas = 2
+availability = "node-failure-tolerant"
 # cpu      = "250m"
 # memory   = "256Mi"
 

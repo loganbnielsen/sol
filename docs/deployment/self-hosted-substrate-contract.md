@@ -357,6 +357,14 @@ provisioning/deploy/operator role ARNs plus a restricted public-endpoint CIDR.
 See [`production-bootstrap.md`](production-bootstrap.md) for the exact commands
 and recovery procedure.
 
+The availability guarantee is a declared semantic, not a replica count: a
+workload states `single` (the default) or `node-failure-tolerant` in its
+`sol.toml`, and a target declares the fixed `node_failure_headroom_nodes` that
+makes restoration possible. Sol refuses a claim the workload cannot satisfy
+(functions, volume-backed workloads, fewer than two replicas) before render and
+fails the preflight when the headroom is missing. See
+[`workload-availability.md`](workload-availability.md).
+
 The artifact guarantee is satisfied by how the application deploys:
 `sol deploy --image-ref <service>=<repo>@sha256:<digest>` pins each workload to
 immutable bytes, and the preflight rejects a mutable tag. A bare

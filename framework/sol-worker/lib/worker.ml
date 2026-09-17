@@ -125,17 +125,18 @@ let with_runtime
       decr r;
       if !r <= 0 then Kafka.Consumer.Stop else Kafka.Consumer.Continue
   in
+  let health = Worker_health.create ~now:(fun () -> Eio.Time.now env#clock) in
   Eio.Switch.run (fun sw ->
     Sol_runtime.install_signal_handler ~sw signal_stop_r;
-    Option.iter
-      (fun render ->
-         Obs_prometheus.serve
-           ~sw
-           ~net:env#net
-           (`Tcp (Eio.Net.Ipaddr.V4.any, metrics_port))
-           render)
-      metrics_renderer;
-    body ~sw ~ot ~msg_count ~msg_duration ~should_stop ~advance)
+    (* AUDIT-080: /metrics, /readyz and /livez on the one metrics port. The
+       renderer is empty when observability is off, so the health endpoints are
+       always present even if there is nothing to scrape. *)
+    Eio.Fiber.fork_daemon ~sw (fun () ->
+      Worker_health.serve ~sw ~net:env#net ~port:metrics_port health (fun () ->
+        match metrics_renderer with
+        | Some render -> render ()
+        | None -> ""));
+    body ~sw ~ot ~msg_count ~msg_duration ~should_stop ~advance ~health)
 ;;
 
 (* Ack after the handler succeeds, so a side effect is never acked before it
@@ -222,7 +223,7 @@ module Make_with_test_seam (W : WORKER) = struct
         ~metrics_port
         ~stop
         ~max_messages
-        ~body:(fun ~sw ~ot ~msg_count ~msg_duration ~should_stop ~advance ->
+        ~body:(fun ~sw ~ot ~msg_count ~msg_duration ~should_stop ~advance ~health ->
           let handler msg ~ack ~trace_ctx =
             if should_stop ()
             then Kafka.Consumer.Stop
@@ -260,6 +261,9 @@ module Make_with_test_seam (W : WORKER) = struct
               ~sw
               ~clock:env#clock
               ?on_ready
+              ~on_assigned:(fun () -> Worker_health.on_assigned health)
+              ~on_revoked:(fun () -> Worker_health.on_revoked health)
+              ~on_poll:(fun () -> Worker_health.on_poll health)
               ?ot
               ~handler
               ()
@@ -299,7 +303,7 @@ module Make_with_retry_and_test_seam (W : RETRYABLE_WORKER) = struct
         ~metrics_port
         ~stop
         ~max_messages
-        ~body:(fun ~sw ~ot ~msg_count ~msg_duration ~should_stop ~advance ->
+        ~body:(fun ~sw ~ot ~msg_count ~msg_duration ~should_stop ~advance ~health ->
           let on_retry ~partition:_ ~attempt:_ ~delay_s:_ =
             match msg_count with
             | Some c -> c ~labels:[ "status", "retry" ] 1
@@ -368,6 +372,9 @@ module Make_with_retry_and_test_seam (W : RETRYABLE_WORKER) = struct
                 ~net:env#net
                 ~clock:env#clock
                 ?on_ready
+                ~on_assigned:(fun () -> Worker_health.on_assigned health)
+                ~on_revoked:(fun () -> Worker_health.on_revoked health)
+                ~on_poll:(fun () -> Worker_health.on_poll health)
                 ~retry_strategy
                 ~on_retry
                 ~on_relay_publish

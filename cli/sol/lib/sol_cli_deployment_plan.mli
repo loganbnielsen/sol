@@ -59,6 +59,10 @@ type service_spec =
   ; backoff_limit : int
   ; replicas : int
   ; availability : Sol_cli_availability.t
+  ; consumes_kafka : bool
+    (** Whether this workload consumes Kafka (AUDIT-080/AUDIT-078): readiness is
+        its consumer-join state and liveness its poll cadence, so only a real
+        consumer gets those probes. *)
   ; language : Sol_cli_compat.language option
   ; cpu : Sol_cli_toml.cpu_quantity
   ; memory : Sol_cli_toml.memory_quantity

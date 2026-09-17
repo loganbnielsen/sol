@@ -31,6 +31,7 @@ type target =
   ; cluster_endpoint_cidr : string option
     (** The single CIDR allowed to reach the public Kubernetes API endpoint. A
         production profile requires an explicit, non-world-reachable value. *)
+  ; node_failure_headroom_nodes : int option
   ; profile : Sol_cli_profile.t option
     (** The production profile this target explicitly selects (DEC-026). Only a
         target file may set it; an environment name never implies one. *)

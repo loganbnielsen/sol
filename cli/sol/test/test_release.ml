@@ -33,6 +33,7 @@ let sample_workload : R.workload =
   ; schedule = None
   ; replicas = 2
   ; availability = "single"
+  ; consumes_kafka = false
   ; cpu = "100m"
   ; memory = "128Mi"
   ; extra_labels = [ "team", "payments" ]
@@ -370,7 +371,7 @@ let test_record_digest_is_total_for_duplicate_keys () =
 let test_record_digest_known_vector () =
   check_string
     "known canonical digest"
-    "f5cc20f7028d7daafd783707c5a41280"
+    "cc3f3694daa7847f57190a7bee17c417"
     (R.record_digest sample_record)
 ;;
 

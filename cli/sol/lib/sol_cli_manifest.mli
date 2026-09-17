@@ -82,6 +82,11 @@ val namespace_doc : ns:string -> string
 
 val service_account_doc : ns:string -> name:string -> string
 
+(** AUDIT-080: the voluntary-disruption budget rendered for a
+    node-failure-tolerant workload, so a node drain cannot evict every ready
+    replica at once. *)
+val pdb_doc : ns:string -> name:string -> replicas:int -> string
+
 val configmap_doc
   :  ?extra_env:(string * string) list
   -> ns:string
@@ -113,7 +118,8 @@ type workload_shape =
   | Background_worker
   (** Workload shape determines exposed container ports and health probes.
           [Http_service] exposes app HTTP on 8080 with probes;
-          [Background_worker] exposes metrics on 9090 without probes. *)
+          [Background_worker] exposes metrics on 9090; consumer probes are
+          rendered when it also consumes Kafka (AUDIT-080). *)
 
 val deployment_doc
   :  ?rollout_strategy:Sol_cli_toml.rollout_strategy
@@ -122,6 +128,8 @@ val deployment_doc
   -> ?volumes:Sol_cli_toml.volume list
   -> ?env:string
   -> ?config_hash:string
+  -> ?availability:Sol_cli_availability.t
+  -> ?consumes_kafka:bool
   -> shape:workload_shape
   -> replicas:int
   -> cpu:string
@@ -145,6 +153,8 @@ val rollout_doc
   -> ?volumes:Sol_cli_toml.volume list
   -> ?config_hash:string
   -> ?env:string
+  -> ?availability:Sol_cli_availability.t
+  -> ?consumes_kafka:bool
   -> shape:workload_shape
   -> replicas:int
   -> cpu:string

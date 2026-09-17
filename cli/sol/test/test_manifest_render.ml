@@ -146,6 +146,7 @@ let svc_spec : Sol_cli_deployment_plan.service_spec =
   ; backoff_limit = 3
   ; replicas = 2
   ; availability = Sol_cli_availability.Single
+  ; consumes_kafka = false
   ; language = None
   ; cpu = cpu "200m"
   ; memory = memory "256Mi"
@@ -176,6 +177,7 @@ let worker_spec : Sol_cli_deployment_plan.service_spec =
   ; schedule = None
   ; replicas = 1
   ; availability = Sol_cli_availability.Single
+  ; consumes_kafka = false
   ; language = None
   ; cpu = cpu "100m"
   ; memory = memory "128Mi"
@@ -206,6 +208,7 @@ let fn_spec : Sol_cli_deployment_plan.service_spec =
   ; backoff_limit = 3
   ; replicas = 1
   ; availability = Sol_cli_availability.Single
+  ; consumes_kafka = false
   ; language = None
   ; cpu = cpu "100m"
   ; memory = memory "128Mi"
@@ -664,6 +667,56 @@ let test_fn_service_account_disables_token_automount () =
   let rendered = ns_yaml ^ workload in
   assert_contains "fn ServiceAccount rendered" rendered "kind: ServiceAccount";
   assert_contains "fn automount disabled" rendered "automountServiceAccountToken: false"
+;;
+
+(* ── AUDIT-080: the availability contract's rendered controls ─────────────── *)
+
+let test_termination_grace_is_explicit () =
+  let _ns, workload = render_spec_ok svc_spec in
+  assert_contains
+    "explicit termination grace (drain has room before SIGKILL)"
+    workload
+    "terminationGracePeriodSeconds: 45"
+;;
+
+let test_worker_consumer_probes () =
+  let _ns, workload = render_spec_ok { worker_spec with consumes_kafka = true } in
+  assert_contains "consumer readiness endpoint" workload "path: /readyz";
+  assert_contains "consumer liveness endpoint" workload "path: /livez";
+  assert_contains "consumer startup probe" workload "startupProbe:"
+;;
+
+let test_non_consumer_worker_has_no_liveness () =
+  let _ns, workload = render_spec_ok worker_spec in
+  assert_absent
+    "a worker with no consumer state claims no liveness"
+    workload
+    "livenessProbe:"
+;;
+
+let test_node_failure_tolerant_renders_pdb_and_spread () =
+  let spec =
+    { svc_spec with
+      availability = Sol_cli_availability.Node_failure_tolerant
+    ; replicas = 2
+    }
+  in
+  let _ns, workload = render_spec_ok spec in
+  assert_contains "PodDisruptionBudget rendered" workload "kind: PodDisruptionBudget";
+  assert_contains "budget keeps one replica available" workload "minAvailable: 1";
+  assert_contains "topology spread constraint" workload "topologySpreadConstraints:";
+  assert_contains
+    "spread keyed on the node"
+    workload
+    "topologyKey: kubernetes.io/hostname"
+;;
+
+let test_single_has_no_pdb () =
+  let _ns, workload = render_spec_ok svc_spec in
+  assert_absent
+    "a single workload claims no disruption budget"
+    workload
+    "PodDisruptionBudget"
 ;;
 
 (* ── Fn tests ────────────────────────────────────────────────────────────── *)
@@ -2383,6 +2436,20 @@ let () =
             "fn ServiceAccount disables token automount"
             `Quick
             test_fn_service_account_disables_token_automount
+        ; Alcotest.test_case
+            "explicit termination grace"
+            `Quick
+            test_termination_grace_is_explicit
+        ; Alcotest.test_case "consumer probes" `Quick test_worker_consumer_probes
+        ; Alcotest.test_case
+            "non-consumer worker has no liveness"
+            `Quick
+            test_non_consumer_worker_has_no_liveness
+        ; Alcotest.test_case
+            "node-failure-tolerant renders PDB and spread"
+            `Quick
+            test_node_failure_tolerant_renders_pdb_and_spread
+        ; Alcotest.test_case "single has no PDB" `Quick test_single_has_no_pdb
         ; Alcotest.test_case
             "user secret key in Secret resource"
             `Quick

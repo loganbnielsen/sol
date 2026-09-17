@@ -1,5 +1,21 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: AUDIT-080 — explicit workload availability semantics (2026-09-17)
+
+A workload declares the failure it must tolerate (`[infra.scale] availability =
+"single" | "node-failure-tolerant"`) instead of raw PDB/affinity/probe knobs.
+The plan refuses a claim it cannot satisfy (functions, volume-backed workloads,
+fewer than two replicas) before render; `node-failure-tolerant` renders a hard
+topology spread and a PodDisruptionBudget, and every workload gets a startup
+probe plus an explicit 45s termination grace (over the 30s drain bound). A Kafka
+worker serves `/readyz` (consumer-join, which transitions both ways across a
+rebalance) and `/livez` (poll cadence) on its metrics port — using two new
+narrowly-observational `kafka-eio` callbacks (merged) so Sol owns the policy. The
+target must declare `node_failure_headroom_nodes`, enforced by the preflight's
+now-real `workload_availability` guarantee. Docs:
+`docs/deployment/workload-availability.md`; live rollout/drain/node-loss evidence
+is HARDEN-002's.
+
 ## Latest: AUDIT-072 — recoverable production state and scoped identities (2026-09-17)
 
 A new `cli/platform/infra/bootstrap` root provisions the conformant remote state

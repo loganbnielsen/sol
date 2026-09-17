@@ -53,6 +53,11 @@ type service_spec =
   ; backoff_limit : int
   ; replicas : int
   ; availability : Sol_cli_availability.t
+  ; consumes_kafka : bool
+    (* AUDIT-080: a consumer's readiness is its join state and its liveness is
+       its poll cadence, so only a workload that actually consumes Kafka gets
+       those probes. Derived from the declared [kafka] resource/`events/` topics
+       (AUDIT-078's declaration), never guessed from the primitive. *)
   ; language : Sol_cli_compat.language option
   ; cpu : Sol_cli_toml.cpu_quantity
   ; memory : Sol_cli_toml.memory_quantity
@@ -221,6 +226,7 @@ let release_workload_of_spec (spec : service_spec) : Sol_cli_release_id.workload
   ; schedule = spec.schedule
   ; replicas = spec.replicas
   ; availability = Sol_cli_availability.to_string spec.availability
+  ; consumes_kafka = spec.consumes_kafka
   ; cpu = Sol_cli_toml.cpu_quantity_to_string spec.cpu
   ; memory = Sol_cli_toml.memory_quantity_to_string spec.memory
   ; extra_labels = spec.extra_labels
@@ -883,6 +889,13 @@ let of_services_result
     let language =
       sol_yml_language ~resolved_config ~service_name:svc.Sol_cli_manifest.name
     in
+    (* AUDIT-080: the Kafka-consumer declaration AUDIT-078 put in the plan, not a
+       guess from the primitive. A declared `kafka` resource or `events/` topic
+       makes this a consumer. *)
+    let consumes_kafka =
+      toml.Sol_cli_toml.topics <> []
+      || service_uses_resource_type resolved_config svc.Sol_cli_manifest.name "kafka"
+    in
     let spec =
       { domain = svc.Sol_cli_manifest.domain
       ; source_name = svc.Sol_cli_manifest.name
@@ -907,6 +920,7 @@ let of_services_result
       ; replicas
       ; availability =
           Option.value toml.Sol_cli_toml.availability ~default:Sol_cli_availability.Single
+      ; consumes_kafka
       ; language
       ; cpu = Option.value toml.Sol_cli_toml.cpu ~default:default_cpu
       ; memory = Option.value toml.Sol_cli_toml.memory ~default:default_memory

@@ -18,6 +18,7 @@ let wl
       ?(schedule = None)
       ?(replicas = 1)
       ?(availability = "single")
+      ?(consumes_kafka = false)
       ?(cpu = "100m")
       ?(memory = "128Mi")
       ?(extra_labels = [])
@@ -39,6 +40,7 @@ let wl
   ; schedule
   ; replicas
   ; availability
+  ; consumes_kafka
   ; cpu
   ; memory
   ; extra_labels
@@ -249,7 +251,7 @@ let test_known_vector () =
     (* BUG-026: sol-release-v2 widens the projection to every manifest-affecting
        input, so the vector moved deliberately. AUDIT-080 adds the declared
        availability, moving it again to sol-release-v3. *)
-    "r-817d3ed0b6d5388b"
+    "r-41a1291ca74157ee"
     (id
        (content
           [ wl
