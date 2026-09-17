@@ -1,6 +1,19 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: INFRA-019 — reuse a passing CI run for identical tested code (2026-09-17)
+## Latest: INFRA-020 — CI evidence reuse withdrawn; one support-package snapshot per run (2026-09-17)
+
+INFRA-019's reuse of earlier CI runs was removed as too complex for its value:
+a new pull-request head reruns its CI. What remains:
+
+- `packages.txt` is the single support-package list.
+- A `support-refs` job resolves every package's `main` commit once per run.
+- Every building job pins exactly those commits, failing closed if the snapshot
+  is incomplete.
+
+Capability-aware job selection is filed as INFRA-021 (BACKLOG). Released
+support-package versions stay with RELEASE-005.
+
+## INFRA-019 — reuse a passing CI run for identical tested code (2026-09-17, withdrawn by INFRA-020)
 
 PR #288 re-ran its whole suite after a no-op update from `main`. The
 classifier was correct; every new head of a source PR simply ran everything.
