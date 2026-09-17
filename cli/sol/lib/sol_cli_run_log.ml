@@ -44,13 +44,29 @@ let format_failure_report ~run_id ~log_path ~tail : string =
     (String.concat "\n" (List.map (fun l -> "    " ^ l) (String.split_on_char '\n' tail)))
 ;;
 
-(* Run ids are lexicographically sortable timestamps; keep the most recent
-   [keep], report the rest for pruning. *)
-let runs_to_prune ~all_run_ids ~keep : string list =
+(* Run ids are timestamps with an arbitrary command prefix
+   ([<prefix>-<YYYYMMDDTHHMMSSZ>-<pid>]), so the timestamp -- not the whole id --
+   is what orders them. Sorting the whole string is NOT chronological across
+   commands: "cloud-apply-…" sorts before "deploy-…" purely by prefix letter,
+   which made a freshly created run look like the oldest one and let [create]
+   prune the directory it had just made. The prefix may itself contain '-', so
+   the timestamp is the second-to-last field. *)
+let run_sort_key id =
+  match List.rev (String.split_on_char '-' id) with
+  | _pid :: ts :: _ -> ts, id
+  | _ -> "", id
+;;
+
+(* Keep the most recent [keep] (never [exclude]), report the rest for pruning,
+   oldest first. *)
+let runs_to_prune ?(exclude = []) ~all_run_ids ~keep () : string list =
   if keep < 0
   then []
   else (
-    let sorted = List.sort compare all_run_ids in
+    let candidates = List.filter (fun id -> not (List.mem id exclude)) all_run_ids in
+    let sorted =
+      List.sort (fun a b -> compare (run_sort_key a) (run_sort_key b)) candidates
+    in
     let n = List.length sorted in
     if n <= keep then [] else List.filteri (fun i _ -> i < n - keep) sorted)
 ;;
@@ -66,24 +82,31 @@ let create ?(keep = 20) ~prefix () : t =
     generate_run_id ~prefix ~now:(Unix.gettimeofday ()) ~pid:(Unix.getpid ())
   in
   let dir = Filename.concat base_dir run_id in
+  (* Snapshot the existing runs BEFORE creating this one: the new directory must
+     never be a pruning candidate for itself. (It previously was, and because
+     pruning ordered whole ids lexicographically -- not chronologically across
+     different command prefixes -- a fresh "cloud-apply-…" run could sort before
+     the older "deploy-…" runs, be pruned as the oldest, and leave the phase-log
+     write failing with an uncaught Sys_error.) [~exclude] keeps that guarantee
+     even if the ordering is changed again. *)
+  let existing =
+    try Array.to_list (Sys.readdir base_dir) with
+    | Sys_error _ -> []
+  in
   Sol_cli_scaffold.mkdir_p dir;
-  (let existing =
-     try Array.to_list (Sys.readdir base_dir) with
-     | Sys_error _ -> []
-   in
-   List.iter
-     (fun stale_id ->
-        let stale_dir = Filename.concat base_dir stale_id in
-        try
-          Array.iter
-            (fun f ->
-               try Sys.remove (Filename.concat stale_dir f) with
-               | _ -> ())
-            (Sys.readdir stale_dir);
-          Unix.rmdir stale_dir
-        with
-        | _ -> ())
-     (runs_to_prune ~all_run_ids:existing ~keep));
+  List.iter
+    (fun stale_id ->
+       let stale_dir = Filename.concat base_dir stale_id in
+       try
+         Array.iter
+           (fun f ->
+              try Sys.remove (Filename.concat stale_dir f) with
+              | _ -> ())
+           (Sys.readdir stale_dir);
+         Unix.rmdir stale_dir
+       with
+       | _ -> ())
+    (runs_to_prune ~exclude:[ run_id ] ~all_run_ids:existing ~keep ());
   { run_id; dir }
 ;;
 
