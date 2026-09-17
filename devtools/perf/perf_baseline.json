@@ -3559,6 +3559,12 @@
           "commit": "a3dc8039",
           "duration_s": 2.291,
           "baseline": true
+        },
+        {
+          "date": "2026-09-17",
+          "commit": "ceeceda1",
+          "duration_s": 2.310,
+          "baseline": true
         }
       ]
     },
@@ -6445,6 +6451,12 @@
           "commit": "a3dc8039",
           "duration_s": 1.295,
           "baseline": true
+        },
+        {
+          "date": "2026-09-17",
+          "commit": "ceeceda1",
+          "duration_s": 1.275,
+          "baseline": true
         }
       ]
     },
@@ -9118,6 +9130,12 @@
           "date": "2026-09-17",
           "commit": "a3dc8039",
           "duration_s": 1.283,
+          "baseline": true
+        },
+        {
+          "date": "2026-09-17",
+          "commit": "ceeceda1",
+          "duration_s": 1.278,
           "baseline": true
         }
       ]
