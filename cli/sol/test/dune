@@ -44,6 +44,7 @@
   test_platform_component
   test_image_ref
   test_db_credential
+  test_substrate
   test_migration)
  (libraries sol_cli alcotest unix yojson str))
 

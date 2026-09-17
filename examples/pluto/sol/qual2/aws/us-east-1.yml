@@ -1,0 +1,24 @@
+target:
+  kube_context: sol-qual2-00e2a443
+  kubeconfig: .sol/kubeconfigs/qual2-aws-us-east-1.kubeconfig
+  profile: production-single-region
+  cluster_name: sol-qual2-00e2a443
+  base_domain: qual2.invalid
+  cluster_issuer: letsencrypt-staging
+  registry: 876701109436.dkr.ecr.us-east-1.amazonaws.com
+  state_bucket: sol-qual2-tfstate-00e2a443
+  state_lock_table: sol-qual2-tflock-00e2a443
+  provisioner_role_arn: arn:aws:iam::876701109436ole/sol-qual2-provisioner
+  deploy_role_arn: arn:aws:iam::876701109436ole/sol-qual2-deploy
+  operator_role_arn: arn:aws:iam::876701109436ole/sol-qual2-operator
+  cluster_endpoint_cidr: 24.10.239.81/32
+  alert_receiver_type: webhook
+  alert_receiver_url: https://alerts.example.com/sol/webhook
+  alert_owner: qual-placeholder-owner
+  alert_runbook_url: https://runbooks.example.com/sol
+  node_failure_headroom_nodes: 1
+
+resources:
+  app_db:
+    type: postgres
+    size: small

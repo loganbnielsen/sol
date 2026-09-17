@@ -329,6 +329,19 @@ let check_migration_prerequisite ~ctx ~plan ~live =
            deploy (before any workload moves).\n\
            %!")
     else (
+      (* HARDEN-002 run 2, finding 8: this gate needs the workspace substrate --
+         the application namespace and the runtime Secret -- and workload
+         mutation, which used to create both, happens *after* this gate. Establish
+         it here, so the gate never depends on something behind itself. Not
+         workload mutation: a namespace and a Secret are not a Deployment, and
+         AUDIT-069's invariant is untouched. *)
+      (match
+         Sol_cli_substrate.ensure
+           ~ctx:ctx.execution.cluster
+           ~namespaces:(Sol_cli_substrate.namespaces plan)
+       with
+       | Ok () -> ()
+       | Error msg -> Cmd_migrate.fatal msg);
       match
         Cmd_migrate.verify_migration_prerequisite
           ~ctx:ctx.execution.cluster

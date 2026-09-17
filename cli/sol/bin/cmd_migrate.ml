@@ -456,6 +456,12 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
        in
        let workspace = Filename.basename (Sys.getcwd ()) in
        let namespace, k8s_name = pick_namespace_and_service ~workspace in
+       (* HARDEN-002 run 2, finding 8: the Job below runs in this namespace and reads
+          the runtime Secret, so establish both before submitting it. Doing it here
+          is what makes a fresh target's first `sol migrate apply` possible. *)
+       (match Sol_cli_substrate.ensure ~ctx ~namespaces:[ namespace ] with
+        | Ok () -> ()
+        | Error msg -> fatal msg);
        let files = read_migration_files dir in
        if files = []
        then Printf.printf "(no migration files found in %s -- nothing to do)\n" dir
@@ -685,6 +691,12 @@ let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table =
         | Error _ as e -> e
         | Ok registry ->
           let namespace, k8s_name = pick_namespace_and_service ~workspace in
+          (* HARDEN-002 run 2, finding 8: the Job below runs in this namespace and reads
+          the runtime Secret, so establish both before submitting it. Doing it here
+          is what makes a fresh target's first `sol migrate apply` possible. *)
+          (match Sol_cli_substrate.ensure ~ctx ~namespaces:[ namespace ] with
+           | Ok () -> ()
+           | Error msg -> fatal msg);
           (match push_runner_image ~workspace ~k8s_name ~registry with
            | Error _ as e -> e
            | Ok image ->
