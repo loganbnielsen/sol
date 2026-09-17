@@ -89,6 +89,13 @@ module "eks" {
   vpc_id                         = module.vpc.vpc_id
   subnet_ids                     = module.vpc.private_subnets
   cluster_endpoint_public_access = true
+  # AUDIT-072: restrict the public API endpoint to an explicit CIDR. Empty keeps
+  # the module default (0.0.0.0/0) for non-production clusters; a
+  # production-single-region target must set cluster_endpoint_cidr, enforced by
+  # sol deploy's preflight rather than assumed here.
+  cluster_endpoint_public_access_cidrs = (
+    var.cluster_endpoint_cidr == "" ? null : [var.cluster_endpoint_cidr]
+  )
 
   # The default vpc-cni addon does not enforce Kubernetes NetworkPolicy
   # resources — sol's generated NetworkPolicies (see BUG-012) are a no-op
@@ -126,8 +133,13 @@ module "eks" {
   # Enable IRSA (IAM Roles for Service Accounts)
   enable_irsa = true
 
-  # Allow cluster creator admin access
-  enable_cluster_creator_admin_permissions = true
+  # AUDIT-072: no standing cluster-creator admin in the normal path. The
+  # production profile uses the named provisioning/deploy/operator identities
+  # from the target file; bootstrapping or break-glass that genuinely needs the
+  # cluster-creator credential is an explicit, documented, scoped exception
+  # (set enable_cluster_creator_admin = true for the one-off bootstrap, then
+  # return it to false).
+  enable_cluster_creator_admin_permissions = var.enable_cluster_creator_admin
 
   tags = var.tags
 }
