@@ -876,6 +876,19 @@ jobs:
           sol local infra up
           sol up --scope=demo_ts
 
+          # `sol up` reports success as soon as the rollout's Kubernetes
+          # readiness condition is met -- for order_svc that's gated on its
+          # HTTP readiness probe, but a plain worker Deployment has no
+          # readiness probe at all, so Kubernetes considers the pod Ready
+          # the instant the container starts, well before the Node process
+          # has actually connected to Kafka and joined its consumer group.
+          # First real run of this job hit exactly this race: the worker
+          # pod was ~2s old when the transaction below fired. Wait for it
+          # explicitly rather than relying on the transaction-check retry
+          # budget alone to paper over a cold start.
+          demo_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-demo-ts$' | head -1)
+          kubectl wait --for=condition=ready pod -l app=fulfillment-worker -n "$demo_ns" --timeout=120s
+
           probe() {
             local path=$1
             local i
@@ -915,11 +928,16 @@ jobs:
           # (the exact credential the app itself uses), not the Postgres
           # Helm chart's internal secret path -- decoupled from that chart's
           # own implementation, which this job has no reason to know about.
-          demo_ns_probe=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-demo-ts$' | head -1)
-          pg_url=$(kubectl get secret -n "$demo_ns_probe" fulfillment-worker-secrets -o jsonpath='{.data.POSTGRES_URL}' | base64 -d)
+          pg_url=$(kubectl get secret -n "$demo_ns" fulfillment-worker-secrets -o jsonpath='{.data.POSTGRES_URL}' | base64 -d)
           pg_pod=$(kubectl get pods -n postgresql -l app.kubernetes.io/name=postgresql -o jsonpath='{.items[0].metadata.name}')
           row_found=0
-          for i in $(seq 1 30); do
+          # 90*2s=3min, not the 60s this job's first real run shipped with --
+          # that run measured the worker's pod age at 2s when the transaction
+          # fired (the `kubectl wait` above now prevents that specific race),
+          # but consumer-group join time on a just-started broker is still
+          # real, variable latency this retry budget should absorb rather
+          # than assume away.
+          for i in $(seq 1 90); do
             row=$(kubectl exec -n postgresql "$pg_pod" -- psql "$pg_url" -tAc \
               "SELECT order_id FROM fulfilled_orders_ts WHERE order_id = '${marker}';" 2>/dev/null || true)
             if [ "$row" = "$marker" ]; then
@@ -937,11 +955,6 @@ jobs:
           # Coarse liveness check, not a reproduction of FEAT-082's
           # forced-shutdown/redelivery experiments: a graceful pod delete
           # must produce a clean replacement, not a CrashLoopBackOff.
-          demo_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-demo-ts$' | head -1 || true)
-          if [ -z "$demo_ns" ]; then
-            echo "::error::TS golden-path smoke test: could not locate the demo_ts namespace"
-            exit 1
-          fi
           order_pod=$(kubectl get pods -n "$demo_ns" -l app=order-svc -o jsonpath='{.items[0].metadata.name}')
           kubectl delete pod -n "$demo_ns" "$order_pod" --grace-period=30 --wait=false
           replacement_ok=0
@@ -974,6 +987,20 @@ jobs:
           kubectl get pods -A -o wide || true
           echo "=== recent events ==="
           kubectl get events -A --sort-by=.lastTimestamp || true
+
+          # Always dump demo_ts's own app logs, unconditionally -- a plain
+          # worker Deployment has no readiness probe, so Kubernetes reports
+          # it Ready (and the loop below would skip it) well before its
+          # Kafka consumer has actually joined a group. The first real run
+          # of this job needed exactly this evidence and didn't have it.
+          demo_ns_diag=$(kubectl get ns -o name 2>/dev/null | sed 's|namespace/||' | grep -- '-demo-ts$' | head -1 || true)
+          if [ -n "$demo_ns_diag" ]; then
+            for app in order-svc fulfillment-worker; do
+              echo "=== logs $demo_ns_diag/$app (app=$app, current) ==="
+              kubectl logs -n "$demo_ns_diag" -l "app=$app" --all-containers --tail=200 || true
+            done
+          fi
+
           for ns in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
             for pod in $(kubectl get pods -n "$ns" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
               phase=$(kubectl get pod "$pod" -n "$ns" -o jsonpath='{.status.phase}' 2>/dev/null) || true
