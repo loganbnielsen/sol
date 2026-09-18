@@ -1430,3 +1430,30 @@ resource "helm_release" "thanos" {
     terraform_data.observability_backend_validation
   ]
 }
+
+# HARDEN-002 run 2, finding 7: the default StorageClass the platform's own
+# durable components need. Before this, Redpanda's PVCs had no class to bind to
+# and the brokers sat Pending until the Helm release timed out, so the profile's
+# durability claims had no substrate support at all.
+#
+# WaitForFirstConsumer matches EBS's zonal nature: the volume is created in the
+# zone the pod lands in, rather than pinning a broker to a zone chosen at claim
+# time.
+resource "kubernetes_storage_class_v1" "platform_default" {
+  count = var.create_storage_class && var.cloud_provider == "aws" ? 1 : 0
+
+  metadata {
+    name        = var.storage_class_name
+    annotations = { "storageclass.kubernetes.io/is-default-class" = "true" }
+  }
+
+  storage_provisioner    = "ebs.csi.aws.com"
+  volume_binding_mode    = "WaitForFirstConsumer"
+  reclaim_policy         = "Delete"
+  allow_volume_expansion = true
+
+  parameters = {
+    type   = "gp3"
+    fsType = "ext4"
+  }
+}

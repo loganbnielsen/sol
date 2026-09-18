@@ -99,6 +99,12 @@ variable "rds_deletion_protection" {
   default     = true
 }
 
+variable "rds_final_snapshot_identifier" {
+  description = "Name for the snapshot Terraform takes when destroying a protected RDS instance. Must be unique per snapshot; leave empty for the cluster-name default."
+  type        = string
+  default     = ""
+}
+
 variable "rds_multi_az" {
   description = "Run RDS with a synchronous standby in another availability zone."
   type        = bool

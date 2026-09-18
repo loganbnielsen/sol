@@ -110,6 +110,21 @@ module "eks" {
     }
   }
 
+  # HARDEN-002 run 2, finding 7: the qualified substrate had no storage at all --
+  # no CSI driver and therefore no StorageClass -- so a persistent Redpanda (RF3,
+  # which the profile's durability claim depends on) could never schedule, and
+  # neither could any workload volume DEC-026 §3/§5 admits.
+  #
+  # This is *platform substrate* storage, not an application workload volume: the
+  # driver and the role below make the platform's own durability topology (and
+  # workload volumes) physically realizable, and they say nothing about how a
+  # workload declares persistence. In particular they do not interact with the
+  # `single`-tier restriction on workload-declared volumes.
+  #
+  # The addon is declared outside the EKS module: its service account role is an
+  # IRSA role for this cluster's OIDC provider, so referencing it from inside
+  # cluster_addons would be a module.eks -> module.ebs_csi_irsa -> module.eks cycle.
+
   # EKS Managed Node Group — general purpose, autoscaling
   eks_managed_node_groups = {
     general = {
@@ -229,6 +244,26 @@ resource "aws_db_instance" "postgres" {
   multi_az                = var.rds_multi_az
   deletion_protection     = var.rds_deletion_protection
   skip_final_snapshot     = !var.rds_deletion_protection
+  # HARDEN-002 run 2, finding 9: with production deletion protection on (the
+  # default), skip_final_snapshot is false, and Terraform then refuses to destroy
+  # the instance unless a final snapshot identifier is given -- so a protected
+  # database could not be torn down at all, and `sol cloud destroy` could not
+  # finish. The identifier is set exactly when a final snapshot is taken, so the
+  # documented lifecycle works: operator confirms destruction, disables deletion
+  # protection, Terraform takes a final snapshot, destroys, and the teardown is
+  # verified. RDS requires the identifier to be unique per snapshot, so an
+  # operator destroying the same cluster twice supplies one via
+  # rds_final_snapshot_identifier instead of colliding with the previous
+  # snapshot.
+  final_snapshot_identifier = (
+    var.rds_deletion_protection
+    ? (
+      var.rds_final_snapshot_identifier != ""
+      ? var.rds_final_snapshot_identifier
+      : "${var.cluster_name}-postgres-final"
+    )
+    : null
+  )
 
   tags = var.tags
 
@@ -411,6 +446,32 @@ module "cert_manager_irsa" {
   role_policy_arns = {
     cert_manager = aws_iam_policy.cert_manager.arn
   }
+}
+
+# HARDEN-002 run 2, finding 7: the EBS CSI driver's identity. Scoped to the
+# driver's own service account, so no workload can use it to reach EBS.
+module "ebs_csi_irsa" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.39"
+
+  role_name             = "${var.cluster_name}-ebs-csi"
+  attach_ebs_csi_policy = true
+
+  oidc_providers = {
+    main = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["kube-system:ebs-csi-controller-sa"]
+    }
+  }
+}
+
+resource "aws_eks_addon" "ebs_csi_driver" {
+  cluster_name                = module.eks.cluster_name
+  addon_name                  = "aws-ebs-csi-driver"
+  resolve_conflicts_on_update = "OVERWRITE"
+  service_account_role_arn    = module.ebs_csi_irsa.iam_role_arn
+
+  depends_on = [module.eks]
 }
 
 # ── Durable observability storage (OBS-006 logs, OBS-007 metrics) ─────────── #

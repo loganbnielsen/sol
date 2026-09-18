@@ -15,6 +15,29 @@ variable "ingress_service_type" {
   default     = "LoadBalancer"
 }
 
+# HARDEN-002 run 2, finding 7: the qualified substrate provided no storage, so a
+# persistent Redpanda (the profile's RF>=3 durability requirement) and every
+# admitted workload volume stayed Pending. The driver is the cloud substrate's
+# job (cli/platform/infra/aws installs the EBS CSI addon and its scoped IRSA
+# role); the StorageClass is the platform substrate's, because it is a cluster
+# object.
+#
+# This is platform storage, not an application workload volume declaration: it
+# makes persistence physically possible without changing what a workload is
+# allowed to declare, and it does not interact with the `single`-tier
+# restriction DEC-026 §3 puts on workload-declared volumes.
+variable "create_storage_class" {
+  description = "Create the default StorageClass for the platform (AWS only; the EBS CSI driver must be installed)."
+  type        = bool
+  default     = true
+}
+
+variable "storage_class_name" {
+  description = "Name of the default StorageClass this module creates."
+  type        = string
+  default     = "gp3"
+}
+
 variable "cloud_provider" {
   description = "Cloud provider for provider-specific Kubernetes integrations."
   type        = string
