@@ -195,15 +195,19 @@ not relaxed for convenience. Destruction is an explicit lifecycle:
 1. the operator confirms the target is disposable;
 2. deletion protection is disabled — `--var=rds_deletion_protection=false` for a
    `terraform destroy`, or `aws rds modify-db-instance --no-deletion-protection`;
-3. Terraform takes a final snapshot. The module now sets
-   `final_snapshot_identifier` whenever it will take one; supply
-   `rds_final_snapshot_identifier` when destroying the same cluster a second time,
-   because RDS requires the snapshot name to be unique;
+3. Terraform takes a final snapshot. The module sets `final_snapshot_identifier`
+   whenever it will take one. RDS requires the name to be unique, so destroying the
+   same cluster twice through `terraform destroy` needs a fresh
+   `rds_final_snapshot_identifier`; `sol cloud destroy` generates a unique one per
+   run and needs nothing;
 4. `terraform destroy` (or `sol cloud destroy <target> --apply`) completes;
 5. absence is verified independently — EKS, RDS, ECR, load balancers, VPC, EIPs
    and volumes — as the smoke harness's own teardown check already does.
 
-**Known gap:** `sol cloud destroy` does not forward `rds_deletion_protection` to
-Terraform, so destroying a protected target through the Sol command still fails and
-the operator has to pass the variable to Terraform directly. Until that is fixed,
-the documented destroy mechanism is `terraform destroy` with the variable above.
+`sol cloud destroy` performs steps 2 and 3 itself on AWS: invoking it *is* the
+operator's confirmation, so it lifts deletion protection for that run only and
+names the final snapshot `<cluster>-postgres-final-<UTC timestamp>`. Nothing on
+the apply path disables protection. Because those variables are appended last and
+Terraform takes the last `-var` for a name, a `--var rds_final_snapshot_identifier=`
+passed to `sol cloud destroy` is overridden by the generated name; set it through
+`terraform destroy` directly if you need to choose it.

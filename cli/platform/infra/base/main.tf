@@ -295,6 +295,12 @@ resource "helm_release" "redpanda" {
       }
     })]
   )
+
+  # HARDEN-002 run 2, finding 7: these PVCs name no storageClassName, so they take
+  # whatever class is default at admission time. Without this edge Terraform is free
+  # to create the StatefulSet first, the claims bind to nothing, and the release
+  # times out -- the exact failure finding 7 describes.
+  depends_on = [kubernetes_storage_class_v1.platform_default]
 }
 
 # ── PostgreSQL (in-cluster; set install_postgresql=false to use RDS/Cloud SQL) #
@@ -350,6 +356,9 @@ resource "helm_release" "postgresql" {
   # latter is the same var-driven, no-cmd_local.ml-equivalent case Loki's
   # persistence knob already established above.
   values = local.postgresql_component_values
+
+  # See redpanda above (HARDEN-002 finding 7): default-class ordering.
+  depends_on = [kubernetes_storage_class_v1.platform_default]
 }
 
 # ── Loki + Grafana + Alloy ──────────────────────────────────────────────── #
@@ -584,7 +593,11 @@ resource "helm_release" "loki" {
     var.observability_backend == "self_hosted_durable" ? [local.loki_infra_bindings] : []
   )
 
-  depends_on = [terraform_data.observability_backend_validation]
+  # StorageClass edge: see redpanda above (HARDEN-002 finding 7).
+  depends_on = [
+    kubernetes_storage_class_v1.platform_default,
+    terraform_data.observability_backend_validation
+  ]
 }
 
 # Grafana, standalone (no longer a loki-stack subchart). Gated identically
@@ -1332,7 +1345,9 @@ resource "helm_release" "prometheus" {
     [yamlencode({ alertmanager = { config = local.prometheus_alertmanager_config } })]
   )
 
+  # StorageClass edge: see redpanda above (HARDEN-002 finding 7).
   depends_on = [
+    kubernetes_storage_class_v1.platform_default,
     kubernetes_secret.thanos_objstore_config,
     terraform_data.observability_backend_validation
   ]

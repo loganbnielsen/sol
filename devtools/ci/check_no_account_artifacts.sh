@@ -9,10 +9,14 @@
 #     is an error, unless it is one of the documented placeholder accounts;
 #   - qualification scratch paths must not exist in the repository at all --
 #     provisioned targets, backend overrides and Terraform locks belong outside it.
+#
+# This is a check over what git tracks, so it runs from the real source root --
+# as a CI step next to its siblings here, not as a dune runtest. Under dune the
+# only root available is `_build/default`, where `git ls-files` reports nothing
+# and every check below would pass vacuously.
 set -euo pipefail
 
-root="$1"
-cd "$root"
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 status=0
 
