@@ -227,6 +227,9 @@ jobs:
       - name: Public cloud lifecycle guardrail (HARDEN-002 finding 5)
         run: internal/ci/test_public_cloud_lifecycle.sh
 
+      - name: Publisher/deployer identity boundary (ADR 0002)
+        run: internal/ci/test_publisher_deployer_boundary.sh
+
   # FRIC-009: smallest check that would have caught a regression like
   # FRIC-007 (every generated service permanently broken on a fresh
   # substrate) — nothing above exercises the golden path against live
