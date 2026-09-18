@@ -1,10 +1,10 @@
 ---
-description: Run a developer experience audit of Sol. Verifies that a startup engineer can start a project, develop locally, and deploy to the cloud using only Sol's documented commands — without DevOps knowledge. Produces a dated report in pipeline/audits/ and materialises open findings as ticket files in pipeline/tickets/READY_FOR_ENGINEERING/.
+description: Run a developer experience audit of Sol. Verifies that a startup engineer can start a project, develop locally, and deploy to the cloud using only Sol's documented commands — without DevOps knowledge. Produces a dated report in internal/pipeline/audits/ and materialises open findings as ticket files in internal/pipeline/tickets/READY_FOR_ENGINEERING/.
 ---
 
 # /ux-audit — Developer Experience Audit
 
-Works through every stage of `docs/audits/UX_AUDIT.md` as if you are a startup engineer encountering Sol for the first time. Each stage has two gates: a **docs gate** (does the guide exist and is it accurate?) and a **reproduction gate** (do the commands actually work?). Writes a completed report to `pipeline/audits/<YYYY-MM-DD>_ux_audit.md` and materialises each open finding as a ticket in `pipeline/tickets/READY_FOR_ENGINEERING/`.
+Works through every stage of `docs/audits/UX_AUDIT.md` as if you are a startup engineer encountering Sol for the first time. Each stage has two gates: a **docs gate** (does the guide exist and is it accurate?) and a **reproduction gate** (do the commands actually work?). Writes a completed report to `internal/pipeline/audits/<YYYY-MM-DD>_ux_audit.md` and materialises each open finding as a ticket in `internal/pipeline/tickets/READY_FOR_ENGINEERING/`.
 
 The core question for every check: *would a startup engineer need knowledge outside this repo to get past this step?* If yes, that is a finding.
 
@@ -13,7 +13,7 @@ Also check whether the experience teaches and preserves Sol's mission: autonomou
 ## Ticket directory structure
 
 ```
-pipeline/tickets/
+internal/pipeline/tickets/
   BACKLOG/                  ← captured but not yet ready to act on
   READY_FOR_ENGINEERING/    ← actionable; this is where new findings land
                                (also covers "worktree/PR open" — GitHub's own
@@ -28,9 +28,9 @@ pipeline/tickets/
 Read `docs/audits/UX_AUDIT.md` in full before starting.
 
 ### 2. Check previous findings
-Read the most recent `pipeline/audits/*_ux_audit.md` report. Note which findings were already open — verify whether they are now resolved before logging them again.
+Read the most recent `internal/pipeline/audits/*_ux_audit.md` report. Note which findings were already open — verify whether they are now resolved before logging them again.
 
-Check all `pipeline/tickets/` subdirectories for existing EXP-* ticket files. A finding already tracked anywhere in `pipeline/tickets/` (regardless of directory) should not be re-materialised. If a finding exists in `DONE/`, mark it resolved in the report — but verify the fix is still actually live in `main` before trusting that (see EXP-032: a `DONE` ticket's merge can be reverted after the fact and never refixed, leaving the ticket falsely marked resolved). Run `soldev pipeline check-reverts` and treat anything it flags as still-open, not resolved.
+Check all `internal/pipeline/tickets/` subdirectories for existing EXP-* ticket files. A finding already tracked anywhere in `internal/pipeline/tickets/` (regardless of directory) should not be re-materialised. If a finding exists in `DONE/`, mark it resolved in the report — but verify the fix is still actually live in `main` before trusting that (see EXP-032: a `DONE` ticket's merge can be reverted after the fact and never refixed, leaving the ticket falsely marked resolved). Run `soldev pipeline check-reverts` and treat anything it flags as still-open, not resolved.
 
 ### 3. Work through each stage
 
@@ -83,27 +83,27 @@ Check all `pipeline/tickets/` subdirectories for existing EXP-* ticket files. A 
 
 ### 4. Write the report
 
-Create `pipeline/audits/<YYYY-MM-DD>_ux_audit.md` with:
+Create `internal/pipeline/audits/<YYYY-MM-DD>_ux_audit.md` with:
 - A header showing the date
 - Each stage with `[x]` / `[ ]` for the docs gate and reproduction gate separately
 - A Findings section with one entry per gap using the format from `docs/audits/UX_AUDIT.md`
 - A summary table
 
-Use finding IDs prefixed `EXP-` continuing from the highest ID across all existing `pipeline/tickets/` files and previous reports.
+Use finding IDs prefixed `EXP-` continuing from the highest ID across all existing `internal/pipeline/tickets/` files and previous reports.
 
 ### 5. Materialise tickets
 
 For each finding with `Status: Open` in the report:
 
-1. Search all `pipeline/tickets/` subdirectories for `<id>.md`. If found anywhere, skip.
-2. If not found, create `pipeline/tickets/READY_FOR_ENGINEERING/<id>.md`:
+1. Search all `internal/pipeline/tickets/` subdirectories for `<id>.md`. If found anywhere, skip.
+2. If not found, create `internal/pipeline/tickets/READY_FOR_ENGINEERING/<id>.md`:
 
 ```markdown
 ---
 id: <EXP-NNN>
 type: ux-finding
 severity: <blocker|high|medium|low>
-source: pipeline/audits/<YYYY-MM-DD>_ux_audit.md
+source: internal/pipeline/audits/<YYYY-MM-DD>_ux_audit.md
 ---
 
 <one-line title>

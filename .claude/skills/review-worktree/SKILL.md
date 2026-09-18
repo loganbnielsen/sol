@@ -22,7 +22,7 @@ Run `soldev pipeline ls` and select `READY_FOR_ENGINEERING` tickets annotated `(
 
 ### 2. Fan out one subagent per worktree
 
-Spawn all review agents in parallel. Each agent receives the worktree path, branch name, PR URL, and full ticket file content (description + remediation = ground truth for intent — read it from the branch's own `pipeline/tickets/DONE/<id>.md`, since the worker's own commit already moved it there).
+Spawn all review agents in parallel. Each agent receives the worktree path, branch name, PR URL, and full ticket file content (description + remediation = ground truth for intent — read it from the branch's own `internal/pipeline/tickets/DONE/<id>.md`, since the worker's own commit already moved it there).
 
 **Subagent output contract:** each agent must return **only** a JSON object to stdout matching this schema — no prose, no file operations, no ticket moves:
 
@@ -57,7 +57,7 @@ git diff main...<branch>
 Verify:
 - Changes are confined to files relevant to the ticket
 - No unrelated files modified (stray reformatting, debug lines, etc.)
-- The **only** `pipeline/tickets/` change is the expected `READY_FOR_ENGINEERING/<id>.md → DONE/<id>.md` move — that one is required, not a scope violation; anything else there is.
+- The **only** `internal/pipeline/tickets/` change is the expected `READY_FOR_ENGINEERING/<id>.md → DONE/<id>.md` move — that one is required, not a scope violation; anything else there is.
 
 #### C. Implementation correctness
 

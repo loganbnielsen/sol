@@ -32,7 +32,7 @@ Every documented `sol` command must exist, have the documented shape, and behave
 
 ### Checklist
 
-* [ ] **Every documented command exists:** `sol new`, `sol dev`, `sol up`, `sol deploy`, `sol status`, `sol logs`, `sol migrate`, `sol rollback`, and any documented subcommands are registered in the CLI.
+* [ ] **Every documented command exists:** `sol new`, `sol local`, `sol up`, `sol deploy`, `sol cloud`, `sol target show`, `sol status`, `sol logs`, `sol migrate`, `sol rollback`, and any documented subcommands are registered in the CLI.
 * [ ] **Documented flags exist:** Flags shown in docs are present in the Cmdliner definitions and have the documented names, defaults, and required/optional status.
 * [ ] **Output promises are true:** If docs say a command prints URLs, health, endpoints, rollback status, or provisioned resources, the command actually prints them.
 * [ ] **Local vs CI deploy semantics are clear:** `sol up` and `sol deploy` are documented with their real responsibilities and failure modes.
@@ -76,7 +76,7 @@ Generated docs are part of the product. They must teach the intended architectur
 
 Package-level specs should be useful implementation references, not stale design notes.
 
-**Source locations:** `framework/kafka-eio-service/kafka-eio-service.md` · `framework/*/*.md`
+**Source locations:** `framework/ocaml/kafka-eio-service/kafka-eio-service.md` · `framework/*/*.md`
 
 ### Checklist
 

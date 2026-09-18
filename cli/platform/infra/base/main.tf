@@ -1083,7 +1083,7 @@ locals {
         rules = [
           {
             # sol_svc_requests_total / status_class come from sol-svc's own
-            # auto-metrics (framework/sol-svc/lib/service.ml) and carry the
+            # auto-metrics (framework/ocaml/sol-svc/lib/service.ml) and carry the
             # workspace/env/domain/service taxonomy labels via pod-label
             # scraping (Sol_cli_manifest_yaml.render_taxonomy_labels) -- same
             # metric and label set as the "5xx error rate by service" panel in

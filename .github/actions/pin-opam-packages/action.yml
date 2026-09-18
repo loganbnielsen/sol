@@ -9,7 +9,7 @@ inputs:
   refs:
     description: >
       Newline-separated "<package> <commit>" lines from
-      devtools/ci/resolve-support-packages.sh, resolved once per workflow run so
+      internal/ci/resolve-support-packages.sh, resolved once per workflow run so
       every job builds against one dependency snapshot. Every package in
       packages.txt must have a line; there is no per-job fallback to #main.
     required: true

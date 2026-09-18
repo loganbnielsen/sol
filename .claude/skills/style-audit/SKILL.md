@@ -1,5 +1,5 @@
 ---
-description: Run an OCaml type-safety and readability style audit. Finds boolean traps, positional debt, stringly-typed finite domains, and nested Option/Result pyramids across the whole repo. Requires manual folder walks beyond grep, supports multi-agent folder partitioning, and creates actionable tickets in pipeline/tickets/READY_FOR_ENGINEERING/.
+description: Run an OCaml type-safety and readability style audit. Finds boolean traps, positional debt, stringly-typed finite domains, and nested Option/Result pyramids across the whole repo. Requires manual folder walks beyond grep, supports multi-agent folder partitioning, and creates actionable tickets in internal/pipeline/tickets/READY_FOR_ENGINEERING/.
 ---
 
 # /style-audit - OCaml Type Safety and API Design Audit
@@ -16,14 +16,14 @@ source-of-truth checklist.
 Create actionable tickets in:
 
 ```text
-pipeline/tickets/READY_FOR_ENGINEERING/
+internal/pipeline/tickets/READY_FOR_ENGINEERING/
 ```
 
 Do not put actionable style findings in `BACKLOG/`.
 
 Use prefix `CODEX_STYLE_AUDIT-NNN` unless the user requests another prefix.
 Continue from the highest existing `CODEX_STYLE_AUDIT-*` ticket across all
-`pipeline/tickets/` subdirectories.
+`internal/pipeline/tickets/` subdirectories.
 
 ## Core Rule
 
@@ -66,12 +66,11 @@ Flag these three categories:
 
 Walk these folders even if grep finds enough tickets early:
 
-- `framework/`
-- `framework/kafka-eio-service/`
+- `framework/ocaml/`
 - `cli/sol/lib/`
 - `cli/sol/bin/`
 - `examples/`
-- `devtools/`
+- `internal/tooling/`
 - tests and scaffold templates that teach users patterns
 
 For each folder:
@@ -132,11 +131,11 @@ per agent and ask for ticket-quality findings only.
 Recommended partitions:
 
 - Agent 1: `framework/`
-- Agent 2: `framework/kafka-eio-service/`
+- Agent 2: `framework/ocaml/kafka-eio-service/`
 - Agent 3: `cli/sol/lib/`
 - Agent 4: `cli/sol/bin/`
 - Agent 5: `examples/` plus scaffold templates
-- Agent 6: `devtools/` plus tests
+- Agent 6: `internal/tooling/` plus tests
 
 Subagent instruction template:
 
@@ -208,5 +207,5 @@ At the end, report:
 - Validation command, usually:
 
 ```bash
-dune exec devtools/soldev/bin/main.exe -- pipeline ls | rg 'CODEX_STYLE_AUDIT'
+dune exec internal/tooling/soldev/bin/main.exe -- pipeline ls | rg 'CODEX_STYLE_AUDIT'
 ```

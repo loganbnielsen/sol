@@ -42,7 +42,7 @@ The tarball includes the `sol` binary and the framework source tree (`framework/
 > eval $(opam env)  # requires OCaml 5.4.1 + opam
 > dune build cli/
 > ln -sf "$(pwd)/_build/default/cli/sol/bin/main.exe" ~/.local/bin/sol
-> ln -sf "$(pwd)/_build/default/devtools/soldev/bin/main.exe" ~/.local/bin/soldev
+> ln -sf "$(pwd)/_build/default/internal/tooling/soldev/bin/main.exe" ~/.local/bin/soldev
 > ```
 
 ---
@@ -515,7 +515,7 @@ Generates `app/billing/invoice_fn/` with a `schedule` field (default `"0 * * * *
 ## How observability wiring works
 
 Every service entrypoint follows the same pattern, through `Sol_obs` — the
-app-facing observability facade (`framework/sol-obs`). Here is the
+app-facing observability facade (`framework/ocaml/sol-obs`). Here is the
 charge-svc `bin/main.ml`:
 
 ```ocaml

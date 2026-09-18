@@ -143,8 +143,8 @@ classifier was correct; every new head of a source PR simply ran everything.
 - Every full pull-request run records a `ci-evidence` artifact.
 - A later run skips the expensive suite only when an earlier run passed on a
   byte-identical tested tree with the same commits, and neither change touched
-  `.github/` or `devtools/ci/`. Anything uncertain runs the full suite.
-- Conditions are pinned by `devtools/ci/test_ci_evidence.sh`.
+  `.github/` or `internal/ci/`. Anything uncertain runs the full suite.
+- Conditions are pinned by `internal/ci/test_ci_evidence.sh`.
 
 ## Latest: FEAT-089 — production profile selection and preflight (2026-09-17)
 
@@ -372,7 +372,7 @@ audit findings into the code-layer and docs queues:
 - Hardened `infer_sol_home()` against `_build` build contexts (BUG-017),
   surfaced dirty/unpushed ticket worktrees in `soldev pipeline ls/check`
   (FEAT-040), and fixed the perf-status `jq` null-history error (BUG-019).
-- REFAC-078 made `devtools/perf/perf_baseline.json` a main-only informational
+- REFAC-078 made `internal/tooling/perf/perf_baseline.json` a main-only informational
   file and removed the local perf-ratio merge gate/auto-revert; REFAC-079
   documented soldev's orchestration-vs-informational command roles.
 - CODE_LAYER-019 modeled workspace discovery as typed facts; CODE_LAYER-015
@@ -388,7 +388,7 @@ audit findings into the code-layer and docs queues:
 
 ## 2026-09-08 — Four-part directory reorg, TypeScript parity, docs audit
 
-- REFAC-071..076 reorganized the repo into `cli/`, `framework/`, `devtools/`,
+- REFAC-071..076 reorganized the repo into `cli/`, `framework/`, `internal/tooling/`,
   and `platform/`; REFAC-077 collapsed the ticket state machine to
   `READY_FOR_ENGINEERING` + `DONE` with the DONE move committed on the PR
   branch, and REFAC-075 fixed the merge tooling.
@@ -406,7 +406,7 @@ PR #136. The GitHub repo was renamed first (`loganbnielsen/sun` ->
 `loganbnielsen/sol`); this ticket did the rest:
 
 - Directories: `cli/sun` -> `cli/sol`, `framework/sun-{svc,worker,fn,obs,env}`
-  -> `framework/sol-*`, `tools/sundev` -> `tools/soldev`,
+  -> `framework/ocaml/sol-*`, `tools/sundev` -> `tools/soldev`,
   `tools/sun_process` -> `tools/sol_process`.
 - OCaml modules: `Sun_cli_*` -> `Sol_cli_*`, `Sun_obs`/`Sun_env`/`Sun_process`
   -> `Sol_obs`/`Sol_env`/`Sol_process`, `Sundev_*` -> `Soldev_*`, the
@@ -419,7 +419,7 @@ PR #136. The GitHub repo was renamed first (`loganbnielsen/sun` ->
   `SUN_SKIP_HOOKS`/`SUN_SKIP_PERF_HOOK` -> `SOL_*`. Scaffold templates
   now emit the new names into every freshly generated workspace
   (including the generated CI workflow, `sol-ci.yml`), and both bundled
-  example workspaces (`examples/pluto/`, `examples/venus/`) were updated
+  example workspaces (`examples/pluto/`, `internal/fixtures/venus/`) were updated
   to match for real, not just in docs.
 - `.github/workflows/release.yml`: bundle/binary naming (`sol-vX.Y.Z-...`,
   `bin/sol`). `sun.opam` regenerated as `sol.opam` from `dune-project`'s
@@ -473,7 +473,7 @@ reviewer confirmed no further issues.
 Follow-up to FEAT-030/BUG-008. `ensure-grafana.sh` only ever provisioned
 Loki/Tempo datasources with no dashboards — anyone opening Grafana after
 a demo run saw an empty Explore page unless they already knew LogQL, and
-there was no path to metrics at all (`examples/local-demo`'s services are
+there was no path to metrics at all (`internal/fixtures/local-demo`'s services are
 short-lived, one-shot runs, not long-running `/metrics` scrape targets).
 Wired the demo's existing but unused `PUSHGATEWAY_URL`/`Obs_prometheus.push`
 path through to a real, provisioned "Sun Demo Overview" dashboard: request/
@@ -491,10 +491,10 @@ in whatever the newest release happened to be that day). Every panel query
 verified individually against Grafana's own datasource proxy with live
 demo data before landing.
 
-## Latest: FEAT-030 — examples/local-demo dogfoods Sun_obs; fulfillment-worker gets real tracing (2026-09-05)
+## Latest: FEAT-030 — internal/fixtures/local-demo dogfoods Sun_obs; fulfillment-worker gets real tracing (2026-09-05)
 
 Picked up from `project/tickets/IN_PROGRESS/FEAT-030.md` (follow-up to
-CODE_LAYER-003, requested after that ticket merged). `examples/local-demo`
+CODE_LAYER-003, requested after that ticket merged). `internal/fixtures/local-demo`
 predated `framework/sun-obs` and still hand-composed `Obs_eio`/`Obs_loki`/
 `Obs_prometheus`/`Obs_tempo` directly; both `order-svc` and
 `fulfillment-worker` now build their observability handle with one
@@ -628,7 +628,7 @@ configurable Thanos/Loki retention, the GCP gate on `self_hosted_durable`,
 and worker `/metrics`) all merged; ticket pipeline is fully drained
 (`REVIEW`/`READY_TO_MERGE`/`IN_PROGRESS` empty). A follow-up commit
 (`a4d4193`) added real e2e coverage for the worker `/metrics` endpoint and
-`Sun_cli_loki.query` against a live local Loki — `examples/local-demo`'s
+`Sun_cli_loki.query` against a live local Loki — `internal/fixtures/local-demo`'s
 e2e suite now exercises both. Local observability (log levels, metrics,
 Grafana Explore/dashboard links) verified working end-to-end against a live
 local stack. AWS self-hosted durable remains unproven against a real
@@ -793,7 +793,7 @@ Updated in this repo to match: `framework/sun-worker/{lib,test}/dune` and
 `integrations/kafka/kafka-eio-service/{lib,test}/dune` now depend on plain `kafka-eio`
 (not `kafka-eio.core`/`.producer`/`.consumer`, which no longer exist). All call sites
 in `framework/sun-worker/`, `integrations/kafka/kafka-eio-service/`,
-`examples/local-demo/`, `examples/venus/`, and the kafka scaffold template in
+`internal/fixtures/local-demo/`, `internal/fixtures/venus/`, and the kafka scaffold template in
 `cli/sun/lib/sun_cli_scaffold_templates.ml` moved from the flat `Kafka_*` names to
 `Kafka.*`. Re-pinned `kafka-eio` to the PR branch tip to verify before merge.
 
@@ -962,8 +962,8 @@ real bugs found during the audit were fixed in place first:
 
 `integrations/storage/` is gone from this repo. `dune-project`/`sun.opam` now depend
 on `pg-eio` (opam-pinned from `~/Code/pg-eio`, tagged `v0.1.0`, pushed to
-`github.com/loganbnielsen/pg-eio`). Every consumer (`examples/venus`, `examples/pluto`,
-`examples/local-demo`, `cli/sun/bin`, the CLI scaffold templates, and
+`github.com/loganbnielsen/pg-eio`). Every consumer (`internal/fixtures/venus`, `examples/pluto`,
+`internal/fixtures/local-demo`, `cli/sun/bin`, the CLI scaffold templates, and
 `sun_cli_workspace.ml`'s port-forward detection) was rewired from the `sun_storage`
 findlib name to `pg-eio`. Module names are unchanged (`Storage_error`, `Db`,
 `Migration`, `Table` — no `Obs`-style rename), though `README.md` in the new repo flags
@@ -1296,7 +1296,7 @@ same postgres database.
 - **Post-commit hook** (`tools/perf/hooks/post-commit`): shows perf table after commit.
 - **Performance baselines** (`tools/perf/perf_baseline.json`): unit 0.2s, kafka 1.0s, e2e
   10.2s. Regression threshold 1.2×.
-- **E2e assertions** (`examples/local-demo/bin/demo.ml`): HTTP 202 for all orders, Prometheus
+- **E2e assertions** (`internal/fixtures/local-demo/bin/demo.ml`): HTTP 202 for all orders, Prometheus
   `sun_svc_requests_total > 0`, `sun_worker_messages_total > 0`, Loki query-back for
   service=order-svc, PostgreSQL row count ≥ orders sent.
 
@@ -1595,16 +1595,16 @@ end
 
 ### 9. E2E demo + Friction Log (complete)
 
-New `examples/local-demo/` at repo root. Full stack in one binary: HTTP → svc → Kafka → worker.
+New `internal/fixtures/local-demo/` at repo root. Full stack in one binary: HTTP → svc → Kafka → worker.
 
 **Shows:**
 - `correlation_id` from HTTP `X-Correlation-Id` → Kafka event payload → worker log spans
 - Auto-wired metrics: `sun_svc_requests_total`, `sun_svc_request_duration_seconds`, `sun_worker_messages_total`, `sun_worker_message_duration_seconds`  
 - Prometheus text output; optional Loki (LOKI_URL) and Pushgateway (PUSHGATEWAY_URL)
 
-**Run:** `KAFKA_BROKERS=localhost:9092 dune exec examples/local-demo/bin/demo.exe`
+**Run:** `KAFKA_BROKERS=localhost:9092 dune exec internal/fixtures/local-demo/bin/demo.exe`
 
-**Also:** `http/` folder renamed to `framework/`. See `examples/local-demo/FRICTION_LOG.md` for 7 friction items to reduce developer barrier to entry.
+**Also:** `http/` folder renamed to `framework/`. See `internal/fixtures/local-demo/FRICTION_LOG.md` for 7 friction items to reduce developer barrier to entry.
 
 ---
 
@@ -1663,13 +1663,13 @@ W3C `traceparent` automatically propagated from HTTP span → Kafka message head
 - `kafka_service.ml/.mli` — `publish` gains `?trace_ctx:Obs_trace.t`; `consume`'s handler type gains `~trace_ctx:Obs_trace.t option`
 - `framework/sun-worker/lib/worker.ml/.mli` — `WORKER.handle` gains `~trace_ctx:Obs_trace.t option`
 - All tests updated for the new handler signatures
-- `examples/local-demo/bin/demo.ml` — extracts `trace_ctx` from HTTP span via `Obs_eio.current_trace_ctx`, passes to `publish`; worker uses `?parent:trace_ctx` to link the fulfillment span
+- `internal/fixtures/local-demo/bin/demo.ml` — extracts `trace_ctx` from HTTP span via `Obs_eio.current_trace_ctx`, passes to `publish`; worker uses `?parent:trace_ctx` to link the fulfillment span
 
 **Trace continuity:** HTTP span → `traceparent` header in Kafka message → extracted in `kafka_service.consume` → passed to `WORKER.handle` as `~trace_ctx` → `?parent:trace_ctx` in `Obs_eio.with_span` → linked child span in Loki/Grafana.
 
 ### 12. Demo friction log — all items closed (complete)
 
-All 7 friction items from `examples/local-demo/FRICTION_LOG.md` are resolved:
+All 7 friction items from `internal/fixtures/local-demo/FRICTION_LOG.md` are resolved:
 
 | # | Item | Resolution |
 |---|------|------------|
@@ -1723,7 +1723,7 @@ New package at `integrations/storage/sun-storage/`.
 
 ### 15. Venus reference workspace (complete)
 
-New `examples/venus/` workspace that uses Sun rather than defines it — a realistic two-team example.
+New `internal/fixtures/venus/` workspace that uses Sun rather than defines it — a realistic two-team example.
 
 **Architecture:**
 ```
@@ -1732,13 +1732,13 @@ payments / charge-svc  →  Kafka (venus-payments-charges)  →  comms / notify-
 
 **Structure:**
 ```
-examples/venus/
+internal/fixtures/venus/
   events/payments/charged.ml         ← Charged event contract (payments team owns, comms team imports)
   app/comms/notify_worker/lib/
     notification.ml                  ← Table.Make(Schema) for notifications table
     notify_worker.ml                 ← Worker.WORKER impl via Make(Config) functor
   db/migrations/0001_notifications.sql
-  bin/run.ml                         ← orchestration runner (replaces examples/local-demo/)
+  bin/run.ml                         ← orchestration runner (replaces internal/fixtures/local-demo/)
 ```
 
 **Key patterns demonstrated:**
@@ -1753,7 +1753,7 @@ examples/venus/
 - Storage test updated to use a random per-run table name for isolation
 - Root cause: demo's migration ran first and recorded version 1 in `sun_schema_migrations`, causing venus's `0001_notifications.sql` to be silently skipped
 
-**Run:** `KAFKA_BROKERS=... POSTGRES_URL=... LOKI_URL=... dune exec examples/venus/bin/run.exe`
+**Run:** `KAFKA_BROKERS=... POSTGRES_URL=... LOKI_URL=... dune exec internal/fixtures/venus/bin/run.exe`
 
 ## In Progress
 
@@ -1847,13 +1847,13 @@ examples/venus/
 - Domain filter arg: `sun status comms` limits to one namespace
 
 **Venus notify_worker now deployable**:
-- Added `examples/venus/app/comms/notify_worker/bin/main.ml` — standalone entrypoint wiring Obs, Db, Kafka from env vars; instantiates `Notify_worker.Make` functor with injected dependencies
-- Added `examples/venus/app/comms/notify_worker/bin/dune`
-- Added `examples/venus/app/comms/notify_worker/Dockerfile` — builds from repo root, `librdkafka1` runtime
+- Added `internal/fixtures/venus/app/comms/notify_worker/bin/main.ml` — standalone entrypoint wiring Obs, Db, Kafka from env vars; instantiates `Notify_worker.Make` functor with injected dependencies
+- Added `internal/fixtures/venus/app/comms/notify_worker/bin/dune`
+- Added `internal/fixtures/venus/app/comms/notify_worker/Dockerfile` — builds from repo root, `librdkafka1` runtime
 
 **Step 3b complete — Logistics/fulfillment acceptance test (venus)**:
-- `examples/venus/events/billing/payment_confirmed.ml` — `Payment_confirmed` event: `payment_id`, `charge_id`, `customer_id`, `amount_cents`, `currency`; library `venus_billing_events`
-- `examples/venus/app/logistics/fulfillment_worker/` — `Fulfillment_worker` wired to `Message = Payment_confirmed`; standalone `bin/main.ml` with env-var driven Kafka config; `Dockerfile` for k8s deploy
+- `internal/fixtures/venus/events/billing/payment_confirmed.ml` — `Payment_confirmed` event: `payment_id`, `charge_id`, `customer_id`, `amount_cents`, `currency`; library `venus_billing_events`
+- `internal/fixtures/venus/app/logistics/fulfillment_worker/` — `Fulfillment_worker` wired to `Message = Payment_confirmed`; standalone `bin/main.ml` with env-var driven Kafka config; `Dockerfile` for k8s deploy
 - `sun up --dry-run` from venus discovers both `comms/notify_worker` and `logistics/fulfillment_worker`; correct namespaces `venus-comms` and `venus-logistics`
 
 **Library naming bug fixed — workspace-prefix all generated library names**:
@@ -1873,13 +1873,13 @@ examples/venus/
 - CronJob schedule `"0 * * * *"` extracted from fn source via literal scan
 
 **Live `sun up` against venus — all pods Running (k3d cluster `sun-local`)**:
-Ran `sun up` from `examples/venus/` against the live k3d cluster and discovered 6 real issues fixed in sequence:
+Ran `sun up` from `internal/fixtures/venus/` against the live k3d cluster and discovered 6 real issues fixed in sequence:
 1. **Namespace dry-run order**: Server-side dry-run fails if namespace doesn't exist yet. Fix: split manifest — apply namespace first (cluster-scoped, idempotent, always safe), then dry-run+apply workload resources against the now-existing namespace.
 2. **Registry hostname split**: k3d's `registries.yaml` maps `sun-registry:5000` inside the cluster, but host pushes via `localhost:5000`. Fix: `push_image = localhost:5000/...`, `cluster_image = sun-registry:5000/...`; manifest references use `cluster_image`.
 3. **`imagePullPolicy: Always`**: k3d/containerd caches images by tag, so re-pushing the same tag doesn't trigger a fresh pull. Fixed by adding `imagePullPolicy: Always` to all generated Deployments and CronJobs.
 4. **GLIBC mismatch**: Binary compiled on Ubuntu 24.04 (GLIBC 2.39) but `debian:bookworm-slim` only has 2.36. Fixed by changing Dockerfile base to `ubuntu:24.04` in template and existing venus Dockerfiles.
 5. **Missing `libpq5`**: `notify_worker` links against PostgreSQL client (`caqti-driver-postgresql` → `libpq.so.5`). Added `libpq5` to the Dockerfile template alongside `librdkafka1`.
-6. **Migrations in-cluster**: Worker called `Migration.apply ~dir:"examples/venus/db/migrations"` (relative path, doesn't exist in container). Fixed: migrations dir now configurable via `MIGRATIONS_DIR` env var; skipped when env var is absent. Cluster workers connect to DB but don't run migrations — that's `sun migrate`'s job.
+6. **Migrations in-cluster**: Worker called `Migration.apply ~dir:"internal/fixtures/venus/db/migrations"` (relative path, doesn't exist in container). Fixed: migrations dir now configurable via `MIGRATIONS_DIR` env var; skipped when env var is absent. Cluster workers connect to DB but don't run migrations — that's `sun migrate`'s job.
 7. **`sun status` output order**: `Printf.printf` is OCaml-buffered, `Sys.command` writes directly to OS stdout. "Namespace:" header appeared after pod table. Fixed by adding `%!` flush before each `Sys.command` call.
 
 Final state: `fulfillment-worker` and `notify-worker` both `1/1 Running`; consumer groups `venus-logistics-fulfillment-worker` and `comms-notify-worker` both **Stable** in Redpanda (verified via `rpk group list`). Logs ship to Loki (LOKI_URL set in ConfigMap).
@@ -2007,7 +2007,7 @@ The production deployment pipeline is complete. All Phase 6 deliverables are don
 | `platform/infra/aws/`, `platform/infra/gcp/`, `platform/infra/base/` Terraform modules | ✓ |
 | Argo CD `Application` manifest + GitOps emit mode | ✓ |
 | `docs/deployment/escape-hatches.md` — four-level escape hatch hierarchy | ✓ |
-| `docs/deployment/self-hosted-substrate-contract.md` | ✓ |
+| `contract/substrate.md` | ✓ |
 | CI workflow references (`platform/infra/ci/`) | ✓ |
 
 ## Phase 7 — Core deliverables complete
@@ -2077,11 +2077,11 @@ The production deployment pipeline is complete. All Phase 6 deliverables are don
 | `framework/sun-worker/test/dune` | Complete |
 | `framework/sun-worker/sun-worker.md` | Complete — design spec |
 | `integrations/kafka/dune-project` | Deleted — merged kafka into root project |
-| `examples/local-demo/lib/events.ml` | Complete — OrderPlaced message contract |
-| `examples/local-demo/lib/dune` | Complete |
-| `examples/local-demo/bin/demo.ml` | Complete — orchestrated e2e demo |
-| `examples/local-demo/bin/dune` | Complete |
-| `examples/local-demo/FRICTION_LOG.md` | Complete — 7 friction items |
+| `internal/fixtures/local-demo/lib/events.ml` | Complete — OrderPlaced message contract |
+| `internal/fixtures/local-demo/lib/dune` | Complete |
+| `internal/fixtures/local-demo/bin/demo.ml` | Complete — orchestrated e2e demo |
+| `internal/fixtures/local-demo/bin/dune` | Complete |
+| `internal/fixtures/local-demo/FRICTION_LOG.md` | Complete — 7 friction items |
 | `http/` → `framework/` | Renamed — updated CLAUDE.md, README, ROADMAP, WORK_SUMMARY |
 | `integrations/storage/sun-storage/lib/storage_error.ml/.mli` | Complete |
 | `integrations/storage/sun-storage/lib/db.ml/.mli` | Complete |

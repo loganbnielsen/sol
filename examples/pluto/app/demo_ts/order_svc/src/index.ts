@@ -67,7 +67,7 @@ async function main() {
   const app = Fastify({ logger: false });
 
   // Sol convention: every request gets a metric, success or failure — mirrors
-  // framework/sol-svc/lib/service.ml's dispatch wrapper, which records
+  // framework/ocaml/sol-svc/lib/service.ml's dispatch wrapper, which records
   // metrics for every response generically rather than leaving it to each
   // handler to remember. A hook is the correct place for this in Fastify;
   // recording inline in the handler (an earlier version of this file did)
@@ -148,7 +148,7 @@ async function main() {
       };
       const wire = encodeWire(schemaId, message);
 
-      // Unlike examples/local-demo/bin/demo.ml (which logs a Kafka publish
+      // Unlike internal/fixtures/local-demo/bin/demo.ml (which logs a Kafka publish
       // error but still returns 202), a publish failure here is allowed to
       // propagate and return 500 — telling the client an order succeeded
       // when the event never reached Kafka is a worse contract than the
@@ -175,7 +175,7 @@ async function main() {
 
   // The local Prometheus container in this repo is configured to scrape
   // Pushgateway only (see cli/platform/local/config/prometheus.yml) — matching
-  // examples/local-demo's own local-run model, not the k8s-native path
+  // internal/fixtures/local-demo's own local-run model, not the k8s-native path
   // where prometheus.io/scrape annotations hit /metrics directly. Push
   // periodically since, unlike the OCaml demo, this is a long-running
   // service rather than a one-shot binary.

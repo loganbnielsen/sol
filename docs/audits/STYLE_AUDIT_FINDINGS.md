@@ -5,7 +5,7 @@ memory, raw strings, runtime validation, or deeply nested control flow instead
 of using OCaml's type system and local readability.
 
 The output is a set of actionable tickets in
-`pipeline/tickets/READY_FOR_ENGINEERING/`.
+`internal/pipeline/tickets/READY_FOR_ENGINEERING/`.
 
 ## Audit Principles
 
@@ -125,13 +125,13 @@ For each folder, manually inspect:
 Cover the repository by ownership area:
 
 - `framework/` - public primitives and generated app lifecycle patterns.
-- `framework/kafka-eio-service/` - FFI boundaries, producer/consumer/service APIs,
+- `framework/ocaml/kafka-eio-service/` - FFI boundaries, producer/consumer/service APIs,
   schema registry, retry and decode paths.
-- `cli/sun/lib/` - deployment planning, rendering, state, hosted model, secrets.
-- `cli/sun/bin/` - Cmdliner terms, command entrypoint shapes, string parsing.
+- `cli/sol/lib/` - deployment planning, rendering, state, hosted model, secrets.
+- `cli/sol/bin/` - Cmdliner terms, command entrypoint shapes, string parsing.
 - `examples/` - user-facing patterns and generated-code quality.
 - `tools/` - workflow helpers, process execution, ticket tooling.
-- `cli/sun/test/`, `framework/*/test/`, `framework/*/test/` - repeated
+- `cli/sol/test/`, `framework/*/test/`, `framework/*/test/` - repeated
   helper patterns and assertions that reveal awkward APIs.
 
 ## Multi-Agent Partitioning
@@ -147,9 +147,9 @@ agent:
 Recommended partitions:
 
 1. `framework/` and generated lifecycle expectations.
-2. `framework/kafka-eio-service/`.
-3. `cli/sun/lib/`.
-4. `cli/sun/bin/`.
+2. `framework/ocaml/kafka-eio-service/`.
+3. `cli/sol/lib/`.
+4. `cli/sol/bin/`.
 5. `examples/` and scaffold templates.
 6. `tools/` and test helper patterns.
 
@@ -169,7 +169,7 @@ Each ticket must include:
 - Acceptance criteria.
 - `**Depends on:** none.` unless the work genuinely depends on another ticket.
 
-Use `pipeline/tickets/READY_FOR_ENGINEERING/` for actionable findings.
+Use `internal/pipeline/tickets/READY_FOR_ENGINEERING/` for actionable findings.
 
 Use a stable prefix for the run, for example `CODEX_STYLE_AUDIT-NNN` or
 `STYLE-NNN`, continuing from the highest existing ID with that prefix.
@@ -213,7 +213,7 @@ Avoid:
 
 - Filing one ticket per grep hit.
 - Filing vague "clean this file up" tickets.
-- Duplicating existing tickets in any `pipeline/tickets/` state.
+- Duplicating existing tickets in any `internal/pipeline/tickets/` state.
 - Putting actionable tickets in `BACKLOG/`.
 - Auditing only `cli/` because it has many obvious command booleans.
 - Ignoring tests/templates/examples; they often define the pattern users copy.

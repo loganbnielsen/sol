@@ -1,6 +1,6 @@
 // pg is the ecosystem Postgres client (TS equivalent of pg-eio) — plain
 // SQL, nothing Sol-specific here. Separate table name (`fulfilled_orders_ts`)
-// so this spike never collides with rows the OCaml examples/local-demo
+// so this spike never collides with rows the OCaml internal/fixtures/local-demo
 // writes to the same POSTGRES_URL.
 
 import pg from "pg";

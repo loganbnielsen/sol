@@ -9,7 +9,7 @@ All of these inputs are pinned in the repository rather than floating. A
 workspace consumes the framework from workspace-owned, immutable opam
 dependencies (DEC-025); it does not need `$SOL_HOME` or a Sol source checkout to
 build. The workspace-independence proof is the CI job recorded in
-`devtools/ci/`.
+`internal/ci/`.
 
 ## Framework languages
 

@@ -200,7 +200,7 @@ not relaxed for convenience. Destruction is an explicit lifecycle:
 4. `terraform destroy` completes;
 5. absence is verified independently. `verify_aws_destroy`, which `sol cloud
    destroy` runs, covers EKS, RDS, ECR and load balancers. The live smoke harness
-   (`devtools/aws-live-smoke.sh`) additionally asserts the VPC is gone after its
+   (`internal/qualification/aws/live-smoke.sh`) additionally asserts the VPC is gone after its
    own `sol cloud destroy`. **Nothing automated checks elastic IPs, NAT gateways
    or EBS volumes** — those remain the manual sweep recorded in HARDEN-002.
    Volumes are worth the operator's attention from this release onward: the EBS

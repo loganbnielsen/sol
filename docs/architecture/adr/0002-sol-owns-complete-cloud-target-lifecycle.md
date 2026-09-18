@@ -10,7 +10,7 @@
 stops. A ready target also needs `cli/platform/infra/base`, including a staged
 cert-manager apply because Terraform resolves `ClusterIssuer` kinds at plan time
 before a same-apply CRD can exist. The only working orchestration is in
-`devtools/aws-live-smoke.sh`; the tutorial instead tells operators to run one
+`internal/qualification/aws/live-smoke.sh`; the tutorial instead tells operators to run one
 base-root apply, which fails on a fresh cluster.
 
 The two Terraform roots also have unrelated local state by default. The AWS root
@@ -199,7 +199,7 @@ for symmetry.
 
 ### Qualification boundary
 
-`devtools/aws-live-smoke.sh` may invoke public Sol commands, independently read
+`internal/qualification/aws/live-smoke.sh` may invoke public Sol commands, independently read
 AWS/Kubernetes state, and inject qualification failures. It must not invoke
 Terraform or Helm to provision, repair or finish a Sol lifecycle phase. This is
 enforced mechanically so the qualification harness cannot regain a shadow

@@ -1,10 +1,10 @@
 ---
-description: "Persona-based adversarial review for a demo or scaffold-facing example: a demo agent (does it actually run end-to-end and show off the platform) and a client agent (is the code an app author has to write appropriately small, or does it hide boilerplate that belongs in a library helper). Iterate fix-and-reconfirm with both personas, then a fresh final reviewer, before treating the demo as done. Use for examples/local-demo, tutorial code samples, or any showcase/onboarding artifact — not for internal framework code with no app-author audience."
+description: "Persona-based adversarial review for a demo or scaffold-facing example: a demo agent (does it actually run end-to-end and show off the platform) and a client agent (is the code an app author has to write appropriately small, or does it hide boilerplate that belongs in a library helper). Iterate fix-and-reconfirm with both personas, then a fresh final reviewer, before treating the demo as done. Use for internal/fixtures/local-demo, tutorial code samples, or any showcase/onboarding artifact — not for internal framework code with no app-author audience."
 ---
 
 # /demo-review — does the demo work, and is the abstraction right?
 
-A demo (`examples/local-demo`, a tutorial snippet, a scaffold's generated
+A demo (`internal/fixtures/local-demo`, a tutorial snippet, a scaffold's generated
 `bin/main.ml`) has two audiences ordinary code review doesn't check for:
 someone running it to see the platform work, and someone reading it as a
 model for their own app code. Correctness review alone misses both. This

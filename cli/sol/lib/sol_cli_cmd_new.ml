@@ -15,8 +15,8 @@ let contains_build_context dir = String.split_on_char '/' dir |> List.mem "_buil
 
 let is_sol_home dir =
   (not (contains_build_context dir))
-  && Sys.file_exists (Filename.concat dir "framework/sol-svc/lib/dune")
-  && Sys.file_exists (Filename.concat dir "framework/kafka-eio-service/lib/dune")
+  && Sys.file_exists (Filename.concat dir "framework/ocaml/sol-svc/lib/dune")
+  && Sys.file_exists (Filename.concat dir "framework/ocaml/kafka-eio-service/lib/dune")
 ;;
 
 let rec realpath path =

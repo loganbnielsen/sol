@@ -9,7 +9,7 @@ let check_str = Alcotest.(check string)
 (* Sol_cli_cmd_new.is_sol_home requires these two files to exist under a
    candidate SOL_HOME directory. *)
 let sol_home_markers =
-  [ "framework/sol-svc/lib/dune"; "framework/kafka-eio-service/lib/dune" ]
+  [ "framework/ocaml/sol-svc/lib/dune"; "framework/ocaml/kafka-eio-service/lib/dune" ]
 ;;
 
 let write_file path content =

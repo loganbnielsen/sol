@@ -175,7 +175,7 @@ async function main() {
 
   // @sol-fab/worker owns the lifecycle contract (idempotent SIGTERM/SIGINT,
   // an unbounded drain -- sol-worker's worker.mli has no drain_timeout_s,
-  // unlike sol-svc) that framework/sol-worker/lib/worker.ml defines; this
+  // unlike sol-svc) that framework/ocaml/sol-worker/lib/worker.ml defines; this
   // app only supplies what to drain and what to close afterwards.
   runWorker({
     drain: async () => {

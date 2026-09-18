@@ -1,20 +1,20 @@
-# Sun Framework: Scaffold Quality Audit
+# Sol Framework: Scaffold Quality Audit
 
 This is a reusable audit template. When performing an audit, create fresh scaffolded workspaces/services/events/functions/workers, verify every generated artifact, and record findings using the format at the bottom. Do not record findings in this file.
 
-**What this audits:** Whether `sun new ...` produces code that compiles immediately, teaches Sun's intended architecture, preserves production defaults, and gives humans and AI agents a predictable working surface.
+**What this audits:** Whether `sol new ...` produces code that compiles immediately, teaches Sol's intended architecture, preserves production defaults, and gives humans and AI agents a predictable working surface.
 
-**Scaffold standard:** Generated code is product code. A bad pattern in a template becomes the default pattern in every startup built on Sun.
+**Scaffold standard:** Generated code is product code. A bad pattern in a template becomes the default pattern in every startup built on Sol.
 
 ---
 
 ## 1. Workspace Scaffold
 
-The default workspace should be a complete, multi-domain Sun application that demonstrates the intended model.
+The default workspace should be a complete, multi-domain Sol application that demonstrates the intended model.
 
-**Command:** `sun new workspace <name>`
+**Command:** `sol new workspace <name>`
 
-**Source locations:** `cli/sun/bin/cmd_new.ml` · `cli/sun/lib/sun_cli_scaffold.ml`
+**Source locations:** `cli/sol/bin/cmd_new.ml` · `cli/sol/lib/sun_cli_scaffold.ml`
 
 ### Checklist
 
@@ -31,13 +31,13 @@ The default workspace should be a complete, multi-domain Sun application that de
 
 HTTP services should expose explicit routes, explicit auth, observability, and framework-owned lifecycle.
 
-**Command:** `sun new svc <domain>/<name>`
+**Command:** `sol new svc <domain>/<name>`
 
 ### Checklist
 
-* [ ] **Uses `Sun.Service.Make`:** Generated entrypoint delegates lifecycle, metrics, health, and graceful shutdown to the framework.
+* [ ] **Uses `Sol.Service.Make`:** Generated entrypoint delegates lifecycle, metrics, health, and graceful shutdown to the framework.
 * [ ] **Auth is explicit on every route:** No route relies on path naming conventions or hidden defaults for auth.
-* [ ] **Handlers return typed responses:** Generated handlers use Sun request/response types and avoid naked exceptions for normal control flow.
+* [ ] **Handlers return typed responses:** Generated handlers use Sol request/response types and avoid naked exceptions for normal control flow.
 * [ ] **Metrics and tracing are wired by the framework:** The template does not require manual instrumentation for baseline telemetry.
 * [ ] **Naming follows conventions:** File paths, module names, Kubernetes names, and service labels derive predictably from workspace/domain/service.
 * [ ] **Business logic is local:** The handler module is the obvious edit point and does not manipulate infrastructure directly.
@@ -48,11 +48,11 @@ HTTP services should expose explicit routes, explicit auth, observability, and f
 
 Workers are the cross-domain event processing primitive. Their defaults must preserve at-least-once semantics and clear event ownership.
 
-**Command:** `sun new worker <domain>/<name>`
+**Command:** `sol new worker <domain>/<name>`
 
 ### Checklist
 
-* [ ] **Uses `Sun.Worker.Make`:** Generated entrypoint delegates Kafka lifecycle, schema registration, metrics, shutdown, and retry behavior to the framework.
+* [ ] **Uses `Sol.Worker.Make`:** Generated entrypoint delegates Kafka lifecycle, schema registration, metrics, shutdown, and retry behavior to the framework.
 * [ ] **Consumes event contracts, not services:** Template imports message contracts from `events/<publishing-team>/`, never from a producer service implementation.
 * [ ] **Acks after side effects:** Generated handler calls `ack()` only after all business side effects succeed.
 * [ ] **Failure path does not ack:** Handler errors return `Error` or equivalent without committing the offset.
@@ -65,11 +65,11 @@ Workers are the cross-domain event processing primitive. Their defaults must pre
 
 Scheduled functions should be small, explicit units of business work with framework-managed invocation telemetry.
 
-**Command:** `sun new fn <domain>/<name>`
+**Command:** `sol new fn <domain>/<name>`
 
 ### Checklist
 
-* [ ] **Uses `Sun.Fn.Make`:** Generated entrypoint delegates invocation lifecycle and metrics push behavior to the framework.
+* [ ] **Uses `Sol.Fn.Make`:** Generated entrypoint delegates invocation lifecycle and metrics push behavior to the framework.
 * [ ] **Schedule is explicit:** Cron schedule is visible in the function module or generated config according to the current framework contract.
 * [ ] **Run result is explicit:** `run` returns a result value; normal failures are not represented by exceptions.
 * [ ] **No long-running service assumptions:** Template exits after one invocation and does not depend on HTTP or worker lifecycles.
@@ -79,9 +79,9 @@ Scheduled functions should be small, explicit units of business work with framew
 
 ## 5. Event Scaffold
 
-Events are Sun's cross-domain contract. The scaffold must make ownership and compatibility obvious.
+Events are Sol's cross-domain contract. The scaffold must make ownership and compatibility obvious.
 
-**Command:** `sun new event <domain>/<name>`
+**Command:** `sol new event <domain>/<name>`
 
 ### Checklist
 
@@ -110,11 +110,11 @@ Storage scaffolding should be explicit, result-based, and workspace-isolated.
 
 ## 7. Deployment Metadata Scaffold
 
-`sun.toml`, Dockerfiles, and generated deployment inputs should preserve Sun defaults while allowing visible overrides.
+`sol.toml`, Dockerfiles, and generated deployment inputs should preserve Sol defaults while allowing visible overrides.
 
 ### Checklist
 
-* [ ] **`sun.toml` is minimal and meaningful:** Defaults are not duplicated unnecessarily, and overrides are high-level rather than raw Kubernetes.
+* [ ] **`sol.toml` is minimal and meaningful:** Defaults are not duplicated unnecessarily, and overrides are high-level rather than raw Kubernetes.
 * [ ] **Security defaults are production-aware:** Templates do not hard-code production plaintext secrets, root containers, or insecure Kafka settings.
 * [ ] **Dockerfiles are portable:** Generated Dockerfiles match the current container portability policy and do not assume incompatible host/container binaries.
 * [ ] **No hand-written manifests:** Scaffolded workspaces do not include per-service Kubernetes YAML as source files.
@@ -132,7 +132,7 @@ The scaffold should be easy for an AI agent to modify correctly because names, m
 * [ ] **Templates include local context:** Generated code names dependencies and contracts clearly enough that an agent does not need to infer hidden wiring.
 * [ ] **Types catch common drift:** Changing an event or storage shape creates compile-time pressure in affected handlers/workers.
 * [ ] **No surprising metaprogramming:** Templates avoid dynamic module loading, hidden code generation, or stringly typed wiring where typed APIs are available.
-* [ ] **Verification path is documented:** Generated README tells an agent how to build, run, test, deploy, inspect logs, and roll back with Sun commands.
+* [ ] **Verification path is documented:** Generated README tells an agent how to build, run, test, deploy, inspect logs, and roll back with Sol commands.
 
 ---
 
@@ -141,14 +141,14 @@ The scaffold should be easy for an AI agent to modify correctly because names, m
 Run this from a clean temporary directory so generated files are easy to inspect.
 
 ```bash
-sun new workspace scaffold_audit
+sol new workspace scaffold_audit
 cd scaffold_audit
 eval $(opam env) && dune build
 
-sun new svc payments/refund
-sun new worker logistics/fulfillment
-sun new fn billing/invoice
-sun new event billing/payment_confirmed
+sol new svc payments/refund
+sol new worker logistics/fulfillment
+sol new fn billing/invoice
+sol new event billing/payment_confirmed
 eval $(opam env) && dune build
 ```
 
@@ -157,7 +157,7 @@ eval $(opam env) && dune build
 * [ ] New artifacts appear under the expected domain paths.
 * [ ] No Kubernetes manifest is added as a source file.
 * [ ] Generated docs and code identify the intended edit points.
-* [ ] Service, worker, function, event, storage, and migration naming follows Sun conventions.
+* [ ] Service, worker, function, event, storage, and migration naming follows Sol conventions.
 
 ---
 
@@ -170,7 +170,7 @@ Record every gap found during this audit run below. Use one entry per finding.
 * **Category:** Compile | Domain Ownership | Runtime Semantics | Security | Docs | AI-Agent Surface
 * **Severity:** Critical | High | Medium | Low
 * **Location:** `path/to/template-or-generated-file.ml` (Lines X-Y)
-* **Description:** What the scaffold generates and why it violates Sun's conventions or product promise.
+* **Description:** What the scaffold generates and why it violates Sol's conventions or product promise.
 * **Impact:** What bad pattern a startup or AI agent would inherit from the template.
 * **Remediation:** The concrete template, generated doc, or CLI change required.
 ```

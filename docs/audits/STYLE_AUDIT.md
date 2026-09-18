@@ -1,9 +1,9 @@
-# Sun Style Audit — OCaml Type Safety and Config Parsing
+# Sol Style Audit — OCaml Type Safety and Config Parsing
 
 ## Config parsing policy
 
 External config values — environment variables, CLI flags, and TOML fields from
-user input — follow these rules across the Sun codebase.
+user input — follow these rules across the Sol codebase.
 
 ### 1. Unknown values fail closed
 
@@ -28,8 +28,8 @@ typed `Error`, not an empty string or zero default.
 When `secret_backend = Kubernetes_live`, every user-declared secret key in
 `spec.secrets` must be present in the process environment.  A missing key
 returns `Error "Kubernetes_live render failed: required secret env var(s) not
-set: KEY_NAME"`.  This propagates through `Sun_cli_deployment_render.render_spec`
-(returns `(string * string, string) result`) and `Sun_cli_change_set.build`
+set: KEY_NAME"`.  This propagates through `Sol_cli_deployment_render.render_spec`
+(returns `(string * string, string) result`) and `Sol_cli_change_set.build`
 (returns `(change_set, string) result`), so callers must handle the error
 before any side effect occurs.
 
@@ -57,16 +57,16 @@ possible.
 ## Secret strategy contract
 
 Secret handling is encoded as a deployment-phase decision derived from the
-`Sun_cli_env_target.t` value.  The allowed combinations are:
+`Sol_cli_env_target.t` value.  The allowed combinations are:
 
 | Target | Allowed secret backends | Notes |
 |--------|------------------------|-------|
-| `Local` (`sun up`) | `Kubernetes_live` | Reads values from the process environment |
+| `Local` (`sol up`) | `Kubernetes_live` | Reads values from the process environment |
 | `Customer_direct` | `Kubernetes_live` | Reads values from the process environment |
 | `Customer_gitops` | `Kubernetes_placeholder`, `External_secrets` | **Never** `Kubernetes_live` |
-| `Sun_hosted` | `Kubernetes_placeholder` (default) | Real secrets managed by the Sun platform |
+| `Sol_hosted` | `Kubernetes_placeholder` (default) | Real secrets managed by the Sol platform |
 
-`Sun_cli_env_target.default_secret_backend` derives the correct default backend
+`Sol_cli_env_target.default_secret_backend` derives the correct default backend
 from the target, replacing the previous hard-coded `Kubernetes_placeholder` for
 all targets.  `cmd_deploy.ml` additionally enforces the invariant at the CLI
 layer: specifying `--secret-backend kubernetes-live` together with `--emit-to`

@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# Blocks the commit if tests fail or a performance regression is detected.
+# Runs unit tests always; other suites when their infra is up.
+#
+# Install: bash cli/platform/local/scripts/install-hooks.sh
+# Skip once: SOL_SKIP_HOOKS=1 git commit ...
+
+[ "${SOL_SKIP_HOOKS:-0}" = "1" ] && exit 0
+
+# ── Ticket state guard ────────────────────────────────────────────────────────
+# Every repository change goes through a PR, including audit reports and new
+# tickets. Validate ticket state transitions independently of checkout/branch:
+# creation and correction are allowed; deletion is only valid as a same-ID move.
+STAGED_TICKETS="$(git diff --cached --name-only | grep -E '^(internal/)?pipeline/tickets/' || true)"
+if [ -n "$STAGED_TICKETS" ]; then
+  # Both roots are named so a one-time root move is still seen as a rename of
+  # each ticket (same id, same state), not as a fresh add in DONE.
+  TICKET_STATUS="$(git diff --cached --name-status -M10% -- pipeline/tickets/ internal/pipeline/tickets/)"
+  if ! REFUSAL="$(printf '%s\n' "$TICKET_STATUS" | "$(git rev-parse --show-toplevel)/internal/ci/check_ticket_transitions.sh")"; then
+    echo ""
+    echo "✗ Invalid pipeline ticket state change."
+    printf '%s\n' "$REFUSAL"
+    exit 1
+  fi
+fi
+
+# ── Merge commit: skip test run ───────────────────────────────────────────────
+# The pipeline verifies tests explicitly before and after every merge.
+# Running them again here on the merge commit is redundant.
+GIT_DIR="$(git rev-parse --git-dir)"
+if [ -f "$GIT_DIR/MERGE_HEAD" ]; then
+  echo ""
+  echo "  (merge commit — tests already verified by pipeline)"
+  exit 0
+fi
+
+# ── Bookkeeping commit: skip test run ─────────────────────────────────────────
+# CI makes the same decision from the same definition: this hook and
+# .github/workflows/ci.yml both call internal/ci/classify-changes.sh, so there is
+# one definition of "docs/tickets only" rather than two path lists that drift
+# apart. Its pinned semantics live in internal/ci/test_classify_changes.sh.
+#
+# Fail-closed: a mixed diff, an unrecognised path, or a classifier that cannot
+# run at all all yield something other than `docs-only`, and the suite runs. The
+# command substitution is empty if the script is missing, which is not
+# `docs-only` either — so the failure mode is "run the tests", never "skip".
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+if [ "$("$REPO_ROOT/internal/ci/classify-changes.sh" --staged)" = "docs-only" ]; then
+  echo ""
+  echo "  (docs/tickets only — skipping test suite)"
+  exit 0
+fi
+RUNNER="$REPO_ROOT/cli/platform/local/scripts/run_tests.sh"
+
+if [ ! -x "$RUNNER" ]; then
+  echo "✗ Test runner not found or not executable: $RUNNER"
+  exit 1
+fi
+
+eval "$(opam env)"
+
+# ── Infra detection ────────────────────────────────────────────────────────────
+BROKER_UP=0;   rpk cluster info &>/dev/null 2>&1            && BROKER_UP=1
+LOKI_UP=0;     curl -sf http://localhost:3100/ready &>/dev/null && LOKI_UP=1
+POSTGRES_UP=0; bash -c 'echo > /dev/tcp/localhost/5432' &>/dev/null && POSTGRES_UP=1
+
+# ── Build ──────────────────────────────────────────────────────────────────────
+echo ""
+echo "▶ pre-commit: build"
+if ! dune build --root "$REPO_ROOT" 2>&1; then
+  echo "✗ Build failed — commit blocked."
+  exit 1
+fi
+
+# ── Helper: run a suite and exit on failure ────────────────────────────────────
+run_suite() {
+  local name="$1"
+  echo ""
+  echo "▶ pre-commit: $name"
+  "$RUNNER" "$name" --no-infra
+  local rc=$?
+  if [ $rc -eq 1 ]; then
+    echo ""
+    echo "✗ ${name} tests failed — commit blocked."
+    echo "  Skip once: SOL_SKIP_HOOKS=1 git commit ..."
+    exit 1
+  elif [ $rc -eq 2 ]; then
+    echo ""
+    echo "✗ Performance regression in ${name} suite — commit blocked."
+    echo "  If intentional: bash $RUNNER ${name} --update-baseline"
+    echo "  Skip once:      SOL_SKIP_HOOKS=1 git commit ..."
+    exit 2
+  fi
+}
+
+# ── Unit (always) ─────────────────────────────────────────────────────────────
+run_suite unit
+
+# ── Kafka (broker-conditional) ────────────────────────────────────────────────
+if [ $BROKER_UP -eq 1 ]; then
+  run_suite kafka
+else
+  echo ""
+  echo "  (Redpanda not running — kafka + e2e tests skipped)"
+  exit 0
+fi
+
+# ── E2e (all infra required) ──────────────────────────────────────────────────
+if [ $LOKI_UP -eq 1 ] && [ $POSTGRES_UP -eq 1 ]; then
+  run_suite e2e
+else
+  echo ""
+  [ $LOKI_UP    -eq 0 ] && echo "  (Loki not running — e2e skipped)"
+  [ $POSTGRES_UP -eq 0 ] && echo "  (Postgres not running — e2e skipped)"
+fi
+
+exit 0

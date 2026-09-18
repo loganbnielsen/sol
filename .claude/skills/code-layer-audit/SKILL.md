@@ -15,8 +15,8 @@ instead of preserving a bad API shape for compatibility.
 
 Default scope for Sol work:
 
-- `/home/lbendtly/Code/sol`
-- `/home/lbendtly/Code/*-eio` when the request mentions shared foundation,
+- `~/Code/sol`
+- `~/Code/*-eio` when the request mentions shared foundation,
   integrations, observability, package extraction, or cross-package shape.
 
 ## What To Map
@@ -100,8 +100,8 @@ for example:
 If the current shape is already lean, say so and list only residual risks.
 
 For a full audit of Sol, also write
-`pipeline/audits/<YYYY-MM-DD>_code_layer_audit.md`. If actionable findings are
-open and `pipeline/tickets/READY_FOR_ENGINEERING/` exists, materialize tickets
+`internal/pipeline/audits/<YYYY-MM-DD>_code_layer_audit.md`. If actionable findings are
+open and `internal/pipeline/tickets/READY_FOR_ENGINEERING/` exists, materialize tickets
 as `CODE_LAYER-NNN`, continuing from the highest existing `CODE_LAYER-*` ID
-across `pipeline/audits/` and `pipeline/tickets/`. Do not create ticket
+across `internal/pipeline/audits/` and `internal/pipeline/tickets/`. Do not create ticket
 directories in standalone packages just to satisfy this format.

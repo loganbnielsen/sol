@@ -1,6 +1,6 @@
 # Trademark
 
-The "Sol" name and the logo in `assets/sol-logo.png` are trademarks of Logan
+The "Sol" name and the logo in `docs/assets/sol-logo.png` are trademarks of Logan
 Nielsen. The Apache-2.0 licence covering this repository's code (section 6) does
 **not** grant permission to use them.
 

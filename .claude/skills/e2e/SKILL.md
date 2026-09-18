@@ -8,7 +8,7 @@ Ensures the local environment is consistent, spins up infrastructure, and runs t
 
 ## Preferred: use the test runner
 
-`cli/platform/local/scripts/run_tests.sh` is the canonical way to run tests. It handles infrastructure setup, per-suite timeouts, and performance regression checks against `devtools/perf/perf_baseline.json`.
+`cli/platform/local/scripts/run_tests.sh` is the canonical way to run tests. It handles infrastructure setup, per-suite timeouts, and performance regression checks against `internal/tooling/perf/perf_baseline.json`.
 
 ```bash
 # Full matrix (all suites, infra auto-provisioned)
@@ -54,7 +54,7 @@ eval $(opam env) && dune test framework/ 2>&1
 ### Kafka integration tests
 ```bash
 bash cli/platform/local/scripts/ensure-broker.sh
-eval $(opam env) && KAFKA_BROKERS=localhost:9092 dune test framework/kafka-eio-service/ --force 2>&1
+eval $(opam env) && KAFKA_BROKERS=localhost:9092 dune test framework/ocaml/kafka-eio-service/ --force 2>&1
 ```
 
 `obs-eio`/`obs-loki-eio`/`obs-prometheus-eio` no longer have a test suite in this repo —
@@ -69,13 +69,13 @@ Sol (the example apps) is covered by the e2e suite below instead.
 Two-team showcase: payments/charge-svc → Kafka → comms/notify-worker → PostgreSQL, with Loki + Prometheus:
 ```bash
 bash cli/platform/local/scripts/ensure-broker.sh && bash cli/platform/local/scripts/ensure-postgres.sh && bash cli/platform/local/scripts/ensure-loki.sh && bash cli/platform/local/scripts/ensure-grafana.sh
-eval $(opam env) && KAFKA_BROKERS=localhost:9092 POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev LOKI_URL=http://localhost:3100 dune exec examples/venus/bin/run.exe 2>&1
+eval $(opam env) && KAFKA_BROKERS=localhost:9092 POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev LOKI_URL=http://localhost:3100 dune exec internal/fixtures/venus/bin/run.exe 2>&1
 ```
 
 ### Demo sandbox (legacy single-team demo)
 ```bash
 bash cli/platform/local/scripts/ensure-broker.sh && bash cli/platform/local/scripts/ensure-postgres.sh
-eval $(opam env) && KAFKA_BROKERS=localhost:9092 POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev dune exec examples/local-demo/bin/demo.exe 2>&1
+eval $(opam env) && KAFKA_BROKERS=localhost:9092 POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev dune exec internal/fixtures/local-demo/bin/demo.exe 2>&1
 ```
 
 All backend env vars (`POSTGRES_URL`, `LOKI_URL`) are optional — both demo binaries degrade gracefully to stdout logs and skip DB if not set. Kafka is required.
