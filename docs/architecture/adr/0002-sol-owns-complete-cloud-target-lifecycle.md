@@ -106,8 +106,13 @@ For AWS, `sol cloud apply` performs and logs these idempotent phases:
 5. initialize the platform root against its separate durable state;
 6. apply cert-manager and its namespace;
 7. verify the required cert-manager CRDs are `Established`;
-8. apply the remaining platform substrate with the explicit cloud bindings; and
-9. verify target readiness from the live cluster.
+8. apply the remaining platform substrate with the explicit cloud bindings;
+9. verify target readiness from the live cluster; and
+10. de-escalate to the bounded steady-state provisioner and verify its effective
+    RBAC.
+
+Steps 6–9 run under the temporary privileged `PlatformInstalling` authority
+(ADR 0003); it is revoked at step 10.
 
 Re-running the command after any interruption is the resume mechanism. An
 already-satisfied phase is harmless; an incomplete phase is reconciled again.
@@ -144,11 +149,14 @@ commands (`sol deploy` / `sol migrate`); one target may serve many workspaces.
 The existing named provisioner owns both cloud-substrate and cluster-wide
 platform-substrate establishment. The AWS cloud phase explicitly creates its
 EKS access entry and group binding. Apply temporarily associates AWS's managed
-cluster-admin access policy with that named principal only to create the custom
-RBAC, then removes the association and verifies the effective steady-state
-permissions before continuing. Sol creates an isolated ephemeral kubeconfig for
-each platform phase; it never uses cluster-creator admin, the namespace-scoped
-deployer, or an ambient kubeconfig/current context.
+cluster-admin access policy with that named principal for the whole privileged
+`PlatformInstalling` phase — the full platform apply **and** verified readiness
+— then removes the association and verifies the effective steady-state
+permissions. Installing cluster-wide software that mints RBAC is privileged
+platform establishment, so the window is not closed at the first custom-RBAC
+object (ADR 0003 defines the phase contract). Sol creates an isolated ephemeral
+kubeconfig for each platform phase; it never uses cluster-creator admin, the
+namespace-scoped deployer, or an ambient kubeconfig/current context.
 
 The provisioner remains a highly privileged infrastructure identity: authority
 over CRDs, controllers and admission-related cluster resources can indirectly
@@ -184,8 +192,12 @@ Finding 5 establishes this phase boundary even where preparation is currently a
 no-op. Finding 9b supplies AWS RDS semantics later: disable deletion protection
 through an applied transition and establish a unique final-snapshot identity.
 A failed destroy after preparation remains observable and safely re-runnable.
-`sol cloud apply` always reconciles back toward protected Ready state, including
-restoring protections changed by a prior destroy attempt.
+Once preparation is verified the Destroy policy governs (ADR 0003): no later
+reconciliation in this lifecycle re-applies the Ready/Production invariant, so
+deletion protection is not silently restored between preparation and
+destruction. `sol cloud apply` reconciles back toward protected Ready state when
+the target is (or returns to) Ready — for example when a prior destroy attempt is
+abandoned — which is why destroy must first leave the Ready policy domain.
 
 ### Provider and local scope
 
@@ -236,6 +248,7 @@ implementation.
 
 ## Related
 
+- ADR 0003 — lifecycle phases determine authority and desired-state policy
 - HARDEN-002, findings 5, 7 and 9
 - DEC-026 — `production-single-region/v1`, initially qualified on AWS EKS
 - DEC-027 — disciplined imperative reconciliation authority

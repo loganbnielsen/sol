@@ -12,18 +12,39 @@ project: lifecycle-test
 EOF
 cat >"$tmp/work/sol/prod/aws/us-east-1.yml" <<'EOF'
 target:
+  # ADR 0003: a production-profile target makes terraform_vars inject the
+  # Ready/Production invariant rds_deletion_protection=true, which is exactly
+  # the policy the Destroy policy must override after PrepareDestroy (finding 15).
+  profile: production-single-region
   base_domain: example.test
   cluster_name: lifecycle-test
   letsencrypt_email: ops@example.test
+  cluster_endpoint_cidr: 203.0.113.0/24
   state_bucket: lifecycle-state
   state_lock_table: lifecycle-lock
   provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+  # HARDEN-002 run 3, finding 11: must reach the provider root's terraform argv
+  # so the module creates the deploy EKS access entry (INFRA-025).
+  deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
+  operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
+
+# ADR 0003: a postgres resource plus the production profile is what makes
+# terraform_vars force the Ready/Production invariant rds_deletion_protection=true.
+resources:
+  app_db:
+    type: postgres
+    size: small
 EOF
 
 cat >"$tmp/bin/terraform" <<'EOF'
 #!/usr/bin/env bash
 set -eu
 printf 'terraform %s\n' "$*" >>"$LIFECYCLE_LOG"
+# HARDEN-002 run 4, finding 12: record the kubeconfig env the platform Terraform
+# actually receives. The base providers read KUBE_CONFIG_PATH/KUBE_CONFIG_PATHS
+# (not KUBECONFIG), so the assertion below fails if that stops being exported.
+[ -n "${KUBE_CONFIG_PATH:-}" ] && printf 'env KUBE_CONFIG_PATH=%s\n' "$KUBE_CONFIG_PATH" >>"$LIFECYCLE_LOG"
+[ -n "${KUBE_CONFIG_PATHS:-}" ] && printf 'env KUBE_CONFIG_PATHS=%s\n' "$KUBE_CONFIG_PATHS" >>"$LIFECYCLE_LOG"
 fail_once() {
   [ "${FAIL_ON:-}" = "$1" ] || return 1
   marker="$FAIL_MARKER_DIR/$1"
@@ -39,8 +60,13 @@ case "$*" in
   *" output -json"*)
     if [ "${OUTPUT_ABSENT:-}" = 1 ]; then printf '{}\n'; exit 0; fi
     if fail_once outputs; then exit 20; fi
+    # HARDEN-002 run 3, finding 10: terraform 1.9.8 OMITS an output whose value
+    # is null, so a real default target (durable observability disabled) has no
+    # loki_*/thanos_* keys at all. The fixture must match that, or the harness
+    # cannot reproduce the live `Can't get member 'value' of non-object type
+    # null` crash this scenario exists to guard.
     cat <<'JSON'
-{"cluster_name":{"value":"lifecycle-test"},"provisioner_role_arn":{"value":"arn:aws:iam::111122223333:role/sol-provisioner"},"cert_manager_irsa_arn":{"value":"arn:aws:iam::111122223333:role/cert-manager"},"loki_s3_bucket":{"value":"loki"},"loki_irsa_arn":{"value":"loki-role"},"thanos_s3_bucket":{"value":"thanos"},"thanos_irsa_arn":{"value":"thanos-role"},"grafana_irsa_arn":{"value":null},"managed_resource_dashboards":{"value":{}}}
+{"cluster_name":{"value":"lifecycle-test"},"provisioner_role_arn":{"value":"arn:aws:iam::111122223333:role/sol-provisioner"},"cert_manager_irsa_arn":{"value":"arn:aws:iam::111122223333:role/cert-manager"},"grafana_irsa_arn":{"value":null},"managed_resource_dashboards":{"value":{}}}
 JSON
     ;;
   *" plan "*)
@@ -76,6 +102,10 @@ JSON
     ;;
   *infra/base*" apply "*"-target="*)
     if fail_once prerequisites; then exit 20; fi
+    # FRESH_TARGET modelling: this apply is what installs cert-manager, and so
+    # what brings the CRDs the pre-install freshness probe looks for into
+    # existence.
+    [ -n "${PLATFORM_INSTALLED_FILE:-}" ] && : >"$PLATFORM_INSTALLED_FILE"
     ;;
   *infra/base*" apply "*)
     if fail_once platform; then exit 20; fi
@@ -154,6 +184,13 @@ fi
 if [ "${CRDS_ABSENT:-}" = 1 ]; then
   case "$*" in *"--for=condition=Established"*) exit 1 ;; esac
 fi
+# FRESH_TARGET models a target that has not been installed yet: the cert-manager
+# CRDs do not exist until this run's own prerequisites apply creates them, which
+# is what makes the run enter PlatformInstalling rather than PlatformUpdating.
+# Gated on the toggle so every other scenario keeps its original cluster.
+if [ "${FRESH_TARGET:-}" = 1 ] && [ ! -e "${PLATFORM_INSTALLED_FILE:-/nonexistent}" ]; then
+  case "$*" in *"--for=condition=Established"*) exit 1 ;; esac
+fi
 if [ "${FAIL_ON:-}" = crds ] && [ ! -e "$FAIL_MARKER_DIR/crds" ] &&
    case "$*" in *"--timeout=180s"*) true;; *) false;; esac; then
   : >"$FAIL_MARKER_DIR/crds"; exit 20
@@ -182,6 +219,7 @@ export KUBECONFIG=/ambient/forbidden
 export FAIL_MARKER_DIR="$tmp/markers"
 export KUBECONFIG_LOG="$tmp/kubeconfigs"
 export RDS_PREPARED_FILE="$tmp/markers/rds-prepared"
+export PLATFORM_INSTALLED_FILE="$tmp/markers/platform-installed"
 
 run_apply() {
   (cd "$tmp/work" && LIFECYCLE_LOG="$1" "$sol" cloud apply prod/aws/us-east-1) >"$1.out" 2>&1
@@ -213,7 +251,62 @@ grep -F 'key=sol/prod/aws/us-east-1/cloud.tfstate' "$log" >/dev/null
 grep -F 'key=sol/prod/aws/us-east-1/platform.tfstate' "$log" >/dev/null
 grep -F -- '-target=helm_release.cert_manager' "$log" >/dev/null
 grep -F 'terraform ' "$log" | grep 'infra/base.* apply ' | grep -v -- '-target=' >/dev/null
+# HARDEN-002 run 3, finding 11: the target's deploy_role_arn must be routed to
+# the provider root (the AWS root declares it and uses it to create the deploy
+# EKS access entry INFRA-025 added).
+grep -F -- '-var=deploy_role_arn=arn:aws:iam::111122223333:role/sol-deploy' "$log" >/dev/null
+# HARDEN-002 run 4, finding 12: the platform Terraform must be handed the
+# ephemeral provisioner kubeconfig under the names the providers actually read.
+grep -F 'env KUBE_CONFIG_PATH=' "$log" >/dev/null
+grep -F 'env KUBE_CONFIG_PATHS=' "$log" >/dev/null
+# ADR 0003 (findings 13/14): installing the platform is privileged platform
+# establishment, so the full platform apply (the non-targeted base apply) must
+# run while the temporary PlatformInstalling authority is still open -- i.e.
+# before provisioner-bootstrap-access-remove -- and only then is it revoked.
+full_apply_line="$(grep -nF 'terraform ' "$log" | grep 'infra/base.* apply ' | grep -v -- '-target=' | head -1 | cut -d: -f1 || true)"
+deescalate_line="$(grep -nF -- 'provisioner_bootstrap_admin=false' "$log" | head -1 | cut -d: -f1 || true)"
+if [ -z "$full_apply_line" ] || [ -z "$deescalate_line" ] || [ "$full_apply_line" -ge "$deescalate_line" ]; then
+  echo "the platform install must complete before provisioner de-escalation" >&2
+  exit 1
+fi
 while IFS= read -r kubeconfig; do test ! -e "$kubeconfig"; done <"$tmp/kubeconfigs"
+
+# ADR 0003 invariants 3 and 5: the phase a run enters is recomputed from
+# observation, and a run may only leave it along an edge the transition relation
+# admits. A first install enters PlatformInstalling; a re-apply of an
+# already-installed target is the explicit privileged re-entry PlatformUpdating,
+# never a silent return to PlatformInstalling -- which the relation rejects, so
+# classifying it that way would have made the model and the operation disagree.
+fresh_log="$tmp/phase-fresh.log"
+rm -f "$PLATFORM_INSTALLED_FILE"
+if ! (export FAIL_ON=""; export FRESH_TARGET=1; run_apply "$fresh_log"); then
+  cat "$fresh_log" >&2
+  cat "$fresh_log.out" >&2
+  echo "cloud apply did not complete a first install" >&2
+  exit 1
+fi
+grep -F 'lifecycle phase: PlatformInstalling' "$fresh_log.out" >/dev/null || {
+  echo "a first install did not report PlatformInstalling:" >&2
+  cat "$fresh_log.out" >&2
+  exit 1
+}
+
+update_log="$tmp/phase-update.log"
+if ! (export FAIL_ON=""; export FRESH_TARGET=1; run_apply "$update_log"); then
+  cat "$update_log" >&2
+  cat "$update_log.out" >&2
+  echo "cloud apply did not complete a re-apply" >&2
+  exit 1
+fi
+grep -F 'lifecycle phase: PlatformUpdating' "$update_log.out" >/dev/null || {
+  echo "a re-apply of an installed target did not report PlatformUpdating:" >&2
+  cat "$update_log.out" >&2
+  exit 1
+}
+grep -F 'lifecycle phase: PlatformInstalling' "$update_log.out" >/dev/null && {
+  echo "a re-apply of an installed target was misclassified as PlatformInstalling" >&2
+  exit 1
+}
 
 plan() {
   local log="$1"
@@ -352,6 +445,28 @@ prepare_line_no="$(grep -n -- '-target=aws_db_instance.postgres' "$log" | head -
 destroy_line_no="$(grep -n 'infra/aws.* destroy ' "$log" | head -1 | cut -d: -f1)"
 if [ -z "$destroy_line_no" ] || [ "$prepare_line_no" -ge "$destroy_line_no" ]; then
   echo "RDS destroy preparation did not run before the cloud destroy" >&2
+  cat "$log" >&2
+  exit 1
+fi
+
+# ADR 0003 / HARDEN-002 run 4 finding 15: after a verified PrepareDestroy the
+# Destroy policy governs. The bootstrap-admin reconciliation that necessarily
+# precedes the actual destroy must therefore still carry the destroy overrides,
+# and they must be appended AFTER the production profile's
+# rds_deletion_protection=true (injected by terraform_vars) so the Destroy policy
+# wins rather than Ready policy silently re-enabling protection.
+admin_apply_line="$(grep 'infra/aws.* apply ' "$log" | grep -F 'provisioner_bootstrap_admin=true' | head -1 || true)"
+case "$admin_apply_line" in
+  *'rds_deletion_protection=false'*) : ;;
+  *)
+    echo "the post-prepare bootstrap-admin apply did not carry the Destroy policy" >&2
+    cat "$log" >&2
+    exit 1
+    ;;
+esac
+last_protection="$(printf '%s\n' "$admin_apply_line" | grep -oE 'rds_deletion_protection=[a-z]+' | tail -1)"
+if [ "$last_protection" != "rds_deletion_protection=false" ]; then
+  echo "Ready policy overrode the Destroy policy after PrepareDestroy ($last_protection)" >&2
   cat "$log" >&2
   exit 1
 fi
