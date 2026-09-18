@@ -622,7 +622,7 @@ base domain   acme.com
 kubernetes    configured — not checked; pass --check to probe it
 ```
 
-The summary is offline by default, so it still prints while you are diagnosing a cluster you cannot reach. `--check` probes it, `--json` prints the same fields for scripts, and `--verbose` adds where the target sits plus the raw kube-context Sol will use.
+The summary is offline by default, so it still prints while you are diagnosing a cluster you cannot reach. `--check` probes it, `--json` prints the same fields for scripts, and `--verbose` adds where the target sits plus the raw kube-context Sol will use. For an AWS target, `--check` also adds a `platform` row carrying ADR 0002's live readiness verdict — `Ready`, or `Unmet — <component>: <reason>` when a required component's named predicate fails.
 
 Two things that line is telling you:
 
@@ -730,7 +730,7 @@ See `cli/platform/infra/ci/` for complete GitHub Actions workflow examples for b
 
 ### Provisioning a production cluster
 
-Use `sol cloud plan` and `sol cloud apply` to provision production infrastructure. These commands run Terraform against the modules bundled in `cli/platform/infra/` and print the provisioned endpoints on completion.
+Use `sol cloud plan` and `sol cloud apply` to provision the complete AWS target. Sol initializes separate durable cloud/platform states, stages cert-manager before CRD-dependent resources, and verifies component-native readiness before reporting success.
 
 **AWS (EKS, ECR, RDS, Route53):**
 
@@ -739,19 +739,13 @@ sol cloud plan prod/aws/us-east-1
 sol cloud apply prod/aws/us-east-1
 ```
 
-**GCP (GKE Autopilot, Artifact Registry, Cloud SQL):**
-
-```bash
-sol cloud plan prod/gcp/us-central1
-sol cloud apply prod/gcp/us-central1
-```
-
 **Plan (show terraform plan without creating resources):**
 
 ```bash
 sol cloud plan prod/aws/us-east-1
-sol cloud plan prod/gcp/us-central1
 ```
+
+Later phases may be reported as `DEFERRED` when an earlier lifecycle prerequisite does not yet exist. This is a successful partial preview, not a readiness result, and planning never mutates infrastructure to unlock another phase. The complete lifecycle is currently qualified only for AWS; GCP fails closed rather than running the former incomplete path.
 
 **Pass a Terraform variables file:**
 
@@ -765,7 +759,7 @@ sol cloud apply prod/aws/us-east-1 --var-file prod.tfvars
 sol cloud apply prod/aws/us-east-1 --var cluster_name=acme-prod --var db_password=...
 ```
 
-On success the command prints the key provisioned endpoints, then runs `kubeconfig_command` automatically so `kubectl` (and therefore `sol local status`/`sol deploy`/`sol local migrate`) can reach the new cluster right away — no separate manual step needed:
+During platform reconciliation Sol creates an ephemeral kubeconfig for the declared provisioner identity. It passes that file explicitly to child processes and removes it afterward; it does not read or update the user's ambient kubeconfig. On success the command prints the non-sensitive provisioned endpoints:
 
 ```
   cluster_name                  acme-prod
@@ -773,28 +767,12 @@ On success the command prints the key provisioned endpoints, then runs `kubeconf
   kubeconfig_command            aws eks update-kubeconfig --region us-east-1 --name acme-prod
   ecr_registry                  123456789.dkr.ecr.us-east-1.amazonaws.com
 
-Configuring kubectl...
-  kubectl configured -- sol status/deploy/migrate can reach this cluster now.
 ```
-
-If kubectl auto-configuration fails (no local `aws`/`gcloud` CLI, no network reach, etc.), the command prints the `kubeconfig_command` line above as a warning with the fix — run it yourself before continuing.
 
 Sensitive outputs (database passwords, connection strings) are never printed; retrieve them with `terraform output -raw <name>` if needed.
 
-**Prerequisites:** `terraform` CLI in PATH, and cloud credentials in the environment (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` for AWS; `GOOGLE_APPLICATION_CREDENTIALS` or `gcloud auth application-default login` for GCP).
-
-**Install platform components** (Argo CD, Redpanda, Loki, Prometheus, cert-manager):
-
-```bash
-cd cli/platform/infra/base
-terraform init
-terraform apply \
-  -var="base_domain=acme.com" \
-  -var="letsencrypt_email=ops@acme.com" \
-  -var="install_postgresql=false"   # using RDS or Cloud SQL
-```
-
-After `terraform apply`, the cluster is identical to `sol local infra up` — same DNS names, same ConfigMap values, same Grafana dashboards.
+**Prerequisites:** `terraform`, `aws`, and `kubectl` in PATH; AWS credentials for the declared provisioner; and a target declaring the bootstrap-created `state_bucket`, `state_lock_table`, and `provisioner_role_arn`.
+The target must also declare `base_domain` and `letsencrypt_email`, which are required platform inputs validated before any platform mutation.
 
 **Point DNS at the ingress** before any service with an `ingress_host` in its `sol.toml` is reachable:
 
@@ -805,28 +783,7 @@ kubectl get svc -n ingress-nginx ingress-nginx-controller   # EXTERNAL-IP
 
 Create an `A`/alias or `CNAME` record for each `ingress_host` — or one wildcard record such as `*.acme.com` — in the zone created by your provider module (`cli/platform/infra/aws` exposes `route53_zone_id` and `route53_nameservers`; point your registrar's NS at the latter on first setup). Sol deliberately does not run external-dns, so this is a required manual step, and cert-manager only finishes TLS once the name resolves. Locally there is nothing to do: `sol local infra up` forwards the same controller to `http://localhost:8088`, and a service with no `ingress_host` gets the dev host `<svc>.<namespace>.localhost` — send it as the `Host` header, e.g. `curl -H 'Host: charge-svc.acme-payments.localhost' http://localhost:8088/health`.
 
-> **Advanced / manual override:** `sol cloud plan/apply` is a thin wrapper around Terraform. Engineers who need full Terraform control — custom variables, targeted applies, remote state configuration, or workspace management — can invoke Terraform directly against the same modules:
->
-> ```bash
-> # AWS example
-> cd cli/platform/infra/aws
-> terraform init
-> terraform apply \
->   -var="cluster_name=acme-prod" \
->   -var="base_domain=acme.com" \
->   -var="db_password=<secret>"
-> aws eks update-kubeconfig --region us-east-1 --name acme-prod
->
-> # GCP example
-> cd cli/platform/infra/gcp
-> terraform init
-> terraform apply \
->   -var="project_id=my-project" \
->   -var="cluster_name=acme-prod" \
->   -var="base_domain=acme.com" \
->   -var="db_password=<secret>"
-> gcloud container clusters get-credentials acme-prod --region us-central1
-> ```
+> **Advanced / manual recovery:** direct Terraform is an escape hatch, not the supported lifecycle. An operator using it must initialize each root against its correct durable backend (distinct `sol/<target>/cloud.tfstate` and `sol/<target>/platform.tfstate` keys), preserve cloud-before-platform ordering and explicit output wiring, stage cert-manager before CRD-dependent resources, and perform the same live readiness checks. Do not use a bare `terraform init`, local state, or ambient kubeconfig as a substitute for `sol cloud apply`. See `docs/deployment/production-bootstrap.md` for the recovery procedure.
 
 **Set up Argo CD GitOps** (one-time per cluster):
 

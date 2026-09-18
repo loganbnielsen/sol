@@ -1,5 +1,16 @@
 val which_check : unit -> bool
-val init : chdir:string -> (Sol_cli_process.result, Sol_cli_process.error) result
+
+type scope
+
+val whole_root : scope
+val targets : string -> string list -> scope
+
+val init
+  :  ?env:(string * string) list
+  -> chdir:string
+  -> backend_config:string list
+  -> unit
+  -> (Sol_cli_process.result, Sol_cli_process.error) result
 
 (** ["key=value"] Terraform CLI syntax for a list of neutral key/value pairs —
     e.g. {!Sol_cli_config.terraform_vars}'s result, before it's combined with
@@ -8,27 +19,41 @@ val init : chdir:string -> (Sol_cli_process.result, Sol_cli_process.error) resul
 val kv_args : (string * string) list -> string list
 
 val plan
-  :  chdir:string
+  :  ?env:(string * string) list
+  -> scope:scope
+  -> chdir:string
   -> var_files:string list
   -> vars:string list
+  -> unit
   -> (Sol_cli_process.result, Sol_cli_process.error) result
 
 val plan_destroy
-  :  chdir:string
+  :  ?env:(string * string) list
+  -> chdir:string
   -> var_files:string list
   -> vars:string list
+  -> unit
   -> (Sol_cli_process.result, Sol_cli_process.error) result
 
 val apply
-  :  chdir:string
+  :  ?env:(string * string) list
+  -> scope:scope
+  -> chdir:string
   -> var_files:string list
   -> vars:string list
+  -> unit
   -> (Sol_cli_process.result, Sol_cli_process.error) result
 
 val destroy
-  :  chdir:string
+  :  ?env:(string * string) list
+  -> chdir:string
   -> var_files:string list
   -> vars:string list
+  -> unit
   -> (Sol_cli_process.result, Sol_cli_process.error) result
 
-val output_json : chdir:string -> (Sol_cli_process.result, Sol_cli_process.error) result
+val output_json
+  :  ?env:(string * string) list
+  -> chdir:string
+  -> unit
+  -> (Sol_cli_process.result, Sol_cli_process.error) result

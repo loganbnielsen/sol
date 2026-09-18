@@ -6,6 +6,7 @@ type target =
   ; registry : string option
   ; base_domain : string option
   ; cluster_issuer : string option
+  ; letsencrypt_email : string option
   ; cluster_name : string option
   ; kube_context : string option
   ; kubeconfig : string option

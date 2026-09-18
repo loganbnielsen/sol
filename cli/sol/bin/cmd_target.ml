@@ -87,6 +87,32 @@ let kubernetes_status ~check (target : Sol_cli_config.target) =
       | Error message -> Sol_cli_target_report.Unreachable (context, message))
 ;;
 
+let platform_status ~check (target : Sol_cli_config.target) =
+  if (not check) || target.provider <> Sol_cli_provider.Aws
+  then None
+  else (
+    match Sol_cli_config.destination_of_target target with
+    | Error _ -> Some "Unmet — no explicit Kubernetes destination"
+    | Ok destination ->
+      let prefix = Sol_cli_kube_destination.kubectl_args destination in
+      let env = Sol_cli_kube_destination.environment destination in
+      let run args =
+        match
+          Sol_cli_process.run (Sol_cli_process.cmd ~env (("kubectl" :: prefix) @ args))
+        with
+        | Ok result when result.exit_code = 0 -> Some result.stdout
+        | _ -> None
+      in
+      let issuer = Option.value target.cluster_issuer ~default:"letsencrypt-prod" in
+      Some
+        (Sol_cli_cloud_lifecycle.readiness
+           ~cluster_issuer:issuer
+           ~observability_backend:
+             (Option.value target.observability_backend ~default:"local")
+           ~run
+         |> Sol_cli_cloud_lifecycle.readiness_summary))
+;;
+
 (* Positional, not labelled: cmdliner's [Term.const] applies its arguments in
    order, so a labelled function cannot be used directly. *)
 let show target verbose json check =
@@ -122,13 +148,14 @@ let show target verbose json check =
             print_available ();
             exit 1);
           let status = kubernetes_status ~check target_config in
+          let platform = platform_status ~check target_config in
           if json
           then
             print_endline
               (Yojson.Safe.to_string
-                 (Sol_cli_target_report.to_json ~verbose target_config status))
+                 (Sol_cli_target_report.to_json ?platform ~verbose target_config status))
           else
-            Sol_cli_target_report.rows ~verbose target_config status
+            Sol_cli_target_report.rows ?platform ~verbose target_config status
             |> List.iter (fun (label, value) -> Printf.printf "%-13s %s\n" label value)))
 ;;
 

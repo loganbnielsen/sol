@@ -111,6 +111,7 @@ target:
   cluster_name: pluto-prod
   base_domain: pluto.example.com
   cluster_issuer: letsencrypt-staging
+  letsencrypt_email: ops@pluto.example.com
 
 services:
   api:
@@ -129,6 +130,10 @@ services:
       check_str "region" "us-east-1" target.region;
       check_str "cluster" "pluto-prod" (Option.get target.cluster_name);
       check_str "cluster issuer" "letsencrypt-staging" (Option.get target.cluster_issuer);
+      check_str
+        "Let's Encrypt email"
+        "ops@pluto.example.com"
+        (Option.get target.letsencrypt_email);
       let resource = List.hd (Sol_cli_config.resources cfg) in
       check_str "resource" "app_db" resource.name;
       let service = List.hd (Sol_cli_config.services cfg) in

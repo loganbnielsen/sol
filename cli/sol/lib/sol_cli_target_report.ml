@@ -72,7 +72,7 @@ let provider_name (target : Sol_cli_config.target) =
 ;;
 
 (* The same rows feed the text and JSON renderings, so the two cannot drift. *)
-let rows ~verbose (target : Sol_cli_config.target) kubernetes =
+let rows ?platform ~verbose (target : Sol_cli_config.target) kubernetes =
   let core =
     [ "provider", provider_name target
     ; "region", target.region
@@ -81,6 +81,11 @@ let rows ~verbose (target : Sol_cli_config.target) kubernetes =
     ; "base domain", Option.value target.base_domain ~default:"(none)"
     ; "kubernetes", describe ~verbose kubernetes
     ]
+  in
+  let core =
+    match platform with
+    | None -> core
+    | Some status -> core @ [ "platform", status ]
   in
   if not verbose
   then core
@@ -93,7 +98,9 @@ let rows ~verbose (target : Sol_cli_config.target) kubernetes =
       ]
 ;;
 
-let to_json ~verbose target kubernetes =
+let to_json ?platform ~verbose target kubernetes =
   `Assoc
-    (List.map (fun (key, value) -> key, `String value) (rows ~verbose target kubernetes))
+    (List.map
+       (fun (key, value) -> key, `String value)
+       (rows ?platform ~verbose target kubernetes))
 ;;

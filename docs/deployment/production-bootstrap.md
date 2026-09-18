@@ -38,15 +38,13 @@ target:
   profile: production-single-region
   state_bucket: acme-tfstate
   state_lock_table: acme-tflock
+  letsencrypt_email: ops@acme.example
 ```
 
-`sol deploy` fails closed before any mutation when either is missing — a local
-or unversioned backend is never conformant. Generate the `backend "s3"` body for
-the provider root from the `backend_config` output:
-
-```bash
-terraform -chdir=cli/platform/infra/bootstrap output -raw backend_config
-```
+`sol cloud` fails closed before Terraform initialization when either is missing.
+It supplies this configuration at runtime and uses deterministic, distinct
+`sol/<target>/cloud.tfstate` and `sol/<target>/platform.tfstate` objects. Do not
+create a repository or operator-managed `backend.tf` for the normal lifecycle.
 
 ## 2. Identities: Sol generates the contracts, you supply the ARNs
 
@@ -65,7 +63,11 @@ target:
 
 The boundary the contracts encode:
 
-- **provisioner** — creates/updates the cluster and its infrastructure;
+- **provisioner** — a constrained high-privilege identity that creates/updates
+  cloud and platform infrastructure. Its direct Kubernetes grants cover the
+  supported platform lifecycle in platform namespaces and exclude ordinary
+  application mutation elsewhere; CRD/controller authority still makes it a
+  powerful infrastructure trust domain;
 - **deploy** — may `DescribeCluster` and mutate application objects through a
   namespace-scoped EKS access entry. It explicitly **denies** infrastructure and
   IAM mutation and any attempt to grant itself cluster administration, so it
@@ -79,15 +81,13 @@ private-only networking is a stronger future posture.
 
 ## 3. No standing cluster-creator admin
 
-The AWS module sets `enable_cluster_creator_admin_permissions = false` by
-default. Bootstrapping or break-glass that genuinely needs the cluster-creator
-credential is a **scoped exception**:
-
-```bash
-cd cli/platform/infra/aws
-terraform apply -var="enable_cluster_creator_admin=true"   # bootstrap only
-terraform apply -var="enable_cluster_creator_admin=false"  # return to normal
-```
+The AWS module sets `enable_cluster_creator_admin_permissions = false`. During
+`sol cloud apply`, the named provisioner receives temporary EKS bootstrap admin
+access only long enough to establish its custom platform RBAC. Sol then removes
+the managed admin association and verifies the effective positive and negative
+RBAC boundary before continuing. An interrupted run is safely re-runnable and
+reconciles that temporary association away; it is not the steady-state access
+model.
 
 ## 4. Recovery procedure
 
@@ -96,16 +96,15 @@ Control-state RTO is procedure-based, not a numeric bound (DEC-026 §5).
 **Recover a clean runner** (original runner and local files gone):
 
 ```bash
-cd cli/platform/infra/aws
-terraform init   # reads the remote backend; no local state needed
-terraform plan   # expect no unintended recreation
+sol cloud plan prod/aws/us-east-1
+sol cloud apply prod/aws/us-east-1
 ```
 
 **Recover a prior state object version** (bad apply, or corrupted state):
 
 ```bash
-aws s3api list-object-versions --bucket <bucket> --prefix sol/terraform.tfstate
-aws s3api get-object --bucket <bucket> --key sol/terraform.tfstate \
+aws s3api list-object-versions --bucket <bucket> --prefix sol/prod/aws/us-east-1/
+aws s3api get-object --bucket <bucket> --key sol/prod/aws/us-east-1/cloud.tfstate \
   --version-id <version-id> /tmp/tfstate.recovered
 # Inspect, then restore the chosen version explicitly — never in place blindly.
 ```
@@ -136,7 +135,7 @@ command line:
 
 ```bash
 TF_VAR_db_password="$(your-secret-tool get sol-db-password)" \
-  sol cloud apply prod/aws/us-east-1 --apply
+  sol cloud apply prod/aws/us-east-1
 ```
 
 Sol refuses an apply that would create Postgres with no credential source, and
@@ -150,13 +149,9 @@ the connection string in their secret store for the runtime Secret that
 workloads read as `POSTGRES_URL`.
 
 **`cluster_issuer` belongs to the base platform layer.** `sol cloud plan/apply/
-destroy` drive `cli/platform/infra/<provider>` and pass that root only the
-variables it declares. `cluster_issuer` names a cert-manager `ClusterIssuer`,
-which `cli/platform/infra/base` owns, so it is applied there:
-
-```bash
-terraform -chdir=cli/platform/infra/base apply -var="cluster_issuer=letsencrypt-prod" ...
-```
+destroy` pass each Terraform root only the variables it declares.
+`cluster_issuer` names a cert-manager `ClusterIssuer`, so Sol routes it to
+`cli/platform/infra/base` after the cloud output contract has been validated.
 
 It remains a target field (`sol deploy` uses it for ingress annotations). Passing
 it to the provider root, as it used to be, made terraform abort with "a variable
@@ -230,8 +225,9 @@ preparation step exists, the operator performs steps 2 and 3 directly (via
 What is fixed here is the Terraform-level defect: `skip_final_snapshot` is no longer
 derived from `deletion_protection` — so permitting destruction no longer means
 silently forgoing the final snapshot — and an identifier is always set when a
-snapshot will be taken, so Terraform no longer refuses the destroy outright. Making
-destruction a *Sol* operation (prepare → verify the transition landed → destroy →
-verify absence, with a unique snapshot identity per attempt) is separate work,
-sequenced with the provisioning lifecycle rather than bolted onto the destroy
-invocation.
+snapshot will be taken, so Terraform no longer refuses the destroy outright.
+`sol cloud destroy` now runs the Sol lifecycle skeleton (prepare → verify the
+preparation landed → destroy platform → destroy cloud → verify absence); its AWS
+preparation is a declared no-op until finding 9b supplies the RDS
+deletion-protection transition and a unique snapshot identity per attempt. Until
+then, steps 2 and 3 above remain the operator's explicit path.
