@@ -517,14 +517,115 @@ let platform_prerequisite_targets =
     ]
 ;;
 
-let prepare_destroy () =
-  Printf.printf
-    "  prepare: no AWS resource-specific preparation is defined (RDS remains Finding 9b).\n\
-     %!"
+let rds_target = Sol_cli_terraform.targets "aws_db_instance.postgres" []
+
+let unique_rds_snapshot_id cluster_name =
+  (* Millisecond resolution: a `.0f` second timestamp could collide if a
+     destroy were retried within the same second. AWS snapshot identifiers
+     disallow `.`, hence the truncated int rather than a raw float. *)
+  Printf.sprintf
+    "%s-postgres-final-%d"
+    cluster_name
+    (int_of_float (Unix.gettimeofday () *. 1000.))
 ;;
 
-let verify_destroy_preparation () =
-  Printf.printf "  verify preparation: no preparation predicates are defined.\n%!"
+(* This root's own applied state, not the named cross-root output contract in
+   Sol_cli_cloud_lifecycle -- that contract exists for wiring the platform
+   root, not for a root checking its own resource against itself. [Ok None]
+   means the instance does not exist (create_rds = false), which is
+   trivially prepared for destruction. *)
+let rds_state infra_dir =
+  match Sol_cli_terraform.show_json ~chdir:infra_dir () with
+  | Ok result when result.Sol_cli_process.exit_code = 0 ->
+    (try
+       let open Yojson.Safe.Util in
+       let resource =
+         Yojson.Safe.from_string result.stdout
+         |> member "values"
+         |> member "root_module"
+         |> member "resources"
+         |> to_list
+         |> List.find_opt (fun r -> member "type" r = `String "aws_db_instance")
+       in
+       match resource with
+       | None -> Ok None
+       | Some r ->
+         let v = member "values" r in
+         let deletion_protection = v |> member "deletion_protection" |> to_bool in
+         let final_snapshot_identifier =
+           match v |> member "final_snapshot_identifier" with
+           | `String s -> Some s
+           | _ -> None
+         in
+         Ok (Some (deletion_protection, final_snapshot_identifier))
+     with
+     | Yojson.Json_error message -> Error ("invalid `terraform show -json`: " ^ message)
+     | Yojson.Safe.Util.Type_error (message, _) ->
+       Error ("unexpected `terraform show -json` shape: " ^ message))
+  | Ok result ->
+    Error (Printf.sprintf "terraform show failed with exit %d" result.exit_code)
+  | Error _ -> Error "could not read terraform state"
+;;
+
+(* ADR 0002 / HARDEN-002 finding 9b: lifting RDS deletion protection is a
+   state transition (ModifyDBInstance), and a destroy plan contains only
+   deletes -- a `-var` passed to `terraform destroy` never reaches the
+   provider, which is handed prior state (see the now-resolved comment this
+   replaced). Preparation is therefore its own targeted apply against just
+   the RDS resource, with a snapshot identity unique to this destroy attempt
+   so re-running destroy after a fresh apply can never collide with a prior
+   attempt's final snapshot. *)
+let prepare_destroy run_log infra_dir var_files vars ~cluster_name =
+  match rds_state infra_dir with
+  | Error message -> lifecycle_error message
+  | Ok None ->
+    Printf.printf "  prepare: no RDS instance for this target, nothing to prepare.\n%!";
+    None
+  | Ok (Some _) ->
+    let snapshot_id = unique_rds_snapshot_id cluster_name in
+    Printf.printf
+      "  prepare: disabling RDS deletion protection, final snapshot %s...\n%!"
+      snapshot_id;
+    require_terraform_success
+      (Sol_cli_run_log.run_phase run_log ~name:"rds-destroy-prepare" (fun () ->
+         Sol_cli_terraform.apply
+           ~scope:rds_target
+           ~chdir:infra_dir
+           ~var_files
+           ~vars:
+             (vars
+              @ [ "rds_deletion_protection=false"
+                ; "rds_skip_final_snapshot=false"
+                ; "rds_final_snapshot_identifier=" ^ snapshot_id
+                ])
+           ()));
+    Some snapshot_id
+;;
+
+let verify_destroy_preparation infra_dir ~prepared =
+  match prepared with
+  | None -> Printf.printf "  verify preparation: nothing was prepared.\n%!"
+  | Some snapshot_id ->
+    (match rds_state infra_dir with
+     | Error message -> lifecycle_error message
+     | Ok None ->
+       lifecycle_error
+         "RDS destroy preparation ran but the instance is now absent from state"
+     | Ok (Some (deletion_protection, final_snapshot_identifier)) ->
+       if deletion_protection
+       then lifecycle_error "RDS deletion protection is still enabled after preparation";
+       if final_snapshot_identifier <> Some snapshot_id
+       then
+         lifecycle_error
+           (Printf.sprintf
+              "RDS final snapshot identifier is %s, expected the prepared %s"
+              (Option.value final_snapshot_identifier ~default:"<none>")
+              snapshot_id);
+       Printf.printf
+         "  verify preparation: RDS deletion protection disabled, final snapshot %s \
+          confirmed.\n\
+          %!"
+         snapshot_id)
 ;;
 
 let platform_absent env =
@@ -860,17 +961,6 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
     | None -> []
     | Some f -> [ normalize_var_file f ]
   in
-  (* HARDEN-002 run 2, finding 9 -- KNOWN GAP, deliberately not patched here.
-     `sol cloud destroy` cannot yet destroy a protected production RDS instance.
-     Lifting deletion protection is a state transition (ModifyDBInstance), and a
-     destroy plan contains only deletes: a `-var` passed to `terraform destroy`
-     never reaches the provider, which is handed prior state. The same is true of
-     the final snapshot name, so it is whatever the last apply rendered.
-     Preparing a protected instance for destruction is its own applied transition
-     -- disable protection, establish a unique final-snapshot identity, verify
-     that landed, then destroy -- and belongs with the provisioning lifecycle
-     work, not bolted onto the destroy invocation. See the known gap in
-     docs/deployment/production-bootstrap.md for the operator's interim path. *)
   Printf.printf "\nDestroying cloud infrastructure (%s)...\n%!" pname;
   run_terraform_init run_log infra_dir cloud_backend;
   let outputs =
@@ -940,8 +1030,13 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
          Sol_cli_terraform.plan_destroy ~chdir:infra_dir ~var_files ~vars ()));
     Printf.printf "\nDone. Re-run with --apply to destroy cloud resources.\n%!"
   | Apply ->
-    prepare_destroy ();
-    verify_destroy_preparation ();
+    (match outputs with
+     | None ->
+       Printf.printf "  prepare: cloud substrate is absent, nothing to prepare.\n%!"
+     | Some outputs ->
+       let cluster_name = Sol_cli_cloud_lifecycle.cluster_name outputs in
+       let prepared = prepare_destroy run_log infra_dir var_files vars ~cluster_name in
+       verify_destroy_preparation infra_dir ~prepared);
     (match outputs with
      | None -> ()
      | Some outputs ->

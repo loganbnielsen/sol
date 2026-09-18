@@ -46,6 +46,28 @@ JSON
   *" plan "*)
     if fail_once plan; then exit 20; fi
     ;;
+  *" show -json")
+    if [ "${RDS_ABSENT:-}" = 1 ]; then
+      printf '{"values":{"root_module":{"resources":[]}}}\n'
+    elif [ -e "$RDS_PREPARED_FILE" ]; then
+      printf \
+        '{"values":{"root_module":{"resources":[{"type":"aws_db_instance","values":{"deletion_protection":false,"final_snapshot_identifier":"%s"}}]}}}\n' \
+        "$(cat "$RDS_PREPARED_FILE")"
+    else
+      printf \
+        '{"values":{"root_module":{"resources":[{"type":"aws_db_instance","values":{"deletion_protection":true,"final_snapshot_identifier":null}}]}}}\n'
+    fi
+    ;;
+  *infra/aws*" apply "*"-target=aws_db_instance.postgres"*)
+    if fail_once rds-prepare; then exit 20; fi
+    for arg in "$@"; do
+      case "$arg" in
+        -var=rds_final_snapshot_identifier=*)
+          printf '%s' "${arg#-var=rds_final_snapshot_identifier=}" >"$RDS_PREPARED_FILE"
+          ;;
+      esac
+    done
+    ;;
   *infra/aws*" apply "*"provisioner_bootstrap_admin=true"*)
     if fail_once cloud; then exit 20; fi
     ;;
@@ -65,6 +87,27 @@ cat >"$tmp/bin/aws" <<'EOF'
 #!/usr/bin/env bash
 set -eu
 printf 'aws %s\n' "$*" >>"$LIFECYCLE_LOG"
+# Destroy-path verification wants the opposite of apply's: every resource
+# reports absent. Apply and destroy never run in the same process, so one
+# env toggle (set only around destroy invocations below) is enough to flip
+# the whole mock rather than keying every case on both directions.
+if [ "${DESTROYING:-}" = 1 ]; then
+  case "$1 $2" in
+    "eks describe-cluster"|"eks describe-addon")
+      echo "An error occurred (ResourceNotFoundException) when calling the operation" >&2
+      exit 254
+      ;;
+    "rds describe-db-instances")
+      echo "An error occurred (DBInstanceNotFound) when calling the operation" >&2
+      exit 254
+      ;;
+    "ecr describe-repositories") printf '\n'; exit 0 ;;
+    "resourcegroupstaggingapi get-resources") printf '\n'; exit 0 ;;
+    # Anything else (notably "eks update-kubeconfig", still needed to build
+    # the platform-phase ephemeral kubeconfig during teardown) falls through
+    # to the ordinary logic below.
+  esac
+fi
 if [ "$1 $2" = "eks describe-cluster" ] || [ "$1 $2" = "eks describe-addon" ]; then
   if [ "${FAIL_ON:-}" = cloud-verify ] && [ ! -e "$FAIL_MARKER_DIR/cloud-verify" ]; then
     : >"$FAIL_MARKER_DIR/cloud-verify"; exit 20
@@ -90,6 +133,11 @@ cat >"$tmp/bin/kubectl" <<'EOF'
 set -eu
 printf 'kubectl %s\n' "$*" >>"$LIFECYCLE_LOG"
 [ "$KUBECONFIG" != /ambient/forbidden ] || exit 93
+# Destroy verifies platform absence by checking every platform namespace is
+# gone; apply never checks this, so DESTROYING is an unambiguous toggle here.
+if [ "${DESTROYING:-}" = 1 ]; then
+  case "$*" in "get namespace "*) exit 1 ;; esac
+fi
 # Plan-only fault knobs: an intermediate target whose provisioner RBAC is not
 # yet established, one whose cert-manager CRDs are not yet Established, and one
 # where the provisioner cannot authenticate to the cluster at all.
@@ -133,9 +181,15 @@ export TF_VAR_db_password=offline-only
 export KUBECONFIG=/ambient/forbidden
 export FAIL_MARKER_DIR="$tmp/markers"
 export KUBECONFIG_LOG="$tmp/kubeconfigs"
+export RDS_PREPARED_FILE="$tmp/markers/rds-prepared"
 
 run_apply() {
   (cd "$tmp/work" && LIFECYCLE_LOG="$1" "$sol" cloud apply prod/aws/us-east-1) >"$1.out" 2>&1
+}
+
+run_destroy() {
+  (cd "$tmp/work" && DESTROYING=1 LIFECYCLE_LOG="$1" "$sol" cloud destroy prod/aws/us-east-1 --apply) \
+    >"$1.out" 2>&1
 }
 
 for phase in cloud outputs cloud-verify access platform-init prerequisites crds deescalate rbac platform readiness; do
@@ -268,3 +322,67 @@ then
   exit 1
 fi
 grep -F 'qualified only for AWS' "$gcp_log.out" >/dev/null
+
+# HARDEN-002 finding 9b: destroy must disable RDS deletion protection through
+# a real applied transition (a targeted apply on just the RDS resource), with
+# a snapshot identity unique to this attempt -- never by passing `-var` to
+# `terraform destroy`, which is inert against a resource's prior state.
+rm -f "$RDS_PREPARED_FILE"
+log="$tmp/destroy-established.log"
+if ! run_destroy "$log"; then
+  cat "$log.out" >&2
+  echo "cloud destroy on an established target must succeed" >&2
+  exit 1
+fi
+grep -F -- '-target=aws_db_instance.postgres' "$log" | grep -F 'rds_deletion_protection=false' \
+  | grep -F 'rds_skip_final_snapshot=false' >/dev/null
+snapshot_line="$(grep -F -- '-target=aws_db_instance.postgres' "$log" | head -1)"
+snapshot_id="$(printf '%s\n' "$snapshot_line" | grep -oE 'rds_final_snapshot_identifier=[^ ]+' | cut -d= -f2)"
+case "$snapshot_id" in
+  lifecycle-test-postgres-final-*) : ;;
+  *)
+    echo "RDS final snapshot identifier was not the expected unique per-attempt name: $snapshot_id" >&2
+    exit 1
+    ;;
+esac
+grep -F 'verify preparation: RDS deletion protection disabled' "$log.out" >/dev/null
+grep -F "final snapshot $snapshot_id confirmed" "$log.out" >/dev/null
+# Preparation happens before the actual destroy, not folded into it.
+prepare_line_no="$(grep -n -- '-target=aws_db_instance.postgres' "$log" | head -1 | cut -d: -f1)"
+destroy_line_no="$(grep -n 'infra/aws.* destroy ' "$log" | head -1 | cut -d: -f1)"
+if [ -z "$destroy_line_no" ] || [ "$prepare_line_no" -ge "$destroy_line_no" ]; then
+  echo "RDS destroy preparation did not run before the cloud destroy" >&2
+  cat "$log" >&2
+  exit 1
+fi
+
+# A second destroy attempt (e.g. retried after a prior failure elsewhere in
+# the lifecycle) must mint a different snapshot identity, not reuse the
+# cluster-derived constant HARDEN-002 finding 9b replaced.
+log2="$tmp/destroy-established-2.log"
+if ! run_destroy "$log2"; then
+  cat "$log2.out" >&2
+  echo "a second cloud destroy attempt must also succeed" >&2
+  exit 1
+fi
+snapshot_line2="$(grep -F -- '-target=aws_db_instance.postgres' "$log2" | head -1)"
+snapshot_id2="$(printf '%s\n' "$snapshot_line2" | grep -oE 'rds_final_snapshot_identifier=[^ ]+' | cut -d= -f2)"
+if [ "$snapshot_id" = "$snapshot_id2" ]; then
+  echo "two destroy attempts minted the same RDS final snapshot identifier: $snapshot_id" >&2
+  exit 1
+fi
+
+# An absent target (cloud substrate never applied) has nothing to prepare and
+# must not attempt the targeted apply.
+rm -f "$RDS_PREPARED_FILE"
+log="$tmp/destroy-absent.log"
+if ! (export OUTPUT_ABSENT=1; run_destroy "$log"); then
+  cat "$log.out" >&2
+  echo "cloud destroy on an absent target must still succeed" >&2
+  exit 1
+fi
+grep -F 'prepare: cloud substrate is absent, nothing to prepare' "$log.out" >/dev/null
+if grep -F -- '-target=aws_db_instance.postgres' "$log" >/dev/null; then
+  echo "cloud destroy attempted RDS preparation on an absent cloud substrate" >&2
+  exit 1
+fi

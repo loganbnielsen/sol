@@ -304,6 +304,12 @@ let test_terraform_output_json_argv () =
   check_str "argv[3]" "-json" (List.nth c.Sol_cli_process.argv 3)
 ;;
 
+let test_terraform_show_json_argv () =
+  let c = Sol_cli_process.cmd [ "terraform"; "-chdir=/d"; "show"; "-json" ] in
+  check_str "argv[2]" "show" (List.nth c.Sol_cli_process.argv 2);
+  check_str "argv[3]" "-json" (List.nth c.Sol_cli_process.argv 3)
+;;
+
 let test_terraform_which_check_returns_bool () =
   let result = Sol_cli_terraform.which_check () in
   check_bool "returns a bool (true or false)" true (result || not result)
@@ -367,6 +373,7 @@ let () =
         ; Alcotest.test_case "apply argv" `Quick test_terraform_apply_argv
         ; Alcotest.test_case "destroy argv" `Quick test_terraform_destroy_argv
         ; Alcotest.test_case "output json argv" `Quick test_terraform_output_json_argv
+        ; Alcotest.test_case "show json argv" `Quick test_terraform_show_json_argv
         ; Alcotest.test_case
             "which_check returns bool"
             `Quick

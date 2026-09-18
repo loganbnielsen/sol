@@ -80,3 +80,7 @@ let destroy ?(env = []) ~chdir ~var_files ~vars () =
 let output_json ?(env = []) ~chdir () =
   run (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "output"; "-json" ])
 ;;
+
+let show_json ?(env = []) ~chdir () =
+  run (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "show"; "-json" ])
+;;
