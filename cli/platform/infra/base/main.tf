@@ -1243,7 +1243,16 @@ locals {
       repeat_interval = "4h"
     }
     receivers = [
-      { name = "null" }
+      # HARDEN-002 (run 2): the unconfigured branch must carry the *same*
+      # attribute set as the configured one. Terraform unifies the two branches
+      # of a conditional by object shape, so `{ name = "null" }` against
+      # `{ name = ..., webhook_configs = [...] }` was an
+      # "Inconsistent conditional result types" error -- and because
+      # local.alerting_configured is true exactly when a receiver is declared,
+      # which the production profile requires, the whole base platform was
+      # unappliable for a conformant target. A null receiver with no
+      # integrations is valid Alertmanager configuration.
+      { name = "null", webhook_configs = [] }
     ]
   }
 }
