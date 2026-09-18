@@ -77,3 +77,17 @@ val policy_of_phase : phase -> phase_policy
 val transition_allowed : from:phase -> to_:phase -> bool
 val ready_policy_applies : phase -> bool
 val policy_vars : phase:phase -> destroy_snapshot_id:string -> (string * string) list
+
+(** ADR 0003's own spelling of a phase, for operator-facing messages. *)
+val phase_to_string : phase -> string
+
+(** [observed_phase ~cloud_exists ~platform_installed] is the phase a target is
+    actually in, recomputed from observation on every run: [Absent] when the
+    cloud substrate does not exist, [Ready] when an earlier run completed the
+    platform install, and [Platform_installing] otherwise. Never persisted. *)
+val observed_phase : cloud_exists:bool -> platform_installed:bool -> phase
+
+(** [enter ~from ~to_] is the only way an operation may move between phases. It
+    is [Error] for any edge [transition_allowed] rejects, so an illegal phase
+    combination cannot be expressed by a call site (ADR 0003 invariant 5). *)
+val enter : from:phase -> to_:phase -> (phase, string) result

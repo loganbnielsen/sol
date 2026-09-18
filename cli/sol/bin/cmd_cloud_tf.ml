@@ -875,6 +875,52 @@ let cloud_init ~target ~var_file ~vars ~action () =
           | _ ->
             cleanup_bootstrap_access ();
             require_terraform_success platform_init);
+         (* ADR 0003: the phase is recomputed from observation at the top of the
+            operation, before this run creates anything. The cert-manager CRDs
+            are cluster objects, so they report what an *earlier* run installed
+            and are unaffected by the bootstrap-admin escalation this run has
+            just performed -- unlike a `kubectl auth can-i` probe, which that
+            escalation would mask. *)
+         let observed =
+           Sol_cli_cloud_lifecycle.observed_phase
+             ~cloud_exists:true
+             ~platform_installed:(crds_established env)
+         in
+         (* ADR 0003 invariant 3: a platform change on an already-installed
+            target is an explicit PlatformUpdating re-entry, never an implicit
+            return to PlatformInstalling -- which the transition relation
+            rejects, so modelling it the other way made the model and the
+            operation disagree. *)
+         let operation_phase =
+           match observed with
+           | Sol_cli_cloud_lifecycle.Ready ->
+             (match
+                Sol_cli_cloud_lifecycle.enter
+                  ~from:Sol_cli_cloud_lifecycle.Ready
+                  ~to_:Sol_cli_cloud_lifecycle.Platform_updating
+              with
+              | Ok phase -> phase
+              | Error message -> lifecycle_error message)
+           | Sol_cli_cloud_lifecycle.Absent | Sol_cli_cloud_lifecycle.Platform_installing
+             -> Sol_cli_cloud_lifecycle.Platform_installing
+           | ( Sol_cli_cloud_lifecycle.Cloud_bootstrap
+             | Sol_cli_cloud_lifecycle.Platform_updating
+             | Sol_cli_cloud_lifecycle.Preparing_destroy
+             | Sol_cli_cloud_lifecycle.Destroying ) as other ->
+             (* Unreachable from [observed_phase] today, and refused rather than
+                matched so that widening the observation cannot silently admit
+                an apply from a phase the relation does not allow one from. *)
+             lifecycle_error
+               (Printf.sprintf
+                  "refusing to apply from observed lifecycle phase %s"
+                  (Sol_cli_cloud_lifecycle.phase_to_string other))
+         in
+         (* ADR 0003: the phase is operational context, so it is reported rather
+            than only acted on -- it is what tells an operator which authority
+            and desired-state policy the run is applying. *)
+         Printf.printf
+           "  lifecycle phase: %s\n%!"
+           (Sol_cli_cloud_lifecycle.phase_to_string operation_phase);
          let prerequisites =
            Sol_cli_run_log.run_phase
              run_log
@@ -943,6 +989,17 @@ let cloud_init ~target ~var_file ~vars ~action () =
          then (
            cleanup_bootstrap_access ();
            lifecycle_error ("platform readiness " ^ summary));
+         (* ADR 0003 invariant 5: the run may only leave its phase along an edge
+            the transition relation admits. PlatformInstalling -> Ready and
+            PlatformUpdating -> Ready are both legal, so the exit is checked
+            against the phase this run actually entered rather than assumed. *)
+         (match
+            Sol_cli_cloud_lifecycle.enter
+              ~from:operation_phase
+              ~to_:Sol_cli_cloud_lifecycle.Ready
+          with
+          | Ok _ -> ()
+          | Error message -> lifecycle_error message);
          require_terraform_success (deescalate ());
          if not (provisioner_rbac_established env)
          then
@@ -1069,13 +1126,23 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
        restored by the bootstrap-admin reconciliation that necessarily precedes
        the destroy. Re-verifying after that apply structurally rejects a
        PreparingDestroy -> Ready-policy regression. *)
+    let destroy_phase = Sol_cli_cloud_lifecycle.Preparing_destroy in
+    Printf.printf
+      "  lifecycle phase: %s\n%!"
+      (Sol_cli_cloud_lifecycle.phase_to_string destroy_phase);
+    (* ADR 0003 invariant 4, checked rather than merely assumed: once destruction
+       has been prepared the Ready/Production invariant must not be in force.
+       This is the guard that would have caught finding 15 at the decision point
+       instead of only in the re-verification after the apply. *)
+    if Sol_cli_cloud_lifecycle.ready_policy_applies destroy_phase
+    then lifecycle_error "Ready policy must not apply once destruction has been prepared";
     let destroy_vars =
       match prepared with
       | None -> []
       | Some snapshot_id ->
         Sol_cli_terraform.kv_args
           (Sol_cli_cloud_lifecycle.policy_vars
-             ~phase:Sol_cli_cloud_lifecycle.Preparing_destroy
+             ~phase:destroy_phase
              ~destroy_snapshot_id:snapshot_id)
     in
     let destroy_apply_vars = vars @ destroy_vars in

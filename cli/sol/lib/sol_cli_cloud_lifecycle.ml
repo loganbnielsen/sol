@@ -499,3 +499,50 @@ let policy_vars ~phase ~destroy_snapshot_id =
     ; "rds_final_snapshot_identifier", destroy_snapshot_id
     ]
 ;;
+
+(* The operator-facing name of a phase (ADR 0003's own spelling). Kept here so a
+   report, an error message and a test label cannot drift from the model. *)
+let phase_to_string = function
+  | Absent -> "Absent"
+  | Cloud_bootstrap -> "CloudBootstrap"
+  | Platform_installing -> "PlatformInstalling"
+  | Ready -> "Ready"
+  | Platform_updating -> "PlatformUpdating"
+  | Preparing_destroy -> "PreparingDestroy"
+  | Destroying -> "Destroying"
+;;
+
+(* The phase a target is actually in, recomputed from observation on every run --
+   the phase is never persisted and is never infrastructure truth (ADR 0003).
+   [cloud_exists] is what Terraform reports for the substrate. [platform_installed]
+   is a cheap, privilege-independent observation that an *earlier* run completed
+   the platform install (the cert-manager CRDs are cluster objects, so unlike a
+   `kubectl auth can-i` probe they are unaffected by the bootstrap-admin
+   escalation the current run performs itself). An installed-but-not-fully-Ready
+   target observes as [Ready] here because the operation it admits is the same
+   privileged re-establishment; the transition is still verified to [Ready] before
+   the run may leave it. *)
+let observed_phase ~cloud_exists ~platform_installed =
+  if not cloud_exists
+  then Absent
+  else if platform_installed
+  then Ready
+  else Platform_installing
+;;
+
+(* The only way an operation may move between phases. A call site cannot express
+   an edge the relation does not admit (ADR 0003 invariant 5), so
+   `Preparing_destroy -> Ready` and `Ready -> Platform_installing` are refused
+   here rather than by an operator or a call site remembering to check. Remaining
+   in the same phase is not a transition and is deliberately not routed through
+   this. *)
+let enter ~from ~to_ =
+  if transition_allowed ~from ~to_
+  then Ok to_
+  else
+    Error
+      (Printf.sprintf
+         "illegal lifecycle transition %s -> %s"
+         (phase_to_string from)
+         (phase_to_string to_))
+;;
