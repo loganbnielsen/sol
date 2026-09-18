@@ -664,6 +664,17 @@ let cloud_init ~target ~var_file ~vars ~action () =
           reserved for phases whose concrete prerequisite is simply not
           established yet and whose establishment would itself be a mutation. *)
        with_provisioner_kubeconfig ~region:target_cfg.region outputs (fun env ->
+         (* [can-i --list] needs authentication only, so it succeeds with an empty
+            rule set when the provisioner's RBAC is simply not established yet, and
+            fails when the cluster credential is unavailable. Deferral is honest
+            only in the former case: the plan exit-status contract makes an
+            unavailable credential a non-zero result, not a deferred phase. The
+            default [can-i] checks cannot tell the two apart -- both return 1. *)
+         if not (process_ok ~env [ "kubectl"; "auth"; "can-i"; "--list" ])
+         then
+           lifecycle_error
+             "could not authenticate to the cluster as the platform provisioner; \
+              refusing to report an unavailable cluster credential as a deferred phase";
          let rbac_established = provisioner_rbac_established env in
          let crds_established = rbac_established && crds_established env in
          let prerequisites, substrate =

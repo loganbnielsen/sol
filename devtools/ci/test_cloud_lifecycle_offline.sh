@@ -91,9 +91,17 @@ set -eu
 printf 'kubectl %s\n' "$*" >>"$LIFECYCLE_LOG"
 [ "$KUBECONFIG" != /ambient/forbidden ] || exit 93
 # Plan-only fault knobs: an intermediate target whose provisioner RBAC is not
-# yet established, and one whose cert-manager CRDs are not yet Established.
+# yet established, one whose cert-manager CRDs are not yet Established, and one
+# where the provisioner cannot authenticate to the cluster at all.
+if [ "${AUTH_ABSENT:-}" = 1 ]; then
+  case "$*" in "auth can-i "*) exit 94 ;; esac
+fi
 if [ "${RBAC_ABSENT:-}" = 1 ]; then
-  case "$*" in "auth can-i "*) exit 1 ;; esac
+  case "$*" in
+    # Authentication succeeds (empty rule set); only the RBAC checks are denied.
+    "auth can-i --list") : ;;
+    "auth can-i "*) exit 1 ;;
+  esac
 fi
 if [ "${CRDS_ABSENT:-}" = 1 ]; then
   case "$*" in *"--for=condition=Established"*) exit 1 ;; esac
@@ -194,6 +202,17 @@ if grep -F 'terraform ' "$log" | grep 'infra/base.* plan ' >/dev/null; then
   echo "cloud plan planned the platform before its provisioner RBAC existed" >&2
   exit 1
 fi
+no_plan_mutation "$log"
+
+# The provisioner cannot authenticate to the cluster at all: unavailable
+# authentication is non-zero, not a Deferred phase (same exit-1 from can-i).
+log="$tmp/plan-auth.log"
+if plan "$log" AUTH_ABSENT=1; then
+  cat "$log.out" >&2
+  echo "cloud plan must exit non-zero when the provisioner cannot authenticate" >&2
+  exit 1
+fi
+grep -F 'could not authenticate to the cluster as the platform provisioner' "$log.out" >/dev/null
 no_plan_mutation "$log"
 
 # Cluster and RBAC established, CRDs not yet: prerequisites are plannable and

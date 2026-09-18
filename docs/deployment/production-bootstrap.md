@@ -225,8 +225,9 @@ preparation step exists, the operator performs steps 2 and 3 directly (via
 What is fixed here is the Terraform-level defect: `skip_final_snapshot` is no longer
 derived from `deletion_protection` — so permitting destruction no longer means
 silently forgoing the final snapshot — and an identifier is always set when a
-snapshot will be taken, so Terraform no longer refuses the destroy outright. Making
-destruction a *Sol* operation (prepare → verify the transition landed → destroy →
-verify absence, with a unique snapshot identity per attempt) is separate work,
-sequenced with the provisioning lifecycle rather than bolted onto the destroy
-invocation.
+snapshot will be taken, so Terraform no longer refuses the destroy outright.
+`sol cloud destroy` now runs the Sol lifecycle skeleton (prepare → verify the
+preparation landed → destroy platform → destroy cloud → verify absence); its AWS
+preparation is a declared no-op until finding 9b supplies the RDS
+deletion-protection transition and a unique snapshot identity per attempt. Until
+then, steps 2 and 3 above remain the operator's explicit path.
