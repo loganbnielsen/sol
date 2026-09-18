@@ -87,6 +87,42 @@ data "aws_iam_policy_document" "provisioner" {
       "rds:*",
       "dynamodb:*",
       "s3:*",
+      # Repository *lifecycle* only (cli/platform/infra/aws's aws_ecr_repository
+      # resources are part of the substrate this identity already reconciles) --
+      # never the data-plane actions that would let it publish an image. See the
+      # explicit deny below: ADR 0002 states "provisioner must not publish
+      # images" as a boundary, not merely an omission.
+      "ecr:CreateRepository",
+      "ecr:DeleteRepository",
+      "ecr:DescribeRepositories",
+      "ecr:PutLifecyclePolicy",
+      "ecr:GetLifecyclePolicy",
+      "ecr:DeleteLifecyclePolicy",
+      "ecr:PutImageScanningConfiguration",
+      "ecr:TagResource",
+      "ecr:UntagResource",
+      "ecr:ListTagsForResource",
+    ]
+    resources = ["*"]
+  }
+
+  # HARDEN-002 finding 6 / ADR 0002: the provisioner creates the ECR
+  # repositories but must never be the identity that publishes into them --
+  # that is the publisher identity's job (see data.aws_iam_policy_document.publisher
+  # below). An explicit deny makes this a structural boundary rather than an
+  # absence that a future broader policy attachment could silently restore.
+  statement {
+    sid    = "NoImagePublish"
+    effect = "Deny"
+    actions = [
+      "ecr:GetAuthorizationToken",
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:InitiateLayerUpload",
+      "ecr:UploadLayerPart",
+      "ecr:CompleteLayerUpload",
+      "ecr:PutImage",
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
     ]
     resources = ["*"]
   }
@@ -113,6 +149,55 @@ data "aws_iam_policy_document" "deploy" {
       "eks:CreateAccessEntry",
       "eks:AssociateAccessPolicy",
       "iam:*",
+    ]
+    resources = ["*"]
+  }
+}
+
+# HARDEN-002 finding 6: the provisioner creates the workspace's ECR
+# repositories, and FEAT-050 requires a published digest before deploy, but
+# before this identity existed nothing in the contract could publish one --
+# the provisioner is explicitly denied it above, and deploy only reads
+# (LocateTheCluster). This is the fourth identity ADR 0002's table already
+# names ("publisher: publish/replace application images; must not provision
+# substrate or deploy workloads") but the bootstrap root never generated a
+# contract for. `sol up` never uses this -- it is local-only and never
+# touches AWS (cli/sol/bin/cmd_up.ml: "Local-only -- no target concept"); a
+# CI pipeline authenticates as this identity before its own `docker push`,
+# entirely outside Sol's own execution, then calls `sol deploy` with the
+# resulting digest. Sol therefore has no runtime code path that resolves this
+# ARN -- there is deliberately no `publisher_role_arn` target field to match;
+# this is a policy-generation contract only, same spirit as the other three.
+data "aws_iam_policy_document" "publisher" {
+  statement {
+    sid    = "PublishWorkspaceImages"
+    effect = "Allow"
+    actions = [
+      "ecr:GetAuthorizationToken",
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:InitiateLayerUpload",
+      "ecr:UploadLayerPart",
+      "ecr:CompleteLayerUpload",
+      "ecr:PutImage",
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
+    ]
+    resources = ["*"]
+  }
+
+  # Publishing an image must not also grant the power to provision substrate
+  # or to deploy/replace a running workload (ADR 0002).
+  statement {
+    sid    = "NoProvisionOrDeploy"
+    effect = "Deny"
+    actions = [
+      "ec2:*",
+      "eks:*",
+      "rds:*",
+      "iam:*",
+      "ecr:CreateRepository",
+      "ecr:DeleteRepository",
+      "ecr:PutLifecyclePolicy",
     ]
     resources = ["*"]
   }

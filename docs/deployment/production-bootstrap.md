@@ -48,10 +48,11 @@ create a repository or operator-managed `backend.tf` for the normal lifecycle.
 
 ## 2. Identities: Sol generates the contracts, you supply the ARNs
 
-The bootstrap root outputs three least-privilege policy documents
-(`provisioner_policy_json`, `deploy_policy_json`, `operator_policy_json`). Sol
-owns the *contract*; it does not create roles, attach policies, or manage their
-lifecycle. Create the roles in your account and declare their ARNs:
+The bootstrap root outputs four least-privilege policy documents
+(`provisioner_policy_json`, `publisher_policy_json`, `deploy_policy_json`,
+`operator_policy_json`). Sol owns the *contract*; it does not create roles,
+attach policies, or manage their lifecycle. Create the roles in your account
+and declare the three ARNs `sol deploy` actually reads:
 
 ```yaml
 target:
@@ -64,19 +65,31 @@ target:
 The boundary the contracts encode:
 
 - **provisioner** — a constrained high-privilege identity that creates/updates
-  cloud and platform infrastructure. Its direct Kubernetes grants cover the
-  supported platform lifecycle in platform namespaces and exclude ordinary
-  application mutation elsewhere; CRD/controller authority still makes it a
-  powerful infrastructure trust domain;
+  cloud and platform infrastructure, including the workspace's ECR
+  repositories (their *lifecycle* — create/describe/tag — never the data-plane
+  actions that would let it push an image into one; that deny is explicit in
+  the generated policy, not just an omission). Its direct Kubernetes grants
+  cover the supported platform lifecycle in platform namespaces and exclude
+  ordinary application mutation elsewhere; CRD/controller authority still
+  makes it a powerful infrastructure trust domain;
+- **publisher** — may push/replace images in the workspace's ECR repositories
+  (`ecr:PutImage` and its supporting layer-upload actions) and nothing else;
+  explicitly denied infrastructure, IAM, and repository-lifecycle mutation, so
+  publishing an image cannot also grant provisioning or deploy authority. No
+  target field names this ARN — Sol's own execution never resolves it.
+  `sol up` never touches AWS at all (local-only, no target concept); a CI
+  pipeline authenticates as this identity for its own `docker push` step,
+  entirely outside Sol, before calling `sol deploy` with the resulting digest;
 - **deploy** — may `DescribeCluster` and mutate application objects through a
   namespace-scoped EKS access entry. It explicitly **denies** infrastructure and
   IAM mutation and any attempt to grant itself cluster administration, so it
   cannot escalate;
 - **operator** — read access to the cluster and state for day-to-day work.
 
-`sol deploy` fails closed unless all three ARNs are present and the public API
-endpoint is restricted to an explicit CIDR (`0.0.0.0/0` is rejected). A public
-endpoint with an explicit CIDR allowlist is acceptable for maturity A;
+`sol deploy` fails closed unless the three ARNs it reads (provisioner, deploy,
+operator) are present and the public API endpoint is restricted to an
+explicit CIDR (`0.0.0.0/0` is rejected). A public endpoint with an explicit
+CIDR allowlist is acceptable for maturity A;
 private-only networking is a stronger future posture.
 
 ## 3. No standing cluster-creator admin
