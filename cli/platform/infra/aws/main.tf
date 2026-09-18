@@ -150,20 +150,36 @@ module "eks" {
   # return it to false).
   enable_cluster_creator_admin_permissions = var.enable_cluster_creator_admin
 
-  access_entries = var.provisioner_role_arn == "" ? {} : {
-    platform_provisioner = {
-      principal_arn     = var.provisioner_role_arn
-      kubernetes_groups = ["sol:platform-provisioners"]
-      policy_associations = var.provisioner_bootstrap_admin ? {
-        bootstrap = {
-          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-          access_scope = {
-            type = "cluster"
+  access_entries = merge(
+    var.provisioner_role_arn == "" ? {} : {
+      platform_provisioner = {
+        principal_arn     = var.provisioner_role_arn
+        kubernetes_groups = ["sol:platform-provisioners"]
+        policy_associations = var.provisioner_bootstrap_admin ? {
+          bootstrap = {
+            policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+            access_scope = {
+              type = "cluster"
+            }
           }
-        }
-      } : {}
-    }
-  }
+        } : {}
+      }
+    },
+    # AUDIT-072 / INFRA-025: group membership only, same as the provisioner's
+    # steady state -- no policy_associations. The RBAC grant itself is the
+    # cluster-wide (but resource-kind-scoped) ClusterRole in
+    # cli/platform/infra/base/platform_deploy_rbac.tf, bound per application
+    # namespace at runtime by Sol_cli_substrate.ensure (namespaces are created
+    # dynamically, so a static Terraform-time namespace list can't express
+    # this, and a ClusterRoleBinding would leak deploy into platform
+    # namespaces' own Secrets/Deployments).
+    var.deploy_role_arn == "" ? {} : {
+      deploy = {
+        principal_arn     = var.deploy_role_arn
+        kubernetes_groups = ["sol:deployers"]
+      }
+    },
+  )
 
   tags = var.tags
 }

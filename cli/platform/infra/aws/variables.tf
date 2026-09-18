@@ -196,3 +196,9 @@ variable "provisioner_bootstrap_admin" {
   type        = bool
   default     = false
 }
+
+variable "deploy_role_arn" {
+  description = "Named AWS deploy principal authenticated to EKS for application workload mutation (AUDIT-072). Grants only Kubernetes group membership here; the namespace-scoped RoleBinding is applied per application namespace by Sol_cli_substrate.ensure, not by Terraform, because application namespaces are created dynamically."
+  type        = string
+  default     = ""
+}

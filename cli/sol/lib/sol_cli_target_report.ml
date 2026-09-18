@@ -50,8 +50,9 @@ let redact ~needle ~replacement haystack =
 let describe ~verbose = function
   | Not_configured ->
     "not configured — this target names no kube_context, so `sol deploy` has no cluster \
-     to reach. `sol cloud init` writes it when Sol creates the cluster; for a cluster \
-     you own, name its context in the target."
+     to reach. After `sol cloud apply`, run the printed `deploy_kubeconfig_command` \
+     output and add the resulting context name; for a cluster you own, name its context \
+     in the target."
   | Configured context ->
     if verbose
     then Printf.sprintf "configured (%s) — not checked; pass --check to probe it" context
