@@ -1328,6 +1328,22 @@ let terraform_vars ~workspace cfg =
          after these profile-derived vars, not because it is weakened here. *)
       if is_production_postgres then ("rds_deletion_protection", "true") :: vars else vars
     in
+    let vars =
+      (* INFRA-030 (HARDEN-002 run 5 attempt 1): the profile owns the cluster
+         shape, so the platform's own components cannot be starved by whichever
+         shape the provider root happens to default to. Attempt 1 provisioned the
+         module defaults (3 x m6i.large = 6 vCPU) and the platform's own RF>=3
+         Redpanda needed 6 vCPU by itself, so the install could never reach Ready.
+         These are profile-derived, so they are appended after any provider-field
+         or --var value and win (vars_with_profile_precedence) — the same
+         mechanism that protects rds_multi_az and rds_deletion_protection above.
+         Both variables are declared by the provider root, so routing them is
+         legal there. A non-profile target keeps full control of its shape and
+         makes no capacity claim. *)
+      if target.profile = Some Sol_cli_profile.Production_single_region
+      then Sol_cli_profile.node_shape_vars Sol_cli_profile.recommended_node_shape @ vars
+      else vars
+    in
     Ok
       (("create_rds", string_of_bool has_postgres)
        :: ("rds_multi_az", string_of_bool is_production_postgres)
