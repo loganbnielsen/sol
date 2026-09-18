@@ -188,6 +188,51 @@ let test_lifecycle_phases () =
     ; Cloud_bootstrap, Ready
     ; Platform_installing, Preparing_destroy
     ];
+  (* The abort edge (ADR 0003 invariant 6). Destruction is not a forward
+     transition, so the relation above is right to reject
+     `Platform_installing -> Preparing_destroy` -- teardown is a different class of
+     move, and the two must not be folded together or the relation stops meaning
+     "the diagram". What matters is that the abort edge admits it, so a failed or
+     partially installed target can never be stranded. *)
+  Alcotest.(check bool)
+    "the forward relation still rejects PlatformInstalling -> PreparingDestroy"
+    false
+    (transition_allowed ~from:Platform_installing ~to_:Preparing_destroy);
+  List.iter
+    (fun phase ->
+       Alcotest.(check bool)
+         (name phase ^ " admits destruction")
+         (phase <> Absent)
+         (destruction_available phase);
+       Alcotest.(check string)
+         (name phase ^ " enters destruction as expected")
+         (if phase = Absent then "Absent" else "PreparingDestroy")
+         (phase_to_string (enter_destruction ~from:phase)))
+    [ Absent
+    ; Cloud_bootstrap
+    ; Platform_installing
+    ; Ready
+    ; Platform_updating
+    ; Preparing_destroy
+    ; Destroying
+    ];
+  (* A destroy never lands in a phase whose policy is Ready, which is what makes
+     invariant 4 hold at the decision point rather than only after re-verification
+     (finding 15). *)
+  List.iter
+    (fun phase ->
+       Alcotest.(check bool)
+         (name phase ^ " does not enter a Ready-policy phase by destroying")
+         false
+         (ready_policy_applies (enter_destruction ~from:phase)))
+    [ Absent
+    ; Cloud_bootstrap
+    ; Platform_installing
+    ; Ready
+    ; Platform_updating
+    ; Preparing_destroy
+    ; Destroying
+    ];
   let destroy_vars = policy_vars ~phase:Preparing_destroy ~destroy_snapshot_id:"snap-1" in
   Alcotest.(check (option string))
     "destroy policy disables RDS deletion protection"

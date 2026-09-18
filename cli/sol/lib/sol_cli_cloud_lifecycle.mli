@@ -74,7 +74,27 @@ type phase_policy =
   | Destroy
 
 val policy_of_phase : phase -> phase_policy
+
+(** The forward lifecycle relation: the edges of ADR 0003's diagram. It describes
+    progressive establishment, so it rejects every edge that would move the target
+    backwards. It is deliberately not the only way to enter a phase -- see
+    [destruction_available]. *)
 val transition_allowed : from:phase -> to_:phase -> bool
+
+(** The abort edge (ADR 0003 invariant 6): whether a destroy may begin, or resume,
+    from this phase. True for every phase that can hold infrastructure and false
+    only for [Absent], so a failed or partially installed target is always
+    destructible. Separate from [transition_allowed] on purpose: destruction is
+    teardown, not a forward transition, and folding it into the relation would
+    stop the relation from meaning "the diagram". *)
+val destruction_available : phase -> bool
+
+(** [enter_destruction ~from] is the phase a destroy operation proceeds in:
+    [Preparing_destroy] from any destructible phase, and [Absent] from [Absent]
+    (the post-destroy state), which is what makes destroy idempotent. Total -- it
+    has no failure case, because no observation may be able to block teardown. *)
+val enter_destruction : from:phase -> phase
+
 val ready_policy_applies : phase -> bool
 val policy_vars : phase:phase -> destroy_snapshot_id:string -> (string * string) list
 
