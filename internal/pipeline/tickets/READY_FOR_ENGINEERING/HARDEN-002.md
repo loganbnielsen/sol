@@ -456,5 +456,192 @@ Findings 8, 5 and 7 no longer block a run 3 by themselves. Finding 6 and the
 deploy-identity destination gap (DEC-030/INFRA-025, filed and fixed in this
 same reconciliation pass — `sol deploy` now has a real, RBAC-scoped
 destination to reach after `sol cloud apply`, which run 2 did not have)
-change what a run 3 would actually exercise; see the HARDEN run 3 plan for
-the updated scope once one exists.
+change what a run 3 would actually exercise; see the HARDEN run 3 plan below.
+
+## Run 3 — proposed plan (2026-09-18, NOT YET EXECUTED)
+
+**This section is preparation only.** Producing it touches no AWS account,
+no Terraform state, no live target. Execution requires explicit,
+present-operator authorization — the same boundary as every prior run.
+
+### Why run 3's achievable scope is materially larger than run 2's
+
+Run 2's own results table recorded `B1-B7, C1-C5, D1-D8, E2-E11, F1-F4` as
+**NOT REACHED — blocked by findings 7 and 8**. Since then, in this
+reconciliation pass:
+
+- **Findings 5, 7, 8** — confirmed already fixed by reading current code
+  (not commit messages): cert-manager/CRD staging is now part of `sol cloud
+  apply`'s own sequencing (finding 5); the AWS/base roots provision the EBS
+  CSI addon, IRSA and default `StorageClass` (finding 7); `Sol_cli_substrate.ensure`
+  is called from both `cmd_deploy.ml` and `cmd_migrate.ml` (finding 8). See
+  the "Remediation queue" section above for the exact file references.
+- **Finding 9b** (INFRA-023) — `sol cloud destroy` now disables RDS deletion
+  protection through a real targeted `terraform apply` with a unique
+  per-attempt final-snapshot identity, verified before destroy proceeds.
+- **Finding 6** (INFRA-026) — the bootstrap root now generates a `publisher`
+  IAM policy contract (ECR push only, explicit deny on infra/IAM/repo-lifecycle
+  mutation); the provisioner gained ECR repository-*lifecycle* actions with
+  an explicit deny on the data-plane publish actions.
+- **The `sol cloud init` / deploy-identity destination gap** (DEC-030,
+  INFRA-025) — `deploy_role_arn` is now wired into a real EKS access entry
+  and namespace-scoped Kubernetes RBAC (a `sol-deploy` `ClusterRole` bound
+  per application namespace, never cluster-wide). This is the fix that
+  actually unblocks `B1` at all: run 2 had no way for `sol deploy` to reach
+  the cluster as a real, RBAC-scoped identity, only run 2's ad hoc
+  workaround of hand-configuring a broad credential.
+
+So run 3 can plausibly reach every matrix section except the alerting rows
+(`G1-G3`, still blocked on a real receiver, unchanged since run 1) and
+whatever new defect it finds along the way — HARDEN runs exist to find
+those, not to have none.
+
+### Preconditions (must all be true before any AWS command runs)
+
+1. A fresh, disposable, isolated AWS account/profile — never reuse run 1 or
+   run 2's.
+2. `cli/platform/infra/bootstrap` applied: state bucket + lock table.
+3. **Four** IAM roles created by the operator (not Sol — AUDIT-072/INFRA-026:
+   Sol owns the policy contracts, never role lifecycle) from the bootstrap
+   root's four generated documents: `provisioner_policy_json`,
+   `publisher_policy_json` (new since run 2), `deploy_policy_json`,
+   `operator_policy_json`. The publisher role needs its own assume-role
+   session, used by nothing else — reusing the provisioner's or deploy's
+   session to publish would silently re-introduce the identity conflation
+   INFRA-024/INFRA-026 exist to prevent.
+4. Target file declaring: `profile: production-single-region`, region,
+   `provisioner_role_arn`, `deploy_role_arn`, `operator_role_arn`, a
+   `cluster_endpoint_cidr` that is not `0.0.0.0/0`, `state_bucket` /
+   `state_lock_table`. Alert receiver fields only if pursuing `G1-G3`.
+5. Confirm the qualification workload is still OCaml-only (Pluto minus its
+   TypeScript services), matching run 2's negative-case strategy — check
+   DEC-026 §2's named TypeScript-qualification triggers before assuming this
+   still holds; if one has fired since run 2, that changes the workload
+   selection, not this plan's mechanism.
+6. A real alert receiver + owner, only if attempting `G1-G3` this run;
+   otherwise they stay recorded skipped, same reasoning as runs 1 and 2
+   (DEC-026 §8: a local sink does not qualify the target).
+
+### Exact command sequence, mapped to `docs/qualification/production-single-region-v1-matrix.md`
+
+1. `sol cloud plan <target>` — before any apply. Verify zero mutation and
+   the honest-plan invariants (Deferred vs. Plannable phases, ADR 0002).
+2. `sol cloud apply <target>` — reconcile through Ready. Evidence: run log;
+   separate `cloud.tfstate`/`platform.tfstate` keys; EKS `ACTIVE` at the
+   pinned Kubernetes version; EBS CSI addon + default `StorageClass`;
+   cert-manager CRDs `Established` before any `ClusterIssuer`; the
+   provisioner's bootstrap-admin window opened then closed, with effective
+   RBAC (positive **and** negative `can-i` checks) verified after
+   de-escalation.
+3. Capture the printed `deploy_kubeconfig_command` / `deploy_kube_context`
+   output (INFRA-025) and actually run it — `aws eks update-kubeconfig
+   --role-arn <deploy_role_arn> --alias <cluster>-deploy` — then add
+   `kube_context: <cluster>-deploy` to the target. This step is itself
+   qualification-relevant: does the printed instruction actually work
+   end to end for a first-time reader, not just in the abstract.
+4. In a **separate** session, assume the publisher role (INFRA-026),
+   authenticate `docker`/`aws ecr get-login-password` as it, and push the
+   qualification workload's images. This is the step that actually closes
+   run 2's recorded deviation ("images were published with the operator's
+   own credential").
+5. `sol deploy <target> --image-ref <svc>=<repo>@sha256:<digest>` per
+   service, using step 4's digests — exercises `B1`/`B2` and `C1`-`C5`
+   (migration gate before workload mutation; the new namespace + RoleBinding
+   bootstrap actually running as the deploy identity for the first time
+   ever, not a hand-configured broad credential).
+6. `B3`-`B7`: one representative transaction; a deliberately failed deploy;
+   rollback to the prior release (and across a `contract` migration
+   boundary, expecting a refusal); drift detection/correction.
+7. `D1`-`D8`: tolerant-workload placement inspection; graceful drain;
+   unplanned node loss with **measured** restoration time; drain grace;
+   slow-start not liveness-killed; Kafka-worker readiness tied to
+   consumer-join in both directions; a hung consumer replaced by liveness,
+   not readiness; broker-unreachable-at-startup does not crash-loop.
+8. `E1`-`E11`: Postgres Multi-AZ inspection (already passed live in run 2);
+   **measured** infra-failure failover RTO/RPO; **measured** PITR RPO;
+   **measured** restore-into-a-clean-target RTO with an application-level
+   transaction proving it, not just "the provider job completed"; Kafka
+   broker-loss zero-acknowledged-message-loss; **measured** consumer
+   auto-resume; the qualified Kafka policy (RF≥3, `acks=all`, write caching
+   off); volume-tier claim boundaries; control-state recovery from a clean
+   runner (this is also the first live exercise of anything destroy-adjacent
+   from INFRA-023, if the recovery procedure is exercised via a
+   destroy/recreate cycle rather than only backend-object recovery);
+   telemetry-loss is non-durable and does not touch the business-data claim;
+   a real transaction after every recovery.
+9. `F1`-`F5`: no ambient ServiceAccount token (already offline-proven,
+   confirm live); credential rotation completes and the workload returns
+   healthy; the old credential is rejected; zero secret values anywhere in
+   the evidence bundle; and **`F5` is now a four-identity check, not
+   three** — provisioner (ECR lifecycle allowed, ECR push denied,
+   cluster-creator admin never standing), publisher (ECR push allowed,
+   infra/IAM/repository-lifecycle denied), deploy (namespace-scoped
+   application mutation allowed via `sol-deploy`, platform-namespace
+   mutation denied), operator (read-only). Include one deliberate negative
+   test of INFRA-025's documented residual gap: attempt to create a
+   `RoleBinding` named `sol-deploy` directly inside a platform namespace via
+   raw `kubectl`, authenticated as the deploy identity, bypassing `sol
+   deploy`/`sol migrate` entirely. This is **expected to still succeed**
+   today — SEC-005 (the admission-control closure) is intentionally
+   deferred — so a success here confirms a known, already-documented gap,
+   not a new defect. Record it as such; do not treat it as a run-3 failure.
+10. Destroy lifecycle: prepare → verify preparation → destroy → verify
+    absence (`docs/qualification/production-single-region-v1-matrix.md`
+    Section H's teardown row, and INFRA-023's mechanism's first live
+    exercise). Confirm the unique per-attempt final-snapshot identity in the
+    actual RDS snapshot list, not just the terraform argv.
+11. `G1`-`G3` only if a real receiver was set up per precondition 6;
+    otherwise recorded skipped, unchanged from runs 1-2.
+
+### Evidence classification (unchanged framework, restated because it matters here)
+
+1. **Static/configuration evidence** — Terraform variable defaults, RBAC
+   rule text, IAM policy JSON shape. This session's offline additions
+   (`cli/sol/test/check_production_infra.sh`,
+   `internal/ci/test_cloud_lifecycle_offline.sh`,
+   `internal/ci/test_publisher_deployer_boundary.sh`) are entirely this
+   tier. Necessary, never sufficient.
+2. **Mechanism/renderability evidence** — `sol cloud plan` producing correct
+   Deferred/Plannable phases; `terraform validate`/`fmt` clean; an RBAC
+   binding structurally namespace-scoped rather than cluster-wide. Also
+   already proven offline this session. Still not sufficient for any
+   `B`-`G` matrix row.
+3. **Real target behavioral qualification** — everything in the command
+   sequence above, executed against a real disposable AWS account. This is
+   the **only** tier that may mark a matrix row's Pass condition as met.
+   Tiers 1 and 2 are not promoted into tier 3 anywhere in this plan or in
+   its execution.
+
+### Explicitly out of scope for run 3
+
+- `G1`-`G3` without a real alert receiver — recorded skipped, not attempted.
+- SEC-005 (admission-control hardening of the deploy-bootstrap RBAC gap) —
+  not a run-3 blocker. Its residual is exactly what the `F5` negative test
+  in step 9 reconfirms exists; run 3 is not expected to close it.
+- GCP or any non-AWS provider — still explicitly unqualified, fails closed
+  upstream of everything in this plan.
+- DEC-026's own explicit exclusions, unchanged: zone-failure tolerance,
+  multi-team RBAC, admission policy, federation, signing/SBOM, automated
+  volume backup.
+
+### Qualification harness discipline
+
+The harness may orchestrate Sol's own public commands and independently
+read AWS/Kubernetes state to verify results (`aws rds describe-db-instances`,
+`kubectl get`, `aws ecr describe-images`, `aws sts get-caller-identity`,
+`kubectl auth can-i`, ...). It must **never** invoke `terraform` or `helm`
+itself to provision or repair a phase — `internal/ci/check_public_cloud_lifecycle.sh`
+already enforces this structurally for `internal/qualification/aws/live-smoke.sh`;
+a run-3 harness reusing or extending that script inherits the same guard.
+Every command's exact invocation, Sol commit SHA, profile version, substrate
+module versions, and the workload image's framework versions
+(`sol-svc`/`sol-worker`/`kafka-eio`/`pg-eio`) go into the run identity
+header, per the matrix's own "Run identity" table — unchanged from runs 1
+and 2.
+
+### Explicit non-execution boundary
+
+This plan is preparation only. Executing any part of steps 1-11 requires
+explicit operator authorization and presence, the same as every AWS command
+in this repository's HARDEN history. Nothing above is run by writing it
+down.
