@@ -243,26 +243,29 @@ resource "aws_db_instance" "postgres" {
   backup_retention_period = 7
   multi_az                = var.rds_multi_az
   deletion_protection     = var.rds_deletion_protection
-  skip_final_snapshot     = !var.rds_deletion_protection
-  # HARDEN-002 run 2, finding 9: with production deletion protection on (the
-  # default), skip_final_snapshot is false, and Terraform then refuses to destroy
-  # the instance unless a final snapshot identifier is given -- so a protected
-  # database could not be torn down at all, and `sol cloud destroy` could not
-  # finish. The identifier is set exactly when a final snapshot is taken, so the
-  # documented lifecycle works: operator confirms destruction, disables deletion
-  # protection, Terraform takes a final snapshot, destroys, and the teardown is
-  # verified. RDS requires the identifier to be unique per snapshot, so an
-  # operator destroying the same cluster twice supplies one via
-  # rds_final_snapshot_identifier instead of colliding with the previous
-  # snapshot.
+  # HARDEN-002 run 2, finding 9. Two things were wrong here:
+  #
+  #   1. skip_final_snapshot was derived from deletion protection, so the only way
+  #      to let Terraform destroy the instance was to stop taking a final snapshot
+  #      -- production destruction was either impossible or silent about data;
+  #   2. no final_snapshot_identifier was ever set, so with a snapshot required
+  #      Terraform refused to destroy at all and `sol cloud destroy` could not
+  #      complete.
+  #
+  # They are separate knobs with production-safe defaults now: protection on, and a
+  # final snapshot taken. Destroying is the explicit operation -- an operator
+  # disabling protection, or `sol cloud destroy`, which does it for the destroy run
+  # -- and the snapshot still happens. The identifier is an implementation detail of
+  # that operation and must be unique per snapshot, which the destroy path supplies.
+  skip_final_snapshot = var.rds_skip_final_snapshot
   final_snapshot_identifier = (
-    var.rds_deletion_protection
-    ? (
+    var.rds_skip_final_snapshot
+    ? null
+    : (
       var.rds_final_snapshot_identifier != ""
       ? var.rds_final_snapshot_identifier
       : "${var.cluster_name}-postgres-final"
     )
-    : null
   )
 
   tags = var.tags

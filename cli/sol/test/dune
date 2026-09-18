@@ -105,9 +105,14 @@
 
 ; See devtools/check_no_account_artifacts.sh: qualification scratch files and real
 ; account ids must not be able to sit under the repository (HARDEN-002 run 2).
+
 (rule
  (alias runtest)
  (deps
   ../../devtools/check_no_account_artifacts.sh
   (source_tree ../../cli/platform/infra))
- (action (run bash %{dep:../../devtools/check_no_account_artifacts.sh} %{workspace_root})))
+ (action
+  (run
+   bash
+   %{dep:../../devtools/check_no_account_artifacts.sh}
+   %{workspace_root})))

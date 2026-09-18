@@ -99,8 +99,14 @@ variable "rds_deletion_protection" {
   default     = true
 }
 
+variable "rds_skip_final_snapshot" {
+  description = "Skip the final snapshot when destroying the instance. Leave false in production: production database destruction takes a final snapshot unless explicitly governed otherwise."
+  type        = bool
+  default     = false
+}
+
 variable "rds_final_snapshot_identifier" {
-  description = "Name for the snapshot Terraform takes when destroying a protected RDS instance. Must be unique per snapshot; leave empty for the cluster-name default."
+  description = "Name for the snapshot Terraform takes when destroying the instance. Must be unique per snapshot; leave empty for the cluster-name default."
   type        = string
   default     = ""
 }
