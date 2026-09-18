@@ -465,6 +465,12 @@ module "ebs_csi_irsa" {
   role_name             = "${var.cluster_name}-ebs-csi"
   attach_ebs_csi_policy = true
 
+  # The module would otherwise name this policy AmazonEKS_EBS_CSI_Policy-<suffix>.
+  # Every identity in this file is cluster-scoped (see aws_iam_policy.cert_manager),
+  # and the scoped provisioner identity may only create iam:*/${cluster_name}* --
+  # so the default name is one the provisioner that applies this cannot create.
+  policy_name_prefix = "${var.cluster_name}-"
+
   oidc_providers = {
     main = {
       provider_arn               = module.eks.oidc_provider_arn

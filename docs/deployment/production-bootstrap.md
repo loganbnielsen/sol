@@ -203,8 +203,15 @@ not relaxed for convenience. Destruction is an explicit lifecycle:
    needs a fresh `rds_final_snapshot_identifier` **applied in the same step as 2** —
    otherwise the delete fails with `DBSnapshotAlreadyExists`;
 4. `terraform destroy` completes;
-5. absence is verified independently — EKS, RDS, ECR, load balancers, VPC, EIPs
-   and volumes — as the smoke harness's own teardown check already does.
+5. absence is verified independently. `sol cloud destroy` checks EKS, RDS, ECR and
+   load balancers (`verify_aws_destroy`); the live smoke harness checks EKS and
+   VPC. **Nothing automated checks VPCs left by a `sol cloud destroy`, elastic IPs,
+   NAT gateways, or EBS volumes** — that remains the manual sweep recorded in
+   HARDEN-002. Volumes are worth the operator's attention from this release
+   onward: the EBS CSI driver and default gp3 StorageClass below are what first
+   make dynamically provisioned EBS volumes possible on this substrate. The class
+   reclaims with `Delete`, but that only fires when the *PVC* is deleted through
+   the API — tearing the cluster down without doing so leaves the volumes behind.
 
 Passing `-var` to `terraform destroy` does **not** accomplish step 2 or 3. A destroy
 plan contains only deletes, so the provider is handed prior state and never sees the
