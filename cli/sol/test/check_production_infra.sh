@@ -109,6 +109,28 @@ esac
 # separate applied transition; when it exists it will be asserted by what it does,
 # not by a string in the file.
 
+# HARDEN-002 run 2, finding 7: the default StorageClass provisions the volumes that
+# hold the platform's durable data, so it carries the substrate's at-rest posture.
+# Encryption-by-default is an account setting Sol does not own; stating it in the
+# class is what makes it true anywhere. Comment-stripped for the reason above.
+sc_code="$(awk '/^resource "kubernetes_storage_class_v1" "platform_default"/,/^}/' \
+  "$root/cli/platform/infra/base/main.tf" | sed 's/#.*//')"
+
+if [ -z "$sc_code" ]; then
+  echo "FAIL: kubernetes_storage_class_v1.platform_default not found" >&2
+  exit 1
+fi
+
+case "$sc_code" in
+  *'encrypted = "true"'*) : ;;
+  *)
+    echo "FAIL: the default StorageClass no longer sets encrypted = \"true\";" >&2
+    echo "      Redpanda's log, in-cluster Postgres, Loki and Prometheus would be" >&2
+    echo "      unencrypted at rest on any account without EBS encryption-by-default." >&2
+    exit 1
+    ;;
+esac
+
 if command -v terraform >/dev/null 2>&1; then
   terraform fmt -check -recursive "$root/cli/platform/infra" >/dev/null
   echo "production infra: precondition present, terraform fmt ok"

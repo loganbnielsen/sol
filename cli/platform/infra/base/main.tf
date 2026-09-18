@@ -1470,5 +1470,13 @@ resource "kubernetes_storage_class_v1" "platform_default" {
   parameters = {
     type   = "gp3"
     fsType = "ext4"
+    # These volumes hold the platform's durable data -- Redpanda's log, in-cluster
+    # Postgres, Loki chunks, the Prometheus TSDB -- so they carry the same at-rest
+    # posture as the rest of the substrate (aws_db_instance.postgres is
+    # storage_encrypted, the state bucket is AES256, EKS secrets are KMS-enveloped).
+    # Encryption-by-default is an account setting Sol does not own, so stating it
+    # here is what makes it true on any account. The AWS-managed aws/ebs key needs
+    # no extra grant; a customer-managed key would need kmsKeyId and an IRSA grant.
+    encrypted = "true"
   }
 }
