@@ -1057,6 +1057,94 @@ let test_production_profile_enables_rds_multi_az () =
          check_str_opt "RDS Multi-AZ" (Some "true") (List.assoc_opt "rds_multi_az" vars)))
 ;;
 
+(* Reviewer-prompted (2026-09-18): rds_multi_az's Terraform default is
+   already false, so stating it explicitly changes nothing for a
+   non-production target. rds_deletion_protection's default is true, so the
+   analogous mistake -- forcing a value for every target rather than only
+   the one that must not be weakened -- would have silently disabled
+   protection for every target without a production profile. This asserts
+   the asymmetry directly: the key is present, forced true, only for a
+   production target using Postgres. *)
+let test_production_profile_enables_rds_deletion_protection () =
+  with_temp_dir (fun () ->
+    write_base ();
+    mkdir_p "sol/prod/aws";
+    write "sol/prod/aws/us-east-1.yml" "target:\n  profile: production-single-region\n";
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+       | Error msg -> Alcotest.fail msg
+       | Ok vars ->
+         check_str_opt
+           "RDS deletion protection"
+           (Some "true")
+           (List.assoc_opt "rds_deletion_protection" vars)))
+;;
+
+let test_non_production_target_leaves_rds_deletion_protection_unset () =
+  with_temp_dir (fun () ->
+    write_base ();
+    mkdir_p "sol/dev/aws";
+    write "sol/dev/aws/us-east-1.yml" "target:\n  cluster_name: dev-cluster\n";
+    match Sol_cli_config.load_for_target ~target:"dev/aws/us-east-1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+       | Error msg -> Alcotest.fail msg
+       | Ok vars ->
+         (* Absent, not "false": a target with no profile must keep relying
+            on the Terraform variable's own protective default, exactly as
+            it did before this variable was ever named here. Emitting
+            "false" would be the regression the asymmetry above guards
+            against. *)
+         check_str_opt
+           "no forced value without a production profile"
+           None
+           (List.assoc_opt "rds_deletion_protection" vars)))
+;;
+
+(* The invariant a --var/var-file override cannot be allowed to defeat: for a
+   production-profile target, Terraform resolves a repeated -var by taking
+   the *last* occurrence, so vars_with_profile_precedence's ordering is the
+   entire enforcement mechanism, independent of any one variable's value.
+   Simulates Terraform's own resolution rather than only asserting order,
+   so a change that reordered but still "looked right" would still be
+   caught if it stopped actually working. *)
+let effective_value key vars =
+  List.fold_left
+    (fun acc v ->
+       match String.index_opt v '=' with
+       | Some i when String.sub v 0 i = key ->
+         Some (String.sub v (i + 1) (String.length v - i - 1))
+       | _ -> acc)
+    None
+    vars
+;;
+
+let test_profile_precedence_defeats_a_conflicting_override () =
+  let cli_vars = [ "rds_deletion_protection=false" ] in
+  let config_vars = [ "rds_deletion_protection=true" ] in
+  check_str_opt
+    "production profile: override defeated, profile value wins"
+    (Some "true")
+    (effective_value
+       "rds_deletion_protection"
+       (Sol_cli_config.vars_with_profile_precedence
+          ~has_profile:true
+          ~cli_vars
+          ~config_vars));
+  check_str_opt
+    "no profile: ordinary target keeps full operator control"
+    (Some "false")
+    (effective_value
+       "rds_deletion_protection"
+       (Sol_cli_config.vars_with_profile_precedence
+          ~has_profile:false
+          ~cli_vars
+          ~config_vars))
+;;
+
 (* HARDEN-002 (run 1): cluster_issuer is a cli/platform/infra/base variable. It
    used to be sent to the provider root too, and terraform aborts the whole
    command when a variable is assigned that the root does not declare:
@@ -1349,6 +1437,18 @@ let () =
             "production profile enables RDS Multi-AZ"
             `Quick
             test_production_profile_enables_rds_multi_az
+        ; Alcotest.test_case
+            "production profile enables RDS deletion protection"
+            `Quick
+            test_production_profile_enables_rds_deletion_protection
+        ; Alcotest.test_case
+            "non-production target leaves RDS deletion protection unset"
+            `Quick
+            test_non_production_target_leaves_rds_deletion_protection_unset
+        ; Alcotest.test_case
+            "profile precedence defeats a conflicting override"
+            `Quick
+            test_profile_precedence_defeats_a_conflicting_override
         ; Alcotest.test_case
             "terraform vars: cluster_issuer stays in the base layer"
             `Quick

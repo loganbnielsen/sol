@@ -1301,12 +1301,32 @@ let terraform_vars ~workspace cfg =
     let has_postgres =
       resources cfg |> List.exists (fun (r : resource) -> r.typ = Some "postgres")
     in
+    let is_production_postgres =
+      has_postgres && target.profile = Some Sol_cli_profile.Production_single_region
+    in
+    let vars =
+      (* A production-profile RDS instance must stay protected regardless of
+         any --var/var-file the caller supplies: this is a claim of the
+         profile, not merely the Terraform variable's own default, which an
+         ordinary apply's --var can otherwise override indefinitely. Unlike
+         rds_multi_az (whose Terraform default is already false, so stating
+         it explicitly for every target is a no-op change), this variable
+         defaults to true -- so it is only ever added here, forced true, for
+         the case that must not be weakened; every other target keeps
+         relying on that same Terraform default, unweakened. sol cloud
+         destroy's own prepare-destroy step disables this deliberately and
+         unconditionally later in the argument list (cmd_cloud_tf.ml's
+         prepare_destroy), which still wins there because it is appended
+         after these profile-derived vars, not because it is weakened here. *)
+      if is_production_postgres then ("rds_deletion_protection", "true") :: vars else vars
+    in
     Ok
       (("create_rds", string_of_bool has_postgres)
-       :: ( "rds_multi_az"
-          , string_of_bool
-              (has_postgres
-               && target.profile = Some Sol_cli_profile.Production_single_region) )
+       :: ("rds_multi_az", string_of_bool is_production_postgres)
        :: ("ecr_repositories", ecr_repositories_var ())
        :: vars)
+;;
+
+let vars_with_profile_precedence ~has_profile ~cli_vars ~config_vars =
+  if has_profile then cli_vars @ config_vars else config_vars @ cli_vars
 ;;
