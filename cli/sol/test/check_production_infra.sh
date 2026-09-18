@@ -199,6 +199,57 @@ if ! grep -q 'var.deploy_role_arn == "" ? {} : {' "$aws_main"; then
   exit 1
 fi
 
+# HARDEN-002 finding 6: the provisioner must never be able to publish an
+# image, and the publisher identity must never be able to provision or
+# replace repositories -- both as explicit denies, not merely omitted grants.
+bootstrap_tf="$root/cli/platform/infra/bootstrap/main.tf"
+
+provisioner_policy="$(awk '/^data "aws_iam_policy_document" "provisioner"/,/^}/' "$bootstrap_tf")"
+
+if [ -z "$provisioner_policy" ]; then
+  echo "FAIL: data.aws_iam_policy_document.provisioner not found" >&2
+  exit 1
+fi
+
+case "$provisioner_policy" in
+  *'sid    = "NoImagePublish"'*'"ecr:PutImage"'*) : ;;
+  *)
+    echo "FAIL: the provisioner policy no longer explicitly denies ecr:PutImage" >&2
+    echo "      (and friends) -- ADR 0002's 'provisioner must not publish' boundary" >&2
+    echo "      would then rest on omission alone." >&2
+    exit 1
+    ;;
+esac
+
+publisher_policy="$(awk '/^data "aws_iam_policy_document" "publisher"/,/^}/' "$bootstrap_tf")"
+
+if [ -z "$publisher_policy" ]; then
+  echo "FAIL: data.aws_iam_policy_document.publisher not found" >&2
+  exit 1
+fi
+
+case "$publisher_policy" in
+  *'"ecr:PutImage"'*) : ;;
+  *)
+    echo "FAIL: the publisher policy no longer grants ecr:PutImage" >&2
+    exit 1
+    ;;
+esac
+
+case "$publisher_policy" in
+  *'sid    = "NoProvisionOrDeploy"'*'"eks:*"'*'"iam:*"'*) : ;;
+  *)
+    echo "FAIL: the publisher policy no longer explicitly denies provisioning/IAM" >&2
+    echo "      mutation -- publishing an image must not also grant those." >&2
+    exit 1
+    ;;
+esac
+
+if ! grep -q 'output "publisher_policy_json"' "$root/cli/platform/infra/bootstrap/outputs.tf"; then
+  echo "FAIL: bootstrap root no longer outputs publisher_policy_json" >&2
+  exit 1
+fi
+
 if command -v terraform >/dev/null 2>&1; then
   terraform fmt -check -recursive "$root/cli/platform/infra" >/dev/null
   echo "production infra: precondition present, terraform fmt ok"

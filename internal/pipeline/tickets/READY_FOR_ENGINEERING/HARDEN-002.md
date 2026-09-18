@@ -434,19 +434,21 @@ Maturity-A gaps, not by re-reading this section's prose:
    (`kubernetes_storage_class_v1.platform_default`, `storage_provisioner =
    "ebs.csi.aws.com"`) — landed in "HARDEN-002: make the platform substrate
    lifecycle real (findings 7 and 9 + public destroy path)" (#308).
-4. **Finding 6 — still open.** `grep -rn 'ecr:' cli/platform/infra/aws/*.tf`
-   has zero matches; no identity in the documented contract
-   (`provisioner_role_arn`/`deploy_role_arn`/`operator_role_arn`, per
-   `docs/deployment/production-bootstrap.md`) can publish images to the ECR
-   repositories the provisioner creates. `internal/qualification/aws/smoke-test-iam-policy.json`
-   (the qualification harness's own runner identity) does carry `ecr:PutImage`
-   etc., but that's a separate, broader identity than the three named
-   contract roles — the exact deviation this ticket's run 2 already recorded
-   ("images were published with the operator's own credential"). Whether the
-   fix is scoping `ecr:*` onto the provisioner's own policy contract
-   (resource-constrained to the repos it already creates) or a fourth named
-   publisher identity is not decided in this reconciliation pass — see
-   whichever ticket picks this up next.
+4. ~~Finding 6~~ — **fixed (INFRA-026).** The bootstrap root now generates a
+   fourth `publisher_policy_json` contract (ECR image-push actions only, with
+   an explicit deny on infrastructure/IAM/repository-lifecycle mutation), and
+   the provisioner's own policy gained the ECR repository-lifecycle actions
+   its terraform already needed, with an explicit deny on the data-plane
+   publish actions — ADR 0002 states "provisioner must not publish images" as
+   a boundary, so extending the provisioner to publish (one of the two
+   options this section originally posed) was never actually a valid
+   resolution once checked against that decision, not just inconsistent with
+   it. No `publisher_role_arn` target field was added: `sol up` never
+   touches AWS (`cmd_up.ml`: "Local-only — no target concept"), so unlike
+   `deploy_role_arn` there is no Sol code path that would ever resolve one —
+   production publishing happens in a CI pipeline's own `docker push`,
+   entirely outside Sol. Live verification (does the publisher policy's
+   deny/allow actually hold against a real account) remains HARDEN run 3's.
 5. Finding 4 — already fixed; keep the runtime row blocked pending a real
    receiver, unchanged.
 

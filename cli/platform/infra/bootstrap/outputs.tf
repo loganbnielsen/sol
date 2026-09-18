@@ -23,6 +23,11 @@ output "deploy_policy_json" {
   value       = data.aws_iam_policy_document.deploy.json
 }
 
+output "publisher_policy_json" {
+  description = "The generated publisher-identity policy contract (ECR image push only, no infrastructure/IAM/repository-lifecycle mutation). No target field consumes this ARN -- attach it to whatever identity your CI pipeline's own `docker push` authenticates as, before it calls `sol deploy` with the resulting digest."
+  value       = data.aws_iam_policy_document.publisher.json
+}
+
 output "operator_policy_json" {
   description = "The generated operator-identity policy contract. Supply the role ARN as `operator_role_arn`."
   value       = data.aws_iam_policy_document.operator.json

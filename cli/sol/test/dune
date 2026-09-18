@@ -109,7 +109,8 @@
  (deps
   check_production_infra.sh
   (source_tree ../../platform/infra/aws)
-  (source_tree ../../platform/infra/base))
+  (source_tree ../../platform/infra/base)
+  (source_tree ../../platform/infra/bootstrap))
  (action
   (run bash %{dep:check_production_infra.sh} %{workspace_root})))
 
