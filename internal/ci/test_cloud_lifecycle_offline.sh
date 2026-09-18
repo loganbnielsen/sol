@@ -386,3 +386,19 @@ if grep -F -- '-target=aws_db_instance.postgres' "$log" >/dev/null; then
   echo "cloud destroy attempted RDS preparation on an absent cloud substrate" >&2
   exit 1
 fi
+
+# Cloud substrate exists but this target never created an RDS instance:
+# distinct from the wholly-absent case above (cloud_destroy still has real
+# outputs and reaches prepare_destroy), and must also skip the targeted apply.
+rm -f "$RDS_PREPARED_FILE"
+log="$tmp/destroy-no-rds.log"
+if ! (export RDS_ABSENT=1; run_destroy "$log"); then
+  cat "$log.out" >&2
+  echo "cloud destroy on a target with no RDS instance must still succeed" >&2
+  exit 1
+fi
+grep -F 'prepare: no RDS instance for this target, nothing to prepare' "$log.out" >/dev/null
+if grep -F -- '-target=aws_db_instance.postgres' "$log" >/dev/null; then
+  echo "cloud destroy attempted RDS preparation when no RDS instance exists" >&2
+  exit 1
+fi
