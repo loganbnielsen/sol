@@ -102,6 +102,10 @@ JSON
     ;;
   *infra/base*" apply "*"-target="*)
     if fail_once prerequisites; then exit 20; fi
+    # FRESH_TARGET modelling: this apply is what installs cert-manager, and so
+    # what brings the CRDs the pre-install freshness probe looks for into
+    # existence.
+    [ -n "${PLATFORM_INSTALLED_FILE:-}" ] && : >"$PLATFORM_INSTALLED_FILE"
     ;;
   *infra/base*" apply "*)
     if fail_once platform; then exit 20; fi
@@ -180,6 +184,13 @@ fi
 if [ "${CRDS_ABSENT:-}" = 1 ]; then
   case "$*" in *"--for=condition=Established"*) exit 1 ;; esac
 fi
+# FRESH_TARGET models a target that has not been installed yet: the cert-manager
+# CRDs do not exist until this run's own prerequisites apply creates them, which
+# is what makes the run enter PlatformInstalling rather than PlatformUpdating.
+# Gated on the toggle so every other scenario keeps its original cluster.
+if [ "${FRESH_TARGET:-}" = 1 ] && [ ! -e "${PLATFORM_INSTALLED_FILE:-/nonexistent}" ]; then
+  case "$*" in *"--for=condition=Established"*) exit 1 ;; esac
+fi
 if [ "${FAIL_ON:-}" = crds ] && [ ! -e "$FAIL_MARKER_DIR/crds" ] &&
    case "$*" in *"--timeout=180s"*) true;; *) false;; esac; then
   : >"$FAIL_MARKER_DIR/crds"; exit 20
@@ -208,6 +219,7 @@ export KUBECONFIG=/ambient/forbidden
 export FAIL_MARKER_DIR="$tmp/markers"
 export KUBECONFIG_LOG="$tmp/kubeconfigs"
 export RDS_PREPARED_FILE="$tmp/markers/rds-prepared"
+export PLATFORM_INSTALLED_FILE="$tmp/markers/platform-installed"
 
 run_apply() {
   (cd "$tmp/work" && LIFECYCLE_LOG="$1" "$sol" cloud apply prod/aws/us-east-1) >"$1.out" 2>&1
@@ -258,6 +270,43 @@ if [ -z "$full_apply_line" ] || [ -z "$deescalate_line" ] || [ "$full_apply_line
   exit 1
 fi
 while IFS= read -r kubeconfig; do test ! -e "$kubeconfig"; done <"$tmp/kubeconfigs"
+
+# ADR 0003 invariants 3 and 5: the phase a run enters is recomputed from
+# observation, and a run may only leave it along an edge the transition relation
+# admits. A first install enters PlatformInstalling; a re-apply of an
+# already-installed target is the explicit privileged re-entry PlatformUpdating,
+# never a silent return to PlatformInstalling -- which the relation rejects, so
+# classifying it that way would have made the model and the operation disagree.
+fresh_log="$tmp/phase-fresh.log"
+rm -f "$PLATFORM_INSTALLED_FILE"
+if ! (export FAIL_ON=""; export FRESH_TARGET=1; run_apply "$fresh_log"); then
+  cat "$fresh_log" >&2
+  cat "$fresh_log.out" >&2
+  echo "cloud apply did not complete a first install" >&2
+  exit 1
+fi
+grep -F 'lifecycle phase: PlatformInstalling' "$fresh_log.out" >/dev/null || {
+  echo "a first install did not report PlatformInstalling:" >&2
+  cat "$fresh_log.out" >&2
+  exit 1
+}
+
+update_log="$tmp/phase-update.log"
+if ! (export FAIL_ON=""; export FRESH_TARGET=1; run_apply "$update_log"); then
+  cat "$update_log" >&2
+  cat "$update_log.out" >&2
+  echo "cloud apply did not complete a re-apply" >&2
+  exit 1
+fi
+grep -F 'lifecycle phase: PlatformUpdating' "$update_log.out" >/dev/null || {
+  echo "a re-apply of an installed target did not report PlatformUpdating:" >&2
+  cat "$update_log.out" >&2
+  exit 1
+}
+grep -F 'lifecycle phase: PlatformInstalling' "$update_log.out" >/dev/null && {
+  echo "a re-apply of an installed target was misclassified as PlatformInstalling" >&2
+  exit 1
+}
 
 plan() {
   local log="$1"

@@ -129,15 +129,9 @@ let test_provisioner_kube_env () =
    the production RDS-deletion-protection invariant by design. *)
 let test_lifecycle_phases () =
   let open L in
-  let name = function
-    | Absent -> "Absent"
-    | Cloud_bootstrap -> "CloudBootstrap"
-    | Platform_installing -> "PlatformInstalling"
-    | Ready -> "Ready"
-    | Platform_updating -> "PlatformUpdating"
-    | Preparing_destroy -> "PreparingDestroy"
-    | Destroying -> "Destroying"
-  in
+  (* The model owns the operator-facing names, so a test label cannot drift from
+     what an operator is actually told. *)
+  let name = phase_to_string in
   Alcotest.(check bool)
     "PlatformInstalling uses Installation policy"
     true
@@ -210,7 +204,57 @@ let test_lifecycle_phases () =
   Alcotest.(check int)
     "Ready adds no policy overrides"
     0
-    (List.length (policy_vars ~phase:Ready ~destroy_snapshot_id:"x"))
+    (List.length (policy_vars ~phase:Ready ~destroy_snapshot_id:"x"));
+  (* ADR 0003: the phase is recomputed from observation on every run, never
+     persisted and never infrastructure truth. *)
+  Alcotest.(check string)
+    "no substrate observes as Absent"
+    "Absent"
+    (phase_to_string (observed_phase ~cloud_exists:false ~platform_installed:false));
+  Alcotest.(check string)
+    "an absent substrate observes as Absent whatever else is claimed"
+    "Absent"
+    (phase_to_string (observed_phase ~cloud_exists:false ~platform_installed:true));
+  Alcotest.(check string)
+    "an uninstalled platform observes as PlatformInstalling"
+    "PlatformInstalling"
+    (phase_to_string (observed_phase ~cloud_exists:true ~platform_installed:false));
+  Alcotest.(check string)
+    "a completed install observes as Ready"
+    "Ready"
+    (phase_to_string (observed_phase ~cloud_exists:true ~platform_installed:true));
+  (* The operation may only move along edges the relation admits. This is the
+     disagreement that used to exist: the relation rejected
+     Ready -> PlatformInstalling while `sol cloud apply` performed exactly that
+     on an already-Ready target. *)
+  Alcotest.(check bool)
+    "PlatformInstalling -> Ready is admitted"
+    true
+    (Result.is_ok (enter ~from:Platform_installing ~to_:Ready));
+  Alcotest.(check bool)
+    "Ready -> PlatformUpdating is admitted"
+    true
+    (Result.is_ok (enter ~from:Ready ~to_:Platform_updating));
+  Alcotest.(check bool)
+    "PlatformUpdating -> Ready is admitted"
+    true
+    (Result.is_ok (enter ~from:Platform_updating ~to_:Ready));
+  Alcotest.(check bool)
+    "Ready -> PlatformInstalling is refused"
+    true
+    (Result.is_error (enter ~from:Ready ~to_:Platform_installing));
+  Alcotest.(check bool)
+    "PreparingDestroy -> Ready is refused"
+    true
+    (Result.is_error (enter ~from:Preparing_destroy ~to_:Ready));
+  Alcotest.(check bool)
+    "CloudBootstrap -> Ready is refused (the install is not skippable)"
+    true
+    (Result.is_error (enter ~from:Cloud_bootstrap ~to_:Ready));
+  Alcotest.(check string)
+    "a refused transition names both phases"
+    "illegal lifecycle transition Ready -> PlatformInstalling"
+    (Result.get_error (enter ~from:Ready ~to_:Platform_installing))
 ;;
 
 let test_backends () =
