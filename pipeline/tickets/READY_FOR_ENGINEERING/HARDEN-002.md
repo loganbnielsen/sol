@@ -422,3 +422,30 @@ Not yet implemented.
    StorageClass) or the profile's durability claims have no substrate support.
 4. Finding 6 — a named identity may publish images to the workspace repositories.
 5. Findings 4 — already fixed; keep the runtime row blocked pending a real receiver.
+
+### Status update (2026-09-18) — implemented vs live-qualified
+
+Remediation landed; **none of it is behaviourally qualified until run 3**, because every
+remaining question is about how the pieces compose on a real target.
+
+| Finding | State |
+|---|---|
+| 4 — alert receiver unrenderable | **Fixed** (#307). Mechanism/configuration correctness only: the alert-delivery *row* stays blocked pending a real receiver. |
+| 7 — substrate provides no storage | **Fixed**. Cloud substrate installs the EBS CSI driver with a service-account-scoped IRSA role; platform substrate creates the default gp3 StorageClass (`WaitForFirstConsumer`). Platform capabilities, not workload volume declarations, so DEC-026 §3's `single`-tier restriction on workload volumes is untouched. |
+| 8 — fresh target cannot run its first deploy | **Architecture implemented** (#307): `Sol_cli_substrate` is a layer of its own, established by `sol migrate apply`, `sol migrate status` and the deploy migration verification before their Jobs, failing closed on a missing credential. Workload rendering is unchanged, so AUDIT-069's verify-before-mutate invariant is untouched. A test asserts what the layer *cannot* contain (no Deployment/Service/PDB/Ingress), which is what keeps it from drifting back into the workload bundle. **Not behaviourally closed** — the acceptance invariant needs a cluster and runs in run 3. |
+| 9 — module cannot destroy its own RDS | **Fixed**. `final_snapshot_identifier` is set exactly when a final snapshot is taken; deletion protection stays on by default. Documented lifecycle: confirm → disable protection → final snapshot → destroy → verify absence. Also recorded: `sol cloud destroy` does not forward `rds_deletion_protection`, so Terraform is the documented destroy mechanism until that is fixed. |
+| 5 — base install sequencing | **Open.** The public provisioning path must own the cert-manager/CRD sequencing. The deeper finding: **no `cli/sol` code path drives `cli/platform/infra/base` at all**, so there is a conceptual hole between "cloud substrate" and "base platform". The lifecycle to make explicit: `cloud substrate → platform substrate → workspace substrate → workload` (workspace substrate now implemented). |
+| 6 — no identity can publish images | **Open, and an ownership decision rather than a bug.** Add an explicit *publisher/builder* capability rather than growing the deploy identity, so the invariant "the identity authorized to deploy a digest cannot publish or replace artifacts" holds. Proposed split: provisioner = infrastructure; publisher = push workspace images; deployer = deploy existing immutable artifacts; operator = inspection. |
+
+**Process fix.** Qualification scratch artifacts must not be *able* to sit under the
+repository: `devtools/check_no_account_artifacts.sh` (dune runtest) fails on a
+real-looking account id in a tracked target/config/IaC file, or on a tracked
+qualification target / operator backend override. The `.terraform.lock.hcl` files are
+deliberately tracked for provider pinning and are excluded. This replaces vigilance
+after the `git add -A` near-miss swept a real account id into the repository.
+
+**Run 3 shape (proposed).** Not another patch-validation run: the first end-to-end
+exercise of the whole production lifecycle — fresh target → provision → **publish** →
+migrate → deploy → failure scenarios → recovery → **destroy** → independently verified
+absence — with the DEC-026 numeric targets measured, and alert delivery still blocked
+for lack of a real receiver.
