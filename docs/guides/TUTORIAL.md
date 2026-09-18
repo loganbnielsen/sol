@@ -626,7 +626,7 @@ The summary is offline by default, so it still prints while you are diagnosing a
 
 Two things that line is telling you:
 
-- **`not configured`** means the target names no `kube_context`, so `sol deploy` has no cluster to reach. `sol cloud init` writes it when Sol creates the cluster; for a cluster you own, name its context in the target.
+- **`not configured`** means the target names no `kube_context`, so `sol deploy` has no cluster to reach. After `sol cloud apply`, run the printed `deploy_kubeconfig_command` output and add the resulting context name to the target; for a cluster you own, name its context directly.
 - **The context is hidden unless you ask.** It is how Sol reaches the cluster, not what the target is, so it does not lead the summary — but it is what you need when you want to run `kubectl` by hand, which is what `--verbose` is for.
 
 ### Destinations: the cluster comes from the target, never from your shell

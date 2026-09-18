@@ -79,6 +79,30 @@ endpoint is restricted to an explicit CIDR (`0.0.0.0/0` is rejected). A public
 endpoint with an explicit CIDR allowlist is acceptable for maturity A;
 private-only networking is a stronger future posture.
 
+### Configuring kubectl for the deploy identity
+
+`sol cloud apply` wires `deploy_role_arn` into an EKS access entry (Kubernetes
+group `sol:deployers`) and a cluster-wide `sol-deploy` `ClusterRole`; the
+namespace-scoped `RoleBinding` that actually grants it is applied per
+application namespace at deploy time (`Sol_cli_substrate.ensure`), not by
+Terraform, since application namespaces are created dynamically. Once the role
+exists and `deploy_role_arn` is set, `sol cloud apply`'s output prints the
+command to run — Sol does not write your kubeconfig or the target file for
+you (AUDIT-072: Sol owns the IAM policy contract, not your local kubeconfig
+or role lifecycle):
+
+```
+deploy_kubeconfig_command   aws eks update-kubeconfig --region us-east-1 --name <cluster> --alias <cluster>-deploy --role-arn arn:aws:iam::111122223333:role/sol-deploy
+deploy_kube_context         <cluster>-deploy
+```
+
+Run the printed command, then add the printed context name to the target:
+
+```yaml
+target:
+  kube_context: <cluster>-deploy
+```
+
 ## 3. No standing cluster-creator admin
 
 The AWS module sets `enable_cluster_creator_admin_permissions = false`. During

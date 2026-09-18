@@ -25,6 +25,26 @@
    Workload desired state (Deployments, Services, PDBs, probes, ...) stays where it
    belongs, in the workload render, behind the migration gate. *)
 
+(* INFRA-025 residual: Kubernetes RBAC has no "except this namespace" rule.
+   sol-deploy-bootstrap's `rolebindings: create` must be granted cluster-wide
+   (RoleBinding creation cannot be restricted by namespace or by resourceNames
+   -- resourceNames is not honored for `create` at all, per the Kubernetes API
+   itself, and there is no partial-cluster-scope ClusterRoleBinding), so RBAC
+   alone cannot stop the deploy identity from creating a `sol-deploy`
+   RoleBinding directly inside a platform namespace it should never reach.
+   Closing that fully needs an admission-control layer (ValidatingAdmissionPolicy
+   or similar) Sol does not have yet -- tracked as a follow-up, not invented
+   here. This list is the software-side guard in the meantime: every ordinary
+   path into this module (sol deploy, sol migrate apply) refuses a namespace
+   name that collides with a platform one, mirroring DEC-016's reservation of
+   "local" as an environment name. It stops accidental collision through Sol's
+   own CLI; it is not a substitute for the missing admission-control layer
+   against a deliberately malicious holder of the deploy credential -- see
+   INFRA-025's completion notes for the accepted threat model. *)
+let reserved_platform_namespaces =
+  [ "cert-manager"; "ingress-nginx"; "argocd"; "redpanda"; "monitoring"; "postgresql" ]
+;;
+
 let namespaces (plan : Sol_cli_deployment_plan.t) : string list =
   plan.Sol_cli_deployment_plan.services
   |> List.map (fun (spec : Sol_cli_deployment_plan.service_spec) ->
@@ -75,15 +95,22 @@ let secret_docs ?(secrets = Sol_cli_manifest.default_secrets) namespaces =
 
 (** The YAML documents that establish the workspace substrate for [namespaces],
     in the order they must be applied: every namespace first, then each
-    namespace's runtime Secret.
+    namespace's deploy-identity RoleBinding (INFRA-025), then each namespace's
+    runtime Secret.
 
     Creating a namespace is not workload mutation, so applying these before the
-    migration gate does not weaken AUDIT-069's invariant. *)
+    migration gate does not weaken AUDIT-069's invariant. The RoleBinding is
+    likewise not workload mutation -- it grants the deploy identity (not any
+    workload) permission to act in this namespace, established once alongside
+    the namespace itself rather than as a side effect of the first deploy. *)
 let docs_for_namespaces ?secrets namespaces : (string list, string) result =
   match secret_docs ?secrets namespaces with
   | Error _ as e -> e
   | Ok secret_docs ->
-    Ok (List.map (fun ns -> Sol_cli_manifest.namespace_doc ~ns) namespaces @ secret_docs)
+    Ok
+      (List.map (fun ns -> Sol_cli_manifest.namespace_doc ~ns) namespaces
+       @ List.map (fun ns -> Sol_cli_manifest.deploy_role_binding_doc ~ns) namespaces
+       @ secret_docs)
 ;;
 
 let docs ?secrets (plan : Sol_cli_deployment_plan.t) : (string list, string) result =
@@ -96,28 +123,87 @@ let write_file path contents =
   close_out oc
 ;;
 
+(* INFRA-025: the deploy identity's namespace-bootstrap grant is deliberately
+   create-only (see cli/platform/infra/base/platform_deploy_rbac.tf's
+   sol-deploy-bootstrap ClusterRole) -- it can never patch/update a namespace
+   or RoleBinding that already exists, including every platform one. So
+   idempotency here comes from tolerating "AlreadyExists" on [create], not
+   from [kubectl apply]'s patch, which this identity does not have for either
+   kind. *)
+let create_idempotent ~ctx ~file =
+  match Sol_cli_kubectl.create ~ctx ~file with
+  | Error err -> Error (Sol_cli_process.error_to_string err)
+  | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
+  | Ok r ->
+    let detail =
+      let stderr = String.trim r.Sol_cli_process.stderr in
+      if stderr <> "" then stderr else String.trim r.Sol_cli_process.stdout
+    in
+    if Sol_cli_port_forward.string_contains ~needle:"AlreadyExists" detail
+    then Ok ()
+    else Error detail
+;;
+
+let write_doc_to_temp_file doc =
+  let path = Filename.temp_file "sol-substrate-" ".yaml" in
+  write_file path doc;
+  path
+;;
+
+let create_doc ~ctx doc =
+  create_idempotent ~ctx ~file:(write_doc_to_temp_file doc)
+  |> Result.map_error (Printf.sprintf "kubectl create (workspace substrate): %s")
+;;
+
+let apply_doc ~ctx doc =
+  Sol_cli_kubectl.apply ~ctx ~file:(write_doc_to_temp_file doc)
+  |> Result.map_error (fun err ->
+    Printf.sprintf
+      "kubectl apply (workspace substrate): %s"
+      (Sol_cli_process.error_to_string err))
+;;
+
 (** [ensure ~ctx ~namespaces] establishes the substrate against [ctx] if it is not
-    already there. Idempotent ([kubectl apply] of a namespace and a Secret).
+    already there: every namespace and its deploy-identity RoleBinding
+    (create, idempotent via "AlreadyExists" tolerance -- this identity cannot
+    patch either kind), then each namespace's runtime Secret (apply, which
+    the deploy identity's own namespace-scoped RoleBinding, just created,
+    grants patch on).
 
     Returns [Error] rather than proceeding when a required secret value is
     missing, so an operation that needs the substrate fails closed before it
-    reaches the thing the substrate was needed for. *)
+    reaches the thing the substrate was needed for. Also refuses a namespace
+    that collides with a platform namespace ({!reserved_platform_namespaces}) --
+    see that value's comment for why this check exists at all. *)
 let ensure ~ctx ~namespaces : (unit, string) result =
-  match docs_for_namespaces namespaces with
-  | Error _ as e -> e
-  | Ok docs ->
+  let ( let* ) = Result.bind in
+  match List.find_opt (fun ns -> List.mem ns reserved_platform_namespaces) namespaces with
+  | Some ns ->
+    Error
+      (Printf.sprintf
+         "%s is a reserved platform namespace; no workspace may deploy into it"
+         ns)
+  | None ->
+    let rec create_all = function
+      | [] -> Ok ()
+      | doc :: rest ->
+        let* () = create_doc ~ctx doc in
+        create_all rest
+    in
     let rec apply_all = function
       | [] -> Ok ()
       | doc :: rest ->
-        let path = Filename.temp_file "sol-substrate-" ".yaml" in
-        write_file path doc;
-        (match Sol_cli_kubectl.apply ~ctx ~file:path with
-         | Ok () -> apply_all rest
-         | Error err ->
-           Error
-             (Printf.sprintf
-                "kubectl apply (workspace substrate): %s"
-                (Sol_cli_process.error_to_string err)))
+        let* () = apply_doc ~ctx doc in
+        apply_all rest
     in
-    apply_all docs
+    let* () =
+      create_all (List.map (fun ns -> Sol_cli_manifest.namespace_doc ~ns) namespaces)
+    in
+    let* () =
+      create_all
+        (List.map (fun ns -> Sol_cli_manifest.deploy_role_binding_doc ~ns) namespaces)
+    in
+    (match secret_docs namespaces with
+     | Error _ as e -> e
+     | Ok docs -> apply_all docs)
 ;;

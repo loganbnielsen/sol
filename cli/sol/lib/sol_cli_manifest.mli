@@ -80,6 +80,11 @@ val sanitize_label_value : string -> string
     [Sol_cli_deployment_render.render_spec]. *)
 val namespace_doc : ns:string -> string
 
+(** INFRA-025: binds the deploy identity's Kubernetes group to the
+    `sol-deploy` ClusterRole inside [ns]. Used by {!Sol_cli_substrate.ensure}
+    to scope the deploy identity to application namespaces only. *)
+val deploy_role_binding_doc : ns:string -> string
+
 val service_account_doc : ns:string -> name:string -> string
 
 (** AUDIT-080: the voluntary-disruption budget rendered for a

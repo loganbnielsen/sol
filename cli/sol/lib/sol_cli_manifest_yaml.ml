@@ -80,6 +80,31 @@ metadata:
     ns
 ;;
 
+(* INFRA-025: binds the deploy identity's Kubernetes group to the deploy
+   ClusterRole (cli/platform/infra/base/platform_deploy_rbac.tf) inside one
+   namespace. Applied per application namespace by Sol_cli_substrate.ensure,
+   not by Terraform -- application namespaces are created dynamically, and a
+   Terraform-time ClusterRoleBinding would grant deploy these verbs in
+   platform namespaces too. *)
+let deploy_role_binding_doc ~ns =
+  f
+    {|---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sol-deploy
+  namespace: %s
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sol-deploy
+subjects:
+  - kind: Group
+    name: sol:deployers
+    apiGroup: rbac.authorization.k8s.io|}
+    ns
+;;
+
 (* SEC-004: a production workload gets no ambient Kubernetes credential. Every
    Sol-rendered workload uses this ServiceAccount, so disabling token automount
    here means no pod receives a mounted service-account token. Maturity A offers
