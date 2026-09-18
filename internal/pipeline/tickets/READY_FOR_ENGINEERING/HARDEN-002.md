@@ -413,12 +413,46 @@ Not yet implemented.
    its Kafka worker (OCaml-only `v1`, and the worker's readiness needs a broker that
    finding 7 shows cannot be hosted), with an availability claim on `checkout_svc`.
 
-### Remediation queue before a run 3
+### Remediation queue before a run 3 — status reconciled 2026-09-18
 
-1. Finding 8 — workspace substrate layer + the fresh-target acceptance regression.
-2. Finding 5 — the normal provisioning path owns the cert-manager/CRD sequencing +
-   an orchestration-boundary regression.
-3. Finding 7 — the substrate must provide storage (EBS CSI driver + IRSA + a
-   StorageClass) or the profile's durability claims have no substrate support.
-4. Finding 6 — a named identity may publish images to the workspace repositories.
-5. Findings 4 — already fixed; keep the runtime row blocked pending a real receiver.
+Verified against current `main` (post-#311) while closing out the surrounding
+Maturity-A gaps, not by re-reading this section's prose:
+
+1. ~~Finding 8~~ — **fixed.** `Sol_cli_substrate.ensure` exists and is called
+   from both `cmd_deploy.ml:339` and `cmd_migrate.ml:462,697`; confirmed by
+   reading the call sites, not just the commit message ("HARDEN-002: make the
+   workspace execution substrate a layer of its own (finding 8)", #307).
+2. ~~Finding 5~~ — **fixed.** `sol cloud apply`'s `cmd_cloud_tf.ml` now stages
+   the platform apply itself: cert-manager first, `kubectl wait
+   --for=condition=Established` on the required CRDs, then the CRD-dependent
+   resources — landed as part of INFRA-022's rewrite of the AWS lifecycle
+   (`bbc6ac6c`, #310), which explicitly scoped itself to "move the
+   cert-manager/CRD staging from the smoke harness into the public lifecycle."
+3. ~~Finding 7~~ — **fixed.** `cli/platform/infra/aws/main.tf` provisions
+   `aws_eks_addon.ebs_csi_driver` + `module.ebs_csi_irsa`;
+   `cli/platform/infra/base/main.tf` renders the default `StorageClass`
+   (`kubernetes_storage_class_v1.platform_default`, `storage_provisioner =
+   "ebs.csi.aws.com"`) — landed in "HARDEN-002: make the platform substrate
+   lifecycle real (findings 7 and 9 + public destroy path)" (#308).
+4. **Finding 6 — still open.** `grep -rn 'ecr:' cli/platform/infra/aws/*.tf`
+   has zero matches; no identity in the documented contract
+   (`provisioner_role_arn`/`deploy_role_arn`/`operator_role_arn`, per
+   `docs/deployment/production-bootstrap.md`) can publish images to the ECR
+   repositories the provisioner creates. `internal/qualification/aws/smoke-test-iam-policy.json`
+   (the qualification harness's own runner identity) does carry `ecr:PutImage`
+   etc., but that's a separate, broader identity than the three named
+   contract roles — the exact deviation this ticket's run 2 already recorded
+   ("images were published with the operator's own credential"). Whether the
+   fix is scoping `ecr:*` onto the provisioner's own policy contract
+   (resource-constrained to the repos it already creates) or a fourth named
+   publisher identity is not decided in this reconciliation pass — see
+   whichever ticket picks this up next.
+5. Finding 4 — already fixed; keep the runtime row blocked pending a real
+   receiver, unchanged.
+
+Findings 8, 5 and 7 no longer block a run 3 by themselves. Finding 6 and the
+deploy-identity destination gap (DEC-030/INFRA-025, filed and fixed in this
+same reconciliation pass — `sol deploy` now has a real, RBAC-scoped
+destination to reach after `sol cloud apply`, which run 2 did not have)
+change what a run 3 would actually exercise; see the HARDEN run 3 plan for
+the updated scope once one exists.
