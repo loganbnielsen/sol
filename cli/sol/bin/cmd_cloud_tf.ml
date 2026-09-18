@@ -770,42 +770,17 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
     | None -> []
     | Some f -> [ normalize_var_file f ]
   in
-  (* HARDEN-002 run 2, finding 9: the public destroy path has to be able to finish.
-     Invoking destroy *is* the operator's explicit confirmation, so for this run the
-     instance's deletion protection is turned off -- otherwise RDS refuses the
-     deletion -- while the final snapshot is still taken, because the module no
-     longer derives skip_final_snapshot from deletion protection. Snapshot names must
-     be unique per snapshot, so one is generated here rather than left to the
-     operator to invent: the semantic contract (production database destruction
-     takes a final snapshot) holds and repetition costs nothing. *)
-  let vars =
-    match provider with
-    | Sol_cli_provider.Aws ->
-      let cluster =
-        Option.value
-          (resolved_var "cluster_name" ~var_files ~vars ~default:None)
-          ~default:"sol"
-      in
-      let tm = Unix.gmtime (Unix.time ()) in
-      let stamp =
-        Printf.sprintf
-          "%04d%02d%02dT%02d%02d%02d"
-          (tm.Unix.tm_year + 1900)
-          (tm.Unix.tm_mon + 1)
-          tm.Unix.tm_mday
-          tm.Unix.tm_hour
-          tm.Unix.tm_min
-          tm.Unix.tm_sec
-      in
-      vars
-      @ [ "rds_deletion_protection=false"
-        ; Printf.sprintf
-            "rds_final_snapshot_identifier=%s-postgres-final-%s"
-            cluster
-            stamp
-        ]
-    | Sol_cli_provider.Gcp -> vars
-  in
+  (* HARDEN-002 run 2, finding 9 -- KNOWN GAP, deliberately not patched here.
+     `sol cloud destroy` cannot yet destroy a protected production RDS instance.
+     Lifting deletion protection is a state transition (ModifyDBInstance), and a
+     destroy plan contains only deletes: a `-var` passed to `terraform destroy`
+     never reaches the provider, which is handed prior state. The same is true of
+     the final snapshot name, so it is whatever the last apply rendered.
+     Preparing a protected instance for destruction is its own applied transition
+     -- disable protection, establish a unique final-snapshot identity, verify
+     that landed, then destroy -- and belongs with the provisioning lifecycle
+     work, not bolted onto the destroy invocation. See the known gap in
+     docs/deployment/production-bootstrap.md for the operator's interim path. *)
   Printf.printf "\nDestroying cloud infrastructure (%s)...\n%!" pname;
   run_terraform_init run_log infra_dir;
   match action with
