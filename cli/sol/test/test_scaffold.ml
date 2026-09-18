@@ -499,15 +499,15 @@ let test_bundle_layout_resolves_sol_home () =
          ignore (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote path)))
        in
        mkdir_p (Filename.concat tmpdir "bin");
-       mkdir_p (Filename.concat tmpdir "framework/sol-svc/lib");
-       mkdir_p (Filename.concat tmpdir "framework/kafka-eio-service/lib");
+       mkdir_p (Filename.concat tmpdir "framework/ocaml/sol-svc/lib");
+       mkdir_p (Filename.concat tmpdir "framework/ocaml/kafka-eio-service/lib");
        (* Create the two sentinel dune files that is_sol_home checks *)
        let touch path =
          let oc = open_out path in
          close_out oc
        in
-       touch (Filename.concat tmpdir "framework/sol-svc/lib/dune");
-       touch (Filename.concat tmpdir "framework/kafka-eio-service/lib/dune");
+       touch (Filename.concat tmpdir "framework/ocaml/sol-svc/lib/dune");
+       touch (Filename.concat tmpdir "framework/ocaml/kafka-eio-service/lib/dune");
        (* Point SOL_HOME at the bundle root — infer_sol_home should accept it *)
        let result =
          let saved = Sys.getenv_opt "SOL_HOME" in
@@ -536,12 +536,12 @@ let test_incomplete_bundle_rejected () =
          ignore (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote path)))
        in
        (* Only create the sol-svc sentinel, not the kafka-eio-service one *)
-       mkdir_p (Filename.concat tmpdir "framework/sol-svc/lib");
+       mkdir_p (Filename.concat tmpdir "framework/ocaml/sol-svc/lib");
        let touch path =
          let oc = open_out path in
          close_out oc
        in
-       touch (Filename.concat tmpdir "framework/sol-svc/lib/dune");
+       touch (Filename.concat tmpdir "framework/ocaml/sol-svc/lib/dune");
        (* SOL_HOME pointing here should be rejected — kafka-eio-service sentinel missing *)
        let result =
          let saved = Sys.getenv_opt "SOL_HOME" in
@@ -576,10 +576,10 @@ let test_ancestor_walk_finds_bundle_root () =
        in
        (* Create the bundle layout: tmpdir/bin/, tmpdir/framework/... *)
        mkdir_p (Filename.concat tmpdir "bin");
-       mkdir_p (Filename.concat tmpdir "framework/sol-svc/lib");
-       mkdir_p (Filename.concat tmpdir "framework/kafka-eio-service/lib");
-       touch (Filename.concat tmpdir "framework/sol-svc/lib/dune");
-       touch (Filename.concat tmpdir "framework/kafka-eio-service/lib/dune");
+       mkdir_p (Filename.concat tmpdir "framework/ocaml/sol-svc/lib");
+       mkdir_p (Filename.concat tmpdir "framework/ocaml/kafka-eio-service/lib");
+       touch (Filename.concat tmpdir "framework/ocaml/sol-svc/lib/dune");
+       touch (Filename.concat tmpdir "framework/ocaml/kafka-eio-service/lib/dune");
        (* is_sol_home should accept the bundle root *)
        check_bool
          "is_sol_home returns true for valid bundle root"
@@ -615,16 +615,16 @@ let test_ancestor_walk_skips_build_context () =
          close_out oc
        in
        (* A real source/release root: tmpdir/framework/... *)
-       mkdir_p (Filename.concat tmpdir "framework/sol-svc/lib");
-       mkdir_p (Filename.concat tmpdir "framework/kafka-eio-service/lib");
-       touch (Filename.concat tmpdir "framework/sol-svc/lib/dune");
-       touch (Filename.concat tmpdir "framework/kafka-eio-service/lib/dune");
+       mkdir_p (Filename.concat tmpdir "framework/ocaml/sol-svc/lib");
+       mkdir_p (Filename.concat tmpdir "framework/ocaml/kafka-eio-service/lib");
+       touch (Filename.concat tmpdir "framework/ocaml/sol-svc/lib/dune");
+       touch (Filename.concat tmpdir "framework/ocaml/kafka-eio-service/lib/dune");
        (* The misleading build context: tmpdir/_build/default/framework/... *)
        let build_default = Filename.concat tmpdir "_build/default" in
-       mkdir_p (Filename.concat build_default "framework/sol-svc/lib");
-       mkdir_p (Filename.concat build_default "framework/kafka-eio-service/lib");
-       touch (Filename.concat build_default "framework/sol-svc/lib/dune");
-       touch (Filename.concat build_default "framework/kafka-eio-service/lib/dune");
+       mkdir_p (Filename.concat build_default "framework/ocaml/sol-svc/lib");
+       mkdir_p (Filename.concat build_default "framework/ocaml/kafka-eio-service/lib");
+       touch (Filename.concat build_default "framework/ocaml/sol-svc/lib/dune");
+       touch (Filename.concat build_default "framework/ocaml/kafka-eio-service/lib/dune");
        check_bool
          "is_sol_home rejects _build/default"
          false

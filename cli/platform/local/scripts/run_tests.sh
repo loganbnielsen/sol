@@ -19,7 +19,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 export REPO_ROOT
-BASELINE="$REPO_ROOT/devtools/perf/perf_baseline.json"
+BASELINE="$REPO_ROOT/internal/tooling/perf/perf_baseline.json"
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
@@ -121,16 +121,16 @@ report_regression() {
 run_unit() {
   info "Primitives unit tests (no infrastructure required)"
   eval $(opam env)
-  # framework/kafka-eio-service/ is excluded here — its test/dune also
+  # framework/ocaml/kafka-eio-service/ is excluded here — its test/dune also
   # builds a broker-requiring integration suite; run_kafka() below covers
   # it explicitly with KAFKA_BROKERS set.
-  dune test --root "$REPO_ROOT" framework/sol-env/ framework/sol-fn/ framework/sol-obs/ framework/sol-svc/ framework/sol-worker/ cli/sol/test/ --force 2>&1
+  dune test --root "$REPO_ROOT" framework/ocaml/sol-env/ framework/ocaml/sol-fn/ framework/ocaml/sol-obs/ framework/ocaml/sol-svc/ framework/ocaml/sol-worker/ cli/sol/test/ --force 2>&1
 }
 
 run_kafka() {
   info "Kafka integration tests (requires broker at localhost:9092)"
   eval $(opam env)
-  KAFKA_BROKERS=localhost:9092 dune test --root "$REPO_ROOT" framework/kafka-eio-service/ --force 2>&1
+  KAFKA_BROKERS=localhost:9092 dune test --root "$REPO_ROOT" framework/ocaml/kafka-eio-service/ --force 2>&1
 }
 
 run_e2e() {
@@ -139,7 +139,7 @@ run_e2e() {
   KAFKA_BROKERS=localhost:9092 \
   LOKI_URL=http://localhost:3100 \
   POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
-    dune test --root "$REPO_ROOT" examples/local-demo/test/ --force 2>&1
+    dune test --root "$REPO_ROOT" internal/fixtures/local-demo/test/ --force 2>&1
 }
 
 # ── Infrastructure setup ──────────────────────────────────────────────────────

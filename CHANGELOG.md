@@ -3,7 +3,7 @@
 Sol is pre-alpha (`~/Code/CLAUDE.md`): no backward-compatibility guarantee, and
 breaking changes are made freely when they improve the design. This file
 tracks user-visible behavior and API changes worth calling out explicitly,
-not a full commit log — see `git log` and `pipeline/tickets/DONE/` for that.
+not a full commit log — see `git log` and `internal/pipeline/tickets/DONE/` for that.
 
 ## Unreleased
 

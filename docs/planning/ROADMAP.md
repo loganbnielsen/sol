@@ -44,7 +44,7 @@ Every roadmap item should strengthen one of these goals. A feature that increase
 | Function layer (`-fn`, cron) | Complete |
 | Worker layer (`-worker`, Kafka consumer) | Complete |
 | Observability auto-wiring (`-svc`, `-fn`, `-worker`) | Complete |
-| Observability app facade (`framework/sol-obs` — `Sol_obs.t`) | Complete — scaffold templates and app handler examples use it instead of composing Loki/Prometheus/Tempo providers directly |
+| Observability app facade (`framework/ocaml/sol-obs` — `Sol_obs.t`) | Complete — scaffold templates and app handler examples use it instead of composing Loki/Prometheus/Tempo providers directly |
 | Storage (PostgreSQL) | Complete |
 | Sol CLI — scaffold (`sol new workspace/svc/worker/fn/event`) | Complete |
 | Sol CLI — local infra (`sol local infra up/down/status/run`) | Complete |
@@ -74,7 +74,7 @@ infrastructure without learning OCaml internals, Kubernetes object shapes, Helm
 chart wiring, or Terraform module structure.
 
 **Completed:** DOGFOOD-001 through DOGFOOD-005, plus DOGFOOD-008 (Kafka
-external listener), DOGFOOD-009 (Loki 2.x compatibility). See `pipeline/dogfood/`
+external listener), DOGFOOD-009 (Loki 2.x compatibility). See `internal/pipeline/dogfood/`
 for full reports.
 
 ### What the dogfood found
@@ -299,7 +299,7 @@ Auth is always declared explicitly on each route. Sol does not infer auth strate
 - Built-in `/healthz` + `/metrics` (configurable auth) ✓
 - 32/32 tests: routing, auth, service integration ✓
 
-**Package:** `framework/sol-svc/`
+**Package:** `framework/ocaml/sol-svc/`
 
 ---
 
@@ -619,7 +619,7 @@ Phase 5 built the synthesis pipeline and proved it against a local k3d cluster. 
 - `cli/platform/infra/aws/` and `cli/platform/infra/gcp/` Terraform modules ✓
 - `cli/platform/infra/base/` cluster-agnostic Helm bootstrapping ✓
 - Argo CD `Application` manifest + GitOps emit mode ✓
-- `docs/deployment/self-hosted-substrate-contract.md` — what Sol generates vs what the user brings ✓
+- `contract/substrate.md` — what Sol generates vs what the user brings ✓
 - `docs/deployment/escape-hatches.md` — four-level escape hatch hierarchy ✓
 
 ### Deployment modes

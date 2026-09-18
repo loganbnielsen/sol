@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/sol-logo.png" alt="Sol" width="300">
+  <img src="./docs/assets/sol-logo.png" alt="Sol" width="300">
 </p>
 
 # Sol
@@ -161,9 +161,30 @@ See [ROADMAP.md](docs/planning/ROADMAP.md) for the current implementation status
 
 ---
 
+## Repository layout
+
+Sol is a platform, a language-neutral application contract, and first-party
+framework implementations of that contract. The first level of the repository
+mirrors those concepts:
+
+```text
+sol/
+├── cli/         # the `sol` CLI and the platform implementation it drives
+├── contract/    # the language-neutral application contract (runtime + substrate)
+├── framework/   # first-party implementations: OCaml here, TypeScript in sibling repos
+├── examples/    # runnable applications that teach the product (start with pluto)
+├── docs/        # architecture, deployment, guides, hosting, legal, planning
+└── internal/    # maintainer machinery: ci, qualification, pipeline, tooling, fixtures
+```
+
+- **Use or manage Sol** → [`cli/`](cli/) and [`contract/`](contract/).
+- **Build an application** → [`framework/`](framework/) and [`examples/pluto/`](examples/pluto/).
+- **Work on Sol itself** → [`internal/`](internal/) and [`docs/architecture/contributing-map.md`](docs/architecture/contributing-map.md).
+
 ## Docs
 
 - [Tutorial](docs/guides/TUTORIAL.md) — full walkthrough, start to finish
+- [Contract](contract/README.md) — the language-neutral application contract
 - [TypeScript packages](https://github.com/loganbnielsen/sol-kafka) — the published `@sol-fab/kafka` and [`@sol-fab/obs`](https://github.com/loganbnielsen/sol-obs) packages, plus the [`demo_ts`](examples/pluto/app/demo_ts/README.md) showcase
 - [Product Architecture](docs/architecture/PRODUCT_ARCHITECTURE.md) — factory model, design principles, ownership lanes
 - [Factory Pipeline](docs/architecture/devops-pipeline.md) — what each `sol` command does

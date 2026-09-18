@@ -2,7 +2,7 @@ name: fn/svc isolation spike (INFRA-016)
 
 # INFRA-016: characterizes whether a bursty -fn workload can materially
 # degrade a long-lived -svc sharing the same node pool -- not a merge gate,
-# run on demand. See pipeline/tickets/ for the full experimental design and
+# run on demand. See internal/pipeline/tickets/ for the full experimental design and
 # the failure criteria this job checks against (defined before this job was
 # written, not fitted to whatever numbers come out).
 on:
@@ -36,7 +36,7 @@ jobs:
         run: |
           {
             echo "refs<<SUPPORT_REFS"
-            devtools/ci/resolve-support-packages.sh
+            internal/ci/resolve-support-packages.sh
             echo "SUPPORT_REFS"
           } >> "$GITHUB_OUTPUT"
 

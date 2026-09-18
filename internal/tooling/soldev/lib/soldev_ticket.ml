@@ -1,0 +1,470 @@
+(* Only three persisted states remain (see REFAC-077) — see the .mli for the
+   full rationale. *)
+type ticket_state =
+  | Backlog
+  | Ready_for_engineering
+  | Done
+
+let state_to_dir = function
+  | Backlog -> "BACKLOG"
+  | Ready_for_engineering -> "READY_FOR_ENGINEERING"
+  | Done -> "DONE"
+;;
+
+let state_of_dir = function
+  | "BACKLOG" -> Some Backlog
+  | "READY_FOR_ENGINEERING" -> Some Ready_for_engineering
+  | "DONE" -> Some Done
+  | _ -> None
+;;
+
+let all_states = [ Backlog; Ready_for_engineering; Done ]
+
+let parse_frontmatter content =
+  match String.split_on_char '\n' content with
+  | "---" :: rest ->
+    let rec collect acc = function
+      | [] | "---" :: _ -> acc
+      | line :: rest ->
+        (match String.index_opt line ':' with
+         | Some i ->
+           let key = String.trim (String.sub line 0 i) in
+           let value =
+             String.trim (String.sub line (i + 1) (String.length line - i - 1))
+           in
+           collect ((key, value) :: acc) rest
+         | None -> collect acc rest)
+    in
+    collect [] rest
+  | _ -> []
+;;
+
+let fm_get fields key =
+  match List.assoc_opt key fields with
+  | Some v when v <> "" -> Some v
+  | _ -> None
+;;
+
+let starts_with ~prefix s =
+  let lp = String.length prefix in
+  String.length s >= lp && String.sub s 0 lp = prefix
+;;
+
+(* Add or overwrite a `key: value` line inside the frontmatter block, leaving
+   the rest of the ticket body untouched. Appends the field if not already
+   present. Returns [content] unchanged if it has no frontmatter block. *)
+let set_frontmatter_field content key value =
+  match String.split_on_char '\n' content with
+  | "---" :: rest ->
+    let rec split_fm acc = function
+      | "---" :: after -> Some (List.rev acc, after)
+      | line :: after -> split_fm (line :: acc) after
+      | [] -> None
+    in
+    (match split_fm [] rest with
+     | None -> content
+     | Some (fm_lines, body) ->
+       let prefix = key ^ ":" in
+       let is_field l = starts_with ~prefix l in
+       let new_line = Printf.sprintf "%s: %s" key value in
+       let fm_lines =
+         if List.exists is_field fm_lines
+         then List.map (fun l -> if is_field l then new_line else l) fm_lines
+         else fm_lines @ [ new_line ]
+       in
+       String.concat "\n" (("---" :: fm_lines) @ ("---" :: body)))
+  | _ -> content
+;;
+
+let contains_substring ~needle s =
+  let ln = String.length needle in
+  let ls = String.length s in
+  if ln = 0
+  then true
+  else if ln > ls
+  then false
+  else (
+    let rec go i =
+      if i > ls - ln
+      then false
+      else if String.sub s i ln = needle
+      then true
+      else go (i + 1)
+    in
+    go 0)
+;;
+
+let strip_trailing_period s =
+  let s = String.trim s in
+  let n = String.length s in
+  if n > 0 && s.[n - 1] = '.' then String.sub s 0 (n - 1) else s
+;;
+
+let is_ticket_id_token_char c =
+  (c >= 'A' && c <= 'Z')
+  || (c >= 'a' && c <= 'z')
+  || (c >= '0' && c <= '9')
+  || c = '_'
+  || c = '-'
+;;
+
+(* A ticket ID looks like PREFIX-NUMBER, where PREFIX is uppercase
+   letters/underscores (FEAT, AUDIT, CODEX_STYLE_AUDIT, ...) and NUMBER is
+   digits (FEAT-033, CODEX_STYLE_AUDIT-006). Reject anything else so prose
+   words in an annotated "Depends on:" line (e.g. "(done — merged as the
+   evidence base for this ticket)", "conceptually", "in practice") never get
+   mistaken for a dependency. *)
+let is_ticket_id_token s =
+  match String.rindex_opt s '-' with
+  | None -> false
+  | Some i when i = 0 || i = String.length s - 1 -> false
+  | Some i ->
+    let prefix = String.sub s 0 i in
+    let suffix = String.sub s (i + 1) (String.length s - i - 1) in
+    let is_upper_or_underscore c = (c >= 'A' && c <= 'Z') || c = '_' in
+    let is_digit c = c >= '0' && c <= '9' in
+    prefix.[0] >= 'A'
+    && prefix.[0] <= 'Z'
+    && String.for_all is_upper_or_underscore prefix
+    && String.length suffix > 0
+    && String.for_all is_digit suffix
+;;
+
+(* Extract every ticket-ID-shaped token from a raw "Depends on:" value,
+   ignoring parenthetical annotations, prose ("and", "in practice", "not a
+   hard dependency"), and punctuation — a "Depends on:" line in this repo is
+   free-form prose, not a structured list (e.g.
+   "FEAT-034 (done), FEAT-035 (done)." or
+   "FEAT-034 in practice — ... Not a hard code dependency."). *)
+let dedup_preserve_order tokens =
+  let seen = Hashtbl.create (List.length tokens) in
+  List.filter
+    (fun token ->
+       if Hashtbl.mem seen token
+       then false
+       else (
+         Hashtbl.add seen token ();
+         true))
+    tokens
+;;
+
+let extract_ticket_ids raw =
+  let n = String.length raw in
+  let rec go i acc =
+    if i >= n
+    then List.rev acc
+    else if not (is_ticket_id_token_char raw.[i])
+    then go (i + 1) acc
+    else (
+      let j = ref i in
+      while !j < n && is_ticket_id_token_char raw.[!j] do
+        incr j
+      done;
+      let token = String.sub raw i (!j - i) in
+      let acc = if is_ticket_id_token token then token :: acc else acc in
+      go !j acc)
+  in
+  go 0 [] |> dedup_preserve_order
+;;
+
+(* "None." always means zero dependencies in this repo's convention, even
+   when followed by an unrelated parenthetical aside that happens to mention
+   another ticket (e.g. "None. (BUG-008's fix already unblocked this.)") —
+   that mention is context, not a second dependency. *)
+let starts_with_none raw =
+  let raw = String.trim raw in
+  let n = String.length raw in
+  n >= 4
+  && String.lowercase_ascii (String.sub raw 0 4) = "none"
+  && (n = 4 || not (is_ticket_id_token_char raw.[4]))
+;;
+
+let parse_depends content =
+  let prefix = "**Depends on:**" in
+  let rec find = function
+    | [] -> []
+    | line :: rest ->
+      let line = String.trim line in
+      if starts_with ~prefix line
+      then (
+        let raw =
+          String.sub
+            line
+            (String.length prefix)
+            (String.length line - String.length prefix)
+          |> strip_trailing_period
+        in
+        if starts_with_none raw then [] else extract_ticket_ids raw)
+      else find rest
+  in
+  find (String.split_on_char '\n' content)
+;;
+
+let has_human_decision_gate content =
+  List.exists
+    (fun marker -> contains_substring ~needle:marker content)
+    [ "## Decision Required"
+    ; "## Blocked On"
+    ; "## Open Questions"
+    ; "**Decision required:**"
+    ; "**Blocked on:**"
+    ; "**Open questions:**"
+    ; "TBD"
+    ; "TODO(decide)"
+    ; "NEEDS HUMAN"
+    ]
+;;
+
+let human_decision_details content =
+  let lines = String.split_on_char '\n' content in
+  let section_markers =
+    [ "## Decision Required"
+    ; "## Blocked On"
+    ; "## Open Questions"
+    ; "**Decision required:**"
+    ; "**Blocked on:**"
+    ; "**Open questions:**"
+    ]
+  in
+  let marker_lines = [ "TBD"; "TODO(decide)"; "NEEDS HUMAN" ] in
+  let is_bold_heading line =
+    let line = String.trim line in
+    starts_with ~prefix:"**" line && contains_substring ~needle:":**" line
+  in
+  let is_boundary marker line =
+    let line = String.trim line in
+    if starts_with ~prefix:"## " marker
+    then starts_with ~prefix:"## " line && line <> marker
+    else is_bold_heading line && line <> marker
+  in
+  let rec collect_section marker acc = function
+    | [] -> List.rev acc
+    | line :: rest ->
+      let trimmed = String.trim line in
+      if acc = [] && trimmed <> marker
+      then collect_section marker acc rest
+      else if acc <> [] && is_boundary marker trimmed
+      then List.rev acc
+      else collect_section marker (line :: acc) rest
+  in
+  let sections =
+    section_markers
+    |> List.filter_map (fun marker ->
+      let section = collect_section marker [] lines in
+      if section = [] then None else Some (String.concat "\n" section))
+  in
+  let marker_hits =
+    lines
+    |> List.filter (fun line ->
+      List.exists (fun m -> contains_substring ~needle:m line) marker_lines)
+  in
+  String.concat "\n\n" (sections @ marker_hits)
+;;
+
+(* ── the title ───────────────────────────────────────────────────────────── *)
+
+(* A line that is a bold-labelled field, e.g. `**Depends on:** None.` or
+   `**Related:** DEC-016`. Recognising the *shape* rather than listing labels is
+   the point: `**Status:**` first became a displayed summary, then `**Related:**`
+   and `**Replaces:**` did — each a new label the old hardcoded skip list did not
+   know, and each noticed only after it showed up in `pipeline ls`.
+
+   Note the shape: the bold span *closes around the colon* (`**Label:**`), so the
+   marker to look for sits immediately after it, not before. Getting that
+   backwards makes the rule match nothing, which is how this was first written. *)
+let is_bold_field_line line =
+  let line = String.trim line in
+  match String.index_opt line ':' with
+  | None -> false
+  | Some colon ->
+    String.length line >= 4
+    && String.sub line 0 2 = "**"
+    && colon + 3 <= String.length line
+    && String.sub line (colon + 1) 2 = "**"
+;;
+
+let is_heading line =
+  let line = String.trim line in
+  String.length line > 0 && line.[0] = '#'
+;;
+
+let strip_heading_markers line =
+  let line = String.trim line in
+  let n = String.length line in
+  let rec first_content i =
+    if i < n && line.[i] = '#' then first_content (i + 1) else i
+  in
+  let start = first_content 0 in
+  String.trim (String.sub line start (n - start))
+;;
+
+(* ── premise probes (INFRA-010) ──────────────────────────────────────────── *)
+
+(* A ticket's premise is the claim that its finding is still unfixed. Most name a
+   symbol, file or command that would not exist if the work had been done, so a
+   probe is written in the *inverted* form: it SUCCEEDS when the premise no
+   longer holds, i.e. when the ticket may already be done.
+
+   The inversion is deliberate. The natural form — "succeeds when the premise
+   still holds" — needs every probe wrapped in a negation, and a mis-negated
+   probe then fails silently in the direction of "still actionable", which is the
+   exact failure this exists to catch. *)
+type premise_verdict =
+  | Premise_holds
+  | Premise_stale
+  | Premise_unverified of string
+
+let premise_of content =
+  match fm_get (parse_frontmatter content) "premise" with
+  | None -> None
+  | Some probe ->
+    (* The convention quotes a probe containing a colon or quote character, so
+       accept both forms rather than documenting one and parsing the other. *)
+    let probe = String.trim probe in
+    let n = String.length probe in
+    let unquoted =
+      if
+        n >= 2
+        && ((probe.[0] = '"' && probe.[n - 1] = '"')
+            || (probe.[0] = '\'' && probe.[n - 1] = '\''))
+      then String.trim (String.sub probe 1 (n - 2))
+      else probe
+    in
+    if unquoted = "" then None else Some unquoted
+;;
+
+(* [exit_code] is passed in rather than obtained here, so the classification is
+   testable without executing anything. A probe that cannot be run at all is
+   "unverified" rather than "holds": failing open in the useful direction. *)
+let premise_verdict ~probe ~exit_code =
+  if String.trim probe = ""
+  then Premise_unverified "the ticket declares an empty probe"
+  else if exit_code = 0
+  then Premise_stale
+  else if exit_code = 127
+  then Premise_unverified "the probe command was not found (exit 127)"
+  else if exit_code = 126
+  then Premise_unverified "the probe command is not executable (exit 126)"
+  else Premise_holds
+;;
+
+let ticket_title content =
+  (* An explicit title wins, always. Intent stated beats intent inferred, and it
+     survives editing the body — every other rule here is a guess about which
+     line the author meant. *)
+  match fm_get (parse_frontmatter content) "title" with
+  | Some title when String.trim title <> "" -> String.trim title
+  | _ ->
+    let lines = String.split_on_char '\n' content in
+    let after_frontmatter = function
+      | "---" :: rest ->
+        let rec skip = function
+          | [] -> []
+          | "---" :: rest -> rest
+          | _ :: rest -> skip rest
+        in
+        skip rest
+      | lines -> lines
+    in
+    (* The first line that is not metadata. If it is a heading, drop the markers:
+       a summary should read as a title, not as Markdown. Note this takes the
+       first content line rather than the first *heading* anywhere in the body —
+       a ticket that opens with prose and later has `## Problem` would otherwise
+       be titled "Problem". *)
+    after_frontmatter lines
+    |> List.find_opt (fun line ->
+      let line = String.trim line in
+      line <> "" && not (is_bold_field_line line))
+    |> Option.map (fun line ->
+      if is_heading line then strip_heading_markers line else String.trim line)
+    |> Option.value ~default:"-"
+;;
+
+let find_ticket ticket_id =
+  List.find_map
+    (fun state ->
+       let dir = state_to_dir state in
+       let path = Printf.sprintf "internal/pipeline/tickets/%s/%s.md" dir ticket_id in
+       if Sys.file_exists path then Some (state, path) else None)
+    all_states
+;;
+
+let dependency_status dep =
+  match find_ticket dep with
+  | None -> `Unknown
+  | Some (Done, _) -> `Done
+  | Some (state, _) -> `Blocked state
+;;
+
+let dependency_summary deps =
+  match deps with
+  | [] -> "none"
+  | deps -> String.concat ", " deps
+;;
+
+(* ── dependency cycles ───────────────────────────────────────────────────── *)
+
+(* [find_dependency_cycle_from ~deps_of start] follows [deps_of] from [start]
+   and returns the first cycle it closes, as a path such as
+   ["DEC-020"; "FEAT-063"; "DEC-020"], or [None].
+
+   A cycle is the failure mode this exists to surface. Every member reports only
+   "blocked by <the other>" — which is indistinguishable from waiting on real
+   work — so the queue reads as idle rather than broken. It happened: a prose
+   mention on a `Depends on:` line became a dependency (`Implemented by
+   FEAT-059`), and DEC-020 and FEAT-063 each named the other while neither was
+   actionable, with nothing saying why.
+
+   [deps_of] is injected so the walk is testable without the filesystem. *)
+let find_dependency_cycle_from ~deps_of start =
+  (* [path] is newest-first. On detection the repeated id heads [id :: path],
+     and the earlier occurrence is somewhere behind it; trimming to the first
+     occurrence drops any prefix walked before the cycle was entered, so a cycle
+     reached from outside does not report the approach path as part of it. *)
+  let cycle_from rev_path repeated =
+    let rec drop = function
+      | [] -> []
+      | x :: rest -> if x = repeated then x :: rest else drop rest
+    in
+    drop (List.rev rev_path)
+  in
+  let rec walk path id =
+    if List.mem id path
+    then Some (cycle_from (id :: path) id)
+    else List.find_map (walk (id :: path)) (deps_of id)
+  in
+  walk [] start
+;;
+
+let find_dependency_cycle ticket_id =
+  find_dependency_cycle_from
+    ~deps_of:(fun id ->
+      match find_ticket id with
+      | None -> []
+      | Some (_, path) ->
+        parse_depends (In_channel.with_open_text path In_channel.input_all))
+    ticket_id
+;;
+
+(* A cycle only matters when it actually blocks. If any member is already done,
+   the chain is satisfied and what remains is ordinary waiting — reporting a
+   cycle there would be noise. *)
+let cycle_blocks cycle = List.for_all (fun id -> dependency_status id <> `Done) cycle
+
+let readiness_label ~ticket_id state content =
+  if has_human_decision_gate content
+  then "needs-human"
+  else (
+    let deps = parse_depends content in
+    match find_dependency_cycle ticket_id with
+    | Some cycle when cycle_blocks cycle ->
+      "blocked: dependency cycle " ^ String.concat " -> " cycle
+    | _ ->
+      (match List.find_opt (fun dep -> dependency_status dep <> `Done) deps with
+       | Some dep ->
+         (match dependency_status dep with
+          | `Unknown -> "blocked: unknown " ^ dep
+          | `Blocked s -> "blocked: " ^ dep ^ " in " ^ state_to_dir s
+          | `Done -> "actionable")
+       | None -> if state = Ready_for_engineering then "actionable" else "-"))
+;;

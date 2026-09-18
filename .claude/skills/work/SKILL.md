@@ -53,7 +53,7 @@ If `soldev pipeline check <ticket-id>` prints `worktree: (dirty worktree ...)` o
    ```bash
    git worktree add -b ticket-id/short-slug ../sol-ticket-id-short-slug main
    ```
-   No `pipeline/tickets/` commit for this — nothing to record on `main` yet.
+   No `internal/pipeline/tickets/` commit for this — nothing to record on `main` yet.
 3. Implement the ticket in the worktree — read the ticket's **Remediation** as the specification.
    - Per `.claude/CLAUDE.md`'s demo/example coverage rule: if the ticket changes
      what an app author does (new `sol.toml` field, primitive/runtime contract,
@@ -64,14 +64,14 @@ If `soldev pipeline check <ticket-id>` prints `worktree: (dirty worktree ...)` o
      completion notes.
 4. **Your own last implementation commit in the worktree must move the ticket file itself:**
    ```bash
-   git mv pipeline/tickets/READY_FOR_ENGINEERING/<ticket-id>.md pipeline/tickets/DONE/<ticket-id>.md
+   git mv internal/pipeline/tickets/READY_FOR_ENGINEERING/<ticket-id>.md internal/pipeline/tickets/DONE/<ticket-id>.md
    ```
    Commit this together with (or as the final commit after) your code changes, on the branch. This is what makes the eventual squash-merge carry the ticket's completion into `main` for free.
 5. From **inside the worktree** (not the main checkout — there is nothing on `main` to touch):
    ```bash
    soldev pipeline submit <ticket-id>
    ```
-   Pushes the branch and opens a PR (or reuses an existing one for that branch) via `gh pr create`. Does not touch `pipeline/tickets/` on `main` at all.
+   Pushes the branch and opens a PR (or reuses an existing one for that branch) via `gh pr create`. Does not touch `internal/pipeline/tickets/` on `main` at all.
 
 ### Ticket already has an open PR → resume + implement
 
@@ -109,7 +109,7 @@ Build failure → immediate **fail** with compiler error as violation.
 git diff main...<branch> --stat
 git diff main...<branch>
 ```
-Verify changes are confined to files relevant to the ticket, **except** the expected `pipeline/tickets/READY_FOR_ENGINEERING/<id>.md → DONE/<id>.md` move — that one is required, not a scope violation.
+Verify changes are confined to files relevant to the ticket, **except** the expected `internal/pipeline/tickets/READY_FOR_ENGINEERING/<id>.md → DONE/<id>.md` move — that one is required, not a scope violation.
 
 #### C. Implementation correctness
 Read each changed file. Verify:

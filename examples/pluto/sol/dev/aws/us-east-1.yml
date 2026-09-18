@@ -1,9 +1,9 @@
 target:
-  cluster_name: sol-dev-lbendtly
+  cluster_name: sol-dev
   base_domain: smoke-test.invalid
   cluster_issuer: letsencrypt-staging
   letsencrypt_email: smoke-test@example.invalid
-  terraform_var_file: ../../cli/platform/infra/aws/smoke-test.tfvars
+  terraform_var_file: ../../../../../internal/qualification/aws/smoke-test.tfvars
 
 resources:
   app_db:

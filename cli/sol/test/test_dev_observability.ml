@@ -96,7 +96,7 @@ let test_tempo_datasource_configmap () =
    Sol_cli_cmd_new.is_sol_home checks for plus the synthetic template,
    same pattern as test_platform_component.ml's with_fake_sol_home. *)
 let sol_home_markers =
-  [ "framework/sol-svc/lib/dune"; "framework/kafka-eio-service/lib/dune" ]
+  [ "framework/ocaml/sol-svc/lib/dune"; "framework/ocaml/kafka-eio-service/lib/dune" ]
 ;;
 
 let write_file path content =

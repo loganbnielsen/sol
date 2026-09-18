@@ -45,7 +45,7 @@ branches, while deletion is only allowed as a same-ID state move.
 ## Commits and branch protection
 
 **Every change reaches `main` through a pull request.** There is no exception,
-including pipeline/planning/bookkeeping under `pipeline/`, documentation
+including internal/pipeline/planning/bookkeeping under `internal/pipeline/`, documentation
 (`*.md`), and the perf baseline.
 
 ```text

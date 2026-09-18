@@ -9,8 +9,8 @@ on:
 jobs:
   # Classifies the diff ONCE for the whole run. Every job consumes this output;
   # none of them carries its own path list. The definition itself lives in
-  # devtools/ci/classify-changes.sh, shared with the local pre-commit hook, and
-  # its semantics are pinned by devtools/ci/test_classify_changes.sh.
+  # internal/ci/classify-changes.sh, shared with the local pre-commit hook, and
+  # its semantics are pinned by internal/ci/test_classify_changes.sh.
   #
   # continue-on-error: classification must never be able to fail the workflow.
   # If this job dies, `kind` is empty, and every consumer's condition
@@ -43,7 +43,7 @@ jobs:
           # authoritative, and only pull-request execution is optimised.
           kind="source"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            kind="$(devtools/ci/classify-changes.sh --range "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" || echo source)"
+            kind="$(internal/ci/classify-changes.sh --range "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" || echo source)"
           fi
           case "$kind" in
             docs-only|source) ;;
@@ -73,7 +73,7 @@ jobs:
       - name: Resolve support-package commits
         id: resolve
         run: |
-          refs="$(devtools/ci/resolve-support-packages.sh)"
+          refs="$(internal/ci/resolve-support-packages.sh)"
           printf '%s\n' "$refs"
           {
             echo "refs<<SUPPORT_REFS"
@@ -100,11 +100,11 @@ jobs:
             echo "### Classification: docs-only"
             echo ""
             echo "The required \`test\` check is green because **every** changed path is in the"
-            echo "safe allowlist (\`docs/**\`, \`pipeline/tickets/**\`, \`*.md\` outside"
-            echo "\`.github/**\`, \`devtools/perf/perf_baseline.json\`)."
+            echo "safe allowlist (\`docs/**\`, \`internal/pipeline/tickets/**\`, \`*.md\` outside"
+            echo "\`.github/**\`, \`internal/tooling/perf/perf_baseline.json\`)."
             echo ""
             echo "The full suite was deliberately not run. Classification semantics are pinned by"
-            echo "\`devtools/ci/test_classify_changes.sh\`."
+            echo "\`internal/ci/test_classify_changes.sh\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install system dependencies
@@ -177,9 +177,9 @@ jobs:
 
       - name: Unit tests (no broker/Postgres/Loki required)
         if: needs.classify.outputs.kind != 'docs-only'
-        # framework/kafka-eio-service/ excluded: its test/dune also builds a
+        # framework/ocaml/kafka-eio-service/ excluded: its test/dune also builds a
         # broker-requiring integration suite (see run_tests.sh's run_kafka()).
-        run: opam exec -- dune test framework/sol-env/ framework/sol-fn/ framework/sol-obs/ framework/sol-runtime/ framework/sol-svc/ framework/sol-worker/ cli/sol/test/
+        run: opam exec -- dune test framework/ocaml/sol-env/ framework/ocaml/sol-fn/ framework/ocaml/sol-obs/ framework/ocaml/sol-runtime/ framework/ocaml/sol-svc/ framework/ocaml/sol-worker/ cli/sol/test/
 
       # INFRA-006: formatting check runs after unit tests on purpose — running
       # `dune fmt --preview` first populates _build/default/framework, which
@@ -195,34 +195,37 @@ jobs:
 
       - name: Platform-component drift guardrail (ADR 0001 / CODE_LAYER-005)
         if: needs.classify.outputs.kind != 'docs-only'
-        run: devtools/ci/check_platform_component_drift.sh
+        run: internal/ci/check_platform_component_drift.sh
 
-      - name: Change-classification semantics (devtools/ci/classify-changes.sh)
+      - name: Change-classification semantics (internal/ci/classify-changes.sh)
         # The classifier decides whether the expensive suite runs, so it is part
         # of the gate rather than a convenience. Its boundaries are pinned here
         # so a future refactor cannot silently widen the docs-only allowlist --
         # "skip expensive CI" quietly becoming "skip CI for something important"
         # would not be visible in a normal review of the diff.
-        run: bash devtools/ci/test_classify_changes.sh
+        run: bash internal/ci/test_classify_changes.sh
 
       - name: Support-package snapshot resolver
-        run: bash devtools/ci/test_resolve_support_packages.sh
+        run: bash internal/ci/test_resolve_support_packages.sh
 
       - name: Ticket-state transition guard
         if: needs.classify.outputs.kind != 'docs-only'
-        run: bash devtools/ci/test_ticket_transitions.sh
+        run: bash internal/ci/test_ticket_transitions.sh
 
       - name: Signal-handler duplication guardrail (REFAC-081)
         if: needs.classify.outputs.kind != 'docs-only'
-        run: devtools/ci/check_signal_handler_duplication.sh
+        run: internal/ci/check_signal_handler_duplication.sh
 
       - name: Qualification-artifact guardrail (HARDEN-002 run 2)
         # No classification condition: a real account id or a provisioned target
         # reaching the repo is exactly as bad in a docs-only change.
-        run: devtools/ci/check_no_account_artifacts.sh
+        run: internal/ci/check_no_account_artifacts.sh
+
+      - name: Qualification-artifact guardrail mutation test
+        run: internal/ci/test_no_account_artifacts.sh
 
       - name: Public cloud lifecycle guardrail (HARDEN-002 finding 5)
-        run: devtools/ci/test_public_cloud_lifecycle.sh
+        run: internal/ci/test_public_cloud_lifecycle.sh
 
   # FRIC-009: smallest check that would have caught a regression like
   # FRIC-007 (every generated service permanently broken on a fresh
@@ -685,7 +688,7 @@ jobs:
           done
 
   # FRIC-014: nothing else catches the checked-in example workspaces
-  # (examples/pluto, examples/venus) drifting out of sync with what `sol
+  # (examples/pluto, internal/fixtures/venus) drifting out of sync with what `sol
   # new`'s scaffold template (tpl_dockerfile in
   # cli/sol/lib/sol_cli_scaffold_templates.ml) actually generates.
   # DOGFOOD-011 found a real, live instance: a stale base image tag and a
@@ -728,10 +731,10 @@ jobs:
             context: examples/pluto
           - dockerfile: examples/pluto/app/comms/notify_worker/Dockerfile
             context: examples/pluto
-          - dockerfile: examples/venus/app/comms/notify_worker/Dockerfile
-            context: examples/venus
-          - dockerfile: examples/venus/app/logistics/fulfillment_worker/Dockerfile
-            context: examples/venus
+          - dockerfile: internal/fixtures/venus/app/comms/notify_worker/Dockerfile
+            context: internal/fixtures/venus
+          - dockerfile: internal/fixtures/venus/app/logistics/fulfillment_worker/Dockerfile
+            context: internal/fixtures/venus
     steps:
       - uses: actions/checkout@v5
 

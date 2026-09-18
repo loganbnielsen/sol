@@ -1,4 +1,4 @@
-// The OrderPlaced.decode port from examples/local-demo/lib/events.ml —
+// The OrderPlaced.decode port from internal/fixtures/local-demo/lib/events.ml —
 // required-field validation is how the OCaml reference actually enforces
 // the contract at consume time (not a separate JSON-schema validator call),
 // so this mirrors that exactly. The Confluent wire-format decode itself

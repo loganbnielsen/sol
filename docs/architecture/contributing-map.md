@@ -5,17 +5,32 @@ a framework: intent should enter through typed models, commands, templates, or
 docs, then flow to generated artifacts. Generated YAML, shell calls, and
 workflow outputs are not ownership boundaries.
 
+## Where things live
+
+```text
+cli/        the `sol` CLI and the platform implementation it drives
+contract/   the language-neutral application contract
+framework/  first-party implementations (OCaml; TypeScript lives in sibling repos)
+examples/   runnable applications that teach the product (start with pluto)
+docs/       architecture, deployment, guides, hosting, legal, planning
+internal/   maintainer machinery: ci/, qualification/, pipeline/, tooling/, fixtures/
+```
+
+If you are working on the product, you want `cli/`, `contract/`, and
+`framework/`. `internal/` is not part of the product or the application
+contract; it holds the CI guardrails, live qualification harness, ticket
+system, maintainer tooling, and test fixtures.
+
 For audit-oriented work, use these workflows as the entry points:
 
-- [`/style-audit`](../../pipeline/tickets/)
-  for repository style and consistency work. This worktree does not currently
-  track `docs/audits/STYLE_AUDIT.md`; style-audit tickets identify that source
-  when the checklist is present.
+- [`/style-audit`](../audits/STYLE_AUDIT.md)
+  for repository style and consistency work, against the checklist in
+  `docs/audits/STYLE_AUDIT.md`.
 - [`/audit`](../audits/AUDIT.md) for product and implementation correctness
   checks.
 - [`/scaffold-audit`](../audits/SCAFFOLD_AUDIT.md) for generated workspace and
   service contract checks.
-- [`/e2e`](../../examples/local-demo/test/test_e2e.ml) for end-to-end local
+- [`/e2e`](../../internal/fixtures/local-demo/test/test_e2e.ml) for end-to-end local
   workflow verification.
   [`cli/platform/local/scripts/run_tests.sh`](../../cli/platform/local/scripts/run_tests.sh)
   is the broader local test runner reference.
@@ -24,7 +39,7 @@ For audit-oriented work, use these workflows as the entry points:
 
 Command parsing and user-facing CLI behavior live in `cli/sol/bin/`. Shared
 command implementation belongs in `cli/sol/lib/`, especially when more than one
-command needs the same behavior. `devtools/soldev/` is for internal repository and
+command needs the same behavior. `internal/tooling/soldev/` is for internal repository and
 ticket workflow tooling, not customer-facing `sol` commands.
 
 Extend commands by adding typed options, shared library functions, and tests in
@@ -97,8 +112,8 @@ schema registry + service orchestration, the same kind of app-linked library
 as `sol-svc`/`sol-worker`/`sol-fn`) or extracted to standalone opam packages
 pinned into this switch (`kafka-eio`, `obs-eio`, `obs-loki-eio`,
 `obs-prometheus-eio`, `pg-eio`, `aws-eio` — see `~/Code/CLAUDE.md`'s repo
-layout notes). Framework primitives in `framework/sol-svc`, `framework/sol-worker`,
-and `framework/sol-fn` compose these into service lifecycles.
+layout notes). Framework primitives in `framework/ocaml/sol-svc`, `framework/ocaml/sol-worker`,
+and `framework/ocaml/sol-fn` compose these into service lifecycles.
 
 Extend an in-tree capability package with a small public interface,
 package-local tests, and package docs. Keep customer service code using the
@@ -113,7 +128,7 @@ lowest package that owns the concept.
 
 Unit and package tests live beside their owner package in `test/` directories.
 CLI behavior is covered in `cli/sol/test/`. End-to-end behavior is represented
-by `examples/local-demo/test/test_e2e.ml` and the `/e2e` workflow. Audit
+by `internal/fixtures/local-demo/test/test_e2e.ml` and the `/e2e` workflow. Audit
 checklists in `docs/audits/` define manual verification expectations.
 
 Extend tests at the same boundary as the behavior being changed. For generated
@@ -130,7 +145,7 @@ the full local workflow.
 User-facing docs live in `README.md`, `docs/guides/`, `docs/deployment/`, and
 `docs/hosted/`. Architecture and ownership docs live in `docs/architecture/`.
 Audit checklists live in `docs/audits/`; dated audit findings belong under
-`pipeline/audits/`, not in reusable checklist files.
+`internal/pipeline/audits/`, not in reusable checklist files.
 
 Extend docs where the reader is already making the relevant decision: quickstart
 behavior in `README.md`, walkthroughs in `docs/guides/`, deployment contracts in

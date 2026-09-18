@@ -11,16 +11,16 @@ and update call sites in the same pass. Full policy: `~/Code/CLAUDE.md`.
 
 ## Current development focus
 
-**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform modules live at `cli/platform/infra/base/`, `cli/platform/infra/aws/`, and `cli/platform/infra/gcp/`. Remaining hosted-product work is tracked in `pipeline/tickets/`. See `docs/planning/WORK_SUMMARY.md` for full details.
+**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform modules live at `cli/platform/infra/base/`, `cli/platform/infra/aws/`, and `cli/platform/infra/gcp/`. Remaining hosted-product work is tracked in `internal/pipeline/tickets/`. See `docs/planning/WORK_SUMMARY.md` for full details.
 
 Package: `cli/sol/` — binary at `_build/default/cli/sol/bin/main.exe`.
 
 ## Ticket system
 
-Work is tracked in `pipeline/tickets/` using a directory-per-status layout. Each ticket is a markdown file with YAML frontmatter.
+Work is tracked in `internal/pipeline/tickets/` using a directory-per-status layout. Each ticket is a markdown file with YAML frontmatter.
 
 ```
-pipeline/tickets/
+internal/pipeline/tickets/
   BACKLOG/                  ← captured but not yet prioritised
   READY_FOR_ENGINEERING/    ← actionable; pick up with /work — covers "not started"
                                through "PR open, in review": GitHub's own open-PR/
@@ -35,7 +35,7 @@ reverting a merged implementation returns `DONE` to `READY_FOR_ENGINEERING`.
 There is no separate "in progress," "in review," "ready to merge," or
 "blocked by performance" directory any more.
 
-Every `pipeline/tickets/` change goes through a PR. New findings are created in
+Every `internal/pipeline/tickets/` change goes through a PR. New findings are created in
 `BACKLOG/` or `READY_FOR_ENGINEERING/` on the audit/filing branch; promotions,
 corrections, and other bookkeeping use their own branches. An implementation
 branch moves its own ticket from `READY_FOR_ENGINEERING/` to `DONE/` in the
@@ -49,7 +49,7 @@ Do not add a `status:` field — the directory encodes status.
 
 **Human-judgment gates:** Tickets in `BACKLOG/` may contain `## Open Questions`, `## Decision Required`, or `## Blocked On` sections. Tickets in `READY_FOR_ENGINEERING/` are treated as actionable, so `/work` must stop before creating a worktree if any unresolved decision section or marker remains. Resolve the decision in the ticket body or keep the ticket in `BACKLOG/` until the Remediation is unambiguous.
 
-**Ticket dependencies:** Use a body line near the top of each ticket: `**Depends on:** None.` or `**Depends on:** FEAT-003, EXP-008.` **Every ticket id on that line becomes a dependency**, whatever prose surrounds it — so a mention like `Implemented by FEAT-059` or `Related: DEC-016` creates a dependency you did not intend, and two tickets referring to each other that way deadlock. Put other mentions on their own line. `/work` must verify dependencies before creating a worktree. A `READY_FOR_ENGINEERING` ticket with dependencies not yet in `pipeline/tickets/DONE/` stays blocked; if a cycle does form, `soldev pipeline check` and `pipeline ls` report it as a cycle rather than as ordinary waiting.
+**Ticket dependencies:** Use a body line near the top of each ticket: `**Depends on:** None.` or `**Depends on:** FEAT-003, EXP-008.` **Every ticket id on that line becomes a dependency**, whatever prose surrounds it — so a mention like `Implemented by FEAT-059` or `Related: DEC-016` creates a dependency you did not intend, and two tickets referring to each other that way deadlock. Put other mentions on their own line. `/work` must verify dependencies before creating a worktree. A `READY_FOR_ENGINEERING` ticket with dependencies not yet in `internal/pipeline/tickets/DONE/` stays blocked; if a cycle does form, `soldev pipeline check` and `pipeline ls` report it as a cycle rather than as ordinary waiting.
 
 **Ticket titles:** The PR title and the listing summary both come from the ticket body — an explicit `title:` frontmatter field when present, otherwise the first line that is not a bold-labelled field, with Markdown heading markers stripped. So either state `title:` or open the body with a real title sentence. Two ways this goes wrong, both observed: opening with a paragraph of argument produces a PR subject that reads as a sentence, and opening with a labelled field (any `**Label:**`, not just `**Depends on:**`) makes that field the displayed summary.
 
@@ -65,7 +65,7 @@ Two rules for writing one: **`check` echoes the command before running it, and a
 
 **Demo/example coverage:** Any ticket that changes what an app author does — a new `sol.toml` field, a framework primitive or runtime contract, a new CLI command, or changed generated manifests — must update a runnable example or demo (`examples/`, a tutorial code sample, or the scaffolded workspace) in the same ticket, and must say so in its Acceptance criteria. If a demo genuinely does not apply (internal refactor, pure documentation), state that in one line in the ticket's completion notes. "The CI smoke covers it" is not sufficient: a smoke test is a test, not a reference a user can read or run. New example Dockerfiles go in the `example-dockerfile-smoke` CI matrix, and demo-facing changes run `/demo-review`.
 
-**TypeScript-parity tracking (DEC-022):** Sol's platform is language-neutral, and OCaml and TypeScript are both first-class application languages. Parity is **capability + behavioural parity, not implementation parity** — the contract (schema-registry conventions, Confluent wire format, W3C trace propagation, retry/DLQ semantics, metric-naming/label vocabulary, lifecycle/shutdown, config/secrets, job semantics) must hold across languages, while the implementation underneath need not be shared (`kafka-eio`/`pg-eio` stay OCaml; TypeScript keeps the Node ecosystem and Sol supplies only the semantics/glue). Every application-facing capability carries a per-language verdict — **implemented / already equivalent / intentionally deferred / not applicable**; silence is not a verdict, and deferring a language is an explicit, recorded decision with a trigger, never default debt. Two conformance levels both matter: the **TS golden path** (`sol new --language typescript` → `sol local up` → `sol deploy`, adoption/DX — FEAT-082) and the **capability matrix** (per-capability verdicts, architectural parity — the inventory in `pipeline/dogfood/2026-09-07_typescript_demo_spike.md` + FEAT-080). Concretely: any ticket that changes one of those conventions, or introduces a new framework-level concept an app author gets "for free" (a new primitive, a new library like `sol-jobs`, a new retry/backoff/observability contract), must check the cross-language gap and say so in one line in its completion notes — "no language-parity impact" with why, or a reference to the tracking ticket recording what the other language would now need. This is bookkeeping, not permission-gating — it keeps the two frameworks from silently drifting the way FEAT-076 through FEAT-079 accumulated against a spike that predated them.
+**TypeScript-parity tracking (DEC-022):** Sol's platform is language-neutral, and OCaml and TypeScript are both first-class application languages. Parity is **capability + behavioural parity, not implementation parity** — the contract (schema-registry conventions, Confluent wire format, W3C trace propagation, retry/DLQ semantics, metric-naming/label vocabulary, lifecycle/shutdown, config/secrets, job semantics) must hold across languages, while the implementation underneath need not be shared (`kafka-eio`/`pg-eio` stay OCaml; TypeScript keeps the Node ecosystem and Sol supplies only the semantics/glue). Every application-facing capability carries a per-language verdict — **implemented / already equivalent / intentionally deferred / not applicable**; silence is not a verdict, and deferring a language is an explicit, recorded decision with a trigger, never default debt. Two conformance levels both matter: the **TS golden path** (`sol new --language typescript` → `sol local up` → `sol deploy`, adoption/DX — FEAT-082) and the **capability matrix** (per-capability verdicts, architectural parity — the inventory in `internal/pipeline/dogfood/2026-09-07_typescript_demo_spike.md` + FEAT-080). Concretely: any ticket that changes one of those conventions, or introduces a new framework-level concept an app author gets "for free" (a new primitive, a new library like `sol-jobs`, a new retry/backoff/observability contract), must check the cross-language gap and say so in one line in its completion notes — "no language-parity impact" with why, or a reference to the tracking ticket recording what the other language would now need. This is bookkeeping, not permission-gating — it keeps the two frameworks from silently drifting the way FEAT-076 through FEAT-079 accumulated against a spike that predated them.
 
 **Skills that interact with tickets:**
 - `/work` — unified entry point; creates worktrees for `READY_FOR_ENGINEERING` tickets with no open PR yet, resumes ones that already have one, runs the review agent on ones ready for it. The worker's own last commit moves the ticket to `DONE/` on the branch before `soldev pipeline submit` pushes it and opens the PR.
@@ -83,7 +83,7 @@ Two rules for writing one: **`check` echoes the command before running it, and a
 - Post-commit hook — informational perf status + orphaned-worktree warnings.
 - Direct-to-`main` ticket-file commits (`BACKLOG` promotions, audit filings) — bookkeeping exception; kept outside PRs because they are metadata moves, not code.
 
-**Performance baseline:** `devtools/perf/perf_baseline.json` is main-only and informational. `run_tests.sh` writes it only with `--update-baseline`; pre-commit never stages it into code commits; merges never revert on perf-ratio regressions (REFAC-078). `.gitattributes` keeps `merge=ours` for local merges.
+**Performance baseline:** `internal/tooling/perf/perf_baseline.json` is main-only and informational. `run_tests.sh` writes it only with `--update-baseline`; pre-commit never stages it into code commits; merges never revert on perf-ratio regressions (REFAC-078). `.gitattributes` keeps `merge=ours` for local merges.
 
 ## Core design principles every engineer must know
 
@@ -99,56 +99,36 @@ Sol is an opinionated production platform for backend systems. Its platform/CLI 
 
 ```
 sol/
-  # kafka-eio-core/producer/consumer + the produce-then-consume demo moved out to the
-  # standalone `kafka-eio` opam package at ~/Code/kafka-eio (own git repo, opam-pinned
-  # into this switch). Edit there, then `opam pin add kafka-eio ~/Code/kafka-eio` to
-  # pick up changes. Single findlib library `kafka-eio`; public API is the nested
-  # `Kafka.Producer`/`Kafka.Consumer`/`Kafka.Error`/`Kafka.Security` modules
-  # (flat `Kafka_producer`/etc. names are private to the kafka-eio package).
-  # obs-eio (core: spans, metrics, trace context), obs-loki-eio (Loki HTTP push
-  # backend), and obs-prometheus-eio (Prometheus exposition backend) moved out to
-  # standalone opam packages at ~/Code/obs-eio, ~/Code/obs-loki-eio, and
-  # ~/Code/obs-prometheus-eio (own git repos, opam-pinned into this switch). Edit
-  # there, then `opam pin add <pkg> https://github.com/loganbnielsen/<pkg>.git` to
-  # pick up changes. Findlib/library names match the package names exactly:
-  # `obs-eio`, `obs-loki-eio`, `obs-prometheus-eio`. Public modules: `Obs_eio`
-  # (+ `Obs_trace`), `Obs_loki`, `Obs_prometheus`. No `integrations/observability/`
-  # directory remains in this repo.
-  # pg-eio (Postgres pool, migrations, Table.Make functor — formerly `sol-storage`)
-  # moved out to a standalone opam package at ~/Code/pg-eio, opam-pinned into this
-  # switch. Edit there, then `opam pin add pg-eio ~/Code/pg-eio` to pick up changes.
-  # Findlib name: `pg-eio`. Public modules unchanged: `Storage_error`, `Db`,
-  # `Migration`, `Table`. No `integrations/storage/` directory remains in this repo.
-  # aws-eio (SigV4 signing, credential resolution, HTTP transport — the foundation
-  # layer for AWS integrations) lives at a standalone opam package, ~/Code/aws-eio,
-  # opam-pinned into this switch, alongside its s3-eio/dynamodb-eio/lambda-eio
-  # siblings (each its own standalone package, own repo). Extracted before any
-  # in-tree consumer existed (unlike kafka-eio/obs-eio/pg-eio, which were pulled
-  # out after real usage). Edit there, then `opam pin add aws-eio ~/Code/aws-eio`
-  # to pick up changes. Findlib name: `aws-eio`. No `integrations/aws/` directory
-  # remains in this repo yet — nothing in Sol consumes this package today.
-  framework/                   ← Sol service primitives
+  # ── product ───────────────────────────────────────────────────────────────
+  cli/                          ← the `sol` CLI (cli/sol) + the platform it drives (cli/platform)
+    sol/{bin,lib,test}/         ← command parsing, shared implementation, tests
+    platform/{components,infra,local}/  ← Helm values, Terraform roots, local k3s tooling
+  contract/                     ← language-neutral application contract (runtime, substrate)
+  framework/ocaml/              ← first-party OCaml framework packages
     sol-svc/lib/                ← REST API service (routes, auth, metrics)
     sol-worker/lib/             ← Kafka consumer (schema registration, per-message metrics)
     sol-fn/lib/                 ← Scheduled function (Pushgateway push, invocation metrics)
     sol-jobs/lib/               ← Postgres-backed leased job library, hosted by a -worker (FEAT-077)
     sol-*/sol-*.md              ← per-package spec docs
     kafka-eio-service/lib/      ← schema registry + service orchestration, depends on `kafka-eio.*`
-    kafka-eio-service/test/
-    kafka-eio-service/kafka-eio-service.md    ← per-package spec doc
-  # No `integrations/` directory remains in this repo — kafka-eio-service moved into
-  # `framework/` (it's an app-linked library like sol-svc/sol-worker/sol-fn, just
-  # historically placed separately because it predates `framework/` as a concept);
-  # the other former `integrations/*` subdirs (storage, observability, aws) were
-  # already extracted to standalone opam packages, described below.
-  examples/local-demo/                         ← full-stack showcase demo (svc → Kafka → worker)
-    lib/                        ← shared event contracts for demo
-    bin/demo.ml                 ← orchestrated demo binary
-  cli/platform/local/
-    scripts/                    ← ensure-broker.sh, ensure-loki.sh, etc.
-    k8s/                        ← Kubernetes manifests
+  examples/pluto/               ← canonical reference application (OCaml + TypeScript, local + cloud)
+  docs/                         ← architecture, deployment, guides, hosted, legal, planning
+  internal/                     ← maintainer machinery (not product)
+    ci/                         ← CI guardrails, classifier, mutation tests
+    qualification/aws/          ← live AWS smoke harness + smoke toolkit
+    pipeline/                   ← tickets/, audits/, dogfood/
+    tooling/                    ← soldev, sol_process, hooks/, perf/
+    fixtures/                   ← test fixtures (OCaml-only worker workspace, e2e demo)
+  # ── package contracts ────────────────────────────────────────────────────
+  *.opam                        ← 9 hand-written package contracts (DEC-025); pin root for `internal/tooling/soldev`
   dune-project / dune-workspace ← unified root build
   README.md / docs/planning/ROADMAP.md / docs/planning/WORK_SUMMARY.md  ← project-wide docs
+
+  # Extracted support packages (own repos, opam-pinned into this switch):
+  #   kafka-eio (~/Code/kafka-eio); obs-eio/obs-loki-eio/obs-prometheus-eio
+  #   (~/Code/obs-*); pg-eio (~/Code/pg-eio); aws-eio/s3-eio/dynamodb-eio/
+  #   lambda-eio (~/Code/aws-eio). Findlib names match the package names.
+  #   No `integrations/` directory remains in this repo.
 ```
 
 ## Build
@@ -191,7 +171,7 @@ bash cli/platform/local/scripts/ensure-prometheus.sh
 
 # Run the full-stack demo (svc → Kafka → worker, with Loki logs + Prometheus metrics)
 KAFKA_BROKERS=localhost:9092 LOKI_URL=http://localhost:3100 \
-  dune exec examples/local-demo/bin/demo.exe
+  dune exec internal/fixtures/local-demo/bin/demo.exe
 
 # Then browse to http://localhost:3000 (Grafana)
 ```
@@ -233,7 +213,7 @@ You must maintain and consult the project's source-of-truth markdown files:
 
 2. **When Writing Code**:
    - Refer to `README.md` for foundational architecture rules.
-   - Refer to the `*.md` spec file co-located with the package you are working in (e.g. `framework/kafka-eio-service/kafka-eio-service.md`) for feature implementation guidelines. For `kafka-eio-core`/`producer`/`consumer`, the spec docs live in the external `~/Code/kafka-eio` repo. For `obs-eio`/`obs-loki-eio`/`obs-prometheus-eio`, the spec docs live in their respective external `~/Code/obs-*` repos. For `pg-eio`, the spec doc (`README.md`) lives in the external `~/Code/pg-eio` repo.
+   - Refer to the `*.md` spec file co-located with the package you are working in (e.g. `framework/ocaml/kafka-eio-service/kafka-eio-service.md`) for feature implementation guidelines. For `kafka-eio-core`/`producer`/`consumer`, the spec docs live in the external `~/Code/kafka-eio` repo. For `obs-eio`/`obs-loki-eio`/`obs-prometheus-eio`, the spec docs live in their respective external `~/Code/obs-*` repos. For `pg-eio`, the spec doc (`README.md`) lives in the external `~/Code/pg-eio` repo.
 
 3. **At Task Completion / Session End**:
    - Update `docs/planning/WORK_SUMMARY.md` to accurately reflect what was accomplished, what is currently "In Progress", and any new implementation hurdles or blockers discovered.

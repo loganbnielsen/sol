@@ -68,8 +68,8 @@ jobs:
       - name: Prove examples/pluto builds without this repository
         run: bash cli/platform/local/scripts/prove-workspace-independence.sh examples/pluto
 
-      - name: Prove examples/venus builds without this repository
-        run: PROOF_SWITCH=sol-workspace-proof bash cli/platform/local/scripts/prove-workspace-independence.sh examples/venus
+      - name: Prove internal/fixtures/venus builds without this repository
+        run: PROOF_SWITCH=sol-workspace-proof bash cli/platform/local/scripts/prove-workspace-independence.sh internal/fixtures/venus
 
   # Proves the TypeScript half. Cheap: the workspace resolves @sol-fab/* from npm
   # as ordinary semver dependencies, so there is no compiler toolchain and no git

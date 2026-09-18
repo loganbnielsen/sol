@@ -127,7 +127,7 @@ so the two cases are:
 See `docs/deployment/migration-ordering.md`.
 
 See the "Production Profile" section of
-`docs/deployment/self-hosted-substrate-contract.md` in the Sol repository.
+`contract/substrate.md` in the Sol repository.
 
 ## CLI commands
 

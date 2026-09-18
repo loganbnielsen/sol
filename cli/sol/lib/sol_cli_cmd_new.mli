@@ -1,8 +1,8 @@
 (** Returns [true] if [dir] looks like a Sol home (source checkout or release
     bundle). Checks for the two sentinel files that must exist in any valid Sol
     root:
-    - [framework/sol-svc/lib/dune]
-    - [framework/kafka-eio-service/lib/dune]
+    - [framework/ocaml/sol-svc/lib/dune]
+    - [framework/ocaml/kafka-eio-service/lib/dune]
 
     Rejects paths containing a [_build] component: dune mirrors source
     directories into build contexts, so the sentinels alone are not sufficient

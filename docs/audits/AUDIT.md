@@ -46,7 +46,7 @@ Sol generates Kubernetes and Kafka topologies from OCaml definitions. The synthe
 
 High performance must not compromise correctness. Every blocking librdkafka call must release the OCaml domain lock so the Eio scheduler can continue running. Generated worker code must enforce at-least-once semantics.
 
-**Source locations:** `~/Code/kafka-eio/lib/kafka_stubs.c` · `~/Code/kafka-eio/lib/kafka_consumer.ml` (standalone `kafka-eio` opam package, opam-pinned into this switch — not in this repo) · `framework/sol-worker/lib/worker.ml` · `cli/sol/lib/sol_cli_cmd_new.ml`
+**Source locations:** `~/Code/kafka-eio/lib/kafka_stubs.c` · `~/Code/kafka-eio/lib/kafka_consumer.ml` (standalone `kafka-eio` opam package, opam-pinned into this switch — not in this repo) · `framework/ocaml/sol-worker/lib/worker.ml` · `cli/sol/lib/sol_cli_cmd_new.ml`
 
 ### Checklist
 
@@ -63,7 +63,7 @@ High performance must not compromise correctness. Every blocking librdkafka call
 
 Startups rarely have dedicated SRE teams. The framework must surface failures with enough signal that a small team can debug production incidents without deep Kafka or OCaml expertise.
 
-**Source locations:** `framework/kafka-eio-service/lib/kafka_service.ml` · `framework/sol-svc/lib/` · `framework/sol-fn/lib/`
+**Source locations:** `framework/ocaml/kafka-eio-service/lib/kafka_service.ml` · `framework/ocaml/sol-svc/lib/` · `framework/ocaml/sol-fn/lib/`
 
 ### Checklist
 
@@ -99,7 +99,7 @@ curl -sf http://localhost:8080/healthz        # charge_svc health probe
 rpk topic list --brokers localhost:9092       # Kafka broker reachable
 
 # 4. Produce a message and verify round-trip through the worker
-KAFKA_BROKERS=localhost:9092 dune exec examples/local-demo/bin/demo.exe 2>&1 | grep -v "^$"
+KAFKA_BROKERS=localhost:9092 dune exec internal/fixtures/local-demo/bin/demo.exe 2>&1 | grep -v "^$"
 ```
 
 **Invariants:**
@@ -150,7 +150,7 @@ curl -s 'http://localhost:3100/loki/api/v1/query?query={service="charge_svc"}' \
   | python3 -m json.tool | head -40
 
 # Trace propagation: verify traceparent is forwarded through Kafka
-KAFKA_BROKERS=localhost:9092 dune exec examples/local-demo/bin/demo.exe 2>&1 \
+KAFKA_BROKERS=localhost:9092 dune exec internal/fixtures/local-demo/bin/demo.exe 2>&1 \
   | grep -i traceparent
 ```
 
@@ -295,7 +295,7 @@ KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 \
 
 Sol's central architecture is autonomous domain teams coordinating through typed events. The framework should make that model easy to follow and deviations easy to spot.
 
-**Source locations:** `README.md` · `docs/guides/TUTORIAL.md` · `cli/sol/lib/sol_cli_cmd_new.ml` · `cli/sol/lib/sol_cli_workspace.ml` · workspace examples under `examples/venus/` and `examples/pluto/`
+**Source locations:** `README.md` · `docs/guides/TUTORIAL.md` · `cli/sol/lib/sol_cli_cmd_new.ml` · `cli/sol/lib/sol_cli_workspace.ml` · workspace examples under `internal/fixtures/venus/` and `examples/pluto/`
 
 ### Checklist
 

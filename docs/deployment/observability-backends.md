@@ -339,7 +339,7 @@ clusters both get tracing the same way ("Dev mirrors prod exactly").
 
 **Wired for `-svc`, `-worker`, and `-fn` alike, through `Sol_obs`.**
 `obs-tempo-eio` (OBS-041) is composed in by `Sol_obs.of_env`
-(`framework/sol-obs`, CODE_LAYER-003) whenever `TEMPO_URL` — an optional
+(`framework/ocaml/sol-obs`, CODE_LAYER-003) whenever `TEMPO_URL` — an optional
 environment variable following the same pattern as `LOKI_URL` — is set;
 absent means no traces, not a startup failure. Since every scaffolded
 primitive now bootstraps its `Obs_eio.t` through the same `Sol_obs.of_env`
@@ -349,7 +349,7 @@ automatically too, closing the gap `OBS-035`'s one-primitive-at-a-time
 precedent had left open.
 
 **Two ports, two purposes.** Spans push to Tempo's OTLP/HTTP receiver on
-port 4318 (`TEMPO_URL`, what `-svc` and `examples/local-demo`'s order-svc
+port 4318 (`TEMPO_URL`, what `-svc` and `internal/fixtures/local-demo`'s order-svc
 push to); Grafana's Tempo datasource reads from Tempo's own query API on
 port 3200. `sol local infra up` port-forwards both (`tempo` and `tempo-query`).
 
@@ -363,7 +363,7 @@ trace-analysis dashboard is a non-goal for this ticket — this is the
 minimal "log line to trace" link, not an APM-style trace search UI.
 
 **Verified live**, not just statically: `dune exec
-examples/local-demo/bin/demo.exe` with `TEMPO_URL` set produced real spans
+internal/fixtures/local-demo/bin/demo.exe` with `TEMPO_URL` set produced real spans
 in a real local Tempo instance (`cli/platform/local/scripts/ensure-tempo.sh`),
 confirmed via `curl`'s TraceQL search API
 (`/api/search?q={resource.service.name="order-svc"}`) — and the `trace_id`

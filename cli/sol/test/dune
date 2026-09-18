@@ -51,11 +51,11 @@
 
 (rule
  (alias runtest)
- (deps ../bin/main.exe ../../../devtools/ci/test_cloud_lifecycle_offline.sh)
+ (deps ../bin/main.exe ../../../internal/ci/test_cloud_lifecycle_offline.sh)
  (action
   (run
    bash
-   %{dep:../../../devtools/ci/test_cloud_lifecycle_offline.sh}
+   %{dep:../../../internal/ci/test_cloud_lifecycle_offline.sh}
    %{dep:../bin/main.exe})))
 
 (rule
@@ -113,7 +113,7 @@
  (action
   (run bash %{dep:check_production_infra.sh} %{workspace_root})))
 
-; The qualification-artifact guard is devtools/ci/check_no_account_artifacts.sh
+; The qualification-artifact guard is internal/ci/check_no_account_artifacts.sh
 ; and runs as a CI step, not here: it checks what git tracks, and dune can only
 ; offer it `_build/default`, where `git ls-files` is empty and it would pass on
 ; any tree at all.

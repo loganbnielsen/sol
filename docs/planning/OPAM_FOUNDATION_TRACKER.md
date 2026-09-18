@@ -21,7 +21,7 @@ This tracker is not a replacement for package READMEs. Each package README remai
 | `pg-eio` | `~/Code/pg-eio` | Caqti/Postgres helpers, migrations, table functor | Clean-switch install/build/test pass | Cross-package pin test with Kafka/AWS once ready |
 | `kafka-eio` | `~/Code/kafka-eio` | Eio Kafka producer/consumer/core over librdkafka | Local lint/build pass; OPAM PR open with metadata fixes | Track opam-repository PR #30557 |
 | `aws-eio` | `~/Code/aws-eio` | SigV4, credentials, minimal AWS HTTP transport | `awskit` comparison done (keep as-is, see below); CI added; README fix merged (PR #1, `ada1811`) | Clean-switch check, then submit to opam-repository |
-| `kafka-eio-service` | `sol/framework/kafka-eio-service` | Sol-level typed message/schema service layer | In Sol; uses `https-eio` | Decide whether it remains Sol-specific after foundation packages settle |
+| `kafka-eio-service` | `sol/framework/ocaml/kafka-eio-service` | Sol-level typed message/schema service layer | In Sol; uses `https-eio` | Decide whether it remains Sol-specific after foundation packages settle |
 
 ## Submission Cadence
 
@@ -216,7 +216,7 @@ Acceptance:
 - [ ] App deploys and reports status.
 - [ ] Migrations run.
 - [ ] Logs/metrics path still works.
-- [ ] Any failure becomes a ticket under `pipeline/tickets/READY_FOR_ENGINEERING/`.
+- [ ] Any failure becomes a ticket under `internal/pipeline/tickets/READY_FOR_ENGINEERING/`.
 
 ### Phase 5: Low-Cost Live AWS Smoke
 
@@ -281,8 +281,8 @@ AWS source checks:
 
 Tracking tickets:
 
-- `pipeline/tickets/READY_FOR_ENGINEERING/AWS-001.md` covers the low-cost `aws-eio` live smoke lane.
-- `pipeline/tickets/BACKLOG/DOGFOOD-011.md` covers full AWS dogfood. Keep it blocked until the cheaper AWS smoke tests pass.
+- `internal/pipeline/tickets/READY_FOR_ENGINEERING/AWS-001.md` covers the low-cost `aws-eio` live smoke lane.
+- `internal/pipeline/tickets/BACKLOG/DOGFOOD-011.md` covers full AWS dogfood. Keep it blocked until the cheaper AWS smoke tests pass.
 
 ## Decision Log
 
@@ -299,7 +299,7 @@ Tracking tickets:
 - 2026-08-26: Fixed `aws-eio/README.md`'s stale `Aws_tls` references (same class of doc-drift already fixed in `obs-loki-eio`/`obs-prometheus-eio`); merged as `aws-eio` PR #1 (`ada1811`).
 - 2026-08-26: Added the STS `GetCallerIdentity` live smoke test from `AWS-001` (gated by `AWS_EIO_LIVE=1`, skipped by default and in CI), merged as `aws-eio` PR #2 (`855dd51`). Ran it live against real AWS using a short-lived STS session token (`sts:GetSessionToken`-minted, ~15 min TTL, from an IAM user with no other permissions) — passed: real AWS accepted a request signed by `aws-eio`'s own SigV4 implementation. This is the strongest evidence yet that `aws-eio` is correct against the real service, not just internally consistent against its own conformance-suite vectors and mocks. `AWS-001`'s S3 tiny-object smoke (steps 3-4) remains undone.
 - 2026-08-26: Phase 3 cross-package pin test passed. Fresh switch `sol-foundation-all`, all seven packages installed together with `--with-test` (each package's own tests ran and passed), `sol` builds and its full test suite passes against the pinned foundation, including the real-broker Kafka integration test. No link-name clashes, no hidden cross-repo assumptions.
-- 2026-08-27: Ran `s3-eio`'s `scripts/test-e2e.sh` live against real AWS (account `876701109436`), completing `AWS-001`'s remaining S3 tiny-object smoke (steps 3-4). Provisioned bucket `sol-live-test-876701109436` + scoped inline policy via `sts-smoke-test-provisioner`, minted a 900s session token for `sts-smoke-test-user`, ran the put/head/get/delete round trip and the missing-key `Not_found` error-path test through `s3-eio`'s client (built on `aws-eio`'s SigV4) — both passed. Teardown (`scripts/teardown.sh`) ran automatically on exit; independently re-verified afterward with `aws s3api head-bucket` → 404 Not Found, confirming the bucket is actually gone rather than trusting the script's own exit code. Could not independently re-verify the inline IAM policy's removal — neither `sts-smoke-test-user` nor `sts-smoke-test-provisioner` has IAM read permissions on themselves (least-privilege by design); `delete-user-policy` in the teardown log completed without error, and even if it somehow lingered it is scoped to `arn:aws:s3:::sol-live-test-876701109436/sol-live-test/*`, inert against a bucket that no longer exists. `AWS-001` is now fully proven end to end.
+- 2026-08-27: Ran `s3-eio`'s `scripts/test-e2e.sh` live against real AWS (account `111122223333`), completing `AWS-001`'s remaining S3 tiny-object smoke (steps 3-4). Provisioned bucket `sol-live-test-111122223333` + scoped inline policy via `sts-smoke-test-provisioner`, minted a 900s session token for `sts-smoke-test-user`, ran the put/head/get/delete round trip and the missing-key `Not_found` error-path test through `s3-eio`'s client (built on `aws-eio`'s SigV4) — both passed. Teardown (`scripts/teardown.sh`) ran automatically on exit; independently re-verified afterward with `aws s3api head-bucket` → 404 Not Found, confirming the bucket is actually gone rather than trusting the script's own exit code. Could not independently re-verify the inline IAM policy's removal — neither `sts-smoke-test-user` nor `sts-smoke-test-provisioner` has IAM read permissions on themselves (least-privilege by design); `delete-user-policy` in the teardown log completed without error, and even if it somehow lingered it is scoped to `arn:aws:s3:::sol-live-test-111122223333/sol-live-test/*`, inert against a bucket that no longer exists. `AWS-001` is now fully proven end to end.
 
 ## Next Action
 

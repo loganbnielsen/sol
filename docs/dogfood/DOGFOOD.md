@@ -15,7 +15,7 @@ the product claim:
 > dependencies inside the image and takes several minutes (measured ~5m34s for the
 > first workspace vs ~22s for the next one — see FRIC-024).
 
-Run reports live in `pipeline/dogfood/`. Each run produces one dated file there.
+Run reports live in `internal/pipeline/dogfood/`. Each run produces one dated file there.
 
 ---
 
@@ -342,7 +342,7 @@ cat /tmp/sol-pf-charge-svc.log 2>/dev/null || true
 
 ## Run Report Template
 
-Copy this into a new file `pipeline/dogfood/RUN_<YYYY-MM-DD>.md` for each run.
+Copy this into a new file `internal/pipeline/dogfood/RUN_<YYYY-MM-DD>.md` for each run.
 
 ```markdown
 # Dogfood Run — <YYYY-MM-DD>
