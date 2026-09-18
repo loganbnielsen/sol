@@ -10,6 +10,17 @@ source: Sol Unified Operational Interface design review, 2026-09-18
 
 **Related:** DEC-031, OBS-044, FEAT-090.
 
+**Promoted to `READY_FOR_ENGINEERING` on 2026-09-18:** `DEC-032` is decided and on
+`main`, so the architectural prerequisite this was waiting for is settled — a
+target is an axis, not a scope, and an infrastructure view is addressed by target
+with no application scope. Nothing else was blocking it; this is the bookkeeping
+transition, not a new decision.
+
+The surface syntax is now settled too: `DEC-031` fixed the rule (the command's
+primary axis takes the positional), so an infrastructure view addressed by target
+takes the target positionally, the same way `sol cloud plan|apply|destroy` already
+do.
+
 ## What this is
 
 The review asks for observability of the infrastructure a target runs on:
