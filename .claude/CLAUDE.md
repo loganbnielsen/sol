@@ -91,6 +91,15 @@ Two rules for writing one: **`check` echoes the command before running it, and a
 
 **Dev mirrors prod exactly.** `sol local infra up` runs the same Helm charts as production at single-replica scale. Port-forwards expose every service at the same address the service code expects. If there's a divergence between dev and prod addressing or configuration, that divergence is a bug.
 
+**The primary axis takes the positional (DEC-031, over DEC-032's axes).** A command has three possible axes — `target` (where), `scope` (what), `view` (which operational concern) — and exactly one of them is *primary* for that command. The primary axis is the positional argument; every other axis is a flag. Writing a new command means deciding which axis it is addressed by, and that decision is what the positional carries:
+
+- addressed **by scope** → scope positional, target `--target`: `sol status [SCOPE]`, `sol open <view> [SCOPE]`;
+- addressed **by target** → target positional, scope `--scope`: `sol up <TARGET>`, `sol deploy <TARGET>`, `sol cloud plan|apply|destroy <TARGET>`, `sol plan`.
+
+This is why `sol status payments/checkout-svc` and `sol up local --scope payments/checkout-svc` are both correct and are not inconsistent. Do not add a `--scope` flag to a scope-primary command or a positional scope to a target-primary one to "make them match"; the split is the rule.
+
+Accepted scopes are **not** uniform, and widening one is a feature, not consistency: `sol status` / `sol open` take workspace, `domain`, `domain/unit`, and `resource/<type>/<name>`; the `--scope` commands resolve `domain` and `domain/unit` through `Sol_cli_workload_selection`; and **`sol logs` is deliberately unit-only** — a workspace- or domain-wide Loki query is a different feature with its own cost and pagination shape, so `sol logs --scope payments` is an error rather than a wider query. The shared thing is the selector *grammar* (`domain` and `domain/unit` mean the same everywhere), not the set of surfaces that accept each scope.
+
 ## What this repo is
 
 Sol is an opinionated production platform for backend systems. Its platform/CLI is written in OCaml and is language-neutral in what it does; OCaml and TypeScript are both first-class application languages (DEC-022). Kafka layer, observability backends, all three service primitives (`-svc`, `-worker`, `-fn`), storage (PostgreSQL), and CLI scaffold commands are complete.
