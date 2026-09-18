@@ -249,12 +249,18 @@ let test_logs_resource_scope_has_no_view () =
 let test_logs_workspace_scope () =
   let url = ok_url (O.url ~base_url ~workspace ~kind:O.Logs O.Workspace) in
   check_bool "explore url" true (contains url "/explore");
-  check_bool "scoped to workspace namespaces" true (contains url "myapp")
+  check_bool "selects on the workspace identity label" true (contains url "myapp");
+  (* OBS-046: the Kubernetes namespace convention is an implementation detail by
+     the identity model's own rule, so no scope's log link may select on it. *)
+  check_bool "no namespace selector" false (contains url "namespace")
 ;;
 
 let test_logs_domain_scope () =
   let url = ok_url (O.url ~base_url ~workspace ~kind:O.Logs (O.Domain "payments")) in
-  check_bool "explore url" true (contains url "/explore")
+  check_bool "explore url" true (contains url "/explore");
+  check_bool "carries the workspace label" true (contains url "myapp");
+  check_bool "carries the domain label" true (contains url "payments");
+  check_bool "no namespace selector" false (contains url "namespace")
 ;;
 
 let test_logs_service_scope () =
@@ -264,7 +270,8 @@ let test_logs_service_scope () =
   in
   check_bool "explore url" true (contains url "/explore");
   (* charge_svc gets normalized to its k8s (hyphenated) name *)
-  check_bool "k8s name normalized" true (contains url "charge-svc")
+  check_bool "k8s name normalized" true (contains url "charge-svc");
+  check_bool "no namespace selector" false (contains url "namespace")
 ;;
 
 let test_logs_service_scope_invalid_name () =

@@ -104,21 +104,47 @@ let dashboard_url ~base_url ~workspace scope =
 ;;
 
 let logs_url ~base_url ~workspace scope =
+  (* OBS-046: select on Sol's identity labels, not on the Kubernetes namespace
+     convention. `namespace` is an implementation detail by the identity model's
+     own rule (docs/architecture/observability-design.md §Identity), and
+     `<workspace>-<domain>` is not guaranteed to hold -- a GitOps-emitted or
+     renamed namespace opened an Explore view that was simply empty, telling the
+     reader nothing about whether that meant "no logs" or "wrong query".
+
+     The labels are on real streams: Alloy promotes the taxonomy pod labels
+     (cli/platform/infra/base/alloy/logs.alloy.tftpl). Verified against a running
+     local substrate, where the deployed units' series carry
+     workspace/domain/service/primitive/release alongside namespace, so
+     `{workspace="pluto"}` and `{workspace="pluto", domain="demo-ts"}` select
+     them.
+
+     Values are sanitized with the same function the manifest renderer uses for
+     the label value itself (Sol_cli_kubernetes_name.sanitize_label_value); a
+     second, weaker transform for the same conceptual value is how a rendered
+     label and this query end up disagreeing (OBS-021), which opens an empty
+     view. *)
+  let label_value = Sol_cli_kubernetes_name.sanitize_label_value in
   match scope with
   | Workspace ->
     Ok
       (Sol_cli_logs.explore_url
          ~base_url
-         ~logql:(Printf.sprintf {|{namespace=~"%s-.+"}|} workspace))
+         ~logql:(Printf.sprintf {|{workspace="%s"}|} (label_value workspace)))
   | Domain domain ->
+    (* The domain is still validated as a name by the same path every other
+       command uses, so an invalid domain fails here exactly as it does
+       elsewhere; the query itself is built from labels either way. *)
     (match Sol_cli_deployment_plan.namespace_result ~workspace ~domain with
      | Error e -> Error (Sol_cli_deployment_plan.plan_error_to_string e)
-     | Ok ns ->
-       let ns = Sol_cli_deployment_plan.namespace_to_string ns in
+     | Ok _ ->
        Ok
          (Sol_cli_logs.explore_url
             ~base_url
-            ~logql:(Printf.sprintf {|{namespace="%s"}|} ns)))
+            ~logql:
+              (Printf.sprintf
+                 {|{workspace="%s", domain="%s"}|}
+                 (label_value workspace)
+                 (label_value domain))))
   | Service (domain, name) ->
     (match
        ( Sol_cli_deployment_plan.namespace_result ~workspace ~domain
