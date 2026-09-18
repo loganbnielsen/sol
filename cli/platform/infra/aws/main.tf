@@ -110,6 +110,21 @@ module "eks" {
     }
   }
 
+  # HARDEN-002 run 2, finding 7: the qualified substrate had no storage at all --
+  # no CSI driver and therefore no StorageClass -- so a persistent Redpanda (RF3,
+  # which the profile's durability claim depends on) could never schedule, and
+  # neither could any workload volume DEC-026 §3/§5 admits.
+  #
+  # This is *platform substrate* storage, not an application workload volume: the
+  # driver and the role below make the platform's own durability topology (and
+  # workload volumes) physically realizable, and they say nothing about how a
+  # workload declares persistence. In particular they do not interact with the
+  # `single`-tier restriction on workload-declared volumes.
+  #
+  # The addon is declared outside the EKS module: its service account role is an
+  # IRSA role for this cluster's OIDC provider, so referencing it from inside
+  # cluster_addons would be a module.eks -> module.ebs_csi_irsa -> module.eks cycle.
+
   # EKS Managed Node Group — general purpose, autoscaling
   eks_managed_node_groups = {
     general = {
@@ -228,7 +243,35 @@ resource "aws_db_instance" "postgres" {
   backup_retention_period = 7
   multi_az                = var.rds_multi_az
   deletion_protection     = var.rds_deletion_protection
-  skip_final_snapshot     = !var.rds_deletion_protection
+  # HARDEN-002 run 2, finding 9. Two things were wrong here:
+  #
+  #   1. skip_final_snapshot was derived from deletion protection, so the only way
+  #      to let Terraform destroy the instance was to stop taking a final snapshot
+  #      -- production destruction was either impossible or silent about data;
+  #   2. no final_snapshot_identifier was ever set, so with a snapshot required
+  #      Terraform refused to destroy at all and `sol cloud destroy` could not
+  #      complete.
+  #
+  # They are separate knobs with production-safe defaults now: protection on, and a
+  # final snapshot taken. Terraform is therefore structurally able to destroy the
+  # instance, which is what (1) and (2) blocked.
+  #
+  # Permitting the destruction is still the operator's own step, and NOT something
+  # `sol cloud destroy` does: lifting protection is an applied transition, and a
+  # `-var` on a destroy is inert because the provider is handed prior state. For the
+  # same reason the identifier used at delete time is whatever the last apply
+  # rendered, so destroying the same cluster_name twice collides unless a fresh one
+  # is applied first. See the known gap in docs/deployment/production-bootstrap.md.
+  skip_final_snapshot = var.rds_skip_final_snapshot
+  final_snapshot_identifier = (
+    var.rds_skip_final_snapshot
+    ? null
+    : (
+      var.rds_final_snapshot_identifier != ""
+      ? var.rds_final_snapshot_identifier
+      : "${var.cluster_name}-postgres-final"
+    )
+  )
 
   tags = var.tags
 
@@ -411,6 +454,38 @@ module "cert_manager_irsa" {
   role_policy_arns = {
     cert_manager = aws_iam_policy.cert_manager.arn
   }
+}
+
+# HARDEN-002 run 2, finding 7: the EBS CSI driver's identity. Scoped to the
+# driver's own service account, so no workload can use it to reach EBS.
+module "ebs_csi_irsa" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.39"
+
+  role_name             = "${var.cluster_name}-ebs-csi"
+  attach_ebs_csi_policy = true
+
+  # The module would otherwise name this policy AmazonEKS_EBS_CSI_Policy-<suffix>.
+  # Every identity in this file is cluster-scoped (see aws_iam_policy.cert_manager),
+  # and the scoped provisioner identity may only create iam:*/${cluster_name}* --
+  # so the default name is one the provisioner that applies this cannot create.
+  policy_name_prefix = "${var.cluster_name}-"
+
+  oidc_providers = {
+    main = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["kube-system:ebs-csi-controller-sa"]
+    }
+  }
+}
+
+resource "aws_eks_addon" "ebs_csi_driver" {
+  cluster_name                = module.eks.cluster_name
+  addon_name                  = "aws-ebs-csi-driver"
+  resolve_conflicts_on_update = "OVERWRITE"
+  service_account_role_arn    = module.ebs_csi_irsa.iam_role_arn
+
+  depends_on = [module.eks]
 }
 
 # ── Durable observability storage (OBS-006 logs, OBS-007 metrics) ─────────── #

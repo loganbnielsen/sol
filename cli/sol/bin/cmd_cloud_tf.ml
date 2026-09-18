@@ -770,6 +770,17 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
     | None -> []
     | Some f -> [ normalize_var_file f ]
   in
+  (* HARDEN-002 run 2, finding 9 -- KNOWN GAP, deliberately not patched here.
+     `sol cloud destroy` cannot yet destroy a protected production RDS instance.
+     Lifting deletion protection is a state transition (ModifyDBInstance), and a
+     destroy plan contains only deletes: a `-var` passed to `terraform destroy`
+     never reaches the provider, which is handed prior state. The same is true of
+     the final snapshot name, so it is whatever the last apply rendered.
+     Preparing a protected instance for destruction is its own applied transition
+     -- disable protection, establish a unique final-snapshot identity, verify
+     that landed, then destroy -- and belongs with the provisioning lifecycle
+     work, not bolted onto the destroy invocation. See the known gap in
+     docs/deployment/production-bootstrap.md for the operator's interim path. *)
   Printf.printf "\nDestroying cloud infrastructure (%s)...\n%!" pname;
   run_terraform_init run_log infra_dir;
   match action with

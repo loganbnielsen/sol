@@ -295,6 +295,12 @@ resource "helm_release" "redpanda" {
       }
     })]
   )
+
+  # HARDEN-002 run 2, finding 7: these PVCs name no storageClassName, so they take
+  # whatever class is default at admission time. Without this edge Terraform is free
+  # to create the StatefulSet first, the claims bind to nothing, and the release
+  # times out -- the exact failure finding 7 describes.
+  depends_on = [kubernetes_storage_class_v1.platform_default]
 }
 
 # ── PostgreSQL (in-cluster; set install_postgresql=false to use RDS/Cloud SQL) #
@@ -350,6 +356,9 @@ resource "helm_release" "postgresql" {
   # latter is the same var-driven, no-cmd_local.ml-equivalent case Loki's
   # persistence knob already established above.
   values = local.postgresql_component_values
+
+  # See redpanda above (HARDEN-002 finding 7): default-class ordering.
+  depends_on = [kubernetes_storage_class_v1.platform_default]
 }
 
 # ── Loki + Grafana + Alloy ──────────────────────────────────────────────── #
@@ -584,7 +593,11 @@ resource "helm_release" "loki" {
     var.observability_backend == "self_hosted_durable" ? [local.loki_infra_bindings] : []
   )
 
-  depends_on = [terraform_data.observability_backend_validation]
+  # StorageClass edge: see redpanda above (HARDEN-002 finding 7).
+  depends_on = [
+    kubernetes_storage_class_v1.platform_default,
+    terraform_data.observability_backend_validation
+  ]
 }
 
 # Grafana, standalone (no longer a loki-stack subchart). Gated identically
@@ -1332,7 +1345,9 @@ resource "helm_release" "prometheus" {
     [yamlencode({ alertmanager = { config = local.prometheus_alertmanager_config } })]
   )
 
+  # StorageClass edge: see redpanda above (HARDEN-002 finding 7).
   depends_on = [
+    kubernetes_storage_class_v1.platform_default,
     kubernetes_secret.thanos_objstore_config,
     terraform_data.observability_backend_validation
   ]
@@ -1429,4 +1444,39 @@ resource "helm_release" "thanos" {
     helm_release.prometheus,
     terraform_data.observability_backend_validation
   ]
+}
+
+# HARDEN-002 run 2, finding 7: the default StorageClass the platform's own
+# durable components need. Before this, Redpanda's PVCs had no class to bind to
+# and the brokers sat Pending until the Helm release timed out, so the profile's
+# durability claims had no substrate support at all.
+#
+# WaitForFirstConsumer matches EBS's zonal nature: the volume is created in the
+# zone the pod lands in, rather than pinning a broker to a zone chosen at claim
+# time.
+resource "kubernetes_storage_class_v1" "platform_default" {
+  count = var.create_storage_class && var.cloud_provider == "aws" ? 1 : 0
+
+  metadata {
+    name        = var.storage_class_name
+    annotations = { "storageclass.kubernetes.io/is-default-class" = "true" }
+  }
+
+  storage_provisioner    = "ebs.csi.aws.com"
+  volume_binding_mode    = "WaitForFirstConsumer"
+  reclaim_policy         = "Delete"
+  allow_volume_expansion = true
+
+  parameters = {
+    type   = "gp3"
+    fsType = "ext4"
+    # These volumes hold the platform's durable data -- Redpanda's log, in-cluster
+    # Postgres, Loki chunks, the Prometheus TSDB -- so they carry the same at-rest
+    # posture as the rest of the substrate (aws_db_instance.postgres is
+    # storage_encrypted, the state bucket is AES256, EKS secrets are KMS-enveloped).
+    # Encryption-by-default is an account setting Sol does not own, so stating it
+    # here is what makes it true on any account. The AWS-managed aws/ebs key needs
+    # no extra grant; a customer-managed key would need kmsKeyId and an IRSA grant.
+    encrypted = "true"
+  }
 }

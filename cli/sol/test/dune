@@ -102,3 +102,8 @@
   (source_tree ../../platform/infra/base))
  (action
   (run bash %{dep:check_production_infra.sh} %{workspace_root})))
+
+; The qualification-artifact guard is devtools/ci/check_no_account_artifacts.sh
+; and runs as a CI step, not here: it checks what git tracks, and dune can only
+; offer it `_build/default`, where `git ls-files` is empty and it would pass on
+; any tree at all.

@@ -163,3 +163,75 @@ it to the provider root, as it used to be, made terraform abort with "a variable
 named cluster_issuer was assigned on the command line, but the root module does
 not declare a variable of that name" — so a documented target using it could not
 provision at all.
+
+## Platform storage (finding 7 of HARDEN-002 run 2)
+
+The qualified substrate must be able to host the platform's own durable
+components. Two layers provide that, and neither is an application workload volume:
+
+- **Cloud substrate** (`cli/platform/infra/aws`) installs the **EBS CSI driver**
+  as an EKS addon, with an IRSA role scoped to
+  `kube-system:ebs-csi-controller-sa`. Without it an EKS cluster has no CSI
+  driver and therefore no StorageClass, so every PVC stays `Pending`.
+- **Platform substrate** (`cli/platform/infra/base`) creates the default **gp3
+  StorageClass** (`WaitForFirstConsumer`, so the volume is created in the zone the
+  pod lands in). Set `create_storage_class = false` if the platform is expected to
+  adopt a class that already exists, or `storage_class_name` to rename it.
+
+This is what makes Redpanda's RF≥3 persistent brokers schedulable. It changes
+nothing about how a workload declares persistence: the `single`-tier restriction
+DEC-026 §3 puts on workload-declared volumes is unaffected, because the driver and
+the class are platform capabilities, not a workload's storage claim.
+
+Before run 2 the substrate had neither, and the only reason the repository's own
+live smoke harness ever installed the platform was that it disabled persistence
+(`-var=redpanda_persistent_storage=false`).
+
+## Destroying a target (finding 9 of HARDEN-002 run 2)
+
+Production RDS deletion protection stays **on** by default; that is correct and is
+not relaxed for convenience. Destruction is an explicit lifecycle:
+
+1. the operator confirms the target is disposable;
+2. deletion protection is disabled **by an applied state transition** — either
+   `terraform apply -var=rds_deletion_protection=false` or `aws rds
+   modify-db-instance --no-deletion-protection`, followed by waiting for the
+   instance to leave `modifying`;
+3. Terraform takes a final snapshot. The module sets `final_snapshot_identifier`
+   whenever it will take one, defaulting to `<cluster>-postgres-final`. RDS requires
+   snapshot names to be unique, so destroying the same cluster name a second time
+   needs a fresh `rds_final_snapshot_identifier` **applied in the same step as 2** —
+   otherwise the delete fails with `DBSnapshotAlreadyExists`;
+4. `terraform destroy` completes;
+5. absence is verified independently. `verify_aws_destroy`, which `sol cloud
+   destroy` runs, covers EKS, RDS, ECR and load balancers. The live smoke harness
+   (`devtools/aws-live-smoke.sh`) additionally asserts the VPC is gone after its
+   own `sol cloud destroy`. **Nothing automated checks elastic IPs, NAT gateways
+   or EBS volumes** — those remain the manual sweep recorded in HARDEN-002.
+   Volumes are worth the operator's attention from this release onward: the EBS
+   CSI driver and default gp3 StorageClass (see *Platform storage* above) are what
+   first make dynamically provisioned EBS volumes possible on this substrate. The
+   class reclaims with `Delete`, but that only fires when the *PVC* is deleted
+   through the API — tearing the cluster down without doing so leaves the volumes
+   behind.
+
+Passing `-var` to `terraform destroy` does **not** accomplish step 2 or 3. A destroy
+plan contains only deletes, so the provider is handed prior state and never sees the
+new value: `terraform plan -destroy -var x=B` on an applied `x = "A"` plans
+`input = "A" -> null`. Both settings have to be applied *before* the destroy.
+
+**Known gap:** `sol cloud destroy` therefore cannot yet destroy a protected
+production RDS instance. It runs the destroy only; it performs no preparatory
+transition, and a `-var` it forwarded would be inert for the reason above. Until the
+preparation step exists, the operator performs steps 2 and 3 directly (via
+`terraform apply` or the `aws` CLI) and may then use either `terraform destroy` or
+`sol cloud destroy <target> --apply`.
+
+What is fixed here is the Terraform-level defect: `skip_final_snapshot` is no longer
+derived from `deletion_protection` — so permitting destruction no longer means
+silently forgoing the final snapshot — and an identifier is always set when a
+snapshot will be taken, so Terraform no longer refuses the destroy outright. Making
+destruction a *Sol* operation (prepare → verify the transition landed → destroy →
+verify absence, with a unique snapshot identity per attempt) is separate work,
+sequenced with the provisioning lifecycle rather than bolted onto the destroy
+invocation.

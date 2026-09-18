@@ -216,6 +216,11 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: devtools/ci/check_signal_handler_duplication.sh
 
+      - name: Qualification-artifact guardrail (HARDEN-002 run 2)
+        # No classification condition: a real account id or a provisioned target
+        # reaching the repo is exactly as bad in a docs-only change.
+        run: devtools/ci/check_no_account_artifacts.sh
+
   # FRIC-009: smallest check that would have caught a regression like
   # FRIC-007 (every generated service permanently broken on a fresh
   # substrate) — nothing above exercises the golden path against live
