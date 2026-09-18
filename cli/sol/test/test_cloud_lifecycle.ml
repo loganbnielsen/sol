@@ -74,6 +74,145 @@ let test_outputs () =
   Alcotest.(check bool) "wrong type" true (Result.is_error (parse wrong))
 ;;
 
+(* HARDEN-002 run 3, finding 10: `terraform output -json` OMITS an output whose
+   value is null (v1.9.8). loki_*/thanos_* are null unless durable observability
+   is enabled (the default), so a real target's output JSON simply has no such
+   keys. The parser must treat an absent optional output like a null one instead
+   of raising Type_error; a required output that is absent must still fail
+   closed with a named error. *)
+let test_outputs_absent_optional () =
+  let optional =
+    [ "loki_s3_bucket"
+    ; "loki_irsa_arn"
+    ; "thanos_s3_bucket"
+    ; "thanos_irsa_arn"
+    ; "grafana_irsa_arn"
+    ]
+  in
+  let without_optional =
+    match valid_outputs () with
+    | `Assoc fields ->
+      `Assoc (List.filter (fun (k, _) -> not (List.mem k optional)) fields)
+    | _ -> assert false
+  in
+  (match parse without_optional with
+   | Ok _ -> ()
+   | Error message ->
+     Alcotest.fail ("absent optional outputs must parse, not crash: " ^ message));
+  let without_required =
+    match without_optional with
+    | `Assoc fields -> `Assoc (List.remove_assoc "cert_manager_irsa_arn" fields)
+    | _ -> assert false
+  in
+  Alcotest.(check bool)
+    "a missing required output still fails closed"
+    true
+    (Result.is_error (parse without_required))
+;;
+
+(* HARDEN-002 run 4, finding 12: the base providers (hashicorp/kubernetes,
+   hashicorp/helm) resolve the kubeconfig from KUBE_CONFIG_PATH/KUBE_CONFIG_PATHS,
+   not KUBECONFIG. Every name must point at the ephemeral provisioner kubeconfig,
+   or the platform phase silently uses the ambient ~/.kube/config. *)
+let test_provisioner_kube_env () =
+  let path = "/tmp/sol-platform-provisioner-test.kubeconfig" in
+  let env = L.provisioner_kube_env path in
+  List.iter
+    (fun key -> Alcotest.(check (option string)) key (Some path) (List.assoc_opt key env))
+    [ "KUBECONFIG"; "KUBE_CONFIG_PATH"; "KUBE_CONFIG_PATHS" ]
+;;
+
+(* HARDEN-002 run 4 / ADR 0003: the lifecycle phase decides the authority and the
+   desired-state policy. These assert the transitions and the policy edges --
+   in particular that a verified PreparingDestroy can never be followed by a
+   Ready-policy reconciliation (finding 15), and that destroy policy contradicts
+   the production RDS-deletion-protection invariant by design. *)
+let test_lifecycle_phases () =
+  let open L in
+  let name = function
+    | Absent -> "Absent"
+    | Cloud_bootstrap -> "CloudBootstrap"
+    | Platform_installing -> "PlatformInstalling"
+    | Ready -> "Ready"
+    | Platform_updating -> "PlatformUpdating"
+    | Preparing_destroy -> "PreparingDestroy"
+    | Destroying -> "Destroying"
+  in
+  Alcotest.(check bool)
+    "PlatformInstalling uses Installation policy"
+    true
+    (policy_of_phase Platform_installing = Installation);
+  Alcotest.(check bool)
+    "Ready uses Production policy"
+    true
+    (policy_of_phase Ready = Production);
+  Alcotest.(check bool)
+    "PreparingDestroy uses Destroy policy"
+    true
+    (policy_of_phase Preparing_destroy = Destroy);
+  Alcotest.(check bool) "Ready policy applies in Ready" true (ready_policy_applies Ready);
+  List.iter
+    (fun p ->
+       Alcotest.(check bool)
+         (name p ^ " is not Ready policy")
+         false
+         (ready_policy_applies p))
+    [ Absent
+    ; Cloud_bootstrap
+    ; Platform_installing
+    ; Platform_updating
+    ; Preparing_destroy
+    ; Destroying
+    ];
+  List.iter
+    (fun (from, to_) ->
+       Alcotest.(check bool)
+         (name from ^ " -> " ^ name to_ ^ " is legal")
+         true
+         (transition_allowed ~from ~to_))
+    [ Absent, Cloud_bootstrap
+    ; Cloud_bootstrap, Platform_installing
+    ; Platform_installing, Ready
+    ; Ready, Platform_updating
+    ; Platform_updating, Ready
+    ; Ready, Preparing_destroy
+    ; Preparing_destroy, Destroying
+    ; Destroying, Absent
+    ];
+  List.iter
+    (fun (from, to_) ->
+       Alcotest.(check bool)
+         (name from ^ " -> " ^ name to_ ^ " is rejected")
+         false
+         (transition_allowed ~from ~to_))
+    [ Preparing_destroy, Ready
+    ; Preparing_destroy, Platform_installing
+    ; Destroying, Preparing_destroy
+    ; Destroying, Ready
+    ; Ready, Platform_installing
+    ; Absent, Ready
+    ; Cloud_bootstrap, Ready
+    ; Platform_installing, Preparing_destroy
+    ];
+  let destroy_vars = policy_vars ~phase:Preparing_destroy ~destroy_snapshot_id:"snap-1" in
+  Alcotest.(check (option string))
+    "destroy policy disables RDS deletion protection"
+    (Some "false")
+    (List.assoc_opt "rds_deletion_protection" destroy_vars);
+  Alcotest.(check (option string))
+    "destroy policy carries the prepared final snapshot"
+    (Some "snap-1")
+    (List.assoc_opt "rds_final_snapshot_identifier" destroy_vars);
+  Alcotest.(check int)
+    "destroy policy is exactly the three destroy vars"
+    3
+    (List.length destroy_vars);
+  Alcotest.(check int)
+    "Ready adds no policy overrides"
+    0
+    (List.length (policy_vars ~phase:Ready ~destroy_snapshot_id:"x"))
+;;
+
 let test_backends () =
   let get root = Result.get_ok (L.backend_config target ~root) in
   let cloud = get `Cloud
@@ -195,6 +334,12 @@ let () =
     "cloud lifecycle"
     [ ( "contracts"
       , [ Alcotest.test_case "strict AWS outputs" `Quick test_outputs
+        ; Alcotest.test_case
+            "absent optional AWS outputs"
+            `Quick
+            test_outputs_absent_optional
+        ; Alcotest.test_case "provisioner kubeconfig env" `Quick test_provisioner_kube_env
+        ; Alcotest.test_case "lifecycle phases and policy" `Quick test_lifecycle_phases
         ; Alcotest.test_case "separate backends" `Quick test_backends
         ; Alcotest.test_case "deferred plan" `Quick test_deferred
         ; Alcotest.test_case

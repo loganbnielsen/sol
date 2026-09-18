@@ -759,7 +759,7 @@ sol cloud apply prod/aws/us-east-1 --var-file prod.tfvars
 sol cloud apply prod/aws/us-east-1 --var cluster_name=acme-prod --var db_password=...
 ```
 
-During platform reconciliation Sol creates an ephemeral kubeconfig for the declared provisioner identity. It passes that file explicitly to child processes and removes it afterward; it does not read or update the user's ambient kubeconfig. On success the command prints the non-sensitive provisioned endpoints:
+During platform reconciliation Sol creates an ephemeral kubeconfig for the declared provisioner identity. It passes that file explicitly to child processes and removes it afterward; it does not read or update the user's ambient kubeconfig. Installing the platform is privileged platform establishment (ADR 0003): the provisioner holds a temporary managed cluster-admin association through the full platform apply and verified readiness, and Sol revokes it before leaving the target Ready — the steady-state provisioner never holds `escalate`/`bind`. On success the command prints the non-sensitive provisioned endpoints:
 
 ```
   cluster_name                  acme-prod

@@ -9,6 +9,11 @@ val aws_outputs_of_json : string -> (aws_outputs, string) result
 val cluster_name : aws_outputs -> string
 val provisioner_role_arn : aws_outputs -> string
 
+(* HARDEN-002 run 4, finding 12: the kubeconfig env the platform Terraform
+   providers actually resolve. See the implementation for why all three names
+   are needed. *)
+val provisioner_kube_env : string -> (string * string) list
+
 type aws_target
 
 val aws_target : Sol_cli_config.target -> (aws_target, string) result
@@ -49,3 +54,26 @@ val readiness
   -> (string * readiness) list
 
 val readiness_summary : (string * readiness) list -> string
+
+(* Lifecycle phases, authority and desired-state policy (ADR 0003). A phase is
+   the operation/transition Sol is performing -- not infrastructure truth -- and
+   it decides both the authority and the desired-state policy that apply. *)
+type phase =
+  | Absent
+  | Cloud_bootstrap
+  | Platform_installing
+  | Ready
+  | Platform_updating
+  | Preparing_destroy
+  | Destroying
+
+type phase_policy =
+  | Bootstrap
+  | Installation
+  | Production
+  | Destroy
+
+val policy_of_phase : phase -> phase_policy
+val transition_allowed : from:phase -> to_:phase -> bool
+val ready_policy_applies : phase -> bool
+val policy_vars : phase:phase -> destroy_snapshot_id:string -> (string * string) list

@@ -250,6 +250,29 @@ if ! grep -q 'output "publisher_policy_json"' "$root/cli/platform/infra/bootstra
   exit 1
 fi
 
+# HARDEN-002 run 4, finding 13: the deploy identity's ClusterRole grants
+# ordinary application verbs the provisioner deliberately does not hold, so the
+# steady-state provisioner CANNOT create it (Kubernetes RBAC escalation
+# prevention) -- it is created inside the temporary bootstrap-admin window
+# instead (see platform_prerequisite_targets in cmd_cloud_tf.ml). That
+# sequencing is load-bearing: it only works while the provisioner holds no
+# escalate/bind verb. Guard the invariant structurally, so a future change
+# cannot "fix" a failing apply by widening the provisioner's steady-state RBAC.
+# Comments are stripped first: the file explains this decision in prose.
+provisioner_rbac="$root/cli/platform/infra/base/platform_provisioner_rbac.tf"
+
+if [ ! -f "$provisioner_rbac" ]; then
+  echo "FAIL: $provisioner_rbac is missing" >&2
+  exit 1
+fi
+
+if printf '%s\n' "$(sed 's/#.*//' "$provisioner_rbac")" | grep -Eq '"(escalate|bind)"'; then
+  echo "FAIL: the steady-state platform provisioner RBAC grants escalate/bind;" >&2
+  echo "      the deploy ClusterRole must be created inside the bootstrap-admin" >&2
+  echo "      window, not by widening the provisioner's standing authority." >&2
+  exit 1
+fi
+
 if command -v terraform >/dev/null 2>&1; then
   terraform fmt -check -recursive "$root/cli/platform/infra" >/dev/null
   echo "production infra: precondition present, terraform fmt ok"

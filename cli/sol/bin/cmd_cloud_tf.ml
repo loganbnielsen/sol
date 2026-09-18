@@ -408,7 +408,9 @@ let provisioner_kubeconfig ~region outputs f =
      with [at_exit] as well; it is idempotent. *)
   at_exit cleanup;
   Fun.protect ~finally:cleanup (fun () ->
-    let env = [ "KUBECONFIG", path ] in
+    (* Finding 12: the base providers resolve the kubeconfig from
+       KUBE_CONFIG_PATH/KUBE_CONFIG_PATHS, not KUBECONFIG. *)
+    let env = Sol_cli_cloud_lifecycle.provisioner_kube_env path in
     match
       Sol_cli_process.run
         (Sol_cli_process.cmd
@@ -513,6 +515,10 @@ let platform_prerequisite_targets =
     ; "kubernetes_role_binding.platform_provisioner"
     ; "kubernetes_cluster_role.platform_provisioner_cluster"
     ; "kubernetes_cluster_role_binding.platform_provisioner_cluster"
+      (* The deploy identity's RBAC (sol_deploy / sol_deploy_bootstrap) is created
+       by the full platform apply, which ADR 0003 keeps inside the privileged
+       PlatformInstalling authority -- so it is not staged here. (HARDEN-002
+       run 4 finding 13's interim staging is superseded by that model.) *)
     ; "helm_release.cert_manager"
     ]
 ;;
@@ -901,20 +907,27 @@ let cloud_init ~target ~var_file ~vars ~action () =
          then (
            cleanup_bootstrap_access ();
            lifecycle_error "cert-manager CRDs did not become Established");
-         require_terraform_success (deescalate ());
-         if not (provisioner_rbac_established env)
-         then
-           lifecycle_error
-             "platform provisioner RBAC is not effective after bootstrap access removal";
-         require_terraform_success
-           (Sol_cli_run_log.run_phase run_log ~name:"platform-apply" (fun () ->
-              Sol_cli_terraform.apply
-                ~env
-                ~scope:Sol_cli_terraform.whole_root
-                ~chdir:platform_dir
-                ~var_files:[]
-                ~vars:platform_vars
-                ()));
+         (* ADR 0003 / HARDEN-002 run 4 finding 14: installing the platform is
+            privileged platform establishment -- the charts mint ClusterRoles
+            granting verbs the bounded provisioner deliberately does not hold --
+            so the temporary bootstrap-admin authority stays open through the
+            full platform apply AND verified readiness, and is revoked only at
+            the PlatformInstalling -> Ready transition below. *)
+         let platform_apply =
+           Sol_cli_run_log.run_phase run_log ~name:"platform-apply" (fun () ->
+             Sol_cli_terraform.apply
+               ~env
+               ~scope:Sol_cli_terraform.whole_root
+               ~chdir:platform_dir
+               ~var_files:[]
+               ~vars:platform_vars
+               ())
+         in
+         (match platform_apply with
+          | Ok result when result.exit_code = 0 -> ()
+          | _ ->
+            cleanup_bootstrap_access ();
+            require_terraform_success platform_apply);
          let cluster_issuer =
            Option.value target_cfg.cluster_issuer ~default:"letsencrypt-prod"
          in
@@ -926,7 +939,15 @@ let cloud_init ~target ~var_file ~vars ~action () =
              ~run:(fun args -> process_output ~env ("kubectl" :: args))
          in
          let summary = Sol_cli_cloud_lifecycle.readiness_summary readiness in
-         if summary <> "Ready" then lifecycle_error ("platform readiness " ^ summary));
+         if summary <> "Ready"
+         then (
+           cleanup_bootstrap_access ();
+           lifecycle_error ("platform readiness " ^ summary));
+         require_terraform_success (deescalate ());
+         if not (provisioner_rbac_established env)
+         then
+           lifecycle_error
+             "platform provisioner RBAC is not effective after bootstrap access removal");
     Printf.printf "\nProvisioned endpoints:\n%!";
     print_outputs infra_dir;
     Printf.printf "\nDone.\n%!"
@@ -1030,13 +1051,34 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
          Sol_cli_terraform.plan_destroy ~chdir:infra_dir ~var_files ~vars ()));
     Printf.printf "\nDone. Re-run with --apply to destroy cloud resources.\n%!"
   | Apply ->
-    (match outputs with
-     | None ->
-       Printf.printf "  prepare: cloud substrate is absent, nothing to prepare.\n%!"
-     | Some outputs ->
-       let cluster_name = Sol_cli_cloud_lifecycle.cluster_name outputs in
-       let prepared = prepare_destroy run_log infra_dir var_files vars ~cluster_name in
-       verify_destroy_preparation infra_dir ~prepared);
+    let prepared =
+      match outputs with
+      | None ->
+        Printf.printf "  prepare: cloud substrate is absent, nothing to prepare.\n%!";
+        None
+      | Some outputs ->
+        let cluster_name = Sol_cli_cloud_lifecycle.cluster_name outputs in
+        let prepared = prepare_destroy run_log infra_dir var_files vars ~cluster_name in
+        verify_destroy_preparation infra_dir ~prepared;
+        prepared
+    in
+    (* ADR 0003 / HARDEN-002 run 4 finding 15: from [Preparing_destroy] on, the
+       Destroy policy governs the desired state. Its overrides are appended AFTER
+       `vars`, so the Production/Ready invariant terraform_vars injects
+       (rds_deletion_protection=true -- BUG-039, still correct in Ready) cannot be
+       restored by the bootstrap-admin reconciliation that necessarily precedes
+       the destroy. Re-verifying after that apply structurally rejects a
+       PreparingDestroy -> Ready-policy regression. *)
+    let destroy_vars =
+      match prepared with
+      | None -> []
+      | Some snapshot_id ->
+        Sol_cli_terraform.kv_args
+          (Sol_cli_cloud_lifecycle.policy_vars
+             ~phase:Sol_cli_cloud_lifecycle.Preparing_destroy
+             ~destroy_snapshot_id:snapshot_id)
+    in
+    let destroy_apply_vars = vars @ destroy_vars in
     (match outputs with
      | None -> ()
      | Some outputs ->
@@ -1045,8 +1087,9 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
             ~scope:Sol_cli_terraform.whole_root
             ~chdir:infra_dir
             ~var_files
-            ~vars:("provisioner_bootstrap_admin=true" :: vars)
+            ~vars:("provisioner_bootstrap_admin=true" :: destroy_apply_vars)
             ());
+       verify_destroy_preparation infra_dir ~prepared;
        let deescalate () =
          Sol_cli_run_log.run_phase
            run_log
@@ -1056,7 +1099,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
                 ~scope:Sol_cli_terraform.whole_root
                 ~chdir:infra_dir
                 ~var_files
-                ~vars:("provisioner_bootstrap_admin=false" :: vars)
+                ~vars:("provisioner_bootstrap_admin=false" :: destroy_apply_vars)
                 ())
        in
        let cleanup_bootstrap_access () = ignore (deescalate ()) in
@@ -1076,7 +1119,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
      | Sol_cli_provider.Gcp -> ());
     require_terraform_success
       (Sol_cli_run_log.run_phase run_log ~name:"terraform-destroy" (fun () ->
-         Sol_cli_terraform.destroy ~chdir:infra_dir ~var_files ~vars ()));
+         Sol_cli_terraform.destroy ~chdir:infra_dir ~var_files ~vars:destroy_apply_vars ()));
     Printf.printf "\nVerifying teardown...\n%!";
     (match provider with
      | Sol_cli_provider.Aws -> verify_aws_destroy ~var_files ~vars
