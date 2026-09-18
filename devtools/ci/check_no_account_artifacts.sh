@@ -49,7 +49,7 @@ scratch="$(git ls-files | grep -E '(^|/)(sol/(qual|qual2)/|backend\.tf$)' || tru
 if [ -n "$scratch" ]; then
   echo "FAIL: qualification scratch files are tracked by git:" >&2
   echo "$scratch" >&2
-  echo "      Provisioned targets, backend overrides and lock files belong outside the repo;" >&2
+  echo "      Provisioned targets and backend overrides belong outside the repo;" >&2
   echo "      see HARDEN-002 (run 2) on why this is checked mechanically." >&2
   status=1
 fi

@@ -32,6 +32,16 @@ ha_nat_gateway = false
 # test turns into an orphaned ~$25-35/month RDS bill nobody notices.
 rds_deletion_protection = false
 
+# Must be stated explicitly. These were one knob until HARDEN-002 finding 9:
+# `skip_final_snapshot` was `!rds_deletion_protection`, so the line above used to
+# imply "no final snapshot" as a side effect. They are independent now — correct
+# for production, where permitting destruction must not silently discard the
+# data — which means a disposable target has to say so itself. Left unset, every
+# smoke teardown would strand a snapshot the destroy-verification does not look
+# for, and the second run of this fixed cluster_name would fail outright with
+# DBSnapshotAlreadyExists.
+rds_skip_final_snapshot = true
+
 # No real DNS to manage for a smoke test — skip creating a Route53 zone
 # (avoids both the zone and needing a real domain you control).
 create_route53_zone = false
