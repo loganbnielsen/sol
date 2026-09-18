@@ -72,7 +72,19 @@ let aws_outputs_of_json text =
   let open Yojson.Safe.Util in
   try
     let json = Yojson.Safe.from_string text in
-    let value name = json |> member name |> member "value" in
+    (* HARDEN-002 run 3, finding 10: Terraform *omits* an output whose value is
+       `null` (v1.9.8), rather than emitting it as present-with-null. So an
+       optional output such as `loki_s3_bucket` (null unless durable
+       observability is enabled) can be absent entirely. `member` yields `Null`
+       for a missing key, and `member "value"` on `Null` raises; resolve an
+       absent output to `Null` so `optional_string` treats it exactly like a
+       null value, while a *required* output still fails closed with a named
+       "missing or not a string" error rather than crashing the lifecycle. *)
+    let value name =
+      match json |> member name with
+      | `Null -> `Null
+      | output -> output |> member "value"
+    in
     let string name =
       match value name with
       | `String s when String.trim s <> "" -> Ok s
@@ -117,6 +129,20 @@ let aws_outputs_of_json text =
 
 let cluster_name outputs = outputs.cluster_name
 let provisioner_role_arn (outputs : aws_outputs) = outputs.provisioner_role_arn
+
+(* HARDEN-002 run 4, finding 12. The base-platform providers are hashicorp/
+   kubernetes and hashicorp/helm, configured implicitly (cli/platform/infra/base
+   declares no `provider` block). hashicorp/kubernetes 2.38.0 resolves the
+   kubeconfig from `KUBE_CONFIG_PATH`/`KUBE_CONFIG_PATHS` and falls back to
+   `~/.kube/config` -- it does NOT consult `KUBECONFIG`, which is the only name
+   Sol used to export. So the platform phase silently used the operator's
+   ambient kubeconfig (or none) and could not reach the provisioned cluster
+   (`dial tcp 127.0.0.1:80`). Export every name the providers read, all pointing
+   at the same ephemeral provisioner kubeconfig, so the phase is deterministic
+   and never ambient. *)
+let provisioner_kube_env path =
+  [ "KUBECONFIG", path; "KUBE_CONFIG_PATH", path; "KUBE_CONFIG_PATHS", path ]
+;;
 
 type platform_inputs =
   { base_domain : string
@@ -396,4 +422,80 @@ let readiness_summary checks =
   with
   | [] -> "Ready"
   | unmet -> "Unmet — " ^ String.concat "; " unmet
+;;
+
+(* ── Lifecycle phases: authority and desired-state policy (ADR 0003) ──────────
+
+   HARDEN-002 run 4 (findings 13, 14, 15) showed that the lifecycle needs an
+   explicit notion of *which operation Sol is performing*, because that decides
+   both the authority it may use and which desired-state policy applies. Two
+   individually-correct rules contradicted each other only because no phase said
+   which one was in force:
+
+     BUG-039      production-single-region/v1 -> RDS deletion protection = true
+     INFRA-023    PrepareDestroy              -> RDS deletion protection = false
+
+   A [phase] is NOT infrastructure truth: Terraform state remains authoritative
+   for managed resources and AWS/Kubernetes provide observed reality. It names
+   the operation/transition, and therefore the authority and policy, Sol is
+   applying right now; it is derived from the command and its verified
+   preparation, never persisted as a second state database. *)
+
+type phase =
+  | Absent
+  | Cloud_bootstrap
+  | Platform_installing
+  | Ready
+  | Platform_updating
+  | Preparing_destroy
+  | Destroying
+
+(* The desired-state policy a phase applies. [Installation] and [Production]
+   differ in authority even where their substitution vars coincide today. *)
+type phase_policy =
+  | Bootstrap
+  | Installation
+  | Production
+  | Destroy
+
+let policy_of_phase = function
+  | Absent | Cloud_bootstrap -> Bootstrap
+  | Platform_installing | Platform_updating -> Installation
+  | Ready -> Production
+  | Preparing_destroy | Destroying -> Destroy
+;;
+
+(* The transition relation. Anything not listed is illegal; the operations in
+   cmd_cloud_tf.ml perform only listed transitions, and the tests assert the
+   illegal ones are rejected. *)
+let transition_allowed ~from ~to_ =
+  match from, to_ with
+  | Absent, Cloud_bootstrap -> true
+  | Cloud_bootstrap, Platform_installing -> true
+  | Platform_installing, Ready -> true
+  | Ready, Platform_updating -> true
+  | Platform_updating, Ready -> true
+  | Ready, Preparing_destroy -> true
+  | Preparing_destroy, Destroying -> true
+  | Destroying, Absent -> true
+  | _ -> false
+;;
+
+(* Ready-state invariants apply only in [Ready]. Once [Preparing_destroy] has
+   succeeded no later reconciliation may re-apply them (finding 15) -- BUG-039
+   stays exactly correct throughout [Ready] and is deliberately left behind when
+   the target leaves it. *)
+let ready_policy_applies phase = policy_of_phase phase = Production
+
+(* The desired-state overrides a phase imposes. Callers append these AFTER their
+   own variables so the phase policy wins. [Destroy] deliberately contradicts the
+   Production invariant for RDS deletion protection. *)
+let policy_vars ~phase ~destroy_snapshot_id =
+  match policy_of_phase phase with
+  | Bootstrap | Installation | Production -> []
+  | Destroy ->
+    [ "rds_deletion_protection", "false"
+    ; "rds_skip_final_snapshot", "false"
+    ; "rds_final_snapshot_identifier", destroy_snapshot_id
+    ]
 ;;

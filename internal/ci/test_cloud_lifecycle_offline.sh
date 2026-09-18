@@ -12,18 +12,39 @@ project: lifecycle-test
 EOF
 cat >"$tmp/work/sol/prod/aws/us-east-1.yml" <<'EOF'
 target:
+  # ADR 0003: a production-profile target makes terraform_vars inject the
+  # Ready/Production invariant rds_deletion_protection=true, which is exactly
+  # the policy the Destroy policy must override after PrepareDestroy (finding 15).
+  profile: production-single-region
   base_domain: example.test
   cluster_name: lifecycle-test
   letsencrypt_email: ops@example.test
+  cluster_endpoint_cidr: 203.0.113.0/24
   state_bucket: lifecycle-state
   state_lock_table: lifecycle-lock
   provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+  # HARDEN-002 run 3, finding 11: must reach the provider root's terraform argv
+  # so the module creates the deploy EKS access entry (INFRA-025).
+  deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
+  operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
+
+# ADR 0003: a postgres resource plus the production profile is what makes
+# terraform_vars force the Ready/Production invariant rds_deletion_protection=true.
+resources:
+  app_db:
+    type: postgres
+    size: small
 EOF
 
 cat >"$tmp/bin/terraform" <<'EOF'
 #!/usr/bin/env bash
 set -eu
 printf 'terraform %s\n' "$*" >>"$LIFECYCLE_LOG"
+# HARDEN-002 run 4, finding 12: record the kubeconfig env the platform Terraform
+# actually receives. The base providers read KUBE_CONFIG_PATH/KUBE_CONFIG_PATHS
+# (not KUBECONFIG), so the assertion below fails if that stops being exported.
+[ -n "${KUBE_CONFIG_PATH:-}" ] && printf 'env KUBE_CONFIG_PATH=%s\n' "$KUBE_CONFIG_PATH" >>"$LIFECYCLE_LOG"
+[ -n "${KUBE_CONFIG_PATHS:-}" ] && printf 'env KUBE_CONFIG_PATHS=%s\n' "$KUBE_CONFIG_PATHS" >>"$LIFECYCLE_LOG"
 fail_once() {
   [ "${FAIL_ON:-}" = "$1" ] || return 1
   marker="$FAIL_MARKER_DIR/$1"
@@ -39,8 +60,13 @@ case "$*" in
   *" output -json"*)
     if [ "${OUTPUT_ABSENT:-}" = 1 ]; then printf '{}\n'; exit 0; fi
     if fail_once outputs; then exit 20; fi
+    # HARDEN-002 run 3, finding 10: terraform 1.9.8 OMITS an output whose value
+    # is null, so a real default target (durable observability disabled) has no
+    # loki_*/thanos_* keys at all. The fixture must match that, or the harness
+    # cannot reproduce the live `Can't get member 'value' of non-object type
+    # null` crash this scenario exists to guard.
     cat <<'JSON'
-{"cluster_name":{"value":"lifecycle-test"},"provisioner_role_arn":{"value":"arn:aws:iam::111122223333:role/sol-provisioner"},"cert_manager_irsa_arn":{"value":"arn:aws:iam::111122223333:role/cert-manager"},"loki_s3_bucket":{"value":"loki"},"loki_irsa_arn":{"value":"loki-role"},"thanos_s3_bucket":{"value":"thanos"},"thanos_irsa_arn":{"value":"thanos-role"},"grafana_irsa_arn":{"value":null},"managed_resource_dashboards":{"value":{}}}
+{"cluster_name":{"value":"lifecycle-test"},"provisioner_role_arn":{"value":"arn:aws:iam::111122223333:role/sol-provisioner"},"cert_manager_irsa_arn":{"value":"arn:aws:iam::111122223333:role/cert-manager"},"grafana_irsa_arn":{"value":null},"managed_resource_dashboards":{"value":{}}}
 JSON
     ;;
   *" plan "*)
@@ -213,6 +239,24 @@ grep -F 'key=sol/prod/aws/us-east-1/cloud.tfstate' "$log" >/dev/null
 grep -F 'key=sol/prod/aws/us-east-1/platform.tfstate' "$log" >/dev/null
 grep -F -- '-target=helm_release.cert_manager' "$log" >/dev/null
 grep -F 'terraform ' "$log" | grep 'infra/base.* apply ' | grep -v -- '-target=' >/dev/null
+# HARDEN-002 run 3, finding 11: the target's deploy_role_arn must be routed to
+# the provider root (the AWS root declares it and uses it to create the deploy
+# EKS access entry INFRA-025 added).
+grep -F -- '-var=deploy_role_arn=arn:aws:iam::111122223333:role/sol-deploy' "$log" >/dev/null
+# HARDEN-002 run 4, finding 12: the platform Terraform must be handed the
+# ephemeral provisioner kubeconfig under the names the providers actually read.
+grep -F 'env KUBE_CONFIG_PATH=' "$log" >/dev/null
+grep -F 'env KUBE_CONFIG_PATHS=' "$log" >/dev/null
+# ADR 0003 (findings 13/14): installing the platform is privileged platform
+# establishment, so the full platform apply (the non-targeted base apply) must
+# run while the temporary PlatformInstalling authority is still open -- i.e.
+# before provisioner-bootstrap-access-remove -- and only then is it revoked.
+full_apply_line="$(grep -nF 'terraform ' "$log" | grep 'infra/base.* apply ' | grep -v -- '-target=' | head -1 | cut -d: -f1 || true)"
+deescalate_line="$(grep -nF -- 'provisioner_bootstrap_admin=false' "$log" | head -1 | cut -d: -f1 || true)"
+if [ -z "$full_apply_line" ] || [ -z "$deescalate_line" ] || [ "$full_apply_line" -ge "$deescalate_line" ]; then
+  echo "the platform install must complete before provisioner de-escalation" >&2
+  exit 1
+fi
 while IFS= read -r kubeconfig; do test ! -e "$kubeconfig"; done <"$tmp/kubeconfigs"
 
 plan() {
@@ -352,6 +396,28 @@ prepare_line_no="$(grep -n -- '-target=aws_db_instance.postgres' "$log" | head -
 destroy_line_no="$(grep -n 'infra/aws.* destroy ' "$log" | head -1 | cut -d: -f1)"
 if [ -z "$destroy_line_no" ] || [ "$prepare_line_no" -ge "$destroy_line_no" ]; then
   echo "RDS destroy preparation did not run before the cloud destroy" >&2
+  cat "$log" >&2
+  exit 1
+fi
+
+# ADR 0003 / HARDEN-002 run 4 finding 15: after a verified PrepareDestroy the
+# Destroy policy governs. The bootstrap-admin reconciliation that necessarily
+# precedes the actual destroy must therefore still carry the destroy overrides,
+# and they must be appended AFTER the production profile's
+# rds_deletion_protection=true (injected by terraform_vars) so the Destroy policy
+# wins rather than Ready policy silently re-enabling protection.
+admin_apply_line="$(grep 'infra/aws.* apply ' "$log" | grep -F 'provisioner_bootstrap_admin=true' | head -1 || true)"
+case "$admin_apply_line" in
+  *'rds_deletion_protection=false'*) : ;;
+  *)
+    echo "the post-prepare bootstrap-admin apply did not carry the Destroy policy" >&2
+    cat "$log" >&2
+    exit 1
+    ;;
+esac
+last_protection="$(printf '%s\n' "$admin_apply_line" | grep -oE 'rds_deletion_protection=[a-z]+' | tail -1)"
+if [ "$last_protection" != "rds_deletion_protection=false" ]; then
+  echo "Ready policy overrode the Destroy policy after PrepareDestroy ($last_protection)" >&2
   cat "$log" >&2
   exit 1
 fi
