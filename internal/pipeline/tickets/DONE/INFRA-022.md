@@ -118,6 +118,17 @@ and can resume from durable state on a clean runner.
     namespaces. It is not granted standing cluster-admin, and neither
     cluster-creator admin nor deployer credentials can satisfy the test.
 
+    > Refined by ADR 0003 (HARDEN-002 run 4, findings 13/14): the platform phase
+    > runs as the declared provisioner while that principal holds the *temporary*
+    > managed cluster-admin association for the whole `PlatformInstalling` phase,
+    > because installing charts that mint RBAC requires escalation authority the
+    > steady-state provisioner deliberately lacks. The association is revoked at
+    > verified readiness and the bounded provisioner is re-verified, so the
+    > property that holds is "no *standing* cluster-admin and no `escalate`/
+    > `bind` at steady state". The module still sets
+    > `enable_cluster_creator_admin_permissions = false`; the temporary grant is a
+    > managed access policy Sol adds and removes, not cluster-creator admin.
+
 ## Smallest useful checks
 
 - One orchestration test records phase calls and injects failure after each

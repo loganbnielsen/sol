@@ -1291,6 +1291,14 @@ let terraform_vars ~workspace cfg =
       |> add_opt "alert_runbook_url" target.alert_runbook_url
       |> add_opt "cluster_endpoint_cidr" target.cluster_endpoint_cidr
       |> add_opt "provisioner_role_arn" target.provisioner_role_arn
+      (* HARDEN-002 run 3, finding 11: deploy_role_arn is declared by the
+         provider root (cli/platform/infra/aws) and drives the deploy EKS
+         access entry INFRA-025 added, but was never routed here — so the entry
+         was never created and the module's deploy_kubeconfig_command/
+         deploy_kube_context outputs stayed null. provider_fields still follow,
+         so a target can override; operator_role_arn is deliberately NOT
+         routed: the AWS root does not declare it. *)
+      |> add_opt "deploy_role_arn" target.deploy_role_arn
       |> add_opt "workspace_name" (Some workspace)
     in
     let vars =

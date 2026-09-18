@@ -1176,6 +1176,45 @@ target:
            (List.assoc_opt "cluster_endpoint_cidr" vars)))
 ;;
 
+(* HARDEN-002 run 3, finding 11: the AWS provider root declares
+   `deploy_role_arn` and uses it to create the deploy identity's EKS access
+   entry (INFRA-025), but Sol_cli_config.terraform_vars never routed the
+   target's value there -- so the entry was never created and the module's
+   deploy_kubeconfig_command/deploy_kube_context outputs stayed null.
+   operator_role_arn is intentionally NOT a provider-root variable (the AWS
+   root does not declare it), so routing it would make terraform abort the
+   whole command on an undeclared variable. *)
+let test_terraform_vars_route_deploy_role_arn () =
+  with_temp_dir (fun () ->
+    write
+      "sol.yml"
+      {|
+target:
+  provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+  deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
+  operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
+  cluster_endpoint_cidr: 203.0.113.0/24
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+       | Error msg -> Alcotest.fail msg
+       | Ok vars ->
+         check_str_opt
+           "deploy_role_arn is routed to the provider root"
+           (Some "arn:aws:iam::111122223333:role/sol-deploy")
+           (List.assoc_opt "deploy_role_arn" vars);
+         check_str_opt
+           "provisioner_role_arn is routed"
+           (Some "arn:aws:iam::111122223333:role/sol-provisioner")
+           (List.assoc_opt "provisioner_role_arn" vars);
+         check_bool
+           "operator_role_arn is not a provider-root variable"
+           false
+           (List.mem_assoc "operator_role_arn" vars)))
+;;
+
 let test_terraform_vars_ecr_repositories_empty_without_app_dir () =
   with_temp_dir (fun () ->
     write
@@ -1453,6 +1492,10 @@ let () =
             "terraform vars: cluster_issuer stays in the base layer"
             `Quick
             test_terraform_vars_route_cluster_issuer_to_the_base_layer
+        ; Alcotest.test_case
+            "terraform vars: deploy_role_arn reaches the provider root"
+            `Quick
+            test_terraform_vars_route_deploy_role_arn
         ; Alcotest.test_case
             "terraform vars: ecr_repositories empty without app/"
             `Quick
