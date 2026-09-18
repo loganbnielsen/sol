@@ -20,10 +20,16 @@ val describe : verbose:bool -> kubernetes_status -> string
 (** Label/value rows for display. The raw kube-context appears only when
     [verbose], since it is a mechanism, not the target's identity (DEC-020). *)
 val rows
-  :  verbose:bool
+  :  ?platform:string
+  -> verbose:bool
   -> Sol_cli_config.target
   -> kubernetes_status
   -> (string * string) list
 
 (** The same rows as JSON. *)
-val to_json : verbose:bool -> Sol_cli_config.target -> kubernetes_status -> Yojson.Safe.t
+val to_json
+  :  ?platform:string
+  -> verbose:bool
+  -> Sol_cli_config.target
+  -> kubernetes_status
+  -> Yojson.Safe.t

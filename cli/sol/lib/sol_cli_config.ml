@@ -6,6 +6,7 @@ type target =
   ; registry : string option
   ; base_domain : string option
   ; cluster_issuer : string option
+  ; letsencrypt_email : string option
   ; cluster_name : string option
   ; kube_context : string option
   ; kubeconfig : string option
@@ -71,6 +72,7 @@ let target_empty =
   ; registry = None
   ; base_domain = None
   ; cluster_issuer = None
+  ; letsencrypt_email = None
   ; cluster_name = None
   ; kube_context = None
   ; kubeconfig = None
@@ -230,6 +232,7 @@ type target_key =
   | Target_registry
   | Target_base_domain
   | Target_cluster_issuer
+  | Target_letsencrypt_email
   | Target_cluster_name
   | Target_kube_context
   | Target_kubeconfig
@@ -255,6 +258,7 @@ let target_key_of_string s =
   | "registry" -> Target_registry
   | "base_domain" -> Target_base_domain
   | "cluster_issuer" -> Target_cluster_issuer
+  | "letsencrypt_email" -> Target_letsencrypt_email
   | "cluster_name" -> Target_cluster_name
   | "kube_context" -> Target_kube_context
   | "kubeconfig" -> Target_kubeconfig
@@ -282,6 +286,7 @@ let target_key_name = function
   | Target_registry -> "registry"
   | Target_base_domain -> "base_domain"
   | Target_cluster_issuer -> "cluster_issuer"
+  | Target_letsencrypt_email -> "letsencrypt_email"
   | Target_cluster_name -> "cluster_name"
   | Target_kube_context -> "kube_context"
   | Target_kubeconfig -> "kubeconfig"
@@ -514,6 +519,9 @@ let load path =
                           | Target_cluster_issuer ->
                             let* v = scalar k v in
                             Ok { current with cluster_issuer = Some v }
+                          | Target_letsencrypt_email ->
+                            let* v = scalar k v in
+                            Ok { current with letsencrypt_email = Some v }
                           | Target_cluster_name ->
                             let* v = scalar k v in
                             Ok { current with cluster_name = Some v }
@@ -760,6 +768,7 @@ let merge_target a b =
     registry = prefer a.registry b.registry
   ; base_domain = prefer a.base_domain b.base_domain
   ; cluster_issuer = prefer a.cluster_issuer b.cluster_issuer
+  ; letsencrypt_email = prefer a.letsencrypt_email b.letsencrypt_email
   ; cluster_name = prefer a.cluster_name b.cluster_name
   ; kube_context = prefer a.kube_context b.kube_context
   ; kubeconfig = prefer a.kubeconfig b.kubeconfig
@@ -875,6 +884,7 @@ let target_of_path s =
           ; registry = None
           ; base_domain = None
           ; cluster_issuer = None
+          ; letsencrypt_email = None
           ; cluster_name = None
           ; kube_context = None
           ; kubeconfig = None
@@ -1280,6 +1290,7 @@ let terraform_vars ~workspace cfg =
       |> add_opt "alert_owner" target.alert_owner
       |> add_opt "alert_runbook_url" target.alert_runbook_url
       |> add_opt "cluster_endpoint_cidr" target.cluster_endpoint_cidr
+      |> add_opt "provisioner_role_arn" target.provisioner_role_arn
       |> add_opt "workspace_name" (Some workspace)
     in
     let vars =

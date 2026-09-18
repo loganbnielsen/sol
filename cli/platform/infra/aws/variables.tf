@@ -184,3 +184,15 @@ variable "enable_cluster_creator_admin" {
   type        = bool
   default     = false
 }
+
+variable "provisioner_role_arn" {
+  description = "Named AWS provisioner principal authenticated to EKS for the platform lifecycle."
+  type        = string
+  default     = ""
+}
+
+variable "provisioner_bootstrap_admin" {
+  description = "Temporarily associate EKS cluster-admin while Sol installs the narrower platform-provisioner RBAC. Sol must remove this before applying the remaining platform."
+  type        = bool
+  default     = false
+}

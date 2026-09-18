@@ -1,6 +1,7 @@
 target:
   cluster_name: pluto-prod
   base_domain: pluto.example.com
+  letsencrypt_email: ops@pluto.example.com
   # AUDIT-080: one spare node's capacity per node-failure-tolerant workload, so
   # a lost node's replicas can be restored inside DEC-026 §3's bound.
   node_failure_headroom_nodes: 1

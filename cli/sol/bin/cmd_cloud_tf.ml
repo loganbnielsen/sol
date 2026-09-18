@@ -21,7 +21,7 @@ let resolve_sol_home () =
 (* Read terraform output -json from a temp file and print key endpoints.
    We only print non-sensitive string/list values. *)
 let print_outputs infra_dir =
-  match Sol_cli_terraform.output_json ~chdir:infra_dir with
+  match Sol_cli_terraform.output_json ~chdir:infra_dir () with
   | Error _ | Ok { Sol_cli_process.exit_code = 1 | 2 | 127 | 128; _ } ->
     Printf.printf "  (could not retrieve terraform outputs)\n%!"
   | Ok r when r.Sol_cli_process.exit_code <> 0 ->
@@ -62,175 +62,11 @@ let print_outputs infra_dir =
      | _ -> Printf.printf "  (error parsing terraform outputs)\n%!")
 ;;
 
-(* Fetch a single non-sensitive string output by key, re-reading terraform's
-   output JSON. Used for kubeconfig_command below -- separate from
-   print_outputs since we need the raw value, not just to print it. *)
-let terraform_output_string infra_dir key =
-  match Sol_cli_terraform.output_json ~chdir:infra_dir with
-  | Error _ -> None
-  | Ok r when r.Sol_cli_process.exit_code <> 0 -> None
-  | Ok r ->
-    (try
-       match Yojson.Safe.from_string r.Sol_cli_process.stdout with
-       | `Assoc pairs ->
-         (match List.assoc_opt key pairs with
-          | Some (`Assoc fields) ->
-            let sensitive =
-              match List.assoc_opt "sensitive" fields with
-              | Some (`Bool b) -> b
-              | _ -> true
-            in
-            if sensitive
-            then None
-            else (
-              match List.assoc_opt "value" fields with
-              | Some (`String v) -> Some v
-              | _ -> None)
-          | _ -> None)
-       | _ -> None
-     with
-     | _ -> None)
-;;
-
-(* Not Sol_cli_scaffold.mkdir_p: that one hardcodes 0o755, fine for generated
-   source but wrong here -- .sol/kubeconfigs/ holds live cluster credentials,
-   so the directory itself must not be world-readable/traversable. *)
-let mkdir_p path =
-  let rec loop dir =
-    if dir = "" || dir = "." || Sys.file_exists dir
-    then ()
-    else (
-      loop (Filename.dirname dir);
-      Unix.mkdir dir 0o700)
-  in
-  loop path
-;;
-
-let write_file path content =
-  let oc = open_out path in
-  Fun.protect ~finally:(fun () -> close_out_noerr oc) (fun () -> output_string oc content)
-;;
-
-let read_file path =
-  let ic = open_in path in
-  Fun.protect
-    ~finally:(fun () -> close_in_noerr ic)
-    (fun () ->
-       let len = in_channel_length ic in
-       really_input_string ic len)
-;;
-
-let target_kubeconfig_path target =
-  let safe =
-    target
-    |> String.map (function
-      | '/' -> '-'
-      | c -> c)
-  in
-  Filename.concat ".sol" (Filename.concat "kubeconfigs" (safe ^ ".kubeconfig"))
-;;
-
-let print_target_destination_lines ~target_file ~kube_context ~kubeconfig =
-  Printf.printf
-    "  Add these lines under `target:` in %s:\n\
-    \    kube_context: %s\n\
-    \    kubeconfig: %s\n\
-     %!"
-    target_file
-    kube_context
-    kubeconfig
-;;
-
 let contains ~needle s =
   let nlen = String.length needle in
   let slen = String.length s in
   let rec loop i = i + nlen <= slen && (String.sub s i nlen = needle || loop (i + 1)) in
   nlen = 0 || loop 0
-;;
-
-let record_target_destination (target : Sol_cli_config.target) ~kube_context ~kubeconfig =
-  let target_file = Sol_cli_config.target_file target in
-  if
-    (not (Sys.file_exists target_file))
-    || contains ~needle:"kube_context:" (read_file target_file)
-    || contains ~needle:"kubeconfig:" (read_file target_file)
-  then print_target_destination_lines ~target_file ~kube_context ~kubeconfig
-  else (
-    let content = read_file target_file in
-    let lines = String.split_on_char '\n' content in
-    let rec insert acc = function
-      | [] -> None
-      | line :: rest when String.trim line = "target:" ->
-        Some
-          (String.concat
-             "\n"
-             (List.rev_append
-                acc
-                (line
-                 :: ("  kube_context: " ^ kube_context)
-                 :: ("  kubeconfig: " ^ kubeconfig)
-                 :: rest)))
-      | line :: rest -> insert (line :: acc) rest
-    in
-    match insert [] lines with
-    | None -> print_target_destination_lines ~target_file ~kube_context ~kubeconfig
-    | Some updated ->
-      write_file target_file updated;
-      Printf.printf
-        "  Recorded Kubernetes destination in %s (%s).\n%!"
-        target_file
-        kube_context)
-;;
-
-(* EXP-028 (originally EXP-023, reverted 2026-06-13): a printed
-   kubeconfig_command line is easy to miss, leaving kubectl unconfigured and
-   every subsequent sol status/deploy/migrate failing with a cryptic
-   connection error. Run it automatically; on failure, fall back to printing
-   an explicit instruction rather than leaving the user to notice the
-   original output line on their own. *)
-let configure_kubectl infra_dir (target : Sol_cli_config.target) =
-  match terraform_output_string infra_dir "kubeconfig_command" with
-  | None -> ()
-  | Some kubeconfig_command ->
-    let kubeconfig = target_kubeconfig_path target.Sol_cli_config.name in
-    mkdir_p (Filename.dirname kubeconfig);
-    Printf.printf "\nConfiguring kubectl...\n%!";
-    (match
-       Sol_cli_process.run
-         (Sol_cli_process.cmd
-            ~env:[ "KUBECONFIG", kubeconfig ]
-            [ "sh"; "-c"; kubeconfig_command ])
-     with
-     | Ok r when r.Sol_cli_process.exit_code = 0 ->
-       let kube_context =
-         terraform_output_string infra_dir "kube_context"
-         |> Option.value
-              ~default:
-                (Option.value target.Sol_cli_config.cluster_name ~default:target.name)
-       in
-       record_target_destination target ~kube_context ~kubeconfig;
-       Printf.printf
-         "  kubectl configured for this target -- sol status/deploy/migrate will use the \
-          recorded destination.\n\
-          %!"
-     | _ ->
-       Printf.printf
-         "  (could not auto-configure kubectl -- run this yourself, then add the target \
-          destination lines printed below:)\n\
-         \  KUBECONFIG=%s %s\n\
-          %!"
-         kubeconfig
-         kubeconfig_command;
-       let kube_context =
-         terraform_output_string infra_dir "kube_context"
-         |> Option.value
-              ~default:
-                (Option.value target.Sol_cli_config.cluster_name ~default:target.name)
-       in
-       print_target_destination_lines
-         ~target_file:(Sol_cli_config.target_file target)
-         ~kube_context
-         ~kubeconfig)
 ;;
 
 (* ── cloud apply/plan ───────────────────────────────────────────────────── *)
@@ -266,6 +102,8 @@ let infra_dir provider =
     exit 1);
   pname, dir
 ;;
+
+let platform_dir () = Filename.concat (resolve_sol_home ()) "cli/platform/infra/base"
 
 type action =
   | Plan
@@ -462,143 +300,23 @@ let aws_no_load_balancers ~region ~cluster_name =
     false
 ;;
 
-(* AUDIT-064: a Kubernetes Service of type LoadBalancer (ingress-nginx's,
-   by default -- cli/platform/infra/base/variables.tf's ingress_service_type)
-   causes the cluster's cloud-controller to provision a real AWS ELB/NLB
-   that Terraform's own state has no knowledge of. Deleting the Service
-   first, before terraform destroy tears down the VPC/subnets that load
-   balancer's ENIs live in, avoids both an orphaned billed resource and a
-   real EKS teardown gotcha (AWS can refuse to delete a subnet that still
-   has an orphaned load balancer's ENI attached).
-
-   Best-effort by design: any failure here (unreachable cluster, missing
-   EKS describe permission, etc.) is a warning, not a hard stop --
-   verify_aws_destroy's post-destroy check below is the hard gate that
-   actually fails the command if a load balancer is genuinely left behind. *)
-let delete_loadbalancer_services ~region ~cluster_name =
-  let kubeconfig = Filename.temp_file "sol-cloud-destroy-" ".kubeconfig" in
-  Fun.protect
-    ~finally:(fun () ->
-      try Sys.remove kubeconfig with
-      | Sys_error _ -> ())
-    (fun () ->
-       let env = [ "KUBECONFIG", kubeconfig ] in
-       let update_ok =
-         match
-           Sol_cli_process.run
-             (Sol_cli_process.cmd
-                ~env
-                ~timeout_s:30.
-                [ "aws"
-                ; "eks"
-                ; "update-kubeconfig"
-                ; "--name"
-                ; cluster_name
-                ; "--region"
-                ; region
-                ; "--alias"
-                ; cluster_name
-                ])
-         with
-         | Ok r -> r.Sol_cli_process.exit_code = 0
-         | Error _ -> false
-       in
-       if not update_ok
-       then
-         Printf.printf
-           "  (could not reach cluster %s to remove LoadBalancer Services first -- \
-            skipping; verifying no load balancer is left behind after destroy instead)\n\
-            %!"
-           cluster_name
-       else (
-         (* Kubernetes' field selectors on core/v1 Service only support
-           metadata.name/metadata.namespace -- "spec.type=LoadBalancer" is
-           rejected outright by every API server (confirmed live against a
-           real cluster; this is standard apiserver behavior, not
-           version-specific). Filter inside the jsonpath range expression
-           instead, which does support arbitrary field predicates. *)
-         match
-           Sol_cli_process.run
-             ~echo:false
-             (Sol_cli_process.cmd
-                ~env
-                ~timeout_s:20.
-                [ "kubectl"
-                ; "--context"
-                ; cluster_name
-                ; "get"
-                ; "svc"
-                ; "-A"
-                ; "-o"
-                ; {|jsonpath={range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.namespace} {.metadata.name}
-{end}|}
-                ])
-         with
-         | Ok r when r.Sol_cli_process.exit_code = 0 ->
-           let services =
-             String.split_on_char '\n' r.Sol_cli_process.stdout
-             |> List.filter_map (fun line ->
-               match String.split_on_char ' ' (String.trim line) with
-               | [ ns; name ] when ns <> "" && name <> "" -> Some (ns, name)
-               | _ -> None)
-           in
-           if services <> []
-           then (
-             Printf.printf
-               "  Deleting %d LoadBalancer Service(s) before terraform destroy \
-                (AUDIT-064) -- their AWS load balancer isn't tracked by Terraform and \
-                must be removed first:\n\
-                %!"
-               (List.length services);
-             List.iter
-               (fun (ns, name) ->
-                  Printf.printf "    %s/%s\n%!" ns name;
-                  ignore
-                    (Sol_cli_process.run
-                       (Sol_cli_process.cmd
-                          ~env
-                          ~timeout_s:90.
-                          [ "kubectl"
-                          ; "--context"
-                          ; cluster_name
-                          ; "delete"
-                          ; "svc"
-                          ; name
-                          ; "-n"
-                          ; ns
-                          ; "--wait=true"
-                          ; "--timeout=60s"
-                          ])))
-               services;
-             (* kubectl delete on a LoadBalancer Service returns once the k8s
-                object is gone, but AWS deprovisions the actual ELB/NLB
-                asynchronously. Poll the same tag-based check
-                verify_aws_destroy uses (bounded, same shape as
-                cmd_migrate.ml's FRIC-012 Job-completion poll) rather than a
-                fixed sleep, which either wastes time or -- worse -- isn't
-                long enough under AWS API backpressure or a slow NLB
-                deprovision. *)
-             let rec wait_for_lbs_gone n =
-               if n = 0
-               then
-                 Printf.printf
-                   "  (warning: load balancer(s) may still be deprovisioning after ~2min \
-                    -- proceeding to terraform destroy anyway; the post-destroy check \
-                    will catch it if one is still there)\n\
-                    %!"
-               else (
-                 match load_balancers_gone ~region ~cluster_name with
-                 | Some true -> ()
-                 | Some false | None ->
-                   Unix.sleepf 5.;
-                   wait_for_lbs_gone (n - 1))
-             in
-             wait_for_lbs_gone 24 (* ~120s at 5s/poll *))
-         | _ ->
-           Printf.printf
-             "  (could not list Services in cluster %s -- skipping LoadBalancer cleanup)\n\
-              %!"
-             cluster_name))
+(* The platform destroy removes the ingress Service through the named
+   provisioner. AWS deprovisions its load balancer asynchronously, so wait
+   before Terraform removes the VPC. The final absence check remains the hard
+   gate if this best-effort wait times out. *)
+let rec wait_for_load_balancers_gone ~region ~cluster_name attempts =
+  if attempts = 0
+  then
+    Printf.printf
+      "  (warning: load balancer(s) may still be deprovisioning; proceeding to cloud \
+       destroy and retaining the final absence check)\n\
+       %!"
+  else (
+    match load_balancers_gone ~region ~cluster_name with
+    | Some true -> ()
+    | Some false | None ->
+      Unix.sleepf 5.;
+      wait_for_load_balancers_gone ~region ~cluster_name (attempts - 1))
 ;;
 
 let verify_aws_destroy ~var_files ~vars =
@@ -643,10 +361,176 @@ let verify_aws_destroy ~var_files ~vars =
     Printf.printf "  AWS verification passed: EKS/RDS/ECR/load-balancers not found.\n%!"
 ;;
 
-let run_terraform_init run_log infra_dir =
-  require_terraform_success
-    (Sol_cli_run_log.run_phase run_log ~name:"terraform-init" (fun () ->
-       Sol_cli_terraform.init ~chdir:infra_dir))
+let terraform_init run_log infra_dir backend_config =
+  Sol_cli_run_log.run_phase run_log ~name:"terraform-init" (fun () ->
+    Sol_cli_terraform.init ~chdir:infra_dir ~backend_config ())
+;;
+
+let run_terraform_init run_log infra_dir backend_config =
+  require_terraform_success (terraform_init run_log infra_dir backend_config)
+;;
+
+let lifecycle_error message =
+  Printf.eprintf "error: %s\n%!" message;
+  exit 1
+;;
+
+let established_target = function
+  | Some target -> target
+  | None -> lifecycle_error "cloud lifecycle requires a resolved target"
+;;
+
+let aws_outputs infra_dir =
+  match Sol_cli_terraform.output_json ~chdir:infra_dir () with
+  | Ok result when result.Sol_cli_process.exit_code = 0 ->
+    (match Yojson.Safe.from_string result.stdout with
+     | `Assoc [] -> Ok None
+     | _ ->
+       Result.map
+         (fun outputs -> Some outputs)
+         (Sol_cli_cloud_lifecycle.aws_outputs_of_json result.stdout)
+     | exception Yojson.Json_error message ->
+       Error ("invalid AWS Terraform output JSON: " ^ message))
+  | Ok result ->
+    Error (Printf.sprintf "terraform output failed with exit %d" result.exit_code)
+  | Error _ -> Error "could not read AWS Terraform outputs"
+;;
+
+let provisioner_kubeconfig ~region outputs f =
+  let path = Filename.temp_file "sol-platform-provisioner-" ".kubeconfig" in
+  let cleanup () =
+    try Sys.remove path with
+    | Sys_error _ -> ()
+  in
+  (* Phase failures terminate through [lifecycle_error] -> [exit], which does not
+     unwind the stack, so [Fun.protect]'s finalizer alone would leak this
+     privileged kubeconfig on every injected failure. Register the same cleanup
+     with [at_exit] as well; it is idempotent. *)
+  at_exit cleanup;
+  Fun.protect ~finally:cleanup (fun () ->
+    let env = [ "KUBECONFIG", path ] in
+    match
+      Sol_cli_process.run
+        (Sol_cli_process.cmd
+           ~env
+           [ "aws"
+           ; "eks"
+           ; "update-kubeconfig"
+           ; "--region"
+           ; region
+           ; "--name"
+           ; Sol_cli_cloud_lifecycle.cluster_name outputs
+           ; "--alias"
+           ; Sol_cli_cloud_lifecycle.cluster_name outputs
+           ; "--role-arn"
+           ; Sol_cli_cloud_lifecycle.provisioner_role_arn outputs
+           ; "--kubeconfig"
+           ; path
+           ])
+    with
+    | Ok result when result.exit_code = 0 -> Ok (f env)
+    | _ -> Error "could not establish ephemeral provisioner cluster access")
+;;
+
+let with_provisioner_kubeconfig ?(on_error = Fun.id) ~region outputs f =
+  match provisioner_kubeconfig ~region outputs f with
+  | Ok value -> value
+  | Error message ->
+    on_error ();
+    lifecycle_error message
+;;
+
+let process_ok ?(env = []) argv =
+  match Sol_cli_process.run (Sol_cli_process.cmd ~env argv) with
+  | Ok result -> result.exit_code = 0
+  | Error _ -> false
+;;
+
+let process_output ?(env = []) argv =
+  match Sol_cli_process.run (Sol_cli_process.cmd ~env argv) with
+  | Ok result when result.exit_code = 0 -> Some result.stdout
+  | _ -> None
+;;
+
+let aws_cloud_ready ~region outputs =
+  let cluster = Sol_cli_cloud_lifecycle.cluster_name outputs in
+  let status args = process_output ([ "aws" ] @ args @ [ "--region"; region ]) in
+  match
+    ( status
+        [ "eks"
+        ; "describe-cluster"
+        ; "--name"
+        ; cluster
+        ; "--query"
+        ; "cluster.status"
+        ; "--output"
+        ; "text"
+        ]
+    , status
+        [ "eks"
+        ; "describe-addon"
+        ; "--cluster-name"
+        ; cluster
+        ; "--addon-name"
+        ; "aws-ebs-csi-driver"
+        ; "--query"
+        ; "addon.status"
+        ; "--output"
+        ; "text"
+        ] )
+  with
+  | Some cluster_status, Some addon_status
+    when String.trim cluster_status = "ACTIVE" && String.trim addon_status = "ACTIVE" ->
+    true
+  | _ -> false
+;;
+
+let crds_established env =
+  process_ok
+    ~env
+    [ "kubectl"
+    ; "wait"
+    ; "--for=condition=Established"
+    ; "crd/certificates.cert-manager.io"
+    ; "crd/clusterissuers.cert-manager.io"
+    ; "--timeout=5s"
+    ]
+;;
+
+let provisioner_rbac_established env =
+  Sol_cli_cloud_lifecycle.provisioner_authorization_established ~can_i:(fun args ->
+    process_ok ~env ([ "kubectl"; "auth"; "can-i" ] @ args))
+;;
+
+let platform_prerequisite_targets =
+  Sol_cli_terraform.targets
+    "kubernetes_namespace.cert_manager"
+    [ "kubernetes_namespace.ingress_nginx"
+    ; "kubernetes_namespace.argocd"
+    ; "kubernetes_namespace.redpanda"
+    ; "kubernetes_namespace.monitoring"
+    ; "kubernetes_cluster_role.platform_provisioner_namespaced"
+    ; "kubernetes_role_binding.platform_provisioner"
+    ; "kubernetes_cluster_role.platform_provisioner_cluster"
+    ; "kubernetes_cluster_role_binding.platform_provisioner_cluster"
+    ; "helm_release.cert_manager"
+    ]
+;;
+
+let prepare_destroy () =
+  Printf.printf
+    "  prepare: no AWS resource-specific preparation is defined (RDS remains Finding 9b).\n\
+     %!"
+;;
+
+let verify_destroy_preparation () =
+  Printf.printf "  verify preparation: no preparation predicates are defined.\n%!"
+;;
+
+let platform_absent env =
+  [ "cert-manager"; "ingress-nginx"; "argocd"; "redpanda"; "monitoring"; "postgresql" ]
+  |> List.for_all (fun namespace ->
+    not (process_ok ~env [ "kubectl"; "get"; "namespace"; namespace ]))
 ;;
 
 let config_vars ~strict target =
@@ -691,7 +575,10 @@ let config_vars ~strict target =
 let cloud_init ~target ~var_file ~vars ~action () =
   check_terraform ();
   let provider = provider_of_target_path target in
+  if provider <> Sol_cli_provider.Aws
+  then lifecycle_error "the complete cloud lifecycle is currently qualified only for AWS";
   let pname, infra_dir = infra_dir provider in
+  let platform_dir = platform_dir () in
   let run_log = Sol_cli_run_log.create ~prefix:"cloud-apply" () in
   (* Check the target before terraform-init, same order cloud_destroy
      already uses -- a typo'd target should fail fast, not after a
@@ -713,6 +600,15 @@ let cloud_init ~target ~var_file ~vars ~action () =
     | Some { Sol_cli_config.profile = Some _; _ } -> vars @ config_vars
     | _ -> config_vars @ vars
   in
+  let target_cfg = established_target target_cfg in
+  let aws_target =
+    match Sol_cli_cloud_lifecycle.aws_target target_cfg with
+    | Ok target -> target
+    | Error message -> lifecycle_error message
+  in
+  let target_cfg = Sol_cli_cloud_lifecycle.target aws_target in
+  let cloud_backend = Sol_cli_cloud_lifecycle.cloud_backend aws_target in
+  let platform_backend = Sol_cli_cloud_lifecycle.platform_backend aws_target in
   let var_files =
     match var_file with
     | None -> []
@@ -732,31 +628,206 @@ let cloud_init ~target ~var_file ~vars ~action () =
      Printf.eprintf "\nerror: %s\n%!" msg;
      exit 1);
   Printf.printf "\nInitializing cloud infrastructure (%s)...\n%!" pname;
-  run_terraform_init run_log infra_dir;
+  run_terraform_init run_log infra_dir cloud_backend;
   match action with
   | Plan ->
     require_terraform_success
       (Sol_cli_run_log.run_phase run_log ~name:"terraform-plan" (fun () ->
-         Sol_cli_terraform.plan ~chdir:infra_dir ~var_files ~vars));
+         Sol_cli_terraform.plan
+           ~scope:Sol_cli_terraform.whole_root
+           ~chdir:infra_dir
+           ~var_files
+           ~vars
+           ()));
+    let report_phase name = function
+      | Sol_cli_cloud_lifecycle.Plannable -> Printf.printf "\n%s\n  PLANNED\n%!" name
+      | Sol_cli_cloud_lifecycle.Deferred reason ->
+        Printf.printf "\n%s\n  DEFERRED — %s\n%!" name reason
+    in
+    (match aws_outputs infra_dir with
+     | Ok None ->
+       report_phase
+         "Platform prerequisites"
+         (Sol_cli_cloud_lifecycle.Deferred "requires cloud substrate to exist");
+       report_phase
+         "Platform substrate"
+         (Sol_cli_cloud_lifecycle.Deferred "requires cloud substrate to exist")
+     | Error message -> lifecycle_error message
+     | Ok (Some outputs) ->
+       let platform_vars =
+         match Sol_cli_cloud_lifecycle.platform_inputs aws_target outputs with
+         | Ok inputs -> Sol_cli_cloud_lifecycle.platform_terraform_vars inputs
+         | Error message -> lifecycle_error message
+       in
+       (* An unavailable cluster credential is not a deferred phase: it is an
+          unavailable lifecycle prerequisite, so plan exits non-zero. Deferral is
+          reserved for phases whose concrete prerequisite is simply not
+          established yet and whose establishment would itself be a mutation. *)
+       with_provisioner_kubeconfig ~region:target_cfg.region outputs (fun env ->
+         let rbac_established = provisioner_rbac_established env in
+         let crds_established = rbac_established && crds_established env in
+         let prerequisites, substrate =
+           Sol_cli_cloud_lifecycle.platform_plan_phases
+             ~cluster_exists:true
+             ~rbac_established
+             ~crds_established
+         in
+         (match prerequisites with
+          | Sol_cli_cloud_lifecycle.Plannable ->
+            run_terraform_init run_log platform_dir platform_backend;
+            require_terraform_success
+              (Sol_cli_run_log.run_phase
+                 run_log
+                 ~name:"platform-prerequisites-plan"
+                 (fun () ->
+                    Sol_cli_terraform.plan
+                      ~env
+                      ~scope:platform_prerequisite_targets
+                      ~chdir:platform_dir
+                      ~var_files:[]
+                      ~vars:platform_vars
+                      ()))
+          | Sol_cli_cloud_lifecycle.Deferred _ -> ());
+         (match substrate with
+          | Sol_cli_cloud_lifecycle.Plannable ->
+            require_terraform_success
+              (Sol_cli_run_log.run_phase run_log ~name:"platform-plan" (fun () ->
+                 Sol_cli_terraform.plan
+                   ~env
+                   ~scope:Sol_cli_terraform.whole_root
+                   ~chdir:platform_dir
+                   ~var_files:[]
+                   ~vars:platform_vars
+                   ()))
+          | Sol_cli_cloud_lifecycle.Deferred _ -> ());
+         report_phase "Platform prerequisites" prerequisites;
+         report_phase "Platform substrate" substrate));
     Printf.printf "\nDone. Re-run with 'sol cloud apply' to change cloud resources.\n%!"
   | Apply ->
     require_terraform_success
       (Sol_cli_run_log.run_phase run_log ~name:"terraform-apply" (fun () ->
-         Sol_cli_terraform.apply ~chdir:infra_dir ~var_files ~vars));
+         Sol_cli_terraform.apply
+           ~scope:Sol_cli_terraform.whole_root
+           ~chdir:infra_dir
+           ~var_files
+           ~vars:("provisioner_bootstrap_admin=true" :: vars)
+           ()));
+    let deescalate () =
+      Sol_cli_run_log.run_phase
+        run_log
+        ~name:"provisioner-bootstrap-access-remove"
+        (fun () ->
+           Sol_cli_terraform.apply
+             ~scope:Sol_cli_terraform.whole_root
+             ~chdir:infra_dir
+             ~var_files
+             ~vars:("provisioner_bootstrap_admin=false" :: vars)
+             ())
+    in
+    let cleanup_bootstrap_access () = ignore (deescalate ()) in
+    let outputs =
+      match aws_outputs infra_dir with
+      | Ok (Some v) -> v
+      | Ok None ->
+        cleanup_bootstrap_access ();
+        lifecycle_error "AWS Terraform apply completed without lifecycle outputs"
+      | Error e ->
+        cleanup_bootstrap_access ();
+        lifecycle_error e
+    in
+    let platform_vars =
+      match Sol_cli_cloud_lifecycle.platform_inputs aws_target outputs with
+      | Ok inputs -> Sol_cli_cloud_lifecycle.platform_terraform_vars inputs
+      | Error message ->
+        cleanup_bootstrap_access ();
+        lifecycle_error message
+    in
+    if not (aws_cloud_ready ~region:target_cfg.region outputs)
+    then (
+      cleanup_bootstrap_access ();
+      lifecycle_error "AWS cloud substrate is not Ready (EKS cluster/EBS CSI addon)");
+    with_provisioner_kubeconfig
+      ~on_error:cleanup_bootstrap_access
+      ~region:target_cfg.region
+      outputs
+      (fun env ->
+         let platform_init = terraform_init run_log platform_dir platform_backend in
+         (match platform_init with
+          | Ok result when result.exit_code = 0 -> ()
+          | _ ->
+            cleanup_bootstrap_access ();
+            require_terraform_success platform_init);
+         let prerequisites =
+           Sol_cli_run_log.run_phase
+             run_log
+             ~name:"platform-prerequisites-apply"
+             (fun () ->
+                Sol_cli_terraform.apply
+                  ~env
+                  ~scope:platform_prerequisite_targets
+                  ~chdir:platform_dir
+                  ~var_files:[]
+                  ~vars:platform_vars
+                  ())
+         in
+         (match prerequisites with
+          | Ok result when result.exit_code = 0 -> ()
+          | _ ->
+            cleanup_bootstrap_access ();
+            require_terraform_success prerequisites);
+         if
+           not
+             (process_ok
+                ~env
+                [ "kubectl"
+                ; "wait"
+                ; "--for=condition=Established"
+                ; "crd/certificates.cert-manager.io"
+                ; "crd/clusterissuers.cert-manager.io"
+                ; "--timeout=180s"
+                ])
+         then (
+           cleanup_bootstrap_access ();
+           lifecycle_error "cert-manager CRDs did not become Established");
+         require_terraform_success (deescalate ());
+         if not (provisioner_rbac_established env)
+         then
+           lifecycle_error
+             "platform provisioner RBAC is not effective after bootstrap access removal";
+         require_terraform_success
+           (Sol_cli_run_log.run_phase run_log ~name:"platform-apply" (fun () ->
+              Sol_cli_terraform.apply
+                ~env
+                ~scope:Sol_cli_terraform.whole_root
+                ~chdir:platform_dir
+                ~var_files:[]
+                ~vars:platform_vars
+                ()));
+         let cluster_issuer =
+           Option.value target_cfg.cluster_issuer ~default:"letsencrypt-prod"
+         in
+         let readiness =
+           Sol_cli_cloud_lifecycle.readiness
+             ~cluster_issuer
+             ~observability_backend:
+               (Option.value target_cfg.observability_backend ~default:"local")
+             ~run:(fun args -> process_output ~env ("kubectl" :: args))
+         in
+         let summary = Sol_cli_cloud_lifecycle.readiness_summary readiness in
+         if summary <> "Ready" then lifecycle_error ("platform readiness " ^ summary));
     Printf.printf "\nProvisioned endpoints:\n%!";
     print_outputs infra_dir;
-    (match target_cfg with
-     | Some target -> configure_kubectl infra_dir target
-     | None -> ());
     Printf.printf "\nDone.\n%!"
 ;;
 
 let cloud_destroy ~target ~var_file ~vars ~action () =
   check_terraform ();
   let provider = provider_of_target_path target in
+  if provider <> Sol_cli_provider.Aws
+  then lifecycle_error "the complete cloud lifecycle is currently qualified only for AWS";
   let pname, infra_dir = infra_dir provider in
   let run_log = Sol_cli_run_log.create ~prefix:"cloud-destroy" () in
-  let config_vars, config_var_file, _target_cfg =
+  let config_vars, config_var_file, target_cfg =
     config_vars ~strict:(action = Apply) (Some target)
   in
   let var_file =
@@ -765,6 +836,14 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
     | None -> config_var_file
   in
   let vars = config_vars @ vars in
+  let target_cfg = established_target target_cfg in
+  let aws_target =
+    match Sol_cli_cloud_lifecycle.aws_target target_cfg with
+    | Ok target -> target
+    | Error message -> lifecycle_error message
+  in
+  let target_cfg = Sol_cli_cloud_lifecycle.target aws_target in
+  let cloud_backend = Sol_cli_cloud_lifecycle.cloud_backend aws_target in
   let var_files =
     match var_file with
     | None -> []
@@ -782,14 +861,101 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
      work, not bolted onto the destroy invocation. See the known gap in
      docs/deployment/production-bootstrap.md for the operator's interim path. *)
   Printf.printf "\nDestroying cloud infrastructure (%s)...\n%!" pname;
-  run_terraform_init run_log infra_dir;
+  run_terraform_init run_log infra_dir cloud_backend;
+  let outputs =
+    match aws_outputs infra_dir with
+    | Ok outputs -> outputs
+    | Error message -> lifecycle_error message
+  in
+  let destroy_platform ?(on_error = Fun.id) outputs =
+    let platform_dir = platform_dir () in
+    let platform_backend = Sol_cli_cloud_lifecycle.platform_backend aws_target in
+    let platform_vars =
+      match Sol_cli_cloud_lifecycle.platform_inputs aws_target outputs with
+      | Ok inputs -> Sol_cli_cloud_lifecycle.platform_terraform_vars inputs
+      | Error message -> lifecycle_error message
+    in
+    with_provisioner_kubeconfig ~on_error ~region:target_cfg.region outputs (fun env ->
+      let init = terraform_init run_log platform_dir platform_backend in
+      (match init with
+       | Ok result when result.exit_code = 0 -> ()
+       | _ ->
+         on_error ();
+         require_terraform_success init);
+      let destroy =
+        Sol_cli_run_log.run_phase run_log ~name:"platform-destroy" (fun () ->
+          Sol_cli_terraform.destroy
+            ~env
+            ~chdir:platform_dir
+            ~var_files:[]
+            ~vars:platform_vars
+            ())
+      in
+      match destroy with
+      | Ok result when result.exit_code = 0 ->
+        if not (platform_absent env)
+        then (
+          on_error ();
+          lifecycle_error "platform absence verification failed after destroy")
+      | _ ->
+        on_error ();
+        require_terraform_success destroy)
+  in
   match action with
   | Plan ->
+    (match outputs with
+     | None ->
+       Printf.printf "  Platform destroy DEFERRED — cloud substrate is absent.\n%!"
+     | Some outputs ->
+       let platform_dir = platform_dir () in
+       let platform_backend = Sol_cli_cloud_lifecycle.platform_backend aws_target in
+       let platform_vars =
+         match Sol_cli_cloud_lifecycle.platform_inputs aws_target outputs with
+         | Ok inputs -> Sol_cli_cloud_lifecycle.platform_terraform_vars inputs
+         | Error message -> lifecycle_error message
+       in
+       with_provisioner_kubeconfig ~region:target_cfg.region outputs (fun env ->
+         run_terraform_init run_log platform_dir platform_backend;
+         require_terraform_success
+           (Sol_cli_run_log.run_phase run_log ~name:"platform-plan-destroy" (fun () ->
+              Sol_cli_terraform.plan_destroy
+                ~env
+                ~chdir:platform_dir
+                ~var_files:[]
+                ~vars:platform_vars
+                ()))));
     require_terraform_success
       (Sol_cli_run_log.run_phase run_log ~name:"terraform-plan-destroy" (fun () ->
-         Sol_cli_terraform.plan_destroy ~chdir:infra_dir ~var_files ~vars));
+         Sol_cli_terraform.plan_destroy ~chdir:infra_dir ~var_files ~vars ()));
     Printf.printf "\nDone. Re-run with --apply to destroy cloud resources.\n%!"
   | Apply ->
+    prepare_destroy ();
+    verify_destroy_preparation ();
+    (match outputs with
+     | None -> ()
+     | Some outputs ->
+       require_terraform_success
+         (Sol_cli_terraform.apply
+            ~scope:Sol_cli_terraform.whole_root
+            ~chdir:infra_dir
+            ~var_files
+            ~vars:("provisioner_bootstrap_admin=true" :: vars)
+            ());
+       let deescalate () =
+         Sol_cli_run_log.run_phase
+           run_log
+           ~name:"provisioner-bootstrap-access-remove"
+           (fun () ->
+              Sol_cli_terraform.apply
+                ~scope:Sol_cli_terraform.whole_root
+                ~chdir:infra_dir
+                ~var_files
+                ~vars:("provisioner_bootstrap_admin=false" :: vars)
+                ())
+       in
+       let cleanup_bootstrap_access () = ignore (deescalate ()) in
+       destroy_platform ~on_error:cleanup_bootstrap_access outputs;
+       require_terraform_success (deescalate ()));
     (match provider with
      | Sol_cli_provider.Aws ->
        (match resolved_var "cluster_name" ~var_files ~vars ~default:None with
@@ -800,11 +966,11 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
               (resolved_var "region" ~var_files ~vars ~default:(Some "us-east-1"))
               ~default:"us-east-1"
           in
-          delete_loadbalancer_services ~region ~cluster_name)
+          wait_for_load_balancers_gone ~region ~cluster_name 24)
      | Sol_cli_provider.Gcp -> ());
     require_terraform_success
       (Sol_cli_run_log.run_phase run_log ~name:"terraform-destroy" (fun () ->
-         Sol_cli_terraform.destroy ~chdir:infra_dir ~var_files ~vars));
+         Sol_cli_terraform.destroy ~chdir:infra_dir ~var_files ~vars ()));
     Printf.printf "\nVerifying teardown...\n%!";
     (match provider with
      | Sol_cli_provider.Aws -> verify_aws_destroy ~var_files ~vars

@@ -21,6 +21,7 @@ let target ?(kube_context = Some "prod-us-east-1") ?kubeconfig () : Sol_cli_conf
   ; registry = Some "123456789012.dkr.ecr.us-east-1.amazonaws.com"
   ; base_domain = Some "acme.com"
   ; cluster_issuer = None
+  ; letsencrypt_email = None
   ; cluster_name = Some "acme-prod"
   ; kube_context
   ; kubeconfig

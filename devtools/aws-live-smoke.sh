@@ -8,23 +8,6 @@ REGION="${AWS_REGION:-us-east-1}"
 CLUSTER="${CLUSTER:-sol-dev-lbendtly}"
 LOG_DIR="${LOG_DIR:-/tmp/sol-aws-live-smoke-$(date +%Y%m%d-%H%M%S)}"
 SOL="$ROOT/_build/default/cli/sol/bin/main.exe"
-ACCOUNT="$(AWS_PROFILE="$PROFILE" AWS_REGION="$REGION" aws sts get-caller-identity --query Account --output text)"
-
-base_vars=(
-  -var=base_domain=smoke-test.invalid
-  -var=cluster_issuer=letsencrypt-staging
-  -var=letsencrypt_email=smoke-test@example.invalid
-  -var=cert_manager_irsa_role_arn=arn:aws:iam::$ACCOUNT:role/$CLUSTER-cert-manager
-  -var=ingress_service_type=ClusterIP
-  -var=redpanda_replicas=1
-  -var=redpanda_cpu_cores=1
-  -var=redpanda_memory=2Gi
-  -var=redpanda_persistent_storage=false
-  -var=install_postgresql=false
-  -var=loki_persistent_storage=false
-  -var=prometheus_persistent_storage=false
-  -var=grafana_admin_password=sol-smoke-dev
-)
 
 PHASE_TIMEOUT="${PHASE_TIMEOUT:-900}" # ponytail: single knob, tune per-phase if one step needs more
 
@@ -42,9 +25,7 @@ run() {
 
 cleanup() {
   local rc=$?
-  say "cleanup: base destroy"
-  KUBE_CONFIG_PATH="$HOME/.kube/config" terraform -chdir="$ROOT/cli/platform/infra/base" destroy -auto-approve "${base_vars[@]}" >"$LOG_DIR/base-destroy.log" 2>&1 || true
-  say "cleanup: aws destroy"
+  say "cleanup: target destroy"
   (cd "$ROOT/examples/pluto" && AWS_PROFILE="$PROFILE" AWS_REGION="$REGION" "$SOL" cloud destroy "$TARGET" --apply) >"$LOG_DIR/aws-destroy.log" 2>&1 || true
   say "cleanup: verify"
   AWS_PROFILE="$PROFILE" AWS_REGION="$REGION" aws eks describe-cluster --name "$CLUSTER" --region "$REGION" >"$LOG_DIR/verify-eks.log" 2>&1 && rc=1 || true
@@ -61,9 +42,6 @@ trap cleanup EXIT
 run aws-apply bash -lc "cd '$ROOT/examples/pluto' && AWS_PROFILE='$PROFILE' AWS_REGION='$REGION' '$SOL' cloud apply '$TARGET'"
 run kubeconfig aws eks update-kubeconfig --region "$REGION" --name "$CLUSTER"
 run nodes kubectl get nodes -o wide
-run base-init terraform -chdir="$ROOT/cli/platform/infra/base" init
-run cert-manager bash -lc "KUBE_CONFIG_PATH='$HOME/.kube/config' terraform -chdir='$ROOT/cli/platform/infra/base' apply -auto-approve -target=kubernetes_namespace.cert_manager -target=helm_release.cert_manager ${base_vars[*]}"
-run base-apply bash -lc "KUBE_CONFIG_PATH='$HOME/.kube/config' terraform -chdir='$ROOT/cli/platform/infra/base' apply -auto-approve ${base_vars[*]}"
 run pods kubectl get pods -A
 run loki-ready bash -lc "kubectl -n monitoring port-forward svc/loki 3100:3100 >/tmp/sol-loki-pf.log 2>&1 & pid=\$!; sleep 5; curl -fsS http://127.0.0.1:3100/ready; kill \$pid"
 # /ready only proves Loki itself is up, not that anything is being ingested.

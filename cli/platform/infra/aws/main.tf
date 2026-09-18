@@ -30,13 +30,7 @@ terraform {
       version = "~> 2.12"
     }
   }
-
-  # Uncomment to store state in S3 (recommended for teams):
-  # backend "s3" {
-  #   bucket = "my-terraform-state"
-  #   key    = "sol/prod/terraform.tfstate"
-  #   region = "us-east-1"
-  # }
+  backend "s3" {}
 }
 
 provider "aws" {
@@ -155,6 +149,21 @@ module "eks" {
   # (set enable_cluster_creator_admin = true for the one-off bootstrap, then
   # return it to false).
   enable_cluster_creator_admin_permissions = var.enable_cluster_creator_admin
+
+  access_entries = var.provisioner_role_arn == "" ? {} : {
+    platform_provisioner = {
+      principal_arn     = var.provisioner_role_arn
+      kubernetes_groups = ["sol:platform-provisioners"]
+      policy_associations = var.provisioner_bootstrap_admin ? {
+        bootstrap = {
+          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = {
+            type = "cluster"
+          }
+        }
+      } : {}
+    }
+  }
 
   tags = var.tags
 }

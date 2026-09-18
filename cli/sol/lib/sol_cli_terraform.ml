@@ -7,7 +7,31 @@ let which_check () =
   | Error _ -> false
 ;;
 
-let init ~chdir = run ~echo:true (cmd [ "terraform"; "-chdir=" ^ chdir; "init" ])
+type scope =
+  | Whole_root
+  | Targets of string * string list
+
+let whole_root = Whole_root
+
+let targets first rest =
+  if String.trim first = "" then invalid_arg "Terraform target must not be empty";
+  Targets (first, rest)
+;;
+
+let scope_args = function
+  | Whole_root -> []
+  | Targets (first, rest) -> List.map (fun target -> "-target=" ^ target) (first :: rest)
+;;
+
+let init ?(env = []) ~chdir ~backend_config () =
+  run
+    ~echo:true
+    (cmd
+       ~env
+       ([ "terraform"; "-chdir=" ^ chdir; "init"; "-reconfigure" ]
+        @ List.map (fun value -> "-backend-config=" ^ value) backend_config))
+;;
+
 let kv_args pairs = List.map (fun (k, v) -> k ^ "=" ^ v) pairs
 
 let var_args ~var_files ~vars =
@@ -16,33 +40,43 @@ let var_args ~var_files ~vars =
   varfile_args @ var_args
 ;;
 
-let plan ~chdir ~var_files ~vars =
-  run
-    ~echo:true
-    (cmd ([ "terraform"; "-chdir=" ^ chdir; "plan" ] @ var_args ~var_files ~vars))
-;;
-
-let plan_destroy ~chdir ~var_files ~vars =
+let plan ?(env = []) ~scope ~chdir ~var_files ~vars () =
   run
     ~echo:true
     (cmd
-       ([ "terraform"; "-chdir=" ^ chdir; "plan"; "-destroy" ] @ var_args ~var_files ~vars))
-;;
-
-let apply ~chdir ~var_files ~vars =
-  run
-    ~echo:true
-    (cmd
-       ([ "terraform"; "-chdir=" ^ chdir; "apply"; "-auto-approve" ]
+       ~env
+       ([ "terraform"; "-chdir=" ^ chdir; "plan" ]
+        @ scope_args scope
         @ var_args ~var_files ~vars))
 ;;
 
-let destroy ~chdir ~var_files ~vars =
+let plan_destroy ?(env = []) ~chdir ~var_files ~vars () =
   run
     ~echo:true
     (cmd
+       ~env
+       ([ "terraform"; "-chdir=" ^ chdir; "plan"; "-destroy" ] @ var_args ~var_files ~vars))
+;;
+
+let apply ?(env = []) ~scope ~chdir ~var_files ~vars () =
+  run
+    ~echo:true
+    (cmd
+       ~env
+       ([ "terraform"; "-chdir=" ^ chdir; "apply"; "-auto-approve" ]
+        @ scope_args scope
+        @ var_args ~var_files ~vars))
+;;
+
+let destroy ?(env = []) ~chdir ~var_files ~vars () =
+  run
+    ~echo:true
+    (cmd
+       ~env
        ([ "terraform"; "-chdir=" ^ chdir; "destroy"; "-auto-approve" ]
         @ var_args ~var_files ~vars))
 ;;
 
-let output_json ~chdir = run (cmd [ "terraform"; "-chdir=" ^ chdir; "output"; "-json" ])
+let output_json ?(env = []) ~chdir () =
+  run (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "output"; "-json" ])
+;;
