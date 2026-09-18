@@ -822,6 +822,23 @@ let cloud_init ~target ~var_file ~vars ~action () =
          report_phase "Platform substrate" substrate));
     Printf.printf "\nDone. Re-run with 'sol cloud apply' to change cloud resources.\n%!"
   | Apply ->
+    (* ADR 0003 / INFRA-031: [CloudBootstrap] is the phase in which the cloud
+       substrate does not exist yet, so report it before the privileged apply
+       that creates it — a fresh target's first phase was previously visible only
+       as the *absence* of output until the platform stage ran. A re-apply onto
+       an existing substrate is not a bootstrap: there the platform stage below
+       reports the phase that run is actually in.
+
+       Only a positive "there is no substrate" observation justifies the claim:
+       a state read that fails means the substrate is *unknown*, not absent, and
+       is failed closed rather than reported as a phase (or applied over). *)
+    (match aws_outputs infra_dir with
+     | Ok (Some _) -> ()
+     | Ok None ->
+       Printf.printf
+         "  lifecycle phase: %s\n%!"
+         (Sol_cli_cloud_lifecycle.phase_to_string Sol_cli_cloud_lifecycle.Cloud_bootstrap)
+     | Error message -> lifecycle_error message);
     require_terraform_success
       (Sol_cli_run_log.run_phase run_log ~name:"terraform-apply" (fun () ->
          Sol_cli_terraform.apply
@@ -1004,7 +1021,16 @@ let cloud_init ~target ~var_file ~vars ~action () =
          if not (provisioner_rbac_established env)
          then
            lifecycle_error
-             "platform provisioner RBAC is not effective after bootstrap access removal");
+             "platform provisioner RBAC is not effective after bootstrap access removal";
+         (* ADR 0003 / INFRA-031: the run is in [Ready] only once readiness has
+            been verified *and* the temporary privileged association has been
+            revoked *and* the bounded provisioner has been verified effective —
+            all three above. Report it here rather than at the transition check,
+            so the phase an operator sees is the state the target is actually
+            left in. *)
+         Printf.printf
+           "  lifecycle phase: %s\n%!"
+           (Sol_cli_cloud_lifecycle.phase_to_string Sol_cli_cloud_lifecycle.Ready));
     Printf.printf "\nProvisioned endpoints:\n%!";
     print_outputs infra_dir;
     Printf.printf "\nDone.\n%!"
@@ -1203,6 +1229,16 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
           in
           wait_for_load_balancers_gone ~region ~cluster_name 24)
      | Sol_cli_provider.Gcp -> ());
+    (* ADR 0003 / INFRA-031: this is where the lifecycle actually enters
+       [Destroying] — preparation is verified above and the platform is already
+       gone, so what remains is tearing the cloud substrate down. An absent
+       target never reaches it and reported [Absent] instead, which is why this
+       is conditional rather than an unconditional phase claim. *)
+    if Option.is_some outputs
+    then
+      Printf.printf
+        "  lifecycle phase: %s\n%!"
+        (Sol_cli_cloud_lifecycle.phase_to_string Sol_cli_cloud_lifecycle.Destroying);
     require_terraform_success
       (Sol_cli_run_log.run_phase run_log ~name:"terraform-destroy" (fun () ->
          Sol_cli_terraform.destroy ~chdir:infra_dir ~var_files ~vars:destroy_apply_vars ()));

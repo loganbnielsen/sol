@@ -290,6 +290,14 @@ grep -F 'lifecycle phase: PlatformInstalling' "$fresh_log.out" >/dev/null || {
   cat "$fresh_log.out" >&2
   exit 1
 }
+# INFRA-031: the run ends in Ready only after readiness is verified AND the
+# privileged association is revoked AND the bounded provisioner is re-verified,
+# so the phase an operator reads is the state the target is actually left in.
+grep -F 'lifecycle phase: Ready' "$fresh_log.out" >/dev/null || {
+  echo "a completed install did not report Ready:" >&2
+  cat "$fresh_log.out" >&2
+  exit 1
+}
 
 update_log="$tmp/phase-update.log"
 if ! (export FAIL_ON=""; export FRESH_TARGET=1; run_apply "$update_log"); then
@@ -305,6 +313,23 @@ grep -F 'lifecycle phase: PlatformUpdating' "$update_log.out" >/dev/null || {
 }
 grep -F 'lifecycle phase: PlatformInstalling' "$update_log.out" >/dev/null && {
   echo "a re-apply of an installed target was misclassified as PlatformInstalling" >&2
+  exit 1
+}
+
+# INFRA-031: a target whose cloud substrate does not exist yet reports
+# CloudBootstrap *before* the privileged apply that creates it, rather than that
+# first phase being visible only as the absence of output. The fixture models
+# "no substrate yet" with OUTPUT_ABSENT=1, which also makes the run fail closed
+# afterwards (an apply with no lifecycle outputs cannot continue) — so the phase
+# is asserted against a run that does not silently appear to succeed.
+bootstrap_log="$tmp/phase-bootstrap.log"
+if (export OUTPUT_ABSENT=1; run_apply "$bootstrap_log"); then
+  echo "an apply with no cloud substrate reported success and must not" >&2
+  exit 1
+fi
+grep -F 'lifecycle phase: CloudBootstrap' "$bootstrap_log.out" >/dev/null || {
+  echo "a target with no cloud substrate did not report CloudBootstrap:" >&2
+  cat "$bootstrap_log.out" >&2
   exit 1
 }
 
@@ -543,6 +568,13 @@ if ! run_destroy "$log"; then
 fi
 grep -F 'lifecycle phase: PreparingDestroy' "$log.out" >/dev/null || {
   echo "destroy on a partially installed target did not enter the destruction phase:" >&2
+  cat "$log.out" >&2
+  exit 1
+}
+# INFRA-031: the substrate teardown itself is Destroying, reported where the
+# lifecycle actually enters it (preparation verified, platform already gone).
+grep -F 'lifecycle phase: Destroying' "$log.out" >/dev/null || {
+  echo "destroy did not report Destroying while tearing the cloud substrate down:" >&2
   cat "$log.out" >&2
   exit 1
 }
