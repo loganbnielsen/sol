@@ -156,8 +156,49 @@ Smallest coherent fix, in dependency order:
 - `CONTRIBUTING.md`'s existing "the hook is not the gate" framing survives — this
   adds a local preflight, it does not promote the hook to the authority.
 
+## Completion
+
+Implemented on this branch. Nothing was decided that the ticket left open, and no
+behaviour was added that the repository cannot check:
+
+- **`CONTRIBUTING.md` § Isolation and ownership** states the rule, the five
+  things to resolve before every commit and push, the declaration that makes the
+  preflight strict, and the recovery for a stale hook install. This is the one
+  statement of the policy.
+- **`.claude/CLAUDE.md`** and **`.claude/skills/work/SKILL.md`** now point at that
+  section instead of defining the rule themselves — the skill is an entry point,
+  not the authority, which is the specific gap that let a non-`/work` actor
+  bypass it.
+- **`internal/ci/check_authority.sh`** resolves worktree, branch, detached state,
+  upstream and (when declared) base. It fails closed only against a declared
+  context; undeclared, it warns about exactly two things and exits 0. It never
+  requires an upstream and never inspects merge state.
+- **`internal/tooling/hooks/pre-commit`** runs the preflight before the
+  ticket-transition guard, because the failure it exists for is a commit that is
+  *valid but in the wrong place* — where every later check passes.
+- **`internal/ci/test_authority_check.sh`** and **`internal/ci/test_hook_install.sh`**
+  pin the semantics in scratch repositories and are wired into CI's `test` job.
+  The install test seeds the exact dangling-symlink failure found in the field.
+
+Two deliberate refinements beyond the ticket text, both to avoid brittleness:
+
+- The canonical-checkout warning fires only when **more than one worktree
+  exists**. A plain single-worktree clone is the human's only checkout, and
+  warning on every commit there would be noise, which is how a warning gets
+  ignored.
+- The preflight is enforced through a *declared* context rather than inferred
+  intent, because the repository genuinely cannot tell an agent from a human. The
+  cheapest declaration is three environment variables on one command line.
+
+Verified: `test_authority_check.sh` (10 expectations, including that a merge
+commit is not blocked and that the hook refuses a mismatched declaration) and
+`test_hook_install.sh` (including that a seeded dangling symlink is repaired and
+that re-running the installer is safe) both pass.
+
 **Demo/example coverage:** Internal tooling and contributor documentation; no
-runnable example or demo applies, and that will be stated in the completion
-notes.
+runnable example or demo applies, per the exemption rule. The runnable artefacts
+here are the two scratch-repository tests, not a demo-app change.
 
 **TypeScript parity:** No language-parity impact — repository tooling only.
+
+**Depends on:** None.
