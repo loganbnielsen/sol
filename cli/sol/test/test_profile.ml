@@ -96,6 +96,7 @@ let test_requirements_follow_usage () =
     ; "alert_delivery"
     ; "immutable_artifacts"
     ; "credential_posture"
+    ; "platform_capacity"
     ]
   in
   check_strs "no used capabilities: target-level guarantees only" always (names []);
@@ -1018,6 +1019,125 @@ let test_event_with_unknown_profile_rejected () =
     (Result.is_error (with_profile_field (Some (`String "production-single-region/v9"))))
 ;;
 
+(* INFRA-030: the production profile's capacity contract. These pin the envelope
+   and the recommended shape together, so shrinking the shape or growing the
+   platform's declared requests fails the build instead of failing a live install
+   the way HARDEN-002 Run 5 attempt 1 did. *)
+let test_recommended_shape_satisfies_the_envelope () =
+  let shape = P.recommended_node_shape in
+  (match
+     P.satisfies_capacity ~envelope:P.platform_capacity_envelope ~shape ~headroom_nodes:1
+   with
+   | Ok () -> ()
+   | Error reason ->
+     Alcotest.fail
+       (Printf.sprintf
+          "the profile's own recommended shape must satisfy its own capacity contract, \
+           but it does not: %s"
+          reason));
+  (* And comfortably rather than barely: the platform must still fit after the
+     one-node headroom a node-failure-tolerant workload requires, which is the
+     margin attempt 1 did not have. *)
+  check_bool
+    "fits after headroom with margin"
+    true
+    ((shape.nodes - 1) * shape.vcpu_per_node > P.platform_capacity_envelope.platform_vcpu)
+;;
+
+let test_attempt_1_shape_is_rejected () =
+  (* Exactly HARDEN-002 Run 5 attempt 1: three 2-vCPU nodes, which is what the
+     provider root defaulted to while the profile declared nothing. *)
+  let shape =
+    { P.instance_type = "m6i.large"
+    ; vcpu_per_node = 2
+    ; memory_gib_per_node = 8
+    ; nodes = 3
+    }
+  in
+  let shortfalls =
+    P.capacity_shortfall ~envelope:P.platform_capacity_envelope ~shape ~headroom_nodes:1
+  in
+  check_bool "Run 5 attempt 1's shape is rejected" true (shortfalls <> []);
+  let joined = String.concat " " shortfalls in
+  check_bool
+    "names the per-node floor"
+    true
+    (contains ~needle:"each node must offer at least 4 vCPU" joined);
+  check_bool
+    "names the post-headroom shortfall"
+    true
+    (contains ~needle:"vCPU left after node-failure headroom" joined);
+  check_bool
+    "the error names the shape it refused"
+    true
+    (match
+       P.satisfies_capacity
+         ~envelope:P.platform_capacity_envelope
+         ~shape
+         ~headroom_nodes:1
+     with
+     | Ok () -> false
+     | Error reason -> contains ~needle:"m6i.large" reason)
+;;
+
+let test_headroom_that_leaves_nothing_is_rejected () =
+  let shape = P.recommended_node_shape in
+  let shortfalls =
+    P.capacity_shortfall
+      ~envelope:P.platform_capacity_envelope
+      ~shape
+      ~headroom_nodes:shape.nodes
+  in
+  check_bool
+    "reserving every node is refused rather than silently accepted"
+    true
+    (contains
+       ~needle:"leaves no schedulable capacity at all"
+       (String.concat " " shortfalls))
+;;
+
+let test_profile_target_pins_the_node_shape () =
+  with_workspace (fun () ->
+    write_target prod_aws selecting;
+    let vars =
+      match
+        Sol_cli_config.terraform_vars ~workspace:"pluto" (load "prod/aws/us-east-1")
+      with
+      | Ok vars -> vars
+      | Error e -> Alcotest.fail e
+    in
+    check_str
+      "node instance types are profile-derived"
+      "[\"m6i.xlarge\"]"
+      (List.assoc "node_instance_types" vars);
+    check_str "node count is profile-derived" "4" (List.assoc "node_desired_size" vars);
+    (* Ordering is the enforcement: Terraform takes the last assignment, so the
+       profile's value must come after the caller's. *)
+    check_strs
+      "the profile's value is applied after the caller's"
+      [ "node_desired_size=2"; "node_desired_size=4" ]
+      (Sol_cli_config.vars_with_profile_precedence
+         ~has_profile:true
+         ~cli_vars:[ "node_desired_size=2" ]
+         ~config_vars:[ "node_desired_size=4" ]))
+;;
+
+let test_ordinary_target_keeps_its_own_shape () =
+  with_workspace (fun () ->
+    write_target prod_aws "target:\n  cluster_name: mine\n";
+    let vars =
+      match
+        Sol_cli_config.terraform_vars ~workspace:"pluto" (load "prod/aws/us-east-1")
+      with
+      | Ok vars -> vars
+      | Error e -> Alcotest.fail e
+    in
+    check_bool
+      "an ordinary target makes no capacity claim and keeps full control"
+      true
+      (not (List.mem_assoc "node_instance_types" vars)))
+;;
+
 let () =
   Alcotest.run
     "profile"
@@ -1204,6 +1324,28 @@ let () =
             "unknown profile rejected"
             `Quick
             test_event_with_unknown_profile_rejected
+        ] )
+    ; ( "platform capacity"
+      , [ Alcotest.test_case
+            "recommended shape satisfies the envelope"
+            `Quick
+            test_recommended_shape_satisfies_the_envelope
+        ; Alcotest.test_case
+            "Run 5 attempt 1's shape is rejected"
+            `Quick
+            test_attempt_1_shape_is_rejected
+        ; Alcotest.test_case
+            "headroom that leaves nothing is rejected"
+            `Quick
+            test_headroom_that_leaves_nothing_is_rejected
+        ; Alcotest.test_case
+            "a profile target pins the node shape"
+            `Quick
+            test_profile_target_pins_the_node_shape
+        ; Alcotest.test_case
+            "an ordinary target keeps its own shape"
+            `Quick
+            test_ordinary_target_keeps_its_own_shape
         ] )
     ]
 ;;

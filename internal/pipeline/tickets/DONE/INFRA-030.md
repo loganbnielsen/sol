@@ -47,6 +47,12 @@ platform. The profile makes a stronger claim than "a shape was chosen" — it cl
 target has enough capacity to host the production platform contract. That claim has to
 be mechanically checkable.
 
+It also makes an already-documented expectation real. HARDEN-002's own minimal harness
+specifies "3 AZs, **4x m6i.xlarge** managed nodes", and no mechanism enforced it, so
+attempt 1 provisioned the provider root's default (3 x m6i.large) instead. The
+recommended shape below is deliberately that same documented shape: this is not a new
+opinion about instance types, it is making the existing opinion binding.
+
 ## The invariant
 
 > A target conforming to `production-single-region/v1` must not be structurally

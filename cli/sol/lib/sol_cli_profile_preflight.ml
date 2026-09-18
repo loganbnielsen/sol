@@ -224,6 +224,26 @@ let establish
                can be restored (DEC-026 §3)"
               required
               required ))
+  | Platform_capacity ->
+    (* INFRA-030. The profile applies its recommended node shape to the provider
+       root through the profile-precedence path, so no target field, var-file or
+       --var can undersize the cluster and still claim this profile: that half of
+       the contract is enforced by construction rather than validated here. What
+       an operator can still get wrong is the headroom they *declare*, so that is
+       what this branch judges — asking to survive losing more nodes than leave
+       the platform schedulable is a configuration that provably violates the
+       contract, and it is refused rather than discovered during a live install
+       as "context deadline exceeded" behind "Insufficient cpu" (Run 5 attempt
+       1). Note this is deliberately conservative arithmetic, not a scheduler. *)
+    let headroom = Option.value target.node_failure_headroom_nodes ~default:0 in
+    (match
+       Sol_cli_profile.satisfies_capacity
+         ~envelope:Sol_cli_profile.platform_capacity_envelope
+         ~shape:Sol_cli_profile.recommended_node_shape
+         ~headroom_nodes:headroom
+     with
+     | Ok () -> Established
+     | Error reason -> Unmet (Target, reason))
   | Postgres_durability ->
     (* AUDIT-078: this capability is only in [requirements] when the plan uses
        Postgres (migrations or a declared `postgres` resource), and the
