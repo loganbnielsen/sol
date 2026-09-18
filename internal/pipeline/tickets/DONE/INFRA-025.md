@@ -130,3 +130,89 @@ example-tree files).
 
 **TypeScript parity:** not applicable — target provisioning and Kubernetes
 RBAC are language-neutral (DEC-022).
+
+## Completion notes (2026-09-18)
+
+**Premise verified:** confirmed at branch start — `deploy_role_arn` had zero
+matches in `cli/platform/infra/*/*.tf`, and `sol_cli_kube_destination.ml`/
+`sol_cli_target_report.ml` still named `sol cloud init`.
+
+- **Item 1.** `cli/platform/infra/aws/variables.tf`/`main.tf`/`outputs.tf`:
+  `deploy_role_arn`, an `access_entries.deploy` block (group
+  `sol:deployers`, no policy association), and `deploy_kubeconfig_command`/
+  `deploy_kube_context` outputs. Deliberately a **different alias**
+  (`${cluster_name}-deploy`) than the provisioner's `kubeconfig_command`
+  (`${cluster_name}`) — both may be run against the same local kubeconfig
+  file, and `--alias` collisions overwrite the earlier context entry.
+- **Item 2.** `cli/platform/infra/base/platform_deploy_rbac.tf`: a
+  `sol-deploy` `ClusterRole` scoped to the exact resource kinds
+  `sol_cli_manifest_yaml.ml` renders (`ConfigMap`/`Secret`/`ServiceAccount`/
+  `Service`/`Deployment`/`Job`/`CronJob`/`PodDisruptionBudget`/`Ingress`/
+  `NetworkPolicy`/`Rollout`/`ExternalSecret`, plus read-only `pods`/
+  `pods/log`), not a wildcard.
+- **Item 3.** `Sol_cli_substrate.ensure` now applies a `deploy_role_binding_doc`
+  (new in `Sol_cli_manifest_yaml`) per namespace.
+- **Item 4.** No target-file write; the printed `deploy_kubeconfig_command`/
+  `deploy_kube_context` outputs (already surfaced by the existing generic
+  `print_outputs`) are what the error text now points at.
+- **Item 5.** Done — `docs/deployment/production-bootstrap.md` §2 gained a
+  worked example of the printed output and the `kube_context` line to add.
+
+**A real gap found in review, not fully closeable in this ticket:** working
+through exactly how `Sol_cli_substrate.ensure` bootstraps a namespace it has
+never seen (namespace creation and the RoleBinding that grants everything
+else are both things deploy cannot yet have permission to do — a
+namespace-scoped `RoleBinding` cannot itself authorize creating a namespace
+or a `RoleBinding`, since `Namespace` is cluster-scoped and Kubernetes RBAC
+never lets a `RoleBinding` cover a cluster-scoped resource kind) required a
+second, minimal `sol-deploy-bootstrap` `ClusterRole`+`ClusterRoleBinding`:
+`namespaces`/`rolebindings` `get,list,watch,create` only (never
+update/patch/delete, so it can create new objects but never mutate an
+existing one, platform ones included), plus `clusterroles` `bind` restricted
+by `resource_names` to exactly `sol-deploy` (satisfying Kubernetes' own RBAC
+escalation check — creating a `RoleBinding` that references a `ClusterRole`
+requires either already holding every permission in it or the `bind` verb
+scoped to it — without which deploy could reference *any* `ClusterRole`,
+including a future one with broader rights).
+
+That bootstrap grant has a real residual gap, found by re-deriving the
+threat model rather than only checking the acceptance criteria as written:
+**`rolebindings: create` cannot be restricted by namespace when bound via a
+`ClusterRoleBinding`** (`resourceNames` is not honored for `create` at all,
+per the Kubernetes API itself, and RBAC has no partial-cluster-scope
+binding). So the deploy identity's own raw credential could, in principle,
+create a `RoleBinding` named `sol-deploy` directly inside a platform
+namespace (`cert-manager`, `argocd`, ...), which would then grant it
+`sol-deploy`'s full `Secret`/`Deployment` rights there too — the exact
+outcome this ticket exists to prevent. Closing this completely needs an
+admission-control layer (a `ValidatingAdmissionPolicy` denying non-provisioner
+`RoleBinding` writes in platform namespaces, or equivalent) that Sol does not
+have today; adding one is out of scope for this ticket and not invented here.
+
+**Accepted mitigation, not a full fix:** `Sol_cli_substrate.reserved_platform_namespaces`
++ a client-side refusal in `ensure` stops every *ordinary* path (`sol deploy`,
+`sol migrate apply`) from touching a namespace whose name collides with a
+platform one — DEC-016's "`local` is reserved" pattern, extended. It does
+**not** stop a deliberate holder of the deploy credential from bypassing
+Sol's CLI and issuing the `RoleBinding`-create API call directly. This is a
+knowingly incomplete boundary, documented rather than silently shipped as
+solved: **today there is no deploy RBAC boundary at all** (any configured
+`kube_context` has whatever access its operator manually granted), so this
+is a substantial narrowing of that gap, not a claim that it is closed. The
+admission-control layer needed to close it fully is real follow-up work,
+better scoped once Sol has a reason to adopt that layer for other purposes
+too, rather than a one-off addition here.
+
+**Offline evidence:** `cli/sol/test/check_production_infra.sh` gained
+structural assertions: `sol-deploy` is never referenced by a
+`kubernetes_cluster_role_binding` (only namespace-scoped `RoleBinding`s, at
+runtime); `sol-deploy-bootstrap`'s `namespaces`/`rolebindings` rule is
+create-only; its `clusterroles` rule scopes `bind` to `sol-deploy` by
+`resource_names`; the AWS root's `access_entries` guards `deploy_role_arn`
+being unset. `test_substrate.ml` covers the new RoleBinding doc's shape/
+ordering and the reserved-namespace refusal (a pure check, provably
+short-circuits before any kubectl call — passed `local_context` on purpose
+to demonstrate that). Live verification (does `sol:deployers` actually deny
+platform-namespace mutation against a real cluster; does the bootstrap
+"create-only" grant behave as expected against the real API server) remains
+HARDEN run 3's.

@@ -59,7 +59,7 @@ let all_text rows =
 let test_not_configured_points_at_the_field () =
   let message = Sol_cli_target_report.describe ~verbose:false Not_configured in
   assert (contains ~needle:"kube_context" message);
-  assert (contains ~needle:"sol cloud init" message)
+  assert (contains ~needle:"deploy_kubeconfig_command" message)
 ;;
 
 let test_configured_is_not_checked_and_hides_the_context () =

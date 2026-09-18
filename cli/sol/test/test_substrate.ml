@@ -26,25 +26,33 @@ let docs_or_fail ?secrets namespaces =
   | Error msg -> Alcotest.fail msg
 ;;
 
-(* The substrate is a namespace plus the workspace's runtime Secret. Nothing else:
-   if a Deployment or Service ever appears here the layer has been misassigned
+(* The substrate is a namespace, the deploy identity's RoleBinding in it
+   (INFRA-025), and the workspace's runtime Secret. Nothing else: if a
+   Deployment or Service ever appears here the layer has been misassigned
    again, which is exactly the bug this module exists to prevent. *)
-let test_substrate_is_namespace_and_runtime_secret_only () =
+let test_substrate_is_namespace_role_binding_and_runtime_secret_only () =
   (* Explicit keys, always present in the test environment: the default key set
      (POSTGRES_URL, SOL_API_KEY) is deliberately absent here, which is what the
      fail-closed test below relies on. *)
   let docs = docs_or_fail ~secrets:[ "HOME", "" ] [ "pluto-payments" ] in
-  check_int "one namespace + one runtime Secret" 2 (List.length docs);
+  check_int "one namespace + one RoleBinding + one runtime Secret" 3 (List.length docs);
   check_bool
     "the namespace comes first"
     true
     (contains ~needle:"kind: Namespace" (List.nth docs 0)
      && contains ~needle:"pluto-payments" (List.nth docs 0));
   check_bool
+    "then the deploy RoleBinding, scoped to this namespace"
+    true
+    (contains ~needle:"kind: RoleBinding" (List.nth docs 1)
+     && contains ~needle:"namespace: pluto-payments" (List.nth docs 1)
+     && contains ~needle:"name: sol-deploy" (List.nth docs 1)
+     && contains ~needle:"name: sol:deployers" (List.nth docs 1));
+  check_bool
     "then the runtime Secret"
     true
-    (contains ~needle:"kind: Secret" (List.nth docs 1)
-     && contains ~needle:"sol-secrets" (List.nth docs 1));
+    (contains ~needle:"kind: Secret" (List.nth docs 2)
+     && contains ~needle:"sol-secrets" (List.nth docs 2));
   List.iter
     (fun doc ->
        List.iter
@@ -61,13 +69,15 @@ let test_substrate_is_namespace_and_runtime_secret_only () =
     docs
 ;;
 
-(* Namespaces all come before any Secret: a Secret in a namespace that does not
-   exist yet is the failure mode that blocked a fresh target's first deploy. *)
-let test_every_namespace_precedes_every_secret () =
+(* Namespaces and RoleBindings all come before any Secret: a Secret in a
+   namespace that does not exist yet is the failure mode that blocked a fresh
+   target's first deploy, and the RoleBinding must exist before the deploy
+   identity needs to patch the Secret into place. *)
+let test_every_namespace_and_binding_precedes_every_secret () =
   let docs =
     docs_or_fail ~secrets:[ "HOME", "" ] [ "pluto-checkout"; "pluto-payments" ]
   in
-  check_int "two namespaces + two runtime Secrets" 4 (List.length docs);
+  check_int "two namespaces + two RoleBindings + two runtime Secrets" 6 (List.length docs);
   let first_secret =
     let rec find i = function
       | [] -> Alcotest.fail "expected a Secret document"
@@ -76,7 +86,10 @@ let test_every_namespace_precedes_every_secret () =
     in
     find 0 docs
   in
-  check_bool "both namespaces are applied before the first Secret" true (first_secret = 2);
+  check_bool
+    "both namespaces and both RoleBindings are applied before the first Secret"
+    true
+    (first_secret = 4);
   List.iter
     (fun ns ->
        check_bool
@@ -107,10 +120,26 @@ let test_missing_credential_fails_closed_before_applying_anything () =
       (contains ~needle:"substrate" msg)
 ;;
 
+(* INFRA-025: RBAC cannot itself stop the deploy identity's bootstrap grant
+   from reaching a platform namespace (see the comment on
+   [reserved_platform_namespaces]), so this client-side refusal is the
+   software-side half of that mitigation. It must fire before any kubectl
+   call -- this test passes [local_context] precisely to prove the check
+   short-circuits without ever touching the destination. *)
+let test_ensure_refuses_a_reserved_platform_namespace () =
+  match
+    S.ensure ~ctx:Sol_cli_kube_destination.local_context ~namespaces:[ "cert-manager" ]
+  with
+  | Ok () -> Alcotest.fail "expected ensure to refuse a reserved platform namespace"
+  | Error msg ->
+    check_bool "names the reserved namespace" true (contains ~needle:"cert-manager" msg);
+    check_bool "says it is reserved" true (contains ~needle:"reserved" msg)
+;;
+
 let test_present_credential_is_accepted () =
   (* HOME is always set in the test environment. *)
   match S.docs_for_namespaces ~secrets:[ "HOME", "" ] [ "pluto-payments" ] with
-  | Ok docs -> check_int "namespace + Secret" 2 (List.length docs)
+  | Ok docs -> check_int "namespace + RoleBinding + Secret" 3 (List.length docs)
   | Error msg -> Alcotest.fail ("expected success, got: " ^ msg)
 ;;
 
@@ -119,13 +148,13 @@ let () =
     "substrate"
     [ ( "workspace substrate"
       , [ Alcotest.test_case
-            "namespace and runtime Secret only"
+            "namespace, RoleBinding and runtime Secret only"
             `Quick
-            test_substrate_is_namespace_and_runtime_secret_only
+            test_substrate_is_namespace_role_binding_and_runtime_secret_only
         ; Alcotest.test_case
-            "every namespace precedes every Secret"
+            "every namespace and binding precedes every Secret"
             `Quick
-            test_every_namespace_precedes_every_secret
+            test_every_namespace_and_binding_precedes_every_secret
         ; Alcotest.test_case
             "missing credential fails closed"
             `Quick
@@ -134,6 +163,10 @@ let () =
             "present credential is accepted"
             `Quick
             test_present_credential_is_accepted
+        ; Alcotest.test_case
+            "ensure refuses a reserved platform namespace"
+            `Quick
+            test_ensure_refuses_a_reserved_platform_namespace
         ] )
     ]
 ;;

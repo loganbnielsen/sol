@@ -131,6 +131,74 @@ case "$sc_code" in
     ;;
 esac
 
+# INFRA-025: the deploy identity's own ClusterRole (Deployments/Secrets/etc.)
+# must never be bound cluster-wide -- only per application namespace, applied
+# at runtime by Sol_cli_substrate.ensure. A kubernetes_cluster_role_binding
+# referencing it here would leak deploy into every platform namespace's own
+# Secrets/Deployments, silently reintroducing exactly what this ticket exists
+# to prevent.
+deploy_rbac="$root/cli/platform/infra/base/platform_deploy_rbac.tf"
+
+if [ ! -f "$deploy_rbac" ]; then
+  echo "FAIL: $deploy_rbac is missing" >&2
+  exit 1
+fi
+
+if ! grep -q 'resource "kubernetes_cluster_role" "sol_deploy" {' "$deploy_rbac"; then
+  echo "FAIL: kubernetes_cluster_role.sol_deploy not found" >&2
+  exit 1
+fi
+
+if grep -q 'kubernetes_cluster_role_binding' "$deploy_rbac" \
+  && awk '/^resource "kubernetes_cluster_role_binding"/,/^}/' "$deploy_rbac" \
+    | grep -q 'kubernetes_cluster_role\.sol_deploy\.metadata'; then
+  echo "FAIL: kubernetes_cluster_role.sol_deploy is bound by a ClusterRoleBinding --" >&2
+  echo "      it must only ever be bound per namespace, at runtime" >&2
+  exit 1
+fi
+
+# The bootstrap role exists to let deploy create a namespace/RoleBinding that
+# does not exist yet; it must stay create-only on both, and its only
+# clusterroles grant must be "bind" scoped to sol-deploy specifically (never
+# "get"/"list"/"*", which would let it discover or reference other roles, and
+# never leaving resource_names unset, which would let it bind ANY ClusterRole
+# -- including a future one this repo adds with broader permissions).
+bootstrap_role="$(awk '/^resource "kubernetes_cluster_role" "sol_deploy_bootstrap"/,/^}/' "$deploy_rbac")"
+
+if [ -z "$bootstrap_role" ]; then
+  echo "FAIL: kubernetes_cluster_role.sol_deploy_bootstrap not found" >&2
+  exit 1
+fi
+
+case "$bootstrap_role" in
+  *'verbs      = ["get", "list", "watch", "create"]'*) : ;;
+  *)
+    echo "FAIL: sol-deploy-bootstrap's namespaces/rolebindings rules are no longer" >&2
+    echo "      create-only; this identity must never patch/update/delete either kind." >&2
+    exit 1
+    ;;
+esac
+
+case "$bootstrap_role" in
+  *'resource_names = [kubernetes_cluster_role.sol_deploy.metadata[0].name]'*'verbs          = ["bind"]'*) : ;;
+  *)
+    echo "FAIL: sol-deploy-bootstrap's clusterroles rule no longer scopes \"bind\" to" >&2
+    echo "      sol-deploy by resource_names -- it could then bind any ClusterRole." >&2
+    exit 1
+    ;;
+esac
+
+# INFRA-025: no access entry — and therefore no deploy group membership at
+# all — when deploy_role_arn is unset, mirroring provisioner_role_arn's own
+# empty-string guard.
+aws_main="$root/cli/platform/infra/aws/main.tf"
+
+if ! grep -q 'var.deploy_role_arn == "" ? {} : {' "$aws_main"; then
+  echo "FAIL: the AWS root's access_entries no longer guards deploy_role_arn" >&2
+  echo "      being unset; an empty ARN must create no access entry." >&2
+  exit 1
+fi
+
 # HARDEN-002 finding 6: the provisioner must never be able to publish an
 # image, and the publisher identity must never be able to provision or
 # replace repositories -- both as explicit denies, not merely omitted grants.

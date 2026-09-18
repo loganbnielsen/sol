@@ -20,9 +20,9 @@ let of_context ?kubeconfig context =
   then
     Error
       "no Kubernetes context is configured for this target, so Sol cannot tell where it \
-       would deploy. Name one with `kube_context`, or let `sol cloud init` record it \
-       when it provisions the cluster — Sol will not fall back to whatever kubectl is \
-       currently pointed at."
+       would deploy. Name one with `kube_context` — after `sol cloud apply`, run the \
+       printed `deploy_kubeconfig_command` output and add the resulting context name — \
+       Sol will not fall back to whatever kubectl is currently pointed at."
   else Ok { context; kubeconfig }
 ;;
 
