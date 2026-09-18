@@ -43,6 +43,18 @@ The evidence bundle records:
 8. Synthetic alert delivery and acknowledgement.
 9. Drift detection or correction according to DEC-027.
 10. One representative application transaction after each recovery.
+11. Lifecycle phase, authority and desired-state policy (ADR 0003; matrix section
+    I): privileged installation authority present only during the install, revoked
+    after verified `Ready`; `Ready` policy in force only in `Ready`;
+    `PlatformUpdating` re-entry and return to `Ready`; destroy under the Destroy
+    policy; and public destruction of a failed or partially installed target.
+12. Abort/resume of the destroy lifecycle (matrix rows I10–I12): a target whose
+    platform install did not complete is still destructible through Sol, and an
+    interrupted destroy can be resumed.
+
+Scenarios 11 and 12 were added for Run 5: they are the lifecycle contract the
+model now defines, and they are the only scenarios whose *state* is deliberately
+not a healthy one.
 
 ## Acceptance criteria
 
@@ -56,6 +68,14 @@ The evidence bundle records:
   matrix and named credentials.
 - Secrets are redacted and teardown is independently verified.
 - The resulting evidence is sufficient for PROD-001's launch review.
+- The lifecycle contract (matrix section I, ADR 0003) is qualified in the same
+  run: the phase reported at each step is paired with an independent observation
+  of the authority and policy actually in force, and a failed/partially installed
+  target is shown to remain destructible through Sol's own public lifecycle —
+  with no out-of-band resource deletion anywhere in the run.
+- Every live assertion names the artifact it must retain, so a reader can check
+  the claim without re-running anything (matrix rows I1–I13 and the run-identity
+  lifecycle-phase record).
 
 **Demo/example coverage:** Run against the same readable production-profile
 example used for the pilot, not a hidden test-only workload.
@@ -413,7 +433,11 @@ Not yet implemented.
    its Kafka worker (OCaml-only `v1`, and the worker's readiness needs a broker that
    finding 7 shows cannot be hosted), with an availability claim on `checkout_svc`.
 
-### Remediation queue before a run 3 — status reconciled 2026-09-18
+### Remediation queue — status reconciled 2026-09-18 (written before run 3)
+
+**Historical.** This queue was written when "run 3" was the next run; runs 3 and 4
+have since executed (see below), so read the finding numbers here as pre-run-3
+state, not as the current plan.
 
 Verified against current `main` (post-#311) while closing out the surrounding
 Maturity-A gaps, not by re-reading this section's prose:
@@ -448,23 +472,71 @@ Maturity-A gaps, not by re-reading this section's prose:
    `deploy_role_arn` there is no Sol code path that would ever resolve one —
    production publishing happens in a CI pipeline's own `docker push`,
    entirely outside Sol. Live verification (does the publisher policy's
-   deny/allow actually hold against a real account) remains HARDEN run 3's.
+   deny/allow actually hold against a real account) was not settled for run 3
+   and **remains open for Run 5** — matrix row F5.
 5. Finding 4 — already fixed; keep the runtime row blocked pending a real
    receiver, unchanged.
 
-Findings 8, 5 and 7 no longer block a run 3 by themselves. Finding 6 and the
-deploy-identity destination gap (DEC-030/INFRA-025, filed and fixed in this
-same reconciliation pass — `sol deploy` now has a real, RBAC-scoped
-destination to reach after `sol cloud apply`, which run 2 did not have)
-change what a run 3 would actually exercise; see the HARDEN run 3 plan below.
+Findings 8, 5 and 7 no longer blocked the next run by themselves. Finding 6 and
+the deploy-identity destination gap (DEC-030/INFRA-025, filed and fixed in this
+same reconciliation pass — `sol deploy` now has a real, RBAC-scoped destination
+to reach after `sol cloud apply`, which run 2 did not have) changed what that run
+would actually exercise; see the Run 5 procedure below.
 
-## Run 3 — proposed plan (2026-09-18, NOT YET EXECUTED)
+## Run 3 and Run 4 (executed 2026-09-18) — findings and remediation
+
+Runs 3 and 4 were executed against disposable production-profile AWS targets. Both
+were **non-conformant**, and their findings are what ADR 0003 and INFRA-028/029
+answer. This section records what the repository records, and states plainly what
+it does not, so that Run 5 does not depend on knowledge that exists only outside
+the tree.
+
+### Where each finding is recorded
+
+| Findings | Defects | Remediation | Recorded in |
+|---|---|---|---|
+| 10, 11, 12 | `aws_outputs_of_json` crashed on an absent optional Terraform output (blocked apply and destroy); `target.deploy_role_arn` was never routed to the provider root, so the deploy EKS access entry was never created; the platform root resolved the **ambient** `~/.kube/config` because `hashicorp/kubernetes` reads `KUBE_CONFIG_PATH`/`KUBE_CONFIG_PATHS`, not `KUBECONFIG` | INFRA-028: the parser treats an absent optional like a null; `deploy_role_arn` is routed; `provisioner_kube_env` sets all three variables | INFRA-028 §Remediation and §Evidence; unit tests `test_outputs_absent_optional`, `test_terraform_vars_route_deploy_role_arn`, `test_provisioner_kube_env` |
+| 13 | the bounded steady-state provisioner could not create the deploy identity's `sol-deploy` ClusterRole — Kubernetes' RBAC privilege-escalation check forbids granting permissions the creator does not hold | INFRA-028 / ADR 0003 invariant 1: the whole platform apply runs under the privileged installation authority, and the interim RBAC staging in `platform_prerequisite_targets` was reverted | ADR 0003; `check_production_infra.sh` (bind scoped to `sol-deploy`, no `escalate`) |
+| 14 | the same check rejected third-party chart RBAC (the prometheus chart's `prometheus-server` ClusterRole) because the full platform apply ran **after** the temporary cluster-admin association had been removed | ADR 0003 invariant 1: the association spans the full apply **and** verified readiness, and is revoked only at the verified transition to `Ready` | ADR 0003; offline harness assertion that a first install reports `PlatformInstalling` |
+| 15 | `sol cloud destroy` prepared destruction (protection off, unique final snapshot, verified) and then re-applied ordinary production desired state before destroying, restoring `rds_deletion_protection=true` and stranding the instance — public destroy could not complete | ADR 0003 invariant 4 / INFRA-023: from verified `PreparingDestroy` the Destroy policy governs, with its overrides appended after the profile's `rds_deletion_protection=true` | ADR 0003; offline harness assertion that the post-prepare bootstrap-admin apply carries the Destroy policy |
+
+The two rules that contradicted each other before ADR 0003 — BUG-039
+(`production-single-region/v1 -> rds_deletion_protection = true`) and INFRA-023
+(`PrepareDestroy -> rds_deletion_protection = false`) — are now reconciled by
+*which phase is in force* rather than by either rule weakening.
+
+### What is **not** recorded in the repository — an explicit gap
+
+The repository does **not** contain the run 3 or run 4 evidence bundles. Runs 1
+and 2 are summarised above with their retained evidence; runs 3 and 4 are not, and
+in particular there is no record here of:
+
+- their bundles, run identities, or per-row matrix outcomes;
+- which of findings 10–12 came from which run (INFRA-028 attributes 13–15 to run 4
+  and records 10–12 as fixed on the same working tree);
+- any measured value from either run;
+- an independently verified teardown record for run 4.
+
+**Consequence for Run 5: it may not cite runs 3 and 4 as qualification evidence.**
+They are defect-discovery history, not conformance. Run 5 re-establishes every
+claim from a fresh target against the matrix, which is the governing rule anyway —
+a claim is per (target, profile version, timestamp). This gap is recorded rather
+than closed because the bundles are not in the tree and cannot be reconstructed
+from it.
+
+## Run 5 — procedure (NOT EXECUTED; requires explicit operator authorization)
+
+This section was written as run 3's proposed plan. Runs 3 and 4 then executed and
+their findings changed the lifecycle model (ADR 0003), so this is now the
+qualification procedure for the model on `main` and has been updated for it: the
+phase, authority and desired-state-policy semantics are asserted live here, and
+their matrix rows are section **I**.
 
 **This section is preparation only.** Producing it touches no AWS account,
 no Terraform state, no live target. Execution requires explicit,
 present-operator authorization — the same boundary as every prior run.
 
-### Why run 3's achievable scope is materially larger than run 2's
+### Why Run 5's achievable scope is materially larger than run 2's
 
 Run 2's own results table recorded `B1-B7, C1-C5, D1-D8, E2-E11, F1-F4` as
 **NOT REACHED — blocked by findings 7 and 8**. Since then, in this
@@ -491,15 +563,16 @@ reconciliation pass:
   the cluster as a real, RBAC-scoped identity, only run 2's ad hoc
   workaround of hand-configuring a broad credential.
 
-So run 3 can plausibly reach every matrix section except the alerting rows
-(`G1-G3`, still blocked on a real receiver, unchanged since run 1) and
-whatever new defect it finds along the way — HARDEN runs exist to find
-those, not to have none.
+So Run 5 can plausibly reach every matrix section — now including section I's
+lifecycle rows, which no previous run could have asserted because the model did
+not exist yet — except the alerting rows (`G1-G3`, still blocked on a real
+receiver, unchanged since run 1) and whatever new defect it finds along the way.
+HARDEN runs exist to find those, not to have none.
 
 ### Preconditions (must all be true before any AWS command runs)
 
-1. A fresh, disposable, isolated AWS account/profile — never reuse run 1 or
-   run 2's.
+1. A fresh, disposable, isolated AWS account/profile — never reuse any previous
+   run's.
 2. `cli/platform/infra/bootstrap` applied: state bucket + lock table.
 3. **Four** IAM roles created by the operator (not Sol — AUDIT-072/INFRA-026:
    Sol owns the policy contracts, never role lifecycle) from the bootstrap
@@ -521,6 +594,20 @@ those, not to have none.
 6. A real alert receiver + owner, only if attempting `G1-G3` this run;
    otherwise they stay recorded skipped, same reasoning as runs 1 and 2
    (DEC-026 §8: a local sink does not qualify the target).
+7. **The lifecycle contract is in scope for this run** (matrix section I). The
+   runner must be able to capture, per `sol cloud` invocation, the verbatim
+   `lifecycle phase:` line, the terraform argv (the `-var` order matters — it is
+   how the Destroy policy is shown to win, row I7), and an independent
+   observation for the authority in force (`aws sts get-caller-identity` and
+   `kubectl auth can-i`, including **negative** checks — rows I2/I3/I5/I6).
+   A run that captures the phase but no independent observation does not satisfy
+   section I.
+8. **A deliberate abort is part of the run, not an accident** (rows I10–I12).
+   Schedule the failure-path scenarios below before final teardown: they need a
+   target that exists but whose platform install did not complete, which is a
+   state the run has to create on purpose. This is the one place where a
+   deliberately non-conformant lifecycle state is required, and it is followed by
+   a public `sol cloud destroy` — never by out-of-band resource deletion.
 
 ### Exact command sequence, mapped to `docs/qualification/production-single-region-v1-matrix.md`
 
@@ -533,31 +620,48 @@ those, not to have none.
    provisioner's bootstrap-admin window opened then closed, with effective
    RBAC (positive **and** negative `can-i` checks) verified after
    de-escalation.
-3. Capture the printed `deploy_kubeconfig_command` / `deploy_kube_context`
+   **Lifecycle rows I1–I4 are captured from this step** and are now part of its
+   pass condition, not an observer's note: the run must report
+   `CloudBootstrap` before any platform mutation (I1), still hold the privileged
+   installation authority after chart RBAC and the `sol-deploy` ClusterRole are
+   created (I2 — this is the live check for finding 14), report `Ready` only
+   after revoking that authority and verifying the bounded provisioner (I3), and
+   show `rds_deletion_protection = true` in force while `Ready` (I4). "The apply
+   succeeded" is not evidence for any of these: each pairs the reported phase
+   with the identity/RBAC/describe observation named in the row.
+3. **`PlatformUpdating` re-entry and return to Ready (rows I5–I6).** Immediately
+   after `Ready` is reached and before any teardown, run a second
+   `sol cloud apply <target>` carrying a platform change. The run must report
+   `PlatformUpdating` — never `PlatformInstalling` — hold the elevated authority
+   only for that operation, and return to `Ready` with the provisioner
+   re-verified. This is the one deliberately *repeated* lifecycle transition in
+   the run, and it is the live check that a privileged platform change is an
+   explicit re-entry rather than a silent widening of `Ready` (invariant 3).
+4. Capture the printed `deploy_kubeconfig_command` / `deploy_kube_context`
    output (INFRA-025) and actually run it — `aws eks update-kubeconfig
    --role-arn <deploy_role_arn> --alias <cluster>-deploy` — then add
    `kube_context: <cluster>-deploy` to the target. This step is itself
    qualification-relevant: does the printed instruction actually work
    end to end for a first-time reader, not just in the abstract.
-4. In a **separate** session, assume the publisher role (INFRA-026),
+5. In a **separate** session, assume the publisher role (INFRA-026),
    authenticate `docker`/`aws ecr get-login-password` as it, and push the
    qualification workload's images. This is the step that actually closes
    run 2's recorded deviation ("images were published with the operator's
    own credential").
-5. `sol deploy <target> --image-ref <svc>=<repo>@sha256:<digest>` per
-   service, using step 4's digests — exercises `B1`/`B2` and `C1`-`C5`
+6. `sol deploy <target> --image-ref <svc>=<repo>@sha256:<digest>` per
+   service, using step 5's digests — exercises `B1`/`B2` and `C1`-`C5`
    (migration gate before workload mutation; the new namespace + RoleBinding
    bootstrap actually running as the deploy identity for the first time
    ever, not a hand-configured broad credential).
-6. `B3`-`B7`: one representative transaction; a deliberately failed deploy;
+7. `B3`-`B7`: one representative transaction; a deliberately failed deploy;
    rollback to the prior release (and across a `contract` migration
    boundary, expecting a refusal); drift detection/correction.
-7. `D1`-`D8`: tolerant-workload placement inspection; graceful drain;
+8. `D1`-`D8`: tolerant-workload placement inspection; graceful drain;
    unplanned node loss with **measured** restoration time; drain grace;
    slow-start not liveness-killed; Kafka-worker readiness tied to
    consumer-join in both directions; a hung consumer replaced by liveness,
    not readiness; broker-unreachable-at-startup does not crash-loop.
-8. `E1`-`E11`: Postgres Multi-AZ inspection (already passed live in run 2);
+9. `E1`-`E11`: Postgres Multi-AZ inspection (already passed live in run 2);
    **measured** infra-failure failover RTO/RPO; **measured** PITR RPO;
    **measured** restore-into-a-clean-target RTO with an application-level
    transaction proving it, not just "the provider job completed"; Kafka
@@ -569,7 +673,7 @@ those, not to have none.
    destroy/recreate cycle rather than only backend-object recovery);
    telemetry-loss is non-durable and does not touch the business-data claim;
    a real transaction after every recovery.
-9. `F1`-`F5`: no ambient ServiceAccount token (already offline-proven,
+10. `F1`-`F5`: no ambient ServiceAccount token (already offline-proven,
    confirm live); credential rotation completes and the workload returns
    healthy; the old credential is rejected; zero secret values anywhere in
    the evidence bundle; and **`F5` is now a four-identity check, not
@@ -584,13 +688,29 @@ those, not to have none.
    deploy`/`sol migrate` entirely. This is **expected to still succeed**
    today — SEC-005 (the admission-control closure) is intentionally
    deferred — so a success here confirms a known, already-documented gap,
-   not a new defect. Record it as such; do not treat it as a run-3 failure.
-10. Destroy lifecycle: prepare → verify preparation → destroy → verify
-    absence (`docs/qualification/production-single-region-v1-matrix.md`
-    Section H's teardown row, and INFRA-023's mechanism's first live
-    exercise). Confirm the unique per-attempt final-snapshot identity in the
-    actual RDS snapshot list, not just the terraform argv.
-11. `G1`-`G3` only if a real receiver was set up per precondition 6;
+   not a new defect. Record it as such; do not treat it as a Run 5 failure.
+11. **Destroy lifecycle, including the failure path (rows I7–I12).** In order:
+    1. `sol cloud destroy <target> --apply` on the `Ready` target: prepare →
+       verify preparation → destroy → verify absence (matrix section H's
+       teardown rows, section I's I7–I9, and INFRA-023's first live exercise).
+       Confirm the unique per-attempt final-snapshot identity **in the actual
+       RDS snapshot list**, not just the terraform argv (I8), and that **no**
+       post-prepare reconciliation sets `rds_deletion_protection=true` (I7 —
+       the live check for finding 15, read from the `-var` order in each
+       argv).
+    2. Re-run `sol cloud destroy <target> --apply` against the now-`Absent`
+       target (I11): it must exit 0, report `Absent`, and prepare nothing.
+    3. **The abort scenarios (I10, I12).** Re-provision, then *deliberately*
+       stop the platform install partway so the target exists but its platform
+       is incomplete, and run `sol cloud destroy <target> --apply`. It must
+       **succeed** and enter `PreparingDestroy` — not be refused for being in
+       `PlatformInstalling`. Without this, invariant 6 is unqualified, and
+       invariant 6 is the one that decides whether a *failed* Run 5 can be
+       cleaned up by Sol at all.
+    4. Interrupt a destroy between preparation and destruction, then re-run it
+       (I12): the second run completes, without reusing the first attempt's
+       final-snapshot identity.
+12. `G1`-`G3` only if a real receiver was set up per precondition 6;
     otherwise recorded skipped, unchanged from runs 1-2.
 
 ### Evidence classification (unchanged framework, restated because it matters here)
@@ -603,21 +723,28 @@ those, not to have none.
    tier. Necessary, never sufficient.
 2. **Mechanism/renderability evidence** — `sol cloud plan` producing correct
    Deferred/Plannable phases; `terraform validate`/`fmt` clean; an RBAC
-   binding structurally namespace-scoped rather than cluster-wide. Also
-   already proven offline this session. Still not sufficient for any
-   `B`-`G` matrix row.
+   binding structurally namespace-scoped rather than cluster-wide; the
+   lifecycle's transition/policy semantics as asserted by the unit tests and
+   `internal/ci/test_cloud_lifecycle_offline.sh`. All of this is already proven
+   offline. Still not sufficient for any `A`–`I` matrix row's **behavioural**
+   pass condition.
 3. **Real target behavioral qualification** — everything in the command
    sequence above, executed against a real disposable AWS account. This is
    the **only** tier that may mark a matrix row's Pass condition as met.
    Tiers 1 and 2 are not promoted into tier 3 anywhere in this plan or in
-   its execution.
+   its execution. This matters most for section I, where the offline harness
+   proves the *mechanism* (a first install reports `PlatformInstalling`, a
+   re-apply reports `PlatformUpdating`, a partially installed target is
+   destructible) while only a real target proves the *authority* — that the
+   privileged association is genuinely present during the phase and genuinely
+   gone after it.
 
-### Explicitly out of scope for run 3
+### Explicitly out of scope for Run 5
 
 - `G1`-`G3` without a real alert receiver — recorded skipped, not attempted.
 - SEC-005 (admission-control hardening of the deploy-bootstrap RBAC gap) —
-  not a run-3 blocker. Its residual is exactly what the `F5` negative test
-  in step 9 reconfirms exists; run 3 is not expected to close it.
+  not a Run 5 blocker. Its residual is exactly what the `F5` negative test
+  in step 10 reconfirms exists; Run 5 is not expected to close it.
 - GCP or any non-AWS provider — still explicitly unqualified, fails closed
   upstream of everything in this plan.
 - DEC-026's own explicit exclusions, unchanged: zone-failure tolerance,
@@ -632,8 +759,9 @@ read AWS/Kubernetes state to verify results (`aws rds describe-db-instances`,
 `kubectl auth can-i`, ...). It must **never** invoke `terraform` or `helm`
 itself to provision or repair a phase — `internal/ci/check_public_cloud_lifecycle.sh`
 already enforces this structurally for `internal/qualification/aws/live-smoke.sh`;
-a run-3 harness reusing or extending that script inherits the same guard.
-Every command's exact invocation, Sol commit SHA, profile version, substrate
+the Run 5 harness reusing or extending that script inherits the same guard.
+Every command's exact invocation, Sol commit SHA, profile version, the verbatim
+`lifecycle phase:` line per invocation, substrate
 module versions, and the workload image's framework versions
 (`sol-svc`/`sol-worker`/`kafka-eio`/`pg-eio`) go into the run identity
 header, per the matrix's own "Run identity" table — unchanged from runs 1
@@ -641,7 +769,7 @@ and 2.
 
 ### Explicit non-execution boundary
 
-This plan is preparation only. Executing any part of steps 1-11 requires
+This plan is preparation only. Executing any part of steps 1-12 requires
 explicit operator authorization and presence, the same as every AWS command
 in this repository's HARDEN history. Nothing above is run by writing it
 down.
