@@ -253,10 +253,15 @@ resource "aws_db_instance" "postgres" {
   #      complete.
   #
   # They are separate knobs with production-safe defaults now: protection on, and a
-  # final snapshot taken. Destroying is the explicit operation -- an operator
-  # disabling protection, or `sol cloud destroy`, which does it for the destroy run
-  # -- and the snapshot still happens. The identifier is an implementation detail of
-  # that operation and must be unique per snapshot, which the destroy path supplies.
+  # final snapshot taken. Terraform is therefore structurally able to destroy the
+  # instance, which is what (1) and (2) blocked.
+  #
+  # Permitting the destruction is still the operator's own step, and NOT something
+  # `sol cloud destroy` does: lifting protection is an applied transition, and a
+  # `-var` on a destroy is inert because the provider is handed prior state. For the
+  # same reason the identifier used at delete time is whatever the last apply
+  # rendered, so destroying the same cluster_name twice collides unless a fresh one
+  # is applied first. See the known gap in docs/deployment/production-bootstrap.md.
   skip_final_snapshot = var.rds_skip_final_snapshot
   final_snapshot_identifier = (
     var.rds_skip_final_snapshot

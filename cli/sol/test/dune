@@ -98,7 +98,6 @@
  (alias runtest)
  (deps
   check_production_infra.sh
-  ../bin/cmd_cloud_tf.ml
   (source_tree ../../platform/infra/aws)
   (source_tree ../../platform/infra/base))
  (action
