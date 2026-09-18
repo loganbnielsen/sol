@@ -114,3 +114,19 @@ val format_use_ref : string -> string
     current directory). Terraform CLI syntax ("key=value", "-var=...") is not
     this module's concern — see {!Sol_cli_terraform.kv_args}. *)
 val terraform_vars : workspace:string -> t -> ((string * string) list, string) result
+
+(** Merges a target's profile-derived Terraform vars (e.g. [rds_multi_az],
+    [rds_deletion_protection]) with the caller's own `-var`/var-file values,
+    in the order the two lists must be handed to Terraform.
+
+    Terraform resolves a key assigned more than once by taking the *last*
+    occurrence, so order is the entire enforcement mechanism: when
+    [has_profile] is true, [config_vars] goes last so a profile's claims
+    cannot be weakened by a caller-supplied value for the same key; when
+    false, [cli_vars] goes last so an ordinary (non-profile) target keeps
+    full operator control. *)
+val vars_with_profile_precedence
+  :  has_profile:bool
+  -> cli_vars:string list
+  -> config_vars:string list
+  -> string list
