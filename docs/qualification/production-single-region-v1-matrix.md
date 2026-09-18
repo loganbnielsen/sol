@@ -1,12 +1,23 @@
 # Executable qualification matrix — `production-single-region/v1` (HARDEN-002)
 
-Derived from **DEC-026 §1–§9** (the profile contract) and the merged maturity-A
-tickets that implement it: AUDIT-078, FEAT-050, FEAT-083, FEAT-088, AUDIT-069,
-AUDIT-072, AUDIT-080, SEC-004, OBS-043, plus FEAT-089's preflight.
+Derived from **DEC-026 §1–§9** (the profile contract), **ADR 0002** (Sol owns the
+cloud-target lifecycle), **ADR 0003** (lifecycle phases determine authority and
+desired-state policy), and the merged tickets that implement them: AUDIT-078,
+FEAT-050, FEAT-083, FEAT-088, AUDIT-069, AUDIT-072, AUDIT-080, SEC-004, OBS-043,
+INFRA-022, INFRA-023, INFRA-025, INFRA-026, INFRA-028, INFRA-029, plus FEAT-089's
+preflight.
 
 This matrix is the *input* to the qualification harness: every row is a scenario
 the harness must execute and an artifact it must retain. It is not evidence that
 anything below passes.
+
+Section **I** is the lifecycle contract (ADR 0003). Its rows are captured during
+the provisioning and teardown steps of the run, not at one moment; they are
+grouped by *contract* rather than by *time* so that the authority and
+desired-state-policy semantics can be read — and qualified — as one thing.
+Runs 3 and 4 (see HARDEN-002) found findings 13–15 by not having this contract:
+rows I2, I5, I7 and I10 are the ones that would have caught them live.
+
 
 ## Governing rules
 
@@ -38,6 +49,12 @@ anything below passes.
 | Platform component versions | helm chart versions from `cli/platform/infra/base` state | recorded verbatim |
 | Framework versions | `sol-worker`/`sol-svc`/`kafka-eio`/`pg-eio` versions used by the workload image | recorded verbatim |
 | Substrate module versions | terraform provider + module versions | recorded verbatim |
+| Lifecycle phase per step | the `lifecycle phase:` line `sol cloud apply`/`destroy` prints, recorded verbatim per invocation | `CloudBootstrap` → `PlatformInstalling` → `Ready` → … → `Absent` |
+
+The lifecycle-phase record is part of the run identity rather than a passing
+condition on its own: section I pairs each reported phase with an independent
+observation, because a phase is operational context and never infrastructure
+truth (ADR 0003).
 
 ## A. Target-capability guarantees (preflight — offline, before mutation)
 
@@ -138,7 +155,37 @@ nothing.
 | H5 | Secrets redacted | scan the bundle | zero secret values | redaction scan |
 | H6 | Teardown independently verified | after the run, verify absence | EKS cluster gone, VPC gone, RDS gone, no orphaned EBS/ELB/EIP; verified by describe calls | teardown verification log |
 
-## I. Explicitly not claimed (recorded as skipped, with reason — DEC-026 §9)
+## I. Lifecycle phases — authority, desired-state policy and transition (ADR 0003)
+
+The phase is **operational context, not infrastructure truth**: it names the
+operation Sol is performing and therefore the authority it may use and the
+desired-state policy in force. Readiness is always *observed*, never inferred from
+the phase, and no phase is persisted (no pointer file, no second state database).
+Rows I1–I4 are captured during provisioning, I5–I6 during a deliberate re-apply,
+I7–I9 during teardown, I10–I13 during and after failure/abort conditions.
+
+Every row here needs **live behavioural** evidence: the phase the run reports is
+not sufficient on its own, so each row pairs the reported phase with an
+independent observation (an identity probe, an RBAC listing, a describe call, or
+the terraform argv).
+
+| # | Invariant (ADR 0003) | Scenario / action | Pass condition | Evidence |
+|---|---|---|---|---|
+| I1 | `CloudBootstrap` is the phase before the platform exists, holding temporary privileged authority and the Bootstrap policy | `sol cloud apply <target>` on a fresh target; capture the phase and the reconciliation identity at each step | the run reports `CloudBootstrap` **before** any platform mutation; the identity in use is the temporary bootstrap authority; no Ready/Production desired-state policy is applied in this phase | CLI `lifecycle phase:` output; terraform argv per step; `aws sts get-caller-identity` per phase |
+| I2 | `PlatformInstalling` holds explicitly privileged installation authority, and that association stays open through the **whole** platform apply — chart RBAC included (invariant 1; **finding 14**) | during I1's apply, sample the reconciliation identity across the entire platform apply | chart RBAC (e.g. the prometheus `prometheus-server` ClusterRole) and the deploy identity's `sol-deploy` ClusterRole are created successfully — not rejected by Kubernetes' RBAC escalation check — and the privileged association is still in place afterwards | per-module terraform apply log; the created `ClusterRole` objects; `kubectl auth can-i --list` samples during the phase |
+| I3 | Privilege is revoked only at the verified `PlatformInstalling -> Ready` transition, and the bounded provisioner is then verified effective (invariants 1, 2) | after the install, capture the phase and probe the provisioner's effective RBAC | run reports `lifecycle phase: Ready`; the temporary privileged association is **gone**; **positive** `can-i` for the steady-state operations and **negative** `can-i` for `create clusterroles`/`create clusterrolebindings` | `lifecycle phase:` output; RBAC binding listing; paired positive/negative `kubectl auth can-i` results |
+| I4 | `Ready` applies the Production policy — `rds_deletion_protection = true` (BUG-039) is in force in exactly this phase | while Ready, inspect the live RDS instance and the terraform argv of a Ready-state apply | `DeletionProtection = true` live; no Destroy override (`rds_deletion_protection=false`) appears in a Ready apply's argv | `aws rds describe-db-instances`; terraform argv |
+| I5 | A privileged platform change after `Ready` is an explicit `PlatformUpdating` re-entry, never a silent widening of `Ready` (invariant 3) | re-apply the platform on the already-`Ready` target (`sol cloud apply` carrying a platform change) | run reports `lifecycle phase: PlatformUpdating` at the start and **never** `PlatformInstalling`; elevated authority is present for the operation; the run returns to `Ready` | `lifecycle phase:` output at both ends; identity evidence during the update; post-update `can-i` (as I3) |
+| I6 | The `PlatformUpdating -> Ready` return re-verifies readiness and re-establishes the bounded provisioner | after I5, capture the phase and probe RBAC exactly as I3 | run reports `lifecycle phase: Ready`; provisioner verified effective; no standing privileged association remains | `lifecycle phase:` output; RBAC listing; `can-i` results |
+| I7 | `PreparingDestroy` applies the Destroy policy, and once preparation is verified the Ready policy must not run again (invariant 4; **finding 15**) | `sol cloud destroy <target> --apply` on the Ready target; capture **every** terraform invocation after preparation | every reconciliation after verified preparation carries the Destroy overrides, appended **after** the profile's `rds_deletion_protection=true`, so the `-var` order visible in the argv makes the Destroy policy win; no post-prepare apply sets `rds_deletion_protection=true`; `DeletionProtection` is false live between preparation and destruction | terraform argv per post-prepare step (flag order visible); `aws rds describe-db-instances` sampled between the steps; run log |
+| I8 | Destroy preparation is a real applied transition with a unique per-attempt final-snapshot identity (INFRA-023) | inspect the RDS snapshot list and the terraform argv during I7 | the disable is a **targeted apply**, not a `-var` on `terraform destroy`; the final-snapshot identifier matches this attempt's identity **and appears in the live snapshot list** | terraform argv; `aws rds describe-db-snapshots` |
+| I9 | `Destroying` proceeds under the Destroy policy and ends at `Absent` | complete the destroy; capture the phase and the end state | run reports `lifecycle phase: Destroying`, then nothing remains; describe calls show EKS/RDS/VPC/ELB/EIP/EBS absent | `lifecycle phase:` output; teardown verification log (H6) |
+| I10 | **Destruction is an abort edge** (invariant 6, INFRA-029): a failed or partially installed target stays destructible through the public lifecycle | deliberately produce a target whose platform install did **not** complete (fail or interrupt the platform step), then run `sol cloud destroy <target> --apply` | the destroy **succeeds** and enters `PreparingDestroy`; it is not refused for being in `PlatformInstalling`; no out-of-band deletion of cloud resources is needed | `lifecycle phase:` output; destroy exit code; run log showing no refusal |
+| I11 | Destroy is idempotent: an already-absent target is `Absent`, not an error | re-run `sol cloud destroy <target> --apply` after I9 | exits 0; reports the target as absent (`lifecycle phase: Absent`); performs no RDS preparation | CLI output; terraform argv (no targeted apply) |
+| I12 | Destroy resumed after an interrupted destroy completes (the abort edge is available from `PreparingDestroy`/`Destroying`) | interrupt the destroy between preparation and destruction, then re-run `sol cloud destroy … --apply` | the second run completes destruction; the final-snapshot identity is **not** reused from the first attempt | terraform argv of both runs; live snapshot list; teardown verification |
+| I13 | The phase record is operational context, never infrastructure truth (ADR 0003) | after a full apply→destroy cycle, inspect the tree and the run's artifacts | no phase-pointer file and no second state database exist; every readiness claim in I3/I4/I6 was established by an observation, not inferred from the reported phase | repository/artifact listing; the probe evidence cited in I3/I4/I6 |
+
+## J. Explicitly not claimed (recorded as skipped, with reason — DEC-026 §9)
 
 | Item | Reason |
 |---|---|
