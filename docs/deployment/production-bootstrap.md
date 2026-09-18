@@ -119,12 +119,15 @@ target:
 ## 3. No standing cluster-creator admin
 
 The AWS module sets `enable_cluster_creator_admin_permissions = false`. During
-`sol cloud apply`, the named provisioner receives temporary EKS bootstrap admin
-access only long enough to establish its custom platform RBAC. Sol then removes
-the managed admin association and verifies the effective positive and negative
-RBAC boundary before continuing. An interrupted run is safely re-runnable and
-reconciles that temporary association away; it is not the steady-state access
-model.
+`sol cloud apply`, the named provisioner holds temporary EKS bootstrap admin
+access for the whole privileged `PlatformInstalling` phase — the full platform
+apply and verified readiness — because installing cluster-wide software that
+mints RBAC is itself privileged platform establishment (ADR 0003). Sol then
+removes the managed admin association and verifies the effective positive and
+negative RBAC boundary, so the steady-state provisioner never holds
+`escalate`/`bind` and cannot manufacture a more powerful identity. An interrupted
+run is safely re-runnable and reconciles that temporary association away; it is
+not the steady-state access model.
 
 ## 4. Recovery procedure
 

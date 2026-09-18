@@ -54,6 +54,13 @@ If `soldev pipeline check <ticket-id>` prints `worktree: (dirty worktree ...)` o
    git worktree add -b ticket-id/short-slug ../sol-ticket-id-short-slug main
    ```
    No `internal/pipeline/tickets/` commit for this — nothing to record on `main` yet.
+   The rule this step implements — one worktree per concurrent actor, and never
+   mutating the canonical checkout — is stated in `CONTRIBUTING.md`
+   § *Isolation and ownership*, together with the pre-commit preflight
+   (`internal/ci/check_authority.sh`) and how to declare a context so it fails
+   closed. Read the policy there rather than here: this skill is an entry point,
+   not the authority, and actors that never enter through `/work` are exactly the
+   ones the rule has to reach.
 3. Implement the ticket in the worktree — read the ticket's **Remediation** as the specification.
    - Per `.claude/CLAUDE.md`'s demo/example coverage rule: if the ticket changes
      what an app author does (new `sol.toml` field, primitive/runtime contract,

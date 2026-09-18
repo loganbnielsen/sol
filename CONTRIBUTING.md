@@ -84,6 +84,63 @@ suite for staged bookkeeping-only changes, which is a useful local speed-up. It
 is **not** a substitute for CI: run CI on the pull request, and do not treat "the
 hook was quiet" as evidence a change is safe. CI is the gate.
 
+### Isolation and ownership
+
+**Each concurrent actor owns one worktree. Agents do not perform mutating work in
+the canonical checkout.** The canonical checkout — the first entry in
+`git worktree list`, the one that holds `.git/` — belongs to the human operator.
+
+Worktrees share the object database, so commits and refs stay visible to
+everyone, but working-tree state and `HEAD` are isolated. That isolation is the
+point: a shared checkout's branch can change underneath an actor midway through a
+commit, and the resulting commit is *valid but in the wrong place* — every test,
+guard and review of its contents passes while it sits on someone else's branch.
+
+```bash
+git worktree add -b <TICKET-ID>/<short-slug> ../sol-<TICKET-ID>-<short-slug> main
+```
+
+Before **every** commit and push, resolve and verify:
+
+- the **worktree** you are in, and that it is not the canonical checkout;
+- the **branch** you are on, and that it is not detached with staged changes;
+- the **upstream**, if any;
+- the **expected base** — what this work is stacked on;
+- **ownership** — whose ticket/PR branch this is. If another actor owns it or is
+  actively rewriting it, do not push to it; produce a clean handoff instead.
+
+`internal/ci/check_authority.sh` performs those checks and is wired into the
+pre-commit hook. It is **advisory by default**, because a human committing in the
+canonical checkout is legitimate and a single-worktree clone should be quiet.
+Declare a context to make it strict:
+
+```bash
+SOL_AUTHORITY_WORKTREE=$PWD \
+SOL_AUTHORITY_BRANCH=<TICKET-ID>/<slug> \
+SOL_AUTHORITY_BASE=main \
+git commit ...
+```
+
+A declared mismatch is refused. An undeclared context warns only about the two
+signals that are unambiguous once more than one worktree exists: a commit from
+the canonical checkout, and a detached `HEAD` with staged changes. It never
+requires a branch to have an upstream, and never blocks a merge commit.
+
+### If nothing seems to be running
+
+A stale hook install fails silently — the hook simply never runs, so the gate is
+absent rather than red. If the local hooks appear inert, re-run the documented
+installer:
+
+```bash
+bash cli/platform/local/scripts/install-hooks.sh
+```
+
+That path is guarded by `internal/ci/test_hook_install.sh`, which runs the
+installer in a scratch repository, seeds a dangling symlink, and asserts every
+hook lands as a resolving, executable symlink. The test exists because a stale
+install is otherwise indistinguishable from a clean one.
+
 ## Trademarks
 
 The "Sol" name and logo are **not** covered by the Apache-2.0 licence — see
