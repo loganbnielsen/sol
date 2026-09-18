@@ -121,9 +121,29 @@ The policy of a phase is fixed: `Bootstrap` for `CloudBootstrap`,
    applies the Destroy policy, so the Production invariant
    (`rds_deletion_protection = true`, BUG-039) is deliberately not in force even
    though it remains exactly correct throughout `Ready`.
-5. **Illegal transitions are rejected.** The transition relation admits only the
-   edges in the diagram; in particular `PreparingDestroy -> Ready` and
-   `PrepareDestroy`-then-Ready-policy are structurally impossible.
+5. **Illegal forward transitions are rejected.** The forward relation
+   (`transition_allowed`) admits only the edges in the diagram; in particular
+   `PreparingDestroy -> Ready` and `PrepareDestroy`-then-Ready-policy are
+   structurally impossible.
+
+6. **A failed or partially installed target is always destructible.** Lifecycle
+   enforcement must never strand infrastructure. Destruction is therefore *not* a
+   forward transition but an **abort edge** (`destruction_available`): available
+   from every phase that can hold infrastructure — `CloudBootstrap`,
+   `PlatformInstalling`, `Ready`, `PlatformUpdating` — and also from
+   `PreparingDestroy`/`Destroying` themselves, so an interrupted destroy can be
+   resumed. Only `Absent`, the post-destroy state, has nothing to tear down, and
+   destroying an absent target yields that state, which is why destroy is
+   idempotent rather than an error.
+
+   The two are kept apart on purpose. Folding the abort edge into the forward
+   relation would stop the relation from meaning "the diagram"; routing
+   destruction *through* the forward relation would refuse to tear down a
+   half-built target, leaving manual surgery on live cloud resources as the only
+   exit — the outcome this invariant exists to prevent. Destruction also observes
+   deliberately less than apply: the abort edge returns the same answer for
+   `Ready` and `PlatformInstalling`, so a destroy decides only Absent-ness, and
+   never depends on a probe that could fail and block teardown.
 
 ### The phase record is not infrastructure truth
 
@@ -140,20 +160,32 @@ a stored description of the world:
 ## Implementation
 
 The phase and policy vocabulary lives in `Sol_cli_cloud_lifecycle` (`phase`,
-`phase_policy`, `policy_of_phase`, `transition_allowed`, `ready_policy_applies`,
-`policy_vars`). The operations in `cli/sol/bin/cmd_cloud_tf.ml` perform only
-legal transitions, and `policy_vars` supplies the phase's desired-state
-overrides, appended after caller variables so the phase policy wins.
+`phase_policy`, `policy_of_phase`, `transition_allowed`, `destruction_available`,
+`enter_destruction`, `ready_policy_applies`, `policy_vars`). The operations in
+`cli/sol/bin/cmd_cloud_tf.ml` perform only legal transitions -- forward progress
+through `enter`, which refuses any edge `transition_allowed` rejects, and entry to
+destruction through `enter_destruction`, the abort edge of invariant 6 -- and
+`policy_vars` supplies the phase's desired-state overrides, appended after caller
+variables so the phase policy wins.
+
+`sol cloud destroy` derives its phase from `enter_destruction` rather than
+asserting `PreparingDestroy` directly. That is what makes the model and the
+operation agree: before, the operation was legal from any state while the relation
+said the edge was not.
 
 Regression coverage asserts the semantics, not just the original bugs:
 
-- unit tests assert the transition relation (including the rejected
-  `PreparingDestroy -> Ready`) and that Destroy policy overrides the Production
-  invariant;
+- unit tests assert the forward relation (including the rejected
+  `PreparingDestroy -> Ready` *and* the rejected
+  `PlatformInstalling -> PreparingDestroy`), that the abort edge nevertheless
+  admits every phase except `Absent`, that destroying never lands in a
+  Ready-policy phase, and that Destroy policy overrides the Production invariant;
 - the offline lifecycle harness asserts the full platform apply happens **before**
-  the provisioner is de-escalated, and that the post-prepare bootstrap-admin
-  apply still carries the Destroy policy (the Destroy override ordering after
-  the profile's `rds_deletion_protection=true`); and
+  the provisioner is de-escalated, that the post-prepare bootstrap-admin apply
+  still carries the Destroy policy (the Destroy override ordering after the
+  profile's `rds_deletion_protection=true`), and that a partially installed
+  target -- substrate present, platform never fully installed -- is still
+  destructible (invariant 6); and
 - `cli/sol/test/check_production_infra.sh` asserts the steady-state provisioner
   RBAC still grants no `escalate`/`bind`, preserving invariant 2 structurally.
 

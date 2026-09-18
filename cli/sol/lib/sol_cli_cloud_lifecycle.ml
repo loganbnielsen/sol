@@ -465,9 +465,16 @@ let policy_of_phase = function
   | Preparing_destroy | Destroying -> Destroy
 ;;
 
-(* The transition relation. Anything not listed is illegal; the operations in
-   cmd_cloud_tf.ml perform only listed transitions, and the tests assert the
-   illegal ones are rejected. *)
+(* The forward lifecycle relation: the edges of ADR 0003's diagram. Anything not
+   listed is illegal; the operations in cmd_cloud_tf.ml perform only listed
+   transitions, and the tests assert the illegal ones are rejected.
+
+   This is deliberately NOT the whole story about how a phase can be entered. It
+   describes *progressive establishment* -- each edge moves the target further
+   along the diagram, so reversing one is illegal (invariant 5). Teardown is a
+   different class of move and is described separately by [destruction_available];
+   keeping the two apart is what lets this relation keep saying exactly what the
+   diagram says. *)
 let transition_allowed ~from ~to_ =
   match from, to_ with
   | Absent, Cloud_bootstrap -> true
@@ -479,6 +486,42 @@ let transition_allowed ~from ~to_ =
   | Preparing_destroy, Destroying -> true
   | Destroying, Absent -> true
   | _ -> false
+;;
+
+(* The abort edge (ADR 0003 invariant 6).
+
+   Destruction is not a forward lifecycle transition, so it is not in the relation
+   above -- which is why `Platform_installing -> Preparing_destroy` is correctly
+   *rejected* there. It is nonetheless available from every phase that can hold
+   infrastructure, including a half-built one, because lifecycle enforcement must
+   never strand infrastructure: a run that fails midway (a partial install, an
+   interrupted privileged update, a destroy that died before finishing) has to
+   remain destructible through Sol's public lifecycle, or the only way out is
+   manual console surgery on live cloud resources.
+
+   [Absent] is the post-destroy state and has nothing to tear down. *)
+let destruction_available = function
+  | Absent -> false
+  | Cloud_bootstrap
+  | Platform_installing
+  | Ready
+  | Platform_updating
+  | Preparing_destroy
+  | Destroying -> true
+;;
+
+(* The phase a destroy operation proceeds in. Total by construction: destroying an
+   already-absent target yields [Absent], the post-destroy state itself, which is
+   why destroy is idempotent rather than an error.
+
+   Note what this does *not* need: the answer is [Preparing_destroy] for every
+   phase except [Absent], so a destroy has to decide only Absent-ness -- which is
+   observable from the substrate Sol is about to tear down. It deliberately does
+   not probe the platform: a probe that can fail must never be able to block
+   teardown, and would strand exactly the half-built target this exists to
+   protect. *)
+let enter_destruction ~from =
+  if destruction_available from then Preparing_destroy else Absent
 ;;
 
 (* Ready-state invariants apply only in [Ready]. Once [Preparing_destroy] has

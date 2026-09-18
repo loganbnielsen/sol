@@ -1126,14 +1126,33 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
        restored by the bootstrap-admin reconciliation that necessarily precedes
        the destroy. Re-verifying after that apply structurally rejects a
        PreparingDestroy -> Ready-policy regression. *)
-    let destroy_phase = Sol_cli_cloud_lifecycle.Preparing_destroy in
+    (* ADR 0003 invariant 6 (HARDEN-002 run 5): destruction is an abort edge, not a
+       forward transition, so it is available from every phase that can hold
+       infrastructure -- including a half-built one. This is the entry that used to
+       be faked: the phase was asserted here as [Preparing_destroy] unconditionally,
+       which made the model and the operation disagree about whether destroying a
+       partially installed target was legal (the forward relation rejects
+       `Platform_installing -> Preparing_destroy`).
+
+       Destroy therefore observes the *coarsest* fact that decides the edge --
+       whether the substrate exists -- and does not probe the platform: [Ready] and
+       [PlatformInstalling] are equally destructible, so the answer is the same,
+       while a probe that can fail would be able to block teardown and strand
+       exactly the half-built target this invariant protects. *)
+    let observed =
+      Sol_cli_cloud_lifecycle.observed_phase
+        ~cloud_exists:(Option.is_some outputs)
+        ~platform_installed:true
+    in
+    let destroy_phase = Sol_cli_cloud_lifecycle.enter_destruction ~from:observed in
     Printf.printf
       "  lifecycle phase: %s\n%!"
       (Sol_cli_cloud_lifecycle.phase_to_string destroy_phase);
-    (* ADR 0003 invariant 4, checked rather than merely assumed: once destruction
-       has been prepared the Ready/Production invariant must not be in force.
-       This is the guard that would have caught finding 15 at the decision point
-       instead of only in the re-verification after the apply. *)
+    (* ADR 0003 invariant 4 at the decision point: whatever phase destruction is
+       in, the Ready/Production invariant must not be in force. [enter_destruction]
+       can only yield [Preparing_destroy] or [Absent], so this now holds by
+       construction; it stays as a fail-closed assertion because the cost of being
+       wrong here is a stranded RDS instance (finding 15) and the branch is free. *)
     if Sol_cli_cloud_lifecycle.ready_policy_applies destroy_phase
     then lifecycle_error "Ready policy must not apply once destruction has been prepared";
     let destroy_vars =

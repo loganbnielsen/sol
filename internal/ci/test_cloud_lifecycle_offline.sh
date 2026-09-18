@@ -517,3 +517,32 @@ if grep -F -- '-target=aws_db_instance.postgres' "$log" >/dev/null; then
   echo "cloud destroy attempted RDS preparation when no RDS instance exists" >&2
   exit 1
 fi
+
+# ADR 0003 invariant 6 (HARDEN-002 run 5): destruction is an abort edge, not a
+# forward transition. A failed or partially installed target must remain
+# destructible through the public lifecycle, because lifecycle enforcement must
+# never strand infrastructure.
+#
+# This is the case the model and the operation used to disagree about: the
+# forward relation rejects `PlatformInstalling -> PreparingDestroy` (correctly --
+# it describes progressive establishment), so routing destroy through `enter`
+# would refuse to tear down a half-built target and leave the operator with no
+# exit but manual surgery on live cloud resources.
+#
+# The marker is removed so the target reads as "substrate exists, platform never
+# fully installed"; a future implementation that consults the phase here, or that
+# gates teardown on a probe which can fail, fails this scenario. Nothing follows
+# this scenario, so the harness state is not restored.
+rm -f "$RDS_PREPARED_FILE"
+rm -f "$PLATFORM_INSTALLED_FILE"
+log="$tmp/destroy-partial-install.log"
+if ! run_destroy "$log"; then
+  cat "$log.out" >&2
+  echo "cloud destroy on a partially installed target must succeed (invariant 6)" >&2
+  exit 1
+fi
+grep -F 'lifecycle phase: PreparingDestroy' "$log.out" >/dev/null || {
+  echo "destroy on a partially installed target did not enter the destruction phase:" >&2
+  cat "$log.out" >&2
+  exit 1
+}
