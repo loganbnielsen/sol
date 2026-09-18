@@ -7,6 +7,16 @@
 
 [ "${SOL_SKIP_HOOKS:-0}" = "1" ] && exit 0
 
+# ── Authority preflight (REFAC-090) ───────────────────────────────────────────
+# Resolve and verify the actor's context before anything else, because the
+# failure this exists for is a commit landing in the wrong worktree/branch —
+# where every later check (ticket transitions, tests) passes while the commit is
+# in the wrong place. Advisory unless a context is declared; see
+# internal/ci/check_authority.sh and CONTRIBUTING.md § Isolation and ownership.
+if ! "$(git rev-parse --show-toplevel)/internal/ci/check_authority.sh"; then
+  exit 1
+fi
+
 # ── Ticket state guard ────────────────────────────────────────────────────────
 # Every repository change goes through a PR, including audit reports and new
 # tickets. Validate ticket state transitions independently of checkout/branch:

@@ -212,6 +212,19 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: bash internal/ci/test_ticket_transitions.sh
 
+      - name: Worktree/authority preflight (REFAC-090)
+        # Cheap and offline, and deliberately unconditional: the semantics it
+        # pins -- a declared context is enforced, an undeclared one is advisory,
+        # a branch with no upstream and a merge commit are never blocked -- are
+        # exactly as important to keep true in a docs-only change.
+        run: bash internal/ci/test_authority_check.sh
+
+      - name: Hook install integrity (REFAC-090)
+        # A stale hook install is silently inert rather than red, so the only
+        # way the repository can notice is a test that runs the installer in a
+        # scratch repository and seeds the dangling-symlink failure.
+        run: bash internal/ci/test_hook_install.sh
+
       - name: Signal-handler duplication guardrail (REFAC-081)
         if: needs.classify.outputs.kind != 'docs-only'
         run: internal/ci/check_signal_handler_duplication.sh
