@@ -57,3 +57,13 @@ val output_json
   -> chdir:string
   -> unit
   -> (Sol_cli_process.result, Sol_cli_process.error) result
+
+(** ["terraform show -json"] — the applied state of every resource, not just
+    named outputs. For a destroy-preparation self-check on this root's own
+    resources; the named-output contract in {!Sol_cli_cloud_lifecycle} is for
+    cross-root wiring and stays the only path for that. *)
+val show_json
+  :  ?env:(string * string) list
+  -> chdir:string
+  -> unit
+  -> (Sol_cli_process.result, Sol_cli_process.error) result
