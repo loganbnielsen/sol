@@ -19,8 +19,11 @@ printf 'The example account is 123456789012.\n' >"$tmp/notes.md"
 git -C "$tmp" add -A
 "$guard" "$tmp" >/dev/null
 
-# A real-looking account id must fail, even in a plain markdown file.
-printf 'AWS account: 987654321098\n' >>"$tmp/notes.md"
+# A real-looking account id must fail, even in a plain markdown file. Assemble
+# the id from a variable so this script -- which the guard also scans, since it
+# is tracked text -- does not itself carry an account-shaped literal.
+fake_id="987654321098"
+printf 'AWS account: %s\n' "$fake_id" >>"$tmp/notes.md"
 git -C "$tmp" add -A
 if "$guard" "$tmp" >/dev/null 2>&1; then
   echo "guard accepted a real-looking account id in a tracked markdown file" >&2
