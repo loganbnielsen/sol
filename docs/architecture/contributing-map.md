@@ -145,7 +145,11 @@ the full local workflow.
 User-facing docs live in `README.md`, `docs/guides/`, `docs/deployment/`, and
 `docs/hosted/`. Architecture and ownership docs live in `docs/architecture/`.
 Audit checklists live in `docs/audits/`; dated audit findings belong under
-`internal/pipeline/audits/`, not in reusable checklist files.
+`internal/pipeline/audits/`, not in reusable checklist files. That directory also
+carries the durable qualification ledger — `internal/pipeline/audits/README.md`
+for the conventions and `internal/pipeline/audits/QUALIFICATION_STATUS.md` for the
+current "what does Sol know" index of findings, provider-neutral invariants and
+open qualification rows.
 
 Extend docs where the reader is already making the relevant decision: quickstart
 behavior in `README.md`, walkthroughs in `docs/guides/`, deployment contracts in
