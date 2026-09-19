@@ -86,7 +86,7 @@ case "$*" in
     case " $* " in
       *infra/gcp*)
         cat <<'JSON'
-{"cluster_name":{"value":"sol-qual"},"project_id":{"value":"sol-qualification"},"region":{"value":"us-central1"},"artifact_registry":{"value":"us-central1-docker.pkg.dev/sol-qualification/sol-qual"}}
+{"cluster_name":{"value":"sol-qual"},"project_id":{"value":"sol-qualification"},"region":{"value":"us-central1"},"artifact_registry":{"value":"us-central1-docker.pkg.dev/sol-qualification/sol-qual"},"provisioner_service_account":{"value":"sol-qual-provisioner@sol-qualification.iam.gserviceaccount.com"}}
 JSON
         exit 0
         ;;

@@ -56,6 +56,11 @@ output "dns_nameservers" {
   value       = var.create_dns_zone ? google_dns_managed_zone.main[0].name_servers : null
 }
 
+output "provisioner_service_account" {
+  description = "The platform provisioner identity Sol impersonates for cluster access; short-lived tokens, never a key file."
+  value       = google_service_account.provisioner.email
+}
+
 output "loki_gcs_bucket" {
   description = "GCS bucket for durable Loki storage — set in cli/platform/infra/base as loki_gcs_bucket (INFRA-003, GCP counterpart to aws/'s loki_s3_bucket)"
   value       = var.enable_durable_observability ? google_storage_bucket.loki[0].name : null

@@ -80,6 +80,25 @@ variable "redpanda_persistent_storage" {
 }
 
 # PostgreSQL (in-cluster)
+# The GCP platform provisioner's identity, empty on AWS (where the provisioner is
+# a named IAM role reached through an EKS access entry). Empty means "do not bind
+# a Google identity"; the provider's own binding mechanism differs, and this is
+# the data that says which identity to bind.
+variable "gcp_provisioner_service_account" {
+  description = "Google service account that acts as the platform provisioner on GCP, bound to the same ClusterRoles the AWS provisioner's group receives. Empty on AWS."
+  type        = string
+  default     = ""
+}
+
+# The install window's privilege. Declared by both provider roots because each
+# realizes it differently -- an EKS access entry on AWS, in-cluster RBAC on GCP --
+# and Sol opens and closes it with the same variable on both.
+variable "provisioner_bootstrap_admin" {
+  description = "Temporarily grant the platform provisioner the authority the install needs. Sol opens this for the install window and closes it before Ready."
+  type        = bool
+  default     = false
+}
+
 variable "install_postgresql" {
   description = "Install in-cluster PostgreSQL. Set false when using RDS or Cloud SQL."
   type        = bool

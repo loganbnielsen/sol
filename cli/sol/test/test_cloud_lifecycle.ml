@@ -124,6 +124,9 @@ let valid_gcp_outputs () =
     ; output
         "artifact_registry"
         ~value:(`String "us-central1-docker.pkg.dev/sol-qualification/sol-qual")
+    ; output
+        "provisioner_service_account"
+        ~value:(`String "sol-qual-provisioner@sol-qualification.iam.gserviceaccount.com")
     ; output "loki_gcs_bucket" ~value:`Null
     ; output "thanos_gcs_bucket" ~value:`Null
     ; output "loki_workload_identity_sa_email" ~value:`Null
@@ -157,7 +160,12 @@ let test_gcp_outputs () =
          (name ^ " is required")
          true
          (Result.is_error (parse_gcp (without_output name (valid_gcp_outputs ())))))
-    [ "cluster_name"; "project_id"; "region"; "artifact_registry" ];
+    [ "cluster_name"
+    ; "project_id"
+    ; "region"
+    ; "artifact_registry"
+    ; "provisioner_service_account"
+    ];
   List.iter
     (fun name ->
        match parse_gcp (without_output name (valid_gcp_outputs ())) with

@@ -659,6 +659,11 @@ let gcp_provisioner_kubeconfig ~region outputs f =
            ; region
            ; "--project"
            ; outputs.Sol_cli_cloud_lifecycle.project_id
+             (* Impersonation is the point: Sol acts as the target's named
+              provisioner, through short-lived tokens, rather than as whoever
+              happened to run the command. *)
+           ; "--impersonate-service-account"
+           ; outputs.Sol_cli_cloud_lifecycle.provisioner_service_account
            ; "--kubeconfig"
            ; path
            ; "--quiet"
@@ -1154,6 +1159,20 @@ let bootstrap_access_vars provider ~enabled =
   | Sol_cli_provider.Gcp -> []
 ;;
 
+(* The install window, per provider. The *variable* is the same on both, because
+   the invariant is the one that matters: the authority the install needs exists
+   only while Sol is installing, and is gone before Ready. Where it lives differs
+   -- AWS associates cluster-admin through an EKS access entry, an object of the
+   cloud root; GCP grants it as in-cluster RBAC, an object of the platform root --
+   so each is applied through the root that owns it rather than through a
+   Sol-side sequence of calls. *)
+let platform_bootstrap_access_vars provider ~enabled =
+  match provider with
+  | Sol_cli_provider.Aws -> []
+  | Sol_cli_provider.Gcp ->
+    [ ("provisioner_bootstrap_admin", if enabled then "true" else "false") ]
+;;
+
 let platform_absent env =
   [ "cert-manager"; "ingress-nginx"; "argocd"; "redpanda"; "monitoring"; "postgresql" ]
   |> List.for_all (fun namespace ->
@@ -1408,6 +1427,14 @@ let cloud_init ~target ~var_file ~vars ~action () =
     let platform_vars =
       platform_vars_of ~on_error:cleanup_bootstrap_access ~cloud_target ~outputs ()
     in
+    (* The install window. Empty on AWS, where the privilege is an EKS access entry
+       the cloud apply above opens; on GCP it is the in-cluster RBAC the platform
+       root owns. Either way it is open for exactly the applies that install, and
+       the revoke below closes it before an install is reported. *)
+    let platform_install_vars =
+      platform_vars
+      @ Sol_cli_terraform.kv_args (platform_bootstrap_access_vars provider ~enabled:true)
+    in
     if not (cloud_ready ~region:target_cfg.region outputs)
     then (
       cleanup_bootstrap_access ();
@@ -1483,7 +1510,7 @@ let cloud_init ~target ~var_file ~vars ~action () =
                   ~scope:(platform_prerequisite_targets provider)
                   ~chdir:platform_dir
                   ~var_files:[]
-                  ~vars:platform_vars
+                  ~vars:platform_install_vars
                   ())
          in
          (match prerequisites with
@@ -1518,7 +1545,7 @@ let cloud_init ~target ~var_file ~vars ~action () =
                ~scope:Sol_cli_terraform.whole_root
                ~chdir:platform_dir
                ~var_files:[]
-               ~vars:platform_vars
+               ~vars:platform_install_vars
                ())
          in
          (match platform_apply with
@@ -1602,6 +1629,27 @@ let cloud_init ~target ~var_file ~vars ~action () =
           | Ok _ -> ()
           | Error message -> lifecycle_error message);
          require_terraform_success (deescalate ());
+         (* GCP's window lives in the platform root, so it is closed by applying the
+            root that owns the object rather than by a Sol-side revocation step:
+            the authority model stays in the layer that defines the authority. *)
+         (match provider with
+          | Sol_cli_provider.Aws -> ()
+          | Sol_cli_provider.Gcp ->
+            require_terraform_success
+              (Sol_cli_run_log.run_phase
+                 run_log
+                 ~name:"provisioner-bootstrap-access-remove"
+                 (fun () ->
+                    Sol_cli_terraform.apply
+                      ~env
+                      ~scope:Sol_cli_terraform.whole_root
+                      ~chdir:platform_dir
+                      ~var_files:[]
+                      ~vars:
+                        (platform_vars
+                         @ Sol_cli_terraform.kv_args
+                             (platform_bootstrap_access_vars provider ~enabled:false))
+                      ())));
          if not (provisioner_rbac_established env)
          then
            lifecycle_error

@@ -81,6 +81,21 @@ variable "sql_private_network_release_wait" {
   default     = "300s"
 }
 
+# The install window's privilege, named exactly as the AWS root names it. The
+# mechanism underneath differs -- an IAM role assumed through an EKS access entry
+# there, an impersonated service account granted in-cluster RBAC here -- but the
+# semantic is one thing, so Sol passes the same variable to both roots and the
+# provider decides how to realize it. That is capability parity rather than IAM
+# cosplay, and it is why this is not a `gcp_provisioner_bootstrap_admin`.
+#
+# Default false: the privileged window exists only while Sol is installing, and a
+# root applied directly by an operator never opens it.
+variable "provisioner_bootstrap_admin" {
+  description = "Temporarily grant the platform provisioner the in-cluster authority Sol needs to install privileged components. Sol opens this for the install window and closes it before Ready."
+  type        = bool
+  default     = false
+}
+
 variable "sql_deletion_protection" {
   description = "Enable both Terraform's destroy guard and Cloud SQL API deletion protection."
   type        = bool

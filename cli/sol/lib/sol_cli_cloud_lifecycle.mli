@@ -22,6 +22,7 @@ type gcp_outputs =
   ; loki_workload_identity_sa_email : string option
   ; thanos_gcs_bucket : string option
   ; thanos_workload_identity_sa_email : string option
+  ; provisioner_service_account : string
   }
 
 val gcp_outputs_of_json : string -> (gcp_outputs, string) result

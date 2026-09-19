@@ -254,6 +254,47 @@ resource "google_service_networking_connection" "sql" {
   reserved_peering_ranges = [google_compute_global_address.sql_peering.name]
 }
 
+# ── The platform provisioner ──────────────────────────────────────────────── #
+#
+# The identity that installs and maintains the platform. Live attempt 1 installed
+# as the operator's own Owner account, which the review named correctly: that is
+# not an authority model, it is a coincidence of who ran the command.
+#
+# The invariant to preserve is the one AWS's bootstrap window preserves:
+# *the authority required to install privileged platform components exists only
+# during the lifecycle stage that requires it; steady-state identities do not
+# retain it.* GCP realizes that differently, and the difference is real rather
+# than cosmetic:
+#
+#   * the identity is a Google service account, not an IAM role, so callers
+#     impersonate it and Google issues short-lived tokens -- there is never a
+#     static key in a file (the same reason the Loki/Thanos identities below are
+#     service accounts rather than keys);
+#   * `roles/container.developer` is what lets it *reach* the cluster (fetch
+#     credentials and read the cluster), and it confers no Kubernetes authority
+#     by itself;
+#   * the install window's privilege is therefore a Kubernetes RBAC binding,
+#     created for that window and removed at the end of it, because GKE has no
+#     access-entry equivalent that maps a cloud identity to in-cluster rights.
+#
+# The steady-state binding to the shared definition's provisioner ClusterRole is
+# created by the platform root (where that ClusterRole lives), not here.
+resource "google_service_account" "provisioner" {
+  account_id   = "${var.cluster_name}-provisioner"
+  display_name = "Sol platform provisioner for ${var.cluster_name}"
+  project      = var.project_id
+}
+
+# Enough to obtain credentials for and read this cluster. Deliberately not
+# `roles/container.admin`: the authority to *change* the cluster is not the
+# authority to install into it, and conflating the two is how a provisioner
+# quietly becomes an administrator.
+resource "google_project_iam_member" "provisioner_cluster_access" {
+  project = var.project_id
+  role    = "roles/container.developer"
+  member  = "serviceAccount:${google_service_account.provisioner.email}"
+}
+
 # ── Cloud DNS ─────────────────────────────────────────────────────────────── #
 
 resource "google_dns_managed_zone" "main" {

@@ -203,6 +203,7 @@ type gcp_outputs =
   ; loki_workload_identity_sa_email : string option
   ; thanos_gcs_bucket : string option
   ; thanos_workload_identity_sa_email : string option
+  ; provisioner_service_account : string
   }
 
 let gcp_outputs_of_json text =
@@ -221,6 +222,10 @@ let gcp_outputs_of_json text =
     let* thanos_workload_identity_sa_email =
       optional_string "thanos_workload_identity_sa_email"
     in
+    (* Required, not optional: without it the platform would be installed as
+       whatever identity happened to call Sol, which is the thing Attempt 1 did
+       and the review named as not being an authority model. *)
+    let* provisioner_service_account = string "provisioner_service_account" in
     Ok
       { cluster_name
       ; project_id
@@ -230,6 +235,7 @@ let gcp_outputs_of_json text =
       ; loki_workload_identity_sa_email
       ; thanos_gcs_bucket
       ; thanos_workload_identity_sa_email
+      ; provisioner_service_account
       }
   with
   | Yojson.Json_error message -> Error ("invalid GCP Terraform output JSON: " ^ message)
@@ -375,7 +381,15 @@ let platform_terraform_vars inputs =
           |> add_opt "thanos_gcs_bucket" outputs.thanos_gcs_bucket
           |> add_opt
                "thanos_workload_identity_sa_email"
-               outputs.thanos_workload_identity_sa_email))
+               outputs.thanos_workload_identity_sa_email
+          (* The identity that holds the platform's authorities on GCP. It is
+             provider-shaped data for the same reason the buckets are: the
+             definition binds *this* identity to the same ClusterRoles the AWS
+             provisioner's group receives, so the authority model is shared and
+             the identity is not. *)
+          |> add_opt
+               "gcp_provisioner_service_account"
+               (Some outputs.provisioner_service_account)))
 ;;
 
 type plan_phase =
