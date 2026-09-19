@@ -353,32 +353,134 @@ let test_deferred () =
   | _ -> Alcotest.fail "fully established cluster must plan both phases"
 ;;
 
+(* The fake cluster every readiness test reads. It answers the convergence checks
+   with the shape they parse, so a check's own predicate is what is under test
+   rather than the fake agreeing with it. The storage answer is derived from the
+   provider's contract rather than spelled out, so the baseline stays "this
+   cluster is converged for this provider". *)
+let converged_cluster provider =
+  let { L.storage_class; csi_driver } = L.platform_storage provider in
+  function
+  | "get" :: "storageclass" :: _ ->
+    Some (Printf.sprintf "%s|%s|true " storage_class csi_driver)
+  | "get" :: "service/ingress-nginx-controller" :: _ -> Some "example.elb.amazonaws.com"
+  | "get" :: "daemonset" :: _ -> Some "4/4 4/4 "
+  | "get" :: "statefulset" :: _ -> Some "3/3 1/1 "
+  | "get" :: "pvc" :: _ -> Some "Bound Bound "
+  | "get" :: "nodes" :: _ -> Some "True True "
+  | _ -> Some ""
+;;
+
 let test_readiness_fails_each_predicate () =
-  let succeeds = function
-    | "get" :: "storageclass/gp3" :: _ -> Some "ebs.csi.aws.com true"
-    | "get" :: "service/ingress-nginx-controller" :: _ -> Some "example.elb.amazonaws.com"
-    (* The convergence checks read status, so the baseline has to supply it. *)
-    | "get" :: "daemonset" :: _ -> Some "4/4 4/4 "
-    | "get" :: "statefulset" :: _ -> Some "3/3 1/1 "
-    | "get" :: "pvc" :: _ -> Some "Bound Bound "
-    | "get" :: "nodes" :: _ -> Some "True True "
-    | _ -> Some ""
+  List.iter
+    (fun p ->
+       let succeeds = converged_cluster p in
+       let all = L.readiness ~provider:p ~run:succeeds in
+       Alcotest.(check string)
+         (Printf.sprintf "baseline (%s)" (Sol_cli_provider.to_string p))
+         "Ready"
+         (L.readiness_summary all);
+       List.iteri
+         (fun failed _ ->
+            let index = ref (-1) in
+            let checks =
+              L.readiness ~provider:p ~run:(fun argv ->
+                incr index;
+                if !index = failed then None else succeeds argv)
+            in
+            Alcotest.(check bool)
+              (Printf.sprintf
+                 "predicate %d fails closed (%s)"
+                 failed
+                 (Sol_cli_provider.to_string p))
+              true
+              (L.readiness_summary checks <> "Ready"))
+         all)
+    Sol_cli_provider.all
+;;
+
+let readiness_with_storage ~provider storage_output =
+  L.readiness ~provider ~run:(fun argv ->
+    match argv with
+    | "get" :: "storageclass" :: _ -> Some storage_output
+    | other -> converged_cluster provider other)
+  |> L.readiness_summary
+;;
+
+(* The storage assertion is the one readiness predicate that is the provider's
+   rather than Sol's, so the ways it could pass vacuously or leak across
+   providers are what these pin. Two of them are states a real cluster actually
+   reaches: no default class at all (EKS ships none, and Sol's own class is
+   absent whenever `create_storage_class = false`), and *two* default classes
+   (what a GCP cluster would have if Sol created its own on top of GKE's). *)
+let test_storage_contract_is_provider_specific () =
+  let aws = Sol_cli_provider.Aws in
+  let gcp = Sol_cli_provider.Gcp in
+  let check_ready provider label output =
+    Alcotest.(check string) label "Ready" (readiness_with_storage ~provider output)
   in
-  let all = L.readiness ~run:succeeds in
-  Alcotest.(check string) "baseline" "Ready" (L.readiness_summary all);
-  List.iteri
-    (fun failed _ ->
-       let index = ref (-1) in
-       let checks =
-         L.readiness ~run:(fun argv ->
-           incr index;
-           if !index = failed then None else succeeds argv)
-       in
-       Alcotest.(check bool)
-         (Printf.sprintf "predicate %d fails closed" failed)
-         true
-         (L.readiness_summary checks <> "Ready"))
-    all
+  let check_unmet provider label output =
+    Alcotest.(check bool) label true (readiness_with_storage ~provider output <> "Ready")
+  in
+  check_ready
+    aws
+    "the AWS contract is satisfied by gp3 on EBS CSI"
+    "gp3|ebs.csi.aws.com|true ";
+  check_ready
+    gcp
+    "the GCP contract is satisfied by GKE's default class"
+    "standard-rwo|pd.csi.storage.gke.io|true ";
+  check_unmet aws "no default StorageClass is unmet" "gp3|ebs.csi.aws.com|false ";
+  check_unmet aws "a default class is unmet" "gp3|ebs.csi.aws.com|";
+  check_unmet aws "an empty listing is unmet" "";
+  check_unmet
+    aws
+    "two default classes are unmet, not resolved arbitrarily"
+    "gp3|ebs.csi.aws.com|true gp2|ebs.csi.aws.com|true ";
+  check_unmet
+    aws
+    "a default class Sol did not establish is unmet even on the same driver"
+    "some-other-class|ebs.csi.aws.com|true ";
+  check_unmet
+    aws
+    "the GCP provider's class does not satisfy the AWS contract"
+    "standard-rwo|pd.csi.storage.gke.io|true ";
+  check_unmet
+    gcp
+    "the AWS provider's class does not satisfy the GCP contract"
+    "gp3|ebs.csi.aws.com|true "
+;;
+
+(* The invocations are per provider too: a storage check that named the other
+   provider's driver would be answered by a cluster that is wrong for this
+   target. CI validates each provider's argv against kubectl, so the two sets
+   have to exist and stay the same shape. *)
+let test_readiness_invocations_are_provider_specific () =
+  let aws = L.readiness_invocations ~provider:Sol_cli_provider.Aws in
+  let gcp = L.readiness_invocations ~provider:Sol_cli_provider.Gcp in
+  let mentions needle checks =
+    List.exists (fun (_, argv) -> List.exists (fun arg -> arg = needle) argv) checks
+  in
+  Alcotest.(check bool)
+    "AWS asserts the EBS CSI driver"
+    true
+    (mentions "csidriver/ebs.csi.aws.com" aws);
+  Alcotest.(check bool)
+    "GCP asserts the PD CSI driver"
+    true
+    (mentions "csidriver/pd.csi.storage.gke.io" gcp);
+  Alcotest.(check bool)
+    "AWS does not assert the GCP driver"
+    false
+    (mentions "csidriver/pd.csi.storage.gke.io" aws);
+  Alcotest.(check bool)
+    "GCP does not assert the AWS driver"
+    false
+    (mentions "csidriver/ebs.csi.aws.com" gcp);
+  Alcotest.(check int)
+    "both providers assert the same number of checks"
+    (List.length aws)
+    (List.length gcp)
 ;;
 
 (* The convergence predicates decide whether `sol cloud apply` may report [Ready],
@@ -388,17 +490,10 @@ let test_readiness_fails_each_predicate () =
    because their replicas are declared by their owner. *)
 let test_convergence_predicates () =
   let summary_with kind output =
-    L.readiness ~run:(fun argv ->
+    L.readiness ~provider ~run:(fun argv ->
       match argv with
       | "get" :: listed :: _ when listed = kind -> Some output
-      | "get" :: "storageclass/gp3" :: _ -> Some "ebs.csi.aws.com true"
-      | "get" :: "service/ingress-nginx-controller" :: _ ->
-        Some "example.elb.amazonaws.com"
-      | "get" :: "daemonset" :: _ -> Some "4/4 4/4 "
-      | "get" :: "statefulset" :: _ -> Some "3/3 1/1 "
-      | "get" :: "pvc" :: _ -> Some "Bound Bound "
-      | "get" :: "nodes" :: _ -> Some "True True "
-      | _ -> Some "")
+      | other -> converged_cluster provider other)
     |> L.readiness_summary
   in
   let check_ready label summary = Alcotest.(check string) label "Ready" summary in
@@ -482,6 +577,14 @@ let () =
             "readiness predicates"
             `Quick
             test_readiness_fails_each_predicate
+        ; Alcotest.test_case
+            "provider-specific storage contract"
+            `Quick
+            test_storage_contract_is_provider_specific
+        ; Alcotest.test_case
+            "provider-specific readiness invocations"
+            `Quick
+            test_readiness_invocations_are_provider_specific
         ; Alcotest.test_case "convergence predicates" `Quick test_convergence_predicates
         ; Alcotest.test_case "effective authorization" `Quick test_effective_authorization
         ; Alcotest.test_case "terraform scope" `Quick test_terraform_scope

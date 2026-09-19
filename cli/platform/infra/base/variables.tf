@@ -26,14 +26,20 @@ variable "ingress_service_type" {
 # makes persistence physically possible without changing what a workload is
 # allowed to declare, and it does not interact with the `single`-tier
 # restriction DEC-026 §3 puts on workload-declared volumes.
+#
+# AWS only, because only AWS needs it: EKS ships no default StorageClass, so Sol
+# creates one. GKE ships `standard-rwo` (`pd.csi.storage.gke.io`) as its default,
+# so on GCP the platform adopts the provider's class rather than creating a second
+# default (see the resource in main.tf). `Ready` asserts the resulting cluster
+# state for either provider.
 variable "create_storage_class" {
-  description = "Create the default StorageClass for the platform (AWS only; the EBS CSI driver must be installed)."
+  description = "Create the platform's default StorageClass (AWS only; the EBS CSI driver must be installed). On GCP, GKE's own default class is adopted instead."
   type        = bool
   default     = true
 }
 
 variable "storage_class_name" {
-  description = "Name of the default StorageClass this module creates."
+  description = "Name of the default StorageClass this module creates on AWS. On GCP the adopted class is GKE's `standard-rwo`."
   type        = string
   default     = "gp3"
 }

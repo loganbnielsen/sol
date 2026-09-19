@@ -1469,6 +1469,16 @@ resource "helm_release" "thanos" {
 # WaitForFirstConsumer matches EBS's zonal nature: the volume is created in the
 # zone the pod lands in, rather than pinning a broker to a zone chosen at claim
 # time.
+#
+# AWS only, and deliberately so. The platform's PVCs name no storageClassName
+# (see the Redpanda and Loki releases above), so they take the cluster's *default*
+# class; EKS ships none, so Sol has to create one. GKE ships `standard-rwo`
+# (`pd.csi.storage.gke.io`) already annotated as the default, so on GCP Sol adopts
+# the provider's class instead -- creating a second default would leave the
+# cluster with two, which Kubernetes accepts with a warning and then resolves
+# arbitrarily. `Ready` asserts the outcome either way: the provider's class is the
+# sole default and is backed by the provider's block-storage CSI driver
+# (Sol_cli_cloud_lifecycle.platform_storage).
 resource "kubernetes_storage_class_v1" "platform_default" {
   count = var.create_storage_class && var.cloud_provider == "aws" ? 1 : 0
 

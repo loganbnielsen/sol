@@ -107,7 +107,7 @@ let platform_status ~check (target : Sol_cli_config.target) =
          surface answers "is this target ready" rather than a second, looser
          question. *)
       Some
-        (Sol_cli_cloud_lifecycle.readiness ~run
+        (Sol_cli_cloud_lifecycle.readiness ~provider:target.provider ~run
          |> Sol_cli_cloud_lifecycle.readiness_summary))
 ;;
 

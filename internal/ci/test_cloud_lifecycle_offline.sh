@@ -210,7 +210,16 @@ fi
 case "$*" in
   "auth can-i "*" -n default") exit 1 ;;
   "auth can-i bind "*|"auth can-i escalate "*) exit 1 ;;
-  *"storageclass/gp3"*) printf 'ebs.csi.aws.com true' ;;
+  "get storageclass -o jsonpath="*)
+    # The one readiness answer that is the cloud provider's rather than Sol's.
+    # STORAGE_CLASS_WRONG models a cluster whose sole default class is backed by
+    # the wrong block-storage driver, which must fail the install closed.
+    if [ "${STORAGE_CLASS_WRONG:-}" = 1 ]; then
+      printf 'gp3|pd.csi.storage.gke.io|true '
+    else
+      printf 'gp3|ebs.csi.aws.com|true '
+    fi
+    ;;
   *"service/ingress-nginx-controller"*) printf 'lb.example.test' ;;
   # INFRA-035/036: convergence is read from status, so this fake has to produce
   # the values the readiness predicates parse (`rollout status` has no [--all],
@@ -301,6 +310,36 @@ grep -F 'platform readiness Unmet' "$log.out" >/dev/null || {
   cat "$log.out" >&2
   exit 1
 }
+
+# The default StorageClass is the one readiness predicate that is the cloud
+# provider's rather than Sol's -- which class is default, and which CSI driver
+# backs it. A wrong answer must fail the install closed with that reason, rather
+# than being inferred from the target's configuration (the class name appears in
+# both the Terraform root and the readiness check, so "config says gp3" is not
+# evidence that the cluster's default is gp3).
+log="$tmp/storage-class-wrong.log"
+if (export STORAGE_CLASS_WRONG=1 SOL_PLATFORM_READINESS_TIMEOUT_S=0; run_apply "$log"); then
+  echo "cloud apply reached Ready although the default StorageClass was not the platform's" >&2
+  cat "$log.out" >&2
+  exit 1
+fi
+grep -F 'default StorageClass' "$log.out" >/dev/null || {
+  echo "a wrong default StorageClass did not name the unmet check:" >&2
+  cat "$log.out" >&2
+  exit 1
+}
+grep -F 'ebs.csi.aws.com' "$log.out" >/dev/null || {
+  echo "the unmet storage check did not name the driver the platform requires:" >&2
+  cat "$log.out" >&2
+  exit 1
+}
+# The install must not de-escalate into Ready on the way out: the same fail-closed
+# rule as any other unmet readiness check.
+if grep -F 'lifecycle phase: Ready' "$log.out" >/dev/null; then
+  echo "a wrong default StorageClass still reported Ready:" >&2
+  cat "$log.out" >&2
+  exit 1
+fi
 
 log="$tmp/success.log"
 (export FAIL_ON=""; run_apply "$log")

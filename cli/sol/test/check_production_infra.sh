@@ -59,12 +59,16 @@ esac
 # while its default flips to true and production destruction goes silent.
 vars_tf="$root/cli/platform/infra/aws/variables.tf"
 
+# [file] defaults to the AWS root's variables, which is where the first callers
+# live; the platform root's own defaults are checked through the same helper so
+# the extraction cannot drift between them.
 variable_default() {
-  awk -v want="variable \"$1\" {" '
+  local name="$1" file="${2:-$vars_tf}"
+  awk -v want="variable \"$name\" {" '
     index($0, want) == 1 { inside = 1; next }
     inside && /^}/ { exit }
     inside && $1 == "default" { print $3; exit }
-  ' "$vars_tf"
+  ' "$file"
 }
 
 if [ "$(variable_default rds_deletion_protection)" != "true" ]; then
@@ -172,6 +176,49 @@ case "$sc_code" in
     exit 1
     ;;
 esac
+
+# The class must stay AWS-gated. GKE already ships `standard-rwo` as its default,
+# so creating this one on GCP as well would leave the cluster with two default
+# classes -- which Kubernetes accepts with a warning and then resolves
+# arbitrarily, silently putting the platform's durable volumes on a class Sol
+# does not own.
+case "$sc_code" in
+  *'var.create_storage_class && var.cloud_provider == "aws"'*) : ;;
+  *)
+    echo "FAIL: the platform default StorageClass is no longer created on AWS only;" >&2
+    echo "      on GCP GKE's own default class is adopted, and a second default" >&2
+    echo "      would be resolved arbitrarily." >&2
+    exit 1
+    ;;
+esac
+
+# That class is asserted in two places that cannot share a literal: Terraform
+# creates it, and the `Ready` gate checks the cluster's own answer
+# (Sol_cli_cloud_lifecycle.platform_storage). What keeps them from drifting is
+# that both name the same class and the same CSI driver -- a rename in one place
+# without the other would make `Ready` assert a class the platform never
+# created, or create one readiness never looks for.
+base_vars="$root/cli/platform/infra/base/variables.tf"
+lifecycle_ml="$root/cli/sol/lib/sol_cli_cloud_lifecycle.ml"
+created_class="$(variable_default storage_class_name "$base_vars" | tr -d '"')"
+created_driver="$(printf '%s\n' "$sc_code" | sed -n 's/.*storage_provisioner *= *"\([^"]*\)".*/\1/p')"
+
+if [ -z "$created_class" ] || [ -z "$created_driver" ]; then
+  echo "FAIL: could not read the platform StorageClass's name/provisioner from Terraform" >&2
+  exit 1
+fi
+
+if ! grep -F "storage_class = \"$created_class\"" "$lifecycle_ml" >/dev/null; then
+  echo "FAIL: the Ready gate does not name the StorageClass Terraform creates" >&2
+  echo "      ($created_class); the two literals must agree." >&2
+  exit 1
+fi
+
+if ! grep -F "csi_driver = \"$created_driver\"" "$lifecycle_ml" >/dev/null; then
+  echo "FAIL: the Ready gate does not name the CSI driver the platform StorageClass" >&2
+  echo "      uses ($created_driver); the two literals must agree." >&2
+  exit 1
+fi
 
 # INFRA-025: the deploy identity's own ClusterRole (Deployments/Secrets/etc.)
 # must never be bound cluster-wide -- only per application namespace, applied

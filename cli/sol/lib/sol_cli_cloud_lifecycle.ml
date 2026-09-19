@@ -399,132 +399,211 @@ let all_nodes_ready output =
   states <> [] && List.for_all (fun state -> state = "True") states
 ;;
 
-(* No arguments: the checks do not depend on the observability backend or on the
-   issuer. Both were backend-shaped distinctions inside a gate whose only job is
-   to state "the platform converged", and the namespace-wide workload checks hold
-   for whatever a backend installed. *)
-let readiness_checks () =
+(* ── The target's Kubernetes storage contract ────────────────────────────────
+
+   The platform's durable components -- Redpanda's log, Loki's chunks, the
+   Prometheus TSDB, Tempo's blocks -- bind PersistentVolumeClaims against the
+   cluster's *default* StorageClass, because that is what an unqualified claim
+   resolves to. The platform therefore depends on two facts that are the cloud
+   provider's, not Sol's: which block-storage CSI driver backs the cluster, and
+   which class is the one default.
+
+   They differ in kind between providers, and the difference is real rather than
+   cosmetic: EKS ships no default StorageClass at all, so Sol creates one (`gp3`,
+   `ebs.csi.aws.com`); GKE ships `standard-rwo` (`pd.csi.storage.gke.io`) already
+   annotated as the default, so Sol *adopts* it -- creating a second default class
+   would leave the cluster with two, which Kubernetes accepts with a warning and
+   then resolves arbitrarily.
+
+   What is provider-neutral is the assertion, so it is expressed once against
+   this table: the provider's class exists, is the *only* default, and is
+   provided by the provider's block-storage CSI driver. Naming the class in the
+   table keeps the assertion as strong as it was when it was spelled out for AWS:
+   a cluster whose default is some unrelated class backed by the same driver
+   still fails, because the platform's volumes are then not on the class Sol
+   established. *)
+type platform_storage =
+  { storage_class : string
+  ; csi_driver : string
+  }
+
+let platform_storage = function
+  | Sol_cli_provider.Aws -> { storage_class = "gp3"; csi_driver = "ebs.csi.aws.com" }
+  | Sol_cli_provider.Gcp ->
+    { storage_class = "standard-rwo"; csi_driver = "pd.csi.storage.gke.io" }
+;;
+
+(* `name|provisioner|is-default` per StorageClass, then space-separated. A CSI
+   StorageClass's `provisioner` is the driver's registered name -- that is the
+   contract, not a naming convention -- so one field of the table covers both.
+
+   Assembled rather than written as one literal so the jsonpath is on one logical
+   line: a `\`-newline inside a string literal is elided by the lexer, which makes
+   the printed argv depend on where the formatter chose to wrap. *)
+let storage_class_entries =
+  let jsonpath =
+    "jsonpath={range .items[*]}"
+    ^ "{.metadata.name}{'|'}{.provisioner}{'|'}"
+    ^ "{.metadata.annotations.storageclass\\.kubernetes\\.io/is-default-class}"
+    ^ "{' '}{end}"
+  in
+  [ "get"; "storageclass"; "-o"; jsonpath ]
+;;
+
+let sole_default_storage_class ~storage_class ~csi_driver output =
+  let fields entry = String.split_on_char '|' entry in
+  let is_default entry =
+    match fields entry with
+    | [ _; _; "true" ] -> true
+    | _ -> false
+  in
+  match String.split_on_char ' ' (String.trim output) |> List.filter is_default with
+  | [ entry ] ->
+    (match fields entry with
+     | [ name; provisioner; _ ] -> name = storage_class && provisioner = csi_driver
+     | _ -> false)
+  | [] | _ :: _ :: _ -> false
+;;
+
+let storage_checks provider =
+  let { storage_class; csi_driver } = platform_storage provider in
   [ check
-      "cert-manager CRDs"
-      "required cert-manager CRDs are not Established"
-      [ "wait"
-      ; "--for=condition=Established"
-      ; "crd/certificates.cert-manager.io"
-      ; "crd/clusterissuers.cert-manager.io"
-      ; "--timeout=5s"
-      ]
-  ; check
-      "cert-manager controllers"
-      "cert-manager controller, webhook, or cainjector is unavailable"
-      (available_deployments "cert-manager")
-  ; check ~accept:all_nodes_ready "nodes" "a cluster node is not Ready" ready_nodes
-  ; check
-      ~accept:(fun output -> output = "ebs.csi.aws.com true")
+      ~accept:(sole_default_storage_class ~storage_class ~csi_driver)
       "default StorageClass"
-      "gp3 StorageClass is absent, not default, or uses the wrong CSI provisioner"
-      [ "get"
-      ; "storageclass/gp3"
-      ; "-o"
-      ; "jsonpath={.provisioner}{' \
-         '}{.metadata.annotations.storageclass\\.kubernetes\\.io/is-default-class}"
-      ]
+      (Printf.sprintf
+         "%s is absent, is not the only default StorageClass, or is not provided by %s"
+         storage_class
+         csi_driver)
+      storage_class_entries
   ; check
-      "EBS CSI driver"
-      "EBS CSI driver is not registered"
-      [ "get"; "csidriver/ebs.csi.aws.com" ]
-  ; (* Monitoring is checked namespace-wide: the assertion is "everything
+      "block-storage CSI driver"
+      (Printf.sprintf "the %s block-storage CSI driver is not registered" csi_driver)
+      [ "get"; "csidriver/" ^ csi_driver ]
+  ]
+;;
+
+(* Parameterised by provider only: the checks still depend on neither the
+   observability backend nor the configured issuer. Those were once
+   backend-shaped distinctions inside a gate whose only job is to state "the
+   platform converged", and the namespace-wide workload checks hold for whatever
+   a backend installed. *)
+let readiness_checks ~provider =
+  let before_storage =
+    [ check
+        "cert-manager CRDs"
+        "required cert-manager CRDs are not Established"
+        [ "wait"
+        ; "--for=condition=Established"
+        ; "crd/certificates.cert-manager.io"
+        ; "crd/clusterissuers.cert-manager.io"
+        ; "--timeout=5s"
+        ]
+    ; check
+        "cert-manager controllers"
+        "cert-manager controller, webhook, or cainjector is unavailable"
+        (available_deployments "cert-manager")
+    ; check ~accept:all_nodes_ready "nodes" "a cluster node is not Ready" ready_nodes
+    ]
+  in
+  before_storage
+  @ storage_checks provider
+  @ [ (* Monitoring is checked namespace-wide: the assertion is "everything
        installed here has converged", which holds for whatever the configured
        observability backend installs and needs no per-chart list to drift. *)
-    check
-      "monitoring deployments"
-      "a monitoring deployment is not available"
-      (available_deployments "monitoring")
-  ; check
-      ~accept:statefulsets_converged
-      "monitoring statefulsets"
-      "a monitoring statefulset does not have every declared replica ready"
-      (converged_statefulsets "monitoring")
-  ; check
-      ~accept:daemonsets_converged
-      "monitoring daemonsets"
-      "a monitoring daemonset does not have every scheduled pod ready"
-      (converged_daemonsets "monitoring")
-  ; check
-      ~accept:all_pvcs_bound
-      "monitoring PVCs"
-      "a monitoring PersistentVolumeClaim is not Bound"
-      (bound_pvcs "monitoring")
-  ; (* The one behavioural check kept in [Ready]. Redpanda is the platform's own
+      check
+        "monitoring deployments"
+        "a monitoring deployment is not available"
+        (available_deployments "monitoring")
+    ; check
+        ~accept:statefulsets_converged
+        "monitoring statefulsets"
+        "a monitoring statefulset does not have every declared replica ready"
+        (converged_statefulsets "monitoring")
+    ; check
+        ~accept:daemonsets_converged
+        "monitoring daemonsets"
+        "a monitoring daemonset does not have every scheduled pod ready"
+        (converged_daemonsets "monitoring")
+    ; check
+        ~accept:all_pvcs_bound
+        "monitoring PVCs"
+        "a monitoring PersistentVolumeClaim is not Bound"
+        (bound_pvcs "monitoring")
+    ; (* The one behavioural check kept in [Ready]. Redpanda is the platform's own
        broker, so this is the platform's own health API rather than a third
        party's, it needs no route beyond the API server -> kubelet path that
        `kubectl exec` already uses, and "the brokers agree they are healthy" is
        what makes the data plane operable rather than merely scheduled. *)
-    check
-      "Redpanda"
-      "Redpanda broker-native cluster health is not healthy"
-      [ "exec"
-      ; "-n"
-      ; "redpanda"
-      ; "statefulset/redpanda"
-      ; "--"
-      ; "rpk"
-      ; "cluster"
-      ; "health"
-      ; "--exit-when-healthy"
-      ; "--watch=false"
-      ]
-  ; check
-      ~accept:statefulsets_converged
-      "Redpanda statefulset"
-      "the Redpanda statefulset does not have every declared replica ready"
-      (converged_statefulsets "redpanda")
-  ; check
-      ~accept:all_pvcs_bound
-      "Redpanda PVCs"
-      "a Redpanda PersistentVolumeClaim is not Bound"
-      (bound_pvcs "redpanda")
-  ; check
-      "ingress-nginx"
-      "ingress-nginx controller is unavailable"
-      (available_deployments "ingress-nginx")
-  ; check
-      ~accept:(fun output -> output <> "")
-      "ingress endpoint"
-      "ingress-nginx LoadBalancer has no assigned endpoint"
-      [ "get"
-      ; "service/ingress-nginx-controller"
-      ; "-n"
-      ; "ingress-nginx"
-      ; "-o"
-      ; "jsonpath={.status.loadBalancer.ingress[0].hostname}{.status.loadBalancer.ingress[0].ip}"
-      ]
-  ; check
-      "Argo CD"
-      "an Argo CD controller is unavailable"
-      (available_deployments "argocd")
-  ]
+      check
+        "Redpanda"
+        "Redpanda broker-native cluster health is not healthy"
+        [ "exec"
+        ; "-n"
+        ; "redpanda"
+        ; "statefulset/redpanda"
+        ; "--"
+        ; "rpk"
+        ; "cluster"
+        ; "health"
+        ; "--exit-when-healthy"
+        ; "--watch=false"
+        ]
+    ; check
+        ~accept:statefulsets_converged
+        "Redpanda statefulset"
+        "the Redpanda statefulset does not have every declared replica ready"
+        (converged_statefulsets "redpanda")
+    ; check
+        ~accept:all_pvcs_bound
+        "Redpanda PVCs"
+        "a Redpanda PersistentVolumeClaim is not Bound"
+        (bound_pvcs "redpanda")
+    ; check
+        "ingress-nginx"
+        "ingress-nginx controller is unavailable"
+        (available_deployments "ingress-nginx")
+    ; check
+        ~accept:(fun output -> output <> "")
+        "ingress endpoint"
+        "ingress-nginx LoadBalancer has no assigned endpoint"
+        [ "get"
+        ; "service/ingress-nginx-controller"
+        ; "-n"
+        ; "ingress-nginx"
+        ; "-o"
+        ; "jsonpath={.status.loadBalancer.ingress[0].hostname}{.status.loadBalancer.ingress[0].ip}"
+        ]
+    ; check
+        "Argo CD"
+        "an Argo CD controller is unavailable"
+        (available_deployments "argocd")
+    ]
 ;;
 
 (* Run every readiness check and report the ones that are not established. A check
    is established only when its invocation succeeds *and* its output satisfies
    [accept]: a command that exits zero while saying nothing useful is not
    evidence. *)
-let readiness ~run =
+let readiness ~provider ~run =
   List.map
     (fun check ->
        ( check.name
        , match run check.argv with
          | Some output when check.accept (String.trim output) -> Established
          | _ -> Unmet check.reason ))
-    (readiness_checks ())
+    (readiness_checks ~provider)
 ;;
 
 (* The kubectl invocations the checks above run, exposed so CI can validate them
    against a real kubectl. Nothing calls this in production — it exists because
    the invocations are otherwise only reachable through [readiness], which needs
-   a live cluster, so an argv kubectl rejects could ship unnoticed. *)
-let readiness_invocations () =
-  List.map (fun check -> check.name, check.argv) (readiness_checks ())
+   a live cluster, so an argv kubectl rejects could ship unnoticed.
+
+   Per provider, because the storage assertion is provider-specific: CI
+   validates every provider's set, so a new one cannot ship an invocation nobody
+   checked. *)
+let readiness_invocations ~provider =
+  List.map (fun check -> check.name, check.argv) (readiness_checks ~provider)
 ;;
 
 let readiness_summary checks =
