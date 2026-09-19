@@ -338,7 +338,12 @@ case "$1 $2" in
         ;;
       *" describe "*)
         if [ "${DESTROYING:-}" = 1 ]; then
-          echo "ERROR: (gcloud.container.clusters.describe) NOT_FOUND: Resource 'sol-qual' was not found" >&2
+          # The real wording (Attempt 4, reproduced live):
+          #   ResponseError: code=404, message=Not found: projects/.../clusters/sol-qual
+          # The stub previously answered NOT_FOUND/"was not found", which the
+          # verification recognised -- so the harness agreed with the implementation
+          # and the live run disagreed with both. A stub must answer like the tool.
+          echo "ERROR: (gcloud.container.clusters.describe) ResponseError: code=404, message=Not found: projects/sol-qualification/locations/us-central1/clusters/sol-qual." >&2
           exit 1
         fi
         printf 'RUNNING\n'; exit 0
@@ -347,7 +352,8 @@ case "$1 $2" in
     ;;
   "sql instances")
     if [ "${DESTROYING:-}" = 1 ]; then
-      echo "ERROR: (gcloud.sql.instances.describe) NOT_FOUND: The Cloud SQL instance does not exist" >&2
+      # The real wording (Attempt 4): `HTTPError 404: The Cloud SQL instance does not exist`.
+      echo "ERROR: (gcloud.sql.instances.describe) HTTPError 404: The Cloud SQL instance does not exist." >&2
       exit 1
     fi
     printf 'RUNNABLE\n'; exit 0

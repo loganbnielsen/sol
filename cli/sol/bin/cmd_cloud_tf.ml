@@ -384,6 +384,31 @@ let verify_aws_destroy ~var_files ~vars =
    differently (a name plus a region against a project plus a self-link), and a
    shared shape would have to be the union of both -- which is exactly how a
    verification quietly stops checking something. *)
+(* Does this error mean the resource is absent, or that the check could not tell?
+   Attempt 4 showed how easy it is to get that wrong in the direction that looks
+   safest.
+
+   The check recognised `NOT_FOUND` and `was not found`. gcloud actually answers a
+   deleted GKE cluster with
+
+     ResponseError: code=404, message=Not found: projects/.../clusters/sol-qual
+
+   and a deleted Cloud SQL instance with `HTTPError 404: The Cloud SQL instance does
+   not exist`. Neither matched, so a destroy that had removed everything was
+   reported as a failed verification. Failing closed is the right instinct, but a
+   check that cannot recognise absence makes [Absent] unreachable -- and [Absent] is
+   the postcondition the whole lifecycle is measured against.
+
+   So absence is recognised by the provider's own wording, in the provider's own
+   case, and anything else remains a verification failure rather than an
+   assumption. *)
+let gcp_absence_message stderr =
+  let text = String.lowercase_ascii stderr in
+  List.exists
+    (fun needle -> contains ~needle text)
+    [ "code=404"; "httperror 404"; "not_found"; "not found"; "does not exist" ]
+;;
+
 let gcp_absent ~project ~kind ~argv =
   match
     Sol_cli_process.run
@@ -392,11 +417,13 @@ let gcp_absent ~project ~kind ~argv =
   | Ok r when r.Sol_cli_process.exit_code = 0 ->
     Printf.eprintf "error: GCP %s still exists after destroy.\n" kind;
     false
-  | Ok r
-    when contains ~needle:"NOT_FOUND" r.Sol_cli_process.stderr
-         || contains ~needle:"was not found" r.Sol_cli_process.stderr -> true
+  | Ok r when gcp_absence_message r.Sol_cli_process.stderr -> true
   | Ok r ->
-    Printf.eprintf "error: GCP %s verification failed: %s\n" kind r.Sol_cli_process.stderr;
+    Printf.eprintf
+      "error: GCP %s verification failed, and the failure does not say the resource is \
+       absent: %s\n"
+      kind
+      r.Sol_cli_process.stderr;
     false
   | Error _ ->
     Printf.eprintf "error: GCP %s verification failed: gcloud unavailable.\n" kind;
