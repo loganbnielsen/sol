@@ -154,6 +154,59 @@ let test_runs_to_prune_keeps_most_recent () =
   check_bool "keeps run-24 (newest)" false (List.mem "run-24" pruned)
 ;;
 
+(* ── run_is_live ─────────────────────────────────────────────────────── *)
+
+(* [run_is_live] is what stops a live command's run directory being pruned. It
+   reads the process table, so on a platform without /proc it is conservatively
+   [false] and pruning keeps its previous behaviour; the assertions that need
+   /proc are skipped there rather than asserted about a different platform. *)
+let test_run_is_live_tracks_the_process_table () =
+  if Sys.file_exists "/proc"
+  then (
+    check_bool "pid 1 is live" true (R.run_is_live "deploy-20260917T191100Z-1");
+    check_bool
+      "an impossible pid is not live"
+      false
+      (R.run_is_live "deploy-20260917T191100Z-9999999"))
+  else ()
+;;
+
+let test_run_is_live_rejects_a_non_pid_tail () =
+  check_bool "a non-pid tail is never live" false (R.run_is_live "cloud-apply-notapid");
+  check_bool "an id with no tail is never live" false (R.run_is_live "cloud-apply")
+;;
+
+(* INFRA-033, the regression: a long-running command (a cloud destroy takes tens
+   of minutes) writes into its run directory at the end of every phase. Pruning
+   that directory made the next write raise an uncaught [Sys_error], aborting the
+   teardown with the target still provisioned and billing — which is how Run 5
+   attempt 2's first destroy died. [create] now passes every live run in
+   [exclude], and this pins that a live run survives while dead overflow is still
+   reclaimed. *)
+let test_runs_to_prune_never_prunes_a_live_run () =
+  if Sys.file_exists "/proc"
+  then (
+    let live = "cloud-destroy-20260919T001717Z-1" in
+    (* Impossibly high pids for the "dead" runs: low pids are taken by kernel
+       threads, and using one would make that run live and quietly test nothing. *)
+    let older =
+      [ "deploy-20260917T191100Z-9999998"; "cloud-apply-20260918T101500Z-9999999" ]
+    in
+    let pruned =
+      R.runs_to_prune
+        ~exclude:(live :: List.filter R.run_is_live (older @ [ live ]))
+        ~all_run_ids:(older @ [ live ])
+        ~keep:1
+        ()
+    in
+    check_bool "a live run is never pruned" false (List.mem live pruned);
+    check_bool
+      "older dead runs are still reclaimed as overflow"
+      true
+      (List.mem "deploy-20260917T191100Z-9999998" pruned))
+  else ()
+;;
+
 let () =
   Alcotest.run
     "run_log"
@@ -180,6 +233,16 @@ let () =
             `Quick
             test_format_failure_report_names_run_and_log
         ] )
+    ; ( "run_is_live"
+      , [ Alcotest.test_case
+            "tracks the process table"
+            `Quick
+            test_run_is_live_tracks_the_process_table
+        ; Alcotest.test_case
+            "rejects a non-pid tail"
+            `Quick
+            test_run_is_live_rejects_a_non_pid_tail
+        ] )
     ; ( "runs_to_prune"
       , [ Alcotest.test_case "under limit" `Quick test_runs_to_prune_under_limit
         ; Alcotest.test_case
@@ -194,6 +257,10 @@ let () =
             "never prunes the excluded run"
             `Quick
             test_runs_to_prune_excludes_the_new_run
+        ; Alcotest.test_case
+            "never prunes a live run"
+            `Quick
+            test_runs_to_prune_never_prunes_a_live_run
         ] )
     ]
 ;;
