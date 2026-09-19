@@ -699,7 +699,34 @@ let process_output ?(env = []) argv =
    GCP equivalent of the AWS root's provisioner role -- so this is the target's
    Owner identity in the privileged install window, which is a recorded gap and
    not something this function should paper over. *)
+(* Attempt 3's first meaningful failure, moved to where it belongs.
+
+   The platform applies authenticate to GKE through the kubeconfig gcloud writes,
+   and that kubeconfig names `gke-gcloud-auth-plugin` as its client-go exec
+   credential plugin. Without it, every Kubernetes call dies with
+   `exec: executable gke-gcloud-auth-plugin not found` -- *inside* the platform
+   apply, which is to say after GKE and Cloud SQL have been provisioned and paid
+   for, and after Sol has spent its way to the interesting part.
+
+   That is a host prerequisite in the same class as terraform itself, so it is
+   checked before the first platform call rather than discovered by one. Failing
+   here costs nothing; failing there costs an apply. *)
+let require_gcp_platform_toolchain () =
+  match
+    Sol_cli_process.run (Sol_cli_process.cmd [ "gke-gcloud-auth-plugin"; "--version" ])
+  with
+  | Ok result when result.Sol_cli_process.exit_code = 0 -> ()
+  | _ ->
+    lifecycle_error
+      "the platform cannot reach a GKE cluster without `gke-gcloud-auth-plugin`, which \
+       is not on PATH: the kubeconfig gcloud writes names it as its credential plugin, \
+       so every Kubernetes call would fail with \"executable gke-gcloud-auth-plugin not \
+       found\". Install it (`gcloud components install gke-gcloud-auth-plugin`) and \
+       re-run. Nothing has been changed."
+;;
+
 let gcp_provisioner_kubeconfig ~region outputs f =
+  require_gcp_platform_toolchain ();
   let path = Filename.temp_file "sol-platform-provisioner-" ".kubeconfig" in
   let cleanup () =
     try Sys.remove path with

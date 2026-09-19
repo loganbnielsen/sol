@@ -619,6 +619,72 @@ The fixes above are Now In Progress; the peering abandonment's destruction behav
 remains **unqualified** until a live destroy observes both the connection and the
 network absent.
 
+### Attempt 3 (2026-09-19): the authority model worked; the host was missing a plugin
+
+Attempt 3 is the first run under the *real* scoped authority model, and the first
+two objectives are met:
+
+- **CloudBootstrap applied in 574.1s** with the install window open on the cloud
+  root, creating the provisioner service account, the impersonation grant for the
+  caller the target declares, and the temporary cluster-admin binding.
+- **Provisioner impersonation and ephemeral cluster access worked.** Sol obtained
+  credentials as `sol-qual-provisioner@…` and reached the cluster: the platform
+  stage's first API call is logged against the GKE endpoint
+  (`Post "https://34.44.114.57/apis/rbac.authorization.k8s.io/v1/clusterroles"`).
+  That is a real transition from "the authority model is written" to "the authority
+  model is entered", which is what §"scoped authority" above could only claim
+  statically.
+- **The window was revoked on the failure path** (`provisioner-bootstrap-access-remove`
+  ok in 8.7s), which is the first observation that the close half works too.
+
+**First meaningful failure:** `exec: executable gke-gcloud-auth-plugin not found`.
+The kubeconfig gcloud writes names `gke-gcloud-auth-plugin` as its client-go exec
+credential plugin, and the host did not have it — so every Kubernetes call fails,
+including the platform apply. Two things are wrong with that as a product:
+
+1. it is a **host prerequisite in the same class as terraform**, and it was
+   discovered *inside* the platform apply — after GKE and Cloud SQL were
+   provisioned and billable. Sol now checks it before the first platform call and
+   fails closed naming the plugin and the command to install it.
+2. the failure was only reachable because the platform work starts after a
+   multi-minute apply that cannot help but be paid for. The check costs nothing
+   and runs before the first platform call.
+
+**Second finding, filed rather than fixed: a failed platform install is not
+destroyable through the lifecycle.** Sol's documented destroy ran
+(`gcp-destroy-prepare` ok, `PreparingDestroy`, reconciliation apply ok) and then
+`platform-destroy` failed with `API did not recognize GroupVersionKind from
+manifest (CRD may not be installed)` — the platform root's state referenced
+CRD-backed resources whose CRDs were never installed, because the install never got
+that far. So a partially-installed platform cannot be destroyed by the documented
+path, which is the ADR 0004 invariant reached through a third mechanism (not
+`prevent_destroy`, not a provider default, but a resource whose API does not
+exist). The install window was still revoked, and the cloud layer was removed by
+the documented emergency path.
+
+**Absence verified by the provider API, not by Terraform's exit status** — which is
+the specific requirement Attempt 3 was also meant to settle:
+
+| checked | result |
+|---|---|
+| GKE cluster | absent |
+| Cloud SQL instance | absent |
+| target VPC network (`sol-qual`) | absent |
+| **service-networking peering on that network** | **absent** |
+| reserved peering address | absent |
+| subnet / router / NAT | absent |
+| provisioner service account | absent |
+| platform Terraform state | empty (0 resources) |
+
+**The peering abandonment is now behaviourally qualified for one observation.** The
+destroy completed in 6m14s with exit 0, the connection's removal took 0s (it was
+abandoned, not deleted), and deleting the network is what removed the peering —
+which the API confirms independently. This establishes *that attempt* reached
+Absent; it does not establish an upper bound on GCP's producer-reference release
+behaviour, and the `deletion_policy = "ABANDON"` trade remains: Terraform no longer
+confirms the peering is gone, so `verify_gcp_destroy` must (`gcloud services
+vpc-peerings list` for the network, plus the network itself).
+
 ### Remaining gaps
 
 Ordered by what unblocks the next one. Closed items keep their entry so the
