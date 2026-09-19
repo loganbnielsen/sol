@@ -9,28 +9,18 @@
 
    Output is one check per line, tab separated:
 
-     <observability backend> \t <check name> \t <argv item> ...
+     <check name> \t <argv item> ...
 
-   Every backend is printed because the checks differ per backend, and the
-   cluster issuer is a placeholder: only the argv's shape is being validated. *)
-
-let backends = [ "external"; "local"; "self_hosted_durable" ]
+   The checks take no arguments, so one pass covers all of them. *)
 
 let () =
-  List.iter
-    (fun backend ->
-       Sol_cli_cloud_lifecycle.readiness_invocations
-         ~cluster_issuer:"letsencrypt-prod"
-         ~observability_backend:backend
-       |> List.iter (fun (name, argv) ->
-         print_string backend;
+  Sol_cli_cloud_lifecycle.readiness_invocations ()
+  |> List.iter (fun (name, argv) ->
+    print_string name;
+    List.iter
+      (fun arg ->
          print_char '\t';
-         print_string name;
-         List.iter
-           (fun arg ->
-              print_char '\t';
-              print_string arg)
-           argv;
-         print_newline ()))
-    backends
+         print_string arg)
+      argv;
+    print_newline ())
 ;;

@@ -265,12 +265,28 @@ type readiness =
   | Established
   | Unmet of string
 
-(* INFRA-035: a readiness check is data, not a call site. Keeping [argv] in the
-   spec and running it in [readiness] below means the invocations CI validates
-   against a real kubectl are the same ones that ship. The previous shape inlined
-   them where only the offline harness could see them — and that harness's fake
-   kubectl accepts any argv, which is how `rollout status … --all`, a flag kubectl
-   does not have, reached a real target and made every platform report `Unmet`. *)
+(* Readiness: is the platform converged? ------------------------------------
+   [Ready] is what licenses `PlatformInstalling -> Ready` (ADR 0003), so it
+   asserts that the platform reached its defined operational state according to
+   authoritative Kubernetes state. Two things it deliberately does NOT do, both
+   learned from a real target:
+
+   * It does not probe the platform across the network. The five checks that read
+     service endpoints through the API server's `/proxy/` path needed a route this
+     platform never creates — the EKS module admits the control plane to nodes
+     only on the admission-webhook ports — so a fully converged platform reported
+     `Unmet`. Whether a capability *works* is HARDEN's question, and HARDEN
+     answers it with behaviour (a known log reaches Loki and can be queried), not
+     with a route.
+   * It does not require an external ACME round trip. A ClusterIssuer's only
+     condition is `Ready`, and for an ACME issuer cert-manager sets it only after
+     registering with the external CA, so an unreachable Let's Encrypt would make
+     a converged platform "not ready". Real issuance is qualified in HARDEN.
+
+   What is left is convergence: Kubernetes' own statement about its own objects.
+   Workloads are read per kind because kinds differ in what they declare — a
+   DaemonSet's desired count is derived from the node set, so zero means nothing
+   matched, while a StatefulSet's replicas are declared by its owner. *)
 type readiness_check =
   { name : string
   ; reason : string
@@ -278,11 +294,9 @@ type readiness_check =
   ; argv : string list
   }
 
-(* [kubectl rollout status] takes one named resource — it has no [--all] — so
-   every check written as `rollout status deployment --all` failed with
-   `unknown flag: --all` and never reported the platform's state at all. [wait]
-   does accept [--all], and the [Available] condition is the Deployment's own
-   authoritative statement that its replicas are available. *)
+let check ?(accept = fun _ -> true) name reason argv = { name; reason; accept; argv }
+
+(* Deployments state their own availability through their own condition. *)
 let available_deployments namespace =
   [ "wait"
   ; "--for=condition=Available"
@@ -294,19 +308,63 @@ let available_deployments namespace =
   ]
 ;;
 
-(* DaemonSets have no condition [kubectl wait] understands, so their convergence
-   is read from status: every daemonset in the namespace must have all of its
-   desired pods ready. A daemonset desiring zero pods is not "converged", it is
-   not running, so the desired count must be positive rather than letting an
-   empty schedule pass as success. *)
-(* Desired-to-ready per daemonset, so the predicate below can require all of
-   them at once through a single [get]. *)
-let daemonsets_ready_jsonpath =
-  "jsonpath={range .items[*]}{.status.numberReady}/{.status.desiredNumberScheduled}{' \
-   '}{end}"
+(* DaemonSets and StatefulSets have no condition [kubectl wait] understands, so
+   convergence comes from status, as ready/desired pairs. *)
+let converged_workload ~kind ~namespace ~ready_field ~desired_field =
+  [ "get"
+  ; kind
+  ; "-n"
+  ; namespace
+  ; "-o"
+  ; Printf.sprintf
+      "jsonpath={range .items[*]}{.%s}/{.%s}{' '}{end}"
+      ready_field
+      desired_field
+  ]
 ;;
 
-let all_daemonsets_ready output =
+let converged_daemonsets namespace =
+  converged_workload
+    ~kind:"daemonset"
+    ~namespace
+    ~ready_field:"status.numberReady"
+    ~desired_field:"status.desiredNumberScheduled"
+;;
+
+let converged_statefulsets namespace =
+  converged_workload
+    ~kind:"statefulset"
+    ~namespace
+    ~ready_field:"status.readyReplicas"
+    ~desired_field:"status.replicas"
+;;
+
+let bound_pvcs namespace =
+  [ "get"
+  ; "pvc"
+  ; "-n"
+  ; namespace
+  ; "-o"
+  ; "jsonpath={range .items[*]}{.status.phase}{' '}{end}"
+  ]
+;;
+
+let ready_nodes =
+  [ "get"
+  ; "nodes"
+  ; "-o"
+  ; "jsonpath={range .items[*]}{.status.conditions[?(@.type==\"Ready\")].status}{' \
+     '}{end}"
+  ]
+;;
+
+(* Every workload reports as many ready replicas as it declares. An empty result
+   is never "converged": it means there was nothing to look at, so a query that
+   matched nothing would otherwise pass silently. [require_desired] additionally
+   rejects a desired count of zero — right for DaemonSets, where zero means the
+   node set matched nothing, and wrong for StatefulSets, where a declared zero is
+   its owner's choice. *)
+let replicas_converged ?(require_desired = true) output =
   let pairs =
     String.split_on_char ' ' (String.trim output) |> List.filter (fun part -> part <> "")
   in
@@ -316,162 +374,157 @@ let all_daemonsets_ready output =
           match String.split_on_char '/' pair with
           | [ ready; desired ] ->
             (match int_of_string_opt ready, int_of_string_opt desired with
-             | Some ready, Some desired -> desired > 0 && ready = desired
+             | Some ready, Some desired ->
+               ready = desired && (desired > 0 || not require_desired)
              | None, _ | _, None -> false)
           | _ -> false)
        pairs
 ;;
 
-let readiness_checks ~cluster_issuer ~observability_backend =
-  let check ?(accept = fun _ -> true) name reason argv = { name; reason; accept; argv } in
-  let common =
-    [ check
-        "cert-manager CRDs"
-        "required cert-manager CRDs are not Established"
-        [ "wait"
-        ; "--for=condition=Established"
-        ; "crd/certificates.cert-manager.io"
-        ; "crd/clusterissuers.cert-manager.io"
-        ; "--timeout=5s"
-        ]
-    ; check
-        "cert-manager controllers"
-        "cert-manager controller, webhook, or cainjector is unavailable"
-        (available_deployments "cert-manager")
-    ; check
-        "ClusterIssuer"
-        "selected ClusterIssuer is not Ready"
-        [ "wait"
-        ; "--for=condition=Ready"
-        ; "clusterissuer/" ^ cluster_issuer
-        ; "--timeout=5s"
-        ]
-    ; check
-        ~accept:(fun output -> output = "ebs.csi.aws.com true")
-        "default StorageClass"
-        "gp3 StorageClass is absent, not default, or uses the wrong CSI provisioner"
-        [ "get"
-        ; "storageclass/gp3"
-        ; "-o"
-        ; "jsonpath={.provisioner}{' \
-           '}{.metadata.annotations.storageclass\\.kubernetes\\.io/is-default-class}"
-        ]
-    ; check
-        "EBS CSI driver"
-        "EBS CSI driver is not registered"
-        [ "get"; "csidriver/ebs.csi.aws.com" ]
-    ; check
-        "Redpanda"
-        "Redpanda broker-native cluster health is not healthy"
-        [ "exec"
-        ; "-n"
-        ; "redpanda"
-        ; "statefulset/redpanda"
-        ; "--"
-        ; "rpk"
-        ; "cluster"
-        ; "health"
-        ; "--exit-when-healthy"
-        ; "--watch=false"
-        ]
-    ; check
-        "ingress-nginx"
-        "ingress-nginx controller is unavailable"
-        (available_deployments "ingress-nginx")
-    ; check
-        ~accept:(fun output -> output <> "")
-        "ingress endpoint"
-        "ingress-nginx LoadBalancer has no assigned endpoint"
-        [ "get"
-        ; "service/ingress-nginx-controller"
-        ; "-n"
-        ; "ingress-nginx"
-        ; "-o"
-        ; "jsonpath={.status.loadBalancer.ingress[0].hostname}{.status.loadBalancer.ingress[0].ip}"
-        ]
-    ; check
-        "Argo CD"
-        "an Argo CD controller is unavailable"
-        (available_deployments "argocd")
-    ; check
-        "Prometheus"
-        "Prometheus native readiness endpoint failed"
-        [ "get"
-        ; "--raw"
-        ; "/api/v1/namespaces/monitoring/services/http:prometheus-server:80/proxy/-/ready"
-        ]
-    ; check
-        ~accept:all_daemonsets_ready
-        "monitoring daemonsets"
-        "a monitoring daemonset does not have every desired agent ready"
-        [ "get"; "daemonset"; "-n"; "monitoring"; "-o"; daemonsets_ready_jsonpath ]
-    ]
+let daemonsets_converged output = replicas_converged output
+let statefulsets_converged output = replicas_converged ~require_desired:false output
+
+(* Every volume is Bound, and there is at least one to look at. *)
+let all_pvcs_bound output =
+  let phases =
+    String.split_on_char ' ' (String.trim output) |> List.filter (fun part -> part <> "")
   in
-  let local_observability =
-    if observability_backend = "external"
-    then []
-    else
-      [ check
-          "Loki"
-          "Loki native readiness endpoint failed"
-          [ "get"
-          ; "--raw"
-          ; "/api/v1/namespaces/monitoring/services/http:loki:3100/proxy/ready"
-          ]
-      ; check
-          "Grafana"
-          "Grafana native health endpoint failed"
-          [ "get"
-          ; "--raw"
-          ; "/api/v1/namespaces/monitoring/services/http:grafana:80/proxy/api/health"
-          ]
-      ; check
-          "Tempo"
-          "Tempo native readiness endpoint failed"
-          [ "get"
-          ; "--raw"
-          ; "/api/v1/namespaces/monitoring/services/http:tempo:3100/proxy/ready"
-          ]
-      ]
-  in
-  let durable_observability =
-    if observability_backend = "self_hosted_durable"
-    then
-      [ check
-          "Thanos"
-          "Thanos query native readiness endpoint failed"
-          [ "get"
-          ; "--raw"
-          ; "/api/v1/namespaces/monitoring/services/http:thanos-query:9090/proxy/-/ready"
-          ]
-      ]
-    else []
-  in
-  common @ local_observability @ durable_observability
+  phases <> [] && List.for_all (fun phase -> phase = "Bound") phases
 ;;
 
-(** Run every readiness check and report the ones that are not established.
-    A check is established only when its invocation succeeds *and* its output
-    satisfies [accept], so a command that exits zero while saying nothing useful
-    does not count as evidence. *)
-let readiness ~cluster_issuer ~observability_backend ~run =
+let all_nodes_ready output =
+  let states =
+    String.split_on_char ' ' (String.trim output) |> List.filter (fun part -> part <> "")
+  in
+  states <> [] && List.for_all (fun state -> state = "True") states
+;;
+
+(* No arguments: the checks do not depend on the observability backend or on the
+   issuer. Both were backend-shaped distinctions inside a gate whose only job is
+   to state "the platform converged", and the namespace-wide workload checks hold
+   for whatever a backend installed. *)
+let readiness_checks () =
+  [ check
+      "cert-manager CRDs"
+      "required cert-manager CRDs are not Established"
+      [ "wait"
+      ; "--for=condition=Established"
+      ; "crd/certificates.cert-manager.io"
+      ; "crd/clusterissuers.cert-manager.io"
+      ; "--timeout=5s"
+      ]
+  ; check
+      "cert-manager controllers"
+      "cert-manager controller, webhook, or cainjector is unavailable"
+      (available_deployments "cert-manager")
+  ; check ~accept:all_nodes_ready "nodes" "a cluster node is not Ready" ready_nodes
+  ; check
+      ~accept:(fun output -> output = "ebs.csi.aws.com true")
+      "default StorageClass"
+      "gp3 StorageClass is absent, not default, or uses the wrong CSI provisioner"
+      [ "get"
+      ; "storageclass/gp3"
+      ; "-o"
+      ; "jsonpath={.provisioner}{' \
+         '}{.metadata.annotations.storageclass\\.kubernetes\\.io/is-default-class}"
+      ]
+  ; check
+      "EBS CSI driver"
+      "EBS CSI driver is not registered"
+      [ "get"; "csidriver/ebs.csi.aws.com" ]
+  ; (* Monitoring is checked namespace-wide: the assertion is "everything
+       installed here has converged", which holds for whatever the configured
+       observability backend installs and needs no per-chart list to drift. *)
+    check
+      "monitoring deployments"
+      "a monitoring deployment is not available"
+      (available_deployments "monitoring")
+  ; check
+      ~accept:statefulsets_converged
+      "monitoring statefulsets"
+      "a monitoring statefulset does not have every declared replica ready"
+      (converged_statefulsets "monitoring")
+  ; check
+      ~accept:daemonsets_converged
+      "monitoring daemonsets"
+      "a monitoring daemonset does not have every scheduled pod ready"
+      (converged_daemonsets "monitoring")
+  ; check
+      ~accept:all_pvcs_bound
+      "monitoring PVCs"
+      "a monitoring PersistentVolumeClaim is not Bound"
+      (bound_pvcs "monitoring")
+  ; (* The one behavioural check kept in [Ready]. Redpanda is the platform's own
+       broker, so this is the platform's own health API rather than a third
+       party's, it needs no route beyond the API server -> kubelet path that
+       `kubectl exec` already uses, and "the brokers agree they are healthy" is
+       what makes the data plane operable rather than merely scheduled. *)
+    check
+      "Redpanda"
+      "Redpanda broker-native cluster health is not healthy"
+      [ "exec"
+      ; "-n"
+      ; "redpanda"
+      ; "statefulset/redpanda"
+      ; "--"
+      ; "rpk"
+      ; "cluster"
+      ; "health"
+      ; "--exit-when-healthy"
+      ; "--watch=false"
+      ]
+  ; check
+      ~accept:statefulsets_converged
+      "Redpanda statefulset"
+      "the Redpanda statefulset does not have every declared replica ready"
+      (converged_statefulsets "redpanda")
+  ; check
+      ~accept:all_pvcs_bound
+      "Redpanda PVCs"
+      "a Redpanda PersistentVolumeClaim is not Bound"
+      (bound_pvcs "redpanda")
+  ; check
+      "ingress-nginx"
+      "ingress-nginx controller is unavailable"
+      (available_deployments "ingress-nginx")
+  ; check
+      ~accept:(fun output -> output <> "")
+      "ingress endpoint"
+      "ingress-nginx LoadBalancer has no assigned endpoint"
+      [ "get"
+      ; "service/ingress-nginx-controller"
+      ; "-n"
+      ; "ingress-nginx"
+      ; "-o"
+      ; "jsonpath={.status.loadBalancer.ingress[0].hostname}{.status.loadBalancer.ingress[0].ip}"
+      ]
+  ; check
+      "Argo CD"
+      "an Argo CD controller is unavailable"
+      (available_deployments "argocd")
+  ]
+;;
+
+(* Run every readiness check and report the ones that are not established. A check
+   is established only when its invocation succeeds *and* its output satisfies
+   [accept]: a command that exits zero while saying nothing useful is not
+   evidence. *)
+let readiness ~run =
   List.map
     (fun check ->
        ( check.name
        , match run check.argv with
          | Some output when check.accept (String.trim output) -> Established
          | _ -> Unmet check.reason ))
-    (readiness_checks ~cluster_issuer ~observability_backend)
+    (readiness_checks ())
 ;;
 
-(** The kubectl invocations the checks above run, exposed so CI can validate them
-    against a real kubectl. Nothing calls this in production — it exists because
-    the invocations are otherwise only reachable through [readiness], which needs
-    a live cluster, so a flag that kubectl does not have could ship unnoticed. *)
-let readiness_invocations ~cluster_issuer ~observability_backend =
-  List.map
-    (fun check -> check.name, check.argv)
-    (readiness_checks ~cluster_issuer ~observability_backend)
+(* The kubectl invocations the checks above run, exposed so CI can validate them
+   against a real kubectl. Nothing calls this in production — it exists because
+   the invocations are otherwise only reachable through [readiness], which needs
+   a live cluster, so an argv kubectl rejects could ship unnoticed. *)
+let readiness_invocations () =
+  List.map (fun check -> check.name, check.argv) (readiness_checks ())
 ;;
 
 let readiness_summary checks =

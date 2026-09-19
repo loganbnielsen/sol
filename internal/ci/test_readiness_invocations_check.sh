@@ -25,7 +25,7 @@ report() {
 # 1. The bug itself: `kubectl rollout status` takes one named resource and has no
 #    --all. This is the invocation that made four readiness checks impossible to
 #    satisfy on real, healthy targets.
-bug='local\tcert-manager controllers\trollout\tstatus\tdeployment\t--all\t-n\tcert-manager\t--timeout=5s\n'
+bug='cert-manager controllers\trollout\tstatus\tdeployment\t--all\t-n\tcert-manager\t--timeout=5s\n'
 if printf "$bug" | "$guard" >"$tmp/bug.out" 2>&1; then
   report "the guard accepted 'rollout status deployment --all' — the exact invocation INFRA-035 exists to catch" "$tmp/bug.out"
   exit 1
@@ -36,7 +36,7 @@ grep -F 'unknown flag' "$tmp/bug.out" >/dev/null || {
 }
 
 # 2. The repair is accepted: waiting on the Deployment's own Available condition.
-fixed='local\tcert-manager controllers\twait\t--for=condition=Available\tdeployment\t--all\t-n\tcert-manager\t--timeout=5s\n'
+fixed='cert-manager controllers\twait\t--for=condition=Available\tdeployment\t--all\t-n\tcert-manager\t--timeout=5s\n'
 if ! printf "$fixed" | "$guard" >"$tmp/fixed.out" 2>&1; then
   report "the guard rejected the repaired invocation" "$tmp/fixed.out"
   exit 1
@@ -49,7 +49,7 @@ if printf '' | "$guard" >"$tmp/empty.out" 2>&1; then
 fi
 
 # 4. A check with no argv at all is refused rather than validated as "kubectl".
-if printf 'local\tno argv\t\n' | "$guard" >"$tmp/noargv.out" 2>&1; then
+if printf 'no argv\t\n' | "$guard" >"$tmp/noargv.out" 2>&1; then
   report "the guard accepted a check with no argv" "$tmp/noargv.out"
   exit 1
 fi

@@ -357,28 +357,22 @@ let test_readiness_fails_each_predicate () =
   let succeeds = function
     | "get" :: "storageclass/gp3" :: _ -> Some "ebs.csi.aws.com true"
     | "get" :: "service/ingress-nginx-controller" :: _ -> Some "example.elb.amazonaws.com"
-    (* INFRA-035: the monitoring DaemonSet check reads desired/ready pairs from
-       status, so the baseline has to supply them. *)
+    (* The convergence checks read status, so the baseline has to supply it. *)
     | "get" :: "daemonset" :: _ -> Some "4/4 4/4 "
+    | "get" :: "statefulset" :: _ -> Some "3/3 1/1 "
+    | "get" :: "pvc" :: _ -> Some "Bound Bound "
+    | "get" :: "nodes" :: _ -> Some "True True "
     | _ -> Some ""
   in
-  let all =
-    L.readiness
-      ~cluster_issuer:"letsencrypt-prod"
-      ~observability_backend:"self_hosted_durable"
-      ~run:succeeds
-  in
+  let all = L.readiness ~run:succeeds in
   Alcotest.(check string) "baseline" "Ready" (L.readiness_summary all);
   List.iteri
     (fun failed _ ->
        let index = ref (-1) in
        let checks =
-         L.readiness
-           ~cluster_issuer:"letsencrypt-prod"
-           ~observability_backend:"self_hosted_durable"
-           ~run:(fun argv ->
-             incr index;
-             if !index = failed then None else succeeds argv)
+         L.readiness ~run:(fun argv ->
+           incr index;
+           if !index = failed then None else succeeds argv)
        in
        Alcotest.(check bool)
          (Printf.sprintf "predicate %d fails closed" failed)
@@ -387,40 +381,54 @@ let test_readiness_fails_each_predicate () =
     all
 ;;
 
-(* INFRA-035: the monitoring DaemonSet check reads convergence from status instead
-   of `rollout status`, whose [--all] kubectl rejects. That makes the predicate
-   itself worth pinning, including the two ways it could pass vacuously: an empty
-   namespace, and a daemonset that schedules no pods at all. *)
-let test_daemonset_readiness_predicate () =
-  let summary_with_daemonsets output =
-    L.readiness
-      ~cluster_issuer:"letsencrypt-prod"
-      ~observability_backend:"local"
-      ~run:(fun argv ->
-        match argv with
-        | "get" :: "storageclass/gp3" :: _ -> Some "ebs.csi.aws.com true"
-        | "get" :: "service/ingress-nginx-controller" :: _ ->
-          Some "example.elb.amazonaws.com"
-        | "get" :: "daemonset" :: _ -> Some output
-        | _ -> Some "")
+(* The convergence predicates decide whether `sol cloud apply` may report [Ready],
+   so the ways they could pass vacuously are worth pinning: an empty listing, and
+   a listing that says nothing useful. DaemonSets additionally require a desired
+   count — zero means the node set matched nothing — while StatefulSets do not,
+   because their replicas are declared by their owner. *)
+let test_convergence_predicates () =
+  let summary_with kind output =
+    L.readiness ~run:(fun argv ->
+      match argv with
+      | "get" :: listed :: _ when listed = kind -> Some output
+      | "get" :: "storageclass/gp3" :: _ -> Some "ebs.csi.aws.com true"
+      | "get" :: "service/ingress-nginx-controller" :: _ ->
+        Some "example.elb.amazonaws.com"
+      | "get" :: "daemonset" :: _ -> Some "4/4 4/4 "
+      | "get" :: "statefulset" :: _ -> Some "3/3 1/1 "
+      | "get" :: "pvc" :: _ -> Some "Bound Bound "
+      | "get" :: "nodes" :: _ -> Some "True True "
+      | _ -> Some "")
     |> L.readiness_summary
   in
-  Alcotest.(check string)
-    "every desired pod ready is converged"
-    "Ready"
-    (summary_with_daemonsets "4/4 4/4 ");
-  Alcotest.(check bool)
+  let check_ready label summary = Alcotest.(check string) label "Ready" summary in
+  let check_unmet label summary = Alcotest.(check bool) label true (summary <> "Ready") in
+  check_ready
+    "every daemonset pod scheduled and ready"
+    (summary_with "daemonset" "4/4 4/4 ");
+  check_unmet
     "a daemonset short of its desired pods is unmet"
-    true
-    (summary_with_daemonsets "4/4 3/4 " <> "Ready");
-  Alcotest.(check bool)
-    "a daemonset that wants no pods is not converged"
-    true
-    (summary_with_daemonsets "0/0 " <> "Ready");
-  Alcotest.(check bool)
-    "no daemonsets at all is unmet"
-    true
-    (summary_with_daemonsets "" <> "Ready")
+    (summary_with "daemonset" "4/4 3/4 ");
+  check_unmet
+    "a daemonset scheduling no pods is not converged"
+    (summary_with "daemonset" "0/0 ");
+  check_unmet "no daemonsets at all is unmet" (summary_with "daemonset" "");
+  check_ready
+    "every statefulset replica declared and ready"
+    (summary_with "statefulset" "3/3 1/1 ");
+  check_unmet
+    "a statefulset short of its declared replicas is unmet"
+    (summary_with "statefulset" "3/2 ");
+  check_ready
+    "a statefulset declared at zero replicas is its owner's choice"
+    (summary_with "statefulset" "0/0 ");
+  check_unmet "no statefulsets at all is unmet" (summary_with "statefulset" "");
+  check_ready "every PVC bound" (summary_with "pvc" "Bound Bound ");
+  check_unmet "a Pending PVC is unmet" (summary_with "pvc" "Bound Pending ");
+  check_unmet "no PVCs at all is unmet" (summary_with "pvc" "");
+  check_ready "every node Ready" (summary_with "nodes" "True True ");
+  check_unmet "a NotReady node is unmet" (summary_with "nodes" "True False ");
+  check_unmet "no nodes at all is unmet" (summary_with "nodes" "")
 ;;
 
 let test_effective_authorization () =
@@ -474,10 +482,7 @@ let () =
             "readiness predicates"
             `Quick
             test_readiness_fails_each_predicate
-        ; Alcotest.test_case
-            "daemonset readiness predicate"
-            `Quick
-            test_daemonset_readiness_predicate
+        ; Alcotest.test_case "convergence predicates" `Quick test_convergence_predicates
         ; Alcotest.test_case "effective authorization" `Quick test_effective_authorization
         ; Alcotest.test_case "terraform scope" `Quick test_terraform_scope
         ] )

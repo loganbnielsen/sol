@@ -49,12 +49,14 @@ type readiness =
 
 (** Every readiness check, run against a live cluster. A check is [Established]
     only when its kubectl invocation succeeds *and* its output satisfies the
-    check's own predicate — exit status alone is not evidence. *)
-val readiness
-  :  cluster_issuer:string
-  -> observability_backend:string
-  -> run:(string list -> string option)
-  -> (string * readiness) list
+    check's own predicate — exit status alone is not evidence.
+
+    The checks assert the platform's convergence from authoritative Kubernetes
+    state, and take no arguments: they depend on neither the observability backend
+    nor the configured issuer. See the implementation for why probing the platform
+    across the network, and any external ACME round trip, are deliberately absent
+    from what gates [Ready]. *)
+val readiness : run:(string list -> string option) -> (string * readiness) list
 
 (** The kubectl invocations [readiness] runs, by check name, without running them.
 
@@ -63,10 +65,7 @@ val readiness
     install fails — which is how `rollout status … --all` shipped and made every
     platform report [Unmet] (INFRA-035). CI validates these against a real
     kubectl; nothing in production calls this. *)
-val readiness_invocations
-  :  cluster_issuer:string
-  -> observability_backend:string
-  -> (string * string list) list
+val readiness_invocations : unit -> (string * string list) list
 
 val readiness_summary : (string * readiness) list -> string
 

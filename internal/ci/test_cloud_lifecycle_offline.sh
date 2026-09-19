@@ -212,10 +212,16 @@ case "$*" in
   "auth can-i bind "*|"auth can-i escalate "*) exit 1 ;;
   *"storageclass/gp3"*) printf 'ebs.csi.aws.com true' ;;
   *"service/ingress-nginx-controller"*) printf 'lb.example.test' ;;
-  # INFRA-035: the monitoring DaemonSet check reads readiness from status rather
-  # than from `rollout status`, whose [--all] kubectl rejects. So this fake has to
-  # produce the desired/ready pairs the check's predicate parses.
+  # INFRA-035/036: convergence is read from status, so this fake has to produce
+  # the values the readiness predicates parse (`rollout status` has no [--all],
+  # which is why the checks no longer use it). A query the fake does not answer
+  # returns empty output and the check fails closed, which is the point.
   *"get daemonset -n monitoring -o jsonpath="*) printf '4/4 4/4 ' ;;
+  *"get statefulset -n monitoring -o jsonpath="*) printf '1/1 1/1 1/1 ' ;;
+  *"get statefulset -n redpanda -o jsonpath="*) printf '3/3 ' ;;
+  *"get pvc -n monitoring -o jsonpath="*) printf 'Bound Bound ' ;;
+  *"get pvc -n redpanda -o jsonpath="*) printf 'Bound Bound ' ;;
+  *"get nodes -o jsonpath="*) printf 'True True True True ' ;;
 esac
 if [ "${FAIL_ON:-}" = readiness ] && [ ! -e "$FAIL_MARKER_DIR/readiness" ] &&
    case "$*" in *"csidriver/ebs.csi.aws.com"*) true;; *) false;; esac; then
