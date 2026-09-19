@@ -16,6 +16,7 @@ type target =
      production default (retain the final snapshot); a disposable qualification
      target sets `destroy_retention: none`. *)
   ; destroy_retention : string option
+  ; provisioner_impersonator : string option
   ; alert_receiver_type : string option
   ; alert_receiver_url : string option
   ; alert_owner : string option

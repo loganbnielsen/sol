@@ -30,17 +30,6 @@ terraform {
       source  = "hashicorp/helm"
       version = "~> 2.12"
     }
-    # Live attempt 1: GCP releases the servicenetworking producer reference
-    # asynchronously, *after* the Cloud SQL instance's delete reports complete, so
-    # deleting the peering immediately afterwards fails with "Producer services
-    # (e.g. CloudSQL ...) are still using this connection". Terraform orders the two
-    # deletes correctly (the instance is a dependent, so it goes first) -- what it
-    # cannot express through ordinary dependencies is a *wait* between them, and a
-    # wait is what the provider requires.
-    time = {
-      source  = "hashicorp/time"
-      version = "~> 0.11"
-    }
   }
 
   # GCS, with GCS's native state locking. `sol cloud` supplies bucket= and
@@ -170,32 +159,6 @@ resource "google_artifact_registry_repository_iam_member" "gke_pull" {
 
 # ── Cloud SQL PostgreSQL ──────────────────────────────────────────────────── #
 
-# Live attempt 1's destruction failure, expressed where it belongs. The graph
-# already ordered this correctly -- the instance is destroyed before the peering,
-# which is why the log shows "google_sql_database_instance.postgres: Destruction
-# complete after 2m2s" immediately followed by
-# "google_service_networking_connection.sql: Destroying..." -- and GCP then
-# refused the peering with "Producer services ... are still using this connection".
-# Terraform orders operations; it cannot insert a wait between two of them, and a
-# wait is exactly what the provider needs.
-#
-# So the wait is expressed as a resource: creating the instance waits for the
-# peering (0s), and *destroying* the instance waits out the release window before
-# the peering is attempted, because reverse order destroys the instance, then this
-# resource (which is where the wait happens), then the peering. Deleting the two
-# in the right order by hand in Sol would be Sol reimplementing the DAG; a
-# dependency the graph can carry belongs in the graph.
-resource "time_sleep" "sql_private_network_release" {
-  depends_on = [google_service_networking_connection.sql]
-
-  # GCP documents deleting the connection only after every instance using it is
-  # gone; live attempt 1 measured at least ~2.5 minutes of refusal after the
-  # instance's delete returned, and the exact window is not documented. This is
-  # deliberately a variable rather than a constant, because the number is the
-  # part that a live observation should correct.
-  destroy_duration = var.sql_private_network_release_wait
-}
-
 resource "google_sql_database_instance" "postgres" {
   name                = "${var.cluster_name}-postgres"
   database_version    = "POSTGRES_16"
@@ -225,7 +188,7 @@ resource "google_sql_database_instance" "postgres" {
     }
   }
 
-  depends_on = [time_sleep.sql_private_network_release]
+  depends_on = [google_service_networking_connection.sql]
 }
 
 resource "google_sql_database" "app" {
@@ -248,10 +211,28 @@ resource "google_compute_global_address" "sql_peering" {
   network       = google_compute_network.main.id
 }
 
+# Attempt 1 could not delete this peering at all, and Attempt 2 showed the obvious
+# reading of that -- "the graph is right, so what is missing must be a wait" -- to be
+# wrong. Five minutes of explicit waiting (`time_sleep`) did not help, and neither did
+# twenty minutes of manual retries: GCP keeps reporting that a producer still uses the
+# connection, and what actually releases it is deleting the *network*, which this root
+# owns and the same destroy deletes.
+#
+# So the connection is abandoned rather than deleted. Asking GCP to delete an object it
+# will not delete while a producer is registered is what failed; the timing was never
+# the problem, and raising a sleep to a larger guessed number would have been a change
+# that only looks like a fix.
+#
+# What this gives up is Terraform's own confirmation that the peering is gone, which is
+# why `verify_gcp_destroy` asks the provider for the peering *and* the network after the
+# destroy instead of trusting this apply's exit status. Abandonment is only defensible
+# against a check that can see the thing that was abandoned.
 resource "google_service_networking_connection" "sql" {
   network                 = google_compute_network.main.id
   service                 = "servicenetworking.googleapis.com"
   reserved_peering_ranges = [google_compute_global_address.sql_peering.name]
+
+  deletion_policy = "ABANDON"
 }
 
 # ── The platform provisioner ──────────────────────────────────────────────── #
@@ -341,6 +322,36 @@ resource "google_project_iam_member" "provisioner_cluster_access" {
   project = var.project_id
   role    = "roles/container.developer"
   member  = "serviceAccount:${google_service_account.provisioner.email}"
+}
+
+# Attempt 2's first finding: creating the identity is not the same as letting
+# anyone *use* it. Sol reaches the cluster by impersonating the provisioner, and
+# impersonation needs `iam.serviceAccounts.getAccessToken` on that identity --
+# which nothing granted, so the first attempt to enter the window failed with
+# "Failed to impersonate ... Permission 'iam.serviceAccounts.getAccessToken'
+# denied" and never reached Kubernetes at all.
+#
+# This is the GCP half of what `sts:AssumeRole` covers on AWS, and the shape is
+# deliberately narrow in two directions at once:
+#
+#   * the role is `roles/iam.serviceAccountTokenCreator` on *this one* service
+#     account, not a project-level role -- the authority to act as the provisioner
+#     is the authority to act as the provisioner, and nothing else;
+#   * the members are named by the target (`provisioner_impersonator`), not
+#     inferred from whoever happens to run Sol. Inferring it would recreate exactly
+#     the ambient-authority escape hatch this whole change exists to remove: "no
+#     caller declared" must mean "no impersonation", not "grant the caller".
+#
+# Note what this is *not*: it is not the install authority. It is the authority to
+# enter the window. What the provisioner may then do in the cluster is decided by
+# the ClusterRoles the platform definition binds it to, and the temporary
+# cluster-admin is the window's own object below.
+resource "google_service_account_iam_member" "provisioner_impersonators" {
+  for_each = toset(var.provisioner_impersonators)
+
+  service_account_id = google_service_account.provisioner.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = each.value
 }
 
 # ── Cloud DNS ─────────────────────────────────────────────────────────────── #

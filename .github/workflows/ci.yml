@@ -216,6 +216,16 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: internal/ci/check_platform_component_drift.sh
 
+      - name: gcloud interface and install-authority guard
+        # Attempt 2 lost a live run to `gcloud container clusters get-credentials
+        # --kubeconfig`, a flag that does not exist: the offline harness could not
+        # catch it because its stub was written from the implementation. This checks
+        # Sol's argv against gcloud's own help, and that the impersonation grant is
+        # scoped to the named provisioner identity and the caller the target declares.
+        # It skips -- loudly -- on runners without gcloud, rather than passing.
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: bash internal/ci/check_gcloud_interface.sh
+
       - name: Change-classification semantics (internal/ci/classify-changes.sh)
         # The classifier decides whether the expensive suite runs, so it is part
         # of the gate rather than a convenience. Its boundaries are pinned here
