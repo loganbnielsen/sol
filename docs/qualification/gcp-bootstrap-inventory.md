@@ -1,5 +1,36 @@
 # GCP bootstrap inventory and lifecycle proposal
 
+> **Where the work stands — read this first.** This document is the GCP
+> qualification workstream's record and decision log; **HARDEN-004** is its ticket
+> and entry point. The sections below are chronological, so they are archaeology:
+> accurate, but they describe how the present was reached rather than what it is.
+>
+> **Canonical state:** `main` @ `8d85c7ce` (2026-09-19). Nothing is running; the
+> qualification target is `Absent`, verified independently.
+>
+> **Qualified behaviourally** (observed live): cloud bootstrap through Sol's own
+> lifecycle on GCP; the provisioner identity, impersonation by the declared caller,
+> ephemeral cluster access, and the install window opened *and revoked*; the platform
+> stage running under that identity (424s of in-cluster work); destruction of a
+> **partially installed** platform through the documented lifecycle, then the cloud
+> layer, then absence verified through the provider's API; the service-networking
+> peering abandonment, twice observed.
+>
+> **Not qualified, and not claimed:** platform `Ready` (never reached), GCP
+> readiness/convergence checks, any HARDEN capability scenario, TLS issuance
+> (**BLOCKED** — no delegated qualification zone), Workload Identity wiring, Cloud
+> SQL regional HA, production capacity/headroom, GCS durable-observability wiring,
+> and GCP retention semantics (refused by name rather than approximated).
+>
+> **Next action:** a fresh disposable target whose first objective is to get past
+> `helm_release.cert_manager` and reach platform `Ready` — and whose *first task* is
+> to capture why that release's post-install `startupapicheck` Job fails, from the
+> check container's own output, before helm deletes the Job and its reason with it.
+> See HARDEN-004's "Current frontier". The standing rules — the absolute cost rule,
+> the `Absent` postcondition, do-not-build-cert-manager-speculatively, no static
+> service-account keys, do-not-weaken-AWS — are listed there too.
+>
+
 **Inventory date:** 2026-09-18 (America/Denver)
 
 **Project:** `sol-qualification` (project number verified against the supplied
@@ -775,45 +806,54 @@ cert-manager's own release did not finish installing.
 
 ### Remaining gaps
 
-Ordered by what unblocks the next one. Closed items keep their entry so the
-decision is recorded, not to suggest outstanding work.
+Ordered by what unblocks the next one. **Closed items stay visible so the decision is
+recorded — do not re-do them.** This list is the work list; the attempt narrative
+above is the evidence behind it.
 
-1. **GCP cert-manager solver and Workload Identity wiring.** The shared
-   definition's `ClusterIssuer`s are hard-wired to the Route 53 DNS-01 solver, so
-   a GCP install cannot issue a certificate as written. Needs a Cloud DNS (or
-   operator-supplied external DNS) solver plus scoped Workload Identity, and a
-   real TLS qualification is additionally blocked on a delegated qualification
-   hostname. Until it lands, a GCP target that declares `cluster_issuer` is
-   **refused by name** rather than handed an issuer that cannot work.
-2. **(Closed) Typed GCP cloud outputs and platform input mapping.** GCP has its
-   own output type and parser (`gcp_outputs`, `gcp_outputs_of_json`) and its own
-   platform variable set, and `cloud_outputs` is the one thing the lifecycle
-   carries — so the provider-shaped facts are read through the branch that knows
-   which provider it has, instead of every field becoming optional on a shared
-   record. The mapping is fallible: a capability the provider's root cannot wire
-   is a refusal naming the gap, not a variable set that silently omits it.
-3. **Provider-neutral `sol cloud` plan/apply/destroy for GCP.** The outer gate that
-   refuses GCP, the GCP variant of cloud-ready observation and cluster access
-   (`gcloud container clusters get-credentials`, the provisioner service account,
-   the `PlatformInstalling` privileged window, the positive/negative `can-i`
-   probes), and the platform targets addressing `module.platform.*`.
-4. **GCP destruction preparation.** Cloud SQL API-level deletion protection off by
-   an applied transition, and a per-attempt backup identity that the qualification
-   path does *not* leave behind: a disposable target must reach literal `Absent`,
-   so taking a final backup and retaining it is the production behaviour, and
-   qualification either skips it or removes it before declaring absence.
-   The undeletability half of this gap is **closed** for both providers by
-   INFRA-037 / ADR 0004 (`force_delete`, `force_destroy`, no `prevent_destroy`,
-   enforced by `internal/ci/check_destroy_completeness.sh`). The retention toggle
-   the ADR deliberately leaves undecided is what remains here.
-5. **Cloud SQL regional HA for the production profile**, and the production
-   profile's capacity contract proven on the selected GKE mode (the current root
-   is Autopilot, which cannot declare the `node-failure-tolerant` headroom).
-6. **GCS durable-observability chart wiring** — the Loki/Thanos values are still
+1. **The current frontier: `helm_release.cert_manager`'s post-install check**, and
+   with it platform `Ready`. Attempt 4's prerequisites apply failed on
+   `failed post-install: timed out waiting for the condition` while cert-manager
+   itself was healthy; the failing object was the chart's `startupapicheck` Job
+   (`BackoffLimitExceeded`). The next attempt establishes *why*, from the check
+   container's own output, before deciding between a GCP-shaped values override and a
+   real GKE/Autopilot incompatibility. Disabling the check is not the default answer:
+   it is the only signal about webhook reachability, which issuance depends on.
+2. **GCP cert-manager solver and Workload Identity wiring.** The shared definition's
+   `ClusterIssuer`s are hard-wired to the Route 53 DNS-01 solver. Needs a Cloud DNS
+   solver plus scoped Workload Identity — built **when the frontier reaches them**,
+   not before. A real TLS qualification is additionally blocked on a delegated
+   qualification hostname; until this lands, a GCP target declaring `cluster_issuer`
+   is refused by name rather than handed an issuer that cannot work.
+3. **Cloud SQL regional HA for the production profile**, and the production profile's
+   capacity contract proven on the selected GKE mode (the current root is Autopilot,
+   which cannot declare the `node-failure-tolerant` headroom).
+4. **GCS durable-observability chart wiring** — the Loki/Thanos values are still
    S3-shaped and `OBS-034`'s gate still rejects `gcp + self_hosted_durable`
    (INFRA-005).
-7. **Offline qualification/preflight coverage** for the GCP path, and a GCP
-   counterpart to `production-single-region-v1-matrix.md`.
+5. **(Closed) Provider-neutral `sol cloud` plan/apply/destroy for GCP.** Closed by
+   #355/#356/#358: the provider gate is gone, GCP runs the real phases, cluster
+   access is `gcloud get-credentials` with declared impersonation, the
+   `PlatformInstalling` window opens on the cloud root and is revoked, and platform
+   targets address `module.platform.*`.
+6. **(Closed) GCP destruction preparation and the undeletability invariant.** Closed
+   by #355/#358 and ADR 0004: both guards (Cloud SQL's and the GKE cluster's
+   provider-default one) are lifted by a targeted applied transition that is then
+   verified, `check_destroy_completeness.sh` enforces "a routed guard must be
+   liftable by the Destroy policy", and the peering is abandoned rather than deleted
+   because GCP will not delete it while a producer is registered. **Still unqualified
+   for GCP: retention.** Sol refuses a GCP target whose `destroy_retention` is the
+   `final-snapshot` default, because Cloud SQL destroys its backups with the instance
+   and "closest available behaviour" would discard recovery data silently.
+7. **(Closed) Offline qualification/preflight coverage for the GCP path.** The
+   lifecycle harness runs GCP plan and destroy against stubs that model the real
+   tools, including the credential fail-closed path, the missing-toolchain refusal,
+   and the INFRA-042 partial-install recovery with its fail-closed opposite. A GCP
+   counterpart to `production-single-region-v1-matrix.md` remains to be written when
+   GCP has capabilities to record in it.
+8. **(Closed) Typed GCP cloud outputs and platform input mapping.** `gcp_outputs`,
+   its parser and its platform variable set are provider-shaped, and `cloud_outputs`
+   is the one thing the lifecycle carries; a capability the provider's root cannot
+   wire is a refusal naming the gap.
 
 ## References
 

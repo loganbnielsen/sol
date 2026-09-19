@@ -8,6 +8,13 @@ source: production platform contract review 2026-09-16
 
 **Depends on:** FEAT-089, FEAT-050, AUDIT-080, AUDIT-069, AUDIT-072, AUDIT-078, SEC-004, OBS-043, FEAT-088.
 
+**See also:** HARDEN-004 — the same contract realized and qualified on GCP. It is a
+separate workstream (different mechanisms, same guarantees), and its per-attempt
+evidence lives in `docs/qualification/gcp-bootstrap-inventory.md`. Changes to the
+shared platform definition or to provider-neutral lifecycle semantics have to keep
+both tickets' contracts, so a change here that looks AWS-local is worth checking
+against that ticket.
+
 ## Goal
 
 Turn the guarantees of the versioned `production-single-region` profile into one
