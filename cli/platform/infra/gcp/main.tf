@@ -279,6 +279,45 @@ resource "google_service_networking_connection" "sql" {
 #
 # The steady-state binding to the shared definition's provisioner ClusterRole is
 # created by the platform root (where that ClusterRole lives), not here.
+# The install window's privilege. It is created *here*, in the cloud root, and
+# that placement is the whole point rather than a convenience:
+#
+#   * the platform applies run as the provisioner, which by construction has no
+#     in-cluster rights until the platform root creates them -- so a binding that
+#     grants those rights cannot be created by the apply that needs them. The
+#     escalation has to be created by a caller that already has authority, and the
+#     cloud root is applied with the operator's credentials.
+#   * this is exactly where AWS puts it: an EKS access entry associated by the
+#     cloud apply, opened before the first platform apply and associated away
+#     afterwards. Same object lifecycle, different object.
+#
+# `provisioner_bootstrap_admin` is therefore declared by both provider *cloud*
+# roots, and Sol opens and closes it with the same variable on both.
+data "google_client_config" "default" {}
+
+provider "kubernetes" {
+  host                   = "https://${google_container_cluster.main.endpoint}"
+  token                  = data.google_client_config.default.access_token
+  cluster_ca_certificate = base64decode(google_container_cluster.main.master_auth[0].cluster_ca_certificate)
+}
+
+resource "kubernetes_cluster_role_binding" "provisioner_bootstrap_admin" {
+  count = var.provisioner_bootstrap_admin ? 1 : 0
+
+  metadata { name = "sol-platform-provisioner-bootstrap-admin" }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = "cluster-admin"
+  }
+  subject {
+    kind      = "User"
+    name      = google_service_account.provisioner.email
+    api_group = "rbac.authorization.k8s.io"
+  }
+}
+
 resource "google_service_account" "provisioner" {
   account_id   = "${var.cluster_name}-provisioner"
   display_name = "Sol platform provisioner for ${var.cluster_name}"

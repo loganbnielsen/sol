@@ -86,12 +86,6 @@ variable "gcp_provisioner_service_account" {
   default     = ""
 }
 
-variable "provisioner_bootstrap_admin" {
-  description = "Temporarily grant the platform provisioner the authority the install needs. Sol opens this for the install window and closes it before Ready."
-  type        = bool
-  default     = false
-}
-
 variable "install_postgresql" {
   description = "Install in-cluster PostgreSQL. Set false when using RDS or Cloud SQL."
   type        = bool

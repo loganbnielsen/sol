@@ -143,30 +143,6 @@ resource "kubernetes_role_binding" "platform_provisioner_gcp" {
   ]
 }
 
-# The install window, and only the install window. This is the GCP realization of
-# the same semantic AWS realizes with `provisioner_bootstrap_admin` on an EKS
-# access entry: the privilege the install needs (charts create CRDs, webhooks and
-# cluster-scoped objects that the steady-state provisioner deliberately cannot)
-# exists while Sol is installing and is removed before Ready. Same variable name,
-# same lifecycle, different object -- because the authority is provider-shaped and
-# the *invariant* is not.
-resource "kubernetes_cluster_role_binding" "platform_provisioner_bootstrap_admin" {
-  count = var.provisioner_bootstrap_admin && local.gcp_provisioner != "" ? 1 : 0
-
-  metadata { name = "sol-platform-provisioner-bootstrap-admin" }
-
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "ClusterRole"
-    name      = "cluster-admin"
-  }
-  subject {
-    kind      = "User"
-    name      = local.gcp_provisioner
-    api_group = "rbac.authorization.k8s.io"
-  }
-}
-
 resource "kubernetes_cluster_role_binding" "platform_provisioner_cluster" {
   metadata { name = "sol-platform-provisioner-cluster" }
   role_ref {
