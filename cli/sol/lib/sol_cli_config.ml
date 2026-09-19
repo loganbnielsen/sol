@@ -785,7 +785,16 @@ let merge_target a b =
   ; kube_context = prefer a.kube_context b.kube_context
   ; kubeconfig = prefer a.kubeconfig b.kubeconfig
   ; terraform_var_file = prefer a.terraform_var_file b.terraform_var_file
-  ; observability_backend = prefer a.observability_backend b.observability_backend
+  ; observability_backend =
+      prefer a.observability_backend b.observability_backend
+      (* DEC-033 added the field but not this line, so the setting was dropped on the
+     only path a real target is resolved through: `{ a with ... }` keeps the
+     *base*'s value and discards the target file's, which meant a disposable
+     target's `destroy_retention: none` was silently ignored and every destroy took
+     the production default. DEC-033's own tests construct [target_empty] directly
+     and so never crossed the merge, which is the shape of gap that a test has to
+     cross on purpose rather than by accident. *)
+  ; destroy_retention = prefer a.destroy_retention b.destroy_retention
   ; alert_receiver_type = prefer a.alert_receiver_type b.alert_receiver_type
   ; alert_receiver_url = prefer a.alert_receiver_url b.alert_receiver_url
   ; alert_owner = prefer a.alert_owner b.alert_owner
@@ -1292,8 +1301,17 @@ let terraform_vars ~workspace cfg =
        do. `cluster_issuer` (and the other base-platform settings) belong to
        `cli/platform/infra/base`, applied separately with its own variables; the
        Renderer consumes the target value for ingress annotations, so the field
-       stays meaningful without being routed to the provider root. *)
-    let vars =
+       stays meaningful without being routed to the provider root.
+
+       GCP (first live attempt): the rule was stated correctly but applied to only
+       one provider. `create_rds`, `rds_multi_az`, `ecr_repositories` and
+       `workspace_name` were routed to *every* target's root, and the GCP root
+       declares none of them — so the first live GCP attempt died with four
+       "Value for undeclared variable" errors before terraform could plan
+       anything at all. Routing a variable a root does not declare is an error,
+       not a no-op, which makes which root declares what part of the mapping
+       rather than a detail of it. The AWS-specific set is now named as such. *)
+    let shared =
       []
       |> add_opt "region" (Some target.region)
       |> add_opt "cluster_name" target.cluster_name
@@ -1302,22 +1320,28 @@ let terraform_vars ~workspace cfg =
       |> add_opt "alert_receiver_url" target.alert_receiver_url
       |> add_opt "alert_owner" target.alert_owner
       |> add_opt "alert_runbook_url" target.alert_runbook_url
-      |> add_opt "cluster_endpoint_cidr" target.cluster_endpoint_cidr
-      |> add_opt "provisioner_role_arn" target.provisioner_role_arn
-      (* HARDEN-002 run 3, finding 11: deploy_role_arn is declared by the
-         provider root (cli/platform/infra/aws) and drives the deploy EKS
-         access entry INFRA-025 added, but was never routed here — so the entry
-         was never created and the module's deploy_kubeconfig_command/
-         deploy_kube_context outputs stayed null. provider_fields still follow,
-         so a target can override; operator_role_arn is deliberately NOT
-         routed: the AWS root does not declare it. *)
-      |> add_opt "deploy_role_arn" target.deploy_role_arn
-      |> add_opt "workspace_name" (Some workspace)
+    in
+    let provider_own =
+      match target.provider with
+      | Sol_cli_provider.Aws ->
+        shared
+        |> add_opt "cluster_endpoint_cidr" target.cluster_endpoint_cidr
+        |> add_opt "provisioner_role_arn" target.provisioner_role_arn
+        (* HARDEN-002 run 3, finding 11: deploy_role_arn is declared by the
+           provider root (cli/platform/infra/aws) and drives the deploy EKS
+           access entry INFRA-025 added, but was never routed here — so the entry
+           was never created and the module's deploy_kubeconfig_command/
+           deploy_kube_context outputs stayed null. provider_fields still follow,
+           so a target can override; operator_role_arn is deliberately NOT
+           routed: the AWS root does not declare it. *)
+        |> add_opt "deploy_role_arn" target.deploy_role_arn
+        |> add_opt "workspace_name" (Some workspace)
+      | Sol_cli_provider.Gcp -> shared
     in
     let vars =
       List.assoc_opt (Sol_cli_provider.to_string target.provider) target.provider_fields
       |> Option.value ~default:[]
-      |> List.rev_append vars
+      |> List.rev_append provider_own
     in
     let has_postgres =
       resources cfg |> List.exists (fun (r : resource) -> r.typ = Some "postgres")
@@ -1339,7 +1363,10 @@ let terraform_vars ~workspace cfg =
          unconditionally later in the argument list (cmd_cloud_tf.ml's
          prepare_destroy), which still wins there because it is appended
          after these profile-derived vars, not because it is weakened here. *)
-      if is_production_postgres then ("rds_deletion_protection", "true") :: vars else vars
+      match target.provider with
+      | Sol_cli_provider.Aws when is_production_postgres ->
+        ("rds_deletion_protection", "true") :: vars
+      | _ -> vars
     in
     let vars =
       (* INFRA-030 (HARDEN-002 run 5 attempt 1): the profile owns the cluster
@@ -1353,15 +1380,26 @@ let terraform_vars ~workspace cfg =
          Both variables are declared by the provider root, so routing them is
          legal there. A non-profile target keeps full control of its shape and
          makes no capacity claim. *)
-      if target.profile = Some Sol_cli_profile.Production_single_region
-      then Sol_cli_profile.node_shape_vars Sol_cli_profile.recommended_node_shape @ vars
-      else vars
+      match target.provider with
+      | Sol_cli_provider.Aws
+        when target.profile = Some Sol_cli_profile.Production_single_region ->
+        Sol_cli_profile.node_shape_vars Sol_cli_profile.recommended_node_shape @ vars
+      | _ -> vars
     in
+    (* AWS's root is the one that declares these three; the GCP root declares its
+       own (`project_id` and the Cloud SQL shapes), which a target supplies through
+       its provider block. A provider that declares a database and needs a
+       credential is not silently skipped: `TF_VAR_db_password` is what carries it,
+       and [Sol_cli_db_credential] refuses a target that provisions one without a
+       credential source. *)
     Ok
-      (("create_rds", string_of_bool has_postgres)
-       :: ("rds_multi_az", string_of_bool is_production_postgres)
-       :: ("ecr_repositories", ecr_repositories_var ())
-       :: vars)
+      (match target.provider with
+       | Sol_cli_provider.Aws ->
+         ("create_rds", string_of_bool has_postgres)
+         :: ("rds_multi_az", string_of_bool is_production_postgres)
+         :: ("ecr_repositories", ecr_repositories_var ())
+         :: vars
+       | Sol_cli_provider.Gcp -> vars)
 ;;
 
 let vars_with_profile_precedence ~has_profile ~cli_vars ~config_vars =

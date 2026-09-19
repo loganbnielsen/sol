@@ -483,6 +483,84 @@ definition and forgotten in the GCP root — so
 every declared variable except the AWS-only ones, and fails if it declares one the
 definition does not.
 
+### Reconciliation onto post-#351/#353/#354 main, and the destroy investigation
+
+Attempt 1's branch was re-applied rather than rebased mechanically, because three
+parallel changes landed in the same places: INFRA-039 (#351, credentials resolved per
+mutating stage), DEC-033 (#353, destruction states what it keeps) and HARDEN-003
+(#354, evidence identity). What current main means, and how GCP implements it:
+
+- **Credential resolution is a per-mutating-stage guarantee, and it applies to GCP.**
+  INFRA-039 implemented it for AWS through `aws configure export-credentials`. On GCP
+  the credential is Application Default Credentials, resolved through
+  `gcloud auth application-default print-access-token` before each mutating stage —
+  including the same failure message, because the reasoning is identical: a destroy
+  that cannot authenticate leaves billable infrastructure standing *and* disables the
+  only supported path to remove it. Plan remains read-only.
+- **Deletion protection, retention and preparation are three things**, and the
+  reconciliation keeps them apart rather than letting them collapse into one
+  `force_destroy`-shaped concept:
+
+  | | what it is | AWS | GCP |
+  |---|---|---|---|
+  | deletion protection | a safety guard on a resource that exists | `rds_deletion_protection` | `sql_deletion_protection`, **`gke_deletion_protection`** |
+  | retention (DEC-033) | what a destroy deliberately keeps | final snapshot | **not expressible yet** |
+  | preparation | the applied, verified transition that makes destruction legal | targeted apply on the RDS resource | targeted apply on both guarded resources |
+
+  Because GCP cannot express retention — Cloud SQL deletes its backups with the
+  instance — a GCP target whose `destroy_retention` is the `final-snapshot` **default**
+  is refused rather than destroyed, and a disposable target opts in with
+  `destroy_retention: none`. Letting the default quietly become "discard the recovery
+  data anyway" is the laundering DEC-033 exists to prevent, so Sol asks instead of
+  deciding.
+
+**Two gaps in DEC-033 itself, both found while doing this:**
+
+1. **The setting never reached a target.** `merge_target` was not extended, so
+   `destroy_retention` was dropped on the only path a real target is resolved
+   through: `{ a with ... }` keeps the *base*'s value and discards the target file's.
+   A target saying `destroy_retention: none` was silently ignored and every destroy
+   took the production default. DEC-033's tests build `target_empty` directly and so
+   never crossed the merge. Fixed, with a test that crosses it on purpose.
+2. **The report was never called.** `retention_report` and its tests existed, and
+   nothing invoked it — so the decision reached the Destroy policy and never reached
+   the operator. Wired into the destroy, for both providers.
+
+### The service-networking destruction failure: what it actually was
+
+Attempt 1's teardown could not reach `Absent` through the lifecycle, and the first
+question is whether that was a modelling error or a temporal one. The log answers it:
+
+```text
+google_sql_database_instance.postgres: Destruction complete after 2m2s
+google_service_networking_connection.sql: Destroying...
+google_service_networking_connection.sql: Still destroying... 20s
+Error: Unable to remove Service Networking Connection ... Producer services
+       (e.g. CloudSQL, Cloud Memstore, etc.) are still using this connection.
+```
+
+**The graph was right.** The instance is a dependent of the peering, so reverse order
+destroys it first, and the log shows exactly that. What GCP requires is a *wait*
+between the two: it releases the servicenetworking producer reference asynchronously,
+after the instance's delete reports complete. Terraform orders operations; it cannot
+express a wait between them through an ordinary dependency, and a wait is what the
+provider demands.
+
+So the fix is in the graph, not in Sol: a `time_sleep` the instance depends on and the
+peering is a dependency of, which on destroy becomes instance → *wait* → peering.
+Hand-rolling "delete Cloud SQL, wait, delete the peering" in `sol cloud destroy` would
+be Sol reimplementing the DAG it delegates to Terraform.
+
+The window is a variable, not a constant, because the number is the part a live
+observation should correct: GCP does not document it, and Attempt 1 measured only that
+~2.5 minutes after the instance's delete was still too early. Default 300s, to be
+measured in Attempt 2.
+
+Two further defects from the same teardown, both fixed: the reconciliation apply was
+not inside a run phase and `require_terraform_success` exited **silently**, so the
+failure's terraform output existed nowhere and the reason had to be reconstructed by
+hand — it now prints, and the apply is a recorded stage like every other.
+
 ### Remaining gaps
 
 Ordered by what unblocks the next one. Closed items keep their entry so the

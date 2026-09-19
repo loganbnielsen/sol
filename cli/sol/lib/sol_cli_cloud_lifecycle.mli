@@ -200,10 +200,11 @@ val destroy_retention_of_string : string -> (destroy_retention, string) result
 val retention_report : retention:destroy_retention -> destroy_snapshot_id:string -> string
 
 (** The desired-state overrides a phase imposes, appended *after* the caller's own
-    variables so the phase policy wins. The levers are the provider's -- an AWS
-    destroy lifts RDS deletion protection and names its final snapshot, while GCP's
-    equivalents are not implemented yet -- but the policy, and the fact that the
-    phase names it, is what is provider-neutral. *)
+    variables so the phase policy wins. The levers are the provider's: AWS lifts RDS
+    deletion protection and names its final snapshot, and GCP lifts Cloud SQL's and
+    the GKE cluster's. Deletion protection (a guard on a resource that exists) and
+    retention (DEC-033: what a destroy deliberately keeps) are separate things, and
+    this carries only the former. *)
 val policy_vars
   :  provider:Sol_cli_provider.t
   -> phase:phase

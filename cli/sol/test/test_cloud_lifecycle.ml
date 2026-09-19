@@ -398,14 +398,21 @@ let test_lifecycle_phases () =
     "destroy policy is exactly the three destroy vars"
     3
     (List.length destroy_vars);
-  (* The GCP policy is empty *and* documented as a gap, rather than carrying AWS's
-     levers: `-var` for a variable the GCP root does not declare is an error, so
-     inheriting them would have failed the first GCP destroy on an undeclared
-     variable instead of lifting anything. *)
-  Alcotest.(check int)
-    "the GCP destroy policy carries no AWS levers"
-    0
-    (List.length
+  (* The GCP policy carries GCP's guards and none of AWS's: `-var` for a variable a
+     root does not declare is an error, so inheriting AWS's would have failed the
+     first GCP destroy on an undeclared variable instead of lifting anything.
+
+     Both of GCP's guards, and the second was found live: the GKE cluster's
+     provider-level `deletion_protection` defaults to true, so a policy that lifted
+     only Cloud SQL left a target that could not be destroyed at all ("Cannot
+     destroy cluster because deletion_protection is set to true"). Neither entry is
+     retention -- that is DEC-033's separate axis, and on GCP it is not expressible
+     yet. *)
+  Alcotest.(check (list string))
+    "the GCP destroy policy carries both of GCP's guards"
+    [ "sql_deletion_protection"; "false"; "gke_deletion_protection"; "false" ]
+    (List.concat_map
+       (fun (k, v) -> [ k; v ])
        (policy_vars
           ~provider:Sol_cli_provider.Gcp
           ~phase:Preparing_destroy
