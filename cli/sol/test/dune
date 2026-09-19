@@ -70,7 +70,10 @@
 
 (rule
  (alias runtest)
- (deps ../bin/main.exe ../../../internal/ci/test_cloud_lifecycle_offline.sh)
+ (deps
+  ../bin/main.exe
+  ../../../internal/ci/test_cloud_lifecycle_offline.sh
+  ../../../internal/ci/qualification_assertions.sh)
  (action
   (run
    bash
