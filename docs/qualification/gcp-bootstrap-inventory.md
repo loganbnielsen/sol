@@ -483,6 +483,76 @@ definition and forgotten in the GCP root — so
 every declared variable except the AWS-only ones, and fails if it declares one the
 definition does not.
 
+### Live attempt 1 (2026-09-19) — cloud bootstrap, three defects, torn down
+
+Billing was linked and the project was bootstrapped by hand first: billing
+confirmed, Owner on the project, no organization (so no org-policy constraints),
+and the APIs the cloud root needs enabled (`compute`, `container`, `sqladmin`,
+`servicenetworking`, `artifactregistry`, `iam`, `iamcredentials`,
+`cloudresourcemanager`, `dns`). us-central1 quotas were inventoried and are ample
+for one target: CPUS 200/0 used, SSD_TOTAL_GB 500, IN_USE_ADDRESSES 8,
+STATIC_ADDRESSES 8, all zones UP. A GCS bucket (`sol-qualification-tfstate`,
+us-central1, uniform access, public-access prevention) holds remote state.
+
+A `terraform plan` against the live project succeeded — 13 to add — which is the
+first *live* evidence that the GCP cloud root's configuration is valid against
+real APIs, before any billable resource existed.
+
+The run then went through Sol, and the first three defects found were all of the
+same kind: **AWS-shaped or provider-default assumptions in the path Sol drives**.
+
+1. **`Sol_cli_config.terraform_vars` routed AWS variables to every provider's
+   root.** `create_rds`, `rds_multi_az`, `ecr_repositories` and `workspace_name`
+   were handed to the GCP root, which declares none of them, so the very first
+   live command died with four `Value for undeclared variable` errors and nothing
+   could be planned. The gate was removed with the GCP-cloud-lifecycle change;
+   the AWS-specific set is now named as such, with a regression test.
+2. **Autopilot reports its node service account as the literal `"default"`.**
+   `google_artifact_registry_repository_iam_member.gke_pull` rendered the member
+   as `serviceAccount:default` and the IAM API rejected it (`Error 400: Invalid
+   service account (default)`) — after the cluster and the database had already
+   been created. Fixed by resolving `"default"` to the project's Compute Engine
+   default service account.
+3. **The GKE cluster's provider-level deletion guard is on by default.** Nothing
+   in the root mentions it, so no policy lifted it, and the teardown refused with
+   `Cannot destroy cluster because deletion_protection is set to true` — a target
+   Sol had provisioned could not be destroyed through Sol at all. This is ADR
+   0004's invariant reached through a *provider default* rather than through
+   `prevent_destroy`, which is why ADR 0004's original guard did not see it: there
+   was no attribute to find. It now has a variable, the Destroy policy lifts it,
+   and `check_destroy_completeness.sh` gained a rule for both halves (a routed
+   guard must be liftable by the policy; a literal guard is a failure).
+
+**Sol's documented destroy did not complete**, so the teardown finished through
+operator/emergency cleanup, recorded here as the failure it was rather than as a
+successful destroy:
+
+- `sol cloud destroy --apply` lifted Cloud SQL's protection by a targeted applied
+  transition and *verified* it — that part worked, and is the reason the Cloud SQL
+  instance could be deleted at all.
+- Its next step, the reconciliation apply, then failed, and **failed silently**:
+  the call is not wrapped in a run phase, and `require_terraform_success` exits
+  without printing the terraform output, so the operator sees only `exit 1`.
+  That is its own defect (failure reporting), not a provider behaviour.
+- The underlying blocker was the cloud root's `google_service_networking_connection`:
+  GCP refused to delete the peering (`Error code 9: Producer services ... are still
+  using this connection`) even after the Cloud SQL instance was gone, and it
+  refused again after the reserved range was deleted. The connection had to be
+  removed with the VPC itself.
+- The GKE cluster was deleted directly (`gcloud container clusters delete`) to stop
+  its billing while that was being worked out.
+
+Independent post-run sweep, after the state was reconciled to empty: **no GKE
+cluster, no Cloud SQL instance, no target VPC/router/NAT/address, no Artifact
+Registry repository, no DNS zone, no disk, no forwarding rule.** The only
+remaining GCP resources are the state bucket above and the project's automatic
+`default` network — neither owned by the target. Cost-clean.
+
+**Attempt 1 verdict: failed, and not a valid qualification of anything.** It
+produced three real defects, a working cloud-side readiness/preparation path, and
+no behavioural claim about the platform layer. The next attempt starts from a
+fresh target with all three fixed.
+
 ### Remaining gaps
 
 Ordered by what unblocks the next one. Closed items keep their entry so the

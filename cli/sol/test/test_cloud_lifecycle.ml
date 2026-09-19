@@ -408,8 +408,12 @@ let test_lifecycle_phases () =
       ~destroy_snapshot_id:"snap-1"
   in
   Alcotest.(check (list string))
-    "the GCP destroy policy carries only the GCP lever"
-    [ "sql_deletion_protection"; "false" ]
+    (* Both of GCP's guards. The second was found live: the GKE cluster's
+       provider-level `deletion_protection` defaults to true, so a Destroy policy
+       that lifted only Cloud SQL left a target that still could not be destroyed
+       ("Cannot destroy cluster because deletion_protection is set to true"). *)
+    "the GCP destroy policy carries both of GCP's levers"
+    [ "sql_deletion_protection"; "false"; "gke_deletion_protection"; "false" ]
     (List.concat_map (fun (k, v) -> [ k; v ]) gcp_destroy_vars);
   Alcotest.(check int)
     "Ready adds no policy overrides"

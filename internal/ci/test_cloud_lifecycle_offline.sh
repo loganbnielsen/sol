@@ -98,11 +98,13 @@ JSON
   *" show -json")
     case " $* " in
       *infra/gcp*)
-        if [ -e "${GCP_SQL_PREPARED_FILE:-/nonexistent}" ]; then
-          printf '{"values":{"root_module":{"resources":[{"type":"google_sql_database_instance","values":{"deletion_protection":false}}]}}}\n'
-        else
-          printf '{"values":{"root_module":{"resources":[{"type":"google_sql_database_instance","values":{"deletion_protection":true}}]}}}\n'
-        fi
+        sql_guard=true
+        gke_guard=true
+        [ -e "${GCP_SQL_PREPARED_FILE:-/nonexistent}" ] && sql_guard=false
+        [ -e "${GKE_PREPARED_FILE:-/nonexistent}" ] && gke_guard=false
+        printf '{"values":{"root_module":{"resources":[{"type":"google_sql_database_instance","values":{"deletion_protection":%s}},{"type":"google_container_cluster","values":{"deletion_protection":%s}}]}}}\n' \
+          "$sql_guard" "$gke_guard"
+        exit 0
         exit 0
         ;;
     esac
@@ -137,7 +139,16 @@ JSON
       *" -var=sql_deletion_protection=false "*) : ;;
       *) exit 95 ;;
     esac
+    case " $* " in
+      *" -target=google_container_cluster.main "*) : ;;
+      *) exit 96 ;;
+    esac
+    case " $* " in
+      *" -var=gke_deletion_protection=false "*) : ;;
+      *) exit 97 ;;
+    esac
     : >"$GCP_SQL_PREPARED_FILE"
+    : >"$GKE_PREPARED_FILE"
     ;;
   *infra/aws*" apply "*"provisioner_bootstrap_admin=true"*)
     if fail_once cloud; then exit 20; fi
@@ -348,6 +359,7 @@ export FAIL_MARKER_DIR="$tmp/markers"
 export KUBECONFIG_LOG="$tmp/kubeconfigs"
 export RDS_PREPARED_FILE="$tmp/markers/rds-prepared"
 export GCP_SQL_PREPARED_FILE="$tmp/markers/gcp-sql-prepared"
+export GKE_PREPARED_FILE="$tmp/markers/gke-prepared"
 export PLATFORM_INSTALLED_FILE="$tmp/markers/platform-installed"
 
 run_apply() {
@@ -637,7 +649,7 @@ while IFS= read -r kubeconfig; do test ! -e "$kubeconfig"; done <"$tmp/kubeconfi
 gcp_vars="--var project_id=sol-qualification --var region=us-central1 --var cluster_name=sol-qual --var base_domain=qual.example.test"
 
 gcp_log="$tmp/gcp-plan.log"
-rm -f "$tmp/markers/cloudsql-prepare" "$GCP_SQL_PREPARED_FILE"
+rm -f "$tmp/markers/cloudsql-prepare" "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE"
 if ! (cd "$tmp/work" && LIFECYCLE_LOG="$gcp_log" "$sol" cloud plan prod/gcp/us-central1 $gcp_vars) \
   >"$gcp_log.out" 2>&1
 then
@@ -689,7 +701,24 @@ grep -E 'terra[a-z]* .*-chdir=[^ ]*infra/gcp .* -target=google_sql_database_inst
   grep -F 'infra/gcp' "$gcp_destroy_log" >&2
   exit 1
 }
-grep -F 'verify preparation: Cloud SQL deletion protection disabled' \
+# Both of GCP's deletion guards are lifted, and both by an applied transition:
+# the GKE cluster's is the provider's own attribute defaulting to true, which the
+# live attempt found only after Cloud SQL had already been lifted.
+grep -E -- '-chdir=[^ ]*infra/gcp ' "$gcp_destroy_log" \
+  | grep -F -- '-target=google_container_cluster.main' \
+  | grep -F -- '-var=gke_deletion_protection=false' >/dev/null || {
+  echo "GCP destroy did not lift the GKE cluster's deletion guard:" >&2
+  grep -E -- '-chdir=[^ ]*infra/gcp ' "$gcp_destroy_log" >&2
+  exit 1
+}
+grep -E -- '-chdir=[^ ]*infra/gcp ' "$gcp_destroy_log" \
+  | grep -F ' destroy ' \
+  | grep -F -- '-var=gke_deletion_protection=false' >/dev/null || {
+  echo "the GCP destroy did not carry the GKE deletion-guard override:" >&2
+  grep -E ' destroy ' "$gcp_destroy_log" >&2
+  exit 1
+}
+grep -F 'verify preparation: Cloud SQL and GKE deletion protection disabled' \
   "$gcp_destroy_log.out" >/dev/null || {
   echo "GCP destroy did not verify that the preparation landed:" >&2
   cat "$gcp_destroy_log.out" >&2

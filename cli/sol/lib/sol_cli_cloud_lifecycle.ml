@@ -921,7 +921,8 @@ let policy_vars ~provider ~phase ~destroy_snapshot_id =
        ; "rds_skip_final_snapshot", "false"
        ; "rds_final_snapshot_identifier", destroy_snapshot_id
        ]
-     | Sol_cli_provider.Gcp -> [ "sql_deletion_protection", "false" ])
+     | Sol_cli_provider.Gcp ->
+       [ "sql_deletion_protection", "false"; "gke_deletion_protection", "false" ])
 ;;
 
 (* The operator-facing name of a phase (ADR 0003's own spelling). Kept here so a

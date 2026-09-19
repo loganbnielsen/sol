@@ -1003,6 +1003,48 @@ target:
          check_bool "gcp var absent" false (List.mem ("project_id", "pluto-dev") vars)))
 ;;
 
+(* GCP, first live attempt (2026-09-19): `create_rds`, `rds_multi_az`,
+   `ecr_repositories` and `workspace_name` were routed to *every* target's root,
+   and the GCP cloud root declares none of them — so the very first live GCP
+   command died with four "Value for undeclared variable" errors before terraform
+   could plan anything. A variable a root does not declare is an error, not a
+   no-op, so which root declares what is part of the mapping. *)
+let test_terraform_vars_are_provider_shaped () =
+  with_temp_dir (fun () ->
+    write
+      "sol.yml"
+      {|
+target:
+  gcp:
+    project_id: sol-qualification
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/gcp/us-central1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+       | Error msg -> Alcotest.fail msg
+       | Ok vars ->
+         check_bool
+           "the GCP root's own variable reaches it"
+           true
+           (List.mem ("project_id", "sol-qualification") vars);
+         check_bool "region reaches it" true (List.mem ("region", "us-central1") vars);
+         List.iter
+           (fun aws_only ->
+              check_bool
+                (Printf.sprintf "%s must not reach the GCP root" aws_only)
+                false
+                (List.mem_assoc aws_only vars))
+           [ "create_rds"
+           ; "rds_multi_az"
+           ; "ecr_repositories"
+           ; "workspace_name"
+           ; "provisioner_role_arn"
+           ; "cluster_endpoint_cidr"
+           ; "deploy_role_arn"
+           ]))
+;;
+
 let test_terraform_vars_workspace_name_and_ecr_repositories () =
   with_temp_dir (fun () ->
     write
@@ -1468,6 +1510,10 @@ let () =
             "provider fields feed terraform vars"
             `Quick
             test_provider_fields_feed_active_terraform_provider
+        ; Alcotest.test_case
+            "terraform vars: provider-shaped"
+            `Quick
+            test_terraform_vars_are_provider_shaped
         ; Alcotest.test_case
             "terraform vars: workspace_name + ecr_repositories"
             `Quick

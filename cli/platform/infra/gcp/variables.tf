@@ -59,6 +59,23 @@ variable "sql_high_availability" {
   default     = false
 }
 
+# The GKE provider's own guard, and it is ON by default -- so a target that never
+# mentions it still cannot be destroyed (live attempt 1: "Cannot destroy cluster
+# because deletion_protection is set to true", after Cloud SQL had already been
+# lifted and everything else deleted). It is the same defect class ADR 0004 names,
+# expressed through a provider default instead of `prevent_destroy`, which is why
+# the invariant has to be asserted over what a root *ends up with* rather than
+# over the attributes it happens to spell out.
+#
+# Default true, so a destroy driven directly against Terraform fails rather than
+# deleting a cluster by surprise; `sol cloud destroy`'s Destroy policy sets it
+# false for the teardown, exactly as it does for Cloud SQL.
+variable "gke_deletion_protection" {
+  description = "Enable the GKE provider's deletion protection on the cluster. Default true (a direct destroy fails rather than deleting a cluster); `sol cloud destroy` sets it false for the Destroy phase."
+  type        = bool
+  default     = true
+}
+
 variable "sql_deletion_protection" {
   description = "Enable both Terraform's destroy guard and Cloud SQL API deletion protection."
   type        = bool

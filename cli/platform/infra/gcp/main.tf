@@ -86,8 +86,12 @@ resource "google_compute_router_nat" "main" {
 # ── GKE Autopilot ─────────────────────────────────────────────────────────── #
 
 resource "google_container_cluster" "main" {
-  name     = var.cluster_name
-  location = var.region
+  name = var.cluster_name
+
+  # See the variable: the provider defaults this to true, so leaving it
+  # unspecified means a target Sol provisioned cannot be destroyed through Sol.
+  deletion_protection = var.gke_deletion_protection
+  location            = var.region
 
   # Autopilot: Google manages nodes, scaling, and security hardening
   enable_autopilot = true
@@ -122,11 +126,28 @@ resource "google_artifact_registry_repository" "images" {
 }
 
 # Grant GKE SA read access to pull images
+# Autopilot reports its node service account as the literal shorthand "default",
+# and the IAM API rejects `serviceAccount:default` ("Invalid service account
+# (default)") -- which is where live attempt 1's apply died, after the cluster and
+# the database had already been created. "default" means the project's Compute
+# Engine default service account, so that is what it is resolved to.
+data "google_compute_default_service_account" "default" {
+  project = var.project_id
+}
+
+locals {
+  gke_node_service_account = (
+    google_container_cluster.main.node_config[0].service_account == "default"
+    ? data.google_compute_default_service_account.default.email
+    : google_container_cluster.main.node_config[0].service_account
+  )
+}
+
 resource "google_artifact_registry_repository_iam_member" "gke_pull" {
   location   = google_artifact_registry_repository.images.location
   repository = google_artifact_registry_repository.images.name
   role       = "roles/artifactregistry.reader"
-  member     = "serviceAccount:${google_container_cluster.main.node_config[0].service_account}"
+  member     = "serviceAccount:${local.gke_node_service_account}"
 }
 
 # ── Cloud SQL PostgreSQL ──────────────────────────────────────────────────── #

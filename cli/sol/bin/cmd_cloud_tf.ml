@@ -899,29 +899,37 @@ let verify_destroy_preparation infra_dir ~prepared =
          snapshot_id)
 ;;
 
-(* The GCP counterpart of [rds_state]: what the target's Cloud SQL instance
-   currently declares, read from the root's own state for the same reason -- the
+(* The GCP counterpart of [rds_state]: what the target's guarded resources
+   currently declare, read from the root's own state for the same reason -- the
    question preparation answers is "did the change actually land", which is a
-   claim about this root's state rather than about the provider's API. *)
-let gcp_sql_state infra_dir =
+   claim about this root's state rather than about the provider's API.
+
+   Two resources carry a deletion guard on GCP, by two different mechanisms: Cloud
+   SQL's is the provider's attribute plus an API-level setting, and the GKE
+   cluster's is the provider's own attribute, which *defaults to true*. The live
+   attempt found the second only after Cloud SQL had been lifted -- the destroy
+   then refused with "Cannot destroy cluster because deletion_protection is set to
+   true", so a target Sol had provisioned could not be destroyed through Sol at
+   all. Both are read and both are lifted. *)
+let gcp_protection_state infra_dir =
   match Sol_cli_terraform.show_json ~chdir:infra_dir () with
   | Ok result when result.Sol_cli_process.exit_code = 0 ->
     (try
        let open Yojson.Safe.Util in
-       let resource =
+       let resources =
          Yojson.Safe.from_string result.stdout
          |> member "values"
          |> member "root_module"
          |> member "resources"
          |> to_list
-         |> List.find_opt (fun r ->
-           member "type" r = `String "google_sql_database_instance")
        in
-       match resource with
-       | None -> Ok None
-       | Some r ->
-         let v = member "values" r in
-         Ok (Some (v |> member "deletion_protection" |> to_bool))
+       let guard resource_type =
+         resources
+         |> List.find_opt (fun r -> member "type" r = `String resource_type)
+         |> Option.map (fun r ->
+           member "values" r |> member "deletion_protection" |> to_bool)
+       in
+       Ok (guard "google_sql_database_instance", guard "google_container_cluster")
      with
      | Yojson.Json_error message -> Error ("invalid `terraform show -json`: " ^ message)
      | Yojson.Safe.Util.Type_error (message, _) ->
@@ -931,7 +939,11 @@ let gcp_sql_state infra_dir =
   | Error _ -> Error "could not read terraform state"
 ;;
 
-let gcp_sql_target = Sol_cli_terraform.targets "google_sql_database_instance.postgres" []
+let gcp_guarded_targets =
+  Sol_cli_terraform.targets
+    "google_sql_database_instance.postgres"
+    [ "google_container_cluster.main" ]
+;;
 
 (* The same shape as the AWS preparation, for the same reason: Cloud SQL's
    deletion protection is an attribute of the instance *and* an API-level setting,
@@ -950,21 +962,22 @@ let gcp_sql_target = Sol_cli_terraform.targets "google_sql_database_instance.pos
    [true] means an instance was prepared; the Cloud SQL protection must then stay
    off for every apply from here until the instance is gone. *)
 let gcp_prepare_destroy run_log infra_dir var_files vars =
-  match gcp_sql_state infra_dir with
+  match gcp_protection_state infra_dir with
   | Error message -> lifecycle_error message
-  | Ok None ->
+  | Ok (None, None) ->
     Printf.printf
-      "  prepare: no Cloud SQL instance for this target, nothing to prepare.\n%!";
+      "  prepare: no guarded resource for this target, nothing to prepare.\n%!";
     false
-  | Ok (Some _) ->
-    Printf.printf "  prepare: disabling Cloud SQL deletion protection...\n%!";
+  | Ok _ ->
+    Printf.printf "  prepare: disabling the Cloud SQL and GKE deletion guards...\n%!";
     require_terraform_success
-      (Sol_cli_run_log.run_phase run_log ~name:"cloudsql-destroy-prepare" (fun () ->
+      (Sol_cli_run_log.run_phase run_log ~name:"gcp-destroy-prepare" (fun () ->
          Sol_cli_terraform.apply
-           ~scope:gcp_sql_target
+           ~scope:gcp_guarded_targets
            ~chdir:infra_dir
            ~var_files
-           ~vars:(vars @ [ "sql_deletion_protection=false" ])
+           ~vars:
+             (vars @ [ "sql_deletion_protection=false"; "gke_deletion_protection=false" ])
            ()));
     true
 ;;
@@ -973,16 +986,22 @@ let verify_gcp_destroy_preparation infra_dir ~prepared =
   if not prepared
   then Printf.printf "  verify preparation: nothing was prepared.\n%!"
   else (
-    match gcp_sql_state infra_dir with
+    match gcp_protection_state infra_dir with
     | Error message -> lifecycle_error message
-    | Ok None ->
-      lifecycle_error
-        "Cloud SQL destroy preparation ran but the instance is now absent from state"
-    | Ok (Some deletion_protection) ->
-      if deletion_protection
-      then
-        lifecycle_error "Cloud SQL deletion protection is still enabled after preparation";
-      Printf.printf "  verify preparation: Cloud SQL deletion protection disabled.\n%!")
+    | Ok (None, None) ->
+      lifecycle_error "GCP destroy preparation ran but no guarded resource is in state"
+    | Ok (sql, cluster) ->
+      (match sql with
+       | Some true ->
+         lifecycle_error
+           "Cloud SQL deletion protection is still enabled after preparation"
+       | _ -> ());
+      (match cluster with
+       | Some true ->
+         lifecycle_error "GKE deletion protection is still enabled after preparation"
+       | _ -> ());
+      Printf.printf
+        "  verify preparation: Cloud SQL and GKE deletion protection disabled.\n%!")
 ;;
 
 (* What destruction preparation did. The providers differ in what there is to
