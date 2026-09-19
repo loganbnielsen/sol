@@ -118,35 +118,44 @@ let target config = config.target
 let cloud_backend config = config.cloud_backend
 let platform_backend config = config.platform_backend
 
-let aws_outputs_of_json text =
+(* Shared by both providers' parsers, because the one thing that has actually
+   bitten the output contract is provider-independent. (HARDEN-002 run 3, finding
+   10: Terraform *omits* an output whose value is `null` (v1.9.8) rather than
+   emitting it as present-with-null. `member` yields `Null` for a missing key and
+   `member "value"` on `Null` raises, so an absent *optional* output — every
+   `loki_*`/`thanos_*` bucket unless durable observability is enabled — must
+   resolve to `Null` and behave like a null value, while an absent *required*
+   output still fails closed with a named error instead of crashing the
+   lifecycle.) *)
+let outputs_reader ~provider text =
   let open Yojson.Safe.Util in
+  let json = Yojson.Safe.from_string text in
+  let value name =
+    match json |> member name with
+    | `Null -> `Null
+    | output -> output |> member "value"
+  in
+  let string name =
+    match value name with
+    | `String s when String.trim s <> "" -> Ok s
+    | _ ->
+      Error
+        (Printf.sprintf "%s Terraform output %S is missing or not a string" provider name)
+  in
+  let optional_string name =
+    match value name with
+    | `Null -> Ok None
+    | `String s -> Ok (if String.trim s = "" then None else Some s)
+    | _ ->
+      Error
+        (Printf.sprintf "%s Terraform output %S is not a string or null" provider name)
+  in
+  value, string, optional_string
+;;
+
+let aws_outputs_of_json text =
   try
-    let json = Yojson.Safe.from_string text in
-    (* HARDEN-002 run 3, finding 10: Terraform *omits* an output whose value is
-       `null` (v1.9.8), rather than emitting it as present-with-null. So an
-       optional output such as `loki_s3_bucket` (null unless durable
-       observability is enabled) can be absent entirely. `member` yields `Null`
-       for a missing key, and `member "value"` on `Null` raises; resolve an
-       absent output to `Null` so `optional_string` treats it exactly like a
-       null value, while a *required* output still fails closed with a named
-       "missing or not a string" error rather than crashing the lifecycle. *)
-    let value name =
-      match json |> member name with
-      | `Null -> `Null
-      | output -> output |> member "value"
-    in
-    let string name =
-      match value name with
-      | `String s when String.trim s <> "" -> Ok s
-      | _ ->
-        Error (Printf.sprintf "AWS Terraform output %S is missing or not a string" name)
-    in
-    let optional_string name =
-      match value name with
-      | `Null -> Ok None
-      | `String s -> Ok (if String.trim s = "" then None else Some s)
-      | _ -> Error (Printf.sprintf "AWS Terraform output %S is not a string or null" name)
-    in
+    let value, string, optional_string = outputs_reader ~provider:"AWS" text in
     let ( let* ) = Result.bind in
     let* cluster_name = string "cluster_name" in
     let* provisioner_role_arn = string "provisioner_role_arn" in
@@ -177,7 +186,69 @@ let aws_outputs_of_json text =
     Error ("invalid AWS Terraform outputs: " ^ message)
 ;;
 
-let cluster_name outputs = outputs.cluster_name
+(* GCP's cloud-root contract: its own type, deliberately, rather than a relabelled
+   [aws_outputs]. The two providers publish different facts, not the same facts
+   under different names -- a GCP root names the project and region because every
+   GCP API is addressed through them *and* the cluster credential is derived from
+   them, and names no role ARN because a caller there impersonates a service
+   account through short-lived credentials. One record carrying both shapes would
+   make every field optional and leave every reader responsible for knowing which
+   fields its provider actually fills in. *)
+type gcp_outputs =
+  { cluster_name : string
+  ; project_id : string
+  ; region : string
+  ; artifact_registry : string
+  ; loki_gcs_bucket : string option
+  ; loki_workload_identity_sa_email : string option
+  ; thanos_gcs_bucket : string option
+  ; thanos_workload_identity_sa_email : string option
+  }
+
+let gcp_outputs_of_json text =
+  try
+    let _, string, optional_string = outputs_reader ~provider:"GCP" text in
+    let ( let* ) = Result.bind in
+    let* cluster_name = string "cluster_name" in
+    let* project_id = string "project_id" in
+    let* region = string "region" in
+    let* artifact_registry = string "artifact_registry" in
+    let* loki_gcs_bucket = optional_string "loki_gcs_bucket" in
+    let* loki_workload_identity_sa_email =
+      optional_string "loki_workload_identity_sa_email"
+    in
+    let* thanos_gcs_bucket = optional_string "thanos_gcs_bucket" in
+    let* thanos_workload_identity_sa_email =
+      optional_string "thanos_workload_identity_sa_email"
+    in
+    Ok
+      { cluster_name
+      ; project_id
+      ; region
+      ; artifact_registry
+      ; loki_gcs_bucket
+      ; loki_workload_identity_sa_email
+      ; thanos_gcs_bucket
+      ; thanos_workload_identity_sa_email
+      }
+  with
+  | Yojson.Json_error message -> Error ("invalid GCP Terraform output JSON: " ^ message)
+  | Yojson.Safe.Util.Type_error (message, _) ->
+    Error ("invalid GCP Terraform outputs: " ^ message)
+;;
+
+(* Either provider's outputs. This is the whole of what "provider-neutral" means
+   at this layer: the lifecycle carries one, and the provider-shaped facts are
+   read through the branch that knows which it has. *)
+type cloud_outputs =
+  | Aws_outputs of aws_outputs
+  | Gcp_outputs of gcp_outputs
+
+let cluster_name = function
+  | Aws_outputs outputs -> outputs.cluster_name
+  | Gcp_outputs outputs -> outputs.cluster_name
+;;
+
 let provisioner_role_arn (outputs : aws_outputs) = outputs.provisioner_role_arn
 
 (* HARDEN-002 run 4, finding 12. The base-platform providers are hashicorp/
@@ -204,16 +275,16 @@ type platform_inputs =
   ; alert_receiver_url : string option
   ; alert_owner : string option
   ; alert_runbook_url : string option
-  ; outputs : aws_outputs
+  ; outputs : cloud_outputs
   }
 
-let platform_inputs (target : cloud_target) (outputs : aws_outputs) =
+let platform_inputs (target : cloud_target) (outputs : cloud_outputs) =
   (* The cloud root reports the identity the platform root will act as; the
      target's declaration is what authorized it, so a mismatch means the platform
      would be wired to an identity Sol did not validate. Providers without a
      role-shaped identity have nothing to compare. *)
-  match target.provisioner_role_arn with
-  | Some arn when arn <> outputs.provisioner_role_arn ->
+  match target.provisioner_role_arn, outputs with
+  | Some arn, Aws_outputs aws when arn <> provisioner_role_arn aws ->
     Error "AWS provisioner_role_arn output does not match the validated target"
   | _ ->
     Ok
@@ -230,25 +301,24 @@ let platform_inputs (target : cloud_target) (outputs : aws_outputs) =
       }
 ;;
 
+(* The platform definition's variables for one provider's target. Fallible,
+   because a target can ask for a capability the provider's root cannot wire yet,
+   and the honest answer there is a refusal naming the gap rather than a variable
+   set that silently omits it.
+
+   What is shared is genuinely shared -- the domain, the ACME contact, and the
+   fact that a cloud database means no in-cluster Postgres. What differs is the
+   provider's own inputs: AWS passes the region and the IRSA roles and buckets its
+   definition branch reads, GCP passes its GCS buckets and Workload Identity
+   service accounts. Neither set is emitted for the other provider, because a
+   variable a provider's root does not declare is an error rather than a no-op. *)
 let platform_terraform_vars inputs =
   let add_opt key value vars =
     match value with
     | None -> vars
     | Some value -> (key ^ "=" ^ value) :: vars
   in
-  let outputs = inputs.outputs in
-  let vars =
-    [ "base_domain=" ^ inputs.base_domain
-    ; "letsencrypt_email=" ^ inputs.letsencrypt_email
-    ; "cloud_provider=aws"
-    ; "aws_region=" ^ inputs.region
-    ; "install_postgresql=false"
-    ; "cert_manager_irsa_role_arn=" ^ outputs.cert_manager_irsa_role_arn
-    ; "managed_resource_dashboards="
-      ^ Yojson.Safe.to_string outputs.managed_resource_dashboards
-    ]
-  in
-  let vars =
+  let optional vars =
     vars
     |> add_opt "cluster_issuer" inputs.cluster_issuer
     |> add_opt "observability_backend" inputs.observability_backend
@@ -256,13 +326,56 @@ let platform_terraform_vars inputs =
     |> add_opt "alert_receiver_url" inputs.alert_receiver_url
     |> add_opt "alert_owner" inputs.alert_owner
     |> add_opt "alert_runbook_url" inputs.alert_runbook_url
-    |> add_opt "loki_s3_bucket" outputs.loki_s3_bucket
-    |> add_opt "loki_irsa_role_arn" outputs.loki_irsa_role_arn
-    |> add_opt "thanos_s3_bucket" outputs.thanos_s3_bucket
-    |> add_opt "thanos_irsa_role_arn" outputs.thanos_irsa_role_arn
-    |> add_opt "grafana_irsa_role_arn" outputs.grafana_irsa_role_arn
   in
-  vars
+  let shared =
+    [ "base_domain=" ^ inputs.base_domain
+    ; "letsencrypt_email=" ^ inputs.letsencrypt_email
+    ; "install_postgresql=false"
+    ]
+  in
+  match inputs.outputs with
+  | Aws_outputs outputs ->
+    Ok
+      (optional
+         (shared
+          @ [ "cloud_provider=aws"
+            ; "aws_region=" ^ inputs.region
+            ; "cert_manager_irsa_role_arn=" ^ outputs.cert_manager_irsa_role_arn
+            ; "managed_resource_dashboards="
+              ^ Yojson.Safe.to_string outputs.managed_resource_dashboards
+            ])
+       |> add_opt "loki_s3_bucket" outputs.loki_s3_bucket
+       |> add_opt "loki_irsa_role_arn" outputs.loki_irsa_role_arn
+       |> add_opt "thanos_s3_bucket" outputs.thanos_s3_bucket
+       |> add_opt "thanos_irsa_role_arn" outputs.thanos_irsa_role_arn
+       |> add_opt "grafana_irsa_role_arn" outputs.grafana_irsa_role_arn)
+  | Gcp_outputs outputs ->
+    (* Refused rather than half-wired: the definition's ClusterIssuers are still
+       the Route 53 DNS-01 solver, so a GCP target that expects TLS would get a
+       platform that looks wired for it and cannot issue. `cluster_issuer` is
+       optional, so this is a refusal only when a target actually asks for the
+       capability -- and a target that does not ask for it gets a platform with no
+       issuer rather than an issuer that cannot work. *)
+    (match inputs.cluster_issuer with
+     | Some _ ->
+       Error
+         "this GCP target declares cluster_issuer, but Sol cannot yet wire a certificate \
+          issuer on GCP: the shared platform definition's ClusterIssuers use the Route \
+          53 DNS-01 solver and there is no qualified Cloud DNS solver or scoped Workload \
+          Identity for cert-manager yet. Remove cluster_issuer from the target to \
+          provision the platform without public TLS, or qualify the GCP issuer path \
+          first"
+     | None ->
+       Ok
+         (optional (shared @ [ "cloud_provider=gcp"; "storage_class_name=standard-rwo" ])
+          |> add_opt "loki_gcs_bucket" outputs.loki_gcs_bucket
+          |> add_opt
+               "loki_workload_identity_sa_email"
+               outputs.loki_workload_identity_sa_email
+          |> add_opt "thanos_gcs_bucket" outputs.thanos_gcs_bucket
+          |> add_opt
+               "thanos_workload_identity_sa_email"
+               outputs.thanos_workload_identity_sa_email))
 ;;
 
 type plan_phase =
@@ -783,14 +896,29 @@ let ready_policy_applies phase = policy_of_phase phase = Production
 (* The desired-state overrides a phase imposes. Callers append these AFTER their
    own variables so the phase policy wins. [Destroy] deliberately contradicts the
    Production invariant for RDS deletion protection. *)
-let policy_vars ~phase ~destroy_snapshot_id =
+(* The Destroy policy is provider-shaped, because the levers are: AWS lifts RDS
+   deletion protection and names the final snapshot it will take, while GCP's Cloud
+   SQL equivalents are attributes of a different provider's resources and are not
+   implemented yet (the inventory's gap 4). What is provider-neutral is that a
+   Destroy policy exists, that the phase names it, and that it is what decides
+   whether a target can reach [Absent].
+
+   This is not a cosmetic split. `-var` for a variable a root does not declare is
+   an error, not a no-op, so handing the GCP cloud root AWS's three would fail the
+   first GCP destroy with "Value for undeclared variable" instead of lifting
+   anything -- the failure would arrive as a destroy that cannot start. So GCP gets
+   an empty policy *and* a named gap rather than AWS's levers. *)
+let policy_vars ~provider ~phase ~destroy_snapshot_id =
   match policy_of_phase phase with
   | Bootstrap | Installation | Production -> []
   | Destroy ->
-    [ "rds_deletion_protection", "false"
-    ; "rds_skip_final_snapshot", "false"
-    ; "rds_final_snapshot_identifier", destroy_snapshot_id
-    ]
+    (match provider with
+     | Sol_cli_provider.Aws ->
+       [ "rds_deletion_protection", "false"
+       ; "rds_skip_final_snapshot", "false"
+       ; "rds_final_snapshot_identifier", destroy_snapshot_id
+       ]
+     | Sol_cli_provider.Gcp -> [])
 ;;
 
 (* The operator-facing name of a phase (ADR 0003's own spelling). Kept here so a

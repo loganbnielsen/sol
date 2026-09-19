@@ -2,6 +2,23 @@ output "cluster_name" {
   value = google_container_cluster.main.name
 }
 
+# The project and region are part of Sol's GCP output contract rather than
+# incidental context: every GCP API is addressed through the project, and the
+# cluster credential Sol establishes for the platform phase is derived from all
+# three (`gcloud container clusters get-credentials <name> --region <region>
+# --project <project>`). An AWS root names a role ARN here instead, because that
+# is how a caller assumes the provisioner there; the two providers publish
+# different facts, not the same facts under different names.
+output "project_id" {
+  description = "GCP project the target was provisioned into; addresses every API call and the cluster credential."
+  value       = var.project_id
+}
+
+output "region" {
+  description = "GCP region the target's regional resources were placed in."
+  value       = var.region
+}
+
 output "kubeconfig_command" {
   description = "Command to update local kubeconfig"
   value       = "gcloud container clusters get-credentials ${google_container_cluster.main.name} --region ${var.region} --project ${var.project_id}"

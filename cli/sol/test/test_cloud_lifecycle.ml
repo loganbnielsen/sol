@@ -110,6 +110,151 @@ let test_outputs_absent_optional () =
     (Result.is_error (parse without_required))
 ;;
 
+(* GCP's cloud root publishes a different set of facts -- a project and a region
+   rather than a role ARN -- so it has its own type, its own parser, and its own
+   required/optional split. The optional half matters for the same reason as AWS's:
+   Terraform omits a null output entirely, so a target without durable
+   observability has no `loki_*`/`thanos_*` keys at all. *)
+let valid_gcp_outputs () =
+  `Assoc
+    [ output "cluster_name" ~value:(`String "sol-qual")
+    ; output "project_id" ~value:(`String "sol-qualification")
+    ; output "region" ~value:(`String "us-central1")
+    ; output
+        "artifact_registry"
+        ~value:(`String "us-central1-docker.pkg.dev/sol-qualification/sol-qual")
+    ; output "loki_gcs_bucket" ~value:`Null
+    ; output "thanos_gcs_bucket" ~value:`Null
+    ; output "loki_workload_identity_sa_email" ~value:`Null
+    ; output "thanos_workload_identity_sa_email" ~value:`Null
+    ]
+;;
+
+let parse_gcp json = L.gcp_outputs_of_json (Yojson.Safe.to_string json)
+
+let without_output name json =
+  match json with
+  | `Assoc fields -> `Assoc (List.remove_assoc name fields)
+  | _ -> assert false
+;;
+
+let test_gcp_outputs () =
+  (match parse_gcp (valid_gcp_outputs ()) with
+   | Ok outputs ->
+     Alcotest.(check string) "cluster" "sol-qual" outputs.L.cluster_name;
+     Alcotest.(check string) "project" "sol-qualification" outputs.L.project_id;
+     Alcotest.(check string) "region" "us-central1" outputs.L.region;
+     Alcotest.(check (option string)) "no loki bucket" None outputs.loki_gcs_bucket
+   | Error message -> Alcotest.fail message);
+  (* The project and region are contract, not incidental context: every GCP API
+     call and the cluster credential are addressed through them. A GCP root that
+     stopped publishing one must fail the lifecycle rather than leave Sol
+     guessing which project it is about to wire the platform into. *)
+  List.iter
+    (fun name ->
+       Alcotest.(check bool)
+         (name ^ " is required")
+         true
+         (Result.is_error (parse_gcp (without_output name (valid_gcp_outputs ())))))
+    [ "cluster_name"; "project_id"; "region"; "artifact_registry" ];
+  List.iter
+    (fun name ->
+       match parse_gcp (without_output name (valid_gcp_outputs ())) with
+       | Ok _ -> ()
+       | Error message -> Alcotest.fail ("absent optional " ^ name ^ ": " ^ message))
+    [ "loki_gcs_bucket"
+    ; "thanos_gcs_bucket"
+    ; "loki_workload_identity_sa_email"
+    ; "thanos_workload_identity_sa_email"
+    ]
+;;
+
+(* The platform definition's variables are the *provider's*: passing AWS's set to a
+   GCP root is an undeclared-variable error, and vice versa. So the mapping emits
+   only the provider's own inputs, and a capability the provider cannot wire yet is
+   refused rather than silently omitted. *)
+let gcp_target () =
+  { target with
+    name = "prod/gcp/us-central1"
+  ; provider = Sol_cli_provider.Gcp
+  ; region = "us-central1"
+  ; state_lock_table = None
+  ; provisioner_role_arn = None
+  ; kube_context =
+      Some "gke_sol-qualification_us-central1_sol"
+      (* The base target names a ClusterIssuer; this one deliberately does not, so
+       the plain case is the case under test. GCP cannot wire an issuer yet, and
+       asking for one is asserted separately. *)
+  ; cluster_issuer = None
+  }
+;;
+
+let test_platform_terraform_vars () =
+  let vars inputs =
+    match L.platform_terraform_vars inputs with
+    | Ok vars -> vars
+    | Error message -> Alcotest.fail message
+  in
+  let has vars entry = List.mem entry vars in
+  let prefixed vars prefix =
+    List.filter (fun entry -> String.starts_with ~prefix entry) vars
+  in
+  let aws_cloud =
+    L.Aws_outputs
+      (Result.get_ok (L.aws_outputs_of_json (Yojson.Safe.to_string (valid_outputs ()))))
+  in
+  let aws_target = Result.get_ok (L.cloud_target target) in
+  let aws_inputs = Result.get_ok (L.platform_inputs aws_target aws_cloud) in
+  let aws = vars aws_inputs in
+  Alcotest.(check bool) "AWS selects its own provider" true (has aws "cloud_provider=aws");
+  Alcotest.(check bool) "AWS passes its region" true (has aws "aws_region=us-east-1");
+  Alcotest.(check bool)
+    "AWS passes the cert-manager role its issuer branch reads"
+    true
+    (has aws "cert_manager_irsa_role_arn=arn:aws:iam::1:role/cert-manager");
+  Alcotest.(check (list string))
+    "AWS passes no GCS inputs to a root that does not declare them"
+    []
+    (prefixed aws "loki_gcs_bucket=" @ prefixed aws "thanos_gcs_bucket=");
+  let gcp = Result.get_ok (L.cloud_target (gcp_target ())) in
+  let gcp_cloud =
+    L.Gcp_outputs
+      (Result.get_ok
+         (L.gcp_outputs_of_json (Yojson.Safe.to_string (valid_gcp_outputs ()))))
+  in
+  let gcp_inputs = Result.get_ok (L.platform_inputs gcp gcp_cloud) in
+  let gcp_vars = vars gcp_inputs in
+  Alcotest.(check bool)
+    "GCP selects its own provider"
+    true
+    (has gcp_vars "cloud_provider=gcp");
+  Alcotest.(check bool)
+    "GCP names the StorageClass it adopts"
+    true
+    (has gcp_vars "storage_class_name=standard-rwo");
+  Alcotest.(check bool)
+    "GCP passes no AWS inputs to a root that does not declare them"
+    true
+    (prefixed gcp_vars "aws_region="
+     @ prefixed gcp_vars "cert_manager_irsa_role_arn="
+     @ prefixed gcp_vars "loki_s3_bucket="
+     @ prefixed gcp_vars "grafana_irsa_role_arn="
+     = []);
+  (* TLS is the capability GCP cannot wire yet, and asking for it must be refused
+     with the gap named rather than quietly omitting the issuer. A target that does
+     not ask for it still gets a usable platform. *)
+  let tls_target = { (gcp_target ()) with cluster_issuer = Some "letsencrypt-prod" } in
+  let tls_cloud = Result.get_ok (L.cloud_target tls_target) in
+  match L.platform_inputs tls_cloud gcp_cloud |> Result.map L.platform_terraform_vars with
+  | Ok (Error message) ->
+    Alcotest.(check bool)
+      "the refusal names the missing solver"
+      true
+      (String.starts_with ~prefix:"this GCP target declares cluster_issuer" message)
+  | Ok (Ok _) -> Alcotest.fail "a GCP target asking for TLS must be refused"
+  | Error message -> Alcotest.fail message
+;;
+
 (* HARDEN-002 run 4, finding 12: the base providers (hashicorp/kubernetes,
    hashicorp/helm) resolve the kubeconfig from KUBE_CONFIG_PATH/KUBE_CONFIG_PATHS,
    not KUBECONFIG. Every name must point at the ephemeral provisioner kubeconfig,
@@ -233,7 +378,12 @@ let test_lifecycle_phases () =
     ; Preparing_destroy
     ; Destroying
     ];
-  let destroy_vars = policy_vars ~phase:Preparing_destroy ~destroy_snapshot_id:"snap-1" in
+  let destroy_vars =
+    policy_vars
+      ~provider:Sol_cli_provider.Aws
+      ~phase:Preparing_destroy
+      ~destroy_snapshot_id:"snap-1"
+  in
   Alcotest.(check (option string))
     "destroy policy disables RDS deletion protection"
     (Some "false")
@@ -246,10 +396,28 @@ let test_lifecycle_phases () =
     "destroy policy is exactly the three destroy vars"
     3
     (List.length destroy_vars);
+  (* The GCP policy is empty *and* documented as a gap, rather than carrying AWS's
+     levers: `-var` for a variable the GCP root does not declare is an error, so
+     inheriting them would have failed the first GCP destroy on an undeclared
+     variable instead of lifting anything. *)
+  Alcotest.(check int)
+    "the GCP destroy policy carries no AWS levers"
+    0
+    (List.length
+       (policy_vars
+          ~provider:Sol_cli_provider.Gcp
+          ~phase:Preparing_destroy
+          ~destroy_snapshot_id:"snap-1"));
   Alcotest.(check int)
     "Ready adds no policy overrides"
     0
-    (List.length (policy_vars ~phase:Ready ~destroy_snapshot_id:"x"));
+    (List.length
+       (policy_vars ~provider:Sol_cli_provider.Aws ~phase:Ready ~destroy_snapshot_id:"x"));
+  Alcotest.(check int)
+    "GCP Ready adds no policy overrides either"
+    0
+    (List.length
+       (policy_vars ~provider:Sol_cli_provider.Gcp ~phase:Ready ~destroy_snapshot_id:"x"));
   (* ADR 0003: the phase is recomputed from observation on every run, never
      persisted and never infrastructure truth. *)
   Alcotest.(check string)
@@ -680,6 +848,11 @@ let () =
             "absent optional AWS outputs"
             `Quick
             test_outputs_absent_optional
+        ; Alcotest.test_case "strict GCP outputs" `Quick test_gcp_outputs
+        ; Alcotest.test_case
+            "provider-shaped platform variables"
+            `Quick
+            test_platform_terraform_vars
         ; Alcotest.test_case "provisioner kubeconfig env" `Quick test_provisioner_kube_env
         ; Alcotest.test_case "lifecycle phases and policy" `Quick test_lifecycle_phases
         ; Alcotest.test_case "separate backends" `Quick test_backends
