@@ -14,7 +14,7 @@ HARDEN-002 runs 3 and 4 exercised the public lifecycle against fresh AWS targets
 and surfaced six defects. Three were ordinary transition/wiring bugs. The other
 three had a single root cause that the earlier design did not model:
 
-- **Finding 13** — the steady-state provisioner could not create the deploy
+- **Finding 13** — the steady-state cluster-access identity could not create the deploy
   identity's `sol-deploy` ClusterRole, because Kubernetes' RBAC
   privilege-escalation check forbids granting permissions the creator does not
   hold.
@@ -63,7 +63,7 @@ Verify
 De-escalate
   |
   v
-Ready                   bounded steady-state provisioner
+Ready                   bounded steady-state cluster-access identity
   |
   +---- platform change requiring privilege ----+
   |                                             v
@@ -104,15 +104,17 @@ The policy of a phase is fixed: `Bootstrap` for `CloudBootstrap`,
    establishment. `PlatformInstalling` keeps the temporary cluster-admin
    association open through the full platform apply **and** verified readiness;
    the association is revoked only at the verified `PlatformInstalling -> Ready`
-   transition, after which the bounded steady-state provisioner is verified
+   transition, after which the bounded steady-state cluster-access identity is verified
    effective. (This supersedes ADR 0002's "only long enough to create the custom
    RBAC".)
-2. **The steady-state provisioner is never privilege-escalatable.** It holds no
-   `escalate`/`bind` verb on `clusterroles`/`clusterrolebindings`. It therefore
-   cannot manufacture a more powerful identity, and it cannot create chart RBAC
-   — which is exactly why invariant 1 exists. A future failing apply must be
-   fixed by using the privileged phase, never by widening the steady-state
-   provisioner.
+2. **The steady-state cluster-access identity is never privilege-escalatable.**
+   It holds no Kubernetes `escalate`/`bind` verb on
+   `clusterroles`/`clusterrolebindings`, and its IAM policy denies EKS
+   access-entry/policy-association and all IAM mutation. The separate
+   cloud-provisioning identity owns those cloud mutations. The cluster-access
+   identity cannot create chart RBAC — which is exactly why invariant 1 exists.
+   A future failing apply must be fixed by using the privileged phase, never by
+   widening the steady-state identity.
 3. **A privileged platform change is an explicit re-entry into `PlatformUpdating`,**
    not an implicit widening of `Ready`. The elevated authority is granted for
    the operation and revoked again after verification.
@@ -186,7 +188,7 @@ Regression coverage asserts the semantics, not just the original bugs:
   profile's `rds_deletion_protection=true`), and that a partially installed
   target -- substrate present, platform never fully installed -- is still
   destructible (invariant 6); and
-- `cli/sol/test/check_production_infra.sh` asserts the steady-state provisioner
+- `cli/sol/test/check_production_infra.sh` asserts the steady-state cluster-access identity
   RBAC still grants no `escalate`/`bind`, preserving invariant 2 structurally.
 
 ## Consequences
@@ -202,9 +204,9 @@ Regression coverage asserts the semantics, not just the original bugs:
 
 ## Alternatives rejected
 
-- **Grant the steady-state provisioner `escalate`/`bind`:** `create` cannot be
+- **Grant the steady-state cluster-access identity `escalate`/`bind`:** `create` cannot be
   scoped by `resourceNames`, so this is an un-scopable escape that would let the
-  steady-state provisioner bind `cluster-admin` to itself — contradicting the
+  steady-state cluster-access identity bind `cluster-admin` to itself — contradicting the
   enforceable negative boundary in ADR 0002.
 - **Fix each finding by reordering `-var`s:** leaves the lifecycle's state
   transitions contradicting one another and produced findings 14 and 15 in

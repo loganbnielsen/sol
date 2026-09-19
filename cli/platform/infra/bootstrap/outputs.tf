@@ -18,6 +18,11 @@ output "provisioner_policy_json" {
   value       = data.aws_iam_policy_document.provisioner.json
 }
 
+output "cluster_access_policy_json" {
+  description = "IAM policy contract for the bounded steady-state cluster-access identity (DEC-034)."
+  value       = data.aws_iam_policy_document.cluster_access.json
+}
+
 output "deploy_policy_json" {
   description = "The generated deploy-identity policy contract (no infrastructure or IAM mutation). Supply the role ARN as `deploy_role_arn`."
   value       = data.aws_iam_policy_document.deploy.json

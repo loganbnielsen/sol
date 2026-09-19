@@ -634,6 +634,7 @@ target:
   state_bucket: acme-tfstate
   state_lock_table: acme-tflock
   provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+  cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
   deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
   operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
   cluster_endpoint_cidr: 203.0.113.0/24
@@ -648,6 +649,10 @@ target:
         "provisioner_role_arn"
         "arn:aws:iam::111122223333:role/sol-provisioner"
         (Option.get target.provisioner_role_arn);
+      check_str
+        "cluster_access_role_arn"
+        "arn:aws:iam::111122223333:role/sol-cluster-access"
+        (Option.get target.cluster_access_role_arn);
       check_str
         "deploy_role_arn"
         "arn:aws:iam::111122223333:role/sol-deploy"
@@ -1343,6 +1348,7 @@ let test_terraform_vars_route_deploy_role_arn () =
       {|
 target:
   provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+  cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
   deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
   operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
   cluster_endpoint_cidr: 203.0.113.0/24
@@ -1361,6 +1367,10 @@ target:
            "provisioner_role_arn is routed"
            (Some "arn:aws:iam::111122223333:role/sol-provisioner")
            (List.assoc_opt "provisioner_role_arn" vars);
+         check_str_opt
+           "cluster_access_role_arn is routed"
+           (Some "arn:aws:iam::111122223333:role/sol-cluster-access")
+           (List.assoc_opt "cluster_access_role_arn" vars);
          check_bool
            "operator_role_arn is not a provider-root variable"
            false

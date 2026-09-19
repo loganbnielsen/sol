@@ -658,6 +658,9 @@ let provisioner_kubeconfig ~region outputs f =
      with [at_exit] as well; it is idempotent. *)
   at_exit cleanup;
   Fun.protect ~finally:cleanup (fun () ->
+    Printf.printf
+      "  cluster access identity: %s\n%!"
+      (Sol_cli_cloud_lifecycle.cluster_access_role_arn outputs);
     (* Finding 12: the base providers resolve the kubeconfig from
        KUBE_CONFIG_PATH/KUBE_CONFIG_PATHS, not KUBECONFIG. *)
     let env = Sol_cli_cloud_lifecycle.provisioner_kube_env path in
@@ -677,7 +680,7 @@ let provisioner_kubeconfig ~region outputs f =
            ; Sol_cli_cloud_lifecycle.cluster_name
                (Sol_cli_cloud_lifecycle.Aws_outputs outputs)
            ; "--role-arn"
-           ; Sol_cli_cloud_lifecycle.provisioner_role_arn outputs
+           ; Sol_cli_cloud_lifecycle.cluster_access_role_arn outputs
            ; "--kubeconfig"
            ; path
            ])

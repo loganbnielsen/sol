@@ -108,8 +108,8 @@ For AWS, `sol cloud apply` performs and logs these idempotent phases:
 7. verify the required cert-manager CRDs are `Established`;
 8. apply the remaining platform substrate with the explicit cloud bindings;
 9. verify target readiness from the live cluster; and
-10. de-escalate to the bounded steady-state provisioner and verify its effective
-    RBAC.
+10. remove bootstrap access and verify the separate bounded steady-state
+    cluster-access identity's effective RBAC and IAM boundary.
 
 Steps 6–9 run under the temporary privileged `PlatformInstalling` authority
 (ADR 0003); it is revoked at step 10.
@@ -144,12 +144,14 @@ Application workspace substrate remains outside this command. Namespaces and
 workspace runtime material are established idempotently by application lifecycle
 commands (`sol deploy` / `sol migrate`); one target may serve many workspaces.
 
-### Provisioning identity
+### Provisioning and cluster-access identities
 
-The existing named provisioner owns both cloud-substrate and cluster-wide
-platform-substrate establishment. The AWS cloud phase explicitly creates its
-EKS access entry and group binding. Apply temporarily associates AWS's managed
-cluster-admin access policy with that named principal for the whole privileged
+Cloud provisioning and steady-state cluster access are separate authority
+domains (DEC-034). The named cloud-provisioning identity owns the AWS substrate
+and the bootstrap EKS access association. A distinct cluster-access identity
+owns the EKS access entry and group binding used by scoped platform paths.
+Apply temporarily associates AWS's managed cluster-admin access policy with the
+cluster-access principal for the whole privileged
 `PlatformInstalling` phase — the full platform apply **and** verified readiness
 — then removes the association and verifies the effective steady-state
 permissions. Installing cluster-wide software that mints RBAC is privileged
@@ -158,19 +160,24 @@ object (ADR 0003 defines the phase contract). Sol creates an isolated ephemeral
 kubeconfig for each platform phase; it never uses cluster-creator admin, the
 namespace-scoped deployer, or an ambient kubeconfig/current context.
 
-The provisioner remains a highly privileged infrastructure identity: authority
+The cloud provisioner remains a highly privileged infrastructure identity: authority
 over CRDs, controllers and admission-related cluster resources can indirectly
 affect workloads. The enforceable negative boundary is narrower. Its direct
-Kubernetes permissions are limited to resources and verbs required by the
+Kubernetes permissions are not used in steady state. The cluster-access
+identity's direct Kubernetes permissions are limited to resources and verbs required by the
 supported platform lifecycle in platform namespaces and exclude ordinary
 application Deployments, Services, Jobs and Secrets outside those namespaces.
-No claim is made that it is equivalent to a low-privilege workload identity.
+Its IAM policy allows EKS discovery/credential retrieval but denies access-entry,
+policy-association, and all IAM mutation, so it cannot recreate the temporary
+installation grant. No claim is made that either identity is equivalent to a
+low-privilege workload identity.
 
-No fifth platform-installer identity is added. The security domains remain:
+The security domains are:
 
 | Identity | May | Must not |
 | --- | --- | --- |
-| provisioner | reconcile cloud and platform substrate | publish images or directly mutate ordinary application resources outside platform namespaces |
+| cloud provisioner | reconcile cloud substrate and bootstrap access | act as steady-state Kubernetes access or publish images |
+| cluster access | reconcile scoped platform substrate through Kubernetes RBAC | mutate EKS access entries/policy associations, mutate IAM, or directly mutate ordinary application resources outside platform namespaces |
 | publisher | publish/replace application images | provision substrate or deploy workloads |
 | deployer | deploy immutable application artifacts | provision substrate or publish/replace images |
 | operator | perform explicitly declared operational actions | provision, publish or deploy beyond those actions |

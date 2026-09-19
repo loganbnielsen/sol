@@ -128,6 +128,34 @@ data "aws_iam_policy_document" "provisioner" {
   }
 }
 
+# DEC-034 / INFRA-046: cloud provisioning and steady-state cluster access are
+# separate identities. This policy permits only discovery and credential
+# retrieval for the EKS cluster. Kubernetes RBAC supplies the scoped platform
+# authorization; explicit denies ensure this identity cannot create or mutate
+# its own EKS access entry/policy association or any IAM identity.
+data "aws_iam_policy_document" "cluster_access" {
+  statement {
+    sid       = "DiscoverCluster"
+    effect    = "Allow"
+    actions   = ["eks:DescribeCluster", "eks:ListClusters"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "NoAccessOrIdentityMutation"
+    effect = "Deny"
+    actions = [
+      "eks:CreateAccessEntry",
+      "eks:DeleteAccessEntry",
+      "eks:UpdateAccessEntry",
+      "eks:AssociateAccessPolicy",
+      "eks:DisassociateAccessPolicy",
+      "iam:*",
+    ]
+    resources = ["*"]
+  }
+}
+
 data "aws_iam_policy_document" "deploy" {
   statement {
     sid       = "LocateTheCluster"

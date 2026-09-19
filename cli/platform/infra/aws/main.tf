@@ -151,9 +151,9 @@ module "eks" {
   enable_cluster_creator_admin_permissions = var.enable_cluster_creator_admin
 
   access_entries = merge(
-    var.provisioner_role_arn == "" ? {} : {
-      platform_provisioner = {
-        principal_arn     = var.provisioner_role_arn
+    var.cluster_access_role_arn == "" ? {} : {
+      platform_cluster_access = {
+        principal_arn     = var.cluster_access_role_arn
         kubernetes_groups = ["sol:platform-provisioners"]
         policy_associations = var.provisioner_bootstrap_admin ? {
           bootstrap = {
