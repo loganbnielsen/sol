@@ -270,6 +270,15 @@ jobs:
       - name: Readiness-probe invocation guard mutation test (INFRA-035)
         run: internal/ci/test_readiness_invocations_check.sh
 
+      # ADR 0004: normal lifecycle activity must never make a target undeletable.
+      # The mutation test runs first because the guard's whole value is that it
+      # can fail; the guard then checks this tree.
+      - name: Destroy-completeness guard mutation test (INFRA-037)
+        run: internal/ci/test_destroy_completeness_check.sh
+
+      - name: Destroy-completeness guard (INFRA-037)
+        run: internal/ci/check_destroy_completeness.sh .
+
   # FRIC-009: smallest check that would have caught a regression like
   # FRIC-007 (every generated service permanently broken on a fresh
   # substrate) — nothing above exercises the golden path against live
