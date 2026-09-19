@@ -3,7 +3,7 @@
 - **Classification:** `OBSERVATION`
 - **State:** `OPEN` (AWS storage/prereqs qualified; GCP storage and plugin preflight mechanism-only)
 - **First identified:** 2026-09-19 (this pass; consolidates known evidence)
-- **Last verified:** 2026-09-19, `main @ 7ea2ef43`
+- **Last verified:** 2026-09-19, `main @ 910a59f1`
 - **Providers:** AWS and GCP
 - **Derived ticket:** none
 - **Related invariant:** `INV-SUBSTRATE-1`, `INV-SUBSTRATE-2`, `INV-PREREQ-1`

@@ -3,7 +3,7 @@
 - **Classification:** `DESIGN_GAP`
 - **State:** `OPEN` (decision required: narrow the provisioner role, or split the cloud-provisioning identity from the steady-state cluster-access identity)
 - **First identified:** 2026-09-19 (authority audit, this pass)
-- **Last verified:** 2026-09-19, `main @ 7ea2ef43`
+- **Last verified:** 2026-09-19, `main @ 910a59f1`
 - **Provider:** AWS / EKS
 - **Derived ticket:** none — see "Why no ticket"
 - **Related invariant:** `INV-AUTH-4`, `INV-AUTH-5`

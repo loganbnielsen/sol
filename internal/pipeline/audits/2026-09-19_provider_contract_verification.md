@@ -11,7 +11,7 @@ Sol implementation and the existing HARDEN evidence; then classify. The
 static/mechanism/behavioural separation used by `production-single-region-v1-matrix.md`
 is preserved throughout — nothing here is promoted to behavioural evidence.
 
-**Result.** One new, verified, actionable Sol defect (filed as **INFRA-043**). Ten of
+**Result.** One new, verified, actionable Sol defect (filed as **INFRA-045**). Ten of
 the fifteen claims are confirmed and already satisfied by Sol — two of those (C2, D2)
 had the wrong cited page but are true, with the correct source supplied. One claim
 (E2) is corrected in substance. One claim (B2) is refuted by its own cited sources and
@@ -33,7 +33,7 @@ which is the same text the registry renders.
 | A1 | `aws-auth` ConfigMap deprecated; use CAM / access entries | AWS CAM best practices | **Confirmed** | access entries via `terraform-aws-modules/eks` | Addressed; observation only |
 | A2 | EKS creator gets admin; disable bootstrap creator admin | `aws_eks_cluster` | **Confirmed** | `enable_cluster_creator_admin = false` default | Addressed (HARDEN live) |
 | B1 | GCP impersonation needs `serviceAccountTokenCreator` | GCP SA overview | **Confirmed** | `provisioner_impersonators` on one SA | Addressed |
-| B2 | `roles/container.developer` cannot authorize workloads | GKE auth / RBAC docs | **Refuted** | project-level `container.developer` on provisioner | **DEFECT → INFRA-043** |
+| B2 | `roles/container.developer` cannot authorize workloads | GKE auth / RBAC docs | **Refuted** | project-level `container.developer` on provisioner | **DEFECT → INFRA-045** |
 | C1 | `aws eks update-kubeconfig` merge/exec semantics | AWS CLI reference | **Confirmed** | ephemeral `--kubeconfig` + `KUBE_CONFIG_*` | Addressed |
 | C2 | GKE 1.26+ requires `gke-gcloud-auth-plugin` | cluster-access doc (not the cited page) | **Confirmed**, citation corrected | `require_gcp_platform_toolchain` | Addressed (HARDEN live) |
 | D1 | RDS destroy needs `skip_final_snapshot` or snapshot id | `aws_db_instance` / `rds_cluster` | **Confirmed** | separate `rds_skip_final_snapshot` / id | Addressed (finding 9) |
@@ -146,7 +146,7 @@ reflect GKE's IAM authorizer in `SubjectAccessReview`; the qualifier must confir
 instrument actually observes the IAM path before trusting a negative. This is exactly
 what HARDEN-003 requires qualification evidence to be able to falsify.
 
-**Filed as INFRA-043** (static/mechanism evidence + verified provider contract; the
+**Filed as INFRA-045** (static/mechanism evidence + verified provider contract; the
 live both-ways IAM-path demonstration remains the behavioural qualifier). The adjacent stale comment in
 `cli/sol/bin/cmd_cloud_tf.ml:695-701` (still describing the GCP caller as the target's
 Owner identity, while the code at `:755-756` already impersonates the provisioner
@@ -324,7 +324,7 @@ models them separately, which is why the two rows in §1 are not one finding.
 
 **Verified Sol defect → ticket**
 
-- **INFRA-043** — GCP provisioner's project-level `roles/container.developer` confers
+- **INFRA-045** — GCP provisioner's project-level `roles/container.developer` confers
   Kubernetes API authority, so the RBAC-only boundary the code and the qualification
   inventory claim is not real. (Static evidence + verified provider contract; the live
   both-ways IAM-path demonstration is the qualifier.)
@@ -345,7 +345,7 @@ lifecycle code.
 
 **Refuted claim (the defect itself)**
 
-- B2 — the cited sources contradict it; it is the basis of INFRA-043.
+- B2 — the cited sources contradict it; it is the basis of INFRA-045.
 
 **Already-recorded gaps (no duplicate ticket)**
 
@@ -354,7 +354,7 @@ lifecycle code.
 
 **Qualification gaps to record in the matrix / inventory, not tickets**
 
-- The GCP provisioner's live IAM-path boundary demonstration (make INFRA-043's claim
+- The GCP provisioner's live IAM-path boundary demonstration (make INFRA-045's claim
   falsifiable) — belongs to the GCP lifecycle qualification.
 - The service-networking ABANDON upper bound (GCP Attempt 3 qualified one observation).
 - Finalizer/partial-install timeout and recovery under Terraform orchestration (H1).
@@ -394,14 +394,14 @@ conclusions were carried into the audit structure on 2026-09-19:
 
 | Conclusion | Durable artifact |
 |---|---|
-| GCP provisioner IAM grants Kubernetes authority | `findings/FND-0001-...md` → ticket `INFRA-043` |
-| AWS provisioner can re-grant cluster-admin via the EKS API (found in the follow-up authority audit) | `findings/FND-0002-...md` (no ticket; needs a decision) |
+| GCP provisioner IAM grants Kubernetes authority | `findings/FND-0001-...md` → ticket `INFRA-045` (`OPEN`) |
+| AWS provisioner can re-grant cluster-admin via the EKS API (found in the follow-up authority audit) | `findings/FND-0002-...md` (`DESIGN_GAP`; no ticket — needs a decision) |
 | Authority/absence effective-capability qualification | `findings/FND-0003-...md` |
-| GCP partial-install destruction | `findings/FND-0004-...md` → ticket `INFRA-042` |
-| Service-networking ABANDON documented-vs-observed | `findings/FND-0005-...md` |
-| Retention live postcondition | `findings/FND-0006-...md` → ticket `INFRA-041` |
-| GCP Cloud DNS / cert-manager capability gap | `findings/FND-0007-...md` |
-| AWS application deploy blocked | `findings/FND-0008-...md` → ticket `INFRA-040` |
+| GCP partial-install destruction | `findings/FND-0004-...md` → ticket `INFRA-042` (DONE; `FIXED_UNQUALIFIED`) |
+| Service-networking ABANDON documented-vs-observed | `findings/FND-0005-...md` (observed twice, Attempts 3 and 4) |
+| Retention live postcondition | `findings/FND-0006-...md` → ticket `INFRA-041` (DONE; `QUALIFIED` by Run 7) |
+| GCP Cloud DNS / cert-manager capability gap | `findings/FND-0007-...md` (`BLOCKED` on a delegated hostname) |
+| AWS runtime Secret identity | `findings/FND-0008-...md` → ticket `INFRA-040` (READY for its diagnostics item; identity `QUALIFIED` by Run 7) |
 | Provider substrate/prerequisite differences | `findings/FND-0009-...md` |
 
 The provider-neutral properties behind them are in
@@ -409,3 +409,21 @@ The provider-neutral properties behind them are in
 `QUALIFICATION_STATUS.md`. The externally supplied packet that prompted this pass
 is preserved (with provenance) at
 `research/aws-gcp-harden-research_gemini-external.md`.
+
+---
+
+## 6. Reconciliation (2026-09-19, later the same day)
+
+This report was reconciled against `origin/main` after #362/#363/#364 merged and
+after HARDEN Run 7 and GCP Attempt 4. The dated claims and primary-source
+conclusions above are unchanged; the *state* of the findings they produced has
+moved, and one issue id was reassigned:
+
+- Ticket **`INFRA-043` was claimed on `origin/main`** by HARDEN Run 7 for a
+  different defect (the deploy identity cannot create the boundary lease). This
+  report's GCP-IAM ticket is therefore renumbered **`INFRA-045`**.
+- `INFRA-042` is `DONE`. INFRA-041's live retention row and INFRA-040's Secret
+  identity are behaviourally qualified by Run 7. Attempt 4 fixed a GCP
+  absence-recognition defect and exercised the partial-install destroy.
+- Findings now carry two axes (classification + state); the authoritative current
+  values are in each `findings/FND-*.md` header and in `QUALIFICATION_STATUS.md`.

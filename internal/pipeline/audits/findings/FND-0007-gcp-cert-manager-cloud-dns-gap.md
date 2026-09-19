@@ -1,9 +1,11 @@
 # FND-0007 — GCP cert-manager cannot issue: the shared issuers are hard-wired to Route 53
 
 - **Classification:** `QUALIFICATION_GAP`
-- **State:** `OPEN` (known capability gap; product fails closed)
+- **State:** `BLOCKED` (TLS issuance: `sol-qual.dev` is not delegated to the
+  qualification project, so DNS-01 cannot complete; the Cloud DNS solver wiring
+  itself is unimplemented and would otherwise be `OPEN`)
 - **First identified:** 2026-09-18 (`gcp-bootstrap-inventory.md`)
-- **Last verified:** 2026-09-19, `main @ 7ea2ef43`
+- **Last verified:** 2026-09-19, `main @ 910a59f1`
 - **Provider:** GCP / GKE (AWS is fine)
 - **Derived ticket:** none — already tracked as `gcp-bootstrap-inventory.md` remaining gap 1
 - **Related invariant:** `INV-SUBSTRATE-1`, `INV-SUBSTRATE-2`
@@ -42,7 +44,7 @@ solver swap.
 | Tier | Evidence |
 |---|---|
 | STATIC | the Route 53-only solver declarations; the shared definition and `base-gcp` module call; the refusal path |
-| MECHANISM | none for GCP TLS (Attempt 3 never reached platform readiness) |
+| MECHANISM | none for GCP TLS (Attempts 3 and 4 never reached platform readiness) |
 | BEHAVIORAL | AWS Route 53 issuance is exercised by the platform path; GCP issuance has never been attempted, and cannot be as written |
 
 ## What is established
@@ -76,6 +78,18 @@ Implement a Cloud DNS (or operator-selected external DNS) solver with a scoped
 identity; delegate a test hostname; issue a real certificate. Matrix row I14
 explicitly does **not** gate `Ready` on external ACME, so this is a separate
 capability row, not a `Ready` row.
+
+## Reconciliation (2026-09-19)
+
+Attempt 4 confirms both halves and adds a boundary. The platform prerequisites
+apply stopped at `helm_release.cert_manager`'s post-install `startupapicheck`
+Job, which failed (`BackoffLimitExceeded`) while cert-manager itself was healthy
+(three pods `1/1 Running`, six CRDs installed). So the install never reached
+issuance, and the inventory records "TLS issuance remains BLOCKED, not
+qualified". The next boundary (why the startup check fails) is owned by the GCP
+agent and is a platform-install issue, not this finding's subject. Unchanged: no
+Cloud DNS solver exists, and a GCP target declaring `cluster_issuer` is refused
+by name.
 
 ## Supersession
 

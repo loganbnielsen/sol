@@ -20,7 +20,7 @@ Known errors (not corrected here, deliberately — the errors are why independen
 verification exists):
   - GKE `roles/container.developer` is described as conferring no Kubernetes
     authority; GKE documentation says the opposite (IAM is an authorization
-    fallback). This error is the origin of INFRA-043.
+    fallback). This error is the origin of INFRA-045.
   - Service Networking `deletion_policy = "ABANDON"` is described as
     "bypassing VPC deletion locks"; the provider documents that it removes the
     connection from state and *leaves the peering in place*, and offers

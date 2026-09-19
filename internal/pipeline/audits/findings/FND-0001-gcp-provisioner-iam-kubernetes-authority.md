@@ -1,11 +1,11 @@
 # FND-0001 — GCP provisioner IAM role grants Kubernetes API authority
 
 - **Classification:** `VERIFIED_DEFECT`
-- **State:** `OPEN` (INFRA-043 not implemented; the boundary is not qualified)
+- **State:** `OPEN` (INFRA-045 not implemented; the boundary is not qualified)
 - **First identified:** 2026-09-19 (provider-contract verification pass)
-- **Last verified:** 2026-09-19, `main @ 7ea2ef43`
+- **Last verified:** 2026-09-19, `main @ 910a59f1`
 - **Provider:** GCP / GKE
-- **Derived ticket:** **INFRA-043** (`internal/pipeline/tickets/READY_FOR_ENGINEERING/INFRA-043.md`)
+- **Derived ticket:** **INFRA-045** (`internal/pipeline/tickets/READY_FOR_ENGINEERING/INFRA-045.md`)
 - **Related invariant:** `INV-AUTH-2`, `INV-AUTH-4`
 - **Related decisions:** ADR 0002 (identity table), ADR 0003 (invariant 2)
 - **Governing report:** `../2026-09-19_provider_contract_verification.md`
@@ -94,7 +94,7 @@ which is the failure HARDEN-003 exists to prevent.
 
 ## Derived engineering work
 
-- **INFRA-043** (created by this finding): replace the project-level predefined
+- **INFRA-045** (created by this finding): replace the project-level predefined
   role with a custom role limited to cluster discovery/credential retrieval, and
   correct the two claims.
 

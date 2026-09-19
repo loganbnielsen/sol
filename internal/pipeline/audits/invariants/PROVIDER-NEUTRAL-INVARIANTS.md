@@ -1,6 +1,7 @@
 # Provider-neutral Sol invariants
 
-**Derived:** 2026-09-19 · **Last verified:** `main @ 7ea2ef43`
+**Derived:** 2026-09-19 · **Last verified:** `main @ 910a59f1` (reconciled after
+HARDEN Run 7 and GCP Attempt 4)
 **Scope:** the `sol cloud` target lifecycle for the `production-single-region`
 profile. Provider neutrality means *the same semantic property may be realized
 through different provider mechanisms* — it does **not** mean AWS and GCP must
@@ -23,21 +24,21 @@ IDs are stable: `INV-<group>-<n>`. The summary table below uses the short form
 | ID | Property (short) | AWS | GCP |
 |---|---|---|---|
 | AUTH-1 | Target authority is explicit, never ambient | QUALIFIED (behavioral, partial) | MECHANISM |
-| AUTH-2 | Authentication ≠ authorization (reach ≠ in-cluster rights) | HOLDS (static) | **DEFECT** (FND-0001/INFRA-043) |
-| AUTH-3 | Install authority exists only during the transitions requiring it | QUALIFIED (behavioral) | MECHANISM |
+| AUTH-2 | Authentication ≠ authorization (reach ≠ in-cluster rights) | HOLDS (static) | **DEFECT** (FND-0001/INFRA-045) |
+| AUTH-3 | Install authority exists only during the transitions requiring it | QUALIFIED (behavioral) | QUALIFIED (behavioral, Attempt 4; window revoked) |
 | AUTH-4 | Revoking bootstrap revokes the *effective* capability (no surviving path) | **DESIGN GAP** (FND-0002) | **DEFECT** (FND-0001) |
-| AUTH-5 | Steady-state identities hold only intended capabilities | QUALIFIED (partial) | GAP (publisher/deployer contract unimplemented) |
-| DESTROY-1 | Every infra-holding state has a Sol path to `Absent` | QUALIFIED (behavioral) | **DEFECT** (FND-0004/INFRA-042) |
-| DESTROY-2 | Normal activity never makes a target undeletable via the lifecycle | QUALIFIED (behavioral) | MECHANISM |
+| AUTH-5 | Steady-state identities hold only intended capabilities | QUALIFIED (partial) | GAP (publisher/deployer contract unimplemented; install identity exercised, Attempt 4) |
+| DESTROY-1 | Every infra-holding state has a Sol path to `Absent` | QUALIFIED (behavioral) | FIXED_UNQUALIFIED (FND-0004; Attempt 4) |
+| DESTROY-2 | Normal activity never makes a target undeletable via the lifecycle | QUALIFIED (behavioral) | FIXED_UNQUALIFIED (FND-0004; missing-CRD recovery) |
 | DESTROY-3 | Provider resource graph stays provider-owned; Sol sequences roots | QUALIFIED (behavioral, AWS-only lifecycle) | MECHANISM |
-| DESTROY-4 | Terraform success ≠ provider-side absence | QUALIFIED (behavioral) | QUALIFIED (behavioral, once) |
+| DESTROY-4 | Terraform success ≠ provider-side absence | QUALIFIED (behavioral) | QUALIFIED (behavioral, Attempts 3+4) |
 | DESTROY-5 | Emergency cleanup ≠ proof the normal destroy passed | OBSERVATION | OBSERVATION |
-| RET-1 | Retention is explicit; `none` = no surviving billable artifacts | MECHANISM (**behavioral gap**) | BLOCKED (not expressible) |
+| RET-1 | Retention is explicit; `none` = no surviving billable artifacts | QUALIFIED (behavioral, Run 7) | BLOCKED (not expressible) |
 | RET-2 | Protection, retention and preparation are separate | QUALIFIED (AWS route) | MECHANISM |
 | CRED-1 | Credentials resolved per mutation, fail closed before billable work | QUALIFIED (behavioral) | MECHANISM |
 | CRED-2 | Ambient kubeconfig/cloud state never selects target authority | QUALIFIED (behavioral) | MECHANISM |
 | PREREQ-1 | Host toolchain prerequisites fail before billable work | OBSERVATION | MECHANISM |
-| IDENT-1 | Rendered producer/consumer agree on identity and namespace | **DEFECT** (FND-0008/INFRA-040) | not exercised |
+| IDENT-1 | Rendered producer/consumer agree on identity and namespace | QUALIFIED (behavioral, Run 7) | not exercised |
 | EVID-1 | Static / mechanism / behavioural evidence kept distinct | convention (partial) | convention (partial) |
 | EVID-2 | Assertions are demonstrably falsifiable | MECHANISM (partial) | MECHANISM (partial) |
 | EVID-3 | Provider docs establish contracts, not Sol qualification | policy | policy |
@@ -111,7 +112,7 @@ discovery/credential access; Kubernetes RBAC establishes Sol authority".
 | | AWS | GCP |
 |---|---|---|
 | Mechanism | EKS access entry maps the IAM principal to Kubernetes groups; authorization is RBAC. IAM alone grants no in-cluster rights. | GKE authorizes via RBAC **first**, then **IAM as a fallback**: an IAM role carrying `container.*` permissions authorizes Kubernetes API operations. |
-| Verdict | **HOLDS** (static; IAM is not an in-cluster authorizer) | **VIOLATED** — see FND-0001 / INFRA-043 |
+| Verdict | **HOLDS** (static; IAM is not an in-cluster authorizer) | **VIOLATED** — see FND-0001 / INFRA-045 |
 
 **Provider-contract sources.**
 - AWS access entries / policy permissions:
@@ -124,13 +125,13 @@ discovery/credential access; Kubernetes RBAC establishes Sol authority".
   https://cloud.google.com/iam/docs/roles-permissions/container
   ("Provides access to Kubernetes API objects inside clusters.")
 
-**Open findings/tickets.** FND-0001 = INFRA-043. The GCP code comment
+**Open findings/tickets.** FND-0001 = INFRA-045. The GCP code comment
 (`cli/platform/infra/gcp/main.tf:254-255`) and the inventory
 (`gcp-bootstrap-inventory.md:302`) both state the refuted version.
 
 **To move GCP to qualified.** Narrow the provisioner IAM role to
 cluster-discovery/credential retrieval only, then demonstrate a denied workload
-operation with no RBAC policy supplying it (INFRA-043 acceptance criteria).
+operation with no RBAC policy supplying it (INFRA-045 acceptance criteria).
 
 ---
 
@@ -157,16 +158,17 @@ is not a standing grant.
 |---|---|---|
 | STATIC | `access_entries` policy_associations keyed on `var.provisioner_bootstrap_admin` (`aws/main.tf:153-181`) | `kubernetes_cluster_role_binding.provisioner_bootstrap_admin` `count = var.provisioner_bootstrap_admin` (`gcp/main.tf:284-300`) |
 | MECHANISM | association created then removed by the two applies | binding created then removed |
-| BEHAVIORAL | Run 5 Attempt 5 rows I1–I3/I5–I6; the window stayed open through the whole platform apply (finding 14's fix) | Attempt 3 revoked the window on the **failure** path (`provisioner-bootstrap-access-remove` ok in 8.7 s) |
+| BEHAVIORAL | Run 5 Attempt 5 rows I1–I3/I5–I6; the window stayed open through the whole platform apply (finding 14's fix) | Attempt 3 revoked the window on the **failure** path (8.7 s); **Attempt 4** ran the platform stage as the *declared* provisioner for 424.2 s of real in-cluster work, then revoked the window (`provisioner-bootstrap-access-remove`, 8.1 s) |
 
 **HARDEN evidence.** HARDEN-002 Run 5 Attempt 5 (conformant, rows I1–I6); GCP
-inventory Attempt 3. Runs 3/4 found findings 13–15 but their bundles are not in
-the tree and may not be cited as qualification (HARDEN-002 §"What is not
+inventory Attempts 3 and 4. Runs 3/4 found findings 13–15 but their bundles are
+not in the tree and may not be cited as qualification (HARDEN-002 §"What is not
 recorded").
 
 **To move GCP to fully qualified.** A *successful* GCP `PlatformInstalling ->
-Ready` transition (Attempt 3 failed during install, so the success-path
-revocation is not yet observed).
+Ready` transition (Attempts 3 and 4 both failed during install — Attempt 4 at
+`helm_release.cert_manager` — so the success-path revocation, after a *completed*
+platform install, is not yet observed).
 
 ---
 
@@ -179,7 +181,7 @@ capability.
 
 **Rationale.** This is a semantic extension of ADR 0003 invariant 2 ("cannot
 manufacture a more powerful identity"), the matrix I3 boundary, and
-`production-bootstrap.md:128`. It exists because INFRA-043 showed the stated
+`production-bootstrap.md:128`. It exists because INFRA-045 showed the stated
 boundary was true of one mechanism and false of another.
 
 **Realization & status.**
@@ -187,7 +189,7 @@ boundary was true of one mechanism and false of another.
 | | AWS | GCP |
 |---|---|---|
 | Surviving path? | **Yes, latent**: the provisioner IAM policy grants `eks:*` (`bootstrap/main.tf:81`), which includes `eks:AssociateAccessPolicy`; the provisioner can associate `AmazonEKSClusterAdminPolicy` with its own access entry and obtain full cluster admin at will. | **Yes, continuous**: the provisioner service account's project-level `roles/container.developer` authorizes Kubernetes API writes through GKE's IAM fallback, with no Sol action. |
-| Verdict | **`DESIGN_GAP`** — the AWS behaviour is documented and correct; the stated invariant ("cannot manufacture a more powerful identity") and the single-identity design are misaligned, and closing the gap requires a design decision (split cloud-provisioning from steady-state cluster-access identity, or restate the invariant) | **`VERIFIED_DEFECT`** — FND-0001 / INFRA-043 |
+| Verdict | **`DESIGN_GAP`** — the AWS behaviour is documented and correct; the stated invariant ("cannot manufacture a more powerful identity") and the single-identity design are misaligned, and closing the gap requires a design decision (split cloud-provisioning from steady-state cluster-access identity, or restate the invariant) | **`VERIFIED_DEFECT`** — FND-0001 / INFRA-045 |
 
 **Provider-contract sources.**
 - `eks:AssociateAccessPolicy` is the permission required to associate access
@@ -203,12 +205,12 @@ post-closure check (`provisioner_authorization_established`) probes Kubernetes
 `PlatformInstalling -> Ready` row names positive/negative `can-i` but no live
 run has executed the full boundary.
 
-**Open findings/tickets.** FND-0001 (defect → INFRA-043), FND-0002
+**Open findings/tickets.** FND-0001 (defect → INFRA-045), FND-0002
 (`DESIGN_GAP`, no ticket — needs a decision), FND-0003 (effective-capability
 qualification gap).
 
 **To move to qualified.**
-- GCP: narrow the role and demonstrate a denied operation (INFRA-043).
+- GCP: narrow the role and demonstrate a denied operation (INFRA-045).
 - AWS: decide whether the provisioner IAM role may retain access-entry
   management; if yes, restate the invariant in terms of the K8s RBAC layer and
   record the cloud-API capability as accepted residual. If no, split the cloud
@@ -275,17 +277,20 @@ binding), not the destruction semantics.
 |---|---|---|
 | STATIC | `destruction_available` admits every non-`Absent` phase; offline harness asserts a partially-installed target is destructible | same model |
 | MECHANISM | `enter_destruction` + destroy lifecycle | same |
-| BEHAVIORAL | Run 5 Attempt 1 destroyed a target whose platform install failed (finding 16); Run 6 completed a normal destroy | **counterexample**: Attempt 3's platform install failed and `platform-destroy` then failed with "API did not recognize GroupVersionKind (CRD may not be installed)"; cloud removed by the emergency path |
+| BEHAVIORAL | Run 5 Attempt 1 destroyed a target whose platform install failed (finding 16); Run 6 completed a normal destroy | Attempt 3 was the counterexample (platform install failed, `platform-destroy` then failed with "API did not recognize GroupVersionKind (CRD may not be installed)", cloud removed by the emergency path); **Attempt 4** then destroyed a partially-installed platform through the documented lifecycle (`platform-destroy ok`, `terraform-destroy ok`, absence verified, no emergency cleanup) — INFRA-042's scenario live |
 
 **HARDEN evidence.** HARDEN-002 Run 5 Attempt 1 (abort path), Run 6; GCP
-inventory Attempt 3.
+inventory Attempts 3 and 4.
 
-**Open findings/tickets.** FND-0004 = **INFRA-042** (GCP partial install not
-destructible through the lifecycle).
+**Open findings/tickets.** FND-0004 = **INFRA-042** (`DONE`); the fix is
+`FIXED_UNQUALIFIED` — the general partial-install-destructible property is now
+observed live (Attempt 4), but the specific missing-CRD recovery path's live
+exercise is not established.
 
-**To move GCP to qualified.** A GCP run in which a deliberately interrupted
-platform install is destroyed through `sol cloud destroy` alone, with provider
-APIs confirming absence and no emergency-path deletion.
+**To move GCP to qualified.** A GCP run in which a platform state that actually
+references a CRD-backed resource whose CRD is absent is destroyed through
+`sol cloud destroy` alone, with provider APIs confirming absence and no
+emergency-path deletion.
 
 ---
 
@@ -311,13 +316,14 @@ Terraform arguments.
 |---|---|---|
 | STATIC | `aws/main.tf:210` (`force_delete`), `check_destroy_completeness.sh` | `gcp/main.tf` `force_destroy = true`; same guard |
 | MECHANISM | offline harness | offline harness |
-| BEHAVIORAL | Run 5 Attempt 5 (ECR failure → fix), Run 6 destroy completed | Attempt 3 destroy reached network + peering absent (once) |
+| BEHAVIORAL | Run 5 Attempt 5 (ECR failure → fix), Run 6 destroy completed | Attempts 3 and 4 reached provider-side absence; Attempt 4 removed a partially-installed platform (`platform-destroy ok`) with no emergency cleanup |
 
 **HARDEN evidence.** ADR 0004; HARDEN-002 Run 5 Attempt 5 finding 21; Run 6
-teardown.
+teardown; GCP inventory Attempts 3 and 4.
 
-**Open findings/tickets.** None. The ADR 0004 invariant is qualified on AWS and
-partially on GCP.
+**Open findings/tickets.** FND-0004 = **INFRA-042** (`DONE`; `FIXED_UNQUALIFIED`
+for the missing-CRD recovery path specifically). Otherwise qualified on AWS and
+observed on GCP.
 
 ---
 
@@ -364,14 +370,15 @@ Registry/peering address/network/peering list).
 |---|---|---|
 | STATIC | `cmd_cloud_tf.ml:343-395` | `cmd_cloud_tf.ml:409-506` |
 | MECHANISM | describe calls fail closed | gcloud describe/list calls fail closed |
-| BEHAVIORAL | every HARDEN teardown; Run 5 Attempt 5 explicitly recorded that "command completion is not infrastructure truth" (describe still showed resources momentarily) | Attempt 3 verified absence by provider API, not Terraform exit status |
+| BEHAVIORAL | every HARDEN teardown; Run 5 Attempt 5 explicitly recorded that "command completion is not infrastructure truth" (describe still showed resources momentarily) | Attempts 3 and 4 verified absence by provider API, not Terraform exit status; Attempt 4 also exposed and fixed an absence-recognition defect in `verify_gcp_destroy` (gcloud answers `code=404 … Not found:`, not `NOT_FOUND`) |
 
 **Important scope limit (AWS).** `production-bootstrap.md:293-301` records that
 **elastic IPs, NAT gateways and EBS volumes are not automatically checked** and
 remain a manual sweep. This is a real qualification gap in the AWS absence
 claim, not an absence of the invariant.
 
-**Open findings/tickets.** FND-0003 (AWS absence coverage gap: EIP/NAT/EBS).
+**Open findings/tickets.** FND-0003 (AWS absence coverage gap: EIP/NAT/EBS);
+FND-0005 (GCP ABANDON documented-vs-observed).
 
 ---
 
@@ -410,17 +417,17 @@ the Destroy policy reads it; `sol cloud destroy` prints a retention report.
 |---|---|---|
 | STATIC | `policy_vars` + `retention_report`; target parsing carries the field (INFRA-041 fix) | GCP cannot express retention: Cloud SQL deletes backups with the instance, so a target using the `final-snapshot` default is **refused** rather than destroyed |
 | MECHANISM | offline harness asserts **both** modes: `none` prepares without a snapshot identity and `final-snapshot` still fails closed on disagreement | refuse-before-destroy is the mechanism |
-| BEHAVIORAL | **GAP.** No run has yet reached `Absent` under `destroy_retention: none` without a manual deletion. Run 6 declared `none` and still had to delete a snapshot by hand (INFRA-041); Run 5 Attempt 5 declared nothing and deleted the snapshot by hand | N/A (retention inexpressible) |
+| BEHAVIORAL | **QUALIFIED — Run 7 attempt 7.** A target declaring `destroy_retention: none` reached `Absent` with `retention: none … no residual billable artifacts` and zero manual snapshots (independently verified). Run 6 and Run 5 Attempt 5 each required a hand-deleted snapshot | N/A (retention inexpressible) |
 
 **HARDEN evidence.** INFRA-041 resolution (both-ways harness); HARDEN-002 Run 6
-(deviation 4: stray snapshot deleted by hand).
+(deviation 4: stray snapshot deleted by hand) and **Run 7 attempt 7** (qualified
+live, no deviation).
 
-**Open findings/tickets.** FND-0006 = **INFRA-041** (fixed; live postcondition
-still unqualified).
+**Open findings/tickets.** FND-0006 = **INFRA-041** (`DONE`; behaviourally
+qualified by Run 7).
 
-**To move AWS to qualified.** A disposable target declaring
-`destroy_retention: none` reaching `Absent` with the retention report naming
-nothing retained and **no** manual snapshot deletion.
+**To move AWS to qualified.** Done — Run 7. Re-opens only if the retention
+mechanism changes (a new retained-artifact kind, or a new provider).
 
 ---
 
@@ -532,12 +539,20 @@ so no workload could be deployed to an AWS target. `runtime_secret_name` is
 defined once but the creation template appended `-secrets` again.
 
 **Realization.** Provider-neutral (manifest rendering), not a cloud mechanism.
+`runtime_secret_name` and `workload_secret_name` are the single definitions, and
+`internal/ci/check_runtime_secret_identity.sh` / `test_runtime_secret_identity.ml`
+pin the agreement.
 
-**Qualification.** STATIC: the defect is confirmed in code
-(`sol_cli_manifest_yaml.ml`). MECHANISM/BEHAVIORAL: **none** — the fix is not
-implemented (INFRA-040 is open), so a live deploy cannot reach the workloads.
+**Qualification.** STATIC: the fix is present (`sol_cli_manifest_yaml.ml:58,
+144-153`). MECHANISM: the offline identity guard and test. BEHAVIORAL: **Run 7
+attempt 7** — the migration Job that died at start in Attempt 6 started and ran,
+`sol migrate apply` reached `Done.`, and `sol deploy` reported the migration gate
+PASS.
 
-**Open findings/tickets.** FND-0008 = **INFRA-040** (open).
+**Open findings/tickets.** FND-0008 = **INFRA-040** (`READY` only for its separate
+evidence-retention/diagnostics item; the identity property is qualified). The
+remaining deploy blocker is a different, newly-recorded defect — `INFRA-043`
+(deploy identity cannot create the boundary lease).
 
 ---
 

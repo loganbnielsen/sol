@@ -3,7 +3,7 @@
 - **Classification:** `QUALIFICATION_GAP`
 - **State:** `OPEN`
 - **First identified:** 2026-09-19 (authority audit, this pass)
-- **Last verified:** 2026-09-19, `main @ 7ea2ef43`
+- **Last verified:** 2026-09-19, `main @ 910a59f1` (reconciled after Runs 4 and 7)
 - **Providers:** AWS and GCP
 - **Derived ticket:** none
 - **Related invariant:** `INV-AUTH-1`, `INV-AUTH-3`, `INV-AUTH-5`, `INV-DESTROY-4`
@@ -37,10 +37,16 @@ finding records the *qualification* state; it is not a defect claim.
     is inferred from the code path rather than recorded with the evidence
     (HARDEN-003); the ability of the probe to fail has not itself been
     demonstrated against a deliberately re-opened window.
-- **GCP.** No live run has executed the positive/negative boundary at all. The
-  inventory's `PlatformInstalling -> Ready` acceptance row names it, and
-  Attempt 3 failed during install, so the intended steady-state probe is
-  unexercised.
+- **GCP.** **Attempt 4 advanced this materially**: the platform stage ran as the
+  *declared* GCP provisioner for 424.2s of real in-cluster work (namespaces,
+  CRDs, RBAC) via impersonation, and the install window was then revoked
+  (`provisioner-bootstrap-access-remove`, 8.1s). So the open/close pair is now
+  observed on a run that actually did platform work, not only on a failed install
+  (Attempt 3). What is still *not* established: the **post-closure**
+  positive/negative boundary. Attempt 4 stopped at `helm_release.cert_manager`'s
+  post-install check, so it never reached the intended steady-state probe, and no
+  run has demonstrated that a bootstrap-only operation is denied after the window
+  closes.
 
 **What would qualify it.** A run that, after closure and with the target's own
 scoped credential, (a) records each probe's raw output and the identity it ran
@@ -60,13 +66,27 @@ four identities" to finding 6. Today the evidence is:
   account (HARDEN-002 explicitly leaves this "open for Run 5").
 - The operator identity's read-only contract is unqualified.
 
-### 3. Absence coverage (AWS) — matrix row H6 / `verify_aws_destroy`
+Run 7 added a live data point in the opposite direction: the **deploy identity
+was refused** an operation it should have been allowed —
+`configmaps "sol-boundary-lease-…" is forbidden` (`INFRA-043` on `origin/main`).
+A refusal is evidence the identity is bounded, but it is a *missing grant*, not a
+demonstration that the intended grants are complete.
 
-`production-bootstrap.md:293-301` records that `verify_aws_destroy` covers EKS,
-RDS, ECR and load balancers, while **elastic IPs, NAT gateways and EBS volumes
-are only manually swept**. Every AWS run's "cost-clean" claim therefore rests
-partly on an operator sweep, not on the verifier. The `destroy_retention` work
-(DEC-033/INFRA-041) narrowed the snapshot half of this, not the EIP/NAT/EBS half.
+### 3. Absence coverage — matrix row H6
+
+- **AWS.** `production-bootstrap.md:293-301` records that `verify_aws_destroy`
+  covers EKS, RDS, ECR and load balancers, while **elastic IPs, NAT gateways and
+  EBS volumes are only manually swept**. Every AWS run's "cost-clean" claim
+  therefore rests partly on an operator sweep, not on the verifier. Run 7's
+  independent verification did sweep EIP/LB/EBS/VPC/ECR and found none, but that
+  is the harness's check, not `verify_aws_destroy`'s — the code gap is unchanged.
+- **GCP.** Attempt 4 found a defect in the opposite direction: `verify_gcp_destroy`
+  recognised `NOT_FOUND`/`was not found` while gcloud answers `code=404 … Not
+  found:` and `HTTPError 404: … does not exist`, so a destroy that had removed
+  everything was reported as a failure. That is fixed (#363), with the harness
+  stub corrected to gcloud's real wording and mutation-tested. It is recorded
+  here because it shows the same theme: absence verification is where a
+  qualification instrument is most likely to be silently wrong.
 
 ## What is established
 
@@ -89,6 +109,13 @@ unqualified so no reader mistakes them for passed.
 
 None directly. The matrix already names these rows; the work is to run them and
 retain the evidence. FND-0002 may add a probe once the AWS decision is made.
+
+## Reconciliation (2026-09-19)
+
+Rebased onto `origin/main` and re-read against Runs 4 and 7: GCP install-window
+authority strengthened (Attempt 4); GCP absence-recognition defect found and
+fixed (#363); AWS absence-verifier coverage gap unchanged. No state change — the
+post-closure boundary and the four-identity rows remain open on both providers.
 
 ## Supersession
 
