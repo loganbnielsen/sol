@@ -1,0 +1,144 @@
+# Sol audit & qualification area
+
+This directory is Sol's **qualification ledger and independent audit function**.
+It records, separately, four things that are easy to conflate:
+
+1. **what Sol claims** (architecture, ADRs/DECs, profile contract);
+2. **what the providers actually document** (AWS, GCP, Kubernetes, Terraform,
+   cert-manager);
+3. **what the current implementation does** (read from `main`, not from commit
+   messages);
+4. **what live HARDEN runs have behaviourally established** — and what they have
+   not.
+
+Its job is accuracy, not ticket production. An audit that finds nothing is a
+valid result; an audit that invents a defect to look productive is not.
+
+## Layout
+
+```
+internal/pipeline/audits/
+  README.md                      this file — structure, conventions, vocabulary
+  QUALIFICATION_STATUS.md        the compact "what does Sol currently know?" index
+  research/                      externally produced source material (not authority)
+  findings/                      durable statements about implementation/qualification state
+  invariants/                    provider-neutral properties Sol intends to guarantee
+  <YYYY-MM-DD>_*.md              dated audit / reconciliation reports (existing convention)
+```
+
+Dated reports stay directly in `internal/pipeline/audits/` because that is the
+repository's established convention (`docs/audits/AUDIT.md`, the `/audit` skill,
+and ADR 0001 all reference them by that path). Historical reports are **not**
+moved into a `reports/` subdirectory, because moving 35+ files would be churn
+with no semantic gain and would break the existing references. New durable
+artifacts (findings, invariants, research) get subdirectories because they are
+referenced by stable ID rather than by date.
+
+## The four artifact types
+
+### 1. Research / source material — `research/`
+
+Externally produced or preliminary research. It may be wrong. It is an *index
+into primary sources*, never authority. Every file here carries a provenance
+header stating that it is unverified and pointing at the report that supersedes
+it. Do not silently correct a research packet; its errors are why independent
+verification exists.
+
+### 2. Verification reports — dated `*.md` in this directory
+
+One pass of audit work reconciling `primary source → provider contract → Sol
+implementation → HARDEN evidence → classification`. Reports are dated and
+historical: a later report supersedes an earlier one for *current* conclusions
+but does not erase it. The governing report for the 2026-09-19 provider-contract
+packet is:
+
+- `2026-09-19_provider_contract_verification.md`
+
+### 3. Findings — `findings/FND-NNNN-*.md`
+
+A **durable statement about Sol's implementation or qualification state**. A
+finding does *not* imply a defect and does *not* imply a ticket. Findings are
+the general storage mechanism; tickets are not.
+
+Each finding records, where applicable: title; status/classification; date
+first identified; date/revision last verified; provider(s); the Sol claim or
+invariant at stake; the verified provider contract with primary-source URLs and
+short exact excerpts; current implementation evidence with paths/line locations;
+HARDEN behavioural evidence; the static / mechanism / behavioural evidence
+available; what **is** established; what is **not** established; impact; derived
+engineering work (ticket IDs) if any; related ADRs/DECs/tickets/runs; and
+supersession/resolution history. A historical finding is not deleted when its
+defect is fixed — its status and evidence are updated and the history kept.
+
+ID allocation: `FND-NNNN`, monotonic across the directory. Search all of
+`findings/` for an existing finding before creating one.
+
+### 4. Engineering tickets — `internal/pipeline/tickets/`
+
+Actionable engineering work only. Ticket policy is deliberately strict:
+
+Create a ticket **only** when all of the following hold:
+
+1. a provider contract or Sol invariant has been independently established;
+2. the current Sol implementation has been inspected;
+3. there is a concrete implementation defect or missing required safeguard;
+4. the finding is actionable in code/configuration;
+5. no equivalent ticket already exists.
+
+Do **not** create a ticket because provider behaviour is undocumented, because
+something is not yet behaviourally qualified, because an assumption needs a live
+test, because two providers differ, because a source is ambiguous, because a
+HARDEN acceptance criterion is unexercised, or because an improvement might be
+useful. Those are findings/invariants/qualification status. Every new ticket
+must name the finding that backs it, and every finding with derived work names
+the ticket.
+
+## Shared vocabulary
+
+### Status / classification
+
+| Status | Meaning |
+|---|---|
+| `VERIFIED_DEFECT` | A provider contract or Sol invariant is established, the implementation inspected, and a concrete defect/missing safeguard exists. |
+| `QUALIFICATION_GAP` | The property is not yet behaviourally established. Not necessarily a defect. |
+| `DOCUMENTATION_GAP` | The code/docs claim something the verified contract does not support (claim too broad, wrong scope, stale). |
+| `BLOCKED` | Cannot be qualified until an external input exists (e.g. a real alert receiver, a delegated DNS zone). |
+| `QUALIFIED` | Behaviourally established, with the run/attempt and evidence named. |
+| `OBSERVATION` | Recorded because it matters to future readers, with no defect and no open qualification row. |
+| `SUPERSEDED` | An earlier conclusion replaced by later verified evidence; retained for history. |
+
+### Evidence taxonomy
+
+Use these three words precisely and never promote one into another:
+
+| Tier | Meaning | Examples |
+|---|---|---|
+| `STATIC` | Source/configuration/rendering/unit/structural evidence. | Terraform contains the intended grant; a rendered Secret name matches its reference; a parser propagates a retention field. |
+| `MECHANISM` | The intended mechanism executes or changes state. | A bootstrap binding is removed; impersonation succeeds; deletion protection is lifted. |
+| `BEHAVIORAL` | The externally meaningful property is demonstrated. | After closure, a bootstrap-only operation is denied; a required steady-state operation still succeeds; provider APIs report the target absent; a real DNS-01 certificate is issued. |
+
+A successful `terraform apply` is never behavioural evidence of provider-side
+absence, and a green offline harness is never behavioural evidence of a live
+property. A `kubectl auth can-i` result is behavioural *only if* the identity
+performing it and the authorizer it exercises have themselves been established
+(HARDEN-003).
+
+### Historical evidence discipline
+
+Every behavioural claim should name, where available: provider; HARDEN
+run/attempt; target; executed code revision; profile/config; observed result;
+cleanup deviations; and whether normal lifecycle or emergency cleanup produced
+the final state. If a historical record does not establish one of these, the
+finding says so rather than filling it in. Later code on `main` does not change
+what an earlier run actually executed.
+
+## Primary-source policy
+
+For provider-contract claims, use primary sources (AWS, Google Cloud,
+Kubernetes, HashiCorp/provider, cert-manager, official CLI docs) and include
+direct URLs. Verify the cited page actually supports the claim; a citation is
+not evidence. Preserve short exact excerpts; distinguish documented guarantees
+from documented behaviour/configuration requirements; mark ambiguity explicitly.
+When a Terraform Registry page is a JavaScript shell, read the generated
+Markdown in the provider's own repository — it is the same text the registry
+renders.

@@ -7,6 +7,8 @@ source: HARDEN Run 6 / Attempt 6 — every migration fails at container start, s
   workload can be deployed to a cloud target
 ---
 
+**Audit finding:** `internal/pipeline/audits/findings/FND-0008-aws-application-deploy-blocked.md`.
+
 **Related:** HARDEN-002 / the Run 6 record (evidence bundle
 `~/.sol/harden-run6-attempt6/`), ADR 0002, `sol_cli_manifest_yaml`,
 `sol_cli_substrate`.
