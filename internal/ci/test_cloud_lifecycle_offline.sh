@@ -199,6 +199,14 @@ if [ "${FAIL_ON:-}" = rbac ] && [ ! -e "$FAIL_MARKER_DIR/rbac" ] &&
    case "$*" in "auth can-i create namespaces") true;; *) false;; esac; then
   : >"$FAIL_MARKER_DIR/rbac"; exit 20
 fi
+# INFRA-034: readiness is a converging condition, so a single failed sample is
+# now waited out rather than fatal. This models the other half of that behaviour:
+# a platform that NEVER converges, which must still fail the install (and must
+# fail within the bounded deadline rather than waiting forever).
+if [ "${FAIL_READINESS_ALWAYS:-}" = 1 ] &&
+   case "$*" in *"csidriver/ebs.csi.aws.com"*) true;; *) false;; esac; then
+  exit 20
+fi
 case "$*" in
   "auth can-i "*" -n default") exit 1 ;;
   "auth can-i bind "*|"auth can-i escalate "*) exit 1 ;;
@@ -230,7 +238,12 @@ run_destroy() {
     >"$1.out" 2>&1
 }
 
-for phase in cloud outputs cloud-verify access platform-init prerequisites crds deescalate rbac platform readiness; do
+# INFRA-034: `readiness` is deliberately NOT in this list. It is a converging
+# condition, not a step that either passes or fails, so a single unmet sample must
+# be waited out rather than failing the install. The two scenarios below assert
+# both ends of that: a transient unmet sample is survived, and a platform that
+# never converges still fails.
+for phase in cloud outputs cloud-verify access platform-init prerequisites crds deescalate rbac platform; do
   rm -f "$tmp/markers/$phase"
   log="$tmp/$phase.log"
   if (export FAIL_ON="$phase"; run_apply "$log"); then
@@ -244,6 +257,40 @@ for phase in cloud outputs cloud-verify access platform-init prerequisites crds 
     exit 1
   fi
 done
+
+# INFRA-034: a transient unmet readiness sample must be waited out, not fatal. This
+# is the defect a real target hit: every component is still starting the moment the
+# platform apply returns, so a one-shot check failed a healthy install.
+rm -f "$tmp/markers/readiness"
+log="$tmp/readiness-transient.log"
+if ! (export FAIL_ON=readiness; run_apply "$log"); then
+  cat "$log.out" >&2
+  echo "a transient unmet readiness sample failed the install instead of being waited out" >&2
+  exit 1
+fi
+grep -F 'awaiting platform readiness' "$log.out" >/dev/null || {
+  echo "an unmet readiness sample was not reported while waiting:" >&2
+  cat "$log.out" >&2
+  exit 1
+}
+grep -F 'lifecycle phase: Ready' "$log.out" >/dev/null || {
+  echo "the install did not reach Ready after a transient unmet readiness sample:" >&2
+  cat "$log.out" >&2
+  exit 1
+}
+
+# ...and the other end: a platform that never converges must still fail closed,
+# within the bounded deadline (which is overridable so this stays fast).
+log="$tmp/readiness-persistent.log"
+if (export FAIL_READINESS_ALWAYS=1 SOL_PLATFORM_READINESS_TIMEOUT_S=0; run_apply "$log"); then
+  echo "cloud apply succeeded although the platform never became ready" >&2
+  exit 1
+fi
+grep -F 'platform readiness Unmet' "$log.out" >/dev/null || {
+  echo "a never-ready platform did not report the unmet readiness summary:" >&2
+  cat "$log.out" >&2
+  exit 1
+}
 
 log="$tmp/success.log"
 (export FAIL_ON=""; run_apply "$log")
