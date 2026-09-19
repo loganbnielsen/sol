@@ -56,6 +56,7 @@ target:
   letsencrypt_email: ops@example.test
   state_bucket: sol-qualification-tfstate
   destroy_retention: none
+  provisioner_impersonator: user:qualification-operator@example.test
   gcp:
     project_id: sol-qualification
 EOF
@@ -269,12 +270,18 @@ case "$1 $2" in
   "container clusters")
     case " $* " in
       *" get-credentials "*)
-        path=""
-        while [ "$#" -gt 0 ]; do
-          if [ "$1" = --kubeconfig ]; then shift; path="$1"; break; fi
-          shift
-        done
-        [ -n "${path:-}" ] && [ "$KUBECONFIG" = "$path" ] || exit 92
+        # The stub models the interface gcloud actually has (Attempt 2):
+        # `get-credentials` writes to the kubeconfig named by $KUBECONFIG and has no
+        # --kubeconfig flag. It accepted one before because it was written from Sol's
+        # implementation rather than from the CLI -- which is how a stub silently
+        # ratifies the assumption it was built on. The flag's absence is asserted
+        # here too, so reintroducing it fails offline as well as in the interface
+        # check.
+        case " $* " in
+          *" --kubeconfig "*) exit 93 ;;
+        esac
+        path="${KUBECONFIG:-}"
+        [ -n "$path" ] || exit 92
         printf '%s\n' "$path" >>"$KUBECONFIG_LOG"
         if [ "${FAIL_ON:-}" = access ] && [ ! -e "$FAIL_MARKER_DIR/access" ]; then
           : >"$FAIL_MARKER_DIR/access"; exit 20
@@ -297,6 +304,14 @@ case "$1 $2" in
       exit 1
     fi
     printf 'RUNNABLE\n'; exit 0
+    ;;
+  "services vpc-peerings")
+    if [ "${DESTROYING:-}" = 1 ]; then
+      echo "ERROR: (gcloud.services.vpc-peerings.list) NOT_FOUND: The network was not found" >&2
+      exit 1
+    fi
+    printf 'servicenetworking-googleapis-com\n'
+    exit 0
     ;;
   "compute networks"|"artifacts repositories"|"compute addresses")
     if [ "${DESTROYING:-}" = 1 ]; then
@@ -738,6 +753,22 @@ while IFS= read -r kubeconfig; do test ! -e "$kubeconfig"; done <"$tmp/kubeconfi
 # The platform definition is reached through the GCP root and told which provider
 # it is building for: an AWS variable there is an undeclared-variable error, not a
 # no-op, so seeing one means the provider-shaped mapping regressed.
+# The caller the target named must reach the root: Attempt 2's first live failure was
+# that nothing granted the bootstrap caller the ability to impersonate the provisioner,
+# because nothing declared one at all.
+grep -F -- '-var=provisioner_impersonators=["user:qualification-operator@example.test"]' \
+  "$gcp_log" >/dev/null || {
+  echo "the target's declared provisioner_impersonator did not reach the GCP root:" >&2
+  grep -F 'provisioner_impersonators' "$gcp_log" >&2
+  exit 1
+}
+# ...and it is *only* the declared one: an inferred member would satisfy "impersonation
+# works" while granting authority to whoever ran Sol.
+if grep -F -- '-var=provisioner_impersonators=[' "$gcp_log" | grep -vF 'qualification-operator@example.test' >/dev/null; then
+  echo "the impersonation grant named a member the target did not declare:" >&2
+  grep -F 'provisioner_impersonators' "$gcp_log" >&2
+  exit 1
+fi
 grep -F -- '-var=cloud_provider=gcp' "$gcp_log" >/dev/null || {
   echo "the GCP platform root was not told cloud_provider=gcp:" >&2
   grep -F 'infra/' "$gcp_log" >&2

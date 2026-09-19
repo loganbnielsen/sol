@@ -70,36 +70,32 @@ variable "gke_deletion_protection" {
   default     = true
 }
 
-# How long to wait, after the Cloud SQL instance is gone, before releasing the
-# servicenetworking peering. Default 300s: live attempt 1 observed the peering
-# still refusing ~2.5 minutes after the instance's delete completed, and GCP does
-# not document the window. The number is a variable so a live observation can
-# correct it without touching the graph's shape.
-variable "sql_private_network_release_wait" {
-  description = "How long to wait between the Cloud SQL instance's destruction and releasing its private-services peering, which GCP releases asynchronously."
-  type        = string
-  default     = "300s"
-}
-
-# The install window's privilege, named exactly as the AWS root names it. The
-# mechanism underneath differs -- an IAM role assumed through an EKS access entry
-# there, an impersonated service account granted in-cluster RBAC here -- but the
-# semantic is one thing, so Sol passes the same variable to both roots and the
-# provider decides how to realize it. That is capability parity rather than IAM
-# cosplay, and it is why this is not a `gcp_provisioner_bootstrap_admin`.
-#
-# Default false: the privileged window exists only while Sol is installing, and a
-# root applied directly by an operator never opens it.
-variable "provisioner_bootstrap_admin" {
-  description = "Temporarily grant the platform provisioner the in-cluster authority Sol needs to install privileged components. Sol opens this for the install window and closes it before Ready."
-  type        = bool
-  default     = false
-}
-
 variable "sql_deletion_protection" {
   description = "Enable both Terraform's destroy guard and Cloud SQL API deletion protection."
   type        = bool
   default     = true
+}
+
+# The identity allowed to enter this target's install window, declared by the target
+# (`provisioner_impersonator`). Naming the caller is a requirement rather than a
+# convenience: an empty list means no impersonation grant at all, because inferring
+# the caller from the running process is the ambient-authority escape hatch this
+# model exists to close.
+variable "provisioner_impersonators" {
+  description = "IAM members (for example `user:ops@example.com`, or a service account) allowed to impersonate the platform provisioner and enter the install window. Each receives roles/iam.serviceAccountTokenCreator on that one identity."
+  type        = list(string)
+  default     = []
+}
+
+# The install window itself. Both provider roots declare it -- the object differs (an
+# EKS access entry on AWS, an in-cluster ClusterRoleBinding here) -- and Sol opens it
+# for the applies that install and closes it before reporting one. On GCP the binding
+# is created here, in the cloud root, because the platform applies run *as* the
+# provisioner and so cannot be the thing that grants the provisioner its authority.
+variable "provisioner_bootstrap_admin" {
+  description = "Temporarily grant the platform provisioner the in-cluster authority the install needs. Sol opens this for the install window and closes it before Ready."
+  type        = bool
+  default     = false
 }
 
 variable "db_password" {

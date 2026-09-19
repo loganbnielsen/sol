@@ -17,6 +17,15 @@ type target =
      target sets `destroy_retention: none`, so its postcondition is Absent with
      nothing billable left behind. *)
   ; destroy_retention : string option
+    (* The identity allowed to enter this target's install window, by impersonating
+       the platform provisioner. GCP requires that grant explicitly -- creating the
+       identity does not let anyone use it (Attempt 2) -- and AWS's equivalent is the
+       provisioner role's trust policy, so this is routed to the GCP root only.
+
+       Declared rather than inferred, deliberately: "no caller named" must mean "no
+       impersonation grant", not "grant whoever is running Sol". Inferring it is the
+       ambient-authority escape hatch this field exists to close. *)
+  ; provisioner_impersonator : string option
   ; alert_receiver_type : string option
   ; alert_receiver_url : string option
   ; alert_owner : string option
@@ -84,6 +93,7 @@ let target_empty =
   ; terraform_var_file = None
   ; observability_backend = None
   ; destroy_retention = None
+  ; provisioner_impersonator = None
   ; alert_receiver_type = None
   ; alert_receiver_url = None
   ; alert_owner = None
@@ -245,6 +255,7 @@ type target_key =
   | Target_terraform_var_file
   | Target_observability_backend
   | Target_destroy_retention
+  | Target_provisioner_impersonator
   | Target_alert_receiver_type
   | Target_alert_receiver_url
   | Target_alert_owner
@@ -272,6 +283,7 @@ let target_key_of_string s =
   | "terraform_var_file" -> Target_terraform_var_file
   | "observability_backend" -> Target_observability_backend
   | "destroy_retention" -> Target_destroy_retention
+  | "provisioner_impersonator" -> Target_provisioner_impersonator
   | "alert_receiver_type" -> Target_alert_receiver_type
   | "alert_receiver_url" -> Target_alert_receiver_url
   | "alert_owner" -> Target_alert_owner
@@ -301,6 +313,7 @@ let target_key_name = function
   | Target_terraform_var_file -> "terraform_var_file"
   | Target_observability_backend -> "observability_backend"
   | Target_destroy_retention -> "destroy_retention"
+  | Target_provisioner_impersonator -> "provisioner_impersonator"
   | Target_alert_receiver_type -> "alert_receiver_type"
   | Target_alert_receiver_url -> "alert_receiver_url"
   | Target_alert_owner -> "alert_owner"
@@ -549,6 +562,9 @@ let load path =
                           | Target_destroy_retention ->
                             let* v = scalar k v in
                             Ok { current with destroy_retention = Some v }
+                          | Target_provisioner_impersonator ->
+                            let* v = scalar k v in
+                            Ok { current with provisioner_impersonator = Some v }
                           | Target_alert_receiver_type ->
                             let* v = scalar k v in
                             Ok { current with alert_receiver_type = Some v }
@@ -795,6 +811,8 @@ let merge_target a b =
      and so never crossed the merge, which is the shape of gap that a test has to
      cross on purpose rather than by accident. *)
   ; destroy_retention = prefer a.destroy_retention b.destroy_retention
+  ; provisioner_impersonator =
+      prefer a.provisioner_impersonator b.provisioner_impersonator
   ; alert_receiver_type = prefer a.alert_receiver_type b.alert_receiver_type
   ; alert_receiver_url = prefer a.alert_receiver_url b.alert_receiver_url
   ; alert_owner = prefer a.alert_owner b.alert_owner
@@ -912,6 +930,7 @@ let target_of_path s =
           ; terraform_var_file = None
           ; observability_backend = None
           ; destroy_retention = None
+          ; provisioner_impersonator = None
           ; alert_receiver_type = None
           ; alert_receiver_url = None
           ; alert_owner = None
@@ -1336,7 +1355,18 @@ let terraform_vars ~workspace cfg =
            routed: the AWS root does not declare it. *)
         |> add_opt "deploy_role_arn" target.deploy_role_arn
         |> add_opt "workspace_name" (Some workspace)
-      | Sol_cli_provider.Gcp -> shared
+      | Sol_cli_provider.Gcp ->
+        (* The impersonation grant is GCP's, and only GCP's: the AWS equivalent is the
+           provisioner role's trust policy, not a variable this root declares, so
+           routing it there would fail the command on an undeclared variable. A
+           target that names no caller gets an empty list -- and therefore no grant
+           at all -- rather than the caller's own identity. *)
+        shared
+        |> add_opt
+             "provisioner_impersonators"
+             (Option.map
+                (fun member -> Printf.sprintf "[%S]" member)
+                target.provisioner_impersonator)
     in
     let vars =
       List.assoc_opt (Sol_cli_provider.to_string target.provider) target.provider_fields
