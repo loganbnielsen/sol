@@ -19,8 +19,7 @@
    the defence that does not depend on Sol being the caller. *)
 
 let provider_creates_postgres = function
-  | Sol_cli_provider.Aws -> true
-  | _ -> false
+  | Sol_cli_provider.Aws | Sol_cli_provider.Gcp -> true
 ;;
 
 (* [vars] are terraform ["key=value"] strings, as the caller builds them. *)
@@ -45,8 +44,24 @@ type source =
   | Command_line (** passed with --var; always refused *)
   | Missing
 
+(* Whether *this* invocation provisions the provider's cloud database. The two
+   providers differ in the shape of the decision, not in whether a database can
+   exist: AWS gates the RDS instance on `create_rds` (a target may deliberately
+   use a database it did not provision), while the GCP root creates its Cloud SQL
+   instance unconditionally, so on GCP the credential is always required.
+
+   This was a real hole rather than a tidy-up: the gate only ever consulted AWS's
+   variable, so every GCP target fell through to [Not_needed] and the check passed
+   vacuously -- a GCP `sol cloud apply` would reach Terraform with no credential
+   source at all, which is precisely the failure this module exists to prevent. *)
+let database_requested ~provider ~vars =
+  match provider with
+  | Sol_cli_provider.Aws -> truthy (var "create_rds" vars)
+  | Sol_cli_provider.Gcp -> true
+;;
+
 let source ~provider ~vars ~tf_var_env =
-  if not (provider_creates_postgres provider && truthy (var "create_rds" vars))
+  if not (provider_creates_postgres provider && database_requested ~provider ~vars)
   then Not_needed
   else if Option.is_some (var "db_password" vars)
   then Command_line
@@ -67,7 +82,8 @@ let check ~provider ~vars ~tf_var_env =
        <target>"
   | Missing ->
     Error
-      "this target provisions Postgres (create_rds = true) but no database master \
+      "this target provisions a cloud Postgres (the AWS root's create_rds = true, or the \
+       GCP root, which always creates its Cloud SQL instance) but no database master \
        password is available. Supply it out of band from your secret store, e.g.\n\
       \      TF_VAR_db_password=\"$(your-secret-tool get sol-db-password)\" sol cloud \
        apply <target>\n\

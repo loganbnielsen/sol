@@ -82,11 +82,29 @@ let test_command_line_password_is_refused_even_with_the_environment_set () =
      | Ok () -> false)
 ;;
 
-let test_provider_without_postgres_module_is_not_asked () =
+(* This test used to assert the opposite, and the assertion was the defect: it
+   said a GCP invocation is "unaffected" because only the AWS root was consulted,
+   so every GCP target fell through to [Not_needed] and the check passed
+   vacuously. GCP's root always creates its Cloud SQL instance -- there is no
+   `create_rds`-shaped switch to consult -- so the credential is required
+   unconditionally, which is the behaviour asserted now. *)
+let test_gcp_always_needs_the_password () =
   check
-    "a provider that does not provision Postgres is unaffected"
+    "GCP without a credential source is refused"
     true
-    (C.check ~provider:Sol_cli_provider.Gcp ~vars:rds ~tf_var_env:None = Ok ())
+    (Result.is_error (C.check ~provider:Sol_cli_provider.Gcp ~vars:rds ~tf_var_env:None));
+  check
+    "GCP with the environment is accepted"
+    true
+    (C.check ~provider:Sol_cli_provider.Gcp ~vars:rds ~tf_var_env:(Some "x") = Ok ());
+  check
+    "GCP refuses a password passed on the command line"
+    true
+    (Result.is_error
+       (C.check
+          ~provider:Sol_cli_provider.Gcp
+          ~vars:([ "db_password=oops" ] @ rds)
+          ~tf_var_env:(Some "x")))
 ;;
 
 let test_source_reports_where_it_came_from () =
@@ -133,9 +151,9 @@ let () =
             `Quick
             test_command_line_password_is_refused_even_with_the_environment_set
         ; Alcotest.test_case
-            "provider without a postgres module"
+            "GCP always needs the password"
             `Quick
-            test_provider_without_postgres_module_is_not_asked
+            test_gcp_always_needs_the_password
         ; Alcotest.test_case "source" `Quick test_source_reports_where_it_came_from
         ] )
     ]

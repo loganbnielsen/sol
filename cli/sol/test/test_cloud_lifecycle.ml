@@ -396,18 +396,21 @@ let test_lifecycle_phases () =
     "destroy policy is exactly the three destroy vars"
     3
     (List.length destroy_vars);
-  (* The GCP policy is empty *and* documented as a gap, rather than carrying AWS's
-     levers: `-var` for a variable the GCP root does not declare is an error, so
-     inheriting them would have failed the first GCP destroy on an undeclared
-     variable instead of lifting anything. *)
-  Alcotest.(check int)
-    "the GCP destroy policy carries no AWS levers"
-    0
-    (List.length
-       (policy_vars
-          ~provider:Sol_cli_provider.Gcp
-          ~phase:Preparing_destroy
-          ~destroy_snapshot_id:"snap-1"));
+  (* The GCP policy carries GCP's lever and none of AWS's: `-var` for a variable a
+     root does not declare is an error, so inheriting AWS's three would have failed
+     the first GCP destroy on an undeclared variable instead of lifting anything --
+     while carrying *none* would let the root's protection-on default be restored by
+     the reconciliation apply that precedes the teardown. *)
+  let gcp_destroy_vars =
+    policy_vars
+      ~provider:Sol_cli_provider.Gcp
+      ~phase:Preparing_destroy
+      ~destroy_snapshot_id:"snap-1"
+  in
+  Alcotest.(check (list string))
+    "the GCP destroy policy carries only the GCP lever"
+    [ "sql_deletion_protection"; "false" ]
+    (List.concat_map (fun (k, v) -> [ k; v ]) gcp_destroy_vars);
   Alcotest.(check int)
     "Ready adds no policy overrides"
     0

@@ -36,6 +36,17 @@ resources:
     size: small
 EOF
 
+# A GCP target carries no `profile`: the production profile asserts the AWS
+# substrate (matrix A5), which is a claim about that substrate rather than about
+# GCP's. Everything the GCP cloud root requires is passed as terraform variables.
+mkdir -p "$tmp/work/sol/prod/gcp"
+cat >"$tmp/work/sol/prod/gcp/us-central1.yml" <<'EOF'
+target:
+  base_domain: qual.example.test
+  letsencrypt_email: ops@example.test
+  state_bucket: sol-qualification-tfstate
+EOF
+
 cat >"$tmp/bin/terraform" <<'EOF'
 #!/usr/bin/env bash
 set -eu
@@ -59,6 +70,18 @@ case "$*" in
     ;;
   *" output -json"*)
     if [ "${OUTPUT_ABSENT:-}" = 1 ]; then printf '{}\n'; exit 0; fi
+    # GCP's cloud root publishes a different set of facts, and Sol reads them
+    # through its own typed contract. The required half is what a lifecycle
+    # operation cannot proceed without; the durable-observability keys are absent
+    # here for the same reason they are absent from the AWS fixture.
+    case " $* " in
+      *infra/gcp*)
+        cat <<'JSON'
+{"cluster_name":{"value":"sol-qual"},"project_id":{"value":"sol-qualification"},"region":{"value":"us-central1"},"artifact_registry":{"value":"us-central1-docker.pkg.dev/sol-qualification/sol-qual"}}
+JSON
+        exit 0
+        ;;
+    esac
     if fail_once outputs; then exit 20; fi
     # HARDEN-002 run 3, finding 10: terraform 1.9.8 OMITS an output whose value
     # is null, so a real default target (durable observability disabled) has no
@@ -73,6 +96,16 @@ JSON
     if fail_once plan; then exit 20; fi
     ;;
   *" show -json")
+    case " $* " in
+      *infra/gcp*)
+        if [ -e "${GCP_SQL_PREPARED_FILE:-/nonexistent}" ]; then
+          printf '{"values":{"root_module":{"resources":[{"type":"google_sql_database_instance","values":{"deletion_protection":false}}]}}}\n'
+        else
+          printf '{"values":{"root_module":{"resources":[{"type":"google_sql_database_instance","values":{"deletion_protection":true}}]}}}\n'
+        fi
+        exit 0
+        ;;
+    esac
     if [ "${RDS_ABSENT:-}" = 1 ]; then
       printf '{"values":{"root_module":{"resources":[]}}}\n'
     elif [ -e "$RDS_PREPARED_FILE" ]; then
@@ -93,6 +126,18 @@ JSON
           ;;
       esac
     done
+    ;;
+  *infra/gcp*" apply "*"-target=google_sql_database_instance.postgres"*)
+    if fail_once cloudsql-prepare; then exit 20; fi
+    # The protection must be lifted by an applied transition on just the database
+    # resource -- a `-var` on the destroy is inert against prior state -- and the
+    # target's *root default* is protection-on, so an apply in the destroy window
+    # that omits this override silently turns it back on.
+    case " $* " in
+      *" -var=sql_deletion_protection=false "*) : ;;
+      *) exit 95 ;;
+    esac
+    : >"$GCP_SQL_PREPARED_FILE"
     ;;
   *infra/aws*" apply "*"provisioner_bootstrap_admin=true"*)
     if fail_once cloud; then exit 20; fi
@@ -156,6 +201,62 @@ if [ "${FAIL_ON:-}" = access ] && [ ! -e "$FAIL_MARKER_DIR/access" ]; then
   : >"$FAIL_MARKER_DIR/access"; exit 20
 fi
 : >"$path"
+EOF
+
+# The GCP mechanisms Sol drives: cluster credentials, the two readiness facts,
+# and absence. `gcloud` names resources by a project rather than a region, so the
+# stub keys on the same DESTROYING toggle the AWS stub uses -- one mock, flipped
+# for teardown, rather than every case carrying both directions.
+cat >"$tmp/bin/gcloud" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+printf 'gcloud %s\n' "$*" >>"$LIFECYCLE_LOG"
+case " $* " in
+  *" --project sol-qualification "*|*" --project=sol-qualification "*) : ;;
+  *) exit 91 ;;
+esac
+case "$1 $2" in
+  "container clusters")
+    case " $* " in
+      *" get-credentials "*)
+        path=""
+        while [ "$#" -gt 0 ]; do
+          if [ "$1" = --kubeconfig ]; then shift; path="$1"; break; fi
+          shift
+        done
+        [ -n "${path:-}" ] && [ "$KUBECONFIG" = "$path" ] || exit 92
+        printf '%s\n' "$path" >>"$KUBECONFIG_LOG"
+        if [ "${FAIL_ON:-}" = access ] && [ ! -e "$FAIL_MARKER_DIR/access" ]; then
+          : >"$FAIL_MARKER_DIR/access"; exit 20
+        fi
+        : >"$path"
+        exit 0
+        ;;
+      *" describe "*)
+        if [ "${DESTROYING:-}" = 1 ]; then
+          echo "ERROR: (gcloud.container.clusters.describe) NOT_FOUND: Resource 'sol-qual' was not found" >&2
+          exit 1
+        fi
+        printf 'RUNNING\n'; exit 0
+        ;;
+    esac
+    ;;
+  "sql instances")
+    if [ "${DESTROYING:-}" = 1 ]; then
+      echo "ERROR: (gcloud.sql.instances.describe) NOT_FOUND: The Cloud SQL instance does not exist" >&2
+      exit 1
+    fi
+    printf 'RUNNABLE\n'; exit 0
+    ;;
+  "compute networks"|"artifacts repositories"|"compute addresses")
+    if [ "${DESTROYING:-}" = 1 ]; then
+      echo "ERROR: (gcloud.$1.$2.describe) NOT_FOUND: Resource was not found" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+esac
+exit 90
 EOF
 
 cat >"$tmp/bin/kubectl" <<'EOF'
@@ -237,7 +338,7 @@ if [ "${FAIL_ON:-}" = readiness ] && [ ! -e "$FAIL_MARKER_DIR/readiness" ] &&
   : >"$FAIL_MARKER_DIR/readiness"; exit 20
 fi
 EOF
-chmod +x "$tmp/bin/terraform" "$tmp/bin/aws" "$tmp/bin/kubectl"
+chmod +x "$tmp/bin/terraform" "$tmp/bin/aws" "$tmp/bin/kubectl" "$tmp/bin/gcloud"
 
 export PATH="$tmp/bin:$PATH"
 export SOL_HOME="$root"
@@ -246,6 +347,7 @@ export KUBECONFIG=/ambient/forbidden
 export FAIL_MARKER_DIR="$tmp/markers"
 export KUBECONFIG_LOG="$tmp/kubeconfigs"
 export RDS_PREPARED_FILE="$tmp/markers/rds-prepared"
+export GCP_SQL_PREPARED_FILE="$tmp/markers/gcp-sql-prepared"
 export PLATFORM_INSTALLED_FILE="$tmp/markers/platform-installed"
 
 run_apply() {
@@ -526,16 +628,86 @@ fi
 # Every ephemeral kubeconfig, including the plan runs', is removed.
 while IFS= read -r kubeconfig; do test ! -e "$kubeconfig"; done <"$tmp/kubeconfigs"
 
-# An unqualified provider fails closed instead of running the former
-# cloud-only path that stopped short of a ready target.
-gcp_log="$tmp/gcp.log"
-if (cd "$tmp/work" && LIFECYCLE_LOG="$gcp_log" "$sol" cloud plan prod/gcp/us-central1) \
+# ── GCP ─────────────────────────────────────────────────────────────────────
+#
+# Sol runs the same phases on GCP through the provider's own mechanisms. What is
+# assertable offline is the *orchestration*: which commands Sol issues, in what
+# order, and carrying which policy. Whether GKE or Cloud SQL honour them is the
+# question only a live target answers, and is recorded as such.
+gcp_vars="--var project_id=sol-qualification --var region=us-central1 --var cluster_name=sol-qual --var base_domain=qual.example.test"
+
+gcp_log="$tmp/gcp-plan.log"
+rm -f "$tmp/markers/cloudsql-prepare" "$GCP_SQL_PREPARED_FILE"
+if ! (cd "$tmp/work" && LIFECYCLE_LOG="$gcp_log" "$sol" cloud plan prod/gcp/us-central1 $gcp_vars) \
   >"$gcp_log.out" 2>&1
 then
-  echo "cloud plan accepted the unqualified GCP lifecycle" >&2
+  cat "$gcp_log.out" >&2
+  echo "cloud plan on GCP failed" >&2
   exit 1
 fi
-grep -F 'qualified only for AWS' "$gcp_log.out" >/dev/null
+# The cluster credential is the provider's mechanism and must be the one Sol
+# uses, in a file of Sol's own choosing -- never the ambient kubeconfig.
+grep -F 'gcloud container clusters get-credentials sol-qual --region us-central1' "$gcp_log" >/dev/null || {
+  echo "GCP plan did not obtain cluster credentials through gcloud:" >&2
+  grep -F 'gcloud ' "$gcp_log" >&2
+  exit 1
+}
+while IFS= read -r kubeconfig; do test ! -e "$kubeconfig"; done <"$tmp/kubeconfigs"
+# The platform definition is reached through the GCP root, and it is told which
+# provider it is building for -- the AWS variable set would be an undeclared
+# variable there, so seeing aws_region would mean the mapping regressed.
+grep -F -- '-var=cloud_provider=gcp' "$gcp_log" >/dev/null || {
+  echo "the GCP platform root was not told cloud_provider=gcp:" >&2
+  grep -F 'infra/' "$gcp_log" >&2
+  exit 1
+}
+if grep -F -- '-var=aws_region=' "$gcp_log" >/dev/null; then
+  echo "an AWS variable reached the GCP platform root:" >&2
+  exit 1
+fi
+if grep -F -- '-var=provisioner_bootstrap_admin' "$gcp_log" >/dev/null; then
+  echo "the AWS bootstrap-access variable reached the GCP cloud root:" >&2
+  exit 1
+fi
+
+# Destroy on GCP: Cloud SQL's deletion protection is lifted by an applied
+# transition on just the database resource (never by a `-var` on the destroy),
+# must stay lifted for the reconciliation apply that precedes the teardown, and
+# the teardown is verified absent through the provider's own API.
+gcp_destroy_log="$tmp/gcp-destroy.log"
+if ! (cd "$tmp/work" && DESTROYING=1 LIFECYCLE_LOG="$gcp_destroy_log" \
+        "$sol" cloud destroy prod/gcp/us-central1 --apply $gcp_vars) \
+  >"$gcp_destroy_log.out" 2>&1
+then
+  cat "$gcp_destroy_log.out" >&2
+  echo "cloud destroy on GCP failed" >&2
+  exit 1
+fi
+grep -E 'terra[a-z]* .*-chdir=[^ ]*infra/gcp .* -target=google_sql_database_instance.postgres ' \
+  "$gcp_destroy_log" >/dev/null || {
+  echo "GCP destroy did not prepare Cloud SQL protection through a targeted apply:" >&2
+  grep -F 'infra/gcp' "$gcp_destroy_log" >&2
+  exit 1
+}
+grep -F 'verify preparation: Cloud SQL deletion protection disabled' \
+  "$gcp_destroy_log.out" >/dev/null || {
+  echo "GCP destroy did not verify that the preparation landed:" >&2
+  cat "$gcp_destroy_log.out" >&2
+  exit 1
+}
+grep -E -- '-chdir=[^ ]*infra/gcp ' "$gcp_destroy_log" \
+  | grep -F ' destroy ' \
+  | grep -F -- '-var=sql_deletion_protection=false' >/dev/null || {
+  echo "the GCP destroy did not carry the Destroy policy's Cloud SQL override:" >&2
+  grep -E ' destroy ' "$gcp_destroy_log" >&2
+  exit 1
+}
+grep -F 'GCP verification passed' "$gcp_destroy_log.out" >/dev/null || {
+  echo "GCP destroy did not verify absence through the provider's API:" >&2
+  cat "$gcp_destroy_log.out" >&2
+  exit 1
+}
+while IFS= read -r kubeconfig; do test ! -e "$kubeconfig"; done <"$tmp/kubeconfigs"
 
 # HARDEN-002 finding 9b: destroy must disable RDS deletion protection through
 # a real applied transition (a targeted apply on just the RDS resource), with

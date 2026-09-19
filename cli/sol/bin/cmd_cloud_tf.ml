@@ -363,6 +363,97 @@ let verify_aws_destroy ~var_files ~vars =
     Printf.printf "  AWS verification passed: EKS/RDS/ECR/load-balancers not found.\n%!"
 ;;
 
+(* The GCP counterpart. Deliberately its own list rather than a shared "enumerate
+   the target's resources" abstraction: the two providers name the same resources
+   differently (a name plus a region against a project plus a self-link), and a
+   shared shape would have to be the union of both -- which is exactly how a
+   verification quietly stops checking something. *)
+let gcp_absent ~project ~kind ~argv =
+  match
+    Sol_cli_process.run
+      (Sol_cli_process.cmd (("gcloud" :: argv) @ [ "--project"; project ]))
+  with
+  | Ok r when r.Sol_cli_process.exit_code = 0 ->
+    Printf.eprintf "error: GCP %s still exists after destroy.\n" kind;
+    false
+  | Ok r
+    when contains ~needle:"NOT_FOUND" r.Sol_cli_process.stderr
+         || contains ~needle:"was not found" r.Sol_cli_process.stderr -> true
+  | Ok r ->
+    Printf.eprintf "error: GCP %s verification failed: %s\n" kind r.Sol_cli_process.stderr;
+    false
+  | Error _ ->
+    Printf.eprintf "error: GCP %s verification failed: gcloud unavailable.\n" kind;
+    false
+;;
+
+(* Absence here is graded the same way it is on AWS: a resource that is merely
+   stopped has not been torn down, and one that still bills has not been either.
+   The five checked are the ones the target's root actually owns and that cost
+   money or block a re-creation -- the VPC, its subnetwork and router are checked
+   through the network, which cannot be deleted while they exist. *)
+let verify_gcp_destroy ~var_files ~vars =
+  let project =
+    match resolved_var "project_id" ~var_files ~vars ~default:None with
+    | Some project -> project
+    | None ->
+      Printf.eprintf "error: cannot verify GCP destroy without project_id.\n";
+      Printf.eprintf "  Pass the same --var project_id=... or --var-file used for init.\n";
+      exit 1
+  in
+  let cluster_name =
+    match resolved_var "cluster_name" ~var_files ~vars ~default:None with
+    | Some cluster_name -> cluster_name
+    | None ->
+      Printf.eprintf "error: cannot verify GCP destroy without cluster_name.\n";
+      Printf.eprintf
+        "  Pass the same --var cluster_name=... or --var-file used for init.\n";
+      exit 1
+  in
+  let region =
+    Option.value
+      (resolved_var "region" ~var_files ~vars ~default:(Some "us-central1"))
+      ~default:"us-central1"
+  in
+  let cluster_gone =
+    gcp_absent
+      ~project
+      ~kind:"GKE cluster"
+      ~argv:[ "container"; "clusters"; "describe"; cluster_name; "--region"; region ]
+  in
+  let sql_gone =
+    gcp_absent
+      ~project
+      ~kind:"Cloud SQL instance"
+      ~argv:[ "sql"; "instances"; "describe"; cluster_name ^ "-postgres" ]
+  in
+  let network_gone =
+    gcp_absent
+      ~project
+      ~kind:"VPC network"
+      ~argv:[ "compute"; "networks"; "describe"; cluster_name ]
+  in
+  let registry_gone =
+    gcp_absent
+      ~project
+      ~kind:"Artifact Registry repository"
+      ~argv:
+        [ "artifacts"; "repositories"; "describe"; cluster_name; "--location"; region ]
+  in
+  let address_gone =
+    gcp_absent
+      ~project
+      ~kind:"Cloud SQL peering address"
+      ~argv:
+        [ "compute"; "addresses"; "describe"; cluster_name ^ "-sql-peering"; "--global" ]
+  in
+  if not (cluster_gone && sql_gone && network_gone && registry_gone && address_gone)
+  then exit 1;
+  Printf.printf
+    "  GCP verification passed: GKE/Cloud SQL/network/registry/peering-address not found.\n\
+     %!"
+;;
+
 let terraform_init run_log infra_dir backend_config =
   Sol_cli_run_log.run_phase run_log ~name:"terraform-init" (fun () ->
     Sol_cli_terraform.init ~chdir:infra_dir ~backend_config ())
@@ -398,6 +489,37 @@ let aws_outputs infra_dir =
   | Error _ -> Error "could not read AWS Terraform outputs"
 ;;
 
+let gcp_outputs infra_dir =
+  match Sol_cli_terraform.output_json ~chdir:infra_dir () with
+  | Ok result when result.Sol_cli_process.exit_code = 0 ->
+    (match Yojson.Safe.from_string result.stdout with
+     | `Assoc [] -> Ok None
+     | _ ->
+       Result.map
+         (fun outputs -> Some outputs)
+         (Sol_cli_cloud_lifecycle.gcp_outputs_of_json result.stdout)
+     | exception Yojson.Json_error message ->
+       Error ("invalid GCP Terraform output JSON: " ^ message))
+  | Ok result ->
+    Error (Printf.sprintf "terraform output failed with exit %d" result.exit_code)
+  | Error _ -> Error "could not read GCP Terraform outputs"
+;;
+
+(* The cloud root's outputs, whichever provider's root published them. The
+   provider-shaped facts stay provider-shaped from here on: every consumer below
+   either dispatches on this value or is genuinely provider-neutral. *)
+let cloud_outputs_of provider infra_dir =
+  match provider with
+  | Sol_cli_provider.Aws ->
+    Result.map
+      (Option.map (fun outputs -> Sol_cli_cloud_lifecycle.Aws_outputs outputs))
+      (aws_outputs infra_dir)
+  | Sol_cli_provider.Gcp ->
+    Result.map
+      (Option.map (fun outputs -> Sol_cli_cloud_lifecycle.Gcp_outputs outputs))
+      (gcp_outputs infra_dir)
+;;
+
 (* One place that turns a cloud root's outputs into the platform definition's
    variables, so the four lifecycle stages cannot disagree about the mapping, and
    so the day a second provider's access path lands there is one call site to
@@ -408,11 +530,7 @@ let aws_outputs infra_dir =
    labelled ones cannot be erased, so a caller that omits [on_error] would be
    typing a partial application rather than a value. *)
 let platform_vars_of ?(on_error = Fun.id) ~cloud_target ~outputs () =
-  match
-    Sol_cli_cloud_lifecycle.platform_inputs
-      cloud_target
-      (Sol_cli_cloud_lifecycle.Aws_outputs outputs)
-  with
+  match Sol_cli_cloud_lifecycle.platform_inputs cloud_target outputs with
   | Error message ->
     on_error ();
     lifecycle_error message
@@ -472,6 +590,59 @@ let with_provisioner_kubeconfig ?(on_error = Fun.id) ~region outputs f =
     lifecycle_error message
 ;;
 
+(* The GCP counterpart of [provisioner_kubeconfig], and the same semantic: an
+   ephemeral kubeconfig for *this target's* cluster, in a temp file, exported
+   under every name the platform providers read (finding 12), never the
+   operator's ambient one.
+
+   What differs is only how a credential is obtained. AWS assumes a role through
+   `aws eks update-kubeconfig --role-arn`; GCP asks the cluster for credentials
+   with the caller's Application Default Credentials. Sol does not yet narrow
+   that caller to a provisioner service account of its own on GCP -- there is no
+   GCP equivalent of the AWS root's provisioner role, so this is the target's
+   Owner identity in the privileged install window, which is exactly the gap the
+   inventory records rather than something this function should paper over. *)
+let gcp_provisioner_kubeconfig ~region outputs f =
+  let path = Filename.temp_file "sol-platform-provisioner-" ".kubeconfig" in
+  let cleanup () =
+    try Sys.remove path with
+    | Sys_error _ -> ()
+  in
+  at_exit cleanup;
+  Fun.protect ~finally:cleanup (fun () ->
+    let env = Sol_cli_cloud_lifecycle.provisioner_kube_env path in
+    match
+      Sol_cli_process.run
+        (Sol_cli_process.cmd
+           ~env
+           [ "gcloud"
+           ; "container"
+           ; "clusters"
+           ; "get-credentials"
+           ; Sol_cli_cloud_lifecycle.cluster_name
+               (Sol_cli_cloud_lifecycle.Gcp_outputs outputs)
+           ; "--region"
+           ; region
+           ; "--project"
+           ; outputs.Sol_cli_cloud_lifecycle.project_id
+           ; "--kubeconfig"
+           ; path
+           ; "--quiet"
+           ])
+    with
+    | Ok result when result.exit_code = 0 -> f env
+    | _ -> lifecycle_error "could not establish ephemeral cluster access")
+;;
+
+let with_cluster_access ?(on_error = Fun.id) ~region outputs f =
+  match outputs with
+  | Sol_cli_cloud_lifecycle.Aws_outputs outputs ->
+    with_provisioner_kubeconfig ~on_error ~region outputs f
+  | Sol_cli_cloud_lifecycle.Gcp_outputs outputs ->
+    ignore on_error;
+    gcp_provisioner_kubeconfig ~region outputs f
+;;
+
 let process_ok ?(env = []) argv =
   match Sol_cli_process.run (Sol_cli_process.cmd ~env argv) with
   | Ok result -> result.exit_code = 0
@@ -517,6 +688,61 @@ let aws_cloud_ready ~region outputs =
     when String.trim cluster_status = "ACTIVE" && String.trim addon_status = "ACTIVE" ->
     true
   | _ -> false
+;;
+
+(* What "the cloud substrate is Ready" means on GCP: the GKE control plane is
+   RUNNING and the Cloud SQL instance is RUNNABLE. The AWS check also asserts the
+   EBS CSI addon is ACTIVE because Sol creates it; on GKE the block-storage
+   provisioner is part of the platform the provider manages, and the readiness
+   contract for storage is asserted at the Kubernetes layer instead (the
+   provider's StorageClass is the sole default and is backed by its CSI driver --
+   see [Sol_cli_cloud_lifecycle.storage_checks]), which is the check that actually
+   covers what a workload binds to. *)
+let gcp_cloud_ready outputs =
+  let project = outputs.Sol_cli_cloud_lifecycle.project_id in
+  let region = outputs.region in
+  let cluster = outputs.cluster_name in
+  let status argv = process_output ([ "gcloud" ] @ argv) in
+  match
+    ( status
+        [ "container"
+        ; "clusters"
+        ; "describe"
+        ; cluster
+        ; "--region"
+        ; region
+        ; "--project"
+        ; project
+        ; "--format"
+        ; "value(status)"
+        ]
+    , status
+        [ "sql"
+        ; "instances"
+        ; "describe"
+        ; cluster ^ "-postgres"
+        ; "--project"
+        ; project
+        ; "--format"
+        ; "value(state)"
+        ] )
+  with
+  | Some cluster_status, Some sql_state
+    when String.trim cluster_status = "RUNNING" && String.trim sql_state = "RUNNABLE" ->
+    true
+  | _ -> false
+;;
+
+let cloud_ready ~region = function
+  | Sol_cli_cloud_lifecycle.Aws_outputs outputs -> aws_cloud_ready ~region outputs
+  | Sol_cli_cloud_lifecycle.Gcp_outputs outputs -> gcp_cloud_ready outputs
+;;
+
+(* What that check means, in the words the failure is reported with. *)
+let cloud_ready_expectation = function
+  | Sol_cli_provider.Aws -> "the EKS cluster and its EBS CSI addon are ACTIVE"
+  | Sol_cli_provider.Gcp ->
+    "the GKE cluster is RUNNING and the Cloud SQL instance is RUNNABLE"
 ;;
 
 let crds_established env =
@@ -673,6 +899,139 @@ let verify_destroy_preparation infra_dir ~prepared =
          snapshot_id)
 ;;
 
+(* The GCP counterpart of [rds_state]: what the target's Cloud SQL instance
+   currently declares, read from the root's own state for the same reason -- the
+   question preparation answers is "did the change actually land", which is a
+   claim about this root's state rather than about the provider's API. *)
+let gcp_sql_state infra_dir =
+  match Sol_cli_terraform.show_json ~chdir:infra_dir () with
+  | Ok result when result.Sol_cli_process.exit_code = 0 ->
+    (try
+       let open Yojson.Safe.Util in
+       let resource =
+         Yojson.Safe.from_string result.stdout
+         |> member "values"
+         |> member "root_module"
+         |> member "resources"
+         |> to_list
+         |> List.find_opt (fun r ->
+           member "type" r = `String "google_sql_database_instance")
+       in
+       match resource with
+       | None -> Ok None
+       | Some r ->
+         let v = member "values" r in
+         Ok (Some (v |> member "deletion_protection" |> to_bool))
+     with
+     | Yojson.Json_error message -> Error ("invalid `terraform show -json`: " ^ message)
+     | Yojson.Safe.Util.Type_error (message, _) ->
+       Error ("unexpected `terraform show -json` shape: " ^ message))
+  | Ok result ->
+    Error (Printf.sprintf "terraform show failed with exit %d" result.exit_code)
+  | Error _ -> Error "could not read terraform state"
+;;
+
+let gcp_sql_target = Sol_cli_terraform.targets "google_sql_database_instance.postgres" []
+
+(* The same shape as the AWS preparation, for the same reason: Cloud SQL's
+   deletion protection is an attribute of the instance *and* an API-level setting,
+   and a destroy plan carries only deletes, so the provider is handed prior state
+   and a `-var` on the destroy never reaches it. Lifting it is therefore its own
+   targeted, applied transition, verified from state afterwards rather than
+   assumed. Doing nothing here -- which is what the GCP path did until now -- does
+   not fail to prepare a destroy, it makes the destroy impossible: Cloud SQL
+   refuses the delete and the target stays billable.
+
+   There is no snapshot identity to mint, and that is a provider difference rather
+   than an omission: the root's backup configuration (enabled, PITR, 7-day
+   transaction log retention) is what carries recoverability, and Cloud SQL does
+   not require a uniquely-named final artifact in order to delete an instance.
+   Inventing one to look like AWS would be mechanism symmetry without a mechanism.
+   [true] means an instance was prepared; the Cloud SQL protection must then stay
+   off for every apply from here until the instance is gone. *)
+let gcp_prepare_destroy run_log infra_dir var_files vars =
+  match gcp_sql_state infra_dir with
+  | Error message -> lifecycle_error message
+  | Ok None ->
+    Printf.printf
+      "  prepare: no Cloud SQL instance for this target, nothing to prepare.\n%!";
+    false
+  | Ok (Some _) ->
+    Printf.printf "  prepare: disabling Cloud SQL deletion protection...\n%!";
+    require_terraform_success
+      (Sol_cli_run_log.run_phase run_log ~name:"cloudsql-destroy-prepare" (fun () ->
+         Sol_cli_terraform.apply
+           ~scope:gcp_sql_target
+           ~chdir:infra_dir
+           ~var_files
+           ~vars:(vars @ [ "sql_deletion_protection=false" ])
+           ()));
+    true
+;;
+
+let verify_gcp_destroy_preparation infra_dir ~prepared =
+  if not prepared
+  then Printf.printf "  verify preparation: nothing was prepared.\n%!"
+  else (
+    match gcp_sql_state infra_dir with
+    | Error message -> lifecycle_error message
+    | Ok None ->
+      lifecycle_error
+        "Cloud SQL destroy preparation ran but the instance is now absent from state"
+    | Ok (Some deletion_protection) ->
+      if deletion_protection
+      then
+        lifecycle_error "Cloud SQL deletion protection is still enabled after preparation";
+      Printf.printf "  verify preparation: Cloud SQL deletion protection disabled.\n%!")
+;;
+
+(* What destruction preparation did. The providers differ in what there is to
+   carry forward -- AWS's prepared final-snapshot identity has no GCP counterpart
+   -- so the difference is named in the type rather than flattened into an option
+   that would have to mean two things. *)
+type destruction_preparation =
+  | Nothing_prepared
+  | Aws_prepared of string
+  | Gcp_prepared
+
+let prepare_destruction ~provider run_log infra_dir var_files vars ~cluster_name =
+  match provider with
+  | Sol_cli_provider.Aws ->
+    let prepared = prepare_destroy run_log infra_dir var_files vars ~cluster_name in
+    verify_destroy_preparation infra_dir ~prepared;
+    (match prepared with
+     | None -> Nothing_prepared
+     | Some snapshot_id -> Aws_prepared snapshot_id)
+  | Sol_cli_provider.Gcp ->
+    let prepared = gcp_prepare_destroy run_log infra_dir var_files vars in
+    verify_gcp_destroy_preparation infra_dir ~prepared;
+    if prepared then Gcp_prepared else Nothing_prepared
+;;
+
+(* The Destroy policy's overrides for this provider, given what preparation found.
+   Appended after the caller's own variables so the phase policy wins (ADR 0003 /
+   HARDEN-002 finding 15). *)
+let destroy_policy_vars ~provider ~phase ~prepared =
+  match prepared with
+  | Nothing_prepared -> []
+  | Aws_prepared snapshot_id ->
+    Sol_cli_cloud_lifecycle.policy_vars ~provider ~phase ~destroy_snapshot_id:snapshot_id
+  | Gcp_prepared ->
+    Sol_cli_cloud_lifecycle.policy_vars ~provider ~phase ~destroy_snapshot_id:""
+;;
+
+(* The cloud root's bootstrap-access escalation is an AWS mechanism: it
+   temporarily associates EKS cluster-admin so the install can create the narrower
+   provisioner RBAC. GCP has no counterpart yet -- GKE grants the project Owner
+   cluster-admin directly -- so the variable is not declared there, and passing it
+   would be an undeclared-variable error rather than a no-op. *)
+let bootstrap_access_vars provider ~enabled =
+  match provider with
+  | Sol_cli_provider.Aws ->
+    [ ("provisioner_bootstrap_admin", if enabled then "true" else "false") ]
+  | Sol_cli_provider.Gcp -> []
+;;
+
 let platform_absent env =
   [ "cert-manager"; "ingress-nginx"; "argocd"; "redpanda"; "monitoring"; "postgresql" ]
   |> List.for_all (fun namespace ->
@@ -721,8 +1080,6 @@ let config_vars ~strict target =
 let cloud_init ~target ~var_file ~vars ~action () =
   check_terraform ();
   let provider = provider_of_target_path target in
-  if provider <> Sol_cli_provider.Aws
-  then lifecycle_error "the complete cloud lifecycle is currently qualified only for AWS";
   let pname, infra_dir = infra_dir provider in
   let platform_dir = platform_dir provider in
   let run_log = Sol_cli_run_log.create ~prefix:"cloud-apply" () in
@@ -790,7 +1147,7 @@ let cloud_init ~target ~var_file ~vars ~action () =
       | Sol_cli_cloud_lifecycle.Deferred reason ->
         Printf.printf "\n%s\n  DEFERRED — %s\n%!" name reason
     in
-    (match aws_outputs infra_dir with
+    (match cloud_outputs_of provider infra_dir with
      | Ok None ->
        report_phase
          "Platform prerequisites"
@@ -805,7 +1162,7 @@ let cloud_init ~target ~var_file ~vars ~action () =
           unavailable lifecycle prerequisite, so plan exits non-zero. Deferral is
           reserved for phases whose concrete prerequisite is simply not
           established yet and whose establishment would itself be a mutation. *)
-       with_provisioner_kubeconfig ~region:target_cfg.region outputs (fun env ->
+       with_cluster_access ~region:target_cfg.region outputs (fun env ->
          (* [can-i --list] needs authentication only, so it succeeds with an empty
             rule set when the provisioner's RBAC is simply not established yet, and
             fails when the cluster credential is unavailable. Deferral is honest
@@ -867,7 +1224,7 @@ let cloud_init ~target ~var_file ~vars ~action () =
        Only a positive "there is no substrate" observation justifies the claim:
        a state read that fails means the substrate is *unknown*, not absent, and
        is failed closed rather than reported as a phase (or applied over). *)
-    (match aws_outputs infra_dir with
+    (match cloud_outputs_of provider infra_dir with
      | Ok (Some _) -> ()
      | Ok None ->
        Printf.printf
@@ -880,7 +1237,9 @@ let cloud_init ~target ~var_file ~vars ~action () =
            ~scope:Sol_cli_terraform.whole_root
            ~chdir:infra_dir
            ~var_files
-           ~vars:("provisioner_bootstrap_admin=true" :: vars)
+           ~vars:
+             (Sol_cli_terraform.kv_args (bootstrap_access_vars provider ~enabled:true)
+              @ vars)
            ()));
     let deescalate () =
       Sol_cli_run_log.run_phase
@@ -891,16 +1250,18 @@ let cloud_init ~target ~var_file ~vars ~action () =
              ~scope:Sol_cli_terraform.whole_root
              ~chdir:infra_dir
              ~var_files
-             ~vars:("provisioner_bootstrap_admin=false" :: vars)
+             ~vars:
+               (Sol_cli_terraform.kv_args (bootstrap_access_vars provider ~enabled:false)
+                @ vars)
              ())
     in
     let cleanup_bootstrap_access () = ignore (deescalate ()) in
     let outputs =
-      match aws_outputs infra_dir with
+      match cloud_outputs_of provider infra_dir with
       | Ok (Some v) -> v
       | Ok None ->
         cleanup_bootstrap_access ();
-        lifecycle_error "AWS Terraform apply completed without lifecycle outputs"
+        lifecycle_error "Terraform apply completed without lifecycle outputs"
       | Error e ->
         cleanup_bootstrap_access ();
         lifecycle_error e
@@ -908,11 +1269,15 @@ let cloud_init ~target ~var_file ~vars ~action () =
     let platform_vars =
       platform_vars_of ~on_error:cleanup_bootstrap_access ~cloud_target ~outputs ()
     in
-    if not (aws_cloud_ready ~region:target_cfg.region outputs)
+    if not (cloud_ready ~region:target_cfg.region outputs)
     then (
       cleanup_bootstrap_access ();
-      lifecycle_error "AWS cloud substrate is not Ready (EKS cluster/EBS CSI addon)");
-    with_provisioner_kubeconfig
+      lifecycle_error
+        (Printf.sprintf
+           "%s cloud substrate is not Ready: %s"
+           pname
+           (cloud_ready_expectation provider)));
+    with_cluster_access
       ~on_error:cleanup_bootstrap_access
       ~region:target_cfg.region
       outputs
@@ -1119,8 +1484,6 @@ let cloud_init ~target ~var_file ~vars ~action () =
 let cloud_destroy ~target ~var_file ~vars ~action () =
   check_terraform ();
   let provider = provider_of_target_path target in
-  if provider <> Sol_cli_provider.Aws
-  then lifecycle_error "the complete cloud lifecycle is currently qualified only for AWS";
   let pname, infra_dir = infra_dir provider in
   let run_log = Sol_cli_run_log.create ~prefix:"cloud-destroy" () in
   let config_vars, config_var_file, target_cfg =
@@ -1148,7 +1511,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
   Printf.printf "\nDestroying cloud infrastructure (%s)...\n%!" pname;
   run_terraform_init run_log infra_dir cloud_backend;
   let outputs =
-    match aws_outputs infra_dir with
+    match cloud_outputs_of provider infra_dir with
     | Ok outputs -> outputs
     | Error message -> lifecycle_error message
   in
@@ -1156,7 +1519,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
     let platform_dir = platform_dir provider in
     let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
     let platform_vars = platform_vars_of ~cloud_target ~outputs () in
-    with_provisioner_kubeconfig ~on_error ~region:target_cfg.region outputs (fun env ->
+    with_cluster_access ~on_error ~region:target_cfg.region outputs (fun env ->
       let init = terraform_init run_log platform_dir platform_backend in
       (match init with
        | Ok result when result.exit_code = 0 -> ()
@@ -1191,7 +1554,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
        let platform_dir = platform_dir provider in
        let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
        let platform_vars = platform_vars_of ~cloud_target ~outputs () in
-       with_provisioner_kubeconfig ~region:target_cfg.region outputs (fun env ->
+       with_cluster_access ~region:target_cfg.region outputs (fun env ->
          run_terraform_init run_log platform_dir platform_backend;
          require_terraform_success
            (Sol_cli_run_log.run_phase run_log ~name:"platform-plan-destroy" (fun () ->
@@ -1210,15 +1573,10 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
       match outputs with
       | None ->
         Printf.printf "  prepare: cloud substrate is absent, nothing to prepare.\n%!";
-        None
+        Nothing_prepared
       | Some outputs ->
-        let cluster_name =
-          Sol_cli_cloud_lifecycle.cluster_name
-            (Sol_cli_cloud_lifecycle.Aws_outputs outputs)
-        in
-        let prepared = prepare_destroy run_log infra_dir var_files vars ~cluster_name in
-        verify_destroy_preparation infra_dir ~prepared;
-        prepared
+        let cluster_name = Sol_cli_cloud_lifecycle.cluster_name outputs in
+        prepare_destruction ~provider run_log infra_dir var_files vars ~cluster_name
     in
     (* ADR 0003 / HARDEN-002 run 4 finding 15: from [Preparing_destroy] on, the
        Destroy policy governs the desired state. Its overrides are appended AFTER
@@ -1257,14 +1615,8 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
     if Sol_cli_cloud_lifecycle.ready_policy_applies destroy_phase
     then lifecycle_error "Ready policy must not apply once destruction has been prepared";
     let destroy_vars =
-      match prepared with
-      | None -> []
-      | Some snapshot_id ->
-        Sol_cli_terraform.kv_args
-          (Sol_cli_cloud_lifecycle.policy_vars
-             ~provider
-             ~phase:destroy_phase
-             ~destroy_snapshot_id:snapshot_id)
+      Sol_cli_terraform.kv_args
+        (destroy_policy_vars ~provider ~phase:destroy_phase ~prepared)
     in
     let destroy_apply_vars = vars @ destroy_vars in
     (match outputs with
@@ -1275,9 +1627,10 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
             ~scope:Sol_cli_terraform.whole_root
             ~chdir:infra_dir
             ~var_files
-            ~vars:("provisioner_bootstrap_admin=true" :: destroy_apply_vars)
+            ~vars:
+              (Sol_cli_terraform.kv_args (bootstrap_access_vars provider ~enabled:true)
+               @ destroy_apply_vars)
             ());
-       verify_destroy_preparation infra_dir ~prepared;
        let deescalate () =
          Sol_cli_run_log.run_phase
            run_log
@@ -1287,7 +1640,10 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
                 ~scope:Sol_cli_terraform.whole_root
                 ~chdir:infra_dir
                 ~var_files
-                ~vars:("provisioner_bootstrap_admin=false" :: destroy_apply_vars)
+                ~vars:
+                  (Sol_cli_terraform.kv_args
+                     (bootstrap_access_vars provider ~enabled:false)
+                   @ destroy_apply_vars)
                 ())
        in
        let cleanup_bootstrap_access () = ignore (deescalate ()) in
@@ -1321,8 +1677,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
     Printf.printf "\nVerifying teardown...\n%!";
     (match provider with
      | Sol_cli_provider.Aws -> verify_aws_destroy ~var_files ~vars
-     | Sol_cli_provider.Gcp ->
-       Printf.printf "  (GCP destroy verification not implemented yet)\n%!");
+     | Sol_cli_provider.Gcp -> verify_gcp_destroy ~var_files ~vars);
     Printf.printf "\nDone.\n%!"
 ;;
 

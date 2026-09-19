@@ -897,17 +897,20 @@ let ready_policy_applies phase = policy_of_phase phase = Production
    own variables so the phase policy wins. [Destroy] deliberately contradicts the
    Production invariant for RDS deletion protection. *)
 (* The Destroy policy is provider-shaped, because the levers are: AWS lifts RDS
-   deletion protection and names the final snapshot it will take, while GCP's Cloud
-   SQL equivalents are attributes of a different provider's resources and are not
-   implemented yet (the inventory's gap 4). What is provider-neutral is that a
-   Destroy policy exists, that the phase names it, and that it is what decides
-   whether a target can reach [Absent].
+   deletion protection and names the final snapshot it will take, while GCP lifts
+   Cloud SQL's. What is provider-neutral is that a Destroy policy exists, that the
+   phase names it, and that it is what decides whether a target can reach [Absent].
 
    This is not a cosmetic split. `-var` for a variable a root does not declare is
    an error, not a no-op, so handing the GCP cloud root AWS's three would fail the
    first GCP destroy with "Value for undeclared variable" instead of lifting
-   anything -- the failure would arrive as a destroy that cannot start. So GCP gets
-   an empty policy *and* a named gap rather than AWS's levers. *)
+   anything -- the failure would arrive as a destroy that cannot start.
+
+   Both entries have to be *forwarded to every apply from [Preparing_destroy] on*,
+   not only to the destroy itself, and that is the part that is easy to get wrong:
+   the root's own default is protection-on, so any apply in the window that omits
+   GCP's override silently turns protection back on and the teardown then fails on
+   a database the target still owns. *)
 let policy_vars ~provider ~phase ~destroy_snapshot_id =
   match policy_of_phase phase with
   | Bootstrap | Installation | Production -> []
@@ -918,7 +921,7 @@ let policy_vars ~provider ~phase ~destroy_snapshot_id =
        ; "rds_skip_final_snapshot", "false"
        ; "rds_final_snapshot_identifier", destroy_snapshot_id
        ]
-     | Sol_cli_provider.Gcp -> [])
+     | Sol_cli_provider.Gcp -> [ "sql_deletion_protection", "false" ])
 ;;
 
 (* The operator-facing name of a phase (ADR 0003's own spelling). Kept here so a
