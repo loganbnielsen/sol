@@ -723,7 +723,7 @@ then deleted.
 
 **Result: the first conformant install of the run.** Authority: `main @ 852be182`,
 verified before the run; the binary was built from that tree and its mtime did not
-change during the attempt. Target `sol-qual9-86054342`, account `876701109436`
+change during the attempt. Target `sol-qual9-86054342`, account `<qualification account>`
 (the recorded precondition-1 deviation still applies).
 
 ```text
