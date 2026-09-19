@@ -619,6 +619,106 @@ this procedure re-read end to end. The profile's capacity contract means a confo
 attempt expects **4 × m6i.xlarge**; a target that provisions anything smaller is now
 refused by preflight rather than discovered as `Insufficient cpu`.
 
+## Run 5 attempt 2 (executed 2026-09-19) — NON-CONFORMANT: finding 19 blocking
+
+Fresh disposable target `sol-qual6-9dda701e` (same target path, 876701109436 / us-east-1),
+run after INFRA-030's capacity contract was on `main`.
+
+| Stage | Result |
+|---|---|
+| `sol cloud plan` | clean; profile-derived shape enforced (`node_instance_types=["m6i.xlarge"]`, `node_desired_size=4`, `node_min_size=3`, `node_max_size=10`) |
+| `terraform-apply` (cloud) | **ok**, 880.4s |
+| `platform-prerequisites-apply` | ok, 48.9s |
+| `platform-apply` | **FAILED**, 166.4s — `helm_release.alloy` |
+
+**finding 19 — the alloy chart cannot be downloaded (INFRA-032).**
+`helm_release.redpanda` and `helm_release.loki[0]` both reached `Creation complete`,
+and every other platform component was observed `Running`, while alloy failed with
+`could not download chart: Chart.yaml file is missing`. Alloy was the only chart in
+the platform root still sourced from the legacy `grafana.github.io` repository; that
+index advertises archives on GitHub releases rather than at the
+`<repo>/<chart>-<version>.tgz` path the Terraform helm provider resolves. Attempt 1
+had treated this as transient; attempt 2 reproduced it on a fresh target, so that
+position is discharged. Fixed by INFRA-032 (the chart is named by archive URL).
+
+### F16 verification — the capacity fix works (live)
+
+Planned shape came from the profile, appended last so a target field or `--var`
+cannot weaken it, and the platform's own components scheduled:
+
+- live nodes: **4 × m6i.xlarge** (16 vCPU), versus attempt 1's 3 × m6i.large (6 vCPU);
+- `redpanda-0/1/2`: **2/2 Running** (attempt 1: `0/3 nodes are available: 3 Insufficient cpu`);
+- `loki-0`, `loki-chunks-cache-0`, `loki-results-cache-0`: **2/2 Running** (attempt 1: Pending);
+- grafana, prometheus, alertmanager, kube-state-metrics, loki canaries: all Running.
+
+### INFRA-033 found while tearing this attempt down
+
+The first `sol cloud destroy` **crashed mid-teardown** with an uncaught
+`Sys_error(.../runs/cloud-destroy-20260919T001717Z-23151/platform-destroy.log: No such
+file or directory)` — its run directory had been pruned underneath it, leaving the
+cluster, four nodes and Multi-AZ RDS provisioned and billing until the destroy was
+re-run (which completed normally: `terraform-destroy` ok, 713.9s). Root cause:
+`run_log.create` prunes to the newest 20 run directories and excluded only the run
+being created, so any new `sol` invocation could delete a live run's directory. Fixed
+by INFRA-033.
+
+### Cost-clean verification
+
+EKS `list-clusters` empty and `describe-cluster` `ResourceNotFound`; RDS 0 instances;
+4 instances `terminated`; NAT gateway `deleted`; EIP 0; ELBv2 0; EBS volumes 0;
+non-default VPCs 0; ECR repos 0. The disposable final snapshot was recorded and then
+deleted (qualification-account hygiene; Sol's production destroy behaviour is
+unchanged).
+
+## Run 5 attempt 3 (executed 2026-09-19) — NON-CONFORMANT: finding 20 blocking
+
+Fresh disposable target `sol-qual7-3904198d`, after INFRA-032 was on `main`.
+
+| Stage | Result |
+|---|---|
+| `terraform-apply` (cloud) | **ok**, 860.3s — EKS v1.36.4 `ACTIVE`, 4 nodes |
+| `platform-prerequisites-apply` | ok, 49.4s |
+| `platform-apply` | **ok**, 171.0s — **every chart installed, alloy included** |
+| `provisioner-bootstrap-access-remove` | ok, 13.6s |
+| platform readiness | **FAILED** — every component reported unavailable |
+
+### finding 20 — a fresh install is judged by one readiness sample (INFRA-034)
+
+`platform-apply` succeeded and then readiness reported **nine** components as
+unavailable, immediately. Minutes later, on that same target: cert-manager 3 × `1/1`,
+ingress-nginx `1/1`, Argo CD 7 × `1/1`, Redpanda 3 × `2/2`, Alloy 4 × `2/2`,
+Loki/Grafana/Tempo/Prometheus all ready, four nodes `Ready`. The gate sampled once the
+instant the apply returned and never re-checked; `readiness` contains no wait, retry or
+sleep. Helm reporting a release as deployed means the objects were created, not that
+the controllers behind them are serving, so a single sample cannot describe a fresh
+install. Fixed by INFRA-034 (bounded wait, progress reporting, same fail-closed
+outcome on timeout).
+
+The run relinquished privilege before reporting the failure, so the operator is told
+the target failed when the platform is fine.
+
+### The one check that could not have fixed itself, and a fixture pitfall
+
+Of the nine, the `ClusterIssuer` had a different and genuine cause: Let's Encrypt
+rejected the ACME registration (`ErrRegisterACMEAccount`) because the contact email's
+domain is on LE's forbidden list — `contact email has forbidden domain "example.com"`.
+The qualification target file had been given a documentation-style address
+(`…@example.invalid`, then `…@example.com`), and **no reserved documentation domain can
+ever satisfy this check**. A qualification target must use a syntactically valid,
+non-forbidden domain; verified against the live ACME server that
+`qualification@sol-harden-qualification.dev` registers (`ACMEAccountRegistered`).
+
+This is a fixture-input error, not a product defect — but it is recorded because it
+cost two attempts, and because the readiness summary reporting nine components at once
+is what made the real cause hard to see (INFRA-034's progress reporting addresses the
+diagnosis half of that).
+
+### Cost-clean verification
+
+EKS `ResourceNotFound` and `list-clusters` empty; RDS 0; 4 instances `terminated`; NAT
+`deleted`; EIP 0; ELBv2 0; EBS 0; non-default VPCs 0; ECR 0. Final snapshot recorded
+then deleted.
+
 ## Run 5 — procedure (NOT EXECUTED; requires explicit operator authorization)
 
 This section was written as run 3's proposed plan. Runs 3 and 4 then executed and
