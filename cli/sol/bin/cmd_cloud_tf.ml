@@ -994,13 +994,65 @@ let cloud_init ~target ~var_file ~vars ~action () =
          let cluster_issuer =
            Option.value target_cfg.cluster_issuer ~default:"letsencrypt-prod"
          in
-         let readiness =
+         let readiness_checks () =
            Sol_cli_cloud_lifecycle.readiness
              ~cluster_issuer
              ~observability_backend:
                (Option.value target_cfg.observability_backend ~default:"local")
              ~run:(fun args -> process_output ~env ("kubectl" :: args))
          in
+         let unmet_count checks =
+           List.length
+             (List.filter
+                (fun (_, state) ->
+                   match state with
+                   | Sol_cli_cloud_lifecycle.Established -> false
+                   | Sol_cli_cloud_lifecycle.Unmet _ -> true)
+                checks)
+         in
+         (* INFRA-034: the install must not be judged on one sample taken the
+            instant the apply returns. Helm reporting a release as deployed says
+            the objects were created, not that the controllers behind them are
+            serving: on a fresh install every native readiness endpoint is still
+            starting, so a single sample reports a healthy platform as Unmet and
+            then fails the run *after* relinquishing privilege. On a real target
+            that produced "Unmet" naming nine components that were all Running
+            minutes later.
+
+            So wait, bounded, and say what is still unmet while waiting — the
+            wait is evidence, and it must not hide a genuine failure. A platform
+            that never converges still fails, with the same summary as before. *)
+         let readiness_deadline_s =
+           (* The default is generous because a fresh install's controllers need
+              minutes, not seconds. Overridable so a harness can bound the wait
+              rather than wait it out: a test that asserts the failing end of this
+              behaviour must not itself take fifteen minutes. *)
+           match Sys.getenv_opt "SOL_PLATFORM_READINESS_TIMEOUT_S" with
+           | Some raw ->
+             (match float_of_string_opt raw with
+              | Some seconds when seconds >= 0. -> seconds
+              | _ -> 900.)
+           | None -> 900.
+         in
+         let readiness_poll_s = 15. in
+         let deadline = Unix.gettimeofday () +. readiness_deadline_s in
+         let waiting_since = Unix.gettimeofday () in
+         let rec await_readiness () =
+           let checks = readiness_checks () in
+           let unmet = unmet_count checks in
+           if unmet = 0
+           then checks
+           else if Unix.gettimeofday () >= deadline
+           then checks
+           else (
+             Printf.printf
+               "  awaiting platform readiness: %d check(s) unmet, %.0fs elapsed\n%!"
+               unmet
+               (Unix.gettimeofday () -. waiting_since);
+             Unix.sleepf readiness_poll_s;
+             await_readiness ())
+         in
+         let readiness = await_readiness () in
          let summary = Sol_cli_cloud_lifecycle.readiness_summary readiness in
          if summary <> "Ready"
          then (
