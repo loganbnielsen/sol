@@ -278,6 +278,11 @@ jobs:
       - name: Qualification assertion mutation test (HARDEN-003)
         run: internal/ci/test_qualification_assertions.sh
 
+      # INFRA-040: the substrate's Secret and the migration Job's reference must
+      # resolve the same identity, or no workload can be deployed.
+      - name: Runtime secret identity guard (INFRA-040)
+        run: internal/ci/check_runtime_secret_identity.sh
+
       - name: Destroy-completeness guard mutation test (INFRA-037)
         run: internal/ci/test_destroy_completeness_check.sh
 

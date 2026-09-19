@@ -287,6 +287,46 @@ let kubectl_apply_or_fatal ~ctx ~what ?(on_fail = fun () -> ()) argv =
    just the three most obvious ones -- an unescaped \r silently gets
    YAML-folded into a space by the double-quoted-scalar line-folding rule,
    corrupting CRLF-terminated SQL without so much as a parse error. *)
+(* INFRA-040: a Job whose container cannot start has already failed. Waiting the
+   full timeout for an outcome that cannot come describes the symptom and hides the
+   cause: Attempt 6 spent its entire migration gate on "did not complete within
+   120s" while the Pod had been reporting
+   `CreateContainerConfigError: secret "sol-secrets" not found` from the start.
+
+   The reason and the message are read together, because the reason names the class
+   and the message names the thing -- which Secret, which image. *)
+let container_waiting_status ~ctx ~namespace ~job_name () =
+  let jsonpath =
+    "jsonpath={range \
+     .items[*]}{.status.containerStatuses[*].state.waiting.reason}\"|\"{.status.containerStatuses[*].state.waiting.message}{\"\\n\"}{end}"
+  in
+  match
+    run_kubectl
+      ~ctx
+      ~timeout_s:15.
+      [ "get"; "pods"; "-n"; namespace; "-l"; "job-name=" ^ job_name; "-o"; jsonpath ]
+  with
+  | Ok r when r.Sol_cli_process.exit_code = 0 ->
+    (match String.split_on_char '|' (String.trim r.Sol_cli_process.stdout) with
+     | reason :: rest when String.trim reason <> "" ->
+       Some (String.trim reason, String.trim (String.concat "|" rest))
+     | _ -> None)
+  | _ -> None
+;;
+
+(* Reasons that mean the container will never run without a change: waiting longer
+   cannot help, so the operation should fail now and say why. *)
+let terminal_waiting_reasons =
+  [ "CreateContainerConfigError"
+  ; "CreateContainerError"
+  ; "InvalidImageName"
+  ; "ErrImagePull"
+  ; "ImagePullBackOff"
+  ; "RunContainerError"
+  ; "CrashLoopBackOff"
+  ]
+;;
+
 let yaml_dq s =
   let b = Buffer.create (String.length s + 2) in
   Buffer.add_char b '"';
@@ -810,10 +850,23 @@ let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table =
                      | _ -> true
                    then `Failed
                    else (
-                     Unix.sleepf 2.;
-                     wait (n - 1))
+                     (* INFRA-040: fail on a container that cannot start rather than waiting
+                        out a timeout that cannot resolve. This is what turned a one-line
+                        Secret-name mismatch into an hour of diagnosis. *)
+                     match container_waiting_status ~ctx ~namespace ~job_name () with
+                     | Some (reason, detail) when List.mem reason terminal_waiting_reasons
+                       -> `Unstartable (reason, detail)
+                     | _ ->
+                       Unix.sleepf 2.;
+                       wait (n - 1))
                  in
                  (match wait 60 with
+                  | `Unstartable (reason, detail) ->
+                    Error
+                      (Printf.sprintf
+                         "migration-status Job cannot start: %s%s"
+                         reason
+                         (if detail = "" then "" else Printf.sprintf " (%s)" detail))
                   | `Timed_out ->
                     Error "migration-status Job did not complete within 120s"
                   | `Failed -> Error "migration-status Job failed -- see the Job logs"

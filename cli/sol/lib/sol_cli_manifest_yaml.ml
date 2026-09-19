@@ -139,7 +139,21 @@ data:
     (render_env_block env)
 ;;
 
-(* stringData lets operators fill in real values without base64-encoding them.
+(* The per-workload Secret name. The convention lives here, once, because the
+   shared runtime Secret is deliberately *not* workload-suffixed: it is
+   [runtime_secret_name] verbatim, and the two must not be derivable from each
+   other by a template that does not know which one it is rendering. *)
+let workload_secret_name name = Printf.sprintf "%s-secrets" name
+
+(* Renders the Kubernetes Secret whose identity is [name]. [name] is the *final*
+   resource name -- this function applies no naming convention of its own. That is
+   the whole point: a template that appends a suffix to whatever it is handed
+   produced `sol-secrets-secrets` for the shared runtime Secret while every
+   consumer referenced `sol-secrets`, and the only way to see it was to read the
+   rendered YAML. Callers pass either [runtime_secret_name] or
+   [workload_secret_name workload].
+
+   stringData lets operators fill in real values without base64-encoding them.
    With ~redact:true (GitOps mode) all values are stripped to "" so nothing
    sensitive lands in committed manifests. *)
 let secret_doc
@@ -164,7 +178,7 @@ let secret_doc
 apiVersion: v1
 kind: Secret
 metadata:
-  name: %s-secrets
+  name: %s
   namespace: %s
 type: Opaque
 %sstringData:
