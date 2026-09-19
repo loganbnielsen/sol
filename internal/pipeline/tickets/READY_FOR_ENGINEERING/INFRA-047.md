@@ -46,3 +46,14 @@ now recognises gcloud's real 404 wording).
 **Demo/example coverage:** Not applicable.
 
 **TypeScript parity:** No language-parity impact.
+
+## Implementation
+
+`verify_aws_destroy` now queries target-named elastic IPs and NAT gateways and
+target-tagged EBS volumes after Terraform destroy.  Each check reports its own
+resource class, rejects a non-empty result, and fails closed on AWS CLI errors.
+
+The offline lifecycle harness requires all three empty-result queries on a
+successful destroy, then mutates each result independently to contain a residual
+resource and requires the public destroy command to fail with the corresponding
+diagnostic.  This exercises both directions without provider access.
