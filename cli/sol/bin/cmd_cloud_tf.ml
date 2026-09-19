@@ -484,6 +484,29 @@ let process_output ?(env = []) argv =
   | _ -> None
 ;;
 
+(* INFRA-039: resolve provider credentials for this operation, report the principal
+   they belong to, and fail closed if they cannot be resolved. Sol used to inherit
+   the ambient environment and assume it still worked: on HARDEN-002 Run 5 Attempt 5
+   the SSO session expired mid-run, the CLI still answered for the profile while
+   terraform could not refresh, and `sol cloud destroy` could not authenticate
+   against a billable target. [leaves_target_standing] says the part that matters —
+   a destroy that cannot authenticate leaves infrastructure running and disables the
+   only supported path to remove it. *)
+let require_credentials ~operation ~leaves_target_standing =
+  let profile = Sys.getenv_opt "AWS_PROFILE" in
+  match Sol_cli_credentials.resolve ~run:process_output ~profile with
+  | Error detail ->
+    lifecycle_error
+      (Sol_cli_credentials.unresolved_message
+         ~operation
+         ~profile
+         ~leaves_target_standing
+         ~detail)
+  | Ok credentials ->
+    Sol_cli_credentials.install credentials;
+    Printf.printf "  credentials: %s\n%!" credentials.principal
+;;
+
 let aws_cloud_ready ~region outputs =
   let cluster =
     Sol_cli_cloud_lifecycle.cluster_name (Sol_cli_cloud_lifecycle.Aws_outputs outputs)
@@ -774,6 +797,12 @@ let cloud_init ~target ~var_file ~vars ~action () =
      Printf.eprintf "\nerror: %s\n%!" msg;
      exit 1);
   Printf.printf "\nInitializing cloud infrastructure (%s)...\n%!" pname;
+  (* INFRA-039: credentials are resolved again here, per mutating stage,
+       rather than assumed from process start -- a platform stage runs many
+       minutes after the cloud stage. *)
+  (match action with
+   | Plan -> ()
+   | _ -> require_credentials ~operation:"applying" ~leaves_target_standing:false);
   run_terraform_init run_log infra_dir cloud_backend;
   match action with
   | Plan ->
@@ -827,6 +856,13 @@ let cloud_init ~target ~var_file ~vars ~action () =
          in
          (match prerequisites with
           | Sol_cli_cloud_lifecycle.Plannable ->
+            (* INFRA-039: credentials are resolved again here, per mutating stage,
+       rather than assumed from process start -- a platform stage runs many
+       minutes after the cloud stage. *)
+            (match action with
+             | Plan -> ()
+             | _ ->
+               require_credentials ~operation:"applying" ~leaves_target_standing:false);
             run_terraform_init run_log platform_dir platform_backend;
             require_terraform_success
               (Sol_cli_run_log.run_phase
@@ -1146,6 +1182,12 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
     | Some f -> [ normalize_var_file f ]
   in
   Printf.printf "\nDestroying cloud infrastructure (%s)...\n%!" pname;
+  (* INFRA-039: credentials are resolved again here, per mutating stage,
+       rather than assumed from process start -- a platform stage runs many
+       minutes after the cloud stage. *)
+  (match action with
+   | Plan -> ()
+   | _ -> require_credentials ~operation:"destroying" ~leaves_target_standing:true);
   run_terraform_init run_log infra_dir cloud_backend;
   let outputs =
     match aws_outputs infra_dir with
@@ -1192,6 +1234,12 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
        let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
        let platform_vars = platform_vars_of ~cloud_target ~outputs () in
        with_provisioner_kubeconfig ~region:target_cfg.region outputs (fun env ->
+         (* INFRA-039: credentials are resolved again here, per mutating stage,
+       rather than assumed from process start -- a platform stage runs many
+       minutes after the cloud stage. *)
+         (match action with
+          | Plan -> ()
+          | _ -> require_credentials ~operation:"destroying" ~leaves_target_standing:true);
          run_terraform_init run_log platform_dir platform_backend;
          require_terraform_success
            (Sol_cli_run_log.run_phase run_log ~name:"platform-plan-destroy" (fun () ->

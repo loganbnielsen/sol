@@ -117,6 +117,24 @@ cat >"$tmp/bin/aws" <<'EOF'
 #!/usr/bin/env bash
 set -eu
 printf 'aws %s\n' "$*" >>"$LIFECYCLE_LOG"
+  # INFRA-039: Sol resolves credentials per mutating stage through the CLI, so
+  # the fake has to answer that (and the identity query) like a working session.
+  case "$1 $2" in
+    "configure export-credentials")
+      if [ "${FAIL_CREDENTIALS:-}" = 1 ]; then
+        printf 'Error: could not resolve credentials, session has expired\n' >&2
+        exit 254
+      fi
+      printf 'export AWS_ACCESS_KEY_ID=AKIAHARNESS\n'
+      printf 'export AWS_SECRET_ACCESS_KEY=harness-secret\n'
+      printf 'export AWS_SESSION_TOKEN=harness-token\n'
+      exit 0
+      ;;
+    "sts get-caller-identity")
+      printf 'arn:aws:iam::111122223333:role/harness-qualification\n'
+      exit 0
+      ;;
+  esac
 # Destroy-path verification wants the opposite of apply's: every resource
 # reports absent. Apply and destroy never run in the same process, so one
 # env toggle (set only around destroy invocations below) is enough to flip
@@ -269,7 +287,11 @@ for phase in cloud outputs cloud-verify access platform-init prerequisites crds 
     echo "cloud apply unexpectedly survived injected $phase failure" >&2
     exit 1
   fi
-  if ! (export FAIL_ON=""; run_apply "$log"); then
+  if ! grep -q "credentials: arn:aws:iam::111122223333:role/harness-qualification" "$log.out"; then
+  echo "INFRA-039: the apply did not report the principal its credentials belong to" >&2
+  exit 1
+fi
+if ! (export FAIL_ON=""; run_apply "$log"); then
     cat "$log" >&2
     cat "$log.out" >&2
     echo "cloud apply did not resume after injected $phase failure" >&2
@@ -517,6 +539,31 @@ no_plan_mutation "$log"
 # A plannable-phase failure is non-zero, not silently Deferred.
 log="$tmp/plan-fail.log"
 rm -f "$tmp/markers/plan"
+
+# INFRA-039: credentials that cannot be resolved must stop the operation before it
+# mutates anything, and say so in terms an operator can act on. The direction of
+# the failure is the point: an operation that cannot authenticate must not be
+# discovered half-way through, and a destroy must say the target is still standing.
+cred_log="$tmp/credentials.log"
+if (export FAIL_CREDENTIALS=1; run_apply "$cred_log"); then
+  echo "credential failure: apply survived unresolvable credentials" >&2
+  exit 1
+fi
+grep -F 'cannot resolve AWS credentials before applying' "$cred_log.out" >/dev/null || {
+  echo "credential failure: the error does not name the operation:" >&2
+  cat "$cred_log.out" >&2
+  exit 1
+}
+grep -F 'Nothing has been changed' "$cred_log.out" >/dev/null || {
+  echo "credential failure: the error does not state that nothing was changed" >&2
+  cat "$cred_log.out" >&2
+  exit 1
+}
+grep -F '[terraform-apply] ok' "$cred_log.out" >/dev/null && {
+  echo "credential failure: an apply stage ran despite unresolvable credentials" >&2
+  exit 1
+}
+
 if plan "$log" FAIL_ON=plan; then
   cat "$log.out" >&2
   echo "cloud plan must exit non-zero when a plannable phase fails" >&2
