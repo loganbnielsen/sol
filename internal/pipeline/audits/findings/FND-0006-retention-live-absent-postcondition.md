@@ -1,6 +1,7 @@
 # FND-0006 — Retention: code and harness are correct, the live `Absent` postcondition is not yet demonstrated
 
-- **Status:** `QUALIFICATION_GAP` (defect fixed; live postcondition open)
+- **Classification:** `QUALIFICATION_GAP`
+- **State:** `FIXED_UNQUALIFIED` (INFRA-041 fixed the code/harness; the live `none → Absent` behaviour is not observed)
 - **First identified:** 2026-09-19 (HARDEN Run 6 / Attempt 6)
 - **Last verified:** 2026-09-19, `main @ 7ea2ef43` (INFRA-041 merged)
 - **Provider:** AWS (GCP retention is inexpressible — see below)

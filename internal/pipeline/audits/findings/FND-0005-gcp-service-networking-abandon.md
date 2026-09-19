@@ -1,6 +1,7 @@
 # FND-0005 — GCP service-networking destruction: documented contract vs one live observation
 
-- **Status:** `QUALIFICATION_GAP` (behaviourally qualified once; documented contract not aligned)
+- **Classification:** `QUALIFICATION_GAP`
+- **State:** `OPEN` (one live observation; documented contract not aligned, upper bound unestablished)
 - **First identified:** 2026-09-19 (GCP qualification Attempts 1–3)
 - **Last verified:** 2026-09-19, `main @ 7ea2ef43`
 - **Provider:** GCP (Terraform `google` provider)

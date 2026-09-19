@@ -25,7 +25,7 @@ IDs are stable: `INV-<group>-<n>`. The summary table below uses the short form
 | AUTH-1 | Target authority is explicit, never ambient | QUALIFIED (behavioral, partial) | MECHANISM |
 | AUTH-2 | Authentication ≠ authorization (reach ≠ in-cluster rights) | HOLDS (static) | **DEFECT** (FND-0001/INFRA-043) |
 | AUTH-3 | Install authority exists only during the transitions requiring it | QUALIFIED (behavioral) | MECHANISM |
-| AUTH-4 | Revoking bootstrap revokes the *effective* capability (no surviving path) | **GAP** (FND-0002) | **DEFECT** (FND-0001) |
+| AUTH-4 | Revoking bootstrap revokes the *effective* capability (no surviving path) | **DESIGN GAP** (FND-0002) | **DEFECT** (FND-0001) |
 | AUTH-5 | Steady-state identities hold only intended capabilities | QUALIFIED (partial) | GAP (publisher/deployer contract unimplemented) |
 | DESTROY-1 | Every infra-holding state has a Sol path to `Absent` | QUALIFIED (behavioral) | **DEFECT** (FND-0004/INFRA-042) |
 | DESTROY-2 | Normal activity never makes a target undeletable via the lifecycle | QUALIFIED (behavioral) | MECHANISM |
@@ -187,7 +187,7 @@ boundary was true of one mechanism and false of another.
 | | AWS | GCP |
 |---|---|---|
 | Surviving path? | **Yes, latent**: the provisioner IAM policy grants `eks:*` (`bootstrap/main.tf:81`), which includes `eks:AssociateAccessPolicy`; the provisioner can associate `AmazonEKSClusterAdminPolicy` with its own access entry and obtain full cluster admin at will. | **Yes, continuous**: the provisioner service account's project-level `roles/container.developer` authorizes Kubernetes API writes through GKE's IAM fallback, with no Sol action. |
-| Verdict | **QUALIFICATION/DOCUMENTATION GAP** — the docs claim "cannot manufacture a more powerful identity"; the cloud-API path is not addressed. A narrowing requires a design decision (split cloud-provisioning identity from steady-state cluster-access identity) | **VERIFIED DEFECT** — FND-0001 / INFRA-043 |
+| Verdict | **`DESIGN_GAP`** — the AWS behaviour is documented and correct; the stated invariant ("cannot manufacture a more powerful identity") and the single-identity design are misaligned, and closing the gap requires a design decision (split cloud-provisioning from steady-state cluster-access identity, or restate the invariant) | **`VERIFIED_DEFECT`** — FND-0001 / INFRA-043 |
 
 **Provider-contract sources.**
 - `eks:AssociateAccessPolicy` is the permission required to associate access
@@ -203,8 +203,9 @@ post-closure check (`provisioner_authorization_established`) probes Kubernetes
 `PlatformInstalling -> Ready` row names positive/negative `can-i` but no live
 run has executed the full boundary.
 
-**Open findings/tickets.** FND-0001 (defect → INFRA-043), FND-0002 (AWS gap, no
-ticket — needs a decision), FND-0003 (effective-capability qualification gap).
+**Open findings/tickets.** FND-0001 (defect → INFRA-043), FND-0002
+(`DESIGN_GAP`, no ticket — needs a decision), FND-0003 (effective-capability
+qualification gap).
 
 **To move to qualified.**
 - GCP: narrow the role and demonstrate a denied operation (INFRA-043).

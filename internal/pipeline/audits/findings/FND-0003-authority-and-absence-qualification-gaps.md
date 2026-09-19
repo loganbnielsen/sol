@@ -1,6 +1,7 @@
 # FND-0003 — Post-revocation effective authority and four-identity permissions are not behaviourally qualified
 
-- **Status:** `QUALIFICATION_GAP`
+- **Classification:** `QUALIFICATION_GAP`
+- **State:** `OPEN`
 - **First identified:** 2026-09-19 (authority audit, this pass)
 - **Last verified:** 2026-09-19, `main @ 7ea2ef43`
 - **Providers:** AWS and GCP

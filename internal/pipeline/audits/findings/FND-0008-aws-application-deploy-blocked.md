@@ -1,6 +1,7 @@
 # FND-0008 — No workload can be deployed to an AWS target: the runtime Secret identity is wrong
 
-- **Status:** `VERIFIED_DEFECT`
+- **Classification:** `VERIFIED_DEFECT`
+- **State:** `OPEN` (INFRA-040 not implemented)
 - **First identified:** 2026-09-19 (HARDEN Run 6 / Attempt 6)
 - **Last verified:** 2026-09-19, `main @ 7ea2ef43`
 - **Provider:** provider-neutral (manifest rendering); observed on AWS

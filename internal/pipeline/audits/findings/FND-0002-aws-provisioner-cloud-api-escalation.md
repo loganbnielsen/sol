@@ -1,6 +1,7 @@
 # FND-0002 — AWS provisioner can re-grant itself cluster-admin through the EKS API
 
-- **Status:** `DOCUMENTATION_GAP` (with an open `QUALIFICATION_GAP`)
+- **Classification:** `DESIGN_GAP`
+- **State:** `OPEN` (decision required: narrow the provisioner role, or split the cloud-provisioning identity from the steady-state cluster-access identity)
 - **First identified:** 2026-09-19 (authority audit, this pass)
 - **Last verified:** 2026-09-19, `main @ 7ea2ef43`
 - **Provider:** AWS / EKS
@@ -91,11 +92,23 @@ admin, and the post-closure `can-i` checks cannot observe an AWS-API path at
 all. The residual authority is real; whether it is unacceptable is a design
 question.
 
-## Why no ticket
+## Classification and why no ticket
+
+**Classification: `DESIGN_GAP`, not `DOCUMENTATION_GAP` or `OBSERVATION`.**
+The AWS behaviour is fully documented and correct — `eks:AssociateAccessPolicy`
+is the documented permission, and `AmazonEKSClusterAdminPolicy` is documented to
+grant administrator access. So this is not a case of Sol's docs contradicting an
+undocumented provider fact. What is unresolved is *Sol's intended steady-state
+authority contract*: ADR 0003 / `production-bootstrap.md` / matrix I3 state the
+provisioner "cannot manufacture a more powerful identity", while the design
+deliberately uses one identity that both builds the cluster (and therefore
+manages its access entries) and is the steady-state cluster-access identity. The
+stated invariant and the design are misaligned, and closing that gap requires a
+design decision. `OBSERVATION` would understate the open question; a
+`DOCUMENTATION_GAP` would misattribute it to the provider documentation.
 
 The ticket policy requires a concrete, actionable implementation defect. Here
-the defect is in the *claim's scope*, and the two candidate fixes both require a
-decision rather than a mechanical change:
+the two candidate fixes both require a decision rather than a mechanical change:
 
 1. **Narrow the provisioner** — deny `eks:AssociateAccessPolicy` /
    `eks:CreateAccessEntry` / `eks:UpdateAccessEntry` unless the identity is
@@ -108,7 +121,10 @@ decision rather than a mechanical change:
    trust owners differ").
 
 Either is a `DEC-*` / ADR-level choice. Creating an `INFRA-*` ticket now would
-prescribe a fix to an undecided question.
+prescribe a fix to an undecided question. Whichever way it is decided, the
+outcome is recorded on this finding as a state transition (`OPEN` →
+`FIXED_UNQUALIFIED` → `QUALIFIED`, or `OPEN` → `ACCEPTED`), never by rewriting
+the classification.
 
 ## To move to qualified
 

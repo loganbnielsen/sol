@@ -1,6 +1,7 @@
 # FND-0001 — GCP provisioner IAM role grants Kubernetes API authority
 
-- **Status:** `VERIFIED_DEFECT`
+- **Classification:** `VERIFIED_DEFECT`
+- **State:** `OPEN` (INFRA-043 not implemented; the boundary is not qualified)
 - **First identified:** 2026-09-19 (provider-contract verification pass)
 - **Last verified:** 2026-09-19, `main @ 7ea2ef43`
 - **Provider:** GCP / GKE

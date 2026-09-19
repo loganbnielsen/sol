@@ -60,7 +60,8 @@ A **durable statement about Sol's implementation or qualification state**. A
 finding does *not* imply a defect and does *not* imply a ticket. Findings are
 the general storage mechanism; tickets are not.
 
-Each finding records, where applicable: title; status/classification; date
+Each finding records, where applicable: title; classification **and** state (two
+axes, defined below); date
 first identified; date/revision last verified; provider(s); the Sol claim or
 invariant at stake; the verified provider contract with primary-source URLs and
 short exact excerpts; current implementation evidence with paths/line locations;
@@ -95,17 +96,35 @@ the ticket.
 
 ## Shared vocabulary
 
-### Status / classification
+### Classification and state are separate axes
 
-| Status | Meaning |
+Every finding carries **both**. Classification is what kind of thing the finding
+*is* and rarely changes. State is where it currently stands and changes as work
+lands and evidence accumulates. History is preserved by updating **State** and
+adding a dated line — never by rewriting the classification or the earlier
+conclusion. (Example: a `VERIFIED_DEFECT` moves `OPEN → FIXED_UNQUALIFIED →
+QUALIFIED` over its life and keeps the same classification throughout.)
+
+**Classification — what the finding is**
+
+| Classification | Meaning |
 |---|---|
-| `VERIFIED_DEFECT` | A provider contract or Sol invariant is established, the implementation inspected, and a concrete defect/missing safeguard exists. |
+| `VERIFIED_DEFECT` | A provider contract or Sol invariant is established, the implementation inspected, and a concrete defect / missing safeguard exists. |
+| `DESIGN_GAP` | The stated invariant or claim and the implementation's design are not aligned, **and** closing the gap (or deliberately restating the claim) requires a design decision — not a mechanical fix and not a measurement. Includes invariant-scope ambiguity. Recorded so the decision is explicit. |
 | `QUALIFICATION_GAP` | The property is not yet behaviourally established. Not necessarily a defect. |
-| `DOCUMENTATION_GAP` | The code/docs claim something the verified contract does not support (claim too broad, wrong scope, stale). |
-| `BLOCKED` | Cannot be qualified until an external input exists (e.g. a real alert receiver, a delegated DNS zone). |
-| `QUALIFIED` | Behaviourally established, with the run/attempt and evidence named. |
-| `OBSERVATION` | Recorded because it matters to future readers, with no defect and no open qualification row. |
-| `SUPERSEDED` | An earlier conclusion replaced by later verified evidence; retained for history. |
+| `DOCUMENTATION_GAP` | The code/docs claim something the verified provider contract does not support — a pure claim error (stale, too broad, wrong page). If the claim is overbroad because the *design* cannot realize it, use `DESIGN_GAP`. |
+| `OBSERVATION` | Recorded because it matters to future readers; no defect. |
+
+**State — where it stands (orthogonal, mutable)**
+
+| State | Meaning |
+|---|---|
+| `OPEN` | The issue/gap exists; no change landed, or the behavioural row is not established. |
+| `FIXED_UNQUALIFIED` | An implementation change landed and is `STATIC`/`MECHANISM`-verified, but the behavioural postcondition is not yet established. Code correctness and behavioural qualification are distinct. |
+| `QUALIFIED` | Behaviourally established, with the run/attempt and target/revision named. |
+| `BLOCKED` | Cannot progress until an external input exists (e.g. a real alert receiver, a delegated DNS zone). |
+| `ACCEPTED` | A deliberate, recorded residual; not being fixed. The reasoning lives in the finding. |
+| `SUPERSEDED` | Replaced by later verified evidence; retained for history. |
 
 ### Evidence taxonomy
 

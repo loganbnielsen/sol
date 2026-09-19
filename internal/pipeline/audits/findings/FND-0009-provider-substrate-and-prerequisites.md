@@ -1,6 +1,7 @@
 # FND-0009 — Provider substrate and host-prerequisite differences
 
-- **Status:** `OBSERVATION` (AWS storage/prereqs qualified; GCP storage mechanism-only)
+- **Classification:** `OBSERVATION`
+- **State:** `OPEN` (AWS storage/prereqs qualified; GCP storage and plugin preflight mechanism-only)
 - **First identified:** 2026-09-19 (this pass; consolidates known evidence)
 - **Last verified:** 2026-09-19, `main @ 7ea2ef43`
 - **Providers:** AWS and GCP

@@ -1,6 +1,7 @@
 # FND-0004 — A partially installed GCP platform is not destructible through the lifecycle
 
-- **Status:** `VERIFIED_DEFECT`
+- **Classification:** `VERIFIED_DEFECT`
+- **State:** `OPEN` (INFRA-042 not implemented)
 - **First identified:** 2026-09-19 (GCP qualification Attempt 3)
 - **Last verified:** 2026-09-19, `main @ 7ea2ef43`
 - **Provider:** GCP / GKE

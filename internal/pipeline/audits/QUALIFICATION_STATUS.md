@@ -13,30 +13,32 @@ authoritative detail; it does not duplicate it. Detail lives in:
 - the executable contract → `docs/qualification/production-single-region-v1-matrix.md` (AWS)
 - the GCP lifecycle proposal → `docs/qualification/gcp-bootstrap-inventory.md`
 
-Status words are the shared set in `README.md`; evidence words are
-`STATIC` / `MECHANISM` / `BEHAVIORAL`. "Unqualified" means "not yet established
-by evidence that could have failed" — it never means "false".
+Findings carry two orthogonal axes (see `README.md`): **Classification** (what it
+is) and **State** (where it stands: `OPEN`, `FIXED_UNQUALIFIED`, `QUALIFIED`,
+`BLOCKED`, `ACCEPTED`, `SUPERSEDED`). Evidence words are `STATIC` / `MECHANISM` /
+`BEHAVIORAL`. "Unqualified" means "not yet established by evidence that could
+have failed" — it never means "false".
 
 ---
 
 ## Open defects (with tickets)
 
-| Finding | Provider | Defect | Ticket | Ticket state |
+| Finding | Provider | Defect | Ticket | State |
 |---|---|---|---|---|
-| FND-0001 | GCP | Provisioner IAM role `roles/container.developer` grants Kubernetes API authority; the claimed RBAC-only boundary is not real | `INFRA-043` | READY |
-| FND-0004 | GCP | A partially-installed platform is not destructible through `sol cloud destroy` (CRD-backed state, CRDs absent) | `INFRA-042` | READY |
-| FND-0008 | AWS (render) | Runtime Secret identity mismatch (`sol-secrets` vs `sol-secrets-secrets`) blocks every cloud deploy | `INFRA-040` | READY |
+| FND-0001 | GCP | Provisioner IAM role `roles/container.developer` grants Kubernetes API authority; the claimed RBAC-only boundary is not real | `INFRA-043` | `OPEN` |
+| FND-0004 | GCP | A partially-installed platform is not destructible through `sol cloud destroy` (CRD-backed state, CRDs absent) | `INFRA-042` | `OPEN` |
+| FND-0008 | AWS (render) | Runtime Secret identity mismatch (`sol-secrets` vs `sol-secrets-secrets`) blocks every cloud deploy | `INFRA-040` | `OPEN` |
 
 ## Open findings without tickets (and why)
 
-| Finding | Status | Why no ticket |
-|---|---|---|
-| FND-0002 | `DOCUMENTATION_GAP` | The AWS provisioner can re-grant itself cluster-admin via `eks:AssociateAccessPolicy`; the fix requires a decision (narrow the role vs split identities), not a mechanical change |
-| FND-0003 | `QUALIFICATION_GAP` | Effective-authority and absence coverage are unexercised, not defective |
-| FND-0005 | `QUALIFICATION_GAP` | Service-networking ABANDON: observed once vs documented "blocks network deletion"; GCP agent owns re-observation |
-| FND-0006 | `QUALIFICATION_GAP` | Retention code/harness fixed; live `Absent` postcondition unproven |
-| FND-0007 | `QUALIFICATION_GAP` | GCP cert-manager Cloud DNS gap already tracked in the GCP inventory; product fails closed |
-| FND-0009 | `OBSERVATION` | Provider substrate/prereq differences; no defect |
+| Finding | Classification | State | Why no ticket |
+|---|---|---|---|
+| FND-0002 | `DESIGN_GAP` | `OPEN` | The AWS provisioner can re-grant itself cluster-admin via `eks:AssociateAccessPolicy` — documented AWS behaviour; the unresolved part is Sol's intended steady-state authority contract, so the fix requires a design decision (narrow the role vs split identities), not a mechanical change |
+| FND-0003 | `QUALIFICATION_GAP` | `OPEN` | Effective-authority and absence coverage are unexercised, not defective |
+| FND-0005 | `QUALIFICATION_GAP` | `OPEN` | Service-networking ABANDON: observed once vs documented "blocks network deletion"; GCP agent owns re-observation |
+| FND-0006 | `QUALIFICATION_GAP` | `FIXED_UNQUALIFIED` | Retention code/harness fixed (INFRA-041); live `Absent` postcondition unproven |
+| FND-0007 | `QUALIFICATION_GAP` | `OPEN` | GCP cert-manager Cloud DNS gap already tracked in the GCP inventory; product fails closed |
+| FND-0009 | `OBSERVATION` | `OPEN` | Provider substrate/prereq differences; no defect |
 
 ## One-line qualification frontier
 
@@ -56,7 +58,7 @@ Full realization and sources: `invariants/PROVIDER-NEUTRAL-INVARIANTS.md`.
 | AUTH-1 explicit target authority | QUALIFIED (behavioral, partial) | MECHANISM | — |
 | AUTH-2 authn ≠ authz | HOLDS (static) | **DEFECT** | FND-0001 / INFRA-043 |
 | AUTH-3 install authority only during transitions | QUALIFIED (behavioral) | MECHANISM | — |
-| AUTH-4 revoke effective capability (no surviving path) | **GAP** | **DEFECT** | FND-0002, FND-0001 |
+| AUTH-4 revoke effective capability (no surviving path) | **DESIGN GAP** | **DEFECT** | FND-0002, FND-0001 |
 | AUTH-5 steady-state identities bounded | QUALIFIED (partial) | GAP (publisher/deployer contract unimplemented) | FND-0003 |
 | DESTROY-1 every state → `Absent` | QUALIFIED (behavioral) | **DEFECT** | FND-0004 / INFRA-042 |
 | DESTROY-2 normal activity never blocks destroy | QUALIFIED (behavioral) | MECHANISM | — |
@@ -160,8 +162,11 @@ Prioritised, provider-tagged, and traceable to a finding/invariant:
 
 ## How to update this index
 
-When a finding's status changes, update the finding, then its row here, then the
+When a finding's **state** changes (classification rarely does), update the
+finding's `State:` line and add a dated line recording the transition, then its
+row here, then the
 matching invariant's qualification table. When a run is executed, record the run
 identity (`provider`, `target`, `revision`, `profile`, `timestamp`, cleanup
 deviations) in the run record and cite it here by that identity. Do not promote
-`STATIC`/`MECHANISM` evidence to `BEHAVIORAL` to make a row look green.
+`STATIC`/`MECHANISM` evidence to `BEHAVIORAL` to make a row look green, and do
+not rewrite a finding's earlier conclusion to reflect a later state.

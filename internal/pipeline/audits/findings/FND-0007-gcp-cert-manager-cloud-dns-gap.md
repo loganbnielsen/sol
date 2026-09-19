@@ -1,6 +1,7 @@
 # FND-0007 — GCP cert-manager cannot issue: the shared issuers are hard-wired to Route 53
 
-- **Status:** `QUALIFICATION_GAP` (known capability gap; product fails closed)
+- **Classification:** `QUALIFICATION_GAP`
+- **State:** `OPEN` (known capability gap; product fails closed)
 - **First identified:** 2026-09-18 (`gcp-bootstrap-inventory.md`)
 - **Last verified:** 2026-09-19, `main @ 7ea2ef43`
 - **Provider:** GCP / GKE (AWS is fine)
