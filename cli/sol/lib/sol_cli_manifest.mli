@@ -63,6 +63,12 @@ val extract_schedule : dir:string -> name:string -> string
 val default_cluster_env : (string * string) list
 val default_secrets : (string * string) list
 val runtime_secret_name : string
+
+(** The per-workload Secret name ([<workload>-secrets]). The convention lives here
+    once; the shared runtime Secret is deliberately NOT workload-suffixed, so the
+    two names are not derived from each other. *)
+val workload_secret_name : string -> string
+
 val config_hash : (string * string) list -> string
 
 (** Bounds a taxonomy label value to Kubernetes' 63-char label-value limit and
@@ -99,6 +105,9 @@ val configmap_doc
   -> unit
   -> string
 
+(** [name] is the *final* Secret name -- this applies no naming convention. Pass
+    [runtime_secret_name] for the shared runtime Secret, or
+    [workload_secret_name workload] for a workload's own. *)
 val secret_doc
   :  ?base_secrets:(string * string) list
   -> ?extra_secrets:(string * string) list

@@ -38,6 +38,7 @@
   test_deploy_event
   test_open
   test_status
+  test_runtime_secret_identity
   test_profile
   test_alerting
   test_workspace

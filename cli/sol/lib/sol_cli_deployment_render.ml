@@ -109,10 +109,22 @@ let render
            let base_secrets =
              List.map (fun (k, _) -> k, value_from_env k) default_secrets
            in
-           Ok (secret_doc ~base_secrets ~extra_secrets ~ns ~name ()))
+           Ok
+             (secret_doc
+                ~base_secrets
+                ~extra_secrets
+                ~ns
+                ~name:(workload_secret_name name)
+                ()))
       | Kubernetes_placeholder ->
         let extra_secrets = List.map (fun (k, _) -> k, "") secrets in
-        Ok (secret_doc ~extra_secrets ~redact:true ~ns ~name ())
+        Ok
+          (secret_doc
+             ~extra_secrets
+             ~redact:true
+             ~ns
+             ~name:(workload_secret_name name)
+             ())
       | External_secrets { store_ref; store_kind; key_prefix; refresh_interval } ->
         let all_keys = List.map fst default_secrets @ List.map fst secrets in
         Ok
