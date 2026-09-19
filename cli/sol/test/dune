@@ -129,6 +129,7 @@
   check_production_infra.sh
   (source_tree ../../platform/infra/aws)
   (source_tree ../../platform/infra/base)
+  (source_tree ../../platform/infra/base-gcp)
   (source_tree ../../platform/infra/bootstrap)
   (source_tree ../../platform/infra/gcp))
  (action

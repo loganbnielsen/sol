@@ -10,49 +10,80 @@ type aws_outputs =
   ; managed_resource_dashboards : Yojson.Safe.t
   }
 
+(* Remote state for one root. A backend's *type* is part of a Terraform root's own
+   configuration -- `-backend-config` sets attributes, never the type -- so each
+   provider's roots declare their own backend and this supplies the attributes
+   that root expects. The two are therefore not the same shape:
+
+     * S3 addresses an object by `key` and needs a separate lock resource
+       (`dynamodb_table`), because S3 has no native locking.
+     * GCS addresses an object by `prefix` and locks natively, so there is no lock
+       resource to name. A GCP target that declares a `state_lock_table` is not
+       wrong -- the field is simply not what serializes applies there.
+
+   What Sol actually requires of a target is the same for both, and is the one
+   declaration checked here: the durable, encrypted, versioned bucket. *)
 let backend_config (target : Sol_cli_config.target) ~root =
-  match target.state_bucket, target.state_lock_table with
-  | Some bucket, Some table when String.trim bucket <> "" && String.trim table <> "" ->
-    let layer =
-      match root with
-      | `Cloud -> "cloud"
-      | `Platform -> "platform"
-    in
-    Ok
-      [ "bucket=" ^ String.trim bucket
-      ; Printf.sprintf "key=sol/%s/%s.tfstate" target.name layer
-      ; "region=" ^ target.region
-      ; "dynamodb_table=" ^ String.trim table
-      ; "encrypt=true"
-      ]
-  | _ ->
-    Error
-      "target must declare state_bucket and state_lock_table before `sol cloud` can use \
-       durable state"
+  let layer =
+    match root with
+    | `Cloud -> "cloud"
+    | `Platform -> "platform"
+  in
+  let object_key = Printf.sprintf "sol/%s/%s.tfstate" target.name layer in
+  match target.state_bucket with
+  | Some bucket when String.trim bucket <> "" ->
+    let bucket = String.trim bucket in
+    (match target.provider with
+     | Sol_cli_provider.Aws ->
+       (match target.state_lock_table with
+        | Some table when String.trim table <> "" ->
+          Ok
+            [ "bucket=" ^ bucket
+            ; "key=" ^ object_key
+            ; "region=" ^ target.region
+            ; "dynamodb_table=" ^ String.trim table
+            ; "encrypt=true"
+            ]
+        | _ ->
+          Error
+            "an AWS target must declare state_lock_table: S3 has no native state \
+             locking, so two applies could corrupt the same state")
+     | Sol_cli_provider.Gcp -> Ok [ "bucket=" ^ bucket; "prefix=" ^ object_key ])
+  | _ -> Error "target must declare state_bucket before `sol cloud` can use durable state"
 ;;
 
-type aws_target =
+(* The provider-neutral facts a cloud lifecycle operation needs from a target,
+   plus the backend config each provider's roots expect. Provider-specific
+   *identity* is deliberately absent: an AWS target names a role ARN because that
+   is how an AWS caller assumes the provisioner, while a GCP target names nothing
+   because the caller impersonates a service account through short-lived
+   credentials instead. Making both carry a role-shaped field would invent a
+   concept GCP does not have. *)
+type cloud_target =
   { target : Sol_cli_config.target
   ; cloud_backend : string list
   ; platform_backend : string list
   ; base_domain : string
   ; letsencrypt_email : string
-  ; provisioner_role_arn : string
+  ; provisioner_role_arn : string option
   }
 
 let required name = function
   | Some value when String.trim value <> "" -> Ok (String.trim value)
-  | _ -> Error ("AWS cloud lifecycle requires target." ^ name)
+  | _ -> Error ("the cloud lifecycle requires target." ^ name)
 ;;
 
-let aws_target target =
+let cloud_target target =
   let ( let* ) = Result.bind in
   let* cloud_backend = backend_config target ~root:`Cloud in
   let* platform_backend = backend_config target ~root:`Platform in
   let* base_domain = required "base_domain" target.Sol_cli_config.base_domain in
   let* letsencrypt_email = required "letsencrypt_email" target.letsencrypt_email in
   let* provisioner_role_arn =
-    required "provisioner_role_arn" target.provisioner_role_arn
+    match target.provider with
+    | Sol_cli_provider.Aws ->
+      Result.map Option.some (required "provisioner_role_arn" target.provisioner_role_arn)
+    | Sol_cli_provider.Gcp -> Ok None
   in
   Ok
     { target
@@ -62,6 +93,25 @@ let aws_target target =
     ; letsencrypt_email
     ; provisioner_role_arn
     }
+;;
+
+(* The platform root, relative to the Sol home. The platform *definition* is
+   shared (`cli/platform/infra/base`); the root differs per provider because a
+   Terraform root's backend type is part of its own configuration -- so `base`
+   declares the S3 backend and is AWS's root, while `base-gcp` declares the GCS
+   backend and uses `base` as the shared definition. *)
+let platform_root = function
+  | Sol_cli_provider.Aws -> "cli/platform/infra/base"
+  | Sol_cli_provider.Gcp -> "cli/platform/infra/base-gcp"
+;;
+
+(* A resource address inside the platform root. A provider whose root reaches the
+   shared definition through a module addresses its resources through it, so the
+   provider prefix lives next to [platform_root] rather than at each `-target`. *)
+let platform_address provider address =
+  match provider with
+  | Sol_cli_provider.Aws -> address
+  | Sol_cli_provider.Gcp -> "module.platform." ^ address
 ;;
 
 let target config = config.target
@@ -157,10 +207,15 @@ type platform_inputs =
   ; outputs : aws_outputs
   }
 
-let platform_inputs (target : aws_target) (outputs : aws_outputs) =
-  if outputs.provisioner_role_arn <> target.provisioner_role_arn
-  then Error "AWS provisioner_role_arn output does not match the validated target"
-  else
+let platform_inputs (target : cloud_target) (outputs : aws_outputs) =
+  (* The cloud root reports the identity the platform root will act as; the
+     target's declaration is what authorized it, so a mismatch means the platform
+     would be wired to an identity Sol did not validate. Providers without a
+     role-shaped identity have nothing to compare. *)
+  match target.provisioner_role_arn with
+  | Some arn when arn <> outputs.provisioner_role_arn ->
+    Error "AWS provisioner_role_arn output does not match the validated target"
+  | _ ->
     Ok
       { base_domain = target.base_domain
       ; letsencrypt_email = target.letsencrypt_email

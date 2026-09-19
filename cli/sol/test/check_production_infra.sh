@@ -362,6 +362,68 @@ if printf '%s\n' "$(sed 's/#.*//' "$provisioner_rbac")" | grep -Eq '"(escalate|b
   exit 1
 fi
 
+# A Terraform root's backend *type* is part of its own configuration --
+# `-backend-config` sets attributes, never the type -- so the platform definition
+# `cli/platform/infra/base` cannot carry both the S3 backend AWS needs and the GCS
+# backend GCP needs. `cli/platform/infra/base-gcp` is a root that supplies the GCS
+# backend and calls the shared definition as a module, which is why `sol cloud`
+# selects a platform root per provider.
+#
+# That makes the wrapper a pass-through whose variable list can drift: a variable
+# added to the definition and forgotten here would leave a GCP install unable to
+# set it, silently falling back to the definition's default. Only the AWS-shaped
+# variables may be missing, and they may only be missing because a provider that
+# has no IAM roles or S3 buckets cannot use them -- so the exclusion list itself
+# is asserted, not just the count.
+wrapper_vars="$root/cli/platform/infra/base-gcp/variables.tf"
+
+if [ ! -f "$wrapper_vars" ]; then
+  echo "FAIL: $wrapper_vars is missing; the GCP platform root has no variables" >&2
+  exit 1
+fi
+
+if ! grep -q 'backend "gcs" {}' "$root/cli/platform/infra/base-gcp/main.tf"; then
+  echo "FAIL: the GCP platform root no longer declares the GCS backend, so the type" >&2
+  echo "      Sol initializes it with would be the definition's S3 one." >&2
+  exit 1
+fi
+
+if grep -q 'backend "s3" {}' "$root/cli/platform/infra/gcp/main.tf"; then
+  echo "FAIL: the GCP cloud root declares the S3 backend" >&2
+  exit 1
+fi
+
+declared_vars() {
+  grep -h '^variable "' "$@" | sed 's/^variable "\([^"]*\)".*/\1/' | sort
+}
+
+# The definition's variables, in every file that declares one.
+definition_vars="$(declared_vars "$root"/cli/platform/infra/base/*.tf)"
+mirrored_vars="$(declared_vars "$wrapper_vars")"
+
+# The only variables a GCP root may omit: AWS IAM roles and S3 buckets.
+aws_only='aws_region cert_manager_irsa_role_arn grafana_irsa_role_arn loki_irsa_role_arn loki_s3_bucket thanos_irsa_role_arn thanos_s3_bucket'
+
+unmirrored="$(comm -23 <(printf '%s\n' "$definition_vars") <(printf '%s\n' "$mirrored_vars"))"
+unexpected="$(comm -13 <(printf '%s\n' "$aws_only" | tr ' ' '\n' | sort) <(printf '%s\n' "$unmirrored"))"
+
+if [ -n "$unexpected" ]; then
+  echo "FAIL: the GCP platform root does not mirror these declared variables:" >&2
+  printf '      %s\n' $unexpected >&2
+  echo "      Add them to cli/platform/infra/base-gcp, or add them to the AWS-only" >&2
+  echo "      exclusion list here with the reason they cannot apply to GCP." >&2
+  exit 1
+fi
+
+extra="$(comm -13 <(printf '%s\n' "$definition_vars") <(printf '%s\n' "$mirrored_vars"))"
+
+if [ -n "$extra" ]; then
+  echo "FAIL: the GCP platform root declares variables the shared definition does" >&2
+  echo "      not, so the module call cannot pass them:" >&2
+  printf '      %s\n' $extra >&2
+  exit 1
+fi
+
 if command -v terraform >/dev/null 2>&1; then
   terraform fmt -check -recursive "$root/cli/platform/infra" >/dev/null
   echo "production infra: precondition present, terraform fmt ok"

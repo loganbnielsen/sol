@@ -240,6 +240,38 @@ Before run 2 the substrate had neither, and the only reason the repository's own
 live smoke harness ever installed the platform was that it disabled persistence
 (`-var=redpanda_persistent_storage=false`).
 
+## Platform roots are selected per provider
+
+The platform *definition* is `cli/platform/infra/base`. A Terraform root's state
+backend *type* is part of its own configuration — `-backend-config` sets
+attributes, never the type — so one root cannot serve both the S3 backend AWS
+needs and the GCS backend GCP needs. `sol cloud` therefore selects a root per
+provider (`Sol_cli_cloud_lifecycle.platform_root`):
+
+| Provider | Root | Backend | Platform state object |
+|---|---|---|---|
+| AWS | `cli/platform/infra/base` | S3 + DynamoDB locking | `sol/<target>/platform.tfstate` (`key=`) |
+| GCP | `cli/platform/infra/base-gcp` | GCS, native locking | `sol/<target>/platform.tfstate` (`prefix=`) |
+
+`base-gcp` declares only the GCS backend and a module call into `base`, so the
+definition itself is not duplicated. Two consequences are worth knowing before
+editing either:
+
+- A module's own `terraform` block is ignored, so `terraform init` on `base-gcp`
+  warns about `base`'s S3 backend and provider requirements. That is expected —
+  the root's backend is the one used, and supplying it is the whole reason the
+  root exists.
+- The GCP root mirrors every variable in the definition except the AWS-shaped
+  ones — `aws_region`, the S3 buckets and their IRSA roles, and
+  `cert_manager_irsa_role_arn`, none of which a GCP install can use. Adding a
+  variable to the definition without adding it to `base-gcp` fails
+  `cli/sol/test/check_production_infra.sh` rather than silently defaulting on GCP.
+
+Everything a target addresses inside the platform root goes through
+`Sol_cli_cloud_lifecycle.platform_address`, because a root that reaches the
+definition through a module addresses its resources through it
+(`module.platform.<resource>`) while AWS's does not.
+
 ## Destroying a target (finding 9 of HARDEN-002 run 2)
 
 Production RDS deletion protection stays **on** by default; that is correct and is

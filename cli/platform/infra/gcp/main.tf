@@ -32,11 +32,11 @@ terraform {
     }
   }
 
-  # Uncomment to store state in GCS (recommended for teams):
-  # backend "gcs" {
-  #   bucket = "my-terraform-state"
-  #   prefix = "sol/prod"
-  # }
+  # GCS, with GCS's native state locking. `sol cloud` supplies bucket= and
+  # prefix=sol/<target>/cloud.tfstate from the target's declared state bucket;
+  # there is no lock resource to name, which is why a GCP target declares no
+  # state_lock_table.
+  backend "gcs" {}
 }
 
 provider "google" {
