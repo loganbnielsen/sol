@@ -59,6 +59,28 @@ variable "sql_high_availability" {
   default     = false
 }
 
+# The GKE provider's own guard. See the resource: it defaults to true, so a
+# target that never mentions it cannot be destroyed. Default true keeps a destroy
+# driven directly against Terraform failing rather than deleting a cluster by
+# surprise; `sol cloud destroy`'s Destroy policy sets it false for the teardown,
+# exactly as it does for Cloud SQL.
+variable "gke_deletion_protection" {
+  description = "Enable the GKE provider's deletion protection on the cluster. Default true (a direct destroy fails rather than deleting a cluster); `sol cloud destroy` sets it false for the Destroy phase."
+  type        = bool
+  default     = true
+}
+
+# How long to wait, after the Cloud SQL instance is gone, before releasing the
+# servicenetworking peering. Default 300s: live attempt 1 observed the peering
+# still refusing ~2.5 minutes after the instance's delete completed, and GCP does
+# not document the window. The number is a variable so a live observation can
+# correct it without touching the graph's shape.
+variable "sql_private_network_release_wait" {
+  description = "How long to wait between the Cloud SQL instance's destruction and releasing its private-services peering, which GCP releases asynchronously."
+  type        = string
+  default     = "300s"
+}
+
 variable "sql_deletion_protection" {
   description = "Enable both Terraform's destroy guard and Cloud SQL API deletion protection."
   type        = bool

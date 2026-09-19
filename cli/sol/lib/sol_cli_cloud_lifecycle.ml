@@ -897,17 +897,35 @@ let ready_policy_applies phase = policy_of_phase phase = Production
    own variables so the phase policy wins. [Destroy] deliberately contradicts the
    Production invariant for RDS deletion protection. *)
 (* The Destroy policy is provider-shaped, because the levers are: AWS lifts RDS
-   deletion protection and names the final snapshot it will take, while GCP's Cloud
-   SQL equivalents are attributes of a different provider's resources and are not
-   implemented yet (the inventory's gap 4). What is provider-neutral is that a
-   Destroy policy exists, that the phase names it, and that it is what decides
-   whether a target can reach [Absent].
+   deletion protection and names the final snapshot it will take, while GCP lifts
+   Cloud SQL's and the GKE cluster's. What is provider-neutral is that a Destroy
+   policy exists, that the phase names it, and that it is what decides whether a
+   target can reach [Absent].
 
    This is not a cosmetic split. `-var` for a variable a root does not declare is
    an error, not a no-op, so handing the GCP cloud root AWS's three would fail the
    first GCP destroy with "Value for undeclared variable" instead of lifting
-   anything -- the failure would arrive as a destroy that cannot start. So GCP gets
-   an empty policy *and* a named gap rather than AWS's levers. *)
+   anything -- the failure would arrive as a destroy that cannot start.
+
+   Three things are deliberately kept separate here, because two of them had already
+   been conflated:
+
+   - *deletion protection* is a safety guard on a resource that exists. Lifting it is
+     what makes the target destructible, and it says nothing about what survives.
+   - *retention* (DEC-033) is what a destroy deliberately keeps. AWS expresses it
+     with the final snapshot; GCP cannot express it at all yet, which is why
+     [prepare_destruction] refuses a GCP target whose retention is the default rather
+     than discarding its recovery data quietly.
+   - *preparation* is the applied-and-verified semantic transition that makes the
+     destruction legal under both of the above.
+
+   Both providers' guards have to be *forwarded to every apply from [Preparing_destroy]
+   on*, not only to the destroy itself: each root's default is protection-on, so any
+   apply in that window which omits the override silently turns protection back on and
+   the teardown then fails on something the target still owns. Live attempt 1 was
+   exactly that shape, one guard deeper than expected -- Cloud SQL's was lifted and the
+   GKE cluster's, a provider default the root never mentioned, was not, so a target Sol
+   had provisioned could not be deleted. *)
 (* DEC-033: what a destroy deliberately keeps, and the fact that it is a choice.
 
    Two postconditions were being conflated. A production destroy means "nothing
@@ -971,7 +989,8 @@ let policy_vars ~provider ~phase ~destroy_snapshot_id ~retention =
           ; "rds_final_snapshot_identifier", destroy_snapshot_id
           ]
         | Retain_nothing -> [ "rds_skip_final_snapshot", "true" ])
-     | Sol_cli_provider.Gcp -> [])
+     | Sol_cli_provider.Gcp ->
+       [ "sql_deletion_protection", "false"; "gke_deletion_protection", "false" ])
 ;;
 
 (* The operator-facing name of a phase (ADR 0003's own spelling). Kept here so a

@@ -68,10 +68,38 @@ for dir in "${target_roots[@]}"; do
       report "$tf declares an object-storage bucket without force_destroy = true, so platform-written contents block the teardown."
     fi
   done < <(grep -rlE '^[[:space:]]*resource[[:space:]]+"(aws_s3_bucket|google_storage_bucket)"' "$root/$dir" --include='*.tf' 2>/dev/null)
+
+  # 3. A *provider-level* deletion guard must be routed through a variable, and the
+  #    Destroy policy must lift it. This is the rule live attempt 1 earned.
+  #    `google_container_cluster`'s `deletion_protection` defaults to true in the
+  #    provider, so a root that never mentions it still cannot be destroyed -- rule 1
+  #    cannot see that, because there is no `prevent_destroy` to find. The guard is
+  #    *absent* rather than wrong, which is the harder half of the invariant: it says
+  #    "every destruction guard must have a documented Destroy-policy transition",
+  #    not "find these dangerous declarations".
+  #
+  #    Requiring the assignment to be a variable is what makes a provider's default
+  #    explicit and therefore visible here at all; requiring the policy to name the
+  #    variable is what makes the teardown able to lift it.
+  for guard_var in $(
+    grep -hoE '^[[:space:]]*deletion_protection[[:space:]]*=[[:space:]]*var\.[a-z_]+' \
+      "$root/$dir"/*.tf 2>/dev/null \
+      | sed 's/.*var\.//' \
+      | sort -u
+  ); do
+    if ! grep -qE "\"$guard_var\",[[:space:]]*\"false\"" "$root/cli/sol/lib/sol_cli_cloud_lifecycle.ml"; then
+      report "$dir routes $guard_var through a variable, but the Destroy policy in Sol_cli_cloud_lifecycle never lifts it -- so a target Sol provisioned cannot be destroyed through Sol (ADR 0004)."
+    fi
+  done
+
+  # ...and a literal is a guard no Destroy policy can override.
+  if grep -qE '^[[:space:]]*deletion_protection[[:space:]]*=[[:space:]]*(true|false)' "$root/$dir"/*.tf 2>/dev/null; then
+    report "$dir sets deletion_protection to a literal, which no Destroy policy can override; route it through a variable."
+  fi
 done
 
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "check_destroy_completeness: $checked terraform file(s) in ${#target_roots[@]} target root(s); no prevent_destroy, every lifecycle-populated resource removable."
+echo "check_destroy_completeness: $checked terraform file(s) in ${#target_roots[@]} target root(s); no prevent_destroy, no literal deletion guard, every lifecycle-populated resource removable and every routed guard liftable by the Destroy policy."

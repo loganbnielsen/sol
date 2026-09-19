@@ -30,6 +30,17 @@ terraform {
       source  = "hashicorp/helm"
       version = "~> 2.12"
     }
+    # Live attempt 1: GCP releases the servicenetworking producer reference
+    # asynchronously, *after* the Cloud SQL instance's delete reports complete, so
+    # deleting the peering immediately afterwards fails with "Producer services
+    # (e.g. CloudSQL ...) are still using this connection". Terraform orders the two
+    # deletes correctly (the instance is a dependent, so it goes first) -- what it
+    # cannot express through ordinary dependencies is a *wait* between them, and a
+    # wait is what the provider requires.
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.11"
+    }
   }
 
   # GCS, with GCS's native state locking. `sol cloud` supplies bucket= and
@@ -89,6 +100,17 @@ resource "google_container_cluster" "main" {
   name     = var.cluster_name
   location = var.region
 
+  # The provider defaults this to true, so a root that never mentions it still
+  # produces a cluster Sol cannot destroy: live attempt 1 lifted Cloud SQL's guard,
+  # deleted everything else, and was then refused with "Cannot destroy cluster
+  # because deletion_protection is set to true". That is ADR 0004's invariant
+  # reached through a provider *default* rather than through `prevent_destroy`,
+  # which is why a search for suspicious configuration found nothing -- there was
+  # no attribute to find, only an attribute's absence. Routing it through a
+  # variable is what makes the default explicit, and the Destroy policy is what
+  # lifts it.
+  deletion_protection = var.gke_deletion_protection
+
   # Autopilot: Google manages nodes, scaling, and security hardening
   enable_autopilot = true
 
@@ -121,15 +143,58 @@ resource "google_artifact_registry_repository" "images" {
   description   = "Container images for ${var.cluster_name} Sol workspace"
 }
 
+# Autopilot reports its node service account as the literal shorthand "default",
+# and the IAM API rejects `serviceAccount:default` ("Error 400: Invalid service
+# account (default)") -- which is where live attempt 1's apply died, after the
+# cluster and the database had already been created. "default" means the project's
+# Compute Engine default service account, so that is what it is resolved to.
+data "google_compute_default_service_account" "default" {
+  project = var.project_id
+}
+
+locals {
+  gke_node_service_account = (
+    google_container_cluster.main.node_config[0].service_account == "default"
+    ? data.google_compute_default_service_account.default.email
+    : google_container_cluster.main.node_config[0].service_account
+  )
+}
+
 # Grant GKE SA read access to pull images
 resource "google_artifact_registry_repository_iam_member" "gke_pull" {
   location   = google_artifact_registry_repository.images.location
   repository = google_artifact_registry_repository.images.name
   role       = "roles/artifactregistry.reader"
-  member     = "serviceAccount:${google_container_cluster.main.node_config[0].service_account}"
+  member     = "serviceAccount:${local.gke_node_service_account}"
 }
 
 # ── Cloud SQL PostgreSQL ──────────────────────────────────────────────────── #
+
+# Live attempt 1's destruction failure, expressed where it belongs. The graph
+# already ordered this correctly -- the instance is destroyed before the peering,
+# which is why the log shows "google_sql_database_instance.postgres: Destruction
+# complete after 2m2s" immediately followed by
+# "google_service_networking_connection.sql: Destroying..." -- and GCP then
+# refused the peering with "Producer services ... are still using this connection".
+# Terraform orders operations; it cannot insert a wait between two of them, and a
+# wait is exactly what the provider needs.
+#
+# So the wait is expressed as a resource: creating the instance waits for the
+# peering (0s), and *destroying* the instance waits out the release window before
+# the peering is attempted, because reverse order destroys the instance, then this
+# resource (which is where the wait happens), then the peering. Deleting the two
+# in the right order by hand in Sol would be Sol reimplementing the DAG; a
+# dependency the graph can carry belongs in the graph.
+resource "time_sleep" "sql_private_network_release" {
+  depends_on = [google_service_networking_connection.sql]
+
+  # GCP documents deleting the connection only after every instance using it is
+  # gone; live attempt 1 measured at least ~2.5 minutes of refusal after the
+  # instance's delete returned, and the exact window is not documented. This is
+  # deliberately a variable rather than a constant, because the number is the
+  # part that a live observation should correct.
+  destroy_duration = var.sql_private_network_release_wait
+}
 
 resource "google_sql_database_instance" "postgres" {
   name                = "${var.cluster_name}-postgres"
@@ -160,7 +225,7 @@ resource "google_sql_database_instance" "postgres" {
     }
   }
 
-  depends_on = [google_service_networking_connection.sql]
+  depends_on = [time_sleep.sql_private_network_release]
 }
 
 resource "google_sql_database" "app" {
