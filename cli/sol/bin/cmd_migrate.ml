@@ -133,12 +133,20 @@ let get_postgres_url ~ctx () =
       exit 1)
 ;;
 
+(* INFRA-044: Pg/caqti errors may reproduce their connection URI verbatim.
+   Rendering through this boundary inside the migration runner is essential:
+   scrubbing only the parent CLI's copy would leave the credential in the
+   Kubernetes Job's own logs and in every sink that collects them. *)
+let pg_error_to_string ~url error =
+  Sol_cli_redaction.connection_error ~url (Pg_error.to_string error)
+;;
+
 let with_pool url f =
   Eio_main.run (fun env ->
     Eio.Switch.run (fun sw ->
       match Pg_db.create_pool ~url ~sw ~stdenv:(env :> Caqti_eio.stdenv) () with
       | Error e ->
-        Printf.eprintf "error: cannot connect to database: %s\n" (Pg_error.to_string e);
+        Printf.eprintf "error: cannot connect to database: %s\n" (pg_error_to_string ~url e);
         exit 1
       | Ok pool -> f ~fs:env#fs pool))
 ;;
@@ -182,7 +190,7 @@ let run_apply_local ~ctx dir table dry_run =
       match Migration.apply ~table pool ~dir ~fs with
       | Ok () -> Printf.printf "Done.\n"
       | Error e ->
-        Printf.eprintf "error: %s\n" (Pg_error.to_string e);
+        Printf.eprintf "error: %s\n" (pg_error_to_string ~url e);
         exit 1))
 ;;
 
@@ -641,7 +649,13 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
               ~timeout_s:30.
               [ "logs"; Printf.sprintf "job/%s" job_name; "-n"; namespace ]
           with
-          | Ok r -> print_string r.Sol_cli_process.stdout
+          | Ok r ->
+            let logs =
+              match Sys.getenv_opt "POSTGRES_URL" with
+              | Some url -> Sol_cli_redaction.connection_error ~url r.Sol_cli_process.stdout
+              | None -> r.Sol_cli_process.stdout
+            in
+            print_string logs
           | Error e ->
             Printf.eprintf
               "warning: could not fetch job logs: %s\n"
@@ -921,7 +935,7 @@ let run_status ~ctx ?(json = false) dir table () =
   with_pool url (fun ~fs pool ->
     match Migration.status ~table pool ~dir ~fs with
     | Error e ->
-      Printf.eprintf "error: %s\n" (Pg_error.to_string e);
+      Printf.eprintf "error: %s\n" (pg_error_to_string ~url e);
       exit 1
     | Ok rows ->
       if json
@@ -953,7 +967,7 @@ let run_rollback ~ctx dir table () =
     match Migration.rollback ~table pool ~dir ~fs with
     | Ok () -> Printf.printf "Rolled back.\n"
     | Error e ->
-      Printf.eprintf "error: %s\n" (Pg_error.to_string e);
+      Printf.eprintf "error: %s\n" (pg_error_to_string ~url e);
       exit 1)
 ;;
 

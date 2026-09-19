@@ -140,6 +140,49 @@ let test_status_json_roundtrip () =
   Alcotest.(check bool) "carries the table" true (contains body "\"table\":\"t\"")
 ;;
 
+let connection_url =
+  "postgresql://postgres:known-password@db.internal:5432/app?sslmode=require"
+;;
+
+let test_runner_error_redacts_password_and_keeps_shape () =
+  let raw = "create migrations table: Failed to connect to <" ^ connection_url ^ ">" in
+  let rendered = Sol_cli_redaction.connection_error ~url:connection_url raw in
+  Alcotest.(check bool) "password absent" false (contains rendered "known-password");
+  Alcotest.(check bool)
+    "placeholder present"
+    true
+    (contains rendered "postgres:<redacted>@");
+  Alcotest.(check bool)
+    "host and database remain"
+    true
+    (contains rendered "db.internal:5432/app")
+;;
+
+let test_job_log_boundary_redacts_repeated_secret_values () =
+  let raw =
+    "migration error: " ^ connection_url ^ "\nretry failed; password=known-password\n"
+  in
+  let rendered = Sol_cli_redaction.connection_error ~url:connection_url raw in
+  Alcotest.(check bool)
+    "password absent everywhere"
+    false
+    (contains rendered "known-password");
+  Alcotest.(check bool) "diagnosis retained" true (contains rendered "retry failed")
+;;
+
+let test_passwordless_and_non_uri_inputs_are_unchanged () =
+  Alcotest.(check string)
+    "passwordless"
+    "connection refused"
+    (Sol_cli_redaction.connection_error
+       ~url:"postgresql://db.internal/app"
+       "connection refused");
+  Alcotest.(check string)
+    "not a URI"
+    "bad input"
+    (Sol_cli_redaction.connection_error ~url:"opaque" "bad input")
+;;
+
 let () =
   Alcotest.run
     "migration"
@@ -160,6 +203,20 @@ let () =
     ; ( "encoding"
       , [ Alcotest.test_case "parse status json" `Quick test_parse_status_json
         ; Alcotest.test_case "status json round-trip" `Quick test_status_json_roundtrip
+        ] )
+    ; ( "connection redaction"
+      , [ Alcotest.test_case
+            "runner error hides password"
+            `Quick
+            test_runner_error_redacts_password_and_keeps_shape
+        ; Alcotest.test_case
+            "Job logs hide every password occurrence"
+            `Quick
+            test_job_log_boundary_redacts_repeated_secret_values
+        ; Alcotest.test_case
+            "non-credential inputs unchanged"
+            `Quick
+            test_passwordless_and_non_uri_inputs_are_unchanged
         ] )
     ]
 ;;
