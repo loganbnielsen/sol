@@ -198,6 +198,17 @@ resource "aws_ecr_repository" "services" {
   name                 = "${var.workspace_name}/${each.value}"
   image_tag_mutability = "MUTABLE"
 
+  # INFRA-037: images are pushed here by the documented publish step, so by the
+  # time anyone destroys a target that has deployed once, these repositories are
+  # NOT empty. Without [force_delete] the destroy fails with "ECR Repository
+  # (...) not empty, consider using force_delete" and leaves the whole target
+  # standing -- which is exactly what happened on HARDEN Run 5 Attempt 5.
+  #
+  # The invariant (ADR 0004): normal lifecycle activity must never make a target
+  # undeletable through the normal lifecycle. Artifacts this repository accumulates
+  # are produced BY the lifecycle, so the lifecycle has to be able to remove them.
+  force_delete = true
+
   image_scanning_configuration {
     scan_on_push = true
   }
@@ -526,9 +537,13 @@ resource "aws_s3_bucket" "loki" {
   bucket = "${var.cluster_name}-loki-logs"
   tags   = var.tags
 
-  lifecycle {
-    prevent_destroy = true
-  }
+  # INFRA-037: this bucket's contents are produced by running the platform (Loki
+  # and Thanos ship into it), so a target that has run for any length of time can
+  # never be destroyed while it is non-empty. [prevent_destroy] made that worse
+  # than a failure: terraform refuses before it even attempts the delete, so
+  # `sol cloud destroy` could never complete for a durable-observability target
+  # and the infrastructure was stranded. See ADR 0004.
+  force_destroy = true
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "loki" {
@@ -587,9 +602,13 @@ resource "aws_s3_bucket" "thanos" {
   bucket = "${var.cluster_name}-thanos-metrics"
   tags   = var.tags
 
-  lifecycle {
-    prevent_destroy = true
-  }
+  # INFRA-037: this bucket's contents are produced by running the platform (Loki
+  # and Thanos ship into it), so a target that has run for any length of time can
+  # never be destroyed while it is non-empty. [prevent_destroy] made that worse
+  # than a failure: terraform refuses before it even attempts the delete, so
+  # `sol cloud destroy` could never complete for a durable-observability target
+  # and the infrastructure was stranded. See ADR 0004.
+  force_destroy = true
 }
 
 data "aws_iam_policy_document" "thanos_s3" {
