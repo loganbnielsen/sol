@@ -273,6 +273,11 @@ jobs:
       # ADR 0004: normal lifecycle activity must never make a target undeletable.
       # The mutation test runs first because the guard's whole value is that it
       # can fail; the guard then checks this tree.
+      # HARDEN-003: an assertion must be demonstrably able to fail. This exercises
+      # the vacuous-assertion failure directly.
+      - name: Qualification assertion mutation test (HARDEN-003)
+        run: internal/ci/test_qualification_assertions.sh
+
       - name: Destroy-completeness guard mutation test (INFRA-037)
         run: internal/ci/test_destroy_completeness_check.sh
 

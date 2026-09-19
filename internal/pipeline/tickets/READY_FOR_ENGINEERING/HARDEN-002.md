@@ -1079,6 +1079,41 @@ the infrastructure around the test.
 12. `G1`-`G3` only if a real receiver was set up per precondition 6;
     otherwise recorded skipped, unchanged from runs 1-2.
 
+### Evidence must establish the identity of its own observations (HARDEN-003)
+
+> Qualification evidence must establish both the asserted condition **and** the
+> identity/provenance of the observation used to establish it. A check that cannot
+> demonstrate it is observing the intended target, endpoint, process, artifact, or
+> output is not qualifying evidence.
+
+> A qualification assertion must be demonstrated capable of failing when its
+> claimed condition is violated.
+
+Both halves were learned the same way on Attempt 5, from two incidents that look
+unrelated and are not. A Loki query returned nothing because a `port-forward
+svc/loki` established before the `PlatformUpdating` rollout kept serving the
+replaced pod — the observation targeted the wrong endpoint. An offline assertion
+grepped a file the CLI never writes to — the observation targeted the wrong output
+channel. Each produced something that looked authoritative and was false; the
+second could not have failed at all, which is worse, because a check that cannot
+fail is invisible in a green run.
+
+In practice, for every behavioural row:
+
+- record **what was observed and how it was reached**, including the resolved
+  endpoint where a name goes through an indirection (service, proxy, load balancer,
+  port-forward);
+- pair any **absence** with a positive control — a canary, a known recent event, the
+  endpoint's own health metric — so "nothing found" is distinguishable from
+  "nothing asked";
+- **re-establish connections** across anything that can replace the process behind
+  a name, or pin to the thing itself rather than the thing that redirects;
+- for scripted assertions, **demonstrate the failure**: feed the violated condition
+  and confirm the assertion rejects it. The offline harness does this with
+  `internal/ci/qualification_assertions.sh` (guarded assertions whose target cannot
+  be missing) and `test_qualification_assertions.sh` (the mutation test proving they
+  can fail).
+
 ### Evidence classification (unchanged framework, restated because it matters here)
 
 1. **Static/configuration evidence** — Terraform variable defaults, RBAC

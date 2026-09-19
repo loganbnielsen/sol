@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# HARDEN-003: assertions must be able to fail. These refuse to pass on a missing
+# or empty target, which is the vacuous-assertion failure mode: an assertion that
+# greps a path the run never wrote cannot fail, and so looks like coverage.
+# shellcheck source=qualification_assertions.sh
+. "$(cd "$(dirname "$0")" && pwd)/qualification_assertions.sh"
+
 root="$(git rev-parse --show-toplevel)"
 sol="$(realpath "${1:-$root/_build/default/cli/sol/bin/main.exe}")"
 tmp="$(mktemp -d)"
@@ -287,10 +293,11 @@ for phase in cloud outputs cloud-verify access platform-init prerequisites crds 
     echo "cloud apply unexpectedly survived injected $phase failure" >&2
     exit 1
   fi
-  if ! grep -q "credentials: arn:aws:iam::111122223333:role/harness-qualification" "$log.out"; then
+  assert_contains "the apply reported its credential principal" "$log.out" \
+  "credentials: arn:aws:iam::111122223333:role/harness-qualification" || {
   echo "INFRA-039: the apply did not report the principal its credentials belong to" >&2
   exit 1
-fi
+}
 if ! (export FAIL_ON=""; run_apply "$log"); then
     cat "$log" >&2
     cat "$log.out" >&2
@@ -549,17 +556,19 @@ if (export FAIL_CREDENTIALS=1; run_apply "$cred_log"); then
   echo "credential failure: apply survived unresolvable credentials" >&2
   exit 1
 fi
-grep -F 'cannot resolve AWS credentials before applying' "$cred_log.out" >/dev/null || {
+assert_contains "credentials named the operation" "$cred_log.out" \
+  'cannot resolve AWS credentials before applying' || {
   echo "credential failure: the error does not name the operation:" >&2
   cat "$cred_log.out" >&2
   exit 1
 }
-grep -F 'Nothing has been changed' "$cred_log.out" >/dev/null || {
+assert_contains "credentials stated nothing changed" "$cred_log.out" \
+  'Nothing has been changed' || {
   echo "credential failure: the error does not state that nothing was changed" >&2
   cat "$cred_log.out" >&2
   exit 1
 }
-grep -F '[terraform-apply] ok' "$cred_log.out" >/dev/null && {
+assert_not_contains "no apply stage ran" "$cred_log.out" '[terraform-apply] ok' || {
   echo "credential failure: an apply stage ran despite unresolvable credentials" >&2
   exit 1
 }
