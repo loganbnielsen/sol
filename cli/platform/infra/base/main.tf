@@ -726,11 +726,25 @@ resource "kubernetes_config_map" "grafana_managed_resource_dashboards" {
 # `rbac.rules` already grants `pods`, `pods/log`, and `namespaces`
 # get/list/watch).
 resource "helm_release" "alloy" {
-  name       = "alloy"
-  repository = "https://grafana.github.io/helm-charts"
-  chart      = "alloy"
-  version    = "1.12.1"
-  namespace  = kubernetes_namespace.monitoring.metadata[0].name
+  name = "alloy"
+  # INFRA-032: named by archive URL rather than by repository + version.
+  #
+  # This is the only chart in this root still sourced from the legacy
+  # `grafana.github.io/helm-charts` repository (loki, grafana and tempo all use
+  # `grafana-community.github.io/helm-charts`). Rather than serving tarballs at
+  # the conventional `<repo>/<chart>-<version>.tgz` path, that legacy index
+  # advertises alloy archives on GitHub releases, and the Terraform helm
+  # provider resolves the conventional path instead: a 404 HTML page, which
+  # surfaces as `could not download chart: Chart.yaml file is missing` and fails
+  # the whole platform apply. Reproduced on two independent live targets
+  # (HARDEN-002 Run 5 attempts 1 and 2) while every other chart installed.
+  #
+  # Naming the archive removes repository-index resolution and the off-host URL
+  # from the path entirely. `version` is therefore not set: the pin is the URL
+  # itself. Verified by installing this exact chart form locally (helm provider
+  # 2.17.0, the version this root pins) before use.
+  chart     = "https://github.com/grafana/helm-charts/releases/download/alloy-1.12.1/alloy-1.12.1.tgz"
+  namespace = kubernetes_namespace.monitoring.metadata[0].name
 
   values = [yamlencode({
     alloy = {
