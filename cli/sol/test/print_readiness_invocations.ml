@@ -7,20 +7,27 @@
    way: it was never a valid invocation, so every platform reported [Unmet] and no
    target could reach Ready.
 
+   Every provider is printed, not just the one a command happens to be addressed
+   to: the storage assertion is provider-specific, so a provider whose argv is
+   never validated is exactly the one that ships an invalid invocation.
+
    Output is one check per line, tab separated:
 
-     <check name> \t <argv item> ...
+     <provider> <check name> \t <argv item> ...
 
-   The checks take no arguments, so one pass covers all of them. *)
+   The checks take no other arguments, so one pass per provider covers all of
+   them. *)
 
 let () =
-  Sol_cli_cloud_lifecycle.readiness_invocations ()
-  |> List.iter (fun (name, argv) ->
-    print_string name;
-    List.iter
-      (fun arg ->
-         print_char '\t';
-         print_string arg)
-      argv;
-    print_newline ())
+  Sol_cli_provider.all
+  |> List.iter (fun provider ->
+    Sol_cli_cloud_lifecycle.readiness_invocations ~provider
+    |> List.iter (fun (name, argv) ->
+      print_string (Sol_cli_provider.to_string provider ^ " " ^ name);
+      List.iter
+        (fun arg ->
+           print_char '\t';
+           print_string arg)
+        argv;
+      print_newline ()))
 ;;

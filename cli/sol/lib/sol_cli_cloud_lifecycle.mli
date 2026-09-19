@@ -47,25 +47,43 @@ type readiness =
   | Established
   | Unmet of string
 
+type platform_storage =
+  { storage_class : string
+  ; csi_driver : string
+  }
+
+(** The Kubernetes storage facts that are the cloud provider's rather than Sol's:
+    the StorageClass the platform's durable volumes bind to, and the block-storage
+    CSI driver that must back it. `Ready` asserts them, and the platform root has
+    to agree with them, so they are data here rather than conditionals at each
+    use. Exposed for the same reason [readiness_invocations] is: a test has to be
+    able to derive "this cluster is converged for provider X" from the contract
+    rather than restate it, or the test would agree with a wrong table. *)
+val platform_storage : Sol_cli_provider.t -> platform_storage
+
 (** Every readiness check, run against a live cluster. A check is [Established]
     only when its kubectl invocation succeeds *and* its output satisfies the
     check's own predicate — exit status alone is not evidence.
 
     The checks assert the platform's convergence from authoritative Kubernetes
-    state, and take no arguments: they depend on neither the observability backend
-    nor the configured issuer. See the implementation for why probing the platform
-    across the network, and any external ACME round trip, are deliberately absent
-    from what gates [Ready]. *)
-val readiness : run:(string list -> string option) -> (string * readiness) list
+    state and take the target's provider, because the storage assertion is the
+    one that is the provider's rather than Sol's: the class that is the sole
+    default, backed by the provider's block-storage CSI driver. See the
+    implementation for why probing the platform across the network, and any
+    external ACME round trip, are deliberately absent from what gates [Ready]. *)
+val readiness
+  :  provider:Sol_cli_provider.t
+  -> run:(string list -> string option)
+  -> (string * readiness) list
 
 (** The kubectl invocations [readiness] runs, by check name, without running them.
 
-    Exposed because an invocation is otherwise only reachable through a live
-    cluster, so an argv kubectl does not accept cannot be tested until a real
-    install fails — which is how `rollout status … --all` shipped and made every
-    platform report [Unmet] (INFRA-035). CI validates these against a real
-    kubectl; nothing in production calls this. *)
-val readiness_invocations : unit -> (string * string list) list
+    Exposed per provider because an invocation is otherwise only reachable
+    through a live cluster, so an argv kubectl does not accept cannot be tested
+    until a real install fails — which is how `rollout status … --all` shipped
+    and made every platform report [Unmet] (INFRA-035). CI validates every
+    provider's set against a real kubectl; nothing in production calls this. *)
+val readiness_invocations : provider:Sol_cli_provider.t -> (string * string list) list
 
 val readiness_summary : (string * readiness) list -> string
 

@@ -204,14 +204,32 @@ provision at all.
 The qualified substrate must be able to host the platform's own durable
 components. Two layers provide that, and neither is an application workload volume:
 
-- **Cloud substrate** (`cli/platform/infra/aws`) installs the **EBS CSI driver**
-  as an EKS addon, with an IRSA role scoped to
+- **Cloud substrate**: on AWS (`cli/platform/infra/aws`) this installs the **EBS
+  CSI driver** as an EKS addon, with an IRSA role scoped to
   `kube-system:ebs-csi-controller-sa`. Without it an EKS cluster has no CSI
-  driver and therefore no StorageClass, so every PVC stays `Pending`.
+  driver and therefore no StorageClass, so every PVC stays `Pending`. On GCP the
+  `pd.csi.storage.gke.io` driver is part of GKE itself and needs no addon.
 - **Platform substrate** (`cli/platform/infra/base`) creates the default **gp3
-  StorageClass** (`WaitForFirstConsumer`, so the volume is created in the zone the
-  pod lands in). Set `create_storage_class = false` if the platform is expected to
-  adopt a class that already exists, or `storage_class_name` to rename it.
+  StorageClass** on AWS (`WaitForFirstConsumer`, so the volume is created in the
+  zone the pod lands in). Set `create_storage_class = false` if the platform is
+  expected to adopt a class that already exists, or `storage_class_name` to rename
+  it.
+- **On GCP the module creates no class and adopts GKE's own default**
+  (`standard-rwo`, provisioner `pd.csi.storage.gke.io`, `WaitForFirstConsumer`,
+  `pd-balanced`). GKE already annotates it as the default, and the platform's PVCs
+  name no `storageClassName`, so they bind to whatever the cluster calls default.
+  Creating a second default class would leave the cluster with two, which
+  Kubernetes accepts with a warning and then resolves arbitrarily. Persistent
+  Disks are encrypted at rest with Google-managed keys by default, so the posture
+  the AWS class states explicitly (`encrypted = "true"`) holds here without a
+  parameter.
+
+`Ready` asserts the outcome for either provider rather than trusting the
+configuration that produced it: the provider's class is the *sole* default
+StorageClass on the cluster and is backed by the provider's block-storage CSI
+driver, which is registered (`Sol_cli_cloud_lifecycle.platform_storage`). A
+cluster whose default is some other class, or whose default is ambiguous, is
+`Unmet` — the platform's durable volumes are then not on the class Sol intends.
 
 This is what makes Redpanda's RF≥3 persistent brokers schedulable. It changes
 nothing about how a workload declares persistence: the `single`-tier restriction

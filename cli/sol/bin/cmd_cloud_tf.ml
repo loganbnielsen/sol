@@ -995,7 +995,7 @@ let cloud_init ~target ~var_file ~vars ~action () =
             Kubernetes state; it is not parameterised by the observability backend
             or the configured issuer (see Sol_cli_cloud_lifecycle.readiness). *)
          let sample_readiness () =
-           Sol_cli_cloud_lifecycle.readiness ~run:(fun args ->
+           Sol_cli_cloud_lifecycle.readiness ~provider ~run:(fun args ->
              process_output ~env ("kubectl" :: args))
          in
          let unmet_count checks =
