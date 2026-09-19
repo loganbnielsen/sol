@@ -1,6 +1,6 @@
 # INFRA-042 — a partially-installed GCP platform is not destroyable through the lifecycle
 
-**Status:** Ready for engineering
+**Status:** Done
 **Severity:** high
 **Discovered:** GCP qualification Attempt 3 (2026-09-19)
 
@@ -42,7 +42,29 @@ two already have guards:
 lifecycle" has to hold for a *failed* install, not only a successful one. A failed
 install is the state a target is most likely to be in.
 
-## Shape of the fix (not prescribed)
+## Fix
+
+Terraform's destroy is attempted first, in full, with its own ownership and ordering.
+Only when it has actually failed does Sol consider which state entries cannot
+correspond to an object, and the proof is the cluster's own discovery
+(`kubectl api-resources --verbs=delete`), deliberately narrow:
+
+- only `kubernetes_manifest`, whose stored manifest states its kind verbatim.
+  Native `kubernetes_*` resources are not handled: deriving their kind means mapping
+  a Terraform type to a Kubernetes kind by convention, and a mapping wrong in the
+  wrong direction forgets a resource that exists. A native resource that will not
+  delete stays a failure.
+- only when the cluster does not serve that kind with `delete`. A served kind means a
+  resource that may exist, so nothing is forgotten and a second failure is the
+  failure.
+
+Each forgotten address is named with the kind that proved it absent. Regression in
+`internal/ci/test_cloud_lifecycle_offline.sh`: it reproduces the missing-CRD failure,
+asserts the recovery, the retry and the completed destroy, and pins the opposite
+direction -- with the CRD served, no `state rm` happens and the destroy fails closed.
+Both directions are mutation-tested.
+
+## Original analysis (kept for the record)
 
 - The failure is specific and detectable: the resource does not exist, and neither
   does its CRD. Removing it from state is then *correct* rather than laundering —

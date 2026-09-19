@@ -77,6 +77,10 @@ let destroy ?(env = []) ~chdir ~var_files ~vars () =
         @ var_args ~var_files ~vars))
 ;;
 
+let state_rm ?(env = []) ~chdir ~address () =
+  run ~echo:true (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "state"; "rm"; address ])
+;;
+
 let output_json ?(env = []) ~chdir () =
   run (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "output"; "-json" ])
 ;;

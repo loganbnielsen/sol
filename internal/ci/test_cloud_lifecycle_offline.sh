@@ -107,6 +107,25 @@ JSON
     ;;
   *" show -json")
     case " $* " in
+      *infra/base-gcp*|*infra/base*)
+        # INFRA-042: the platform root's state. PARTIAL_INSTALL models Attempt 3 --
+        # the two cert-manager ClusterIssuers are in state as `kubernetes_manifest`
+        # even though the install never installed the CRDs they need. The cluster
+        # stub decides whether that kind is served, which is what the recovery is
+        # allowed to act on.
+        if [ "${PARTIAL_INSTALL:-}" = 1 ]; then
+          if [ "${CRD_SERVED:-}" = 1 ]; then
+            kind="ClusterIssuer"
+          else
+            kind="ClusterIssuer"
+          fi
+          printf '{"values":{"root_module":{"resources":[{"type":"kubernetes_manifest","address":"module.platform.kubernetes_manifest.letsencrypt_prod","values":{"manifest":{"kind":"%s"}}},{"type":"kubernetes_namespace","address":"module.platform.kubernetes_namespace.cert_manager","values":{"metadata":[{"name":"cert-manager"}]}}]}}}\n' \
+            "$kind"
+        else
+          printf '{"values":{"root_module":{"resources":[]}}}\n'
+        fi
+        exit 0
+        ;;
       *infra/gcp*)
         sql_guard=true
         gke_guard=true
@@ -149,6 +168,22 @@ JSON
           ;;
       esac
     done
+    ;;
+  *" state rm "*)
+    # INFRA-042's recovery: forgetting a resource Terraform cannot address. Logged
+    # so the regression can assert which addresses were forgotten, and that a
+    # resource whose kind the cluster serves is never among them.
+    printf 'state-rm %s\n' "${!#}" >>"$LIFECYCLE_LOG"
+    : >"$STATE_RM_FILE"
+    ;;
+  *infra/base-gcp*" destroy "*|*infra/base*" destroy "*)
+    # The platform destroy. With PARTIAL_INSTALL it fails exactly as Attempt 3 did,
+    # until the missing-CRD resources have been forgotten -- and then it succeeds,
+    # which is the behaviour the regression has to demonstrate rather than assume.
+    if [ "${PARTIAL_INSTALL:-}" = 1 ] && [ ! -e "${STATE_RM_FILE:-/nonexistent}" ]; then
+      printf 'Error: API did not recognize GroupVersionKind from manifest (CRD may not be installed)\n' >&2
+      exit 1
+    fi
     ;;
   *infra/gcp*" apply "*"-target=google_sql_database_instance.postgres"*)
     if fail_once gcp-prepare; then exit 20; fi
@@ -352,6 +387,25 @@ cat >"$tmp/bin/kubectl" <<'EOF'
 #!/usr/bin/env bash
 set -eu
 printf 'kubectl %s\n' "$*" >>"$LIFECYCLE_LOG"
+# INFRA-042: the cluster's own discovery. The recovery may only forget a resource
+# whose kind is *not* here, so the stub has to be able to say both things --
+# CRD_SERVED=1 models a cluster where the CRD is present (and the destroy must then
+# fail closed rather than forget anything).
+case " $* " in
+  *" api-resources "*)
+    printf 'NAME        SHORTNAMES   APIVERSION   NAMESPACED   KIND\n'
+    printf 'namespaces  ns           v1           false        Namespace\n'
+    printf 'clusterroles             rbac.authorization.k8s.io/v1  false  ClusterRole\n'
+    if [ "${CRD_SERVED:-}" = 1 ]; then
+      printf 'clusterissuers           cert-manager.io/v1  false  ClusterIssuer\n'
+    fi
+    exit 0
+    ;;
+esac
+
+#!/usr/bin/env bash
+set -eu
+printf 'kubectl %s\n' "$*" >>"$LIFECYCLE_LOG"
 [ "$KUBECONFIG" != /ambient/forbidden ] || exit 93
 # Destroy verifies platform absence by checking every platform namespace is
 # gone; apply never checks this, so DESTROYING is an unambiguous toggle here.
@@ -437,6 +491,7 @@ export KUBECONFIG=/ambient/forbidden
 export FAIL_MARKER_DIR="$tmp/markers"
 export KUBECONFIG_LOG="$tmp/kubeconfigs"
 export RDS_PREPARED_FILE="$tmp/markers/rds-prepared"
+export STATE_RM_FILE="$tmp/markers/state-rm"
 export GCP_SQL_PREPARED_FILE="$tmp/markers/gcp-sql-prepared"
 export GKE_PREPARED_FILE="$tmp/markers/gke-prepared"
 export PLATFORM_INSTALLED_FILE="$tmp/markers/platform-installed"
@@ -887,6 +942,83 @@ if grep -F 'platform-destroy' "$gcp_toolchain_log" >/dev/null; then
   echo "the missing-plugin failure reached the platform stage anyway:" >&2
   exit 1
 fi
+
+# ── INFRA-042: a partially installed platform must still be destroyable ─────
+#
+# Attempt 3's install failed partway, leaving the platform root's state holding
+# CRD-backed resources (the two cert-manager ClusterIssuers) whose CRDs were never
+# installed. Terraform cannot delete a resource whose API does not exist, so the
+# documented destroy failed and the cloud layer stayed billable.
+#
+# This reproduces that and pins the intended recovery -- and, just as importantly,
+# its limit: a resource whose kind the cluster *does* serve is never forgotten.
+partial_log="$tmp/gcp-partial.log"
+rm -f "$STATE_RM_FILE" "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE"
+if ! (cd "$tmp/work" && PARTIAL_INSTALL=1 DESTROYING=1 LIFECYCLE_LOG="$partial_log" \
+        "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$partial_log.out" 2>&1
+then
+  # The first platform destroy fails (that is the reproduction); the recovery must
+  # then have made the destroy succeed, so reaching here at all is a failure --
+  # unless the CRD turned out to be served, which the negative case below covers.
+  cat "$partial_log.out" >&2
+  echo "INFRA-042: a partially installed platform was not destroyable" >&2
+  exit 1
+fi
+# The failure was reached and observed, not skipped: the platform destroy really did
+# run and really did fail before the recovery.
+grep -F 'platform-destroy' "$partial_log.out" >/dev/null || {
+  echo "INFRA-042: the platform destroy stage never ran" >&2
+  exit 1
+}
+grep -F 'platform-destroy-retry' "$partial_log.out" >/dev/null || {
+  echo "INFRA-042: the destroy was not retried after the recovery" >&2
+  exit 1
+}
+# Exactly the unserved resource was forgotten -- by address, and only it.
+grep -F 'state-rm module.platform.kubernetes_manifest.letsencrypt_prod' "$partial_log" \
+  >/dev/null || {
+  echo "INFRA-042: the unserved resource was not the one forgotten:" >&2
+  grep -F 'state-rm' "$partial_log" >&2
+  exit 1
+}
+if grep -F 'state-rm module.platform.kubernetes_namespace.cert_manager' "$partial_log" >/dev/null; then
+  echo "INFRA-042: a resource whose kind the cluster serves was forgotten too" >&2
+  exit 1
+fi
+grep -F 'CLUSTER DOES NOT SERVE' "$partial_log.out" >/dev/null || true
+grep -F 'ClusterIssuer is not served by this cluster' "$partial_log.out" >/dev/null || {
+  echo "INFRA-042: the recovery did not say which kind proved the resource absent:" >&2
+  cat "$partial_log.out" >&2
+  exit 1
+}
+# ...and the lifecycle still ends where it must.
+grep -F 'GCP verification passed' "$partial_log.out" >/dev/null || {
+  echo "INFRA-042: the destroy did not complete after the recovery:" >&2
+  cat "$partial_log.out" >&2
+  exit 1
+}
+
+# The limit: when the cluster *does* serve the kind, the resource may exist, so
+# nothing is forgotten and the failure stands. This is the case that separates the
+# recovery from "delete whatever Terraform cannot handle".
+served_log="$tmp/gcp-partial-served.log"
+rm -f "$STATE_RM_FILE"
+if (cd "$tmp/work" && PARTIAL_INSTALL=1 CRD_SERVED=1 DESTROYING=1 \
+      LIFECYCLE_LOG="$served_log" "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$served_log.out" 2>&1
+then
+  echo "INFRA-042: a destroy that could not delete a served resource reported success" >&2
+  exit 1
+fi
+if grep -F 'state-rm' "$served_log" >/dev/null; then
+  echo "INFRA-042: a resource whose kind the cluster serves was forgotten anyway:" >&2
+  grep -F 'state-rm' "$served_log" >&2
+  exit 1
+fi
+grep -F 'Could not remove Service Networking Connection\|API did not recognize' \
+  "$served_log.out" >/dev/null || true
+rm -f "$STATE_RM_FILE"
 
 # ...and when they cannot be resolved, it fails closed and says the part that
 # matters, rather than proceeding to mutate infrastructure it cannot authenticate

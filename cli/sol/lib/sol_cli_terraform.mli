@@ -52,6 +52,18 @@ val destroy
   -> unit
   -> (Sol_cli_process.result, Sol_cli_process.error) result
 
+(** [terraform state rm <address>] — forget the resource *without* touching the
+    object. Only legitimate where the object provably cannot exist: a resource
+    whose kind the cluster does not serve has no object to delete, and Terraform
+    cannot be asked to delete what has no API (INFRA-042). Anywhere else this would
+    be the silent-ignore failure it exists to avoid. *)
+val state_rm
+  :  ?env:(string * string) list
+  -> chdir:string
+  -> address:string
+  -> unit
+  -> (Sol_cli_process.result, Sol_cli_process.error) result
+
 val output_json
   :  ?env:(string * string) list
   -> chdir:string

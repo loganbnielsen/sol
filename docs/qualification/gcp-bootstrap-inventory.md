@@ -685,6 +685,33 @@ behaviour, and the `deletion_policy = "ABANDON"` trade remains: Terraform no lon
 confirms the peering is gone, so `verify_gcp_destroy` must (`gcloud services
 vpc-peerings list` for the network, plus the network itself).
 
+### INFRA-042: destroying a partially installed platform
+
+Attempt 3's install failed partway, and the documented destroy could not finish:
+Terraform cannot delete a resource whose API does not exist, and the platform root's
+state held the two cert-manager `kubernetes_manifest` ClusterIssuers while their
+CRDs had never been installed. The cloud layer behind it stayed billable, and the
+teardown finished through the emergency path — which is what INFRA-042 is about,
+because a *failed* install is the state a target is most likely to be in.
+
+The fix attempts Terraform's destroy first, in full, with its own ownership and
+ordering, and only on failure considers which state entries cannot correspond to an
+object. The proof is the cluster's own discovery, and it is deliberately narrow:
+
+- only `kubernetes_manifest`, whose stored manifest states its kind verbatim.
+  Native `kubernetes_*` resources are not handled, because deriving their kind means
+  mapping a Terraform type to a Kubernetes kind by convention — and a mapping wrong
+  in the wrong direction forgets a resource that exists;
+- only when the cluster does not serve that kind with `delete`. A served kind means a
+  resource that may exist, so nothing is forgotten, the destroy is retried, and a
+  second failure is the failure.
+
+Each forgotten address is printed with the kind that proved it absent. The offline
+harness reproduces Attempt 3 exactly — the missing-CRD failure, the recovery, the
+retry, and the completion — and pins the limit in the other direction: with the CRD
+served, no `state rm` happens and the destroy fails closed. Both directions are
+mutation-tested.
+
 ### Remaining gaps
 
 Ordered by what unblocks the next one. Closed items keep their entry so the
