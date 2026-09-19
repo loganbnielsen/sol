@@ -292,6 +292,8 @@ jobs:
       # resolve the same identity, or no workload can be deployed.
       - name: Runtime secret identity guard (INFRA-040)
         run: internal/ci/check_runtime_secret_identity.sh
+      - name: Check GCP provisioner IAM boundary
+        run: internal/ci/test_gcp_provisioner_role.sh
 
       - name: Destroy-completeness guard mutation test (INFRA-037)
         run: internal/ci/test_destroy_completeness_check.sh

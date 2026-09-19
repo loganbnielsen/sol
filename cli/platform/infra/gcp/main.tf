@@ -251,9 +251,10 @@ resource "google_service_networking_connection" "sql" {
 #     impersonate it and Google issues short-lived tokens -- there is never a
 #     static key in a file (the same reason the Loki/Thanos identities below are
 #     service accounts rather than keys);
-#   * `roles/container.developer` is what lets it *reach* the cluster (fetch
-#     credentials and read the cluster), and it confers no Kubernetes authority
-#     by itself;
+#   * GKE authorization is RBAC-first with Google IAM as a fallback. The custom
+#     IAM role below therefore contains only cluster discovery, credential
+#     retrieval, and control-plane connection permissions -- never Kubernetes
+#     object permissions. Scoped in-cluster authority comes from RBAC;
 #   * the install window's privilege is therefore a Kubernetes RBAC binding,
 #     created for that window and removed at the end of it, because GKE has no
 #     access-entry equivalent that maps a cloud identity to in-cluster rights.
@@ -318,9 +319,22 @@ resource "google_service_account" "provisioner" {
 #
 # A single answer covering both is how "the provisioner needs to install charts"
 # becomes "the provisioner is an administrator".
+resource "google_project_iam_custom_role" "provisioner_cluster_access" {
+  project     = var.project_id
+  role_id     = "sol_${replace(var.cluster_name, "-", "_")}_cluster_access"
+  title       = "Sol provisioner cluster access"
+  description = "Discover and obtain credentials for GKE clusters; Kubernetes object authority is supplied only by RBAC."
+  permissions = [
+    "container.clusters.get",
+    "container.clusters.list",
+    "container.clusters.getCredentials",
+    "container.clusters.connect",
+  ]
+}
+
 resource "google_project_iam_member" "provisioner_cluster_access" {
   project = var.project_id
-  role    = "roles/container.developer"
+  role    = google_project_iam_custom_role.provisioner_cluster_access.name
   member  = "serviceAccount:${google_service_account.provisioner.email}"
 }
 
