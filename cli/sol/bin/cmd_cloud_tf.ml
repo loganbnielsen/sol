@@ -398,6 +398,32 @@ let aws_outputs infra_dir =
   | Error _ -> Error "could not read AWS Terraform outputs"
 ;;
 
+(* One place that turns a cloud root's outputs into the platform definition's
+   variables, so the four lifecycle stages cannot disagree about the mapping, and
+   so the day a second provider's access path lands there is one call site to
+   widen rather than four. [on_error] runs before the refusal is reported, which
+   is how the bootstrap-access cleanup on the apply path still happens when the
+   mapping itself is what failed. *)
+(* The trailing [()] is not decoration: an optional argument followed by only
+   labelled ones cannot be erased, so a caller that omits [on_error] would be
+   typing a partial application rather than a value. *)
+let platform_vars_of ?(on_error = Fun.id) ~cloud_target ~outputs () =
+  match
+    Sol_cli_cloud_lifecycle.platform_inputs
+      cloud_target
+      (Sol_cli_cloud_lifecycle.Aws_outputs outputs)
+  with
+  | Error message ->
+    on_error ();
+    lifecycle_error message
+  | Ok inputs ->
+    (match Sol_cli_cloud_lifecycle.platform_terraform_vars inputs with
+     | Ok vars -> vars
+     | Error message ->
+       on_error ();
+       lifecycle_error message)
+;;
+
 let provisioner_kubeconfig ~region outputs f =
   let path = Filename.temp_file "sol-platform-provisioner-" ".kubeconfig" in
   let cleanup () =
@@ -423,9 +449,11 @@ let provisioner_kubeconfig ~region outputs f =
            ; "--region"
            ; region
            ; "--name"
-           ; Sol_cli_cloud_lifecycle.cluster_name outputs
+           ; Sol_cli_cloud_lifecycle.cluster_name
+               (Sol_cli_cloud_lifecycle.Aws_outputs outputs)
            ; "--alias"
-           ; Sol_cli_cloud_lifecycle.cluster_name outputs
+           ; Sol_cli_cloud_lifecycle.cluster_name
+               (Sol_cli_cloud_lifecycle.Aws_outputs outputs)
            ; "--role-arn"
            ; Sol_cli_cloud_lifecycle.provisioner_role_arn outputs
            ; "--kubeconfig"
@@ -457,7 +485,9 @@ let process_output ?(env = []) argv =
 ;;
 
 let aws_cloud_ready ~region outputs =
-  let cluster = Sol_cli_cloud_lifecycle.cluster_name outputs in
+  let cluster =
+    Sol_cli_cloud_lifecycle.cluster_name (Sol_cli_cloud_lifecycle.Aws_outputs outputs)
+  in
   let status args = process_output ([ "aws" ] @ args @ [ "--region"; region ]) in
   match
     ( status
@@ -770,11 +800,7 @@ let cloud_init ~target ~var_file ~vars ~action () =
          (Sol_cli_cloud_lifecycle.Deferred "requires cloud substrate to exist")
      | Error message -> lifecycle_error message
      | Ok (Some outputs) ->
-       let platform_vars =
-         match Sol_cli_cloud_lifecycle.platform_inputs cloud_target outputs with
-         | Ok inputs -> Sol_cli_cloud_lifecycle.platform_terraform_vars inputs
-         | Error message -> lifecycle_error message
-       in
+       let platform_vars = platform_vars_of ~cloud_target ~outputs () in
        (* An unavailable cluster credential is not a deferred phase: it is an
           unavailable lifecycle prerequisite, so plan exits non-zero. Deferral is
           reserved for phases whose concrete prerequisite is simply not
@@ -880,11 +906,7 @@ let cloud_init ~target ~var_file ~vars ~action () =
         lifecycle_error e
     in
     let platform_vars =
-      match Sol_cli_cloud_lifecycle.platform_inputs cloud_target outputs with
-      | Ok inputs -> Sol_cli_cloud_lifecycle.platform_terraform_vars inputs
-      | Error message ->
-        cleanup_bootstrap_access ();
-        lifecycle_error message
+      platform_vars_of ~on_error:cleanup_bootstrap_access ~cloud_target ~outputs ()
     in
     if not (aws_cloud_ready ~region:target_cfg.region outputs)
     then (
@@ -1133,11 +1155,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
   let destroy_platform ?(on_error = Fun.id) outputs =
     let platform_dir = platform_dir provider in
     let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
-    let platform_vars =
-      match Sol_cli_cloud_lifecycle.platform_inputs cloud_target outputs with
-      | Ok inputs -> Sol_cli_cloud_lifecycle.platform_terraform_vars inputs
-      | Error message -> lifecycle_error message
-    in
+    let platform_vars = platform_vars_of ~cloud_target ~outputs () in
     with_provisioner_kubeconfig ~on_error ~region:target_cfg.region outputs (fun env ->
       let init = terraform_init run_log platform_dir platform_backend in
       (match init with
@@ -1172,11 +1190,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
      | Some outputs ->
        let platform_dir = platform_dir provider in
        let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
-       let platform_vars =
-         match Sol_cli_cloud_lifecycle.platform_inputs cloud_target outputs with
-         | Ok inputs -> Sol_cli_cloud_lifecycle.platform_terraform_vars inputs
-         | Error message -> lifecycle_error message
-       in
+       let platform_vars = platform_vars_of ~cloud_target ~outputs () in
        with_provisioner_kubeconfig ~region:target_cfg.region outputs (fun env ->
          run_terraform_init run_log platform_dir platform_backend;
          require_terraform_success
@@ -1198,7 +1212,10 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
         Printf.printf "  prepare: cloud substrate is absent, nothing to prepare.\n%!";
         None
       | Some outputs ->
-        let cluster_name = Sol_cli_cloud_lifecycle.cluster_name outputs in
+        let cluster_name =
+          Sol_cli_cloud_lifecycle.cluster_name
+            (Sol_cli_cloud_lifecycle.Aws_outputs outputs)
+        in
         let prepared = prepare_destroy run_log infra_dir var_files vars ~cluster_name in
         verify_destroy_preparation infra_dir ~prepared;
         prepared
@@ -1245,6 +1262,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
       | Some snapshot_id ->
         Sol_cli_terraform.kv_args
           (Sol_cli_cloud_lifecycle.policy_vars
+             ~provider
              ~phase:destroy_phase
              ~destroy_snapshot_id:snapshot_id)
     in
