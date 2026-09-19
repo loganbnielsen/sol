@@ -125,6 +125,32 @@ if [ "$gcp_deletion_default" != "true" ]; then
   exit 1
 fi
 
+# Sol's GCP output contract is read by name (`gcp_outputs_of_json`), so a renamed
+# or dropped output fails at runtime rather than in the type system -- and it fails
+# while a lifecycle operation is already under way. The required half is exactly
+# what an operation cannot proceed without: the project and region address every
+# GCP API call and the cluster credential, the cluster name identifies the target,
+# and the registry is what a deploy pushes to.
+#
+# The undeletability invariant that used to live in this file is now
+# `internal/ci/check_destroy_completeness.sh` (ADR 0004), which states the rule
+# rather than the two resources that happened to violate it. This one stays here
+# because it is about the output contract, not about destruction.
+gcp_outputs="$root/cli/platform/infra/gcp/outputs.tf"
+
+if [ ! -f "$gcp_outputs" ]; then
+  echo "FAIL: $gcp_outputs is missing" >&2
+  exit 1
+fi
+
+for gcp_required_output in cluster_name project_id region artifact_registry; do
+  if ! grep -q "^output \"$gcp_required_output\" {" "$gcp_outputs"; then
+    echo "FAIL: the GCP cloud root no longer publishes \"$gcp_required_output\"," >&2
+    echo "      which Sol_cli_cloud_lifecycle.gcp_outputs_of_json requires." >&2
+    exit 1
+  fi
+done
+
 # Comments stripped: the block explains finding 9 in prose directly above these
 # assignments, so a match against the raw text would be satisfied by the comment
 # that survives the very deletion this is guarding against.

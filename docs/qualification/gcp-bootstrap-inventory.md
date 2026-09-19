@@ -403,10 +403,11 @@ step.
 
 ### Code landed without a live project
 
-Two changes address gaps 1 and 2 of the list below. Both are validated offline
-only — static/configuration and mechanism/renderability evidence, not behavioural
-evidence — and neither is reachable on GCP yet, because the GCP lifecycle still
-fails closed in `sol cloud`.
+Four changes bear on this work. One of them — the destroy invariant — landed as
+INFRA-037 / ADR 0004 rather than here. All four are validated offline only:
+static/configuration and mechanism/renderability evidence, not behavioural
+evidence. None is reachable on GCP yet, because the GCP lifecycle still fails
+closed in `sol cloud`.
 
 - **Provider-specific Kubernetes storage and readiness.** `Ready` asserted `gp3`
   and `ebs.csi.aws.com` literally in a module that is meant to be
@@ -422,6 +423,37 @@ fails closed in `sol cloud`.
   target no longer requires an AWS role ARN of a GCP target, and
   `cli/platform/infra/base-gcp` is a GCP platform root declaring the GCS backend
   and calling the shared platform definition as a module.
+- **A disposable target must be able to reach `Absent`** — landed independently as
+  INFRA-037 / **ADR 0004**, and deliberately *not* duplicated here. `prevent_destroy`
+  is gone from both providers' durable telemetry buckets, the ECR repositories take
+  `force_delete`, and `internal/ci/check_destroy_completeness.sh` asserts the rule
+  rather than the resources that violated it. GCP inherits the invariant concretely
+  (the same two buckets) instead of the AWS spelling of it. The retention toggle —
+  whether `sol cloud destroy` discards a target's telemetry by default — is
+  deliberately left undecided by that change, and a branch here that had decided it
+  by accident (a `durable_storage_force_destroy` variable defaulting to `false` and
+  set `true` by the Destroy policy) was **withdrawn rather than merged** for exactly
+  that reason.
+
+- **GCP's own output and input contract.** `gcp_outputs` and `gcp_outputs_of_json`
+  are a separate type rather than a relabelled `aws_outputs`, because the two
+  providers publish different facts: a GCP root names the project and region that
+  address every API call *and* derive the cluster credential, and names no role
+  ARN, because a caller there impersonates a service account through short-lived
+  credentials. `cloud_outputs` is what the lifecycle carries, and
+  `platform_terraform_vars` emits only the target provider's own variable set — an
+  AWS variable handed to the GCP root is an undeclared-variable error, not a
+  no-op. The mapping is fallible by design: a GCP target that declares
+  `cluster_issuer` is refused with the missing solver named (gap 1), rather than
+  being given a platform whose issuers cannot issue.
+
+The Destroy policy became provider-shaped in the same change, and that part is
+*not* covered by ADR 0004. It was returning `rds_deletion_protection`,
+`rds_skip_final_snapshot` and `rds_final_snapshot_identifier` for *every* provider,
+which the GCP root does not declare — so a GCP destroy would have failed on an
+undeclared variable the moment the GCP path opened. The neutral part is that a
+Destroy policy exists and the phase names it; the levers are the provider's, and
+GCP's are still unimplemented (gap 4).
 
 ### Structural finding: a Terraform root cannot carry two backends
 
@@ -453,36 +485,44 @@ definition does not.
 
 ### Remaining gaps
 
-Ordered by what unblocks the next one; all still open.
+Ordered by what unblocks the next one. Closed items keep their entry so the
+decision is recorded, not to suggest outstanding work.
 
 1. **GCP cert-manager solver and Workload Identity wiring.** The shared
    definition's `ClusterIssuer`s are hard-wired to the Route 53 DNS-01 solver, so
    a GCP install cannot issue a certificate as written. Needs a Cloud DNS (or
    operator-supplied external DNS) solver plus scoped Workload Identity, and a
    real TLS qualification is additionally blocked on a delegated qualification
-   hostname.
-2. **Typed GCP cloud outputs and platform input mapping.** `aws_outputs_of_json`
-   and `platform_terraform_vars` are AWS-shaped; GCP needs its own typed outputs
-   (project, region, cluster, Workload Identity identities, GCS buckets) and a
-   mapping that selects `cloud_provider = "gcp"` and the GCS variable set.
-3. **GCP kubeconfig and scoped authority.** Ephemeral credentials from
-   `gcloud container clusters get-credentials`, the provisioner service account,
-   the `PlatformInstalling` privileged window, and the positive/negative
-   `can-i` probes.
-4. **Provider-neutral `sol cloud` plan/apply/destroy for GCP.** The outer gate
-   that refuses GCP, the GCP variant of cloud-ready observation, and the platform
-   targets addressing `module.platform.*`.
-5. **GCP destruction preparation and retained-storage semantics.** Cloud SQL
-   API-level deletion protection off by an applied transition, a per-attempt
-   backup identity, and the `prevent_destroy` durable buckets resolved so a
-   complete destroy is possible (they currently cannot participate).
-6. **Cloud SQL regional HA for the production profile**, and the production
+   hostname. Until it lands, a GCP target that declares `cluster_issuer` is
+   **refused by name** rather than handed an issuer that cannot work.
+2. **(Closed) Typed GCP cloud outputs and platform input mapping.** GCP has its
+   own output type and parser (`gcp_outputs`, `gcp_outputs_of_json`) and its own
+   platform variable set, and `cloud_outputs` is the one thing the lifecycle
+   carries — so the provider-shaped facts are read through the branch that knows
+   which provider it has, instead of every field becoming optional on a shared
+   record. The mapping is fallible: a capability the provider's root cannot wire
+   is a refusal naming the gap, not a variable set that silently omits it.
+3. **Provider-neutral `sol cloud` plan/apply/destroy for GCP.** The outer gate that
+   refuses GCP, the GCP variant of cloud-ready observation and cluster access
+   (`gcloud container clusters get-credentials`, the provisioner service account,
+   the `PlatformInstalling` privileged window, the positive/negative `can-i`
+   probes), and the platform targets addressing `module.platform.*`.
+4. **GCP destruction preparation.** Cloud SQL API-level deletion protection off by
+   an applied transition, and a per-attempt backup identity that the qualification
+   path does *not* leave behind: a disposable target must reach literal `Absent`,
+   so taking a final backup and retaining it is the production behaviour, and
+   qualification either skips it or removes it before declaring absence.
+   The undeletability half of this gap is **closed** for both providers by
+   INFRA-037 / ADR 0004 (`force_delete`, `force_destroy`, no `prevent_destroy`,
+   enforced by `internal/ci/check_destroy_completeness.sh`). The retention toggle
+   the ADR deliberately leaves undecided is what remains here.
+5. **Cloud SQL regional HA for the production profile**, and the production
    profile's capacity contract proven on the selected GKE mode (the current root
    is Autopilot, which cannot declare the `node-failure-tolerant` headroom).
-7. **GCS durable-observability chart wiring** — the Loki/Thanos values are still
+6. **GCS durable-observability chart wiring** — the Loki/Thanos values are still
    S3-shaped and `OBS-034`'s gate still rejects `gcp + self_hosted_durable`
    (INFRA-005).
-8. **Offline qualification/preflight coverage** for the GCP path, and a GCP
+7. **Offline qualification/preflight coverage** for the GCP path, and a GCP
    counterpart to `production-single-region-v1-matrix.md`.
 
 ## References
