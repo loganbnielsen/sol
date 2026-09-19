@@ -1,5 +1,10 @@
 # Executable qualification matrix — `production-single-region/v1` (HARDEN-002)
 
+> **Related:** `docs/qualification/gcp-bootstrap-inventory.md` — the GCP realization
+> of the same contract (HARDEN-004). This matrix is the AWS profile's; the GCP rows
+> are recorded separately, with TLS issuance currently BLOCKED rather than qualified.
+
+
 Derived from **DEC-026 §1–§9** (the profile contract), **ADR 0002** (Sol owns the
 cloud-target lifecycle), **ADR 0003** (lifecycle phases determine authority and
 desired-state policy), and the merged tickets that implement them: AUDIT-078,
