@@ -12,6 +12,11 @@ type target =
   ; kubeconfig : string option
   ; terraform_var_file : string option
   ; observability_backend : string option
+    (* DEC-033: what `sol cloud destroy` deliberately keeps. Absent means the
+     production default (retain the final snapshot); a disposable qualification
+     target sets `destroy_retention: none`, so its postcondition is Absent with
+     nothing billable left behind. *)
+  ; destroy_retention : string option
   ; alert_receiver_type : string option
   ; alert_receiver_url : string option
   ; alert_owner : string option
@@ -78,6 +83,7 @@ let target_empty =
   ; kubeconfig = None
   ; terraform_var_file = None
   ; observability_backend = None
+  ; destroy_retention = None
   ; alert_receiver_type = None
   ; alert_receiver_url = None
   ; alert_owner = None
@@ -238,6 +244,7 @@ type target_key =
   | Target_kubeconfig
   | Target_terraform_var_file
   | Target_observability_backend
+  | Target_destroy_retention
   | Target_alert_receiver_type
   | Target_alert_receiver_url
   | Target_alert_owner
@@ -264,6 +271,7 @@ let target_key_of_string s =
   | "kubeconfig" -> Target_kubeconfig
   | "terraform_var_file" -> Target_terraform_var_file
   | "observability_backend" -> Target_observability_backend
+  | "destroy_retention" -> Target_destroy_retention
   | "alert_receiver_type" -> Target_alert_receiver_type
   | "alert_receiver_url" -> Target_alert_receiver_url
   | "alert_owner" -> Target_alert_owner
@@ -292,6 +300,7 @@ let target_key_name = function
   | Target_kubeconfig -> "kubeconfig"
   | Target_terraform_var_file -> "terraform_var_file"
   | Target_observability_backend -> "observability_backend"
+  | Target_destroy_retention -> "destroy_retention"
   | Target_alert_receiver_type -> "alert_receiver_type"
   | Target_alert_receiver_url -> "alert_receiver_url"
   | Target_alert_owner -> "alert_owner"
@@ -537,6 +546,9 @@ let load path =
                           | Target_observability_backend ->
                             let* v = scalar k v in
                             Ok { current with observability_backend = Some v }
+                          | Target_destroy_retention ->
+                            let* v = scalar k v in
+                            Ok { current with destroy_retention = Some v }
                           | Target_alert_receiver_type ->
                             let* v = scalar k v in
                             Ok { current with alert_receiver_type = Some v }
@@ -890,6 +902,7 @@ let target_of_path s =
           ; kubeconfig = None
           ; terraform_var_file = None
           ; observability_backend = None
+          ; destroy_retention = None
           ; alert_receiver_type = None
           ; alert_receiver_url = None
           ; alert_owner = None

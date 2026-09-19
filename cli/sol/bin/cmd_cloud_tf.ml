@@ -643,7 +643,7 @@ let rds_state infra_dir =
    the RDS resource, with a snapshot identity unique to this destroy attempt
    so re-running destroy after a fresh apply can never collide with a prior
    attempt's final snapshot. *)
-let prepare_destroy run_log infra_dir var_files vars ~cluster_name =
+let prepare_destroy run_log infra_dir var_files vars ~cluster_name ~retention =
   match rds_state infra_dir with
   | Error message -> lifecycle_error message
   | Ok None ->
@@ -652,8 +652,11 @@ let prepare_destroy run_log infra_dir var_files vars ~cluster_name =
   | Ok (Some _) ->
     let snapshot_id = unique_rds_snapshot_id cluster_name in
     Printf.printf
-      "  prepare: disabling RDS deletion protection, final snapshot %s...\n%!"
-      snapshot_id;
+      "  prepare: disabling RDS deletion protection%s...\n%!"
+      (match retention with
+       | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
+         ", final snapshot " ^ snapshot_id
+       | Sol_cli_cloud_lifecycle.Retain_nothing -> ", retaining nothing");
     require_terraform_success
       (Sol_cli_run_log.run_phase run_log ~name:"rds-destroy-prepare" (fun () ->
          Sol_cli_terraform.apply
@@ -662,10 +665,15 @@ let prepare_destroy run_log infra_dir var_files vars ~cluster_name =
            ~var_files
            ~vars:
              (vars
-              @ [ "rds_deletion_protection=false"
-                ; "rds_skip_final_snapshot=false"
+              @ [ "rds_deletion_protection=false" ]
+              @
+              match retention with
+              | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
+                [ "rds_skip_final_snapshot=false"
                 ; "rds_final_snapshot_identifier=" ^ snapshot_id
-                ])
+                ]
+              | Sol_cli_cloud_lifecycle.Retain_nothing ->
+                [ "rds_skip_final_snapshot=true" ])
            ()));
     Some snapshot_id
 ;;
@@ -1169,6 +1177,18 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
   in
   let vars = config_vars @ vars in
   let target_cfg = established_target target_cfg in
+  (* DEC-033: what this destroy deliberately keeps, named by the target. Absent
+     means the production default -- retain the final snapshot -- so a
+     qualification target opting out never changes what destroy promises by
+     default. *)
+  let retention =
+    match target_cfg.destroy_retention with
+    | None -> Sol_cli_cloud_lifecycle.default_destroy_retention
+    | Some raw ->
+      (match Sol_cli_cloud_lifecycle.destroy_retention_of_string raw with
+       | Ok retention -> retention
+       | Error message -> lifecycle_error message)
+  in
   let cloud_target =
     match Sol_cli_cloud_lifecycle.cloud_target target_cfg with
     | Ok target -> target
@@ -1264,7 +1284,9 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
           Sol_cli_cloud_lifecycle.cluster_name
             (Sol_cli_cloud_lifecycle.Aws_outputs outputs)
         in
-        let prepared = prepare_destroy run_log infra_dir var_files vars ~cluster_name in
+        let prepared =
+          prepare_destroy run_log infra_dir var_files vars ~cluster_name ~retention
+        in
         verify_destroy_preparation infra_dir ~prepared;
         prepared
     in
@@ -1312,7 +1334,8 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
           (Sol_cli_cloud_lifecycle.policy_vars
              ~provider
              ~phase:destroy_phase
-             ~destroy_snapshot_id:snapshot_id)
+             ~destroy_snapshot_id:snapshot_id
+             ~retention)
     in
     let destroy_apply_vars = vars @ destroy_vars in
     (match outputs with

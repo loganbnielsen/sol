@@ -824,6 +824,18 @@ infrastructure and disables the only supported path to remove it.
    raw sequence is preserved: the empty query, the contradiction against the
    canary, and the stale-vs-actual metric comparison.
 
+### Retention must be stated, not inferred (DEC-033)
+
+A disposable qualification target sets `destroy_retention: none` in its target
+file before teardown. The destroy then reports `retention: none ... no residual
+billable artifacts` and passes no final-snapshot identity, so "cost-clean" is a
+claim the run's own output supports rather than something an operator establishes
+afterwards by deleting a snapshot by hand — which is what Attempt 5 needed.
+
+Leaving the field absent is correct for a production target: retention stays
+explicit (the destroy names the snapshot and how to remove it), and a
+qualification run retaining nothing never changes what destroy promises by default.
+
 ### Cost-clean verification (independent)
 
 EKS none · RDS instances 0 · RDS manual snapshots 0 · EC2 4 terminated · NAT

@@ -16,6 +16,7 @@ let target : Sol_cli_config.target =
   ; kubeconfig = None
   ; terraform_var_file = None
   ; observability_backend = Some "self_hosted_durable"
+  ; destroy_retention = None
   ; alert_receiver_type = None
   ; alert_receiver_url = None
   ; alert_owner = None
@@ -383,6 +384,7 @@ let test_lifecycle_phases () =
       ~provider:Sol_cli_provider.Aws
       ~phase:Preparing_destroy
       ~destroy_snapshot_id:"snap-1"
+      ~retention:default_destroy_retention
   in
   Alcotest.(check (option string))
     "destroy policy disables RDS deletion protection"
@@ -407,17 +409,26 @@ let test_lifecycle_phases () =
        (policy_vars
           ~provider:Sol_cli_provider.Gcp
           ~phase:Preparing_destroy
-          ~destroy_snapshot_id:"snap-1"));
+          ~destroy_snapshot_id:"snap-1"
+          ~retention:default_destroy_retention));
   Alcotest.(check int)
     "Ready adds no policy overrides"
     0
     (List.length
-       (policy_vars ~provider:Sol_cli_provider.Aws ~phase:Ready ~destroy_snapshot_id:"x"));
+       (policy_vars
+          ~provider:Sol_cli_provider.Aws
+          ~phase:Ready
+          ~destroy_snapshot_id:"x"
+          ~retention:default_destroy_retention));
   Alcotest.(check int)
     "GCP Ready adds no policy overrides either"
     0
     (List.length
-       (policy_vars ~provider:Sol_cli_provider.Gcp ~phase:Ready ~destroy_snapshot_id:"x"));
+       (policy_vars
+          ~provider:Sol_cli_provider.Gcp
+          ~phase:Ready
+          ~destroy_snapshot_id:"x"
+          ~retention:default_destroy_retention));
   (* ADR 0003: the phase is recomputed from observation on every run, never
      persisted and never infrastructure truth. *)
   Alcotest.(check string)
@@ -767,6 +778,72 @@ let test_readiness_invocations_are_provider_specific () =
    a listing that says nothing useful. DaemonSets additionally require a desired
    count — zero means the node set matched nothing — while StatefulSets do not,
    because their replicas are declared by their owner. *)
+(* DEC-033: a destroy states what it deliberately keeps. The default must remain
+   retain -- a disposable target opting out is a choice, not a change to what
+   destroy promises for every target -- and an unparseable mode must be refused
+   rather than quietly falling back to it. *)
+let test_destroy_retention () =
+  let has needle haystack =
+    let n = String.length needle
+    and h = String.length haystack in
+    let rec go i = i + n <= h && (String.sub haystack i n = needle || go (i + 1)) in
+    go 0
+  in
+  let destroy_vars retention =
+    L.policy_vars
+      ~provider:Sol_cli_provider.Aws
+      ~phase:L.Preparing_destroy
+      ~destroy_snapshot_id:"snap-1"
+      ~retention
+  in
+  let round_trip raw =
+    Result.map L.destroy_retention_to_string (L.destroy_retention_of_string raw)
+  in
+  Alcotest.(check (result string string))
+    "final-snapshot parses"
+    (Ok "final-snapshot")
+    (round_trip "final-snapshot");
+  Alcotest.(check (result string string)) "none parses" (Ok "none") (round_trip "none");
+  Alcotest.(check bool)
+    "an unknown mode is refused rather than defaulted"
+    true
+    (Result.is_error (L.destroy_retention_of_string "keep-everything"));
+  Alcotest.(check bool)
+    "the default retains a final snapshot"
+    true
+    (List.mem_assoc
+       "rds_final_snapshot_identifier"
+       (destroy_vars L.Retain_final_snapshot));
+  Alcotest.(check bool)
+    "retaining nothing passes no snapshot identity"
+    true
+    (List.assoc_opt "rds_final_snapshot_identifier" (destroy_vars L.Retain_nothing) = None);
+  Alcotest.(check bool)
+    "retaining nothing skips the final snapshot"
+    true
+    (List.assoc_opt "rds_skip_final_snapshot" (destroy_vars L.Retain_nothing)
+     = Some "true");
+  Alcotest.(check bool)
+    "retention still lifts deletion protection either way"
+    true
+    (List.assoc_opt "rds_deletion_protection" (destroy_vars L.Retain_nothing)
+     = Some "false");
+  Alcotest.(check bool)
+    "the report names the snapshot and how to remove it"
+    true
+    (let report =
+       L.retention_report ~retention:L.Retain_final_snapshot ~destroy_snapshot_id:"snap-1"
+     in
+     has "snap-1" report && has "delete-db-snapshot" report);
+  Alcotest.(check bool)
+    "the report says a disposable destroy keeps nothing"
+    true
+    (let report =
+       L.retention_report ~retention:L.Retain_nothing ~destroy_snapshot_id:"snap-1"
+     in
+     has "no residual billable artifacts" report)
+;;
+
 let test_convergence_predicates () =
   let summary_with kind output =
     L.readiness ~provider ~run:(fun argv ->
@@ -875,6 +952,7 @@ let () =
             `Quick
             test_readiness_invocations_are_provider_specific
         ; Alcotest.test_case "convergence predicates" `Quick test_convergence_predicates
+        ; Alcotest.test_case "destroy retention" `Quick test_destroy_retention
         ; Alcotest.test_case "effective authorization" `Quick test_effective_authorization
         ; Alcotest.test_case "terraform scope" `Quick test_terraform_scope
         ] )

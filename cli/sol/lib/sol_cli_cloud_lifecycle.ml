@@ -908,16 +908,69 @@ let ready_policy_applies phase = policy_of_phase phase = Production
    first GCP destroy with "Value for undeclared variable" instead of lifting
    anything -- the failure would arrive as a destroy that cannot start. So GCP gets
    an empty policy *and* a named gap rather than AWS's levers. *)
-let policy_vars ~provider ~phase ~destroy_snapshot_id =
+(* DEC-033: what a destroy deliberately keeps, and the fact that it is a choice.
+
+   Two postconditions were being conflated. A production destroy means "nothing
+   running, with recovery explicitly retained"; a disposable qualification
+   target's means "Absent, with nothing billable left behind". Both are legitimate;
+   neither is the default for the other. The default here stays [Retain_final_snapshot]
+   -- a qualification run retaining nothing must not quietly become "Sol destroys
+   every recovery artifact".
+
+   Retention is named by the target (see [Sol_cli_config.destroy_retention]) and
+   reported by the destroy that performed it, so an operator never has to infer
+   what survived. *)
+type destroy_retention =
+  | Retain_final_snapshot
+  | Retain_nothing
+
+let default_destroy_retention = Retain_final_snapshot
+
+let destroy_retention_to_string = function
+  | Retain_final_snapshot -> "final-snapshot"
+  | Retain_nothing -> "none"
+;;
+
+let destroy_retention_of_string = function
+  | "final-snapshot" -> Ok Retain_final_snapshot
+  | "none" -> Ok Retain_nothing
+  | other ->
+    Error
+      (Printf.sprintf
+         "unknown destroy_retention %S (expected \"final-snapshot\" or \"none\")"
+         other)
+;;
+
+(* What the destroy says afterwards. For retention, "what survives", "why" and
+   "how it is eventually removed" are all part of the claim. *)
+let retention_report ~retention ~destroy_snapshot_id =
+  match retention with
+  | Retain_final_snapshot ->
+    Printf.sprintf
+      "  retention: final snapshot %s (target destroy_retention = final-snapshot, so the \
+       target outlives its compute; remove it with `aws rds delete-db-snapshot \
+       --db-snapshot-identifier %s` once it is no longer needed)"
+      destroy_snapshot_id
+      destroy_snapshot_id
+  | Retain_nothing ->
+    "  retention: none (target destroy_retention = none) -- destroyed to Absent with no \
+     residual billable artifacts"
+;;
+
+let policy_vars ~provider ~phase ~destroy_snapshot_id ~retention =
   match policy_of_phase phase with
   | Bootstrap | Installation | Production -> []
   | Destroy ->
     (match provider with
      | Sol_cli_provider.Aws ->
-       [ "rds_deletion_protection", "false"
-       ; "rds_skip_final_snapshot", "false"
-       ; "rds_final_snapshot_identifier", destroy_snapshot_id
-       ]
+       ("rds_deletion_protection", "false")
+       ::
+       (match retention with
+        | Retain_final_snapshot ->
+          [ "rds_skip_final_snapshot", "false"
+          ; "rds_final_snapshot_identifier", destroy_snapshot_id
+          ]
+        | Retain_nothing -> [ "rds_skip_final_snapshot", "true" ])
      | Sol_cli_provider.Gcp -> [])
 ;;
 
