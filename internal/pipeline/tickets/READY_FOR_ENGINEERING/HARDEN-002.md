@@ -641,7 +641,7 @@ index advertises archives on GitHub releases rather than at the
 had treated this as transient; attempt 2 reproduced it on a fresh target, so that
 position is discharged. Fixed by INFRA-032 (the chart is named by archive URL).
 
-### F16 verification — the capacity fix works (live)
+### finding 16 verification — the capacity fix works (live)
 
 Planned shape came from the profile, appended last so a target field or `--var`
 cannot weaken it, and the platform's own components scheduled:
@@ -805,6 +805,38 @@ HARDEN runs exist to find those, not to have none.
    a public `sol cloud destroy` — never by out-of-band resource deletion.
 
 ### Exact command sequence, mapped to `docs/qualification/production-single-region-v1-matrix.md`
+### Read-only networking inspection (INFRA-036 — record the mechanism, change nothing)
+
+Perform this before teardown, and change no networking in response to it.
+
+`kubectl logs` succeeded on real targets while API-server access to pod and service
+endpoints timed out, and the EKS module's default node-security-group rules admit
+the control plane only on the admission-webhook ports (4443/6443/8443/9443). So
+control-plane → kubelet is explained by something not yet read, or it is a real gap
+— and that path matters well beyond readiness, because it is what `sol logs`,
+port-forward and exec rely on.
+
+Record, without modifying anything:
+
+1. the node security group's effective ingress rules, including any rule whose
+   source is the cluster security group, with ports and protocols;
+2. whether the control plane can reach a node's kubelet — `kubectl logs` against a
+   pod on a known node is the observable;
+3. which Sol capabilities actually depend on that path, from the surfaces in
+   `cli/sol/` (`sol logs`, port-forward, exec).
+
+Then state the conclusion in exactly one of two forms:
+
+- the path **is** part of the production contract, *because a Sol capability
+  requires it* — in which case it becomes an explicit contract entry with a direct
+  test; or
+- it is not, in which case nothing depends on it and it is recorded as observed
+  but unrequired.
+
+Do not add or widen a security-group rule to preserve behaviour until that
+question has been answered. Widening the network so a check passes is designing
+the infrastructure around the test.
+
 
 1. `sol cloud plan <target>` — before any apply. Verify zero mutation and
    the honest-plan invariants (Deferred vs. Plannable phases, ADR 0002).
@@ -824,6 +856,18 @@ HARDEN runs exist to find those, not to have none.
    show `rds_deletion_protection = true` in force while `Ready` (I4). "The apply
    succeeded" is not evidence for any of these: each pairs the reported phase
    with the identity/RBAC/describe observation named in the row.
+
+   **What `Ready` means here (INFRA-036; matrix row I14).** The gate is
+   authoritative Kubernetes convergence — CRDs `Established`, Deployments
+   `Available`, StatefulSets/DaemonSets reporting every declared replica, PVCs
+   `Bound`, nodes `Ready`, the default `StorageClass` and EBS CSI driver
+   registered, the ingress endpoint assigned, and Redpanda's own broker-native
+   health — and nothing else. It deliberately does not probe the platform across
+   the network, and does not require an external ACME round trip. So "the target
+   reached `Ready`" is evidence of *convergence*, not of *capability*: capability
+   is what the observability, ingress, broker and storage scenarios below qualify.
+   A `Ready` target whose external CA is unreachable is the expected outcome, not
+   a defect to report.
 3. **`PlatformUpdating` re-entry and return to Ready (rows I5–I6).** Immediately
    after `Ready` is reached and before any teardown, run a second
    `sol cloud apply <target>` carrying a platform change. The run must report

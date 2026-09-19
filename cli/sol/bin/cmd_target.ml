@@ -103,13 +103,11 @@ let platform_status ~check (target : Sol_cli_config.target) =
         | Ok result when result.exit_code = 0 -> Some result.stdout
         | _ -> None
       in
-      let issuer = Option.value target.cluster_issuer ~default:"letsencrypt-prod" in
+      (* The same convergence checks `sol cloud apply` gates [Ready] on, so this
+         surface answers "is this target ready" rather than a second, looser
+         question. *)
       Some
-        (Sol_cli_cloud_lifecycle.readiness
-           ~cluster_issuer:issuer
-           ~observability_backend:
-             (Option.value target.observability_backend ~default:"local")
-           ~run
+        (Sol_cli_cloud_lifecycle.readiness ~run
          |> Sol_cli_cloud_lifecycle.readiness_summary))
 ;;
 

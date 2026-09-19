@@ -991,15 +991,12 @@ let cloud_init ~target ~var_file ~vars ~action () =
           | _ ->
             cleanup_bootstrap_access ();
             require_terraform_success platform_apply);
-         let cluster_issuer =
-           Option.value target_cfg.cluster_issuer ~default:"letsencrypt-prod"
-         in
-         let readiness_checks () =
-           Sol_cli_cloud_lifecycle.readiness
-             ~cluster_issuer
-             ~observability_backend:
-               (Option.value target_cfg.observability_backend ~default:"local")
-             ~run:(fun args -> process_output ~env ("kubectl" :: args))
+         (* Readiness asserts the platform's convergence from authoritative
+            Kubernetes state; it is not parameterised by the observability backend
+            or the configured issuer (see Sol_cli_cloud_lifecycle.readiness). *)
+         let sample_readiness () =
+           Sol_cli_cloud_lifecycle.readiness ~run:(fun args ->
+             process_output ~env ("kubectl" :: args))
          in
          let unmet_count checks =
            List.length
@@ -1038,7 +1035,7 @@ let cloud_init ~target ~var_file ~vars ~action () =
          let deadline = Unix.gettimeofday () +. readiness_deadline_s in
          let waiting_since = Unix.gettimeofday () in
          let rec await_readiness () =
-           let checks = readiness_checks () in
+           let checks = sample_readiness () in
            let unmet = unmet_count checks in
            if unmet = 0
            then checks

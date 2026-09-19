@@ -185,6 +185,22 @@ the terraform argv).
 | I11 | Destroy is idempotent: an already-absent target is `Absent`, not an error | re-run `sol cloud destroy <target> --apply` after I9 | exits 0; reports the target as absent (`lifecycle phase: Absent`); performs no RDS preparation | CLI output; terraform argv (no targeted apply) |
 | I12 | Destroy resumed after an interrupted destroy completes (the abort edge is available from `PreparingDestroy`/`Destroying`) | interrupt the destroy between preparation and destruction, then re-run `sol cloud destroy … --apply` | the second run completes destruction; the final-snapshot identity is **not** reused from the first attempt | terraform argv of both runs; live snapshot list; teardown verification |
 | I13 | The phase record is operational context, never infrastructure truth (ADR 0003) | after a full apply→destroy cycle, inspect the tree and the run's artifacts | no phase-pointer file and no second state database exist; every readiness claim in I3/I4/I6 was established by an observation, not inferred from the reported phase | repository/artifact listing; the probe evidence cited in I3/I4/I6 |
+| I14 | **What `Ready` asserts, and what it deliberately does not** (INFRA-035/036). `Ready` is gated on authoritative Kubernetes convergence: CRDs `Established`, Deployments `Available`, StatefulSets/DaemonSets reporting every declared replica ready, PVCs `Bound`, nodes `Ready`, the default `StorageClass` and EBS CSI driver registered, the ingress LoadBalancer endpoint assigned, and Redpanda's own broker-native cluster health. It does **not** probe the platform across the network and does **not** require an external ACME round trip | inspect the readiness checks and run them against the target; confirm no check reads a service/pod endpoint through the API server's `/proxy/` path and none requires a `ClusterIssuer` condition | the gate names only Kubernetes-native convergence (plus Redpanda's own health API); a target whose platform is converged reports `Ready` with an unreachable external ACME provider, and a revoked `/proxy/` route does not make it `Unmet` | the readiness check list (`readiness_invocations`); the run's `platform-readiness` phase output; the behavioural evidence for capability (J below and HARDEN-002's observability scenarios) |
+
+Two consequences of I14 are worth stating, because both were learned from failed attempts
+rather than reasoned about:
+
+- **API-server → arbitrary pod/service reachability is not part of this platform's
+  contract.** The EKS module admits the control plane to nodes only on the
+  admission-webhook ports (4443/6443/8443/9443), and nothing promises more. Probing
+  capabilities through that route made `Ready` depend on a path the platform never
+  created — and the fix was to remove the probes, never to widen a security group so a
+  test would pass.
+- **Capability behaviour is HARDEN's question, not `Ready`'s.** "Loki's `/ready`
+  answers through an API-server proxy" says almost nothing about whether observability
+  works. A known log reaching Loki and being queryable does. That evidence belongs in
+  HARDEN-002's observability scenarios, and it subsumes what the removed probes were
+  reaching for.
 
 ## J. Explicitly not claimed (recorded as skipped, with reason — DEC-026 §9)
 

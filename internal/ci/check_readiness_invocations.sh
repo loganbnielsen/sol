@@ -19,8 +19,8 @@
 # accepted — a parse error is distinguishable from the connection error that
 # follows. No cluster is contacted and nothing is mutated.
 #
-# Input: tab separated `<backend> \t <check name> \t <argv item> ...`, one check
-# per line, printed by cli/sol/test/print_readiness_invocations.ml.
+# Input: tab separated `<check name> \t <argv item> ...`, one check per line,
+# printed by cli/sol/test/print_readiness_invocations.ml.
 #
 # Usage:
 #   internal/ci/check_readiness_invocations.sh < invocations.tsv
@@ -58,11 +58,11 @@ parse_error='unknown flag|unknown shorthand flag|unknown command|invalid argumen
 
 fail=0
 checked=0
-while IFS=$'\t' read -r backend name argv; do
+while IFS=$'\t' read -r name argv; do
   [ -n "${name:-}" ] || continue
   IFS=$'\t' read -r -a args <<<"$argv"
   if [ "${#args[@]}" -eq 0 ]; then
-    echo "check_readiness_invocations: '$name' ($backend) has no argv." >&2
+    echo "check_readiness_invocations: '$name' has no argv." >&2
     fail=1
     continue
   fi
@@ -70,7 +70,7 @@ while IFS=$'\t' read -r backend name argv; do
   KUBECONFIG=/dev/null kubectl "${args[@]}" >"$out" 2>&1 || true
   checked=$((checked + 1))
   if grep -qiE "$parse_error" "$out"; then
-    echo "check_readiness_invocations: '$name' ($backend) is not a valid kubectl invocation:" >&2
+    echo "check_readiness_invocations: '$name' is not a valid kubectl invocation:" >&2
     sed 's/^/    /' "$out" >&2
     printf '    argv: kubectl' >&2
     printf ' %q' "${args[@]}" >&2
