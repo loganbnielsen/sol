@@ -324,6 +324,18 @@ esac
 exit 90
 EOF
 
+# The platform stage's host prerequisite (Attempt 3): the kubeconfig gcloud writes
+# names this as its exec credential plugin, so every Kubernetes call needs it on
+# PATH. Failing without it is free; failing inside the platform apply is not.
+cat >"$tmp/bin/gke-gcloud-auth-plugin" <<'EOF'
+#!/usr/bin/env bash
+# NO_AUTH_PLUGIN models a host without the plugin, which is how Attempt 3 failed:
+# after a billable apply, inside the platform stage.
+if [ "${NO_AUTH_PLUGIN:-}" = 1 ]; then exit 1; fi
+printf 'Kubernetes v0.1.0-harness\n'
+exit 0
+EOF
+
 cat >"$tmp/bin/kubectl" <<'EOF'
 #!/usr/bin/env bash
 set -eu
@@ -403,7 +415,8 @@ if [ "${FAIL_ON:-}" = readiness ] && [ ! -e "$FAIL_MARKER_DIR/readiness" ] &&
   : >"$FAIL_MARKER_DIR/readiness"; exit 20
 fi
 EOF
-chmod +x "$tmp/bin/terraform" "$tmp/bin/aws" "$tmp/bin/kubectl" "$tmp/bin/gcloud"
+chmod +x "$tmp/bin/terraform" "$tmp/bin/aws" "$tmp/bin/kubectl" "$tmp/bin/gcloud" \
+  "$tmp/bin/gke-gcloud-auth-plugin"
 
 export PATH="$tmp/bin:$PATH"
 export SOL_HOME="$root"
@@ -840,6 +853,28 @@ grep -F 'credentials: Google Application Default Credentials resolved' \
   cat "$gcp_destroy_log.out" >&2
   exit 1
 }
+
+# Attempt 3 spent a billable apply before discovering that the host lacked the
+# plugin the platform stage needs. It must be refused up front instead -- the check
+# costs nothing and the alternative costs an apply.
+gcp_toolchain_log="$tmp/gcp-toolchain.log"
+rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE"
+if (cd "$tmp/work" && NO_AUTH_PLUGIN=1 DESTROYING=1 LIFECYCLE_LOG="$gcp_toolchain_log" \
+      "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$gcp_toolchain_log.out" 2>&1
+then
+  echo "a GCP platform stage ran without gke-gcloud-auth-plugin" >&2
+  exit 1
+fi
+grep -F 'gke-gcloud-auth-plugin' "$gcp_toolchain_log.out" >/dev/null || {
+  echo "the missing-plugin failure did not name the plugin:" >&2
+  cat "$gcp_toolchain_log.out" >&2
+  exit 1
+}
+if grep -F 'platform-destroy' "$gcp_toolchain_log" >/dev/null; then
+  echo "the missing-plugin failure reached the platform stage anyway:" >&2
+  exit 1
+fi
 
 # ...and when they cannot be resolved, it fails closed and says the part that
 # matters, rather than proceeding to mutate infrastructure it cannot authenticate
