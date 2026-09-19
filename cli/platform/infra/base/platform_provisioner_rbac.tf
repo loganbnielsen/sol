@@ -85,6 +85,64 @@ resource "kubernetes_cluster_role" "platform_provisioner_cluster" {
   }
 }
 
+# ── GCP: the same authorities, held by a Google identity ────────────────────
+#
+# AWS puts the named provisioner in the `sol:platform-provisioners` group through
+# its EKS access entry, and every binding above is expressed against that group.
+# GKE has no access-entry equivalent, and without Google Workspace there is no
+# IAM->group mapping either: an out-of-cluster Google identity authenticates to
+# the API server as itself. So the same two ClusterRoles are bound to that
+# identity directly.
+#
+# What is shared is the authority model -- a named provisioner with exactly these
+# rights, no more -- and what differs is how a cloud identity is attached to it.
+# Binding the group *and* the identity conditionally would be the cosmetic
+# version; this is the one the provider actually supports.
+locals {
+  gcp_provisioner = var.gcp_provisioner_service_account
+}
+
+resource "kubernetes_cluster_role_binding" "platform_provisioner_cluster_gcp" {
+  count = local.gcp_provisioner == "" ? 0 : 1
+
+  metadata { name = "sol-platform-provisioner-cluster" }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role.platform_provisioner_cluster.metadata[0].name
+  }
+  subject {
+    kind      = "User"
+    name      = local.gcp_provisioner
+    api_group = "rbac.authorization.k8s.io"
+  }
+}
+
+resource "kubernetes_role_binding" "platform_provisioner_gcp" {
+  for_each = local.gcp_provisioner == "" ? toset([]) : local.platform_namespaces
+
+  metadata {
+    name      = "sol-platform-provisioner"
+    namespace = each.key
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role.platform_provisioner_namespaced.metadata[0].name
+  }
+  subject {
+    kind      = "User"
+    name      = local.gcp_provisioner
+    api_group = "rbac.authorization.k8s.io"
+  }
+  depends_on = [
+    kubernetes_namespace.cert_manager, kubernetes_namespace.ingress_nginx,
+    kubernetes_namespace.argocd, kubernetes_namespace.redpanda,
+    kubernetes_namespace.postgresql, kubernetes_namespace.monitoring,
+  ]
+}
+
 resource "kubernetes_cluster_role_binding" "platform_provisioner_cluster" {
   metadata { name = "sol-platform-provisioner-cluster" }
   role_ref {

@@ -659,6 +659,11 @@ let gcp_provisioner_kubeconfig ~region outputs f =
            ; region
            ; "--project"
            ; outputs.Sol_cli_cloud_lifecycle.project_id
+             (* Impersonation is the point: Sol acts as the target's named
+              provisioner, through short-lived tokens, rather than as whoever
+              happened to run the command. *)
+           ; "--impersonate-service-account"
+           ; outputs.Sol_cli_cloud_lifecycle.provisioner_service_account
            ; "--kubeconfig"
            ; path
            ; "--quiet"
@@ -1141,17 +1146,21 @@ let destroy_policy_vars ~provider ~phase ~retention ~prepared =
       ~retention
 ;;
 
-(* The cloud root's bootstrap-access escalation is an AWS mechanism: it temporarily
-   associates EKS cluster-admin so the install can create the narrower provisioner
-   RBAC. GCP has no counterpart yet -- GKE grants the project Owner cluster-admin
-   directly, which is a recorded gap rather than a design -- so the variable is not
-   declared there, and passing it would be an undeclared-variable error rather than
-   a no-op. *)
-let bootstrap_access_vars provider ~enabled =
-  match provider with
-  | Sol_cli_provider.Aws ->
-    [ ("provisioner_bootstrap_admin", if enabled then "true" else "false") ]
-  | Sol_cli_provider.Gcp -> []
+(* The install window, opened on the cloud root of *both* providers and closed
+   before an install is reported. What differs is the object -- an EKS access entry
+   on AWS, an in-cluster ClusterRoleBinding created under the operator's
+   credentials on GCP -- and both are created by the cloud apply for the same
+   reason: the platform apply runs *as* the provisioner, so it cannot be the thing
+   that grants the provisioner the authority it is authenticated with. A binding
+   created by the apply that needs it is a chicken-and-egg, which is exactly what
+   the first draft of this got wrong.
+   
+   So there is no provider branch here and no provider argument: the variable is
+   declared by both cloud roots, and the invariant -- authority exists only for the
+   window -- is what is shared. *)
+
+let bootstrap_access_vars ~enabled =
+  [ ("provisioner_bootstrap_admin", if enabled then "true" else "false") ]
 ;;
 
 let platform_absent env =
@@ -1376,9 +1385,7 @@ let cloud_init ~target ~var_file ~vars ~action () =
            ~scope:Sol_cli_terraform.whole_root
            ~chdir:infra_dir
            ~var_files
-           ~vars:
-             (Sol_cli_terraform.kv_args (bootstrap_access_vars provider ~enabled:true)
-              @ vars)
+           ~vars:(Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:true) @ vars)
            ()));
     let deescalate () =
       Sol_cli_run_log.run_phase
@@ -1390,8 +1397,7 @@ let cloud_init ~target ~var_file ~vars ~action () =
              ~chdir:infra_dir
              ~var_files
              ~vars:
-               (Sol_cli_terraform.kv_args (bootstrap_access_vars provider ~enabled:false)
-                @ vars)
+               (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:false) @ vars)
              ())
     in
     let cleanup_bootstrap_access () = ignore (deescalate ()) in
@@ -1602,6 +1608,9 @@ let cloud_init ~target ~var_file ~vars ~action () =
           | Ok _ -> ()
           | Error message -> lifecycle_error message);
          require_terraform_success (deescalate ());
+         (* GCP's window lives in the platform root, so it is closed by applying the
+            root that owns the object rather than by a Sol-side revocation step:
+            the authority model stays in the layer that defines the authority. *)
          if not (provisioner_rbac_established env)
          then
            lifecycle_error
@@ -1807,8 +1816,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
                  ~chdir:infra_dir
                  ~var_files
                  ~vars:
-                   (Sol_cli_terraform.kv_args
-                      (bootstrap_access_vars provider ~enabled:true)
+                   (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:true)
                     @ destroy_apply_vars)
                  ()));
        let deescalate () =
@@ -1821,8 +1829,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
                 ~chdir:infra_dir
                 ~var_files
                 ~vars:
-                  (Sol_cli_terraform.kv_args
-                     (bootstrap_access_vars provider ~enabled:false)
+                  (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:false)
                    @ destroy_apply_vars)
                 ())
        in

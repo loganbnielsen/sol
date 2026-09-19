@@ -80,6 +80,12 @@ variable "redpanda_persistent_storage" {
   default     = true
 }
 
+variable "gcp_provisioner_service_account" {
+  description = "Google service account that acts as the platform provisioner on GCP, bound to the same ClusterRoles the AWS provisioner's group receives. Empty on AWS."
+  type        = string
+  default     = ""
+}
+
 variable "install_postgresql" {
   description = "Install in-cluster PostgreSQL. Set false when using RDS or Cloud SQL."
   type        = bool

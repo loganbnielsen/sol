@@ -45,6 +45,7 @@ module "platform" {
   redpanda_memory                      = var.redpanda_memory
   redpanda_persistent_storage          = var.redpanda_persistent_storage
   install_postgresql                   = var.install_postgresql
+  gcp_provisioner_service_account      = var.gcp_provisioner_service_account
   postgres_password                    = var.postgres_password
   postgres_persistent_storage          = var.postgres_persistent_storage
   grafana_admin_password               = var.grafana_admin_password
