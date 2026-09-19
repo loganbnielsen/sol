@@ -226,7 +226,7 @@ resource "google_storage_bucket" "loki" {
   location                    = var.region
   project                     = var.project_id
   uniform_bucket_level_access = true
-  force_destroy               = false
+  force_destroy               = true
 
   lifecycle_rule {
     condition {
@@ -236,10 +236,10 @@ resource "google_storage_bucket" "loki" {
       type = "Delete"
     }
   }
-
-  lifecycle {
-    prevent_destroy = true
-  }
+  # INFRA-037: same invariant as AWS (ADR 0004) -- these buckets are populated by
+  # running the platform, so [force_destroy = false] together with
+  # [prevent_destroy] left a durable-observability target undeletable through
+  # `sol cloud destroy`.
 }
 
 resource "google_service_account" "loki" {
@@ -272,11 +272,11 @@ resource "google_storage_bucket" "thanos" {
   location                    = var.region
   project                     = var.project_id
   uniform_bucket_level_access = true
-  force_destroy               = false
-
-  lifecycle {
-    prevent_destroy = true
-  }
+  force_destroy               = true
+  # INFRA-037: same invariant as AWS (ADR 0004) -- these buckets are populated by
+  # running the platform, so [force_destroy = false] together with
+  # [prevent_destroy] left a durable-observability target undeletable through
+  # `sol cloud destroy`.
 }
 
 resource "google_service_account" "thanos" {
