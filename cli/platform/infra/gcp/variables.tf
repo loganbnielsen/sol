@@ -60,7 +60,7 @@ variable "sql_high_availability" {
 }
 
 variable "sql_deletion_protection" {
-  description = "Enable Cloud SQL deletion protection."
+  description = "Enable both Terraform's destroy guard and Cloud SQL API deletion protection."
   type        = bool
   default     = true
 }

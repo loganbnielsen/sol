@@ -79,6 +79,48 @@ if [ "$(variable_default rds_skip_final_snapshot)" != "false" ]; then
   exit 1
 fi
 
+# GCP has two independent protections: Terraform's top-level guard and Cloud
+# SQL's live API setting. The former alone only stops this Terraform state from
+# deleting the instance; it does not establish the Ready-state provider
+# invariant or protect against other clients.
+gcp="$root/cli/platform/infra/gcp/main.tf"
+gcp_vars="$root/cli/platform/infra/gcp/variables.tf"
+gcp_sql_block="$(awk '/^resource "google_sql_database_instance" "postgres"/,/^}/' "$gcp")"
+
+if [ -z "$gcp_sql_block" ]; then
+  echo "FAIL: google_sql_database_instance.postgres not found in $gcp" >&2
+  exit 1
+fi
+
+gcp_sql_code="$(printf '%s\n' "$gcp_sql_block" | sed 's/#.*//')"
+
+case "$gcp_sql_code" in
+  *"deletion_protection = var.sql_deletion_protection"*) : ;;
+  *)
+    echo "FAIL: Cloud SQL no longer wires Terraform's deletion-protection guard." >&2
+    exit 1
+    ;;
+esac
+
+case "$gcp_sql_code" in
+  *"deletion_protection_enabled = var.sql_deletion_protection"*) : ;;
+  *)
+    echo "FAIL: Cloud SQL no longer wires the live API deletion-protection setting." >&2
+    exit 1
+    ;;
+esac
+
+gcp_deletion_default="$(awk '
+  index($0, "variable \"sql_deletion_protection\" {") == 1 { inside = 1; next }
+  inside && /^}/ { exit }
+  inside && $1 == "default" { print $3; exit }
+' "$gcp_vars")"
+
+if [ "$gcp_deletion_default" != "true" ]; then
+  echo "FAIL: sql_deletion_protection no longer defaults to true" >&2
+  exit 1
+fi
+
 # Comments stripped: the block explains finding 9 in prose directly above these
 # assignments, so a match against the raw text would be satisfied by the comment
 # that survives the very deletion this is guarding against.
