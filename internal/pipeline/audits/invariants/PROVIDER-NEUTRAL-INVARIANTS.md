@@ -207,16 +207,14 @@ post-closure check (`provisioner_authorization_established`) probes Kubernetes
 run has executed the full boundary.
 
 **Open findings/tickets.** FND-0001 (defect → INFRA-045), FND-0002
-(`DESIGN_GAP`, no ticket — needs a decision), FND-0003 (effective-capability
-qualification gap).
+(`DESIGN_GAP`; decision `DEC-034` ratified 2026-09-19, implementation
+`INFRA-046`), FND-0003 (effective-capability qualification gap).
 
 **To move to qualified.**
 - GCP: narrow the role and demonstrate a denied operation (INFRA-045).
-- AWS: decide whether the provisioner IAM role may retain access-entry
-  management; if yes, restate the invariant in terms of the K8s RBAC layer and
-  record the cloud-API capability as accepted residual. If no, split the cloud
-  provisioning identity from the steady-state cluster-access identity and
-  re-run the post-closure probe.
+- AWS: split the cloud-provisioning identity from the steady-state cluster-access
+  identity (DEC-034 / INFRA-046), revise ADR 0002 and matrix row I3, then re-run
+  the post-closure probe and demonstrate the escalation is denied.
 
 ---
 

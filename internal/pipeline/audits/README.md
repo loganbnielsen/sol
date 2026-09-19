@@ -94,6 +94,11 @@ useful. Those are findings/invariants/qualification status. Every new ticket
 must name the finding that backs it, and every finding with derived work names
 the ticket.
 
+A `DESIGN_GAP` whose question has since been **decided** is no longer blocked by
+rule 3: once the decision is recorded (e.g. a `DEC-*`), the implementation becomes
+concrete work and gets a ticket. A `DEC-*` records the decision; the `INFRA-*`
+that follows implements it.
+
 ## Shared vocabulary
 
 ### Classification and state are separate axes
