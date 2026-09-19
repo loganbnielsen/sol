@@ -30,6 +30,7 @@ have failed" — it never means "false".
 | Finding | Provider | What | Ticket | Classification | State |
 |---|---|---|---|---|---|
 | FND-0001 | GCP | Provisioner IAM role `roles/container.developer` grants Kubernetes API authority; the claimed RBAC-only boundary is not real | `INFRA-045` | `VERIFIED_DEFECT` | `OPEN` |
+| FND-0002 | AWS | The provisioner can re-grant itself cluster-admin via `eks:AssociateAccessPolicy` (documented AWS behaviour; the gap is Sol's authority contract) | `DEC-034` (decided) → `INFRA-046` | `DESIGN_GAP` | `OPEN` (decision ratified; implementation pending) |
 | FND-0004 | GCP | A partially-installed platform was not destructible through `sol cloud destroy` (CRD-backed state, CRDs absent) | `INFRA-042` (DONE) | `VERIFIED_DEFECT` | `FIXED_UNQUALIFIED` |
 | FND-0008 | AWS (render) | Runtime Secret identity mismatch blocked the migration path | `INFRA-040` (READY: diagnostics only) | `VERIFIED_DEFECT` | `QUALIFIED` (Run 7) |
 
@@ -37,8 +38,7 @@ have failed" — it never means "false".
 
 | Finding | Classification | State | Why no ticket |
 |---|---|---|---|
-| FND-0002 | `DESIGN_GAP` | `OPEN` | The AWS provisioner can re-grant itself cluster-admin via `eks:AssociateAccessPolicy` — documented AWS behaviour; the unresolved part is Sol's intended steady-state authority contract, so the fix requires a design decision (narrow the role vs split identities), not a mechanical change |
-| FND-0003 | `QUALIFICATION_GAP` | `OPEN` | Effective-authority and absence coverage are unexercised, not defective |
+| FND-0003 | `QUALIFICATION_GAP` | `OPEN` | Effective-authority and absence coverage are unexercised, not defective (its absence half is now `INFRA-047`) |
 | FND-0005 | `QUALIFICATION_GAP` | `OPEN` | Service-networking ABANDON: observed twice (Attempts 3, 4) vs documented "blocks network deletion"; the decision (ABANDON vs `REMOVE_PEERING`) is a qualification gap, not a defect |
 | FND-0006 | `QUALIFICATION_GAP` | `QUALIFIED` (Run 7) | Retention `none` reached provider-side `Absent` with nothing retained and no manual step |
 | FND-0007 | `QUALIFICATION_GAP` | `BLOCKED` | GCP Cloud DNS solver gap + no delegated hostname; tracked in the GCP inventory and refused by name |
@@ -154,25 +154,35 @@ claims were corrected or discarded (detail in the report and findings):
 
 ---
 
-## For the next AWS / GCP HARDEN run — the evidence it should collect
+## Sequenced plan (2026-09-19)
 
-Prioritised, provider-tagged, and traceable to a finding/invariant:
+Owners are placeholders for assignment; work is owned by the assignee, while the
+qualification lead (this function) sequences it, reviews the evidence and keeps
+this board current. **Live runs are serialized — one target at a time, provider
+by provider** — so each run's evidence carries one clean identity and one
+operator. Code, docs and contract work proceed in parallel.
 
-1. **AWS (blocks the application half):** implement `INFRA-043` (the deploy
-   lease grant), then run matrix B/D and record the observations with their
-   identity (HARDEN-003). Confirm the `INFRA-040` diagnostics item and the
-   `INFRA-044` redaction item.
-2. **GCP (blocks everything):** a run whose platform install reaches `Ready`.
-   The next live boundary is the `helm_release.cert_manager` post-install check;
-   then the success-path `PlatformInstalling → Ready` revocation and the
-   positive/negative provisioner probe (FND-0001, FND-0003, FND-0007).
-3. **Both:** extend `verify_aws_destroy` to cover EIP/NAT/EBS so the absence row
-   no longer rests on a manual sweep (FND-0003).
-4. **GCP:** re-observe peering absence and decide ABANDON vs `REMOVE_PEERING`
-   (FND-0005); and, if a test hostname is delegated, the TLS solver work
-   (FND-0007).
-5. **AWS:** decide FND-0002 and, if narrowed, prove the escalation path is
-   denied or explicitly accepted.
+| # | Track | Work item | Ticket | Depends on | Live run | Done when |
+|---|---|---|---|---|---|---|
+| 1 | T1 AWS app | Deploy-lease grant | `INFRA-043` | — | no | `sol deploy` passes the lease step; an offline test pins the granted verbs against the issued ones |
+| 2 | T2 authority | Split the provisioning / steady-state identities (decision ratified 2026-09-19) | `DEC-034` → `INFRA-046` | — | no | the steady-state identity holds no access-entry/`iam:*` permission; a guard pins it; ADR 0002 + matrix I3 revised |
+| 3 | T2 authority | Narrow the GCP provisioner role | `INFRA-045` | — | no | a custom role limited to discovery/credential retrieval; the "no Kubernetes authority" claim corrected |
+| 4 | T4 coverage | Redact the connection URL in migration errors | `INFRA-044` | — | no | the password is absent from Sol's output and the Job logs, mutation-tested |
+| 5 | T3 GCP platform | Root-cause the `helm_release.cert_manager` post-install failure | `HARDEN-004` | — | no | the cause is established from the container's own output, not the Job status |
+| 6 | T4 coverage | Absence verifier: EIP / NAT / EBS | `INFRA-047` | — | no | `verify_aws_destroy` covers all three, mutation-tested both directions |
+| 7 | T4 contract | GCP matrix expressed against the provider-neutral invariants | `HARDEN-004` | — | no | rows exist for the invariants; the inventory becomes a contract a run can fail |
+| 8 | T1 AWS app | Run 8: matrix B/C/D (deploy, rollback, availability) | `HARDEN-002` | 1 | **yes** | run record with its identity; B/C/D rows pass or are recorded |
+| 9 | T2 authority | Steady-state authority probe | FND-0003 | 2, 3 and a `Ready` target | **yes** | positives/negatives as the recorded identity, plus a denial in a non-`default` namespace |
+| 10 | T3 GCP platform | Attempt 5 → `Ready`, then the success-path probe | `HARDEN-004` | 5 | **yes** | phase lines, window open/close, readiness; then the FND-0001/0003/0007 probes |
+| 11 | T2 contract | ABANDON vs `REMOVE_PEERING` | FND-0005 | — | no (decision) | recorded; re-observation folded into a GCP run |
+
+Order of live runs: **#8 (AWS) then #10 (GCP)**, or the reverse — not both at
+once.
+
+Each work item starts with three things: an **owner**, its own **branch or
+worktree**, and the **acceptance + evidence contract** — what must be observed,
+as which identity, against which revision, and what would make it fail. A pass
+without the third is not evidence.
 
 ## How to update this index
 

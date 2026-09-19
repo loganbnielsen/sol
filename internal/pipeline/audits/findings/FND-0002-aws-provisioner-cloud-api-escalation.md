@@ -1,13 +1,16 @@
 # FND-0002 — AWS provisioner can re-grant itself cluster-admin through the EKS API
 
 - **Classification:** `DESIGN_GAP`
-- **State:** `OPEN` (decision required: narrow the provisioner role, or split the cloud-provisioning identity from the steady-state cluster-access identity)
+- **State:** `OPEN` — decision ratified 2026-09-19 (split identities); implementation pending
 - **First identified:** 2026-09-19 (authority audit, this pass)
 - **Last verified:** 2026-09-19, `main @ 910a59f1`
 - **Provider:** AWS / EKS
-- **Derived ticket:** none — see "Why no ticket"
+- **Decision:** **split the cloud-provisioning identity from the steady-state
+  cluster-access identity** (ratified 2026-09-19 by the repository owner).
+  Recorded in `DEC-034`; implementation is `INFRA-046`.
+- **Derived tickets:** **INFRA-046** (implementation), `DEC-034` (decision)
 - **Related invariant:** `INV-AUTH-4`, `INV-AUTH-5`
-- **Related decisions:** ADR 0002 (identity table), ADR 0003 (invariant 2)
+- **Related decisions:** ADR 0002 (identity table — needs revision for the split), ADR 0003 (invariant 2)
 - **Related:** FND-0003 (effective-capability qualification)
 
 ## Sol claim at stake
@@ -92,45 +95,43 @@ admin, and the post-closure `can-i` checks cannot observe an AWS-API path at
 all. The residual authority is real; whether it is unacceptable is a design
 question.
 
-## Classification and why no ticket
+## Classification and the decision
 
-**Classification: `DESIGN_GAP`, not `DOCUMENTATION_GAP` or `OBSERVATION`.**
-The AWS behaviour is fully documented and correct — `eks:AssociateAccessPolicy`
-is the documented permission, and `AmazonEKSClusterAdminPolicy` is documented to
-grant administrator access. So this is not a case of Sol's docs contradicting an
-undocumented provider fact. What is unresolved is *Sol's intended steady-state
-authority contract*: ADR 0003 / `production-bootstrap.md` / matrix I3 state the
-provisioner "cannot manufacture a more powerful identity", while the design
-deliberately uses one identity that both builds the cluster (and therefore
-manages its access entries) and is the steady-state cluster-access identity. The
-stated invariant and the design are misaligned, and closing that gap requires a
-design decision. `OBSERVATION` would understate the open question; a
-`DOCUMENTATION_GAP` would misattribute it to the provider documentation.
+**Classification stays `DESIGN_GAP`.** The AWS behaviour is fully documented and
+correct — `eks:AssociateAccessPolicy` is the documented permission, and
+`AmazonEKSClusterAdminPolicy` is documented to grant administrator access — so
+this is not a case of Sol's docs contradicting an undocumented provider fact.
+The misalignment is between Sol's stated invariant ("cannot manufacture a more
+powerful identity") and a design that uses one identity to both build the cluster
+(and therefore manage its access entries) and act as the steady-state
+cluster-access identity.
 
-The ticket policy requires a concrete, actionable implementation defect. Here
-the two candidate fixes both require a decision rather than a mechanical change:
+**Decision (2026-09-19, ratified): split the identities.**
 
-1. **Narrow the provisioner** — deny `eks:AssociateAccessPolicy` /
-   `eks:CreateAccessEntry` / `eks:UpdateAccessEntry` unless the identity is
-   actually applying the cloud root. This may break the documented model where
-   the provisioner applies the cloud root and creates the bootstrap association.
-2. **Split the identities** — one cloud-provisioning identity that owns
-   `eks:*`, and one steady-state cluster-access identity that does not. The
-   current design deliberately uses one ("no fifth identity", ADR 0002;
-   inventory: "splitting cloud and platform provisioners is unnecessary until
-   trust owners differ").
+- a **cloud-provisioning identity** that legitimately owns `eks:*` (and the GCP
+  equivalents), because its job is to create/update the cloud substrate and the
+  bootstrap access entry; and
+- a **steady-state cluster-access identity** that the platform role assumes,
+  which must not hold `eks:AssociateAccessPolicy`, `eks:CreateAccessEntry`,
+  `eks:UpdateAccessEntry` or `iam:*`, and is the identity the post-closure
+  `can-i` probe exercises.
 
-Either is a `DEC-*` / ADR-level choice. Creating an `INFRA-*` ticket now would
-prescribe a fix to an undecided question. Whichever way it is decided, the
-outcome is recorded on this finding as a state transition (`OPEN` →
-`FIXED_UNQUALIFIED` → `QUALIFIED`, or `OPEN` → `ACCEPTED`), never by rewriting
-the classification.
+This is the only shape in which `INV-AUTH-4` / `INV-AUTH-5` can be true on AWS as
+well as GCP, and it mirrors what the deploy policy already does with its explicit
+`NoInfrastructureOrIdentityMutation` deny. It supersedes ADR 0002's "no fifth
+identity" for the provisioning axis; ADR 0002, the matrix row I3 wording and
+`production-bootstrap.md:127-128` must be revised to match.
+
+Recorded in `DEC-034`; the implementation work is `INFRA-046`.
 
 ## To move to qualified
 
-Decide 1 or 2. Then, whichever is chosen, demonstrate the residual capability
-(either denied after closure, or explicitly accepted with a named compensating
-boundary) and record it in the matrix row I3 wording.
+Implement `INFRA-046`, then demonstrate that the steady-state cluster-access
+identity cannot re-grant itself cluster-admin (the association is denied, or the
+identity structurally cannot make it), and update ADR 0002 and matrix row I3 to
+the split model. Until then the state stays `OPEN`; it becomes
+`FIXED_UNQUALIFIED` when the code lands and `QUALIFIED` only when a run proves the
+residual path is gone.
 
 ## Supersession
 
