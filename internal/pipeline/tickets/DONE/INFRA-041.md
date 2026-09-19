@@ -64,6 +64,27 @@ well its model is tested.
 - The Run 6 procedure's cost-clean verification is reachable without a manual
   deletion.
 
+## Resolution
+
+The code defect is fixed and covered offline, and the harness now asserts *both* sides
+of the contract rather than only the new mode:
+
+- a target selecting `none` prepares without an expected snapshot identity, and the
+  post-prepare verification establishes that snapshot creation is disabled by reading
+  `skip_final_snapshot` -- an empty identifier alone cannot distinguish "keeps
+  nothing" from "keeps the cluster-name default";
+- a target selecting `final-snapshot` still fails closed when the provider's record
+  disagrees with what was prepared, so the new mode cannot weaken the original
+  guarantee. The harness injects that disagreement on purpose.
+
+The verification is driven by the selected policy rather than by a single expected
+value, so neither mode can be satisfied by the other's evidence.
+
+**Still unqualified, and deliberately not claimed here:** the *live* postcondition. A
+green harness establishes that the selected policy reaches the provider correctly;
+only a run that reaches `Absent` without a manual snapshot deletion establishes the
+behavioural row. That belongs to HARDEN-002's record.
+
 **Demo/example coverage:** The qualification target already carries the field.
 
 **TypeScript parity:** No language-parity impact.
