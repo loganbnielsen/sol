@@ -109,6 +109,20 @@ Before **every** commit and push, resolve and verify:
 - **ownership** — whose ticket/PR branch this is. If another actor owns it or is
   actively rewriting it, do not push to it; produce a clean handoff instead.
 
+**Removing a worktree is a mutating operation on someone else's working tree.**
+`git worktree remove --force` discards uncommitted changes without asking, and a
+worktree that looks finished — your PR merged, branch deleted — can still hold an
+actor's edits made after the merge. Removing one that way destroyed uncommitted
+review edits to two tickets in this repository. Before removing any worktree that is
+not demonstrably yours and clean:
+
+```bash
+git -C <worktree> status --porcelain   # empty, or stop and hand it over
+```
+
+The isolation rule above is about not *working* in a shared checkout; this is the
+same rule applied to cleaning one up.
+
 `internal/ci/check_authority.sh` performs those checks and is wired into the
 pre-commit hook. It is **advisory by default**, because a human committing in the
 canonical checkout is legitimate and a single-worktree clone should be quiet.

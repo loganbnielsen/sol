@@ -992,7 +992,34 @@ snapshot remained and was deleted by hand (the INFRA-041 deviation).
    mentioned in the deploy step of this procedure.
 4. The stray final snapshot was deleted by hand.
 
-## Run 5 — procedure (NOT EXECUTED; requires explicit operator authorization)
+## Run 5 — procedure (executed as Attempts 5, 6 and 7; requires explicit operator authorization)
+
+### Prerequisites the procedure assumes
+
+Two things bit the first three executions. Both are properties of the environment,
+not of the target, so they belong here rather than in a run record:
+
+- **`POSTGRES_URL` and `SOL_API_KEY` must be in the operator's environment** before
+  `sol deploy` or `sol migrate`. The deploy's own error names a missing one, but the
+  workspace's secret set is not otherwise discoverable from the target file.
+- **`POSTGRES_URL` must percent-encode the password.** An RDS password generated with
+  URI-reserved characters (`#`, `+`, `^`, `/`, `@`) is not a valid URI as written, and
+  the failure surfaces only as `connection failed` from inside the migration Job —
+  with the URL echoed in full (INFRA-044). Encode it:
+
+  ```bash
+  ENC="$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=""))' "$PGPASSWORD")"
+  export POSTGRES_URL="postgresql://postgres:${ENC}@${HOST}:5432/app"
+  ```
+
+### Where the evidence lives
+
+Run records in this ticket are the durable account: attempts, findings, deviations,
+and which matrix rows each attempt did and did not establish. A captured evidence
+bundle (`~/.sol/harden-run<N>-attempt<N>/`, referenced from the run records) is
+machine-local and is **not** in the repository — if the record and a bundle disagree,
+the record is what other actors can see, so anything load-bearing belongs in the
+record.
 
 This section was written as run 3's proposed plan. Runs 3 and 4 then executed and
 their findings changed the lifecycle model (ADR 0003), so this is now the
