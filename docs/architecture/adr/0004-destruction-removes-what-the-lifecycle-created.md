@@ -93,8 +93,17 @@ snapshots**, and the operator's manual deletion is recorded as a deviation.
   mechanical half: no `prevent_destroy` in a target root, and every resource that
   ordinary activity populates carries the force attribute.
 
-## Left open
+## Retention is now decided (DEC-033)
 
-Making snapshot retention a target-level choice — so a disposable target is
-cost-clean with no manual step — is a follow-up, deliberately not decided here
-because it changes what `sol cloud destroy` promises by default.
+A target names what its destruction keeps:
+
+- **absent** — the production default is unchanged. `sol cloud destroy` retains the
+  final snapshot, and the destroy reports it by identifier along with the command
+  that eventually removes it, so retention is explicit rather than inferred.
+- **`destroy_retention: none`** — a disposable qualification target. Its
+  postcondition is `Absent` with no residual billable artifacts, and the destroy
+  says so.
+
+The two are different postconditions, and neither is the other's default: a
+qualification target opting out does not turn "this run retains nothing" into "Sol
+destroys every recovery artifact".

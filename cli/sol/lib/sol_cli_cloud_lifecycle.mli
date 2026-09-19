@@ -182,6 +182,23 @@ val enter_destruction : from:phase -> phase
 
 val ready_policy_applies : phase -> bool
 
+(** What a destroy deliberately keeps (DEC-033). Production retention must be
+    explicit -- what survives, why, and how it is eventually removed -- while a
+    disposable qualification target's postcondition is [Absent], with nothing
+    billable left behind. The default is [Retain_final_snapshot]: a qualification
+    run retaining nothing must not become "Sol destroys every recovery artifact". *)
+type destroy_retention =
+  | Retain_final_snapshot
+  | Retain_nothing
+
+val default_destroy_retention : destroy_retention
+val destroy_retention_to_string : destroy_retention -> string
+val destroy_retention_of_string : string -> (destroy_retention, string) result
+
+(** What the destroy says afterwards, by identifier, so an operator never has to
+    infer what survived. *)
+val retention_report : retention:destroy_retention -> destroy_snapshot_id:string -> string
+
 (** The desired-state overrides a phase imposes, appended *after* the caller's own
     variables so the phase policy wins. The levers are the provider's -- an AWS
     destroy lifts RDS deletion protection and names its final snapshot, while GCP's
@@ -191,6 +208,7 @@ val policy_vars
   :  provider:Sol_cli_provider.t
   -> phase:phase
   -> destroy_snapshot_id:string
+  -> retention:destroy_retention
   -> (string * string) list
 
 (** ADR 0003's own spelling of a phase, for operator-facing messages. *)

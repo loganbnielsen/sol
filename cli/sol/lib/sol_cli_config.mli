@@ -12,6 +12,10 @@ type target =
   ; kubeconfig : string option
   ; terraform_var_file : string option
   ; observability_backend : string option
+    (* DEC-033: what `sol cloud destroy` deliberately keeps. Absent means the
+     production default (retain the final snapshot); a disposable qualification
+     target sets `destroy_retention: none`. *)
+  ; destroy_retention : string option
   ; alert_receiver_type : string option
   ; alert_receiver_url : string option
   ; alert_owner : string option
