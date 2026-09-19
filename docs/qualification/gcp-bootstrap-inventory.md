@@ -561,6 +561,64 @@ not inside a run phase and `require_terraform_success` exited **silently**, so t
 failure's terraform output existed nowhere and the reason had to be reconstructed by
 hand — it now prints, and the apply is a recorded stage like every other.
 
+### Attempt 2 (2026-09-19): scoped authority, and where it stopped
+
+Attempt 2 ran from a fresh disposable target against the merged scoped-authority
+work. **The cloud layer applied in 600.9s with the install window open on the cloud
+root** (`-var=provisioner_bootstrap_admin=true`), creating GKE, Cloud SQL, Artifact
+Registry, Cloud DNS, NAT and — for the first time — the provisioner service account
+and its temporary cluster-admin binding. Sol then reported GKE `RUNNING` and Cloud
+SQL `RUNNABLE`.
+
+It stopped immediately afterwards, at cluster access, and that failure is two
+distinct defects:
+
+1. **`--kubeconfig` does not exist on `gcloud container clusters get-credentials`.**
+   Sol passed it, so access died at argument parsing with
+   `unrecognized arguments: --kubeconfig`. gcloud writes the kubeconfig named by
+   `$KUBECONFIG`, which Sol already exports for the child (its own help says so: "You
+   can provide an alternate path by setting the KUBECONFIG environment variable").
+2. **Impersonation was denied.** Reproduced by hand:
+   `PERMISSION_DENIED: Failed to impersonate [sol-qual-provisioner@…].
+   Permission 'iam.serviceAccounts.getAccessToken' denied`. The cloud root *created*
+   the provisioner identity and nothing granted the bootstrap caller the right to
+   **use** it — creating an identity is not the same as letting anyone enter the
+   window, and without the grant the authority model cannot be entered at all.
+
+**The harness could not have caught the first one, and that is the durable lesson.**
+Its `gcloud` stub accepted the flag because it was written from the implementation.
+A stub cannot falsify the interface it was modelled on, so "the harness passed"
+was not evidence about gcloud. `internal/ci/check_gcloud_interface.sh` now asks the
+real CLI: it matches every flag Sol passes against `gcloud <subcommand> --help`,
+asserts the absent flag really is absent, and checks that the impersonation grant is
+scoped to the named service account and the caller the target declares.
+
+**Sol's documented destroy could not complete**, for the same reason: it lifted both
+deletion guards by a targeted applied transition and verified them (21s — that part
+is now qualified), ran the reconciliation apply, then failed at cluster access. So
+Attempt 2's destruction path is **non-conformant**, recorded as a failure, and
+cleanup finished through the documented emergency path.
+
+**The `time_sleep` was the wrong mechanism, and Attempt 2 measured it.** It waited
+its full five minutes and the peering *still* refused, and it still refused twenty
+minutes later on manual retries. What releases the peering is deleting the *network*,
+which the same root owns and the same destroy deletes — so the correct reading was
+never "the window is longer than 300 seconds", it was "GCP will not delete this
+object while a producer is registered at all". The connection is now abandoned
+(`deletion_policy = "ABANDON"`) and `verify_gcp_destroy` asks the provider for the
+peering *and* the network afterwards, because abandonment gives up Terraform's own
+confirmation and that is only defensible against a check that can see the thing
+being abandoned.
+
+**Absence verified independently:** no GKE, no Cloud SQL, no target VPC/subnet/
+router/NAT/address, no disk, no forwarding rule, no DNS zone, no Artifact Registry
+repository, **no provisioner service account**. Remaining: the empty state bucket and
+the project's automatic `default` network.
+
+The fixes above are Now In Progress; the peering abandonment's destruction behaviour
+remains **unqualified** until a live destroy observes both the connection and the
+network absent.
+
 ### Remaining gaps
 
 Ordered by what unblocks the next one. Closed items keep their entry so the

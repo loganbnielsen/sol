@@ -461,10 +461,73 @@ let verify_gcp_destroy ~var_files ~vars =
       ~argv:
         [ "compute"; "addresses"; "describe"; cluster_name ^ "-sql-peering"; "--global" ]
   in
-  if not (cluster_gone && sql_gone && network_gone && registry_gone && address_gone)
+  (* The connection itself, asked of the provider rather than inferred from the
+     root's exit status. Attempt 2 is why: the root now *abandons* the peering
+     (`deletion_policy = "ABANDON"`) because GCP refuses to delete it while a
+     producer is registered, so terraform will report success without the API ever
+     being asked to remove it -- which is exactly the case where "terraform
+     succeeded" and "the resource is gone" part company.
+
+     A network that does not exist has no peerings, so the absence of the network is
+     itself evidence; what this rules out is the peering surviving some other way,
+     and it is checked by listing rather than by describing, because a peering has
+     no name of its own to describe. *)
+  let peering_gone =
+    match
+      Sol_cli_process.run
+        (Sol_cli_process.cmd
+           [ "gcloud"
+           ; "services"
+           ; "vpc-peerings"
+           ; "list"
+           ; "--network=" ^ cluster_name
+           ; "--service=servicenetworking.googleapis.com"
+           ; "--project"
+           ; project
+           ; "--format=value(peering)"
+           ])
+    with
+    | Ok result when result.Sol_cli_process.exit_code = 0 ->
+      let peerings =
+        String.split_on_char '\n' result.Sol_cli_process.stdout
+        |> List.map String.trim
+        |> List.filter (fun p -> p <> "" && p <> "---")
+      in
+      if peerings = []
+      then true
+      else (
+        Printf.eprintf
+          "error: the service-networking peering survived the destroy: %s\n%!"
+          (String.concat ", " peerings);
+        false)
+    | Ok result
+      when contains ~needle:"NOT_FOUND" result.Sol_cli_process.stderr
+           || contains ~needle:"was not found" result.Sol_cli_process.stderr -> true
+    | Ok result ->
+      Printf.eprintf
+        "error: could not determine whether the service-networking peering is gone: %s\n\
+         %!"
+        result.Sol_cli_process.stderr;
+      false
+    | Error _ ->
+      Printf.eprintf
+        "error: could not determine whether the service-networking peering is gone: \
+         gcloud unavailable.\n\
+         %!";
+      false
+  in
+  if
+    not
+      (cluster_gone
+       && sql_gone
+       && network_gone
+       && registry_gone
+       && address_gone
+       && peering_gone)
   then exit 1;
   Printf.printf
-    "  GCP verification passed: GKE/Cloud SQL/network/registry/peering-address not found.\n\
+    "  GCP verification passed: GKE/Cloud SQL/network/registry/peering-address not \
+     found, and no service-networking peering remains.\n\
      %!"
 ;;
 
@@ -664,13 +727,37 @@ let gcp_provisioner_kubeconfig ~region outputs f =
               happened to run the command. *)
            ; "--impersonate-service-account"
            ; outputs.Sol_cli_cloud_lifecycle.provisioner_service_account
-           ; "--kubeconfig"
-           ; path
+             (* No `--kubeconfig`. Attempt 2's first live failure was
+                "unrecognized arguments: --kubeconfig": the flag does not exist on
+                this subcommand. gcloud writes to the kubeconfig named by
+                `$KUBECONFIG`, which [provisioner_kube_env] has already exported for
+                this child, and that is the interface it actually has.
+
+                The offline stub accepted the flag because it was written from this
+                implementation, which is the limitation worth remembering: a stub
+                cannot falsify the interface it was modelled on.
+                `check_gcloud_interface.sh` now validates the argv against gcloud's
+                own help output instead. *)
            ; "--quiet"
            ])
     with
     | Ok result when result.exit_code = 0 -> f env
-    | _ -> lifecycle_error "could not establish ephemeral cluster access")
+    | Ok result ->
+      (* Attempt 2 also showed why this failed without saying so. The message named
+         the step and nothing else, so the reason -- a missing impersonation grant
+         versus a wrong flag -- had to be reconstructed by hand. *)
+      lifecycle_error
+        (Printf.sprintf
+           "could not establish ephemeral cluster access as %s: gcloud exited %d%s"
+           outputs.Sol_cli_cloud_lifecycle.provisioner_service_account
+           result.Sol_cli_process.exit_code
+           (let detail = String.trim result.Sol_cli_process.stderr in
+            if detail = "" then "" else ":\n" ^ detail))
+    | Error error ->
+      lifecycle_error
+        (Printf.sprintf
+           "could not run gcloud to establish cluster access: %s"
+           (Sol_cli_process.error_to_string error)))
 ;;
 
 let with_cluster_access ?(on_error = Fun.id) ~region outputs f =

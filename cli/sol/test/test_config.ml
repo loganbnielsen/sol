@@ -1043,6 +1043,82 @@ target:
    died with four "Value for undeclared variable" errors before terraform could
    plan anything. A variable a root does not declare is an error, not a no-op, so
    which root declares what is part of the mapping. *)
+(* Attempt 2: creating the provisioner identity does not let anyone use it. Sol
+   reaches the cluster by impersonating it, so the root has to grant the *declared*
+   caller roles/iam.serviceAccountTokenCreator on that one identity -- and a target
+   that names no caller must produce no grant, rather than defaulting to whoever ran
+   Sol. Inferring the caller is the ambient-authority escape hatch the field exists
+   to close, so "absent" and "named" have to differ observably. *)
+let test_provisioner_impersonator_reaches_the_gcp_root () =
+  with_temp_dir (fun () ->
+    write
+      "sol.yml"
+      {|
+target:
+  provisioner_impersonator: user:ops@example.test
+  gcp:
+    project_id: sol-qualification
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/gcp/us-central1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+       | Error msg -> Alcotest.fail msg
+       | Ok vars ->
+         check_str_opt
+           "the declared caller reaches the GCP root as the list the root declares"
+           (Some {|["user:ops@example.test"]|})
+           (List.assoc_opt "provisioner_impersonators" vars)))
+;;
+
+let test_absent_provisioner_impersonator_grants_nobody () =
+  with_temp_dir (fun () ->
+    write
+      "sol.yml"
+      {|
+target:
+  gcp:
+    project_id: sol-qualification
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/gcp/us-central1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+       | Error msg -> Alcotest.fail msg
+       | Ok vars ->
+         check_bool
+           "no caller named means no impersonation, not the caller's own identity"
+           false
+           (List.mem_assoc "provisioner_impersonators" vars)))
+;;
+
+let test_provisioner_impersonator_survives_the_merge () =
+  with_temp_dir (fun () ->
+    write
+      "sol.yml"
+      {|
+target:
+  base_domain: example.test
+|};
+    mkdir_p "sol/prod/gcp";
+    write
+      "sol/prod/gcp/us-central1.yml"
+      {|
+target:
+  provisioner_impersonator: user:ops@example.test
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/gcp/us-central1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      (match Sol_cli_config.target cfg with
+       | None -> Alcotest.fail "target missing"
+       | Some target ->
+         check_str_opt
+           "the declared caller survives the merge"
+           (Some "user:ops@example.test")
+           target.Sol_cli_config.provisioner_impersonator))
+;;
+
 let test_terraform_vars_are_provider_shaped () =
   with_temp_dir (fun () ->
     write
@@ -1548,6 +1624,18 @@ let () =
             "destroy_retention survives the merge"
             `Quick
             test_destroy_retention_survives_the_merge
+        ; Alcotest.test_case
+            "provisioner impersonator: reaches the GCP root"
+            `Quick
+            test_provisioner_impersonator_reaches_the_gcp_root
+        ; Alcotest.test_case
+            "provisioner impersonator: absent grants nobody"
+            `Quick
+            test_absent_provisioner_impersonator_grants_nobody
+        ; Alcotest.test_case
+            "provisioner impersonator: survives the merge"
+            `Quick
+            test_provisioner_impersonator_survives_the_merge
         ; Alcotest.test_case
             "terraform vars: provider-shaped"
             `Quick

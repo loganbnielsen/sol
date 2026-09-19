@@ -17,6 +17,7 @@ let target : Sol_cli_config.target =
   ; terraform_var_file = None
   ; observability_backend = Some "self_hosted_durable"
   ; destroy_retention = None
+  ; provisioner_impersonator = None
   ; alert_receiver_type = None
   ; alert_receiver_url = None
   ; alert_owner = None
