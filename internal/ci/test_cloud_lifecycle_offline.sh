@@ -120,12 +120,19 @@ JSON
     if [ "${RDS_ABSENT:-}" = 1 ]; then
       printf '{"values":{"root_module":{"resources":[]}}}\n'
     elif [ -e "$RDS_PREPARED_FILE" ]; then
-      printf \
-        '{"values":{"root_module":{"resources":[{"type":"aws_db_instance","values":{"deletion_protection":false,"final_snapshot_identifier":"%s"}}]}}}\n' \
-        "$(cat "$RDS_PREPARED_FILE")"
+      prepared_value="$(cat "$RDS_PREPARED_FILE")"
+      if [ "$prepared_value" = "skip" ]; then
+        printf '{"values":{"root_module":{"resources":[{"type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":true,"final_snapshot_identifier":null}}]}}}\n'
+      else
+        # RDS_SNAPSHOT_MISMATCH makes the provider's record disagree with what was
+        # prepared, so the production guarantee can be shown to still fail closed.
+        printf \
+          '{"values":{"root_module":{"resources":[{"type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":false,"final_snapshot_identifier":"%s"}}]}}}\n' \
+          "${prepared_value}${RDS_SNAPSHOT_MISMATCH:+-other}"
+      fi
     else
       printf \
-        '{"values":{"root_module":{"resources":[{"type":"aws_db_instance","values":{"deletion_protection":true,"final_snapshot_identifier":null}}]}}}\n'
+        '{"values":{"root_module":{"resources":[{"type":"aws_db_instance","values":{"deletion_protection":true,"skip_final_snapshot":false,"final_snapshot_identifier":null}}]}}}\n'
     fi
     ;;
   *infra/aws*" apply "*"-target=aws_db_instance.postgres"*)
@@ -134,6 +141,11 @@ JSON
       case "$arg" in
         -var=rds_final_snapshot_identifier=*)
           printf '%s' "${arg#-var=rds_final_snapshot_identifier=}" >"$RDS_PREPARED_FILE"
+          ;;
+        # A prepare that keeps nothing has no identifier to record, and the setting
+        # itself is what the verification has to establish.
+        -var=rds_skip_final_snapshot=true)
+          printf 'skip' >"$RDS_PREPARED_FILE"
           ;;
       esac
     done
@@ -968,6 +980,95 @@ if [ "$snapshot_id" = "$snapshot_id2" ]; then
   echo "two destroy attempts minted the same RDS final snapshot identifier: $snapshot_id" >&2
   exit 1
 fi
+
+# DEC-033 / INFRA-041: retention is whatever the target says, and the destroy
+# reports it. This crosses parse -> merge -> destroy -> phase policy -> prepare ->
+# post-prepare verification, which is the boundary the original DEC-033 tests did
+# not cross: they exercised the model, and `merge_target` discarded the setting.
+log_retain="$tmp/destroy-retention-default.log"
+if ! run_destroy "$log_retain"; then
+  cat "$log_retain.out" >&2
+  echo "a default destroy must still succeed" >&2
+  exit 1
+fi
+retain_line="$(grep -F -- '-target=aws_db_instance.postgres' "$log_retain" | head -1)"
+case "$retain_line" in
+  *'rds_skip_final_snapshot=false'*) : ;;
+  *)
+    echo "the default destroy did not retain the final snapshot; prepare saw: $retain_line" >&2
+    exit 1
+    ;;
+esac
+assert_contains "the default destroy reports what it retained" "$log_retain.out" \
+  'retention: final snapshot' || exit 1
+
+# The production guarantee must not be weakened by the new mode: a target that
+# retains its snapshot still fails closed when the provider's record disagrees with
+# what was prepared. The fake makes them disagree.
+mismatch_log="$tmp/destroy-snapshot-mismatch.log"
+if (cd "$tmp/work" && DESTROYING=1 RDS_SNAPSHOT_MISMATCH=1 \
+      LIFECYCLE_LOG="$mismatch_log" "$sol" cloud destroy prod/aws/us-east-1 --apply) \
+      >"$mismatch_log.out" 2>&1; then
+  echo "a destroy whose prepared snapshot identity does not match the provider's must fail" >&2
+  cat "$mismatch_log.out" >&2
+  exit 1
+fi
+assert_contains "the snapshot mismatch was reported" "$mismatch_log.out" \
+  'final snapshot identifier is' || exit 1
+
+# The disposable case, named by the target file. The field is inserted inside the
+# target block using that block's own indentation, taken from the line following
+# `target:` rather than assumed -- the parser is strict about which keys belong to
+# `target:` and which to a resource and rejects a misplaced one, which is how this
+# line was wrong the first time.
+awk '
+  /^[[:space:]]*target:[[:space:]]*$/ { in_target = 1; print; next }
+  in_target && !inserted {
+    match($0, /^[[:space:]]*/)
+    if (RLENGTH > 0) { printf "%sdestroy_retention: none\n", substr($0, 1, RLENGTH); inserted = 1 }
+    in_target = 0
+  }
+  { print }
+' "$tmp/work/sol/prod/aws/us-east-1.yml" >"$tmp/work/target.with-retention.yml"
+mv "$tmp/work/target.with-retention.yml" "$tmp/work/sol/prod/aws/us-east-1.yml"
+if ! grep -qE '^[[:space:]]*destroy_retention:[[:space:]]*none[[:space:]]*$' \
+  "$tmp/work/sol/prod/aws/us-east-1.yml"; then
+  echo "the retention scenario did not get destroy_retention into the target file:" >&2
+  sed -n '/^target:/,/^[a-z]/p' "$tmp/work/sol/prod/aws/us-east-1.yml" >&2
+  exit 1
+fi
+
+log_none="$tmp/destroy-retention-none.log"
+if ! run_destroy "$log_none"; then
+  cat "$log_none.out" >&2
+  echo "a destroy with destroy_retention: none must succeed" >&2
+  exit 1
+fi
+none_line="$(grep -F -- '-target=aws_db_instance.postgres' "$log_none" | head -1)"
+if [ -z "$none_line" ]; then
+  echo "the prepare stage did not run for a destroy_retention: none target" >&2
+  exit 1
+fi
+case "$none_line" in
+  *'rds_skip_final_snapshot=true'*) : ;;
+  *)
+    echo "destroy_retention: none did not skip the final snapshot; prepare saw: $none_line" >&2
+    exit 1
+    ;;
+esac
+case "$none_line" in
+  *'rds_final_snapshot_identifier='*)
+    echo "destroy_retention: none still named a snapshot to keep: $none_line" >&2
+    exit 1
+    ;;
+esac
+# The verification must agree about what "prepared" means for this mode, and say so.
+assert_contains "preparation established that the snapshot will be skipped" "$log_none.out" \
+  'final snapshot skipped (skip_final_snapshot=true)' || exit 1
+assert_contains "the disposable destroy reports retaining nothing" "$log_none.out" \
+  'retention: none' || exit 1
+assert_contains "the disposable destroy states no artifacts remain" "$log_none.out" \
+  'no residual billable artifacts' || exit 1
 
 # An absent target (cloud substrate never applied) has nothing to prepare and
 # must not attempt the targeted apply.

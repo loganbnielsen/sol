@@ -1010,10 +1010,19 @@ let rds_state infra_dir =
          let deletion_protection = v |> member "deletion_protection" |> to_bool in
          let final_snapshot_identifier =
            match v |> member "final_snapshot_identifier" with
-           | `String s -> Some s
+           | `String s when s <> "" -> Some s
            | _ -> None
          in
-         Ok (Some (deletion_protection, final_snapshot_identifier))
+         (* DEC-033: whether a final snapshot will be taken is decided by
+            [skip_final_snapshot], not by the presence of an identifier. An empty
+            identifier alone cannot distinguish "keeps nothing" from "keeps the
+            cluster-name default", so the verification reads the setting itself. *)
+         let skip_final_snapshot =
+           match v |> member "skip_final_snapshot" with
+           | `Bool b -> Some b
+           | _ -> None
+         in
+         Ok (Some (deletion_protection, final_snapshot_identifier, skip_final_snapshot))
      with
      | Yojson.Json_error message -> Error ("invalid `terraform show -json`: " ^ message)
      | Yojson.Safe.Util.Type_error (message, _) ->
@@ -1066,7 +1075,18 @@ let prepare_destroy run_log infra_dir var_files vars ~cluster_name ~retention =
     Some snapshot_id
 ;;
 
-let verify_destroy_preparation infra_dir ~prepared =
+(* DEC-033: what "prepared" means depends on what the target selected, so the
+   verification is driven by the policy rather than by a single expected value.
+
+     final-snapshot -> deletion protection disabled, snapshot creation ENABLED,
+                       and the identifier is the one this run prepared
+     none           -> deletion protection disabled, snapshot creation DISABLED,
+                       and no identifier is required
+
+   Deliberately not `if actual <> "" then check_identifier`: that would let a
+   missing identifier pass for a target that explicitly asked to keep its snapshot,
+   which is the production guarantee this must not weaken. *)
+let verify_destroy_preparation infra_dir ~retention ~prepared =
   match prepared with
   | None -> Printf.printf "  verify preparation: nothing was prepared.\n%!"
   | Some snapshot_id ->
@@ -1075,21 +1095,55 @@ let verify_destroy_preparation infra_dir ~prepared =
      | Ok None ->
        lifecycle_error
          "RDS destroy preparation ran but the instance is now absent from state"
-     | Ok (Some (deletion_protection, final_snapshot_identifier)) ->
+     | Ok (Some (deletion_protection, final_snapshot_identifier, skip_final_snapshot)) ->
        if deletion_protection
        then lifecycle_error "RDS deletion protection is still enabled after preparation";
-       if final_snapshot_identifier <> Some snapshot_id
-       then
-         lifecycle_error
-           (Printf.sprintf
-              "RDS final snapshot identifier is %s, expected the prepared %s"
-              (Option.value final_snapshot_identifier ~default:"<none>")
-              snapshot_id);
+       (match retention with
+        | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
+          (match skip_final_snapshot with
+           | Some true ->
+             lifecycle_error
+               "the target retains its final snapshot, but preparation disabled snapshot \
+                creation"
+           | None ->
+             lifecycle_error
+               "cannot establish that the final snapshot will be retained: \
+                skip_final_snapshot is absent from state"
+           | Some false -> ());
+          if final_snapshot_identifier <> Some snapshot_id
+          then
+            lifecycle_error
+              (Printf.sprintf
+                 "RDS final snapshot identifier is %s, expected the prepared %s"
+                 (Option.value final_snapshot_identifier ~default:"<none>")
+                 snapshot_id)
+        | Sol_cli_cloud_lifecycle.Retain_nothing ->
+          (match skip_final_snapshot with
+           | Some true -> ()
+           | Some false ->
+             lifecycle_error
+               "the target retains nothing, but preparation left snapshot creation \
+                enabled"
+           | None ->
+             lifecycle_error
+               "cannot establish that snapshot creation is disabled: skip_final_snapshot \
+                is absent from state"));
        Printf.printf
          "  verify preparation: RDS deletion protection disabled, final snapshot %s \
-          confirmed.\n\
+          (target destroy_retention = %s)\n\
           %!"
-         snapshot_id)
+         (match retention with
+          | Sol_cli_cloud_lifecycle.Retain_final_snapshot -> snapshot_id ^ " confirmed"
+          | Sol_cli_cloud_lifecycle.Retain_nothing ->
+            (* Say what will happen, not just the setting: `skip_final_snapshot=true`
+               reads as "enabled" to anyone skimming, which is the opposite of what
+               it means. *)
+            Printf.sprintf
+              "skipped (skip_final_snapshot=%s)"
+              (match skip_final_snapshot with
+               | Some value -> string_of_bool value
+               | None -> "absent"))
+         (Sol_cli_cloud_lifecycle.destroy_retention_to_string retention))
 ;;
 
 (* The GCP counterpart of [rds_state]: what the target's guarded resources
@@ -1213,7 +1267,7 @@ let prepare_destruction
     let prepared =
       prepare_destroy run_log infra_dir var_files vars ~cluster_name ~retention
     in
-    verify_destroy_preparation infra_dir ~prepared;
+    verify_destroy_preparation infra_dir ~retention ~prepared;
     (match prepared with
      | None -> Nothing_prepared
      | Some snapshot_id -> Aws_prepared snapshot_id)
