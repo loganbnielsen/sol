@@ -1245,6 +1245,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
       | Some snapshot_id ->
         Sol_cli_terraform.kv_args
           (Sol_cli_cloud_lifecycle.policy_vars
+             ~provider
              ~phase:destroy_phase
              ~destroy_snapshot_id:snapshot_id)
     in

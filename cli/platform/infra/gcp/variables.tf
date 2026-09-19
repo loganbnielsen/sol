@@ -65,6 +65,24 @@ variable "sql_deletion_protection" {
   default     = true
 }
 
+# Cross-provider invariant (AWS HARDEN-002 attempt 5): normal Sol operation must
+# not make a disposable target impossible to destroy through the documented
+# lifecycle. A bucket that refuses deletion does exactly that -- and it retains
+# nothing either, it blocks the whole root's destroy -- which is how a target ends
+# up stranded with billable storage behind it.
+#
+# `true` lets the documented lifecycle discard the target's telemetry along with
+# the rest of the target, which is what makes a disposable target end at Absent.
+# The default is `false` so that a destroy driven directly against Terraform fails
+# on a non-empty bucket rather than silently discarding data; `sol cloud`'s
+# Destroy policy sets it explicitly, because discarding telemetry is a decision
+# the phase should name rather than a resource default should assume.
+variable "durable_storage_force_destroy" {
+  description = "Allow the target's durable telemetry buckets to be deleted together with their contents when the target is destroyed. Default false (a direct destroy fails on a non-empty bucket rather than discarding data); `sol cloud destroy` sets it true for the Destroy phase."
+  type        = bool
+  default     = false
+}
+
 variable "db_password" {
   description = "PostgreSQL admin password"
   type        = string

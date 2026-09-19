@@ -561,6 +561,15 @@ case "$snapshot_id" in
 esac
 grep -F 'verify preparation: RDS deletion protection disabled' "$log.out" >/dev/null
 grep -F "final snapshot $snapshot_id confirmed" "$log.out" >/dev/null
+# Cross-provider invariant (AWS HARDEN-002 attempt 5): a disposable target must be
+# able to reach Absent. The durable-telemetry buckets are the resource that used to
+# make that impossible, so the Destroy policy has to name the decision to discard
+# them -- on the destroy itself, not only on the preparation apply.
+grep -E 'infra/aws.* destroy ' "$log" | grep -F 'durable_storage_force_destroy=true' >/dev/null || {
+  echo "the cloud destroy did not carry the Destroy policy's durable-storage override:" >&2
+  grep -E 'infra/aws.* destroy ' "$log" >&2
+  exit 1
+}
 # Preparation happens before the actual destroy, not folded into it.
 prepare_line_no="$(grep -n -- '-target=aws_db_instance.postgres' "$log" | head -1 | cut -d: -f1)"
 destroy_line_no="$(grep -n 'infra/aws.* destroy ' "$log" | head -1 | cut -d: -f1)"

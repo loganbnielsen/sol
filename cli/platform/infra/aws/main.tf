@@ -526,9 +526,18 @@ resource "aws_s3_bucket" "loki" {
   bucket = "${var.cluster_name}-loki-logs"
   tags   = var.tags
 
-  lifecycle {
-    prevent_destroy = true
-  }
+  # Cross-provider invariant (AWS HARDEN-002 attempt 5): a resource the target
+  # owns must never make the target undestroyable through the documented
+  # lifecycle. `prevent_destroy = true` did not retain the telemetry -- it made
+  # every `sol cloud destroy` of a durable-observability target impossible, which
+  # is what strands a disposable target and leaves billable infrastructure behind.
+  #
+  # `force_destroy` is the honest knob: it decides whether a *non-empty* bucket may
+  # be deleted. The default is the conservative one (false: a destroy fails rather
+  # than discarding data), and the Destroy policy sets it true explicitly, so the
+  # decision to discard telemetry is named by the phase applying it instead of
+  # being hidden in a resource attribute.
+  force_destroy = var.durable_storage_force_destroy
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "loki" {
@@ -587,9 +596,8 @@ resource "aws_s3_bucket" "thanos" {
   bucket = "${var.cluster_name}-thanos-metrics"
   tags   = var.tags
 
-  lifecycle {
-    prevent_destroy = true
-  }
+  # Same invariant, same knob, as aws_s3_bucket.loki above.
+  force_destroy = var.durable_storage_force_destroy
 }
 
 data "aws_iam_policy_document" "thanos_s3" {

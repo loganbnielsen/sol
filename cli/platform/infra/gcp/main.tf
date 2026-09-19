@@ -226,7 +226,18 @@ resource "google_storage_bucket" "loki" {
   location                    = var.region
   project                     = var.project_id
   uniform_bucket_level_access = true
-  force_destroy               = false
+
+  # Cross-provider invariant (AWS HARDEN-002 attempt 5): a resource the target
+  # owns must never make the target undestroyable through the documented
+  # lifecycle. `prevent_destroy = true` did not retain the telemetry -- it made
+  # every `sol cloud destroy` of a durable-observability target impossible, which
+  # strands a disposable target and leaves billable storage behind.
+  #
+  # `force_destroy` is the honest knob: it decides whether a *non-empty* bucket may
+  # be deleted. The default is the conservative one (false: a destroy fails rather
+  # than discarding data), and the Destroy policy sets it true explicitly, so the
+  # decision to discard telemetry is named by the phase applying it.
+  force_destroy = var.durable_storage_force_destroy
 
   lifecycle_rule {
     condition {
@@ -235,10 +246,6 @@ resource "google_storage_bucket" "loki" {
     action {
       type = "Delete"
     }
-  }
-
-  lifecycle {
-    prevent_destroy = true
   }
 }
 
@@ -272,11 +279,9 @@ resource "google_storage_bucket" "thanos" {
   location                    = var.region
   project                     = var.project_id
   uniform_bucket_level_access = true
-  force_destroy               = false
 
-  lifecycle {
-    prevent_destroy = true
-  }
+  # Same invariant, same knob, as google_storage_bucket.loki above.
+  force_destroy = var.durable_storage_force_destroy
 }
 
 resource "google_service_account" "thanos" {

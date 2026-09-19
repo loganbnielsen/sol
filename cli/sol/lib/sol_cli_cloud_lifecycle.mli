@@ -150,7 +150,12 @@ val destruction_available : phase -> bool
 val enter_destruction : from:phase -> phase
 
 val ready_policy_applies : phase -> bool
-val policy_vars : phase:phase -> destroy_snapshot_id:string -> (string * string) list
+
+val policy_vars
+  :  provider:Sol_cli_provider.t
+  -> phase:phase
+  -> destroy_snapshot_id:string
+  -> (string * string) list
 
 (** ADR 0003's own spelling of a phase, for operator-facing messages. *)
 val phase_to_string : phase -> string

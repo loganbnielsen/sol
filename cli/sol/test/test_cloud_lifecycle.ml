@@ -233,7 +233,12 @@ let test_lifecycle_phases () =
     ; Preparing_destroy
     ; Destroying
     ];
-  let destroy_vars = policy_vars ~phase:Preparing_destroy ~destroy_snapshot_id:"snap-1" in
+  let destroy_vars =
+    policy_vars
+      ~provider:Sol_cli_provider.Aws
+      ~phase:Preparing_destroy
+      ~destroy_snapshot_id:"snap-1"
+  in
   Alcotest.(check (option string))
     "destroy policy disables RDS deletion protection"
     (Some "false")
@@ -242,14 +247,37 @@ let test_lifecycle_phases () =
     "destroy policy carries the prepared final snapshot"
     (Some "snap-1")
     (List.assoc_opt "rds_final_snapshot_identifier" destroy_vars);
+  Alcotest.(check (option string))
+    "destroy policy lets the target's durable storage be discarded"
+    (Some "true")
+    (List.assoc_opt "durable_storage_force_destroy" destroy_vars);
   Alcotest.(check int)
-    "destroy policy is exactly the three destroy vars"
-    3
+    "destroy policy is exactly the four destroy vars"
+    4
     (List.length destroy_vars);
+  (* The GCP Destroy policy names its own levers. Passing the AWS ones would be an
+     undeclared-variable error against the GCP root, which is the provider leak
+     this parameterisation exists to prevent. *)
+  let gcp_destroy_vars =
+    policy_vars
+      ~provider:Sol_cli_provider.Gcp
+      ~phase:Preparing_destroy
+      ~destroy_snapshot_id:"snap-1"
+  in
+  Alcotest.(check (list string))
+    "the GCP destroy policy carries only the GCP levers"
+    [ "durable_storage_force_destroy"; "true" ]
+    (List.concat_map (fun (k, v) -> [ k; v ]) gcp_destroy_vars);
   Alcotest.(check int)
     "Ready adds no policy overrides"
     0
-    (List.length (policy_vars ~phase:Ready ~destroy_snapshot_id:"x"));
+    (List.length
+       (policy_vars ~provider:Sol_cli_provider.Aws ~phase:Ready ~destroy_snapshot_id:"x"));
+  Alcotest.(check int)
+    "GCP Ready adds no policy overrides either"
+    0
+    (List.length
+       (policy_vars ~provider:Sol_cli_provider.Gcp ~phase:Ready ~destroy_snapshot_id:"x"));
   (* ADR 0003: the phase is recomputed from observation on every run, never
      persisted and never infrastructure truth. *)
   Alcotest.(check string)

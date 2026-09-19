@@ -268,7 +268,15 @@ must be treated as an input to Terraform/preflight, not bypassed.
 - control of a qualification hostname, DNS reachability, and public CA issuance
   when qualifying a workload's public-ingress/cert-manager capability;
 - a configured and actually delivered/acknowledged alert receiver; and
-- resumable destruction from every phase that may contain infrastructure.
+- resumable destruction from every phase that may contain infrastructure; and
+- **nothing normal Sol operation creates may make a disposable target impossible
+  to destroy through the documented lifecycle**, with a disposable qualification
+  target able to reach literal `Absent`. Discovered on AWS (HARDEN-002 attempt 5:
+  an ECR repository, plus `prevent_destroy` telemetry buckets that made *every*
+  destroy of a durable-observability target impossible). Applied to both
+  providers and asserted structurally, because GCS telemetry, artifact and state
+  buckets are the same class of trap — an artifact of normal operation cannot be
+  what makes the qualification environment immortal.
 
 ### AWS assumptions not to carry into GCP
 
@@ -403,10 +411,10 @@ step.
 
 ### Code landed without a live project
 
-Two changes address gaps 1 and 2 of the list below. Both are validated offline
-only — static/configuration and mechanism/renderability evidence, not behavioural
-evidence — and neither is reachable on GCP yet, because the GCP lifecycle still
-fails closed in `sol cloud`.
+Three changes address gaps 1, 2 and the retained-storage half of gap 5 below. All
+are validated offline only — static/configuration and mechanism/renderability
+evidence, not behavioural evidence — and the first two are not yet reachable on
+GCP, because the GCP lifecycle still fails closed in `sol cloud`.
 
 - **Provider-specific Kubernetes storage and readiness.** `Ready` asserted `gp3`
   and `ebs.csi.aws.com` literally in a module that is meant to be
@@ -422,6 +430,22 @@ fails closed in `sol cloud`.
   target no longer requires an AWS role ARN of a GCP target, and
   `cli/platform/infra/base-gcp` is a GCP platform root declaring the GCS backend
   and calling the shared platform definition as a module.
+- **A disposable target must be able to reach `Absent`** (carried forward from AWS
+  HARDEN-002 attempt 5, and deliberately applied to the invariant rather than to
+  the AWS resource that exposed it). `prevent_destroy` is gone from both providers'
+  durable telemetry buckets; deletability is wired to
+  `durable_storage_force_destroy`, whose default keeps a direct `terraform
+  destroy` conservative while the Destroy policy names the decision to discard the
+  target's telemetry. GCS telemetry, artifact and state buckets are the same class
+  of trap, so the guard is over the roots rather than over the two known buckets:
+  a third durable resource cannot reintroduce it.
+
+The Destroy policy also became provider-shaped in the same change. It was
+returning `rds_deletion_protection`, `rds_skip_final_snapshot` and
+`rds_final_snapshot_identifier` for *every* provider, which the GCP root does not
+declare — so a GCP destroy would have failed on an undeclared variable the moment
+the GCP path opened. The neutral part is that a Destroy policy exists and the
+phase names it; the levers are the provider's.
 
 ### Structural finding: a Terraform root cannot carry two backends
 
@@ -472,10 +496,14 @@ Ordered by what unblocks the next one; all still open.
 4. **Provider-neutral `sol cloud` plan/apply/destroy for GCP.** The outer gate
    that refuses GCP, the GCP variant of cloud-ready observation, and the platform
    targets addressing `module.platform.*`.
-5. **GCP destruction preparation and retained-storage semantics.** Cloud SQL
-   API-level deletion protection off by an applied transition, a per-attempt
-   backup identity, and the `prevent_destroy` durable buckets resolved so a
-   complete destroy is possible (they currently cannot participate).
+5. **GCP destruction preparation.** Cloud SQL API-level deletion protection off by
+   an applied transition, and a per-attempt backup identity that the qualification
+   path does *not* leave behind: a disposable target must reach literal `Absent`,
+   so taking a final backup and retaining it is the production behaviour, and
+   qualification either skips it or removes it before declaring absence.
+   The retained-storage half of this gap is **closed** for both providers: the
+   `prevent_destroy` buckets are gone, deletion is wired to
+   `durable_storage_force_destroy`, and the Destroy policy names the decision.
 6. **Cloud SQL regional HA for the production profile**, and the production
    profile's capacity contract proven on the selected GKE mode (the current root
    is Autopilot, which cannot declare the `node-failure-tolerant` headroom).

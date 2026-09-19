@@ -781,16 +781,38 @@ let enter_destruction ~from =
 let ready_policy_applies phase = policy_of_phase phase = Production
 
 (* The desired-state overrides a phase imposes. Callers append these AFTER their
-   own variables so the phase policy wins. [Destroy] deliberately contradicts the
-   Production invariant for RDS deletion protection. *)
-let policy_vars ~phase ~destroy_snapshot_id =
+   own variables so the phase policy wins.
+
+   The Destroy policy is provider-shaped, because the levers are: AWS lifts RDS
+   deletion protection and names the final snapshot it will take, while GCP's
+   Cloud SQL equivalents are attributes of a different provider's resources and
+   are not implemented yet. What is provider-neutral is that a Destroy policy
+   exists, that the phase names it, and that it is what decides whether a target
+   can reach [Absent].
+
+   [durable_storage_force_destroy] is in the Destroy policy for both providers,
+   and it fixes a cross-provider defect rather than expressing a provider
+   difference: a durable-telemetry bucket that refuses deletion does not retain
+   anything, it makes the whole target undestroyable, so a disposable target can
+   never reach [Absent]. The bucket's own default stays conservative (a direct
+   `terraform destroy` fails rather than discarding data); the phase that is
+   deliberately tearing the target down is what decides to discard it. *)
+let policy_vars ~provider ~phase ~destroy_snapshot_id =
   match policy_of_phase phase with
   | Bootstrap | Installation | Production -> []
   | Destroy ->
-    [ "rds_deletion_protection", "false"
-    ; "rds_skip_final_snapshot", "false"
-    ; "rds_final_snapshot_identifier", destroy_snapshot_id
-    ]
+    (match provider with
+     | Sol_cli_provider.Aws ->
+       [ "rds_deletion_protection", "false"
+       ; "rds_skip_final_snapshot", "false"
+       ; "rds_final_snapshot_identifier", destroy_snapshot_id
+       ; "durable_storage_force_destroy", "true"
+       ]
+     | Sol_cli_provider.Gcp ->
+       (* Still missing, and named here rather than left implicit: Cloud SQL's
+          API-level deletion protection and the destroy-preparation apply that
+          lifts it, neither of which the GCP lifecycle implements yet. *)
+       [ "durable_storage_force_destroy", "true" ])
 ;;
 
 (* The operator-facing name of a phase (ADR 0003's own spelling). Kept here so a

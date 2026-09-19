@@ -125,6 +125,48 @@ if [ "$gcp_deletion_default" != "true" ]; then
   exit 1
 fi
 
+# Cross-provider invariant (AWS HARDEN-002 attempt 5): normal Sol operation must
+# never make a disposable target impossible to destroy through the documented
+# lifecycle. `prevent_destroy` is the trap rather than a retention guarantee -- it
+# does not keep the object, it makes the whole root undestroyable -- which is how a
+# target is stranded with billable storage behind it. The AWS case was an ECR
+# repository; the durable telemetry buckets were the same defect in both providers.
+#
+# The invariant is asserted over the roots rather than over the two buckets, so a
+# third durable resource cannot reintroduce it by being added somewhere this does
+# not happen to look.
+for owned_root in "$aws" "$gcp"; do
+  owned_label="$(basename "$(dirname "$owned_root")")"
+
+  if grep -n 'prevent_destroy' "$owned_root" \
+    | sed 's/^[0-9]*:[[:space:]]*//' \
+    | grep -v '^#' >/dev/null; then
+    echo "FAIL: $owned_label/main.tf uses prevent_destroy, so a target that owns" >&2
+    echo "      that resource can never reach Absent through the documented lifecycle." >&2
+    grep -n 'prevent_destroy' "$owned_root" >&2
+    exit 1
+  fi
+
+  # Deletability is a policy the phase names, not a resource default: the buckets
+  # must be wired to the variable, and a destroy driven directly against Terraform
+  # must stay conservative by default.
+  wired="$(grep -c 'force_destroy *= *var\.durable_storage_force_destroy' "$owned_root")"
+
+  if [ "$wired" -ne 2 ]; then
+    echo "FAIL: $owned_label no longer wires both durable-telemetry buckets'" >&2
+    echo "      force_destroy to var.durable_storage_force_destroy ($wired of 2)." >&2
+    exit 1
+  fi
+
+  if [ "$(variable_default durable_storage_force_destroy "$(dirname "$owned_root")/variables.tf")" \
+    != "false" ]; then
+    echo "FAIL: $owned_label's durable_storage_force_destroy no longer defaults to" >&2
+    echo "      false; a direct terraform destroy would then discard telemetry with" >&2
+    echo "      no phase having decided to." >&2
+    exit 1
+  fi
+done
+
 # Comments stripped: the block explains finding 9 in prose directly above these
 # assignments, so a match against the raw text would be satisfied by the comment
 # that survives the very deletion this is guarding against.

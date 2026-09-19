@@ -305,19 +305,61 @@ plan contains only deletes, so the provider is handed prior state and never sees
 new value: `terraform plan -destroy -var x=B` on an applied `x = "A"` plans
 `input = "A" -> null`. Both settings have to be applied *before* the destroy.
 
-**Known gap:** `sol cloud destroy` therefore cannot yet destroy a protected
-production RDS instance. It runs the destroy only; it performs no preparatory
-transition, and a `-var` it forwarded would be inert for the reason above. Until the
-preparation step exists, the operator performs steps 2 and 3 directly (via
-`terraform apply` or the `aws` CLI) and may then use either `terraform destroy` or
-`sol cloud destroy <target> --apply`.
+That is why preparation is its own **applied transition** on just the database
+resource (`INFRA-023`, finding 9b): `sol cloud destroy --apply` runs a targeted
+`terraform apply` that disables deletion protection and sets a final-snapshot
+identifier unique to that attempt, verifies the preparation landed in state, and
+only then destroys. The overrides are appended *after* the profile's
+`rds_deletion_protection=true`, so the Destroy policy wins over the Ready policy
+for the reconciliation that necessarily precedes the teardown (ADR 0003, finding
+15). A re-run after an interrupted destroy mints a fresh snapshot identifier, so a
+retry cannot collide with a previous attempt's final snapshot.
 
-What is fixed here is the Terraform-level defect: `skip_final_snapshot` is no longer
-derived from `deletion_protection` — so permitting destruction no longer means
-silently forgoing the final snapshot — and an identifier is always set when a
-snapshot will be taken, so Terraform no longer refuses the destroy outright.
-`sol cloud destroy` now runs the Sol lifecycle skeleton (prepare → verify the
-preparation landed → destroy platform → destroy cloud → verify absence); its AWS
-preparation is a declared no-op until finding 9b supplies the RDS
-deletion-protection transition and a unique snapshot identity per attempt. Until
-then, steps 2 and 3 above remain the operator's explicit path.
+## A disposable target must be able to reach `Absent`
+
+The invariant, discovered the hard way on AWS (HARDEN-002 attempt 5) and applied
+to both providers rather than to the one resource that exposed it:
+
+> **Normal Sol operation must not make a disposable target impossible to destroy
+> through the documented Sol lifecycle.**
+
+`prevent_destroy = true` on the durable telemetry buckets was exactly that defect.
+It does not *retain* anything — it makes the whole root undestroyable, so a target
+with durable observability could never reach `Absent` and its storage stayed
+billable forever. The AWS ECR repository was the same mistake in a different
+resource.
+
+What replaced it separates the two things the attribute conflated:
+
+- **`force_destroy`** (both providers, wired to
+  `durable_storage_force_destroy`) decides whether a *non-empty* bucket may be
+  deleted. Its default is `false`, so a `terraform destroy` driven directly
+  discards no telemetry by surprise.
+- **The Destroy policy sets it `true`.** Discarding a target's telemetry is a
+  decision the phase performing the teardown names, not a resource default that
+  assumes it. `sol cloud destroy --apply` therefore deletes the buckets with the
+  target.
+
+Retention beyond a target's life is a *facility* concern, not a resource
+attribute: objects that must outlive the target have to be owned outside the
+target's root (a separate state), because no Terraform attribute can express
+"keep this and forget it". A target that wants production-grade retention gets it
+by having its telemetry buckets owned elsewhere, not by making its own root
+impossible to destroy.
+
+For a **disposable qualification** target, teardown is expected to end at literal
+`Absent`: no residual storage, snapshots, addresses, disks or load balancers
+unless retention itself is the scenario under test. Production retention
+semantics are deliberately different, and explicit — they are not weakened to
+satisfy qualification, and qualification does not inherit them by accident.
+
+`cli/sol/test/check_production_infra.sh` asserts the invariant structurally: no
+root may use `prevent_destroy`, both providers' buckets must be wired to the
+variable, and its default must stay conservative. Mutation-checked against
+reintroducing the attribute, breaking the wiring, and flipping the default.
+
+**Not yet live-confirmed:** the bucket deletion path above has been validated
+offline (guard + the fake-toolchain lifecycle harness) and by `terraform fmt` /
+`validate`, but no live destroy has yet run against a target with durable
+observability enabled. That is the first thing the qualification run should
+exercise, on both providers.
