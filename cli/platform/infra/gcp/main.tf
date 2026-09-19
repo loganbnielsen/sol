@@ -285,10 +285,19 @@ resource "google_service_account" "provisioner" {
   project      = var.project_id
 }
 
-# Enough to obtain credentials for and read this cluster. Deliberately not
-# `roles/container.admin`: the authority to *change* the cluster is not the
-# authority to install into it, and conflating the two is how a provisioner
-# quietly becomes an administrator.
+# The cloud-side prerequisite, and only that: enough to obtain credentials for and
+# read this cluster. Deliberately not `roles/container.admin` -- the authority to
+# *change* the cluster is not the authority to install into it.
+#
+# This is not the provisioner's install authority, and the two are auditable
+# separately on purpose:
+#
+#   can this identity do too much in GCP?  -> IAM, answered by this binding
+#   can this identity do too much in the cluster? -> Kubernetes RBAC, answered by
+#       the ClusterRoles the platform definition binds it to
+#
+# A single answer covering both is how "the provisioner needs to install charts"
+# becomes "the provisioner is an administrator".
 resource "google_project_iam_member" "provisioner_cluster_access" {
   project = var.project_id
   role    = "roles/container.developer"
