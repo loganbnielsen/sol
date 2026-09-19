@@ -710,7 +710,7 @@ let workload_capabilities ~resolved_config ~services ~topics ~migrations =
     ]
 ;;
 
-let profile_claim ~resolved_config ~services ~topics ~migrations =
+let profile_claim ~resolved_config ~services ~topics ~migrations ~whole_workspace =
   match Option.bind resolved_config Sol_cli_config.target with
   | None -> None
   | Some target ->
@@ -746,9 +746,29 @@ let profile_claim ~resolved_config ~services ~topics ~migrations =
                [ ( not (declares "postgres")
                  , Sol_cli_profile.Postgres_durability
                  , "declare a postgres resource for database migrations" )
-               ; ( not (service_uses "kafka")
+               ; (* INFRA-038: a Service acquires a Kafka/event requirement by
+                    *declaring* one, and not otherwise. The predicate below used to be
+                    [not (service_uses "kafka")], which asked whether *any* selected
+                    Service declared Kafka -- so a service that uses nothing, like the
+                    stateless checkout_svc, could not be deployed on its own at all:
+                    the target's ability to provide Kafka was being treated as a
+                    requirement of every workload deployed onto it. That is the
+                    conflation this ticket exists to remove.
+
+                    What is worth failing closed on is the mismatch that *can* be
+                    established: the workspace declares Kafka topics, so something in
+                    it is meant to handle them, yet no Service declares the Kafka
+                    resource it uses. That reading is only meaningful for the whole
+                    workspace -- a scope excludes the Service that would declare the
+                    use, so requiring it of every scope is the same bug in a smaller
+                    hat. A scope that declares no Kafka use therefore acquires no
+                    Kafka requirement, and a Service that declares one still gets the
+                    durability contract through [requirements] above, which is the
+                    target-side question and is checked separately. *)
+                 ( whole_workspace && topics <> [] && not (service_uses "kafka")
                  , Sol_cli_profile.Kafka_durability
-                 , "declare each Kafka-using service with uses: [<kafka resource>]" )
+                 , "this workspace declares Kafka topics, so the Service that handles \
+                    them must declare uses: [<kafka resource>]" )
                ]
          })
       target.Sol_cli_config.profile
@@ -1004,7 +1024,17 @@ let of_services_result
         derive_consumer_groups ?resolved_config workspace resolved_services
     ; requested_scope
     ; profile =
-        profile_claim ~resolved_config ~services:resolved_services ~topics ~migrations
+        (* INFRA-038: whether the *whole* workspace is being deployed decides
+           whether the Kafka declaration-completeness reading applies. A scope
+           deliberately excludes the Service that would declare a use, so asking
+           it of every scope would keep the target's capability attached to
+           workloads that do not use it. *)
+        profile_claim
+          ~resolved_config
+          ~services:resolved_services
+          ~topics
+          ~migrations
+          ~whole_workspace:(String.equal requested_scope "workspace")
     }
 ;;
 

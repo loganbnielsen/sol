@@ -194,7 +194,11 @@ let unit ~domain ~name primitive : Sol_cli_manifest.service =
 
 let charge_svc = unit ~domain:"payments" ~name:"charge_svc" Sol_cli_manifest.Svc
 
-let plan_for ?(services = [ charge_svc ]) ?(image_refs = []) target =
+(* INFRA-038: the stateless case -- a Service that declares no resource use at
+   all, mirroring examples/pluto's checkout_svc. *)
+let checkout_svc = unit ~domain:"checkout" ~name:"checkout_svc" Sol_cli_manifest.Svc
+
+let plan_for ?(services = [ charge_svc ]) ?(image_refs = []) ?scope target =
   List.iter
     (fun (s : Sol_cli_manifest.service) ->
        mkdir_p s.dir;
@@ -206,6 +210,7 @@ let plan_for ?(services = [ charge_svc ]) ?(image_refs = []) target =
       ~env
       ~resolved_config:(load target)
       ~image_refs
+      ?requested_scope:scope
       services
   with
   | Ok plan -> plan
@@ -216,6 +221,18 @@ let requirements_of plan =
   match plan.Sol_cli_deployment_plan.profile with
   | None -> Alcotest.fail "expected a profile claim"
   | Some claim -> claim.requirements
+;;
+
+(* INFRA-038: the findings a plan reports about the *workload*, as opposed to the
+   requirements it places on the target. *)
+let findings_of plan =
+  match plan.Sol_cli_deployment_plan.profile with
+  | None -> Alcotest.fail "expected a profile claim"
+  | Some claim -> claim.application_findings
+;;
+
+let kafka_findings plan =
+  List.filter (fun (capability, _) -> capability = P.Kafka_durability) (findings_of plan)
 ;;
 
 (* AUDIT-080: a node-failure-tolerant workload needs at least two replicas; the
@@ -378,6 +395,95 @@ let test_declared_topics_require_kafka () =
       (List.mem
          P.Kafka_durability
          (requirements_of (plan_for ~services:[ notify_worker ] "prod/aws/us-east-1"))))
+;;
+
+(* INFRA-038. A Service acquires a Kafka requirement by declaring one. The target
+   being *able* to provide Kafka durability is a property of the target, and it
+   must not attach itself to every workload deployed onto it -- which is what made
+   the stateless checkout_svc undeployable on its own, since no scope containing
+   it could satisfy a check that asked whether some Service in the scope used
+   Kafka. *)
+let kafka_workspace =
+  "project: pluto\n\
+   resources:\n\
+  \  app_db:\n\
+  \    type: postgres\n\
+  \  events:\n\
+  \    type: kafka\n\
+   services:\n\
+  \  checkout_svc:\n\
+  \    path: app/checkout/checkout_svc\n\
+  \    language: ocaml\n\
+  \  notify_worker:\n\
+  \    uses: [events]\n\
+  \    path: app/comms/notify_worker\n\
+  \    language: ocaml\n"
+;;
+
+let test_stateless_scope_acquires_no_kafka_requirement () =
+  with_workspace (fun () ->
+    write "sol.yml" kafka_workspace;
+    write_target prod_aws selecting;
+    mkdir_p "events/comms";
+    write "events/comms/sol.toml" "[service]\ntopics = [\"comms-emails\"]\n";
+    let plan =
+      plan_for
+        ~services:[ checkout_svc ]
+        ~scope:"checkout/checkout_svc"
+        "prod/aws/us-east-1"
+    in
+    check_bool
+      "a scope that declares no Kafka use acquires no Kafka finding"
+      true
+      (kafka_findings plan = []))
+;;
+
+let test_scope_declaring_kafka_is_unaffected () =
+  with_workspace (fun () ->
+    write "sol.yml" kafka_workspace;
+    write_target prod_aws selecting;
+    mkdir_p "events/comms";
+    write "events/comms/sol.toml" "[service]\ntopics = [\"comms-emails\"]\n";
+    let plan =
+      plan_for
+        ~services:[ notify_worker ]
+        ~scope:"comms/notify_worker"
+        "prod/aws/us-east-1"
+    in
+    check_bool
+      "a Service that declares the use raises no finding"
+      true
+      (kafka_findings plan = []))
+;;
+
+let test_whole_workspace_topic_without_declaration_fails_closed () =
+  with_workspace (fun () ->
+    (* No Service declares the Kafka use, but the workspace declares topics -- so
+       something here is meant to handle them. This is the mismatch that can be
+       established, and it is the only Kafka case the deploy path should refuse. *)
+    write
+      "sol.yml"
+      "project: pluto\n\
+       resources:\n\
+      \  app_db:\n\
+      \    type: postgres\n\
+      \  events:\n\
+      \    type: kafka\n\
+       services:\n\
+      \  checkout_svc:\n\
+      \    path: app/checkout/checkout_svc\n\
+      \    language: ocaml\n\
+      \  notify_worker:\n\
+      \    path: app/comms/notify_worker\n\
+      \    language: ocaml\n";
+    write_target prod_aws selecting;
+    mkdir_p "events/comms";
+    write "events/comms/sol.toml" "[service]\ntopics = [\"comms-emails\"]\n";
+    let plan = plan_for ~services:[ checkout_svc; notify_worker ] "prod/aws/us-east-1" in
+    check_bool
+      "a workspace-wide selection with no declaration still fails closed"
+      true
+      (kafka_findings plan <> []))
 ;;
 
 let test_plan_without_profile_is_unchanged () =
@@ -896,20 +1002,29 @@ let test_emit_to_rejected_for_profile () =
          fs))
 ;;
 
-let test_kafka_dependency_declaration_required () =
+let test_declared_kafka_resource_is_a_target_requirement () =
+  (* INFRA-038. A workspace that declares a Kafka *resource* is stating that the
+     target must provide Kafka durability -- a target-side requirement. It is not
+     stating that every Service deployed onto that target uses Kafka. Those are
+     different claims, and only the second belongs to a workload.
+
+     This test previously asserted the opposite: that declaring the resource
+     required a workload-side Kafka dependency to be declared. That is what made a
+     stateless Service undeployable on a target whose profile supports Kafka. *)
   with_workspace (fun () ->
     write "sol.yml" "project: pluto\nresources:\n  events:\n    type: kafka\n";
     write_target prod_aws selecting;
     let fs =
       findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
     in
-    match
-      List.find_opt (fun (f : Pre.finding) -> f.capability = P.Kafka_durability) fs
-    with
-    | None -> Alcotest.fail "expected an undeclared Kafka dependency finding"
-    | Some finding ->
-      check_bool "application side" true (finding.side = Pre.Application);
-      check_bool "names uses" true (contains ~needle:"uses:" finding.reason))
+    check_bool
+      "no workload acquires a Kafka requirement from the target's capability"
+      true
+      (not
+         (List.exists
+            (fun (f : Pre.finding) ->
+               f.capability = P.Kafka_durability && f.side = Pre.Application)
+            fs)))
 ;;
 
 let test_postgres_resource_declaration_required () =
@@ -1196,6 +1311,15 @@ let () =
             "declared topics require Kafka"
             `Quick
             test_declared_topics_require_kafka
+        ; ( "stateless scope acquires no Kafka requirement"
+          , `Quick
+          , test_stateless_scope_acquires_no_kafka_requirement )
+        ; ( "scope declaring Kafka is unaffected"
+          , `Quick
+          , test_scope_declaring_kafka_is_unaffected )
+        ; ( "whole-workspace topic without declaration fails closed"
+          , `Quick
+          , test_whole_workspace_topic_without_declaration_fails_closed )
         ; Alcotest.test_case
             "no profile, unchanged plan"
             `Quick
@@ -1293,9 +1417,9 @@ let () =
             `Quick
             test_scoped_identities_established
         ; Alcotest.test_case
-            "Kafka dependency declaration required"
+            "declared Kafka resource is a target requirement"
             `Quick
-            test_kafka_dependency_declaration_required
+            test_declared_kafka_resource_is_a_target_requirement
         ; Alcotest.test_case
             "Postgres resource declaration required"
             `Quick
