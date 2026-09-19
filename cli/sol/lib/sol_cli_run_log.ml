@@ -57,6 +57,26 @@ let run_sort_key id =
   | _ -> "", id
 ;;
 
+(* A run directory belongs to a process that may still be running. A long command
+   — a cloud apply or destroy takes tens of minutes — writes into that directory
+   at the end of every phase, so pruning it underneath a live run makes the next
+   write raise an uncaught [Sys_error]. For [cloud destroy] that aborts the
+   teardown mid-flight and leaves the target provisioned and billing, which is
+   exactly how HARDEN-002 Run 5 attempt 2's first destroy died.
+
+   The run id already ends in the owning pid, so liveness is checkable directly.
+   Where it cannot be established (a platform without [/proc], or an id whose
+   tail is not a pid) this is conservatively [false] and pruning behaves as it
+   did before. *)
+let run_is_live id =
+  match List.rev (String.split_on_char '-' id) with
+  | pid :: _ ->
+    String.length pid > 0
+    && String.for_all (fun c -> c >= '0' && c <= '9') pid
+    && Sys.file_exists (Filename.concat "/proc" pid)
+  | [] -> false
+;;
+
 (* Keep the most recent [keep] (never [exclude]), report the rest for pruning,
    oldest first. *)
 let runs_to_prune ?(exclude = []) ~all_run_ids ~keep () : string list =
@@ -106,7 +126,16 @@ let create ?(keep = 20) ~prefix () : t =
          Unix.rmdir stale_dir
        with
        | _ -> ())
-    (runs_to_prune ~exclude:[ run_id ] ~all_run_ids:existing ~keep ());
+    (runs_to_prune
+     (* INFRA-033: exclude every run whose process is still alive, not just
+          this one. A long command writes to its phase logs throughout its life,
+          so pruning a live run's directory makes its next write raise an
+          uncaught [Sys_error] — and for [cloud destroy] that aborts a teardown
+          mid-flight, leaving the target provisioned and billing. *)
+       ~exclude:(run_id :: List.filter run_is_live existing)
+       ~all_run_ids:existing
+       ~keep
+       ());
   { run_id; dir }
 ;;
 
@@ -114,7 +143,16 @@ let phase_log_path t ~phase = Filename.concat t.dir (phase ^ ".log")
 let run_id t = t.run_id
 let dir t = t.dir
 
+(* INFRA-033: losing a phase log is never a reason to abort the command that is
+   producing it. Pruning now skips runs whose process is alive, but a directory
+   can still disappear underneath a long command (external cleanup, a stale-pid
+   false negative, a shared run directory), and an uncaught [Sys_error] here used
+   to kill a [cloud destroy] mid-teardown with the target still provisioned. So
+   recreate the run directory if it is gone and keep going. *)
+let ensure_parent path = Sol_cli_scaffold.mkdir_p (Filename.dirname path)
+
 let write_file path contents =
+  ensure_parent path;
   let oc = open_out path in
   output_string oc contents;
   close_out oc
@@ -138,6 +176,7 @@ let finish_phase t ~name ~elapsed_s ~ok ~contents =
     the rendered plan it acted on. *)
 let append_phase_log t ~phase text =
   let path = phase_log_path t ~phase in
+  ensure_parent path;
   let oc = open_out_gen [ Open_creat; Open_append; Open_text ] 0o644 path in
   output_string oc text;
   close_out oc

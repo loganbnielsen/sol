@@ -26,6 +26,17 @@ val format_phase_line : name:string -> elapsed_s:float -> ok:bool -> string
     a deploy after the terminal that ran it is gone. *)
 val format_failure_report : run_id:string -> log_path:string -> tail:string -> string
 
+(** [run_is_live id] is [true] when the process that owns the run id is still
+    running, so its directory must not be pruned: a live command writes to its
+    phase logs throughout its life, and deleting that directory makes the next
+    write raise an uncaught [Sys_error] — which for [cloud destroy] aborted a
+    teardown mid-flight and left the target provisioned (INFRA-033).
+
+    The run id ends in the owning pid, so this checks whether that pid exists.
+    Conservatively [false] where that cannot be established (no [/proc], or an id
+    whose tail is not a pid), which leaves pruning as it behaved before. *)
+val run_is_live : string -> bool
+
 (** Given all existing run ids and how many to [keep], returns the ids that
     should be pruned (oldest first). Pure — [create] uses this to decide what to
     delete.
@@ -33,7 +44,8 @@ val format_failure_report : run_id:string -> log_path:string -> tail:string -> s
     Ordering is by the timestamp embedded in the id, not by the whole id: the
     prefix differs per command, so whole-id order is not chronological
     ("cloud-apply-…" sorts before "deploy-…" regardless of when each ran).
-    [exclude] ids are never returned, so a run can never prune itself. *)
+    [exclude] ids are never returned, so a run can never prune itself — and
+    [create] passes every live run in [exclude] for the same reason. *)
 val runs_to_prune
   :  ?exclude:string list
   -> all_run_ids:string list
