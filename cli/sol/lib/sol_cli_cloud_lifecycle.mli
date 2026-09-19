@@ -14,16 +14,38 @@ val provisioner_role_arn : aws_outputs -> string
    are needed. *)
 val provisioner_kube_env : string -> (string * string) list
 
-type aws_target
+(** The provider-neutral facts a lifecycle operation needs from a target, plus the
+    backend config each provider's roots expect. [provisioner_role_arn] is
+    [None] on a provider whose caller is not a role-assuming one -- the field is
+    optional rather than empty so "names no role" and "names an empty role" cannot
+    be confused. *)
+type cloud_target =
+  { target : Sol_cli_config.target
+  ; cloud_backend : string list
+  ; platform_backend : string list
+  ; base_domain : string
+  ; letsencrypt_email : string
+  ; provisioner_role_arn : string option
+  }
 
-val aws_target : Sol_cli_config.target -> (aws_target, string) result
-val target : aws_target -> Sol_cli_config.target
-val cloud_backend : aws_target -> string list
-val platform_backend : aws_target -> string list
+val cloud_target : Sol_cli_config.target -> (cloud_target, string) result
+val target : cloud_target -> Sol_cli_config.target
+val cloud_backend : cloud_target -> string list
+val platform_backend : cloud_target -> string list
+
+(** The platform root for a provider, relative to the Sol home. The platform
+    definition is shared; the root differs because a Terraform root's backend type
+    is part of its own configuration. *)
+val platform_root : Sol_cli_provider.t -> string
+
+(** A resource address inside the platform root. A root that reaches the shared
+    definition through a module addresses its resources through it, so the prefix
+    is applied here rather than at each `-target`. *)
+val platform_address : Sol_cli_provider.t -> string -> string
 
 type platform_inputs
 
-val platform_inputs : aws_target -> aws_outputs -> (platform_inputs, string) result
+val platform_inputs : cloud_target -> aws_outputs -> (platform_inputs, string) result
 val platform_terraform_vars : platform_inputs -> string list
 
 type plan_phase =

@@ -103,7 +103,9 @@ let infra_dir provider =
   pname, dir
 ;;
 
-let platform_dir () = Filename.concat (resolve_sol_home ()) "cli/platform/infra/base"
+let platform_dir provider =
+  Filename.concat (resolve_sol_home ()) (Sol_cli_cloud_lifecycle.platform_root provider)
+;;
 
 type action =
   | Plan
@@ -504,23 +506,30 @@ let provisioner_rbac_established env =
     process_ok ~env ([ "kubectl"; "auth"; "can-i" ] @ args))
 ;;
 
-let platform_prerequisite_targets =
+(* Staged through the shared platform definition. The provider's root addresses
+   its resources through whatever structure reaches that definition, so every
+   address is resolved per provider rather than written as a bare one. *)
+let platform_prerequisite_targets provider =
+  let address = Sol_cli_cloud_lifecycle.platform_address provider in
   Sol_cli_terraform.targets
-    "kubernetes_namespace.cert_manager"
-    [ "kubernetes_namespace.ingress_nginx"
-    ; "kubernetes_namespace.argocd"
-    ; "kubernetes_namespace.redpanda"
-    ; "kubernetes_namespace.monitoring"
-    ; "kubernetes_cluster_role.platform_provisioner_namespaced"
-    ; "kubernetes_role_binding.platform_provisioner"
-    ; "kubernetes_cluster_role.platform_provisioner_cluster"
-    ; "kubernetes_cluster_role_binding.platform_provisioner_cluster"
-      (* The deploy identity's RBAC (sol_deploy / sol_deploy_bootstrap) is created
-       by the full platform apply, which ADR 0003 keeps inside the privileged
-       PlatformInstalling authority -- so it is not staged here. (HARDEN-002
-       run 4 finding 13's interim staging is superseded by that model.) *)
-    ; "helm_release.cert_manager"
-    ]
+    (address "kubernetes_namespace.cert_manager")
+    (List.map
+       address
+       [ "kubernetes_namespace.ingress_nginx"
+       ; "kubernetes_namespace.argocd"
+       ; "kubernetes_namespace.redpanda"
+       ; "kubernetes_namespace.monitoring"
+       ; "kubernetes_cluster_role.platform_provisioner_namespaced"
+       ; "kubernetes_role_binding.platform_provisioner"
+       ; "kubernetes_cluster_role.platform_provisioner_cluster"
+       ; "kubernetes_cluster_role_binding.platform_provisioner_cluster"
+         (* The deploy identity's RBAC (sol_deploy / sol_deploy_bootstrap) is
+            created by the full platform apply, which ADR 0003 keeps inside the
+            privileged PlatformInstalling authority -- so it is not staged here.
+            (HARDEN-002 run 4 finding 13's interim staging is superseded by that
+            model.) *)
+       ; "helm_release.cert_manager"
+       ])
 ;;
 
 let rds_target = Sol_cli_terraform.targets "aws_db_instance.postgres" []
@@ -685,7 +694,7 @@ let cloud_init ~target ~var_file ~vars ~action () =
   if provider <> Sol_cli_provider.Aws
   then lifecycle_error "the complete cloud lifecycle is currently qualified only for AWS";
   let pname, infra_dir = infra_dir provider in
-  let platform_dir = platform_dir () in
+  let platform_dir = platform_dir provider in
   let run_log = Sol_cli_run_log.create ~prefix:"cloud-apply" () in
   (* Check the target before terraform-init, same order cloud_destroy
      already uses -- a typo'd target should fail fast, not after a
@@ -708,14 +717,14 @@ let cloud_init ~target ~var_file ~vars ~action () =
       ~config_vars
   in
   let target_cfg = established_target target_cfg in
-  let aws_target =
-    match Sol_cli_cloud_lifecycle.aws_target target_cfg with
+  let cloud_target =
+    match Sol_cli_cloud_lifecycle.cloud_target target_cfg with
     | Ok target -> target
     | Error message -> lifecycle_error message
   in
-  let target_cfg = Sol_cli_cloud_lifecycle.target aws_target in
-  let cloud_backend = Sol_cli_cloud_lifecycle.cloud_backend aws_target in
-  let platform_backend = Sol_cli_cloud_lifecycle.platform_backend aws_target in
+  let target_cfg = Sol_cli_cloud_lifecycle.target cloud_target in
+  let cloud_backend = Sol_cli_cloud_lifecycle.cloud_backend cloud_target in
+  let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
   let var_files =
     match var_file with
     | None -> []
@@ -762,7 +771,7 @@ let cloud_init ~target ~var_file ~vars ~action () =
      | Error message -> lifecycle_error message
      | Ok (Some outputs) ->
        let platform_vars =
-         match Sol_cli_cloud_lifecycle.platform_inputs aws_target outputs with
+         match Sol_cli_cloud_lifecycle.platform_inputs cloud_target outputs with
          | Ok inputs -> Sol_cli_cloud_lifecycle.platform_terraform_vars inputs
          | Error message -> lifecycle_error message
        in
@@ -800,7 +809,7 @@ let cloud_init ~target ~var_file ~vars ~action () =
                  (fun () ->
                     Sol_cli_terraform.plan
                       ~env
-                      ~scope:platform_prerequisite_targets
+                      ~scope:(platform_prerequisite_targets provider)
                       ~chdir:platform_dir
                       ~var_files:[]
                       ~vars:platform_vars
@@ -871,7 +880,7 @@ let cloud_init ~target ~var_file ~vars ~action () =
         lifecycle_error e
     in
     let platform_vars =
-      match Sol_cli_cloud_lifecycle.platform_inputs aws_target outputs with
+      match Sol_cli_cloud_lifecycle.platform_inputs cloud_target outputs with
       | Ok inputs -> Sol_cli_cloud_lifecycle.platform_terraform_vars inputs
       | Error message ->
         cleanup_bootstrap_access ();
@@ -945,7 +954,7 @@ let cloud_init ~target ~var_file ~vars ~action () =
              (fun () ->
                 Sol_cli_terraform.apply
                   ~env
-                  ~scope:platform_prerequisite_targets
+                  ~scope:(platform_prerequisite_targets provider)
                   ~chdir:platform_dir
                   ~var_files:[]
                   ~vars:platform_vars
@@ -1102,13 +1111,13 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
   in
   let vars = config_vars @ vars in
   let target_cfg = established_target target_cfg in
-  let aws_target =
-    match Sol_cli_cloud_lifecycle.aws_target target_cfg with
+  let cloud_target =
+    match Sol_cli_cloud_lifecycle.cloud_target target_cfg with
     | Ok target -> target
     | Error message -> lifecycle_error message
   in
-  let target_cfg = Sol_cli_cloud_lifecycle.target aws_target in
-  let cloud_backend = Sol_cli_cloud_lifecycle.cloud_backend aws_target in
+  let target_cfg = Sol_cli_cloud_lifecycle.target cloud_target in
+  let cloud_backend = Sol_cli_cloud_lifecycle.cloud_backend cloud_target in
   let var_files =
     match var_file with
     | None -> []
@@ -1122,10 +1131,10 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
     | Error message -> lifecycle_error message
   in
   let destroy_platform ?(on_error = Fun.id) outputs =
-    let platform_dir = platform_dir () in
-    let platform_backend = Sol_cli_cloud_lifecycle.platform_backend aws_target in
+    let platform_dir = platform_dir provider in
+    let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
     let platform_vars =
-      match Sol_cli_cloud_lifecycle.platform_inputs aws_target outputs with
+      match Sol_cli_cloud_lifecycle.platform_inputs cloud_target outputs with
       | Ok inputs -> Sol_cli_cloud_lifecycle.platform_terraform_vars inputs
       | Error message -> lifecycle_error message
     in
@@ -1161,10 +1170,10 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
      | None ->
        Printf.printf "  Platform destroy DEFERRED — cloud substrate is absent.\n%!"
      | Some outputs ->
-       let platform_dir = platform_dir () in
-       let platform_backend = Sol_cli_cloud_lifecycle.platform_backend aws_target in
+       let platform_dir = platform_dir provider in
+       let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
        let platform_vars =
-         match Sol_cli_cloud_lifecycle.platform_inputs aws_target outputs with
+         match Sol_cli_cloud_lifecycle.platform_inputs cloud_target outputs with
          | Ok inputs -> Sol_cli_cloud_lifecycle.platform_terraform_vars inputs
          | Error message -> lifecycle_error message
        in

@@ -303,9 +303,9 @@ let test_lifecycle_phases () =
 ;;
 
 let test_backends () =
-  let get root = Result.get_ok (L.backend_config target ~root) in
-  let cloud = get `Cloud
-  and platform = get `Platform in
+  let get t root = Result.get_ok (L.backend_config t ~root) in
+  let cloud = get target `Cloud
+  and platform = get target `Platform in
   Alcotest.(check bool) "distinct" true (cloud <> platform);
   Alcotest.(check bool)
     "cloud key"
@@ -314,7 +314,118 @@ let test_backends () =
   Alcotest.(check bool)
     "platform key"
     true
-    (List.mem "key=sol/prod/aws/us-east-1/platform.tfstate" platform)
+    (List.mem "key=sol/prod/aws/us-east-1/platform.tfstate" platform);
+  (* S3 has no native locking, so the lock resource is part of the AWS config and
+     its absence is a refusal rather than a silent concurrent-apply hazard. *)
+  let aws_without_lock = { target with state_lock_table = None } in
+  (match L.backend_config aws_without_lock ~root:`Cloud with
+   | Error _ -> ()
+   | Ok _ -> Alcotest.fail "an AWS target without a lock table must be refused");
+  (* GCS locks natively: there is no resource to name, the object is addressed by
+     `prefix`, and a target that declares a lock table for some other tool is not
+     thereby invalid. *)
+  let gcp =
+    { target with
+      name = "prod/gcp/us-central1"
+    ; provider = Sol_cli_provider.Gcp
+    ; region = "us-central1"
+    ; state_lock_table = None
+    ; provisioner_role_arn = None
+    ; kube_context = Some "gke_sol-qualification_us-central1_sol"
+    }
+  in
+  let gcp_cloud = get gcp `Cloud in
+  Alcotest.(check (list string))
+    "GCS addresses the object by prefix and names no lock resource"
+    [ "bucket=acme-state"; "prefix=sol/prod/gcp/us-central1/cloud.tfstate" ]
+    gcp_cloud;
+  Alcotest.(check bool)
+    "GCS platform state is its own object"
+    true
+    (get gcp `Platform
+     = [ "bucket=acme-state"; "prefix=sol/prod/gcp/us-central1/platform.tfstate" ]);
+  (match
+     L.backend_config { gcp with state_lock_table = Some "unnecessary" } ~root:`Cloud
+   with
+   | Ok config ->
+     Alcotest.(check (list string))
+       "a GCP target's lock table is not a backend attribute at all"
+       [ "bucket=acme-state"; "prefix=sol/prod/gcp/us-central1/cloud.tfstate" ]
+       config
+   | Error message -> Alcotest.fail ("a GCP lock table must not be an error: " ^ message));
+  (* The durable-state prerequisite is the same for both providers. *)
+  List.iter
+    (fun t ->
+       match L.backend_config { t with state_bucket = None } ~root:`Cloud with
+       | Error _ -> ()
+       | Ok _ -> Alcotest.fail "a target without a state bucket must be refused")
+    [ target; gcp ]
+;;
+
+(* The two providers' targets are not the same shape, and the difference is real
+   rather than cosmetic: AWS names a role ARN because that is how a caller assumes
+   the provisioner there, while GCP names nothing because the caller impersonates a
+   service account through short-lived credentials. Requiring both to carry a
+   role-shaped field would invent a concept GCP does not have. *)
+let test_cloud_target () =
+  let gcp =
+    { target with
+      name = "prod/gcp/us-central1"
+    ; provider = Sol_cli_provider.Gcp
+    ; region = "us-central1"
+    ; state_lock_table = None
+    ; provisioner_role_arn = None
+    ; kube_context = Some "gke_sol-qualification_us-central1_sol"
+    }
+  in
+  let aws = Result.get_ok (L.cloud_target target) in
+  Alcotest.(check bool)
+    "AWS carries the provisioner role it must assume"
+    true
+    (aws.provisioner_role_arn = Some "arn:aws:iam::1:role/provisioner");
+  let gcp = Result.get_ok (L.cloud_target gcp) in
+  Alcotest.(check bool)
+    "GCP carries no role ARN and is not refused for it"
+    true
+    (gcp.provisioner_role_arn = None);
+  Alcotest.(check string) "region travels from the target" "us-central1" gcp.target.region;
+  Alcotest.(check (list string))
+    "the target's own backends are the ones selected"
+    [ "bucket=acme-state"; "prefix=sol/prod/gcp/us-central1/platform.tfstate" ]
+    gcp.platform_backend;
+  (match L.cloud_target { target with provisioner_role_arn = None } with
+   | Error _ -> ()
+   | Ok _ -> Alcotest.fail "an AWS target without a provisioner role must be refused");
+  match L.cloud_target { target with base_domain = None } with
+  | Error _ -> ()
+  | Ok _ -> Alcotest.fail "a target without a base domain must be refused"
+;;
+
+(* The platform root differs per provider because a Terraform root's backend type
+   is part of its own configuration, and the address prefix follows the structure
+   that reaches the shared definition. The two have to agree: a provider whose root
+   is `base` cannot be addressed through `module.platform`. *)
+let test_platform_root_selection () =
+  Alcotest.(check string)
+    "AWS keeps the shared definition as its own root"
+    "cli/platform/infra/base"
+    (L.platform_root Sol_cli_provider.Aws);
+  Alcotest.(check string)
+    "GCP has a root that declares the GCS backend"
+    "cli/platform/infra/base-gcp"
+    (L.platform_root Sol_cli_provider.Gcp);
+  Alcotest.(check string)
+    "an AWS address is bare"
+    "kubernetes_namespace.cert_manager"
+    (L.platform_address Sol_cli_provider.Aws "kubernetes_namespace.cert_manager");
+  Alcotest.(check string)
+    "a GCP address goes through the module that reaches the definition"
+    "module.platform.kubernetes_namespace.cert_manager"
+    (L.platform_address Sol_cli_provider.Gcp "kubernetes_namespace.cert_manager");
+  Alcotest.(check bool)
+    "the two providers do not select the same platform root"
+    true
+    (L.platform_root Sol_cli_provider.Aws <> L.platform_root Sol_cli_provider.Gcp)
 ;;
 
 let test_deferred () =
@@ -572,6 +683,11 @@ let () =
         ; Alcotest.test_case "provisioner kubeconfig env" `Quick test_provisioner_kube_env
         ; Alcotest.test_case "lifecycle phases and policy" `Quick test_lifecycle_phases
         ; Alcotest.test_case "separate backends" `Quick test_backends
+        ; Alcotest.test_case "provider-shaped cloud target" `Quick test_cloud_target
+        ; Alcotest.test_case
+            "provider-specific platform root"
+            `Quick
+            test_platform_root_selection
         ; Alcotest.test_case "deferred plan" `Quick test_deferred
         ; Alcotest.test_case
             "readiness predicates"

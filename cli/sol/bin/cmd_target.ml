@@ -88,7 +88,11 @@ let kubernetes_status ~check (target : Sol_cli_config.target) =
 ;;
 
 let platform_status ~check (target : Sol_cli_config.target) =
-  if (not check) || target.provider <> Sol_cli_provider.Aws
+  (* No provider gate: the convergence checks are the target's own provider's
+     (see [Sol_cli_cloud_lifecycle.readiness]), and this surface answers "is this
+     target ready". A target with no explicit Kubernetes destination still reports
+     that, which is the honest answer and the same one AWS gets. *)
+  if not check
   then None
   else (
     match Sol_cli_config.destination_of_target target with

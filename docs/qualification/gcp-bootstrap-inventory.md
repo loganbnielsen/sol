@@ -351,6 +351,140 @@ qualification sequence above.
    then qualify through the public `sol cloud` lifecycle rather than a shadow
    Terraform/Helm harness.
 
+## Implementation progress
+
+**Updated:** 2026-09-18 (America/Denver). Read-only re-check of the bootstrap
+prerequisites. No resource, API, IAM, billing, DNS, or infrastructure change was
+made or left behind.
+
+### Preflight re-check
+
+| Check | Observed | Verdict |
+| --- | --- | --- |
+| Active principal | `lbendtlynielsen@gmail.com` | unchanged |
+| Active project | `sol-qualification`, number matches the supplied value | unchanged, `ACTIVE` |
+| Billing linked | `billingEnabled = false`, `billingAccountName` empty | **blocked** |
+| Enabled APIs | the same 22 services listed above, byte for byte | unchanged |
+| Project IAM | one binding: `user:LBendtlyNielsen@gmail.com` → `roles/owner` | unchanged |
+| User-managed service accounts, GCS buckets | none | unchanged |
+| Long-lived service-account keys | none created or downloaded | required posture held |
+
+Two billing accounts are visible to this principal, one open and one closed. The
+open one is the candidate; neither is named here, for the same reason the rest of
+this file names no account-level identifier.
+
+**The blocker is stronger than the original inventory implied, and that changes
+what "prerequisite" means here.** Unlinked billing does not merely block the
+billable qualification resources — it blocks the *bootstrap* step:
+
+```text
+ERROR: (gcloud.services.enable) FAILED_PRECONDITION: Billing account for project
+'<project-number>' is not found. Billing must be enabled for activation of
+service(s) 'artifactregistry.googleapis.com, compute.googleapis.com,
+container.googleapis.com, dns.googleapis.com,
+containerregistry.googleapis.com' to proceed.
+  reason: UREQ_PROJECT_BILLING_NOT_FOUND
+```
+
+So the API-enable step in the lifecycle table (`Absent -> CloudBootstrap`) is
+itself gated, and the "repeat all resource queries before the first Terraform
+plan" instruction above is not reachable. Quota, capacity, and the inventories
+that need Compute/GKE/Cloud SQL/DNS APIs stay **unknown**, not empty. The refused
+enable left the project untouched — the enabled-service list is identical to the
+one recorded above.
+
+**Action required, and only this: link an open billing account to
+`sol-qualification`.** That is an account-level relationship outside Sol's
+project-scoped bootstrap authority, and this work is not authorized to change it.
+Everything else in the preflight is ready: principal, project, ADC, Terraform, and
+the Owner binding that can create the qualification-scoped identities and
+resources. Once billing is linked, the next attempt resumes at the API-enable
+step.
+
+### Code landed without a live project
+
+Two changes address gaps 1 and 2 of the list below. Both are validated offline
+only — static/configuration and mechanism/renderability evidence, not behavioural
+evidence — and neither is reachable on GCP yet, because the GCP lifecycle still
+fails closed in `sol cloud`.
+
+- **Provider-specific Kubernetes storage and readiness.** `Ready` asserted `gp3`
+  and `ebs.csi.aws.com` literally in a module that is meant to be
+  provider-neutral. The provider's storage facts are now data
+  (`Sol_cli_cloud_lifecycle.platform_storage`), the check asserts the provider's
+  class is the *sole* default and is backed by the provider's block-storage CSI
+  driver, and the AWS guarantee is unchanged. EKS ships no default class so Sol
+  creates one; GKE ships `standard-rwo` already defaulted, so Sol adopts it —
+  creating a second default class would leave the cluster with two, which
+  Kubernetes resolves arbitrarily.
+- **Provider-selected remote state and platform roots.** `backend_config` is
+  provider-aware (S3 + DynamoDB locking, GCS with native locking), the cloud
+  target no longer requires an AWS role ARN of a GCP target, and
+  `cli/platform/infra/base-gcp` is a GCP platform root declaring the GCS backend
+  and calling the shared platform definition as a module.
+
+### Structural finding: a Terraform root cannot carry two backends
+
+This is the first case where the provider-neutral model had to change rather than
+gain a branch. A backend's *type* is part of a Terraform root's own
+configuration — `-backend-config` sets attributes, never the type — so a single
+platform root cannot serve S3 state for AWS and GCS state for GCP. The
+resolutions considered:
+
+1. **Per-provider roots over a shared definition** (chosen). The definition stays
+   where it is and each provider's root supplies only what a root can. A module's
+   own `terraform` block is ignored with a warning, which is what makes this work
+   without moving 1,500 lines.
+2. **Extract the definition into its own module** and make both providers' roots
+   thin wrappers. Cleaner and symmetric, but it changes every AWS resource address
+   (`module.platform.*`) on a path that is live-qualified — churn without evidence
+   to justify it today. This remains the better long-term shape and is the natural
+   follow-up once the GCP path is qualified.
+3. **One backend type for both providers.** Rejected: it would change AWS's state
+   contract (S3 + DynamoDB locking is a named requirement) to accommodate GCP.
+4. **S3-compatible access to GCS** (`endpoints { s3 = ... }` plus HMAC keys).
+   Rejected: it requires long-lived credentials, which the posture above forbids.
+
+The mirroring in option 1 introduces one liability — a variable added to the
+definition and forgotten in the GCP root — so
+`cli/sol/test/check_production_infra.sh` now fails if the wrapper does not mirror
+every declared variable except the AWS-only ones, and fails if it declares one the
+definition does not.
+
+### Remaining gaps
+
+Ordered by what unblocks the next one; all still open.
+
+1. **GCP cert-manager solver and Workload Identity wiring.** The shared
+   definition's `ClusterIssuer`s are hard-wired to the Route 53 DNS-01 solver, so
+   a GCP install cannot issue a certificate as written. Needs a Cloud DNS (or
+   operator-supplied external DNS) solver plus scoped Workload Identity, and a
+   real TLS qualification is additionally blocked on a delegated qualification
+   hostname.
+2. **Typed GCP cloud outputs and platform input mapping.** `aws_outputs_of_json`
+   and `platform_terraform_vars` are AWS-shaped; GCP needs its own typed outputs
+   (project, region, cluster, Workload Identity identities, GCS buckets) and a
+   mapping that selects `cloud_provider = "gcp"` and the GCS variable set.
+3. **GCP kubeconfig and scoped authority.** Ephemeral credentials from
+   `gcloud container clusters get-credentials`, the provisioner service account,
+   the `PlatformInstalling` privileged window, and the positive/negative
+   `can-i` probes.
+4. **Provider-neutral `sol cloud` plan/apply/destroy for GCP.** The outer gate
+   that refuses GCP, the GCP variant of cloud-ready observation, and the platform
+   targets addressing `module.platform.*`.
+5. **GCP destruction preparation and retained-storage semantics.** Cloud SQL
+   API-level deletion protection off by an applied transition, a per-attempt
+   backup identity, and the `prevent_destroy` durable buckets resolved so a
+   complete destroy is possible (they currently cannot participate).
+6. **Cloud SQL regional HA for the production profile**, and the production
+   profile's capacity contract proven on the selected GKE mode (the current root
+   is Autopilot, which cannot declare the `node-failure-tolerant` headroom).
+7. **GCS durable-observability chart wiring** — the Loki/Thanos values are still
+   S3-shaped and `OBS-034`'s gate still rejects `gcp + self_hosted_durable`
+   (INFRA-005).
+8. **Offline qualification/preflight coverage** for the GCP path, and a GCP
+   counterpart to `production-single-region-v1-matrix.md`.
+
 ## References
 
 - [Terraform authentication on Google Cloud](https://cloud.google.com/docs/terraform/authentication)
