@@ -1,6 +1,6 @@
 # Provider-neutral Sol invariants
 
-**Derived:** 2026-09-19 · **Last verified:** `main @ 910a59f1` (reconciled after
+**Derived:** 2026-09-19 · **Last verified:** `main @ c642bb3e` (reconciled after
 HARDEN Run 7 and GCP Attempt 4)
 **Scope:** the `sol cloud` target lifecycle for the `production-single-region`
 profile. Provider neutrality means *the same semantic property may be realized
@@ -127,7 +127,8 @@ discovery/credential access; Kubernetes RBAC establishes Sol authority".
 
 **Open findings/tickets.** FND-0001 = INFRA-045. The GCP code comment
 (`cli/platform/infra/gcp/main.tf:254-255`) and the inventory
-(`gcp-bootstrap-inventory.md:302`) both state the refuted version.
+(`gcp-bootstrap-inventory.md`, §"Proposed GCP capability mapping", row "Kubernetes
+access") both state the refuted version.
 
 **To move GCP to qualified.** Narrow the provisioner IAM role to
 cluster-discovery/credential retrieval only, then demonstrate a denied workload

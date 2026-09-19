@@ -383,7 +383,10 @@ lifecycle code.
 
 **Limitation.** Provider docs are versioned and these were read at their current
 `latest`; a provider upgrade can move a default. Each Sol reference above was read in
-the working tree at `main @ 7ea2ef43`.
+the working tree at `main @ 7ea2ef43`. Line-number citations into Sol docs are as
+of that revision: `gcp-bootstrap-inventory.md` was restructured in #366, so if a
+line does not match, use the quoted text or the section name (the durable findings
+cite sections and rows rather than line numbers for exactly this reason).
 
 ---
 

@@ -24,7 +24,8 @@ in-cluster authority established solely by Kubernetes RBAC:
 The qualification inventory repeats the claim:
 
 > "IAM establishes cluster discovery/credential access; Kubernetes RBAC
-> establishes Sol authority." — `docs/qualification/gcp-bootstrap-inventory.md:302`
+> establishes Sol authority." — `docs/qualification/gcp-bootstrap-inventory.md`,
+> §"Proposed GCP capability mapping", row "Kubernetes access"
 
 ADR 0003 invariant 2 states the steady-state provisioner "cannot manufacture a
 more powerful identity"; the production matrix row I3 states the boundary is
@@ -66,7 +67,7 @@ that "the provisioner cannot manufacture an identity more powerful than itself".
 | Tier | Evidence |
 |---|---|
 | STATIC | the project-level role grant and the claim in the same file; the RBAC bindings |
-| MECHANISM | GCP Attempt 3 showed the provisioner impersonation works and the install-window binding is revoked on the failure path (`provisioner-bootstrap-access-remove` ok, 8.7 s) — `gcp-bootstrap-inventory.md:622-687` |
+| MECHANISM | GCP Attempt 3 showed the provisioner impersonation works and the install-window binding is revoked on the failure path (`provisioner-bootstrap-access-remove` ok, 8.7 s) — `gcp-bootstrap-inventory.md`, §"Attempt 3 (2026-09-19)" |
 | BEHAVIORAL | **none for the boundary.** No run has demonstrated a workload operation being *denied* to the provisioner after closure; the IAM path would in fact permit it |
 
 ## What is established

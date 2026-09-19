@@ -1,9 +1,11 @@
 # Sol qualification status
 
-**As of:** 2026-09-19 · **Code revision verified:** `main @ 910a59f1`
+**As of:** 2026-09-19 · **Code revision verified:** `main @ c642bb3e`
 **Owner:** the independent audit function (`internal/pipeline/audits/`).
 **Reconciled** 2026-09-19 after rebasing onto `origin/main` (PRs #362/#363/#364:
-INFRA-042 fixed, GCP Attempt 4, HARDEN Run 7).
+INFRA-042 fixed, GCP Attempt 4, HARDEN Run 7; #365/#366: entry-point docs and a
+GCP inventory restructure, against which the findings' citations were re-anchored
+to sections and rows).
 
 This is the compact answer to "what does Sol currently know?". It links to the
 authoritative detail; it does not duplicate it. Detail lives in:

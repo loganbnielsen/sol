@@ -9,7 +9,7 @@
 - **Provider:** GCP / GKE (AWS is fine)
 - **Derived ticket:** none — already tracked as `gcp-bootstrap-inventory.md` remaining gap 1
 - **Related invariant:** `INV-SUBSTRATE-1`, `INV-SUBSTRATE-2`
-- **Related:** matrix row I14; `docs/qualification/gcp-bootstrap-inventory.md:29, 199, 305, 344, 693-698`
+- **Related:** matrix row I14; `docs/qualification/gcp-bootstrap-inventory.md` §"Remaining gaps" (gap 1) and §"Proposed GCP capability mapping" (DNS/TLS row)
 
 ## Sol claim at stake
 
@@ -25,7 +25,7 @@ Route 53 solvers. No `cloudDNS` solver exists anywhere in `cli/platform/`.
 
 Product mitigation: a GCP target that declares `cluster_issuer` is **refused by
 name** rather than handed an issuer that cannot work
-(`gcp-bootstrap-inventory.md:698`).
+(`gcp-bootstrap-inventory.md` §"Remaining gaps", gap 1).
 
 ## Verified provider contract
 
