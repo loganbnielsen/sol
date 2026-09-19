@@ -712,6 +712,67 @@ retry, and the completion — and pins the limit in the other direction: with th
 served, no `state rm` happens and the destroy fails closed. Both directions are
 mutation-tested.
 
+### Attempt 4 (2026-09-19): the platform stage runs as the provisioner, and stops at cert-manager
+
+The primary objective is met, and then some.
+
+- **CloudBootstrap applied in 571.2s** with the install window open, and — for the
+  first time — the impersonation grant for the *declared* caller reached the root:
+  `-var=provisioner_impersonators=["user:…"]`.
+- **The platform stage ran as the provisioner for 424.2s.** This is the transition
+  Attempts 2 and 3 could not make: real in-cluster work — namespaces, CRDs, RBAC —
+  performed by the scoped identity, authenticated by impersonation.
+- **The window was revoked** (`provisioner-bootstrap-access-remove`, 8.1s), so the
+  open/close pair is now observed on a run that actually did platform work.
+- **The documented destroy completed the entire teardown**, including the partially
+  installed platform: `platform-destroy ok (80.0s)`, then `terraform-destroy ok
+  (342.6s)`, then verification. That is INFRA-042's scenario live, through the
+  documented lifecycle, with no emergency cleanup.
+
+**Next boundary: `helm_release.cert_manager` — "failed post-install: timed out
+waiting for the condition".** The platform prerequisites apply stopped there. What
+the cluster says is precise and matters for the fix: cert-manager itself is
+**healthy** — `cert-manager`, `cert-manager-cainjector` and `cert-manager-webhook`
+all `1/1 Running` for 9m, six CRDs installed — and the failure is the chart's
+post-install **`startupapicheck` Job**, `Failed 0/1` after 7m49s with
+`BackoffLimitExceeded` at 117s.
+
+That distinction is worth keeping rather than acting on quickly. Disabling the
+startup check would make the release succeed; it would also discard the one
+signal that says whether the webhook is reachable, which is the thing certificate
+issuance depends on. The next attempt should establish *why* the check fails (the
+container's own output, not the Job's status) before deciding whether the fix is a
+values override or a real GKE/Autopilot incompatibility.
+
+**A defect in Sol's own absence verification, found by this run.** The destroy
+removed everything and then reported failure:
+
+```
+error: GCP GKE cluster verification failed: ERROR: (gcloud.container.clusters.describe)
+  ResponseError: code=404, message=Not found: projects/.../clusters/sol-qual
+```
+
+The check recognised `NOT_FOUND` and `was not found`; gcloud's actual answers are
+`code=404 … Not found:` and `HTTPError 404: The Cloud SQL instance does not exist`.
+It failed closed, which is the right instinct, but a check that cannot recognise
+absence makes `Absent` unreachable — the postcondition the whole lifecycle is
+measured against. Fixed, and the harness stub now answers with the **real** wording
+rather than the wording the implementation happened to expect (the `--kubeconfig`
+lesson applied to a stub of my own): with the old needles the harness fails, with
+the provider's wording it passes.
+
+**Absence verified independently** after that teardown: no GKE, no Cloud SQL, no
+target network, **no service-networking peering**, no address, no disk, no
+provisioner service account; only the project's default network and default service
+account, and the empty state bucket. The peering abandonment worked again, and for
+the second time the peering and the network were confirmed absent through the
+provider's API rather than Terraform's exit status.
+
+**TLS issuance remains BLOCKED**, not qualified: `sol-qual.dev` is not delegated to
+the qualification project, so DNS-01 cannot complete. It becomes qualified only by a
+delegated hostname, and Attempt 4 did not reach issuance in any case —
+cert-manager's own release did not finish installing.
+
 ### Remaining gaps
 
 Ordered by what unblocks the next one. Closed items keep their entry so the
