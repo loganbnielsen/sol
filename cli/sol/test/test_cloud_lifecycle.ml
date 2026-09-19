@@ -357,6 +357,9 @@ let test_readiness_fails_each_predicate () =
   let succeeds = function
     | "get" :: "storageclass/gp3" :: _ -> Some "ebs.csi.aws.com true"
     | "get" :: "service/ingress-nginx-controller" :: _ -> Some "example.elb.amazonaws.com"
+    (* INFRA-035: the monitoring DaemonSet check reads desired/ready pairs from
+       status, so the baseline has to supply them. *)
+    | "get" :: "daemonset" :: _ -> Some "4/4 4/4 "
     | _ -> Some ""
   in
   let all =
@@ -382,6 +385,42 @@ let test_readiness_fails_each_predicate () =
          true
          (L.readiness_summary checks <> "Ready"))
     all
+;;
+
+(* INFRA-035: the monitoring DaemonSet check reads convergence from status instead
+   of `rollout status`, whose [--all] kubectl rejects. That makes the predicate
+   itself worth pinning, including the two ways it could pass vacuously: an empty
+   namespace, and a daemonset that schedules no pods at all. *)
+let test_daemonset_readiness_predicate () =
+  let summary_with_daemonsets output =
+    L.readiness
+      ~cluster_issuer:"letsencrypt-prod"
+      ~observability_backend:"local"
+      ~run:(fun argv ->
+        match argv with
+        | "get" :: "storageclass/gp3" :: _ -> Some "ebs.csi.aws.com true"
+        | "get" :: "service/ingress-nginx-controller" :: _ ->
+          Some "example.elb.amazonaws.com"
+        | "get" :: "daemonset" :: _ -> Some output
+        | _ -> Some "")
+    |> L.readiness_summary
+  in
+  Alcotest.(check string)
+    "every desired pod ready is converged"
+    "Ready"
+    (summary_with_daemonsets "4/4 4/4 ");
+  Alcotest.(check bool)
+    "a daemonset short of its desired pods is unmet"
+    true
+    (summary_with_daemonsets "4/4 3/4 " <> "Ready");
+  Alcotest.(check bool)
+    "a daemonset that wants no pods is not converged"
+    true
+    (summary_with_daemonsets "0/0 " <> "Ready");
+  Alcotest.(check bool)
+    "no daemonsets at all is unmet"
+    true
+    (summary_with_daemonsets "" <> "Ready")
 ;;
 
 let test_effective_authorization () =
@@ -435,6 +474,10 @@ let () =
             "readiness predicates"
             `Quick
             test_readiness_fails_each_predicate
+        ; Alcotest.test_case
+            "daemonset readiness predicate"
+            `Quick
+            test_daemonset_readiness_predicate
         ; Alcotest.test_case "effective authorization" `Quick test_effective_authorization
         ; Alcotest.test_case "terraform scope" `Quick test_terraform_scope
         ] )

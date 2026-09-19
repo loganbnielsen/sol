@@ -47,11 +47,26 @@ type readiness =
   | Established
   | Unmet of string
 
+(** Every readiness check, run against a live cluster. A check is [Established]
+    only when its kubectl invocation succeeds *and* its output satisfies the
+    check's own predicate — exit status alone is not evidence. *)
 val readiness
   :  cluster_issuer:string
   -> observability_backend:string
   -> run:(string list -> string option)
   -> (string * readiness) list
+
+(** The kubectl invocations [readiness] runs, by check name, without running them.
+
+    Exposed because an invocation is otherwise only reachable through a live
+    cluster, so an argv kubectl does not accept cannot be tested until a real
+    install fails — which is how `rollout status … --all` shipped and made every
+    platform report [Unmet] (INFRA-035). CI validates these against a real
+    kubectl; nothing in production calls this. *)
+val readiness_invocations
+  :  cluster_issuer:string
+  -> observability_backend:string
+  -> (string * string list) list
 
 val readiness_summary : (string * readiness) list -> string
 
