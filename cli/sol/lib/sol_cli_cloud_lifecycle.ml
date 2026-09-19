@@ -265,13 +265,65 @@ type readiness =
   | Established
   | Unmet of string
 
-let readiness ~cluster_issuer ~observability_backend ~run =
-  let check ?(accept = fun _ -> true) name reason argv =
-    ( name
-    , match run argv with
-      | Some output when accept (String.trim output) -> Established
-      | _ -> Unmet reason )
+(* INFRA-035: a readiness check is data, not a call site. Keeping [argv] in the
+   spec and running it in [readiness] below means the invocations CI validates
+   against a real kubectl are the same ones that ship. The previous shape inlined
+   them where only the offline harness could see them — and that harness's fake
+   kubectl accepts any argv, which is how `rollout status … --all`, a flag kubectl
+   does not have, reached a real target and made every platform report `Unmet`. *)
+type readiness_check =
+  { name : string
+  ; reason : string
+  ; accept : string -> bool
+  ; argv : string list
+  }
+
+(* [kubectl rollout status] takes one named resource — it has no [--all] — so
+   every check written as `rollout status deployment --all` failed with
+   `unknown flag: --all` and never reported the platform's state at all. [wait]
+   does accept [--all], and the [Available] condition is the Deployment's own
+   authoritative statement that its replicas are available. *)
+let available_deployments namespace =
+  [ "wait"
+  ; "--for=condition=Available"
+  ; "deployment"
+  ; "--all"
+  ; "-n"
+  ; namespace
+  ; "--timeout=5s"
+  ]
+;;
+
+(* DaemonSets have no condition [kubectl wait] understands, so their convergence
+   is read from status: every daemonset in the namespace must have all of its
+   desired pods ready. A daemonset desiring zero pods is not "converged", it is
+   not running, so the desired count must be positive rather than letting an
+   empty schedule pass as success. *)
+(* Desired-to-ready per daemonset, so the predicate below can require all of
+   them at once through a single [get]. *)
+let daemonsets_ready_jsonpath =
+  "jsonpath={range .items[*]}{.status.numberReady}/{.status.desiredNumberScheduled}{' \
+   '}{end}"
+;;
+
+let all_daemonsets_ready output =
+  let pairs =
+    String.split_on_char ' ' (String.trim output) |> List.filter (fun part -> part <> "")
   in
+  pairs <> []
+  && List.for_all
+       (fun pair ->
+          match String.split_on_char '/' pair with
+          | [ ready; desired ] ->
+            (match int_of_string_opt ready, int_of_string_opt desired with
+             | Some ready, Some desired -> desired > 0 && ready = desired
+             | None, _ | _, None -> false)
+          | _ -> false)
+       pairs
+;;
+
+let readiness_checks ~cluster_issuer ~observability_backend =
+  let check ?(accept = fun _ -> true) name reason argv = { name; reason; accept; argv } in
   let common =
     [ check
         "cert-manager CRDs"
@@ -285,14 +337,7 @@ let readiness ~cluster_issuer ~observability_backend ~run =
     ; check
         "cert-manager controllers"
         "cert-manager controller, webhook, or cainjector is unavailable"
-        [ "rollout"
-        ; "status"
-        ; "deployment"
-        ; "--all"
-        ; "-n"
-        ; "cert-manager"
-        ; "--timeout=5s"
-        ]
+        (available_deployments "cert-manager")
     ; check
         "ClusterIssuer"
         "selected ClusterIssuer is not Ready"
@@ -332,14 +377,7 @@ let readiness ~cluster_issuer ~observability_backend ~run =
     ; check
         "ingress-nginx"
         "ingress-nginx controller is unavailable"
-        [ "rollout"
-        ; "status"
-        ; "deployment"
-        ; "--all"
-        ; "-n"
-        ; "ingress-nginx"
-        ; "--timeout=5s"
-        ]
+        (available_deployments "ingress-nginx")
     ; check
         ~accept:(fun output -> output <> "")
         "ingress endpoint"
@@ -354,7 +392,7 @@ let readiness ~cluster_issuer ~observability_backend ~run =
     ; check
         "Argo CD"
         "an Argo CD controller is unavailable"
-        [ "rollout"; "status"; "deployment"; "--all"; "-n"; "argocd"; "--timeout=5s" ]
+        (available_deployments "argocd")
     ; check
         "Prometheus"
         "Prometheus native readiness endpoint failed"
@@ -363,9 +401,10 @@ let readiness ~cluster_issuer ~observability_backend ~run =
         ; "/api/v1/namespaces/monitoring/services/http:prometheus-server:80/proxy/-/ready"
         ]
     ; check
-        "Alloy"
-        "Alloy does not have every desired agent ready"
-        [ "rollout"; "status"; "daemonset"; "--all"; "-n"; "monitoring"; "--timeout=5s" ]
+        ~accept:all_daemonsets_ready
+        "monitoring daemonsets"
+        "a monitoring daemonset does not have every desired agent ready"
+        [ "get"; "daemonset"; "-n"; "monitoring"; "-o"; daemonsets_ready_jsonpath ]
     ]
   in
   let local_observability =
@@ -409,6 +448,30 @@ let readiness ~cluster_issuer ~observability_backend ~run =
     else []
   in
   common @ local_observability @ durable_observability
+;;
+
+(** Run every readiness check and report the ones that are not established.
+    A check is established only when its invocation succeeds *and* its output
+    satisfies [accept], so a command that exits zero while saying nothing useful
+    does not count as evidence. *)
+let readiness ~cluster_issuer ~observability_backend ~run =
+  List.map
+    (fun check ->
+       ( check.name
+       , match run check.argv with
+         | Some output when check.accept (String.trim output) -> Established
+         | _ -> Unmet check.reason ))
+    (readiness_checks ~cluster_issuer ~observability_backend)
+;;
+
+(** The kubectl invocations the checks above run, exposed so CI can validate them
+    against a real kubectl. Nothing calls this in production — it exists because
+    the invocations are otherwise only reachable through [readiness], which needs
+    a live cluster, so a flag that kubectl does not have could ship unnoticed. *)
+let readiness_invocations ~cluster_issuer ~observability_backend =
+  List.map
+    (fun check -> check.name, check.argv)
+    (readiness_checks ~cluster_issuer ~observability_backend)
 ;;
 
 let readiness_summary checks =

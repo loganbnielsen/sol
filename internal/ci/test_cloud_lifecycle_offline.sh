@@ -212,6 +212,10 @@ case "$*" in
   "auth can-i bind "*|"auth can-i escalate "*) exit 1 ;;
   *"storageclass/gp3"*) printf 'ebs.csi.aws.com true' ;;
   *"service/ingress-nginx-controller"*) printf 'lb.example.test' ;;
+  # INFRA-035: the monitoring DaemonSet check reads readiness from status rather
+  # than from `rollout status`, whose [--all] kubectl rejects. So this fake has to
+  # produce the desired/ready pairs the check's predicate parses.
+  *"get daemonset -n monitoring -o jsonpath="*) printf '4/4 4/4 ' ;;
 esac
 if [ "${FAIL_ON:-}" = readiness ] && [ ! -e "$FAIL_MARKER_DIR/readiness" ] &&
    case "$*" in *"csidriver/ebs.csi.aws.com"*) true;; *) false;; esac; then

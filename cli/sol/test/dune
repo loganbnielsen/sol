@@ -49,6 +49,25 @@
   test_migration)
  (libraries sol_cli alcotest unix yojson str))
 
+(executable
+ (name print_readiness_invocations)
+ (libraries sol_cli))
+
+; INFRA-035: the readiness checks' kubectl argv, validated against a real
+; kubectl. The lifecycle harness below cannot cover this: its fake kubectl
+; accepts any argv, which is how `rollout status … --all` — a flag kubectl does
+; not have — made every platform report `Unmet` on a real target.
+
+(rule
+ (alias runtest)
+ (deps
+  print_readiness_invocations.exe
+  ../../../internal/ci/check_readiness_invocations.sh)
+ (action
+  (pipe-stdout
+   (run %{dep:print_readiness_invocations.exe})
+   (run bash %{dep:../../../internal/ci/check_readiness_invocations.sh}))))
+
 (rule
  (alias runtest)
  (deps ../bin/main.exe ../../../internal/ci/test_cloud_lifecycle_offline.sh)
