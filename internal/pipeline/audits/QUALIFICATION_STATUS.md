@@ -43,6 +43,7 @@ have failed" — it never means "false".
 | FND-0006 | `QUALIFICATION_GAP` | `QUALIFIED` (Run 7) | Retention `none` reached provider-side `Absent` with nothing retained and no manual step |
 | FND-0007 | `QUALIFICATION_GAP` | `BLOCKED` | GCP Cloud DNS solver gap + no delegated hostname; tracked in the GCP inventory and refused by name |
 | FND-0009 | `OBSERVATION` | `OPEN` | Provider substrate/prereq differences; no defect |
+| FND-0010 | `QUALIFICATION_GAP` | `OPEN` | GCP `cert_manager` `startupapicheck` failure: analysed and narrowed to the API-server → webhook path, but the cause is not yet established (needs the Attempt 5 container log). A ticket follows **only if** Attempt 5 confirms reachability |
 
 ## Current blockers recorded by the HARDEN epic (on `origin/main`, not audit findings)
 
@@ -61,7 +62,7 @@ the frontier is legible; the audit ledger does not duplicate their evidence.
 | Provider | Furthest live state reached | Behaviourally conformant? |
 |---|---|---|
 | AWS | `CloudBootstrap → PlatformInstalling → Ready` (Run 7 attempt 7, third consecutive), application preflight PASS, **migration Job PASS (first time)**; deploy lease FAIL; workload NOT REACHED. Destroy completed to `Absent` with `retention: none` | **Platform install/update/ready + destroy: yes. Full profile: no** — application deploy blocked (`INFRA-043`), alerting blocked, several measured rows not run |
-| GCP | `CloudBootstrap` conformant; `PlatformInstalling` ran as the declared provisioner for 424.2 s then stopped at `helm_release.cert_manager`'s post-install check (Attempt 4); destroy of a partially-installed platform completed through the documented lifecycle | **No** — platform never reached `Ready`; see FND-0001/0004/0007 |
+| GCP | `CloudBootstrap` conformant; `PlatformInstalling` ran as the declared provisioner for 424.2 s then stopped at `helm_release.cert_manager`'s post-install check (Attempt 4); destroy of a partially-installed platform completed through the documented lifecycle | **No** — platform never reached `Ready`; see FND-0001/0004/0007/0010 |
 
 ---
 
@@ -128,7 +129,7 @@ qualification evidence** (they are defect-discovery history only).
 | Bootstrap inventory | Complete (read-only) | `gcp-bootstrap-inventory.md` |
 | Cloud substrate apply | QUALIFIED (behavioral) | Attempts 1–4 |
 | Provisioner impersonation + install window | QUALIFIED (behavioral) | Attempt 4: platform stage ran as the declared provisioner 424.2 s; window revoked (8.1 s) |
-| Platform install → Ready | **FAILED** | Attempt 4: `helm_release.cert_manager` post-install `startupapicheck` (cert-manager itself healthy) |
+| Platform install → Ready | **FAILED** | Attempt 4: `helm_release.cert_manager` post-install `startupapicheck` (cert-manager itself healthy); cause narrowed, not yet established — FND-0010 |
 | Destroy from `Ready` | not reached | — |
 | Destroy from partial install | FIXED_UNQUALIFIED, observed live | Attempt 4 completed the documented destroy; INFRA-042 (DONE) |
 | Service-networking peering absence | QUALIFIED (behavioral, Attempts 3+4) | verified by provider API, not Terraform exit status |
@@ -168,7 +169,7 @@ operator. Code, docs and contract work proceed in parallel.
 | 2 | T2 authority | Split the provisioning / steady-state identities (decision ratified 2026-09-19) | `DEC-034` → `INFRA-046` | — | no | the steady-state identity holds no access-entry/`iam:*` permission; a guard pins it; ADR 0002 + matrix I3 revised |
 | 3 | T2 authority | Narrow the GCP provisioner role | `INFRA-045` | — | no | a custom role limited to discovery/credential retrieval; the "no Kubernetes authority" claim corrected |
 | 4 | T4 coverage | Redact the connection URL in migration errors | `INFRA-044` | — | no | the password is absent from Sol's output and the Job logs, mutation-tested |
-| 5 | T3 GCP platform | Root-cause the `helm_release.cert_manager` post-install failure | `HARDEN-004` | — | no | the cause is established from the container's own output, not the Job status |
+| 5 | T3 GCP platform | Root-cause the `helm_release.cert_manager` post-install failure | `HARDEN-004` / FND-0010 | 10 (the probe runs in that attempt) | **with #10** | the check's own container log is captured and the cause branch is settled (FND-0010's probe list) |
 | 6 | T4 coverage | Absence verifier: EIP / NAT / EBS | `INFRA-047` | — | no | `verify_aws_destroy` covers all three, mutation-tested both directions |
 | 7 | T4 contract | GCP matrix expressed against the provider-neutral invariants | `HARDEN-004` | — | no | rows exist for the invariants; the inventory becomes a contract a run can fail |
 | 8 | T1 AWS app | Run 8: matrix B/C/D (deploy, rollback, availability) | `HARDEN-002` | 1 | **yes** | run record with its identity; B/C/D rows pass or are recorded |
