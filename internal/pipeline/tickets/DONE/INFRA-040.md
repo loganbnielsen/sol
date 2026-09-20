@@ -92,3 +92,31 @@ That behaviour is right and this ticket must not weaken it — only its reportin
 **Demo/example coverage:** Not applicable.
 
 **TypeScript parity:** No language-parity impact.
+
+## Landed (2026-09-20)
+
+Closed as a **prerequisite to Run 8** rather than a diagnostics follow-up: a run
+carrying this much qualification value should not be spent while a failed deploy
+can still delete the evidence needed to diagnose it.
+
+- **The failure is read out of the Job before anything removes it.**
+  `Sol_cli_migration.evidence_report` composes what the operator sees from the
+  container's waiting reason (a Job whose container never started) and the Job's
+  logs (a Job that ran and failed); `cmd_migrate` prints it in the deploy's own
+  output. Either half may be absent, and neither is invented when it is.
+- **The failing Job is no longer deleted.** Success still tidies up after itself;
+  a failure keeps the Job and prints the command that removes it, so the evidence
+  stays readable after the deploy returns.
+- **The prescribed remedy says why it addresses the same selection.** Migrations
+  are workspace-wide (`cmd_migrate.ml`), so the deploy's `--scope` does not select
+  them; the message now says so instead of leaving the operator to wonder whether
+  following it reproduces the failure.
+
+Covered offline by four unit tests under "failure evidence (INFRA-040)" — the
+unstartable-with-reason, failed-with-logs, both-observations and
+nothing-observed cases. The container's waiting reason was already surfaced (the
+earlier half of this ticket), and the rendered-Job/render-secret name agreement is
+pinned by `internal/ci/check_runtime_secret_identity.sh`.
+
+**Outstanding:** none in code. Run 8 is the first run that exercises this path
+live; if the migration gate fails there, the failure now diagnoses itself.

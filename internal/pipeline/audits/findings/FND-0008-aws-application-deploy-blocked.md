@@ -2,16 +2,17 @@
 
 - **Classification:** `VERIFIED_DEFECT`
 - **State:** `QUALIFIED` (the identity defect: fixed in #359, behaviourally
-  exercised by HARDEN Run 7 attempt 7). The derived ticket `INFRA-040` remains
-  `OPEN` for its separate evidence-retention/diagnostics acceptance criteria.
+  exercised by HARDEN Run 7 attempt 7). The derived ticket `INFRA-040` closed on
+  2026-09-20: its separate evidence-retention/diagnostics acceptance criteria are
+  now implemented and covered offline.
 - **First identified:** 2026-09-19 (HARDEN Run 6 / Attempt 6)
 - **Last verified:** 2026-09-19, `main @ 910a59f1` (reconciled after Run 7)
 - **Provider:** provider-neutral (manifest rendering); observed on AWS
-- **Derived ticket:** **INFRA-040** (`READY_FOR_ENGINEERING`) — still open for the
-  diagnostics/evidence-retention item, **not** for the identity
+- **Derived ticket:** **INFRA-040** (`DONE`, 2026-09-20) — closed for the
+  diagnostics/evidence-retention criteria, which was its only remaining item
 - **Related invariant:** `INV-IDENT-1`
 - **Related:** ADR 0002; matrix sections B/C (deploy and migration); INFRA-043
-  (the current deploy blocker, a different defect)
+  (the deploy blocker at the time, since cleared in #370)
 
 ## Sol claim at stake
 
@@ -68,11 +69,13 @@ target in Run 7. The property `INV-IDENT-1` is behaviourally qualified on AWS.
 
 ## Impact
 
-INFRA-040 no longer blocks the migration gate. Its remaining open item is the
+INFRA-040 no longer blocks the migration gate. Its remaining item was the
 evidence-retention/diagnostics criterion, demonstrated live in Run 7: `sol deploy`
-said "see the Job logs" *after* deleting them, costing the diagnosis. Matrix
-section C's migration-gate row is behaviourally met; section B remains blocked by
-`INFRA-043`.
+said "see the Job logs" *after* deleting them, costing the diagnosis. That item
+closed on 2026-09-20 — the failure is now read out of the Job before removal and a
+failing Job is kept — so the ticket is `DONE`. Matrix section C's migration-gate
+row is behaviourally met; section B's deploy lease was granted in #370, and Run 8
+is the first attempt that can exercise it.
 
 ## Correction (2026-09-19 reconciliation)
 
@@ -87,9 +90,10 @@ move.
 
 ## Derived engineering work
 
-**INFRA-040** remains open for the evidence-retention/diagnostics acceptance
-criteria only (Run 7 demonstrated the cost of the current behaviour). The deploy's
-fail-closed behaviour is correct and must not be weakened.
+**INFRA-040** closed on 2026-09-20 for the evidence-retention/diagnostics
+acceptance criteria (Run 7 demonstrated the cost of the previous behaviour). The
+deploy's fail-closed behaviour is correct and was not weakened: only its reporting
+changed.
 
 ## Supersession
 

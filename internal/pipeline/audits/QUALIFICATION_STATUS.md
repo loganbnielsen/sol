@@ -35,7 +35,7 @@ have failed" — it never means "false".
 | FND-0001 | GCP | Provisioner IAM role `roles/container.developer` grants Kubernetes API authority; the claimed RBAC-only boundary is not real | `INFRA-045` | `VERIFIED_DEFECT` | `FIXED_UNQUALIFIED` (#376) |
 | FND-0002 | AWS | The provisioner can re-grant itself cluster-admin via `eks:AssociateAccessPolicy` (documented AWS behaviour; the gap is Sol's authority contract) | `DEC-034` (decided) → `INFRA-046` | `DESIGN_GAP` | `FIXED_UNQUALIFIED` (#376) |
 | FND-0004 | GCP | A partially-installed platform was not destructible through `sol cloud destroy` (CRD-backed state, CRDs absent) | `INFRA-042` (DONE) | `VERIFIED_DEFECT` | `FIXED_UNQUALIFIED` |
-| FND-0008 | AWS (render) | Runtime Secret identity mismatch blocked the migration path | `INFRA-040` (READY: diagnostics only) | `VERIFIED_DEFECT` | `QUALIFIED` (Run 7) |
+| FND-0008 | AWS (render) | Runtime Secret identity mismatch blocked the migration path | `INFRA-040` (DONE 2026-09-20) | `VERIFIED_DEFECT` | `QUALIFIED` (Run 7) |
 
 ## Findings without tickets (and why)
 
@@ -56,7 +56,7 @@ the frontier is legible; the audit ledger does not duplicate their evidence.
 | Ticket | What | Effect on the frontier |
 |---|---|---|
 | `INFRA-043`, `INFRA-044` (**cleared**) | Deploy-lease grant; migration-credential leak | Landed in #370 and #376. Their behavioural halves are Run 8's deploy step and the normal migration path; they no longer block the frontier |
-| `INFRA-040` (residual) | `sol deploy` says "see the Job logs" *after* deleting them | Diagnostics/evidence-retention item; Run 7 demonstrated the live cost |
+| `INFRA-040` (**cleared**) | Deploy reported "see the Job logs" after deleting them | Closed 2026-09-20 as a Run 8 prerequisite: the failure is now read out of the Job before removal, and a failing Job is kept. See `DONE/INFRA-040.md` |
 | Procedure gap | An RDS password with URI-reserved characters must be percent-encoded by the operator; `SOL_API_KEY` is absent from the deploy step | Run 7 deviation |
 
 ## One-line qualification frontier

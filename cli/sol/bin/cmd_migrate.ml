@@ -337,6 +337,32 @@ let terminal_waiting_reasons =
   ]
 ;;
 
+(* INFRA-040: read the failing Job's evidence out before anything removes it. The
+   message this replaced said "see the Job logs" and then deleted the Job, so the
+   cause had to be rediscovered with a different command. Both observations are
+   gathered because a Job fails in either direction: a container that cannot
+   start has a waiting reason and no logs, while a Job that ran and failed has
+   logs and no waiting reason. *)
+let status_job_evidence ~ctx ~namespace ~job_name () =
+  let logs =
+    match
+      run_kubectl
+        ~ctx
+        ~timeout_s:20.
+        [ "logs"; Printf.sprintf "job/%s" job_name; "-n"; namespace; "--tail=200" ]
+    with
+    | Ok r when r.Sol_cli_process.exit_code = 0 -> String.trim r.Sol_cli_process.stdout
+    | Ok r ->
+      (match String.trim r.Sol_cli_process.stderr with
+       | "" -> ""
+       | e -> "(kubectl logs failed: " ^ e ^ ")")
+    | Error _ -> ""
+  in
+  Sol_cli_migration.evidence_report
+    ~waiting:(container_waiting_status ~ctx ~namespace ~job_name ())
+    ~logs
+;;
+
 let yaml_dq s =
   let b = Buffer.create (String.length s + 2) in
   Buffer.add_char b '"';
@@ -911,7 +937,27 @@ let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table =
                        in
                        Sol_cli_migration.parse_status_json text))
              in
-             cleanup ();
+             (* INFRA-040: this check is read-only, so a success still tidies up
+                after itself. A failure must not delete the only record of why it
+                failed: the evidence goes into the deploy's own output, and the
+                Job is kept so it can still be read afterwards. *)
+             (match result with
+              | Ok _ -> cleanup ()
+              | Error _ ->
+                let evidence = status_job_evidence ~ctx ~namespace ~job_name () in
+                if String.trim evidence <> ""
+                then Printf.eprintf "\nmigration-status Job evidence:\n%s\n%!" evidence;
+                Printf.eprintf
+                  "\n\
+                   The failing Job is kept for inspection:\n\
+                  \  kubectl logs job/%s -n %s\n\
+                  \  kubectl delete job/%s configmap/%s -n %s\n\
+                   %!"
+                  job_name
+                  namespace
+                  job_name
+                  configmap_name
+                  namespace);
              result)))
 ;;
 
