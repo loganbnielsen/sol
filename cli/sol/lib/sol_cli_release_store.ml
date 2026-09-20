@@ -19,17 +19,158 @@ let with_temp_json json (f : string -> 'a) : 'a =
     (fun () -> f path)
 ;;
 
-let apply_json ~ctx json =
-  with_temp_json json (fun path ->
-    match Sol_cli_kubectl.apply ~ctx ~file:path with
-    | Ok () -> Ok ()
+(* ── DEC-037 / INFRA-055: writing with the verbs the deploy identity holds ────
+
+   [kubectl apply] degrades to a *patch* when the object already exists, and the
+   boundary-lease grant deliberately withholds `patch` on ConfigMaps in `default`
+   (`platform_deploy_rbac.tf`). So every write after the first was refused, and the
+   release pointer silently stayed on an older release while the deploy reported
+   success. `create` and `update` -- the verb `kubectl replace` uses -- are both
+   granted, which is the narrower mechanism: the deploy role does not acquire
+   generic `patch` in `default`, the verb that would also let it rewrite the
+   boundary lease that serialises deploys.
+
+   Three consequences worth stating:
+
+   - An object whose [data] already matches is left alone. That matters for the
+     content-addressed record: re-deploying identical content re-writes the same
+     object name, and the immutable record would reject a changed replace anyway.
+   - Optimistic concurrency travels *in the object*: the replace carries the live
+     object's [resourceVersion], so a concurrent writer is a conflict rather than a
+     silent overwrite.
+   - Both of the above are only sound because the whole record step runs inside the
+     workspace boundary lease (`cmd_deploy.ml`'s [run_apply], and `cmd_up.ml`).
+     Moving it outside that lease would reintroduce a lost-update window. *)
+
+let metadata_string json key =
+  match json with
+  | `Assoc fields ->
+    (match List.assoc_opt "metadata" fields with
+     | Some (`Assoc meta) ->
+       (match List.assoc_opt key meta with
+        | Some (`String value) -> Some value
+        | _ -> None)
+     | _ -> None)
+  | _ -> None
+;;
+
+let data_of_json json =
+  match json with
+  | `Assoc fields -> List.assoc_opt "data" fields
+  | _ -> None
+;;
+
+(* The live object's [data] and [resourceVersion], or [None] when it does not
+   exist. A read that fails for any *other* reason is an error: a permission
+   failure must never be mistaken for absence and answered with a create. *)
+let fetch_live ~ctx ~name ~namespace =
+  match
+    Sol_cli_kubectl.get_raw
+      ~ctx
+      ~args:[ "get"; "configmap"; name; "-n"; namespace; "-o"; "json" ]
+  with
+  | Ok r when r.Sol_cli_process.exit_code = 0 ->
+    (try
+       let json = Yojson.Safe.from_string r.Sol_cli_process.stdout in
+       Ok (Some (data_of_json json, metadata_string json "resourceVersion"))
+     with
+     | _ ->
+       Error (Printf.sprintf "could not parse the live ConfigMap %s/%s" namespace name))
+  | Ok r ->
+    let detail =
+      String.trim (r.Sol_cli_process.stderr ^ " " ^ r.Sol_cli_process.stdout)
+    in
+    if Sol_cli_port_forward.string_contains ~needle:"NotFound" detail
+    then Ok None
+    else
+      Error
+        (Printf.sprintf
+           "kubectl get configmap %s failed: %s"
+           name
+           (if String.equal detail "" then "no output" else detail))
+  | Error e -> Error (Sol_cli_process.error_to_string e)
+;;
+
+let detail_of_result (r : Sol_cli_process.result) =
+  let stderr = String.trim r.Sol_cli_process.stderr in
+  let stdout = String.trim r.Sol_cli_process.stdout in
+  if not (String.equal stderr "")
+  then stderr
+  else if not (String.equal stdout "")
+  then stdout
+  else "no output"
+;;
+
+let with_resource_version json (resource_version : string option) =
+  match resource_version, json with
+  | None, _ | _, `Assoc _ ->
+    (match json with
+     | `Assoc fields ->
+       let meta =
+         match List.assoc_opt "metadata" fields with
+         | Some (`Assoc meta) -> meta
+         | _ -> []
+       in
+       let meta =
+         match resource_version with
+         | None -> meta
+         | Some rv ->
+           ("resourceVersion", `String rv) :: List.remove_assoc "resourceVersion" meta
+       in
+       `Assoc (("metadata", `Assoc meta) :: List.remove_assoc "metadata" fields)
+     | other -> other)
+  | _ -> json
+;;
+
+let write_one ~ctx ~verb ~name json =
+  with_temp_json (Yojson.Safe.to_string json) (fun path ->
+    let result =
+      match verb with
+      | `Create -> Sol_cli_kubectl.create ~ctx ~file:path
+      | `Replace -> Sol_cli_kubectl.replace ~ctx ~file:path
+    in
+    match result with
+    | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
+    | Ok r ->
+      Error
+        (Printf.sprintf
+           "kubectl %s configmap %s failed: %s"
+           (match verb with
+            | `Create -> "create"
+            | `Replace -> "replace")
+           name
+           (detail_of_result r))
     | Error e -> Error (Sol_cli_process.error_to_string e))
 ;;
 
+let write_json ~ctx json =
+  match metadata_string json "name", metadata_string json "namespace" with
+  | None, _ | _, None -> Error "release ConfigMap is missing metadata.name/namespace"
+  | Some name, Some namespace ->
+    (match fetch_live ~ctx ~name ~namespace with
+     | Error e -> Error e
+     | Ok (Some (live_data, _)) when live_data = data_of_json json -> Ok ()
+     | Ok (Some (_, live_rv)) ->
+       write_one ~ctx ~verb:`Replace ~name (with_resource_version json live_rv)
+     | Ok None -> write_one ~ctx ~verb:`Create ~name json)
+;;
+
+let parse_configmap json =
+  try Ok (Yojson.Safe.from_string json) with
+  | _ -> Error "release ConfigMap is not valid JSON"
+;;
+
 let record ~ctx (t : Sol_cli_release.t) : (unit, string) result =
-  match apply_json ~ctx (Sol_cli_release.to_configmap_json t) with
+  match parse_configmap (Sol_cli_release.to_configmap_json t) with
   | Error e -> Error e
-  | Ok () -> apply_json ~ctx (Sol_cli_release.to_current_configmap_json t)
+  | Ok json ->
+    (match write_json ~ctx json with
+     | Error e -> Error e
+     | Ok () ->
+       parse_configmap (Sol_cli_release.to_current_configmap_json t)
+       |> (function
+        | Error e -> Error e
+        | Ok json -> write_json ~ctx json))
 ;;
 
 (* FEAT-069: the record is content-addressed, so it is built from the plan's
@@ -165,5 +306,9 @@ let delete ~ctx ~(release_id : string) : (unit, string) result =
 ;;
 
 let move_pointer ~ctx (t : Sol_cli_release.t) : (unit, string) result =
-  apply_json ~ctx (Sol_cli_release.to_current_configmap_json t)
+  (* INFRA-055: rollback moves the same pointer, so it uses the same writer --
+     one mechanism, one set of verbs, one place for the lease constraint. *)
+  match parse_configmap (Sol_cli_release.to_current_configmap_json t) with
+  | Error e -> Error e
+  | Ok json -> write_json ~ctx json
 ;;

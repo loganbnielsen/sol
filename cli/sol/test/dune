@@ -27,6 +27,7 @@
   test_loki
   test_run_log
   test_release
+  test_release_store
   test_release_id
   test_release_retention
   test_boundary_lease
