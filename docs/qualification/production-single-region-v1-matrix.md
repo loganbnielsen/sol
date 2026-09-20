@@ -288,3 +288,21 @@ relying on the revision to pin it.
 - The alert receiver is still a blocking input: record G as blocked, not passed,
   unless a real destination with an owner is in place.
 
+### Host prerequisites the run's own commands need (procedure/tooling friction)
+
+These are not product defects; they are things the operator's session must have, and
+Run 8 lost time to one of them.
+
+- **Docker group access, in the shell that runs `sol deploy`.** Sol's migration
+  check shells out to `docker build` (it renders and pushes a migration-runner
+  image). A session that predates the operator's `docker` group membership fails
+  with `permission denied ... unix:///var/run/docker.sock` — which reads like a
+  target or credential problem and is neither. Check with
+  `docker version` before starting, or run the deploy under `sg docker -c '…'`.
+- **The deploy's kubeconfig context must be the deploy identity's.** Running
+  `aws eks update-kubeconfig` twice with different `--role-arn` values and the
+  same cluster makes both aliases share one user entry, so the "operator" context
+  silently authenticates as the deploy role. Verify with
+  `kubectl --context <ctx> auth can-i get clusterroles` before trusting a probe's
+  identity.
+
