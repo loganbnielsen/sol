@@ -247,7 +247,7 @@ have changed since, and Run 8 is the first attempt that can spend them:
 it to `examples/pluto/sol/qual/aws/us-east-1.yml` with real values. That path is
 deliberately **untracked** — the repository forbids tracking `sol/qual/`
 (`internal/ci/check_no_account_artifacts.sh`), so the run record
-(`docs/qualification/run8-aws-record.md`) carries the target's contents rather than
+(`docs/qualification/2026-09-20-run8-aws.md`) carries the target's contents rather than
 relying on the revision to pin it.
 
 - **The deploy lease is granted** (`INFRA-043`, #370). Every previous attempt
