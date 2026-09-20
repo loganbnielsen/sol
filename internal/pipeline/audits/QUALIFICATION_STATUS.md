@@ -36,6 +36,8 @@ have failed" — it never means "false".
 | FND-0002 | AWS | The provisioner can re-grant itself cluster-admin via `eks:AssociateAccessPolicy` (documented AWS behaviour; the gap is Sol's authority contract) | `DEC-034` (decided) → `INFRA-046` | `DESIGN_GAP` | `FIXED_UNQUALIFIED` (#376) |
 | FND-0004 | GCP | A partially-installed platform was not destructible through `sol cloud destroy` (CRD-backed state, CRDs absent) | `INFRA-042` (DONE) | `VERIFIED_DEFECT` | `FIXED_UNQUALIFIED` |
 | FND-0008 | AWS (render) | Runtime Secret identity mismatch blocked the migration path | `INFRA-040` (DONE 2026-09-20) | `VERIFIED_DEFECT` | `QUALIFIED` (Run 7) |
+| FND-0011 | AWS (live) | The deploy path `kubectl apply`s the Namespace; the deploy identity may only `create` it, so the apply step is Forbidden — on the first deploy and on the migration-gate recovery path alike | `INFRA-048` | `VERIFIED_DEFECT` | `OPEN` (found live in Run 8 step 6; fix in progress) |
+| FND-0012 | AWS (preflight) | A target-level `omit` does not exempt a unit from the profile preflight, which makes whole-workspace deploy impossible while a workspace declares an unqualified language | `INFRA-049` | `VERIFIED_DEFECT` (remedy needs an intent decision) | `OPEN` |
 
 ## Findings without tickets (and why)
 

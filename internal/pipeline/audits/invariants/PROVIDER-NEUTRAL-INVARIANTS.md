@@ -28,6 +28,7 @@ IDs are stable: `INV-<group>-<n>`. The summary table below uses the short form
 | AUTH-3 | Install authority exists only during the transitions requiring it | QUALIFIED (behavioral) | QUALIFIED (behavioral, Attempt 4; window revoked) |
 | AUTH-4 | Revoking bootstrap revokes the *effective* capability (no surviving path) | **DESIGN GAP** (FND-0002) | **DEFECT** (FND-0001) |
 | AUTH-5 | Steady-state identities hold only intended capabilities | QUALIFIED (partial) | GAP (publisher/deployer contract unimplemented; install identity exercised, Attempt 4) |
+| AUTH-6 | An identity Sol provisions may do everything Sol does as it | **DEFECT** (FND-0011/INFRA-048) | not exercised |
 | DESTROY-1 | Every infra-holding state has a Sol path to `Absent` | QUALIFIED (behavioral) | FIXED_UNQUALIFIED (FND-0004; Attempt 4) |
 | DESTROY-2 | Normal activity never makes a target undeletable via the lifecycle | QUALIFIED (behavioral) | FIXED_UNQUALIFIED (FND-0004; missing-CRD recovery) |
 | DESTROY-3 | Provider resource graph stays provider-owned; Sol sequences roots | QUALIFIED (behavioral, AWS-only lifecycle) | MECHANISM |
@@ -252,6 +253,39 @@ an AWS-parity defect to fix here.
 **Open findings/tickets.** FND-0003 (comprehensive four-identity
 effective-permission qualification is the open row ADR 0002 assigns to
 "Finding 6"); FND-0002 for the provisioner's cloud-API path.
+
+---
+
+### INV-AUTH-6 — An identity Sol provisions may do everything Sol does as it
+
+**Statement.** For every identity Sol creates and then acts as, the capability
+contract Sol generates covers the operations Sol's own code issues as that
+identity. A grant narrower than Sol's own behaviour is a defect, not least
+privilege.
+
+**Rationale.** The complement of INV-AUTH-5, and observed to be a distinct
+failure mode. AUTH-5 bounds an identity from above (it must not hold more than
+intended); AUTH-6 bounds it from below (it must not hold less than required). A
+contract can satisfy one and violate the other — and Run 8 showed exactly that: a
+correctly-bounded deploy identity that could not carry out the deploy.
+
+**Realization.** Provider-neutral at the contract level: AWS realizes it as the
+bootstrap root's policy documents plus the EKS access entry group and the
+ClusterRoles in `cli/platform/infra/base/platform_deploy_rbac.tf`; GCP would
+realize it as the four service-account contracts (mostly unimplemented today).
+
+**Qualification.**
+
+| Tier | AWS | GCP |
+|---|---|---|
+| STATIC | the contract and the code can be compared offline — that comparison *is* the check this invariant wants | n/a |
+| MECHANISM | n/a (the boundary is the contract) | not exercised |
+| BEHAVIORAL | **FAILED, Run 8**: the deploy identity refused the `patch` on `namespaces` that Sol's own apply path issued | not exercised |
+
+**Open findings/tickets.** FND-0011 → INFRA-048 (the deploy identity cannot
+reconcile a namespace it manages). The general form — every generated contract
+compared against the operations Sol performs under it, offline — is unowned and
+should be a guard rather than a live discovery.
 
 ---
 
