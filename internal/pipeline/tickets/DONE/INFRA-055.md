@@ -85,3 +85,10 @@ exists-and-identical-is-ok logic must cover both objects, not just the pointer.
 The prune's `list` (`INFRA-051`) — pruning stays best-effort per DEC-037. And
 `INFRA-054`, which must land independently: the guarantee that a failed record fails
 the deploy is what makes this defect visible rather than silent.
+
+## Landed (2026-09-20)
+
+DEC-037 implemented: `get`+`replace` (`create` when absent, no write when identical), needing no generic `patch`; rollback uses the same writer. Live-retested: the pointer advanced off the stale value.
+
+Merged in #395; live-retested against the preserved Run 8 target. See
+`docs/qualification/2026-09-20-run8-aws.md`.
