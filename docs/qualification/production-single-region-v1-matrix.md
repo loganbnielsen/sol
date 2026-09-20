@@ -236,3 +236,48 @@ rather than reasoned about:
 - **The production-profile alert receiver**: a real destination plus an owner who
   can acknowledge (G1–G3). A local sink proves the mechanism only and explicitly
   does not qualify the target (DEC-026 §8).
+
+## Before the next run (Run 8)
+
+Run 7 reached `Ready`, passed the application preflight, passed the migration Job
+for the first time, and then stopped one grant short of a workload. Three things
+have changed since, and Run 8 is the first attempt that can spend them:
+
+- **The deploy lease is granted** (`INFRA-043`, #370). Every previous attempt
+  stopped at `sol-boundary-lease-<workspace>`, so section **B** has never been
+  reached. Run 8 is the first attempt that can pass it.
+- **A failed migration gate now diagnoses itself** (`INFRA-040`, #379). The gate
+  reads the failing Job's evidence out — container waiting reason, and the Job's
+  logs — before anything removes it, and keeps the Job. If the gate fails here,
+  the cause is in the deploy's own output rather than in a second command.
+- **The absence verifier covers EIPs, NAT gateways and EBS volumes**
+  (`INFRA-047`, #376).
+
+### Assertions that ride along at no extra cost
+
+1. **Make the new absence checks fire.** Section H's absence check now queries
+   three resource classes that nothing has ever left behind on purpose. Leave one
+   residual of each class in place at a point `verify_aws_destroy` will observe —
+   or record a real leftover if one appears — so the checks are shown able to
+   fail against real resources, not only against the offline harness's mock
+   (HARDEN-003). A green absence check that has never been seen to go red is not
+   evidence of absence.
+2. **Record the steady-state authority posture as the named identities.** Section
+   F and `I3` are the place for it: as the bounded cluster-access identity, an
+   `aws eks associate-access-policy` attempt must be **denied** (this is FND-0002's
+   behavioural half and the probe plan item 9 asks for), and the steady-state
+   `can-i` results must be recorded *with the identity that produced them* —
+   positive for steady-state operations, negative for `escalate` and `bind`.
+3. **Exercise the migration gate end to end.** Section C's gate passed once in
+   Run 7; `INFRA-044`'s redaction (#376) is on the same path and its behavioural
+   half is a normal failing-then-fixed migration, not a unit test.
+
+### What the run must not do
+
+- Do not attribute a deploy failure to the missing lease: it exists now. If `sol
+  deploy` still stops at the boundary lease, that is a new observation, not the
+  one recorded for Runs 6 and 7.
+- Do not record B or D as passing from a partially deployed workload.
+- The alert receiver is still a blocking input: record G as blocked, not passed,
+  unless a real destination with an owner is in place.
+

@@ -1,8 +1,11 @@
 # FND-0005 — GCP service-networking destruction: documented contract vs live observation
 
 - **Classification:** `QUALIFICATION_GAP`
-- **State:** `OPEN` (observed twice — Attempts 3 and 4; the documented contract is
-  not aligned, and no general upper bound is established)
+- **State:** `OPEN` — observed twice (Attempts 3 and 4); the documented contract is
+  not aligned, no general upper bound is established, and the
+  ABANDON-vs-`REMOVE_PEERING` decision is **recommended but not yet ratified**
+  (recommendation in "Decision input" below: keep `ABANDON`, with the provider
+  upgrade to `>= 8.1` as the trigger to revisit)
 - **First identified:** 2026-09-19 (GCP qualification Attempts 1–3)
 - **Last verified:** 2026-09-19, `main @ 910a59f1` (reconciled after Attempt 4 / #363)
 - **Provider:** GCP (Terraform `google` provider)
@@ -121,6 +124,60 @@ policy it belongs here as a qualification gap and a recommendation, not a ticket
 Decide ABANDON vs `REMOVE_PEERING` with the provider wording as the primary
 input. If ABANDON is kept, record the two observations and the residual
 uncertainty as an accepted design choice rather than an open qualification row.
+
+## Decision input (2026-09-20): the provider version gate
+
+The open question above — "whether the documented `REMOVE_PEERING` policy … is the
+more appropriate choice" — now has a decisive constraint. From
+`terraform-provider-google`'s own CHANGELOG:
+
+> ## 8.1.0 (September 1, 2026)
+> * servicenetworking: added `REMOVE_PEERING` value to `deletion_policy` on
+>   `google_service_networking_connection`, which removes the VPC peering when the
+>   connection cannot be deleted because service producer resources still use it
+>   ([#29036](https://github.com/hashicorp/terraform-provider-google/pull/29036))
+
+Sol pins the provider at `google = { version = "~> 5.25" }`
+(`cli/platform/infra/gcp/main.tf:20-24`), so `REMOVE_PEERING` **cannot be used at
+the pinned version**. Adopting it is a 5.x → 8.x major upgrade of the Google
+provider, which re-opens every other GCP resource in the root to re-verification —
+a separate, larger change with its own qualification, not something to fold into a
+destruction-behaviour decision.
+
+The full documented semantics, verified from the resource page (same source as
+above):
+
+| Value | Documented effect |
+|---|---|
+| `DELETE` (default) | Deleting the resource is allowed. |
+| `PREVENT` | `terraform destroy`/`apply` fails when it would delete the resource. |
+| `ABANDON` | Removes the resource from Terraform management "without updating or deleting the resource in the API"; the VPC peering is left in place, "which will block deletion of the network". |
+| `REMOVE_PEERING` | "The connection is deleted, and if the API refuses because service producer resources still use it, the VPC peering is removed from the network so that the network can be deleted." An "escape hatch, not equivalent to a fully successful `deleteConnection`. Aim it at teardown of ephemeral networks or projects, not routine operations." |
+
+### Recommendation: keep `ABANDON`, and let the provider upgrade be the trigger
+
+1. `REMOVE_PEERING` is documented as the more complete mechanism and costs a major
+   provider upgrade (above). It is not available to this code today.
+2. What Sol does is not bare abandonment. The connection is abandoned, the network
+   is deleted in the same destroy, and `verify_gcp_destroy` then asks the provider
+   for the network **and** the peering. That compensation is what makes the choice
+   defensible: the abandonment is checked by something that can see the abandoned
+   object, and the documented failure ("will block deletion of the network") fails
+   closed instead of stranding a billable resource silently.
+3. `REMOVE_PEERING`'s documented precondition would be satisfiable later: the Cloud
+   SQL instance `depends_on` the connection (`cli/platform/infra/gcp/main.tf:191`),
+   so a destroy removes the instance before the connection — the doc's "only once
+   every service instance reachable through the connection has already been
+   deleted".
+
+So record `ABANDON` as an **accepted design choice with a named trigger**, not an
+open qualification row. Revisit it when the Google provider is upgraded to `>= 8.1`,
+and revisit it immediately if any run observes the documented failure — the network
+still present after the connection was abandoned, with the peering still listed.
+
+Two things must not change while `ABANDON` stands: the post-destroy provider query
+for the peering (it *is* the compensation), and the fail-closed absence recognition
+(#363's `gcp_absence_message`), without which the compensation is blind.
 
 ## Supersession
 
