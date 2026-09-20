@@ -1338,9 +1338,12 @@ target:
    entry (INFRA-025), but Sol_cli_config.terraform_vars never routed the
    target's value there -- so the entry was never created and the module's
    deploy_kubeconfig_command/deploy_kube_context outputs stayed null.
-   operator_role_arn is intentionally NOT a provider-root variable (the AWS
-   root does not declare it), so routing it would make terraform abort the
-   whole command on an undeclared variable. *)
+
+   DEC-038 changed the other half of this: the AWS root now *does* declare
+   operator_role_arn (the operator's read-only EKS access entry), so it is routed
+   too. It used to be excluded precisely because the root did not declare it --
+   which was the reason the operator identity Sol documents could not exist. Same
+   bug class, so the same assertion. *)
 let test_terraform_vars_route_deploy_role_arn () =
   with_temp_dir (fun () ->
     write
@@ -1371,10 +1374,10 @@ target:
            "cluster_access_role_arn is routed"
            (Some "arn:aws:iam::111122223333:role/sol-cluster-access")
            (List.assoc_opt "cluster_access_role_arn" vars);
-         check_bool
-           "operator_role_arn is not a provider-root variable"
-           false
-           (List.mem_assoc "operator_role_arn" vars)))
+         check_str_opt
+           "operator_role_arn is routed to the provider root (DEC-038)"
+           (Some "arn:aws:iam::111122223333:role/sol-operator")
+           (List.assoc_opt "operator_role_arn" vars)))
 ;;
 
 let test_terraform_vars_ecr_repositories_empty_without_app_dir () =

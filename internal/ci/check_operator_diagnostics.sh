@@ -78,6 +78,13 @@ grep -q 'name: sol:operators' "$rbac_doc" ||
 grep -q 'Sol_cli_manifest.operator_role_binding_doc ~ns' "$substrate" ||
   fail "Sol_cli_substrate.ensure never applies the operator binding"
 
+# A declared ARN that never reaches the provider root is exactly how the deploy
+# entry was missed once (HARDEN-002 run 3, finding 11). The root declares
+# operator_role_arn now, so Sol_cli_config.terraform_vars must route it, or the
+# access entry is never created and the identity stays unreachable.
+grep -q 'add_opt "operator_role_arn" target.operator_role_arn' "$root/cli/sol/lib/sol_cli_config.ml" ||
+  fail "operator_role_arn is declared by the AWS root but never routed to it, so no access entry is created"
+
 # ── the cross-check: what the diagnostic path reads, the operator must see ───
 # kubectl's short spellings, mapped to the API resource the grant names.
 canonical() {

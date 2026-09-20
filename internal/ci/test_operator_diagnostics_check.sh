@@ -24,6 +24,7 @@ files=(
   cli/sol/lib/sol_cli_rollout_diagnosis.ml
   cli/sol/bin/cmd_status.ml
   cli/sol/bin/cmd_logs.ml
+  cli/sol/lib/sol_cli_config.ml
 )
 
 seed() {
@@ -117,5 +118,11 @@ assert old in s
 open(p, "w").write(s.replace(old, new, 1))
 PY
 expect_fail "a new read the operator cannot perform"
+
+# ── the declared ARN never reaches the provider root ────────────────────────
+seed
+sed -i 's/        |> add_opt "operator_role_arn" target.operator_role_arn/        |> ignore/' \
+  "$work/root/cli/sol/lib/sol_cli_config.ml"
+expect_fail "an ARN that never reaches the provider root"
 
 echo "operator diagnostics check: every guard rejection reproduced"

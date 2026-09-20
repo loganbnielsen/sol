@@ -1362,9 +1362,18 @@ let terraform_vars ~workspace cfg =
            access entry INFRA-025 added, but was never routed here — so the entry
            was never created and the module's deploy_kubeconfig_command/
            deploy_kube_context outputs stayed null. provider_fields still follow,
-           so a target can override; operator_role_arn is deliberately NOT
-           routed: the AWS root does not declare it. *)
+           so a target can override.
+
+           DEC-038 routes operator_role_arn the same way. It used to be excluded
+           on the grounds that the AWS root did not declare it -- which was true,
+           and was the reason the operator identity Sol documents could not exist:
+           the ARN was parsed, stored, printed in examples, and never reached
+           anything that could act on it. The root now declares it (the operator's
+           read-only EKS access entry), so it is routed here like the others. A
+           declared identity that never reaches the root is the same bug class as
+           the one this comment records. *)
         |> add_opt "deploy_role_arn" target.deploy_role_arn
+        |> add_opt "operator_role_arn" target.operator_role_arn
         |> add_opt "workspace_name" (Some workspace)
       | Sol_cli_provider.Gcp ->
         (* The impersonation grant is GCP's, and only GCP's: the AWS equivalent is the
