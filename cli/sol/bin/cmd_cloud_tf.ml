@@ -382,7 +382,9 @@ let aws_no_ebs_volumes ~region ~cluster_name =
       [ "ec2"
       ; "describe-volumes"
       ; "--filters"
-      ; Printf.sprintf "Name=tag:kubernetes.io/cluster/%s,Values=owned,shared" cluster_name
+      ; Printf.sprintf
+          "Name=tag:kubernetes.io/cluster/%s,Values=owned,shared"
+          cluster_name
       ; "--query"
       ; "Volumes[].VolumeId"
       ; "--output"
@@ -450,11 +452,14 @@ let verify_aws_destroy ~var_files ~vars =
     let eips_gone = aws_no_elastic_ips ~region ~cluster_name in
     let nat_gone = aws_no_nat_gateways ~region ~cluster_name in
     let ebs_gone = aws_no_ebs_volumes ~region ~cluster_name in
-    if not (eks_gone && rds_gone && ecr_gone && elb_gone && eips_gone && nat_gone && ebs_gone)
+    if
+      not
+        (eks_gone && rds_gone && ecr_gone && elb_gone && eips_gone && nat_gone && ebs_gone)
     then exit 1;
     Printf.printf
-      "  AWS verification passed: EKS/RDS/ECR/load-balancers/EIPs/NAT-gateways/\
-       EBS-volumes not found.\n%!"
+      "  AWS verification passed: \
+       EKS/RDS/ECR/load-balancers/EIPs/NAT-gateways/EBS-volumes not found.\n\
+       %!"
 ;;
 
 (* The GCP counterpart. Deliberately its own list rather than a shared "enumerate
