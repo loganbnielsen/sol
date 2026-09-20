@@ -8,21 +8,20 @@ let replace_all ~needle ~replacement text =
     let rec loop offset =
       if offset >= text_len
       then Buffer.contents out
-      else
+      else (
         match String.index_from_opt text offset needle.[0] with
         | None ->
           Buffer.add_substring out text offset (text_len - offset);
           Buffer.contents out
         | Some index ->
-          if index + needle_len <= text_len
-             && String.sub text index needle_len = needle
+          if index + needle_len <= text_len && String.sub text index needle_len = needle
           then (
             Buffer.add_substring out text offset (index - offset);
             Buffer.add_string out replacement;
             loop (index + needle_len))
           else (
             Buffer.add_substring out text offset (index - offset + 1);
-            loop (index + 1))
+            loop (index + 1)))
     in
     loop 0)
 ;;
@@ -32,9 +31,10 @@ let password_span url =
   | None -> None
   | Some scheme_colon ->
     let authority_start = scheme_colon + 3 in
-    if authority_start > String.length url
-       || String.sub url (scheme_colon + 1) (min 2 (String.length url - scheme_colon - 1))
-          <> "//"
+    if
+      authority_start > String.length url
+      || String.sub url (scheme_colon + 1) (min 2 (String.length url - scheme_colon - 1))
+         <> "//"
     then None
     else (
       match String.index_from_opt url authority_start '@' with

@@ -146,7 +146,9 @@ let with_pool url f =
     Eio.Switch.run (fun sw ->
       match Pg_db.create_pool ~url ~sw ~stdenv:(env :> Caqti_eio.stdenv) () with
       | Error e ->
-        Printf.eprintf "error: cannot connect to database: %s\n" (pg_error_to_string ~url e);
+        Printf.eprintf
+          "error: cannot connect to database: %s\n"
+          (pg_error_to_string ~url e);
         exit 1
       | Ok pool -> f ~fs:env#fs pool))
 ;;
@@ -652,7 +654,8 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
           | Ok r ->
             let logs =
               match Sys.getenv_opt "POSTGRES_URL" with
-              | Some url -> Sol_cli_redaction.connection_error ~url r.Sol_cli_process.stdout
+              | Some url ->
+                Sol_cli_redaction.connection_error ~url r.Sol_cli_process.stdout
               | None -> r.Sol_cli_process.stdout
             in
             print_string logs
