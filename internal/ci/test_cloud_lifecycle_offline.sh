@@ -29,6 +29,7 @@ target:
   state_bucket: lifecycle-state
   state_lock_table: lifecycle-lock
   provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+  cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
   # HARDEN-002 run 3, finding 11: must reach the provider root's terraform argv
   # so the module creates the deploy EKS access entry (INFRA-025).
   deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
@@ -99,7 +100,7 @@ JSON
     # cannot reproduce the live `Can't get member 'value' of non-object type
     # null` crash this scenario exists to guard.
     cat <<'JSON'
-{"cluster_name":{"value":"lifecycle-test"},"provisioner_role_arn":{"value":"arn:aws:iam::111122223333:role/sol-provisioner"},"cert_manager_irsa_arn":{"value":"arn:aws:iam::111122223333:role/cert-manager"},"grafana_irsa_arn":{"value":null},"managed_resource_dashboards":{"value":{}}}
+{"cluster_name":{"value":"lifecycle-test"},"cluster_access_role_arn":{"value":"arn:aws:iam::111122223333:role/sol-cluster-access"},"cert_manager_irsa_arn":{"value":"arn:aws:iam::111122223333:role/cert-manager"},"grafana_irsa_arn":{"value":null},"managed_resource_dashboards":{"value":{}}}
 JSON
     ;;
   *" plan "*)
@@ -274,7 +275,7 @@ if [ "$1 $2" = "eks describe-cluster" ] || [ "$1 $2" = "eks describe-addon" ]; t
   printf 'ACTIVE\n'; exit 0
 fi
 [ "$1 $2" = "eks update-kubeconfig" ] || exit 90
-case " $* " in *" --role-arn arn:aws:iam::111122223333:role/sol-provisioner "*) : ;; *) exit 91 ;; esac
+case " $* " in *" --role-arn arn:aws:iam::111122223333:role/sol-cluster-access "*) : ;; *) exit 91 ;; esac
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --kubeconfig ]; then shift; path="$1"; break; fi
   shift

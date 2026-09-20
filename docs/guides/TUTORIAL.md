@@ -759,7 +759,7 @@ sol cloud apply prod/aws/us-east-1 --var-file prod.tfvars
 sol cloud apply prod/aws/us-east-1 --var cluster_name=acme-prod --var db_password=...
 ```
 
-During platform reconciliation Sol creates an ephemeral kubeconfig for the declared provisioner identity. It passes that file explicitly to child processes and removes it afterward; it does not read or update the user's ambient kubeconfig. Installing the platform is privileged platform establishment (ADR 0003): the provisioner holds a temporary managed cluster-admin association through the full platform apply and verified readiness, and Sol revokes it before leaving the target Ready — the steady-state provisioner never holds `escalate`/`bind`. On success the command prints the non-sensitive provisioned endpoints:
+During platform reconciliation Sol creates an ephemeral kubeconfig for the declared steady-state cluster-access identity, separate from the cloud-provisioning identity. It passes that file explicitly to child processes and removes it afterward; it does not read or update the user's ambient kubeconfig. Installing the platform is privileged platform establishment (ADR 0003): the cluster-access identity holds a temporary managed cluster-admin association through the full platform apply and verified readiness, and Sol revokes it before leaving the target Ready. In steady state it holds neither Kubernetes `escalate`/`bind` nor IAM access-entry/policy-association mutation. On success the command prints the non-sensitive provisioned endpoints:
 
 ```
   cluster_name                  acme-prod
@@ -771,7 +771,7 @@ During platform reconciliation Sol creates an ephemeral kubeconfig for the decla
 
 Sensitive outputs (database passwords, connection strings) are never printed; retrieve them with `terraform output -raw <name>` if needed.
 
-**Prerequisites:** `terraform`, `aws`, and `kubectl` in PATH; AWS credentials for the declared provisioner; and a target declaring the bootstrap-created `state_bucket`, `state_lock_table`, and `provisioner_role_arn`.
+**Prerequisites:** `terraform`, `aws`, and `kubectl` in PATH; AWS credentials for the declared cloud provisioner; and a target declaring the bootstrap-created `state_bucket`, `state_lock_table`, `provisioner_role_arn`, and distinct `cluster_access_role_arn`.
 The target must also declare `base_domain` and `letsencrypt_email`, which are required platform inputs validated before any platform mutation.
 
 **Point DNS at the ingress** before any service with an `ingress_host` in its `sol.toml` is reachable:

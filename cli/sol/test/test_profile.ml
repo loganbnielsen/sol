@@ -623,6 +623,7 @@ let test_world_reachable_endpoint_is_rejected () =
       "target:\n\
       \  profile: production-single-region\n\
       \  provisioner_role_arn: arn:aws:iam::1:role/provisioner\n\
+      \  cluster_access_role_arn: arn:aws:iam::1:role/cluster-access\n\
       \  deploy_role_arn: arn:aws:iam::1:role/deploy\n\
       \  operator_role_arn: arn:aws:iam::1:role/operator\n\
       \  cluster_endpoint_cidr: 0.0.0.0/0\n";
@@ -646,6 +647,7 @@ let test_scoped_identities_established () =
       "target:\n\
       \  profile: production-single-region\n\
       \  provisioner_role_arn: arn:aws:iam::1:role/provisioner\n\
+      \  cluster_access_role_arn: arn:aws:iam::1:role/cluster-access\n\
       \  deploy_role_arn: arn:aws:iam::1:role/deploy\n\
       \  operator_role_arn: arn:aws:iam::1:role/operator\n\
       \  cluster_endpoint_cidr: 203.0.113.0/24\n";

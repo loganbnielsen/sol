@@ -158,6 +158,7 @@ let establish
       List.filter_map
         (fun (name, value) -> if present value then None else Some name)
         [ "provisioner_role_arn", target.provisioner_role_arn
+        ; "cluster_access_role_arn", target.cluster_access_role_arn
         ; "deploy_role_arn", target.deploy_role_arn
         ; "operator_role_arn", target.operator_role_arn
         ]

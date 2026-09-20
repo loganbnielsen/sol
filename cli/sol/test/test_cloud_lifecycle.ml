@@ -25,6 +25,7 @@ let target : Sol_cli_config.target =
   ; state_bucket = Some "acme-state"
   ; state_lock_table = Some "acme-lock"
   ; provisioner_role_arn = Some "arn:aws:iam::1:role/provisioner"
+  ; cluster_access_role_arn = Some "arn:aws:iam::1:role/cluster-access"
   ; deploy_role_arn = None
   ; operator_role_arn = None
   ; cluster_endpoint_cidr = None
@@ -42,7 +43,9 @@ let valid_outputs () =
   `Assoc
     [ output "cluster_name" ~value:(`String "acme-prod")
     ; output "kubeconfig_command"
-    ; output "provisioner_role_arn" ~value:(`String "arn:aws:iam::1:role/provisioner")
+    ; output
+        "cluster_access_role_arn"
+        ~value:(`String "arn:aws:iam::1:role/cluster-access")
     ; output "cert_manager_irsa_arn" ~value:(`String "arn:aws:iam::1:role/cert-manager")
     ; output "loki_s3_bucket" ~value:(`String "loki")
     ; output "loki_irsa_arn" ~value:(`String "loki-role")
@@ -190,6 +193,7 @@ let gcp_target () =
   ; region = "us-central1"
   ; state_lock_table = None
   ; provisioner_role_arn = None
+  ; cluster_access_role_arn = None
   ; kube_context =
       Some "gke_sol-qualification_us-central1_sol"
       (* The base target names a ClusterIssuer; this one deliberately does not, so
@@ -526,6 +530,7 @@ let test_backends () =
     ; region = "us-central1"
     ; state_lock_table = None
     ; provisioner_role_arn = None
+    ; cluster_access_role_arn = None
     ; kube_context = Some "gke_sol-qualification_us-central1_sol"
     }
   in
@@ -570,6 +575,7 @@ let test_cloud_target () =
     ; region = "us-central1"
     ; state_lock_table = None
     ; provisioner_role_arn = None
+    ; cluster_access_role_arn = None
     ; kube_context = Some "gke_sol-qualification_us-central1_sol"
     }
   in
@@ -577,20 +583,20 @@ let test_cloud_target () =
   Alcotest.(check bool)
     "AWS carries the provisioner role it must assume"
     true
-    (aws.provisioner_role_arn = Some "arn:aws:iam::1:role/provisioner");
+    (aws.cluster_access_role_arn = Some "arn:aws:iam::1:role/cluster-access");
   let gcp = Result.get_ok (L.cloud_target gcp) in
   Alcotest.(check bool)
     "GCP carries no role ARN and is not refused for it"
     true
-    (gcp.provisioner_role_arn = None);
+    (gcp.cluster_access_role_arn = None);
   Alcotest.(check string) "region travels from the target" "us-central1" gcp.target.region;
   Alcotest.(check (list string))
     "the target's own backends are the ones selected"
     [ "bucket=acme-state"; "prefix=sol/prod/gcp/us-central1/platform.tfstate" ]
     gcp.platform_backend;
-  (match L.cloud_target { target with provisioner_role_arn = None } with
+  (match L.cloud_target { target with cluster_access_role_arn = None } with
    | Error _ -> ()
-   | Ok _ -> Alcotest.fail "an AWS target without a provisioner role must be refused");
+   | Ok _ -> Alcotest.fail "an AWS target without a cluster-access role must be refused");
   match L.cloud_target { target with base_domain = None } with
   | Error _ -> ()
   | Ok _ -> Alcotest.fail "a target without a base domain must be refused"

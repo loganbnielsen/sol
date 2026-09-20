@@ -295,6 +295,9 @@ jobs:
       - name: Check GCP provisioner IAM boundary
         run: internal/ci/test_gcp_provisioner_role.sh
 
+      - name: Check steady-state cluster-access identity boundary
+        run: internal/ci/test_cluster_access_identity.sh
+
       - name: Destroy-completeness guard mutation test (INFRA-037)
         run: internal/ci/test_destroy_completeness_check.sh
 

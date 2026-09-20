@@ -33,6 +33,7 @@ type target =
   ; state_bucket : string option
   ; state_lock_table : string option
   ; provisioner_role_arn : string option
+  ; cluster_access_role_arn : string option
   ; deploy_role_arn : string option
   ; operator_role_arn : string option
   ; cluster_endpoint_cidr : string option
@@ -101,6 +102,7 @@ let target_empty =
   ; state_bucket = None
   ; state_lock_table = None
   ; provisioner_role_arn = None
+  ; cluster_access_role_arn = None
   ; deploy_role_arn = None
   ; operator_role_arn = None
   ; cluster_endpoint_cidr = None
@@ -263,6 +265,7 @@ type target_key =
   | Target_state_bucket
   | Target_state_lock_table
   | Target_provisioner_role_arn
+  | Target_cluster_access_role_arn
   | Target_deploy_role_arn
   | Target_operator_role_arn
   | Target_cluster_endpoint_cidr
@@ -291,6 +294,7 @@ let target_key_of_string s =
   | "state_bucket" -> Target_state_bucket
   | "state_lock_table" -> Target_state_lock_table
   | "provisioner_role_arn" -> Target_provisioner_role_arn
+  | "cluster_access_role_arn" -> Target_cluster_access_role_arn
   | "deploy_role_arn" -> Target_deploy_role_arn
   | "operator_role_arn" -> Target_operator_role_arn
   | "cluster_endpoint_cidr" -> Target_cluster_endpoint_cidr
@@ -321,6 +325,7 @@ let target_key_name = function
   | Target_state_bucket -> "state_bucket"
   | Target_state_lock_table -> "state_lock_table"
   | Target_provisioner_role_arn -> "provisioner_role_arn"
+  | Target_cluster_access_role_arn -> "cluster_access_role_arn"
   | Target_deploy_role_arn -> "deploy_role_arn"
   | Target_operator_role_arn -> "operator_role_arn"
   | Target_cluster_endpoint_cidr -> "cluster_endpoint_cidr"
@@ -586,6 +591,9 @@ let load path =
                           | Target_provisioner_role_arn ->
                             let* v = scalar k v in
                             Ok { current with provisioner_role_arn = Some v }
+                          | Target_cluster_access_role_arn ->
+                            let* v = scalar k v in
+                            Ok { current with cluster_access_role_arn = Some v }
                           | Target_deploy_role_arn ->
                             let* v = scalar k v in
                             Ok { current with deploy_role_arn = Some v }
@@ -820,6 +828,7 @@ let merge_target a b =
   ; state_bucket = prefer a.state_bucket b.state_bucket
   ; state_lock_table = prefer a.state_lock_table b.state_lock_table
   ; provisioner_role_arn = prefer a.provisioner_role_arn b.provisioner_role_arn
+  ; cluster_access_role_arn = prefer a.cluster_access_role_arn b.cluster_access_role_arn
   ; deploy_role_arn = prefer a.deploy_role_arn b.deploy_role_arn
   ; operator_role_arn = prefer a.operator_role_arn b.operator_role_arn
   ; cluster_endpoint_cidr = prefer a.cluster_endpoint_cidr b.cluster_endpoint_cidr
@@ -938,6 +947,7 @@ let target_of_path s =
           ; state_bucket = None
           ; state_lock_table = None
           ; provisioner_role_arn = None
+          ; cluster_access_role_arn = None
           ; deploy_role_arn = None
           ; operator_role_arn = None
           ; cluster_endpoint_cidr = None
@@ -1346,6 +1356,7 @@ let terraform_vars ~workspace cfg =
         shared
         |> add_opt "cluster_endpoint_cidr" target.cluster_endpoint_cidr
         |> add_opt "provisioner_role_arn" target.provisioner_role_arn
+        |> add_opt "cluster_access_role_arn" target.cluster_access_role_arn
         (* HARDEN-002 run 3, finding 11: deploy_role_arn is declared by the
            provider root (cli/platform/infra/aws) and drives the deploy EKS
            access entry INFRA-025 added, but was never routed here — so the entry

@@ -186,7 +186,13 @@ variable "enable_cluster_creator_admin" {
 }
 
 variable "provisioner_role_arn" {
-  description = "Named AWS provisioner principal authenticated to EKS for the platform lifecycle."
+  description = "Named AWS cloud-provisioning principal. This identity reconciles the cloud substrate and bootstrap access association; it is not used for steady-state Kubernetes access."
+  type        = string
+  default     = ""
+}
+
+variable "cluster_access_role_arn" {
+  description = "Named AWS steady-state cluster-access principal authenticated to EKS for the scoped platform lifecycle. Its IAM policy must not grant access-entry, policy-association, or IAM mutation."
   type        = string
   default     = ""
 }

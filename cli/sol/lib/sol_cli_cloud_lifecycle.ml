@@ -1,6 +1,6 @@
 type aws_outputs =
   { cluster_name : string
-  ; provisioner_role_arn : string
+  ; cluster_access_role_arn : string
   ; cert_manager_irsa_role_arn : string
   ; loki_s3_bucket : string option
   ; loki_irsa_role_arn : string option
@@ -65,7 +65,7 @@ type cloud_target =
   ; platform_backend : string list
   ; base_domain : string
   ; letsencrypt_email : string
-  ; provisioner_role_arn : string option
+  ; cluster_access_role_arn : string option
   }
 
 let required name = function
@@ -79,10 +79,12 @@ let cloud_target target =
   let* platform_backend = backend_config target ~root:`Platform in
   let* base_domain = required "base_domain" target.Sol_cli_config.base_domain in
   let* letsencrypt_email = required "letsencrypt_email" target.letsencrypt_email in
-  let* provisioner_role_arn =
+  let* cluster_access_role_arn =
     match target.provider with
     | Sol_cli_provider.Aws ->
-      Result.map Option.some (required "provisioner_role_arn" target.provisioner_role_arn)
+      Result.map
+        Option.some
+        (required "cluster_access_role_arn" target.cluster_access_role_arn)
     | Sol_cli_provider.Gcp -> Ok None
   in
   Ok
@@ -91,7 +93,7 @@ let cloud_target target =
     ; platform_backend
     ; base_domain
     ; letsencrypt_email
-    ; provisioner_role_arn
+    ; cluster_access_role_arn
     }
 ;;
 
@@ -158,7 +160,7 @@ let aws_outputs_of_json text =
     let value, string, optional_string = outputs_reader ~provider:"AWS" text in
     let ( let* ) = Result.bind in
     let* cluster_name = string "cluster_name" in
-    let* provisioner_role_arn = string "provisioner_role_arn" in
+    let* cluster_access_role_arn = string "cluster_access_role_arn" in
     let* cert_manager_irsa_role_arn = string "cert_manager_irsa_arn" in
     let* loki_s3_bucket = optional_string "loki_s3_bucket" in
     let* loki_irsa_role_arn = optional_string "loki_irsa_arn" in
@@ -170,7 +172,7 @@ let aws_outputs_of_json text =
     | `Assoc _ ->
       Ok
         { cluster_name
-        ; provisioner_role_arn
+        ; cluster_access_role_arn
         ; cert_manager_irsa_role_arn
         ; loki_s3_bucket
         ; loki_irsa_role_arn
@@ -255,7 +257,7 @@ let cluster_name = function
   | Gcp_outputs outputs -> outputs.cluster_name
 ;;
 
-let provisioner_role_arn (outputs : aws_outputs) = outputs.provisioner_role_arn
+let cluster_access_role_arn (outputs : aws_outputs) = outputs.cluster_access_role_arn
 
 (* HARDEN-002 run 4, finding 12. The base-platform providers are hashicorp/
    kubernetes and hashicorp/helm, configured implicitly (cli/platform/infra/base
@@ -289,9 +291,9 @@ let platform_inputs (target : cloud_target) (outputs : cloud_outputs) =
      target's declaration is what authorized it, so a mismatch means the platform
      would be wired to an identity Sol did not validate. Providers without a
      role-shaped identity have nothing to compare. *)
-  match target.provisioner_role_arn, outputs with
-  | Some arn, Aws_outputs aws when arn <> provisioner_role_arn aws ->
-    Error "AWS provisioner_role_arn output does not match the validated target"
+  match target.cluster_access_role_arn, outputs with
+  | Some arn, Aws_outputs aws when arn <> cluster_access_role_arn aws ->
+    Error "AWS cluster_access_role_arn output does not match the validated target"
   | _ ->
     Ok
       { base_domain = target.base_domain

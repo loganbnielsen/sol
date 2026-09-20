@@ -67,3 +67,21 @@ the in-cluster roles.
 **Demo/example coverage:** Not applicable.
 
 **TypeScript parity:** No language-parity impact.
+
+## Implementation record (2026-09-19)
+
+Implemented on `codex/infra-046` without a provider run:
+
+- `provisioner_role_arn` remains the cloud-provisioning declaration;
+  `cluster_access_role_arn` is now a distinct required AWS lifecycle field and
+  owns the EKS access entry used by scoped platform paths.
+- the bootstrap root emits a discovery-only cluster-access IAM policy with
+  explicit access-entry, policy-association, and `iam:*` denies;
+- `internal/ci/test_cluster_access_identity.sh` pins the split and proves the
+  guard rejects both a removed deny and a newly allowed mutation;
+- ADR 0002/0003, the production bootstrap guide, tutorial, and matrix I3 now
+  state the two-identity model.
+
+Static/unit acceptance is complete. The required recorded denial under the
+real steady-state identity remains qualification evidence for the next AWS live
+run; this implementation performed no live/provider operation.
