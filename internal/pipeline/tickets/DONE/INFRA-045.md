@@ -152,3 +152,16 @@ Implemented on `codex/infra-045` without a provider run:
 Static/mechanism acceptance is complete. The before/after denied operation and
 probe falsification remain evidence for the next GCP live qualification; this
 implementation performed no live/provider operation.
+
+## Landed (2026-09-20)
+
+Merged in #376 (FND-0001). The project-level predefined `roles/container.developer` grant
+is replaced by a custom role holding only `container.clusters.get`, `.list`,
+`.getCredentials` and `.connect`; `check_gcp_provisioner_role.sh` and its mutation test
+pin the four-item allowlist and reject the predefined role returning. The code comment and
+the inventory's "Kubernetes access" row now state the real model (RBAC first, IAM
+fallback).
+
+**Outstanding (behavioural, FND-0001 stays `FIXED_UNQUALIFIED`):** GCP Attempt 5 must show
+the platform stage still reaching the cluster with this narrowed role, and a
+Kubernetes-object operation denied. The static guard can establish neither.

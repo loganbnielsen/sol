@@ -73,3 +73,18 @@ What the offline harness cannot show is that a *real* leftover matches these
 filters; the first run that exercises this verifier should plant or observe one
 residual of each class, as HARDEN-003 requires of any absence check.
 
+
+## Landed (2026-09-20)
+
+Merged in #376. `verify_aws_destroy` now fails closed on residual elastic IPs, NAT gateways
+and EBS volumes. The offline lifecycle harness requires all three queries on a successful
+destroy (so a missing check cannot pass on the mock's empty default) and mutates each
+residual class in independently.
+
+The `tag:Name` filters were verified against the module that creates the resources:
+`terraform-aws-modules/vpc/aws` v5.7.0 and v5.8.1 name both `aws_eip.nat` and
+`aws_nat_gateway.this` `<cluster>-<az>`, and the root passes `name = var.cluster_name`.
+
+**Outstanding (behavioural):** Run 8 should plant or observe one residual of each class, so
+the check is demonstrated able to fire against real resources rather than only against the
+harness mock (HARDEN-003).

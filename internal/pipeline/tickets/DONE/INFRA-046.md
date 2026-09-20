@@ -85,3 +85,16 @@ Implemented on `codex/infra-046` without a provider run:
 Static/unit acceptance is complete. The required recorded denial under the
 real steady-state identity remains qualification evidence for the next AWS live
 run; this implementation performed no live/provider operation.
+
+## Landed (2026-09-20)
+
+Merged in #376 (DEC-034, FND-0002). The bounded `cluster_access` policy contract allows
+cluster discovery and explicitly denies access-entry/policy-association mutation and all
+`iam:*`; the EKS access entry (carrying the temporary bootstrap-admin association) now
+belongs to that identity, so the install window still applies to the identity whose
+kubeconfig is used; `cluster_access_role_arn` is AWS-only. `check_cluster_access_identity.sh`
+and its mutation test pass. ADR 0002, ADR 0003, `production-bootstrap.md` and matrix row I3
+no longer carry the single-provisioner escalation claim.
+
+**Outstanding (behavioural, FND-0002 stays `FIXED_UNQUALIFIED`):** a run must record that
+the steady-state identity's `aws eks associate-access-policy` attempt is denied (plan item 9).

@@ -1,11 +1,11 @@
 # FND-0001 — GCP provisioner IAM role grants Kubernetes API authority
 
 - **Classification:** `VERIFIED_DEFECT`
-- **State:** `OPEN` (INFRA-045 not implemented; the boundary is not qualified)
+- **State:** `FIXED_UNQUALIFIED` — the narrowed role and its guard landed in #376; a live run must still confirm the platform stage reaches the cluster with it and that a Kubernetes-object operation is denied
 - **First identified:** 2026-09-19 (provider-contract verification pass)
 - **Last verified:** 2026-09-19, `main @ 910a59f1`
 - **Provider:** GCP / GKE
-- **Derived ticket:** **INFRA-045** (`internal/pipeline/tickets/READY_FOR_ENGINEERING/INFRA-045.md`)
+- **Derived ticket:** **INFRA-045** (`internal/pipeline/tickets/DONE/INFRA-045.md`)
 - **Related invariant:** `INV-AUTH-2`, `INV-AUTH-4`
 - **Related decisions:** ADR 0002 (identity table), ADR 0003 (invariant 2)
 - **Governing report:** `../2026-09-19_provider_contract_verification.md`
