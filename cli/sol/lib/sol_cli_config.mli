@@ -32,6 +32,9 @@ type target =
     (** AUDIT-072: named identities distinct from the cluster-creator admin.
         Sol generates the least-privilege policy contracts; the operator
         supplies the role ARNs. *)
+  ; cluster_access_role_arn : string option
+    (** DEC-034: bounded steady-state AWS identity used for Kubernetes access,
+        separate from the cloud-provisioning identity above. *)
   ; deploy_role_arn : string option
   ; operator_role_arn : string option
   ; cluster_endpoint_cidr : string option

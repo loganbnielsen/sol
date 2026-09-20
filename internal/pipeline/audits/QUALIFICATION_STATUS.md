@@ -134,7 +134,7 @@ qualification evidence** (they are defect-discovery history only).
 | Destroy from partial install | FIXED_UNQUALIFIED, observed live | Attempt 4 completed the documented destroy; INFRA-042 (DONE) |
 | Service-networking peering absence | QUALIFIED (behavioral, Attempts 3+4) | verified by provider API, not Terraform exit status |
 | Cloud SQL deletion protection / prepare | MECHANISM (prepared and verified 21 s) | Attempt 2 |
-| GCP query matrix / equivalent profile | **does not exist** | inventory remaining gap 7 |
+| GCP query matrix / equivalent profile | **EXISTS, NOT RUN** | `gcp-production-single-region-v1-matrix.tsv`; verifier and mutation test make missing/failing/weak-evidence rows fail |
 
 ---
 

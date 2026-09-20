@@ -6,7 +6,7 @@ val backend_config
   -> (string list, string) result
 
 val aws_outputs_of_json : string -> (aws_outputs, string) result
-val provisioner_role_arn : aws_outputs -> string
+val cluster_access_role_arn : aws_outputs -> string
 
 (** GCP's cloud-root contract. A separate type rather than a relabelled
     [aws_outputs], because the two providers publish different facts: a GCP root
@@ -42,7 +42,7 @@ val cluster_name : cloud_outputs -> string
 val provisioner_kube_env : string -> (string * string) list
 
 (** The provider-neutral facts a lifecycle operation needs from a target, plus the
-    backend config each provider's roots expect. [provisioner_role_arn] is
+    backend config each provider's roots expect. [cluster_access_role_arn] is
     [None] on a provider whose caller is not a role-assuming one -- the field is
     optional rather than empty so "names no role" and "names an empty role" cannot
     be confused. *)
@@ -52,7 +52,7 @@ type cloud_target =
   ; platform_backend : string list
   ; base_domain : string
   ; letsencrypt_email : string
-  ; provisioner_role_arn : string option
+  ; cluster_access_role_arn : string option
   }
 
 val cloud_target : Sol_cli_config.target -> (cloud_target, string) result

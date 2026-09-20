@@ -30,6 +30,12 @@
 > the `Absent` postcondition, do-not-build-cert-manager-speculatively, no static
 > service-account keys, do-not-weaken-AWS — are listed there too.
 >
+> **Executable contract:**
+> `docs/qualification/gcp-production-single-region-v1-matrix.md` and its adjacent
+> TSV map every provider-neutral invariant to a GCP scenario. The verifier makes
+> missing, failing, or insufficiently evidenced rows fail the run; the matrix is
+> not evidence that any currently unqualified capability passes.
+>
 
 **Inventory date:** 2026-09-18 (America/Denver)
 
@@ -330,7 +336,7 @@ semantic boundaries and use the fewest principals that enforce them.
 | Deployer | Identity authorized to fetch GKE credentials plus Sol's namespace-scoped deploy RBAC, but unable to push images or provision infrastructure. CI may use the same external identity provider as publisher while impersonating a different service account for each operation. |
 | Workload identity | Workload Identity Federation for GKE, direct principal IAM grants where supported; linked Google service accounts only for APIs/tools requiring them. |
 | Remote Terraform state | Dedicated GCS bucket with uniform access, versioning, encryption, public-access prevention, and native backend locking. Use deterministic `sol/<target>/cloud.tfstate` and `sol/<target>/platform.tfstate` prefixes. Bootstrap state remains the unavoidable separate bootstrap boundary. |
-| Kubernetes access | Ephemeral kubeconfig from `gcloud container clusters get-credentials`, isolated per phase. IAM establishes cluster discovery/credential access; Kubernetes RBAC establishes Sol authority. Never use ambient kubeconfig. |
+| Kubernetes access | Ephemeral kubeconfig from `gcloud container clusters get-credentials`, isolated per phase. GKE evaluates RBAC first and Google IAM as a fallback, so the provisioner's custom IAM role is deliberately limited to cluster discovery, credential retrieval, and control-plane connection; scoped Kubernetes-object authority comes from RBAC. Never use ambient kubeconfig. |
 | Database | Private-IP Cloud SQL for PostgreSQL 16, regional HA, PITR/backups, API-level `settings.deletion_protection_enabled` in `Ready`, and an explicit destroy preparation. Terraform's top-level `deletion_protection` is a useful second guard but is not the live GCP protection predicate. Keep credentials out of plans/logs; choose password rotation or IAM database authentication deliberately during implementation. |
 | Registry | Regional Artifact Registry Docker repository, digest deployment, repository-scoped writer/reader permissions. |
 | DNS/TLS | Conditional on workloads declaring `ingress_host`. Use Cloud DNS only when Sol is delegated the qualification zone; otherwise consume operator-managed records. Keep ingress-nginx plus cert-manager/ACME for contract parity, but replace the hard-coded Route 53 DNS-01 solver with Cloud DNS plus a scoped GKE workload identity, or with the selected external provider's qualified solver before TLS capability qualification. |
@@ -844,12 +850,16 @@ above is the evidence behind it.
    for GCP: retention.** Sol refuses a GCP target whose `destroy_retention` is the
    `final-snapshot` default, because Cloud SQL destroys its backups with the instance
    and "closest available behaviour" would discard recovery data silently.
-7. **(Closed) Offline qualification/preflight coverage for the GCP path.** The
+7. **(Closed) Offline qualification/preflight coverage and executable contract
+   for the GCP path.** The
    lifecycle harness runs GCP plan and destroy against stubs that model the real
    tools, including the credential fail-closed path, the missing-toolchain refusal,
-   and the INFRA-042 partial-install recovery with its fail-closed opposite. A GCP
-   counterpart to `production-single-region-v1-matrix.md` remains to be written when
-   GCP has capabilities to record in it.
+   and the INFRA-042 partial-install recovery with its fail-closed opposite.
+   `gcp-production-single-region-v1-matrix.tsv` now carries one executable row per
+   provider-neutral invariant. `internal/qualification/gcp/verify-matrix.sh`
+   rejects incomplete, failing, unknown, duplicate, evidence-less, and weakly
+   evidenced results; its mutation test pins those failure directions. Rows describe
+   the contract even when the current GCP implementation cannot pass them.
 8. **(Closed) Typed GCP cloud outputs and platform input mapping.** `gcp_outputs`,
    its parser and its platform variable set are provider-shaped, and `cloud_outputs`
    is the one thing the lifecycle carries; a capability the provider's root cannot

@@ -57,6 +57,7 @@ and declare the three ARNs `sol deploy` actually reads:
 ```yaml
 target:
   provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+  cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
   deploy_role_arn:      arn:aws:iam::111122223333:role/sol-deploy
   operator_role_arn:    arn:aws:iam::111122223333:role/sol-operator
   cluster_endpoint_cidr: 203.0.113.0/24
@@ -119,13 +120,15 @@ target:
 ## 3. No standing cluster-creator admin
 
 The AWS module sets `enable_cluster_creator_admin_permissions = false`. During
-`sol cloud apply`, the named provisioner holds temporary EKS bootstrap admin
+`sol cloud apply`, the separate cluster-access identity holds temporary EKS bootstrap admin
 access for the whole privileged `PlatformInstalling` phase — the full platform
 apply and verified readiness — because installing cluster-wide software that
 mints RBAC is itself privileged platform establishment (ADR 0003). Sol then
 removes the managed admin association and verifies the effective positive and
-negative RBAC boundary, so the steady-state provisioner never holds
-`escalate`/`bind` and cannot manufacture a more powerful identity. An interrupted
+negative RBAC boundary. Its IAM policy permits cluster discovery and credential
+retrieval but explicitly denies access-entry/policy-association and all `iam:*`
+mutation, so the steady-state identity cannot recreate that grant. The cloud
+provisioner remains responsible for substrate and bootstrap-access mutation. An interrupted
 run is safely re-runnable and reconciles that temporary association away; it is
 not the steady-state access model.
 
@@ -289,10 +292,12 @@ not relaxed for convenience. Destruction is an explicit lifecycle:
    otherwise the delete fails with `DBSnapshotAlreadyExists`;
 4. `terraform destroy` completes;
 5. absence is verified independently. `verify_aws_destroy`, which `sol cloud
-   destroy` runs, covers EKS, RDS, ECR and load balancers. The live smoke harness
+   destroy` runs, covers EKS, RDS, ECR, load balancers, elastic IPs, NAT gateways,
+   and target-tagged EBS volumes. The live smoke harness
    (`internal/qualification/aws/live-smoke.sh`) additionally asserts the VPC is gone after its
-   own `sol cloud destroy`. **Nothing automated checks elastic IPs, NAT gateways
-   or EBS volumes** — those remain the manual sweep recorded in HARDEN-002.
+   own `sol cloud destroy`. The verifier fails closed when any of those provider
+   queries errors or returns a resource; an operator sweep remains useful as
+   independent evidence, but it is no longer the only EIP/NAT/EBS check.
    Volumes are worth the operator's attention from this release onward: the EBS
    CSI driver and default gp3 StorageClass (see *Platform storage* above) are what
    first make dynamically provisioned EBS volumes possible on this substrate. The

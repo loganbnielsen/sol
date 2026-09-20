@@ -163,3 +163,8 @@ rather than being dropped.
   was found to be unable to recognise gcloud's actual 404 wording, and fixed.
 - **Attempt 5 (next)** — past cert-manager to platform `Ready`, per "Current
   frontier" above.
+- **GCP invariant matrix (offline)** — the provider-neutral invariant inventory is
+  expressed as GCP scenarios in
+  `docs/qualification/gcp-production-single-region-v1-matrix.tsv`; the checked-in
+  verifier makes missing, failing, or insufficiently evidenced rows non-conformant.
+  This is an executable contract only and does not promote any row to qualified.

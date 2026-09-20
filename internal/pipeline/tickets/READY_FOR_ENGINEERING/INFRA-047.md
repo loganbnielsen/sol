@@ -46,3 +46,30 @@ now recognises gcloud's real 404 wording).
 **Demo/example coverage:** Not applicable.
 
 **TypeScript parity:** No language-parity impact.
+
+## Implementation
+
+`verify_aws_destroy` now queries target-named elastic IPs and NAT gateways and
+target-tagged EBS volumes after Terraform destroy.  Each check reports its own
+resource class, rejects a non-empty result, and fails closed on AWS CLI errors.
+
+The offline lifecycle harness requires all three empty-result queries on a
+successful destroy, then mutates each result independently to contain a residual
+resource and requires the public destroy command to fail with the corresponding
+diagnostic.  This exercises both directions without provider access.
+
+### Why the `tag:Name` filters can actually match
+
+The EIP and NAT checks select on `Name=tag:Name,Values=<cluster_name>-*`. That
+looks like it could be a check that never fires, so it was verified against the
+module that creates those resources: `terraform-aws-modules/vpc/aws` v5.7.0 and
+v5.8.1 both tag `aws_eip.nat` and `aws_nat_gateway.this` with
+`Name = "${var.name}-%s"`, and `cli/platform/infra/aws/main.tf` passes
+`name = var.cluster_name`.  The filter therefore matches the resources this root
+creates, for both the single-NAT and HA shapes.  EBS volumes are selected by the
+standard `kubernetes.io/cluster/<cluster>` tag the CSI driver applies.
+
+What the offline harness cannot show is that a *real* leftover matches these
+filters; the first run that exercises this verifier should plant or observe one
+residual of each class, as HARDEN-003 requires of any absence check.
+
