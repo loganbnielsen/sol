@@ -135,3 +135,20 @@ boundary.
 configuration, not a user-facing surface.
 
 **TypeScript parity:** No language-parity impact.
+
+## Implementation record (2026-09-19)
+
+Implemented on `codex/infra-045` without a provider run:
+
+- replaced the project-level `roles/container.developer` binding with a
+  target-named custom role containing only
+  `container.clusters.get`, `list`, `getCredentials`, and `connect`;
+- corrected the GCP root and inventory to state the real RBAC-first, IAM-fallback
+  authorization model;
+- added `internal/ci/test_gcp_provisioner_role.sh`, which proves the structural
+  guard rejects both a restored predefined developer role and an injected
+  workload-write permission.
+
+Static/mechanism acceptance is complete. The before/after denied operation and
+probe falsification remain evidence for the next GCP live qualification; this
+implementation performed no live/provider operation.
