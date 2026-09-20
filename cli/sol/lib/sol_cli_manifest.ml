@@ -146,21 +146,49 @@ let kubectl_apply ~ctx tmp =
     raise (Deploy_failed ("kubectl apply failed: " ^ Sol_cli_process.error_to_string e))
 ;;
 
-let apply_live ~ctx yaml =
+(* INFRA-048 / FND-0011: a namespace Sol created is established with [create],
+   never [apply].
+
+   The deploy identity's bootstrap grant is create-only by design
+   (cli/platform/infra/base/platform_deploy_rbac.tf, sol-deploy-bootstrap), and
+   both that file and Sol_cli_substrate state the assumption this function
+   satisfies: idempotency comes from tolerating "AlreadyExists" on [create], not
+   from [kubectl apply]'s patch, which the identity does not have for namespaces.
+
+   Applying an existing namespace needs [patch] and is refused -- and the
+   substrate step always creates the namespace before this runs, so applying it
+   could only ever fail. That is how both the first deploy and the migration-gate
+   recovery path failed on a live target. *)
+let create_idempotent ~ctx ~file =
+  match Sol_cli_kubectl.create ~ctx ~file with
+  | Error err -> Error (Sol_cli_process.error_to_string err)
+  | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
+  | Ok r ->
+    let detail =
+      let stderr = String.trim r.Sol_cli_process.stderr in
+      if stderr <> "" then stderr else String.trim r.Sol_cli_process.stdout
+    in
+    if Sol_cli_port_forward.string_contains ~needle:"AlreadyExists" detail
+    then Ok ()
+    else Error detail
+;;
+
+let create_idempotent_yaml ~ctx yaml =
   let tmp = write_tmp yaml in
-  (try kubectl_apply ~ctx tmp with
-   | e ->
-     (try Sys.remove tmp with
-      | _ -> ());
-     raise e);
-  Sys.remove tmp
+  Fun.protect
+    ~finally:(fun () ->
+      try Sys.remove tmp with
+      | _ -> ())
+    (fun () -> create_idempotent ~ctx ~file:tmp)
 ;;
 
 let apply ~ctx (ns_yaml, workload_yaml) ~dry_run =
   if dry_run
   then Printf.printf "%s\n%s\n" ns_yaml workload_yaml
   else (
-    apply_live ~ctx ns_yaml;
+    (match create_idempotent_yaml ~ctx ns_yaml with
+     | Ok () -> ()
+     | Error detail -> raise (Deploy_failed ("kubectl create (namespace): " ^ detail)));
     let tmp = write_tmp workload_yaml in
     (try
        (match Sol_cli_kubectl.apply_dry_run ~ctx ~file:tmp with

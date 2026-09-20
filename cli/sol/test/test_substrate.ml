@@ -143,6 +143,131 @@ let test_present_credential_is_accepted () =
   | Error msg -> Alcotest.fail ("expected success, got: " ^ msg)
 ;;
 
+(* ── INFRA-048 / FND-0011: the namespace is created, never applied ───────────
+
+   The live defect: the apply path ran `kubectl apply` over the Namespace
+   document, which requires `patch`, which the deploy identity's bootstrap grant
+   deliberately withholds. Sol_cli_substrate.ensure always creates the namespace
+   first, so that apply could only ever be refused -- on the first deploy and on
+   the migration-gate recovery path the deploy itself prints.
+
+   The fake kubectl below reproduces the live role exactly: it refuses `apply` on
+   a Namespace (as the API server did) and answers `create` on an existing
+   Namespace with AlreadyExists (as it does once the substrate has run). The test
+   therefore drives the real condition -- an existing namespace with no
+   last-applied annotation -- rather than a sanitised one, and fails with the
+   live failure if the apply path ever returns to `kubectl apply` for it. *)
+
+let read_file path =
+  let ic = open_in path in
+  let n = in_channel_length ic in
+  let s = really_input_string ic n in
+  close_in ic;
+  s
+;;
+
+let fake_kubectl ~log =
+  Printf.sprintf
+    {|#!/bin/sh
+# Classify by the document's kind, record the verdict, then behave like the
+# cluster the deploy identity actually talks to.
+#
+# Sol invokes kubectl as `kubectl --context <destination> <verb> ...`, so the
+# destination's flags precede the verb -- find the verb by name, not position.
+verb=""
+for a in "$@"; do
+  case "$a" in
+    apply|create|delete|get|patch|replace|rollout|logs) verb="$a"; break ;;
+  esac
+done
+file=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-f" ]; then file="$a"; fi
+  prev="$a"
+done
+kind=other
+if [ -n "$file" ] && grep -q 'kind: Namespace' "$file" 2>/dev/null; then
+  kind=Namespace
+fi
+printf '%%s %%s\n' "$verb" "$kind" >> %s
+if [ "$kind" = "Namespace" ]; then
+  if [ "$verb" = "apply" ]; then
+    echo 'Error from server (Forbidden): namespaces "pluto-checkout" is forbidden:' \
+         'cannot patch resource "namespaces"' >&2
+    exit 1
+  fi
+  if [ "$verb" = "create" ]; then
+    echo 'Error from server (AlreadyExists): namespaces "pluto-checkout" already exists' >&2
+    exit 1
+  fi
+fi
+exit 0
+|}
+    log
+;;
+
+let with_fake_kubectl f =
+  let dir = Filename.temp_file "sol-fake-kubectl-" "" in
+  Sys.remove dir;
+  Unix.mkdir dir 0o755;
+  let log = Filename.concat dir "calls.log" in
+  let bin = Filename.concat dir "kubectl" in
+  let oc = open_out bin in
+  output_string oc (fake_kubectl ~log);
+  close_out oc;
+  Unix.chmod bin 0o755;
+  let old_path =
+    try Sys.getenv "PATH" with
+    | Not_found -> ""
+  in
+  Unix.putenv "PATH" (dir ^ ":" ^ old_path);
+  Fun.protect
+    ~finally:(fun () ->
+      Unix.putenv "PATH" old_path;
+      (try Sys.remove bin with
+       | _ -> ());
+      (try Sys.remove log with
+       | _ -> ());
+      try Unix.rmdir dir with
+      | _ -> ())
+    (fun () -> f log)
+;;
+
+let test_namespace_is_created_not_applied () =
+  with_fake_kubectl (fun log ->
+    let ns_yaml = Sol_cli_manifest.namespace_doc ~ns:"pluto-checkout" in
+    let workload_yaml =
+      "---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: checkout-svc\n"
+    in
+    (* Before the fix this raises Deploy_failed carrying the live Forbidden
+       error: the namespace is applied rather than created. *)
+    (try
+       Sol_cli_manifest.apply
+         ~ctx:Sol_cli_kube_destination.local_context
+         (ns_yaml, workload_yaml)
+         ~dry_run:false
+     with
+     | Sol_cli_manifest.Deploy_failed msg ->
+       Alcotest.failf
+         "the namespace was applied instead of created; live error was: %s"
+         msg);
+    let calls = String.split_on_char '\n' (read_file log) in
+    let call verb kind =
+      List.exists (fun line -> String.equal (String.trim line) (verb ^ " " ^ kind)) calls
+    in
+    check_bool "the namespace is created" true (call "create" "Namespace");
+    check_bool
+      "the namespace is never applied (apply would need patch, which deploy lacks)"
+      false
+      (call "apply" "Namespace");
+    check_bool
+      "an AlreadyExists create on an existing namespace is tolerated, not fatal"
+      true
+      (call "create" "Namespace");
+    check_bool "the workload is still applied" true (call "apply" "other"))
+;;
+
 let () =
   Alcotest.run
     "substrate"
@@ -167,6 +292,10 @@ let () =
             "ensure refuses a reserved platform namespace"
             `Quick
             test_ensure_refuses_a_reserved_platform_namespace
+        ; Alcotest.test_case
+            "an existing namespace is created, never applied (INFRA-048)"
+            `Quick
+            test_namespace_is_created_not_applied
         ] )
     ]
 ;;
