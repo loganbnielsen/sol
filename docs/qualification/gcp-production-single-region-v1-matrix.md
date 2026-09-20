@@ -8,9 +8,9 @@ turns those rows into a falsifiable result.
 
 The matrix is a contract, not evidence that GCP passes it. Current observations
 remain in `gcp-bootstrap-inventory.md` and the audit ledger. In particular,
-platform `Ready` has not been reached, the authority defect tracked by
-INFRA-045 remains open, and public TLS remains blocked. A future run must not
-pre-fill those rows from this document.
+platform `Ready` has not been reached, the authority finding FND-0001 is
+implemented (#376) but unqualified against a live cluster, and public TLS remains
+blocked. A future run must not pre-fill those rows from this document.
 
 ## Result contract
 
@@ -68,3 +68,56 @@ keyed to stable provider-neutral invariant IDs instead of copying AWS
 mechanisms. Its scenarios use GCP impersonation, GKE authorization, Cloud SQL,
 Artifact Registry, and provider-side GCP absence queries. This preserves the
 semantic contract while making provider differences observable.
+
+## Before the next attempt (Attempt 5)
+
+Attempt 5 is the first run that can reach `Ready` on GCP, and the first that must
+produce evidence for three findings at once. Two captures that earlier attempts
+missed decide whether the run is diagnosable.
+
+### The narrowed provisioner role still reaches the cluster (FND-0001)
+
+`INFRA-045` replaced the project-level `roles/container.developer` grant with a
+custom role holding only `container.clusters.get`, `.list`, `.getCredentials` and
+`.connect`. That change closes a hole and opens a live risk in the other
+direction: if the role is *insufficient*, the platform stage fails at credential
+retrieval or connection rather than at a chart. Record the effective IAM binding
+and the precise failure if one appears, so a cluster-access failure is not
+misread as a cert-manager or chart problem. A Kubernetes-object operation
+attempted as the provisioner must be **denied**; that denial is FND-0001's
+behavioural half.
+
+### Why the cert-manager post-install check fails (FND-0010)
+
+Attempts 3 and 4 stopped at `helm_release.cert_manager`'s post-install
+`startupapicheck` while cert-manager itself was healthy. The check performs a
+dry-run create of a `v1` Certificate in the `cert-manager` namespace, which forces
+the API server to call the cert-manager **validating webhook** (the chart's
+"v1alpha2 / conversion webhook" comment is stale; the CRD serves only `v1`).
+
+Before the platform stage gives up, capture:
+
+- `kubectl -n cert-manager logs job/cert-manager-startupapicheck --all-containers`
+  — the container's own output. A webhook-call failure or `context deadline
+  exceeded` confirms the GKE control-plane → webhook-pod-port hypothesis;
+  `x509: certificate signed by unknown authority` instead means the webhook CA
+  bundle is not injected, which is a different cause with a different fix.
+- `kubectl -n cert-manager get events --sort-by=.lastTimestamp` and
+  `kubectl -n cert-manager describe job cert-manager-startupapicheck`.
+- `kubectl -n cert-manager get svc cert-manager-webhook -o jsonpath='{.spec.ports[*].targetPort}'`
+  (expect `10250`).
+- `gcloud compute firewall-rules list --filter="name~<cluster>"` beside the
+  cluster's `masterIpv4CidrBlock`.
+
+If reachability is confirmed, the fix is a `google_compute_firewall` allowing the
+master CIDR to the webhook's **pod** port, and FND-0010 becomes a `VERIFIED_DEFECT`
+with a ticket. Disabling `startupapicheck` is not a fix: it discards the only
+signal that the webhook is reachable, which certificate issuance depends on.
+
+### What the run must not do
+
+- Do not pre-fill any row from this document or from `gcp-bootstrap-inventory.md`.
+- Do not attribute the stop to `roles/container.developer` (it is gone) or to the
+  chart (cert-manager's own pods were healthy).
+- Record FND-0007 (external TLS) as blocked, not passed, while no hostname is
+  delegated to the target.
