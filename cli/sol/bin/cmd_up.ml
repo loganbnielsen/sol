@@ -246,12 +246,22 @@ let read_previous_release ~workspace =
     None
 ;;
 
-(* Post-apply bookkeeping, non-fatal: record the release, then bound history. *)
+(* DEC-037: see cmd_deploy.ml's twin. The release state is part of the outcome of
+   a deployment, not bookkeeping after it, so a failure to write it fails the
+   deployment. Pruning stays best-effort. *)
 let record_release_and_prune ~workspace ~keep ~previous plan =
   match
     Sol_cli_release_store.record_plan ~ctx:cluster ~apply_mode:Sol_cli_release.Direct plan
   with
-  | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg
+  | Error msg ->
+    Error
+      (Printf.sprintf
+         "the release was applied but could not be recorded: %s\n\
+         \  The workloads for this release may already be running; the release state was \
+          not advanced, so `sol rollback` and release retention still describe the \
+          previous release.\n\
+         \  Fix the cause and deploy again -- nothing on the cluster needs undoing."
+         msg)
   | Ok () ->
     (match
        Sol_cli_release_retention.prune
@@ -267,7 +277,8 @@ let record_release_and_prune ~workspace ~keep ~previous plan =
          "Pruned %d release record(s) beyond the last %d.\n"
          (List.length pruned)
          keep
-     | Error msg -> Printf.eprintf "warning: could not prune old releases: %s\n%!" msg)
+     | Error msg -> Printf.eprintf "warning: could not prune old releases: %s\n%!" msg);
+    Ok ()
 ;;
 
 (* Build the image context and apply every workload, refreshing the lease
@@ -391,9 +402,11 @@ let run_apply
          match applied with
          | Error msg -> Error msg
          | Ok () ->
-           report_apply_success ~workspace ~sha plan;
-           record_release_and_prune ~workspace ~keep:keep_releases ~previous plan;
-           Ok ())
+           (* DEC-037: record before reporting success. *)
+           Sol_cli_release.finish_deployment
+             ~record_release:(fun () ->
+               record_release_and_prune ~workspace ~keep:keep_releases ~previous plan)
+             ~report_success:(fun () -> report_apply_success ~workspace ~sha plan))
   in
   match result with
   | Error msg -> Error msg

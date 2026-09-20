@@ -621,3 +621,22 @@ let format_table (records : t list) : string =
   in
   String.concat "\n" (render_row headers :: List.map render_row rows)
 ;;
+
+(* ── DEC-037: the deployment outcome ───────────────────────────────────────── *)
+
+(* Recording the release is part of a deployment's outcome, not bookkeeping after
+   it. The pointer written here is what `sol rollback` restores and what retention
+   anchors on, so a deployment that cannot advance it has not succeeded -- and must
+   not print a success line over a release state that still describes the previous
+   release.
+
+   Both `sol deploy` and `sol up` route through this, so the two cannot drift the
+   way they did before: the order (record, then report) and the propagation (a
+   record failure is the deployment's failure) are decided in one place. *)
+let finish_deployment ~(record_release : unit -> (unit, string) result) ~report_success =
+  match record_release () with
+  | Error msg -> Error msg
+  | Ok () ->
+    report_success ();
+    Ok ()
+;;

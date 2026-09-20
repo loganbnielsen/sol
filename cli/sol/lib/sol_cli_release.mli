@@ -152,3 +152,17 @@ val parse_kubectl_list_with_creation : Yojson.Safe.t -> ((t * string) list, stri
 
 (** An aligned [ID / ENV / WORKLOADS] table, ordered by id. *)
 val format_table : t list -> string
+
+(** DEC-037: a deployment's outcome, given how recording the release went.
+
+    [record_release] writes the authoritative release state; [report_success]
+    prints the deploy's success output. A record failure is returned and
+    [report_success] is **not** called — the workloads may be running, but the
+    deployment has not succeeded, and it must not say that it has.
+
+    Both `sol deploy` and `sol up` route through this so the order and the
+    propagation cannot drift between them. *)
+val finish_deployment
+  :  record_release:(unit -> (unit, string) result)
+  -> report_success:(unit -> unit)
+  -> (unit, string) result
