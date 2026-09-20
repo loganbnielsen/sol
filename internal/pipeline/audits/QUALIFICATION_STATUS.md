@@ -179,12 +179,22 @@ operator. Code, docs and contract work proceed in parallel.
 | 10 | T3 GCP platform | Attempt 5 → `Ready`, then the success-path probe | `HARDEN-004` | 5 | **yes** | waiting on the run | phase lines, window open/close, readiness; then the FND-0001/0003/0007/FND-0010 probes |
 | 11 | T2 contract | ABANDON vs `REMOVE_PEERING` | FND-0005 → `DEC-035` | — | no (decision) | **DECIDED 2026-09-20: keep `ABANDON`** | the four constraints are in `DEC-035`; revisit when `google >= 8.1` is itself qualified, or immediately if a run observes the documented failure |
 
-Order of live runs: **#8 (AWS) then #10 (GCP)**, or the reverse — not both at
-once.
+Order of live runs — **decided 2026-09-20, not to be reordered**: **#8 (AWS
+Run 8) first**; then **reconcile its evidence into the matrix, this ledger and the
+findings before anything else**; only then **#10 (GCP Attempt 5)**. Never
+concurrently. AWS goes first because it carries the larger qualification surface and
+is the first attempt capable of reaching the application half, and because it
+exercises the absence checks, the denied steady-state identity and the migration
+gate in one run — so any common-path finding from it must be incorporated before a
+GCP attempt is spent.
 
 With item 11 decided, the remaining qualification frontier is **AWS Run 8 (#8,
 which also carries item 9's probe) and GCP Attempt 5 (#10)**. Everything else on
 this board is either landed or waiting on one of those two runs.
+
+Both runs complete `docs/qualification/run-record-template.md` (copied once per
+run), so the evidence arrives in the shape this board reads instead of being
+reconstructed from terminal history afterwards.
 
 Each work item starts with three things: an **owner**, its own **branch or
 worktree**, and the **acceptance + evidence contract** — what must be observed,
