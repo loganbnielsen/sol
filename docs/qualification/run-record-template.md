@@ -22,7 +22,8 @@
 | Field | Value | Source |
 |---|---|---|
 | Sol revision | | `git rev-parse HEAD` at run start |
-| Working tree clean | | `git status --porcelain` (must be empty) |
+| Working tree state | | `git status --porcelain`. Must show **only** the untracked qualification target (see below) and nothing else |
+| Qualification target contents | | the target file is untracked, so the revision does not pin it: paste its contents, or a SHA-256 of them, plus the path |
 | Profile | | target config `profile:` |
 | Target | | target config path, e.g. `qual/aws/us-east-1` |
 | Account / project | | |
@@ -35,6 +36,19 @@
 | Started (UTC) | | `date -u +%FT%TZ` |
 | Finished (UTC) | | |
 | Evidence bundle directory | | path, and whether it is outside the repository |
+
+**The qualification target is untracked, on purpose.** It lives at
+`<workspace>/sol/qual/aws/us-east-1.yml` (start from
+`docs/qualification/run8-aws-target.example.yml`), and the repository forbids
+tracking that path — `internal/ci/check_no_account_artifacts.sh` fails on any
+tracked file under `sol/qual/` or `sol/qual2/`, because a real target carries a
+real account, registry and role ARNs. HARDEN-002 run 2 is the incident where one
+was committed and had to be removed.
+
+Two things follow, and both are why the two rows above exist: the revision does
+**not** pin the target, so the record must carry its contents; and the working tree
+is not literally clean during the run — exactly that one file is expected as `??`
+and nothing else may be modified.
 
 ## 2. Entry point and environment
 

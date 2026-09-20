@@ -1,0 +1,87 @@
+# EXAMPLE qualification target for AWS Run 8 (HARDEN-002) — not a runnable target.
+#
+# Copy this file to `<workspace>/sol/qual/aws/us-east-1.yml` — for this repository
+# that is `examples/pluto/sol/qual/aws/us-east-1.yml` — and replace every
+# placeholder. It must stay **untracked**: `internal/ci/check_no_account_artifacts.sh`
+# fails on any tracked path under `sol/qual/` or `sol/qual2/`, because a real
+# qualification target carries a real account, registry and role ARNs, and
+# HARDEN-002 run 2 is the incident where one was committed and had to be removed.
+#
+# Two consequences of it being untracked, both handled by the run record
+# (`docs/qualification/run-record-template.md` §1):
+#   * the run's revision does **not** pin the target, so the record captures the
+#     target's contents (or a hash of them) as part of the run identity; and
+#   * `git status --porcelain` will show exactly this one file as `??` — that is
+#     expected, and nothing else may be modified.
+#
+# No secrets here. `TF_VAR_db_password`, `POSTGRES_URL` (percent-encoded password)
+# and `SOL_API_KEY` are environment inputs at run time. The alert receiver URL must
+# not embed routing credentials either: point it at a stable endpoint whose
+# credential lives in the secret store.
+#
+# What Run 8 asserts with this target is in
+# `docs/qualification/production-single-region-v1-matrix.md` §"Before the next run
+# (Run 8)"; the record to fill in is `docs/qualification/run8-aws-record.md`.
+target:
+  profile: production-single-region
+  cluster_name: <cluster-name>          # also names the VPC, NAT gateways and EIPs
+  base_domain: <your-domain>
+  letsencrypt_email: <ops@your-domain>
+  kube_context: <cluster-name>
+  registry: <account>.dkr.ecr.us-east-1.amazonaws.com
+
+  # Durable state (AUDIT-072). A Terraform root cannot create its own backend, so
+  # this pair is provisioned once by the separate bootstrap root and then recorded
+  # here for the preflight to verify:
+  #
+  #   cd cli/platform/infra/bootstrap
+  #   terraform init
+  #   terraform apply -var="region=us-east-1" \
+  #     -var="state_bucket=<globally-unique>" -var="state_lock_table=<name>"
+  #
+  # `state_bucket` must be globally unique across all of S3. `sol cloud` fails
+  # closed before Terraform initialization when either field is missing.
+  state_bucket: <globally-unique-bucket>
+  state_lock_table: <lock-table>
+
+  # DEC-034 / #376 split these two. The steady-state cluster-access identity is what
+  # the scoped platform and deploy paths assume; the cloud-provisioning identity is
+  # the one that may mutate the cloud substrate and the bootstrap access entry. Run
+  # 8 records a denied `eks associate-access-policy` for the former, so a target
+  # that points both at one role cannot produce that evidence.
+  provisioner_role_arn: arn:aws:iam::<account>:role/<provisioner-role>
+  cluster_access_role_arn: arn:aws:iam::<account>:role/<cluster-access-role>
+  deploy_role_arn: arn:aws:iam::<account>:role/<deploy-role>
+  operator_role_arn: arn:aws:iam::<account>:role/<operator-role>
+
+  # The CIDR the operators run `sol` from, allowed to reach the API server.
+  cluster_endpoint_cidr: <your-egress-cidr>
+
+  # Alert delivery is a guarantee the profile requires (OBS-043), not an optional
+  # row: the preflight refuses until all four fields are valid. `webhook` is the
+  # only qualified type. Verify the route before the run with
+  # `sol alert test --target qual/aws/us-east-1`.
+  alert_receiver_type: webhook
+  alert_receiver_url: <https://your-receiver-endpoint>
+  alert_owner: <accountable-owner>
+  alert_runbook_url: <https://your-runbook>
+
+  # A node-failure-tolerant workload needs one spare node of capacity.
+  node_failure_headroom_nodes: 1
+
+  # Qualification target: the destroy is expected to remove everything. Run 8's
+  # final state must be a provider-side `Absent` with nothing billable retained.
+  destroy_retention: none
+
+# The pluto workspace declares two TypeScript services (order_svc and
+# fulfillment_worker). The first profile is OCaml-only (DEC-026 §2), and the
+# preflight reports an unqualified language as an unmet guarantee, so they are
+# omitted here rather than left to fail the run at step 1. Everything else —
+# including `app_db` and `events`, which the migration gate and the broker
+# scenarios need — keeps the workspace defaults.
+services:
+  order_svc:
+    omit: true
+
+  fulfillment_worker:
+    omit: true
