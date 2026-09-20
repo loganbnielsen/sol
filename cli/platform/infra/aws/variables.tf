@@ -208,3 +208,9 @@ variable "deploy_role_arn" {
   type        = string
   default     = ""
 }
+
+variable "operator_role_arn" {
+  description = "Named AWS operator principal authenticated to EKS for production observation and diagnosis (DEC-038). The generated AWS-side contract (bootstrap: eks:DescribeCluster/ListClusters + state read) lets it obtain a kubeconfig; this variable is what makes it usable once there, by granting Kubernetes group membership. The read-only cluster role it receives is cli/platform/infra/base/platform_operator_rbac.tf, bound per application namespace by Sol_cli_substrate.ensure for the same reason deploy's is: application namespaces are created dynamically. Without this, the identity Sol documents cannot reach the cluster at all."
+  type        = string
+  default     = ""
+}

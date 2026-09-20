@@ -91,6 +91,11 @@ val namespace_doc : ns:string -> string
     to scope the deploy identity to application namespaces only. *)
 val deploy_role_binding_doc : ns:string -> string
 
+(** DEC-038: the operator's read-only diagnostic RoleBinding for one application
+    namespace. Binds the [sol-operator-diagnostics] ClusterRole to the
+    [sol:operators] group; grants observation only, never mutation. *)
+val operator_role_binding_doc : ns:string -> string
+
 val service_account_doc : ns:string -> name:string -> string
 
 (** AUDIT-080: the voluntary-disruption budget rendered for a

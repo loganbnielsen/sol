@@ -105,6 +105,28 @@ subjects:
     ns
 ;;
 
+(* DEC-038 / INFRA-057: the operator's read-only diagnostic grant, bound per
+   application namespace for the same reason as deploy's -- those namespaces are
+   created dynamically, and this grants observation only. *)
+let operator_role_binding_doc ~ns =
+  f
+    {|---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sol-operator
+  namespace: %s
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sol-operator-diagnostics
+subjects:
+  - kind: Group
+    name: sol:operators
+    apiGroup: rbac.authorization.k8s.io|}
+    ns
+;;
+
 (* SEC-004: a production workload gets no ambient Kubernetes credential. Every
    Sol-rendered workload uses this ServiceAccount, so disabling token automount
    here means no pod receives a mounted service-account token. Maturity A offers
