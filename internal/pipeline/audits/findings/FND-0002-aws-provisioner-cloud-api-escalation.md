@@ -1,7 +1,7 @@
 # FND-0002 — AWS provisioner can re-grant itself cluster-admin through the EKS API
 
 - **Classification:** `DESIGN_GAP`
-- **State:** `OPEN` — decision ratified 2026-09-19 (split identities); implementation pending
+- **State:** `FIXED_UNQUALIFIED` — decision ratified 2026-09-19 (split identities) and implemented in #376; a run must still record that the steady-state identity's `eks associate-access-policy` attempt is denied
 - **First identified:** 2026-09-19 (authority audit, this pass)
 - **Last verified:** 2026-09-19, `main @ 910a59f1`
 - **Provider:** AWS / EKS

@@ -61,3 +61,13 @@ share the mechanism rather than special-casing one error string.
 Offline tests inject a known password into a representative failed-connection
 message and a multi-line Job log.  They require the password to be absent while
 preserving the user, host, port, database, and non-secret diagnostic text.
+
+## Landed (2026-09-20)
+
+Merged in #376. Migration database errors are rendered through the redaction boundary
+inside the migration runner itself, so the credential never reaches container stderr and
+the Kubernetes Job log is clean at source; the parent CLI redacts again when it
+reproduces Job logs. Offline tests inject a known password and require it to be absent.
+
+**Outstanding:** none specific — the redaction is a pure function with unit coverage; the
+normal application path (Run 8) exercises the migration gate it protects.
