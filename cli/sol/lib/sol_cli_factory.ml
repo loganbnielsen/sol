@@ -23,6 +23,7 @@ let plan_of_services
       ?requested_scope
       ?resolved_config
       ?image_refs
+      ?inventory
       services
   =
   Sol_cli_deployment_plan.of_services_result
@@ -31,6 +32,7 @@ let plan_of_services
     ?requested_scope
     ?resolved_config
     ?image_refs
+    ?inventory
     services
   |> Result.map_error Sol_cli_deployment_plan.plan_error_to_string
 ;;

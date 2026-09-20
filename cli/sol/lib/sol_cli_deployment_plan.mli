@@ -256,5 +256,10 @@ val of_services_result
   -> ?requested_scope:string
   -> ?resolved_config:Sol_cli_config.t
   -> ?image_refs:(string * string) list
+  -> ?inventory:Sol_cli_manifest.service list
+       (** DEC-036: the set a call reference may *name* — the workspace
+           inventory. Defaults to the selected [services], which is the previous
+           behaviour. Never changes what is deployed: that is the final
+           positional argument, unchanged. *)
   -> Sol_cli_manifest.service list
   -> (t, plan_error) result

@@ -1411,6 +1411,92 @@ calls = ["checkout/missing_svc"]
     | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
 
+(* DEC-036 / INFRA-053, case 1: a scoped deploy whose call graph leaves the scope
+   must still resolve the callee -- from the workspace inventory, not from the
+   selection -- and must deploy exactly the selection. This is the live Run 8
+   failure: `--scope payments/charge_svc` reported its healthy callee as missing. *)
+let test_scoped_call_resolves_from_the_inventory () =
+  let tmp = Filename.temp_dir "sol_test_plan_inventory_call" "" in
+  with_cwd tmp (fun () ->
+    mkdirs "app/payments/charge_svc";
+    mkdirs "app/checkout/checkout_svc";
+    write_file
+      "app/payments/charge_svc/sol.toml"
+      {|[service]
+calls = ["checkout/checkout_svc"]
+|};
+    write_file "app/checkout/checkout_svc/sol.toml" "";
+    let checkout_service : Sol_cli_manifest.service =
+      { domain = "checkout"
+      ; name = "checkout_svc"
+      ; primitive = Sol_cli_manifest.Svc
+      ; dir = "app/checkout/checkout_svc"
+      }
+    in
+    match
+      Sol_cli_deployment_plan.of_services_result
+        ~workspace:"myworkspace"
+        ~env:deploy_env
+        ~inventory:[ charge_svc_service; checkout_service ]
+        [ charge_svc_service ]
+    with
+    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
+    | Ok plan ->
+      Alcotest.(check int)
+        "the selection is deployed unchanged -- no transitive widening"
+        1
+        (List.length plan.Sol_cli_deployment_plan.services);
+      (match plan.Sol_cli_deployment_plan.services with
+       | [ caller ] ->
+         Alcotest.(check (list (pair string string)))
+           "the caller resolves the URL of the callee it did not select"
+           [ ( "CHECKOUT_SVC_URL"
+             , "http://checkout-svc.myworkspace-checkout.svc.cluster.local" )
+           ]
+           caller.config
+       | _ -> Alcotest.fail "expected exactly one service spec"))
+;;
+
+(* DEC-036 / INFRA-053, case 2: resolution stays fail-closed, and the message now
+   names the reference and what the workspace does contain -- rather than implying
+   the callee merely was not selected. *)
+let test_unknown_service_call_fails_and_names_the_units () =
+  let tmp = Filename.temp_dir "sol_test_plan_inventory_bad_call" "" in
+  with_cwd tmp (fun () ->
+    mkdirs "app/payments/charge_svc";
+    mkdirs "app/checkout/checkout_svc";
+    write_file
+      "app/payments/charge_svc/sol.toml"
+      {|[service]
+calls = ["checkout/checkout_svcc"]
+|};
+    write_file "app/checkout/checkout_svc/sol.toml" "";
+    let checkout_service : Sol_cli_manifest.service =
+      { domain = "checkout"
+      ; name = "checkout_svc"
+      ; primitive = Sol_cli_manifest.Svc
+      ; dir = "app/checkout/checkout_svc"
+      }
+    in
+    match
+      Sol_cli_deployment_plan.of_services_result
+        ~workspace:"myworkspace"
+        ~env:deploy_env
+        ~inventory:[ charge_svc_service; checkout_service ]
+        [ charge_svc_service ]
+    with
+    | Error (Sol_cli_deployment_plan.Invalid_service_call { ref; message; _ }) ->
+      (* The raw reference is preserved in the error, and the message names both
+         what was referenced and what the workspace actually contains. *)
+      Alcotest.(check string) "the reference as written" "checkout/checkout_svcc" ref;
+      assert (contains (Str.regexp_string "target service not found") message);
+      assert (contains (Str.regexp_string "checkout_svcc") message);
+      assert (contains (Str.regexp_string "workspace units:") message);
+      assert (contains (Str.regexp_string "checkout/checkout_svc") message)
+    | Ok _ -> Alcotest.fail "expected a misspelled call target to fail"
+    | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
+;;
+
 let test_service_call_env_conflict_fails () =
   let tmp = Filename.temp_dir "sol_test_plan_call_env_conflict" "" in
   with_cwd tmp (fun () ->
@@ -1770,6 +1856,14 @@ let () =
             "unknown service call fails"
             `Quick
             test_unknown_service_call_fails
+        ; Alcotest.test_case
+            "a scoped call resolves from the inventory, not the selection (DEC-036)"
+            `Quick
+            test_scoped_call_resolves_from_the_inventory
+        ; Alcotest.test_case
+            "a misspelled call target still fails, and names the units (DEC-036)"
+            `Quick
+            test_unknown_service_call_fails_and_names_the_units
         ; Alcotest.test_case
             "service call env conflict fails"
             `Quick
