@@ -488,13 +488,29 @@ let read_previous_release ctx =
 (* Post-apply bookkeeping, non-fatal by construction: record the release, then
    bound the workspace's history. A failure here warns; it never turns a
    successful deploy into a failed one. *)
+(* DEC-037: recording the release is part of the deploy's outcome, not
+   bookkeeping after it. The pointer this writes is what `sol rollback` restores
+   and what release retention anchors on, so a deploy that cannot advance it has
+   not succeeded -- and must say so rather than printing a success line over a
+   release state that still describes the previous release.
+
+   Pruning stays best-effort: it is housekeeping over old records, not the
+   release identity. *)
 let record_release_and_prune ctx ~previous plan =
   let cluster = ctx.execution.cluster in
   let workspace = ctx.execution.workspace in
   match
     Sol_cli_release_store.record_plan ~ctx:cluster ~apply_mode:Sol_cli_release.Direct plan
   with
-  | Error msg -> Printf.eprintf "warning: could not record release: %s\n%!" msg
+  | Error msg ->
+    Error
+      (Printf.sprintf
+         "the release was applied but could not be recorded: %s\n\
+         \  The workloads for this release may already be running; the release state was \
+          not advanced, so `sol rollback` and release retention still describe the \
+          previous release.\n\
+         \  Fix the cause and deploy again -- nothing on the cluster needs undoing."
+         msg)
   | Ok () ->
     (match
        Sol_cli_release_retention.prune
@@ -510,7 +526,8 @@ let record_release_and_prune ctx ~previous plan =
          "Pruned %d release record(s) beyond the last %d.\n"
          (List.length pruned)
          ctx.keep_releases
-     | Error msg -> Printf.eprintf "warning: could not prune old releases: %s\n%!" msg)
+     | Error msg -> Printf.eprintf "warning: could not prune old releases: %s\n%!" msg);
+    Ok ()
 ;;
 
 (* FEAT-074: report-only, and only for a whole-workspace deploy -- see
@@ -662,9 +679,13 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
        with
        | Error msg -> Error msg
        | Ok (_attempt, results) ->
-         report_apply_success ctx plan results;
-         record_release_and_prune ctx ~previous plan;
-         Ok ())
+         (* DEC-037: record first, report second. If the authoritative release
+            state cannot be written, this deploy has not succeeded, so it must
+            neither print a success line nor exit zero -- and the message names
+            that the workloads may already be running. *)
+         Sol_cli_release.finish_deployment
+           ~record_release:(fun () -> record_release_and_prune ctx ~previous plan)
+           ~report_success:(fun () -> report_apply_success ctx plan results))
 ;;
 
 let run (req : Sol_cli_command_request.deploy_request) =

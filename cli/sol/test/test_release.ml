@@ -523,6 +523,38 @@ let test_bundle_files_are_deterministic () =
      = R.to_configmap_json sample_record)
 ;;
 
+(* ── DEC-037 / INFRA-054: the deployment outcome ─────────────────────────── *)
+
+(* The live Run 8 case: workload application succeeded and only the release
+   record write failed. The deployment must fail, and must not print a success
+   line over a release state that still describes the previous release. *)
+let test_record_failure_fails_the_deployment () =
+  let reported = ref false in
+  let result =
+    R.finish_deployment
+      ~record_release:(fun () ->
+        Error
+          "error when patching \"sol-release-current-pluto\": configmaps \
+           \"sol-release-current-pluto\" is forbidden")
+      ~report_success:(fun () -> reported := true)
+  in
+  check_bool "no successful completion was reported" false !reported;
+  match result with
+  | Ok () -> Alcotest.fail "a deployment that could not record its release must fail"
+  | Error msg -> assert (contains "sol-release-current-pluto" msg)
+;;
+
+let test_recorded_release_reports_success () =
+  let reported = ref false in
+  match
+    R.finish_deployment
+      ~record_release:(fun () -> Ok ())
+      ~report_success:(fun () -> reported := true)
+  with
+  | Error msg -> Alcotest.fail ("unexpected failure: " ^ msg)
+  | Ok () -> check_bool "success was reported" true !reported
+;;
+
 let () =
   Alcotest.run
     "release"
@@ -613,6 +645,16 @@ let () =
             "bundle files are deterministic"
             `Quick
             test_bundle_files_are_deterministic
+        ] )
+    ; ( "deployment outcome (DEC-037)"
+      , [ Alcotest.test_case
+            "a failed release record fails the deployment"
+            `Quick
+            test_record_failure_fails_the_deployment
+        ; Alcotest.test_case
+            "a recorded release reports success"
+            `Quick
+            test_recorded_release_reports_success
         ] )
     ]
 ;;
