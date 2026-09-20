@@ -346,7 +346,10 @@ root calling the shared `base` definition.
 where a provider-side wait was modelled in Terraform and then withdrawn (see
 FND-0005).
 
-**Open findings/tickets.** FND-0005.
+**Findings.** FND-0005 — `ACCEPTED` by `DEC-035` (2026-09-20): on GCP the peering's
+absence is established by the verifier rather than by Terraform's graph, which is a
+deliberate, recorded weakening of this invariant's *mechanism* for that one object,
+with the verification constraints that keep it honest.
 
 ---
 

@@ -42,7 +42,7 @@ have failed" — it never means "false".
 | Finding | Classification | State | Why no ticket |
 |---|---|---|---|
 | FND-0003 | `QUALIFICATION_GAP` | `OPEN` (absence half implemented in #376, still unexercised live) | Effective-authority and absence coverage were unexercised, not defective; `INFRA-047` now verifies EIP/NAT/EBS absence, and the effective-authority probe remains (item 9) |
-| FND-0005 | `QUALIFICATION_GAP` | `OPEN` (recommendation awaiting ratification) | Service-networking ABANDON: observed twice (Attempts 3, 4) vs documented "blocks network deletion". Recommendation: keep `ABANDON` — `REMOVE_PEERING` would need provider `>= 8.1` and Sol pins `~> 5.25`; the provider upgrade is the trigger to revisit |
+| FND-0005 | `QUALIFICATION_GAP` | `ACCEPTED` (`DEC-035`, 2026-09-20) | Service-networking ABANDON: observed twice (Attempts 3, 4) vs the documented "blocks network deletion". Decided: keep `ABANDON` — network deletion plus the post-destroy network/peering query is the compensating mechanism, and `REMOVE_PEERING` would need a 5.x→8.x provider upgrade. The four invariants of that choice are in `DEC-035` |
 | FND-0006 | `QUALIFICATION_GAP` | `QUALIFIED` (Run 7) | Retention `none` reached provider-side `Absent` with nothing retained and no manual step |
 | FND-0007 | `QUALIFICATION_GAP` | `BLOCKED` | GCP Cloud DNS solver gap + no delegated hostname; tracked in the GCP inventory and refused by name, and the GCP matrix (#376) now carries it as a row a run must fail on |
 | FND-0009 | `OBSERVATION` | `OPEN` | Provider substrate/prereq differences; no defect |
@@ -177,10 +177,14 @@ operator. Code, docs and contract work proceed in parallel.
 | 8 | T1 AWS app | Run 8: matrix B/C/D (deploy, rollback, availability) | `HARDEN-002` | 1 (**now clear**) | **yes** | ready to schedule | run record with its identity; B/C/D rows pass or are recorded |
 | 9 | T2 authority | Steady-state authority probe | FND-0003 | 2, 3 (**both landed**) and a `Ready` target | **yes** | waiting on a `Ready` target | positives/negatives as the recorded identity, plus a denial in a non-`default` namespace |
 | 10 | T3 GCP platform | Attempt 5 → `Ready`, then the success-path probe | `HARDEN-004` | 5 | **yes** | waiting on the run | phase lines, window open/close, readiness; then the FND-0001/0003/0007/FND-0010 probes |
-| 11 | T2 contract | ABANDON vs `REMOVE_PEERING` | FND-0005 | — | no (decision) | **recommendation ready, awaiting ratification**: keep `ABANDON` | `REMOVE_PEERING` needs provider `>= 8.1` (Sol pins `~> 5.25`), so the trigger to revisit is the provider upgrade; see FND-0005 "Decision input" |
+| 11 | T2 contract | ABANDON vs `REMOVE_PEERING` | FND-0005 → `DEC-035` | — | no (decision) | **DECIDED 2026-09-20: keep `ABANDON`** | the four constraints are in `DEC-035`; revisit when `google >= 8.1` is itself qualified, or immediately if a run observes the documented failure |
 
 Order of live runs: **#8 (AWS) then #10 (GCP)**, or the reverse — not both at
 once.
+
+With item 11 decided, the remaining qualification frontier is **AWS Run 8 (#8,
+which also carries item 9's probe) and GCP Attempt 5 (#10)**. Everything else on
+this board is either landed or waiting on one of those two runs.
 
 Each work item starts with three things: an **owner**, its own **branch or
 worktree**, and the **acceptance + evidence contract** — what must be observed,
