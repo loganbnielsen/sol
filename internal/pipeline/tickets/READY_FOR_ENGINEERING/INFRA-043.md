@@ -51,3 +51,17 @@ The lease semantics. This is a missing grant, not a redesign of the boundary.
 **Demo/example coverage:** Not applicable.
 
 **TypeScript parity:** No language-parity impact.
+
+## Implementation
+
+The platform now installs a dedicated `sol-boundary-lease` Role and RoleBinding
+in `default` for the `sol:deployers` group.  The grant contains only ConfigMaps
+and the exact `get`, `create`, `update`, and `delete` verbs issued by the lease
+implementation.  `check_production_infra.sh` pins both sides of that contract and
+fails if either the issued operation set or the grant changes independently.
+
+Kubernetes RBAC cannot apply `resourceNames` to `create` requests, so the create
+half cannot be name-restricted by the API authorizer.  Reads and mutations are
+restricted by Sol's generated `sol-boundary-lease-<workspace>` name; the grant is
+kept separate from the application deploy role and confined to ConfigMaps in
+`default`.

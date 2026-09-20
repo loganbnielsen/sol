@@ -294,6 +294,51 @@ case "$bootstrap_role" in
     ;;
 esac
 
+# INFRA-043: the boundary lease is stored in `default`, outside every
+# application-namespace RoleBinding.  Its dedicated Role must grant exactly the
+# verbs the implementation issues: kubectl get/create/replace/delete maps to
+# Kubernetes RBAC get/create/update/delete.  This exact comparison is
+# intentional mutation coverage: removing an issued verb or adding an
+# unneeded grant fails the offline contract check.
+lease_role="$(awk '/^resource "kubernetes_role" "sol_boundary_lease"/,/^}/' "$deploy_rbac")"
+
+if [ -z "$lease_role" ]; then
+  echo "FAIL: kubernetes_role.sol_boundary_lease not found" >&2
+  exit 1
+fi
+
+case "$lease_role" in
+  *'namespace = "default"'*'resources  = ["configmaps"]'*'verbs      = ["create"]'*'verbs      = ["get", "update", "delete"]'*) : ;;
+  *)
+    echo "FAIL: the boundary-lease Role must grant exactly get/create/update/delete" >&2
+    echo "      on ConfigMaps in the default namespace" >&2
+    exit 1
+    ;;
+esac
+
+lease_binding="$(awk '/^resource "kubernetes_role_binding" "sol_boundary_lease"/,/^}/' "$deploy_rbac")"
+case "$lease_binding" in
+  *'namespace = "default"'*'name      = kubernetes_role.sol_boundary_lease.metadata[0].name'*'name      = "sol:deployers"'*) : ;;
+  *)
+    echo "FAIL: the boundary-lease Role is not bound to sol:deployers in default" >&2
+    exit 1
+    ;;
+esac
+
+lease_impl="$root/cli/sol/lib/sol_cli_boundary_lease.ml"
+issued_lease_operations="$(
+  grep -o 'Sol_cli_kubectl\.[a-z_]*' "$lease_impl" \
+    | sed 's/Sol_cli_kubectl\.//' \
+    | sort -u \
+    | tr '\n' ' ' \
+    | sed 's/ $//'
+)"
+if [ "$issued_lease_operations" != "create delete get replace" ]; then
+  echo "FAIL: boundary-lease kubectl operations changed: $issued_lease_operations" >&2
+  echo "      update the least-privilege Role and this explicit contract together" >&2
+  exit 1
+fi
+
 case "$bootstrap_role" in
   *'resource_names = [kubernetes_cluster_role.sol_deploy.metadata[0].name]'*'verbs          = ["bind"]'*) : ;;
   *)

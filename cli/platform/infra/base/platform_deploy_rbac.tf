@@ -119,3 +119,58 @@ resource "kubernetes_cluster_role_binding" "sol_deploy_bootstrap" {
     api_group = "rbac.authorization.k8s.io"
   }
 }
+
+# INFRA-043: the workspace boundary lease is deliberately kept in `default`
+# so deploy and rollback coordinate across every application namespace in the
+# workspace.  The ordinary sol-deploy Role is only bound inside application
+# namespaces, so it cannot authorize this object.  Keep the exception separate
+# and namespaced: it grants only ConfigMap operations, only in `default`, and
+# only the four verbs issued by Sol_cli_boundary_lease.
+#
+# Kubernetes does not honor resourceNames for `create` authorization (the name
+# is not available to the authorizer for that request), so `create` cannot be
+# narrowed to sol-boundary-lease-* in RBAC.  Reads and subsequent mutations are
+# nevertheless client-scoped to that exact generated name, and the offline
+# production-infra check below pins the grant to the issued operation set.
+resource "kubernetes_role" "sol_boundary_lease" {
+  metadata {
+    name      = "sol-boundary-lease"
+    namespace = "default"
+  }
+
+  # `create` cannot use resource_names: Kubernetes authorizes create before a
+  # named object exists.  Keep it in its own rule so no other verb inherits
+  # that unavoidable limitation.
+  rule {
+    api_groups = [""]
+    resources  = ["configmaps"]
+    verbs      = ["create"]
+  }
+
+  # Terraform cannot know workspace names at platform-install time.  The
+  # boundary-lease implementation supplies the generated name on every one of
+  # these requests; unlike create, these verbs can be name-scoped if/when the
+  # workspace inventory becomes an input to the platform module.
+  rule {
+    api_groups = [""]
+    resources  = ["configmaps"]
+    verbs      = ["get", "update", "delete"]
+  }
+}
+
+resource "kubernetes_role_binding" "sol_boundary_lease" {
+  metadata {
+    name      = "sol-boundary-lease"
+    namespace = "default"
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.sol_boundary_lease.metadata[0].name
+  }
+  subject {
+    kind      = "Group"
+    name      = "sol:deployers"
+    api_group = "rbac.authorization.k8s.io"
+  }
+}
