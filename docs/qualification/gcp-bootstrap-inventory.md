@@ -30,6 +30,12 @@
 > the `Absent` postcondition, do-not-build-cert-manager-speculatively, no static
 > service-account keys, do-not-weaken-AWS — are listed there too.
 >
+> **Executable contract:**
+> `docs/qualification/gcp-production-single-region-v1-matrix.md` and its adjacent
+> TSV map every provider-neutral invariant to a GCP scenario. The verifier makes
+> missing, failing, or insufficiently evidenced rows fail the run; the matrix is
+> not evidence that any currently unqualified capability passes.
+>
 
 **Inventory date:** 2026-09-18 (America/Denver)
 
@@ -844,12 +850,16 @@ above is the evidence behind it.
    for GCP: retention.** Sol refuses a GCP target whose `destroy_retention` is the
    `final-snapshot` default, because Cloud SQL destroys its backups with the instance
    and "closest available behaviour" would discard recovery data silently.
-7. **(Closed) Offline qualification/preflight coverage for the GCP path.** The
+7. **(Closed) Offline qualification/preflight coverage and executable contract
+   for the GCP path.** The
    lifecycle harness runs GCP plan and destroy against stubs that model the real
    tools, including the credential fail-closed path, the missing-toolchain refusal,
-   and the INFRA-042 partial-install recovery with its fail-closed opposite. A GCP
-   counterpart to `production-single-region-v1-matrix.md` remains to be written when
-   GCP has capabilities to record in it.
+   and the INFRA-042 partial-install recovery with its fail-closed opposite.
+   `gcp-production-single-region-v1-matrix.tsv` now carries one executable row per
+   provider-neutral invariant. `internal/qualification/gcp/verify-matrix.sh`
+   rejects incomplete, failing, unknown, duplicate, evidence-less, and weakly
+   evidenced results; its mutation test pins those failure directions. Rows describe
+   the contract even when the current GCP implementation cannot pass them.
 8. **(Closed) Typed GCP cloud outputs and platform input mapping.** `gcp_outputs`,
    its parser and its platform variable set are provider-shaped, and `cloud_outputs`
    is the one thing the lifecycle carries; a capability the provider's root cannot
