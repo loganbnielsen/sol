@@ -59,7 +59,9 @@ type deploy_request =
           customer-cluster path) happens in [cmd_deploy.ml] once the target
           loads, not here, since this constructor never touches
           [Sol_cli_config]. *)
-  ; secret_backend : Sol_cli_manifest.secret_backend
+  ; secret_backend : Sol_cli_manifest.secret_backend option
+    (** INFRA-050: [None] means the operator did not choose, so the resolved
+          destination decides. The CLI must carry no default of its own. *)
   ; confirm_group_change : bool
   ; loki_push_url : string option
     (** Raw [--loki-push-url] value (OBS-037). [None] means "resolve the push
@@ -100,7 +102,7 @@ val make_deploy_request
   -> image_tag:string option
   -> image_refs:(string option * string) list
   -> registry:string option
-  -> secret_backend:Sol_cli_manifest.secret_backend
+  -> secret_backend:Sol_cli_manifest.secret_backend option
   -> confirm_group_change:bool
   -> loki_push_url:string option
   -> keep_releases:int

@@ -136,6 +136,9 @@ type deploy_context =
   ; sha : string
   ; registry : string
   ; secret_backend : Sol_cli_manifest.secret_backend
+    (** INFRA-050: already resolved -- the operator's explicit choice, else the
+          destination's default. Resolved once in [run], so every path (dry-run,
+          emit, apply) uses the same decision. *)
   ; emit_plan_to : string option
   ; target_cfg : Sol_cli_config.target
   ; resolved_config : Sol_cli_config.t
@@ -170,9 +173,12 @@ let build_plan ctx ~emit_to =
       Printf.eprintf "error: %s\n" msg;
       exit 1
   in
-  (* Guard: Kubernetes_live is never allowed with a GitOps target.
-     Combining the two would write plaintext secret values into the GitOps
-     repository, leaking them to everyone with read access to the repo. *)
+  (* Guard: Kubernetes_live is never allowed with a GitOps target. Combining the
+     two would write plaintext secret values into the GitOps repository, leaking
+     them to everyone with read access to the repo. [ctx.secret_backend] is
+     already resolved (INFRA-050), so this fires only on an explicit
+     --secret-backend kubernetes-live: an absent flag resolves to the GitOps
+     destination's own placeholder. *)
   (match env_target, ctx.secret_backend with
    | Sol_cli_env_target.Customer_gitops _, Sol_cli_manifest.Kubernetes_live ->
      Printf.eprintf
@@ -735,6 +741,32 @@ let run (req : Sol_cli_command_request.deploy_request) =
     "\nRun: %s\n  log: %s/\n"
     (Sol_cli_run_log.run_id run_log)
     (Sol_cli_run_log.dir run_log);
+  (* INFRA-050: resolve the secret backend once, here, where the emit intent is
+     known -- not in the flag parser, and not again downstream. An explicit
+     --secret-backend wins; otherwise the destination decides (a direct deploy
+     writes real values, a GitOps target writes a redacted placeholder). The CLI
+     used to carry its own default, which always won and made a direct deploy
+     emit an empty Secret. *)
+  let emit_intent =
+    match req.action with
+    | Sol_cli_command_request.Deploy_dry_run { emit_to } -> emit_to
+    | Sol_cli_command_request.Deploy_emit_to dir -> Some dir
+    | Sol_cli_command_request.Deploy_apply -> None
+  in
+  let secret_backend =
+    match
+      Sol_cli_env_target.customer_cloud_defaults
+        ~registry
+        ~image_tag:sha
+        ~emit_to:emit_intent
+        ()
+    with
+    | Error msg ->
+      Printf.eprintf "error: %s\n%!" msg;
+      exit 1
+    | Ok env_target ->
+      Sol_cli_env_target.resolve_secret_backend ?explicit:req.secret_backend env_target
+  in
   let ctx =
     { execution =
         Sol_cli_execution.context
@@ -750,7 +782,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
           ()
     ; sha
     ; registry
-    ; secret_backend = req.secret_backend
+    ; secret_backend
     ; emit_plan_to = req.emit_plan_to
     ; target_cfg
     ; resolved_config
@@ -880,14 +912,17 @@ let registry_arg =
 let secret_backend_arg =
   Arg.(
     value
-    & opt string "kubernetes-placeholder"
+    & opt (some string) None
     & info
         [ "secret-backend" ]
         ~docv:"BACKEND"
         ~doc:
-          "Secret backend for GitOps output. 'kubernetes-placeholder' (default) emits a \
-           redacted Kubernetes Secret; 'external-secrets' emits an ExternalSecret CRD \
-           for the External Secrets Operator. Only meaningful with --emit-to.")
+          "Override how the runtime Secret is rendered. Omitted -- the usual case -- the \
+           destination decides: a direct or local deploy writes real values \
+           ('kubernetes-live'), while a GitOps target writes a redacted \
+           'kubernetes-placeholder'. Pass 'kubernetes-placeholder' to force a redacted \
+           Secret, or 'external-secrets' (with --emit-to) to emit an ExternalSecret CRD \
+           for the External Secrets Operator instead.")
 ;;
 
 let secret_store_ref_arg =
@@ -942,31 +977,36 @@ let refresh_interval_arg =
 let secret_backend_term =
   let build str store_ref store_kind key_prefix refresh_interval emit_to =
     match str with
-    | "kubernetes-placeholder" | "" -> `Ok Sol_cli_manifest.Kubernetes_placeholder
-    | "external-secrets" when emit_to = None ->
+    (* INFRA-050: no flag means the *destination* decides, not the CLI. A CLI
+       default here is what made a direct deploy emit an empty Secret. *)
+    | None -> `Ok None
+    | Some "kubernetes-placeholder" -> `Ok (Some Sol_cli_manifest.Kubernetes_placeholder)
+    | Some "kubernetes-live" -> `Ok (Some Sol_cli_manifest.Kubernetes_live)
+    | Some "external-secrets" when emit_to = None ->
       Printf.eprintf
         "warning: --secret-backend external-secrets is only meaningful with --emit-to; \
          using kubernetes-placeholder.\n";
-      `Ok Sol_cli_manifest.Kubernetes_placeholder
-    | "external-secrets" ->
+      `Ok (Some Sol_cli_manifest.Kubernetes_placeholder)
+    | Some "external-secrets" ->
       (match store_ref with
        | None ->
          `Error
            (true, "--secret-store-ref is required when --secret-backend=external-secrets")
        | Some sref ->
          `Ok
-           (Sol_cli_manifest.External_secrets
-              { store_ref = sref
-              ; store_kind = Option.value store_kind ~default:"ClusterSecretStore"
-              ; key_prefix = Option.value key_prefix ~default:""
-              ; refresh_interval = Option.value refresh_interval ~default:"1h"
-              }))
-    | other ->
+           (Some
+              (Sol_cli_manifest.External_secrets
+                 { store_ref = sref
+                 ; store_kind = Option.value store_kind ~default:"ClusterSecretStore"
+                 ; key_prefix = Option.value key_prefix ~default:""
+                 ; refresh_interval = Option.value refresh_interval ~default:"1h"
+                 })))
+    | Some other ->
       `Error
         ( true
         , Printf.sprintf
-            "unknown --secret-backend value %S (expected: kubernetes-placeholder | \
-             external-secrets)"
+            "unknown --secret-backend value %S (expected: kubernetes-live | \
+             kubernetes-placeholder | external-secrets)"
             other )
   in
   Term.(

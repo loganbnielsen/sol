@@ -71,6 +71,25 @@ let default_secret_backend : t -> Sol_cli_manifest.secret_backend = function
   | Sol_hosted _ -> Sol_cli_manifest.Kubernetes_placeholder
 ;;
 
+(** INFRA-050: resolve the runtime secret backend for a deploy.
+
+    [explicit] is the operator's [--secret-backend], or [None] when they did not
+    choose — and "did not choose" must mean *the destination decides*, never "a
+    CLI default". The CLI used to carry its own default of
+    [Kubernetes_placeholder], which always won because it always supplied a
+    value: a direct deploy then emitted a redacted (empty) Secret and the
+    workload could not start. There is exactly one default, and it is
+    {!default_secret_backend}'s.
+
+    An explicit choice wins in both directions. The CLI still refuses
+    [Kubernetes_live] on a GitOps destination before this is used, because that
+    combination would write plaintext secrets into the repository. *)
+let resolve_secret_backend ?explicit t =
+  match explicit with
+  | Some backend -> backend
+  | None -> default_secret_backend t
+;;
+
 let to_env_config ~name t : Sol_cli_deployment_plan.env_config =
   { name
   ; mode = deployment_mode_of_target t
