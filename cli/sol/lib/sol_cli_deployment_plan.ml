@@ -780,8 +780,37 @@ let of_services_result
       ?(requested_scope = "workspace")
       ?resolved_config
       ?(image_refs = [])
+      ?inventory
       services
   =
+  (* DEC-036: what gets *deployed* is [services] -- the requested scope, unchanged
+     and never widened. What a call reference may *name* is the workspace
+     inventory: a unit deployed alone still has to resolve a callee that already
+     exists in the workspace, and it needs only that callee's manifest metadata
+     (domain, name, derived URL) -- never its liveness, and never its presence in
+     this release. Resolution stays fail-closed: a reference that names nothing in
+     the inventory is an error, not an empty URL.
+
+     [inventory] defaults to [services], which leaves every existing caller (and
+     test) on the previous behaviour until it passes the discovered set. *)
+  let resolution_units =
+    match inventory with
+    | None -> services
+    | Some units ->
+      let seen = Hashtbl.create 16 in
+      List.filter
+        (fun (svc : Sol_cli_manifest.service) ->
+           let key = svc.Sol_cli_manifest.domain ^ "/" ^ svc.Sol_cli_manifest.name in
+           if Hashtbl.mem seen key
+           then false
+           else (
+             Hashtbl.add seen key ();
+             true))
+        (* [services] first: the selection wins over the same unit as discovered.
+           They are the same unit either way, but the selection is the one this
+           invocation was asked about. *)
+        (services @ units)
+  in
   let loaded =
     List.map
       (fun svc ->
@@ -794,7 +823,7 @@ let of_services_result
               (Filename.concat svc.Sol_cli_manifest.dir "sol.toml"))
          |> Result.map_error (fun err -> Toml_error err)
          |> Result.map (fun toml -> svc, toml))
-      services
+      resolution_units
   in
   let rec collect_loaded acc = function
     | [] -> Ok (List.rev acc)
@@ -803,6 +832,15 @@ let of_services_result
       collect_loaded (item :: acc) rest
   in
   let* loaded = collect_loaded [] loaded in
+  (* DEC-036: a reference that resolves to nothing must name what it referenced
+     and what the workspace does contain. The old message said "target service not
+     found", which read as though the callee had to be *selected*. *)
+  let known_units () =
+    loaded
+    |> List.map (fun (svc, _) ->
+      Printf.sprintf "%s/%s" svc.Sol_cli_manifest.domain svc.Sol_cli_manifest.name)
+    |> List.sort_uniq String.compare
+  in
   let lookup_call caller ref =
     match String.split_on_char '/' ref with
     | [ domain; source_name ] when domain <> "" && source_name <> "" ->
@@ -817,7 +855,18 @@ let of_services_result
        | None ->
          Error
            (Invalid_service_call
-              { service = caller; ref; message = "target service not found" })
+              { service = caller
+              ; ref
+              ; message =
+                  Printf.sprintf
+                    "target service not found: this workspace has no service %S in \
+                     domain %S; workspace units: %s"
+                    source_name
+                    domain
+                    (match known_units () with
+                     | [] -> "(none)"
+                     | units -> String.concat ", " units)
+              })
        | Some (target, _) ->
          let* target_name = k8s_name_result target.Sol_cli_manifest.name in
          let* target_namespace =
@@ -964,7 +1013,19 @@ let of_services_result
       let* spec = to_spec svc in
       collect (spec :: acc) rest
   in
-  let* resolved_services = collect [] loaded in
+  (* DEC-036: specs are built for the *selection* only. [loaded] holds the whole
+     inventory so that call references resolve against it, but what gets deployed
+     is exactly what was asked for -- resolving a callee never pulls it into the
+     release. This is the line that keeps DEC-036's "no transitive widening"
+     clause true, so it is worth keeping adjacent to [resolution_units]. *)
+  let selection_key (svc : Sol_cli_manifest.service) =
+    svc.Sol_cli_manifest.domain ^ "/" ^ svc.Sol_cli_manifest.name
+  in
+  let selection_keys = List.map selection_key services in
+  let deployable =
+    List.filter (fun (svc, _) -> List.mem (selection_key svc) selection_keys) loaded
+  in
+  let* resolved_services = collect [] deployable in
   let resolved_services =
     List.map
       (fun (svc : service_spec) ->

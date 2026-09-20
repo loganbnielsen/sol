@@ -28,6 +28,9 @@ val plan_of_services
   -> ?requested_scope:string
   -> ?resolved_config:Sol_cli_config.t
   -> ?image_refs:(string * string) list
+  -> ?inventory:Sol_cli_manifest.service list
+       (** DEC-036: what a call reference may name. The positional list stays the
+           selection — what gets deployed. *)
   -> Sol_cli_manifest.service list
   -> (Sol_cli_deployment_plan.t, string) result
 

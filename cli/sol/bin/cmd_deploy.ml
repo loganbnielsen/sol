@@ -143,6 +143,12 @@ type deploy_context =
   ; target_cfg : Sol_cli_config.target
   ; resolved_config : Sol_cli_config.t
   ; services : Sol_cli_manifest.service list
+    (** The *selection* — what this deploy applies. Determined by [--scope] and
+        never widened (DEC-036). *)
+  ; inventory : Sol_cli_manifest.service list
+    (** Everything discovery found. Call references resolve against this, so a
+        unit can be deployed alone while still naming a callee that already
+        exists in the workspace (DEC-036). Never what gets deployed. *)
   ; image_refs : (string * string) list
     (** FEAT-050: resolved per-service immutable references for this
           invocation, [service_name -> repo@sha256:<digest>]. Empty when no
@@ -206,6 +212,7 @@ let build_plan ctx ~emit_to =
       ~requested_scope:ctx.requested_scope
       ~resolved_config:ctx.resolved_config
       ~image_refs:ctx.image_refs
+      ~inventory:ctx.inventory
       ctx.services
   with
   | Error msg ->
@@ -666,8 +673,13 @@ let run (req : Sol_cli_command_request.deploy_request) =
   (* Resolve the scope first: a bad selector must fail before any deploy logic
      (target loading, contract check, registry resolution) can report a
      downstream cause for it. *)
+  (* DEC-036: discovery once, then two different things from it. [inventory] is
+     everything that exists -- what a call reference may name. [services] is the
+     selection -- what this invocation deploys. They are deliberately not the same
+     list, and the selection is never widened to close a call graph. *)
+  let inventory = discover_services () in
   let selected =
-    match Sol_cli_workload_selection.resolve req.scope (discover_services ()) with
+    match Sol_cli_workload_selection.resolve req.scope inventory with
     | Ok selected -> selected
     | Error message ->
       Printf.eprintf "error: %s\n" message;
@@ -787,6 +799,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
     ; target_cfg
     ; resolved_config
     ; services
+    ; inventory
     ; image_refs
     ; requested_scope
     ; target_name = req.target
