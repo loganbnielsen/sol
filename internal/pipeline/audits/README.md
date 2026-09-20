@@ -166,3 +166,22 @@ from documented behaviour/configuration requirements; mark ambiguity explicitly.
 When a Terraform Registry page is a JavaScript shell, read the generated
 Markdown in the provider's own repository — it is the same text the registry
 renders.
+
+## Working alongside other actors
+
+The ledger is shared, and two rules here were learned expensively:
+
+- **Never remove a worktree.** A worktree can hold its owner's uncommitted review
+  edits, and removing it destroys them with no trace in git — `git status` being
+  clean at the moment you look does not prove the owner is finished with it
+  (#365, repeated on 2026-09-20). Leave worktrees in place, or report them;
+  removing one is the owner's call.
+- **Publishing a branch is not owning it.** When an item's branch is committed
+  but unpublished, publishing it and opening its PR is shepherding and is fine;
+  rewriting its commits is not, and the PR body should name who authored it. The
+  repository refuses to merge a branch that is behind `main`, so landing several
+  independent items one at a time costs a full CI cycle each; when the items do
+  not overlap, one integration branch with a single CI run is cheaper — and the
+  per-item PRs stay as the review record. Every item still lands on its own
+  gates: review against its acceptance criteria, its guards and mutation tests
+  run, and CI green before merge.
