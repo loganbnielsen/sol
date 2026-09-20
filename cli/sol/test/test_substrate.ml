@@ -35,7 +35,10 @@ let test_substrate_is_namespace_role_binding_and_runtime_secret_only () =
      (POSTGRES_URL, SOL_API_KEY) is deliberately absent here, which is what the
      fail-closed test below relies on. *)
   let docs = docs_or_fail ~secrets:[ "HOME", "" ] [ "pluto-payments" ] in
-  check_int "one namespace + one RoleBinding + one runtime Secret" 3 (List.length docs);
+  check_int
+    "namespace + deploy RoleBinding + operator RoleBinding + runtime Secret"
+    4
+    (List.length docs);
   check_bool
     "the namespace comes first"
     true
@@ -49,10 +52,17 @@ let test_substrate_is_namespace_role_binding_and_runtime_secret_only () =
      && contains ~needle:"name: sol-deploy" (List.nth docs 1)
      && contains ~needle:"name: sol:deployers" (List.nth docs 1));
   check_bool
+    "then the operator's read-only RoleBinding (DEC-038)"
+    true
+    (contains ~needle:"kind: RoleBinding" (List.nth docs 2)
+     && contains ~needle:"namespace: pluto-payments" (List.nth docs 2)
+     && contains ~needle:"name: sol-operator-diagnostics" (List.nth docs 2)
+     && contains ~needle:"name: sol:operators" (List.nth docs 2));
+  check_bool
     "then the runtime Secret"
     true
-    (contains ~needle:"kind: Secret" (List.nth docs 2)
-     && contains ~needle:"sol-secrets" (List.nth docs 2));
+    (contains ~needle:"kind: Secret" (List.nth docs 3)
+     && contains ~needle:"sol-secrets" (List.nth docs 3));
   List.iter
     (fun doc ->
        List.iter
@@ -77,7 +87,11 @@ let test_every_namespace_and_binding_precedes_every_secret () =
   let docs =
     docs_or_fail ~secrets:[ "HOME", "" ] [ "pluto-checkout"; "pluto-payments" ]
   in
-  check_int "two namespaces + two RoleBindings + two runtime Secrets" 6 (List.length docs);
+  check_int
+    "two namespaces + four RoleBindings (deploy and operator, per namespace) + two \
+     runtime Secrets"
+    8
+    (List.length docs);
   let first_secret =
     let rec find i = function
       | [] -> Alcotest.fail "expected a Secret document"
@@ -87,9 +101,9 @@ let test_every_namespace_and_binding_precedes_every_secret () =
     find 0 docs
   in
   check_bool
-    "both namespaces and both RoleBindings are applied before the first Secret"
+    "both namespaces and all four RoleBindings are applied before the first Secret"
     true
-    (first_secret = 4);
+    (first_secret = 6);
   List.iter
     (fun ns ->
        check_bool
@@ -139,7 +153,11 @@ let test_ensure_refuses_a_reserved_platform_namespace () =
 let test_present_credential_is_accepted () =
   (* HOME is always set in the test environment. *)
   match S.docs_for_namespaces ~secrets:[ "HOME", "" ] [ "pluto-payments" ] with
-  | Ok docs -> check_int "namespace + RoleBinding + Secret" 3 (List.length docs)
+  | Ok docs ->
+    check_int
+      "namespace + deploy RoleBinding + operator RoleBinding + Secret"
+      4
+      (List.length docs)
   | Error msg -> Alcotest.fail ("expected success, got: " ^ msg)
 ;;
 

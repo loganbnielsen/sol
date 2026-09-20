@@ -85,7 +85,18 @@ The boundary the contracts encode:
   namespace-scoped EKS access entry. It explicitly **denies** infrastructure and
   IAM mutation and any attempt to grant itself cluster administration, so it
   cannot escalate;
-- **operator** — read access to the cluster and state for day-to-day work.
+- **operator** — owns **production observation and diagnosis** (DEC-038). Its
+  generated AWS policy is read-only (`eks:DescribeCluster`, `eks:ListClusters`,
+  plus the state bucket), which is enough to obtain a kubeconfig; `sol cloud
+  apply` then creates the EKS access entry (Kubernetes group `sol:operators`) and
+  a `sol-operator-diagnostics` `ClusterRole`, bound per application namespace at
+  runtime exactly like deploy's. The grant is `get`/`list` on **only** the
+  resources Sol's read-only commands read — pods, pods/log, services, events,
+  deployments, cronjobs, and namespaces — so `sol status` can explain an
+  unhealthy workload *including its events*. It deliberately has **no** mutating
+  verb, no `secrets`, and no `pods/exec` or `pods/portforward`: interactive
+  debugging is not diagnosis, and a future command that needs those must justify
+  them rather than inherit them.
 
 `sol deploy` fails closed unless the three ARNs it reads (provisioner, deploy,
 operator) are present and the public API endpoint is restricted to an

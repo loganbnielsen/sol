@@ -110,6 +110,7 @@ let docs_for_namespaces ?secrets namespaces : (string list, string) result =
     Ok
       (List.map (fun ns -> Sol_cli_manifest.namespace_doc ~ns) namespaces
        @ List.map (fun ns -> Sol_cli_manifest.deploy_role_binding_doc ~ns) namespaces
+       @ List.map (fun ns -> Sol_cli_manifest.operator_role_binding_doc ~ns) namespaces
        @ secret_docs)
 ;;
 
@@ -193,7 +194,9 @@ let ensure ~ctx ~namespaces : (unit, string) result =
     in
     let* () =
       create_all
-        (List.map (fun ns -> Sol_cli_manifest.deploy_role_binding_doc ~ns) namespaces)
+        (List.map (fun ns -> Sol_cli_manifest.deploy_role_binding_doc ~ns) namespaces
+         @ List.map (fun ns -> Sol_cli_manifest.operator_role_binding_doc ~ns) namespaces
+        )
     in
     (match secret_docs namespaces with
      | Error _ as e -> e

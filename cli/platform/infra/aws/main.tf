@@ -179,6 +179,19 @@ module "eks" {
         kubernetes_groups = ["sol:deployers"]
       }
     },
+    # ADR 0002 / DEC-038: the operator identity observes production. Group
+    # membership only, like the two above -- no policy_associations, because the
+    # grant is the read-only ClusterRole in
+    # cli/platform/infra/base/platform_operator_rbac.tf, bound per application
+    # namespace at runtime. Before DEC-038 nothing created this entry at all, so
+    # `operator_role_arn` was documented and unreachable: `sol deploy` tells the
+    # operator to run `sol status`, and no identity could.
+    var.operator_role_arn == "" ? {} : {
+      operator = {
+        principal_arn     = var.operator_role_arn
+        kubernetes_groups = ["sol:operators"]
+      }
+    },
   )
 
   tags = var.tags

@@ -78,3 +78,11 @@ decision — a diagnosis that could not read its evidence must say so, and shoul
 replica is ready, the other is not, logs are empty, and the event stream is
 unreadable; `exit 137` is consistent with a liveness kill and with an OOM kill. It
 is the case that exposed the gap, not evidence of a workload defect.
+
+## Superseded (2026-09-20)
+
+Superseded by `INFRA-057`, which carries the same work with the contract attached.
+When this ticket was written the operator identity had no specified surface; DEC-038
+then fixed it (observation and diagnosis, derived from the evidence the read-only
+commands consume, with the deliberate exclusions), and `INFRA-057` is that
+implementation. Kept for the trail: the finding and the framing are unchanged.

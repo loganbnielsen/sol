@@ -304,6 +304,13 @@ jobs:
       - name: Destroy-completeness guard (INFRA-037)
         run: internal/ci/check_destroy_completeness.sh .
 
+      # DEC-038: the operator identity owns production observation and diagnosis,
+      # and its grant must follow the evidence Sol's read-only commands consume.
+      - name: Operator diagnostic grant (DEC-038 / INFRA-057)
+        run: internal/ci/check_operator_diagnostics.sh
+      - name: Operator diagnostic guard mutation test (INFRA-057)
+        run: internal/ci/test_operator_diagnostics_check.sh
+
   # FRIC-009: smallest check that would have caught a regression like
   # FRIC-007 (every generated service permanently broken on a fresh
   # substrate) — nothing above exercises the golden path against live
