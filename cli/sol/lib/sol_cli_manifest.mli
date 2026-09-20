@@ -235,6 +235,16 @@ exception Deploy_failed of string
 
 val write_tmp : string -> string
 
+(** INFRA-048: establishes an object with [kubectl create], treating
+    "AlreadyExists" as success. This is how a Sol-created namespace is
+    established: the deploy identity's bootstrap grant is deliberately
+    create-only, so idempotency cannot come from [kubectl apply]'s patch. Shared
+    with {!Sol_cli_substrate}. *)
+val create_idempotent
+  :  ctx:Sol_cli_kube_destination.context
+  -> file:string
+  -> (unit, string) result
+
 (** FEAT-063: applies into the cluster [ctx] names. *)
 val apply
   :  ctx:Sol_cli_kube_destination.context

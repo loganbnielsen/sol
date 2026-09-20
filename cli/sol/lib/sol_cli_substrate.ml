@@ -129,20 +129,12 @@ let write_file path contents =
    or RoleBinding that already exists, including every platform one. So
    idempotency here comes from tolerating "AlreadyExists" on [create], not
    from [kubectl apply]'s patch, which this identity does not have for either
-   kind. *)
-let create_idempotent ~ctx ~file =
-  match Sol_cli_kubectl.create ~ctx ~file with
-  | Error err -> Error (Sol_cli_process.error_to_string err)
-  | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
-  | Ok r ->
-    let detail =
-      let stderr = String.trim r.Sol_cli_process.stderr in
-      if stderr <> "" then stderr else String.trim r.Sol_cli_process.stdout
-    in
-    if Sol_cli_port_forward.string_contains ~needle:"AlreadyExists" detail
-    then Ok ()
-    else Error detail
-;;
+   kind.
+
+   INFRA-048: the primitive lives in Sol_cli_manifest so the manifest apply path
+   uses exactly the same one -- that path was applying the namespace, which is
+   the defect this sharing removes. *)
+let create_idempotent = Sol_cli_manifest.create_idempotent
 
 let write_doc_to_temp_file doc =
   let path = Filename.temp_file "sol-substrate-" ".yaml" in
