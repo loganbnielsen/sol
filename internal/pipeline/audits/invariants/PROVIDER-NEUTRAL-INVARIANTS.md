@@ -548,10 +548,10 @@ attempt 7** — the migration Job that died at start in Attempt 6 started and ra
 `sol migrate apply` reached `Done.`, and `sol deploy` reported the migration gate
 PASS.
 
-**Open findings/tickets.** FND-0008 = **INFRA-040** (`READY` only for its separate
-evidence-retention/diagnostics item; the identity property is qualified). The
-remaining deploy blocker is a different, newly-recorded defect — `INFRA-043`
-(deploy identity cannot create the boundary lease).
+**Open findings/tickets.** FND-0008 = **INFRA-040**, now `DONE`: the identity
+property is qualified by Run 7, and its evidence-retention/diagnostics item closed
+on 2026-09-20 (a failing migration Job is read out before removal and is kept).
+The deploy blocker recorded here next — `INFRA-043` — cleared in #370.
 
 ---
 

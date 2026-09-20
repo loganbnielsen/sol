@@ -404,7 +404,7 @@ conclusions were carried into the audit structure on 2026-09-19:
 | Service-networking ABANDON documented-vs-observed | `findings/FND-0005-...md` (observed twice, Attempts 3 and 4) |
 | Retention live postcondition | `findings/FND-0006-...md` → ticket `INFRA-041` (DONE; `QUALIFIED` by Run 7) |
 | GCP Cloud DNS / cert-manager capability gap | `findings/FND-0007-...md` (`BLOCKED` on a delegated hostname) |
-| AWS runtime Secret identity | `findings/FND-0008-...md` → ticket `INFRA-040` (READY for its diagnostics item; identity `QUALIFIED` by Run 7) |
+| AWS runtime Secret identity | `findings/FND-0008-...md` → ticket `INFRA-040` (DONE; identity `QUALIFIED` by Run 7, diagnostics item closed 2026-09-20) |
 | Provider substrate/prerequisite differences | `findings/FND-0009-...md` |
 
 The provider-neutral properties behind them are in

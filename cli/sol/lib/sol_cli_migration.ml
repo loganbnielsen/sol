@@ -138,3 +138,31 @@ let status_json ~table rows =
     ]
   |> Yojson.Safe.to_string
 ;;
+
+(* INFRA-040: the deploy's migration gate removes the Job it ran, so a failure
+   has to be read *out* of the Job before that happens. This is the report the
+   deploy prints: what the container was waiting on, if it never started, and
+   whatever the Job logged, if it did.
+
+   Kept pure and here rather than inline in the binary because "a Job that cannot
+   start is reported with its reason" is exactly the property Attempt 6 needed
+   and could not see, and the shell-out path around it is not testable offline.
+   The caller gathers the two observations; this decides what the operator reads.
+   Either half may be absent: a container that never started has no logs, and a
+   Job that ran and failed has no waiting reason. *)
+let evidence_report ~waiting ~logs =
+  let waiting_lines =
+    match waiting with
+    | Some (reason, detail) when String.trim reason <> "" ->
+      let detail = String.trim detail in
+      [ Printf.sprintf
+          "container waiting: %s%s"
+          (String.trim reason)
+          (if detail = "" then "" else " -- " ^ detail)
+      ]
+    | _ -> []
+  in
+  let logs = String.trim logs in
+  let log_lines = if logs = "" then [] else [ "job logs:\n" ^ logs ] in
+  String.concat "\n\n" (waiting_lines @ log_lines)
+;;

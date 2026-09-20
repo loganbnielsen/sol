@@ -31,3 +31,10 @@ val to_string : prerequisite -> string
 (** The [sol migrate status --json] body: one entry per migration with its
     applied flag. *)
 val status_json : table:string -> (int * string * string option) list -> string
+
+(** The report printed when the deploy's read-only migration-status Job fails:
+    what the container was waiting on (if it never started) and what the Job
+    logged (if it ran). Either half may be absent. INFRA-040: the Job is removed
+    after the check, so this is what makes the failure diagnosable from the
+    deploy's own output. *)
+val evidence_report : waiting:(string * string) option -> logs:string -> string

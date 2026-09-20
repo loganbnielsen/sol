@@ -183,6 +183,56 @@ let test_passwordless_and_non_uri_inputs_are_unchanged () =
     (Sol_cli_redaction.connection_error ~url:"opaque" "bad input")
 ;;
 
+(* INFRA-040: the deploy's migration gate removes its Job, so a failure has to be
+   reported out of it. Attempt 6's message said "see the Job logs" after the Job
+   was gone, and the cause had to be rediscovered with a different command. *)
+
+let test_evidence_report_unstartable_names_the_reason () =
+  let report =
+    M.evidence_report
+      ~waiting:(Some ("CreateContainerConfigError", "secret \"sol-secrets\" not found"))
+      ~logs:""
+  in
+  Alcotest.(check bool)
+    "waiting reason"
+    true
+    (contains report "CreateContainerConfigError");
+  Alcotest.(check bool)
+    "waiting message"
+    true
+    (contains report "secret \"sol-secrets\" not found");
+  Alcotest.(check bool)
+    "no empty logs section is invented"
+    false
+    (contains report "job logs:")
+;;
+
+let test_evidence_report_failed_job_carries_its_logs () =
+  let report =
+    M.evidence_report ~waiting:None ~logs:"error: migration 003 failed\nline two"
+  in
+  Alcotest.(check bool) "first line" true (contains report "migration 003 failed");
+  Alcotest.(check bool) "second line" true (contains report "line two");
+  Alcotest.(check bool)
+    "no waiting section is invented"
+    false
+    (contains report "container waiting")
+;;
+
+let test_evidence_report_carries_both () =
+  let report = M.evidence_report ~waiting:(Some ("CrashLoopBackOff", "")) ~logs:"boom" in
+  Alcotest.(check bool) "reason" true (contains report "CrashLoopBackOff");
+  Alcotest.(check bool) "logs" true (contains report "boom")
+;;
+
+let test_evidence_report_is_empty_without_observations () =
+  Alcotest.(check string) "no observations" "" (M.evidence_report ~waiting:None ~logs:"");
+  Alcotest.(check string)
+    "blank logs are not an observation"
+    ""
+    (M.evidence_report ~waiting:None ~logs:"   \n")
+;;
+
 let () =
   Alcotest.run
     "migration"
@@ -217,6 +267,24 @@ let () =
             "non-credential inputs unchanged"
             `Quick
             test_passwordless_and_non_uri_inputs_are_unchanged
+        ] )
+    ; ( "failure evidence (INFRA-040)"
+      , [ Alcotest.test_case
+            "unstartable Job names its reason"
+            `Quick
+            test_evidence_report_unstartable_names_the_reason
+        ; Alcotest.test_case
+            "failed Job carries its logs"
+            `Quick
+            test_evidence_report_failed_job_carries_its_logs
+        ; Alcotest.test_case
+            "both observations together"
+            `Quick
+            test_evidence_report_carries_both
+        ; Alcotest.test_case
+            "nothing observed, nothing reported"
+            `Quick
+            test_evidence_report_is_empty_without_observations
         ] )
     ]
 ;;
