@@ -18,6 +18,42 @@
 
 ---
 
+## Preflight (2026-09-20) — **FAILED, and this is not run evidence**
+
+Run 8 was authorized conditionally on the operator preflight passing. It did not,
+so **no mutating command was issued** and nothing below §1 has been executed. Per
+the authorization, this is recorded as a preflight failure rather than as run
+evidence, and no attempt was made to improvise around it.
+
+| # | Required check | Result |
+|---|---|---|
+| 1 | Target present, contents/hash recorded, `git status` shows only that file | **FAIL** — `examples/pluto/sol/qual/aws/us-east-1.yml` does not exist; `git status --porcelain` is empty (not even the expected `??`) |
+| 2 | AWS identity/account/region are the intended disposable target | **FAIL** — no usable credentials. `[profile sol-qual]` exists in `~/.aws/config`, but its SSO token has expired and refresh is interactive (`aws sso login`). `~/.aws/credentials` is empty; `AWS_PROFILE` and `AWS_REGION` are unset |
+| 3 | `TF_VAR_db_password` present | **FAIL** — absent |
+| 4 | `POSTGRES_URL` present, password correctly percent-encoded | **FAIL** — absent (encoding therefore unchecked) |
+| 5 | `SOL_API_KEY` present | **FAIL** — absent |
+| 6 | Publisher role can push to the configured ECR registry; digests available | **NOT REACHED** — needs credentials |
+| 7 | All four alert-delivery values populated, receiver live | **NOT REACHED** — needs the target |
+| 8 | `sol alert test --target qual/aws/us-east-1` succeeds | **NOT RUN** — needs the target |
+| 9 | Bootstrap root completed | **NOT REACHED** — needs credentials, and the bucket name is in the missing target |
+| 10 | `sol cloud plan qual/aws/us-east-1` succeeds with the recorded target | **NOT RUN** — needs the target |
+
+What *was* established, and is worth carrying forward: the identity and
+`sol-qual` SSO session are configured on this host, so the run is intended to
+happen here — it needs a fresh `aws sso login`, the target file, and the three
+runtime inputs, in that order.
+
+The target's absence is unexplained. It is not in the repository, not untracked,
+not in a stash (`git stash list` is empty), and a search of the home directory for
+its distinguishing key (`cluster_access_role_arn`) finds only `_build` copies of
+`docs/qualification/run8-aws-target.example.yml`. An earlier turn of this session
+ran `git stash -u` once, which stashes untracked files; no stash remains and the
+commit made then contained only the record file, so the stash was popped or empty.
+If the target was in the working tree at that moment, that command is the plausible
+cause and this session owns it. Re-create it from the example before re-attempting.
+
+---
+
 ## 1. Run identity
 
 | Field | Value | Source |
