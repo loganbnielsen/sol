@@ -1,0 +1,82 @@
+# Qualification target for AWS Run 8 (HARDEN-002).
+#
+# REPLACE EVERY <…> BEFORE THE RUN IS AUTHORIZED. The placeholders below are
+# deliberately shaped like the ones `docs/deployment/production-bootstrap.md`
+# uses, so `sol cloud plan qual/aws/us-east-1` will parse and run the profile
+# preflight — but the preflight checks *shape*, not ownership: it cannot tell you
+# that account 111122223333 or `sol-qual-provisioner` are yours. Replace them,
+# then re-run `sol cloud plan` before `sol cloud apply`.
+#
+# No secrets live here. `POSTGRES_URL` (percent-encoded password) and
+# `SOL_API_KEY` are environment inputs at run time — see
+# `docs/qualification/run-record-template.md` §2. The alert receiver URL must not
+# embed routing credentials either: point it at a stable endpoint whose
+# credential lives in the secret store.
+#
+# The run itself, its assertions and its evidence contract are in
+# `docs/qualification/production-single-region-v1-matrix.md` §"Before the next run
+# (Run 8)"; the record to fill in is `docs/qualification/run8-aws-record.md`.
+target:
+  profile: production-single-region
+  cluster_name: sol-qual
+  base_domain: qual.example.com
+  letsencrypt_email: ops@example.com
+  kube_context: sol-qual
+  registry: 111122223333.dkr.ecr.us-east-1.amazonaws.com
+
+  # Durable state (AUDIT-072). A Terraform root cannot create its own backend, so
+  # this pair is provisioned once by the separate bootstrap root and then recorded
+  # here for the preflight to verify:
+  #
+  #   cd cli/platform/infra/bootstrap
+  #   terraform init
+  #   terraform apply -var="region=us-east-1" \
+  #     -var="state_bucket=<globally-unique>" -var="state_lock_table=<name>"
+  #
+  # `state_bucket` must be globally unique across all of S3, so it is the one name
+  # here that cannot be a fixed placeholder. `sol cloud` fails closed before
+  # Terraform initialization when either field is missing.
+  state_bucket: sol-qual-tfstate-CHANGE-ME-GLOBALLY-UNIQUE
+  state_lock_table: sol-qual-tflock
+
+  # DEC-034 / #376 split these two. The steady-state cluster-access identity is
+  # what the scoped platform and deploy paths assume; the cloud-provisioning
+  # identity is the one that may mutate the cloud substrate and the bootstrap
+  # access entry. Run 8 records a denied `eks associate-access-policy` for the
+  # former, so a target that points both at one role cannot produce that evidence.
+  provisioner_role_arn: arn:aws:iam::111122223333:role/sol-qual-provisioner
+  cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-qual-cluster-access
+  deploy_role_arn: arn:aws:iam::111122223333:role/sol-qual-deploy
+  operator_role_arn: arn:aws:iam::111122223333:role/sol-qual-operator
+
+  # The CIDR the operators run `sol` from, allowed to reach the API server.
+  cluster_endpoint_cidr: 203.0.113.0/24
+
+  # Alert delivery is a guarantee the profile requires (OBS-043), not an optional
+  # row: the preflight refuses until all four fields are valid. `webhook` is the
+  # only qualified type. The route is exercised before the run with
+  # `sol alert test --target qual/aws/us-east-1`.
+  alert_receiver_type: webhook
+  alert_receiver_url: https://alerts.example.com/sol/webhook
+  alert_owner: sol-qual-oncall
+  alert_runbook_url: https://runbooks.example.com/sol
+
+  # A node-failure-tolerant workload needs one spare node of capacity.
+  node_failure_headroom_nodes: 1
+
+  # Qualification target: the destroy is expected to remove everything. Run 8's
+  # final state must be a provider-side `Absent` with nothing billable retained.
+  destroy_retention: none
+
+# The pluto workspace declares two TypeScript services (order_svc and
+# fulfillment_worker). The first profile is OCaml-only (DEC-026 §2), and the
+# preflight reports an unqualified language as an unmet guarantee, so they are
+# omitted here rather than left to fail the run at step 1. Everything else —
+# including `app_db` and `events`, which the migration gate and the broker
+# scenarios need — keeps the workspace defaults.
+services:
+  order_svc:
+    omit: true
+
+  fulfillment_worker:
+    omit: true
