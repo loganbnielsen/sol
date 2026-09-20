@@ -60,6 +60,20 @@ val registry : t -> string
     against [Customer_gitops + Kubernetes_live] at the CLI layer. *)
 val default_secret_backend : t -> Sol_cli_manifest.secret_backend
 
+(** INFRA-050: [resolve_secret_backend ?explicit t] is the backend a deploy
+    actually uses. [explicit] is the operator's [--secret-backend], or [None]
+    when they did not choose — and "did not choose" means *the destination
+    decides* ({!default_secret_backend}), never a CLI-level default. A direct
+    deploy therefore writes real values and a GitOps target writes a placeholder,
+    with one source of truth.
+
+    An explicit choice wins in both directions. The CLI still refuses
+    [Kubernetes_live] on a GitOps destination before calling this. *)
+val resolve_secret_backend
+  :  ?explicit:Sol_cli_manifest.secret_backend
+  -> t
+  -> Sol_cli_manifest.secret_backend
+
 (** [to_env_config ~name t] converts an env target into the
     [Sol_cli_deployment_plan.env_config] expected by
     [Sol_cli_deployment_plan.of_services]. The [secret_backend] field is

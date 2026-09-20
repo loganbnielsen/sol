@@ -222,6 +222,67 @@ let test_to_env_config_gitops_backend () =
       cfg.Sol_cli_deployment_plan.secret_backend
 ;;
 
+(* ── resolve_secret_backend (INFRA-050) ───────────────────────────────────── *)
+
+(* The defect this pins: the CLI supplied its own hard default of
+   [kubernetes-placeholder], so a *direct* deploy emitted a redacted (empty)
+   Secret and its workload could not start. "No --secret-backend" must mean "the
+   destination decides" -- there is exactly one default. *)
+
+let customer_direct_target () =
+  match
+    Sol_cli_env_target.customer_cloud_defaults
+      ~registry:"reg.example.com"
+      ~image_tag:"sha"
+      ~emit_to:None
+      ()
+  with
+  | Ok t -> t
+  | Error msg -> Alcotest.fail msg
+;;
+
+let customer_gitops_target () =
+  match
+    Sol_cli_env_target.customer_cloud_defaults
+      ~registry:"reg.example.com"
+      ~image_tag:"sha"
+      ~emit_to:(Some "manifests")
+      ()
+  with
+  | Ok t -> t
+  | Error msg -> Alcotest.fail msg
+;;
+
+let backend_is ~expected ?explicit t =
+  let actual = Sol_cli_env_target.resolve_secret_backend ?explicit t in
+  Alcotest.(check bool)
+    (Printf.sprintf
+       "expected %s, got %s"
+       (Sol_cli_manifest.secret_backend_to_string expected)
+       (Sol_cli_manifest.secret_backend_to_string actual))
+    true
+    (actual = expected)
+;;
+
+let test_resolve_direct_without_flag_is_live () =
+  backend_is ~expected:Sol_cli_manifest.Kubernetes_live (customer_direct_target ())
+;;
+
+let test_resolve_gitops_without_flag_is_placeholder () =
+  backend_is ~expected:Sol_cli_manifest.Kubernetes_placeholder (customer_gitops_target ())
+;;
+
+let test_resolve_explicit_overrides_inference () =
+  backend_is
+    ~expected:Sol_cli_manifest.Kubernetes_placeholder
+    ~explicit:Sol_cli_manifest.Kubernetes_placeholder
+    (customer_direct_target ());
+  backend_is
+    ~expected:Sol_cli_manifest.Kubernetes_live
+    ~explicit:Sol_cli_manifest.Kubernetes_live
+    (customer_gitops_target ())
+;;
+
 let () =
   Alcotest.run
     "env_target"
@@ -261,6 +322,20 @@ let () =
             "Customer_gitops → placeholder"
             `Quick
             test_to_env_config_gitops_backend
+        ] )
+    ; ( "resolve_secret_backend (INFRA-050)"
+      , [ Alcotest.test_case
+            "direct deploy with no --secret-backend is live"
+            `Quick
+            test_resolve_direct_without_flag_is_live
+        ; Alcotest.test_case
+            "GitOps with no --secret-backend stays a placeholder"
+            `Quick
+            test_resolve_gitops_without_flag_is_placeholder
+        ; Alcotest.test_case
+            "an explicit --secret-backend overrides the inference"
+            `Quick
+            test_resolve_explicit_overrides_inference
         ] )
     ]
 ;;

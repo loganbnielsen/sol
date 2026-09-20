@@ -265,7 +265,7 @@ let test_deploy_request_uses_explicit_tag () =
       ~image_tag:(Some "sha-abc")
       ~image_refs:[]
       ~registry:(Some "reg.example.com")
-      ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
+      ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
@@ -288,7 +288,7 @@ let test_deploy_request_local_mode_builds_request () =
       ~image_tag:(Some "v2")
       ~image_refs:[]
       ~registry:(Some "gcr.io/myproject")
-      ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
+      ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
@@ -316,7 +316,7 @@ let test_deploy_request_gitops_action () =
       ~image_tag:(Some "tag")
       ~image_refs:[]
       ~registry:(Some "reg")
-      ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
+      ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
@@ -344,7 +344,7 @@ let test_deploy_request_dry_run_action_preserves_emit_to () =
       ~image_tag:(Some "tag")
       ~image_refs:[]
       ~registry:(Some "reg")
-      ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
+      ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
@@ -375,7 +375,7 @@ let test_deploy_request_rejects_empty_target () =
       ~image_tag:(Some "tag")
       ~image_refs:[]
       ~registry:(Some "reg")
-      ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
+      ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
@@ -398,7 +398,7 @@ let test_deploy_request_registry_omitted_stays_none () =
       ~image_tag:(Some "tag")
       ~image_refs:[]
       ~registry:None
-      ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
+      ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
@@ -427,7 +427,7 @@ let test_deploy_request_accepts_image_refs () =
       ~image_tag:(Some "unused")
       ~image_refs:[ Some "svc", digest ]
       ~registry:(Some "reg")
-      ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
+      ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
@@ -453,7 +453,7 @@ let test_deploy_request_rejects_mutable_image_ref () =
       ~image_tag:(Some "unused")
       ~image_refs:[ None, "reg.example.com/ws/svc:latest" ]
       ~registry:(Some "reg")
-      ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
+      ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
@@ -1083,7 +1083,7 @@ let test_deploy_request_rejects_nonpositive_keep () =
       ~image_tag:(Some "tag")
       ~image_refs:[]
       ~registry:(Some "reg")
-      ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
+      ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:0

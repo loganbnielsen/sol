@@ -28,7 +28,12 @@ type deploy_request =
           [Some service, ref] for [<service>=<ref>] or [None, ref] for a bare
           reference. *)
   ; registry : string option
-  ; secret_backend : Sol_cli_manifest.secret_backend
+  ; secret_backend : Sol_cli_manifest.secret_backend option
+    (** INFRA-050: [None] means the operator did not choose, so the resolved
+          *destination* decides ({!Sol_cli_env_target.default_secret_backend}:
+          live for a direct/local deploy, placeholder for GitOps). The CLI must
+          not carry a default of its own -- two defaults meant a direct deploy
+          emitted an empty Secret and the workload could not start. *)
   ; confirm_group_change : bool
   ; loki_push_url : string option
   ; keep_releases : int
