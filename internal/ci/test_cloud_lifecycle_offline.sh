@@ -263,6 +263,18 @@ if [ "${DESTROYING:-}" = 1 ]; then
       ;;
     "ecr describe-repositories") printf '\n'; exit 0 ;;
     "resourcegroupstaggingapi get-resources") printf '\n'; exit 0 ;;
+    "ec2 describe-addresses")
+      [ "${AWS_RESIDUAL_KIND:-}" = eip ] && printf 'eipalloc-residual\n' || printf '\n'
+      exit 0
+      ;;
+    "ec2 describe-nat-gateways")
+      [ "${AWS_RESIDUAL_KIND:-}" = nat ] && printf 'nat-residual\n' || printf '\n'
+      exit 0
+      ;;
+    "ec2 describe-volumes")
+      [ "${AWS_RESIDUAL_KIND:-}" = ebs ] && printf 'vol-residual\n' || printf '\n'
+      exit 0
+      ;;
     # Anything else (notably "eks update-kubeconfig", still needed to build
     # the platform-phase ephemeral kubeconfig during teardown) falls through
     # to the ordinary logic below.
@@ -1073,6 +1085,33 @@ case "$snapshot_id" in
 esac
 grep -F 'verify preparation: RDS deletion protection disabled' "$log.out" >/dev/null
 grep -F "final snapshot $snapshot_id confirmed" "$log.out" >/dev/null
+# INFRA-047: the successful direction must execute all three independent
+# absence queries; a missing check cannot pass merely because the mock defaults
+# to empty output.
+grep -F 'aws ec2 describe-addresses' "$log" >/dev/null
+grep -F 'aws ec2 describe-nat-gateways' "$log" >/dev/null
+grep -F 'aws ec2 describe-volumes' "$log" >/dev/null
+
+# Mutation direction: each positive result must independently fail the public
+# destroy command and identify the residual class.  These are separate runs so
+# short-circuiting or accidentally wiring one result to another is observable.
+for residual in eip nat ebs; do
+  residual_log="$tmp/destroy-residual-$residual.log"
+  if (export AWS_RESIDUAL_KIND="$residual"; run_destroy "$residual_log"); then
+    echo "AWS destroy verification accepted residual $residual infrastructure" >&2
+    exit 1
+  fi
+  case "$residual" in
+    eip) expected='AWS elastic IPs still exist after destroy' ;;
+    nat) expected='AWS NAT gateways still exist after destroy' ;;
+    ebs) expected='AWS EBS volumes still exist after destroy' ;;
+  esac
+  grep -F "$expected" "$residual_log.out" >/dev/null || {
+    echo "AWS residual $residual did not report its failed absence check" >&2
+    cat "$residual_log.out" >&2
+    exit 1
+  }
+done
 # Preparation happens before the actual destroy, not folded into it.
 prepare_line_no="$(grep -n -- '-target=aws_db_instance.postgres' "$log" | head -1 | cut -d: -f1)"
 destroy_line_no="$(grep -n 'infra/aws.* destroy ' "$log" | head -1 | cut -d: -f1)"

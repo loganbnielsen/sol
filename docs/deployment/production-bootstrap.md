@@ -292,10 +292,12 @@ not relaxed for convenience. Destruction is an explicit lifecycle:
    otherwise the delete fails with `DBSnapshotAlreadyExists`;
 4. `terraform destroy` completes;
 5. absence is verified independently. `verify_aws_destroy`, which `sol cloud
-   destroy` runs, covers EKS, RDS, ECR and load balancers. The live smoke harness
+   destroy` runs, covers EKS, RDS, ECR, load balancers, elastic IPs, NAT gateways,
+   and target-tagged EBS volumes. The live smoke harness
    (`internal/qualification/aws/live-smoke.sh`) additionally asserts the VPC is gone after its
-   own `sol cloud destroy`. **Nothing automated checks elastic IPs, NAT gateways
-   or EBS volumes** — those remain the manual sweep recorded in HARDEN-002.
+   own `sol cloud destroy`. The verifier fails closed when any of those provider
+   queries errors or returns a resource; an operator sweep remains useful as
+   independent evidence, but it is no longer the only EIP/NAT/EBS check.
    Volumes are worth the operator's attention from this release onward: the EBS
    CSI driver and default gp3 StorageClass (see *Platform storage* above) are what
    first make dynamically provisioned EBS volumes possible on this substrate. The

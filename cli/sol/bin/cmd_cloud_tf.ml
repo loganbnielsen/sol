@@ -318,6 +318,78 @@ let aws_no_load_balancers ~region ~cluster_name =
     false
 ;;
 
+(* INFRA-047: Terraform state being empty is not an absence proof for resources
+   created indirectly by the VPC module or by Kubernetes.  These queries use
+   the target's stable cluster name/tags and treat an API error as a failed
+   verification, never as absence. *)
+let aws_no_listed_resources ~region ~kind ~argv =
+  match
+    Sol_cli_process.run (Sol_cli_process.cmd (("aws" :: argv) @ [ "--region"; region ]))
+  with
+  | Ok r when r.Sol_cli_process.exit_code = 0 && String.trim r.Sol_cli_process.stdout = ""
+    -> true
+  | Ok r when r.Sol_cli_process.exit_code = 0 ->
+    Printf.eprintf
+      "error: AWS %s still exist after destroy: %s\n"
+      kind
+      r.Sol_cli_process.stdout;
+    false
+  | Ok r ->
+    Printf.eprintf "error: AWS %s verification failed: %s\n" kind r.Sol_cli_process.stderr;
+    false
+  | Error _ ->
+    Printf.eprintf "error: AWS %s verification failed: aws CLI unavailable.\n" kind;
+    false
+;;
+
+let aws_no_elastic_ips ~region ~cluster_name =
+  aws_no_listed_resources
+    ~region
+    ~kind:"elastic IPs"
+    ~argv:
+      [ "ec2"
+      ; "describe-addresses"
+      ; "--filters"
+      ; Printf.sprintf "Name=tag:Name,Values=%s-*" cluster_name
+      ; "--query"
+      ; "Addresses[].AllocationId"
+      ; "--output"
+      ; "text"
+      ]
+;;
+
+let aws_no_nat_gateways ~region ~cluster_name =
+  aws_no_listed_resources
+    ~region
+    ~kind:"NAT gateways"
+    ~argv:
+      [ "ec2"
+      ; "describe-nat-gateways"
+      ; "--filter"
+      ; Printf.sprintf "Name=tag:Name,Values=%s-*" cluster_name
+      ; "--query"
+      ; "NatGateways[?State != `deleted`].NatGatewayId"
+      ; "--output"
+      ; "text"
+      ]
+;;
+
+let aws_no_ebs_volumes ~region ~cluster_name =
+  aws_no_listed_resources
+    ~region
+    ~kind:"EBS volumes"
+    ~argv:
+      [ "ec2"
+      ; "describe-volumes"
+      ; "--filters"
+      ; Printf.sprintf "Name=tag:kubernetes.io/cluster/%s,Values=owned,shared" cluster_name
+      ; "--query"
+      ; "Volumes[].VolumeId"
+      ; "--output"
+      ; "text"
+      ]
+;;
+
 (* The platform destroy removes the ingress Service through the named
    provisioner. AWS deprovisions its load balancer asynchronously, so wait
    before Terraform removes the VPC. The final absence check remains the hard
@@ -375,8 +447,14 @@ let verify_aws_destroy ~var_files ~vars =
     in
     let ecr_gone = aws_no_ecr_repositories ~region ~workspace_name in
     let elb_gone = aws_no_load_balancers ~region ~cluster_name in
-    if not (eks_gone && rds_gone && ecr_gone && elb_gone) then exit 1;
-    Printf.printf "  AWS verification passed: EKS/RDS/ECR/load-balancers not found.\n%!"
+    let eips_gone = aws_no_elastic_ips ~region ~cluster_name in
+    let nat_gone = aws_no_nat_gateways ~region ~cluster_name in
+    let ebs_gone = aws_no_ebs_volumes ~region ~cluster_name in
+    if not (eks_gone && rds_gone && ecr_gone && elb_gone && eips_gone && nat_gone && ebs_gone)
+    then exit 1;
+    Printf.printf
+      "  AWS verification passed: EKS/RDS/ECR/load-balancers/EIPs/NAT-gateways/\
+       EBS-volumes not found.\n%!"
 ;;
 
 (* The GCP counterpart. Deliberately its own list rather than a shared "enumerate
