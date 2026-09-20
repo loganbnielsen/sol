@@ -59,9 +59,25 @@ type pod_expectation =
   | Continuous
   | Ephemeral
 
+(** INFRA-057 / DEC-038 §5: the result of reading a namespace's events.
+
+    A failed read is **not** an empty result, and the two must never render the
+    same way:
+
+    - [Events []] -- the read succeeded and there is nothing to report;
+    - [Events_unavailable why] -- Sol could not look, and says so, naming why.
+
+    The status contract stays best-effort (one denied read must not deny the
+    operator the rest of the diagnosis), but it must never present a part it did
+    not obtain as though it had. *)
+type events_fetch_result =
+  | Events of event list
+  | Events_unavailable of string
+
 (** Render one pod's diagnosis block: state/reason, restarts, last termination
-    reason, image, and recent events. *)
-val format_pod_diagnosis : pod_status -> event list -> string
+    reason, image, and recent events. When the events read failed, the block says
+    so rather than showing none. *)
+val format_pod_diagnosis : pod_status -> events_fetch_result -> string
 
 (** [Continuous] diagnosis over a confirmed pod list. Pass only a real pod list
     from a successful kubectl fetch: [] means confirmed zero pods, not "could
@@ -69,7 +85,7 @@ val format_pod_diagnosis : pod_status -> event list -> string
 val format_service_diagnosis
   :  service_name:string
   -> pod_status list
-  -> event list
+  -> events_fetch_result
   -> string option
 
 (** CronJob status fields used for [Ephemeral] diagnosis. *)
@@ -110,7 +126,7 @@ val format_cronjob_diagnosis
 val format_active_run_diagnosis
   :  service_name:string
   -> pod_status list
-  -> event list
+  -> events_fetch_result
   -> string option
 
 (** Live diagnosis for a deployed workload in the cluster [ctx] names. Unlike
