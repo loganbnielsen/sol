@@ -192,7 +192,22 @@ type pod_expectation =
   | Continuous
   | Ephemeral
 
-let format_pod_diagnosis (p : pod_status) (events : event list) : string =
+(* INFRA-057 / DEC-038 §5: a *failed* read is not an empty result.
+
+   The two states must never collapse into one another:
+
+   - [Events []] -- the read succeeded and there is nothing to report;
+   - [Events_unavailable why] -- Sol could not look, and says so.
+
+   The status contract stays best-effort (one denied read must not deny the
+   operator the rest of the diagnosis), but it must never present a part it did
+   not obtain as though it had. [cronjob_fetch_result] below already had this
+   shape; this is the same discipline for events. *)
+type events_fetch_result =
+  | Events of event list
+  | Events_unavailable of string
+
+let format_pod_diagnosis (p : pod_status) (events : events_fetch_result) : string =
   let buf = Buffer.create 256 in
   let headline =
     match p.state with
@@ -231,16 +246,32 @@ let format_pod_diagnosis (p : pod_status) (events : event list) : string =
   (match p.image with
    | Some img -> Buffer.add_string buf (Printf.sprintf "Image: %s\n" img)
    | None -> ());
-  if events <> []
-  then (
-    Buffer.add_string buf "Last events:\n";
-    List.iter
-      (fun e -> Buffer.add_string buf (Printf.sprintf "  %s: %s\n" e.reason e.message))
-      events);
+  (match events with
+   | Events [] -> Buffer.add_string buf "No events recorded for this pod.\n"
+   | Events l ->
+     Buffer.add_string buf "Last events:\n";
+     List.iter
+       (fun e -> Buffer.add_string buf (Printf.sprintf "  %s: %s\n" e.reason e.message))
+       l
+   | Events_unavailable why ->
+     (* Named, never silent: this is the difference between "nothing happened"
+        and "I was not allowed to look". *)
+     Buffer.add_string buf (Printf.sprintf "Events unavailable: %s\n" why));
   Buffer.contents buf
 ;;
 
-let render_unhealthy_pods ~service_name (pods : pod_status list) (events : event list)
+(* The events for one pod, keeping the unavailable state intact so the caller
+   cannot accidentally render a failed read as "none". *)
+let events_for_pod_result ~pod_name (result : events_fetch_result) : events_fetch_result =
+  match result with
+  | Events l -> Events (events_for_pod ~pod_name l)
+  | Events_unavailable _ as unavailable -> unavailable
+;;
+
+let render_unhealthy_pods
+      ~service_name
+      (pods : pod_status list)
+      (events : events_fetch_result)
   : string
   =
   let buf = Buffer.create 512 in
@@ -249,7 +280,7 @@ let render_unhealthy_pods ~service_name (pods : pod_status list) (events : event
     (fun p ->
        Buffer.add_string
          buf
-         (format_pod_diagnosis p (events_for_pod ~pod_name:p.name events));
+         (format_pod_diagnosis p (events_for_pod_result ~pod_name:p.name events));
        Buffer.add_char buf '\n')
     pods;
   Buffer.contents buf
@@ -257,7 +288,10 @@ let render_unhealthy_pods ~service_name (pods : pod_status list) (events : event
 
 (* Continuous workloads should always have a pod; an empty confirmed pod
    list means the workload never started. *)
-let format_service_diagnosis ~service_name (pods : pod_status list) (events : event list)
+let format_service_diagnosis
+      ~service_name
+      (pods : pod_status list)
+      (events : events_fetch_result)
   : string option
   =
   if pods = []
@@ -279,14 +313,21 @@ let format_service_diagnosis ~service_name (pods : pod_status list) (events : ev
    PodInitializing) is also OK -- unless a [FailedScheduling] event names it
    (genuinely unschedulable) or it has already restarted (no longer a first
    start). *)
-let is_active_run_pod_ok ~(events : event list) (p : pod_status) : bool =
+let is_active_run_pod_ok ~(events : events_fetch_result) (p : pod_status) : bool =
   is_healthy p
   || p.phase = "Succeeded"
   || (p.restarts = 0
-      && (not
-            (List.exists
-               (fun e -> e.involved_name = p.name && e.reason = "FailedScheduling")
-               events))
+      && (match events with
+          (* DEC-038 §5: with no evidence, a merely-starting pod is not assumed
+             fine. An unreadable event stream cannot rule out FailedScheduling,
+             so it makes a pod need explanation rather than letting it pass --
+             and the renderer then says the events were unavailable. *)
+          | Events_unavailable _ -> false
+          | Events l ->
+            not
+              (List.exists
+                 (fun e -> e.involved_name = p.name && e.reason = "FailedScheduling")
+                 l))
       &&
       match p.state with
       | Waiting { reason; _ } ->
@@ -300,7 +341,7 @@ let is_active_run_pod_ok ~(events : event list) (p : pod_status) : bool =
 let format_active_run_diagnosis
       ~service_name
       (pods : pod_status list)
-      (events : event list)
+      (events : events_fetch_result)
   : string option
   =
   let unhealthy = List.filter (fun p -> not (is_active_run_pod_ok ~events p)) pods in
@@ -393,13 +434,24 @@ let format_cronjob_diagnosis ~service_name (result : cronjob_fetch_result) : str
                scheduled))
 ;;
 
-let fetch_namespace_events ~ctx ~ns : event list =
+let fetch_namespace_events ~ctx ~ns : events_fetch_result =
   match
     Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; "events"; "-n"; ns; "-o"; "json" ]
   with
   | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    parse_events_json r.Sol_cli_process.stdout
-  | _ -> []
+    Events (parse_events_json r.Sol_cli_process.stdout)
+  | Ok r ->
+    let detail =
+      String.trim (r.Sol_cli_process.stderr ^ " " ^ r.Sol_cli_process.stdout)
+    in
+    Events_unavailable
+      (if String.equal detail ""
+       then
+         Printf.sprintf
+           "kubectl get events exited with code %d"
+           r.Sol_cli_process.exit_code
+       else detail)
+  | Error e -> Events_unavailable (Sol_cli_process.error_to_string e)
 ;;
 
 let fetch_pod_statuses ~ctx ~ns ~k8s_name : pod_status list option =
