@@ -1,11 +1,13 @@
 # FND-0005 — GCP service-networking destruction: documented contract vs live observation
 
 - **Classification:** `QUALIFICATION_GAP`
-- **State:** `OPEN` — observed twice (Attempts 3 and 4); the documented contract is
-  not aligned, no general upper bound is established, and the
-  ABANDON-vs-`REMOVE_PEERING` decision is **recommended but not yet ratified**
-  (recommendation in "Decision input" below: keep `ABANDON`, with the provider
-  upgrade to `>= 8.1` as the trigger to revisit)
+- **State:** `ACCEPTED` — decided 2026-09-20: keep `ABANDON`, with the provider
+  upgrade to `>= 8.1` (or an observed instance of the documented failure) as the
+  trigger to revisit. Recorded as **`DEC-035`**
+  (`internal/pipeline/tickets/DONE/DEC-035.md`), which also carries the four
+  constraints that keep the choice defensible. Observed twice (Attempts 3 and 4);
+  the documented contract is still not aligned, and no general upper bound is
+  established — that residual is what `ACCEPTED` records.
 - **First identified:** 2026-09-19 (GCP qualification Attempts 1–3)
 - **Last verified:** 2026-09-19, `main @ 910a59f1` (reconciled after Attempt 4 / #363)
 - **Provider:** GCP (Terraform `google` provider)
@@ -121,9 +123,10 @@ policy it belongs here as a qualification gap and a recommendation, not a ticket
 
 ## To move to qualified
 
-Decide ABANDON vs `REMOVE_PEERING` with the provider wording as the primary
-input. If ABANDON is kept, record the two observations and the residual
-uncertainty as an accepted design choice rather than an open qualification row.
+**Done, 2026-09-20.** The decision was taken with the provider wording and the
+provider version as the primary inputs; `ABANDON` is kept and the residual
+uncertainty is recorded as an accepted design choice rather than an open
+qualification row. See `DEC-035` for the decision and its four constraints.
 
 ## Decision input (2026-09-20): the provider version gate
 
@@ -154,7 +157,10 @@ above):
 | `ABANDON` | Removes the resource from Terraform management "without updating or deleting the resource in the API"; the VPC peering is left in place, "which will block deletion of the network". |
 | `REMOVE_PEERING` | "The connection is deleted, and if the API refuses because service producer resources still use it, the VPC peering is removed from the network so that the network can be deleted." An "escape hatch, not equivalent to a fully successful `deleteConnection`. Aim it at teardown of ephemeral networks or projects, not routine operations." |
 
-### Recommendation: keep `ABANDON`, and let the provider upgrade be the trigger
+### Decision (ratified 2026-09-20): keep `ABANDON`, with the provider upgrade as the trigger
+
+Ratified by the repository owner and recorded as `DEC-035`; the reasoning below is
+the recommendation that was accepted.
 
 1. `REMOVE_PEERING` is documented as the more complete mechanism and costs a major
    provider upgrade (above). It is not available to this code today.
