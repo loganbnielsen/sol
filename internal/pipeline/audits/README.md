@@ -176,6 +176,12 @@ The ledger is shared, and two rules here were learned expensively:
   clean at the moment you look does not prove the owner is finished with it
   (#365, repeated on 2026-09-20). Leave worktrees in place, or report them;
   removing one is the owner's call.
+- **Never `git add -A` while a qualification target is in the tree.** A real
+  target sits untracked at `sol/qual/…` by design, so a blanket add sweeps it into
+  the commit — the HARDEN-002 run 2 incident, reproduced on 2026-09-20 by an agent
+  that had read that incident's own comment. Stage explicit paths. When a
+  qualification target is present, `git status` should show exactly one `??` entry
+  and every add should name what it is adding.
 - **Publishing a branch is not owning it.** When an item's branch is committed
   but unpublished, publishing it and opening its PR is shepherding and is fine;
   rewriting its commits is not, and the PR body should name who authored it. The
