@@ -48,3 +48,16 @@ them. That is recorded there; this ticket is only about what the output contains
 **Demo/example coverage:** Not applicable.
 
 **TypeScript parity:** No language-parity impact.
+
+## Implementation
+
+Migration database errors are now rendered through a connection-credential
+redaction boundary inside the migration runner itself.  This removes the
+password before it reaches container stderr, so the Kubernetes Job log is safe
+at its source.  The parent CLI also applies the same redaction when reproducing
+Job logs as defense in depth.  Apply, status, rollback, and pool-creation errors
+share the mechanism rather than special-casing one error string.
+
+Offline tests inject a known password into a representative failed-connection
+message and a multi-line Job log.  They require the password to be absent while
+preserving the user, host, port, database, and non-secret diagnostic text.
