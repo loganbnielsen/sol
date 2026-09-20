@@ -21,7 +21,7 @@
 #
 # What Run 8 asserts with this target is in
 # `docs/qualification/production-single-region-v1-matrix.md` §"Before the next run
-# (Run 8)"; the record to fill in is `docs/qualification/run8-aws-record.md`.
+# (Run 8)"; the record to fill in is `docs/qualification/2026-09-20-run8-aws.md`.
 target:
   profile: production-single-region
   cluster_name: <cluster-name>          # also names the VPC, NAT gateways and EIPs
