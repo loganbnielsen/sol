@@ -12,37 +12,47 @@ source: audit finding FND-0021
 
 ## START HERE -- what the epoch is blocked on
 
-**Completed 2026-09-21 on the corrective branch.** The ticket had been moved to `DONE`
-with this checklist still open; a corrective PR (not a reopen) lands the remaining
-fail-open and wrong-end-state items and ticks them here.
+**Code scope completed 2026-09-21 on the corrective branch.** The ticket had been moved to
+`DONE` with this checklist still open; a corrective PR (not a reopen) lands the remaining
+fail-open and wrong-end-state items:
 
-- [x] **A. Window on failure**: `verify_whoami_shape` and the shared bootstrap-window
-      control take `~on_error` and run it before their terminal `lifecycle_error`, so a
-      gate or control failure removes the bootstrap access. The offline harness injects a
-      persistent gate failure and asserts the removal apply ran (`provisioner_bootstrap_admin=false`)
-      and `bootstrap-window` reads `false`; dropping the cleanup from the mutant makes it fail.
+- [x] **A. Window on failure**: `verify_whoami_shape` and the bootstrap-window control run
+      an `~on_error` cleanup before their terminal `lifecycle_error`, so a gate or control
+      failure removes the bootstrap access. The offline harness injects a persistent gate
+      failure and asserts the removal apply ran (`provisioner_bootstrap_admin=false`) and
+      `bootstrap-window` reads `false`; dropping the cleanup from the mutant makes it fail.
 - [x] **B. `can-i` tri-state**: `capability_answer = Permitted | Denied | Indeterminate`
-      replaces the `(string * bool)` probe list, and `deescalation_probe` classifies the
-      `can-i` **stdout** (`yes`/`no`) rather than the exit code. A transport or token
-      failure is `Indeterminate`, the verdict is `Undetermined`, and it can never produce
-      `Deescalated`. The harness models a non-authorization `can-i` failure after
-      de-escalation; reverting the classifier to exit-code semantics makes it fail.
-- [x] **Destroy path**: `sol cloud destroy` revokes the bootstrap access too, so it now
-      observes the window control and verifies the effective surface afterwards --
-      DEC-040's "every path that revokes privileged access verifies the effective surface"
-      acceptance criterion, which the live teardown exposed as missing. A harness scenario
-      fails the destroy when the post-removal probe is indeterminate.
-- [ ] **Full-suite green on a code head, with the path named.** Pending on this PR's CI;
-      the head now carries code, so a completed `test` job resolves it.
-- [x] **The offline harness green on the head**, including the new A, B and destroy cases.
+      replaces the `(string * bool)` probe list, and the classifier is a pure lib function
+      over kubectl's exit code and **stdout** (`yes`/`no`, tolerating a `no - reason`
+      suffix; a token/exit mismatch is indeterminate). A transport or token failure is
+      `Indeterminate`, the verdict is `Undetermined`, and it can never produce
+      `Deescalated`. Unit-tested directly and mutation-verified in the harness.
+- [x] **Control strictness**: the window control refuses a window containing an
+      *indeterminate* probe even when another capability is permitted, so the run fails
+      before the platform install instead of at de-escalation. A harness scenario
+      (`CAN_I_INDETERMINATE_WHEN_OPEN`) pins it; a control that accepts "any permitted"
+      reaches the install and fails the scenario.
+- [x] **Destroy path**: `sol cloud destroy` revokes the bootstrap access too, so it
+      observes the window and checks the effective surface afterwards. That check is
+      **advisory**, a deliberate decision: the terminal state of a destroy is the
+      substrate's *absence*, and a probe that can fail must not block teardown (ADR 0003
+      invariant 6) or strand billable infrastructure (HARDEN-004's cost rule). A harness
+      scenario asserts an indeterminate post-removal probe is reported and teardown
+      completes.
+- [x] **The offline harness green on the head**, including the new cases.
 
-**No live capture has happened yet.** Everything known about the shape of the authorizer's
-answer is still the version recalled from the API; the parser has never seen a real response.
-The live capture remains the step that settles it, and it is the only item this branch
-does not close.
+Two facts are deliberately *not* checklist items here, because neither is code this ticket
+owns:
 
-**Known red, cause confirmed, and now self-diagnosing.** The offline harness fails at a
-**stub syntax check** and names the line:
+- **Full-suite green** is recorded by this PR's CI. The head now carries code, so a
+  `test` job that ran to completion with no code commit between it and the head is the
+  readable record (the rule the ticket itself added).
+- **The first live capture** is a HARDEN-002 run step, not a code item: it belongs in the
+  next run record's capture section, where the parser meets the real authorizer response.
+  This branch narrows what that capture has to confirm; it does not replace it.
+
+**A red that was real, then fixed, and is now self-diagnosing.** The offline harness once
+failed at a **stub syntax check** and named the line:
 
 ```
 the generated aws stub is not valid shell:
