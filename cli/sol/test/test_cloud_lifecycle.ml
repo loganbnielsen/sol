@@ -912,6 +912,46 @@ let permitted capability = capability, Sol_cli_cloud_lifecycle.Permitted
 let denied capability = capability, Sol_cli_cloud_lifecycle.Denied
 let indeterminate capability why = capability, Sol_cli_cloud_lifecycle.Indeterminate why
 
+(* DEC-040: the classifier is where the fail-open lived, and a shell stub cannot produce
+   every case by hand (`no - reason`, a token/exit mismatch). It is pure, so it is tested
+   directly rather than only through the harness. *)
+let test_can_i_classification () =
+  let classify ?(stderr = "") ~exit_code stdout =
+    Sol_cli_cloud_lifecycle.capability_answer_of_can_i_output ~exit_code ~stdout ~stderr
+  in
+  let label = function
+    | Sol_cli_cloud_lifecycle.Permitted -> "permitted"
+    | Sol_cli_cloud_lifecycle.Denied -> "denied"
+    | Sol_cli_cloud_lifecycle.Indeterminate _ -> "indeterminate"
+  in
+  let check name expected actual = Alcotest.(check string) name expected (label actual) in
+  (* The forms real kubectl emits. *)
+  check "yes" "permitted" (classify ~exit_code:0 "yes\n");
+  check "no" "denied" (classify ~exit_code:1 "no\n");
+  (* Newer kubectl appends a reason after a denial. Matching the whole line would make
+     this indeterminate, and every real denial would stop the run. *)
+  check
+    "no with a reason"
+    "denied"
+    (classify ~exit_code:1 "no - no RBAC policy matched\n");
+  check
+    "yes with a trailing line"
+    "permitted"
+    (classify ~exit_code:0 "yes\nsome trailing line\n");
+  (* A token that disagrees with the exit code is not an answer. *)
+  check "yes with exit 1" "indeterminate" (classify ~exit_code:1 "yes\n");
+  check "no with exit 0" "indeterminate" (classify ~exit_code:0 "no\n");
+  (* A transport or token failure: non-zero, nothing on stdout. *)
+  check
+    "a transport failure"
+    "indeterminate"
+    (classify ~exit_code:1 ~stderr:"error: unable to connect to the server" "");
+  check
+    "an unclassifiable answer"
+    "indeterminate"
+    (classify ~exit_code:1 "something unexpected\n")
+;;
+
 (* DEC-040 / FND-0021: de-escalation is decided from the effective authorization
    surface, and only from the principal whose elevation is being removed. The live
    counterexample: an EKS access-policy disassociation was accepted and the API
@@ -954,6 +994,24 @@ let test_deescalation_requires_the_effective_surface () =
      Alcotest.fail "a permitted capability was read as de-escalated"
    | Sol_cli_cloud_lifecycle.Undetermined _ ->
      Alcotest.fail "a permitted capability was read as undetermined");
+  (* A definitely-permitted capability outranks another capability's indeterminate probe:
+     elevation is hard evidence, and the operator needs it named rather than hidden
+     behind "could not tell". *)
+  (match
+     verdict
+       [ permitted (capability "escalate" "clusterroles")
+       ; indeterminate (capability "create" "clusterroles") "connection refused"
+       ]
+   with
+   | Sol_cli_cloud_lifecycle.Still_elevated still ->
+     Alcotest.(check (list string))
+       "the permitted capability is named despite the indeterminate one"
+       [ "escalate clusterroles" ]
+       still
+   | Sol_cli_cloud_lifecycle.Undetermined _ ->
+     Alcotest.fail "an indeterminate probe masked a capability that was permitted"
+   | Sol_cli_cloud_lifecycle.Deescalated ->
+     Alcotest.fail "a permitted capability was read as de-escalated");
   (* No answer is not de-escalation: an unanswered probe must never license Ready. *)
   (match verdict [] with
    | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
@@ -1130,6 +1188,27 @@ let test_deescalation_requires_a_transition () =
    | Sol_cli_cloud_lifecycle.Deescalated ->
      Alcotest.fail "a capability the after-probe never covered was read as removed"
    | Sol_cli_cloud_lifecycle.Still_elevated _ -> Alcotest.fail "unexpected verdict");
+  (* 7. A definitely-permitted capability after de-escalation outranks another
+     capability's indeterminate probe: it is hard evidence of elevation, and the operator
+     needs it named. *)
+  (match
+     Sol_cli_cloud_lifecycle.deescalation_transition
+       ~before:granted
+       ~after_principal:confirmed
+       ~after:
+         [ permitted (capability "escalate" "clusterroles")
+         ; indeterminate (capability "create" "clusterroles") "connection refused"
+         ]
+   with
+   | Sol_cli_cloud_lifecycle.Still_elevated still ->
+     Alcotest.(check (list string))
+       "the permitted capability is named despite the indeterminate one"
+       [ "escalate clusterroles" ]
+       still
+   | Sol_cli_cloud_lifecycle.Undetermined _ ->
+     Alcotest.fail "an indeterminate probe masked a capability that was permitted"
+   | Sol_cli_cloud_lifecycle.Deescalated ->
+     Alcotest.fail "a permitted capability was read as de-escalated");
   (* ... and if the capability is still permitted, it is still elevated -- the positive
      control makes that observable rather than merely assumed. *)
   match
@@ -1484,6 +1563,10 @@ let () =
         ; Alcotest.test_case "convergence predicates" `Quick test_convergence_predicates
         ; Alcotest.test_case "destroy retention" `Quick test_destroy_retention
         ; Alcotest.test_case "effective authorization" `Quick test_effective_authorization
+        ; Alcotest.test_case
+            "can-i answer classification (DEC-040)"
+            `Quick
+            test_can_i_classification
         ; Alcotest.test_case
             "verified de-escalation (DEC-040)"
             `Quick

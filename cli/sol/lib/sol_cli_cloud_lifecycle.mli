@@ -261,6 +261,24 @@ val capability_label : capability -> string
 (** Only an explicit [Permitted] is permitted; [Indeterminate] is not. *)
 val answer_is_permitted : capability_answer -> bool
 
+(** Classify a `kubectl auth can-i` result from its exit code and output.
+
+    Real kubectl prints `yes`/`no` as the first token, and some versions append a
+    reason after a denial (`no - no RBAC policy matched`), so only the first
+    whitespace-delimited token is read. The token and the exit code must agree
+    (`yes`/0, `no`/1); a mismatch is not an answer. Pure, so the decision is unit
+    tested rather than only exercised through a shell stub. *)
+val capability_answer_of_can_i_output
+  :  exit_code:int
+  -> stdout:string
+  -> stderr:string
+  -> capability_answer
+
+(** The indeterminate reason for a probe, if it has one, labelled with its capability.
+    Exposed so a caller can report *why* a window or a surface could not be
+    established instead of only that it could not. *)
+val indeterminate_reason : capability * capability_answer -> (string * string) option
+
 (** [probes] is the *authorizer's* answer -- the component that enforces the
     boundary -- for the capabilities only the bootstrap authority held.
 
