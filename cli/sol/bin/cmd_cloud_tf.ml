@@ -2814,6 +2814,12 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
           *permitted* as the provisioner while this run's window is open, then verified
           gone afterwards. Captured before the platform teardown, which is when the
           window is open. *)
+       (* ADR 0003 invariant 6 (teardown must not be blocked by a probe that can fail) is
+          satisfied here rather than waived: the platform teardown below already calls
+          [with_cluster_access] and needs the cluster API, so a cluster this probe cannot
+          reach is one the very next step could not tear down either. The check adds no
+          new way to strand a target, and it is placed after the removal so a substrate
+          that is about to be destroyed is not left holding access the run never checked. *)
        let deescalation_target =
          match provider, target_cfg.provisioner_role_arn, outputs with
          | ( Sol_cli_provider.Aws
