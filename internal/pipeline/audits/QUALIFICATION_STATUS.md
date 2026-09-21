@@ -274,3 +274,87 @@ One procedural note that outlives this run: the evidence for "a message was proc
 came from the platform's own log store, and it **overturned** the broker's committed
 offset, which read as success while the worker had skipped the record. Committed offset
 is not evidence of processing.
+
+## Run 8 frontier after the two harness decisions (2026-09-21)
+
+Both decisions were taken as separate matters, and both hit a real limit -- each with
+clean evidence rather than a workaround.
+
+**Transport (DEC-039 / FND-0020 / INFRA-060).** The qualification-only capability was
+built: `sol:qualifiers`, `pods`/`services` `get`/`list` and `pods/portforward` `create`,
+nothing else, established outside `sol cloud apply`, with a guard (six mutations)
+proving it cannot leak into production. But establishing it needed a temporary
+privileged window -- no standing identity can write cluster-scoped RBAC, since the
+installation authority was de-escalated (ADR 0003) -- and **closing that window did not
+take effect**: the API reported `accessPolicies: null` while the authorizer still
+granted cluster-admin, proven by reading an application's Secrets from a principal
+confirmed at the time of the read. The credential was broader than its declared
+contract, so it was **revoked rather than used** (`FND-0021` / `INFRA-061`, high
+severity), with the general lesson that de-escalation must verify the effective
+surface rather than the API's report -- including Sol's own `De-escalate` phase.
+
+**Fixture reset (FND-0022 / INFRA-062).** Redeploying the recorded revision through the
+documented mechanism succeeded and changed nothing: `generation` stayed 1, the same two
+pods with the same creation timestamps, still 0/2 ready, still `DEGRADED`. An unchanged
+deploy is idempotent **by design** -- B2 qualifies exactly that -- so "reset the
+fixture" is not expressible and the procedure must say what it means. Stop condition
+met: the run stopped rather than restarting the workload or reaching for
+`kubectl delete pod`.
+
+**Consequence.** B3 is still `NOT REACHED`, now for two documented reasons rather than
+one unexplained one. §B4-§B7 and the consumer-dependent §D/§E rows are in the same
+position. Also noted post-boundary: `sol deploy` cannot write `sol-deploy-state-pluto`
+either (same `apply`->`patch` root cause as `INFRA-051`), so BUG-025's drift check has
+no state to compare against.
+
+## CI health note (2026-09-21): an unexplained red gate, recorded rather than explained away
+
+`audit/fnd-0021-and-boundary` (#406) failed its `test` job **twice** (03:35 and 03:47) at
+`FAIL: sol-deploy is no longer in the deploy bootstrap's bind allowlist` -- the guard's
+own message, meaning its allowlist extraction came back empty.
+
+What was ruled out, by inspection rather than assumption: the branch's
+`platform_deploy_rbac.tf` contains the same allowlist as main and as two branches whose
+`test` jobs passed; the guard carries the same extraction; it passes locally under dune
+on that exact tree; and main was consistent, carrying both the allowlist and the
+assertion that checks it.
+
+The temporary instrumentation (#409, not for merge) made CI print what it actually sees,
+and the answer is that **the failure no longer reproduces**: on the same content, with the
+diagnostic in place, `test` **passed** (7m57s) and the guard's inputs were provably
+correct --
+
+```
+cwd:                  .../_build/default/cli/sol/test
+root argument:        ../../..            (relative)
+rbac file:            ../../../cli/platform/infra/base/platform_deploy_rbac.tf
+file exists:          yes
+resource_names lines: 2
+extracted allowlist:  both ClusterRoles, correctly
+```
+
+**Recorded as an unexplained failure plus a successful rerun, not as a diagnosis.** What
+the diagnostic establishes: the guard's inputs are correct in CI. What it does not: why
+those two runs saw otherwise. A plausible shape (a `_build` sandbox whose copy of the
+Terraform file was absent or stale, making the extraction empty and producing exactly
+that message) is *not* asserted, because the diagnostic did not run during a failure and
+no cause was observed.
+
+Worth keeping from this: instrument the thing that is inexplicably empty and ask the
+runner, rather than reasoning from assumptions about it -- one CI cycle settled more than
+an hour of local investigation had.
+
+## Environment destroyed (2026-09-21)
+
+The qualification target was destroyed through the documented path and verified
+`Absent` (`EKS/RDS/ECR/load-balancers/EIPs/NAT-gateways/EBS-volumes not found`), exit 0.
+Torn down deliberately rather than preserved: the next step was a CI diagnosis that needs
+no AWS, and keeping a live target through a genuine pause invites exceptions.
+
+The remaining sequence starts from a **fresh** target, which is itself evidence: several
+fixes landed during this environment's lifetime, so rebuilding exercises them from clean
+bootstrap rather than only against a repeatedly reconciled cluster.
+
+**Open before that sequence:** the destroy path removes the bootstrap elevation but does
+not verify the effective surface (DEC-040 applies to every revoking path) — a remaining
+piece of INFRA-061, exposed by the teardown itself.
