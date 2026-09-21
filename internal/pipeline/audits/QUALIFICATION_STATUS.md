@@ -306,3 +306,40 @@ one unexplained one. §B4-§B7 and the consumer-dependent §D/§E rows are in th
 position. Also noted post-boundary: `sol deploy` cannot write `sol-deploy-state-pluto`
 either (same `apply`->`patch` root cause as `INFRA-051`), so BUG-025's drift check has
 no state to compare against.
+
+## CI health note (2026-09-21): an unexplained red gate, recorded rather than explained away
+
+`audit/fnd-0021-and-boundary` (#406) failed its `test` job **twice** (03:35 and 03:47) at
+`FAIL: sol-deploy is no longer in the deploy bootstrap's bind allowlist` -- the guard's
+own message, meaning its allowlist extraction came back empty.
+
+What was ruled out, by inspection rather than assumption: the branch's
+`platform_deploy_rbac.tf` contains the same allowlist as main and as two branches whose
+`test` jobs passed; the guard carries the same extraction; it passes locally under dune
+on that exact tree; and main was consistent, carrying both the allowlist and the
+assertion that checks it.
+
+The temporary instrumentation (#409, not for merge) made CI print what it actually sees,
+and the answer is that **the failure no longer reproduces**: on the same content, with the
+diagnostic in place, `test` **passed** (7m57s) and the guard's inputs were provably
+correct --
+
+```
+cwd:                  .../_build/default/cli/sol/test
+root argument:        ../../..            (relative)
+rbac file:            ../../../cli/platform/infra/base/platform_deploy_rbac.tf
+file exists:          yes
+resource_names lines: 2
+extracted allowlist:  both ClusterRoles, correctly
+```
+
+**Recorded as an unexplained failure plus a successful rerun, not as a diagnosis.** What
+the diagnostic establishes: the guard's inputs are correct in CI. What it does not: why
+those two runs saw otherwise. A plausible shape (a `_build` sandbox whose copy of the
+Terraform file was absent or stale, making the extraction empty and producing exactly
+that message) is *not* asserted, because the diagnostic did not run during a failure and
+no cause was observed.
+
+Worth keeping from this: instrument the thing that is inexplicably empty and ask the
+runner, rather than reasoning from assumptions about it -- one CI cycle settled more than
+an hour of local investigation had.
