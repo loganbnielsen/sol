@@ -1213,7 +1213,8 @@ let observe_bootstrap_window ~on_error ~region ~outputs ~provisioner_role_arn ()
         fail
           "the bootstrap window never showed its capability permitted, so a later denial \
            could not be told apart from a credential that never worked. The run stops \
-           before the platform install."
+           rather than proceeding to a verification that can only come back \
+           undetermined."
       else (
         Printf.printf
           "  bootstrap window control: not yet permitted; retrying in %.0fs\n%!"

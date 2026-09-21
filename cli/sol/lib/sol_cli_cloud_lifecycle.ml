@@ -1193,8 +1193,8 @@ let deescalation_transition
               (fun capability -> not (List.mem_assoc capability after))
               before_permitted
           in
-          (* A probe that stopped covering a capability before it was permitted would
-             otherwise let that capability's absence read as its removal. *)
+          (* A capability observed permitted in the window must still be *covered* by
+             the after-probe. Its absence from the after list is not its removal. *)
           if uncovered <> []
           then
             Undetermined
@@ -1213,8 +1213,6 @@ let deescalation_transition
                    why)
             | None ->
               (match still_permitted after with
-               | [] when after = [] ->
-                 Undetermined "no capability probe produced an answer after de-escalation"
                | [] -> Deescalated
                | still -> Still_elevated still))))
 ;;
