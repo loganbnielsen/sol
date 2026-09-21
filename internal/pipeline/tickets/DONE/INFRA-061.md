@@ -249,3 +249,162 @@ are only in code comments.
 **Minor, NOT DONE.** `SOL_WHOAMI_RETRY_INTERVAL_S` is parsed in three places and should be one
 helper that rejects negative and NaN values. The `assume-role` stdout carries credentials and
 must never be printed or included in `detail` (it is not today; keep it that way).
+
+## Known red, and the correction (2026-09-21)
+
+**The tree is NOT green.** An earlier note said "green and pushed" while also saying the new
+head should fail the harness; that is a contradiction and the inviting one is wrong. The
+accurate statement is:
+
+> **Known red: the offline harness fails since the STS stub fix. Cause not yet confirmed.**
+
+First failing message from the harness after the reorder (verbatim):
+
+```
+  whoami shape: not reachable yet (could not establish ephemeral provisioner cluster access); retrying in 0s
+  cluster access identity: arn:aws:iam::111122223333:role/sol-cluster-access
+error: the authorizer could not be reached to check the whoami shape (could not establish
+ephemeral provisioner cluster access). The gate not having run is a failure, not a pass: the
+run stops before the platform install rather than discovering an unreadable shape at
+de-escalation.
+```
+
+**Leading hypothesis (unverified):** the failure is in my own stub edit, not in the product.
+Moving the `sts assume-role` case above the eks-only guard was done by cutting the arm and
+re-inserting it earlier, which very likely split the surrounding `case ... esac` so that
+`aws eks update-kubeconfig` no longer matches its arm -- and the error above is exactly an
+`eks update-kubeconfig` failure surfacing through `provisioner_kubeconfig`. The fix is to
+rebuild that `case` block properly rather than by text move. Recorded as a hypothesis because
+it has not been confirmed by reading the generated stub.
+
+That also means the earlier claim "the behaviour changed, which confirms the diagnosis" is
+half right: it confirms the branch was dead, and says nothing about whether the discriminator
+now passes or whether the positive path exposes a real bookkeeping mismatch. Those need
+opposite responses, so the fresh session starts with the message above and the question it
+leaves open.
+
+## Pre-epoch items
+
+**A. Item 1 -- the window stays open on failure (unchanged, highest priority).** See above.
+
+**B. The capability answer must be tri-state -- this is a fail-open in the verdict.**
+In `deescalation_probe` the probe currently reduces an answer to a `bool`:
+
+```ocaml
+| Ok r -> r.Sol_cli_process.exit_code = 0
+| Error _ -> false
+```
+
+`false` means "denied", but `kubectl auth can-i` also exits non-zero when it cannot reach the
+API, hits a transient error, or fails to get a token. If `whoami` succeeds and the `can-i`
+calls then fail for a non-authorization reason, all three capabilities read as denied, the
+principal is `Principal_confirmed`, and `deescalation_transition` returns `Deescalated`:
+absence of evidence read as evidence, in the verdict itself. This belongs next to A, not in a
+follow-up PR.
+
+```ocaml
+type capability = { verb : string; resource : string }
+type answer = Permitted | Denied | Indeterminate of string
+```
+
+Parse stdout: `yes` is `Permitted`, `no` is `Denied`, anything else -- including a process
+error -- is `Indeterminate`. Any `Indeterminate` makes the verdict `Undetermined`. Needs a
+stub case where `can-i` exits 1 with a non-authorization error, and a mutant mapping it to
+`Denied`. It also replaces the `(string * bool) list` and the `"create clusterroles"` strings
+with something that cannot be misspelled.
+
+## Ordering for the next session
+
+1. **A** -- the window fix, with its harness case (`bootstrap-window` reads `false`).
+2. **B** -- the `can-i` tri-state, with its stub case and mutant.
+3. The paired positive control (`WHOAMI_REFUSE=1` without `STS_ASSUME_FAIL` must reach
+   `Deescalated`) and the message assertions (Item 3 below).
+4. Ticket staleness (Item 4 below).
+5. The type-tightening refactors below, **after** the first live capture, so the parser being
+   validated does not move underneath it.
+
+## What the epoch is blocked on -- checklist
+
+- [ ] A: a gate or control failure removes the bootstrap window (`bootstrap-window` = `false`)
+- [ ] B: an indeterminate `can-i` answer cannot produce `Deescalated`
+- [ ] Full-suite green on the head, **with the path named**
+- [ ] The offline harness green on the head
+
+**No live capture has happened yet.** Everything known about the shape of the authorizer's
+answer is still the version recalled from the API; the parser has never seen a real response.
+
+## Follow-up: tighten the types
+
+Refactors, to land after the first capture. They touch the same functions the mutants target,
+so every mutation check must be re-run afterwards.
+
+**Two ARN types.** The bug class we kept hitting -- path normalisation, raw versus canonical --
+is all `string`. The code already comments that the STS call needs the raw ARN while the
+comparison needs the path-free one:
+
+```ocaml
+module Role_arn : sig type t val of_string : string -> t val to_string : t -> string end
+module Canonical_role_arn : sig type t val of_role_arn : Role_arn.t -> t end
+val principal_matches : expected:Canonical_role_arn.t -> whoami_identity -> ...
+```
+
+Passing the raw ARN to the comparison then becomes a compile error.
+
+**`source : string` should be a variant.** The gate tests
+`source <> "extra.canonicalArn" && source <> "userInfo.canonicalArn"`, so a typo silently
+changes behaviour. Better: give the gate a type where canonical is *required*
+(`canonical_arn : string`, not `option`), so a non-canonical identity cannot reach the
+comparison at all. That removes the `arn` fallback in `principal_matches`, which can never
+equal a role ARN anyway.
+
+**The gate should return a result, not raise.**
+
+```ocaml
+type gate_failure =
+  | Unparseable of string
+  | Wrong_principal of string
+  | Non_canonical of source
+  | Unreachable of string
+```
+
+`cloud_init` converts it to `lifecycle_error` in one place, after `cleanup_bootstrap_access`.
+That fixes the open-window issue **structurally** instead of by remembering `~on_error` at
+every call site, and tests can assert the variant rather than message text.
+
+**Small variants replacing option/bool combinations.** `sts_assumable : bool option` becomes
+`Assumable | Not_assumable | Unchecked`; `principal_matches : bool option` becomes
+`Match | Mismatch of string | Unnamed`; `cluster_refused : string -> bool` could return
+`Refused | Other`.
+
+**`deescalation_principal` mixes identity with outcome.** `Refused` and `Probe_failed` are not
+principals, and `deescalation_verdict ~principal probes` accepts `Refused` with a non-empty
+probe list -- an illegal combination. A probe outcome shaped as
+
+```ocaml
+| Answered of principal * capability_answer list
+| Refused of string
+| Failed of string
+```
+
+removes those states by construction; and once `Indeterminate` exists, the list can be made
+non-empty by construction too.
+
+**`before` should be evidence, not a list.** `verify_deescalation ~before` receives `[]` when
+the control is `None` and relies on a runtime `Undetermined`. Give it an abstract
+`Window_control.t` that can only be built from an observed `Permitted`, and bundle it with the
+role ARN in one `bootstrap_verification option` so the three separate matches on
+`provisioner_role_arn, outputs` collapse into one -- the `None -> []` branch then cannot exist.
+
+**Cleanup.** Delete `role_name_of_arn`, `principal_role_name` and `index_of_substring` from
+the `.mli`: production uses only `normalize_role_arn` and `principal_matches`, and the rest
+encode the role-name comparison rejected as fail-open. Only tests call them.
+
+**One `Retry_interval` and `Attempts` type.** The env parsing is copy-pasted three times and
+accepts negatives and NaN; `attempt 10` and `loop 18` should be named bounds.
+
+**`run_id` needs a type and a monotonic or random source.**
+`int_of_float (Unix.gettimeofday ())` can collide within a second if the gate is called twice.
+
+## Status
+
+The remaining work is mechanical, and Item A should be done fresh.
