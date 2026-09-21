@@ -8,6 +8,29 @@ source: audit finding FND-0021
 
 **Audit finding:** `internal/pipeline/audits/findings/FND-0021-disassociated-access-policy-remained-effective.md`
 
+---
+
+## START HERE -- what the epoch is blocked on
+
+- [ ] **A. Window on failure**: a gate or control failure must remove the bootstrap access
+      (`bootstrap-window` reads `false`). Not fixed; approach and harness case below.
+- [ ] **B. `can-i` tri-state**: an indeterminate probe answer must not be able to produce
+      `Deescalated`. Not fixed; this is a fail-open in the verdict, not a refactor.
+- [ ] **Full-suite green on the head, with the path named.**
+- [ ] **The offline harness green on the head** -- currently red, cause now known (below).
+
+**No live capture has happened yet.** Everything known about the shape of the authorizer's
+answer is still the version recalled from the API; the parser has never seen a real response.
+
+**Known red, cause confirmed:** the offline harness fails since the STS stub fix. `bash -n`
+on the generated aws stub reports a **syntax error at line 74** (`[ "$1 $2" = "eks
+update-kubeconfig" ] || exit 90`), so the `sts assume-role` case was moved out of its
+`case ... esac` and the surrounding block was split. The fix is to rebuild that `case` block
+properly rather than by text move.
+
+---
+
+
 ## Problem
 
 `aws eks disassociate-access-policy` was accepted, `describe-access-entry` reports
@@ -269,13 +292,17 @@ run stops before the platform install rather than discovering an unreadable shap
 de-escalation.
 ```
 
-**Leading hypothesis (unverified):** the failure is in my own stub edit, not in the product.
-Moving the `sts assume-role` case above the eks-only guard was done by cutting the arm and
-re-inserting it earlier, which very likely split the surrounding `case ... esac` so that
-`aws eks update-kubeconfig` no longer matches its arm -- and the error above is exactly an
-`eks update-kubeconfig` failure surfacing through `provisioner_kubeconfig`. The fix is to
-rebuild that `case` block properly rather than by text move. Recorded as a hypothesis because
-it has not been confirmed by reading the generated stub.
+**Cause: confirmed, and it is mine.** `bash -n` on the generated aws stub reports
+
+```
+/tmp/aws-stub.sh: line 74: syntax error near unexpected token `"$1 $2"'
+/tmp/aws-stub.sh: line 74: `[ "$1 $2" = "eks update-kubeconfig" ] || exit 90'
+```
+
+so moving the `sts assume-role` case did split the surrounding `case ... esac`: the eks-only
+guard now sits outside it, `aws eks update-kubeconfig` never matches its arm, and the failure
+surfaces through `provisioner_kubeconfig` exactly as the error above shows. The fix is to
+rebuild that `case` block properly rather than by text move.
 
 That also means the earlier claim "the behaviour changed, which confirms the diagnosis" is
 half right: it confirms the branch was dead, and says nothing about whether the discriminator
@@ -407,4 +434,7 @@ accepts negatives and NaN; `attempt 10` and `loop 18` should be named bounds.
 
 ## Status
 
-The remaining work is mechanical, and Item A should be done fresh.
+Most of the remaining work is mechanical, with one exception: **B is a small design change,
+not parenthesis surgery.** It alters a type that `deescalation_transition` and several tests
+consume, and it needs its own mutant, so treat it as design work. A and the ticket edits are
+the mechanical part; both should still be done fresh.
