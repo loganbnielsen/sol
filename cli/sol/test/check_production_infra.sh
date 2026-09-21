@@ -354,6 +354,23 @@ bind_allowlist=$(
     "$root/cli/platform/infra/base/platform_deploy_rbac.tf"
 )
 
+# TEMPORARY DIAGNOSTIC (#406): the guard's allowlist extraction came back empty in CI
+# while passing locally on identical content. Print what CI actually sees, so the cause
+# is an observation rather than a guess. Remove once explained.
+{
+  echo "DIAGNOSTIC (temporary, #406)"
+  echo "  cwd:            $(pwd)"
+  echo "  root argument:  $root"
+  echo "  rbac file:      $root/cli/platform/infra/base/platform_deploy_rbac.tf"
+  echo "  file exists:    $([ -f "$root/cli/platform/infra/base/platform_deploy_rbac.tf" ] && echo yes || echo NO)"
+  echo "  file bytes:     $(wc -c < "$root/cli/platform/infra/base/platform_deploy_rbac.tf" 2>/dev/null || echo unavailable)"
+  echo "  resource_names lines: $(grep -c 'resource_names' "$root/cli/platform/infra/base/platform_deploy_rbac.tf" 2>/dev/null || echo unavailable)"
+  echo "  extracted allowlist:"
+  printf '%s\n' "$bind_allowlist" | sed 's/^/    | /'
+  echo "  source excerpt:"
+  grep -n -B 1 -A 8 'resource_names' "$root/cli/platform/infra/base/platform_deploy_rbac.tf" 2>/dev/null | sed 's/^/    | /'
+} >&2
+
 if ! printf '%s' "$bind_allowlist" | grep -q 'kubernetes_cluster_role.sol_deploy.metadata'; then
   echo "FAIL: sol-deploy is no longer in the deploy bootstrap's bind allowlist" >&2
   exit 1
