@@ -6,10 +6,16 @@
 #
 # Rules, deliberately high-signal so documented examples still pass:
 #   - a real-looking 12-digit AWS account id in any tracked text file is an
-#     error, unless it is one of the documented placeholder accounts. The
-#     patterns are account-shaped (an `arn:aws:...:<id>:` ARN, an account id in
-#     an ECR registry host, or the word "account" followed by an id) rather than
-#     a bare 12-digit number, which would false-positive on GitHub run ids;
+#     error, unless it is one of the documented placeholder accounts. An id is
+#     matched when it is account-*shaped*: in an `arn:aws:...:<id>:` ARN, in an
+#     ECR registry host, after the word "account", or adjacent (in either order)
+#     to a qualification qualifier -- the word "aws", a region token, or an
+#     `arn:` fragment. A bare 12-digit number with no such qualifier is still not
+#     matched: a GitHub run id, a hash prefix and a timestamp fragment are all
+#     digit runs, and none of them sits next to a qualifier. FND-0015: a bare id
+#     in prose sat in this repository undetected until this rule, so the
+#     asymmetry is deliberate -- a false positive costs a minute, a false
+#     negative is a permanent leak in a public repository;
 #   - qualification scratch paths must not exist in the repository at all --
 #     provisioned targets, backend overrides and Terraform locks belong outside it.
 #
@@ -30,9 +36,18 @@ status=0
 # placeholders.
 placeholders='111122223333|123456789012|000000000000'
 
+# What a bare account id has to sit next to, in either order: the word
+# "account", the word "aws" (letter-bounded, so "flaws" is not one), an `arn:`
+# fragment, or an AWS region token. The region alternatives are the actual AWS
+# prefixes so a workload name like `my-app-name-1` is not mistaken for a region.
+account_qualifier='([Aa]ccount|(^|[^A-Za-z])[Aa][Ww][Ss]|arn:|(us|eu|ap|sa|ca|me|af|cn|il)(-gov)?-[a-z]+-[0-9])'
+
 # Every tracked text file, regardless of extension: the real leak this guard
-# missed first was a bare account id in a planning .md, not in a target/.tf.
-found="$(git grep -nI -E '(arn:aws:[a-zA-Z0-9-]*:[a-zA-Z0-9-]*:[0-9]{12}:|[0-9]{12}\.dkr\.ecr|[Aa]ccount[^0-9]{0,12}[0-9]{12})' 2>/dev/null | grep -vE "$placeholders" || true)"
+# missed first was a bare account id in a planning .md, not in a target/.tf. The
+# `(^|[^0-9/])` before each bare-id alternative is what keeps a GitHub run id in
+# its URL (`.../actions/runs/<id>`) out: an account id in prose is not a path
+# segment.
+found="$(git grep -nI -E "(arn:aws:[a-zA-Z0-9-]*:[a-zA-Z0-9-]*:[0-9]{12}:|[0-9]{12}\\.dkr\\.ecr|[Aa]ccount[^0-9]{0,12}[0-9]{12}|(^|[^0-9/])[0-9]{12}[^0-9]{0,16}${account_qualifier}|${account_qualifier}[^0-9]{0,16}(^|[^0-9/])[0-9]{12})" 2>/dev/null | grep -vE "$placeholders" || true)"
 
 if [ -n "$found" ]; then
   echo "FAIL: real-looking AWS account id in a tracked file:" >&2

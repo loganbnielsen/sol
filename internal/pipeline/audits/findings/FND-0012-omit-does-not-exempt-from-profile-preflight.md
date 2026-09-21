@@ -7,6 +7,10 @@
   2026-09-20 during the Run 8 preflight)
 - **Derived ticket:** `INFRA-049`
 - **Evidence class:** `BEHAVIORAL` (preflight invocations on the landed target)
+- **Related:** `FND-0023` (2026-09-21) — the code mechanism behind this observation:
+  `omit` *is* honoured by the resolved-config accessors and bypassed by the deploy
+  inventory and the preflight. It is applied in one layer and ignored in the one users
+  notice, not unimplemented.
 
 ## The observation
 
