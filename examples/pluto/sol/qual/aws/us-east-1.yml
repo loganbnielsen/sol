@@ -1,0 +1,68 @@
+# Qualification target for AWS Run 8 (HARDEN-002) — UNTRACKED by design.
+#
+# This path is reserved for the operator's real target; the repository forbids
+# tracking `sol/qual/` (internal/ci/check_no_account_artifacts.sh, HARDEN-002 run
+# 2). The run record captures this file's contents and SHA-256 instead of relying
+# on the revision to pin it.
+#
+# Values below were discovered from the disposable qualification account
+# (876701109436) rather than invented: the four scoped roles and the state
+# backend already existed from the previous iteration; `sol-qual5-cluster-access`
+# was created for this run from the bootstrap root's `cluster_access_policy_json`
+# contract, because the DEC-034 identity split (#376) is newer than that account
+# state. No secrets live here.
+target:
+  profile: production-single-region
+  cluster_name: sol-qual5
+  base_domain: qual.invalid
+  letsencrypt_email: ops@qual.invalid
+  kube_context: sol-qual5-deploy
+  registry: 876701109436.dkr.ecr.us-east-1.amazonaws.com
+
+  # Pre-existing backend, verified: versioning Enabled, AES256, full public-access
+  # block, and a LockID table in ACTIVE state.
+  state_bucket: sol-qual5-876701109436-tfstate
+  state_lock_table: sol-qual5-tflock
+
+  # DEC-034 split. Each policy was compared against the bootstrap root's current
+  # contract and matches byte-for-byte; cluster-access carries the explicit Deny
+  # on eks:AssociateAccessPolicy and iam:* that Run 8 records a denial for.
+  provisioner_role_arn: arn:aws:iam::876701109436:role/sol-qual5-provisioner
+  cluster_access_role_arn: arn:aws:iam::876701109436:role/sol-qual5-cluster-access
+  deploy_role_arn: arn:aws:iam::876701109436:role/sol-qual5-deploy
+  operator_role_arn: arn:aws:iam::876701109436:role/sol-qual5-operator
+
+  # This host's egress address, so the API endpoint allowlist admits the operator
+  # that runs the scenario steps. Re-check before the run if the address changes.
+  cluster_endpoint_cidr: 4.1.2.61/32
+
+  # Alert delivery is a profile guarantee (OBS-043); the preflight refuses until
+  # all four fields validate.
+  #
+  # The runbook is Sol's own, and was verified rather than assumed: HTTP 200
+  # serving the document's own headings (SolRolloutFailed, SolPostgresUnavailable),
+  # and it covers all five required alerts with first-response steps. A suggested
+  # https://sol-fab.dev/runbooks/qualification-alert was tried first and rejected —
+  # it 404s, so using it would have satisfied validation with a dead link.
+  alert_owner: Logan Nielsen
+  alert_runbook_url: https://github.com/loganbnielsen/sol/blob/main/docs/deployment/alert-runbooks.md
+
+  # The receiver is a Webhook.site endpoint for this disposable run only. It is
+  # deliberately NOT a permanent Sol endpoint: it is discarded after Run 8, and it
+  # lives in this untracked file so it never enters the repository. `webhook` is
+  # the only qualified receiver type.
+  alert_receiver_type: webhook
+  alert_receiver_url: https://webhook.site/fecb9538-0a19-4158-b3b5-f45ba0d77b7f
+
+  node_failure_headroom_nodes: 1
+  destroy_retention: none
+
+# The pluto workspace declares two TypeScript services; the first profile is
+# OCaml-only (DEC-026 §2), and the preflight reports an unqualified language as an
+# unmet guarantee. Omitted here rather than left to fail the run at step 1.
+services:
+  order_svc:
+    omit: true
+
+  fulfillment_worker:
+    omit: true
