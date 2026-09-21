@@ -517,10 +517,23 @@ case " $* " in
       printf 'error: the authorizer was asked about the wrong principal\n' >&2
       exit 90
     fi
+    # DEC-040 / FND-0021: a non-authorization failure. Real kubectl exits non-zero here
+    # with no `yes`/`no` on stdout, and Sol must read that as indeterminate -- not as a
+    # denial. Only after the window closes, so the positive control still observes the
+    # capability permitted first. CAN_I_FAIL=1 models it.
+    if [ "${CAN_I_FAIL:-}" = 1 ] &&
+      [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "false" ]; then
+      printf 'error: unable to connect to the server: dial tcp: i/o timeout\n' >&2
+      exit 1
+    fi
+    # Real kubectl prints the answer on stdout (`yes`/`no`) and exits 0/1. The classifier
+    # reads the answer, so the stub must emit it rather than only an exit code -- which is
+    # what let a transport failure masquerade as a denial before.
     if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "true" ]; then
+      printf 'yes\n'
       exit 0
     fi
-    printf 'error: You must be logged in to the server (Unauthorized)\n' >&2
+    printf 'no\n'
     exit 1
     ;;
 esac
@@ -647,6 +660,9 @@ run_destroy() {
 # never converges still fails.
 for phase in cloud outputs cloud-verify access platform-init prerequisites crds deescalate rbac platform; do
   rm -f "$tmp/markers/$phase"
+  # INFRA-061 A: clear the window marker so the assertion below cannot pass vacuously on a
+  # value left behind by an earlier run.
+  if [ "$phase" = access ]; then rm -f "$FAIL_MARKER_DIR/bootstrap-window"; fi
   log="$tmp/$phase.log"
   # The access phase is persistent here: an injected access failure that never clears must
   # still be fatal, or the retry would quietly turn a hard failure into a pass.
@@ -659,13 +675,30 @@ for phase in cloud outputs cloud-verify access platform-init prerequisites crds 
   echo "INFRA-039: the apply did not report the principal its credentials belong to" >&2
   exit 1
 }
+# INFRA-061 A: the whoami gate runs *after* the bootstrap window is open, so a gate
+# failure must remove that access before the run stops. Assert both that the removal apply
+# ran and that the emulated window reads closed -- otherwise the run exits with
+# provisioner_bootstrap_admin=true still applied on a cluster it just decided it cannot
+# verify, which is the wrong end state for a least-privilege change.
+if [ "$phase" = access ]; then
+  if ! grep -qF 'provisioner_bootstrap_admin=false' "$log"; then
+    echo "INFRA-061 A: a failed whoami gate never removed the bootstrap access:" >&2
+    cat "$log.out" >&2
+    exit 1
+  fi
+  if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" != "false" ]; then
+    echo "INFRA-061 A: the bootstrap window is still open after the gate failed:" >&2
+    cat "$log.out" >&2
+    exit 1
+  fi
+fi
 # DEC-040 discriminator: the base identity is valid but the provisioning role cannot be
 # assumed. A cluster refusal then must NOT be read as de-escalation -- the run has to come
 # back Undetermined and fail, or a broken credential passes as a verified removal. This is
 # the end-to-end counterpart of the unit case, and it fails if the identity check is skipped.
 # The positive pairing -- a refusal with a *working* identity counting as the removal -- is
-# covered by the unit case (refusal_is_deescalation with sts_assumable = Some true), because
-# the emulated cluster's window bookkeeping does not line up for it end to end here.
+# covered by the unit case (refusal_is_deescalation with Credential_assumable), because the
+# emulated cluster's window bookkeeping does not line up for it end to end here.
 sts_log="$tmp/sts-unassumable.log"
 if (export FAIL_ON=""; export WHOAMI_REFUSE=1; export STS_ASSUME_FAIL=1; run_apply "$sts_log"); then
   echo "a refusal with an unassumable role was accepted as de-escalation:" >&2
@@ -704,6 +737,24 @@ if ! (export FAIL_ON=""; run_apply "$log"); then
     exit 1
   fi
 done
+
+# DEC-040 tri-state. After de-escalation the capability probe must obtain a *usable*
+# answer. A `kubectl auth can-i` that exits non-zero for a non-authorization reason -- an
+# unreachable API here -- is not a denial, and reading it as one would declare the removal
+# verified while the surface was never established. This is the fail-open the tri-state
+# closes; it fails if the answer is classified by exit code instead of by stdout.
+can_i_log="$tmp/can-i-indeterminate.log"
+rm -f "$FAIL_MARKER_DIR/bootstrap-window"
+if (export FAIL_ON=""; export CAN_I_FAIL=1; run_apply "$can_i_log"); then
+  echo "a non-authorization can-i failure was accepted as de-escalation:" >&2
+  cat "$can_i_log.out" >&2
+  exit 1
+fi
+grep -qF 'no usable answer' "$can_i_log.out" || {
+  echo "the run failed, but not because the capability probe was indeterminate:" >&2
+  cat "$can_i_log.out" >&2
+  exit 1
+}
 
 # INFRA-034: a transient unmet readiness sample must be waited out, not fatal. This
 # is the defect a real target hit: every component is still starting the moment the
@@ -1403,6 +1454,24 @@ assert_contains "the disposable destroy reports retaining nothing" "$log_none.ou
   'retention: none' || exit 1
 assert_contains "the disposable destroy states no artifacts remain" "$log_none.out" \
   'no residual billable artifacts' || exit 1
+
+# DEC-040 acceptance: the destroy path revokes the bootstrap access too, so it owes the
+# same effective-surface verification the install path gives. A `can-i` that returns no
+# usable answer after the removal must fail the destroy, not let it declare the revocation
+# complete. Without the verification this scenario succeeds, which is why it is here.
+destroy_tri_log="$tmp/destroy-can-i-indeterminate.log"
+rm -f "$FAIL_MARKER_DIR/bootstrap-window"
+if (cd "$tmp/work" && DESTROYING=1 CAN_I_FAIL=1 LIFECYCLE_LOG="$destroy_tri_log" \
+      "$sol" cloud destroy prod/aws/us-east-1 --apply) >"$destroy_tri_log.out" 2>&1; then
+  echo "a destroy accepted an indeterminate de-escalation probe as a verified removal:" >&2
+  cat "$destroy_tri_log.out" >&2
+  exit 1
+fi
+grep -qF 'no usable answer' "$destroy_tri_log.out" || {
+  echo "the destroy failed, but not because the capability probe was indeterminate:" >&2
+  cat "$destroy_tri_log.out" >&2
+  exit 1
+}
 
 # An absent target (cloud substrate never applied) has nothing to prepare and
 # must not attempt the targeted apply.

@@ -795,10 +795,51 @@ let with_provisioner_kubeconfig ?(on_error = Fun.id) ?role_arn ~region outputs f
    believing any answer: a probe that quietly authenticated as somebody else would
    "prove" exactly the thing FND-0021 showed can be false. *)
 let bootstrap_only_capabilities =
-  [ "create", "clusterroles"
-  ; "create", "clusterrolebindings"
-  ; "escalate", "clusterroles"
-  ]
+  List.map
+    (fun (verb, resource) -> { Sol_cli_cloud_lifecycle.verb; resource })
+    [ "create", "clusterroles"
+    ; "create", "clusterrolebindings"
+    ; "escalate", "clusterroles"
+    ]
+;;
+
+(* `kubectl auth can-i` prints `yes` or `no` on stdout and exits 0 or 1. The exit code
+   alone is not enough: an unreachable API, a token that could not be minted, or any
+   other non-authorization failure also exits non-zero, and reading every non-zero as
+   `no` is how a probe that obtained no evidence became evidence of removal (DEC-040 /
+   FND-0021). Only an explicit `yes`/`no` is classified; everything else is
+   [Indeterminate] and fails the verdict closed. *)
+let capability_answer_of_can_i ~env { Sol_cli_cloud_lifecycle.verb; resource } =
+  match
+    Sol_cli_process.run
+      (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "can-i"; verb; resource ])
+  with
+  | Ok r ->
+    (match String.trim r.Sol_cli_process.stdout with
+     | "yes" -> Sol_cli_cloud_lifecycle.Permitted
+     | "no" -> Sol_cli_cloud_lifecycle.Denied
+     | _ ->
+       Sol_cli_cloud_lifecycle.Indeterminate
+         (Printf.sprintf
+            "kubectl exited %d without a yes/no answer (%s)"
+            r.Sol_cli_process.exit_code
+            (String.trim (r.Sol_cli_process.stderr ^ " " ^ r.Sol_cli_process.stdout))))
+  | Error e -> Sol_cli_cloud_lifecycle.Indeterminate (Sol_cli_process.error_to_string e)
+;;
+
+(* One definition of the retry interval, so the shape gate, the bootstrap-window
+   control and the post-de-escalation loop cannot drift apart. Production uses the
+   default; a harness overrides it to exercise the retry without sleeping through it.
+   A negative or non-finite override is ignored rather than slept on -- a NaN reaches
+   [Unix.sleepf] as an exception, and a negative would spend the whole retry budget in
+   one pass. *)
+let whoami_retry_interval_s () =
+  match Sys.getenv_opt "SOL_WHOAMI_RETRY_INTERVAL_S" with
+  | None -> 10.
+  | Some raw ->
+    (match float_of_string_opt raw with
+     | Some seconds when Float.is_finite seconds && seconds >= 0. -> seconds
+     | _ -> 10.)
 ;;
 
 (* A refusal from the cluster, as opposed to a failure to reach it. Shared because the
@@ -858,7 +899,7 @@ let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
          broken, the clock is skewed, or the wrong role was assumed -- and reading that as
          removal would be a fail-open into Deescalated. The raw configured ARN is used here,
          not the path-free form the comparison wants, because this is an IAM call. *)
-      let sts_assumable =
+      let assumption =
         match
           Sol_cli_process.run
             (Sol_cli_process.cmd
@@ -872,11 +913,12 @@ let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
                ; "sol-deescalation-check"
                ])
         with
-        | Ok r when r.Sol_cli_process.exit_code = 0 -> Some true
-        | Ok _ -> Some false
-        | Error _ -> None
+        | Ok r when r.Sol_cli_process.exit_code = 0 ->
+          Sol_cli_cloud_lifecycle.Credential_assumable
+        | Ok _ -> Sol_cli_cloud_lifecycle.Credential_refused
+        | Error _ -> Sol_cli_cloud_lifecycle.Credential_unchecked
       in
-      Sol_cli_cloud_lifecycle.refusal_is_deescalation ~sts_assumable detail)
+      Sol_cli_cloud_lifecycle.refusal_is_deescalation assumption detail)
     else Sol_cli_cloud_lifecycle.Principal_probe_failed detail
   | Error e ->
     Sol_cli_cloud_lifecycle.Principal_probe_failed (Sol_cli_process.error_to_string e)
@@ -906,18 +948,7 @@ let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
           []
         | _ ->
           List.map
-            (fun (verb, resource) ->
-               let permitted =
-                 match
-                   Sol_cli_process.run
-                     (Sol_cli_process.cmd
-                        ~env
-                        [ "kubectl"; "auth"; "can-i"; verb; resource ])
-                 with
-                 | Ok r -> r.Sol_cli_process.exit_code = 0
-                 | Error _ -> false
-               in
-               Printf.sprintf "%s %s" verb resource, permitted)
+            (fun capability -> capability, capability_answer_of_can_i ~env capability)
             bootstrap_only_capabilities
       in
       principal, probes)
@@ -988,17 +1019,16 @@ let persist_whoami_capture ~run_id json =
          path)
 ;;
 
-let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
-  (* The retry interval is overridable so a harness can exercise the retry path without
-     sleeping through it. Production uses the default. *)
-  let interval_s =
-    match Sys.getenv_opt "SOL_WHOAMI_RETRY_INTERVAL_S" with
-    | Some v ->
-      (match float_of_string_opt v with
-       | Some f -> f
-       | None -> 10.)
-    | None -> 10.
+let verify_whoami_shape ~on_error ~region ~outputs ~provisioner_role_arn =
+  (* This gate runs after the bootstrap window is open, so a failure here must remove
+     that access before the run stops -- otherwise the run exits with
+     [provisioner_bootstrap_admin=true] still applied on a cluster it has just decided
+     it cannot verify. [on_error] is the same cleanup every other failure path uses. *)
+  let fail message =
+    on_error ();
+    lifecycle_error message
   in
+  let interval_s = whoami_retry_interval_s () in
   (* The expectation is the configured intent -- the target's provisioner role, normalised
      to the path-free form canonicalArn reports, so a role with a path does not produce a
      false mismatch on a healthy cluster. The observation is the authorizer's own answer
@@ -1024,7 +1054,7 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
       let identity_result = Sol_cli_cloud_lifecycle.whoami_identity_of_json json in
       (match identity_result with
        | Error why ->
-         lifecycle_error
+         fail
            (Printf.sprintf
               "the authorizer's whoami response did not match the parser (%s). The run \
                stops here rather than spending a bootstrap on a verification that cannot \
@@ -1044,17 +1074,17 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
          (match matched with
           | Some true -> ()
           | Some false ->
-            lifecycle_error
+            fail
               (Printf.sprintf
                  "the authorizer answered as a different principal than the provisioner \
                   whose elevation this run manages (%s, from %s). The run stops here: \
                   the de-escalation comparison would be about somebody else."
                  named
                  source)
-          | None -> lifecycle_error "the authorizer's answer named no principal at all");
+          | None -> fail "the authorizer's answer named no principal at all");
          if source <> "extra.canonicalArn" && source <> "userInfo.canonicalArn"
          then
-           lifecycle_error
+           fail
              (Printf.sprintf
                 "the principal came from %s rather than canonicalArn, which is the field \
                  the de-escalation comparison depends on. The run stops rather than \
@@ -1085,7 +1115,7 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
          minute. *)
       if remaining <= 1
       then
-        lifecycle_error
+        fail
           (Printf.sprintf
              "the authorizer could not be reached to check the whoami shape (%s). The \
               gate not having run is a failure, not a pass: the run stops before the \
@@ -1104,15 +1134,7 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
 ;;
 
 let verify_deescalation ~region ~outputs ~provisioner_role_arn ~before =
-  (* Injectable so the harness does not sleep through it; production uses 10s. *)
-  let interval_s =
-    match Sys.getenv_opt "SOL_WHOAMI_RETRY_INTERVAL_S" with
-    | Some v ->
-      (match float_of_string_opt v with
-       | Some f -> f
-       | None -> 10.)
-    | None -> 10.
-  in
+  let interval_s = whoami_retry_interval_s () in
   let rec loop remaining =
     (* The after-probe builds its kubeconfig the same way the window control did, against
        the same cluster and region. That is what makes a refusal attributable to the removal
@@ -1148,6 +1170,71 @@ let verify_deescalation ~region ~outputs ~provisioner_role_arn ~before =
     lifecycle_error
       ("de-escalation could not be established: "
        ^ Sol_cli_cloud_lifecycle.deescalation_verdict_to_string verdict)
+;;
+
+(* Operator-facing wording for the control line, kept out of the library: this is how a
+   probe result is reported, not part of the verdict. *)
+let deescalation_principal_to_string = function
+  | Sol_cli_cloud_lifecycle.Principal_confirmed arn -> "confirmed " ^ arn
+  | Sol_cli_cloud_lifecycle.Principal_refused_by_cluster why ->
+    "refused by the cluster: " ^ why
+  | Sol_cli_cloud_lifecycle.Principal_probe_failed why -> "no evidence: " ^ why
+  | Sol_cli_cloud_lifecycle.Principal_unexpected who -> "unexpected " ^ who
+;;
+
+let capability_answer_to_string = function
+  | Sol_cli_cloud_lifecycle.Permitted -> "permitted"
+  | Sol_cli_cloud_lifecycle.Denied -> "denied"
+  | Sol_cli_cloud_lifecycle.Indeterminate why -> "indeterminate: " ^ why
+;;
+
+(* DEC-040's positive control, shared by every path that opens and later revokes the
+   bootstrap window (install and destroy). The bootstrap-only capability must be
+   observed *permitted* as the provisioner while this run's window is open, or a later
+   denial is not a transition. A fresh cluster can refuse or be unreachable while
+   propagation catches up, so the observation retries; if it never sees the capability
+   permitted, the run stops through [on_error] rather than proceeding to a verification
+   that can only come back [Undetermined]. *)
+let observe_bootstrap_window ~on_error ~region ~outputs ~provisioner_role_arn () =
+  let fail message =
+    on_error ();
+    lifecycle_error message
+  in
+  let interval_s = whoami_retry_interval_s () in
+  let rec attempt remaining =
+    let control = deescalation_probe ~region ~outputs ~provisioner_role_arn () in
+    let _, probes = control in
+    match
+      List.exists (fun (_, answer) -> answer = Sol_cli_cloud_lifecycle.Permitted) probes
+    with
+    | false ->
+      if remaining <= 1
+      then
+        fail
+          "the bootstrap window never showed its capability permitted, so a later denial \
+           could not be told apart from a credential that never worked. The run stops \
+           before the platform install."
+      else (
+        Printf.printf
+          "  bootstrap window control: not yet permitted; retrying in %.0fs\n%!"
+          interval_s;
+        Unix.sleepf interval_s;
+        attempt (remaining - 1))
+    | true ->
+      let principal, probes = control in
+      Printf.printf
+        "  bootstrap window control: principal=%s; %s\n%!"
+        (deescalation_principal_to_string principal)
+        (probes
+         |> List.map (fun (capability, answer) ->
+           Printf.sprintf
+             "%s=%s"
+             (Sol_cli_cloud_lifecycle.capability_label capability)
+             (capability_answer_to_string answer))
+         |> String.concat ", ");
+      control
+  in
+  attempt 10
 ;;
 
 let process_ok ?(env = []) argv =
@@ -2181,6 +2268,7 @@ let cloud_init ~target ~var_file ~vars ~action () =
     (match target_cfg.provisioner_role_arn, outputs with
      | Some provisioner_role_arn, Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ->
        verify_whoami_shape
+         ~on_error:cleanup_bootstrap_access
          ~region:target_cfg.region
          ~outputs:aws_outputs
          ~provisioner_role_arn
@@ -2191,60 +2279,20 @@ let cloud_init ~target ~var_file ~vars ~action () =
        propagation catches up. So it retries with backoff, and if it never observes
        permitted the run stops before the platform install rather than proceeding to a
        verification that can only come back Undetermined. *)
-    let control_interval_s =
-      match Sys.getenv_opt "SOL_WHOAMI_RETRY_INTERVAL_S" with
-      | Some v ->
-        (match float_of_string_opt v with
-         | Some f -> f
-         | None -> 10.)
-      | None -> 10.
-    in
-    let rec observe_bootstrap_window remaining =
+    let bootstrap_window_control =
       match target_cfg.provisioner_role_arn, outputs with
       | Some provisioner_role_arn, Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ->
-        let control =
-          (* Paired with the after-probe in verify_deescalation: both build the kubeconfig
-             the same way, against the same cluster and region, and that shared path is what
-             lets a later refusal be read as the removal. Change both or neither. *)
-          deescalation_probe
-            ~region:target_cfg.region
-            ~outputs:aws_outputs
-            ~provisioner_role_arn
-            ()
-        in
-        let _, probes = control in
-        (match List.exists snd probes with
-         | true -> Some control
-         | false ->
-           if remaining <= 1
-           then
-             lifecycle_error
-               "the bootstrap window never showed its capability permitted, so a later \
-                denial could not be told apart from a credential that never worked. The \
-                run stops before the platform install."
-           else (
-             Printf.printf
-               "  bootstrap window control: not yet permitted; retrying in %.0fs\n%!"
-               control_interval_s;
-             Unix.sleepf control_interval_s;
-             observe_bootstrap_window (remaining - 1)))
+        Some
+          (observe_bootstrap_window
+             ~on_error:cleanup_bootstrap_access
+             ~region:target_cfg.region
+             ~outputs:aws_outputs
+             ~provisioner_role_arn
+             ())
       | _ -> None
     in
-    let bootstrap_window_control = observe_bootstrap_window 10 in
     (match bootstrap_window_control with
-     | Some (principal, probes) ->
-       Printf.printf
-         "  bootstrap window control: principal=%s; %s\n%!"
-         (match principal with
-          | Sol_cli_cloud_lifecycle.Principal_confirmed arn -> "confirmed " ^ arn
-          | Sol_cli_cloud_lifecycle.Principal_refused_by_cluster why ->
-            "refused by the cluster: " ^ why
-          | Sol_cli_cloud_lifecycle.Principal_probe_failed why -> "no evidence: " ^ why
-          | Sol_cli_cloud_lifecycle.Principal_unexpected who -> "unexpected " ^ who)
-         (probes
-          |> List.map (fun (c, ok) ->
-            Printf.sprintf "%s=%s" c (if ok then "permitted" else "denied"))
-          |> String.concat ", ")
+     | Some _ -> ()
      | None -> Printf.printf "  bootstrap window control: not captured\n%!");
     let platform_vars =
       platform_vars_of ~on_error:cleanup_bootstrap_access ~cloud_target ~outputs ()
@@ -2761,8 +2809,50 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
                 ())
        in
        let cleanup_bootstrap_access () = ignore (deescalate ()) in
+       (* DEC-040 acceptance: the destroy path revokes the same bootstrap access the
+          install path does, so it owes the same evidence -- a capability observed
+          *permitted* as the provisioner while this run's window is open, then verified
+          gone afterwards. Captured before the platform teardown, which is when the
+          window is open. *)
+       let deescalation_target =
+         match provider, target_cfg.provisioner_role_arn, outputs with
+         | ( Sol_cli_provider.Aws
+           , Some provisioner_role_arn
+           , Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ) ->
+           Some (provisioner_role_arn, aws_outputs)
+         | _ -> None
+       in
+       let before =
+         match deescalation_target with
+         | Some (provisioner_role_arn, aws_outputs) ->
+           let _, probes =
+             observe_bootstrap_window
+               ~on_error:cleanup_bootstrap_access
+               ~region:target_cfg.region
+               ~outputs:aws_outputs
+               ~provisioner_role_arn
+               ()
+           in
+           probes
+         | None -> []
+       in
        destroy_platform ~on_error:cleanup_bootstrap_access outputs;
-       require_terraform_success (deescalate ()));
+       require_terraform_success (deescalate ());
+       (match deescalation_target with
+        | Some (provisioner_role_arn, aws_outputs) ->
+          verify_deescalation
+            ~region:target_cfg.region
+            ~outputs:aws_outputs
+            ~before
+            ~provisioner_role_arn
+        | None ->
+          (* A target that declares no provisioner role elevated nothing; said out loud
+             rather than skipped, the same as on the install path. *)
+          (match provider with
+           | Sol_cli_provider.Aws ->
+             Printf.printf
+               "  no provisioner role declared: no bootstrap elevation to verify\n%!"
+           | Sol_cli_provider.Gcp -> ())));
     (match provider with
      | Sol_cli_provider.Aws ->
        (match resolved_var "cluster_name" ~var_files ~vars ~default:None with

@@ -904,6 +904,14 @@ let test_convergence_predicates () =
   check_unmet "no nodes at all is unmet" (summary_with "nodes" "")
 ;;
 
+(* The capability probes are typed now, so a test names both the capability and the
+   three-valued answer instead of a bare bool that conflated "denied" with "the probe
+   could not tell". *)
+let capability verb resource = { Sol_cli_cloud_lifecycle.verb; resource }
+let permitted capability = capability, Sol_cli_cloud_lifecycle.Permitted
+let denied capability = capability, Sol_cli_cloud_lifecycle.Denied
+let indeterminate capability why = capability, Sol_cli_cloud_lifecycle.Indeterminate why
+
 (* DEC-040 / FND-0021: de-escalation is decided from the effective authorization
    surface, and only from the principal whose elevation is being removed. The live
    counterexample: an EKS access-policy disassociation was accepted and the API
@@ -916,19 +924,27 @@ let test_deescalation_requires_the_effective_surface () =
     =
     Sol_cli_cloud_lifecycle.deescalation_verdict ~principal probes
   in
-  (* Every capability refused is the only thing that licenses the verdict. *)
+  (* Every capability denied is the only thing that licenses the verdict. *)
   Alcotest.(check string)
-    "all refused -> de-escalated"
+    "all denied -> de-escalated"
     "de-escalated"
     (match
-       verdict [ "create clusterroles", false; "create clusterrolebindings", false ]
+       verdict
+         [ denied (capability "create" "clusterroles")
+         ; denied (capability "create" "clusterrolebindings")
+         ]
      with
      | Sol_cli_cloud_lifecycle.Deescalated -> "de-escalated"
      | Sol_cli_cloud_lifecycle.Still_elevated _ -> "still elevated"
      | Sol_cli_cloud_lifecycle.Undetermined _ -> "undetermined");
   (* One capability still permitted means the elevated authority is still usable,
      however the revocation was reported. *)
-  (match verdict [ "create clusterroles", false; "escalate clusterroles", true ] with
+  (match
+     verdict
+       [ denied (capability "create" "clusterroles")
+       ; permitted (capability "escalate" "clusterroles")
+       ]
+   with
    | Sol_cli_cloud_lifecycle.Still_elevated still ->
      Alcotest.(check (list string))
        "the permitted capability is named"
@@ -945,6 +961,21 @@ let test_deescalation_requires_the_effective_surface () =
      Alcotest.fail "no evidence was read as de-escalated"
    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
      Alcotest.fail "no evidence was read as elevated");
+  (* An *indeterminate* answer is not a denial. `kubectl auth can-i` exits non-zero
+     when it cannot reach the API or mint a token, and folding that into `no` is how a
+     probe that obtained no evidence became evidence of removal (FND-0021). *)
+  (match
+     verdict [ indeterminate (capability "create" "clusterroles") "connection refused" ]
+   with
+   | Sol_cli_cloud_lifecycle.Undetermined why ->
+     Alcotest.(check bool)
+       "the indeterminate capability is named"
+       true
+       (Sol_cli_port_forward.string_contains ~needle:"connection refused" why)
+   | Sol_cli_cloud_lifecycle.Deescalated ->
+     Alcotest.fail "an indeterminate probe was read as de-escalated"
+   | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+     Alcotest.fail "an indeterminate probe was read as elevated");
   (* The principal matters. If the probe answered as somebody else -- a SteadyState
      identity rather than the one whose bootstrap elevation was removed -- its refusals
      prove nothing about that principal, so the verdict may not be de-escalated. This
@@ -953,7 +984,7 @@ let test_deescalation_requires_the_effective_surface () =
   (match
      verdict
        ~principal:(Sol_cli_cloud_lifecycle.Principal_unexpected "…/sol-cluster-access")
-       [ "create clusterroles", false ]
+       [ denied (capability "create" "clusterroles") ]
    with
    | Sol_cli_cloud_lifecycle.Undetermined why ->
      Alcotest.(check bool)
@@ -1000,17 +1031,20 @@ let test_deescalation_requires_the_effective_surface () =
    and only one of them is evidence. *)
 let test_deescalation_requires_a_transition () =
   let caps =
-    [ "create clusterroles"; "create clusterrolebindings"; "escalate clusterroles" ]
+    [ capability "create" "clusterroles"
+    ; capability "create" "clusterrolebindings"
+    ; capability "escalate" "clusterroles"
+    ]
   in
-  let granted = List.map (fun c -> c, true) caps in
-  let denied = List.map (fun c -> c, false) caps in
+  let granted = List.map permitted caps in
+  let refused = List.map denied caps in
   let confirmed = Sol_cli_cloud_lifecycle.Principal_confirmed "…/sol-provisioner" in
-  let undetermined why =
+  let not_a_transition before =
     match
       Sol_cli_cloud_lifecycle.deescalation_transition
-        ~before:why
+        ~before
         ~after_principal:confirmed
-        ~after:denied
+        ~after:refused
     with
     | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
     | Sol_cli_cloud_lifecycle.Deescalated ->
@@ -1020,8 +1054,12 @@ let test_deescalation_requires_a_transition () =
       Alcotest.fail "a capability never observed granted was read as still elevated"
   in
   (* 1. The capability was never observed granted in the window: nothing was removed. *)
-  undetermined [];
-  undetermined denied;
+  not_a_transition [];
+  not_a_transition refused;
+  (* 1b. A capability that was *indeterminate* in the window was never shown to be
+     granted, so its later denial is not evidence that it was removed. *)
+  not_a_transition
+    [ indeterminate (capability "create" "clusterroles") "the API was unreachable" ];
   (* 2. A different principal answered after de-escalation: the transition is not
      established, however clean the denial looks. *)
   (match
@@ -1029,7 +1067,7 @@ let test_deescalation_requires_a_transition () =
        ~before:granted
        ~after_principal:
          (Sol_cli_cloud_lifecycle.Principal_unexpected "…/sol-cluster-access")
-       ~after:denied
+       ~after:refused
    with
    | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
    | Sol_cli_cloud_lifecycle.Deescalated ->
@@ -1041,7 +1079,7 @@ let test_deescalation_requires_a_transition () =
        ~before:granted
        ~after_principal:
          (Sol_cli_cloud_lifecycle.Principal_probe_failed "expired credentials")
-       ~after:denied
+       ~after:refused
    with
    | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
    | Sol_cli_cloud_lifecycle.Deescalated ->
@@ -1053,13 +1091,45 @@ let test_deescalation_requires_a_transition () =
      Sol_cli_cloud_lifecycle.deescalation_transition
        ~before:granted
        ~after_principal:confirmed
-       ~after:denied
+       ~after:refused
    with
    | Sol_cli_cloud_lifecycle.Deescalated -> ()
    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
      Alcotest.fail "a demonstrated transition was read as still elevated"
    | Sol_cli_cloud_lifecycle.Undetermined why ->
      Alcotest.fail ("a demonstrated transition was read as undetermined: " ^ why));
+  (* 5. A capability that comes back *indeterminate* after de-escalation is not a
+     denial: the surface was not established. Without the tri-state this read as
+     Deescalated -- the fail-open this case exists to pin. *)
+  (match
+     Sol_cli_cloud_lifecycle.deescalation_transition
+       ~before:granted
+       ~after_principal:confirmed
+       ~after:
+         [ indeterminate (capability "create" "clusterroles") "connection refused"
+         ; denied (capability "create" "clusterrolebindings")
+         ; denied (capability "escalate" "clusterroles")
+         ]
+   with
+   | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+   | Sol_cli_cloud_lifecycle.Deescalated ->
+     Alcotest.fail "an indeterminate post-de-escalation probe was read as de-escalated"
+   | Sol_cli_cloud_lifecycle.Still_elevated _ -> Alcotest.fail "unexpected verdict");
+  (* 6. A probe that stops covering a capability observed granted in the window cannot
+     license a verdict about it. *)
+  (match
+     Sol_cli_cloud_lifecycle.deescalation_transition
+       ~before:granted
+       ~after_principal:confirmed
+       ~after:
+         [ denied (capability "create" "clusterroles")
+         ; denied (capability "create" "clusterrolebindings")
+         ]
+   with
+   | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+   | Sol_cli_cloud_lifecycle.Deescalated ->
+     Alcotest.fail "a capability the after-probe never covered was read as removed"
+   | Sol_cli_cloud_lifecycle.Still_elevated _ -> Alcotest.fail "unexpected verdict");
   (* ... and if the capability is still permitted, it is still elevated -- the positive
      control makes that observable rather than merely assumed. *)
   match
@@ -1224,8 +1294,8 @@ let test_principal_comparison_fails_closed () =
    through to a verdict it would be a wrong verdict, not a safe failure -- and this was on
    the not-yet-applied list, so nothing proved it. *)
 let test_parse_failure_is_undetermined () =
-  let granted = [ "create clusterroles", true ] in
-  let denied = [ "create clusterroles", false ] in
+  let granted = [ permitted (capability "create" "clusterroles") ] in
+  let refused = [ denied (capability "create" "clusterroles") ] in
   let confirmed = Sol_cli_cloud_lifecycle.Principal_confirmed "arn:aws:iam::1:role/p" in
   let parse_failure =
     match
@@ -1248,7 +1318,7 @@ let test_parse_failure_is_undetermined () =
     (Sol_cli_cloud_lifecycle.deescalation_transition
        ~before:granted
        ~after_principal:parse_failure
-       ~after:denied);
+       ~after:refused);
   (* before: the window control could not identify the principal, so nothing was shown to
      have been removed *)
   check_undetermined
@@ -1256,7 +1326,7 @@ let test_parse_failure_is_undetermined () =
     (Sol_cli_cloud_lifecycle.deescalation_transition
        ~before:[]
        ~after_principal:confirmed
-       ~after:denied)
+       ~after:refused)
 ;;
 
 (* DEC-040: what the parser does with an *ambiguous* array, asserted rather than argued.
@@ -1313,28 +1383,28 @@ let test_identity_reports_its_source () =
    Principal_refused_by_cluster maps straight to Deescalated. Without the identity check that
    is a fail-open into the one verdict that has to mean something. *)
 let test_refusal_needs_a_good_identity () =
-  let granted = [ "create clusterroles", true ] in
-  let denied = [ "create clusterroles", false ] in
-  let verdict_of sts_assumable =
+  let granted = [ permitted (capability "create" "clusterroles") ] in
+  let refused = [ denied (capability "create" "clusterroles") ] in
+  let verdict_of assumption =
     Sol_cli_cloud_lifecycle.deescalation_transition
       ~before:granted
       ~after_principal:
-        (Sol_cli_cloud_lifecycle.refusal_is_deescalation ~sts_assumable "Unauthorized")
-      ~after:denied
+        (Sol_cli_cloud_lifecycle.refusal_is_deescalation assumption "Unauthorized")
+      ~after:refused
   in
   (* the credential is good: the refusal is the removal *)
-  (match verdict_of (Some true) with
+  (match verdict_of Sol_cli_cloud_lifecycle.Credential_assumable with
    | Sol_cli_cloud_lifecycle.Deescalated -> ()
    | _ -> Alcotest.fail "a refusal with a working identity was not read as de-escalated");
   (* the credential is broken: a revocation cannot be told from a bad trust policy *)
-  (match verdict_of (Some false) with
+  (match verdict_of Sol_cli_cloud_lifecycle.Credential_refused with
    | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
    | Sol_cli_cloud_lifecycle.Deescalated ->
      Alcotest.fail "a refusal with an unassumable role was read as de-escalated"
    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
      Alcotest.fail "a refusal with an unassumable role was read as still elevated");
   (* the identity check could not be performed at all *)
-  match verdict_of None with
+  match verdict_of Sol_cli_cloud_lifecycle.Credential_unchecked with
   | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
   | Sol_cli_cloud_lifecycle.Deescalated ->
     Alcotest.fail "a refusal with no identity check was read as de-escalated"

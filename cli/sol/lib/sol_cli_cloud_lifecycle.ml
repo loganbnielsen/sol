@@ -1081,9 +1081,48 @@ type deescalation_verdict =
   | Undetermined of string
   (** The surface could not be established -- never treated as de-escalated. *)
 
+(* DEC-040 / FND-0021: a `kubectl auth can-i` answer is three-valued, not a bool.
+
+   [false] used to mean "denied", but the same non-zero exit is what an unreachable
+   API, a token that could not be minted, or a transient failure produce. Folding
+   those into "denied" made every capability read as removed, the principal read as
+   confirmed, and the verdict read as [Deescalated] -- absence of evidence turned
+   into evidence of removal in the one verdict that has to mean something. So the
+   probe's answer is named, and only an explicit `no` is a denial. *)
+type capability_answer =
+  | Permitted
+  | Denied
+  | Indeterminate of string
+  (** The probe obtained no usable answer: a transport, token or process failure, or
+      an answer the caller could not classify. Never treated as [Denied]. *)
+
+type capability =
+  { verb : string
+  ; resource : string
+  }
+
+let capability_label { verb; resource } = Printf.sprintf "%s %s" verb resource
+
+let indeterminate_reason (capability, answer) =
+  match answer with
+  | Indeterminate why -> Some (capability_label capability, why)
+  | Permitted | Denied -> None
+;;
+
+let permitted_capabilities probes =
+  List.filter_map
+    (fun (capability, answer) ->
+       match answer with
+       | Permitted -> Some capability
+       | Denied | Indeterminate _ -> None)
+    probes
+;;
+
+let still_permitted probes = List.map capability_label (permitted_capabilities probes)
+
 let deescalation_verdict
       ~(principal : deescalation_principal)
-      (probes : (string * bool) list)
+      (probes : (capability * capability_answer) list)
   : deescalation_verdict
   =
   match principal with
@@ -1095,13 +1134,20 @@ let deescalation_verdict
   | Principal_probe_failed why -> Undetermined why
   | Principal_refused_by_cluster _why -> Deescalated
   | Principal_confirmed _ ->
-    (match probes with
-     | [] -> Undetermined "no capability probe produced an answer"
-     | probes ->
-       let still =
-         List.filter_map (fun (c, permitted) -> if permitted then Some c else None) probes
-       in
-       if still = [] then Deescalated else Still_elevated still)
+    (match List.find_map indeterminate_reason probes with
+     | Some (capability, why) ->
+       Undetermined
+         (Printf.sprintf
+            "the capability probe for %s obtained no usable answer (%s), so the \
+             effective surface is not established"
+            capability
+            why)
+     | None ->
+       (match probes with
+        | [] -> Undetermined "no capability probe produced an answer"
+        | probes ->
+          let still = still_permitted probes in
+          if still = [] then Deescalated else Still_elevated still))
 ;;
 
 (* DEC-040's positive control. A final denial is not evidence of a transition: a
@@ -1111,35 +1157,66 @@ let deescalation_verdict
    *permitted* inside the bootstrap window and *denied* after it. Anything less is
    [Undetermined], which is not a licence to announce Ready. *)
 let deescalation_transition
-      ~(before : (string * bool) list)
+      ~(before : (capability * capability_answer) list)
       ~after_principal
-      ~(after : (string * bool) list)
+      ~(after : (capability * capability_answer) list)
   =
-  let permitted probes =
-    List.filter_map (fun (c, ok) -> if ok then Some c else None) probes
-  in
-  match permitted before with
-  | [] ->
+  match List.find_map indeterminate_reason before with
+  | Some (capability, why) ->
     Undetermined
-      "the bootstrap-only capabilities were never observed permitted, so no removal can \
-       be demonstrated"
-  | _ ->
-    (match after_principal with
-     | Principal_unexpected who ->
+      (Printf.sprintf
+         "the bootstrap window probe for %s obtained no usable answer (%s), so its later \
+          removal cannot be demonstrated"
+         capability
+         why)
+  | None ->
+    let before_permitted = permitted_capabilities before in
+    (match before_permitted with
+     | [] ->
        Undetermined
-         (Printf.sprintf
-            "the principal answering after de-escalation was %s, not the one observed \
-             during the window; the transition is not established"
-            who)
-     | Principal_probe_failed why ->
-       Undetermined ("the post-de-escalation probe obtained no evidence: " ^ why)
-     | Principal_refused_by_cluster _ -> Deescalated
-     | Principal_confirmed _ ->
-       (match permitted after with
-        | [] when after = [] ->
-          Undetermined "no capability probe produced an answer after de-escalation"
-        | [] -> Deescalated
-        | still -> Still_elevated still))
+         "the bootstrap-only capabilities were never observed permitted, so no removal \
+          can be demonstrated"
+     | before_permitted ->
+       (match after_principal with
+        | Principal_unexpected who ->
+          Undetermined
+            (Printf.sprintf
+               "the principal answering after de-escalation was %s, not the one observed \
+                during the window; the transition is not established"
+               who)
+        | Principal_probe_failed why ->
+          Undetermined ("the post-de-escalation probe obtained no evidence: " ^ why)
+        | Principal_refused_by_cluster _ -> Deescalated
+        | Principal_confirmed _ ->
+          let uncovered =
+            List.filter
+              (fun capability -> not (List.mem_assoc capability after))
+              before_permitted
+          in
+          (* A probe that stopped covering a capability before it was permitted would
+             otherwise let that capability's absence read as its removal. *)
+          if uncovered <> []
+          then
+            Undetermined
+              (Printf.sprintf
+                 "the post-de-escalation probe did not cover %s, so its removal is not \
+                  established"
+                 (String.concat ", " (List.map capability_label uncovered)))
+          else (
+            match List.find_map indeterminate_reason after with
+            | Some (capability, why) ->
+              Undetermined
+                (Printf.sprintf
+                   "the capability probe for %s obtained no usable answer after \
+                    de-escalation (%s), so removal is not established"
+                   capability
+                   why)
+            | None ->
+              (match still_permitted after with
+               | [] when after = [] ->
+                 Undetermined "no capability probe produced an answer after de-escalation"
+               | [] -> Deescalated
+               | still -> Still_elevated still))))
 ;;
 
 (* DEC-040 / FND-0021: identify the principal the authorizer resolved, from the JSON
@@ -1340,19 +1417,25 @@ let principal_matches ~expected (identity : whoami_identity) =
    broken credential as a verified transition, which is a fail-*open* into the one verdict
    that has to mean something. So the caller also confirms the role can still be assumed, and
    only a refusal with a working identity counts. If the identity check fails, the probe
-   obtained no usable evidence and says so.
-   [sts_assumable] is [Some true] when the role was assumed successfully, [Some false] when
-   the attempt was refused, and [None] when the attempt itself could not be made. *)
-let refusal_is_deescalation ~(sts_assumable : bool option) detail =
-  match sts_assumable with
-  | Some true -> Principal_refused_by_cluster detail
-  | Some false ->
+   obtained no usable evidence and says so. *)
+type credential_assumption =
+  | Credential_assumable
+  (** The role was assumed successfully, so the refusal is about the capability. *)
+  | Credential_refused
+  (** The role itself could not be assumed: a broken credential, not a revoked one. *)
+  | Credential_unchecked
+  (** The assumption attempt could not be made at all: no usable evidence either way. *)
+
+let refusal_is_deescalation assumption detail =
+  match assumption with
+  | Credential_assumable -> Principal_refused_by_cluster detail
+  | Credential_refused ->
     Principal_probe_failed
       (Printf.sprintf
          "the cluster refused the probe (%s) and the provisioning role could not be \
           assumed, so a broken credential cannot be told apart from a revoked one"
          detail)
-  | None ->
+  | Credential_unchecked ->
     Principal_probe_failed
       (Printf.sprintf
          "the cluster refused the probe (%s) and the identity check could not be \
