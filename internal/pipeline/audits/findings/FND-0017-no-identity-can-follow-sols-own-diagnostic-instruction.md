@@ -1,7 +1,7 @@
 # FND-0017 — No identity in the profile can follow Sol's own diagnostic instruction
 
 - **Classification:** `VERIFIED_DEFECT`
-- **State:** `OPEN`
+- **State:** `QUALIFIED` (2026-09-21)
 - **First identified:** 2026-09-20, AWS Run 8 (a read-only diagnosis that could not be completed)
 - **Derived ticket:** `INFRA-056`
 - **Invariant:** the counterpart of `INV-AUTH-5`/`INV-AUTH-6` for *reading*: an identity
@@ -179,3 +179,38 @@ variable, and it was invisible in the output. Any A/B comparing identities over
 kubeconfig aliases must therefore re-issue `update-kubeconfig` for the identity
 under test immediately before each side, and record which principal actually served
 each read.
+
+## Resolution (2026-09-21)
+
+`INFRA-058` and `INFRA-059` landed, and the operator identity then obtained the
+diagnosis that no identity could obtain when this finding was written:
+
+```
+comms/notify-worker  DEGRADED
+
+NAME                             READY   STATUS    RESTARTS        AGE
+notify-worker-5d9f597f4f-nwx89   1/1     Running   12 (161m ago)   3h50m
+notify-worker-5d9f597f4f-x4lt4   0/1     Running   0               3h50m
+notify_worker rollout failed
+
+Pod notify-worker-5d9f597f4f-x4lt4: Running
+Image: sha256:50ad590a…
+Last events:
+  Unhealthy: Readiness probe failed: HTTP probe failed with statuscode: 503
+```
+
+The `Last events:` block is the finding's whole subject: it is evidence that did not
+exist for any identity before, and it names the mechanism.
+
+The effective surface, from the cluster's own authorizer, matches DEC-038 §3 exactly
+and contains nothing else:
+
+```
+events [get list]   namespaces [get list]   pods/log [get list]   pods [get list]
+services [get list]   deployments.apps [get list]   cronjobs.batch [get list]
+```
+
+No mutating verb, no `secrets`, no `pods/exec`, no `pods/portforward`.
+
+Verified without redeploying or restarting the workload: the two replicas carry the
+same creation timestamps throughout, and the unready one is still the same pod.

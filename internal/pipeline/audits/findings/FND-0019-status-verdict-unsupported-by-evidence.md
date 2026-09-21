@@ -1,6 +1,6 @@
 # FND-0019 — `sol status` reports an unsupported verdict: an unreadable workload is called healthy
 
-**Classification:** `VERIFIED_DEFECT` · **State:** `OPEN` · **Severity:** critical
+**Classification:** `VERIFIED_DEFECT` · **State:** `QUALIFIED` (2026-09-21) · **Severity:** critical
 **Ticket:** `INFRA-059` · **Contract:** DEC-038 §7 (clarified 2026-09-21)
 **Derived from:** FND-0017's first live verification · **Evidence:** `BEHAVIORAL`
 
@@ -84,3 +84,25 @@ readable-unhealthy → `DEGRADED`, unreadable → `UNKNOWN` with its reason, and
 zero-objects-after-a-successful-read distinct from a failed read — plus live
 evidence that the operator identity, once it can read the namespace, obtains the
 same degraded evidence the deploy identity did.
+
+## Resolution (2026-09-21)
+
+The verdict is now `Healthy | Unhealthy of string | Undetermined of string`, every
+fetch carries its reason, and the rollup takes an observed namespace presence rather
+than a boolean. The audit's other instances are fixed in the same change:
+`format_cronjob_diagnosis`'s `Unavailable -> None` (a failed read was health — and a
+*test* asserted it), `ns_exists`'s `Error _ -> false` (an unreadable namespace was
+NOT DEPLOYED), and a `filter_map` that let an unresolvable service vanish from the
+rollup.
+
+Live: the operator identity, which previously produced `healthy` from an unreadable
+namespace, now produces the same `DEGRADED` verdict the correctly authenticated
+identity produced — with the events on top.
+
+The regression that matters is mutation-verified: restoring the collapse (an
+`Undetermined` verdict rolling up to `Healthy`) fails
+`an unreadable workload is Unknown, never Healthy`.
+
+The invariant this finding asked for is now structural rather than defensive:
+`HEALTHY` cannot be produced by a read that did not happen, because the type no
+longer has a value that means both.
