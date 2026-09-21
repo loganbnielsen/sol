@@ -810,17 +810,34 @@ let arn_role_name arn =
   | _ -> arn
 ;;
 
+(* Whitespace-insensitive on purpose. kubectl with -o json emits the arn key with no
+   space after the colon, and a needle that assumed a space silently turned a genuine
+   answer into an unexpected principal -- which the offline lifecycle harness caught,
+   and which would have failed closed on every real install. *)
 let json_string_field ~field json =
-  let needle = Printf.sprintf "\"%s\": \"" field in
+  let key = Printf.sprintf "\"%s\"" field in
+  let len = String.length json in
+  let is_space c = c = ' ' || c = '\t' || c = '\n' || c = '\r' in
   let rec scan from =
-    if from + String.length needle > String.length json
+    if from + String.length key > len
     then None
-    else if String.sub json from (String.length needle) = needle
+    else if String.sub json from (String.length key) = key
     then (
-      let vstart = from + String.length needle in
-      match String.index_from_opt json vstart '"' with
-      | Some vend -> Some (String.sub json vstart (vend - vstart))
-      | None -> None)
+      let i = ref (from + String.length key) in
+      while !i < len && is_space json.[!i] do
+        incr i
+      done;
+      if !i < len && json.[!i] = ':' then incr i;
+      while !i < len && is_space json.[!i] do
+        incr i
+      done;
+      if !i < len && json.[!i] = '"'
+      then (
+        let vstart = !i + 1 in
+        match String.index_from_opt json vstart '"' with
+        | Some vend -> Some (String.sub json vstart (vend - vstart))
+        | None -> None)
+      else None)
     else scan (from + 1)
   in
   scan 0
@@ -861,34 +878,44 @@ let deescalation_principal_check ~expected_role_name env =
     Sol_cli_cloud_lifecycle.Principal_probe_failed (Sol_cli_process.error_to_string e)
 ;;
 
+(* Deliberately *not* [with_provisioner_kubeconfig]: that raises through
+   [lifecycle_error] when the ephemeral access cannot be established, which would abort
+   paths that must degrade gracefully -- the offline lifecycle harness injects a cloud
+   failure and requires `cloud apply` to resume, and it does not have a real cluster to
+   reach. Failing to obtain the probe is a measurement failure, which the transition
+   verdict already handles as [Undetermined]; it must not become a crash. *)
 let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
   let expected_role_name = arn_role_name provisioner_role_arn in
-  with_provisioner_kubeconfig ~role_arn:provisioner_role_arn ~region outputs (fun env ->
-    let principal = deescalation_principal_check ~expected_role_name env in
-    let probes =
-      match principal with
-      | Sol_cli_cloud_lifecycle.Principal_unexpected _
-      | Sol_cli_cloud_lifecycle.Principal_probe_failed _
-      | Sol_cli_cloud_lifecycle.Principal_refused_by_cluster _ ->
-        (* Never interrogate another principal's capabilities and call it evidence. *)
-        []
-      | _ ->
-        List.map
-          (fun (verb, resource) ->
-             let permitted =
-               match
-                 Sol_cli_process.run
-                   (Sol_cli_process.cmd
-                      ~env
-                      [ "kubectl"; "auth"; "can-i"; verb; resource ])
-               with
-               | Ok r -> r.Sol_cli_process.exit_code = 0
-               | Error _ -> false
-             in
-             Printf.sprintf "%s %s" verb resource, permitted)
-          bootstrap_only_capabilities
-    in
-    principal, probes)
+  match
+    provisioner_kubeconfig ~role_arn:provisioner_role_arn ~region outputs (fun env ->
+      let principal = deescalation_principal_check ~expected_role_name env in
+      let probes =
+        match principal with
+        | Sol_cli_cloud_lifecycle.Principal_unexpected _
+        | Sol_cli_cloud_lifecycle.Principal_probe_failed _
+        | Sol_cli_cloud_lifecycle.Principal_refused_by_cluster _ ->
+          (* Never interrogate another principal's capabilities and call it evidence. *)
+          []
+        | _ ->
+          List.map
+            (fun (verb, resource) ->
+               let permitted =
+                 match
+                   Sol_cli_process.run
+                     (Sol_cli_process.cmd
+                        ~env
+                        [ "kubectl"; "auth"; "can-i"; verb; resource ])
+                 with
+                 | Ok r -> r.Sol_cli_process.exit_code = 0
+                 | Error _ -> false
+               in
+               Printf.sprintf "%s %s" verb resource, permitted)
+            bootstrap_only_capabilities
+      in
+      principal, probes)
+  with
+  | Ok v -> v
+  | Error e -> Sol_cli_cloud_lifecycle.Principal_probe_failed e, []
 ;;
 
 (* Bounded and fail-closed: access-entry changes are eventually consistent so a retry
@@ -1960,9 +1987,15 @@ let cloud_init ~target ~var_file ~vars ~action () =
       | _ -> None
     in
     (match bootstrap_window_control with
-     | Some (_, probes) ->
+     | Some (principal, probes) ->
        Printf.printf
-         "  bootstrap window control: %s\n%!"
+         "  bootstrap window control: principal=%s; %s\n%!"
+         (match principal with
+          | Sol_cli_cloud_lifecycle.Principal_confirmed arn -> "confirmed " ^ arn
+          | Sol_cli_cloud_lifecycle.Principal_refused_by_cluster why ->
+            "refused by the cluster: " ^ why
+          | Sol_cli_cloud_lifecycle.Principal_probe_failed why -> "no evidence: " ^ why
+          | Sol_cli_cloud_lifecycle.Principal_unexpected who -> "unexpected " ^ who)
          (probes
           |> List.map (fun (c, ok) ->
             Printf.sprintf "%s=%s" c (if ok then "permitted" else "denied"))

@@ -207,9 +207,15 @@ JSON
     : >"$GKE_PREPARED_FILE"
     ;;
   *infra/aws*" apply "*"provisioner_bootstrap_admin=true"*)
+    # DEC-040: this variable *is* the bootstrap window, so the stub records it and the
+    # kubectl stub answers the de-escalation probes from it -- permitted while open,
+    # denied once closed. That makes the offline harness exercise the transition the
+    # verification requires rather than asserting a lifecycle it would refuse.
+    printf 'true\n' >"$FAIL_MARKER_DIR/bootstrap-window"
     if fail_once cloud; then exit 20; fi
     ;;
   *infra/aws*" apply "*"provisioner_bootstrap_admin=false"*)
+    printf 'false\n' >"$FAIL_MARKER_DIR/bootstrap-window"
     if fail_once deescalate; then exit 20; fi
     ;;
   *infra/base*" apply "*"-target="*)
@@ -287,7 +293,20 @@ if [ "$1 $2" = "eks describe-cluster" ] || [ "$1 $2" = "eks describe-addon" ]; t
   printf 'ACTIVE\n'; exit 0
 fi
 [ "$1 $2" = "eks update-kubeconfig" ] || exit 90
-case " $* " in *" --role-arn arn:aws:iam::111122223333:role/sol-cluster-access "*) : ;; *) exit 91 ;; esac
+# The platform phase builds its ephemeral kubeconfig as the cluster-access identity, and
+# DEC-040's de-escalation probe deliberately builds one as the *provisioner* -- the
+# principal whose bootstrap elevation is being removed. Both are legitimate here; which
+# one is correct is asserted where it matters, by the kubectl stub below, which refuses
+# to answer the authorizer question for any other principal.
+case " $* " in
+  *" --role-arn arn:aws:iam::111122223333:role/sol-cluster-access "*)
+    printf 'sol-cluster-access\n' >"$FAIL_MARKER_DIR/kubeconfig-role"
+    ;;
+  *" --role-arn arn:aws:iam::111122223333:role/sol-provisioner "*)
+    printf 'sol-provisioner\n' >"$FAIL_MARKER_DIR/kubeconfig-role"
+    ;;
+  *) exit 91 ;;
+esac
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --kubeconfig ]; then shift; path="$1"; break; fi
   shift
@@ -410,6 +429,42 @@ printf 'kubectl %s\n' "$*" >>"$LIFECYCLE_LOG"
 # whose kind is *not* here, so the stub has to be able to say both things --
 # CRD_SERVED=1 models a cluster where the CRD is present (and the destroy must then
 # fail closed rather than forget anything).
+# DEC-040: answer the *de-escalation probes* on the same terms the real cluster does.
+# Scoped deliberately to the bootstrap-only capability set: Sol also checks that the
+# platform provisioner's own RBAC survives the bootstrap removal, and that check asks
+# different questions as a different (legitimate) principal. Answering for it here would
+# replace the thing being tested with the test.
+case " $* " in
+  *" auth whoami "*)
+    # Whichever role the ephemeral kubeconfig was built for, so a caller inspecting the
+    # principal sees the truth.
+    case "$(cat "$FAIL_MARKER_DIR/kubeconfig-role" 2>/dev/null || true)" in
+      sol-provisioner)
+        printf '{"status":{"userInfo":{"arn":"arn:aws:iam::111122223333:role/sol-provisioner"}}}\n'
+        ;;
+      sol-cluster-access)
+        printf '{"status":{"userInfo":{"arn":"arn:aws:iam::111122223333:role/sol-cluster-access"}}}\n'
+        ;;
+      *) printf '{"status":{"userInfo":{"arn":"arn:aws:iam::111122223333:role/unknown"}}}\n' ;;
+    esac
+    exit 0
+    ;;
+  *" auth can-i "*" clusterroles "*|*" auth can-i "*" clusterrolebindings "*)
+    # The probe must interrogate *the principal whose elevation is being removed*.
+    # Answering for another principal would let a wrong-principal check look like
+    # evidence, so this refuses -- the harness asserts the principal requirement rather
+    # than merely supplying answers to it.
+    if [ "$(cat "$FAIL_MARKER_DIR/kubeconfig-role" 2>/dev/null || true)" != "sol-provisioner" ]; then
+      printf 'error: the authorizer was asked about the wrong principal\n' >&2
+      exit 90
+    fi
+    if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "true" ]; then
+      exit 0
+    fi
+    printf 'error: You must be logged in to the server (Unauthorized)\n' >&2
+    exit 1
+    ;;
+esac
 case " $* " in
   *" api-resources "*)
     printf 'NAME        SHORTNAMES   APIVERSION   NAMESPACED   KIND\n'
