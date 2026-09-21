@@ -201,13 +201,23 @@ mutation-verified as a valid mutant (mutated build succeeds, then the test fails
 | same principal, permitted before and denied after | `Deescalated` |
 | same principal, still permitted after | `Still_elevated` |
 
-## Remaining hardening of the principal check (identified, not yet applied)
+## Principal-check hardening (state reconciled 2026-09-21)
 
-The parser on this branch handles the EKS shape (arrays under `status.userInfo.extra`, else
-a flat string), prefers `canonicalArn`, compares role names, and returns `Error` -- which
-the caller maps to `Undetermined` -- rather than a default. Five further hardenings were
-identified and are **not yet applied**; an attempt was reverted rather than land a
-half-restructured module at the end of the session:
+The parser handles the EKS shape (arrays under `status.userInfo.extra`, else a flat
+string), prefers `canonicalArn`, and returns `Error` -- which the caller maps to
+`Undetermined` -- rather than a default. Five hardenings were identified; the correction
+below records how the comparison changed. Their **current** state:
+
+- items 1 and 2 (account+role precision, role-path normalisation) are applied: the
+  comparison is the **full canonical ARN**, and the expected side is normalised by
+  `normalize_role_arn` so a role with a path does not produce a false mismatch;
+- item 3 (reject ambiguous arrays) and item 5 (parse failure distinct from denial) are
+  applied and mutant-verified;
+- item 4 (discover the ARNs by shape rather than the recalled key names) is **deliberately
+  still not applied**: it is what the first live capture settles, and building it against
+  the same recalled keys would only move the assumption.
+
+The original list is kept for context:
 
 1. **Compare (account, role), not role alone.** The same role name in a different account
    is a different principal, and the current comparison would call it the same.
