@@ -191,7 +191,7 @@ sol/
 - [Deployment escape hatches](docs/deployment/escape-hatches.md) — `sol.toml` reference
 - [Roadmap](docs/planning/ROADMAP.md) — current status and what's next
 - [Contributor map](docs/architecture/contributing-map.md) — where to make common changes
-- Build-from-source, running tests, and the full repo layout: [`.claude/CLAUDE.md`](.claude/CLAUDE.md)
+- Build-from-source, running tests, and the full repo layout: [`AGENTS.md`](AGENTS.md)
 
 ## License
 
