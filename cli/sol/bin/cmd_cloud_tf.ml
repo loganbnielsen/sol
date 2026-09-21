@@ -837,7 +837,28 @@ let deescalation_principal_check ~expected_role_name env =
        Sol_cli_cloud_lifecycle.Principal_confirmed arn
      | Some arn -> Sol_cli_cloud_lifecycle.Principal_unexpected arn
      | None -> Sol_cli_cloud_lifecycle.Principal_unexpected r.Sol_cli_process.stdout)
-  | _ -> Sol_cli_cloud_lifecycle.Principal_cannot_authenticate
+  | Ok r ->
+    let detail =
+      String.trim (r.Sol_cli_process.stderr ^ " " ^ r.Sol_cli_process.stdout)
+    in
+    (* A refusal from the cluster is the expected post-de-escalation state. Anything
+       else -- a credential that could not be assumed, a token that could not be
+       generated, no reachable API -- is a measurement failure, and absence of evidence
+       must not become evidence of de-escalation. Only the cluster's own answer counts. *)
+    if
+      List.exists
+        (fun needle -> Sol_cli_port_forward.string_contains ~needle detail)
+        [ "Unauthorized"
+        ; "You must be logged in"
+        ; "the server has asked for the client to provide credentials"
+        ; "is forbidden"
+        ]
+    then
+      Sol_cli_cloud_lifecycle.Principal_refused_by_cluster
+        (Printf.sprintf "%s: %s" expected_role_name detail)
+    else Sol_cli_cloud_lifecycle.Principal_probe_failed detail
+  | Error e ->
+    Sol_cli_cloud_lifecycle.Principal_probe_failed (Sol_cli_process.error_to_string e)
 ;;
 
 let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
@@ -846,7 +867,9 @@ let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
     let principal = deescalation_principal_check ~expected_role_name env in
     let probes =
       match principal with
-      | Sol_cli_cloud_lifecycle.Principal_unexpected _ ->
+      | Sol_cli_cloud_lifecycle.Principal_unexpected _
+      | Sol_cli_cloud_lifecycle.Principal_probe_failed _
+      | Sol_cli_cloud_lifecycle.Principal_refused_by_cluster _ ->
         (* Never interrogate another principal's capabilities and call it evidence. *)
         []
       | _ ->

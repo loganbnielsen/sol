@@ -231,7 +231,8 @@ val observed_phase : cloud_exists:bool -> platform_installed:bool -> phase
     usable, and probing elsewhere would reproduce exactly that error. *)
 type deescalation_principal =
   | Principal_confirmed of string
-  | Principal_cannot_authenticate
+  | Principal_refused_by_cluster of string
+  | Principal_probe_failed of string
   | Principal_unexpected of string
 
 type deescalation_verdict =

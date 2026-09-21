@@ -1063,9 +1063,14 @@ let observed_phase ~cloud_exists ~platform_installed =
 type deescalation_principal =
   | Principal_confirmed of string
   (** The intended principal answered, so its refusals are evidence. *)
-  | Principal_cannot_authenticate
-  (** The intended principal has no cluster authority at all: the elevated
-          capability is gone by construction, because it requires authentication. *)
+  | Principal_refused_by_cluster of string
+  (** The intended principal reached the cluster and the cluster's own authorizer
+          refused it -- the expected result of removing its access. The elevated
+          capability needs authentication, so its absence is its revocation. *)
+  | Principal_probe_failed of string
+  (** The probe obtained no evidence -- credentials, token generation, network, API, or
+          any error that is not the cluster refusing an identified principal. A
+          measurement failure must never read as de-escalation. *)
   | Principal_unexpected of string
   (** Some other principal answered. The probe establishes nothing. *)
 
@@ -1087,7 +1092,8 @@ let deescalation_verdict
       (Printf.sprintf
          "the probe answered as %s, not the principal whose elevation was removed"
          who)
-  | Principal_cannot_authenticate -> Deescalated
+  | Principal_probe_failed why -> Undetermined why
+  | Principal_refused_by_cluster _why -> Deescalated
   | Principal_confirmed _ ->
     (match probes with
      | [] -> Undetermined "no capability probe produced an answer"

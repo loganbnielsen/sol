@@ -964,14 +964,35 @@ let test_deescalation_requires_the_effective_surface () =
      Alcotest.fail "another principal's refusal was read as de-escalation"
    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
      Alcotest.fail "another principal's answers were treated as answers");
-  (* A principal with no cluster authority at all has lost the capability by
-     construction: it requires authentication. *)
-  match verdict ~principal:Sol_cli_cloud_lifecycle.Principal_cannot_authenticate [] with
-  | Sol_cli_cloud_lifecycle.Deescalated -> ()
+  (* The cluster refusing an identified principal is the expected post-de-escalation
+     state: the capability requires authentication, so its absence is its revocation. *)
+  (match
+     verdict
+       ~principal:
+         (Sol_cli_cloud_lifecycle.Principal_refused_by_cluster
+            "…/sol-provisioner: Unauthorized")
+       []
+   with
+   | Sol_cli_cloud_lifecycle.Deescalated -> ()
+   | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+     Alcotest.fail "a refused principal was read as still elevated"
+   | Sol_cli_cloud_lifecycle.Undetermined _ ->
+     Alcotest.fail "a refused principal was read as undetermined");
+  (* ...but failing to *obtain* evidence is not de-escalation. An expired credential, an
+     unreachable API or a token-generation failure leaves us knowing nothing, and the
+     absence of evidence must not become evidence of de-escalation. *)
+  match
+    verdict
+      ~principal:
+        (Sol_cli_cloud_lifecycle.Principal_probe_failed
+           "could not establish ephemeral provisioner cluster access")
+      []
+  with
+  | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+  | Sol_cli_cloud_lifecycle.Deescalated ->
+    Alcotest.fail "a measurement failure was read as de-escalation"
   | Sol_cli_cloud_lifecycle.Still_elevated _ ->
-    Alcotest.fail "an unauthenticated principal was read as still elevated"
-  | Sol_cli_cloud_lifecycle.Undetermined _ ->
-    Alcotest.fail "an unauthenticated principal was read as undetermined"
+    Alcotest.fail "a measurement failure was read as still elevated"
 ;;
 
 let test_effective_authorization () =
