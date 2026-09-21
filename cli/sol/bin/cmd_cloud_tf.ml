@@ -1205,7 +1205,9 @@ let observe_bootstrap_window ~on_error ~region ~outputs ~provisioner_role_arn ()
     let control = deescalation_probe ~region ~outputs ~provisioner_role_arn () in
     let _, probes = control in
     match
-      List.exists (fun (_, answer) -> answer = Sol_cli_cloud_lifecycle.Permitted) probes
+      List.exists
+        (fun (_, answer) -> Sol_cli_cloud_lifecycle.answer_is_permitted answer)
+        probes
     with
     | false ->
       if remaining <= 1

@@ -258,6 +258,9 @@ type capability =
 (** "verb resource", the form the capability is reported in. *)
 val capability_label : capability -> string
 
+(** Only an explicit [Permitted] is permitted; [Indeterminate] is not. *)
+val answer_is_permitted : capability_answer -> bool
+
 (** [probes] is the *authorizer's* answer -- the component that enforces the
     boundary -- for the capabilities only the bootstrap authority held.
 

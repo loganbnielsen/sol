@@ -1103,6 +1103,11 @@ type capability =
 
 let capability_label { verb; resource } = Printf.sprintf "%s %s" verb resource
 
+let answer_is_permitted = function
+  | Permitted -> true
+  | Denied | Indeterminate _ -> false
+;;
+
 let indeterminate_reason (capability, answer) =
   match answer with
   | Indeterminate why -> Some (capability_label capability, why)
@@ -1112,9 +1117,7 @@ let indeterminate_reason (capability, answer) =
 let permitted_capabilities probes =
   List.filter_map
     (fun (capability, answer) ->
-       match answer with
-       | Permitted -> Some capability
-       | Denied | Indeterminate _ -> None)
+       if answer_is_permitted answer then Some capability else None)
     probes
 ;;
 
