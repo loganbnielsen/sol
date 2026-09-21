@@ -343,3 +343,18 @@ no cause was observed.
 Worth keeping from this: instrument the thing that is inexplicably empty and ask the
 runner, rather than reasoning from assumptions about it -- one CI cycle settled more than
 an hour of local investigation had.
+
+## Environment destroyed (2026-09-21)
+
+The qualification target was destroyed through the documented path and verified
+`Absent` (`EKS/RDS/ECR/load-balancers/EIPs/NAT-gateways/EBS-volumes not found`), exit 0.
+Torn down deliberately rather than preserved: the next step was a CI diagnosis that needs
+no AWS, and keeping a live target through a genuine pause invites exceptions.
+
+The remaining sequence starts from a **fresh** target, which is itself evidence: several
+fixes landed during this environment's lifetime, so rebuilding exercises them from clean
+bootstrap rather than only against a repeatedly reconciled cluster.
+
+**Open before that sequence:** the destroy path removes the bootstrap elevation but does
+not verify the effective surface (DEC-040 applies to every revoking path) — a remaining
+piece of INFRA-061, exposed by the teardown itself.
