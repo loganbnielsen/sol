@@ -78,6 +78,28 @@ grep -q 'name: sol:operators' "$rbac_doc" ||
 grep -q 'Sol_cli_manifest.operator_role_binding_doc ~ns' "$substrate" ||
   fail "Sol_cli_substrate.ensure never applies the operator binding"
 
+# The substrate step runs as the deploy identity, and Kubernetes only lets a
+# RoleBinding grant permissions its creator lacks when the creator holds `bind`
+# on that specific ClusterRole. So every ClusterRole the substrate binds must be
+# in the bootstrap role's enumerated bind allowlist. A live run failed here:
+# sol-operator-diagnostics was bound by the substrate and not bindable, so the
+# operator's binding could not be created at all.
+deploy_rbac="$root/cli/platform/infra/base/platform_deploy_rbac.tf"
+[ -f "$deploy_rbac" ] || fail "missing $deploy_rbac"
+
+# Read to the closing bracket of the *list*, not the first line containing one:
+# the entries themselves contain `]` (metadata[0]), which would end an awk range
+# on the first entry.
+bind_allowlist=$(awk '/resource_names *= *\[/{f=1} f{print} f && /^[[:space:]]*\][[:space:]]*$/ {exit}' "$deploy_rbac")
+[ -n "$bind_allowlist" ] ||
+  fail "the deploy bootstrap has no enumerated ClusterRole bind allowlist"
+
+echo "$bind_allowlist" | grep -q 'sol_deploy' ||
+  fail "the deploy bootstrap cannot bind sol-deploy, so its own binding is not creatable"
+
+echo "$bind_allowlist" | grep -q 'sol_operator_diagnostics' ||
+  fail "the deploy bootstrap cannot bind sol-operator-diagnostics, so the runtime substrate step cannot create the operator's RoleBinding (a live run failed exactly here)"
+
 # A declared ARN that never reaches the provider root is exactly how the deploy
 # entry was missed once (HARDEN-002 run 3, finding 11). The root declares
 # operator_role_arn now, so Sol_cli_config.terraform_vars must route it, or the

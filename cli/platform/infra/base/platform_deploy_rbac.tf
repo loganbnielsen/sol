@@ -99,10 +99,22 @@ resource "kubernetes_cluster_role" "sol_deploy_bootstrap" {
     verbs      = ["get", "list", "watch", "create"]
   }
   rule {
-    api_groups     = ["rbac.authorization.k8s.io"]
-    resources      = ["clusterroles"]
-    resource_names = [kubernetes_cluster_role.sol_deploy.metadata[0].name]
-    verbs          = ["bind"]
+    api_groups = ["rbac.authorization.k8s.io"]
+    resources  = ["clusterroles"]
+    # DEC-038 / INFRA-057: enumerated, never wildcarded. The substrate step runs
+    # as the deploy identity, and Kubernetes lets a RoleBinding grant permissions
+    # its creator lacks only when the creator holds `bind` on that specific
+    # ClusterRole -- so every ClusterRole the substrate binds must be listed here.
+    # A live run failed on exactly this: the operator's read-only binding could
+    # not be created because sol-operator-diagnostics was not bindable. The fix is
+    # this second name -- not `escalate`, which would permit granting anything,
+    # and not giving the deploy identity the operator's diagnostic permissions,
+    # which would dissolve the boundary DEC-038 draws.
+    resource_names = [
+      kubernetes_cluster_role.sol_deploy.metadata[0].name,
+      kubernetes_cluster_role.sol_operator_diagnostics.metadata[0].name,
+    ]
+    verbs = ["bind"]
   }
 }
 

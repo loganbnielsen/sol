@@ -25,6 +25,7 @@ files=(
   cli/sol/bin/cmd_status.ml
   cli/sol/bin/cmd_logs.ml
   cli/sol/lib/sol_cli_config.ml
+  cli/platform/infra/base/platform_deploy_rbac.tf
 )
 
 seed() {
@@ -124,5 +125,20 @@ seed
 sed -i 's/        |> add_opt "operator_role_arn" target.operator_role_arn/        |> ignore/' \
   "$work/root/cli/sol/lib/sol_cli_config.ml"
 expect_fail "an ARN that never reaches the provider root"
+
+# ── the substrate identity cannot bind what the substrate creates ───────────
+# The condition a live run failed on: the operator's RoleBinding is created by the
+# runtime substrate (as the deploy identity), so sol-operator-diagnostics must be
+# in that identity's enumerated bind allowlist.
+seed
+python3 - "$work/root/cli/platform/infra/base/platform_deploy_rbac.tf" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = "      kubernetes_cluster_role.sol_operator_diagnostics.metadata[0].name,\n"
+assert old in s
+open(p, "w").write(s.replace(old, "", 1))
+PY
+expect_fail "an operator RoleBinding the substrate identity cannot bind"
 
 echo "operator diagnostics check: every guard rejection reproduced"
