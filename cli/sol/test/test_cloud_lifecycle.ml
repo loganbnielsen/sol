@@ -1075,6 +1075,61 @@ let test_deescalation_requires_a_transition () =
   | Sol_cli_cloud_lifecycle.Undetermined _ -> Alcotest.fail "unexpected verdict"
 ;;
 
+(* DEC-040: the principal is parsed, not pattern-matched.
+
+   Fixtures cover the shapes the emitter produces: compact (no spaces, which is what an
+   earlier string-matching version failed on), pretty-printed, and with the apiVersion /
+   kind envelope kubectl includes. The live shape is confirmed against a real cluster when
+   the next epoch reaches bootstrap; these lock in that the parse does not depend on
+   whitespace or on the envelope being absent. *)
+let test_principal_arn_is_parsed () =
+  let arn = "arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth" in
+  let expect_ok label body =
+    Alcotest.(check (result string string))
+      label
+      (Ok arn)
+      (Sol_cli_cloud_lifecycle.principal_arn_of_whoami body)
+  in
+  (* compact, exactly as kubectl emits it *)
+  expect_ok "compact" (Printf.sprintf {|{"status":{"userInfo":{"arn":"%s"}}}|} arn);
+  (* pretty-printed *)
+  expect_ok
+    "pretty"
+    (Printf.sprintf
+       {|{
+  "status": {
+    "userInfo": {
+      "arn": "%s"
+    }
+  }
+}|}
+       arn);
+  (* with the envelope kubectl includes, and extra fields beside the arn *)
+  expect_ok
+    "enveloped"
+    (Printf.sprintf
+       {|{"apiVersion":"authentication.k8s.io/v1","kind":"WhoAmI","status":{"userInfo":{"username":"%s","uid":"aws-iam-authenticator:111122223333:AROA","groups":["sol:platform-provisioners"],"extra":{"arn":["%s"]},"arn":"%s"}}}|}
+       arn
+       arn
+       arn);
+  (* nothing to parse is Error, never a default that could pass for a principal *)
+  (match
+     Sol_cli_cloud_lifecycle.principal_arn_of_whoami {|{"status":{"userInfo":{}}}|}
+   with
+   | Error _ -> ()
+   | Ok v -> Alcotest.fail ("a response with no arn produced " ^ v));
+  (match
+     Sol_cli_cloud_lifecycle.principal_arn_of_whoami "error: You must be logged in"
+   with
+   | Error _ -> ()
+   | Ok v -> Alcotest.fail ("a non-JSON response produced " ^ v));
+  match
+    Sol_cli_cloud_lifecycle.principal_arn_of_whoami {|{"status":{"userInfo":{"arn":""}}}|}
+  with
+  | Error _ -> ()
+  | Ok v -> Alcotest.fail ("an empty arn produced " ^ v)
+;;
+
 let test_effective_authorization () =
   let open L in
   let expected = provisioner_authorization_checks in
@@ -1151,6 +1206,10 @@ let () =
             "verified de-escalation (DEC-040)"
             `Quick
             test_deescalation_requires_the_effective_surface
+        ; Alcotest.test_case
+            "principal arn is parsed (DEC-040)"
+            `Quick
+            test_principal_arn_is_parsed
         ; Alcotest.test_case
             "verified de-escalation is a transition (DEC-040)"
             `Quick

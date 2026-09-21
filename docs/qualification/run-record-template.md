@@ -163,3 +163,36 @@ as the citation.
 | Finding / row | State before | Would move to | Because (evidence reference) |
 |---|---|---|---|
 | | | | |
+
+## Mandatory: DEC-040 live capture during bootstrap (a hard gate, not a nice-to-have)
+
+`Ready` is a claim that the provisioner's bootstrap elevation is gone, and an offline
+harness cannot establish it — the harness emulates the cluster keyed on
+`provisioner_bootstrap_admin`, so it can show the code is self-consistent but not that a
+real cluster behaves that way. This capture is therefore **required before `Ready` is
+accepted**, and the run is not evidence without it.
+
+Record, with the command and its output, in this order:
+
+1. **The principal.** Which principal P's bootstrap elevation this run exercises — the
+   role ARN, and confirmation (`kubectl auth whoami -o json` or equivalent) that it is the
+   principal the probe interrogates. A mismatch on either side invalidates everything
+   below.
+2. **The capability observed available, inside the window.** Before de-escalation, as P:
+   the bootstrap-only capability set (`create clusterroles`, `create clusterrolebindings`,
+   `escalate clusterroles`) answered **permitted** by the effective authorizer. Without
+   this the later denial proves nothing — a credential that never worked looks identical.
+3. **The window actually open.** The bootstrap access established during this run
+   (the phase log line), so the observation in (2) is known to be *inside* the window and
+   not merely a pre-existing grant.
+4. **De-escalation performed.** The phase log line for the bootstrap access removal.
+5. **The capability observed denied, after, as the same P.** Same principal, same
+   capability set, same authorizer — answered **denied**.
+6. **`Ready` only then.** The phase transition, after (5).
+
+Also capture, once a real cluster is up, and add as a fixture if it differs from what the
+tests assume: the **actual** `kubectl auth whoami -o json` response, so the parser is
+tested against the real emitter rather than an assumption about its spacing or envelope.
+
+If any of steps 1–5 cannot be obtained, the verification is `Undetermined` and the run
+must not accept `Ready` — record the failure, do not proceed.

@@ -810,50 +810,17 @@ let arn_role_name arn =
   | _ -> arn
 ;;
 
-(* Whitespace-insensitive on purpose. kubectl with -o json emits the arn key with no
-   space after the colon, and a needle that assumed a space silently turned a genuine
-   answer into an unexpected principal -- which the offline lifecycle harness caught,
-   and which would have failed closed on every real install. *)
-let json_string_field ~field json =
-  let key = Printf.sprintf "\"%s\"" field in
-  let len = String.length json in
-  let is_space c = c = ' ' || c = '\t' || c = '\n' || c = '\r' in
-  let rec scan from =
-    if from + String.length key > len
-    then None
-    else if String.sub json from (String.length key) = key
-    then (
-      let i = ref (from + String.length key) in
-      while !i < len && is_space json.[!i] do
-        incr i
-      done;
-      if !i < len && json.[!i] = ':' then incr i;
-      while !i < len && is_space json.[!i] do
-        incr i
-      done;
-      if !i < len && json.[!i] = '"'
-      then (
-        let vstart = !i + 1 in
-        match String.index_from_opt json vstart '"' with
-        | Some vend -> Some (String.sub json vstart (vend - vstart))
-        | None -> None)
-      else None)
-    else scan (from + 1)
-  in
-  scan 0
-;;
-
 let deescalation_principal_check ~expected_role_name env =
   match
     Sol_cli_process.run
       (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ])
   with
   | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    (match json_string_field ~field:"arn" r.Sol_cli_process.stdout with
-     | Some arn when arn_role_name arn = expected_role_name ->
+    (match Sol_cli_cloud_lifecycle.principal_arn_of_whoami r.Sol_cli_process.stdout with
+     | Ok arn when arn_role_name arn = expected_role_name ->
        Sol_cli_cloud_lifecycle.Principal_confirmed arn
-     | Some arn -> Sol_cli_cloud_lifecycle.Principal_unexpected arn
-     | None -> Sol_cli_cloud_lifecycle.Principal_unexpected r.Sol_cli_process.stdout)
+     | Ok arn -> Sol_cli_cloud_lifecycle.Principal_unexpected arn
+     | Error why -> Sol_cli_cloud_lifecycle.Principal_probe_failed why)
   | Ok r ->
     let detail =
       String.trim (r.Sol_cli_process.stderr ^ " " ^ r.Sol_cli_process.stdout)

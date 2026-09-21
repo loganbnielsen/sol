@@ -1142,6 +1142,25 @@ let deescalation_transition
         | still -> Still_elevated still))
 ;;
 
+(* DEC-040 / FND-0021: the principal the authorizer resolved, from the JSON that
+   kubectl auth whoami -o json emits.
+
+   Parsed as JSON, not pattern-matched. The first version searched for a literal needle
+   that included a space after the colon, and so read a genuine answer as an unexpected
+   principal -- because kubectl emits the key and value with no space between them. That
+   would have failed closed on every real install. A string assumption standing in for a
+   parse is the same class of error as a control-plane report standing in for the
+   authorizer. *)
+let principal_arn_of_whoami json : (string, string) result =
+  match Yojson.Safe.from_string json with
+  | exception _ -> Error "the whoami response was not JSON"
+  | json ->
+    let member = Yojson.Safe.Util.member in
+    (match json |> member "status" |> member "userInfo" |> member "arn" with
+     | `String arn when String.trim arn <> "" -> Ok (String.trim arn)
+     | _ -> Error "the whoami response carried no principal arn")
+;;
+
 let deescalation_verdict_to_string = function
   | Deescalated ->
     "de-escalated: the effective surface no longer permits bootstrap capabilities"

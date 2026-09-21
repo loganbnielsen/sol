@@ -273,6 +273,11 @@ val deescalation_transition
   -> after:(string * bool) list
   -> deescalation_verdict
 
+(** The principal from `kubectl auth whoami -o json`, parsed rather than
+    pattern-matched. [Error] when the response is not JSON or carries no arn -- never a
+    default, because a default would let a wrong principal look like a right one. *)
+val principal_arn_of_whoami : string -> (string, string) result
+
 val deescalation_verdict_to_string : deescalation_verdict -> string
 
 (** [enter ~from ~to_] is the only way an operation may move between phases. It
