@@ -8,6 +8,13 @@ source: audit finding FND-0012 — two live observations during AWS Run 8
 
 **Audit finding:** `internal/pipeline/audits/findings/FND-0012-omit-does-not-exempt-from-profile-preflight.md`
 
+**Depends on:** `DEC-041` — which layer owns `omit`. The implementation below assumes the
+"two readings" framing that FND-0023 supersedes: the key is already honoured by the
+resolved-config accessors and bypassed by the deploy selection, so the work is a call on
+which layer is authoritative (and, if the deploy selection wins, whether an explicit
+`--scope` overrides `omit`), not on whether to implement the key. Do not start this until
+`DEC-041` is decided; the fix's shape and regression matrix depend on it.
+
 ## The defect as observed
 
 A target that omits a service does not exempt it from the profile preflight. Run
