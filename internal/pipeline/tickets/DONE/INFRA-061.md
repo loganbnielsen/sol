@@ -68,3 +68,39 @@ mutation-verified as a valid mutant (mutated build succeeds, then the test fails
 | measurement failure before or after | `Undetermined` |
 | same principal, permitted before and denied after | `Deescalated` |
 | same principal, still permitted after | `Still_elevated` |
+
+## Remaining hardening of the principal check (identified, not yet applied)
+
+The parser on this branch handles the EKS shape (arrays under `status.userInfo.extra`, else
+a flat string), prefers `canonicalArn`, compares role names, and returns `Error` -- which
+the caller maps to `Undetermined` -- rather than a default. Five further hardenings were
+identified and are **not yet applied**; an attempt was reverted rather than land a
+half-restructured module at the end of the session:
+
+1. **Compare (account, role), not role alone.** The same role name in a different account
+   is a different principal, and the current comparison would call it the same.
+2. **Normalise role paths.** `canonicalArn` drops the path (SSO roles are the common case)
+   while `arn` may not, so the two spellings of the same role must compare equal.
+3. **Reject ambiguous arrays.** An empty array, a multi-element array, or a non-string
+   should be an `Error`, not an occasion to take the first element -- that is a default in
+   disguise.
+4. **Discover the ARNs by shape, not by key name.** The documented keys are `arn` and
+   `canonicalArn`, but naming can differ between access entries and aws-auth, and a parser
+   pinned to a recalled key list fails closed on a cluster that spells it differently.
+5. **Keep parse failure distinct from denial**, with a regression case tying a parse
+   `Error` to `Undetermined` and never to `Still_elevated` or `Deescalated`.
+
+**Risk while unapplied, stated plainly:** every failure mode above makes the check *fail
+closed* -- `Undetermined`, so `Ready` is not announced. None can produce a wrong verdict of
+de-escalation. That is why the epoch may proceed before this lands, and why the live
+capture (see the run-record template) is the step that settles the real shape: the
+fixtures currently encode a shape recalled from the API, not captured from EKS.
+
+## Harness coverage canary (applied 2026-09-21)
+
+`internal/ci/test_cloud_lifecycle_offline.sh` now fails if it never enters the
+bootstrap-access-removal phase, so the transition coverage cannot quietly go absent while
+every assertion still passes. Verified by breaking the phase pattern: the canary fails.
+Worth recording that the first reading here was wrong -- a grep of the harness's *stdout*
+suggested the phase never ran, when the per-scenario logs are where the output goes. The
+canary is what settled it, which is the argument for having one.

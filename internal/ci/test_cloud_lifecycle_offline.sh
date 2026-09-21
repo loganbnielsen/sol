@@ -1374,3 +1374,15 @@ grep -F 'lifecycle phase: Destroying' "$log.out" >/dev/null || {
   cat "$log.out" >&2
   exit 1
 }
+
+# DEC-040 canary. The bootstrap-access-removal phase is where the de-escalation transition
+# is verified, and it is the point of the install path. If this harness never enters it,
+# the transition coverage is absent while every assertion here still passes -- so assert
+# that the harness actually reached it, and fail loudly rather than passing vacuously.
+if ! grep -lF 'provisioner-bootstrap-access-remove' "$tmp"/*.out >/dev/null 2>&1 &&
+   ! grep -lF 'provisioner-bootstrap-access-remove' ./*.out >/dev/null 2>&1; then
+  echo "DEC-040 canary: this harness never entered the bootstrap-access-removal phase," >&2
+  echo "so it exercised no de-escalation transition at all -- the unit cases would be" >&2
+  echo "carrying the whole load without anything here noticing." >&2
+  exit 1
+fi
