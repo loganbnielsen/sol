@@ -1045,6 +1045,45 @@ let observed_phase ~cloud_exists ~platform_installed =
    here rather than by an operator or a call site remembering to check. Remaining
    in the same phase is not a transition and is deliberately not routed through
    this. *)
+(* DEC-040 / FND-0021: a control-plane acknowledgement is not evidence that an
+   authorization boundary has moved.
+
+   Live, an EKS access-policy disassociation was accepted and `describe-access-entry`
+   reported no access policies, while the cluster's authorizer went on granting
+   cluster-admin for over five minutes -- established by reading an application's
+   Secrets from a principal confirmed at the time of the read. Deleting the access
+   *entry* propagated in under 45 seconds; the policy disassociation did not.
+
+   So de-escalation is decided from the *effective* authorization surface: the
+   capabilities only the bootstrap authority held, asked of the component that
+   enforces the boundary. [Deescalated] is the only verdict that permits `Ready`. *)
+type deescalation_verdict =
+  | Deescalated
+  | Still_elevated of string list
+  (** Capabilities the de-escalated identity is still permitted. *)
+  | Undetermined of string
+  (** The surface could not be established -- never treated as de-escalated. *)
+
+let deescalation_verdict (probes : (string * bool) list) : deescalation_verdict =
+  match probes with
+  | [] -> Undetermined "no capability probe produced an answer"
+  | probes ->
+    let still =
+      List.filter_map (fun (c, permitted) -> if permitted then Some c else None) probes
+    in
+    if still = [] then Deescalated else Still_elevated still
+;;
+
+let deescalation_verdict_to_string = function
+  | Deescalated ->
+    "de-escalated: the effective surface no longer permits bootstrap capabilities"
+  | Still_elevated capabilities ->
+    Printf.sprintf
+      "still elevated: the de-escalated identity is still permitted %s"
+      (String.concat ", " capabilities)
+  | Undetermined why -> Printf.sprintf "undetermined: %s" why
+;;
+
 let enter ~from ~to_ =
   if transition_allowed ~from ~to_
   then Ok to_

@@ -222,6 +222,23 @@ val phase_to_string : phase -> string
     platform install, and [Platform_installing] otherwise. Never persisted. *)
 val observed_phase : cloud_exists:bool -> platform_installed:bool -> phase
 
+(** DEC-040 / FND-0021: whether the effective authorization surface shows the
+    bootstrap capability is gone. [Still_elevated] and [Undetermined] both mean the
+    run may not claim [Ready]; the caller fails closed on anything but
+    [Deescalated]. *)
+type deescalation_verdict =
+  | Deescalated
+  | Still_elevated of string list
+  | Undetermined of string
+
+(** [probes] is (capability, still_permitted) as answered by the *authorizer* --
+    the component that enforces the boundary -- for the capabilities only the
+    bootstrap authority held. Any permitted capability is [Still_elevated]; an empty
+    probe list is [Undetermined], never [Deescalated]. *)
+val deescalation_verdict : (string * bool) list -> deescalation_verdict
+
+val deescalation_verdict_to_string : deescalation_verdict -> string
+
 (** [enter ~from ~to_] is the only way an operation may move between phases. It
     is [Error] for any edge [transition_allowed] rejects, so an illegal phase
     combination cannot be expressed by a call site (ADR 0003 invariant 5). *)

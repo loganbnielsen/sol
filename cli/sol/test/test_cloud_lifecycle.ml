@@ -904,6 +904,46 @@ let test_convergence_predicates () =
   check_unmet "no nodes at all is unmet" (summary_with "nodes" "")
 ;;
 
+(* DEC-040 / FND-0021: de-escalation is decided from the effective authorization
+   surface, not from what a control plane reports. The live counterexample: an EKS
+   access-policy disassociation was accepted and the API reported no access policies
+   while the authorizer still granted cluster-admin for over five minutes. *)
+let test_deescalation_requires_the_effective_surface () =
+  (* Every capability refused is the only thing that licenses the verdict. *)
+  Alcotest.(check string)
+    "all refused -> de-escalated"
+    "de-escalated"
+    (match
+       Sol_cli_cloud_lifecycle.deescalation_verdict
+         [ "create clusterroles", false; "create clusterrolebindings", false ]
+     with
+     | Sol_cli_cloud_lifecycle.Deescalated -> "de-escalated"
+     | Sol_cli_cloud_lifecycle.Still_elevated _ -> "still elevated"
+     | Sol_cli_cloud_lifecycle.Undetermined _ -> "undetermined");
+  (* One capability still permitted means the elevated authority is still usable,
+     however the revocation was reported. *)
+  (match
+     Sol_cli_cloud_lifecycle.deescalation_verdict
+       [ "create clusterroles", false; "escalate clusterroles", true ]
+   with
+   | Sol_cli_cloud_lifecycle.Still_elevated still ->
+     Alcotest.(check (list string))
+       "the permitted capability is named"
+       [ "escalate clusterroles" ]
+       still
+   | Sol_cli_cloud_lifecycle.Deescalated ->
+     Alcotest.fail "a permitted capability was read as de-escalated"
+   | Sol_cli_cloud_lifecycle.Undetermined _ ->
+     Alcotest.fail "a permitted capability was read as undetermined");
+  (* No answer is not de-escalation: an unanswered probe must never license Ready. *)
+  match Sol_cli_cloud_lifecycle.deescalation_verdict [] with
+  | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+  | Sol_cli_cloud_lifecycle.Deescalated ->
+    Alcotest.fail "no evidence was read as de-escalated"
+  | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+    Alcotest.fail "no evidence was read as elevated"
+;;
+
 let test_effective_authorization () =
   let open L in
   let expected = provisioner_authorization_checks in
@@ -976,6 +1016,10 @@ let () =
         ; Alcotest.test_case "convergence predicates" `Quick test_convergence_predicates
         ; Alcotest.test_case "destroy retention" `Quick test_destroy_retention
         ; Alcotest.test_case "effective authorization" `Quick test_effective_authorization
+        ; Alcotest.test_case
+            "verified de-escalation (DEC-040)"
+            `Quick
+            test_deescalation_requires_the_effective_surface
         ; Alcotest.test_case "terraform scope" `Quick test_terraform_scope
         ] )
     ]

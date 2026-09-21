@@ -780,6 +780,68 @@ let with_provisioner_kubeconfig ?(on_error = Fun.id) ~region outputs f =
     lifecycle_error message
 ;;
 
+(* DEC-040 / FND-0021: de-escalation is not complete because a control plane said so.
+
+   Live, an EKS access-policy disassociation was accepted, `describe-access-entry`
+   reported no access policies, and the authorizer went on granting cluster-admin for
+   over five minutes. A successful apply that removes the bootstrap access entry is the
+   same kind of evidence, so the phase asks the component that actually enforces the
+   boundary instead: the capabilities only the bootstrap authority held, probed as the
+   steady-state platform identity through the same ephemeral access the platform uses.
+   Anything still permitted means the elevated capability is still usable, whatever the
+   API reports. *)
+let bootstrap_only_capabilities =
+  [ "create", "clusterroles"
+  ; "create", "clusterrolebindings"
+  ; "escalate", "clusterroles"
+  ]
+;;
+
+let deescalation_probes ~region ~outputs () =
+  with_provisioner_kubeconfig ~region outputs (fun env ->
+    List.map
+      (fun (verb, resource) ->
+         let permitted =
+           match
+             Sol_cli_process.run
+               (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "can-i"; verb; resource ])
+           with
+           | Ok r -> r.Sol_cli_process.exit_code = 0
+           | Error _ -> false
+         in
+         Printf.sprintf "%s %s" verb resource, permitted)
+      bootstrap_only_capabilities)
+;;
+
+(* Bounded and fail-closed: access-entry changes are eventually consistent so a retry
+   is expected, but an unverified claim is not an acceptable outcome. *)
+let verify_deescalation ~region ~outputs =
+  let interval_s = 10. in
+  let rec loop remaining =
+    let verdict =
+      Sol_cli_cloud_lifecycle.deescalation_verdict
+        (deescalation_probes ~region ~outputs ())
+    in
+    match verdict with
+    | Sol_cli_cloud_lifecycle.Deescalated -> verdict
+    | _ when remaining <= 1 -> verdict
+    | verdict ->
+      Printf.printf
+        "  awaiting effective de-escalation: %s\n%!"
+        (Sol_cli_cloud_lifecycle.deescalation_verdict_to_string verdict);
+      Unix.sleepf interval_s;
+      loop (remaining - 1)
+  in
+  match loop 6 with
+  | Sol_cli_cloud_lifecycle.Deescalated ->
+    Printf.printf
+      "  de-escalation verified against the effective authorization surface\n%!"
+  | verdict ->
+    lifecycle_error
+      ("de-escalation could not be established: "
+       ^ Sol_cli_cloud_lifecycle.deescalation_verdict_to_string verdict)
+;;
+
 let process_ok ?(env = []) argv =
   match Sol_cli_process.run (Sol_cli_process.cmd ~env argv) with
   | Ok result -> result.exit_code = 0
@@ -1987,6 +2049,18 @@ let cloud_init ~target ~var_file ~vars ~action () =
             the transition relation admits. PlatformInstalling -> Ready and
             PlatformUpdating -> Ready are both legal, so the exit is checked
             against the phase this run actually entered rather than assumed. *)
+         require_terraform_success (deescalate ());
+         (* DEC-040: [Ready] is a claim of least privilege, so it is not announced
+            until the effective authorization surface shows the bootstrap capability
+            is gone. The previous order announced [Ready] and then de-escalated, which
+            made the claim before its evidence existed. *)
+         (* DEC-040 applies to the AWS bootstrap access, which Sol revokes itself.
+            GCP's window lives in the platform root and is closed by applying that
+            root, so there is no Sol-side revocation here to verify. *)
+         (match outputs with
+          | Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ->
+            verify_deescalation ~region:target_cfg.region ~outputs:aws_outputs
+          | Sol_cli_cloud_lifecycle.Gcp_outputs _ -> ());
          (match
             Sol_cli_cloud_lifecycle.enter
               ~from:operation_phase
@@ -1994,7 +2068,6 @@ let cloud_init ~target ~var_file ~vars ~action () =
           with
           | Ok _ -> ()
           | Error message -> lifecycle_error message);
-         require_terraform_success (deescalate ());
          (* GCP's window lives in the platform root, so it is closed by applying the
             root that owns the object rather than by a Sol-side revocation step:
             the authority model stays in the layer that defines the authority. *)
