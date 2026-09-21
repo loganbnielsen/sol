@@ -301,6 +301,10 @@ val role_name_of_arn : string -> string
     `arn`, then the username. *)
 val principal_role_name : whoami_identity -> string option
 
+(** The path-free form canonicalArn reports, so an expected role ARN that carries a role
+    path compares equal to the cluster's answer instead of producing a false mismatch. *)
+val normalize_role_arn : string -> string
+
 (** Whether the response names exactly the expected principal, compared as the full
     canonical ARN (account and path included). [None] when the response names no ARN.
 

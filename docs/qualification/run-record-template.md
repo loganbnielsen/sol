@@ -212,5 +212,20 @@ promote it to a fixture if it differs from what the parser is tested against.
 **A green offline harness is not shape validation.** That harness emits the shape recalled
 from the API, so it shows the wiring works; only this capture shows the shape is right.
 
+**If the capture disagrees with the shape the parser expects: trust the capture.** Fix the
+parser against it, record the discrepancy here, and promote the capture to a fixture. The
+fixtures are the recalled shape; the cluster is the truth.
+
+Promoting it needs one more step, because a real response carries a 12-digit account id and
+the account-artifact guard rejects those -- correctly:
+
+```
+internal/pipeline/qualification/scrub-whoami-capture.sh <capture.json>
+```
+
+which replaces the account with the repository's documented placeholder while preserving
+array wrapping, key names and ARN shape, and refuses to emit a file that still carries an
+account id. **Keep the raw capture outside the repository** and attach the scrubbed one.
+
 If any of steps 1–5 cannot be obtained, the verification is `Undetermined` and the run
 must not accept `Ready` — record the failure, do not proceed.

@@ -1292,6 +1292,25 @@ let principal_role_name (i : whoami_identity) =
   | None, None, None -> None
 ;;
 
+(* The form canonicalArn reports: role/<name>, with any role path dropped.
+
+   Normalising the *expected* side matters because the gate requires canonicalArn, which is
+   path-free: a provisioner role configured with a path (SSO roles are the common case) would
+   otherwise produce a false mismatch in the first minute on a perfectly healthy cluster. *)
+let normalize_role_arn arn =
+  match index_of_substring ~needle:":role/" arn with
+  | None -> arn
+  | Some i ->
+    let prefix = String.sub arn 0 (i + 6) in
+    let name = String.sub arn (i + 6) (String.length arn - i - 6) in
+    prefix
+    ^
+      (match String.rindex_opt name '/' with
+      | Some j when j + 1 < String.length name ->
+        String.sub name (j + 1) (String.length name - j - 1)
+      | _ -> name)
+;;
+
 (* Whether the response names exactly the expected principal.
 
    The comparison is the **full** canonical ARN, account and path included. Comparing an

@@ -801,6 +801,19 @@ let bootstrap_only_capabilities =
   ]
 ;;
 
+(* A refusal from the cluster, as opposed to a failure to reach it. Shared because the
+   de-escalation probe treats it as evidence of de-escalation while the shape gate treats it
+   as a reason to stop immediately: retrying cannot change an identity. *)
+let cluster_refused detail =
+  List.exists
+    (fun needle -> Sol_cli_port_forward.string_contains ~needle detail)
+    [ "Unauthorized"
+    ; "You must be logged in"
+    ; "the server has asked for the client to provide credentials"
+    ; "is forbidden"
+    ]
+;;
+
 (* Compares the **full** canonical ARN, account and path included.
 
    Comparing an extracted role name was a fail-*open*: the same role name in another
@@ -838,14 +851,7 @@ let deescalation_principal_check ~expected_arn env =
        else -- a credential that could not be assumed, a token that could not be
        generated, no reachable API -- is a measurement failure, and absence of evidence
        must not become evidence of de-escalation. Only the cluster's own answer counts. *)
-    if
-      List.exists
-        (fun needle -> Sol_cli_port_forward.string_contains ~needle detail)
-        [ "Unauthorized"
-        ; "You must be logged in"
-        ; "the server has asked for the client to provide credentials"
-        ; "is forbidden"
-        ]
+    if cluster_refused detail
     then
       Sol_cli_cloud_lifecycle.Principal_refused_by_cluster
         (Printf.sprintf "%s: %s" expected_arn detail)
@@ -864,7 +870,9 @@ let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
   match
     provisioner_kubeconfig ~role_arn:provisioner_role_arn ~region outputs (fun env ->
       let principal =
-        deescalation_principal_check ~expected_arn:provisioner_role_arn env
+        deescalation_principal_check
+          ~expected_arn:(Sol_cli_cloud_lifecycle.normalize_role_arn provisioner_role_arn)
+          env
       in
       let probes =
         match principal with
@@ -917,18 +925,20 @@ let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
 
    The raw response is written to a run artifact that survives teardown, so it can be
    promoted to a fixture even if the run later fails. *)
-let whoami_capture_path () =
+(* The filename carries the run, so a second run cannot overwrite the first one's
+   evidence. *)
+let whoami_capture_path ~run_id =
+  let name = Printf.sprintf "whoami-capture-%s.json" run_id in
   match Sys.getenv_opt "SOL_QUALIFICATION_CAPTURE_DIR" with
-  | Some dir -> Some (Filename.concat dir "whoami-capture.json")
+  | Some dir -> Some (Filename.concat dir name)
   | None ->
     (match Sys.getenv_opt "HOME" with
-     | Some home ->
-       Some (Filename.concat (Filename.concat home ".sol-qual") "whoami-capture.json")
+     | Some home -> Some (Filename.concat (Filename.concat home ".sol-qual") name)
      | None -> None)
 ;;
 
-let persist_whoami_capture json =
-  match whoami_capture_path () with
+let persist_whoami_capture ~run_id json =
+  match whoami_capture_path ~run_id with
   | None ->
     Printf.printf
       "  whoami capture: no writable path (set HOME or SOL_QUALIFICATION_CAPTURE_DIR)\n%!"
@@ -950,6 +960,15 @@ let persist_whoami_capture json =
 
 let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
   let interval_s = 10. in
+  (* The expectation is the configured intent -- the target's provisioner role, normalised
+     to the path-free form canonicalArn reports, so a role with a path does not produce a
+     false mismatch on a healthy cluster. The observation is the authorizer's own answer
+     about who authenticated. They are not the same value read back from one place: the
+     kubeconfig is built from the config, but the ARN compared against it comes from the
+     cluster, so a leftover credential of another identity answers with that other ARN and
+     is caught. *)
+  let expected = Sol_cli_cloud_lifecycle.normalize_role_arn provisioner_role_arn in
+  let run_id = Printf.sprintf "%d" (int_of_float (Unix.gettimeofday ())) in
   let rec attempt remaining =
     let outcome =
       provisioner_kubeconfig ~role_arn:provisioner_role_arn ~region outputs (fun env ->
@@ -959,7 +978,10 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
     match outcome with
     | Ok (Ok r) when r.Sol_cli_process.exit_code = 0 ->
       let json = String.trim r.Sol_cli_process.stdout in
-      persist_whoami_capture json;
+      (* Persisted before anything is asserted, on every attempt: the run that fails on a
+         shape mismatch is the one whose capture matters most, and writing afterwards would
+         leave nothing behind for exactly that case. *)
+      persist_whoami_capture ~run_id json;
       let identity_result = Sol_cli_cloud_lifecycle.whoami_identity_of_json json in
       (match identity_result with
        | Error why ->
@@ -973,11 +995,7 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
        | Ok identity ->
          let source = identity.Sol_cli_cloud_lifecycle.source in
          Printf.printf "  whoami shape: parsed (identity source: %s)\n%!" source;
-         let matched =
-           Sol_cli_cloud_lifecycle.principal_matches
-             ~expected:provisioner_role_arn
-             identity
-         in
+         let matched = Sol_cli_cloud_lifecycle.principal_matches ~expected identity in
          let named =
            match identity.Sol_cli_cloud_lifecycle.canonical_arn, identity.arn with
            | Some a, _ -> a
@@ -1015,7 +1033,16 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
         | Ok (Error e) -> Sol_cli_process.error_to_string e
         | Error e -> e
       in
-      if remaining <= 1
+      (* Retry is for an endpoint that is not ready yet. An authorization refusal will not
+         fix itself with backoff -- the identity is what it is -- so it fails immediately. *)
+      if cluster_refused why
+      then
+        lifecycle_error
+          (Printf.sprintf
+             "the authorizer refused the probe as this principal (%s). Retrying cannot \
+              change an identity, so the run stops rather than waiting out the window."
+             why)
+      else if remaining <= 1
       then
         lifecycle_error
           (Printf.sprintf
