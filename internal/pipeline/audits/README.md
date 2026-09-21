@@ -156,6 +156,14 @@ the final state. If a historical record does not establish one of these, the
 finding says so rather than filling it in. Later code on `main` does not change
 what an earlier run actually executed.
 
+## Mutation verification
+
+A mutation test is evidence only when **the mutated build succeeds and the intended test
+then fails**. A compiler rejection is an *invalid* mutant, not a killed one; and when a
+build fails, the test binary that runs is the previous one, so its exit code says nothing
+about the mutation. Mutate the body of the live code path, check the build's exit status,
+then read the test result. (Learned the hard way: see DEC-040.)
+
 ## Primary-source policy
 
 For provider-contract claims, use primary sources (AWS, Google Cloud,

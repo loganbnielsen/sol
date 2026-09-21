@@ -10,6 +10,18 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 sol="$(realpath "${1:-$root/_build/default/cli/sol/bin/main.exe}")"
 tmp="$(mktemp -d)"
+# DEC-040: a green exit code must not be able to mean a fixture is corrupt. If a splice
+# swallows a heredoc terminator the generated stub runs to end-of-file, and this harness
+# still passes -- bash's "delimited by end-of-file" warning is the only sign. Assert the
+# invariant directly: every generator heredoc is closed. Checked here rather than trusted to
+# memory, and it is the check that would have caught the splice that produced a false green.
+heredocs_open=$(grep -cE "^cat >.*<<'EOF'" "$0")
+heredocs_close=$(grep -cE '^EOF$' "$0")
+if [ "$heredocs_open" != "$heredocs_close" ]; then
+  echo "generator heredocs are unbalanced: $heredocs_open opened, $heredocs_close closed" >&2
+  echo "a generated file is likely running past its terminator, so a fixture is corrupt" >&2
+  exit 1
+fi
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/work/sol/prod/aws" "$tmp/markers"
 
@@ -207,9 +219,15 @@ JSON
     : >"$GKE_PREPARED_FILE"
     ;;
   *infra/aws*" apply "*"provisioner_bootstrap_admin=true"*)
+    # DEC-040: this variable *is* the bootstrap window, so the stub records it and the
+    # kubectl stub answers the de-escalation probes from it -- permitted while open,
+    # denied once closed. That makes the offline harness exercise the transition the
+    # verification requires rather than asserting a lifecycle it would refuse.
+    printf 'true\n' >"$FAIL_MARKER_DIR/bootstrap-window"
     if fail_once cloud; then exit 20; fi
     ;;
   *infra/aws*" apply "*"provisioner_bootstrap_admin=false"*)
+    printf 'false\n' >"$FAIL_MARKER_DIR/bootstrap-window"
     if fail_once deescalate; then exit 20; fi
     ;;
   *infra/base*" apply "*"-target="*)
@@ -286,15 +304,39 @@ if [ "$1 $2" = "eks describe-cluster" ] || [ "$1 $2" = "eks describe-addon" ]; t
   fi
   printf 'ACTIVE\n'; exit 0
 fi
+case " $* " in
+  *" sts assume-role "*)
+    # DEC-040: the identity check behind a cluster refusal. It must come before the eks-only
+    # guard below, or it never matches and the discriminator scenario passes vacuously.
+    if [ "${STS_ASSUME_FAIL:-}" = 1 ]; then
+      printf 'An error occurred (AccessDenied) when calling the AssumeRole operation\n' >&2
+      exit 255
+    fi
+    printf '{"Credentials":{"AccessKeyId":"ASIAEXAMPLE"}}\n'
+    exit 0
+    ;;
+esac
 [ "$1 $2" = "eks update-kubeconfig" ] || exit 90
-case " $* " in *" --role-arn arn:aws:iam::111122223333:role/sol-cluster-access "*) : ;; *) exit 91 ;; esac
+case " $* " in
+  *" --role-arn arn:aws:iam::111122223333:role/sol-cluster-access "*)
+    printf 'sol-cluster-access\n' >"$FAIL_MARKER_DIR/kubeconfig-role"
+    ;;
+  *" --role-arn arn:aws:iam::111122223333:role/sol-provisioner "*)
+    printf 'sol-provisioner\n' >"$FAIL_MARKER_DIR/kubeconfig-role"
+    ;;
+  *) exit 91 ;;
+esac
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --kubeconfig ]; then shift; path="$1"; break; fi
   shift
 done
 [ -n "${path:-}" ] && [ "$KUBECONFIG" = "$path" ] || exit 92
 printf '%s\n' "$path" >>"$KUBECONFIG_LOG"
-if [ "${FAIL_ON:-}" = access ] && [ ! -e "$FAIL_MARKER_DIR/access" ]; then
+# DEC-040: the access failure is injected in one of two modes, because the two now have
+# different expected outcomes. `once` (default) is the transient case a bounded retry must
+# ride through; `always` is the persistent case, where the gate must fail after its window
+# with the message that the gate did not run.
+if [ "${FAIL_ON:-}" = access ] && { [ "${ACCESS_FAIL:-once}" = always ] || [ ! -e "$FAIL_MARKER_DIR/access" ]; }; then
   : >"$FAIL_MARKER_DIR/access"; exit 20
 fi
 : >"$path"
@@ -390,6 +432,19 @@ esac
 exit 90
 EOF
 
+# DEC-040: check the generated stubs parse before anything runs. A syntax error in a stub
+# surfaces as a plausible-looking product failure -- an "eks update-kubeconfig failed" message
+# that took several rounds to trace back to the stub itself. Cheap assertion, loud failure, so
+# this harness cannot fail for a reason that looks like a bug in sol.
+for generated in "$tmp/bin/aws" "$tmp/bin/terraform" "$tmp/bin/kubectl" "$tmp/bin/gcloud"; do
+  [ -e "$generated" ] || continue
+  if ! bash -n "$generated" 2>/dev/null; then
+    echo "the generated $(basename "$generated") stub is not valid shell:" >&2
+    bash -n "$generated" 2>&1 | head -3 >&2
+    exit 1
+  fi
+done
+
 # The platform stage's host prerequisite (Attempt 3): the kubeconfig gcloud writes
 # names this as its exec credential plugin, so every Kubernetes call needs it on
 # PATH. Failing without it is free; failing inside the platform apply is not.
@@ -410,6 +465,65 @@ printf 'kubectl %s\n' "$*" >>"$LIFECYCLE_LOG"
 # whose kind is *not* here, so the stub has to be able to say both things --
 # CRD_SERVED=1 models a cluster where the CRD is present (and the destroy must then
 # fail closed rather than forget anything).
+# DEC-040: answer the *de-escalation probes* on the same terms the real cluster does.
+# Scoped deliberately to the bootstrap-only capability set: Sol also checks that the
+# platform provisioner's own RBAC survives the bootstrap removal, and that check asks
+# different questions as a different (legitimate) principal. Answering for it here would
+# replace the thing being tested with the test.
+case " $* " in
+  *" auth whoami "*)
+    # Whichever role the ephemeral kubeconfig was built for, so a caller inspecting the
+    # principal sees the truth.
+    # The EKS shape, not a convenience one: a SelfSubjectReview whose identity lives in
+    # status.userInfo.extra, where every value is an array of strings -- arn is the STS
+    # assumed-role ARN with a session name, canonicalArn is the stable role ARN. Emitting
+    # anything simpler here would let the harness pass against a shape no real cluster
+    # produces, which is the failure this emulation exists to prevent.
+    case "$(cat "$FAIL_MARKER_DIR/kubeconfig-role" 2>/dev/null || true)" in
+      sol-provisioner)
+        # DEC-040: the first answer is a 401, as a freshly created EKS cluster gives
+        # while access-entry or aws-auth propagation catches up for the *correct*
+        # principal. The gate must retry that, not read it as a wrong identity.
+        # A refusal of the identity call itself, which is the shape an upstream-broken
+        # credential takes: the token generates, and the cluster rejects it. Only once the
+        # bootstrap window is closed, because that is when the removal has taken effect and
+        # the question the discriminator answers arises -- before that the gate would stop
+        # the run first, which is correct but not what this scenario is testing.
+        if [ "${WHOAMI_REFUSE:-}" = 1 ] &&
+          [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "false" ]; then
+          printf 'error: You must be logged in to the server (Unauthorized)\n' >&2
+          exit 1
+        fi
+        if [ ! -e "${LIFECYCLE_LOG}.whoami-401-seen" ]; then
+          : >"${LIFECYCLE_LOG}.whoami-401-seen"
+          printf 'error: You must be logged in to the server (Unauthorized)\n' >&2
+          exit 1
+        fi
+        printf '{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview","metadata":{"creationTimestamp":null},"status":{"userInfo":{"username":"arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth","uid":"aws-iam-authenticator:111122223333:AROA","groups":["system:authenticated","sol:platform-provisioners"],"extra":{"arn":["arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth"],"canonicalArn":["arn:aws:iam::111122223333:role/sol-provisioner"],"sessionName":["EKSGetTokenAuth"]}}}}\n'
+        ;;
+      sol-cluster-access)
+        printf '{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview","status":{"userInfo":{"username":"arn:aws:sts::111122223333:assumed-role/sol-cluster-access/EKSGetTokenAuth","extra":{"arn":["arn:aws:sts::111122223333:assumed-role/sol-cluster-access/EKSGetTokenAuth"],"canonicalArn":["arn:aws:iam::111122223333:role/sol-cluster-access"]}}}}\n'
+        ;;
+      *) printf '{"status":{"userInfo":{}}}\n' ;;
+    esac
+    exit 0
+    ;;
+  *" auth can-i "*" clusterroles "*|*" auth can-i "*" clusterrolebindings "*)
+    # The probe must interrogate *the principal whose elevation is being removed*.
+    # Answering for another principal would let a wrong-principal check look like
+    # evidence, so this refuses -- the harness asserts the principal requirement rather
+    # than merely supplying answers to it.
+    if [ "$(cat "$FAIL_MARKER_DIR/kubeconfig-role" 2>/dev/null || true)" != "sol-provisioner" ]; then
+      printf 'error: the authorizer was asked about the wrong principal\n' >&2
+      exit 90
+    fi
+    if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "true" ]; then
+      exit 0
+    fi
+    printf 'error: You must be logged in to the server (Unauthorized)\n' >&2
+    exit 1
+    ;;
+esac
 case " $* " in
   *" api-resources "*)
     printf 'NAME        SHORTNAMES   APIVERSION   NAMESPACED   KIND\n'
@@ -508,6 +622,8 @@ export SOL_HOME="$root"
 export TF_VAR_db_password=offline-only
 export KUBECONFIG=/ambient/forbidden
 export FAIL_MARKER_DIR="$tmp/markers"
+# DEC-040: exercise the gate's retry without sleeping through it.
+export SOL_WHOAMI_RETRY_INTERVAL_S=0
 export KUBECONFIG_LOG="$tmp/kubeconfigs"
 export RDS_PREPARED_FILE="$tmp/markers/rds-prepared"
 export STATE_RM_FILE="$tmp/markers/state-rm"
@@ -532,7 +648,9 @@ run_destroy() {
 for phase in cloud outputs cloud-verify access platform-init prerequisites crds deescalate rbac platform; do
   rm -f "$tmp/markers/$phase"
   log="$tmp/$phase.log"
-  if (export FAIL_ON="$phase"; run_apply "$log"); then
+  # The access phase is persistent here: an injected access failure that never clears must
+  # still be fatal, or the retry would quietly turn a hard failure into a pass.
+  if (export FAIL_ON="$phase"; export ACCESS_FAIL=always; run_apply "$log"); then
     echo "cloud apply unexpectedly survived injected $phase failure" >&2
     exit 1
   fi
@@ -541,6 +659,44 @@ for phase in cloud outputs cloud-verify access platform-init prerequisites crds 
   echo "INFRA-039: the apply did not report the principal its credentials belong to" >&2
   exit 1
 }
+# DEC-040 discriminator: the base identity is valid but the provisioning role cannot be
+# assumed. A cluster refusal then must NOT be read as de-escalation -- the run has to come
+# back Undetermined and fail, or a broken credential passes as a verified removal. This is
+# the end-to-end counterpart of the unit case, and it fails if the identity check is skipped.
+# The positive pairing -- a refusal with a *working* identity counting as the removal -- is
+# covered by the unit case (refusal_is_deescalation with sts_assumable = Some true), because
+# the emulated cluster's window bookkeeping does not line up for it end to end here.
+sts_log="$tmp/sts-unassumable.log"
+if (export FAIL_ON=""; export WHOAMI_REFUSE=1; export STS_ASSUME_FAIL=1; run_apply "$sts_log"); then
+  echo "a refusal with an unassumable role was accepted as de-escalation:" >&2
+  cat "$sts_log.out" >&2
+  exit 1
+fi
+grep -qF 'could not be assumed' "$sts_log.out" || {
+  echo "the run failed, but not because the role could not be assumed:" >&2
+  cat "$sts_log.out" >&2
+  exit 1
+}
+
+# DEC-040 transient: the same injected access failure, but it clears after the first
+# attempt. The bounded retry must ride through it and the install must survive -- and the
+# log must show the retry, because otherwise "survived" is indistinguishable from "the
+# injection never happened", which is how a one-shot injection turns a fatal case into a
+# false pass.
+transient_log="$tmp/access-transient.log"
+rm -f "$tmp/markers/access"
+if ! (export FAIL_ON=access; export ACCESS_FAIL=once; run_apply "$transient_log"); then
+  echo "a transient access failure failed the run instead of being retried through:" >&2
+  cat "$transient_log.out" >&2
+  exit 1
+fi
+grep -qF 'not reachable yet' "$transient_log.out" || {
+  echo "the run survived an injected access failure without ever retrying, so this scenario" >&2
+  echo "did not exercise the retry path at all:" >&2
+  cat "$transient_log.out" >&2
+  exit 1
+}
+
 if ! (export FAIL_ON=""; run_apply "$log"); then
     cat "$log" >&2
     cat "$log.out" >&2
@@ -1314,3 +1470,26 @@ grep -F 'lifecycle phase: Destroying' "$log.out" >/dev/null || {
   cat "$log.out" >&2
   exit 1
 }
+
+# DEC-040 canary. The bootstrap-access-removal phase is where the de-escalation transition
+# is verified, and it is the point of the install path. If this harness never enters it,
+# the transition coverage is absent while every assertion here still passes -- so assert
+# that the harness actually reached it, and fail loudly rather than passing vacuously.
+if ! grep -lF 'provisioner-bootstrap-access-remove' "$tmp"/*.out >/dev/null 2>&1 &&
+   ! grep -lF 'provisioner-bootstrap-access-remove' ./*.out >/dev/null 2>&1; then
+  echo "DEC-040 canary: this harness never entered the bootstrap-access-removal phase," >&2
+  echo "so it exercised no de-escalation transition at all -- the unit cases would be" >&2
+  echo "carrying the whole load without anything here noticing." >&2
+  exit 1
+fi
+
+# DEC-040 shape gate. The fixtures encode a shape recalled from the API; the gate is what
+# compares that against an answer. Assert it ran and did not reject the shape, so the
+# coverage cannot quietly go absent -- and so a shape the parser cannot read fails here
+# rather than at the end of a live bootstrap.
+if ! grep -lF 'whoami shape: parsed' "$tmp"/*.out >/dev/null 2>&1; then
+  echo "DEC-040 canary: the whoami shape gate never reported a parsed response, so either it" >&2
+  echo "did not run or it rejected the emulated shape -- the fixtures would be going" >&2
+  echo "unvalidated against anything." >&2
+  exit 1
+fi

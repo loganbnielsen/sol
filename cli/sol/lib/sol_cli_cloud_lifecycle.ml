@@ -1045,6 +1045,331 @@ let observed_phase ~cloud_exists ~platform_installed =
    here rather than by an operator or a call site remembering to check. Remaining
    in the same phase is not a transition and is deliberately not routed through
    this. *)
+(* DEC-040 / FND-0021: a control-plane acknowledgement is not evidence that an
+   authorization boundary has moved.
+
+   Live, an EKS access-policy disassociation was accepted and `describe-access-entry`
+   reported no access policies, while the cluster's authorizer went on granting
+   cluster-admin for over five minutes -- established by reading an application's
+   Secrets from a principal confirmed at the time of the read. Deleting the access
+   *entry* propagated in under 45 seconds; the policy disassociation did not.
+
+   So de-escalation is decided from the *effective* authorization surface: the
+   capabilities only the bootstrap authority held, asked of the component that
+   enforces the boundary. [Deescalated] is the only verdict that permits `Ready`. *)
+(** Which principal answered the probe. The probe must be run as the principal whose
+    elevation is being removed; a different principal answering proves nothing about
+    that one, which is why it is [Unexpected] rather than a pass. *)
+type deescalation_principal =
+  | Principal_confirmed of string
+  (** The intended principal answered, so its refusals are evidence. *)
+  | Principal_refused_by_cluster of string
+  (** The intended principal reached the cluster and the cluster's own authorizer
+          refused it -- the expected result of removing its access. The elevated
+          capability needs authentication, so its absence is its revocation. *)
+  | Principal_probe_failed of string
+  (** The probe obtained no evidence -- credentials, token generation, network, API, or
+          any error that is not the cluster refusing an identified principal. A
+          measurement failure must never read as de-escalation. *)
+  | Principal_unexpected of string
+  (** Some other principal answered. The probe establishes nothing. *)
+
+type deescalation_verdict =
+  | Deescalated
+  | Still_elevated of string list
+  (** Capabilities the de-escalated principal is still permitted. *)
+  | Undetermined of string
+  (** The surface could not be established -- never treated as de-escalated. *)
+
+let deescalation_verdict
+      ~(principal : deescalation_principal)
+      (probes : (string * bool) list)
+  : deescalation_verdict
+  =
+  match principal with
+  | Principal_unexpected who ->
+    Undetermined
+      (Printf.sprintf
+         "the probe answered as %s, not the principal whose elevation was removed"
+         who)
+  | Principal_probe_failed why -> Undetermined why
+  | Principal_refused_by_cluster _why -> Deescalated
+  | Principal_confirmed _ ->
+    (match probes with
+     | [] -> Undetermined "no capability probe produced an answer"
+     | probes ->
+       let still =
+         List.filter_map (fun (c, permitted) -> if permitted then Some c else None) probes
+       in
+       if still = [] then Deescalated else Still_elevated still)
+;;
+
+(* DEC-040's positive control. A final denial is not evidence of a transition: a
+   credential that never worked, a principal that was never the elevated one, or a
+   capability that was never granted all produce the same "denied" afterwards. What the
+   security claim needs is the same principal and the same capabilities, observed
+   *permitted* inside the bootstrap window and *denied* after it. Anything less is
+   [Undetermined], which is not a licence to announce Ready. *)
+let deescalation_transition
+      ~(before : (string * bool) list)
+      ~after_principal
+      ~(after : (string * bool) list)
+  =
+  let permitted probes =
+    List.filter_map (fun (c, ok) -> if ok then Some c else None) probes
+  in
+  match permitted before with
+  | [] ->
+    Undetermined
+      "the bootstrap-only capabilities were never observed permitted, so no removal can \
+       be demonstrated"
+  | _ ->
+    (match after_principal with
+     | Principal_unexpected who ->
+       Undetermined
+         (Printf.sprintf
+            "the principal answering after de-escalation was %s, not the one observed \
+             during the window; the transition is not established"
+            who)
+     | Principal_probe_failed why ->
+       Undetermined ("the post-de-escalation probe obtained no evidence: " ^ why)
+     | Principal_refused_by_cluster _ -> Deescalated
+     | Principal_confirmed _ ->
+       (match permitted after with
+        | [] when after = [] ->
+          Undetermined "no capability probe produced an answer after de-escalation"
+        | [] -> Deescalated
+        | still -> Still_elevated still))
+;;
+
+(* DEC-040 / FND-0021: identify the principal the authorizer resolved, from the JSON
+   that kubectl auth whoami -o json emits.
+
+   That response is a SelfSubjectReview. On EKS the AWS authenticator puts identity
+   details under status.userInfo.extra, where every value is an *array of strings* --
+   including arn and canonicalArn. So the arn is not a plain field of userInfo, and an
+   earlier version that looked only for a string there would have failed closed on every
+   real install. The flat string form is still accepted, because other authenticators and
+   test stubs emit it, but the array form is the one EKS actually produces.
+
+   canonicalArn is preferred for identity: arn for an assumed role carries a session name
+   that differs between the before and after probes, so comparing raw arns would report a
+   false mismatch. *)
+type whoami_identity =
+  { arn : string option
+  ; canonical_arn : string option
+  ; username : string option
+  ; source : string
+    (** Which field the identity was taken from: extra.canonicalArn, extra.arn,
+          userInfo.canonicalArn, userInfo.arn, or username. The de-escalation comparison
+          depends on canonicalArn being present, so a caller that cares must be able to see
+          which field it got. *)
+  }
+
+(* Strict: a value that is a list must have exactly one element.
+
+   The AWS authenticator reports identity values as one-element arrays, so a two-element
+   array names more than one principal -- and taking the first element is a default in
+   disguise, which is how an ambiguous response could otherwise be read as a definite one.
+   Absent is [Ok None]; present-but-ambiguous is [Error]. *)
+let single_string_of_json ~what = function
+  | `String v -> Ok (Some v)
+  | `List [ `String v ] -> Ok (Some v)
+  | `List [] -> Error (Printf.sprintf "a %s value was an empty array" what)
+  | `List (_ :: _ :: _) ->
+    Error (Printf.sprintf "a %s value was an array of more than one element" what)
+  | `Null -> Ok None
+  | _ ->
+    Error (Printf.sprintf "a %s value was neither a string nor an array of strings" what)
+;;
+
+let whoami_identity_of_json json : (whoami_identity, string) result =
+  match Yojson.Safe.from_string json with
+  | exception _ -> Error "the whoami response was not JSON"
+  | json ->
+    (* Non-raising on purpose: Yojson's member raises when its parent is null, and a
+       response with no `extra` at all (any non-EKS authenticator, or a stub) would then
+       crash the probe instead of degrading to a stated reason. The fixtures caught
+       exactly that. *)
+    let member_opt key = function
+      | `Assoc fields -> List.assoc_opt key fields
+      | _ -> None
+    in
+    let sub key j =
+      match member_opt key j with
+      | Some v -> v
+      | None -> `Null
+    in
+    let status = sub "status" json in
+    let user = sub "userInfo" status in
+    let extra = sub "extra" user in
+    let source = ref "none" in
+    (* A present-but-ambiguous value is an error, not a first element. *)
+    let field name = single_string_of_json ~what:name (sub name user) in
+    let extra_field name = single_string_of_json ~what:name (sub name extra) in
+    Result.bind (extra_field "arn") (fun extra_arn ->
+      Result.bind (field "arn") (fun user_arn ->
+        Result.bind (extra_field "canonicalArn") (fun extra_canonical ->
+          Result.bind (field "canonicalArn") (fun user_canonical ->
+            Result.bind (field "username") (fun username ->
+              let arn, arn_source =
+                match extra_arn with
+                | Some _ as v -> v, "extra.arn"
+                | None -> user_arn, "userInfo.arn"
+              in
+              let canonical_arn, canonical_source =
+                match extra_canonical with
+                | Some _ as v -> v, "extra.canonicalArn"
+                | None -> user_canonical, "userInfo.canonicalArn"
+              in
+              (* The field the identity is *taken from*: canonicalArn is the one the
+                 comparison depends on, so it is named rather than left implicit. *)
+              (source
+               := match canonical_arn, arn, username with
+                  | Some _, _, _ -> canonical_source
+                  | None, Some _, _ -> arn_source
+                  | None, None, Some _ -> "username"
+                  | None, None, None -> "none");
+              let identity = { arn; canonical_arn; username; source = !source } in
+              match arn, canonical_arn, username with
+              | None, None, None ->
+                Error
+                  "the whoami response carried no arn and no username (is \
+                   SelfSubjectReview supported by this cluster and kubectl?)"
+              | _ -> Ok identity)))))
+;;
+
+(* The role name inside an ARN, whichever form it takes. An assumed-role ARN is
+   .../assumed-role/<role>/<session>, so the role is the second-to-last segment and a
+   naive last-segment split would compare session names -- and two probes of the same
+   principal have different session names, which would read as a principal mismatch. *)
+let index_of_substring ~needle haystack =
+  let n = String.length needle
+  and h = String.length haystack in
+  let rec scan i =
+    if i + n > h
+    then None
+    else if String.sub haystack i n = needle
+    then Some i
+    else scan (i + 1)
+  in
+  scan 0
+;;
+
+let role_name_of_arn arn =
+  let after needle =
+    match index_of_substring ~needle arn with
+    | None -> None
+    | Some i ->
+      let from = i + String.length needle in
+      Some (String.sub arn from (String.length arn - from))
+  in
+  (* The real form is ...:assumed-role/<role>/<session> -- colon before, not slash -- and
+     missing that made the role name come out as the session, which would have read as a
+     principal mismatch between two probes of the same principal. Matched without the
+     leading separator so both spellings work. *)
+  match after "assumed-role/" with
+  | Some rest ->
+    (match String.index_opt rest '/' with
+     | Some i -> String.sub rest 0 i
+     | None -> rest)
+  | None ->
+    (match after ":role/" with
+     | Some name -> name
+     | None ->
+       (match String.rindex_opt arn '/' with
+        | Some i when i + 1 < String.length arn ->
+          String.sub arn (i + 1) (String.length arn - i - 1)
+        | _ -> arn))
+;;
+
+(* The principal's stable role name: canonicalArn first, then arn, then the username. *)
+let principal_role_name (i : whoami_identity) =
+  match i.canonical_arn, i.arn, i.username with
+  | Some a, _, _ -> Some (role_name_of_arn a)
+  | None, Some a, _ -> Some (role_name_of_arn a)
+  | None, None, Some u -> Some u
+  | None, None, None -> None
+;;
+
+(* The form canonicalArn reports: role/<name>, with any role path dropped.
+
+   Normalising the *expected* side matters because the gate requires canonicalArn, which is
+   path-free: a provisioner role configured with a path (SSO roles are the common case) would
+   otherwise produce a false mismatch in the first minute on a perfectly healthy cluster. *)
+let normalize_role_arn arn =
+  match index_of_substring ~needle:":role/" arn with
+  | None -> arn
+  | Some i ->
+    let prefix = String.sub arn 0 (i + 6) in
+    let name = String.sub arn (i + 6) (String.length arn - i - 6) in
+    prefix
+    ^
+      (match String.rindex_opt name '/' with
+      | Some j when j + 1 < String.length name ->
+        String.sub name (j + 1) (String.length name - j - 1)
+      | _ -> name)
+;;
+
+(* Whether the response names exactly the expected principal.
+
+   The comparison is the **full** canonical ARN, account and path included. Comparing an
+   extracted role name was a fail-*open* -- the same role name in another account, or
+   reached through a different role path, would look like the same principal, and a
+   different principal being denied afterwards would then read as Deescalated. The strict
+   form's worst case is a false mismatch, which lands in Undetermined and does not
+   announce Ready. INFRA-061 records the precise comparison (account plus normalised role)
+   as the follow-up that makes it exact without the false mismatches. *)
+let principal_matches ~expected (identity : whoami_identity) =
+  match identity.canonical_arn with
+  | Some arn -> Some (String.equal arn expected)
+  | None ->
+    (* A bare arn carries a session name, so it cannot equal a role ARN: report the
+       mismatch rather than guess. *)
+    (match identity.arn with
+     | Some arn -> Some (String.equal arn expected)
+     | None -> None)
+;;
+
+(* A refusal by the cluster is evidence of de-escalation only if the credential itself is
+   still good.
+
+   "You must be logged in" is also what a valid credential gets when something upstream of
+   the cluster is wrong -- a broken trust policy on the role, clock skew, a wrong assumed
+   role -- and `Principal_refused_by_cluster` maps straight to Deescalated. That would read a
+   broken credential as a verified transition, which is a fail-*open* into the one verdict
+   that has to mean something. So the caller also confirms the role can still be assumed, and
+   only a refusal with a working identity counts. If the identity check fails, the probe
+   obtained no usable evidence and says so.
+   [sts_assumable] is [Some true] when the role was assumed successfully, [Some false] when
+   the attempt was refused, and [None] when the attempt itself could not be made. *)
+let refusal_is_deescalation ~(sts_assumable : bool option) detail =
+  match sts_assumable with
+  | Some true -> Principal_refused_by_cluster detail
+  | Some false ->
+    Principal_probe_failed
+      (Printf.sprintf
+         "the cluster refused the probe (%s) and the provisioning role could not be \
+          assumed, so a broken credential cannot be told apart from a revoked one"
+         detail)
+  | None ->
+    Principal_probe_failed
+      (Printf.sprintf
+         "the cluster refused the probe (%s) and the identity check could not be \
+          performed, so the refusal is not evidence"
+         detail)
+;;
+
+let deescalation_verdict_to_string = function
+  | Deescalated ->
+    "de-escalated: the effective surface no longer permits bootstrap capabilities"
+  | Still_elevated capabilities ->
+    Printf.sprintf
+      "still elevated: the de-escalated identity is still permitted %s"
+      (String.concat ", " capabilities)
+  | Undetermined why -> Printf.sprintf "undetermined: %s" why
+;;
+
 let enter ~from ~to_ =
   if transition_allowed ~from ~to_
   then Ok to_

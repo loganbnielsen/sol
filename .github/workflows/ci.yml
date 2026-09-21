@@ -318,6 +318,11 @@ jobs:
       - name: Qualification transport guard mutation test (INFRA-060)
         run: internal/ci/test_qualification_transport_check.sh
 
+      # DEC-040: a captured whoami response must be scrubbable into a fixture without
+      # flattening the structure the parser depends on, or leaving an account id behind.
+      - name: whoami capture scrubber (DEC-040)
+        run: internal/ci/test_scrub_whoami_capture.sh
+
   # FRIC-009: smallest check that would have caught a regression like
   # FRIC-007 (every generated service permanently broken on a fresh
   # substrate) — nothing above exercises the golden path against live

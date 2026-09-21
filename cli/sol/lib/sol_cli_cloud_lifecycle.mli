@@ -222,6 +222,107 @@ val phase_to_string : phase -> string
     platform install, and [Platform_installing] otherwise. Never persisted. *)
 val observed_phase : cloud_exists:bool -> platform_installed:bool -> phase
 
+(** DEC-040 / FND-0021: whether the effective authorization surface shows the
+    bootstrap capability is gone.
+
+    The probe must be run as **the principal whose elevation is being removed**. A
+    different principal answering establishes nothing about that one -- FND-0021's
+    whole shape is a revocation reported complete while the capability remained
+    usable, and probing elsewhere would reproduce exactly that error. *)
+type deescalation_principal =
+  | Principal_confirmed of string
+  | Principal_refused_by_cluster of string
+  | Principal_probe_failed of string
+  | Principal_unexpected of string
+
+type deescalation_verdict =
+  | Deescalated
+  | Still_elevated of string list
+  | Undetermined of string
+
+(** [probes] is (capability, still_permitted) as answered by the *authorizer* -- the
+    component that enforces the boundary -- for the capabilities only the bootstrap
+    authority held.
+
+    - [Principal_unexpected] is [Undetermined]: the probe proves nothing.
+    - [Principal_refused_by_cluster] is [Deescalated]: the elevated capability needs
+      cluster authentication, so its absence is its revocation.
+    - Otherwise any permitted capability is [Still_elevated], an empty probe list is
+      [Undetermined] (never [Deescalated]), and only a confirmed principal with no
+      permitted capability is [Deescalated]. *)
+val deescalation_verdict
+  :  principal:deescalation_principal
+  -> (string * bool) list
+  -> deescalation_verdict
+
+(** DEC-040's positive control: [Deescalated] only when the *same* principal is observed
+    permitted the bootstrap-only capabilities inside the bootstrap window and denied them
+    afterwards.
+
+    A final denial alone proves nothing -- a credential that never worked, a different
+    principal, or a capability that was never granted all look identical afterwards. So:
+
+    - the bootstrap capabilities were never observed permitted -> [Undetermined];
+    - a different principal answered after de-escalation -> [Undetermined];
+    - the post-de-escalation probe obtained no evidence -> [Undetermined];
+    - the same principal, permitted before and denied after -> [Deescalated];
+    - still permitted after -> [Still_elevated]. *)
+val deescalation_transition
+  :  before:(string * bool) list
+  -> after_principal:deescalation_principal
+  -> after:(string * bool) list
+  -> deescalation_verdict
+
+(** The identity in a `kubectl auth whoami -o json` response (a SelfSubjectReview).
+
+    On EKS the AWS authenticator reports these under `status.userInfo.extra`, where every
+    value is an **array of strings** — including `arn` and `canonicalArn` — so the arn is
+    not a plain field of `userInfo`. The flat string form is also accepted, because other
+    authenticators and test stubs emit it. [Error] when the response is not JSON or names
+    no principal at all: never a default, because a default would let a wrong principal
+    look like a right one. *)
+type whoami_identity =
+  { arn : string option
+  ; canonical_arn : string option
+  ; username : string option
+  ; source : string
+    (** Which field the identity came from. The de-escalation comparison depends on
+          canonicalArn, so a caller must be able to see whether it got that one. *)
+  }
+
+val whoami_identity_of_json : string -> (whoami_identity, string) result
+
+(** The role name inside an ARN, whichever form it takes — handling the assumed-role form
+    whose final segment is a *session* name, so two probes of the same principal do not
+    read as a mismatch. *)
+val role_name_of_arn : string -> string
+
+(** The stable role name of an identity: `canonicalArn` first (a plain IAM role ARN), then
+    `arn`, then the username. *)
+val principal_role_name : whoami_identity -> string option
+
+(** The path-free form canonicalArn reports, so an expected role ARN that carries a role
+    path compares equal to the cluster's answer instead of producing a false mismatch. *)
+val normalize_role_arn : string -> string
+
+(** Whether the response names exactly the expected principal, compared as the full
+    canonical ARN (account and path included). [None] when the response names no ARN.
+
+    Strict on purpose: comparing an extracted role name fails *open* when the same role
+    name appears in another account or behind a different role path. The strict form's
+    worst case is a false mismatch, which the caller turns into [Undetermined]. *)
+val principal_matches : expected:string -> whoami_identity -> bool option
+
+(** A cluster refusal counts as de-escalation only when the credential is still good: a
+    broken trust policy, clock skew or a wrong assumed role produces the same refusal as a
+    revoked grant, and reading it as removal would be a fail-open into [Deescalated]. *)
+val refusal_is_deescalation
+  :  sts_assumable:bool option
+  -> string
+  -> deescalation_principal
+
+val deescalation_verdict_to_string : deescalation_verdict -> string
+
 (** [enter ~from ~to_] is the only way an operation may move between phases. It
     is [Error] for any edge [transition_allowed] rejects, so an illegal phase
     combination cannot be expressed by a call site (ADR 0003 invariant 5). *)

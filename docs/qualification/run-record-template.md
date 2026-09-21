@@ -163,3 +163,69 @@ as the citation.
 | Finding / row | State before | Would move to | Because (evidence reference) |
 |---|---|---|---|
 | | | | |
+
+## Mandatory: DEC-040 live capture during bootstrap (a hard gate, not a nice-to-have)
+
+`Ready` is a claim that the provisioner's bootstrap elevation is gone, and an offline
+harness cannot establish it — the harness emulates the cluster keyed on
+`provisioner_bootstrap_admin`, so it can show the code is self-consistent but not that a
+real cluster behaves that way. This capture is therefore **required before `Ready` is
+accepted**, and the run is not evidence without it.
+
+Record, with the command and its output, in this order:
+
+1. **The principal.** Which principal P's bootstrap elevation this run exercises — the
+   role ARN, and confirmation (`kubectl auth whoami -o json` or equivalent) that it is the
+   principal the probe interrogates. A mismatch on either side invalidates everything
+   below.
+2. **The capability observed available, inside the window.** Before de-escalation, as P:
+   the bootstrap-only capability set (`create clusterroles`, `create clusterrolebindings`,
+   `escalate clusterroles`) answered **permitted** by the effective authorizer. Without
+   this the later denial proves nothing — a credential that never worked looks identical.
+3. **The window actually open.** The bootstrap access established during this run
+   (the phase log line), so the observation in (2) is known to be *inside* the window and
+   not merely a pre-existing grant.
+4. **De-escalation performed.** The phase log line for the bootstrap access removal.
+5. **The capability observed denied, after, as the same P.** Same principal, same
+   capability set, same authorizer — answered **denied**.
+6. **`Ready` only then.** The phase transition, after (5).
+
+The **shape of the authorizer's answer** is checked automatically, in the first minutes
+after the cluster is reachable -- after the cloud apply, before the platform install.
+`sol cloud apply` retries the probe with backoff (a fresh EKS endpoint is briefly unable to
+authenticate its own principal) and then **fails the run** unless it observes all four of:
+
+1. an answer at all — unreachability after the retry window is a **failure**, not a pass,
+   because the gate not having run means the shape is unchecked;
+2. a response the parser can identify a principal from;
+3. **the expected provisioner**, not merely some principal — a leftover credential of
+   another identity must not pass a shape check;
+4. an identity taken from **`canonicalArn`**, the field the de-escalation comparison
+   depends on. A pass via the `arn` or `username` fallbacks would validate a path the
+   comparison does not use, so it stops the run too.
+
+Record here which of those the run reported, and the identity source field it printed. The
+raw response is written to `$SOL_QUALIFICATION_CAPTURE_DIR/whoami-capture-<run_id>.json`
+(`~/.sol-qual/` by default) so it survives teardown — **attach it to this record**, and
+promote it to a fixture if it differs from what the parser is tested against.
+
+**A green offline harness is not shape validation.** That harness emits the shape recalled
+from the API, so it shows the wiring works; only this capture shows the shape is right.
+
+**If the capture disagrees with the shape the parser expects: trust the capture.** Fix the
+parser against it, record the discrepancy here, and promote the capture to a fixture. The
+fixtures are the recalled shape; the cluster is the truth.
+
+Promoting it needs one more step, because a real response carries a 12-digit account id and
+the account-artifact guard rejects those -- correctly:
+
+```
+internal/pipeline/qualification/scrub-whoami-capture.sh <capture.json>
+```
+
+which replaces the account with the repository's documented placeholder while preserving
+array wrapping, key names and ARN shape, and refuses to emit a file that still carries an
+account id. **Keep the raw capture outside the repository** and attach the scrubbed one.
+
+If any of steps 1–5 cannot be obtained, the verification is `Undetermined` and the run
+must not accept `Ready` — record the failure, do not proceed.

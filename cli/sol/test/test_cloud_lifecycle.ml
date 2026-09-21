@@ -904,6 +904,444 @@ let test_convergence_predicates () =
   check_unmet "no nodes at all is unmet" (summary_with "nodes" "")
 ;;
 
+(* DEC-040 / FND-0021: de-escalation is decided from the effective authorization
+   surface, and only from the principal whose elevation is being removed. The live
+   counterexample: an EKS access-policy disassociation was accepted and the API
+   reported no access policies while the authorizer still granted cluster-admin for
+   over five minutes. *)
+let test_deescalation_requires_the_effective_surface () =
+  let verdict
+        ?(principal = Sol_cli_cloud_lifecycle.Principal_confirmed "…/sol-provisioner")
+        probes
+    =
+    Sol_cli_cloud_lifecycle.deescalation_verdict ~principal probes
+  in
+  (* Every capability refused is the only thing that licenses the verdict. *)
+  Alcotest.(check string)
+    "all refused -> de-escalated"
+    "de-escalated"
+    (match
+       verdict [ "create clusterroles", false; "create clusterrolebindings", false ]
+     with
+     | Sol_cli_cloud_lifecycle.Deescalated -> "de-escalated"
+     | Sol_cli_cloud_lifecycle.Still_elevated _ -> "still elevated"
+     | Sol_cli_cloud_lifecycle.Undetermined _ -> "undetermined");
+  (* One capability still permitted means the elevated authority is still usable,
+     however the revocation was reported. *)
+  (match verdict [ "create clusterroles", false; "escalate clusterroles", true ] with
+   | Sol_cli_cloud_lifecycle.Still_elevated still ->
+     Alcotest.(check (list string))
+       "the permitted capability is named"
+       [ "escalate clusterroles" ]
+       still
+   | Sol_cli_cloud_lifecycle.Deescalated ->
+     Alcotest.fail "a permitted capability was read as de-escalated"
+   | Sol_cli_cloud_lifecycle.Undetermined _ ->
+     Alcotest.fail "a permitted capability was read as undetermined");
+  (* No answer is not de-escalation: an unanswered probe must never license Ready. *)
+  (match verdict [] with
+   | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+   | Sol_cli_cloud_lifecycle.Deescalated ->
+     Alcotest.fail "no evidence was read as de-escalated"
+   | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+     Alcotest.fail "no evidence was read as elevated");
+  (* The principal matters. If the probe answered as somebody else -- a SteadyState
+     identity rather than the one whose bootstrap elevation was removed -- its refusals
+     prove nothing about that principal, so the verdict may not be de-escalated. This
+     is the FND-0021 trap: a check that cannot detect the privilege it testifies about
+     must not testify. *)
+  (match
+     verdict
+       ~principal:(Sol_cli_cloud_lifecycle.Principal_unexpected "…/sol-cluster-access")
+       [ "create clusterroles", false ]
+   with
+   | Sol_cli_cloud_lifecycle.Undetermined why ->
+     Alcotest.(check bool)
+       "the unexpected principal is named"
+       true
+       (Sol_cli_port_forward.string_contains ~needle:"sol-cluster-access" why)
+   | Sol_cli_cloud_lifecycle.Deescalated ->
+     Alcotest.fail "another principal's refusal was read as de-escalation"
+   | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+     Alcotest.fail "another principal's answers were treated as answers");
+  (* The cluster refusing an identified principal is the expected post-de-escalation
+     state: the capability requires authentication, so its absence is its revocation. *)
+  (match
+     verdict
+       ~principal:
+         (Sol_cli_cloud_lifecycle.Principal_refused_by_cluster
+            "…/sol-provisioner: Unauthorized")
+       []
+   with
+   | Sol_cli_cloud_lifecycle.Deescalated -> ()
+   | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+     Alcotest.fail "a refused principal was read as still elevated"
+   | Sol_cli_cloud_lifecycle.Undetermined _ ->
+     Alcotest.fail "a refused principal was read as undetermined");
+  (* ...but failing to *obtain* evidence is not de-escalation. An expired credential, an
+     unreachable API or a token-generation failure leaves us knowing nothing, and the
+     absence of evidence must not become evidence of de-escalation. *)
+  match
+    verdict
+      ~principal:
+        (Sol_cli_cloud_lifecycle.Principal_probe_failed
+           "could not establish ephemeral provisioner cluster access")
+      []
+  with
+  | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+  | Sol_cli_cloud_lifecycle.Deescalated ->
+    Alcotest.fail "a measurement failure was read as de-escalation"
+  | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+    Alcotest.fail "a measurement failure was read as still elevated"
+;;
+
+(* DEC-040's positive control: only a *transition* of the same principal and the same
+   capabilities licenses Ready. Every one of these cases produces a "denied" afterwards,
+   and only one of them is evidence. *)
+let test_deescalation_requires_a_transition () =
+  let caps =
+    [ "create clusterroles"; "create clusterrolebindings"; "escalate clusterroles" ]
+  in
+  let granted = List.map (fun c -> c, true) caps in
+  let denied = List.map (fun c -> c, false) caps in
+  let confirmed = Sol_cli_cloud_lifecycle.Principal_confirmed "…/sol-provisioner" in
+  let undetermined why =
+    match
+      Sol_cli_cloud_lifecycle.deescalation_transition
+        ~before:why
+        ~after_principal:confirmed
+        ~after:denied
+    with
+    | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+    | Sol_cli_cloud_lifecycle.Deescalated ->
+      Alcotest.fail
+        "a capability never observed granted was read as a verified transition"
+    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+      Alcotest.fail "a capability never observed granted was read as still elevated"
+  in
+  (* 1. The capability was never observed granted in the window: nothing was removed. *)
+  undetermined [];
+  undetermined denied;
+  (* 2. A different principal answered after de-escalation: the transition is not
+     established, however clean the denial looks. *)
+  (match
+     Sol_cli_cloud_lifecycle.deescalation_transition
+       ~before:granted
+       ~after_principal:
+         (Sol_cli_cloud_lifecycle.Principal_unexpected "…/sol-cluster-access")
+       ~after:denied
+   with
+   | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+   | Sol_cli_cloud_lifecycle.Deescalated ->
+     Alcotest.fail "a different principal's denial was read as a verified transition"
+   | Sol_cli_cloud_lifecycle.Still_elevated _ -> Alcotest.fail "unexpected verdict");
+  (* 3. A measurement failure after de-escalation leaves us knowing nothing. *)
+  (match
+     Sol_cli_cloud_lifecycle.deescalation_transition
+       ~before:granted
+       ~after_principal:
+         (Sol_cli_cloud_lifecycle.Principal_probe_failed "expired credentials")
+       ~after:denied
+   with
+   | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+   | Sol_cli_cloud_lifecycle.Deescalated ->
+     Alcotest.fail "a measurement failure was read as a verified transition"
+   | Sol_cli_cloud_lifecycle.Still_elevated _ -> Alcotest.fail "unexpected verdict");
+  (* 4. Granted before, denied after, same principal and capabilities: the only shape
+     that licenses Ready. *)
+  (match
+     Sol_cli_cloud_lifecycle.deescalation_transition
+       ~before:granted
+       ~after_principal:confirmed
+       ~after:denied
+   with
+   | Sol_cli_cloud_lifecycle.Deescalated -> ()
+   | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+     Alcotest.fail "a demonstrated transition was read as still elevated"
+   | Sol_cli_cloud_lifecycle.Undetermined why ->
+     Alcotest.fail ("a demonstrated transition was read as undetermined: " ^ why));
+  (* ... and if the capability is still permitted, it is still elevated -- the positive
+     control makes that observable rather than merely assumed. *)
+  match
+    Sol_cli_cloud_lifecycle.deescalation_transition
+      ~before:granted
+      ~after_principal:confirmed
+      ~after:granted
+  with
+  | Sol_cli_cloud_lifecycle.Still_elevated still ->
+    Alcotest.(check int) "all three capabilities named" 3 (List.length still)
+  | Sol_cli_cloud_lifecycle.Deescalated ->
+    Alcotest.fail "a still-permitted capability was read as de-escalated"
+  | Sol_cli_cloud_lifecycle.Undetermined _ -> Alcotest.fail "unexpected verdict"
+;;
+
+(* DEC-040: the principal is identified from a real SelfSubjectReview shape.
+
+   On EKS the AWS authenticator reports identity under status.userInfo.extra, where every
+   value is an array of strings -- including arn and canonicalArn. An earlier version
+   looked only for a plain string arn in userInfo, which is not what EKS produces, and
+   would have failed closed on every real install. The flat form is still covered because
+   other authenticators and stubs emit it.
+
+   The live response is captured into this fixture during the next bootstrap epoch (see
+   the run-record template); these lock in the documented shape meanwhile. *)
+let test_whoami_identity_shapes () =
+  let sts = "arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth" in
+  let canonical = "arn:aws:iam::111122223333:role/sol-provisioner" in
+  let eks_body session =
+    Printf.sprintf
+      {|{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview","metadata":{"creationTimestamp":null},"status":{"userInfo":{"username":"%s","uid":"aws-iam-authenticator:111122223333:AROA","groups":["system:authenticated","sol:platform-provisioners"],"extra":{"arn":["arn:aws:sts::111122223333:assumed-role/sol-provisioner/%s"],"canonicalArn":["%s"],"sessionName":["%s"],"principalId":["AROA:logan"]}}}}|}
+      sts
+      session
+      canonical
+      session
+  in
+  let role_of body =
+    match Sol_cli_cloud_lifecycle.whoami_identity_of_json body with
+    | Ok i -> Sol_cli_cloud_lifecycle.principal_role_name i
+    | Error e -> Alcotest.fail e
+  in
+  (* the EKS shape: arrays under extra, canonicalArn present *)
+  Alcotest.(check (option string))
+    "eks shape yields the role"
+    (Some "sol-provisioner")
+    (role_of (eks_body "EKSGetTokenAuth"));
+  (* the session name changes between probes of the same principal -- that must not read
+     as a principal mismatch, or the transition would be Undetermined for no reason *)
+  Alcotest.(check (option string))
+    "a new session is still the same principal"
+    (role_of (eks_body "EKSGetTokenAuth"))
+    (role_of (eks_body "some-other-session"));
+  (* the flat string form, which other authenticators and the stubs emit *)
+  let flat = Printf.sprintf {|{"status":{"userInfo":{"arn":"%s"}}}|} canonical in
+  Alcotest.(check (option string))
+    "flat string form"
+    (Some "sol-provisioner")
+    (role_of flat);
+  (* pretty-printed, in case the emitter ever formats it *)
+  let pretty =
+    Printf.sprintf
+      {|{
+  "status": {
+    "userInfo": {
+      "extra": {
+        "canonicalArn": [
+          "%s"
+        ]
+      }
+    }
+  }
+}|}
+      canonical
+  in
+  Alcotest.(check (option string))
+    "pretty-printed"
+    (Some "sol-provisioner")
+    (role_of pretty);
+  (* username as the last resort, and no principal at all is Error -- never a default *)
+  (match
+     Sol_cli_cloud_lifecycle.whoami_identity_of_json
+       {|{"status":{"userInfo":{"username":"system:node:ip-10-0-1-1"}}}|}
+   with
+   | Ok i ->
+     Alcotest.(check (option string))
+       "username is the last resort"
+       (Some "system:node:ip-10-0-1-1")
+       (Sol_cli_cloud_lifecycle.principal_role_name i)
+   | Error e -> Alcotest.fail e);
+  (match
+     Sol_cli_cloud_lifecycle.whoami_identity_of_json {|{"status":{"userInfo":{}}}|}
+   with
+   | Error _ -> ()
+   | Ok i ->
+     Alcotest.fail
+       ("a response naming no principal produced "
+        ^ Option.value (Sol_cli_cloud_lifecycle.principal_role_name i) ~default:"?"));
+  (match
+     Sol_cli_cloud_lifecycle.whoami_identity_of_json "error: You must be logged in"
+   with
+   | Error _ -> ()
+   | Ok _ -> Alcotest.fail "a non-JSON response was accepted");
+  (* the role name extraction itself, both ARN forms *)
+  Alcotest.(check string)
+    "assumed-role ARN"
+    "sol-provisioner"
+    (Sol_cli_cloud_lifecycle.role_name_of_arn sts);
+  Alcotest.(check string)
+    "role ARN"
+    "sol-provisioner"
+    (Sol_cli_cloud_lifecycle.role_name_of_arn canonical)
+;;
+
+(* DEC-040: the principal comparison must fail *closed*, and a parse failure must land in
+   Undetermined rather than in a verdict.
+
+   The previous comparison extracted a role name, which fails open: the same role name in
+   another account, or behind a different role path, would look like the same principal --
+   and a different principal being denied afterwards would read as Deescalated. *)
+let test_principal_comparison_fails_closed () =
+  let expected = "arn:aws:iam::111122223333:role/sol-provisioner" in
+  let identity ?canonical ?arn ?username () =
+    Sol_cli_cloud_lifecycle.{ canonical_arn = canonical; arn; username; source = "test" }
+  in
+  Alcotest.(check (option bool))
+    "exact match"
+    (Some true)
+    (Sol_cli_cloud_lifecycle.principal_matches
+       ~expected
+       (identity ~canonical:expected ()));
+  Alcotest.(check (option bool))
+    "same role name in another account"
+    (Some false)
+    (Sol_cli_cloud_lifecycle.principal_matches
+       ~expected
+       (identity
+          ~canonical:("arn:aws:iam::" ^ String.make 12 '9' ^ ":role/sol-provisioner")
+          ()));
+  Alcotest.(check (option bool))
+    "same role behind a different path"
+    (Some false)
+    (Sol_cli_cloud_lifecycle.principal_matches
+       ~expected
+       (identity ~canonical:"arn:aws:iam::111122223333:role/team/sol-provisioner" ()));
+  Alcotest.(check (option bool))
+    "a session-carrying arn is not a role arn"
+    (Some false)
+    (Sol_cli_cloud_lifecycle.principal_matches
+       ~expected
+       (identity
+          ~arn:"arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth"
+          ()));
+  Alcotest.(check (option bool))
+    "no arn at all is None, not a default"
+    None
+    (Sol_cli_cloud_lifecycle.principal_matches
+       ~expected
+       (identity ~username:"somebody" ()))
+;;
+
+(* A parse failure must be Undetermined on *both* sides of the transition. If it fell
+   through to a verdict it would be a wrong verdict, not a safe failure -- and this was on
+   the not-yet-applied list, so nothing proved it. *)
+let test_parse_failure_is_undetermined () =
+  let granted = [ "create clusterroles", true ] in
+  let denied = [ "create clusterroles", false ] in
+  let confirmed = Sol_cli_cloud_lifecycle.Principal_confirmed "arn:aws:iam::1:role/p" in
+  let parse_failure =
+    match
+      Sol_cli_cloud_lifecycle.whoami_identity_of_json "error: You must be logged in"
+    with
+    | Error why -> Sol_cli_cloud_lifecycle.Principal_probe_failed why
+    | Ok _ -> Alcotest.fail "a non-JSON response was accepted by the parser"
+  in
+  let check_undetermined label verdict =
+    match verdict with
+    | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+    | Sol_cli_cloud_lifecycle.Deescalated ->
+      Alcotest.fail (label ^ ": a parse failure was read as de-escalated")
+    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+      Alcotest.fail (label ^ ": a parse failure was read as still elevated")
+  in
+  (* after: the post-de-escalation probe could not identify the principal *)
+  check_undetermined
+    "after"
+    (Sol_cli_cloud_lifecycle.deescalation_transition
+       ~before:granted
+       ~after_principal:parse_failure
+       ~after:denied);
+  (* before: the window control could not identify the principal, so nothing was shown to
+     have been removed *)
+  check_undetermined
+    "before"
+    (Sol_cli_cloud_lifecycle.deescalation_transition
+       ~before:[]
+       ~after_principal:confirmed
+       ~after:denied)
+;;
+
+(* DEC-040: what the parser does with an *ambiguous* array, asserted rather than argued.
+
+   A response whose canonicalArn has more than one entry names more than one principal. The
+   argument for treating that as safe was that the exact comparison cannot confirm a
+   principal it never saw -- which holds for a false Deescalated, but it is an argument, not
+   a check. This asserts the mapping. If it fails, the parser returns a principal and
+   proceeds, and "believed closed" becomes a known gap; if it passes, it is verified. *)
+let test_ambiguous_array_does_not_proceed () =
+  let two_entries =
+    {|{"status":{"userInfo":{"extra":{"canonicalArn":["arn:aws:iam::111122223333:role/sol-provisioner","arn:aws:iam::111122223333:role/sol-cluster-access"]}}}}|}
+  in
+  match Sol_cli_cloud_lifecycle.whoami_identity_of_json two_entries with
+  | Error _ -> () (* refused: the ambiguity cannot produce a verdict *)
+  | Ok identity ->
+    Alcotest.fail
+      (Printf.sprintf
+         "a two-entry canonicalArn was accepted and produced %s; taking one element is a \
+          default in disguise, and the array is ambiguous about which principal this is"
+         (Option.value
+            (Sol_cli_cloud_lifecycle.principal_role_name identity)
+            ~default:"?"))
+;;
+
+(* DEC-040: the identity must report *which field* it came from. The gate requires
+   canonicalArn, because that is the field the de-escalation comparison depends on -- a pass
+   via the arn or username fallbacks would validate a path the comparison does not use. *)
+let test_identity_reports_its_source () =
+  let source_of body =
+    match Sol_cli_cloud_lifecycle.whoami_identity_of_json body with
+    | Ok i -> i.Sol_cli_cloud_lifecycle.source
+    | Error e -> Alcotest.fail e
+  in
+  Alcotest.(check string)
+    "canonicalArn from extra"
+    "extra.canonicalArn"
+    (source_of
+       {|{"status":{"userInfo":{"extra":{"canonicalArn":["arn:aws:iam::111122223333:role/p"]}}}}|});
+  Alcotest.(check string)
+    "arn from extra when there is no canonicalArn"
+    "extra.arn"
+    (source_of
+       {|{"status":{"userInfo":{"extra":{"arn":["arn:aws:iam::111122223333:role/p"]}}}}|});
+  Alcotest.(check string)
+    "the username fallback is named as such"
+    "username"
+    (source_of {|{"status":{"userInfo":{"username":"system:node:ip-10-0-1-1"}}}|})
+;;
+
+(* DEC-040: a refusal is evidence of removal only if the credential is still good.
+   "You must be logged in" is also what a working credential gets when the role's trust
+   policy is broken, the clock is skewed, or the wrong role was assumed -- and
+   Principal_refused_by_cluster maps straight to Deescalated. Without the identity check that
+   is a fail-open into the one verdict that has to mean something. *)
+let test_refusal_needs_a_good_identity () =
+  let granted = [ "create clusterroles", true ] in
+  let denied = [ "create clusterroles", false ] in
+  let verdict_of sts_assumable =
+    Sol_cli_cloud_lifecycle.deescalation_transition
+      ~before:granted
+      ~after_principal:
+        (Sol_cli_cloud_lifecycle.refusal_is_deescalation ~sts_assumable "Unauthorized")
+      ~after:denied
+  in
+  (* the credential is good: the refusal is the removal *)
+  (match verdict_of (Some true) with
+   | Sol_cli_cloud_lifecycle.Deescalated -> ()
+   | _ -> Alcotest.fail "a refusal with a working identity was not read as de-escalated");
+  (* the credential is broken: a revocation cannot be told from a bad trust policy *)
+  (match verdict_of (Some false) with
+   | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+   | Sol_cli_cloud_lifecycle.Deescalated ->
+     Alcotest.fail "a refusal with an unassumable role was read as de-escalated"
+   | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+     Alcotest.fail "a refusal with an unassumable role was read as still elevated");
+  (* the identity check could not be performed at all *)
+  match verdict_of None with
+  | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+  | Sol_cli_cloud_lifecycle.Deescalated ->
+    Alcotest.fail "a refusal with no identity check was read as de-escalated"
+  | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+    Alcotest.fail "a refusal with no identity check was read as still elevated"
+;;
+
 let test_effective_authorization () =
   let open L in
   let expected = provisioner_authorization_checks in
@@ -976,6 +1414,38 @@ let () =
         ; Alcotest.test_case "convergence predicates" `Quick test_convergence_predicates
         ; Alcotest.test_case "destroy retention" `Quick test_destroy_retention
         ; Alcotest.test_case "effective authorization" `Quick test_effective_authorization
+        ; Alcotest.test_case
+            "verified de-escalation (DEC-040)"
+            `Quick
+            test_deescalation_requires_the_effective_surface
+        ; Alcotest.test_case
+            "whoami identity shapes (DEC-040)"
+            `Quick
+            test_whoami_identity_shapes
+        ; Alcotest.test_case
+            "principal comparison fails closed (DEC-040)"
+            `Quick
+            test_principal_comparison_fails_closed
+        ; Alcotest.test_case
+            "ambiguous array (DEC-040)"
+            `Quick
+            test_ambiguous_array_does_not_proceed
+        ; Alcotest.test_case
+            "a refusal needs a good identity (DEC-040)"
+            `Quick
+            test_refusal_needs_a_good_identity
+        ; Alcotest.test_case
+            "identity reports its source (DEC-040)"
+            `Quick
+            test_identity_reports_its_source
+        ; Alcotest.test_case
+            "parse failure is Undetermined (DEC-040)"
+            `Quick
+            test_parse_failure_is_undetermined
+        ; Alcotest.test_case
+            "verified de-escalation is a transition (DEC-040)"
+            `Quick
+            test_deescalation_requires_a_transition
         ; Alcotest.test_case "terraform scope" `Quick test_terraform_scope
         ] )
     ]
