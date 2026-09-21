@@ -44,10 +44,35 @@ its `esac` -- rather than moving arms or deleting braces by text. Several attemp
 route each left a stray or missing `esac`; the syntax check caught every one of them, which is
 the argument for having it.
 
-**Once that parses, the harness's result is the open question**: either it goes green (and the
-discriminator scenario and positive path are sound), or the resurrected `STS_ASSUME_FAIL`
-branch exposes a real mismatch in the window bookkeeping. The second outcome changes what B and
-the paired control need to look like, so run it before deciding.
+**Resolved.** The splice landed by script (three preconditions gating the write, condition 3
+having caught a mistake before it could apply), the harness is green, and the discriminator
+scenario is load-bearing: ignoring the identity check fails it with *"a refusal with an
+unassumable role was accepted as de-escalation."*
+
+**But the claim is narrower than "no mismatch surfaced".** Precisely: **no mismatch surfaced in
+the scenarios that exist.** The stub answers instantly and coherently, and the `WHOAMI_REFUSE`
+scenario exercises only the **negative** path -- an unassumable role giving `Undetermined`. The
+positive pairing (refused **and** assumable, which must reach `Deescalated`) is still unit-only,
+so the end-to-end refusal branch has never run against the stub at all. That is fine to defer,
+and the paired control is what closes it.
+
+**The heredoc check has one blind spot, accepted.** Counting markers (8 opened, 8 closed) catches
+a swallowed terminator, which is the false-green path it was added for. It does not catch a
+generator whose body was truncated but still ends with a correct `EOF`, nor an arm moved to the
+wrong place inside an otherwise valid stub. `bash -n` plus the discriminator mutant cover the
+second case for the `sts` arm; nothing covers it for the other arms, but the existing scenarios
+exercise them. Low risk, and deliberately no extra check.
+
+**Where the epoch stands -- three blockers, in order of consequence:**
+
+1. **A, window left open on failure.** Can leave elevated access applied on a cluster the run
+   has just decided it cannot verify. Design-shaped.
+2. **B, `can-i` tri-state.** Can produce a wrong `Deescalated`. Design-shaped, and it needs its
+   own mutant.
+3. **Full-suite green on the head**, with the path named. Pending on CI.
+
+**Head of record:** `290f685a` -- local HEAD, `origin` head and the PR head all agree, so the
+run in flight is for the current head and not an earlier one.
 
 ---
 
