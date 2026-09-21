@@ -427,6 +427,19 @@ esac
 exit 90
 EOF
 
+# DEC-040: check the generated stubs parse before anything runs. A syntax error in a stub
+# surfaces as a plausible-looking product failure -- an "eks update-kubeconfig failed" message
+# that took several rounds to trace back to the stub itself. Cheap assertion, loud failure, so
+# this harness cannot fail for a reason that looks like a bug in sol.
+for generated in "$tmp/bin/aws" "$tmp/bin/terraform" "$tmp/bin/kubectl" "$tmp/bin/gcloud"; do
+  [ -e "$generated" ] || continue
+  if ! bash -n "$generated" 2>/dev/null; then
+    echo "the generated $(basename "$generated") stub is not valid shell:" >&2
+    bash -n "$generated" 2>&1 | head -3 >&2
+    exit 1
+  fi
+done
+
 # The platform stage's host prerequisite (Attempt 3): the kubeconfig gcloud writes
 # names this as its exec credential plugin, so every Kubernetes call needs it on
 # PATH. Failing without it is free; failing inside the platform apply is not.

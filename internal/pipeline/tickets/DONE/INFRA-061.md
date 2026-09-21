@@ -22,11 +22,32 @@ source: audit finding FND-0021
 **No live capture has happened yet.** Everything known about the shape of the authorizer's
 answer is still the version recalled from the API; the parser has never seen a real response.
 
-**Known red, cause confirmed:** the offline harness fails since the STS stub fix. `bash -n`
-on the generated aws stub reports a **syntax error at line 74** (`[ "$1 $2" = "eks
-update-kubeconfig" ] || exit 90`), so the `sts assume-role` case was moved out of its
-`case ... esac` and the surrounding block was split. The fix is to rebuild that `case` block
-properly rather than by text move.
+**Known red, cause confirmed, and now self-diagnosing.** The offline harness fails at a
+**stub syntax check** and names the line:
+
+```
+the generated aws stub is not valid shell:
+/tmp/.../bin/aws: line 74: syntax error near unexpected token `"$1 $2"'
+/tmp/.../bin/aws: line 74: `[ "$1 $2" = "eks update-kubeconfig" ] || exit 90'
+```
+
+So the `sts assume-role` case was moved out of its `case ... esac` and the block was split. The
+harness now runs `bash -n` over every generated stub before anything else, because a syntax
+error there used to surface as a plausible-looking product failure -- an "eks update-kubeconfig
+failed" message -- and took several rounds to trace back. Same pattern as the coverage canary:
+a cheap assertion that fails loudly, so this harness cannot fail for a reason that looks like a
+bug in sol. The terraform, kubectl and gcloud stubs parse cleanly.
+
+**The fix is one coherent edit**: rewrite that region of the aws stub as a single block -- the
+`sts assume-role` case and its `esac`, then the eks-only guard, then the `--role-arn` case and
+its `esac` -- rather than moving arms or deleting braces by text. Several attempts at the text
+route each left a stray or missing `esac`; the syntax check caught every one of them, which is
+the argument for having it.
+
+**Once that parses, the harness's result is the open question**: either it goes green (and the
+discriminator scenario and positive path are sound), or the resurrected `STS_ASSUME_FAIL`
+branch exposes a real mismatch in the window bookkeeping. The second outcome changes what B and
+the paired control need to look like, so run it before deciding.
 
 ---
 
