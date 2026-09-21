@@ -438,14 +438,19 @@ case " $* " in
   *" auth whoami "*)
     # Whichever role the ephemeral kubeconfig was built for, so a caller inspecting the
     # principal sees the truth.
+    # The EKS shape, not a convenience one: a SelfSubjectReview whose identity lives in
+    # status.userInfo.extra, where every value is an array of strings -- arn is the STS
+    # assumed-role ARN with a session name, canonicalArn is the stable role ARN. Emitting
+    # anything simpler here would let the harness pass against a shape no real cluster
+    # produces, which is the failure this emulation exists to prevent.
     case "$(cat "$FAIL_MARKER_DIR/kubeconfig-role" 2>/dev/null || true)" in
       sol-provisioner)
-        printf '{"status":{"userInfo":{"arn":"arn:aws:iam::111122223333:role/sol-provisioner"}}}\n'
+        printf '{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview","metadata":{"creationTimestamp":null},"status":{"userInfo":{"username":"arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth","uid":"aws-iam-authenticator:111122223333:AROA","groups":["system:authenticated","sol:platform-provisioners"],"extra":{"arn":["arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth"],"canonicalArn":["arn:aws:iam::111122223333:role/sol-provisioner"],"sessionName":["EKSGetTokenAuth"]}}}}\n'
         ;;
       sol-cluster-access)
-        printf '{"status":{"userInfo":{"arn":"arn:aws:iam::111122223333:role/sol-cluster-access"}}}\n'
+        printf '{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview","status":{"userInfo":{"username":"arn:aws:sts::111122223333:assumed-role/sol-cluster-access/EKSGetTokenAuth","extra":{"arn":["arn:aws:sts::111122223333:assumed-role/sol-cluster-access/EKSGetTokenAuth"],"canonicalArn":["arn:aws:iam::111122223333:role/sol-cluster-access"]}}}}\n'
         ;;
-      *) printf '{"status":{"userInfo":{"arn":"arn:aws:iam::111122223333:role/unknown"}}}\n' ;;
+      *) printf '{"status":{"userInfo":{}}}\n' ;;
     esac
     exit 0
     ;;

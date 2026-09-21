@@ -1142,23 +1142,123 @@ let deescalation_transition
         | still -> Still_elevated still))
 ;;
 
-(* DEC-040 / FND-0021: the principal the authorizer resolved, from the JSON that
-   kubectl auth whoami -o json emits.
+(* DEC-040 / FND-0021: identify the principal the authorizer resolved, from the JSON
+   that kubectl auth whoami -o json emits.
 
-   Parsed as JSON, not pattern-matched. The first version searched for a literal needle
-   that included a space after the colon, and so read a genuine answer as an unexpected
-   principal -- because kubectl emits the key and value with no space between them. That
-   would have failed closed on every real install. A string assumption standing in for a
-   parse is the same class of error as a control-plane report standing in for the
-   authorizer. *)
-let principal_arn_of_whoami json : (string, string) result =
+   That response is a SelfSubjectReview. On EKS the AWS authenticator puts identity
+   details under status.userInfo.extra, where every value is an *array of strings* --
+   including arn and canonicalArn. So the arn is not a plain field of userInfo, and an
+   earlier version that looked only for a string there would have failed closed on every
+   real install. The flat string form is still accepted, because other authenticators and
+   test stubs emit it, but the array form is the one EKS actually produces.
+
+   canonicalArn is preferred for identity: arn for an assumed role carries a session name
+   that differs between the before and after probes, so comparing raw arns would report a
+   false mismatch. *)
+type whoami_identity =
+  { arn : string option
+  ; canonical_arn : string option
+  ; username : string option
+  }
+
+let first_string_of_json = function
+  | `String v -> Some v
+  | `List (`String v :: _) -> Some v
+  | _ -> None
+;;
+
+let whoami_identity_of_json json : (whoami_identity, string) result =
   match Yojson.Safe.from_string json with
   | exception _ -> Error "the whoami response was not JSON"
   | json ->
-    let member = Yojson.Safe.Util.member in
-    (match json |> member "status" |> member "userInfo" |> member "arn" with
-     | `String arn when String.trim arn <> "" -> Ok (String.trim arn)
-     | _ -> Error "the whoami response carried no principal arn")
+    (* Non-raising on purpose: Yojson's member raises when its parent is null, and a
+       response with no `extra` at all (any non-EKS authenticator, or a stub) would then
+       crash the probe instead of degrading to a stated reason. The fixtures caught
+       exactly that. *)
+    let member_opt key = function
+      | `Assoc fields -> List.assoc_opt key fields
+      | _ -> None
+    in
+    let sub key j =
+      match member_opt key j with
+      | Some v -> v
+      | None -> `Null
+    in
+    let status = sub "status" json in
+    let user = sub "userInfo" status in
+    let extra = sub "extra" user in
+    let field name = first_string_of_json (sub name user) in
+    let extra_field name = first_string_of_json (sub name extra) in
+    let arn =
+      match extra_field "arn" with
+      | Some _ as v -> v
+      | None -> field "arn"
+    in
+    let canonical_arn =
+      match extra_field "canonicalArn" with
+      | Some _ as v -> v
+      | None -> field "canonicalArn"
+    in
+    let identity = { arn; canonical_arn; username = field "username" } in
+    (match arn, canonical_arn, identity.username with
+     | None, None, None ->
+       Error
+         "the whoami response carried no arn and no username (is SelfSubjectReview \
+          supported by this cluster and kubectl?)"
+     | _ -> Ok identity)
+;;
+
+(* The role name inside an ARN, whichever form it takes. An assumed-role ARN is
+   .../assumed-role/<role>/<session>, so the role is the second-to-last segment and a
+   naive last-segment split would compare session names -- and two probes of the same
+   principal have different session names, which would read as a principal mismatch. *)
+let index_of_substring ~needle haystack =
+  let n = String.length needle
+  and h = String.length haystack in
+  let rec scan i =
+    if i + n > h
+    then None
+    else if String.sub haystack i n = needle
+    then Some i
+    else scan (i + 1)
+  in
+  scan 0
+;;
+
+let role_name_of_arn arn =
+  let after needle =
+    match index_of_substring ~needle arn with
+    | None -> None
+    | Some i ->
+      let from = i + String.length needle in
+      Some (String.sub arn from (String.length arn - from))
+  in
+  (* The real form is ...:assumed-role/<role>/<session> -- colon before, not slash -- and
+     missing that made the role name come out as the session, which would have read as a
+     principal mismatch between two probes of the same principal. Matched without the
+     leading separator so both spellings work. *)
+  match after "assumed-role/" with
+  | Some rest ->
+    (match String.index_opt rest '/' with
+     | Some i -> String.sub rest 0 i
+     | None -> rest)
+  | None ->
+    (match after ":role/" with
+     | Some name -> name
+     | None ->
+       (match String.rindex_opt arn '/' with
+        | Some i when i + 1 < String.length arn ->
+          String.sub arn (i + 1) (String.length arn - i - 1)
+        | _ -> arn))
+;;
+
+(* The principal's stable role name: canonicalArn first, then arn, then the username. *)
+let principal_role_name (i : whoami_identity) =
+  match i.canonical_arn, i.arn, i.username with
+  | Some a, _, _ -> Some (role_name_of_arn a)
+  | None, Some a, _ -> Some (role_name_of_arn a)
+  | None, None, Some u -> Some u
+  | None, None, None -> None
 ;;
 
 let deescalation_verdict_to_string = function

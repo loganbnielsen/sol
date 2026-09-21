@@ -273,10 +273,30 @@ val deescalation_transition
   -> after:(string * bool) list
   -> deescalation_verdict
 
-(** The principal from `kubectl auth whoami -o json`, parsed rather than
-    pattern-matched. [Error] when the response is not JSON or carries no arn -- never a
-    default, because a default would let a wrong principal look like a right one. *)
-val principal_arn_of_whoami : string -> (string, string) result
+(** The identity in a `kubectl auth whoami -o json` response (a SelfSubjectReview).
+
+    On EKS the AWS authenticator reports these under `status.userInfo.extra`, where every
+    value is an **array of strings** — including `arn` and `canonicalArn` — so the arn is
+    not a plain field of `userInfo`. The flat string form is also accepted, because other
+    authenticators and test stubs emit it. [Error] when the response is not JSON or names
+    no principal at all: never a default, because a default would let a wrong principal
+    look like a right one. *)
+type whoami_identity =
+  { arn : string option
+  ; canonical_arn : string option
+  ; username : string option
+  }
+
+val whoami_identity_of_json : string -> (whoami_identity, string) result
+
+(** The role name inside an ARN, whichever form it takes — handling the assumed-role form
+    whose final segment is a *session* name, so two probes of the same principal do not
+    read as a mismatch. *)
+val role_name_of_arn : string -> string
+
+(** The stable role name of an identity: `canonicalArn` first (a plain IAM role ARN), then
+    `arn`, then the username. *)
+val principal_role_name : whoami_identity -> string option
 
 val deescalation_verdict_to_string : deescalation_verdict -> string
 

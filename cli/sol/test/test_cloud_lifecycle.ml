@@ -1075,59 +1075,102 @@ let test_deescalation_requires_a_transition () =
   | Sol_cli_cloud_lifecycle.Undetermined _ -> Alcotest.fail "unexpected verdict"
 ;;
 
-(* DEC-040: the principal is parsed, not pattern-matched.
+(* DEC-040: the principal is identified from a real SelfSubjectReview shape.
 
-   Fixtures cover the shapes the emitter produces: compact (no spaces, which is what an
-   earlier string-matching version failed on), pretty-printed, and with the apiVersion /
-   kind envelope kubectl includes. The live shape is confirmed against a real cluster when
-   the next epoch reaches bootstrap; these lock in that the parse does not depend on
-   whitespace or on the envelope being absent. *)
-let test_principal_arn_is_parsed () =
-  let arn = "arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth" in
-  let expect_ok label body =
-    Alcotest.(check (result string string))
-      label
-      (Ok arn)
-      (Sol_cli_cloud_lifecycle.principal_arn_of_whoami body)
+   On EKS the AWS authenticator reports identity under status.userInfo.extra, where every
+   value is an array of strings -- including arn and canonicalArn. An earlier version
+   looked only for a plain string arn in userInfo, which is not what EKS produces, and
+   would have failed closed on every real install. The flat form is still covered because
+   other authenticators and stubs emit it.
+
+   The live response is captured into this fixture during the next bootstrap epoch (see
+   the run-record template); these lock in the documented shape meanwhile. *)
+let test_whoami_identity_shapes () =
+  let sts = "arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth" in
+  let canonical = "arn:aws:iam::111122223333:role/sol-provisioner" in
+  let eks_body session =
+    Printf.sprintf
+      {|{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview","metadata":{"creationTimestamp":null},"status":{"userInfo":{"username":"%s","uid":"aws-iam-authenticator:111122223333:AROA","groups":["system:authenticated","sol:platform-provisioners"],"extra":{"arn":["arn:aws:sts::111122223333:assumed-role/sol-provisioner/%s"],"canonicalArn":["%s"],"sessionName":["%s"],"principalId":["AROA:logan"]}}}}|}
+      sts
+      session
+      canonical
+      session
   in
-  (* compact, exactly as kubectl emits it *)
-  expect_ok "compact" (Printf.sprintf {|{"status":{"userInfo":{"arn":"%s"}}}|} arn);
-  (* pretty-printed *)
-  expect_ok
-    "pretty"
-    (Printf.sprintf
-       {|{
+  let role_of body =
+    match Sol_cli_cloud_lifecycle.whoami_identity_of_json body with
+    | Ok i -> Sol_cli_cloud_lifecycle.principal_role_name i
+    | Error e -> Alcotest.fail e
+  in
+  (* the EKS shape: arrays under extra, canonicalArn present *)
+  Alcotest.(check (option string))
+    "eks shape yields the role"
+    (Some "sol-provisioner")
+    (role_of (eks_body "EKSGetTokenAuth"));
+  (* the session name changes between probes of the same principal -- that must not read
+     as a principal mismatch, or the transition would be Undetermined for no reason *)
+  Alcotest.(check (option string))
+    "a new session is still the same principal"
+    (role_of (eks_body "EKSGetTokenAuth"))
+    (role_of (eks_body "some-other-session"));
+  (* the flat string form, which other authenticators and the stubs emit *)
+  let flat = Printf.sprintf {|{"status":{"userInfo":{"arn":"%s"}}}|} canonical in
+  Alcotest.(check (option string))
+    "flat string form"
+    (Some "sol-provisioner")
+    (role_of flat);
+  (* pretty-printed, in case the emitter ever formats it *)
+  let pretty =
+    Printf.sprintf
+      {|{
   "status": {
     "userInfo": {
-      "arn": "%s"
+      "extra": {
+        "canonicalArn": [
+          "%s"
+        ]
+      }
     }
   }
 }|}
-       arn);
-  (* with the envelope kubectl includes, and extra fields beside the arn *)
-  expect_ok
-    "enveloped"
-    (Printf.sprintf
-       {|{"apiVersion":"authentication.k8s.io/v1","kind":"WhoAmI","status":{"userInfo":{"username":"%s","uid":"aws-iam-authenticator:111122223333:AROA","groups":["sol:platform-provisioners"],"extra":{"arn":["%s"]},"arn":"%s"}}}|}
-       arn
-       arn
-       arn);
-  (* nothing to parse is Error, never a default that could pass for a principal *)
+      canonical
+  in
+  Alcotest.(check (option string))
+    "pretty-printed"
+    (Some "sol-provisioner")
+    (role_of pretty);
+  (* username as the last resort, and no principal at all is Error -- never a default *)
   (match
-     Sol_cli_cloud_lifecycle.principal_arn_of_whoami {|{"status":{"userInfo":{}}}|}
+     Sol_cli_cloud_lifecycle.whoami_identity_of_json
+       {|{"status":{"userInfo":{"username":"system:node:ip-10-0-1-1"}}}|}
+   with
+   | Ok i ->
+     Alcotest.(check (option string))
+       "username is the last resort"
+       (Some "system:node:ip-10-0-1-1")
+       (Sol_cli_cloud_lifecycle.principal_role_name i)
+   | Error e -> Alcotest.fail e);
+  (match
+     Sol_cli_cloud_lifecycle.whoami_identity_of_json {|{"status":{"userInfo":{}}}|}
    with
    | Error _ -> ()
-   | Ok v -> Alcotest.fail ("a response with no arn produced " ^ v));
+   | Ok i ->
+     Alcotest.fail
+       ("a response naming no principal produced "
+        ^ Option.value (Sol_cli_cloud_lifecycle.principal_role_name i) ~default:"?"));
   (match
-     Sol_cli_cloud_lifecycle.principal_arn_of_whoami "error: You must be logged in"
+     Sol_cli_cloud_lifecycle.whoami_identity_of_json "error: You must be logged in"
    with
    | Error _ -> ()
-   | Ok v -> Alcotest.fail ("a non-JSON response produced " ^ v));
-  match
-    Sol_cli_cloud_lifecycle.principal_arn_of_whoami {|{"status":{"userInfo":{"arn":""}}}|}
-  with
-  | Error _ -> ()
-  | Ok v -> Alcotest.fail ("an empty arn produced " ^ v)
+   | Ok _ -> Alcotest.fail "a non-JSON response was accepted");
+  (* the role name extraction itself, both ARN forms *)
+  Alcotest.(check string)
+    "assumed-role ARN"
+    "sol-provisioner"
+    (Sol_cli_cloud_lifecycle.role_name_of_arn sts);
+  Alcotest.(check string)
+    "role ARN"
+    "sol-provisioner"
+    (Sol_cli_cloud_lifecycle.role_name_of_arn canonical)
 ;;
 
 let test_effective_authorization () =
@@ -1207,9 +1250,9 @@ let () =
             `Quick
             test_deescalation_requires_the_effective_surface
         ; Alcotest.test_case
-            "principal arn is parsed (DEC-040)"
+            "whoami identity shapes (DEC-040)"
             `Quick
-            test_principal_arn_is_parsed
+            test_whoami_identity_shapes
         ; Alcotest.test_case
             "verified de-escalation is a transition (DEC-040)"
             `Quick

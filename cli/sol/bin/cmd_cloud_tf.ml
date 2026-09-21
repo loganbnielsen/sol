@@ -801,25 +801,25 @@ let bootstrap_only_capabilities =
   ]
 ;;
 
-(* The role name inside an ARN, so an answer can be compared with the intended
-   principal without pulling a JSON parser into this file. *)
-let arn_role_name arn =
-  match String.rindex_opt arn '/' with
-  | Some i when i + 1 < String.length arn ->
-    String.sub arn (i + 1) (String.length arn - i - 1)
-  | _ -> arn
-;;
-
 let deescalation_principal_check ~expected_role_name env =
   match
     Sol_cli_process.run
       (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ])
   with
   | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    (match Sol_cli_cloud_lifecycle.principal_arn_of_whoami r.Sol_cli_process.stdout with
-     | Ok arn when arn_role_name arn = expected_role_name ->
-       Sol_cli_cloud_lifecycle.Principal_confirmed arn
-     | Ok arn -> Sol_cli_cloud_lifecycle.Principal_unexpected arn
+    (match Sol_cli_cloud_lifecycle.whoami_identity_of_json r.Sol_cli_process.stdout with
+     | Ok identity ->
+       let shown =
+         match identity.Sol_cli_cloud_lifecycle.canonical_arn, identity.arn with
+         | Some a, _ | None, Some a -> a
+         | None, None -> Option.value identity.username ~default:"(unnamed)"
+       in
+       (match Sol_cli_cloud_lifecycle.principal_role_name identity with
+        | Some role when role = expected_role_name ->
+          Sol_cli_cloud_lifecycle.Principal_confirmed shown
+        | Some role -> Sol_cli_cloud_lifecycle.Principal_unexpected role
+        | None ->
+          Sol_cli_cloud_lifecycle.Principal_probe_failed "the response named no principal")
      | Error why -> Sol_cli_cloud_lifecycle.Principal_probe_failed why)
   | Ok r ->
     let detail =
@@ -852,7 +852,9 @@ let deescalation_principal_check ~expected_role_name env =
    reach. Failing to obtain the probe is a measurement failure, which the transition
    verdict already handles as [Undetermined]; it must not become a crash. *)
 let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
-  let expected_role_name = arn_role_name provisioner_role_arn in
+  let expected_role_name =
+    Sol_cli_cloud_lifecycle.role_name_of_arn provisioner_role_arn
+  in
   match
     provisioner_kubeconfig ~role_arn:provisioner_role_arn ~region outputs (fun env ->
       let principal = deescalation_principal_check ~expected_role_name env in
