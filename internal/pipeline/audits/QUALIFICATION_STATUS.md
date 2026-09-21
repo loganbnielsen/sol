@@ -241,3 +241,36 @@ and no *workload* identity holds `pods/portforward` by design (DEC-038 §4 exclu
 from the operator, and the deploy identity is denied it), so B3 must be driven with
 the qualification operator's `cluster-access` capability, and the run record must say
 which identity served each read.
+
+## Run 8 §B from B3 — attempted 2026-09-21: **BLOCKED**, and stopping
+
+Two independent blockers, both now evidenced in the run record:
+
+1. **No identity can transport into an application namespace.** `cluster-access` is
+   cluster-admin in *platform* namespaces and has no access in application ones;
+   `deploy`/`operator` are read-only there with no `portforward`/`exec`; the
+   provisioner has no access entry; the SSO administrator is `Unauthorized` on the
+   cluster. So the `-svc` half of B3 cannot be executed — a gap in the procedure's
+   assumptions, not something to fix by widening DEC-038.
+2. **The workload itself prevents an unambiguous result.** `notify-worker`'s consumer
+   group joins and leaves — observed from the broker as `LAG 1` with **no members**,
+   having been `Stable` with 2 members minutes earlier, which is the same instability
+   its readiness probe (HTTP 503) shows, now from a second, independent source.
+
+The two are coupled: only the application's own producer emits the schema-registry
+framing the worker accepts, so producing a valid message *is* the `POST /charges` call
+that blocker 1 prevents.
+
+**Stop condition met, per the run's rule:** the degraded Deployment prevents B3 and
+makes its result ambiguous, so the run stops rather than modifying the workload to
+obtain a pass. `notify-worker` was not restarted, redeployed or reset — same pods, same
+creation timestamps throughout.
+
+**Awaiting an operator decision:** repair/reset the `notify-worker` fixture before using
+subsequent evidence that depends on its consumer, or defer `§B`'s worker half. §D/§E
+rows that depend on a healthy consumer are in the same position.
+
+One procedural note that outlives this run: the evidence for "a message was processed"
+came from the platform's own log store, and it **overturned** the broker's committed
+offset, which read as success while the worker had skipped the record. Committed offset
+is not evidence of processing.
