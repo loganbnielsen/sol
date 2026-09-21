@@ -1057,21 +1057,45 @@ let observed_phase ~cloud_exists ~platform_installed =
    So de-escalation is decided from the *effective* authorization surface: the
    capabilities only the bootstrap authority held, asked of the component that
    enforces the boundary. [Deescalated] is the only verdict that permits `Ready`. *)
+(** Which principal answered the probe. The probe must be run as the principal whose
+    elevation is being removed; a different principal answering proves nothing about
+    that one, which is why it is [Unexpected] rather than a pass. *)
+type deescalation_principal =
+  | Principal_confirmed of string
+  (** The intended principal answered, so its refusals are evidence. *)
+  | Principal_cannot_authenticate
+  (** The intended principal has no cluster authority at all: the elevated
+          capability is gone by construction, because it requires authentication. *)
+  | Principal_unexpected of string
+  (** Some other principal answered. The probe establishes nothing. *)
+
 type deescalation_verdict =
   | Deescalated
   | Still_elevated of string list
-  (** Capabilities the de-escalated identity is still permitted. *)
+  (** Capabilities the de-escalated principal is still permitted. *)
   | Undetermined of string
   (** The surface could not be established -- never treated as de-escalated. *)
 
-let deescalation_verdict (probes : (string * bool) list) : deescalation_verdict =
-  match probes with
-  | [] -> Undetermined "no capability probe produced an answer"
-  | probes ->
-    let still =
-      List.filter_map (fun (c, permitted) -> if permitted then Some c else None) probes
-    in
-    if still = [] then Deescalated else Still_elevated still
+let deescalation_verdict
+      ~(principal : deescalation_principal)
+      (probes : (string * bool) list)
+  : deescalation_verdict
+  =
+  match principal with
+  | Principal_unexpected who ->
+    Undetermined
+      (Printf.sprintf
+         "the probe answered as %s, not the principal whose elevation was removed"
+         who)
+  | Principal_cannot_authenticate -> Deescalated
+  | Principal_confirmed _ ->
+    (match probes with
+     | [] -> Undetermined "no capability probe produced an answer"
+     | probes ->
+       let still =
+         List.filter_map (fun (c, permitted) -> if permitted then Some c else None) probes
+       in
+       if still = [] then Deescalated else Still_elevated still)
 ;;
 
 let deescalation_verdict_to_string = function

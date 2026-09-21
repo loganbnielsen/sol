@@ -905,27 +905,30 @@ let test_convergence_predicates () =
 ;;
 
 (* DEC-040 / FND-0021: de-escalation is decided from the effective authorization
-   surface, not from what a control plane reports. The live counterexample: an EKS
-   access-policy disassociation was accepted and the API reported no access policies
-   while the authorizer still granted cluster-admin for over five minutes. *)
+   surface, and only from the principal whose elevation is being removed. The live
+   counterexample: an EKS access-policy disassociation was accepted and the API
+   reported no access policies while the authorizer still granted cluster-admin for
+   over five minutes. *)
 let test_deescalation_requires_the_effective_surface () =
+  let verdict
+        ?(principal = Sol_cli_cloud_lifecycle.Principal_confirmed "…/sol-provisioner")
+        probes
+    =
+    Sol_cli_cloud_lifecycle.deescalation_verdict ~principal probes
+  in
   (* Every capability refused is the only thing that licenses the verdict. *)
   Alcotest.(check string)
     "all refused -> de-escalated"
     "de-escalated"
     (match
-       Sol_cli_cloud_lifecycle.deescalation_verdict
-         [ "create clusterroles", false; "create clusterrolebindings", false ]
+       verdict [ "create clusterroles", false; "create clusterrolebindings", false ]
      with
      | Sol_cli_cloud_lifecycle.Deescalated -> "de-escalated"
      | Sol_cli_cloud_lifecycle.Still_elevated _ -> "still elevated"
      | Sol_cli_cloud_lifecycle.Undetermined _ -> "undetermined");
   (* One capability still permitted means the elevated authority is still usable,
      however the revocation was reported. *)
-  (match
-     Sol_cli_cloud_lifecycle.deescalation_verdict
-       [ "create clusterroles", false; "escalate clusterroles", true ]
-   with
+  (match verdict [ "create clusterroles", false; "escalate clusterroles", true ] with
    | Sol_cli_cloud_lifecycle.Still_elevated still ->
      Alcotest.(check (list string))
        "the permitted capability is named"
@@ -936,12 +939,39 @@ let test_deescalation_requires_the_effective_surface () =
    | Sol_cli_cloud_lifecycle.Undetermined _ ->
      Alcotest.fail "a permitted capability was read as undetermined");
   (* No answer is not de-escalation: an unanswered probe must never license Ready. *)
-  match Sol_cli_cloud_lifecycle.deescalation_verdict [] with
-  | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
-  | Sol_cli_cloud_lifecycle.Deescalated ->
-    Alcotest.fail "no evidence was read as de-escalated"
+  (match verdict [] with
+   | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+   | Sol_cli_cloud_lifecycle.Deescalated ->
+     Alcotest.fail "no evidence was read as de-escalated"
+   | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+     Alcotest.fail "no evidence was read as elevated");
+  (* The principal matters. If the probe answered as somebody else -- a SteadyState
+     identity rather than the one whose bootstrap elevation was removed -- its refusals
+     prove nothing about that principal, so the verdict may not be de-escalated. This
+     is the FND-0021 trap: a check that cannot detect the privilege it testifies about
+     must not testify. *)
+  (match
+     verdict
+       ~principal:(Sol_cli_cloud_lifecycle.Principal_unexpected "…/sol-cluster-access")
+       [ "create clusterroles", false ]
+   with
+   | Sol_cli_cloud_lifecycle.Undetermined why ->
+     Alcotest.(check bool)
+       "the unexpected principal is named"
+       true
+       (Sol_cli_port_forward.string_contains ~needle:"sol-cluster-access" why)
+   | Sol_cli_cloud_lifecycle.Deescalated ->
+     Alcotest.fail "another principal's refusal was read as de-escalation"
+   | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+     Alcotest.fail "another principal's answers were treated as answers");
+  (* A principal with no cluster authority at all has lost the capability by
+     construction: it requires authentication. *)
+  match verdict ~principal:Sol_cli_cloud_lifecycle.Principal_cannot_authenticate [] with
+  | Sol_cli_cloud_lifecycle.Deescalated -> ()
   | Sol_cli_cloud_lifecycle.Still_elevated _ ->
-    Alcotest.fail "no evidence was read as elevated"
+    Alcotest.fail "an unauthenticated principal was read as still elevated"
+  | Sol_cli_cloud_lifecycle.Undetermined _ ->
+    Alcotest.fail "an unauthenticated principal was read as undetermined"
 ;;
 
 let test_effective_authorization () =

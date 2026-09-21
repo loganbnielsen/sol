@@ -223,19 +223,36 @@ val phase_to_string : phase -> string
 val observed_phase : cloud_exists:bool -> platform_installed:bool -> phase
 
 (** DEC-040 / FND-0021: whether the effective authorization surface shows the
-    bootstrap capability is gone. [Still_elevated] and [Undetermined] both mean the
-    run may not claim [Ready]; the caller fails closed on anything but
-    [Deescalated]. *)
+    bootstrap capability is gone.
+
+    The probe must be run as **the principal whose elevation is being removed**. A
+    different principal answering establishes nothing about that one -- FND-0021's
+    whole shape is a revocation reported complete while the capability remained
+    usable, and probing elsewhere would reproduce exactly that error. *)
+type deescalation_principal =
+  | Principal_confirmed of string
+  | Principal_cannot_authenticate
+  | Principal_unexpected of string
+
 type deescalation_verdict =
   | Deescalated
   | Still_elevated of string list
   | Undetermined of string
 
-(** [probes] is (capability, still_permitted) as answered by the *authorizer* --
-    the component that enforces the boundary -- for the capabilities only the
-    bootstrap authority held. Any permitted capability is [Still_elevated]; an empty
-    probe list is [Undetermined], never [Deescalated]. *)
-val deescalation_verdict : (string * bool) list -> deescalation_verdict
+(** [probes] is (capability, still_permitted) as answered by the *authorizer* -- the
+    component that enforces the boundary -- for the capabilities only the bootstrap
+    authority held.
+
+    - [Principal_unexpected] is [Undetermined]: the probe proves nothing.
+    - [Principal_cannot_authenticate] is [Deescalated]: the elevated capability needs
+      cluster authentication, so its absence is its revocation.
+    - Otherwise any permitted capability is [Still_elevated], an empty probe list is
+      [Undetermined] (never [Deescalated]), and only a confirmed principal with no
+      permitted capability is [Deescalated]. *)
+val deescalation_verdict
+  :  principal:deescalation_principal
+  -> (string * bool) list
+  -> deescalation_verdict
 
 val deescalation_verdict_to_string : deescalation_verdict -> string
 

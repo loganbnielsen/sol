@@ -729,7 +729,7 @@ let platform_vars_of ?(on_error = Fun.id) ~cloud_target ~outputs () =
        lifecycle_error message)
 ;;
 
-let provisioner_kubeconfig ~region outputs f =
+let provisioner_kubeconfig ?role_arn ~region outputs f =
   let path = Filename.temp_file "sol-platform-provisioner-" ".kubeconfig" in
   let cleanup () =
     try Sys.remove path with
@@ -763,7 +763,9 @@ let provisioner_kubeconfig ~region outputs f =
            ; Sol_cli_cloud_lifecycle.cluster_name
                (Sol_cli_cloud_lifecycle.Aws_outputs outputs)
            ; "--role-arn"
-           ; Sol_cli_cloud_lifecycle.cluster_access_role_arn outputs
+           ; (match role_arn with
+              | Some arn -> arn
+              | None -> Sol_cli_cloud_lifecycle.cluster_access_role_arn outputs)
            ; "--kubeconfig"
            ; path
            ])
@@ -772,8 +774,8 @@ let provisioner_kubeconfig ~region outputs f =
     | _ -> Error "could not establish ephemeral provisioner cluster access")
 ;;
 
-let with_provisioner_kubeconfig ?(on_error = Fun.id) ~region outputs f =
-  match provisioner_kubeconfig ~region outputs f with
+let with_provisioner_kubeconfig ?(on_error = Fun.id) ?role_arn ~region outputs f =
+  match provisioner_kubeconfig ?role_arn ~region outputs f with
   | Ok value -> value
   | Error message ->
     on_error ();
@@ -784,12 +786,14 @@ let with_provisioner_kubeconfig ?(on_error = Fun.id) ~region outputs f =
 
    Live, an EKS access-policy disassociation was accepted, `describe-access-entry`
    reported no access policies, and the authorizer went on granting cluster-admin for
-   over five minutes. A successful apply that removes the bootstrap access entry is the
-   same kind of evidence, so the phase asks the component that actually enforces the
-   boundary instead: the capabilities only the bootstrap authority held, probed as the
-   steady-state platform identity through the same ephemeral access the platform uses.
-   Anything still permitted means the elevated capability is still usable, whatever the
-   API reports. *)
+   over five minutes.
+
+   Two things make this evidence rather than ceremony. The probe runs as **the principal
+   whose bootstrap elevation this phase removes** -- the provisioner, not the
+   steady-state cluster-access identity, whose refusals would say nothing about the
+   provisioner's authority. And it establishes *which* principal answered before
+   believing any answer: a probe that quietly authenticated as somebody else would
+   "prove" exactly the thing FND-0021 showed can be false. *)
 let bootstrap_only_capabilities =
   [ "create", "clusterroles"
   ; "create", "clusterrolebindings"
@@ -797,31 +801,82 @@ let bootstrap_only_capabilities =
   ]
 ;;
 
-let deescalation_probes ~region ~outputs () =
-  with_provisioner_kubeconfig ~region outputs (fun env ->
-    List.map
-      (fun (verb, resource) ->
-         let permitted =
-           match
-             Sol_cli_process.run
-               (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "can-i"; verb; resource ])
-           with
-           | Ok r -> r.Sol_cli_process.exit_code = 0
-           | Error _ -> false
-         in
-         Printf.sprintf "%s %s" verb resource, permitted)
-      bootstrap_only_capabilities)
+(* The role name inside an ARN, so an answer can be compared with the intended
+   principal without pulling a JSON parser into this file. *)
+let arn_role_name arn =
+  match String.rindex_opt arn '/' with
+  | Some i when i + 1 < String.length arn ->
+    String.sub arn (i + 1) (String.length arn - i - 1)
+  | _ -> arn
+;;
+
+let json_string_field ~field json =
+  let needle = Printf.sprintf "\"%s\": \"" field in
+  let rec scan from =
+    if from + String.length needle > String.length json
+    then None
+    else if String.sub json from (String.length needle) = needle
+    then (
+      let vstart = from + String.length needle in
+      match String.index_from_opt json vstart '"' with
+      | Some vend -> Some (String.sub json vstart (vend - vstart))
+      | None -> None)
+    else scan (from + 1)
+  in
+  scan 0
+;;
+
+let deescalation_principal_check ~expected_role_name env =
+  match
+    Sol_cli_process.run
+      (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ])
+  with
+  | Ok r when r.Sol_cli_process.exit_code = 0 ->
+    (match json_string_field ~field:"arn" r.Sol_cli_process.stdout with
+     | Some arn when arn_role_name arn = expected_role_name ->
+       Sol_cli_cloud_lifecycle.Principal_confirmed arn
+     | Some arn -> Sol_cli_cloud_lifecycle.Principal_unexpected arn
+     | None -> Sol_cli_cloud_lifecycle.Principal_unexpected r.Sol_cli_process.stdout)
+  | _ -> Sol_cli_cloud_lifecycle.Principal_cannot_authenticate
+;;
+
+let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
+  let expected_role_name = arn_role_name provisioner_role_arn in
+  with_provisioner_kubeconfig ~role_arn:provisioner_role_arn ~region outputs (fun env ->
+    let principal = deescalation_principal_check ~expected_role_name env in
+    let probes =
+      match principal with
+      | Sol_cli_cloud_lifecycle.Principal_unexpected _ ->
+        (* Never interrogate another principal's capabilities and call it evidence. *)
+        []
+      | _ ->
+        List.map
+          (fun (verb, resource) ->
+             let permitted =
+               match
+                 Sol_cli_process.run
+                   (Sol_cli_process.cmd
+                      ~env
+                      [ "kubectl"; "auth"; "can-i"; verb; resource ])
+               with
+               | Ok r -> r.Sol_cli_process.exit_code = 0
+               | Error _ -> false
+             in
+             Printf.sprintf "%s %s" verb resource, permitted)
+          bootstrap_only_capabilities
+    in
+    principal, probes)
 ;;
 
 (* Bounded and fail-closed: access-entry changes are eventually consistent so a retry
    is expected, but an unverified claim is not an acceptable outcome. *)
-let verify_deescalation ~region ~outputs =
+let verify_deescalation ~region ~outputs ~provisioner_role_arn =
   let interval_s = 10. in
   let rec loop remaining =
-    let verdict =
-      Sol_cli_cloud_lifecycle.deescalation_verdict
-        (deescalation_probes ~region ~outputs ())
+    let principal, probes =
+      deescalation_probe ~region ~outputs ~provisioner_role_arn ()
     in
+    let verdict = Sol_cli_cloud_lifecycle.deescalation_verdict ~principal probes in
     match verdict with
     | Sol_cli_cloud_lifecycle.Deescalated -> verdict
     | _ when remaining <= 1 -> verdict
@@ -834,8 +889,7 @@ let verify_deescalation ~region ~outputs =
   in
   match loop 6 with
   | Sol_cli_cloud_lifecycle.Deescalated ->
-    Printf.printf
-      "  de-escalation verified against the effective authorization surface\n%!"
+    Printf.printf "  de-escalation verified as %s\n%!" provisioner_role_arn
   | verdict ->
     lifecycle_error
       ("de-escalation could not be established: "
@@ -2059,7 +2113,19 @@ let cloud_init ~target ~var_file ~vars ~action () =
             root, so there is no Sol-side revocation here to verify. *)
          (match outputs with
           | Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ->
-            verify_deescalation ~region:target_cfg.region ~outputs:aws_outputs
+            (match target_cfg.provisioner_role_arn with
+             | Some provisioner_role_arn ->
+               verify_deescalation
+                 ~region:target_cfg.region
+                 ~outputs:aws_outputs
+                 ~provisioner_role_arn
+             | None ->
+               (* The bootstrap elevation is scoped to the provisioner role; a target
+                  that declares none had nothing elevated. Said out loud rather than
+                  skipped, because a silently skipped verification is exactly the
+                  false-pass shape DEC-040 exists to remove. *)
+               Printf.printf
+                 "  no provisioner role declared: no bootstrap elevation to verify\n%!")
           | Sol_cli_cloud_lifecycle.Gcp_outputs _ -> ());
          (match
             Sol_cli_cloud_lifecycle.enter
