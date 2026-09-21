@@ -34,11 +34,19 @@ fail-open and wrong-end-state items:
       reaches the install and fails the scenario.
 - [x] **Destroy path**: `sol cloud destroy` revokes the bootstrap access too, so it
       observes the window and checks the effective surface afterwards. That check is
-      **advisory**, a deliberate decision: the terminal state of a destroy is the
-      substrate's *absence*, and a probe that can fail must not block teardown (ADR 0003
-      invariant 6) or strand billable infrastructure (HARDEN-004's cost rule). A harness
-      scenario asserts an indeterminate post-removal probe is reported and teardown
-      completes.
+      **advisory**, a deliberate decision, and it does **not** mean the destroy path
+      "verifies de-escalation" the way the install path does. DEC-040's first acceptance
+      criterion -- "every path that revokes privileged access verifies the effective
+      surface *before declaring the revocation complete*, and fails closed if it cannot"
+      -- is satisfied in that operational sense: a destroy never declares a revocation
+      complete, it removes the substrate, and its terminal proof is the verified absence
+      of that substrate, which is stronger than the effective-surface probe. The check is
+      deliberately not a gate: a probe that can fail must not block teardown (ADR 0003
+      invariant 6) or strand billable infrastructure (HARDEN-004's cost rule), and the
+      observation runs as the *provisioner* role while the teardown uses the
+      *cluster-access* role, so a fatal probe would let a broken provisioner trust abort a
+      teardown that would otherwise succeed. The harness scenario therefore asserts an
+      indeterminate post-removal probe is **reported** and teardown completes.
 - [x] **The offline harness green on the head**, including the new cases.
 
 Two facts are deliberately *not* checklist items here, because neither is code this ticket
