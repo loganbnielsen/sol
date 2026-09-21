@@ -286,6 +286,58 @@ let test_namespace_is_created_not_applied () =
     check_bool "the workload is still applied" true (call "apply" "other"))
 ;;
 
+(* ── DEC-038 §6 / INFRA-058: the grant follows the workload ────────────────── *)
+
+(* Live, the operator's binding existed only in the namespace `sol migrate apply`
+   happened to touch, so the operator could not read the workload it exists to
+   diagnose -- and the only existing path that would have created it redeployed the
+   workload. These documents cover the workspace's own service inventory regardless
+   of any caller's scope, and they are RBAC and nothing else: establishing read
+   authorization must not touch a Secret or a workload. *)
+let test_operator_bindings_cover_every_workload_namespace () =
+  let svc domain name =
+    { Sol_cli_manifest.domain; name; primitive = Sol_cli_manifest.Svc; dir = "/tmp" }
+  in
+  let docs =
+    Sol_cli_substrate.operator_binding_docs
+      ~workspace:"pluto"
+      [ svc "checkout" "checkout_svc"
+      ; svc "comms" "notify_worker"
+      ; svc "checkout" "refunds"
+      ]
+  in
+  check_int
+    "one binding per distinct namespace, whoever the caller is"
+    2
+    (List.length docs);
+  let has needle = List.exists (fun doc -> contains ~needle doc) docs in
+  check_bool
+    "the namespace the caller was not operating on is covered"
+    true
+    (has "namespace: pluto-comms");
+  check_bool "so is the caller's own" true (has "namespace: pluto-checkout");
+  List.iter
+    (fun doc ->
+       check_bool
+         "every document is a RoleBinding"
+         true
+         (contains ~needle:"kind: RoleBinding" doc);
+       check_bool
+         "bound to the operator group"
+         true
+         (contains ~needle:"name: sol:operators" doc);
+       check_bool
+         "referencing the read-only role"
+         true
+         (contains ~needle:"name: sol-operator-diagnostics" doc);
+       check_bool "no Secret is written" false (contains ~needle:"kind: Secret" doc);
+       check_bool
+         "no workload document is written"
+         false
+         (contains ~needle:"kind: Deployment" doc))
+    docs
+;;
+
 let () =
   Alcotest.run
     "substrate"
@@ -314,6 +366,12 @@ let () =
             "an existing namespace is created, never applied (INFRA-048)"
             `Quick
             test_namespace_is_created_not_applied
+        ] )
+    ; ( "operator diagnostic bindings (INFRA-058)"
+      , [ Alcotest.test_case
+            "every workload namespace is covered, RBAC only"
+            `Quick
+            test_operator_bindings_cover_every_workload_namespace
         ] )
     ]
 ;;

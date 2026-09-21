@@ -286,25 +286,37 @@ let render_unhealthy_pods
   Buffer.contents buf
 ;;
 
+(* DEC-038 §7: the evidence behind a verdict.
+
+   [Healthy] and [Unhealthy] both mean the evidence was *obtained*; they differ
+   only in what it says. [Undetermined] means it could not be obtained, and carries
+   why. The old [string option] used [None] for [Healthy] *and* for "could not
+   read", so an unreadable workload was reported as healthy -- absence and
+   inability to observe sharing one representation. They no longer do. *)
+type diagnosis =
+  | Healthy
+  | Unhealthy of string
+  | Undetermined of string
+
 (* Continuous workloads should always have a pod; an empty confirmed pod
    list means the workload never started. *)
 let format_service_diagnosis
       ~service_name
       (pods : pod_status list)
       (events : events_fetch_result)
-  : string option
+  : diagnosis
   =
   if pods = []
   then
-    Some
+    Unhealthy
       (Printf.sprintf
          "%s rollout failed\n\nNo pods found for this service.\n"
          service_name)
   else (
     let unhealthy = List.filter (fun p -> not (is_healthy p)) pods in
     if unhealthy = []
-    then None
-    else Some (render_unhealthy_pods ~service_name unhealthy events))
+    then Healthy
+    else Unhealthy (render_unhealthy_pods ~service_name unhealthy events))
 ;;
 
 (* Beyond [is_healthy]: [Succeeded] is OK (a finishing run is expected, and
@@ -342,12 +354,12 @@ let format_active_run_diagnosis
       ~service_name
       (pods : pod_status list)
       (events : events_fetch_result)
-  : string option
+  : diagnosis
   =
   let unhealthy = List.filter (fun p -> not (is_active_run_pod_ok ~events p)) pods in
   if unhealthy = []
-  then None
-  else Some (render_unhealthy_pods ~service_name unhealthy events)
+  then Healthy
+  else Unhealthy (render_unhealthy_pods ~service_name unhealthy events)
 ;;
 
 type cronjob_status =
@@ -388,8 +400,9 @@ type cronjob_fetch_result =
   | Missing
   (** Confirmed via kubectl's own NotFound response -- not a transient
           failure. *)
-  | Unavailable
-  (** The kubectl call itself failed, or its output couldn't be parsed
+  | Unavailable of string
+  (** The kubectl call itself failed, or its output couldn't be parsed, and this
+          carries why -- a failed read is not an absent CronJob (DEC-038 §7).
           (transient error, timeout, RBAC, ...) -- stays silent, same as other
           transient-failure handling in this module. *)
 
@@ -402,21 +415,23 @@ let is_at_or_after ~reference candidate =
 
 (* Ephemeral diagnosis uses CronJob status, not historical pod lists.
    Active-run pod health is tracked separately. *)
-let format_cronjob_diagnosis ~service_name (result : cronjob_fetch_result) : string option
-  =
+let format_cronjob_diagnosis ~service_name (result : cronjob_fetch_result) : diagnosis =
   match result with
-  | Unavailable -> None
+  (* DEC-038 §7: a failed read is not a verdict. This arm used to be [None] --
+     which the rollup read as healthy. *)
+  | Unavailable why ->
+    Undetermined (Printf.sprintf "the CronJob's status could not be read: %s" why)
   | Missing ->
-    Some
+    Unhealthy
       (Printf.sprintf
          "%s rollout failed\n\nCronJob not found for this service.\n"
          service_name)
   | Found status ->
     if status.active_count > 0
-    then None
+    then Healthy
     else (
       match status.last_schedule_time with
-      | None -> None
+      | None -> Healthy
       | Some scheduled ->
         let succeeded_since =
           match status.last_successful_time with
@@ -424,9 +439,9 @@ let format_cronjob_diagnosis ~service_name (result : cronjob_fetch_result) : str
           | None -> false
         in
         if succeeded_since
-        then None
+        then Healthy
         else
-          Some
+          Unhealthy
             (Printf.sprintf
                "%s rollout failed\n\n\
                 Most recently scheduled run (%s) did not complete successfully.\n"
@@ -454,38 +469,68 @@ let fetch_namespace_events ~ctx ~ns : events_fetch_result =
   | Error e -> Events_unavailable (Sol_cli_process.error_to_string e)
 ;;
 
-let fetch_pod_statuses ~ctx ~ns ~k8s_name : pod_status list option =
+(* DEC-038 §7: the reason travels with the failure, so a verdict can say it could
+   not look rather than implying it looked and found nothing. *)
+let kubectl_read_failure ~what r =
+  let open Sol_cli_process in
+  let detail = String.trim (r.stderr ^ " " ^ r.stdout) in
+  Printf.sprintf
+    "%s could not be read%s"
+    what
+    (if String.equal detail ""
+     then Printf.sprintf " (exit %d)" r.exit_code
+     else ": " ^ detail)
+;;
+
+let fetch_pod_statuses ~ctx ~ns ~k8s_name : (pod_status list, string) result =
   match
     Sol_cli_kubectl.get_raw
       ~ctx
       ~args:[ "get"; "pods"; "-n"; ns; "-l"; "app=" ^ k8s_name; "-o"; "json" ]
   with
   | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    Some (parse_pods_json r.Sol_cli_process.stdout)
-  | _ -> None
+    Ok (parse_pods_json r.Sol_cli_process.stdout)
+  | Ok r -> Error (kubectl_read_failure ~what:"pods" r)
+  | Error e -> Error (Sol_cli_process.error_to_string e)
 ;;
 
-let fetch_job_pod_statuses ~ctx ~ns ~job_name : pod_status list option =
+let fetch_job_pod_statuses ~ctx ~ns ~job_name : (pod_status list, string) result =
   match
     Sol_cli_kubectl.get_raw
       ~ctx
       ~args:[ "get"; "pods"; "-n"; ns; "-l"; "job-name=" ^ job_name; "-o"; "json" ]
   with
   | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    Some (parse_pods_json r.Sol_cli_process.stdout)
-  | _ -> None
+    Ok (parse_pods_json r.Sol_cli_process.stdout)
+  | Ok r -> Error (kubectl_read_failure ~what:"the run's pods" r)
+  | Error e -> Error (Sol_cli_process.error_to_string e)
 ;;
 
-(* Best-effort per job: one failed fetch doesn't block the others. [None]
-   only when every fetch fails. *)
-let fetch_active_cronjob_pods ~ctx ~ns job_names : pod_status list option =
+(* Best-effort per job: one failed fetch doesn't block the others. An error only
+   when every fetch fails, and then it carries the reason. *)
+let fetch_active_cronjob_pods ~ctx ~ns job_names : (pod_status list, string) result =
+  let results =
+    List.map (fun job_name -> fetch_job_pod_statuses ~ctx ~ns ~job_name) job_names
+  in
   let fetched =
-    job_names
-    |> List.filter_map (fun job_name -> fetch_job_pod_statuses ~ctx ~ns ~job_name)
+    List.filter_map
+      (function
+        | Ok pods -> Some pods
+        | Error _ -> None)
+      results
   in
   match fetched with
-  | [] when job_names <> [] -> None
-  | _ -> Some (List.concat fetched)
+  | [] when job_names <> [] ->
+    let reasons =
+      List.filter_map
+        (function
+          | Error why -> Some why
+          | Ok _ -> None)
+        results
+      |> List.sort_uniq String.compare
+    in
+    Error (String.concat "; " reasons)
+  | _ -> Ok (List.concat fetched)
 ;;
 
 let fetch_cronjob_status ~ctx ~ns ~k8s_name : cronjob_fetch_result =
@@ -494,27 +539,27 @@ let fetch_cronjob_status ~ctx ~ns ~k8s_name : cronjob_fetch_result =
       ~ctx
       ~args:[ "get"; "cronjob"; k8s_name; "-n"; ns; "-o"; "json" ]
   with
-  | Error _ -> Unavailable
+  | Error e -> Unavailable (Sol_cli_process.error_to_string e)
   | Ok r when r.Sol_cli_process.exit_code = 0 ->
     (match parse_cronjob_status r.Sol_cli_process.stdout with
      | Some status -> Found status
-     | None -> Unavailable)
+     | None -> Unavailable "its status could not be parsed")
   | Ok r ->
     if Sol_cli_port_forward.string_contains ~needle:"NotFound" r.Sol_cli_process.stderr
     then Missing
-    else Unavailable
+    else Unavailable (kubectl_read_failure ~what:"the CronJob" r)
 ;;
 
 (* FEAT-063: diagnosis is cluster IO, so the destination-side context reaches
    every fetch through [ctx]. *)
-let diagnose_service_live ~ctx ~pod_expectation ~ns ~service_name ~k8s_name ()
-  : string option
+let diagnose_service_live ~ctx ~pod_expectation ~ns ~service_name ~k8s_name () : diagnosis
   =
   match pod_expectation with
   | Continuous ->
     (match fetch_pod_statuses ~ctx ~ns ~k8s_name with
-     | None -> None
-     | Some pods ->
+     (* Could not look: [Undetermined], never [Healthy]. *)
+     | Error why -> Undetermined why
+     | Ok pods ->
        let events = fetch_namespace_events ~ctx ~ns in
        format_service_diagnosis ~service_name pods events)
   | Ephemeral ->
@@ -522,9 +567,11 @@ let diagnose_service_live ~ctx ~pod_expectation ~ns ~service_name ~k8s_name ()
     (match cronjob with
      | Found { active_job_names = _ :: _ as job_names; _ } ->
        (match fetch_active_cronjob_pods ~ctx ~ns job_names with
-        | Some (_ :: _ as pods) ->
+        | Ok (_ :: _ as pods) ->
           let events = fetch_namespace_events ~ctx ~ns in
           format_active_run_diagnosis ~service_name pods events
-        | Some [] | None -> format_cronjob_diagnosis ~service_name cronjob)
+        | Ok [] -> format_cronjob_diagnosis ~service_name cronjob
+        | Error why ->
+          Undetermined (Printf.sprintf "the active run's pods could not be read: %s" why))
      | _ -> format_cronjob_diagnosis ~service_name cronjob)
 ;;

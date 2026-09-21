@@ -31,3 +31,25 @@ val ensure
   :  ctx:Sol_cli_kube_destination.context
   -> namespaces:string list
   -> (unit, string) result
+
+(** DEC-038 §6 / INFRA-058: the operator RoleBinding documents for every namespace
+    holding a Sol-managed workload, derived from the workspace's service inventory
+    rather than from any command's scope. Pure: it produces RoleBindings and
+    nothing else. *)
+val operator_binding_docs
+  :  workspace:string
+  -> Sol_cli_manifest.service list
+  -> string list
+
+(** [reconcile_operator_bindings ~ctx ~workspace] establishes the operator's
+    read-only diagnostic grant in every workload namespace, independent of whether
+    that namespace participated in the current operation.
+
+    RBAC only: it must not write runtime Secrets and must not apply workload
+    documents, which is why it does not go through {!ensure}. Safe to run
+    repeatedly, and it is what makes an already-running workload diagnosable
+    without redeploying it. *)
+val reconcile_operator_bindings
+  :  ctx:Sol_cli_kube_destination.context
+  -> workspace:string
+  -> (unit, string) result

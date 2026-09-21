@@ -1,19 +1,46 @@
 (* Workspace-level status rollup for 'sol status' (OBS-009). *)
 
+(** DEC-038 §7: a verdict is a claim about evidence.
+
+    [Healthy] and [Degraded] both require that sufficient evidence was *obtained*;
+    they differ only in what it says. [Unknown] means it could not be obtained, and
+    carries why. [Not_deployed] is a positive finding — the namespace is confirmed
+    absent — not an inability to observe. *)
 type domain_status =
   | Healthy
   | Degraded
+  | Unknown of string
   | Not_deployed
 
-(** [rollup_domain_status ~ns_exists diagnoses] aggregates one domain's
-    per-service diagnoses (as returned by
-    [Sol_cli_rollout_diagnosis.diagnose_service_live] -- [None] means healthy,
-    [Some _] means that service's rollout failed) into a single domain-level
+(** Whether a namespace exists, as *observed*. Absence is a fact; a failed read is
+    not absence, and [Ns_unreadable] carries why. *)
+type namespace_presence =
+  | Ns_present
+  | Ns_absent
+  | Ns_unreadable of string
+
+(** [rollup_domain_status ~ns_presence diagnoses] aggregates one domain's
+    per-service verdicts (as returned by
+    [Sol_cli_rollout_diagnosis.diagnose_service_live]) into a single domain-level
     status:
-    - [Not_deployed] when the namespace doesn't exist.
-    - [Degraded] when the namespace exists and any service is unhealthy.
-    - [Healthy] when the namespace exists and every service is healthy. *)
-val rollup_domain_status : ns_exists:bool -> string option list -> domain_status
+    - [Not_deployed] when the namespace is confirmed absent;
+    - [Unknown why] when it could not be read, or when a service's evidence could
+      not be obtained and nothing obtained contradicts that;
+    - [Degraded] when the namespace was read and any service is unhealthy;
+    - [Healthy] when the namespace was read and every service is healthy.
+
+    [Healthy] therefore always means "evidence was obtained and it indicates
+    health". It must never be produced by reads that did not happen — which is
+    what the previous [ns_exists:bool] + [string option list] signature allowed,
+    because [None] meant both "nothing wrong" and "could not read". *)
+val rollup_domain_status
+  :  ns_presence:namespace_presence
+  -> Sol_cli_rollout_diagnosis.diagnosis list
+  -> domain_status
+
+(** The first line of a reason, for rendering it inside a verdict line. The full
+    text belongs where the diagnosis itself is printed. *)
+val first_line : string -> string
 
 (** Display label. Non-healthy states are upper-cased so they stand out in
     plain-text output without needing ANSI colors. *)

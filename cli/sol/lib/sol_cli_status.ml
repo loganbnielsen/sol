@@ -2,22 +2,73 @@
    aggregation of diagnosis OBS-001 already computes -- no new diagnosis
    logic here. *)
 
+(* DEC-038 §7: a verdict is a claim about evidence.
+
+   [Healthy] and [Degraded] both require that sufficient evidence was *obtained*.
+   [Unknown] means it was not, and carries why. The previous rollup took
+   [string option list] where [None] meant both "nothing wrong" and "could not
+   read", and turned the second into [Healthy] -- so a workload nothing could be
+   read about was reported healthy. That is the failure mode this type removes.
+
+   [Not_deployed] stays separate: it is a positive finding (the namespace is
+   confirmed absent), not an inability to observe. *)
 type domain_status =
   | Healthy
   | Degraded
+  | Unknown of string
   | Not_deployed
 
-let rollup_domain_status ~ns_exists (diagnoses : string option list) =
-  if not ns_exists
-  then Not_deployed
-  else if List.exists (fun d -> d <> None) diagnoses
-  then Degraded
-  else Healthy
+(** Whether a namespace exists, as *observed*: absence is a fact, but a failed read
+    is not absence. [Ns_unreadable] carries why. *)
+type namespace_presence =
+  | Ns_present
+  | Ns_absent
+  | Ns_unreadable of string
+
+(* Only the first line of a reason: the verdict line stays a line, and the full
+   text is where the diagnosis itself is printed. *)
+let first_line s =
+  match String.split_on_char '\n' (String.trim s) with
+  | [] -> String.trim s
+  | line :: _ -> line
+;;
+
+let rollup_domain_status
+      ~(ns_presence : namespace_presence)
+      (diagnoses : Sol_cli_rollout_diagnosis.diagnosis list)
+  =
+  match ns_presence with
+  (* Confirmed absent: a real finding, not an unreadable one. *)
+  | Ns_absent -> Not_deployed
+  (* Could not look: say so, whatever else was collected. *)
+  | Ns_unreadable why -> Unknown why
+  | Ns_present ->
+    if
+      List.exists
+        (function
+          | Sol_cli_rollout_diagnosis.Unhealthy _ -> true
+          | _ -> false)
+        diagnoses
+    then Degraded
+    else (
+      (* A problem outranks an unknown: if the evidence obtained shows a fault,
+         that is a verdict. But when the evidence is merely incomplete, the
+         verdict is "could not determine", never "healthy". *)
+      match
+        List.find_opt
+          (function
+            | Sol_cli_rollout_diagnosis.Undetermined _ -> true
+            | _ -> false)
+          diagnoses
+      with
+      | Some (Sol_cli_rollout_diagnosis.Undetermined why) -> Unknown why
+      | _ -> Healthy)
 ;;
 
 let domain_status_to_string = function
   | Healthy -> "healthy"
   | Degraded -> "DEGRADED"
+  | Unknown why -> Printf.sprintf "UNKNOWN (%s)" (first_line why)
   | Not_deployed -> "NOT DEPLOYED"
 ;;
 

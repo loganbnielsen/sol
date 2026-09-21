@@ -135,8 +135,19 @@ let wait_for_service_rollout ~ctx spec exec =
             ~k8s_name:exec.k8s_name
             ()
         with
-        | Some d -> Error d
-        | None ->
+        (* DEC-038 §7: [Unhealthy] carries the evidence. [Undetermined] does not
+           mean the rollout failed -- it means Sol could not tell, and reporting
+           "rollout failed" from a read that did not happen is the same
+           unsupported verdict one layer down. *)
+        | Sol_cli_rollout_diagnosis.Unhealthy d -> Error d
+        | Sol_cli_rollout_diagnosis.Undetermined why ->
+          Error
+            (Printf.sprintf
+               "could not determine whether the rollout of %s/%s succeeded: %s"
+               exec.namespace
+               exec.k8s_name
+               why)
+        | Sol_cli_rollout_diagnosis.Healthy ->
           Error (Printf.sprintf "rollout failed: %s/%s" exec.namespace exec.k8s_name)))
 ;;
 

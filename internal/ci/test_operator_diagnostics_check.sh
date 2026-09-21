@@ -141,4 +141,19 @@ open(p, "w").write(s.replace(old, "", 1))
 PY
 expect_fail "an operator RoleBinding the substrate identity cannot bind"
 
+# ── the reconciliation stops being RBAC only ────────────────────────────────
+# The failure mode this guards: "simplifying" it to reuse the substrate path, which
+# also writes runtime Secrets.
+seed
+python3 - "$work/root/cli/sol/lib/sol_cli_substrate.ml" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = "  create_all (operator_binding_docs ~workspace (Sol_cli_manifest.discover_services ()))"
+assert old in s
+new = "  let _ = secret_docs [] in\n" + old
+open(p, "w").write(s.replace(old, new, 1))
+PY
+expect_fail "a reconciliation that writes Secrets"
+
 echo "operator diagnostics check: every guard rejection reproduced"

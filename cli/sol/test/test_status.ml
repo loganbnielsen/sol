@@ -1,35 +1,90 @@
 let check_bool = Alcotest.(check bool)
 
 module S = Sol_cli_status
+module D = Sol_cli_rollout_diagnosis
+
+let contains needle haystack =
+  try
+    ignore (Str.search_forward (Str.regexp_string needle) haystack 0);
+    true
+  with
+  | Not_found -> false
+;;
 
 let test_all_healthy () =
   check_bool
-    "no diagnoses -> Healthy"
+    "a read namespace with no services -> Healthy"
     true
-    (S.rollup_domain_status ~ns_exists:true [] = S.Healthy);
+    (S.rollup_domain_status ~ns_presence:Ns_present [] = S.Healthy);
   check_bool
-    "all None -> Healthy"
+    "all diagnosed healthy -> Healthy"
     true
-    (S.rollup_domain_status ~ns_exists:true [ None; None ] = S.Healthy)
+    (S.rollup_domain_status ~ns_presence:Ns_present [ D.Healthy; D.Healthy ] = S.Healthy)
 ;;
 
 let test_one_degraded () =
   check_bool
-    "one Some -> Degraded"
+    "one diagnosed unhealthy -> Degraded"
     true
-    (S.rollup_domain_status ~ns_exists:true [ None; Some "charge-svc rollout failed" ]
+    (S.rollup_domain_status
+       ~ns_presence:Ns_present
+       [ D.Healthy; D.Unhealthy "charge-svc rollout failed" ]
+     = S.Degraded)
+;;
+
+(* DEC-038 §7 / FND-0019, the regression that matters: an unreadable workload
+   must not roll up to healthy. Before this, `Undetermined` did not exist and the
+   equivalent input was `None`, which rolled up to Healthy. *)
+let test_unreadable_is_unknown_not_healthy () =
+  let status =
+    S.rollup_domain_status
+      ~ns_presence:Ns_present
+      [ D.Undetermined "pods could not be read: Error from server (Forbidden)" ]
+  in
+  check_bool "an unreadable workload is not Healthy" false (status = S.Healthy);
+  (match status with
+   | S.Unknown why -> check_bool "the verdict carries why" true (contains "Forbidden" why)
+   | other -> Alcotest.fail ("expected Unknown, got " ^ S.domain_status_to_string other));
+  (* and it must stay distinguishable from a *successful* read finding nothing *)
+  check_bool
+    "a successful read with nothing wrong is still Healthy"
+    true
+    (S.rollup_domain_status ~ns_presence:Ns_present [ D.Healthy ] = S.Healthy)
+;;
+
+let test_unreadable_namespace_is_unknown_not_absent () =
+  (match S.rollup_domain_status ~ns_presence:(Ns_unreadable "forbidden") [] with
+   | S.Unknown _ -> ()
+   | other ->
+     Alcotest.fail
+       ("an unreadable namespace must be Unknown, got " ^ S.domain_status_to_string other));
+  check_bool
+    "a confirmed absent namespace is still Not_deployed"
+    true
+    (S.rollup_domain_status ~ns_presence:Ns_absent [] = S.Not_deployed)
+;;
+
+(* Evidence of a fault outranks missing evidence: if something observed is broken,
+   that is a verdict. Missing evidence only decides when nothing contradicts it. *)
+let test_a_known_fault_outranks_an_unknown () =
+  check_bool
+    "unhealthy beats undetermined"
+    true
+    (S.rollup_domain_status
+       ~ns_presence:Ns_present
+       [ D.Undetermined "x could not be read"; D.Unhealthy "y rollout failed" ]
      = S.Degraded)
 ;;
 
 let test_not_deployed_overrides_diagnoses () =
   check_bool
-    "ns missing -> Not_deployed regardless of diagnoses"
+    "ns absent -> Not_deployed regardless of diagnoses"
     true
-    (S.rollup_domain_status ~ns_exists:false [ None ] = S.Not_deployed);
+    (S.rollup_domain_status ~ns_presence:Ns_absent [ D.Healthy ] = S.Not_deployed);
   check_bool
-    "ns missing with a failing diagnosis -> still Not_deployed"
+    "ns absent with a failing diagnosis -> still Not_deployed"
     true
-    (S.rollup_domain_status ~ns_exists:false [ Some "x" ] = S.Not_deployed)
+    (S.rollup_domain_status ~ns_presence:Ns_absent [ D.Unhealthy "x" ] = S.Not_deployed)
 ;;
 
 let test_domain_status_to_string () =
@@ -41,7 +96,18 @@ let test_domain_status_to_string () =
   check_bool
     "Not_deployed label is upper-cased"
     true
-    (S.domain_status_to_string S.Not_deployed = "NOT DEPLOYED")
+    (S.domain_status_to_string S.Not_deployed = "NOT DEPLOYED");
+  (* The reason is rendered inside the verdict line, first line only. *)
+  check_bool
+    "Unknown carries its reason"
+    true
+    (S.domain_status_to_string (S.Unknown "pods could not be read: Forbidden")
+     = "UNKNOWN (pods could not be read: Forbidden)");
+  check_bool
+    "Unknown renders one line"
+    true
+    (S.domain_status_to_string (S.Unknown "first line\nsecond line")
+     = "UNKNOWN (first line)")
 ;;
 
 (* ── probe_url / reachability_of_probe (OBS-018) ────────────────────────── *)
@@ -309,6 +375,18 @@ let () =
     [ ( "rollup_domain_status"
       , [ Alcotest.test_case "all healthy" `Quick test_all_healthy
         ; Alcotest.test_case "one degraded" `Quick test_one_degraded
+        ; Alcotest.test_case
+            "an unreadable workload is Unknown, never Healthy"
+            `Quick
+            test_unreadable_is_unknown_not_healthy
+        ; Alcotest.test_case
+            "an unreadable namespace is Unknown, not Not_deployed"
+            `Quick
+            test_unreadable_namespace_is_unknown_not_absent
+        ; Alcotest.test_case
+            "a known fault outranks an unknown"
+            `Quick
+            test_a_known_fault_outranks_an_unknown
         ; Alcotest.test_case
             "not deployed overrides"
             `Quick

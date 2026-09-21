@@ -4,6 +4,27 @@ let check_int = Alcotest.(check int)
 
 module D = Sol_cli_rollout_diagnosis
 
+(* DEC-038 §7: the diagnosis functions now return a three-valued verdict. These
+   helpers keep the existing assertions about *this* question -- "did it report a
+   problem?" -- readable, and make the mapping explicit rather than incidental. *)
+let contains needle haystack =
+  try
+    ignore (Str.search_forward (Str.regexp_string needle) haystack 0);
+    true
+  with
+  | Not_found -> false
+;;
+
+let reports_healthy = function
+  | D.Healthy -> true
+  | D.Unhealthy _ | D.Undetermined _ -> false
+;;
+
+let reports_a_problem = function
+  | D.Healthy -> false
+  | D.Unhealthy _ | D.Undetermined _ -> true
+;;
+
 let healthy_pod_json =
   {|
 {"items": [
@@ -201,7 +222,7 @@ let test_format_service_diagnosis_none_when_healthy () =
   check_bool
     "no diagnosis for healthy service"
     true
-    (Option.is_none
+    (reports_healthy
        (D.format_service_diagnosis ~service_name:"charge-svc" pods (D.Events [])))
 ;;
 
@@ -209,8 +230,10 @@ let test_format_service_diagnosis_includes_events_and_reason () =
   let pods = D.parse_pods_json image_pull_backoff_json in
   let events = D.parse_events_json events_json in
   match D.format_service_diagnosis ~service_name:"charge-svc" pods (D.Events events) with
-  | None -> Alcotest.fail "expected a diagnosis"
-  | Some diagnosis ->
+  | D.Healthy -> Alcotest.fail "expected a diagnosis"
+  | D.Undetermined why ->
+    Alcotest.fail ("the pod list was readable, so a verdict is expected: " ^ why)
+  | D.Unhealthy diagnosis ->
     check_bool
       "mentions rollout failed"
       true
@@ -244,8 +267,10 @@ let test_format_service_diagnosis_includes_events_and_reason () =
 let test_format_service_diagnosis_reports_empty_pod_list () =
   (* Empty here means kubectl confirmed zero pods, not a fetch failure. *)
   match D.format_service_diagnosis ~service_name:"charge-svc" [] (D.Events []) with
-  | None -> Alcotest.fail "expected a diagnosis for zero pods, got None (looks healthy)"
-  | Some diagnosis ->
+  | D.Healthy -> Alcotest.fail "expected a diagnosis for zero pods, not a healthy verdict"
+  | D.Undetermined why ->
+    Alcotest.fail ("the pod list was readable, so a verdict is expected: " ^ why)
+  | D.Unhealthy diagnosis ->
     check_bool
       "mentions rollout failed"
       true
@@ -273,7 +298,7 @@ let test_format_service_diagnosis_succeeded_pod_still_flagged_when_continuous ()
   check_bool
     "a Succeeded pod is still a finding for Continuous (Svc/Worker)"
     true
-    (Option.is_some
+    (reports_a_problem
        (D.format_service_diagnosis ~service_name:"charge-svc" pods (D.Events [])))
 ;;
 
@@ -331,7 +356,7 @@ let test_format_cronjob_diagnosis_never_scheduled_is_ok () =
   check_bool
     "never scheduled -> no diagnosis"
     true
-    (Option.is_none
+    (reports_healthy
        (D.format_cronjob_diagnosis ~service_name:"invoice-fn" (D.Found never_scheduled)))
 ;;
 
@@ -339,7 +364,7 @@ let test_format_cronjob_diagnosis_last_run_succeeded_is_ok () =
   check_bool
     "most recent run succeeded -> no diagnosis"
     true
-    (Option.is_none
+    (reports_healthy
        (D.format_cronjob_diagnosis
           ~service_name:"invoice-fn"
           (D.Found idle_last_run_succeeded)))
@@ -349,7 +374,7 @@ let test_format_cronjob_diagnosis_success_at_schedule_boundary_is_ok () =
   check_bool
     "success at the same instant as the schedule trigger -> no diagnosis"
     true
-    (Option.is_none
+    (reports_healthy
        (D.format_cronjob_diagnosis
           ~service_name:"invoice-fn"
           (D.Found idle_success_at_schedule_boundary)))
@@ -359,10 +384,10 @@ let test_format_cronjob_diagnosis_last_run_failed_is_flagged () =
   match
     D.format_cronjob_diagnosis ~service_name:"invoice-fn" (D.Found idle_last_run_failed)
   with
-  | None ->
-    Alcotest.fail
-      "expected a diagnosis for a most-recent-run failure, got None (looks healthy)"
-  | Some diagnosis ->
+  | D.Healthy ->
+    Alcotest.fail "expected a diagnosis for a most-recent-run failure, not healthy"
+  | D.Undetermined why -> Alcotest.fail ("the CronJob was readable: " ^ why)
+  | D.Unhealthy diagnosis ->
     check_bool
       "mentions rollout failed"
       true
@@ -390,7 +415,7 @@ let test_format_cronjob_diagnosis_never_succeeded_is_flagged () =
   check_bool
     "scheduled but never once succeeded -> flagged"
     true
-    (Option.is_some
+    (reports_a_problem
        (D.format_cronjob_diagnosis
           ~service_name:"invoice-fn"
           (D.Found idle_never_succeeded)))
@@ -401,7 +426,7 @@ let test_format_cronjob_diagnosis_active_run_is_ok () =
   check_bool
     "a currently-active run is not (yet) a diagnosis"
     true
-    (Option.is_none
+    (reports_healthy
        (D.format_cronjob_diagnosis
           ~service_name:"invoice-fn"
           (D.Found run_currently_active)))
@@ -409,9 +434,9 @@ let test_format_cronjob_diagnosis_active_run_is_ok () =
 
 let test_format_cronjob_diagnosis_missing_is_flagged () =
   match D.format_cronjob_diagnosis ~service_name:"invoice-fn" D.Missing with
-  | None ->
-    Alcotest.fail "expected a diagnosis for a missing CronJob, got None (looks healthy)"
-  | Some diagnosis ->
+  | D.Healthy -> Alcotest.fail "expected a diagnosis for a missing CronJob, not healthy"
+  | D.Undetermined why -> Alcotest.fail ("the CronJob read succeeded: " ^ why)
+  | D.Unhealthy diagnosis ->
     check_bool
       "mentions rollout failed"
       true
@@ -434,11 +459,21 @@ let test_format_cronjob_diagnosis_missing_is_flagged () =
        | Not_found -> false)
 ;;
 
-let test_format_cronjob_diagnosis_unavailable_stays_silent () =
-  check_bool
-    "an unavailable (transient failure) fetch is not a diagnosis"
-    true
-    (Option.is_none (D.format_cronjob_diagnosis ~service_name:"invoice-fn" D.Unavailable))
+(* DEC-038 §7 / FND-0019. This test used to assert *silence* -- the expectation
+   was the old `None`, which the rollup read as healthy. It was asserting the bug.
+
+   An unavailable fetch is still not a rollout failure, and that intent is kept.
+   But it is not health either: it is Undetermined, and it carries why. *)
+let test_format_cronjob_diagnosis_unavailable_is_undetermined () =
+  match
+    D.format_cronjob_diagnosis
+      ~service_name:"invoice-fn"
+      (D.Unavailable "the kubectl call failed")
+  with
+  | D.Undetermined why ->
+    check_bool "the verdict carries why" true (contains "kubectl call failed" why)
+  | D.Healthy -> Alcotest.fail "a failed read must not be reported as healthy"
+  | D.Unhealthy _ -> Alcotest.fail "a failed read is not a rollout failure either"
 ;;
 
 (* ── format_active_run_diagnosis (Ephemeral/Fn active run) ──────────────── *)
@@ -448,7 +483,7 @@ let test_format_active_run_diagnosis_running_pod_is_ok () =
   check_bool
     "a Running, ready pod is not a finding"
     true
-    (Option.is_none
+    (reports_healthy
        (D.format_active_run_diagnosis ~service_name:"invoice-fn" pods (D.Events [])))
 ;;
 
@@ -459,7 +494,7 @@ let test_format_active_run_diagnosis_succeeded_pod_is_ok () =
   check_bool
     "a Succeeded active-run pod is not a finding"
     true
-    (Option.is_none
+    (reports_healthy
        (D.format_active_run_diagnosis ~service_name:"invoice-fn" pods (D.Events [])))
 ;;
 
@@ -468,7 +503,7 @@ let test_format_active_run_diagnosis_stuck_pod_is_flagged () =
   check_bool
     "a stuck (ImagePullBackOff) active-run pod is a finding"
     true
-    (Option.is_some
+    (reports_a_problem
        (D.format_active_run_diagnosis ~service_name:"invoice-fn" pods (D.Events [])))
 ;;
 
@@ -479,7 +514,7 @@ let test_format_active_run_diagnosis_pending_startup_is_ok () =
   check_bool
     "a freshly-scheduled pod with no container status yet is not a finding"
     true
-    (Option.is_none
+    (reports_healthy
        (D.format_active_run_diagnosis ~service_name:"invoice-fn" pods (D.Events [])))
 ;;
 
@@ -491,7 +526,7 @@ let test_format_active_run_diagnosis_failed_scheduling_is_flagged () =
   check_bool
     "a FailedScheduling pod is still a finding despite looking like normal startup"
     true
-    (Option.is_some
+    (reports_a_problem
        (D.format_active_run_diagnosis ~service_name:"invoice-fn" pods (D.Events events)))
 ;;
 
@@ -500,7 +535,7 @@ let test_format_active_run_diagnosis_container_creating_is_ok () =
   check_bool
     "ContainerCreating with no restarts is not a finding"
     true
-    (Option.is_none
+    (reports_healthy
        (D.format_active_run_diagnosis ~service_name:"invoice-fn" pods (D.Events [])))
 ;;
 
@@ -511,7 +546,7 @@ let test_format_active_run_diagnosis_container_creating_after_restart_is_flagged
   check_bool
     "ContainerCreating after a restart is still a finding"
     true
-    (Option.is_some
+    (reports_a_problem
        (D.format_active_run_diagnosis ~service_name:"invoice-fn" pods (D.Events [])))
 ;;
 
@@ -582,8 +617,10 @@ let test_unavailable_events_are_named_not_empty () =
          "Error from server (Forbidden): events is forbidden: cannot list resource \
           \"events\"")
   with
-  | None -> Alcotest.fail "an unhealthy pod must be diagnosed"
-  | Some text ->
+  | D.Healthy -> Alcotest.fail "an unhealthy pod must be diagnosed"
+  | D.Undetermined why ->
+    Alcotest.fail ("the pod list was readable, so this should be a diagnosis: " ^ why)
+  | D.Unhealthy text ->
     check_bool
       "the block says the events read was unavailable"
       true
@@ -605,8 +642,10 @@ let test_zero_events_are_reported_as_zero () =
       (D.parse_pods_json crash_loop_json)
       (D.Events [])
   with
-  | None -> Alcotest.fail "an unhealthy pod must be diagnosed"
-  | Some text ->
+  | D.Healthy -> Alcotest.fail "an unhealthy pod must be diagnosed"
+  | D.Undetermined why ->
+    Alcotest.fail ("the pod list was readable, so this should be a diagnosis: " ^ why)
+  | D.Unhealthy text ->
     check_bool
       "the block says there were no events"
       true
@@ -619,7 +658,7 @@ let test_zero_events_are_reported_as_zero () =
 
 (* End to end through the real fetch: the collapse happened in
    [fetch_namespace_events], so a rendering test alone would not have caught it. *)
-let with_fake_kubectl f =
+let with_fake_kubectl ?(deny = "events") f =
   let dir = Filename.temp_file "sol-fake-kubectl-" "" in
   Sys.remove dir;
   Unix.mkdir dir 0o755;
@@ -628,23 +667,33 @@ let with_fake_kubectl f =
     Printf.sprintf
       {|#!/bin/sh
 verb=""
+deny='%s'
 for a in "$@"; do
   case "$a" in get|create|apply|patch|delete) verb="$a"; break ;; esac
 done
 if [ "$verb" = "get" ]; then
   case "$*" in
-    *events*)
-      echo 'Error from server (Forbidden): events is forbidden: cannot list resource "events" in API group "" in the namespace "pluto-checkout"' >&2
-      exit 1 ;;
     *pods*)
+      if [ "$deny" = "pods" ]; then
+        echo 'Error from server (Forbidden): pods is forbidden: User "arn:aws:sts::111122223333:assumed-role/sol-operator/EKSGetTokenAuth" cannot list resource "pods" in API group "" in the namespace "pluto-comms"' >&2
+        exit 1
+      fi
       cat <<'JSON'
 %s
 JSON
+      exit 0 ;;
+    *events*)
+      if [ "$deny" = "events" ]; then
+        echo 'Error from server (Forbidden): events is forbidden: cannot list resource "events" in API group "" in the namespace "pluto-checkout"' >&2
+        exit 1
+      fi
+      echo '{"items":[]}'
       exit 0 ;;
   esac
 fi
 exit 0
 |}
+      deny
       crash_loop_json
   in
   let oc = open_out bin in
@@ -677,8 +726,10 @@ let test_the_fetch_distinguishes_a_denied_read () =
         ~k8s_name:"charge-svc"
         ()
     with
-    | None -> Alcotest.fail "the pod is unhealthy, so a diagnosis is expected"
-    | Some text ->
+    | D.Healthy -> Alcotest.fail "the pod is unhealthy, so a diagnosis is expected"
+    | D.Undetermined why ->
+      Alcotest.fail ("the pod list was readable, so a verdict is expected: " ^ why)
+    | D.Unhealthy text ->
       check_bool
         "the denied events read reaches the output as unavailable"
         true
@@ -687,6 +738,33 @@ let test_the_fetch_distinguishes_a_denied_read () =
         "and is not reported as an empty event set"
         false
         (contains "No events recorded" text))
+;;
+
+(* DEC-038 §7 / FND-0019, the exact live regression: an identity that cannot read
+   the workload at all. `sol status` reported "healthy" for this, because
+   `diagnose_service_live` returned the same `None` for "nothing wrong" and
+   "could not read". It must be Undetermined, and it must say why. *)
+let test_an_unreadable_workload_is_undetermined_not_healthy () =
+  with_fake_kubectl ~deny:"pods" (fun () ->
+    match
+      D.diagnose_service_live
+        ~ctx:Sol_cli_kube_destination.local_context
+        ~pod_expectation:D.Continuous
+        ~ns:"pluto-comms"
+        ~service_name:"notify-worker"
+        ~k8s_name:"notify-worker"
+        ()
+    with
+    | D.Undetermined why ->
+      check_bool
+        "the verdict says the workload could not be read"
+        true
+        (contains "could not be read" why);
+      check_bool "and carries the server's reason" true (contains "Forbidden" why)
+    | D.Healthy ->
+      Alcotest.fail "an unreadable workload must never be reported healthy (FND-0019)"
+    | D.Unhealthy _ ->
+      Alcotest.fail "a read that did not happen is not a rollout failure either")
 ;;
 
 let () =
@@ -766,9 +844,9 @@ let () =
             `Quick
             test_format_cronjob_diagnosis_missing_is_flagged
         ; Alcotest.test_case
-            "unavailable fetch stays silent"
+            "an unavailable fetch is Undetermined, not healthy"
             `Quick
-            test_format_cronjob_diagnosis_unavailable_stays_silent
+            test_format_cronjob_diagnosis_unavailable_is_undetermined
         ] )
     ; ( "format_active_run_diagnosis"
       , [ Alcotest.test_case
@@ -824,6 +902,10 @@ let () =
             "the fetch distinguishes a denied read"
             `Quick
             test_the_fetch_distinguishes_a_denied_read
+        ; Alcotest.test_case
+            "an unreadable workload is Undetermined, never healthy"
+            `Quick
+            test_an_unreadable_workload_is_undetermined_not_healthy
         ] )
     ]
 ;;

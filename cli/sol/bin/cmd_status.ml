@@ -41,34 +41,52 @@ let services_of_domain services domain =
 ;;
 
 let service_diagnoses_named ~ctx ~ns (services : Sol_cli_manifest.service list)
-  : (string * string option) list
+  : (string * Sol_cli_rollout_diagnosis.diagnosis) list
   =
+  (* DEC-038 §7: this was a [filter_map], so a service whose Kubernetes name could
+     not be resolved disappeared from the rollup entirely -- and a rollup with
+     nothing in it reads as healthy. Every input service now produces a verdict. *)
   services
-  |> List.filter_map (fun (s : Sol_cli_manifest.service) ->
+  |> List.map (fun (s : Sol_cli_manifest.service) ->
     match Sol_cli_deployment_plan.k8s_name_result s.name with
-    | Error _ -> None
+    | Error e ->
+      ( s.name
+      , Sol_cli_rollout_diagnosis.Undetermined
+          (Printf.sprintf
+             "its Kubernetes name could not be resolved, so nothing was read: %s"
+             (Sol_cli_deployment_plan.plan_error_to_string e)) )
     | Ok k8s_name ->
       let k8s_name = Sol_cli_deployment_plan.k8s_name_to_string k8s_name in
       let pod_expectation = Sol_cli_status.pod_expectation_of_primitive s.primitive in
-      Some
-        ( k8s_name
-        , Sol_cli_rollout_diagnosis.diagnose_service_live
-            ~ctx
-            ~pod_expectation
-            ~ns
-            ~service_name:s.name
-            ~k8s_name
-            () ))
+      ( k8s_name
+      , Sol_cli_rollout_diagnosis.diagnose_service_live
+          ~ctx
+          ~pod_expectation
+          ~ns
+          ~service_name:s.name
+          ~k8s_name
+          () ))
 ;;
 
 let service_diagnoses ~ctx ~ns services =
   service_diagnoses_named ~ctx ~ns services |> List.map snd
 ;;
 
-let ns_exists ~ctx ns =
+(* DEC-038 §7: absence is a fact; a failed read is not absence. This used to
+   return [false] on [Error _], so a namespace that exists but could not be read
+   -- permissions, an API error -- rendered as NOT DEPLOYED. *)
+let namespace_presence ~ctx ns : Sol_cli_status.namespace_presence =
   match Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; "ns"; ns ] with
-  | Ok r -> r.Sol_cli_process.exit_code = 0
-  | Error _ -> false
+  | Ok r when r.Sol_cli_process.exit_code = 0 -> Ns_present
+  | Ok r ->
+    let detail =
+      String.trim (r.Sol_cli_process.stderr ^ " " ^ r.Sol_cli_process.stdout)
+    in
+    if Sol_cli_port_forward.string_contains ~needle:"NotFound" detail
+    then Ns_absent
+    else
+      Ns_unreadable (if String.equal detail "" then "kubectl get ns failed" else detail)
+  | Error e -> Ns_unreadable (Sol_cli_process.error_to_string e)
 ;;
 
 (* The outer process-level timeout must give curl's own [--max-time] room
@@ -214,7 +232,16 @@ let print_open_block ~scope =
 
 let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
   Printf.printf "\nNamespace: %s\n%!" ns;
-  if ns_exists ~ctx ns
+  (* DEC-038 §7: when the namespace could not be read, say so. Silence here reads
+     as "there is nothing to show", which is a different claim from "I could not
+     look", and this block is the evidence an operator is looking for. *)
+  (match namespace_presence ~ctx ns with
+   | Ns_unreadable why ->
+     Printf.printf
+       "  (namespace could not be read: %s)\n%!"
+       (Sol_cli_status.first_line why)
+   | Ns_present | Ns_absent -> ());
+  if namespace_presence ~ctx ns = Ns_present
   then (
     let pod_args =
       match only_k8s_name with
@@ -257,8 +284,14 @@ let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
       | Some only when only <> k8s_name -> ()
       | _ ->
         (match diagnosis with
-         | None -> ()
-         | Some d -> Printf.printf "%s\n%!" d));
+         (* DEC-038 §7: an unhealthy workload prints its evidence, an
+            undetermined one prints why it is undetermined, and only a healthy
+            one is silent -- which is now a claim backed by a read that
+            happened. *)
+         | Sol_cli_rollout_diagnosis.Unhealthy d -> Printf.printf "%s\n%!" d
+         | Sol_cli_rollout_diagnosis.Undetermined why ->
+           Printf.printf "diagnosis unavailable: %s\n%!" why
+         | Sol_cli_rollout_diagnosis.Healthy -> ()));
     (* Port-forward hint for ClusterIP HTTP services in this namespace.
        Filter out internal services: names ending in "-headless" or equal
        to "kubernetes". *)
@@ -324,13 +357,16 @@ let print_workspace_index
   List.iter
     (fun domain ->
        let ns = namespace_or_exit ~workspace ~domain in
-       let exists = ns_exists ~ctx ns in
+       let presence = namespace_presence ~ctx ns in
        let diagnoses =
-         if exists
-         then service_diagnoses ~ctx ~ns (services_of_domain services domain)
-         else []
+         match presence with
+         | Ns_present -> service_diagnoses ~ctx ~ns (services_of_domain services domain)
+         (* Not readable or confirmed absent: nothing was read, so there are no
+            per-service verdicts to roll up. The rollup decides the verdict from
+            the presence itself rather than from an empty list. *)
+         | Ns_absent | Ns_unreadable _ -> []
        in
-       let status = Sol_cli_status.rollup_domain_status ~ns_exists:exists diagnoses in
+       let status = Sol_cli_status.rollup_domain_status ~ns_presence:presence diagnoses in
        Printf.printf "  %-12s %s\n" domain (Sol_cli_status.domain_status_to_string status))
     domains;
   Printf.printf "\nObservability\n";
@@ -352,14 +388,14 @@ let print_domain_status
       ~explicit_prometheus_url
   =
   let ns = namespace_or_exit ~workspace ~domain in
-  let exists = ns_exists ~ctx ns in
+  let presence = namespace_presence ~ctx ns in
   let named =
-    if exists
-    then service_diagnoses_named ~ctx ~ns (services_of_domain services domain)
-    else []
+    match presence with
+    | Ns_present -> service_diagnoses_named ~ctx ~ns (services_of_domain services domain)
+    | Ns_absent | Ns_unreadable _ -> []
   in
   let status =
-    Sol_cli_status.rollup_domain_status ~ns_exists:exists (List.map snd named)
+    Sol_cli_status.rollup_domain_status ~ns_presence:presence (List.map snd named)
   in
   Printf.printf
     "\n%s  %s  %s\n"
@@ -373,7 +409,7 @@ let print_domain_status
     List.iter
       (fun (k8s_name, diagnosis) ->
          let service_status =
-           Sol_cli_status.rollup_domain_status ~ns_exists:true [ diagnosis ]
+           Sol_cli_status.rollup_domain_status ~ns_presence:Ns_present [ diagnosis ]
          in
          Printf.printf
            "  %-12s %s\n"
@@ -427,20 +463,24 @@ let print_service_status
   let pod_expectation =
     Sol_cli_status.pod_expectation_of_primitive svc.Sol_cli_manifest.primitive
   in
-  let exists = ns_exists ~ctx ns in
-  let diagnosis =
-    if exists
-    then
-      Sol_cli_rollout_diagnosis.diagnose_service_live
-        ~ctx
-        ~pod_expectation
-        ~ns
-        ~service_name:k8s_name
-        ~k8s_name
-        ()
-    else None
+  let presence = namespace_presence ~ctx ns in
+  let diagnoses =
+    match presence with
+    | Ns_present ->
+      [ Sol_cli_rollout_diagnosis.diagnose_service_live
+          ~ctx
+          ~pod_expectation
+          ~ns
+          ~service_name:k8s_name
+          ~k8s_name
+          ()
+      ]
+    (* Nothing was read, so there is no per-service verdict: the rollup decides
+       from the presence. Synthesising a healthy one here is exactly how an
+       unreadable workload came to be reported healthy. *)
+    | Ns_absent | Ns_unreadable _ -> []
   in
-  let status = Sol_cli_status.rollup_domain_status ~ns_exists:exists [ diagnosis ] in
+  let status = Sol_cli_status.rollup_domain_status ~ns_presence:presence diagnoses in
   Printf.printf
     "\n%s/%s  %s\n"
     domain

@@ -471,6 +471,26 @@ let render_status_job ~name ~namespace ~image ~table ~configmap_name =
    standalone tool image to. Reusing this same service's repo path with a
    distinct tag (not a version tag) avoids needing a new, otherwise-empty
    repository just for this one-off image. *)
+
+(* DEC-038 §6 / INFRA-058: the operator's diagnostic grant follows the workload,
+   not this command's scope, so reconcile it across every namespace that holds a
+   Sol-managed workload. RBAC only -- it writes RoleBindings and nothing else.
+
+   A failure here is a warning, not fatal: a deployment must not be blocked by a
+   read-only grant. But it is never silent -- the warning names what could not be
+   established and what it costs, because a diagnostic capability that quietly
+   did not appear is the failure mode this whole line of work exists to remove. *)
+let reconcile_operator_bindings_warn ~ctx ~workspace =
+  match Sol_cli_substrate.reconcile_operator_bindings ~ctx ~workspace with
+  | Ok () -> ()
+  | Error msg ->
+    Printf.eprintf
+      "warning: could not establish the operator's diagnostic RoleBindings: %s\n\
+       The operator identity will not be able to read this workspace's workloads.\n\
+       %!"
+      msg
+;;
+
 let pick_namespace_and_service ~workspace =
   match Sol_cli_manifest.discover_services () with
   | [] ->
@@ -538,6 +558,7 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
        (match Sol_cli_substrate.ensure ~ctx ~namespaces:[ namespace ] with
         | Ok () -> ()
         | Error msg -> fatal msg);
+       reconcile_operator_bindings_warn ~ctx ~workspace;
        let files = read_migration_files dir in
        if files = []
        then Printf.printf "(no migration files found in %s -- nothing to do)\n" dir
