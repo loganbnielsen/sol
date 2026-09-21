@@ -307,6 +307,14 @@ case " $* " in
     ;;
   *) exit 91 ;;
 esac
+case " $* " in
+  *" sts assume-role "*)
+    # DEC-040: the identity check behind a cluster refusal. The credential is good here, so a
+    # refusal is evidence of removal rather than of a broken trust policy.
+    printf '{"Credentials":{"AccessKeyId":"ASIAEXAMPLE"}}\n'
+    exit 0
+    ;;
+esac
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --kubeconfig ]; then shift; path="$1"; break; fi
   shift

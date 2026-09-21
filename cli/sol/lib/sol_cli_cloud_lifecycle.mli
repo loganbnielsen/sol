@@ -313,6 +313,14 @@ val normalize_role_arn : string -> string
     worst case is a false mismatch, which the caller turns into [Undetermined]. *)
 val principal_matches : expected:string -> whoami_identity -> bool option
 
+(** A cluster refusal counts as de-escalation only when the credential is still good: a
+    broken trust policy, clock skew or a wrong assumed role produces the same refusal as a
+    revoked grant, and reading it as removal would be a fail-open into [Deescalated]. *)
+val refusal_is_deescalation
+  :  sts_assumable:bool option
+  -> string
+  -> deescalation_principal
+
 val deescalation_verdict_to_string : deescalation_verdict -> string
 
 (** [enter ~from ~to_] is the only way an operation may move between phases. It

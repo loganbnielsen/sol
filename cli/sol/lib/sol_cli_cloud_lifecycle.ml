@@ -1331,6 +1331,35 @@ let principal_matches ~expected (identity : whoami_identity) =
      | None -> None)
 ;;
 
+(* A refusal by the cluster is evidence of de-escalation only if the credential itself is
+   still good.
+
+   "You must be logged in" is also what a valid credential gets when something upstream of
+   the cluster is wrong -- a broken trust policy on the role, clock skew, a wrong assumed
+   role -- and `Principal_refused_by_cluster` maps straight to Deescalated. That would read a
+   broken credential as a verified transition, which is a fail-*open* into the one verdict
+   that has to mean something. So the caller also confirms the role can still be assumed, and
+   only a refusal with a working identity counts. If the identity check fails, the probe
+   obtained no usable evidence and says so.
+   [sts_assumable] is [Some true] when the role was assumed successfully, [Some false] when
+   the attempt was refused, and [None] when the attempt itself could not be made. *)
+let refusal_is_deescalation ~(sts_assumable : bool option) detail =
+  match sts_assumable with
+  | Some true -> Principal_refused_by_cluster detail
+  | Some false ->
+    Principal_probe_failed
+      (Printf.sprintf
+         "the cluster refused the probe (%s) and the provisioning role could not be \
+          assumed, so a broken credential cannot be told apart from a revoked one"
+         detail)
+  | None ->
+    Principal_probe_failed
+      (Printf.sprintf
+         "the cluster refused the probe (%s) and the identity check could not be \
+          performed, so the refusal is not evidence"
+         detail)
+;;
+
 let deescalation_verdict_to_string = function
   | Deescalated ->
     "de-escalated: the effective surface no longer permits bootstrap capabilities"

@@ -822,7 +822,7 @@ let cluster_refused detail =
    strict comparison is the safe direction -- its worst case is a false mismatch, which
    lands in Undetermined and does not announce Ready. INFRA-061 records the precise
    comparison (account plus normalised role) as the follow-up that makes it exact. *)
-let deescalation_principal_check ~expected_arn env =
+let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
   match
     Sol_cli_process.run
       (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ])
@@ -852,9 +852,31 @@ let deescalation_principal_check ~expected_arn env =
        generated, no reachable API -- is a measurement failure, and absence of evidence
        must not become evidence of de-escalation. Only the cluster's own answer counts. *)
     if cluster_refused detail
-    then
-      Sol_cli_cloud_lifecycle.Principal_refused_by_cluster
-        (Printf.sprintf "%s: %s" expected_arn detail)
+    then (
+      (* A refusal is evidence of removal only if the credential is still good. "You must be
+         logged in" is also what a working credential gets when the role's trust policy is
+         broken, the clock is skewed, or the wrong role was assumed -- and reading that as
+         removal would be a fail-open into Deescalated. The raw configured ARN is used here,
+         not the path-free form the comparison wants, because this is an IAM call. *)
+      let sts_assumable =
+        match
+          Sol_cli_process.run
+            (Sol_cli_process.cmd
+               ~env
+               [ "aws"
+               ; "sts"
+               ; "assume-role"
+               ; "--role-arn"
+               ; provisioner_role_arn
+               ; "--role-session-name"
+               ; "sol-deescalation-check"
+               ])
+        with
+        | Ok r when r.Sol_cli_process.exit_code = 0 -> Some true
+        | Ok _ -> Some false
+        | Error _ -> None
+      in
+      Sol_cli_cloud_lifecycle.refusal_is_deescalation ~sts_assumable detail)
     else Sol_cli_cloud_lifecycle.Principal_probe_failed detail
   | Error e ->
     Sol_cli_cloud_lifecycle.Principal_probe_failed (Sol_cli_process.error_to_string e)
@@ -872,6 +894,7 @@ let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
       let principal =
         deescalation_principal_check
           ~expected_arn:(Sol_cli_cloud_lifecycle.normalize_role_arn provisioner_role_arn)
+          ~provisioner_role_arn
           env
       in
       let probes =
@@ -2154,7 +2177,10 @@ let cloud_init ~target ~var_file ~vars ~action () =
        verification that can only come back Undetermined. *)
     let control_interval_s =
       match Sys.getenv_opt "SOL_WHOAMI_RETRY_INTERVAL_S" with
-      | Some v -> (match float_of_string_opt v with Some f -> f | None -> 10.)
+      | Some v ->
+        (match float_of_string_opt v with
+         | Some f -> f
+         | None -> 10.)
       | None -> 10.
     in
     let rec observe_bootstrap_window remaining =

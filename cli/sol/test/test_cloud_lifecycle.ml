@@ -1307,6 +1307,41 @@ let test_identity_reports_its_source () =
     (source_of {|{"status":{"userInfo":{"username":"system:node:ip-10-0-1-1"}}}|})
 ;;
 
+(* DEC-040: a refusal is evidence of removal only if the credential is still good.
+   "You must be logged in" is also what a working credential gets when the role's trust
+   policy is broken, the clock is skewed, or the wrong role was assumed -- and
+   Principal_refused_by_cluster maps straight to Deescalated. Without the identity check that
+   is a fail-open into the one verdict that has to mean something. *)
+let test_refusal_needs_a_good_identity () =
+  let granted = [ "create clusterroles", true ] in
+  let denied = [ "create clusterroles", false ] in
+  let verdict_of sts_assumable =
+    Sol_cli_cloud_lifecycle.deescalation_transition
+      ~before:granted
+      ~after_principal:
+        (Sol_cli_cloud_lifecycle.refusal_is_deescalation ~sts_assumable "Unauthorized")
+      ~after:denied
+  in
+  (* the credential is good: the refusal is the removal *)
+  (match verdict_of (Some true) with
+   | Sol_cli_cloud_lifecycle.Deescalated -> ()
+   | _ -> Alcotest.fail "a refusal with a working identity was not read as de-escalated");
+  (* the credential is broken: a revocation cannot be told from a bad trust policy *)
+  (match verdict_of (Some false) with
+   | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+   | Sol_cli_cloud_lifecycle.Deescalated ->
+     Alcotest.fail "a refusal with an unassumable role was read as de-escalated"
+   | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+     Alcotest.fail "a refusal with an unassumable role was read as still elevated");
+  (* the identity check could not be performed at all *)
+  match verdict_of None with
+  | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+  | Sol_cli_cloud_lifecycle.Deescalated ->
+    Alcotest.fail "a refusal with no identity check was read as de-escalated"
+  | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+    Alcotest.fail "a refusal with no identity check was read as still elevated"
+;;
+
 let test_effective_authorization () =
   let open L in
   let expected = provisioner_authorization_checks in
@@ -1395,6 +1430,10 @@ let () =
             "ambiguous array (DEC-040)"
             `Quick
             test_ambiguous_array_does_not_proceed
+        ; Alcotest.test_case
+            "a refusal needs a good identity (DEC-040)"
+            `Quick
+            test_refusal_needs_a_good_identity
         ; Alcotest.test_case
             "identity reports its source (DEC-040)"
             `Quick
