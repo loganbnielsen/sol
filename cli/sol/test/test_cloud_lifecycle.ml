@@ -1182,7 +1182,7 @@ let test_whoami_identity_shapes () =
 let test_principal_comparison_fails_closed () =
   let expected = "arn:aws:iam::111122223333:role/sol-provisioner" in
   let identity ?canonical ?arn ?username () =
-    Sol_cli_cloud_lifecycle.{ canonical_arn = canonical; arn; username }
+    Sol_cli_cloud_lifecycle.{ canonical_arn = canonical; arn; username; source = "test" }
   in
   Alcotest.(check (option bool))
     "exact match"
@@ -1282,6 +1282,31 @@ let test_ambiguous_array_does_not_proceed () =
             ~default:"?"))
 ;;
 
+(* DEC-040: the identity must report *which field* it came from. The gate requires
+   canonicalArn, because that is the field the de-escalation comparison depends on -- a pass
+   via the arn or username fallbacks would validate a path the comparison does not use. *)
+let test_identity_reports_its_source () =
+  let source_of body =
+    match Sol_cli_cloud_lifecycle.whoami_identity_of_json body with
+    | Ok i -> i.Sol_cli_cloud_lifecycle.source
+    | Error e -> Alcotest.fail e
+  in
+  Alcotest.(check string)
+    "canonicalArn from extra"
+    "extra.canonicalArn"
+    (source_of
+       {|{"status":{"userInfo":{"extra":{"canonicalArn":["arn:aws:iam::111122223333:role/p"]}}}}|});
+  Alcotest.(check string)
+    "arn from extra when there is no canonicalArn"
+    "extra.arn"
+    (source_of
+       {|{"status":{"userInfo":{"extra":{"arn":["arn:aws:iam::111122223333:role/p"]}}}}|});
+  Alcotest.(check string)
+    "the username fallback is named as such"
+    "username"
+    (source_of {|{"status":{"userInfo":{"username":"system:node:ip-10-0-1-1"}}}|})
+;;
+
 let test_effective_authorization () =
   let open L in
   let expected = provisioner_authorization_checks in
@@ -1370,6 +1395,10 @@ let () =
             "ambiguous array (DEC-040)"
             `Quick
             test_ambiguous_array_does_not_proceed
+        ; Alcotest.test_case
+            "identity reports its source (DEC-040)"
+            `Quick
+            test_identity_reports_its_source
         ; Alcotest.test_case
             "parse failure is Undetermined (DEC-040)"
             `Quick

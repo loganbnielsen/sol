@@ -190,13 +190,27 @@ Record, with the command and its output, in this order:
    capability set, same authorizer — answered **denied**.
 6. **`Ready` only then.** The phase transition, after (5).
 
-The **shape of the authorizer's answer** is now checked automatically, in the first
-minutes after the cluster is reachable: `sol cloud apply` runs the probe once as the
-provisioner and **fails the run** if the parser cannot identify a principal, printing the
-raw response. Record that outcome here, and paste the raw response -- then promote it to a
-fixture if it differs from the ones the parser is tested against. The fixtures encode a
-shape recalled from the API; the cluster is what settles it, and the gate is what stops the
-question being deferred to the end of a bootstrap.
+The **shape of the authorizer's answer** is checked automatically, in the first minutes
+after the cluster is reachable -- after the cloud apply, before the platform install.
+`sol cloud apply` retries the probe with backoff (a fresh EKS endpoint is briefly unable to
+authenticate its own principal) and then **fails the run** unless it observes all four of:
+
+1. an answer at all — unreachability after the retry window is a **failure**, not a pass,
+   because the gate not having run means the shape is unchecked;
+2. a response the parser can identify a principal from;
+3. **the expected provisioner**, not merely some principal — a leftover credential of
+   another identity must not pass a shape check;
+4. an identity taken from **`canonicalArn`**, the field the de-escalation comparison
+   depends on. A pass via the `arn` or `username` fallbacks would validate a path the
+   comparison does not use, so it stops the run too.
+
+Record here which of those the run reported, and the identity source field it printed. The
+raw response is written to `$SOL_QUALIFICATION_CAPTURE_DIR/whoami-capture.json`
+(`~/.sol-qual/` by default) so it survives teardown — **attach it to this record**, and
+promote it to a fixture if it differs from what the parser is tested against.
+
+**A green offline harness is not shape validation.** That harness emits the shape recalled
+from the API, so it shows the wiring works; only this capture shows the shape is right.
 
 If any of steps 1–5 cannot be obtained, the verification is `Undetermined` and the run
 must not accept `Ready` — record the failure, do not proceed.

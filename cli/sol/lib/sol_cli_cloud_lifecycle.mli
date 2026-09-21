@@ -285,6 +285,9 @@ type whoami_identity =
   { arn : string option
   ; canonical_arn : string option
   ; username : string option
+  ; source : string
+    (** Which field the identity came from. The de-escalation comparison depends on
+          canonicalArn, so a caller must be able to see whether it got that one. *)
   }
 
 val whoami_identity_of_json : string -> (whoami_identity, string) result

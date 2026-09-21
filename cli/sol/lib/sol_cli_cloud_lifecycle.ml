@@ -1159,6 +1159,11 @@ type whoami_identity =
   { arn : string option
   ; canonical_arn : string option
   ; username : string option
+  ; source : string
+    (** Which field the identity was taken from: extra.canonicalArn, extra.arn,
+          userInfo.canonicalArn, userInfo.arn, or username. The de-escalation comparison
+          depends on canonicalArn being present, so a caller that cares must be able to see
+          which field it got. *)
   }
 
 (* Strict: a value that is a list must have exactly one element.
@@ -1198,6 +1203,7 @@ let whoami_identity_of_json json : (whoami_identity, string) result =
     let status = sub "status" json in
     let user = sub "userInfo" status in
     let extra = sub "extra" user in
+    let source = ref "none" in
     (* A present-but-ambiguous value is an error, not a first element. *)
     let field name = single_string_of_json ~what:name (sub name user) in
     let extra_field name = single_string_of_json ~what:name (sub name extra) in
@@ -1206,17 +1212,25 @@ let whoami_identity_of_json json : (whoami_identity, string) result =
         Result.bind (extra_field "canonicalArn") (fun extra_canonical ->
           Result.bind (field "canonicalArn") (fun user_canonical ->
             Result.bind (field "username") (fun username ->
-              let arn =
+              let arn, arn_source =
                 match extra_arn with
-                | Some _ as v -> v
-                | None -> user_arn
+                | Some _ as v -> v, "extra.arn"
+                | None -> user_arn, "userInfo.arn"
               in
-              let canonical_arn =
+              let canonical_arn, canonical_source =
                 match extra_canonical with
-                | Some _ as v -> v
-                | None -> user_canonical
+                | Some _ as v -> v, "extra.canonicalArn"
+                | None -> user_canonical, "userInfo.canonicalArn"
               in
-              let identity = { arn; canonical_arn; username } in
+              (* The field the identity is *taken from*: canonicalArn is the one the
+                 comparison depends on, so it is named rather than left implicit. *)
+              (source
+               := match canonical_arn, arn, username with
+                  | Some _, _, _ -> canonical_source
+                  | None, Some _, _ -> arn_source
+                  | None, None, Some _ -> "username"
+                  | None, None, None -> "none");
+              let identity = { arn; canonical_arn; username; source = !source } in
               match arn, canonical_arn, username with
               | None, None, None ->
                 Error

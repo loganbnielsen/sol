@@ -899,40 +899,140 @@ let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
    is expected, but an unverified claim is not an acceptable outcome. *)
 (* DEC-040 gate: the shape of the authorizer's answer is the one thing a fixture cannot
    settle, because the fixtures encode a shape recalled from the API rather than captured
-   from a cluster. So it is observed once, as soon as the cluster is reachable, and the run
-   *fails* if the parser cannot identify a principal -- otherwise a bootstrap proceeds for
-   an hour to a verification that was never going to succeed, which is exactly the failure
-   this gate exists to prevent.
+   from a cluster.
 
-   A transient failure to reach the cluster is not a shape mismatch and does not fail the
-   run; it is reported, and the verification itself stays fail-closed. The raw response is
-   printed so the run record can diff it against the fixture shapes. *)
+   It runs as soon as the cluster is reachable -- after the cloud apply and before the
+   platform install, which is the expensive part -- and it **fails the run** unless it
+   observes, in order:
+
+   1. an answer at all, retried with backoff because a freshly created EKS endpoint is
+      briefly unable to authenticate its own principal. Unreachability is retried and then
+      fatal: the gate not having run is a failure, not a pass;
+   2. a response the parser can identify a principal from;
+   3. that the principal is **the expected provisioner**, not merely that some principal was
+      named -- otherwise a leftover credential of another identity passes the shape check;
+   4. that the identity came from `canonicalArn`. The de-escalation comparison depends on
+      that field, so a pass via the `arn` or `username` fallbacks would be validating a path
+      the comparison does not use.
+
+   The raw response is written to a run artifact that survives teardown, so it can be
+   promoted to a fixture even if the run later fails. *)
+let whoami_capture_path () =
+  match Sys.getenv_opt "SOL_QUALIFICATION_CAPTURE_DIR" with
+  | Some dir -> Some (Filename.concat dir "whoami-capture.json")
+  | None ->
+    (match Sys.getenv_opt "HOME" with
+     | Some home ->
+       Some (Filename.concat (Filename.concat home ".sol-qual") "whoami-capture.json")
+     | None -> None)
+;;
+
+let persist_whoami_capture json =
+  match whoami_capture_path () with
+  | None ->
+    Printf.printf
+      "  whoami capture: no writable path (set HOME or SOL_QUALIFICATION_CAPTURE_DIR)\n%!"
+  | Some path ->
+    (try
+       let dir = Filename.dirname path in
+       if not (Sys.file_exists dir) then Unix.mkdir dir 0o700;
+       let oc = open_out path in
+       output_string oc json;
+       close_out oc;
+       Printf.printf "  whoami capture: %s\n%!" path
+     with
+     | _ ->
+       Printf.printf
+         "  whoami capture: could not write %s -- the raw response is in this log above\n\
+          %!"
+         path)
+;;
+
 let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
-  match
-    provisioner_kubeconfig ~role_arn:provisioner_role_arn ~region outputs (fun env ->
-      Sol_cli_process.run
-        (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ]))
-  with
-  | Error e -> Printf.printf "  whoami shape: not reached (%s)\n%!" e
-  | Ok (Error e) ->
-    Printf.printf
-      "  whoami shape: not reached (%s)\n%!"
-      (Sol_cli_process.error_to_string e)
-  | Ok (Ok r) when r.Sol_cli_process.exit_code <> 0 ->
-    Printf.printf
-      "  whoami shape: kubectl did not answer (%s)\n%!"
-      (String.trim (r.Sol_cli_process.stderr ^ " " ^ r.Sol_cli_process.stdout))
-  | Ok (Ok r) ->
-    (match Sol_cli_cloud_lifecycle.whoami_identity_of_json r.Sol_cli_process.stdout with
-     | Ok _ -> Printf.printf "  whoami shape: parsed\n%!"
-     | Error why ->
-       lifecycle_error
-         (Printf.sprintf
-            "the authorizer's whoami response did not match the parser (%s). The run \
-             stops             here rather than spending a bootstrap on a verification \
-             that cannot succeed. Raw response: %s"
-            why
-            (String.trim r.Sol_cli_process.stdout)))
+  let interval_s = 10. in
+  let rec attempt remaining =
+    let outcome =
+      provisioner_kubeconfig ~role_arn:provisioner_role_arn ~region outputs (fun env ->
+        Sol_cli_process.run
+          (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ]))
+    in
+    match outcome with
+    | Ok (Ok r) when r.Sol_cli_process.exit_code = 0 ->
+      let json = String.trim r.Sol_cli_process.stdout in
+      persist_whoami_capture json;
+      let identity_result = Sol_cli_cloud_lifecycle.whoami_identity_of_json json in
+      (match identity_result with
+       | Error why ->
+         lifecycle_error
+           (Printf.sprintf
+              "the authorizer's whoami response did not match the parser (%s). The run \
+               stops here rather than spending a bootstrap on a verification that cannot \
+               succeed. Raw response: %s"
+              why
+              json)
+       | Ok identity ->
+         let source = identity.Sol_cli_cloud_lifecycle.source in
+         Printf.printf "  whoami shape: parsed (identity source: %s)\n%!" source;
+         let matched =
+           Sol_cli_cloud_lifecycle.principal_matches
+             ~expected:provisioner_role_arn
+             identity
+         in
+         let named =
+           match identity.Sol_cli_cloud_lifecycle.canonical_arn, identity.arn with
+           | Some a, _ -> a
+           | None, Some a -> a
+           | None, None -> "(unnamed)"
+         in
+         (match matched with
+          | Some true -> ()
+          | Some false ->
+            lifecycle_error
+              (Printf.sprintf
+                 "the authorizer answered as a different principal than the provisioner \
+                  whose elevation this run manages (%s, from %s). The run stops here: \
+                  the de-escalation comparison would be about somebody else."
+                 named
+                 source)
+          | None -> lifecycle_error "the authorizer's answer named no principal at all");
+         if source <> "extra.canonicalArn" && source <> "userInfo.canonicalArn"
+         then
+           lifecycle_error
+             (Printf.sprintf
+                "the principal came from %s rather than canonicalArn, which is the field \
+                 the de-escalation comparison depends on. The run stops rather than \
+                 validating a path the verification does not use. Raw response: %s"
+                source
+                json))
+    | unreachable ->
+      let why =
+        match unreachable with
+        | Ok (Ok r) ->
+          Printf.sprintf
+            "kubectl exited %d (%s)"
+            r.Sol_cli_process.exit_code
+            (String.trim (r.Sol_cli_process.stderr ^ " " ^ r.Sol_cli_process.stdout))
+        | Ok (Error e) -> Sol_cli_process.error_to_string e
+        | Error e -> e
+      in
+      if remaining <= 1
+      then
+        lifecycle_error
+          (Printf.sprintf
+             "the authorizer could not be reached to check the whoami shape (%s). The \
+              gate not having run is a failure, not a pass: the run stops before the \
+              platform install rather than discovering an unreadable shape at \
+              de-escalation."
+             why)
+      else (
+        Printf.printf
+          "  whoami shape: not reachable yet (%s); retrying in %.0fs\n%!"
+          why
+          interval_s;
+        Unix.sleepf interval_s;
+        attempt (remaining - 1))
+  in
+  attempt 10
 ;;
 
 let verify_deescalation ~region ~outputs ~provisioner_role_arn ~before =

@@ -140,10 +140,29 @@ raw response for the run record to diff against the fixture shapes. A transient 
 reach the cluster is not a shape mismatch: it is reported, and the verification itself
 stays fail-closed.
 
-Verified falsifiable: with the parser mutated to reject every shape, the offline lifecycle
-harness fails the run; restored, it passes. The harness also asserts the gate reported a
-parsed response, so the check cannot quietly go absent.
+The gate retries with backoff and then **fails** rather than warning: a fresh EKS endpoint
+is briefly unable to authenticate its own principal, but once the retry window expires, the
+gate not having run is a failure rather than a pass -- otherwise the run proceeds into the
+expensive install with the shape unchecked and discovers the mismatch at de-escalation. It
+also asserts that the principal is **the expected provisioner** (a leftover credential of
+another identity must not pass a shape check) and that the identity came from
+**`canonicalArn`**, the field the comparison depends on.
+
+Verified falsifiable, end to end: with the parser mutated to reject every shape, the offline
+lifecycle harness fails the run; with the emulated cluster answering without `canonicalArn`,
+it fails the run; restored, it passes. The harness asserts the gate reported a parsed
+response, so the check cannot quietly go absent. A green harness is still not shape
+validation -- it emits the recalled shape -- which is what the capture is for.
 
 This means the epoch cannot spend an hour on a bootstrap whose de-escalation verification
 was never going to succeed -- the mismatch is found in the first minutes, while the target
 is still destructible.
+
+## If the first de-escalation returns Undetermined for a principal mismatch
+
+Check the two captured ARNs before concluding the cluster misbehaved. The strict full-ARN
+comparison can produce false mismatches -- `canonicalArn` dropping a role path while `arn`
+keeps it is the known case -- and a mismatch lands in `Undetermined`, which is fail-closed
+but noisy. The gate's capture, plus the post-de-escalation probe's `identity source`, say
+which field each side came from. Reading those two before blaming the cluster is the
+difference between finding a real defect and chasing a false one.
