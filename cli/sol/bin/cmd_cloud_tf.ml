@@ -150,6 +150,25 @@ let require_terraform_success r =
     exit 1
 ;;
 
+(* [cleanup] is best-effort: the run is already failing, so a cleanup failure cannot
+   change the exit path -- but it must be reported, or the operator is left believing the
+   elevated access was removed when it may not have been. *)
+let report_cleanup_failure ~what cleanup =
+  match cleanup () with
+  | Ok r when r.Sol_cli_process.exit_code = 0 -> ()
+  | Ok r ->
+    Printf.eprintf
+      "warning: %s failed (terraform exited %d); the elevated access may still be applied\n\
+       %!"
+      what
+      r.Sol_cli_process.exit_code
+  | Error e ->
+    Printf.eprintf
+      "warning: %s failed (%s); the elevated access may still be applied\n%!"
+      what
+      (Sol_cli_process.error_to_string e)
+;;
+
 let normalize_var_file path =
   if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path else path
 ;;
@@ -803,27 +822,18 @@ let bootstrap_only_capabilities =
     ]
 ;;
 
-(* `kubectl auth can-i` prints `yes` or `no` on stdout and exits 0 or 1. The exit code
-   alone is not enough: an unreachable API, a token that could not be minted, or any
-   other non-authorization failure also exits non-zero, and reading every non-zero as
-   `no` is how a probe that obtained no evidence became evidence of removal (DEC-040 /
-   FND-0021). Only an explicit `yes`/`no` is classified; everything else is
-   [Indeterminate] and fails the verdict closed. *)
+(* Run `kubectl auth can-i` and classify its result. The classification itself is a lib
+   function so it can be unit tested; this only performs the call. *)
 let capability_answer_of_can_i ~env { Sol_cli_cloud_lifecycle.verb; resource } =
   match
     Sol_cli_process.run
       (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "can-i"; verb; resource ])
   with
   | Ok r ->
-    (match String.trim r.Sol_cli_process.stdout with
-     | "yes" -> Sol_cli_cloud_lifecycle.Permitted
-     | "no" -> Sol_cli_cloud_lifecycle.Denied
-     | _ ->
-       Sol_cli_cloud_lifecycle.Indeterminate
-         (Printf.sprintf
-            "kubectl exited %d without a yes/no answer (%s)"
-            r.Sol_cli_process.exit_code
-            (String.trim (r.Sol_cli_process.stderr ^ " " ^ r.Sol_cli_process.stdout))))
+    Sol_cli_cloud_lifecycle.capability_answer_of_can_i_output
+      ~exit_code:r.Sol_cli_process.exit_code
+      ~stdout:r.Sol_cli_process.stdout
+      ~stderr:r.Sol_cli_process.stderr
   | Error e -> Sol_cli_cloud_lifecycle.Indeterminate (Sol_cli_process.error_to_string e)
 ;;
 
@@ -841,6 +851,13 @@ let whoami_retry_interval_s () =
      | Some seconds when Float.is_finite seconds && seconds >= 0. -> seconds
      | _ -> 10.)
 ;;
+
+(* Bounds for the retry loops, named so they cannot drift apart silently. The shape
+   gate and the window control both wait out a fresh endpoint's propagation; the
+   post-removal await is longer, because FND-0021 saw an access-policy disassociation
+   take over five minutes to propagate while a deletion took under 45 s. *)
+let cluster_propagation_attempts = 10
+let deescalation_attempts = 18
 
 (* A refusal from the cluster, as opposed to a failure to reach it. Shared because the
    de-escalation probe treats it as evidence of de-escalation while the shape gate treats it
@@ -1130,10 +1147,14 @@ let verify_whoami_shape ~on_error ~region ~outputs ~provisioner_role_arn =
         Unix.sleepf interval_s;
         attempt (remaining - 1))
   in
-  attempt 10
+  attempt cluster_propagation_attempts
 ;;
 
-let verify_deescalation ~region ~outputs ~provisioner_role_arn ~before =
+(* The verdict after the removal, once it stops changing or the bounded window expires.
+   Never exits: the install path treats anything but [Deescalated] as fatal because Ready
+   is a least-privilege claim, while the destroy path must not let a probe that can fail
+   block teardown (ADR 0003 invariant 6) and reports the verdict instead. *)
+let await_deescalation ~region ~outputs ~provisioner_role_arn ~before =
   let interval_s = whoami_retry_interval_s () in
   let rec loop remaining =
     (* The after-probe builds its kubeconfig the same way the window control did, against
@@ -1160,10 +1181,11 @@ let verify_deescalation ~region ~outputs ~provisioner_role_arn ~before =
       Unix.sleepf interval_s;
       loop (remaining - 1)
   in
-  (* FND-0021 saw an access-entry deletion propagate in under 45s, so a 60s bound left a
-     thin margin: a slow propagation would fail a healthy run as Undetermined at the end of a
-     bootstrap -- fail-closed, but noisy and expensive. Three minutes. *)
-  match loop 18 with
+  loop deescalation_attempts
+;;
+
+let verify_deescalation ~region ~outputs ~provisioner_role_arn ~before =
+  match await_deescalation ~region ~outputs ~provisioner_role_arn ~before with
   | Sol_cli_cloud_lifecycle.Deescalated ->
     Printf.printf "  de-escalation verified as %s\n%!" provisioner_role_arn
   | verdict ->
@@ -1188,43 +1210,50 @@ let capability_answer_to_string = function
   | Sol_cli_cloud_lifecycle.Indeterminate why -> "indeterminate: " ^ why
 ;;
 
-(* DEC-040's positive control, shared by every path that opens and later revokes the
-   bootstrap window (install and destroy). The bootstrap-only capability must be
-   observed *permitted* as the provisioner while this run's window is open, or a later
-   denial is not a transition. A fresh cluster can refuse or be unreachable while
-   propagation catches up, so the observation retries; if it never sees the capability
-   permitted, the run stops through [on_error] rather than proceeding to a verification
-   that can only come back [Undetermined]. *)
-let observe_bootstrap_window ~on_error ~region ~outputs ~provisioner_role_arn () =
-  let fail message =
-    on_error ();
-    lifecycle_error message
+(* The window control's failure, with every reason it could not be established: an
+   operator needs to see which capability was indeterminate and why, not only that the
+   window never opened. *)
+let window_control_failure ~permitted indeterminate =
+  let stop =
+    "The run stops rather than proceeding to a verification that can only come back \
+     undetermined."
   in
+  if not permitted
+  then
+    Printf.sprintf
+      "the bootstrap window never showed a capability permitted, so a later denial could \
+       not be told apart from a credential that never worked. %s"
+      stop
+  else
+    Printf.sprintf
+      "the bootstrap window showed a capability permitted but also an indeterminate \
+       probe (%s), which a later denial could not be told apart from. %s"
+      (indeterminate
+       |> List.map (fun (capability, why) -> capability ^ ": " ^ why)
+       |> String.concat ", ")
+      stop
+;;
+
+(* [Ok control] once the window shows at least one bootstrap-only capability permitted
+   *and* no indeterminate probe -- an indeterminate capability would make the later
+   transition [Undetermined] anyway, so failing here catches it before the platform
+   install rather than at de-escalation. [Error reason] otherwise; never exits, so the
+   destroy path can report rather than be blocked. *)
+let observe_bootstrap_window_result ~region ~outputs ~provisioner_role_arn () =
   let interval_s = whoami_retry_interval_s () in
   let rec attempt remaining =
     let control = deescalation_probe ~region ~outputs ~provisioner_role_arn () in
-    let _, probes = control in
-    match
+    let principal, probes = control in
+    let permitted =
       List.exists
         (fun (_, answer) -> Sol_cli_cloud_lifecycle.answer_is_permitted answer)
         probes
-    with
-    | false ->
-      if remaining <= 1
-      then
-        fail
-          "the bootstrap window never showed its capability permitted, so a later denial \
-           could not be told apart from a credential that never worked. The run stops \
-           rather than proceeding to a verification that can only come back \
-           undetermined."
-      else (
-        Printf.printf
-          "  bootstrap window control: not yet permitted; retrying in %.0fs\n%!"
-          interval_s;
-        Unix.sleepf interval_s;
-        attempt (remaining - 1))
-    | true ->
-      let principal, probes = control in
+    in
+    let indeterminate =
+      List.filter_map Sol_cli_cloud_lifecycle.indeterminate_reason probes
+    in
+    match permitted, indeterminate with
+    | true, [] ->
       Printf.printf
         "  bootstrap window control: principal=%s; %s\n%!"
         (deescalation_principal_to_string principal)
@@ -1235,9 +1264,29 @@ let observe_bootstrap_window ~on_error ~region ~outputs ~provisioner_role_arn ()
              (Sol_cli_cloud_lifecycle.capability_label capability)
              (capability_answer_to_string answer))
          |> String.concat ", ");
-      control
+      Ok control
+    | _ ->
+      if remaining <= 1
+      then Error (window_control_failure ~permitted indeterminate)
+      else (
+        Printf.printf
+          "  bootstrap window control: not yet permitted; retrying in %.0fs\n%!"
+          interval_s;
+        Unix.sleepf interval_s;
+        attempt (remaining - 1))
   in
-  attempt 10
+  attempt cluster_propagation_attempts
+;;
+
+(* The install path's control: a failure removes the bootstrap window and stops the run,
+   because proceeding would spend a platform install on a verification that cannot
+   succeed. *)
+let observe_bootstrap_window ~on_error ~region ~outputs ~provisioner_role_arn () =
+  match observe_bootstrap_window_result ~region ~outputs ~provisioner_role_arn () with
+  | Ok control -> control
+  | Error message ->
+    on_error ();
+    lifecycle_error message
 ;;
 
 let process_ok ?(env = []) argv =
@@ -2247,7 +2296,9 @@ let cloud_init ~target ~var_file ~vars ~action () =
                (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:false) @ vars)
              ())
     in
-    let cleanup_bootstrap_access () = ignore (deescalate ()) in
+    let cleanup_bootstrap_access () =
+      report_cleanup_failure ~what:"removing the bootstrap access" deescalate
+    in
     let outputs =
       match cloud_outputs_of provider infra_dir with
       | Ok (Some v) -> v
@@ -2811,18 +2862,18 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
                    @ destroy_apply_vars)
                 ())
        in
-       let cleanup_bootstrap_access () = ignore (deescalate ()) in
+       let cleanup_bootstrap_access () =
+         report_cleanup_failure ~what:"removing the bootstrap access" deescalate
+       in
        (* DEC-040 acceptance: the destroy path revokes the same bootstrap access the
-          install path does, so it owes the same evidence -- a capability observed
-          *permitted* as the provisioner while this run's window is open, then verified
-          gone afterwards. Captured before the platform teardown, which is when the
-          window is open. *)
-       (* ADR 0003 invariant 6 (teardown must not be blocked by a probe that can fail) is
-          satisfied here rather than waived: the platform teardown below already calls
-          [with_cluster_access] and needs the cluster API, so a cluster this probe cannot
-          reach is one the very next step could not tear down either. The check adds no
-          new way to strand a target, and it is placed after the removal so a substrate
-          that is about to be destroyed is not left holding access the run never checked. *)
+          install path does, so it owes the same evidence. It is best-effort here, not
+          fatal, and that is a decision rather than an oversight: a destroy's terminal
+          state is the substrate's *absence*, which is stronger evidence than the
+          effective-surface probe, and a probe that can fail must not block teardown
+          (ADR 0003 invariant 6) or strand billable qualification infrastructure
+          (HARDEN-004's cost rule). The observation runs while this run's window is open,
+          before the platform teardown; the verification runs after the removal, before
+          the substrate destroy. *)
        let deescalation_target =
          match provider, target_cfg.provisioner_role_arn, outputs with
          | ( Sol_cli_provider.Aws
@@ -2834,26 +2885,47 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
        let before =
          match deescalation_target with
          | Some (provisioner_role_arn, aws_outputs) ->
-           let _, probes =
-             observe_bootstrap_window
-               ~on_error:cleanup_bootstrap_access
-               ~region:target_cfg.region
-               ~outputs:aws_outputs
-               ~provisioner_role_arn
-               ()
-           in
-           probes
-         | None -> []
+           (match
+              observe_bootstrap_window_result
+                ~region:target_cfg.region
+                ~outputs:aws_outputs
+                ~provisioner_role_arn
+                ()
+            with
+            | Ok (_, probes) -> Some probes
+            | Error message ->
+              Printf.eprintf
+                "warning: the bootstrap window could not be observed before teardown \
+                 (%s); its effective removal will not be verified. Teardown removes the \
+                 access with the substrate anyway.\n\
+                 %!"
+                message;
+              None)
+         | None -> None
        in
        destroy_platform ~on_error:cleanup_bootstrap_access outputs;
        require_terraform_success (deescalate ());
        (match deescalation_target with
         | Some (provisioner_role_arn, aws_outputs) ->
-          verify_deescalation
-            ~region:target_cfg.region
-            ~outputs:aws_outputs
-            ~before
-            ~provisioner_role_arn
+          (match before with
+           | Some before ->
+             (match
+                await_deescalation
+                  ~region:target_cfg.region
+                  ~outputs:aws_outputs
+                  ~before
+                  ~provisioner_role_arn
+              with
+              | Sol_cli_cloud_lifecycle.Deescalated -> ()
+              | verdict ->
+                Printf.eprintf
+                  "warning: the bootstrap access was removed but its effective removal \
+                   could not be verified (%s). Proceeding: destroying the substrate \
+                   removes the access with it, and teardown is not blocked by a probe \
+                   that can fail (ADR 0003 invariant 6).\n\
+                   %!"
+                  (Sol_cli_cloud_lifecycle.deescalation_verdict_to_string verdict))
+           | None -> ())
         | None ->
           (* A target that declares no provisioner role elevated nothing; said out loud
              rather than skipped, the same as on the install path. *)

@@ -526,14 +526,28 @@ case " $* " in
       printf 'error: unable to connect to the server: dial tcp: i/o timeout\n' >&2
       exit 1
     fi
-    # Real kubectl prints the answer on stdout (`yes`/`no`) and exits 0/1. The classifier
-    # reads the answer, so the stub must emit it rather than only an exit code -- which is
-    # what let a transport failure masquerade as a denial before.
+    # INFRA-061 control strictness: one capability comes back indeterminate while the
+    # others are permitted, in the window. A control that accepts "any capability
+    # permitted" would proceed and only discover the indeterminate at de-escalation,
+    # after the platform install; the control must fail early instead.
+    if [ "${CAN_I_INDETERMINATE_WHEN_OPEN:-}" = 1 ] &&
+      [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "true" ]; then
+      case " $* " in
+        *" auth can-i create clusterroles "*)
+          printf 'maybe\n'
+          exit 0
+          ;;
+      esac
+    fi
+    # Real kubectl prints the answer on stdout and exits 0/1, and a denial carries a
+    # reason after the token (`no - ...`) on the versions that do. The classifier reads
+    # the first token, so the stub emits the real shape: matching the whole line would
+    # otherwise read every genuine denial as indeterminate.
     if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "true" ]; then
       printf 'yes\n'
       exit 0
     fi
-    printf 'no\n'
+    printf 'no - no RBAC policy matched\n'
     exit 1
     ;;
 esac
@@ -755,6 +769,34 @@ grep -qF 'no usable answer' "$can_i_log.out" || {
   cat "$can_i_log.out" >&2
   exit 1
 }
+
+# INFRA-061 control strictness. One capability is indeterminate *inside the window* while
+# the others are permitted. An indeterminate capability makes the later transition
+# Undetermined regardless, so a control that accepts "any capability permitted" spends the
+# platform install only to fail at de-escalation. The control must refuse the window, name
+# the indeterminate probe, and stop before the platform install.
+indeterminate_window_log="$tmp/window-indeterminate.log"
+rm -f "$FAIL_MARKER_DIR/bootstrap-window"
+if (export FAIL_ON=""; export CAN_I_INDETERMINATE_WHEN_OPEN=1; run_apply "$indeterminate_window_log"); then
+  echo "an indeterminate window probe did not stop the run:" >&2
+  cat "$indeterminate_window_log.out" >&2
+  exit 1
+fi
+grep -qF 'indeterminate probe' "$indeterminate_window_log.out" || {
+  echo "the run did not report why the window could not be established:" >&2
+  cat "$indeterminate_window_log.out" >&2
+  exit 1
+}
+if grep -qF 'platform-apply' "$indeterminate_window_log.out"; then
+  echo "the run reached the platform install despite an indeterminate window probe:" >&2
+  cat "$indeterminate_window_log.out" >&2
+  exit 1
+fi
+if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" != "false" ]; then
+  echo "the indeterminate-window failure left the bootstrap window open:" >&2
+  cat "$indeterminate_window_log.out" >&2
+  exit 1
+fi
 
 # INFRA-034: a transient unmet readiness sample must be waited out, not fatal. This
 # is the defect a real target hit: every component is still starting the moment the
@@ -1455,20 +1497,27 @@ assert_contains "the disposable destroy reports retaining nothing" "$log_none.ou
 assert_contains "the disposable destroy states no artifacts remain" "$log_none.out" \
   'no residual billable artifacts' || exit 1
 
-# DEC-040 acceptance: the destroy path revokes the bootstrap access too, so it owes the
-# same effective-surface verification the install path gives. A `can-i` that returns no
-# usable answer after the removal must fail the destroy, not let it declare the revocation
-# complete. Without the verification this scenario succeeds, which is why it is here.
+# DEC-040 acceptance on the destroy path, and the decision it makes: the destroy revokes
+# the bootstrap access too, so it must observe the window and check the effective surface,
+# but that check is advisory. A probe that can fail must not block teardown (ADR 0003
+# invariant 6) or strand billable infrastructure (HARDEN-004's cost rule), and a destroy's
+# terminal state is the substrate's absence, which is stronger evidence anyway. So an
+# indeterminate post-removal probe must be *reported* and the teardown must still complete.
 destroy_tri_log="$tmp/destroy-can-i-indeterminate.log"
 rm -f "$FAIL_MARKER_DIR/bootstrap-window"
-if (cd "$tmp/work" && DESTROYING=1 CAN_I_FAIL=1 LIFECYCLE_LOG="$destroy_tri_log" \
+if ! (cd "$tmp/work" && DESTROYING=1 CAN_I_FAIL=1 LIFECYCLE_LOG="$destroy_tri_log" \
       "$sol" cloud destroy prod/aws/us-east-1 --apply) >"$destroy_tri_log.out" 2>&1; then
-  echo "a destroy accepted an indeterminate de-escalation probe as a verified removal:" >&2
+  echo "the destroy was blocked by the de-escalation probe, which must never strand a target:" >&2
   cat "$destroy_tri_log.out" >&2
   exit 1
 fi
+grep -qF 'effective removal could not be verified' "$destroy_tri_log.out" || {
+  echo "the destroy completed but never reported that the removal could not be verified:" >&2
+  cat "$destroy_tri_log.out" >&2
+  exit 1
+}
 grep -qF 'no usable answer' "$destroy_tri_log.out" || {
-  echo "the destroy failed, but not because the capability probe was indeterminate:" >&2
+  echo "the destroy warning did not name the indeterminate probe:" >&2
   cat "$destroy_tri_log.out" >&2
   exit 1
 }
