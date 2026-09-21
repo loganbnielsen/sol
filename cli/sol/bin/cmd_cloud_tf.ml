@@ -2152,6 +2152,11 @@ let cloud_init ~target ~var_file ~vars ~action () =
        propagation catches up. So it retries with backoff, and if it never observes
        permitted the run stops before the platform install rather than proceeding to a
        verification that can only come back Undetermined. *)
+    let control_interval_s =
+      match Sys.getenv_opt "SOL_WHOAMI_RETRY_INTERVAL_S" with
+      | Some v -> (match float_of_string_opt v with Some f -> f | None -> 10.)
+      | None -> 10.
+    in
     let rec observe_bootstrap_window remaining =
       match target_cfg.provisioner_role_arn, outputs with
       | Some provisioner_role_arn, Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ->
@@ -2174,8 +2179,9 @@ let cloud_init ~target ~var_file ~vars ~action () =
                 run stops before the platform install."
            else (
              Printf.printf
-               "  bootstrap window control: not yet permitted; retrying in 10s\n%!";
-             Unix.sleepf 10.;
+               "  bootstrap window control: not yet permitted; retrying in %.0fs\n%!"
+               control_interval_s;
+             Unix.sleepf control_interval_s;
              observe_bootstrap_window (remaining - 1)))
       | _ -> None
     in

@@ -313,7 +313,11 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "${path:-}" ] && [ "$KUBECONFIG" = "$path" ] || exit 92
 printf '%s\n' "$path" >>"$KUBECONFIG_LOG"
-if [ "${FAIL_ON:-}" = access ] && [ ! -e "$FAIL_MARKER_DIR/access" ]; then
+# DEC-040: the access failure is injected in one of two modes, because the two now have
+# different expected outcomes. `once` (default) is the transient case a bounded retry must
+# ride through; `always` is the persistent case, where the gate must fail after its window
+# with the message that the gate did not run.
+if [ "${FAIL_ON:-}" = access ] && { [ "${ACCESS_FAIL:-once}" = always ] || [ ! -e "$FAIL_MARKER_DIR/access" ]; }; then
   : >"$FAIL_MARKER_DIR/access"; exit 20
 fi
 : >"$path"
@@ -602,7 +606,9 @@ run_destroy() {
 for phase in cloud outputs cloud-verify access platform-init prerequisites crds deescalate rbac platform; do
   rm -f "$tmp/markers/$phase"
   log="$tmp/$phase.log"
-  if (export FAIL_ON="$phase"; run_apply "$log"); then
+  # The access phase is persistent here: an injected access failure that never clears must
+  # still be fatal, or the retry would quietly turn a hard failure into a pass.
+  if (export FAIL_ON="$phase"; export ACCESS_FAIL=always; run_apply "$log"); then
     echo "cloud apply unexpectedly survived injected $phase failure" >&2
     exit 1
   fi
@@ -611,6 +617,25 @@ for phase in cloud outputs cloud-verify access platform-init prerequisites crds 
   echo "INFRA-039: the apply did not report the principal its credentials belong to" >&2
   exit 1
 }
+# DEC-040 transient: the same injected access failure, but it clears after the first
+# attempt. The bounded retry must ride through it and the install must survive -- and the
+# log must show the retry, because otherwise "survived" is indistinguishable from "the
+# injection never happened", which is how a one-shot injection turns a fatal case into a
+# false pass.
+transient_log="$tmp/access-transient.log"
+rm -f "$tmp/markers/access"
+if ! (export FAIL_ON=access; export ACCESS_FAIL=once; run_apply "$transient_log"); then
+  echo "a transient access failure failed the run instead of being retried through:" >&2
+  cat "$transient_log.out" >&2
+  exit 1
+fi
+grep -qF 'not reachable yet' "$transient_log.out" || {
+  echo "the run survived an injected access failure without ever retrying, so this scenario" >&2
+  echo "did not exercise the retry path at all:" >&2
+  cat "$transient_log.out" >&2
+  exit 1
+}
+
 if ! (export FAIL_ON=""; run_apply "$log"); then
     cat "$log" >&2
     cat "$log.out" >&2
