@@ -459,3 +459,36 @@ Most of the remaining work is mechanical, with one exception: **B is a small des
 not parenthesis surgery.** It alters a type that `deescalation_transition` and several tests
 consume, and it needs its own mutant, so treat it as design work. A and the ticket edits are
 the mechanical part; both should still be done fresh.
+
+## Notes from the failed attempts at the stub region (2026-09-21)
+
+Five attempts at rewriting the aws stub's `case` region by text all failed. Two findings worth
+carrying forward, because both wasted a round here:
+
+**The scratch-file method works, and one attempt produced a verified region.** Building the
+replacement in a scratch copy of the whole stub and running `bash -n` on *that* -- rather than
+editing the live file and reading the resulting harness failure -- parses clean on the first
+try. The region that parses is: the `sts assume-role` case closed with its own `esac`, then
+`[ "$1 $2" = "eks update-kubeconfig" ] || exit 90`, then the `--role-arn` case closed with
+`esac`.
+
+**The slicing hazard that produces a false green.** Replacing "from the outer `case` to the
+last `esac`" is unsafe: the region is inside the generator heredoc, and a region boundary that
+reaches past the last `esac` swallows the heredoc's `EOF` terminator. The stub then runs to
+end-of-file, **the harness still exits 0**, and the only sign is bash's
+
+```
+warning: here-document at line 234 delimited by end-of-file (wanted `EOF')
+```
+
+That is the worst failure mode seen in this thread -- a green result with a corrupted fixture --
+and the warning is the only tell. Bound the region by the heredoc terminator, exclusive, and
+treat that warning as fatal.
+
+**Also recorded:** the `sts` case was dead *before* the syntax break, because the original
+diff placed it after the `--role-arn` case and after the `exit 90` guard. The ordering above
+fixes both problems, but a reader working from the old hunk would reproduce the deadness.
+
+**And the heredoc-quoting hypothesis is refuted:** the generator is `cat >"$tmp/bin/aws" <<'EOF'`
+(quoted), so `$1`, `$2` and `$*` are not expanded at generation time. The literal `"$1 $2"` in
+bash's error message already implied that; the check confirms it.
