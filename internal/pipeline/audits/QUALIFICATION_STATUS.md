@@ -274,3 +274,35 @@ One procedural note that outlives this run: the evidence for "a message was proc
 came from the platform's own log store, and it **overturned** the broker's committed
 offset, which read as success while the worker had skipped the record. Committed offset
 is not evidence of processing.
+
+## Run 8 frontier after the two harness decisions (2026-09-21)
+
+Both decisions were taken as separate matters, and both hit a real limit -- each with
+clean evidence rather than a workaround.
+
+**Transport (DEC-039 / FND-0020 / INFRA-060).** The qualification-only capability was
+built: `sol:qualifiers`, `pods`/`services` `get`/`list` and `pods/portforward` `create`,
+nothing else, established outside `sol cloud apply`, with a guard (six mutations)
+proving it cannot leak into production. But establishing it needed a temporary
+privileged window -- no standing identity can write cluster-scoped RBAC, since the
+installation authority was de-escalated (ADR 0003) -- and **closing that window did not
+take effect**: the API reported `accessPolicies: null` while the authorizer still
+granted cluster-admin, proven by reading an application's Secrets from a principal
+confirmed at the time of the read. The credential was broader than its declared
+contract, so it was **revoked rather than used** (`FND-0021` / `INFRA-061`, high
+severity), with the general lesson that de-escalation must verify the effective
+surface rather than the API's report -- including Sol's own `De-escalate` phase.
+
+**Fixture reset (FND-0022 / INFRA-062).** Redeploying the recorded revision through the
+documented mechanism succeeded and changed nothing: `generation` stayed 1, the same two
+pods with the same creation timestamps, still 0/2 ready, still `DEGRADED`. An unchanged
+deploy is idempotent **by design** -- B2 qualifies exactly that -- so "reset the
+fixture" is not expressible and the procedure must say what it means. Stop condition
+met: the run stopped rather than restarting the workload or reaching for
+`kubectl delete pod`.
+
+**Consequence.** B3 is still `NOT REACHED`, now for two documented reasons rather than
+one unexplained one. §B4-§B7 and the consumer-dependent §D/§E rows are in the same
+position. Also noted post-boundary: `sol deploy` cannot write `sol-deploy-state-pluto`
+either (same `apply`->`patch` root cause as `INFRA-051`), so BUG-025's drift check has
+no state to compare against.
