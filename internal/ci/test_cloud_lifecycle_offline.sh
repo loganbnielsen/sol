@@ -292,6 +292,19 @@ if [ "$1 $2" = "eks describe-cluster" ] || [ "$1 $2" = "eks describe-addon" ]; t
   fi
   printf 'ACTIVE\n'; exit 0
 fi
+case " $* " in
+  *" sts assume-role "*)
+    # DEC-040: the identity check behind a cluster refusal. Normally the credential is good,
+    # so a refusal is evidence of removal. With STS_ASSUME_FAIL=1 the base identity is still
+    # valid but the *role* cannot be assumed -- a broken trust policy, clock skew, or a wrong
+    # role -- which must not read as a verified removal.
+    if [ "${STS_ASSUME_FAIL:-}" = 1 ]; then
+      printf 'An error occurred (AccessDenied) when calling the AssumeRole operation\n' >&2
+      exit 255
+    fi
+    printf '{"Credentials":{"AccessKeyId":"ASIAEXAMPLE"}}\n'
+    exit 0
+    ;;
 [ "$1 $2" = "eks update-kubeconfig" ] || exit 90
 # The platform phase builds its ephemeral kubeconfig as the cluster-access identity, and
 # DEC-040's de-escalation probe deliberately builds one as the *provisioner* -- the
@@ -307,19 +320,6 @@ case " $* " in
     ;;
   *) exit 91 ;;
 esac
-case " $* " in
-  *" sts assume-role "*)
-    # DEC-040: the identity check behind a cluster refusal. Normally the credential is good,
-    # so a refusal is evidence of removal. With STS_ASSUME_FAIL=1 the base identity is still
-    # valid but the *role* cannot be assumed -- a broken trust policy, clock skew, or a wrong
-    # role -- which must not read as a verified removal.
-    if [ "${STS_ASSUME_FAIL:-}" = 1 ]; then
-      printf 'An error occurred (AccessDenied) when calling the AssumeRole operation\n' >&2
-      exit 255
-    fi
-    printf '{"Credentials":{"AccessKeyId":"ASIAEXAMPLE"}}\n'
-    exit 0
-    ;;
 esac
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --kubeconfig ]; then shift; path="$1"; break; fi

@@ -210,3 +210,42 @@ keeps it is the known case -- and a mismatch lands in `Undetermined`, which is f
 but noisy. The gate's capture, plus the post-de-escalation probe's `identity source`, say
 which field each side came from. Reading those two before blaming the cluster is the
 difference between finding a real defect and chasing a false one.
+
+## Outstanding from review (2026-09-21), recorded so the next session starts here
+
+**1. A failed gate or control leaves the bootstrap window open — NOT FIXED, highest priority.**
+`verify_whoami_shape` and `observe_bootstrap_window` call `lifecycle_error` directly, while the
+surrounding failure paths pass `~on_error:cleanup_bootstrap_access`. A minute-one failure
+therefore exits with `provisioner_bootstrap_admin=true` still applied on a cluster the run has
+just decided it cannot verify — the wrong end state for a least-privilege change.
+
+The fix is a local `fail message = on_error (); lifecycle_error message` helper in each
+function, with `~on_error:cleanup_bootstrap_access` passed at both call sites (the binding is
+already in scope above them). An attempt at this was reverted rather than left half-applied;
+the remaining work is mechanical. Needs a harness case where the gate fails persistently and
+the log shows the removal apply ran (`bootstrap-window` reads `false`).
+
+**2. The STS stub branch was dead code — FIXED.** In the aws stub,
+`[ "$1 $2" = "eks update-kubeconfig" ] || exit 90` preceded the `sts assume-role` case, so
+`aws sts assume-role` exited 90 every time and the `STS_ASSUME_FAIL` branch was unreachable.
+The discriminator scenario therefore passed whether or not `STS_ASSUME_FAIL` was set. The case
+is now above the guard, and the harness's behaviour changed as a result — which is what a
+resurrected branch looks like, and confirms the diagnosis. The paired positive control
+(`WHOAMI_REFUSE=1` without `STS_ASSUME_FAIL` must reach `Deescalated`) is still to be added.
+
+**3. The persistent-failure case does not assert why it failed — NOT DONE.** The phase loop
+only checks that the run fails; a failure at the pre-gate access step would satisfy it. It
+should assert the gate's "could not be reached to check the whoami shape" text for the
+`access` iteration, and the transient case should assert its first injected failure lands on
+the gate's `update-kubeconfig` rather than an earlier step.
+
+**4. Ticket staleness — PARTLY DONE.** The "Early shape gate" section still says a transient
+failure "is reported" and the verification "stays fail-closed", which the code no longer does;
+the hardening list still calls ambiguous arrays and the parse-failure mapping "not yet
+applied", contradicting the table below it; and the STS discriminator, the widened 3-minute
+bound (FND-0021 saw sub-45s propagation, which is the basis) and the same-build-path residual
+are only in code comments.
+
+**Minor, NOT DONE.** `SOL_WHOAMI_RETRY_INTERVAL_S` is parsed in three places and should be one
+helper that rejects negative and NaN values. The `assume-role` stdout carries credentials and
+must never be printed or included in `detail` (it is not today; keep it that way).
