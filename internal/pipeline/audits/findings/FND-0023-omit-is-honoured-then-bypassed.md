@@ -50,8 +50,24 @@ unimplemented; it is applied in one place and ignored in the place its users wou
 
 ## Reproduction (2026-09-21, `main` @ `506d71a9`)
 
-Against a throwaway copy of `examples/pluto` with a `qual/aws/us-east-1.yml` that carries
-the run8 target's omissions (`order_svc`, `fulfillment_worker`: `omit: true`):
+Throwaway copy of `examples/pluto`; `qual/aws/us-east-1.yml` carries the run8 target's
+omissions (`order_svc`, `fulfillment_worker`: `omit: true`).
+
+**The omitted units are in the plan, by name.** With the profile check out of the way
+(the target's `profile:` line removed — nothing else changed, and the languages are the
+real `typescript`), a dry run prints the plan's service list:
+
+```text
+$ sol deploy qual/aws/us-east-1 --dry-run --image-ref <svc>=<repo>@sha256:<digest> …  # one per service
+[worker] comms/notify_worker
+[svc]    demo_ts/order_svc             <-- omit: true
+[worker] demo_ts/fulfillment_worker    <-- omit: true
+[svc]    payments/charge_svc
+[svc]    checkout/checkout_svc
+```
+
+**…and the profile preflight reads that list.** With the profile declared, as the real
+target does, and the same omissions:
 
 ```text
 $ sol deploy qual/aws/us-east-1 --dry-run --image-tag probe
@@ -61,20 +77,20 @@ unmet guarantee(s). Nothing was changed.
     language typescript, which production-single-region/v1 does not qualify; ...
 ```
 
-The same workspace and target, narrowed so the omitted units leave the selection:
+**Narrowing the selection removes them; `omit` does not.** Same target, `--scope`:
 
 ```text
 $ sol deploy qual/aws/us-east-1 --dry-run --scope checkout/checkout_svc \
     --image-ref checkout_svc=<repo>@sha256:<digest>
 ...
-[dry-run] ok (0.0s)                      # exit 0
+[dry-run] ok (0.0s)                      # exit 0, no language finding
 ```
 
-The failure follows the **selection**, not the language lookup: `--scope` removes the
-unit and the preflight passes; `omit: true` does not, and the preflight fails. That is
-also the evidence for the "smaller fix does not work" note below — pointing
-`sol_yml_language` alone at the accessor would leave the unit in `plan.services`, where it
-would fail the same predicate as "does not declare a language".
+So: the omitted units are present in `plan.services` (named above), the preflight reports
+them, `--scope` removes them and `omit: true` does not. That is also the evidence for the
+"smaller fix does not work" note below — pointing `sol_yml_language` alone at the accessor
+would leave the unit in `plan.services`, where it would fail the same predicate as "does
+not declare a language".
 
 The run8 target example's own comment states the intent that this behaviour defeats:
 the TypeScript pair is "omitted here rather than left to fail the run at step 1". The
@@ -93,6 +109,27 @@ authoritative:
   have filtered).
 
 Either way the current split — filter here, bypass there — is the defect.
+
+### If option A is chosen: what does an explicit `--scope` naming an omitted unit do?
+
+The DEC cannot stop at "derive the selection from the omit-filtered config", because that
+leaves a real fork, and the two readings have different regression matrices:
+
+- **`omit` is a *default*; `--scope` is explicit intent** (strawman; my recommendation).
+  `omit` removes the unit from the no-`--scope` set; naming it in `--scope` includes it
+  again, and the run *reports* that it selected an omitted unit. Rationale: `--scope` is
+  already the operator's explicit statement of what this invocation deploys (DEC-036),
+  and in the run8 target `omit` reads as "do not make the default run deal with this",
+  not "this unit may never be deployed". It keeps an escape hatch and avoids a `--scope`
+  that silently selects nothing.
+- **`omit` is authoritative.** `--scope` cannot resurrect an omitted unit; naming it is
+  refused or diagnosed. Simpler rule, but a scope that names a unit and deploys nothing is
+  a surprising outcome, and it removes the only way to qualify a unit the workspace still
+  contains.
+
+Regression matrix, per reading: the first needs "no scope → omitted unit absent",
+"scope names an omitted unit → present and reported", "scope names only omitted units →
+not silently empty"; the second needs "scope names an omitted unit → refused/diagnosed".
 
 ## Evidence tier of each half
 
@@ -135,8 +172,10 @@ targets are created outside the repository — `internal/ci/check_no_account_art
 forbids tracking `sol/(qual|qual2)/`, but it does *not* forbid `sol/prod/…` — so a real
 target that sets `omit` is invisible here. Absence of a hit is not evidence of absence
 (the FND-0021 lesson). Whichever way `INFRA-049` resolves, the two tracked files must be
-revisited in the same change, and any operator target that sets `omit` is currently
-getting the config-layer half only.
+revisited in the same change. The migration **cannot be complete**, though: an untracked
+target that sets `omit` will change behaviour silently on upgrade, and this repository has
+no channel to warn its owner. The DEC should record that as a known, un-warnable
+population rather than implying the two tracked files cover it.
 
 ## What is not established
 
