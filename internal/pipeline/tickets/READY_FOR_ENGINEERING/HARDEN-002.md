@@ -535,7 +535,7 @@ from it.
 
 First attempt at the Run 5 procedure below, against a fresh disposable target in the
 qualification account (`cloud/aws/us-east-1`, cluster `sol-qual5-2ca50d57`,
-`production-single-region/v1`, 876701109436 / us-east-1).
+`production-single-region/v1`, 111122223333 / us-east-1).
 
 ### Outcome
 
@@ -628,7 +628,7 @@ refused by preflight rather than discovered as `Insufficient cpu`.
 
 ## Run 5 attempt 2 (executed 2026-09-19) — NON-CONFORMANT: finding 19 blocking
 
-Fresh disposable target `sol-qual6-9dda701e` (same target path, 876701109436 / us-east-1),
+Fresh disposable target `sol-qual6-9dda701e` (same target path, 111122223333 / us-east-1),
 run after INFRA-030's capacity contract was on `main`.
 
 | Stage | Result |
