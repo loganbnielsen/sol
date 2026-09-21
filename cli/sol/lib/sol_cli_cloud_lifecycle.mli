@@ -240,19 +240,58 @@ type deescalation_verdict =
   | Still_elevated of string list
   | Undetermined of string
 
-(** [probes] is (capability, still_permitted) as answered by the *authorizer* -- the
-    component that enforces the boundary -- for the capabilities only the bootstrap
-    authority held.
+(** A single `kubectl auth can-i` answer. [Indeterminate] is **not** a denial: the
+    probe obtained no usable answer (the API was unreachable, a token could not be
+    minted, or the process failed for a reason other than the authorizer saying
+    no). Folding those into [Denied] is the fail-open FND-0021 is about -- every
+    capability reads as removed and the verdict reads as [Deescalated]. *)
+type capability_answer =
+  | Permitted
+  | Denied
+  | Indeterminate of string
+
+type capability =
+  { verb : string
+  ; resource : string
+  }
+
+(** "verb resource", the form the capability is reported in. *)
+val capability_label : capability -> string
+
+(** Only an explicit [Permitted] is permitted; [Indeterminate] is not. *)
+val answer_is_permitted : capability_answer -> bool
+
+(** Classify a `kubectl auth can-i` result from its exit code and output.
+
+    Real kubectl prints `yes`/`no` as the first token, and some versions append a
+    reason after a denial (`no - no RBAC policy matched`), so only the first
+    whitespace-delimited token is read. The token and the exit code must agree
+    (`yes`/0, `no`/1); a mismatch is not an answer. Pure, so the decision is unit
+    tested rather than only exercised through a shell stub. *)
+val capability_answer_of_can_i_output
+  :  exit_code:int
+  -> stdout:string
+  -> stderr:string
+  -> capability_answer
+
+(** The indeterminate reason for a probe, if it has one, labelled with its capability.
+    Exposed so a caller can report *why* a window or a surface could not be
+    established instead of only that it could not. *)
+val indeterminate_reason : capability * capability_answer -> (string * string) option
+
+(** [probes] is the *authorizer's* answer -- the component that enforces the
+    boundary -- for the capabilities only the bootstrap authority held.
 
     - [Principal_unexpected] is [Undetermined]: the probe proves nothing.
     - [Principal_refused_by_cluster] is [Deescalated]: the elevated capability needs
       cluster authentication, so its absence is its revocation.
+    - An [Indeterminate] answer, on any capability, is [Undetermined].
     - Otherwise any permitted capability is [Still_elevated], an empty probe list is
       [Undetermined] (never [Deescalated]), and only a confirmed principal with no
       permitted capability is [Deescalated]. *)
 val deescalation_verdict
   :  principal:deescalation_principal
-  -> (string * bool) list
+  -> (capability * capability_answer) list
   -> deescalation_verdict
 
 (** DEC-040's positive control: [Deescalated] only when the *same* principal is observed
@@ -262,15 +301,19 @@ val deescalation_verdict
     A final denial alone proves nothing -- a credential that never worked, a different
     principal, or a capability that was never granted all look identical afterwards. So:
 
+    - a capability that was [Indeterminate] in the window -> [Undetermined], because a
+      later denial of it would not demonstrate its removal;
     - the bootstrap capabilities were never observed permitted -> [Undetermined];
     - a different principal answered after de-escalation -> [Undetermined];
     - the post-de-escalation probe obtained no evidence -> [Undetermined];
+    - the post-de-escalation probe did not cover a capability observed permitted
+      during the window -> [Undetermined];
     - the same principal, permitted before and denied after -> [Deescalated];
     - still permitted after -> [Still_elevated]. *)
 val deescalation_transition
-  :  before:(string * bool) list
+  :  before:(capability * capability_answer) list
   -> after_principal:deescalation_principal
-  -> after:(string * bool) list
+  -> after:(capability * capability_answer) list
   -> deescalation_verdict
 
 (** The identity in a `kubectl auth whoami -o json` response (a SelfSubjectReview).
@@ -313,13 +356,18 @@ val normalize_role_arn : string -> string
     worst case is a false mismatch, which the caller turns into [Undetermined]. *)
 val principal_matches : expected:string -> whoami_identity -> bool option
 
+(** Whether the probe's own credential could still be assumed. A named three-state
+    rather than a [bool option], because "the role was refused" and "the assumption
+    could not be attempted" are different diagnoses. *)
+type credential_assumption =
+  | Credential_assumable
+  | Credential_refused
+  | Credential_unchecked
+
 (** A cluster refusal counts as de-escalation only when the credential is still good: a
     broken trust policy, clock skew or a wrong assumed role produces the same refusal as a
     revoked grant, and reading it as removal would be a fail-open into [Deescalated]. *)
-val refusal_is_deescalation
-  :  sts_assumable:bool option
-  -> string
-  -> deescalation_principal
+val refusal_is_deescalation : credential_assumption -> string -> deescalation_principal
 
 val deescalation_verdict_to_string : deescalation_verdict -> string
 

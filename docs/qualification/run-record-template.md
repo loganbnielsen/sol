@@ -190,6 +190,14 @@ Record, with the command and its output, in this order:
    capability set, same authorizer — answered **denied**.
 6. **`Ready` only then.** The phase transition, after (5).
 
+These six items are the **install** path's evidence, and they end at `Ready`. The
+**destroy** path removes the same bootstrap access, and it reports the effective-surface
+probe's verdict, but that probe is **advisory** — it does not gate teardown (ADR 0003
+invariant 6) and a destroy never declares a verified de-escalation. So a bootstrap-access
+removal observed during teardown **cannot** be cited as item (4)/(5) for this section; the
+install path's own before/after pair is what establishes it. See `DEC-040`'s scope note and
+`INFRA-061`.
+
 The **shape of the authorizer's answer** is checked automatically, in the first minutes
 after the cluster is reachable -- after the cloud apply, before the platform install.
 `sol cloud apply` retries the probe with backoff (a fresh EKS endpoint is briefly unable to

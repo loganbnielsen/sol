@@ -12,18 +12,55 @@ source: audit finding FND-0021
 
 ## START HERE -- what the epoch is blocked on
 
-- [ ] **A. Window on failure**: a gate or control failure must remove the bootstrap access
-      (`bootstrap-window` reads `false`). Not fixed; approach and harness case below.
-- [ ] **B. `can-i` tri-state**: an indeterminate probe answer must not be able to produce
-      `Deescalated`. Not fixed; this is a fail-open in the verdict, not a refactor.
-- [ ] **Full-suite green on the head, with the path named.**
-- [ ] **The offline harness green on the head** -- currently red, cause now known (below).
+**Code scope completed 2026-09-21 on the corrective branch.** The ticket had been moved to
+`DONE` with this checklist still open; a corrective PR (not a reopen) lands the remaining
+fail-open and wrong-end-state items:
 
-**No live capture has happened yet.** Everything known about the shape of the authorizer's
-answer is still the version recalled from the API; the parser has never seen a real response.
+- [x] **A. Window on failure**: `verify_whoami_shape` and the bootstrap-window control run
+      an `~on_error` cleanup before their terminal `lifecycle_error`, so a gate or control
+      failure removes the bootstrap access. The offline harness injects a persistent gate
+      failure and asserts the removal apply ran (`provisioner_bootstrap_admin=false`) and
+      `bootstrap-window` reads `false`; dropping the cleanup from the mutant makes it fail.
+- [x] **B. `can-i` tri-state**: `capability_answer = Permitted | Denied | Indeterminate`
+      replaces the `(string * bool)` probe list, and the classifier is a pure lib function
+      over kubectl's exit code and **stdout** (`yes`/`no`, tolerating a `no - reason`
+      suffix; a token/exit mismatch is indeterminate). A transport or token failure is
+      `Indeterminate`, the verdict is `Undetermined`, and it can never produce
+      `Deescalated`. Unit-tested directly and mutation-verified in the harness.
+- [x] **Control strictness**: the window control refuses a window containing an
+      *indeterminate* probe even when another capability is permitted, so the run fails
+      before the platform install instead of at de-escalation. A harness scenario
+      (`CAN_I_INDETERMINATE_WHEN_OPEN`) pins it; a control that accepts "any permitted"
+      reaches the install and fails the scenario.
+- [x] **Destroy path**: `sol cloud destroy` revokes the bootstrap access too, so it
+      observes the window and checks the effective surface afterwards. That check is
+      **advisory**, a deliberate decision, and it does **not** mean the destroy path
+      "verifies de-escalation" the way the install path does. DEC-040's first acceptance
+      criterion -- "every path that revokes privileged access verifies the effective
+      surface *before declaring the revocation complete*, and fails closed if it cannot"
+      -- is satisfied in that operational sense: a destroy never declares a revocation
+      complete, it removes the substrate, and its terminal proof is the verified absence
+      of that substrate, which is stronger than the effective-surface probe. The check is
+      deliberately not a gate: a probe that can fail must not block teardown (ADR 0003
+      invariant 6) or strand billable infrastructure (HARDEN-004's cost rule), and the
+      observation runs as the *provisioner* role while the teardown uses the
+      *cluster-access* role, so a fatal probe would let a broken provisioner trust abort a
+      teardown that would otherwise succeed. The harness scenario therefore asserts an
+      indeterminate post-removal probe is **reported** and teardown completes.
+- [x] **The offline harness green on the head**, including the new cases.
 
-**Known red, cause confirmed, and now self-diagnosing.** The offline harness fails at a
-**stub syntax check** and names the line:
+Two facts are deliberately *not* checklist items here, because neither is code this ticket
+owns:
+
+- **Full-suite green** is recorded by this PR's CI. The head now carries code, so a
+  `test` job that ran to completion with no code commit between it and the head is the
+  readable record (the rule the ticket itself added).
+- **The first live capture** is a HARDEN-002 run step, not a code item: it belongs in the
+  next run record's capture section, where the parser meets the real authorizer response.
+  This branch narrows what that capture has to confirm; it does not replace it.
+
+**A red that was real, then fixed, and is now self-diagnosing.** The offline harness once
+failed at a **stub syntax check** and named the line:
 
 ```
 the generated aws stub is not valid shell:
@@ -182,13 +219,23 @@ mutation-verified as a valid mutant (mutated build succeeds, then the test fails
 | same principal, permitted before and denied after | `Deescalated` |
 | same principal, still permitted after | `Still_elevated` |
 
-## Remaining hardening of the principal check (identified, not yet applied)
+## Principal-check hardening (state reconciled 2026-09-21)
 
-The parser on this branch handles the EKS shape (arrays under `status.userInfo.extra`, else
-a flat string), prefers `canonicalArn`, compares role names, and returns `Error` -- which
-the caller maps to `Undetermined` -- rather than a default. Five further hardenings were
-identified and are **not yet applied**; an attempt was reverted rather than land a
-half-restructured module at the end of the session:
+The parser handles the EKS shape (arrays under `status.userInfo.extra`, else a flat
+string), prefers `canonicalArn`, and returns `Error` -- which the caller maps to
+`Undetermined` -- rather than a default. Five hardenings were identified; the correction
+below records how the comparison changed. Their **current** state:
+
+- items 1 and 2 (account+role precision, role-path normalisation) are applied: the
+  comparison is the **full canonical ARN**, and the expected side is normalised by
+  `normalize_role_arn` so a role with a path does not produce a false mismatch;
+- item 3 (reject ambiguous arrays) and item 5 (parse failure distinct from denial) are
+  applied and mutant-verified;
+- item 4 (discover the ARNs by shape rather than the recalled key names) is **deliberately
+  still not applied**: it is what the first live capture settles, and building it against
+  the same recalled keys would only move the assumption.
+
+The original list is kept for context:
 
 1. **Compare (account, role), not role alone.** The same role name in a different account
    is a different principal, and the current comparison would call it the same.
