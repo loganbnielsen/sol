@@ -311,6 +311,13 @@ jobs:
       - name: Operator diagnostic guard mutation test (INFRA-057)
         run: internal/ci/test_operator_diagnostics_check.sh
 
+      # DEC-039: the qualification transport is harness-only. No production root may
+      # reference it, and it may not carry a verb beyond transport and addressing.
+      - name: Qualification transport boundary (DEC-039 / INFRA-060)
+        run: internal/ci/check_qualification_transport.sh
+      - name: Qualification transport guard mutation test (INFRA-060)
+        run: internal/ci/test_qualification_transport_check.sh
+
   # FRIC-009: smallest check that would have caught a regression like
   # FRIC-007 (every generated service permanently broken on a fresh
   # substrate) — nothing above exercises the golden path against live
