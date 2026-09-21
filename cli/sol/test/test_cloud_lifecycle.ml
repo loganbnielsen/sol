@@ -1259,6 +1259,29 @@ let test_parse_failure_is_undetermined () =
        ~after:denied)
 ;;
 
+(* DEC-040: what the parser does with an *ambiguous* array, asserted rather than argued.
+
+   A response whose canonicalArn has more than one entry names more than one principal. The
+   argument for treating that as safe was that the exact comparison cannot confirm a
+   principal it never saw -- which holds for a false Deescalated, but it is an argument, not
+   a check. This asserts the mapping. If it fails, the parser returns a principal and
+   proceeds, and "believed closed" becomes a known gap; if it passes, it is verified. *)
+let test_ambiguous_array_does_not_proceed () =
+  let two_entries =
+    {|{"status":{"userInfo":{"extra":{"canonicalArn":["arn:aws:iam::111122223333:role/sol-provisioner","arn:aws:iam::111122223333:role/sol-cluster-access"]}}}}|}
+  in
+  match Sol_cli_cloud_lifecycle.whoami_identity_of_json two_entries with
+  | Error _ -> () (* refused: the ambiguity cannot produce a verdict *)
+  | Ok identity ->
+    Alcotest.fail
+      (Printf.sprintf
+         "a two-entry canonicalArn was accepted and produced %s; taking one element is a \
+          default in disguise, and the array is ambiguous about which principal this is"
+         (Option.value
+            (Sol_cli_cloud_lifecycle.principal_role_name identity)
+            ~default:"?"))
+;;
+
 let test_effective_authorization () =
   let open L in
   let expected = provisioner_authorization_checks in
@@ -1343,6 +1366,10 @@ let () =
             "principal comparison fails closed (DEC-040)"
             `Quick
             test_principal_comparison_fails_closed
+        ; Alcotest.test_case
+            "ambiguous array (DEC-040)"
+            `Quick
+            test_ambiguous_array_does_not_proceed
         ; Alcotest.test_case
             "parse failure is Undetermined (DEC-040)"
             `Quick

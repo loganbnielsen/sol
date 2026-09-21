@@ -897,6 +897,44 @@ let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
 
 (* Bounded and fail-closed: access-entry changes are eventually consistent so a retry
    is expected, but an unverified claim is not an acceptable outcome. *)
+(* DEC-040 gate: the shape of the authorizer's answer is the one thing a fixture cannot
+   settle, because the fixtures encode a shape recalled from the API rather than captured
+   from a cluster. So it is observed once, as soon as the cluster is reachable, and the run
+   *fails* if the parser cannot identify a principal -- otherwise a bootstrap proceeds for
+   an hour to a verification that was never going to succeed, which is exactly the failure
+   this gate exists to prevent.
+
+   A transient failure to reach the cluster is not a shape mismatch and does not fail the
+   run; it is reported, and the verification itself stays fail-closed. The raw response is
+   printed so the run record can diff it against the fixture shapes. *)
+let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
+  match
+    provisioner_kubeconfig ~role_arn:provisioner_role_arn ~region outputs (fun env ->
+      Sol_cli_process.run
+        (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ]))
+  with
+  | Error e -> Printf.printf "  whoami shape: not reached (%s)\n%!" e
+  | Ok (Error e) ->
+    Printf.printf
+      "  whoami shape: not reached (%s)\n%!"
+      (Sol_cli_process.error_to_string e)
+  | Ok (Ok r) when r.Sol_cli_process.exit_code <> 0 ->
+    Printf.printf
+      "  whoami shape: kubectl did not answer (%s)\n%!"
+      (String.trim (r.Sol_cli_process.stderr ^ " " ^ r.Sol_cli_process.stdout))
+  | Ok (Ok r) ->
+    (match Sol_cli_cloud_lifecycle.whoami_identity_of_json r.Sol_cli_process.stdout with
+     | Ok _ -> Printf.printf "  whoami shape: parsed\n%!"
+     | Error why ->
+       lifecycle_error
+         (Printf.sprintf
+            "the authorizer's whoami response did not match the parser (%s). The run \
+             stops             here rather than spending a bootstrap on a verification \
+             that cannot succeed. Raw response: %s"
+            why
+            (String.trim r.Sol_cli_process.stdout)))
+;;
+
 let verify_deescalation ~region ~outputs ~provisioner_role_arn ~before =
   let interval_s = 10. in
   let rec loop remaining =
@@ -1963,6 +2001,13 @@ let cloud_init ~target ~var_file ~vars ~action () =
              ())
       | _ -> None
     in
+    (match target_cfg.provisioner_role_arn, outputs with
+     | Some provisioner_role_arn, Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ->
+       verify_whoami_shape
+         ~region:target_cfg.region
+         ~outputs:aws_outputs
+         ~provisioner_role_arn
+     | _ -> ());
     (match bootstrap_window_control with
      | Some (principal, probes) ->
        Printf.printf

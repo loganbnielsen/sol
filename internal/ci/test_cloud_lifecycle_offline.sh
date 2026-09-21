@@ -1386,3 +1386,14 @@ if ! grep -lF 'provisioner-bootstrap-access-remove' "$tmp"/*.out >/dev/null 2>&1
   echo "carrying the whole load without anything here noticing." >&2
   exit 1
 fi
+
+# DEC-040 shape gate. The fixtures encode a shape recalled from the API; the gate is what
+# compares that against an answer. Assert it ran and did not reject the shape, so the
+# coverage cannot quietly go absent -- and so a shape the parser cannot read fails here
+# rather than at the end of a live bootstrap.
+if ! grep -lF 'whoami shape: parsed' "$tmp"/*.out >/dev/null 2>&1; then
+  echo "DEC-040 canary: the whoami shape gate never reported a parsed response, so either it" >&2
+  echo "did not run or it rejected the emulated shape -- the fixtures would be going" >&2
+  echo "unvalidated against anything." >&2
+  exit 1
+fi

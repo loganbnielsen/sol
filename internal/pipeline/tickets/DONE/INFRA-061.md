@@ -107,8 +107,9 @@ wrong, not that it was read and believed:
 | same role name in a different account -> not the same principal | **verified closed** (mutant: comparing the final segment fails the test) |
 | same role behind a different role path -> not the same principal | **verified closed** (same mutant) |
 | a session-carrying `arn` cannot confirm a role ARN | **verified closed** (fixture) |
-| unexpected key names (no ARN discovered) -> `Undetermined` | **verified closed** (fixtures: no arn is an `Error`, never a default) |
-| a **multi-entry** array -> the ambiguity is *reported* rather than the first element taken | **believed**, not verified: the current parser takes the first element. The exact comparison means it cannot confirm a principal it never saw, but it does not flag the ambiguity -- hardenings 3 and 4 do that. |
+| a **multi-entry** array -> the ambiguity is *reported* | **verified closed** (the parser refuses it; a mutant that takes the first element fails the test) |
+| a value that is neither a string nor a single-element array -> `Undetermined` | **verified closed** (same test) |
+| an **unknown shape** (keys named differently, no ARN discoverable) -> `Undetermined` | **verified closed as a mapping** -- and *not* a validation of the EKS shape. The claim is that unknown shapes do not proceed, checked against the fixtures; whether the fixtures match what EKS emits is what the capture below settles, not this row. |
 | account+role **precision** (no false mismatches) | **not claimed**: false mismatches are possible and land in `Undetermined`. Safe, but noisy until hardening 1 and 2 land. |
 
 That is why the epoch may proceed before this lands: the ways it can be wrong are noisy,
@@ -124,3 +125,25 @@ every assertion still passes. Verified by breaking the phase pattern: the canary
 Worth recording that the first reading here was wrong -- a grep of the harness's *stdout*
 suggested the phase never ran, when the per-scenario logs are where the output goes. The
 canary is what settled it, which is the argument for having one.
+
+## Early shape gate (applied 2026-09-21)
+
+The fixtures encode a shape recalled from the API. The only thing that compares that
+against a real answer is the cluster itself, and a template step is the kind of thing that
+gets skipped when a bootstrap is already running and the environment is costing money. So
+it is a gate instead:
+
+As soon as the cluster is reachable -- after the cloud apply, before the platform install,
+which is the expensive part -- Sol runs `kubectl auth whoami -o json` once as the
+provisioner and **fails the run** if the parser cannot identify a principal, printing the
+raw response for the run record to diff against the fixture shapes. A transient failure to
+reach the cluster is not a shape mismatch: it is reported, and the verification itself
+stays fail-closed.
+
+Verified falsifiable: with the parser mutated to reject every shape, the offline lifecycle
+harness fails the run; restored, it passes. The harness also asserts the gate reported a
+parsed response, so the check cannot quietly go absent.
+
+This means the epoch cannot spend an hour on a bootstrap whose de-escalation verification
+was never going to succeed -- the mismatch is found in the first minutes, while the target
+is still destructible.

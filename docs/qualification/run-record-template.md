@@ -190,9 +190,13 @@ Record, with the command and its output, in this order:
    capability set, same authorizer — answered **denied**.
 6. **`Ready` only then.** The phase transition, after (5).
 
-Also capture, once a real cluster is up, and add as a fixture if it differs from what the
-tests assume: the **actual** `kubectl auth whoami -o json` response, so the parser is
-tested against the real emitter rather than an assumption about its spacing or envelope.
+The **shape of the authorizer's answer** is now checked automatically, in the first
+minutes after the cluster is reachable: `sol cloud apply` runs the probe once as the
+provisioner and **fails the run** if the parser cannot identify a principal, printing the
+raw response. Record that outcome here, and paste the raw response -- then promote it to a
+fixture if it differs from the ones the parser is tested against. The fixtures encode a
+shape recalled from the API; the cluster is what settles it, and the gate is what stops the
+question being deferred to the end of a bootstrap.
 
 If any of steps 1–5 cannot be obtained, the verification is `Undetermined` and the run
 must not accept `Ready` — record the failure, do not proceed.

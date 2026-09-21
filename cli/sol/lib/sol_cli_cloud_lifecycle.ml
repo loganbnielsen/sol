@@ -1161,10 +1161,21 @@ type whoami_identity =
   ; username : string option
   }
 
-let first_string_of_json = function
-  | `String v -> Some v
-  | `List (`String v :: _) -> Some v
-  | _ -> None
+(* Strict: a value that is a list must have exactly one element.
+
+   The AWS authenticator reports identity values as one-element arrays, so a two-element
+   array names more than one principal -- and taking the first element is a default in
+   disguise, which is how an ambiguous response could otherwise be read as a definite one.
+   Absent is [Ok None]; present-but-ambiguous is [Error]. *)
+let single_string_of_json ~what = function
+  | `String v -> Ok (Some v)
+  | `List [ `String v ] -> Ok (Some v)
+  | `List [] -> Error (Printf.sprintf "a %s value was an empty array" what)
+  | `List (_ :: _ :: _) ->
+    Error (Printf.sprintf "a %s value was an array of more than one element" what)
+  | `Null -> Ok None
+  | _ ->
+    Error (Printf.sprintf "a %s value was neither a string nor an array of strings" what)
 ;;
 
 let whoami_identity_of_json json : (whoami_identity, string) result =
@@ -1187,25 +1198,31 @@ let whoami_identity_of_json json : (whoami_identity, string) result =
     let status = sub "status" json in
     let user = sub "userInfo" status in
     let extra = sub "extra" user in
-    let field name = first_string_of_json (sub name user) in
-    let extra_field name = first_string_of_json (sub name extra) in
-    let arn =
-      match extra_field "arn" with
-      | Some _ as v -> v
-      | None -> field "arn"
-    in
-    let canonical_arn =
-      match extra_field "canonicalArn" with
-      | Some _ as v -> v
-      | None -> field "canonicalArn"
-    in
-    let identity = { arn; canonical_arn; username = field "username" } in
-    (match arn, canonical_arn, identity.username with
-     | None, None, None ->
-       Error
-         "the whoami response carried no arn and no username (is SelfSubjectReview \
-          supported by this cluster and kubectl?)"
-     | _ -> Ok identity)
+    (* A present-but-ambiguous value is an error, not a first element. *)
+    let field name = single_string_of_json ~what:name (sub name user) in
+    let extra_field name = single_string_of_json ~what:name (sub name extra) in
+    Result.bind (extra_field "arn") (fun extra_arn ->
+      Result.bind (field "arn") (fun user_arn ->
+        Result.bind (extra_field "canonicalArn") (fun extra_canonical ->
+          Result.bind (field "canonicalArn") (fun user_canonical ->
+            Result.bind (field "username") (fun username ->
+              let arn =
+                match extra_arn with
+                | Some _ as v -> v
+                | None -> user_arn
+              in
+              let canonical_arn =
+                match extra_canonical with
+                | Some _ as v -> v
+                | None -> user_canonical
+              in
+              let identity = { arn; canonical_arn; username } in
+              match arn, canonical_arn, username with
+              | None, None, None ->
+                Error
+                  "the whoami response carried no arn and no username (is \
+                   SelfSubjectReview supported by this cluster and kubectl?)"
+              | _ -> Ok identity)))))
 ;;
 
 (* The role name inside an ARN, whichever form it takes. An assumed-role ARN is
