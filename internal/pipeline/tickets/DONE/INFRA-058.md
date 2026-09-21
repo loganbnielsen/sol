@@ -45,3 +45,10 @@ deploy/migrate operation.** Existing namespaces count.
 ## Out of scope
 
 Widening the operator's permissions; changing the deploy or provisioner grants.
+
+## Landed (2026-09-21)
+
+DEC-038 $6 implemented: `reconcile_operator_bindings` establishes the operator's read-only RoleBinding in every namespace holding a Sol-managed workload, derived from the workspace's service inventory rather than the caller's scope, RBAC only (no Secret, no workload document), create-idempotent. Live: all three workload namespaces carry it after one `sol migrate apply`, with `notify-worker` untouched. Caught live in the first implementation: fail-fast meant one never-deployed namespace (`pluto-demo-ts`) aborted the loop and left `pluto-payments` without its grant; now per-namespace best-effort, absence is not a failure, and everything else is collected and reported.
+
+Merged in #401; see `internal/pipeline/audits/findings/FND-0018-operator-grant-follows-command-not-workload.md` and
+`FND-0019-status-verdict-unsupported-by-evidence.md`.
