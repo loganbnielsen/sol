@@ -202,3 +202,80 @@ let ensure ~ctx ~namespaces : (unit, string) result =
      | Error _ as e -> e
      | Ok docs -> apply_all docs)
 ;;
+
+(* DEC-038 §6 / INFRA-058: the operator's read-only grant follows the *workload*,
+   not the command that happens to be running.
+
+   [ensure] above establishes the binding only for the namespaces the invoking
+   command is operating on. So a namespace that has not taken part in a
+   deploy/migrate since the grant existed never receives it, and the operator
+   cannot diagnose the workload there -- while the only existing path that would
+   create it redeploys the workload, which is the one thing establishing read
+   authorization must never require.
+
+   [operator_binding_docs] therefore enumerates every namespace holding a
+   Sol-managed workload, from the workspace's own service inventory rather than
+   from a command's scope. [reconcile_operator_bindings] applies them.
+
+   RBAC only, deliberately: it does not call [ensure], because that path also
+   writes each namespace's runtime Secret. Running a Secret write to fix a
+   permission would be the wrong abstraction and a hazard. Nothing here touches a
+   workload or a Secret -- the documents produced are RoleBindings and nothing
+   else.
+
+   [create] with AlreadyExists tolerated rather than [apply]: the deploy identity's
+   bootstrap grant holds get/list/watch/create on rolebindings but not patch, so an
+   apply would silently become a patch as soon as the object exists (INFRA-048). *)
+let operator_binding_docs ~workspace (services : Sol_cli_manifest.service list)
+  : string list
+  =
+  services
+  |> List.filter_map (fun (s : Sol_cli_manifest.service) ->
+    match
+      Sol_cli_deployment_plan.namespace_result
+        ~workspace
+        ~domain:s.Sol_cli_manifest.domain
+    with
+    | Ok ns -> Some (Sol_cli_deployment_plan.namespace_to_string ns)
+    | Error _ -> None)
+  |> List.sort_uniq String.compare
+  |> List.map (fun ns -> Sol_cli_manifest.operator_role_binding_doc ~ns)
+;;
+
+let reconcile_operator_bindings ~ctx ~workspace : (unit, string) result =
+  let namespaces =
+    Sol_cli_manifest.discover_services ()
+    |> List.filter_map (fun (s : Sol_cli_manifest.service) ->
+      match
+        Sol_cli_deployment_plan.namespace_result
+          ~workspace
+          ~domain:s.Sol_cli_manifest.domain
+      with
+      | Ok ns -> Some (Sol_cli_deployment_plan.namespace_to_string ns)
+      | Error _ -> None)
+    |> List.sort_uniq String.compare
+  in
+  (* Best-effort per namespace, which is a correctness property rather than a
+     convenience: the invariant is per workload namespace, so one namespace that
+     cannot be established must not deny every namespace after it. Found live -- a
+     service present in the workspace but never deployed (so it has no namespace to
+     bind into) aborted a fail-fast loop and silently left a real workload
+     namespace without its grant.
+
+     A namespace that does not exist holds no Sol-managed workload, so it is
+     nothing to do rather than a failure. Anything else is collected and reported:
+     a diagnostic grant that quietly did not appear is the failure mode this whole
+     line of work exists to remove. *)
+  let failures =
+    List.filter_map
+      (fun ns ->
+         match create_doc ~ctx (Sol_cli_manifest.operator_role_binding_doc ~ns) with
+         | Ok () -> None
+         | Error e when Sol_cli_port_forward.string_contains ~needle:"NotFound" e -> None
+         | Error e -> Some (Printf.sprintf "%s: %s" ns e))
+      namespaces
+  in
+  match failures with
+  | [] -> Ok ()
+  | failures -> Error (String.concat "; " failures)
+;;

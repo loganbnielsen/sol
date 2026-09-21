@@ -9,6 +9,25 @@ open Sol_cli_manifest
    from any descendant directory. *)
 let workspace_name = Sol_cli_workspace.current_name
 
+(* DEC-038 §6 / INFRA-058: the operator's diagnostic grant follows the workload,
+   not this command's scope, so reconcile it across every namespace that holds a
+   Sol-managed workload. RBAC only -- it writes RoleBindings and nothing else.
+
+   A failure here is a warning, not fatal: a deployment must not be blocked by a
+   read-only grant. But it is never silent -- the warning names what could not be
+   established and what it costs, because a diagnostic capability that quietly
+   did not appear is the failure mode this whole line of work exists to remove. *)
+let reconcile_operator_bindings_warn ~ctx ~workspace =
+  match Sol_cli_substrate.reconcile_operator_bindings ~ctx ~workspace with
+  | Ok () -> ()
+  | Error msg ->
+    Printf.eprintf
+      "warning: could not establish the operator's diagnostic RoleBindings: %s\n\
+       The operator identity will not be able to read this workspace's workloads.\n\
+       %!"
+      msg
+;;
+
 let git_sha () =
   match
     Sol_cli_process.run (Sol_cli_process.cmd [ "git"; "rev-parse"; "--short"; "HEAD" ])
@@ -355,6 +374,9 @@ let check_migration_prerequisite ~ctx ~plan ~live =
        with
        | Ok () -> ()
        | Error msg -> Cmd_migrate.fatal msg);
+      reconcile_operator_bindings_warn
+        ~ctx:ctx.execution.cluster
+        ~workspace:ctx.execution.workspace;
       match
         Cmd_migrate.verify_migration_prerequisite
           ~ctx:ctx.execution.cluster

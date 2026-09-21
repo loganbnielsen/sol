@@ -1,7 +1,7 @@
 # FND-0017 — No identity in the profile can follow Sol's own diagnostic instruction
 
 - **Classification:** `VERIFIED_DEFECT`
-- **State:** `OPEN`
+- **State:** `QUALIFIED` (2026-09-21)
 - **First identified:** 2026-09-20, AWS Run 8 (a read-only diagnosis that could not be completed)
 - **Derived ticket:** `INFRA-056`
 - **Invariant:** the counterpart of `INV-AUTH-5`/`INV-AUTH-6` for *reading*: an identity
@@ -134,3 +134,83 @@ explain it — with a run record showing the command, the identity, and the outp
 - `cli/platform/infra/aws/main.tf:146-175`
 - `cli/platform/infra/base/platform_provisioner_rbac.tf` (the "deliberately omitted"
   comment) and `platform_deploy_rbac.tf`
+
+## Live verification (2026-09-21) — partially successful, two defects found
+
+The identity was built (DEC-038, parts A–D) and exercised against the preserved Run 8
+target. What passed, verified live rather than argued:
+
+- the operator principal authenticates (`sol-qual5-operator` access entry exists);
+- it can read the evidence the diagnostic path needs — `list events`, `list pods`,
+  `get pods/log` all **yes** in `pluto-checkout`, including `events`, which the deploy
+  identity is refused;
+- every negative holds: create/delete pods, patch deployments, create rolebindings,
+  `pods/portforward`, `pods/exec`, and `secrets` are all **no**.
+
+What did **not** pass — the operator could not obtain the diagnosis, so this finding
+stays `OPEN`, and the two blockers are recorded as derived defects:
+
+| Defect | What happened |
+|---|---|
+| `FND-0018` / `INFRA-058` | the binding is created per *command scope*, so `pluto-comms` — the namespace under investigation — has none, and the operator is refused all three reads there |
+| `FND-0019` / `INFRA-059` | worse: with no read access, `sol status` printed **`healthy`**, where the identity that could read printed **`DEGRADED`** with the pod table and `notify_worker rollout failed` |
+
+`FND-0019` is the more serious of the two and prompted a contract clarification
+(DEC-038 §7): a verdict must be evidence-backed and three-valued.
+
+### Methodology note — an invalid first comparison, and why it was caught
+
+The first A/B was wrong and nearly became a false conclusion. `aws eks
+update-kubeconfig --alias <a> --role-arn <b>` **rewrites the shared user entry**, so
+after creating the operator's kubeconfig the context named `sol-qual5-deploy` was
+still authenticating **as the operator**. The comparison therefore ran
+operator-vs-operator, both printed `healthy`, and the natural reading — "the verdict
+is wrong regardless of identity" — was not supported by it.
+
+The contradiction is what exposed it: the claim required that the *deploy* identity
+also be unable to read `pluto-comms`, but that identity deployed there. Re-running
+with the deploy context genuinely regenerated produced the real contrast, which is
+the evidence `FND-0019` rests on.
+
+The rule this reinforces is the one HARDEN-003 already states: when an observation
+contradicts an established one, the contradiction is evidence about the *method*
+until the method is ruled out. Here the identity behind a context alias was the
+variable, and it was invisible in the output. Any A/B comparing identities over
+kubeconfig aliases must therefore re-issue `update-kubeconfig` for the identity
+under test immediately before each side, and record which principal actually served
+each read.
+
+## Resolution (2026-09-21)
+
+`INFRA-058` and `INFRA-059` landed, and the operator identity then obtained the
+diagnosis that no identity could obtain when this finding was written:
+
+```
+comms/notify-worker  DEGRADED
+
+NAME                             READY   STATUS    RESTARTS        AGE
+notify-worker-5d9f597f4f-nwx89   1/1     Running   12 (161m ago)   3h50m
+notify-worker-5d9f597f4f-x4lt4   0/1     Running   0               3h50m
+notify_worker rollout failed
+
+Pod notify-worker-5d9f597f4f-x4lt4: Running
+Image: sha256:50ad590a…
+Last events:
+  Unhealthy: Readiness probe failed: HTTP probe failed with statuscode: 503
+```
+
+The `Last events:` block is the finding's whole subject: it is evidence that did not
+exist for any identity before, and it names the mechanism.
+
+The effective surface, from the cluster's own authorizer, matches DEC-038 §3 exactly
+and contains nothing else:
+
+```
+events [get list]   namespaces [get list]   pods/log [get list]   pods [get list]
+services [get list]   deployments.apps [get list]   cronjobs.batch [get list]
+```
+
+No mutating verb, no `secrets`, no `pods/exec`, no `pods/portforward`.
+
+Verified without redeploying or restarting the workload: the two replicas carry the
+same creation timestamps throughout, and the unready one is still the same pod.

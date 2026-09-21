@@ -339,14 +339,44 @@ if [ "$issued_lease_operations" != "create delete get replace" ]; then
   exit 1
 fi
 
-case "$bootstrap_role" in
-  *'resource_names = [kubernetes_cluster_role.sol_deploy.metadata[0].name]'*'verbs          = ["bind"]'*) : ;;
-  *)
-    echo "FAIL: sol-deploy-bootstrap's clusterroles rule no longer scopes \"bind\" to" >&2
-    echo "      sol-deploy by resource_names -- it could then bind any ClusterRole." >&2
-    exit 1
-    ;;
-esac
+# DEC-038: `bind` stays scoped to an explicit, enumerated set -- never a wildcard,
+# never `escalate` -- and that set now names exactly the ClusterRoles the runtime
+# substrate actually binds: sol-deploy (the deploy identity's own) and
+# sol-operator-diagnostics (the operator's read-only grant, created per workload
+# namespace by Sol_cli_substrate.reconcile_operator_bindings). A third name, a
+# wildcard, or an added escalate verb would let the deploy identity bind something
+# it has no business binding.
+#
+# Read to the closing bracket of the *list*: the entries themselves contain `]`
+# (metadata[0]), which would end a naive range on the first entry.
+bind_allowlist=$(
+  awk '/resource_names *= *\[/{f=1} f{print} f && /^[[:space:]]*\][[:space:]]*$/{f=0}' \
+    "$root/cli/platform/infra/base/platform_deploy_rbac.tf"
+)
+
+if ! printf '%s' "$bind_allowlist" | grep -q 'kubernetes_cluster_role.sol_deploy.metadata'; then
+  echo "FAIL: sol-deploy is no longer in the deploy bootstrap's bind allowlist" >&2
+  exit 1
+fi
+
+if ! printf '%s' "$bind_allowlist" | grep -q 'kubernetes_cluster_role.sol_operator_diagnostics.metadata'; then
+  echo "FAIL: the operator's read-only ClusterRole is not in the deploy bootstrap's" >&2
+  echo "      bind allowlist, so the runtime substrate cannot create the operator's" >&2
+  echo "      RoleBinding (found live, before this was added)." >&2
+  exit 1
+fi
+
+if printf '%s' "$bind_allowlist" | grep -q '"\*"'; then
+  echo "FAIL: the deploy bootstrap's bind allowlist uses a wildcard -- it could then" >&2
+  echo "      bind any ClusterRole." >&2
+  exit 1
+fi
+
+if grep -q '"escalate"' "$root/cli/platform/infra/base/platform_deploy_rbac.tf"; then
+  echo "FAIL: the deploy bootstrap grants escalate -- it could then grant any" >&2
+  echo "      permission, which dissolves the identity boundary." >&2
+  exit 1
+fi
 
 # INFRA-025: no access entry — and therefore no deploy group membership at
 # all — when deploy_role_arn is unset, mirroring provisioner_role_arn's own

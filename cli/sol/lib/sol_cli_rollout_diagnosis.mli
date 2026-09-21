@@ -79,14 +79,29 @@ type events_fetch_result =
     so rather than showing none. *)
 val format_pod_diagnosis : pod_status -> events_fetch_result -> string
 
+(** DEC-038 §7: the evidence behind a verdict.
+
+    [Healthy] and [Unhealthy] both mean the evidence was *obtained*; they differ
+    only in what it says. [Undetermined] means it could not be obtained, and
+    carries why.
+
+    This replaces a [string option] whose [None] meant both "nothing wrong" and
+    "could not read", which is how an unreadable workload came to be reported as
+    healthy. A verdict must never be produced by reads that did not happen. *)
+type diagnosis =
+  | Healthy
+  | Unhealthy of string
+  | Undetermined of string
+
 (** [Continuous] diagnosis over a confirmed pod list. Pass only a real pod list
     from a successful kubectl fetch: [] means confirmed zero pods, not "could
-    not check." [None] means every pod is healthy. *)
+    not check." [Healthy] means every pod is healthy; [Undetermined] is for a list
+    that could not be obtained, which is a different thing entirely. *)
 val format_service_diagnosis
   :  service_name:string
   -> pod_status list
   -> events_fetch_result
-  -> string option
+  -> diagnosis
 
 (** CronJob status fields used for [Ephemeral] diagnosis. *)
 type cronjob_status =
@@ -102,22 +117,19 @@ type cronjob_status =
     [status] object parses to defaults, not [None]. *)
 val parse_cronjob_status : string -> cronjob_status option
 
-(** CronJob fetch result. [Missing] is confirmed NotFound and should be
-    reported; [Unavailable] is a transient fetch/parse failure and should stay
-    silent. *)
+(** CronJob fetch result. [Missing] is confirmed NotFound and should be reported;
+    [Unavailable] is a fetch/parse failure and carries why, so the verdict can say
+    it could not read rather than reporting health it did not observe. *)
 type cronjob_fetch_result =
   | Found of cronjob_status
   | Missing
-  | Unavailable
+  | Unavailable of string
 
 (** [Ephemeral] diagnosis of the CronJob's last *completed* run: healthy when no
     run has ever been scheduled or [lastSuccessfulTime >= lastScheduleTime]. A
     currently-active run is never a finding here regardless of its pod's state
     -- see [format_active_run_diagnosis] for that. *)
-val format_cronjob_diagnosis
-  :  service_name:string
-  -> cronjob_fetch_result
-  -> string option
+val format_cronjob_diagnosis : service_name:string -> cronjob_fetch_result -> diagnosis
 
 (** [Ephemeral] diagnosis of an active run's own pod(s), scoped to exactly the
     Job(s) in [cronjob_status.active_job_names]. More lenient than
@@ -127,7 +139,7 @@ val format_active_run_diagnosis
   :  service_name:string
   -> pod_status list
   -> events_fetch_result
-  -> string option
+  -> diagnosis
 
 (** Live diagnosis for a deployed workload in the cluster [ctx] names. Unlike
     the rest of this module, this fetches cluster state itself (pods, events,
@@ -143,4 +155,4 @@ val diagnose_service_live
   -> service_name:string
   -> k8s_name:string
   -> unit
-  -> string option
+  -> diagnosis

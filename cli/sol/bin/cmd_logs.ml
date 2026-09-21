@@ -188,8 +188,12 @@ let run_unit ~ctx ~target (options : log_options) scope : unit =
          ~k8s_name
          ()
      with
-     | Some diagnosis -> Printf.printf "%s\n%!" diagnosis
-     | None -> ());
+     (* DEC-038 §7: a failed read is not a diagnosis, and printing nothing would
+        read as "fine". *)
+     | Sol_cli_rollout_diagnosis.Unhealthy text -> Printf.printf "%s\n%!" text
+     | Sol_cli_rollout_diagnosis.Undetermined why ->
+       Printf.printf "diagnosis unavailable: %s\n%!" why
+     | Sol_cli_rollout_diagnosis.Healthy -> ());
     exec_kubectl_logs ~ctx ~ns ~target:kubectl_target ~follow ~tail
   in
   if follow
