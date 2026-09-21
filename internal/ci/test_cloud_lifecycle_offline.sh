@@ -309,8 +309,14 @@ case " $* " in
 esac
 case " $* " in
   *" sts assume-role "*)
-    # DEC-040: the identity check behind a cluster refusal. The credential is good here, so a
-    # refusal is evidence of removal rather than of a broken trust policy.
+    # DEC-040: the identity check behind a cluster refusal. Normally the credential is good,
+    # so a refusal is evidence of removal. With STS_ASSUME_FAIL=1 the base identity is still
+    # valid but the *role* cannot be assumed -- a broken trust policy, clock skew, or a wrong
+    # role -- which must not read as a verified removal.
+    if [ "${STS_ASSUME_FAIL:-}" = 1 ]; then
+      printf 'An error occurred (AccessDenied) when calling the AssumeRole operation\n' >&2
+      exit 255
+    fi
     printf '{"Credentials":{"AccessKeyId":"ASIAEXAMPLE"}}\n'
     exit 0
     ;;
@@ -460,6 +466,16 @@ case " $* " in
         # DEC-040: the first answer is a 401, as a freshly created EKS cluster gives
         # while access-entry or aws-auth propagation catches up for the *correct*
         # principal. The gate must retry that, not read it as a wrong identity.
+        # A refusal of the identity call itself, which is the shape an upstream-broken
+        # credential takes: the token generates, and the cluster rejects it. Only once the
+        # bootstrap window is closed, because that is when the removal has taken effect and
+        # the question the discriminator answers arises -- before that the gate would stop
+        # the run first, which is correct but not what this scenario is testing.
+        if [ "${WHOAMI_REFUSE:-}" = 1 ] &&
+          [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "false" ]; then
+          printf 'error: You must be logged in to the server (Unauthorized)\n' >&2
+          exit 1
+        fi
         if [ ! -e "${LIFECYCLE_LOG}.whoami-401-seen" ]; then
           : >"${LIFECYCLE_LOG}.whoami-401-seen"
           printf 'error: You must be logged in to the server (Unauthorized)\n' >&2
@@ -625,6 +641,25 @@ for phase in cloud outputs cloud-verify access platform-init prerequisites crds 
   echo "INFRA-039: the apply did not report the principal its credentials belong to" >&2
   exit 1
 }
+# DEC-040 discriminator: the base identity is valid but the provisioning role cannot be
+# assumed. A cluster refusal then must NOT be read as de-escalation -- the run has to come
+# back Undetermined and fail, or a broken credential passes as a verified removal. This is
+# the end-to-end counterpart of the unit case, and it fails if the identity check is skipped.
+# The positive pairing -- a refusal with a *working* identity counting as the removal -- is
+# covered by the unit case (refusal_is_deescalation with sts_assumable = Some true), because
+# the emulated cluster's window bookkeeping does not line up for it end to end here.
+sts_log="$tmp/sts-unassumable.log"
+if (export FAIL_ON=""; export WHOAMI_REFUSE=1; export STS_ASSUME_FAIL=1; run_apply "$sts_log"); then
+  echo "a refusal with an unassumable role was accepted as de-escalation:" >&2
+  cat "$sts_log.out" >&2
+  exit 1
+fi
+grep -qF 'could not be assumed' "$sts_log.out" || {
+  echo "the run failed, but not because the role could not be assumed:" >&2
+  cat "$sts_log.out" >&2
+  exit 1
+}
+
 # DEC-040 transient: the same injected access failure, but it clears after the first
 # attempt. The bounded retry must ride through it and the install must survive -- and the
 # log must show the retry, because otherwise "survived" is indistinguishable from "the

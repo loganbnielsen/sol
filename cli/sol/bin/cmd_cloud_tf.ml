@@ -1104,8 +1104,21 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
 ;;
 
 let verify_deescalation ~region ~outputs ~provisioner_role_arn ~before =
-  let interval_s = 10. in
+  (* Injectable so the harness does not sleep through it; production uses 10s. *)
+  let interval_s =
+    match Sys.getenv_opt "SOL_WHOAMI_RETRY_INTERVAL_S" with
+    | Some v ->
+      (match float_of_string_opt v with
+       | Some f -> f
+       | None -> 10.)
+    | None -> 10.
+  in
   let rec loop remaining =
+    (* The after-probe builds its kubeconfig the same way the window control did, against
+       the same cluster and region. That is what makes a refusal attributable to the removal
+       rather than to a wrong cluster name, a different endpoint or a region mismatch -- none
+       of which the IAM identity check can see. If these two paths ever diverge, the
+       guarantee goes with them, so change both or neither. *)
     let principal, probes =
       deescalation_probe ~region ~outputs ~provisioner_role_arn ()
     in
@@ -1125,7 +1138,10 @@ let verify_deescalation ~region ~outputs ~provisioner_role_arn ~before =
       Unix.sleepf interval_s;
       loop (remaining - 1)
   in
-  match loop 6 with
+  (* FND-0021 saw an access-entry deletion propagate in under 45s, so a 60s bound left a
+     thin margin: a slow propagation would fail a healthy run as Undetermined at the end of a
+     bootstrap -- fail-closed, but noisy and expensive. Three minutes. *)
+  match loop 18 with
   | Sol_cli_cloud_lifecycle.Deescalated ->
     Printf.printf "  de-escalation verified as %s\n%!" provisioner_role_arn
   | verdict ->
@@ -2187,6 +2203,9 @@ let cloud_init ~target ~var_file ~vars ~action () =
       match target_cfg.provisioner_role_arn, outputs with
       | Some provisioner_role_arn, Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ->
         let control =
+          (* Paired with the after-probe in verify_deescalation: both build the kubeconfig
+             the same way, against the same cluster and region, and that shared path is what
+             lets a later refusal be read as the removal. Change both or neither. *)
           deescalation_probe
             ~region:target_cfg.region
             ~outputs:aws_outputs
