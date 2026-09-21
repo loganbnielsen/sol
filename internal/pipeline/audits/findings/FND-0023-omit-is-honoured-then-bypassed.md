@@ -62,18 +62,47 @@ authoritative:
 
 Either way the current split — filter here, bypass there — is the defect.
 
+## Evidence tier of each half
+
+The two halves are not equally strong, and the difference matters before this is used to
+frame a decision:
+
+- **Config layer filters `omit` — `STATIC` + pinned by a test.**
+  `test_config.ml`'s `test_target_overlay_can_omit_resources_and_services` loads a target
+  that sets `omit: true` on `app_db` and `api`, and asserts `Sol_cli_config.resources cfg`
+  is `[ "sessions" ]` and `Sol_cli_config.services cfg` is `[]`. That is the accessor
+  filtering, observed.
+- **Deploy path bypasses it — `STATIC` + `BEHAVIORAL`, but no unit test.**
+  The reachability chain is complete and was checked end to end:
+  `cmd_deploy.run` builds the inventory with `Sol_cli_manifest.discover_services ()`
+  (`sol_cli_manifest.ml` contains no `omit` reference, so the filesystem scan cannot
+  filter on it) and narrows it only by `--scope` (`sol_cli_workload_selection.ml` has no
+  `omit` reference either); `ctx.resolved_config` flows through
+  `Sol_cli_factory.plan_of_services` into `deployment_plan.of_services_result`; `to_spec`
+  then calls `sol_yml_language` on each selected unit, and that reads the raw
+  `cfg.Sol_cli_config.services` field, not the filtering accessor. FND-0012 observed the
+  preflight reporting omitted units live. But no unit test in the tree pins the bypass —
+  every plan fixture uses `omit = false` (`test_deployment_plan.ml:798,811,1145`) — so
+  this half rests on that chain plus FND-0012's live observation. A regression test
+  belongs with the `INFRA-049` fix; it should be added there, not assumed here.
+
 ## Who is affected
 
-Only two tracked configurations set `omit`, in six places (no customer or production
-target is tracked):
+The repository tracks *example* targets for four environments
+(`examples/pluto/sol/{dev,prod,pilot,customer_cloud}/aws/us-east-1.yml`), and of **all
+tracked files** only two set `omit`, in six places:
 
 | File | Units |
 |---|---|
 | `examples/pluto/sol/dev/aws/us-east-1.yml` | 4 |
 | `docs/qualification/run8-aws-target.example.yml` | 2 |
 
-Whichever way `INFRA-049` resolves, those two files must be revisited in the same change,
-and any operator target that sets `omit` (untracked, and so invisible here) is currently
+That is a statement about **tracked** files, not a guarantee about real targets. Real
+targets are created outside the repository — `internal/ci/check_no_account_artifacts.sh`
+forbids tracking `sol/(qual|qual2)/`, but it does *not* forbid `sol/prod/…` — so a real
+target that sets `omit` is invisible here. Absence of a hit is not evidence of absence
+(the FND-0021 lesson). Whichever way `INFRA-049` resolves, the two tracked files must be
+revisited in the same change, and any operator target that sets `omit` is currently
 getting the config-layer half only.
 
 ## What is not established
@@ -83,7 +112,7 @@ getting the config-layer half only.
   selection (filter the inventory by `omit`), or in both; the language error and the
   "immutable artifact identity" error in FND-0012 have different causes and may need
   different fixes.
-- The behaviour of any untracked `sol/qual/…` target that sets `omit`.
+- The behaviour of any untracked target that sets `omit`.
 
 ## What would make this qualified
 
