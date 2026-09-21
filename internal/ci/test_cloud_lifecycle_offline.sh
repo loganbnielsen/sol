@@ -10,6 +10,18 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 sol="$(realpath "${1:-$root/_build/default/cli/sol/bin/main.exe}")"
 tmp="$(mktemp -d)"
+# DEC-040: a green exit code must not be able to mean a fixture is corrupt. If a splice
+# swallows a heredoc terminator the generated stub runs to end-of-file, and this harness
+# still passes -- bash's "delimited by end-of-file" warning is the only sign. Assert the
+# invariant directly: every generator heredoc is closed. Checked here rather than trusted to
+# memory, and it is the check that would have caught the splice that produced a false green.
+heredocs_open=$(grep -cE "^cat >.*<<'EOF'" "$0")
+heredocs_close=$(grep -cE '^EOF$' "$0")
+if [ "$heredocs_open" != "$heredocs_close" ]; then
+  echo "generator heredocs are unbalanced: $heredocs_open opened, $heredocs_close closed" >&2
+  echo "a generated file is likely running past its terminator, so a fixture is corrupt" >&2
+  exit 1
+fi
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/work/sol/prod/aws" "$tmp/markers"
 
@@ -294,10 +306,8 @@ if [ "$1 $2" = "eks describe-cluster" ] || [ "$1 $2" = "eks describe-addon" ]; t
 fi
 case " $* " in
   *" sts assume-role "*)
-    # DEC-040: the identity check behind a cluster refusal. Normally the credential is good,
-    # so a refusal is evidence of removal. With STS_ASSUME_FAIL=1 the base identity is still
-    # valid but the *role* cannot be assumed -- a broken trust policy, clock skew, or a wrong
-    # role -- which must not read as a verified removal.
+    # DEC-040: the identity check behind a cluster refusal. It must come before the eks-only
+    # guard below, or it never matches and the discriminator scenario passes vacuously.
     if [ "${STS_ASSUME_FAIL:-}" = 1 ]; then
       printf 'An error occurred (AccessDenied) when calling the AssumeRole operation\n' >&2
       exit 255
@@ -305,12 +315,8 @@ case " $* " in
     printf '{"Credentials":{"AccessKeyId":"ASIAEXAMPLE"}}\n'
     exit 0
     ;;
+esac
 [ "$1 $2" = "eks update-kubeconfig" ] || exit 90
-# The platform phase builds its ephemeral kubeconfig as the cluster-access identity, and
-# DEC-040's de-escalation probe deliberately builds one as the *provisioner* -- the
-# principal whose bootstrap elevation is being removed. Both are legitimate here; which
-# one is correct is asserted where it matters, by the kubectl stub below, which refuses
-# to answer the authorizer question for any other principal.
 case " $* " in
   *" --role-arn arn:aws:iam::111122223333:role/sol-cluster-access "*)
     printf 'sol-cluster-access\n' >"$FAIL_MARKER_DIR/kubeconfig-role"
@@ -319,7 +325,6 @@ case " $* " in
     printf 'sol-provisioner\n' >"$FAIL_MARKER_DIR/kubeconfig-role"
     ;;
   *) exit 91 ;;
-esac
 esac
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --kubeconfig ]; then shift; path="$1"; break; fi
