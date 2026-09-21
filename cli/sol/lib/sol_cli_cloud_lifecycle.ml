@@ -1261,6 +1261,26 @@ let principal_role_name (i : whoami_identity) =
   | None, None, None -> None
 ;;
 
+(* Whether the response names exactly the expected principal.
+
+   The comparison is the **full** canonical ARN, account and path included. Comparing an
+   extracted role name was a fail-*open* -- the same role name in another account, or
+   reached through a different role path, would look like the same principal, and a
+   different principal being denied afterwards would then read as Deescalated. The strict
+   form's worst case is a false mismatch, which lands in Undetermined and does not
+   announce Ready. INFRA-061 records the precise comparison (account plus normalised role)
+   as the follow-up that makes it exact without the false mismatches. *)
+let principal_matches ~expected (identity : whoami_identity) =
+  match identity.canonical_arn with
+  | Some arn -> Some (String.equal arn expected)
+  | None ->
+    (* A bare arn carries a session name, so it cannot equal a role ARN: report the
+       mismatch rather than guess. *)
+    (match identity.arn with
+     | Some arn -> Some (String.equal arn expected)
+     | None -> None)
+;;
+
 let deescalation_verdict_to_string = function
   | Deescalated ->
     "de-escalated: the effective surface no longer permits bootstrap capabilities"

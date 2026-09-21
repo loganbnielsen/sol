@@ -298,6 +298,14 @@ val role_name_of_arn : string -> string
     `arn`, then the username. *)
 val principal_role_name : whoami_identity -> string option
 
+(** Whether the response names exactly the expected principal, compared as the full
+    canonical ARN (account and path included). [None] when the response names no ARN.
+
+    Strict on purpose: comparing an extracted role name fails *open* when the same role
+    name appears in another account or behind a different role path. The strict form's
+    worst case is a false mismatch, which the caller turns into [Undetermined]. *)
+val principal_matches : expected:string -> whoami_identity -> bool option
+
 val deescalation_verdict_to_string : deescalation_verdict -> string
 
 (** [enter ~from ~to_] is the only way an operation may move between phases. It

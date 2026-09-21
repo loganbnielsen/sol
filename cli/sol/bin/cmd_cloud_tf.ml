@@ -801,7 +801,15 @@ let bootstrap_only_capabilities =
   ]
 ;;
 
-let deescalation_principal_check ~expected_role_name env =
+(* Compares the **full** canonical ARN, account and path included.
+
+   Comparing an extracted role name was a fail-*open*: the same role name in another
+   account, or reached through a different role path, would look like the same principal,
+   and a different principal being denied afterwards would then read as Deescalated. The
+   strict comparison is the safe direction -- its worst case is a false mismatch, which
+   lands in Undetermined and does not announce Ready. INFRA-061 records the precise
+   comparison (account plus normalised role) as the follow-up that makes it exact. *)
+let deescalation_principal_check ~expected_arn env =
   match
     Sol_cli_process.run
       (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ])
@@ -812,12 +820,13 @@ let deescalation_principal_check ~expected_role_name env =
        let shown =
          match identity.Sol_cli_cloud_lifecycle.canonical_arn, identity.arn with
          | Some a, _ | None, Some a -> a
-         | None, None -> Option.value identity.username ~default:"(unnamed)"
+         | None, None -> "(unnamed)"
        in
-       (match Sol_cli_cloud_lifecycle.principal_role_name identity with
-        | Some role when role = expected_role_name ->
-          Sol_cli_cloud_lifecycle.Principal_confirmed shown
-        | Some role -> Sol_cli_cloud_lifecycle.Principal_unexpected role
+       (match
+          Sol_cli_cloud_lifecycle.principal_matches ~expected:expected_arn identity
+        with
+        | Some true -> Sol_cli_cloud_lifecycle.Principal_confirmed shown
+        | Some false -> Sol_cli_cloud_lifecycle.Principal_unexpected shown
         | None ->
           Sol_cli_cloud_lifecycle.Principal_probe_failed "the response named no principal")
      | Error why -> Sol_cli_cloud_lifecycle.Principal_probe_failed why)
@@ -839,7 +848,7 @@ let deescalation_principal_check ~expected_role_name env =
         ]
     then
       Sol_cli_cloud_lifecycle.Principal_refused_by_cluster
-        (Printf.sprintf "%s: %s" expected_role_name detail)
+        (Printf.sprintf "%s: %s" expected_arn detail)
     else Sol_cli_cloud_lifecycle.Principal_probe_failed detail
   | Error e ->
     Sol_cli_cloud_lifecycle.Principal_probe_failed (Sol_cli_process.error_to_string e)
@@ -852,12 +861,11 @@ let deescalation_principal_check ~expected_role_name env =
    reach. Failing to obtain the probe is a measurement failure, which the transition
    verdict already handles as [Undetermined]; it must not become a crash. *)
 let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
-  let expected_role_name =
-    Sol_cli_cloud_lifecycle.role_name_of_arn provisioner_role_arn
-  in
   match
     provisioner_kubeconfig ~role_arn:provisioner_role_arn ~region outputs (fun env ->
-      let principal = deescalation_principal_check ~expected_role_name env in
+      let principal =
+        deescalation_principal_check ~expected_arn:provisioner_role_arn env
+      in
       let probes =
         match principal with
         | Sol_cli_cloud_lifecycle.Principal_unexpected _

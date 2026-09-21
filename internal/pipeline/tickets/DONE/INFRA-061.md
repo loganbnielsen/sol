@@ -90,11 +90,31 @@ half-restructured module at the end of the session:
 5. **Keep parse failure distinct from denial**, with a regression case tying a parse
    `Error` to `Undetermined` and never to `Still_elevated` or `Deescalated`.
 
-**Risk while unapplied, stated plainly:** every failure mode above makes the check *fail
-closed* -- `Undetermined`, so `Ready` is not announced. None can produce a wrong verdict of
-de-escalation. That is why the epoch may proceed before this lands, and why the live
-capture (see the run-record template) is the step that settles the real shape: the
-fixtures currently encode a shape recalled from the API, not captured from EKS.
+**Correction (2026-09-21).** An earlier version of this note claimed every failure mode
+above fails closed. That was an overclaim, and specifically wrong about one of them:
+comparing an extracted *role name* fails **open**, because the same role name in another
+account, or behind a different role path, looks like the same principal -- and a different
+principal being denied afterwards would read as `Deescalated`. The comparison has been
+changed to the **full canonical ARN**, account and path included, whose worst case is a
+false mismatch (safe but noisy), and it is now a tested lib function (`principal_matches`).
+
+The honest position, mode by mode -- *verified* means a test fails when the behaviour is
+wrong, not that it was read and believed:
+
+| Failure mode | Status |
+|---|---|
+| parse failure / non-JSON / no ARN at all -> `Undetermined`, on **both** the window control and the post-de-escalation probe | **verified closed** (mutant: mapping a probe failure to `Still_elevated` fails the test) |
+| same role name in a different account -> not the same principal | **verified closed** (mutant: comparing the final segment fails the test) |
+| same role behind a different role path -> not the same principal | **verified closed** (same mutant) |
+| a session-carrying `arn` cannot confirm a role ARN | **verified closed** (fixture) |
+| unexpected key names (no ARN discovered) -> `Undetermined` | **verified closed** (fixtures: no arn is an `Error`, never a default) |
+| a **multi-entry** array -> the ambiguity is *reported* rather than the first element taken | **believed**, not verified: the current parser takes the first element. The exact comparison means it cannot confirm a principal it never saw, but it does not flag the ambiguity -- hardenings 3 and 4 do that. |
+| account+role **precision** (no false mismatches) | **not claimed**: false mismatches are possible and land in `Undetermined`. Safe, but noisy until hardening 1 and 2 land. |
+
+That is why the epoch may proceed before this lands: the ways it can be wrong are noisy,
+not permissive. And it is why the live capture (see the run-record template) is the step
+that settles the real shape -- the fixtures encode a shape recalled from the API, not
+captured from EKS.
 
 ## Harness coverage canary (applied 2026-09-21)
 

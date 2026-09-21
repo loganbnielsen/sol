@@ -1173,6 +1173,92 @@ let test_whoami_identity_shapes () =
     (Sol_cli_cloud_lifecycle.role_name_of_arn canonical)
 ;;
 
+(* DEC-040: the principal comparison must fail *closed*, and a parse failure must land in
+   Undetermined rather than in a verdict.
+
+   The previous comparison extracted a role name, which fails open: the same role name in
+   another account, or behind a different role path, would look like the same principal --
+   and a different principal being denied afterwards would read as Deescalated. *)
+let test_principal_comparison_fails_closed () =
+  let expected = "arn:aws:iam::111122223333:role/sol-provisioner" in
+  let identity ?canonical ?arn ?username () =
+    Sol_cli_cloud_lifecycle.{ canonical_arn = canonical; arn; username }
+  in
+  Alcotest.(check (option bool))
+    "exact match"
+    (Some true)
+    (Sol_cli_cloud_lifecycle.principal_matches
+       ~expected
+       (identity ~canonical:expected ()));
+  Alcotest.(check (option bool))
+    "same role name in another account"
+    (Some false)
+    (Sol_cli_cloud_lifecycle.principal_matches
+       ~expected
+       (identity
+          ~canonical:("arn:aws:iam::" ^ String.make 12 '9' ^ ":role/sol-provisioner")
+          ()));
+  Alcotest.(check (option bool))
+    "same role behind a different path"
+    (Some false)
+    (Sol_cli_cloud_lifecycle.principal_matches
+       ~expected
+       (identity ~canonical:"arn:aws:iam::111122223333:role/team/sol-provisioner" ()));
+  Alcotest.(check (option bool))
+    "a session-carrying arn is not a role arn"
+    (Some false)
+    (Sol_cli_cloud_lifecycle.principal_matches
+       ~expected
+       (identity
+          ~arn:"arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth"
+          ()));
+  Alcotest.(check (option bool))
+    "no arn at all is None, not a default"
+    None
+    (Sol_cli_cloud_lifecycle.principal_matches
+       ~expected
+       (identity ~username:"somebody" ()))
+;;
+
+(* A parse failure must be Undetermined on *both* sides of the transition. If it fell
+   through to a verdict it would be a wrong verdict, not a safe failure -- and this was on
+   the not-yet-applied list, so nothing proved it. *)
+let test_parse_failure_is_undetermined () =
+  let granted = [ "create clusterroles", true ] in
+  let denied = [ "create clusterroles", false ] in
+  let confirmed = Sol_cli_cloud_lifecycle.Principal_confirmed "arn:aws:iam::1:role/p" in
+  let parse_failure =
+    match
+      Sol_cli_cloud_lifecycle.whoami_identity_of_json "error: You must be logged in"
+    with
+    | Error why -> Sol_cli_cloud_lifecycle.Principal_probe_failed why
+    | Ok _ -> Alcotest.fail "a non-JSON response was accepted by the parser"
+  in
+  let check_undetermined label verdict =
+    match verdict with
+    | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+    | Sol_cli_cloud_lifecycle.Deescalated ->
+      Alcotest.fail (label ^ ": a parse failure was read as de-escalated")
+    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+      Alcotest.fail (label ^ ": a parse failure was read as still elevated")
+  in
+  (* after: the post-de-escalation probe could not identify the principal *)
+  check_undetermined
+    "after"
+    (Sol_cli_cloud_lifecycle.deescalation_transition
+       ~before:granted
+       ~after_principal:parse_failure
+       ~after:denied);
+  (* before: the window control could not identify the principal, so nothing was shown to
+     have been removed *)
+  check_undetermined
+    "before"
+    (Sol_cli_cloud_lifecycle.deescalation_transition
+       ~before:[]
+       ~after_principal:confirmed
+       ~after:denied)
+;;
+
 let test_effective_authorization () =
   let open L in
   let expected = provisioner_authorization_checks in
@@ -1253,6 +1339,14 @@ let () =
             "whoami identity shapes (DEC-040)"
             `Quick
             test_whoami_identity_shapes
+        ; Alcotest.test_case
+            "principal comparison fails closed (DEC-040)"
+            `Quick
+            test_principal_comparison_fails_closed
+        ; Alcotest.test_case
+            "parse failure is Undetermined (DEC-040)"
+            `Quick
+            test_parse_failure_is_undetermined
         ; Alcotest.test_case
             "verified de-escalation is a transition (DEC-040)"
             `Quick
