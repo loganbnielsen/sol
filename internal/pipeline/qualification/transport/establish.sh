@@ -26,11 +26,16 @@ here="$(cd "$(dirname "$0")" && pwd)"
 echo "qualification transport: cluster=${cluster} role=${role} region=${region}"
 
 # ── the IAM half: enough to obtain a kubeconfig, nothing more ────────────────
+# Trust is account-scoped for simplicity: this role exists only in a qualification
+# account, and every qualification identity there is already administrator-equivalent.
+# It is not a pattern to copy into a customer environment, which is why the manifest
+# lives outside the production roots and the guard asserts nothing references it.
 if ! aws iam get-role --role-name "$role" >/dev/null 2>&1; then
+  trust="{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::${account}:root\"},\"Action\":\"sts:AssumeRole\"}]}"
   aws iam create-role \
     --role-name "$role" \
     --description "Sol qualification-only transport principal (DEC-039). Not production." \
-    --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::__ACCOUNT__:root"},"Action":"sts:AssumeRole"}]}' >/dev/null
+    --assume-role-policy-document "$trust" >/dev/null
   echo "  created IAM role ${role}"
 else
   echo "  IAM role ${role} already exists"
