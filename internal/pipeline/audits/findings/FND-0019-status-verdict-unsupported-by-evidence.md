@@ -106,3 +106,14 @@ The regression that matters is mutation-verified: restoring the collapse (an
 The invariant this finding asked for is now structural rather than defensive:
 `HEALTHY` cannot be produced by a read that did not happen, because the type no
 longer has a value that means both.
+
+### Process deviation (recorded, 2026-09-21)
+
+The audit's own instruction was *artifacts, then regression tests, then the product
+change*. The artifacts came first, but the code changes for this finding and for
+FND-0018 were made before their tests. The deviation is recorded rather than
+remediated: the coverage is present and mutation-verified (the collapse restored fails
+`an unreadable workload is Unknown, never Healthy`), so what is missing is ordering
+discipline, not evidence. It is worth recording because the one guard test that *was*
+written first found a real gap in the guard itself — a substring match that let a
+renamed call pass — which is the argument for the ordering.
