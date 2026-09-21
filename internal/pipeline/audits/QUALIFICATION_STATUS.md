@@ -218,3 +218,26 @@ executed, record the run identity (`provider`, `target`, `revision`, `profile`,
 identity. Do not promote `STATIC`/`MECHANISM` evidence to `BEHAVIORAL` to make a
 row look green, and do not rewrite a finding's earlier conclusion to reflect a
 later state.
+
+## The operator identity and the status model (2026-09-21)
+
+`DEC-038` is complete and verified live. `INFRA-057` (the identity), `INFRA-058`
+(the grant follows the workload) and `INFRA-059` (the verdict is evidence-backed)
+are all landed.
+
+| | |
+|---|---|
+| Operator identity | real: access entry, read-only ClusterRole per workload namespace, `events`/`pods`/`pods/log`/`services`/`deployments`/`cronjobs`/`namespaces` — `get`/`list` only |
+| Its bounds | verified live: no mutating verb, no `secrets`, no `pods/exec`, no `pods/portforward` |
+| `FND-0017` | `QUALIFIED` — the operator obtained the diagnosis no identity could obtain, including the events |
+| `FND-0018` | `QUALIFIED` — the grant is present in `pluto-checkout`, `pluto-payments` and `pluto-comms` after one `sol migrate apply`, with the workload untouched |
+| `FND-0019` | `QUALIFIED` — `HEALTHY` can no longer be produced by a read that did not happen; the regression is mutation-verified |
+| `notify-worker` | classified from the evidence: `DEGRADED`, readiness probe returns **HTTP 503** on one replica (0 restarts), the other `1/1` with 12 restarts |
+
+**Run 8 frontier:** the diagnosability blocker is gone and the payment path works
+(`FND-0016` qualified). §B is next, from **B3** — driving a representative
+transaction. Note for the operator: B3 needs a port-forward to a ClusterIP service,
+and no *workload* identity holds `pods/portforward` by design (DEC-038 §4 excludes it
+from the operator, and the deploy identity is denied it), so B3 must be driven with
+the qualification operator's `cluster-access` capability, and the run record must say
+which identity served each read.

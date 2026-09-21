@@ -64,3 +64,10 @@ what it could not see.
 ## Out of scope
 
 Changing what the health contract itself considers healthy for a readable workload.
+
+## Landed (2026-09-21)
+
+DEC-038 $7 implemented: the verdict is three-valued (`Healthy | Unhealthy of string | Undetermined of string`), every fetch carries its reason, and the rollup takes an observed namespace presence rather than a boolean. The audit fixed three further instances of the same collapse, including one a *test* was asserting (a failed CronJob read staying silent). Mutation-verified: restoring the collapse fails `an unreadable workload is Unknown, never Healthy`. Live: the operator identity now produces the same `DEGRADED` verdict the correctly authenticated identity produced, where it previously said `healthy`.
+
+Merged in #401; see `internal/pipeline/audits/findings/FND-0018-operator-grant-follows-command-not-workload.md` and
+`FND-0019-status-verdict-unsupported-by-evidence.md`.
