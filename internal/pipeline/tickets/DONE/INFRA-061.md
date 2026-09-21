@@ -517,3 +517,29 @@ fixes both problems, but a reader working from the old hunk would reproduce the 
 **And the heredoc-quoting hypothesis is refuted:** the generator is `cat >"$tmp/bin/aws" <<'EOF'`
 (quoted), so `$1`, `$2` and `$*` are not expanded at generation time. The literal `"$1 $2"` in
 bash's error message already implied that; the check confirms it.
+
+## The docs-only path, and why the head's green must be checked (2026-09-21)
+
+The head moved from `290f685a` to `b5e2df48` on a docs-only commit, and the workflow classifies a
+change by its paths and **deliberately skips the full suite** for docs-only. So a green on the
+new head could come from the skip path and say nothing about the code.
+
+Checked: the run for the current head carries the `test` job, plus `golden-path-smoke`, the
+dockerfile smokes and the TypeScript demo -- the jobs a docs-only classification skips. So the
+head is on the full-suite path, not the skip path. **It is still in flight**, so no green is
+established yet.
+
+When it reports, state it as "full-suite green on `<sha>`" only if the `test` job **completed**,
+not merely appeared, and name the SHA. If it turns out to be skipped, the alternative is a
+full-suite run on the code commit `290f685a`.
+
+## Session close
+
+**Epoch checklist:** A, B, and full-suite green on the head with the path named. Harness green is
+done.
+
+**Not yet true:** any claim that the recalled shape of the authorizer's answer is right. No live
+capture has happened; the first one settles it.
+
+A and B are the two places where a wrong verdict or an open window could still come out of a run,
+so a fresh session should start with them.
