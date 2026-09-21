@@ -205,7 +205,7 @@ authenticate its own principal) and then **fails the run** unless it observes al
    comparison does not use, so it stops the run too.
 
 Record here which of those the run reported, and the identity source field it printed. The
-raw response is written to `$SOL_QUALIFICATION_CAPTURE_DIR/whoami-capture.json`
+raw response is written to `$SOL_QUALIFICATION_CAPTURE_DIR/whoami-capture-<run_id>.json`
 (`~/.sol-qual/` by default) so it survives teardown — **attach it to this record**, and
 promote it to a fixture if it differs from what the parser is tested against.
 

@@ -945,10 +945,17 @@ let persist_whoami_capture ~run_id json =
   | Some path ->
     (try
        let dir = Filename.dirname path in
+       (* The raw capture holds real ARNs and account ids, so the directory is 0700 and the
+          file 0600 -- created or tightened, since an existing directory may be looser. *)
        if not (Sys.file_exists dir) then Unix.mkdir dir 0o700;
-       let oc = open_out path in
+       (try Unix.chmod dir 0o700 with
+        | _ -> ());
+       let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ] 0o600 in
+       let oc = Unix.out_channel_of_descr fd in
        output_string oc json;
        close_out oc;
+       (try Unix.chmod path 0o600 with
+        | _ -> ());
        Printf.printf "  whoami capture: %s\n%!" path
      with
      | _ ->
@@ -959,7 +966,16 @@ let persist_whoami_capture ~run_id json =
 ;;
 
 let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
-  let interval_s = 10. in
+  (* The retry interval is overridable so a harness can exercise the retry path without
+     sleeping through it. Production uses the default. *)
+  let interval_s =
+    match Sys.getenv_opt "SOL_WHOAMI_RETRY_INTERVAL_S" with
+    | Some v ->
+      (match float_of_string_opt v with
+       | Some f -> f
+       | None -> 10.)
+    | None -> 10.
+  in
   (* The expectation is the configured intent -- the target's provisioner role, normalised
      to the path-free form canonicalArn reports, so a role with a path does not produce a
      false mismatch on a healthy cluster. The observation is the authorizer's own answer
@@ -1033,16 +1049,18 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
         | Ok (Error e) -> Sol_cli_process.error_to_string e
         | Error e -> e
       in
-      (* Retry is for an endpoint that is not ready yet. An authorization refusal will not
-         fix itself with backoff -- the identity is what it is -- so it fails immediately. *)
-      if cluster_refused why
-      then
-        lifecycle_error
-          (Printf.sprintf
-             "the authorizer refused the probe as this principal (%s). Retrying cannot \
-              change an identity, so the run stops rather than waiting out the window."
-             why)
-      else if remaining <= 1
+      (* Retried, not treated as terminal. A 401 or an authentication failure immediately
+         after cluster creation is usually access-entry or aws-auth propagation lag for the
+         *correct* principal, and connection errors are the endpoint not being ready -- both
+         fix themselves. A 403 on this call is unusual (SelfSubjectReview is normally allowed
+         for any authenticated user) and is retried on the same terms, then fails when the
+         window expires.
+
+         The one thing that *is* terminal is a successful answer naming a different identity,
+         which is handled above: that is a wrong credential, and no amount of waiting changes
+         it. Treating every Unauthorized as terminal here would fail healthy runs in the first
+         minute. *)
+      if remaining <= 1
       then
         lifecycle_error
           (Printf.sprintf
@@ -2117,17 +2135,10 @@ let cloud_init ~target ~var_file ~vars ~action () =
        is much later. Without it, a later denial is indistinguishable from a credential
        that never worked, a principal that was never the elevated one, or a capability
        that was never granted: a final denial is not a transition. *)
-    let bootstrap_window_control =
-      match target_cfg.provisioner_role_arn, outputs with
-      | Some provisioner_role_arn, Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ->
-        Some
-          (deescalation_probe
-             ~region:target_cfg.region
-             ~outputs:aws_outputs
-             ~provisioner_role_arn
-             ())
-      | _ -> None
-    in
+    (* The gate first. It fires at the moment a fresh endpoint is least likely to answer,
+       so it must not be preceded by anything that also needs a working cluster -- least of
+       all the control below, whose single probe would otherwise be the first thing to meet
+       the propagation window. *)
     (match target_cfg.provisioner_role_arn, outputs with
      | Some provisioner_role_arn, Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ->
        verify_whoami_shape
@@ -2135,6 +2146,40 @@ let cloud_init ~target ~var_file ~vars ~action () =
          ~outputs:aws_outputs
          ~provisioner_role_arn
      | _ -> ());
+    (* The control must observe the bootstrap-only capability *permitted*, because a later
+       denial is not a transition unless the capability was shown to work first. One probe
+       at this moment is not enough: a fresh cluster can refuse or be unreachable while
+       propagation catches up. So it retries with backoff, and if it never observes
+       permitted the run stops before the platform install rather than proceeding to a
+       verification that can only come back Undetermined. *)
+    let rec observe_bootstrap_window remaining =
+      match target_cfg.provisioner_role_arn, outputs with
+      | Some provisioner_role_arn, Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ->
+        let control =
+          deescalation_probe
+            ~region:target_cfg.region
+            ~outputs:aws_outputs
+            ~provisioner_role_arn
+            ()
+        in
+        let _, probes = control in
+        (match List.exists snd probes with
+         | true -> Some control
+         | false ->
+           if remaining <= 1
+           then
+             lifecycle_error
+               "the bootstrap window never showed its capability permitted, so a later \
+                denial could not be told apart from a credential that never worked. The \
+                run stops before the platform install."
+           else (
+             Printf.printf
+               "  bootstrap window control: not yet permitted; retrying in 10s\n%!";
+             Unix.sleepf 10.;
+             observe_bootstrap_window (remaining - 1)))
+      | _ -> None
+    in
+    let bootstrap_window_control = observe_bootstrap_window 10 in
     (match bootstrap_window_control with
      | Some (principal, probes) ->
        Printf.printf

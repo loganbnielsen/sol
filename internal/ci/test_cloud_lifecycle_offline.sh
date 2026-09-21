@@ -445,6 +445,14 @@ case " $* " in
     # produces, which is the failure this emulation exists to prevent.
     case "$(cat "$FAIL_MARKER_DIR/kubeconfig-role" 2>/dev/null || true)" in
       sol-provisioner)
+        # DEC-040: the first answer is a 401, as a freshly created EKS cluster gives
+        # while access-entry or aws-auth propagation catches up for the *correct*
+        # principal. The gate must retry that, not read it as a wrong identity.
+        if [ ! -e "${LIFECYCLE_LOG}.whoami-401-seen" ]; then
+          : >"${LIFECYCLE_LOG}.whoami-401-seen"
+          printf 'error: You must be logged in to the server (Unauthorized)\n' >&2
+          exit 1
+        fi
         printf '{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview","metadata":{"creationTimestamp":null},"status":{"userInfo":{"username":"arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth","uid":"aws-iam-authenticator:111122223333:AROA","groups":["system:authenticated","sol:platform-provisioners"],"extra":{"arn":["arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth"],"canonicalArn":["arn:aws:iam::111122223333:role/sol-provisioner"],"sessionName":["EKSGetTokenAuth"]}}}}\n'
         ;;
       sol-cluster-access)
@@ -568,6 +576,8 @@ export SOL_HOME="$root"
 export TF_VAR_db_password=offline-only
 export KUBECONFIG=/ambient/forbidden
 export FAIL_MARKER_DIR="$tmp/markers"
+# DEC-040: exercise the gate's retry without sleeping through it.
+export SOL_WHOAMI_RETRY_INTERVAL_S=0
 export KUBECONFIG_LOG="$tmp/kubeconfigs"
 export RDS_PREPARED_FILE="$tmp/markers/rds-prepared"
 export STATE_RM_FILE="$tmp/markers/state-rm"

@@ -245,7 +245,7 @@ type deescalation_verdict =
     authority held.
 
     - [Principal_unexpected] is [Undetermined]: the probe proves nothing.
-    - [Principal_cannot_authenticate] is [Deescalated]: the elevated capability needs
+    - [Principal_refused_by_cluster] is [Deescalated]: the elevated capability needs
       cluster authentication, so its absence is its revocation.
     - Otherwise any permitted capability is [Still_elevated], an empty probe list is
       [Undetermined] (never [Deescalated]), and only a confirmed principal with no
