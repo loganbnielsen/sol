@@ -25,7 +25,7 @@ The distinction is worth stating plainly because it is easy to conflate: a sign-
 
 ## Before you start
 
-- Build, tests and repository layout: [`.claude/CLAUDE.md`](.claude/CLAUDE.md).
+- Build, tests and repository layout: [`AGENTS.md`](AGENTS.md).
 - Where to make common changes: [`docs/architecture/contributing-map.md`](docs/architecture/contributing-map.md).
 - The conventions code and docs are held to — including the demo/example coverage
   rule, which requires a runnable example (not only unit tests) for anything that
