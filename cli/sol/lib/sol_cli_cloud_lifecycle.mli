@@ -255,6 +255,24 @@ val deescalation_verdict
   -> (string * bool) list
   -> deescalation_verdict
 
+(** DEC-040's positive control: [Deescalated] only when the *same* principal is observed
+    permitted the bootstrap-only capabilities inside the bootstrap window and denied them
+    afterwards.
+
+    A final denial alone proves nothing -- a credential that never worked, a different
+    principal, or a capability that was never granted all look identical afterwards. So:
+
+    - the bootstrap capabilities were never observed permitted -> [Undetermined];
+    - a different principal answered after de-escalation -> [Undetermined];
+    - the post-de-escalation probe obtained no evidence -> [Undetermined];
+    - the same principal, permitted before and denied after -> [Deescalated];
+    - still permitted after -> [Still_elevated]. *)
+val deescalation_transition
+  :  before:(string * bool) list
+  -> after_principal:deescalation_principal
+  -> after:(string * bool) list
+  -> deescalation_verdict
+
 val deescalation_verdict_to_string : deescalation_verdict -> string
 
 (** [enter ~from ~to_] is the only way an operation may move between phases. It

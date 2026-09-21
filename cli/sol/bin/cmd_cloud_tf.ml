@@ -893,13 +893,18 @@ let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
 
 (* Bounded and fail-closed: access-entry changes are eventually consistent so a retry
    is expected, but an unverified claim is not an acceptable outcome. *)
-let verify_deescalation ~region ~outputs ~provisioner_role_arn =
+let verify_deescalation ~region ~outputs ~provisioner_role_arn ~before =
   let interval_s = 10. in
   let rec loop remaining =
     let principal, probes =
       deescalation_probe ~region ~outputs ~provisioner_role_arn ()
     in
-    let verdict = Sol_cli_cloud_lifecycle.deescalation_verdict ~principal probes in
+    let verdict =
+      Sol_cli_cloud_lifecycle.deescalation_transition
+        ~before
+        ~after_principal:principal
+        ~after:probes
+    in
     match verdict with
     | Sol_cli_cloud_lifecycle.Deescalated -> verdict
     | _ when remaining <= 1 -> verdict
@@ -1937,6 +1942,32 @@ let cloud_init ~target ~var_file ~vars ~action () =
         cleanup_bootstrap_access ();
         lifecycle_error e
     in
+    (* DEC-040's positive control. The bootstrap-only capabilities observed *permitted* as
+       the provisioner while the window this run opened is still open -- captured here
+       because the cloud apply has produced the outputs the probe needs and de-escalation
+       is much later. Without it, a later denial is indistinguishable from a credential
+       that never worked, a principal that was never the elevated one, or a capability
+       that was never granted: a final denial is not a transition. *)
+    let bootstrap_window_control =
+      match target_cfg.provisioner_role_arn, outputs with
+      | Some provisioner_role_arn, Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ->
+        Some
+          (deescalation_probe
+             ~region:target_cfg.region
+             ~outputs:aws_outputs
+             ~provisioner_role_arn
+             ())
+      | _ -> None
+    in
+    (match bootstrap_window_control with
+     | Some (_, probes) ->
+       Printf.printf
+         "  bootstrap window control: %s\n%!"
+         (probes
+          |> List.map (fun (c, ok) ->
+            Printf.sprintf "%s=%s" c (if ok then "permitted" else "denied"))
+          |> String.concat ", ")
+     | None -> Printf.printf "  bootstrap window control: not captured\n%!");
     let platform_vars =
       platform_vars_of ~on_error:cleanup_bootstrap_access ~cloud_target ~outputs ()
     in
@@ -2141,6 +2172,10 @@ let cloud_init ~target ~var_file ~vars ~action () =
                verify_deescalation
                  ~region:target_cfg.region
                  ~outputs:aws_outputs
+                 ~before:
+                   (match bootstrap_window_control with
+                    | Some (_, probes) -> probes
+                    | None -> [])
                  ~provisioner_role_arn
              | None ->
                (* The bootstrap elevation is scoped to the provisioner role; a target

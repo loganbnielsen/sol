@@ -1104,6 +1104,44 @@ let deescalation_verdict
        if still = [] then Deescalated else Still_elevated still)
 ;;
 
+(* DEC-040's positive control. A final denial is not evidence of a transition: a
+   credential that never worked, a principal that was never the elevated one, or a
+   capability that was never granted all produce the same "denied" afterwards. What the
+   security claim needs is the same principal and the same capabilities, observed
+   *permitted* inside the bootstrap window and *denied* after it. Anything less is
+   [Undetermined], which is not a licence to announce Ready. *)
+let deescalation_transition
+      ~(before : (string * bool) list)
+      ~after_principal
+      ~(after : (string * bool) list)
+  =
+  let permitted probes =
+    List.filter_map (fun (c, ok) -> if ok then Some c else None) probes
+  in
+  match permitted before with
+  | [] ->
+    Undetermined
+      "the bootstrap-only capabilities were never observed permitted, so no removal can \
+       be demonstrated"
+  | _ ->
+    (match after_principal with
+     | Principal_unexpected who ->
+       Undetermined
+         (Printf.sprintf
+            "the principal answering after de-escalation was %s, not the one observed \
+             during the window; the transition is not established"
+            who)
+     | Principal_probe_failed why ->
+       Undetermined ("the post-de-escalation probe obtained no evidence: " ^ why)
+     | Principal_refused_by_cluster _ -> Deescalated
+     | Principal_confirmed _ ->
+       (match permitted after with
+        | [] when after = [] ->
+          Undetermined "no capability probe produced an answer after de-escalation"
+        | [] -> Deescalated
+        | still -> Still_elevated still))
+;;
+
 let deescalation_verdict_to_string = function
   | Deescalated ->
     "de-escalated: the effective surface no longer permits bootstrap capabilities"

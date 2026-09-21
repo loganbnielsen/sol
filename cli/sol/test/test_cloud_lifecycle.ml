@@ -995,6 +995,86 @@ let test_deescalation_requires_the_effective_surface () =
     Alcotest.fail "a measurement failure was read as still elevated"
 ;;
 
+(* DEC-040's positive control: only a *transition* of the same principal and the same
+   capabilities licenses Ready. Every one of these cases produces a "denied" afterwards,
+   and only one of them is evidence. *)
+let test_deescalation_requires_a_transition () =
+  let caps =
+    [ "create clusterroles"; "create clusterrolebindings"; "escalate clusterroles" ]
+  in
+  let granted = List.map (fun c -> c, true) caps in
+  let denied = List.map (fun c -> c, false) caps in
+  let confirmed = Sol_cli_cloud_lifecycle.Principal_confirmed "…/sol-provisioner" in
+  let undetermined why =
+    match
+      Sol_cli_cloud_lifecycle.deescalation_transition
+        ~before:why
+        ~after_principal:confirmed
+        ~after:denied
+    with
+    | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+    | Sol_cli_cloud_lifecycle.Deescalated ->
+      Alcotest.fail
+        "a capability never observed granted was read as a verified transition"
+    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+      Alcotest.fail "a capability never observed granted was read as still elevated"
+  in
+  (* 1. The capability was never observed granted in the window: nothing was removed. *)
+  undetermined [];
+  undetermined denied;
+  (* 2. A different principal answered after de-escalation: the transition is not
+     established, however clean the denial looks. *)
+  (match
+     Sol_cli_cloud_lifecycle.deescalation_transition
+       ~before:granted
+       ~after_principal:
+         (Sol_cli_cloud_lifecycle.Principal_unexpected "…/sol-cluster-access")
+       ~after:denied
+   with
+   | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+   | Sol_cli_cloud_lifecycle.Deescalated ->
+     Alcotest.fail "a different principal's denial was read as a verified transition"
+   | Sol_cli_cloud_lifecycle.Still_elevated _ -> Alcotest.fail "unexpected verdict");
+  (* 3. A measurement failure after de-escalation leaves us knowing nothing. *)
+  (match
+     Sol_cli_cloud_lifecycle.deescalation_transition
+       ~before:granted
+       ~after_principal:
+         (Sol_cli_cloud_lifecycle.Principal_probe_failed "expired credentials")
+       ~after:denied
+   with
+   | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
+   | Sol_cli_cloud_lifecycle.Deescalated ->
+     Alcotest.fail "a measurement failure was read as a verified transition"
+   | Sol_cli_cloud_lifecycle.Still_elevated _ -> Alcotest.fail "unexpected verdict");
+  (* 4. Granted before, denied after, same principal and capabilities: the only shape
+     that licenses Ready. *)
+  (match
+     Sol_cli_cloud_lifecycle.deescalation_transition
+       ~before:granted
+       ~after_principal:confirmed
+       ~after:denied
+   with
+   | Sol_cli_cloud_lifecycle.Deescalated -> ()
+   | Sol_cli_cloud_lifecycle.Still_elevated _ ->
+     Alcotest.fail "a demonstrated transition was read as still elevated"
+   | Sol_cli_cloud_lifecycle.Undetermined why ->
+     Alcotest.fail ("a demonstrated transition was read as undetermined: " ^ why));
+  (* ... and if the capability is still permitted, it is still elevated -- the positive
+     control makes that observable rather than merely assumed. *)
+  match
+    Sol_cli_cloud_lifecycle.deescalation_transition
+      ~before:granted
+      ~after_principal:confirmed
+      ~after:granted
+  with
+  | Sol_cli_cloud_lifecycle.Still_elevated still ->
+    Alcotest.(check int) "all three capabilities named" 3 (List.length still)
+  | Sol_cli_cloud_lifecycle.Deescalated ->
+    Alcotest.fail "a still-permitted capability was read as de-escalated"
+  | Sol_cli_cloud_lifecycle.Undetermined _ -> Alcotest.fail "unexpected verdict"
+;;
+
 let test_effective_authorization () =
   let open L in
   let expected = provisioner_authorization_checks in
@@ -1071,6 +1151,10 @@ let () =
             "verified de-escalation (DEC-040)"
             `Quick
             test_deescalation_requires_the_effective_surface
+        ; Alcotest.test_case
+            "verified de-escalation is a transition (DEC-040)"
+            `Quick
+            test_deescalation_requires_a_transition
         ; Alcotest.test_case "terraform scope" `Quick test_terraform_scope
         ] )
     ]
