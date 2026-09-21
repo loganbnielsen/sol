@@ -53,3 +53,36 @@ negative is a permanent leak in a public repository, which is what HARDEN-002 ru
 
 The product defects Run 8 found (`INFRA-048`, `INFRA-050`, `INFRA-051`). This is
 guard/process hardening, deliberately kept separate.
+
+## Completion — 2026-09-21
+
+`check_no_account_artifacts.sh` now matches a bare account id when it is adjacent
+(in either order, within a short gap) to a qualifier: `account`, the
+letter-bounded word `aws`, an `arn:` fragment, or an AWS region token. Region
+tokens are the actual AWS prefixes, so `my-app-name-1` is not mistaken for one. A
+12-digit number with no qualifier is still not matched, and the
+`(^|[^0-9/])` before each bare-id alternative keeps a GitHub run id in its
+`.../actions/runs/<id>` URL out — an account id in prose is not a path segment.
+
+Demonstrated, not asserted:
+
+- **Before** — the new guard against the unredacted tree (main, `506d71a9`):
+  `FAIL`, naming `HARDEN-002.md:538` and `:631`.
+- **After** — the same guard against this branch: `qualification artifacts: no
+  account ids or scratch files in the repository`, exit 0.
+- **Mutant** — removing the new alternatives makes `test_no_account_artifacts.sh`
+  fail with `guard accepted a bare account id adjacent to a region token`.
+  The test also pins the no-false-positive cases (a 12-digit run id in its URL
+  next to a region token, a timestamp fragment, a hash prefix) and keeps the
+  pre-existing `account <id>` behaviour.
+
+The two leaked lines in `HARDEN-002.md` are redacted to the documented
+placeholder `111122223333`, consistent with the other qualification documents.
+
+**Acceptance 4 was already satisfied on `main`.** `internal/pipeline/audits/README.md`
+already names `git add -A` explicitly, in the same "Working alongside other
+actors" section as the never-remove-a-worktree rule (added by `b6419db1`, which
+recorded Run 8's findings). Nothing was changed there rather than duplicate it.
+
+**No demo/example change**: this is a CI guard and its mutation test, not
+app-author-facing behaviour, so the demo-coverage rule does not apply.

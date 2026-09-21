@@ -29,5 +29,38 @@ if "$guard" "$tmp" >/dev/null 2>&1; then
   echo "guard accepted a real-looking account id in a tracked markdown file" >&2
   exit 1
 fi
+rm -f "$tmp/notes.md"
+
+# FND-0015: a *bare* account id in prose -- no `account`, no ARN, no ECR host --
+# must fail when it is adjacent to a region token. This is the exact shape that
+# sat undetected in HARDEN-002.md.
+bare_id="246813579024"
+printf 'Target `sol-qual7-ab12cd34` (production-single-region/v1, %s / us-east-1).\n' \
+  "$bare_id" >"$tmp/prose.md"
+git -C "$tmp" add -A
+if "$guard" "$tmp" >/dev/null 2>&1; then
+  echo "guard accepted a bare account id adjacent to a region token" >&2
+  exit 1
+fi
+rm -f "$tmp/prose.md"
+
+# ... but a 12-digit number with no qualifier is not an account id, and must not
+# false-positive. The three shapes: a GitHub run id (notably in its URL, where
+# the id is a path segment, which is why the pattern excludes a preceding `/`),
+# a timestamp fragment, and a hash prefix.
+run_id="356549406961"
+printf 'run https://github.com/loganbnielsen/sol/actions/runs/%s in us-east-1\n' \
+  "$run_id" >"$tmp/numbers.md"
+printf 'timestamp %s sha a1b2c3d4e5f6 %s\n' "$bare_id" "$run_id" >>"$tmp/numbers.md"
+git -C "$tmp" add -A
+"$guard" "$tmp" >/dev/null
+
+# The word "account" followed by an id still fails, as it always has.
+printf 'account %s was used\n' "$bare_id" >"$tmp/account.md"
+git -C "$tmp" add -A
+if "$guard" "$tmp" >/dev/null 2>&1; then
+  echo "guard accepted an 'account <id>' phrase" >&2
+  exit 1
+fi
 
 echo "account-artifact guard mutation test: ok"
