@@ -5,8 +5,8 @@
 - **First identified:** 2026-09-21, scoping `INFRA-049` for implementation
 - **Last verified:** 2026-09-21 (`main` @ `506d71a9`)
 - **Derived ticket:** `INFRA-049` (its decision selects which layer should apply `omit`)
-- **Evidence class:** `STATIC` (the two code paths) plus `BEHAVIORAL` for the preflight
-  (FND-0012)
+- **Evidence class:** `STATIC` (the code paths) + `BEHAVIORAL` (the preflight — FND-0012's
+  live observation, reproduced under control on 2026-09-21)
 
 ## Correction to the first reading
 
@@ -48,6 +48,38 @@ is exactly FND-0012's behavioural observation — but now with the mechanism: th
 layer filters, and the deploy/preflight layer bypasses the filter. `omit` is not
 unimplemented; it is applied in one place and ignored in the place its users would notice.
 
+## Reproduction (2026-09-21, `main` @ `506d71a9`)
+
+Against a throwaway copy of `examples/pluto` with a `qual/aws/us-east-1.yml` that carries
+the run8 target's omissions (`order_svc`, `fulfillment_worker`: `omit: true`):
+
+```text
+$ sol deploy qual/aws/us-east-1 --dry-run --image-tag probe
+error: this target selects profile production-single-region/v1, and preflight found 2
+unmet guarantee(s). Nothing was changed.
+  - qualified version set is not established [application]: service "order_svc" declares
+    language typescript, which production-single-region/v1 does not qualify; ...
+```
+
+The same workspace and target, narrowed so the omitted units leave the selection:
+
+```text
+$ sol deploy qual/aws/us-east-1 --dry-run --scope checkout/checkout_svc \
+    --image-ref checkout_svc=<repo>@sha256:<digest>
+...
+[dry-run] ok (0.0s)                      # exit 0
+```
+
+The failure follows the **selection**, not the language lookup: `--scope` removes the
+unit and the preflight passes; `omit: true` does not, and the preflight fails. That is
+also the evidence for the "smaller fix does not work" note below — pointing
+`sol_yml_language` alone at the accessor would leave the unit in `plan.services`, where it
+would fail the same predicate as "does not declare a language".
+
+The run8 target example's own comment states the intent that this behaviour defeats:
+the TypeScript pair is "omitted here rather than left to fail the run at step 1". The
+author expected `omit` to exempt the preflight; it does not.
+
 ## Consequence for `INFRA-049`
 
 This changes what the decision is deciding. It is not "should we implement this key or
@@ -72,19 +104,20 @@ frame a decision:
   that sets `omit: true` on `app_db` and `api`, and asserts `Sol_cli_config.resources cfg`
   is `[ "sessions" ]` and `Sol_cli_config.services cfg` is `[]`. That is the accessor
   filtering, observed.
-- **Deploy path bypasses it — `STATIC` + `BEHAVIORAL`, but no unit test.**
-  The reachability chain is complete and was checked end to end:
+- **Deploy path bypasses it — `BEHAVIORAL`, reproduced under control; still no unit
+  test.** The reproduction above shows the failure follows the selection (`--scope`
+  removes the unit and the preflight passes; `omit: true` does not). The reachability
+  chain is also complete and was checked end to end:
   `cmd_deploy.run` builds the inventory with `Sol_cli_manifest.discover_services ()`
   (`sol_cli_manifest.ml` contains no `omit` reference, so the filesystem scan cannot
   filter on it) and narrows it only by `--scope` (`sol_cli_workload_selection.ml` has no
   `omit` reference either); `ctx.resolved_config` flows through
   `Sol_cli_factory.plan_of_services` into `deployment_plan.of_services_result`; `to_spec`
   then calls `sol_yml_language` on each selected unit, and that reads the raw
-  `cfg.Sol_cli_config.services` field, not the filtering accessor. FND-0012 observed the
-  preflight reporting omitted units live. But no unit test in the tree pins the bypass —
-  every plan fixture uses `omit = false` (`test_deployment_plan.ml:798,811,1145`) — so
-  this half rests on that chain plus FND-0012's live observation. A regression test
-  belongs with the `INFRA-049` fix; it should be added there, not assumed here.
+  `cfg.Sol_cli_config.services` field, not the filtering accessor. What is missing is a
+  *regression* test — every plan fixture still uses `omit = false`
+  (`test_deployment_plan.ml:798,811,1145`) — and that belongs with the `INFRA-049` fix,
+  not assumed here.
 
 ## Who is affected
 
@@ -108,10 +141,15 @@ getting the config-layer half only.
 ## What is not established
 
 - Which layer *should* be authoritative — the `INFRA-049` contract decision.
-- Whether an intended fix belongs in `sol_yml_language` (read the accessor), in the
-  selection (filter the inventory by `omit`), or in both; the language error and the
-  "immutable artifact identity" error in FND-0012 have different causes and may need
-  different fixes.
+- **Which change actually fixes it — and the smaller one does not.** The language error
+  is produced by `Sol_cli_profile_preflight.ml`'s `Qualified_versions`, which iterates
+  `plan.services` and each `service_spec.language` (`:88-128`). That list is the deploy
+  selection, and each `language` came from `sol_yml_language`. So the load-bearing bypass
+  is the **selection** including an omitted unit. Pointing `sol_yml_language` at the
+  filtering accessor *alone* would not fix the preflight: the omitted unit would then read
+  as `language = None` and fail the same predicate as "does not declare a language". The
+  unit has to leave `plan.services`. Recorded here so the decision is not settled with the
+  smaller change.
 - The behaviour of any untracked target that sets `omit`.
 
 ## What would make this qualified
@@ -125,6 +163,7 @@ verbatim.
 - `cli/sol/lib/sol_cli_config.ml:58,72,233,245,651-654,682-685,849,861,997-998,1105,1120,1286-1287`
 - `cli/sol/lib/sol_cli_config.mli:68,81,113-114`
 - `cli/sol/lib/sol_cli_deployment_plan.ml:492,678,1095`
+- `cli/sol/lib/sol_cli_profile_preflight.ml:88-128` (the `Qualified_versions` predicate)
 - `cli/sol/bin/cmd_deploy.ml:722-732`
 - `cli/sol/lib/sol_cli_workload_selection.ml:49-66`
 - `cli/sol/lib/sol_cli_manifest.ml` (`discover_services`)
