@@ -96,6 +96,60 @@ The run8 target example's own comment states the intent that this behaviour defe
 the TypeScript pair is "omitted here rather than left to fail the run at step 1". The
 author expected `omit` to exempt the preflight; it does not.
 
+### Reproducing the by-name observation
+
+Verbatim, so the finding does not rest on trust in this summary. A throwaway copy of
+`examples/pluto`, and a target that carries the run8 omissions — note the only difference
+from the real target is the absent `profile:`, which leaves the selection untouched and
+only stops the preflight from gating before the plan is printed:
+
+```sh
+scratch="$(mktemp -d)"
+cp -r examples/pluto "$scratch/pluto" && cd "$scratch/pluto"
+mkdir -p sol/qual/aws
+cat > sol/qual/aws/us-east-1.yml <<'YAML'
+target:
+  cluster_name: sol-qual-omit-test
+  kube_context: sol-qual-omit-test
+  base_domain: smoke-test.invalid
+  cluster_issuer: letsencrypt-staging
+  letsencrypt_email: smoke-test@example.invalid
+  registry: 111122223333.dkr.ecr.us-east-1.amazonaws.com
+  state_bucket: sol-qual-omit-test-state
+  state_lock_table: sol-qual-omit-test-lock
+  provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+  cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
+  deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
+  operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
+  cluster_endpoint_cidr: 203.0.113.0/24
+  alert_receiver_type: webhook
+  alert_receiver_url: https://example.invalid/hook
+  alert_owner: test
+  alert_runbook_url: https://example.invalid/runbook
+  node_failure_headroom_nodes: 1
+  destroy_retention: none
+services:
+  order_svc:
+    omit: true
+  fulfillment_worker:
+    omit: true
+YAML
+dg="$(printf 'a%.0s' {1..64})"; reg=111122223333.dkr.ecr.us-east-1.amazonaws.com
+sol deploy qual/aws/us-east-1 --dry-run \
+  --image-ref "checkout_svc=$reg/checkout_svc@sha256:$dg" \
+  --image-ref "charge_svc=$reg/charge_svc@sha256:$dg" \
+  --image-ref "notify_worker=$reg/notify_worker@sha256:$dg" \
+  --image-ref "order_svc=$reg/order_svc@sha256:$dg" \
+  --image-ref "fulfillment_worker=$reg/fulfillment_worker@sha256:$dg"
+# → the plan prints [svc] demo_ts/order_svc and [worker] demo_ts/fulfillment_worker
+#   even though both are omitted
+```
+
+Adding the real target's `profile: production-single-region` back and replacing the
+`--image-ref` list with `--image-tag probe` produces the failing preflight quoted above.
+The account id `111122223333` is a documented placeholder; no registry or cluster is
+contacted (`--dry-run`).
+
 ## Consequence for `INFRA-049`
 
 This changes what the decision is deciding. It is not "should we implement this key or
