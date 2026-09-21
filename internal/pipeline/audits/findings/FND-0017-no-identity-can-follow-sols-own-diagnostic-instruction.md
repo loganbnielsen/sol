@@ -134,3 +134,48 @@ explain it — with a run record showing the command, the identity, and the outp
 - `cli/platform/infra/aws/main.tf:146-175`
 - `cli/platform/infra/base/platform_provisioner_rbac.tf` (the "deliberately omitted"
   comment) and `platform_deploy_rbac.tf`
+
+## Live verification (2026-09-21) — partially successful, two defects found
+
+The identity was built (DEC-038, parts A–D) and exercised against the preserved Run 8
+target. What passed, verified live rather than argued:
+
+- the operator principal authenticates (`sol-qual5-operator` access entry exists);
+- it can read the evidence the diagnostic path needs — `list events`, `list pods`,
+  `get pods/log` all **yes** in `pluto-checkout`, including `events`, which the deploy
+  identity is refused;
+- every negative holds: create/delete pods, patch deployments, create rolebindings,
+  `pods/portforward`, `pods/exec`, and `secrets` are all **no**.
+
+What did **not** pass — the operator could not obtain the diagnosis, so this finding
+stays `OPEN`, and the two blockers are recorded as derived defects:
+
+| Defect | What happened |
+|---|---|
+| `FND-0018` / `INFRA-058` | the binding is created per *command scope*, so `pluto-comms` — the namespace under investigation — has none, and the operator is refused all three reads there |
+| `FND-0019` / `INFRA-059` | worse: with no read access, `sol status` printed **`healthy`**, where the identity that could read printed **`DEGRADED`** with the pod table and `notify_worker rollout failed` |
+
+`FND-0019` is the more serious of the two and prompted a contract clarification
+(DEC-038 §7): a verdict must be evidence-backed and three-valued.
+
+### Methodology note — an invalid first comparison, and why it was caught
+
+The first A/B was wrong and nearly became a false conclusion. `aws eks
+update-kubeconfig --alias <a> --role-arn <b>` **rewrites the shared user entry**, so
+after creating the operator's kubeconfig the context named `sol-qual5-deploy` was
+still authenticating **as the operator**. The comparison therefore ran
+operator-vs-operator, both printed `healthy`, and the natural reading — "the verdict
+is wrong regardless of identity" — was not supported by it.
+
+The contradiction is what exposed it: the claim required that the *deploy* identity
+also be unable to read `pluto-comms`, but that identity deployed there. Re-running
+with the deploy context genuinely regenerated produced the real contrast, which is
+the evidence `FND-0019` rests on.
+
+The rule this reinforces is the one HARDEN-003 already states: when an observation
+contradicts an established one, the contradiction is evidence about the *method*
+until the method is ruled out. Here the identity behind a context alias was the
+variable, and it was invisible in the output. Any A/B comparing identities over
+kubeconfig aliases must therefore re-issue `update-kubeconfig` for the identity
+under test immediately before each side, and record which principal actually served
+each read.
