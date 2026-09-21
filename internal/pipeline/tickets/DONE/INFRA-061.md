@@ -543,3 +543,25 @@ capture has happened; the first one settles it.
 
 A and B are the two places where a wrong verdict or an open window could still come out of a run,
 so a fresh session should start with them.
+
+## Taking the full-suite green (record both facts)
+
+The head keeps moving by docs-only commits, so the SHA a green is read from may not be the SHA
+that carries the code. When recording it, write down **both**:
+
+1. the SHA whose `test` job ran to **completion**; and
+2. whether any **code** commit sits between that SHA and the head.
+
+If A and B land as code commits this resolves itself, because the head will carry code and run
+the full suite. Until then, "full-suite green" without the pair of facts is not readable by
+someone else.
+
+## Handoff
+
+The code state is as this record describes it, and this record has been wrong before -- it
+briefly claimed a green tree while the harness was red, which review caught. So start by
+verifying the state rather than trusting it: run the harness (it is self-diagnosing now), and
+check the checklist items against the code.
+
+The record's own caveats, stated rather than absent: no live capture has happened, the positive
+refusal path is unit-only, and the head's CI is unresolved.
