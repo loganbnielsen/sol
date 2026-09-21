@@ -243,12 +243,39 @@ let operator_binding_docs ~workspace (services : Sol_cli_manifest.service list)
 ;;
 
 let reconcile_operator_bindings ~ctx ~workspace : (unit, string) result =
-  let ( let* ) = Result.bind in
-  let rec create_all = function
-    | [] -> Ok ()
-    | doc :: rest ->
-      let* () = create_doc ~ctx doc in
-      create_all rest
+  let namespaces =
+    Sol_cli_manifest.discover_services ()
+    |> List.filter_map (fun (s : Sol_cli_manifest.service) ->
+      match
+        Sol_cli_deployment_plan.namespace_result
+          ~workspace
+          ~domain:s.Sol_cli_manifest.domain
+      with
+      | Ok ns -> Some (Sol_cli_deployment_plan.namespace_to_string ns)
+      | Error _ -> None)
+    |> List.sort_uniq String.compare
   in
-  create_all (operator_binding_docs ~workspace (Sol_cli_manifest.discover_services ()))
+  (* Best-effort per namespace, which is a correctness property rather than a
+     convenience: the invariant is per workload namespace, so one namespace that
+     cannot be established must not deny every namespace after it. Found live -- a
+     service present in the workspace but never deployed (so it has no namespace to
+     bind into) aborted a fail-fast loop and silently left a real workload
+     namespace without its grant.
+
+     A namespace that does not exist holds no Sol-managed workload, so it is
+     nothing to do rather than a failure. Anything else is collected and reported:
+     a diagnostic grant that quietly did not appear is the failure mode this whole
+     line of work exists to remove. *)
+  let failures =
+    List.filter_map
+      (fun ns ->
+         match create_doc ~ctx (Sol_cli_manifest.operator_role_binding_doc ~ns) with
+         | Ok () -> None
+         | Error e when Sol_cli_port_forward.string_contains ~needle:"NotFound" e -> None
+         | Error e -> Some (Printf.sprintf "%s: %s" ns e))
+      namespaces
+  in
+  match failures with
+  | [] -> Ok ()
+  | failures -> Error (String.concat "; " failures)
 ;;

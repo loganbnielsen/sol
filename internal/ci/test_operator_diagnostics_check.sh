@@ -149,7 +149,7 @@ python3 - "$work/root/cli/sol/lib/sol_cli_substrate.ml" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p).read()
-old = "  create_all (operator_binding_docs ~workspace (Sol_cli_manifest.discover_services ()))"
+old = "  let failures ="
 assert old in s
 new = "  let _ = secret_docs [] in\n" + old
 open(p, "w").write(s.replace(old, new, 1))

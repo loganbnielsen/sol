@@ -115,8 +115,8 @@ if echo "$reconcile" | grep -Eq 'ensure|secret_docs|apply_doc'; then
   fail "the operator binding reconciliation is not RBAC-only: it uses the substrate/Secret path"
 fi
 
-echo "$reconcile" | grep -q 'operator_binding_docs' ||
-  fail "the reconciliation does not use the RBAC-only document producer"
+echo "$reconcile" | grep -Eq 'operator_role_binding_doc|operator_binding_docs' ||
+  fail "the reconciliation does not produce the operator's RoleBinding through the RBAC-only document producer"
 
 # A declared ARN that never reaches the provider root is exactly how the deploy
 # entry was missed once (HARDEN-002 run 3, finding 11). The root declares
