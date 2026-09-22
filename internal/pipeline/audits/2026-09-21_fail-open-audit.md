@@ -40,8 +40,8 @@ was read as removed), and DEC-040 (a `can-i` non-zero exit read as `Denied`).
 
 | Finding | Classification | State | Severity | Ticket |
 |---|---|---|---|---|
-| FND-0024 — `kubectl probe` reports an unreadable cluster as `false`, so `sol logs`/`sol fn` say "not deployed" | `VERIFIED_DEFECT` | `OPEN` | low | `INFRA-063` |
-| FND-0025 — a failed pointer read drops the previous release's prune protection | `VERIFIED_DEFECT` | `OPEN` | medium | `INFRA-064` |
+| FND-0024 — `kubectl probe` reports an unreadable cluster as `false`, so `sol logs`/`sol fn` say "not deployed" | `VERIFIED_DEFECT` | `FIXED_UNQUALIFIED` (INFRA-063, 2026-09-22) | low | `INFRA-063` |
+| FND-0025 — a failed pointer read drops the previous release's prune protection | `VERIFIED_DEFECT` | `FIXED_UNQUALIFIED` (INFRA-064, 2026-09-22) | medium | `INFRA-064` |
 | FND-0026 — a missing *or unreadable* migrations directory both mean "no migrations required" | `OBSERVATION` | `OPEN` | low | — (no ticket) |
 | FND-0027 — Loki stream parse failures are dropped without a trace | `OBSERVATION` | `OPEN` | low | — (no ticket) |
 

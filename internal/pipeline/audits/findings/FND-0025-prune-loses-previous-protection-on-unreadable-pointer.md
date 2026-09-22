@@ -1,7 +1,12 @@
 # FND-0025 — a failed current-release-pointer read drops the previous release's prune protection
 
 - **Classification:** `VERIFIED_DEFECT`
-- **State:** `OPEN`
+- **State:** `FIXED_UNQUALIFIED` — fixed by `INFRA-064` (2026-09-22): the
+  previous-release input is three-valued (`Known | None_yet | Unreadable`) and the
+  selection refuses to prune on `Unreadable`, reporting the cause, so the protection
+  is no longer dropped exactly when its input could not be read. Both readers
+  (`cmd_deploy.ml`, `cmd_up.ml`) are fixed. Verified by pure unit tests; a
+  qualification run is what would make it `QUALIFIED`.
 - **First identified:** 2026-09-21, fail-open audit (`2026-09-21_fail-open-audit.md`)
 - **Last verified:** 2026-09-21 (`main` @ `4ae985f3`)
 - **Derived ticket:** `INFRA-064`
