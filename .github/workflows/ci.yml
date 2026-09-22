@@ -945,6 +945,16 @@ jobs:
         working-directory: examples/pluto/app/demo_ts
         run: npm run build -w order-svc -w fulfillment-worker
 
+      - name: Dependency advisories (AUDIT-068)
+        # Production dependencies only, and only high or above: this is the bar
+        # AUDIT-068 was filed against (11 OpenTelemetry advisories, 2 of them
+        # high), and it is deliberately not an all-severity gate -- a
+        # moderate-only advisory in a devDependency should not block an
+        # unrelated change. Drift past this line fails visibly rather than
+        # waiting for the next audit to notice.
+        working-directory: examples/pluto/app/demo_ts
+        run: npm audit --omit=dev --audit-level=high
+
   # FEAT-087: `golden-path-smoke` (OCaml) is the only job that proves a real
   # deploy works end to end -- `ts-tests`/`demo-ts-dockerfile-smoke` above stop
   # at typecheck and `docker build`. TypeScript is a first-class Sol

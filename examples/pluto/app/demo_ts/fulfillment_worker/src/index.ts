@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { Kafka } from "kafkajs";
-import { Pushgateway } from "prom-client";
+import { Pushgateway } from "@prometheus-io/client";
 import type { SpanContext } from "@opentelemetry/api";
 
 import {

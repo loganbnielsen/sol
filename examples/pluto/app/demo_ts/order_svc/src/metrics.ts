@@ -1,9 +1,9 @@
-// prom-client handles exposition (the ecosystem library); the metric NAMES
+// @prometheus-io/client handles exposition (the ecosystem library); the metric NAMES
 // and LABELS below come from @sol-fab/obs, which owns Sol's naming convention
 // so this service's metrics land in the same Grafana panels as an OCaml
 // sol-svc's would.
 
-import { Counter, Histogram, Registry } from "prom-client";
+import { Counter, Histogram, Registry } from "@prometheus-io/client";
 import { SOL_SVC_REQUESTS_TOTAL, SOL_SVC_REQUEST_DURATION_SECONDS } from "@sol-fab/obs";
 
 export function makeSvcMetrics() {
