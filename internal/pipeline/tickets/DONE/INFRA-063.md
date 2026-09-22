@@ -57,3 +57,30 @@ already does:
 2. A genuine non-zero exit from kubectl still says "not deployed".
 3. A unit test at the adapter level pins the three cases (the test doubles
    already model a runner), so the collapse cannot come back.
+
+## Completion (2026-09-22)
+
+Done as the Remediation describes, with the classifier made **pure** so it is
+testable without a cluster:
+
+- `Sol_cli_kubectl` gains `presence = Present | Absent of string | Uncheckable of
+  string` and the pure `presence_of_probe_result`; `probe` is **deleted** (these
+  two callers were its only production users) rather than left as a bool that can
+  still collapse the two negative states.
+- `cmd_fn.ml` and `cmd_logs.ml` match all three ways: `Absent` keeps today's "not
+  deployed" message; `Uncheckable why` prints "could not check … : <why>". Both
+  still exit 1.
+- The old test asserted the collapse itself (`probe` returns `false` for a missing
+  tool); it is replaced by `test_kubectl_presence_classification`, a hermetic test
+  of the four cases — including that an unrunnable kubectl is **not** reported as
+  absent, which is the bug.
+
+Acceptance criteria: (1) and (2) are the two match arms; (3) is the new test, which
+needs no cluster and no `kubectl` on `PATH`.
+
+**Demo/example coverage:** not applicable — an internal error-message change with
+no app-author surface.
+
+`dune build` clean; the `tool_adapters` suite passes (29 tests). The kafka and e2e
+suites fail on this machine for the environment reason recorded in `AGENTS.md`
+(`localhost:9092`/`8081` refused — no local infra), unrelated to this change.
