@@ -99,6 +99,42 @@ are listed once at the end as `NOT REACHED` with the reason.
 |---|---|---|---|
 | | `MECHANISM` / `BEHAVIORAL` | | |
 
+### The public-TLS row needs a namespace, and that is the test's requirement
+
+The model, recorded once here because two matrices reference it and it is easy to
+misread as a provider quirk:
+
+```text
+qualification row "public TLS issuance"
+        ↓ requires
+a DNS-01 challenge the CA can resolve
+        ↓ requires
+the run is authoritative for a real namespace
+        ↓ hence
+a subdomain delegated to that cloud's DNS service
+```
+
+**A cloud does not need a subdomain. A capability test does.** Proving public DNS →
+ACME → TLS requires control of a real zone on Cloud DNS *and* Route 53 alike; what
+decides whether a delegation exists today is whether that profile's matrix carries
+the row. Recorded in `DEC-042`, which fixed one delegated label per cloud —
+`qual-gcp.sol-fab.dev` for GCP and `qual-aws.sol-fab.dev` reserved for AWS — because
+a name can be delegated exactly once and a rename would force re-delegation and
+re-issuance.
+
+Three consequences for a run record:
+
+- **The delegation is a prerequisite, not a finding.** A missing one is recorded as
+  `BLOCKED` with the reason (`FND-0007` did exactly that), never as a failed row.
+- **The zone is created by Sol's cloud root** (`create_dns_zone` /
+  `create_route53_zone`; `dns_nameservers` / `route53_nameservers` are the registrar
+  hand-off). A hand-created zone sits outside Terraform state and collides on the
+  next apply.
+- **The zone must outlive the target.** Recreating it assigns *new* nameservers, so a
+  teardown that removes it silently invalidates the pasted delegation and the TLS
+  failure that follows does not name the cause. If the zone is removed, the run
+  record must say the delegation has to be redone.
+
 ## 5. Run-specific assertions
 
 Fill the block that applies to this run; delete the other.

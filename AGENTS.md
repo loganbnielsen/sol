@@ -81,6 +81,14 @@ Two rules for writing one: **`check` echoes the command before running it, and a
 
 **Worktree isolation (REFAC-090):** each concurrent actor owns one worktree, and agents do not perform mutating work in the canonical checkout — that checkout belongs to the human operator, and its branch can change underneath an actor midway through a commit, producing a commit that is *valid but in the wrong place*. The authoritative statement, the checks to resolve before every commit and push, and the recovery for a stale hook install live in `CONTRIBUTING.md` § *Isolation and ownership*; the preflight is `internal/ci/check_authority.sh`, wired into the pre-commit hook. That section is the one place to keep true — this file does not restate the policy.
 
+**But name the tree on every mutating command (observed twice in one session).** The preflight catches a *commit* in the wrong place, and only when a context is declared — so it cannot catch the more common failure, which is a **staging** operation: `git add` / `rm` / `mv` / `checkout` run after a `cd` into the canonical checkout stages changes *there*, and every later check passes while the edit is in the wrong repository. Both occurrences were exactly that — a file written into the wrong worktree, and a ticket `git rm`'d from canonical — and in the second the canonical checkout sat with a staged deletion until a later sweep found it.
+
+The discipline, since relying on remembering the current directory has now failed twice:
+
+- **Pass the tree explicitly** — `git -C <worktree> …`, or set `cd` inside the same command and never inherit it. `cd` persists across tool calls; the working tree you *think* you are in is the least reliable fact in the session.
+- **After any batch that touched git, verify the canonical checkout is clean:** `git -C <canonical> status --porcelain` must print nothing. A non-empty canonical checkout is a bug in the workflow, not somebody's local edit — treat it as one and restore it.
+- **Prefer `git worktree add … origin/main`** over the local `main` ref, so a stale canonical checkout never silently bases work on an old commit and there is no reason to reset that checkout at all.
+
 **Skills that interact with tickets:**
 - `/work` — unified entry point; creates worktrees for `READY_FOR_ENGINEERING` tickets with no open PR yet, resumes ones that already have one, runs the review agent on ones ready for it. The worker's own last commit moves the ticket to `DONE/` on the branch before `soldev pipeline submit` pushes it and opens the PR.
 - `/review-worktree` — standalone review gate (called internally by `/work`); subagents emit JSON, `soldev pipeline review` leaves the verdict on the PR
