@@ -124,4 +124,33 @@ if ! run_check --branch main; then
 fi
 echo "  [OK]   main passes"
 
+
+# ── must refuse loudly: a shallow checkout cannot be judged ───────────────────
+# The CI shape that produced this case. The test job checks out shallow by default,
+# so the branch's commit *subjects* are unreadable while its *name* still names the
+# ticket -- and the guard's documented "(<ID>, part A)" escape hatch lives in a
+# subject. Concluding "no declaration" there refuses a legitimate partial PR and
+# prints advice that cannot be followed, so the guard must name the cause instead.
+git clone -q --depth 1 "file://$tmp" "$tmp/shallow"
+cd "$tmp/shallow"
+git fetch -q --depth 1 origin fix/infra-901a-part-one
+git checkout -q FETCH_HEAD
+if "$CHECK" --base origin/main --branch fix/infra-901a-part-one >/dev/null 2>&1; then
+  echo "  [FAIL] a shallow checkout was judged instead of refused" >&2
+  exit 1
+fi
+# Capture first: the guard exits 2 here, and `set -o pipefail` would make that
+# poison the pipeline even when the grep matches.
+shallow_out="$("$CHECK" --base origin/main --branch fix/infra-901a-part-one 2>&1 || true)"
+case "$shallow_out" in
+  *shallow*) ;;
+  *)
+    echo "  [FAIL] the shallow refusal did not name the cause" >&2
+    printf '%s\n' "$shallow_out" >&2
+    exit 1
+    ;;
+esac
+echo "  [OK]   a shallow checkout is refused, naming the cause"
+cd "$tmp"
+
 echo "ticket-move guard: all expectations hold."
