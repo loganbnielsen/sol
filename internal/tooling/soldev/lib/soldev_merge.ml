@@ -451,41 +451,62 @@ let run_review ticket_id result_file =
 
 (* ── pipeline merge-finish (internal — spawned by `merge`, never call directly) ──
 
-   Runs the post-merge test suite and updates the perf baseline. `merge`
-   always invokes this as a subprocess of a binary rebuilt *after* the PR's
-   merge commit landed — never inline in the resident pre-merge process (see
-   REFAC-075). There is no ticket file to move here any more: the squash
-   commit `merge` just applied already carried the ticket's own
-   READY_FOR_ENGINEERING -> DONE move (committed by the worker, on the
-   branch). On a real regression, reverting that squash commit un-does the
-   code *and* the ticket's DONE move together, landing it back in
-   READY_FOR_ENGINEERING for free — no BLOCKED_BY_PERFORMANCE state needed. *)
+   Runs the post-merge test suite and updates the perf baseline. `merge` always
+   invokes this as a subprocess of a binary rebuilt *after* the PR's merge commit
+   landed — never inline in the resident pre-merge process (see REFAC-075). There
+   is no ticket file to move here any more: the squash commit `merge` just applied
+   already carried the ticket's own READY_FOR_ENGINEERING -> DONE move (committed by
+   the worker, on the branch).
+
+   What this must *not* do is act on a local failure (BUG-033). Everything that can
+   be known about the code — build, tests, review marker, CI — was established
+   before `gh pr merge` touched origin/main, and GitHub's own required checks are
+   the authoritative gate. A suite run after that point, on this machine, reflects
+   this machine's environment as much as the code; the common failure here is
+   missing local kafka/e2e infra, not a regression. The previous behaviour reverted
+   the squash commit on *local* main and printed "ticket returns to
+   READY_FOR_ENGINEERING" — a rollback that never reached origin, left local main
+   diverged from the branch of record, and told the operator something untrue about
+   the ticket. A local failure is a report, not an action. *)
+
+(* The decision as a value, so the rule is testable without a shell or a cluster
+   (test_merge.ml). rc = 2 is the perf-ratio verdict, which is informational;
+   every other non-zero — including a crashed or unrunnable suite (127) — is a
+   failure to report rather than a baseline to record. The old shape treated only
+   1 as a failure and everything else as "merged", so an unrunnable suite was
+   silently recorded as a success. *)
+type post_merge_action =
+  | Record_baseline
+  | Record_baseline_after_perf_regression
+  | Report_local_failure of int
+
+let post_merge_action_of_rc = function
+  | 0 -> Record_baseline
+  | 2 -> Record_baseline_after_perf_regression
+  | rc -> Report_local_failure rc
+;;
+
 let run_merge_finish ~ticket_id ~merge_sha =
   let perf_rc = Soldev_shell.run_cmd "./cli/platform/local/scripts/run_tests.sh" in
-  if perf_rc = 1
-  then (
-    (* Functional test failure: the PR should not have merged; revert it. *)
-    let revert_rc =
-      Soldev_shell.run_cmd
-        ~echo:false
-        (Printf.sprintf
-           "SOL_SKIP_HOOKS=1 git revert %s --no-edit"
-           (Filename.quote merge_sha))
-    in
+  match post_merge_action_of_rc perf_rc with
+  | Report_local_failure rc ->
     Printf.eprintf
-      "  test failure detected — reverted %s (ticket returns to READY_FOR_ENGINEERING \
-       with it)\n\
+      "  local post-merge suite failed (rc=%d) — %s is NOT reverted.\n\
+      \  The merge is on origin/main (the required checks verified it before it landed) \
+       and the ticket's DONE move travelled with it: nothing is rolled back, here or \
+       there.\n\
+      \  This run reflects this machine — missing kafka/e2e infra is the usual cause — \
+       not the code CI already verified.\n\
+      \  If this is a real regression, revert it deliberately on the remote:\n\
+      \    git revert %s && git push origin main\n\
        %!"
+      rc
+      ticket_id
       merge_sha;
-    if revert_rc <> 0
-    then
-      Printf.eprintf
-        "  warning: %s remains merged because automatic revert failed\n%!"
-        ticket_id;
-    exit 1)
-  else (
+    exit 1
+  | Record_baseline | Record_baseline_after_perf_regression ->
     (* Perf-ratio regressions (rc = 2) are informational only: record the new
-       baseline so history reflects the merged commit, but do not revert. *)
+       baseline so history reflects the merged commit, but never revert. *)
     if perf_rc = 2
     then
       Printf.eprintf
@@ -511,7 +532,7 @@ let run_merge_finish ~ticket_id ~merge_sha =
             "git add internal/tooling/perf/perf_baseline.json && git commit -m %s"
             (Filename.quote message)));
     Printf.printf "  ✓  merged\n%!";
-    exit 0)
+    exit 0
 ;;
 
 (* Path to the binary `dune build` just refreshed. Invoked directly rather
@@ -615,23 +636,21 @@ let run_merge ~dry_run ~ticket_filter =
              let build_rc = Soldev_shell.run_cmd "dune build" in
              if build_rc <> 0
              then (
-               Printf.eprintf "  post-merge build failed — reverting %s\n%!" merge_sha;
-               ignore
-                 (Soldev_shell.run_cmd
-                    ~echo:false
-                    "git checkout -- internal/tooling/perf/perf_baseline.json");
-               let revert_rc =
-                 Soldev_shell.run_cmd
-                   ~echo:false
-                   (Printf.sprintf
-                      "SOL_SKIP_HOOKS=1 git revert %s --no-edit"
-                      (Filename.quote merge_sha))
-               in
-               if revert_rc <> 0
-               then
-                 Printf.eprintf
-                   "  warning: %s remains merged because automatic revert failed\n%!"
-                   id;
+               (* BUG-033: report, never revert. The merge is already on
+                  origin/main; a build failure on this machine after that point
+                  cannot undo it, and a local-only revert would leave local main
+                  diverged from the branch of record while printing a rollback
+                  that did not happen. *)
+               Printf.eprintf
+                 "  post-merge build failed — %s is NOT reverted.\n\
+                 \  The merge is on origin/main and the ticket's DONE move travelled \
+                  with it; local main has been synced to it.\n\
+                 \  Investigate here; if this is a real regression, revert it \
+                  deliberately on the remote:\n\
+                 \    git revert %s && git push origin main\n\
+                  %!"
+                 id
+                 merge_sha;
                incr errors)
              else (
                let finish_rc =
