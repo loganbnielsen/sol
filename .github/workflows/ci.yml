@@ -210,7 +210,13 @@ jobs:
 
       - name: Format check
         if: needs.classify.outputs.kind != 'docs-only'
-        run: opam exec -- dune fmt --preview
+        # One definition, shared with the pre-commit hook's --staged mode, so the
+        # local check and this one cannot drift apart.
+        run: internal/ci/check_ocamlformat.sh --all
+
+      - name: ocamlformat guard mutation test
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: bash internal/ci/test_ocamlformat.sh
 
       - name: Platform-component drift guardrail (ADR 0001 / CODE_LAYER-005)
         if: needs.classify.outputs.kind != 'docs-only'
