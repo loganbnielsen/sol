@@ -4,6 +4,7 @@
   test_destination
   test_deployment_scope
   test_workload_selection
+  test_manual_job_name
   test_deployment_plan
   test_check
   test_config
