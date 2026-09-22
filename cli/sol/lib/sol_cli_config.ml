@@ -1286,6 +1286,12 @@ let target cfg = cfg.target
 let resources cfg = active_resources cfg
 let services cfg = active_services cfg
 
+(* Reads the raw declarations, not [active_services]: the caller is asking about a
+   unit it reached by another route, to decide whether this target omits it. *)
+let is_omitted_service cfg ~name =
+  List.exists (fun (s : service) -> s.omit && String.equal s.name name) cfg.services
+;;
+
 (* Every service in the workspace gets an ECR repository, regardless of
    which target is currently being planned/applied -- a service omitted
    from one target may still be deployed to another and needs its own

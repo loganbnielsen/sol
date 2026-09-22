@@ -37,3 +37,30 @@ val resolve
 
 (** [is_empty resolved] is [true] when resolution matched no workload. *)
 val is_empty : resolved -> bool
+
+(** The result of applying the target's [omit] declarations to a resolved
+    selection (DEC-041). [selected] and [excluded] partition the resolved services,
+    so nothing is dropped without being reported; [included] is a subset of
+    [selected] naming what the target omits and the scope named back in. *)
+type omission =
+  { selected : Sol_cli_manifest.service list (** What the run should actually deploy. *)
+  ; excluded : Sol_cli_manifest.service list
+    (** Omitted by the target, and not named by the scope: dropped, and the caller
+        should say so. *)
+  ; included : Sol_cli_manifest.service list
+    (** Omitted by the target but named by a unit-level `--scope`: included, and
+        the caller should say so. *)
+  }
+
+(** [apply_omission ~is_omitted resolved] decides what the target's [omit]
+    declarations do to a resolved selection. Pure, so the rule is testable without
+    a workspace.
+
+    The request kind is the whole point: a bare `--scope <domain>` (or no scope at
+    all) never names a unit, so an omitted one is excluded rather than swept back
+    in, while `--scope <domain>/<name>` is explicit intent about that unit and may
+    include it — reporting that it did. Placement does not affect
+    [is_omitted]'s meaning: it is already resolved to an absolute predicate over
+    services, so a unit-level scope cannot be "defeated" by how names were written
+    (DEC-036). *)
+val apply_omission : is_omitted:(Sol_cli_manifest.service -> bool) -> resolved -> omission

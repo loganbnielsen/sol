@@ -1,8 +1,13 @@
 # FND-0012 — A target-level `omit` does not exempt a unit from the profile preflight
 
-- **Classification:** `VERIFIED_DEFECT` (remedy depends on an unestablished intent —
-  see "Not yet established")
-- **State:** `OPEN`
+- **Classification:** `VERIFIED_DEFECT` (the intent this remedy depended on is now
+  established — see `DEC-041`, which decided that `omit` means "not in this target's
+  default set")
+- **State:** `FIXED_UNQUALIFIED` — fixed by `INFRA-049` (2026-09-22, DEC-041): the
+  deploy selection is derived from the omit-filtered config, so an omitted unit is
+  absent from the preflight's input as well. Verified by unit tests over the
+  selection rule; not yet re-observed on a qualification target, which is what
+  `QUALIFIED` would require.
 - **First identified:** 2026-09-20, AWS Run 8 (second observation; first
   2026-09-20 during the Run 8 preflight)
 - **Derived ticket:** `INFRA-049`
