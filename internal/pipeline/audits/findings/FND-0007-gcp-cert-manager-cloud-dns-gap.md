@@ -1,15 +1,18 @@
 # FND-0007 — GCP cert-manager cannot issue: the shared issuers are hard-wired to Route 53
 
 - **Classification:** `QUALIFICATION_GAP`
-- **State:** `BLOCKED` (TLS issuance: `sol-qual.dev` is not delegated to the
-  qualification project, so DNS-01 cannot complete; the Cloud DNS solver wiring
-  itself is unimplemented and would otherwise be `OPEN`)
+- **State:** `BLOCKED` — the delegation half now has a source and is decision-gated,
+  not input-starved: the owner controls `sol-fab.dev`, and `DEC-042` records the
+  proposed delegation (a dedicated subdomain as its own Cloud DNS zone). Until that
+  is decided the row stays blocked; the Cloud DNS **solver** wiring is unimplemented
+  and would otherwise be `OPEN`.
 - **First identified:** 2026-09-18 (`gcp-bootstrap-inventory.md`)
-- **Last verified:** 2026-09-19, `main @ 910a59f1`
+- **Last verified:** 2026-09-22, `main @ 0ec8bfef` (external input identified)
 - **Provider:** GCP / GKE (AWS is fine)
-- **Derived ticket:** none — already tracked as `gcp-bootstrap-inventory.md` remaining gap 1
+- **Derived ticket:** none for the delegation (decision is `DEC-042`); the solver swap
+  is tracked as `gcp-bootstrap-inventory.md` remaining gap 1
 - **Related invariant:** `INV-SUBSTRATE-1`, `INV-SUBSTRATE-2`
-- **Related:** matrix row I14; `docs/qualification/gcp-bootstrap-inventory.md` §"Remaining gaps" (gap 1) and §"Proposed GCP capability mapping" (DNS/TLS row)
+- **Related:** matrix row I14; `DEC-042`; `docs/qualification/gcp-bootstrap-inventory.md` §"Remaining gaps" (gap 1) and §"Proposed GCP capability mapping" (DNS/TLS row)
 
 ## Sol claim at stake
 

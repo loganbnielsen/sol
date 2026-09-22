@@ -242,6 +242,18 @@ is insufficient: registrar delegation and ingress records remain explicit
 operator prerequisites. Google-managed certificates are not an automatic
 replacement for Sol's current cert-manager contract.
 
+**External input identified (2026-09-22).** The owner controls **`sol-fab.dev`**,
+so the "control of a qualification subdomain" prerequisite above can be met
+rather than remaining blocked. The proposed shape — recorded for sign-off as
+`DEC-042` — is a **dedicated subdomain delegated as its own Cloud DNS zone** in
+`sol-qualification` (e.g. `qual.sol-fab.dev`, NS records at the registrar or
+parent zone), with the cert-manager identity's IAM **scoped to that zone only**
+and the ACME staging directory qualified before a single production issuance. The
+product's own names — the apex and every name it serves — are not delegated and
+stay outside the qualification project's authority; deleting the NS records
+revokes the whole grant. This is one HARDEN-004 row (public TLS issuance); the
+identity/authority rows and reaching `Ready` do not depend on it.
+
 ### GKE Workload Identity Federation prerequisites
 
 Workload Identity Federation for GKE is always enabled on Autopilot. If the
@@ -339,7 +351,7 @@ semantic boundaries and use the fewest principals that enforce them.
 | Kubernetes access | Ephemeral kubeconfig from `gcloud container clusters get-credentials`, isolated per phase. GKE evaluates RBAC first and Google IAM as a fallback, so the provisioner's custom IAM role is deliberately limited to cluster discovery, credential retrieval, and control-plane connection; scoped Kubernetes-object authority comes from RBAC. Never use ambient kubeconfig. |
 | Database | Private-IP Cloud SQL for PostgreSQL 16, regional HA, PITR/backups, API-level `settings.deletion_protection_enabled` in `Ready`, and an explicit destroy preparation. Terraform's top-level `deletion_protection` is a useful second guard but is not the live GCP protection predicate. Keep credentials out of plans/logs; choose password rotation or IAM database authentication deliberately during implementation. |
 | Registry | Regional Artifact Registry Docker repository, digest deployment, repository-scoped writer/reader permissions. |
-| DNS/TLS | Conditional on workloads declaring `ingress_host`. Use Cloud DNS only when Sol is delegated the qualification zone; otherwise consume operator-managed records. Keep ingress-nginx plus cert-manager/ACME for contract parity, but replace the hard-coded Route 53 DNS-01 solver with Cloud DNS plus a scoped GKE workload identity, or with the selected external provider's qualified solver before TLS capability qualification. |
+| DNS/TLS | Conditional on workloads declaring `ingress_host`. Use Cloud DNS only when Sol is delegated the qualification zone; otherwise consume operator-managed records. Keep ingress-nginx plus cert-manager/ACME for contract parity, but replace the hard-coded Route 53 DNS-01 solver with Cloud DNS plus a scoped GKE workload identity, or with the selected external provider's qualified solver before TLS capability qualification. **Proposed delegation (2026-09-22, `DEC-042`):** a dedicated subdomain of the owner's `sol-fab.dev`, delegated as its own Cloud DNS zone in `sol-qualification`, zone-scoped cert-manager identity, staging before production issuance. |
 | Observability/storage | GKE persistent disks through a GCP StorageClass; GCS for durable Loki/Thanos after completing the existing chart wiring; Cloud Logging/Monitoring for GCP/GKE control-plane signals, not as an unqualified replacement for Sol's platform observability. |
 
 GCS backend locking is native; do not add a lock database. Terraform remains
