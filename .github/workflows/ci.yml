@@ -257,6 +257,11 @@ jobs:
         # ticket it is given, but nothing covered a hand-pushed branch.
         run: |
           git fetch --no-tags origin main -q
+          # The test job's checkout is shallow by default, which hides the branch's
+          # commit subjects -- including the "(<ID>, part A)" declaration this guard
+          # reads -- while leaving the branch *name* visible, so a legitimate partial
+          # PR would be refused. Deepen before running it.
+          git fetch --no-tags --unshallow origin -q 2>/dev/null || git fetch --no-tags origin main -q
           internal/ci/check_ticket_move.sh --base origin/main --branch "${{ github.head_ref }}"
 
       - name: Ticket-move guard mutation test
