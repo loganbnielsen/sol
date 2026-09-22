@@ -254,6 +254,46 @@ stay outside the qualification project's authority; deleting the NS records
 revokes the whole grant. This is one HARDEN-004 row (public TLS issuance); the
 identity/authority rows and reaching `Ready` do not depend on it.
 
+**Operator runbook once `DEC-042` is accepted (drafted 2026-09-22).** The exact
+nameservers are **assigned by GCP when the zone is created** — they cannot be
+known in advance. Any `ns-cloud-a1…a4.googledomains.com` in an example is
+illustrative: the letter/number vary per zone, so they must be read from the
+zone, not assumed. The order is therefore fixed:
+
+1. **Create the zone.** Enable `dns.googleapis.com` in `sol-qualification`
+   (currently disabled — see the prerequisite table above), then create a public
+   managed zone whose DNS name is the delegated name (`qual.sol-fab.dev`). Sol's
+   cloud root can create this ("optional DNS"), or `gcloud dns managed-zones
+   create --dns-name=qual.sol-fab.dev --visibility=public …`.
+2. **Read its nameservers.** `gcloud dns managed-zones describe <zone>
+   --format='value(nameServers)'` (or the console's zone detail page). There are
+   four; copy them exactly.
+3. **Delegate at the registrar — four `NS` records**, name `qual`, data = the
+   four nameservers from step 2. At Squarespace the Name field takes the label
+   only (`qual`) and the domain is appended automatically; entering
+   `qual.sol-fab.dev` would produce `qual.sol-fab.dev.sol-fab.dev`. TTL of 1h
+   keeps the initial propagation quick. **Add nothing else under `qual` at the
+   registrar:** once delegated, every name below `qual.sol-fab.dev` — wildcard
+   included — is answered by the Cloud DNS zone, so a record there would be
+   ignored at best and confusing at worst.
+4. **Verify the delegation.** `dig NS qual.sol-fab.dev +short` from a public
+   resolver returns the four nameservers, and
+   `dig NS qual.sol-fab.dev @<parent-nameserver>` shows the hand-off from the
+   authoritative parent.
+5. **Then the child-zone records and the solver.** The application/`*` A or
+   CNAME to the ingress address live **in the Cloud DNS zone** (the "ingress
+   records remain explicit operator prerequisites" gap above), and the
+   cert-manager Cloud DNS solver is built against the zone with its zone-scoped
+   identity.
+
+Two caveats. If the parent zone (`sol-fab.dev`) is **DNSSEC-signed**, the
+delegation also needs a matching **DS record** for the child zone (Cloud DNS
+publishes the child DNSKEY); if the registrar cannot hold a subdomain DS, either
+turn off parent DNSSEC or record the delegation as insecure deliberately. And a
+Cloud DNS zone is a **persistent, minimally-billable** resource (~$0.20/month
+plus queries) — small, but unlike the rest of a torn-down target it does not
+reach `Absent` on destroy unless the zone is removed too.
+
 ### GKE Workload Identity Federation prerequisites
 
 Workload Identity Federation for GKE is always enabled on Autopilot. If the
