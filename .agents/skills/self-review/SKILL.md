@@ -72,6 +72,10 @@ the actual diff — don't just skim and assume it's fine.
 - Run `git status --short` after editing+testing, *before* doing anything
   else (merging, rebasing) — an uncommitted fix can get silently carried
   through a `git merge` and never actually reach the remote.
+- Run `internal/ci/check_ocamlformat.sh --staged` before pushing. CI's Format
+  check runs the same definition over the whole project, and `dune build` does
+  not cover it, so unformatted OCaml is a guaranteed CI bounce — a full run
+  spent on something `dune fmt` fixes in a second.
 - After pushing, verify with `gh pr diff <N>` (the actual remote content),
   not just local `git log`/`git status`, before telling anyone a finding is
   fixed.

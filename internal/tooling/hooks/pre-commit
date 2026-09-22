@@ -74,6 +74,20 @@ BROKER_UP=0;   rpk cluster info &>/dev/null 2>&1            && BROKER_UP=1
 LOKI_UP=0;     curl -sf http://localhost:3100/ready &>/dev/null && LOKI_UP=1
 POSTGRES_UP=0; bash -c 'echo > /dev/tcp/localhost/5432' &>/dev/null && POSTGRES_UP=1
 
+# ── Format ─────────────────────────────────────────────────────────────────────
+# CI's Format check runs `dune fmt --preview` over the whole project, so an
+# unformatted commit is a guaranteed CI bounce that costs a full run to discover.
+# Catch it here, on the staged files only: a worktree often carries unrelated
+# work in progress, and a whole-project check would block this commit for
+# formatting elsewhere. One definition, shared with CI: check_ocamlformat.sh.
+echo ""
+echo "▶ pre-commit: ocamlformat"
+if ! "$REPO_ROOT/internal/ci/check_ocamlformat.sh" --staged; then
+  echo "✗ Unformatted staged OCaml — commit blocked."
+  echo "  Skip once: SOL_SKIP_HOOKS=1 git commit ..."
+  exit 1
+fi
+
 # ── Build ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "▶ pre-commit: build"
