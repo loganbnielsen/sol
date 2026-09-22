@@ -74,6 +74,32 @@ inference and is how the operator was left without a working documented command.
 
 ## Out of scope
 
-The `configmaps` prune warning recorded separately as `FND-0014`/`INFRA-051` — the
-deploy identity cannot list ConfigMaps in `default`, so release pruning is skipped
-with a warning. Same INV-AUTH-6 shape, different defect, and it is not blocking.
+The `configmaps` prune warning recorded separately as `FND-0014`/`INFRA-051` —
+the deploy identity cannot list ConfigMaps in `default`, so release pruning is
+skipped with a warning. Same INV-AUTH-6 shape, different defect, and it is not
+blocking.
+
+## Completion — verified close-out (2026-09-22)
+
+**The work landed in #390 (`d8d8c876`) and the ticket was never moved to DONE**, so
+it kept reporting as actionable. Closed here after checking each criterion against
+the code rather than assuming the comment meant it was done:
+
+1–3. The competing default is gone: the flag is now
+`opt (some string) None` — *no* default — and
+`Sol_cli_env_target.resolve_secret_backend ?explicit` (`sol_cli_env_target.ml:87`)
+returns the explicit choice when given and `default_secret_backend` otherwise, so a
+direct/local deploy resolves to `kubernetes-live` and a GitOps target to
+`kubernetes-placeholder` with nothing supplied.
+4. The GitOps guard is intact (`cmd_deploy.ml:203-219`), and its comment now records
+*why* it can only fire on an explicit flag: an absent flag resolves to the GitOps
+destination's own placeholder rather than to a live backend.
+5. `cli/sol/test/test_env_target.ml` has a `resolve_secret_backend (INFRA-050)`
+section covering both directions, and the help text now reads "Omitted — the usual
+case — the destination decides", with `kubernetes-placeholder` described as the
+way to force a redacted Secret.
+6. **Live and outstanding.** Re-running the documented step 6 command against the
+live target is a qualification-run step, not something this repository can verify
+offline. `FND-0013` therefore stays `FIXED_UNQUALIFIED`, and the live half is the
+next run's to close — recorded here so closing this ticket does not read as
+"verified against a real cluster".
