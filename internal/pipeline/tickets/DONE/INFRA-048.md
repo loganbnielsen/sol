@@ -84,3 +84,25 @@ prescribes, instead of widening the RBAC. The narrow shape:
    sufficient.
 4. The offline production-infra check
    (`cli/sol/test/check_production_infra.sh`) continues to pin the boundary.
+
+## Completion — verified close-out (2026-09-22)
+
+**The work landed in #388 (`642162b4`) and the ticket was never moved to DONE**, so
+it kept reporting as actionable. Closed here after checking each criterion against
+the code rather than assuming the comment meant it was done:
+
+1. `Sol_cli_manifest.create_idempotent` (`sol_cli_manifest.ml:149-170`) creates the
+   namespace with `Sol_cli_kubectl.create` and tolerates `AlreadyExists`;
+   `Sol_cli_manifest.apply` calls it instead of applying the Namespace document.
+2. `platform_deploy_rbac.tf` still grants exactly
+   `verbs = ["get", "list", "watch", "create"]` for `namespaces` — no
+   `patch`/`update`/`delete`.
+3. `cli/sol/test/test_substrate.ml:164-` drives the lifecycle with a fake kubectl
+   that refuses `apply` on a namespace (`cannot patch resource "namespaces"`) and
+   answers `AlreadyExists` to `create`, exactly as the live role does. Returning the
+   apply path to `kubectl apply` fails it.
+4. `check_production_infra.sh` passes (run during this close-out).
+
+**Not verified live.** Criterion 1's live condition was Run 8's cluster state; the
+next qualification run is what re-observes it, and `FND-0011` stays
+`FIXED_UNQUALIFIED` until then.
