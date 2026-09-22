@@ -1,14 +1,16 @@
 # FND-0007 — GCP cert-manager cannot issue: the shared issuers are hard-wired to Route 53
 
 - **Classification:** `QUALIFICATION_GAP`
-- **State:** `BLOCKED` — the delegation half now has a source and is decision-gated,
-  not input-starved: the owner controls `sol-fab.dev`, and `DEC-042` records the
-  proposed delegation (a dedicated subdomain as its own Cloud DNS zone). Until that
-  is decided the row stays blocked; the Cloud DNS **solver** wiring is unimplemented
-  and would otherwise be `OPEN`.
+- **State:** `BLOCKED` — the delegation half is now **decided** (`DEC-042`: 
+  `qual-gcp.sol-fab.dev`, created by Sol's cloud root, delegated by hand at the
+  Squarespace-managed parent), so this is no longer waiting on a decision; what
+  remains is implementation: the Cloud DNS **solver** wiring is unimplemented, and no
+  issuance has been attempted. The row stays blocked until both land.
 - **First identified:** 2026-09-18 (`gcp-bootstrap-inventory.md`)
-- **Last verified:** 2026-09-22, `main @ 0ec8bfef` (external input identified)
-- **Provider:** GCP / GKE (AWS is fine)
+- **Last verified:** 2026-09-22, `main @ 931c52fd` (delegation decided; solver still absent)
+- **Provider:** GCP / GKE. The **solver** gap is GCP-only. The **delegation** it needs
+  is provider-neutral — see "Symmetry" below, because "AWS is fine" here means "AWS
+  does not currently attempt this capability", not "AWS does not need a zone".
 - **Derived ticket:** none for the delegation (decision is `DEC-042`); the solver swap
   is tracked as `gcp-bootstrap-inventory.md` remaining gap 1
 - **Related invariant:** `INV-SUBSTRATE-1`, `INV-SUBSTRATE-2`
@@ -93,6 +95,29 @@ qualified". The next boundary (why the startup check fails) is owned by the GCP
 agent and is a platform-install issue, not this finding's subject. Unchanged: no
 Cloud DNS solver exists, and a GCP target declaring `cluster_issuer` is refused
 by name.
+
+## Symmetry — the delegation half is not a GCP property
+
+The fix depends on two things, and only one of them is about GCP:
+
+| Half | Scope |
+|---|---|
+| A DNS-01 solver wired for the provider's DNS service | **GCP-only gap** — the shared issuers are hard-wired to Route 53, and no `cloudDNS` solver exists |
+| Control of a real DNS namespace, so `_acme-challenge` is resolvable by the CA | **Provider-neutral** — a consequence of *proving* public TLS, identical on Cloud DNS and Route 53 |
+
+So "AWS is fine" needs qualifying: AWS has no equivalent finding **because the AWS
+profile does not currently attempt this capability** — matrix row I14 records that
+`Ready` does not require an external ACME round trip — not because Route 53 avoids
+the problem. If that row were added, AWS would need the same delegation
+(`qual-aws.sol-fab.dev`, reserved by `DEC-042`), and the plumbing is already in place:
+`create_route53_zone`, the `route53_nameservers` output whose description is the
+registrar instruction, `route53_zone_id` for the solver, `cert_manager_irsa_arn` for
+its identity, and a Route 53 DNS-01 solver. Adding it would be a delegation and a
+variable, not a design.
+
+This matters for reading this finding: the delegation is **not** evidence that GCP is
+architecturally different, and a future reader asking "why does GCP need a subdomain
+and AWS doesn't?" should find the answer here rather than re-deriving it.
 
 ## Supersession
 

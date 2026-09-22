@@ -42,11 +42,13 @@ differently. Where GCP exposes a flaw in the provider-neutral model, fix the mod
    a live attempt has reached the boundary that needs them. TLS issuance is
    **BLOCKED** — the qualification name is not delegated to the qualification
    project — and a blocked row is recorded as blocked, never as qualified. The
-   owner controls `sol-fab.dev`, so the external input now exists: `DEC-042`
-   records the proposed delegation (a dedicated subdomain, e.g. `qual.sol-fab.dev`,
-   as its own Cloud DNS zone with a zone-scoped cert-manager identity). Until
-   `DEC-042` is decided, this row stays `BLOCKED`; the rest of the workstream does
-   not depend on it.
+   owner controls `sol-fab.dev`, and `DEC-042` is now **decided**: `qual-gcp.sol-fab.dev`
+   as its own Cloud DNS zone in `sol-qualification`, created by Sol's cloud root and
+   delegated from the Squarespace-managed parent by hand (four `NS` records), with a
+   scoped cert-manager identity. So this row is no longer waiting on a decision — it is
+   waiting on implementation and the delegation itself. The rest of the workstream does
+   not depend on it. (`qual-aws.sol-fab.dev` is reserved for the AWS profile; the
+   delegation requirement follows from proving public TLS, not from GCP.)
 4. **Never create long-lived service-account JSON keys.** Impersonation and
    short-lived tokens only.
 5. **Do not weaken or restructure AWS behaviour to accommodate GCP.** Shared-definition
@@ -134,7 +136,7 @@ rather than being dropped.
 | workload deploy + request | not reached |
 | observability: log→Loki, metric→Prometheus, trace→Tempo | not reached |
 | ingress | not reached |
-| TLS issuance | **BLOCKED — pending `DEC-042`** (owner controls `sol-fab.dev`; proposed dedicated subdomain delegation, not yet decided) |
+| TLS issuance | **BLOCKED — decided, not yet implemented** (`DEC-042`: `qual-gcp.sol-fab.dev` delegated as its own Cloud DNS zone, created by the cloud root; the Cloud DNS solver swap is the other half of `FND-0007`) |
 | Kafka produce→consume, broker-loss durability | not reached |
 | database HA/failover, node-loss recovery | not reached |
 | failed deploy, rollback, credential rotation, drift | not reached |

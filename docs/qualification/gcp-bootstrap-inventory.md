@@ -189,9 +189,22 @@ is enough for `production-single-region/v1`.
 
 ### Quotas and blockers
 
-Exact quota limits and usage could not be obtained because billing and the
-Compute, GKE, Artifact Registry, Cloud SQL, and DNS APIs are disabled. Validate
-at least the following after API activation and before apply:
+**Correction (2026-09-22).** This section used to say quota usage "could not be
+obtained because billing and the Compute, GKE, Artifact Registry, Cloud SQL, and DNS
+APIs are disabled". That is no longer the project's state and was already wrong when
+re-read: `sol-qualification` has **billing enabled** and **39 APIs enabled**,
+including all five named — verified directly, not inferred:
+
+```bash
+gcloud services list --enabled --project sol-qualification      # 39 APIs, incl. the five
+curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  "https://cloudbilling.googleapis.com/v1/projects/sol-qualification/billingInfo"
+# -> {"billingEnabled": true, "billingAccountName": "billingAccounts/01EADC-…"}
+```
+
+The honest statement is narrower: **these quotas were never read**, not that they
+could not be. Nothing here has been bootstrapped away, so the checks below are still
+outstanding work — validate them before apply:
 
 | Area | Qualification check |
 | --- | --- |
@@ -243,16 +256,26 @@ operator prerequisites. Google-managed certificates are not an automatic
 replacement for Sol's current cert-manager contract.
 
 **External input identified (2026-09-22).** The owner controls **`sol-fab.dev`**,
-so the "control of a qualification subdomain" prerequisite above can be met
-rather than remaining blocked. The proposed shape — recorded for sign-off as
-`DEC-042` — is a **dedicated subdomain delegated as its own Cloud DNS zone** in
-`sol-qualification` (e.g. `qual.sol-fab.dev`, NS records at the registrar or
-parent zone), with the cert-manager identity's IAM **scoped to that zone only**
-and the ACME staging directory qualified before a single production issuance. The
-product's own names — the apex and every name it serves — are not delegated and
-stay outside the qualification project's authority; deleting the NS records
-revokes the whole grant. This is one HARDEN-004 row (public TLS issuance); the
-identity/authority rows and reaching `Ready` do not depend on it.
+so the "control of a qualification subdomain" prerequisite above can be met rather
+than remaining blocked. `DEC-042` now **decides** the shape: a **dedicated
+per-cloud subdomain delegated as its own DNS zone** — `qual-gcp.sol-fab.dev` for
+this profile, with `qual-aws.sol-fab.dev` reserved for AWS if that profile ever
+requires the same capability — created by Sol's cloud root rather than by hand, with
+the ACME staging directory qualified before a single production issuance. The
+product's own names — the apex and every name it serves — are not delegated and stay
+outside the qualification project's authority; deleting the NS records revokes the
+whole grant. This is one HARDEN-004 row (public TLS issuance); the identity/authority
+rows and reaching `Ready` do not depend on it.
+
+**The delegation requirement is symmetric; only the qualification scope is not.**
+Any profile that must prove public DNS → ACME → TLS needs to control a real zone, on
+Cloud DNS or Route 53 alike. The AWS profile does not carry that row (its matrix's
+I14 states `Ready` does not require an external ACME round trip) and Sol's AWS cloud
+root already offers the identical opt-in zone and registrar hand-off
+(`create_route53_zone` / `route53_nameservers` / `cert_manager_irsa_arn`, with a
+Route 53 DNS-01 solver), so nothing needs building for it — the reservation is a name
+and a delegation, not a design. What is genuinely GCP-only is the missing **solver**
+(`FND-0007`).
 
 **Operator runbook once `DEC-042` is accepted (drafted 2026-09-22).** The exact
 nameservers are **assigned by GCP when the zone is created** — they cannot be
@@ -260,30 +283,33 @@ known in advance. Any `ns-cloud-a1…a4.googledomains.com` in an example is
 illustrative: the letter/number vary per zone, so they must be read from the
 zone, not assumed. The order is therefore fixed:
 
-1. **Create the zone.** Enable `dns.googleapis.com` in `sol-qualification`
-   (currently disabled — see the prerequisite table above), then create a public
-   managed zone whose DNS name is the delegated name (`qual.sol-fab.dev`). Sol's
-   cloud root can create this ("optional DNS"), or `gcloud dns managed-zones
-   create --dns-name=qual.sol-fab.dev --visibility=public …`.
-2. **Read its nameservers.** `gcloud dns managed-zones describe <zone>
-   --format='value(nameServers)'` (or the console's zone detail page). There are
-   four; copy them exactly.
-3. **Delegate at the registrar — four `NS` records**, name `qual`, data = the
+1. **Create the zone — with Sol, not by hand.** `dns.googleapis.com` is already
+   enabled in `sol-qualification` (verified 2026-09-22), and the zone is declared in
+   the cloud root (`google_dns_managed_zone.main`, gated on `create_dns_zone`), so
+   the zone is created by the cloud bootstrap:
+   `sol cloud apply … --var create_dns_zone=true --var base_domain=qual-gcp.sol-fab.dev`.
+   Running `gcloud dns managed-zones create` instead would place the zone outside
+   Terraform state and collide with the product's own declaration of the same DNS
+   name on the next apply.
+2. **Read its nameservers.** `terraform output dns_nameservers` on the cloud root,
+   or `gcloud dns managed-zones describe <zone> --format='value(nameServers)'` (or
+   the console's zone detail page). There are four; copy them exactly.
+3. **Delegate at the registrar — four `NS` records**, name `qual-gcp`, data = the
    four nameservers from step 2. At Squarespace the Name field takes the label
-   only (`qual`) and the domain is appended automatically; entering
-   `qual.sol-fab.dev` would produce `qual.sol-fab.dev.sol-fab.dev`. TTL of 1h
-   keeps the initial propagation quick. **Add nothing else under `qual` at the
-   registrar:** once delegated, every name below `qual.sol-fab.dev` — wildcard
+   only (`qual-gcp`) and the domain is appended automatically; entering
+   `qual-gcp.sol-fab.dev` would produce `qual-gcp.sol-fab.dev.sol-fab.dev`. TTL of
+   1h keeps the initial propagation quick. **Add nothing else under `qual-gcp` at the
+   registrar:** once delegated, every name below `qual-gcp.sol-fab.dev` — wildcard
    included — is answered by the Cloud DNS zone, so a record there would be
    ignored at best and confusing at worst.
-4. **Verify the delegation.** `dig NS qual.sol-fab.dev +short` from a public
+4. **Verify the delegation.** `dig NS qual-gcp.sol-fab.dev +short` from a public
    resolver returns the four nameservers, and
-   `dig NS qual.sol-fab.dev @<parent-nameserver>` shows the hand-off from the
+   `dig NS qual-gcp.sol-fab.dev @<parent-nameserver>` shows the hand-off from the
    authoritative parent.
 5. **Then the child-zone records and the solver.** The application/`*` A or
    CNAME to the ingress address live **in the Cloud DNS zone** (the "ingress
    records remain explicit operator prerequisites" gap above), and the
-   cert-manager Cloud DNS solver is built against the zone with its zone-scoped
+   cert-manager Cloud DNS solver is built against the zone with its scoped
    identity.
 
 Two caveats. If the parent zone (`sol-fab.dev`) is **DNSSEC-signed**, the
@@ -293,6 +319,14 @@ turn off parent DNSSEC or record the delegation as insecure deliberately. And a
 Cloud DNS zone is a **persistent, minimally-billable** resource (~$0.20/month
 plus queries) — small, but unlike the rest of a torn-down target it does not
 reach `Absent` on destroy unless the zone is removed too.
+
+**That persistence is a requirement, not a side effect.** Because the four
+nameservers are copied into a parent zone no API can update (Squarespace), a zone
+that is destroyed and recreated comes back with *different* nameservers, and the
+pasted delegation silently points at a zone that no longer exists — the resulting TLS
+failure names nothing close to the cause. So the delegated zone is a standing
+prerequisite that must outlive target teardown; if it is ever removed, the delegation
+must be redone by hand before the next issuance, and the run record should say so.
 
 ### GKE Workload Identity Federation prerequisites
 
@@ -391,7 +425,7 @@ semantic boundaries and use the fewest principals that enforce them.
 | Kubernetes access | Ephemeral kubeconfig from `gcloud container clusters get-credentials`, isolated per phase. GKE evaluates RBAC first and Google IAM as a fallback, so the provisioner's custom IAM role is deliberately limited to cluster discovery, credential retrieval, and control-plane connection; scoped Kubernetes-object authority comes from RBAC. Never use ambient kubeconfig. |
 | Database | Private-IP Cloud SQL for PostgreSQL 16, regional HA, PITR/backups, API-level `settings.deletion_protection_enabled` in `Ready`, and an explicit destroy preparation. Terraform's top-level `deletion_protection` is a useful second guard but is not the live GCP protection predicate. Keep credentials out of plans/logs; choose password rotation or IAM database authentication deliberately during implementation. |
 | Registry | Regional Artifact Registry Docker repository, digest deployment, repository-scoped writer/reader permissions. |
-| DNS/TLS | Conditional on workloads declaring `ingress_host`. Use Cloud DNS only when Sol is delegated the qualification zone; otherwise consume operator-managed records. Keep ingress-nginx plus cert-manager/ACME for contract parity, but replace the hard-coded Route 53 DNS-01 solver with Cloud DNS plus a scoped GKE workload identity, or with the selected external provider's qualified solver before TLS capability qualification. **Proposed delegation (2026-09-22, `DEC-042`):** a dedicated subdomain of the owner's `sol-fab.dev`, delegated as its own Cloud DNS zone in `sol-qualification`, zone-scoped cert-manager identity, staging before production issuance. |
+| DNS/TLS | Conditional on workloads declaring `ingress_host`. Use Cloud DNS only when Sol is delegated the qualification zone; otherwise consume operator-managed records. Keep ingress-nginx plus cert-manager/ACME for contract parity, but replace the hard-coded Route 53 DNS-01 solver with Cloud DNS plus a scoped GKE workload identity, or with the selected external provider's qualified solver before TLS capability qualification. **Delegation decided (2026-09-22, `DEC-042`):** `qual-gcp.sol-fab.dev` as its own Cloud DNS zone in `sol-qualification`, created by Sol's cloud root (`create_dns_zone`), delegated from the Squarespace-managed parent by hand, with a scoped cert-manager identity and staging before production issuance. `qual-aws.sol-fab.dev` is reserved for the AWS profile if it ever requires the same capability — the delegation requirement is a property of proving ACME, not of GCP. |
 | Observability/storage | GKE persistent disks through a GCP StorageClass; GCS for durable Loki/Thanos after completing the existing chart wiring; Cloud Logging/Monitoring for GCP/GKE control-plane signals, not as an unqualified replacement for Sol's platform observability. |
 
 GCS backend locking is native; do not add a lock database. Terraform remains
