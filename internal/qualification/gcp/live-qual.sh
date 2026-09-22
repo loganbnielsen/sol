@@ -101,12 +101,47 @@ esac
 # The zone's name in Cloud DNS is derived from base_domain by the cloud root.
 ZONE_NAME="$(printf '%s' "$BASE_DOMAIN" | tr '.' '-')"
 
-[ -x "$SOL" ] || {
-  echo "✗ CLI not built at $SOL" >&2
-  echo "  Build it in this checkout so the attempt is identifiable by commit:" >&2
-  echo "    eval \$(opam env) && dune build cli/sol/bin/main.exe" >&2
-  exit 2
+say() { printf '[%(%H:%M:%S)T] %s\n' -1 "$*"; }
+
+# ── environment identity, asserted rather than remembered ────────────────────
+# Three times in one session the environment was not what the operator believed: a
+# file written into a directory that was never a worktree, a ticket removed from the
+# canonical checkout, and a guard run from the wrong tree. Prose reminders failed, so
+# the harness asserts it, before it writes anything or touches the provider.
+assert_environment() {
+  local top
+  top="$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" || {
+    echo "✗ $ROOT is not inside a git work tree — refusing to run." >&2
+    echo "  A qualification run is identified by the revision it ran from, so it needs one." >&2
+    exit 2
+  }
+  if [ "$(cd "$top" && pwd -P)" != "$(cd "$ROOT" && pwd -P)" ]; then
+    echo "✗ refusing: the harness lives in $ROOT but its work tree's top level is $top." >&2
+    exit 2
+  fi
+  # This harness writes the untracked target into the example workspace, so it must not
+  # run in the canonical checkout, which belongs to the human operator (REFAC-090).
+  local canonical
+  canonical="$(git -C "$ROOT" worktree list --porcelain | awk '/^worktree /{print $2; exit}')"
+  if [ "$(cd "$canonical" && pwd -P)" = "$(cd "$ROOT" && pwd -P)" ] && [ "${ALLOW_CANONICAL:-0}" != "1" ]; then
+    echo "✗ refusing to run in the canonical checkout ($ROOT)." >&2
+    echo "  Run from a worktree, or set ALLOW_CANONICAL=1 if you own this checkout." >&2
+    exit 2
+  fi
+  say "environment: work tree $top, revision $(git -C "$ROOT" rev-parse --short HEAD)"
 }
+assert_environment
+
+# The phases that mutate need the CLI; `verify` is provider-side reads only and must
+# stay usable from an unbuilt tree, which is exactly the situation it is reached for in.
+if [ "${1:-}" != "verify" ]; then
+  [ -x "$SOL" ] || {
+    echo "✗ CLI not built at $SOL" >&2
+    echo "  Build it in this checkout so the attempt is identifiable by commit:" >&2
+    echo "    eval \$(opam env) && dune build cli/sol/bin/main.exe" >&2
+    exit 2
+  }
+fi
 
 mkdir -p "$LOG_DIR"
 # The per-run password is generated, never stored in the repository, and never needed
@@ -115,8 +150,6 @@ DB_PASSWORD="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 20)"
 
 KEEP=0            # set to 1 only at the deliberate delegation boundary
 CLOUD_APPLIED=0   # whether a cloud root may exist and therefore need destroying
-
-say() { printf '[%(%H:%M:%S)T] %s\n' -1 "$*"; }
 
 # Run one phase, logging it, failing the script if it fails. Used for everything whose
 # failure is not itself the evidence we came for.
