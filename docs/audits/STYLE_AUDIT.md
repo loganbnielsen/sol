@@ -12,10 +12,11 @@ default.  Example: `KAFKA_SECURITY_PROTOCOL=foo` must produce
 `Error "unknown protocol: foo"`, not silently become `Plaintext`.
 
 Already correct examples:
-- `Kafka_security.protocol_of_string` — returns `Result`, tests in
-  `test_kafka_security.ml` cover rejection of unknown protocols.
-- `release_status_of_string` in `sun_cli_registry.ml` — returns `Error` for
-  unknown values.
+- `Kafka.Security.protocol_of_string` — returns `Result`. The module is in the
+  standalone `kafka-eio` opam package, not this repository (see the source-location
+  notes in `AUDIT.md`), so its rejection tests live with that package.
+- `apply_mode_of_string` in `sol_cli_release.ml` — returns `Error` for unknown
+  values.
 - `secret_backend` CLI argument parsing in `cmd_deploy.ml` — returns
   `\`Error` for unknown `--secret-backend` values.
 
@@ -24,7 +25,7 @@ Already correct examples:
 If a value is required for the operation to succeed, its absence must produce a
 typed `Error`, not an empty string or zero default.
 
-**Kubernetes_live secret rendering** (`sun_cli_deployment_render.ml`):
+**Kubernetes_live secret rendering** (`sol_cli_deployment_render.ml`):
 When `secret_backend = Kubernetes_live`, every user-declared secret key in
 `spec.secrets` must be present in the process environment.  A missing key
 returns `Error "Kubernetes_live render failed: required secret env var(s) not
@@ -52,7 +53,7 @@ possible.
 
 | ID | Location | Fix |
 |----|----------|-----|
-| CODEX_STYLE_AUDIT-073 | `sun_cli_deployment_render.ml` — `Kubernetes_live` secret rendering | `render_spec` now returns `(string * string, string) result`; missing user-declared secret env vars produce `Error`. |
+| CODEX_STYLE_AUDIT-073 | `sol_cli_deployment_render.ml` — `Kubernetes_live` secret rendering | `render_spec` now returns `(string * string, string) result`; missing user-declared secret env vars produce `Error`. |
 
 ## Secret strategy contract
 
@@ -79,7 +80,8 @@ renderer when the output goes to a file on disk destined for a git repository.
 
 ## Areas noted for future improvement
 
-- `param_int` in `sun_cli_control_plane.ml` silently defaults invalid integers
-  from HTTP query parameters.  This is lower priority (not CI/CD-facing) but
-  should be converted to return `Result` when the control-plane API is
-  stabilised.
+*None open.* The one item here — `param_int` silently defaulting invalid integers
+from control-plane HTTP query parameters — named a function and a module
+(`sun_cli_control_plane.ml`) that no longer exist: the control-plane API surface it
+belonged to is not in this repository. It is deleted rather than re-pointed at
+whatever module looks closest today, because there is no current call site to fix.
