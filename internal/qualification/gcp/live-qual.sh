@@ -30,14 +30,15 @@
 #      `aws_s3_bucket`, `aws_dynamodb_table`) — so on GCP the bucket is either created
 #      once out of band and recorded in the untracked target, or a GCP bootstrap root
 #      is authored. GCS needs no lock table.
-#   2. **The target's profile fields.** A qualification target is much richer than a
-#      dev target: `docs/qualification/run8-aws-target.example.yml` carries `profile`,
-#      `kube_context`, `registry`, the four role identities, `cluster_endpoint_cidr`,
-#      the alert quartet (a guarantee the profile requires, not an option),
-#      `node_failure_headroom_nodes` and `destroy_retention: none`. The GCP variants of
-#      those must be derived from the config schema and the GCP preflight rather than
-#      invented here, which is why this harness currently writes only the fields it can
-#      justify and stops at the first missing prerequisite instead of guessing.
+#   2. **The target's fields, derived from the contract rather than copied from AWS.**
+#      `docs/qualification/run8-aws-target.example.yml` is an *AWS* target: it carries
+#      `kube_context`, `registry`, four role ARNs and `cluster_endpoint_cidr`, none of
+#      which are GCP-shaped. The symmetry here is capability, not configuration: GCP
+#      declares one `provisioner_impersonator` where AWS carries a provisioner role
+#      ARN, and carries no lock table because GCS serializes state natively. This
+#      harness therefore writes only the fields `config.ml`'s target record actually
+#      has and the GCP contract requires, and stops at the first missing prerequisite
+#      rather than guessing.
 #
 # Usage:
 #   internal/qualification/gcp/live-qual.sh cloud      # bootstrap + zone + NS capture, then STOP
@@ -79,6 +80,9 @@ BASE_DOMAIN="${BASE_DOMAIN:-qual-gcp.sol-fab.dev}"
 PHASE_TIMEOUT="${PHASE_TIMEOUT:-1200}"
 DELEGATION_WAIT_MINUTES="${DELEGATION_WAIT_MINUTES:-25}"
 LOG_DIR="${LOG_DIR:-/tmp/sol-gcp-qual-$(date +%Y%m%d-%H%M%S)}"
+STATE_BUCKET="${STATE_BUCKET:-sol-qualification-tfstate}"
+PROFILE_NAME="${PROFILE_NAME:-production-single-region}"
+BOOTSTRAP_ROOT="$ROOT/cli/platform/infra/bootstrap-gcp"
 
 # Requirements are per subcommand, and the messages deliberately avoid an apostrophe:
 # inside a ${var:?word} expansion bash treats a single quote as a quote character, so
@@ -175,9 +179,26 @@ write_target() {
 target:
   cluster_name: $CLUSTER
   base_domain: $BASE_DOMAIN
+  profile: $PROFILE_NAME
   cluster_issuer: letsencrypt-staging
   letsencrypt_email: $LE_EMAIL
   terraform_var_file: ../../../../../internal/qualification/gcp/qual-gcp.tfvars
+
+  # The durable state backend: provisioned once by ensure_state_bucket() and merely
+  # CONSUMED here. `state_lock_table` is deliberately absent -- GCS serializes state
+  # natively, and Sol's own backend_config sends a GCP target only `bucket=` and
+  # `prefix=sol/<cloud|platform>/<target>.tfstate`.
+  state_bucket: $STATE_BUCKET
+
+  # GCP's identity declaration. Same capability as AWS's provisioner role (who may
+  # enter the install window), provider-native mechanism: an impersonation grant
+  # rather than a role ARN. Declared, never inferred, so that "no caller named"
+  # cannot come to mean "grant whoever is running Sol".
+  provisioner_impersonator: $IMPERSONATOR
+
+  # A disposable qualification target: the postcondition is Absent with nothing
+  # billable retained (DEC-033).
+  destroy_retention: none
 
 # The platform layer is what this attempt is about. Application resources and
 # services are omitted so the attempt is cheap and the failure it is looking for
@@ -212,9 +233,57 @@ cloud_vars() {
 # prerequisite, and a recreated zone gets new nameservers that silently invalidate
 # the delegation). Everything else must be gone, including the service-networking
 # peering, which has twice been the abandoned resource in this workstream.
+# ── durable prerequisites: ENSURED, never recreated, never destroyed ──────────
+# "Durable" must not drift into meaning "created every run". This ensures the bucket
+# is present and otherwise does nothing, so a second attempt against the same project
+# is a no-op; and nothing here ever destroys it. The target lifecycle only consumes
+# what this provides -- which is the FND-0028 lifetime distinction, executable today,
+# before DEC-043 changes any product semantics.
+ensure_state_bucket() {
+  if gcloud storage buckets describe "gs://$STATE_BUCKET" --project "$PROJECT" \
+    >/dev/null 2>&1; then
+    say "bootstrap: state bucket gs://$STATE_BUCKET present (durable; left untouched)"
+    return 0
+  fi
+  say "bootstrap: creating the durable state bucket via $BOOTSTRAP_ROOT"
+  if ! ( cd "$BOOTSTRAP_ROOT" \
+      && timeout "$PHASE_TIMEOUT" terraform init -input=false \
+      && timeout "$PHASE_TIMEOUT" terraform apply -input=false -auto-approve \
+           -var="project_id=$PROJECT" -var="region=$REGION" \
+           -var="state_bucket=$STATE_BUCKET" ) >"$LOG_DIR/bootstrap.log" 2>&1; then
+    say "bootstrap FAILED — a prerequisite, not a target failure. See $LOG_DIR/bootstrap.log"
+    tail -n 20 "$LOG_DIR/bootstrap.log" || true
+    return 1
+  fi
+  say "bootstrap: state bucket created"
+}
+
+# EXPECTED PRESENT — the durable prerequisites. A run must verify these SURVIVE, not
+# assume it: the whole point of the lifetime distinction is that it is checked.
+verify_durable_present() {
+  local rc=0
+  say "verify: expected PRESENT (durable prerequisites outlive the target)"
+  if gcloud storage buckets describe "gs://$STATE_BUCKET" --project "$PROJECT" \
+    >"$LOG_DIR/verify-state-bucket.log" 2>&1; then
+    say "  ✓ state bucket gs://$STATE_BUCKET present"
+  else
+    say "  ✗ state bucket gs://$STATE_BUCKET is MISSING — a disposable destroy removed a durable prerequisite"
+    rc=1
+  fi
+  if gcloud dns managed-zones describe "$ZONE_NAME" --project "$PROJECT" \
+    >"$LOG_DIR/verify-dns-zone.log" 2>&1; then
+    say "  ✓ dns zone $ZONE_NAME present (DEC-042: durable by design)"
+  else
+    say "  · dns zone $ZONE_NAME not created yet (nothing delegated)"
+  fi
+  return "$rc"
+}
+
+# EXPECTED ABSENT — everything the target owns.
 verify_absent() {
   local rc=0
-  say "verify: independence from Terraform's exit status — asking the provider"
+  verify_durable_present || rc=1
+  say "verify: expected ABSENT (target-owned; independence from Terraform's exit status)"
 
   probe_gone() { # name, command...
     local name="$1"; shift
@@ -249,15 +318,6 @@ verify_absent() {
     rc=1
   else
     say "  ✓ no servicenetworking peering"
-  fi
-
-  # The zone must be present. Reported, never treated as a failure: destroying it
-  # would break the delegation DEC-042 deliberately made durable.
-  if gcloud dns managed-zones describe "$ZONE_NAME" --project "$PROJECT" \
-    >"$LOG_DIR/verify-dns-zone.log" 2>&1; then
-    say "  ✓ dns zone $ZONE_NAME retained (DEC-042: durable by design)"
-  else
-    say "  · dns zone $ZONE_NAME absent (nothing delegated yet, or the zone was removed)"
   fi
 
   # Quota usage is the cheap global cross-check: usage 0 across the board means the
@@ -327,6 +387,11 @@ phase_cloud() {
   write_target
   # shellcheck disable=SC2046
   local vars; mapfile -t vars < <(cloud_vars)
+
+  # Terraform cannot even initialize against a backend that does not exist, so the
+  # durable prerequisite is ensured in both modes. PLAN_ONLY still means "no target
+  # infrastructure": this only guarantees the bucket, idempotently.
+  ensure_state_bucket || return 1
 
   if plan_only; then
     run cloud-plan "$SOL" cloud plan "$TARGET" "${vars[@]}"
