@@ -276,6 +276,14 @@ own author here). The mechanics that are easy to get wrong:
 - **Non-ticket PRs (`audit/*`, `dec/*`) can't use `soldev pipeline review`** (it
   finds the PR by `<ticket-id>/` branch prefix). Post the same marker by hand:
   `SOLDEV-REVIEW: PASS <head-sha>`.
+- **A batch branch has the same problem, and it fails quietly.** `docs/DOCS-018-019`
+  does not start with `DOCS-018/`, so `soldev pipeline review DOCS-018` reports
+  *"no open PR found"* — the marker is never posted — while the PR is still
+  mergable enough to go through. Observed on #432: two tickets landed with no
+  `SOLDEV-REVIEW` comment at all. Batch branches are still worth it (one CI cycle
+  for several independent items, and the ticket-move guard reads *every* id in the
+  name, so they all must move), but **check the marker landed** before merging, or
+  post it by hand; do not read "merged" as "the marker step ran".
 - **Protection is `strict` + `enforce_admins`.** `--admin` bypasses the 1-approval
   requirement but **not** required checks, and a branch **behind `main`** cannot
   merge ("Required status check is expected"). So each merge makes the next branch
