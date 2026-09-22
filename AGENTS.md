@@ -291,6 +291,15 @@ own author here). The mechanics that are easy to get wrong:
   **locally only** (origin is untouched). Check `git log origin/main` before
   believing a revert: if the merge is on origin, `git reset --hard origin/main` to
   drop the spurious local revert. `rc=2` is a perf ratio and is informational only.
+- **Run the format check before pushing.** CI's *Format check* step is
+  `internal/ci/check_ocamlformat.sh --all` (ocamlformat 0.29.0, janestreet
+  profile); a local `dune build` does **not** cover it, so unformatted code is a
+  guaranteed CI bounce that costs a full run. Run
+  `internal/ci/check_ocamlformat.sh --staged` (staged files only, so unrelated
+  work-in-progress cannot block you) or `dune fmt` before pushing. The pre-commit
+  hook runs the `--staged` check too, once installed
+  (`cli/platform/local/scripts/install-hooks.sh`) — it is not installed by
+  default.
 - **`gh` gaps in this environment:** `gh pr update-branch` does not exist (update
   locally instead), and `gh pr edit` fails with a Projects-classic GraphQL
   deprecation — set the body via
