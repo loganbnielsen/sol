@@ -72,6 +72,14 @@ eval $(opam env) && dune build
 * [ ] `dune build` produces zero warnings and zero errors on the generated code
 * [ ] The auditor understands the project layout from reading the generated README alone — no prior Sol knowledge required
 * [ ] The auditor can identify which domain owns each generated event, service, worker, database module, and migration
+* [ ] **TypeScript verdict recorded:** this stage's gate is OCaml-only, and `sol new` has no `--language` flag, so a TypeScript project cannot be scaffolded to walk. Record that explicitly — the gap is FEAT-084, and the audit continues against the shipped TypeScript path in Stage 3 (see *Language Coverage*). An unrecorded absence reads as coverage.
+
+**TypeScript at this stage:** a TypeScript workspace is hand-authored today. If the
+auditor is asked to walk the TypeScript path, it starts from
+`examples/pluto/app/demo_ts` (its own npm project root, consuming the published
+`@sol-fab/*` packages) rather than from `sol new`, and the finding to look for is a
+missing or misleading *guide*, not a missing scaffold — the scaffold is a known,
+owned gap.
 
 ---
 
@@ -101,7 +109,7 @@ Then, following the guide:
 * [ ] `sol local infra up` starts all infrastructure without error and prints the addresses of every local service (Kafka, Grafana, Postgres) before exiting
 * [ ] `sol up` starts all workspace services and tails their output in one terminal
 * [ ] A `POST /charges` request to the local service produces a message that appears in the worker logs
-* [ ] `sun_worker_messages_total` appears in Prometheus after at least one message is processed
+* [ ] `sol_worker_messages_total` appears in Prometheus after at least one message is processed
 * [ ] The trace/log/metric view lets the auditor follow the request across domain boundaries without manually correlating raw IDs from multiple tools
 * [ ] The auditor did not run any command not shown in the guide (no manual `rpk`, `kubectl`, or `dune exec`)
 
@@ -264,6 +272,36 @@ Add a customer_email field to the charge request, persist it, include it in the 
 * [ ] The agent does not introduce cross-domain imports from service implementation modules
 * [ ] The agent can verify the change with documented Sol commands only
 * [ ] Any schema compatibility issue is surfaced clearly before production deploy
+
+---
+
+## Language Coverage
+
+Sol's guides and scaffolds are OCaml-first, and a pass that walks nine stages of
+OCaml commands and says nothing about TypeScript is silent about a first-class
+language. These verdicts are part of the audit: record each one, and treat "not
+applicable today" as a verdict rather than an omission.
+
+* [ ] **The nine stages above were walked in OCaml.** Say so explicitly in the run
+  record; it is a scope statement, not an assumption.
+* [ ] **TypeScript status recorded as staged, not shipped:** TypeScript is a
+  first-class *application* language (four published `@sol-fab/*` packages, the
+  `demo_ts` showcase deployed in CI), but it is staged behind the production
+  profile's parity triggers (DEC-026 §2 — see `docs/deployment/compatibility.md`)
+  and lacks a `sol new` scaffold (FEAT-084). The UX verdict is: *can a new engineer
+  get a TypeScript service running using only documented commands?* Answer it from
+  the guide, and record the answer.
+* [ ] **The guide states the split where a reader will hit it:** the README's
+  TypeScript section is the current statement of what is shipped versus staged; a
+  guide that implies `sol new --language typescript` exists is a finding.
+* [ ] **Local dev path for TypeScript:** `sol up` deploys whatever `sol.yml`
+  declares regardless of language, so a TypeScript unit in the workspace is covered
+  by the same commands — verify that the documentation makes that legible instead of
+  leaving it to be inferred from `demo_ts`.
+* [ ] **Day-2 path for TypeScript:** logs, metrics and traces from a TypeScript unit
+  must land in the same Grafana/Tempo surface as an OCaml one (`@sol-fab/obs` is what
+  makes that true). If a stage's invariant cannot be met for a TypeScript unit,
+  that is a finding with a named owner, not a silent gap.
 
 ---
 

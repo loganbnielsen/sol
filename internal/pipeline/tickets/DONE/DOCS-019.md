@@ -112,5 +112,69 @@ a gap.
 **Demo/example coverage:** Document-only change; no runnable example or demo
 applies, and that will be stated in the completion notes.
 
+## Completion (2026-09-22)
+
+The model now lives once, in `docs/architecture/observability-design.md`. Nothing had
+to be merged in from a second document: the review text is not a file in this
+repository (it survives as the tickets that own its parts), and no other doc restates
+the model — the "one logs backend, one metrics backend" rule appears only here.
+
+**What the doc gained** — five additions, all material the review asked for and the
+doc did not carry:
+
+- **One Model, Three Representations** — CLI, Grafana and automation as projections
+  over one model rather than three platforms. It also names the two capabilities that
+  are *not* in all three yet, with owners: traces have no CLI surface (`sol open`
+  ships `logs`, `metrics`, `dashboard`; OBS-045 owns traces) and alerts are not
+  exposed per scope (FEAT-092).
+- **Who Is Authoritative For What** — the per-information-kind split as a table:
+  Terraform state for what exists, Sol's own release records and deployment events for
+  what was released, the observability backend for what applications emitted, the
+  cloud provider for what it measured. Sol supplies shared identity and navigation and
+  keeps no second copy. The target axis is recorded here too: a target is not a scope
+  (DEC-032), addressed positionally (DEC-031), with FEAT-090 (cloud health/drift) and
+  INFRA-027 (target-scoped infrastructure views) named as owners of surfaces that do
+  not exist yet — and explicitly not claimed as shipped.
+- **Lifecycle** — a pointer to ADR 0003 plus the one principle this doc needs: the
+  phase is not infrastructure truth. **No phase list is restated**, which was the
+  point of the ticket: the review's `ProvisioningCloud`/`InstallingPlatform`
+  vocabulary contradicts the accepted ADR, and both names are absent from the doc
+  (verified by search).
+- **What Sol owns, what Grafana owns** — the split table: definitions, the label and
+  attribute vocabulary, template variables and scope mapping, deep links, and
+  provisioning are Sol's; rendering, storage, exploration and navigation belong to
+  Grafana and the telemetry backends.
+- **Non-Goals** — two additions: no second system of record, and no becoming the
+  composition (Sol does not become Terraform, Kubernetes, Grafana, Prometheus, Loki
+  or Tempo).
+
+**Where the doc was aspirational, it now says so — and two unowned claims were
+handled deliberately differently:**
+
+- The dashboard list said "Sol should provision …" and hedged the release timeline
+  with "when available", reading as a plan. All four dashboards exist and are
+  provisioned by `cli/platform/infra/base/main.tf`; the doc now names the files, and
+  records that the "service logs view" is Loki-backed log panels inside those
+  dashboards rather than a separate file. "Should provision" became "provisions".
+- **Hosted Path** describes a product direction that no ticket owns and that is not
+  true in the tree. It is *labelled* as an unowned direction rather than deleted. The
+  criterion's intent is that nothing in the doc reads as a scheduled deliverable, and
+  a section that says plainly "no ticket owns this; there is no hosted Sol today;
+  nothing here should be read as scheduled work" does not. Deleting it would have
+  removed design information the ticket did not ask to remove, and the ticket's own
+  non-goals say existing sections are edited only where the model extends them.
+
+**CLI examples.** They were already in the shipped positional form
+(`sol open logs <scope>`); verified that no `--scope` form appears, and that the one
+flag the section promises — `--links` — exists (`cli/sol/bin/cmd_open.ml`).
+
+**Verification:** the review's phase vocabulary appears 0 times; the model statement
+appears in exactly one document; and every owner the doc references exists as a
+ticket (`OBS-044`, `OBS-045`, `FEAT-090`, `FEAT-092`, `INFRA-027`) or as an accepted
+ADR (`ADR 0003`).
+
+**TypeScript parity:** no impact — the doc describes a language-neutral model and this
+changes no contract, as the ticket states.
+
 **TypeScript parity:** No language-parity impact — the doc describes a
 language-neutral model and this changes no contract.
