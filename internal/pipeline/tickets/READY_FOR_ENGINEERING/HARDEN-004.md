@@ -40,8 +40,13 @@ differently. Where GCP exposes a flaw in the provider-neutral model, fix the mod
    than destroyed.
 3. **Do not build cert-manager or Workload Identity speculatively.** Build them when
    a live attempt has reached the boundary that needs them. TLS issuance is
-   **BLOCKED** — `sol-qual.dev` is not delegated to the qualification project — and a
-   blocked row is recorded as blocked, never as qualified.
+   **BLOCKED** — the qualification name is not delegated to the qualification
+   project — and a blocked row is recorded as blocked, never as qualified. The
+   owner controls `sol-fab.dev`, so the external input now exists: `DEC-042`
+   records the proposed delegation (a dedicated subdomain, e.g. `qual.sol-fab.dev`,
+   as its own Cloud DNS zone with a zone-scoped cert-manager identity). Until
+   `DEC-042` is decided, this row stays `BLOCKED`; the rest of the workstream does
+   not depend on it.
 4. **Never create long-lived service-account JSON keys.** Impersonation and
    short-lived tokens only.
 5. **Do not weaken or restructure AWS behaviour to accommodate GCP.** Shared-definition
@@ -129,7 +134,7 @@ rather than being dropped.
 | workload deploy + request | not reached |
 | observability: log→Loki, metric→Prometheus, trace→Tempo | not reached |
 | ingress | not reached |
-| TLS issuance | **BLOCKED — no delegated qualification zone** |
+| TLS issuance | **BLOCKED — pending `DEC-042`** (owner controls `sol-fab.dev`; proposed dedicated subdomain delegation, not yet decided) |
 | Kafka produce→consume, broker-loss durability | not reached |
 | database HA/failover, node-loss recovery | not reached |
 | failed deploy, rollback, credential rotation, drift | not reached |
