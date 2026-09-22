@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import { Kafka } from "kafkajs";
-import { Pushgateway } from "prom-client";
+import { Pushgateway } from "@prometheus-io/client";
 import { SpanStatusCode } from "@opentelemetry/api";
 import { randomBytes } from "node:crypto";
 

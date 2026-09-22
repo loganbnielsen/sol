@@ -9,7 +9,7 @@
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { Resource } from "@opentelemetry/resources";
+import { resourceFromAttributes } from "@opentelemetry/resources";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
 import { trace, context, SpanKind, type SpanContext } from "@opentelemetry/api";
 
@@ -19,7 +19,7 @@ export function initTracing(serviceName: string, tempoUrl: string | undefined) {
     : undefined;
 
   const provider = new NodeTracerProvider({
-    resource: new Resource({ [ATTR_SERVICE_NAME]: serviceName }),
+    resource: resourceFromAttributes({ [ATTR_SERVICE_NAME]: serviceName }),
     spanProcessors: exporter ? [new BatchSpanProcessor(exporter)] : [],
   });
   provider.register();
