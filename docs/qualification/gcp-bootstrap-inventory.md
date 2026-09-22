@@ -206,6 +206,43 @@ The honest statement is narrower: **these quotas were never read**, not that the
 could not be. Nothing here has been bootstrapped away, so the checks below are still
 outstanding work — validate them before apply:
 
+**Read 2026-09-22 — the prerequisite is now evidence rather than a gap.** Region
+`us-central1` (the repository's first qualification candidate), project
+`sol-qualification`:
+
+| Quota | Limit | Usage |
+| --- | --- | --- |
+| `CPUS` | 200 | 0 |
+| `N2_CPUS` | 200 | 0 |
+| `E2_CPUS` | 24 | 0 |
+| `INSTANCES` | 24 | 0 |
+| `IN_USE_ADDRESSES` | **8** | 0 |
+| `STATIC_ADDRESSES` | **8** | 0 |
+| `SSD_TOTAL_GB` | 500 | 0 |
+| `DISKS_TOTAL_GB` | 4096 | 0 |
+| `INSTANCE_GROUPS` | 100 | 0 |
+| `REGIONAL_INSTANCE_GROUP_MANAGERS` | 150 | 0 |
+| `NETWORK_ENDPOINT_GROUPS` | 100 | 0 |
+| `SNAPSHOTS` | 1000 | 0 |
+
+```bash
+gcloud compute regions describe us-central1 --project sol-qualification \
+  --format='csv[no-heading](quotas.metric,quotas.limit,quotas.usage)'
+```
+
+Two things this establishes. **The project is idle and cost-clean**: every quota
+reads `usage = 0`, which is the independent check the cost rule asks for *after* a
+teardown has been recorded as `Absent` — a `destroy` that succeeds is not itself
+evidence of cost-cleanliness. And **the headroom is ample in one place and tight in
+another**: CPU, memory-family, disk and instance limits sit far above one regional
+cluster plus Cloud SQL, but `IN_USE_ADDRESSES` and `STATIC_ADDRESSES` are both **8**,
+the tightest constraint on this project and the one to watch during an attempt — an
+ingress `LoadBalancer`, a Cloud NAT gateway and any reserved address all draw on it.
+Exhausting them is a quota request, not a defect.
+
+The table below remains the *conceptual* list to walk per attempt; the numbers above
+satisfy the "read them first" step, not the per-attempt validation.
+
 | Area | Qualification check |
 | --- | --- |
 | GKE | regional cluster/control-plane limits; Standard node count; Pods; total/SSD persistent-disk capacity |
