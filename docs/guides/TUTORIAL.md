@@ -6,7 +6,9 @@ This tutorial walks through building and running a real multi-service applicatio
 
 ## What Sol is
 
-Sol is a production platform for OCaml services. It gives you three service primitives:
+Sol is a production platform for backend services, written in **OCaml or
+TypeScript** — both are first-class application languages on one
+language-neutral platform. It gives you three service primitives:
 
 - **`-svc`** — a long-running HTTP service with routes, auth, and a `/healthz` endpoint
 - **`-worker`** — a Kafka consumer that processes a typed event stream
@@ -15,6 +17,13 @@ Sol is a production platform for OCaml services. It gives you three service prim
 These primitives share a common observability layer (Loki for logs, Prometheus for metrics) and a storage layer (PostgreSQL). Sol wires all of it together at startup. You write the handler; Sol runs it.
 
 The `sol` CLI scaffolds new services, manages the local development cluster, builds and deploys container images, and runs database migrations.
+
+This walkthrough uses OCaml, which is the deepest-supported path. `sol new`
+scaffolds OCaml units only today — a TypeScript unit is authored by hand and
+consumes the published `@sol-fab/*` packages — so the TypeScript path has its own
+runnable example in
+[`examples/pluto/app/demo_ts`](../../examples/pluto/app/demo_ts/README.md) rather
+than a `sol new` walkthrough. The scaffolding gap is FEAT-084.
 
 ---
 

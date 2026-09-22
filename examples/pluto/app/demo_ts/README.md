@@ -2,7 +2,7 @@
 
 `order_svc` and `fulfillment_worker` are a real TypeScript service and worker
 running on Sol's deploy machinery (CLI, Docker builds, Kubernetes manifests
-are all language-neutral) and consuming Sol's own conventions via two published
+are all language-neutral) and consuming Sol's own conventions via four published
 npm packages:
 
 - [`@sol-fab/kafka`](https://github.com/loganbnielsen/sol-kafka) — schema
@@ -10,13 +10,26 @@ npm packages:
   format, and decode/retry/crash routing.
 - [`@sol-fab/obs`](https://github.com/loganbnielsen/sol-obs) — metric naming/label
   vocabulary, Loki push shape, and W3C traceparent propagation.
+- [`@sol-fab/svc`](https://github.com/loganbnielsen/sol-typescript) — the service
+  lifecycle contract `order_svc` runs on: bounded drain and idempotent
+  `SIGTERM`/`SIGINT`, matching the OCaml `sol-svc`.
+- [`@sol-fab/worker`](https://github.com/loganbnielsen/sol-typescript) — the
+  worker lifecycle contract `fulfillment_worker` runs on, matching the OCaml
+  `sol-worker`.
 
-Both packages exist so a TypeScript service and an OCaml `sol-svc`/
+The four exist so a TypeScript service and an OCaml `sol-svc`/
 `sol-worker` land in the same Grafana panels and the same Tempo traces
 without an author having to reconstruct Sol's policy by hand — see each
 package's own tests for the specific bugs a hand-rolled first attempt hit
-(FEAT-033's spike) before these existed. Each lives in its own repository with
-its own CI, including the broker-backed retry/DLQ tests.
+(FEAT-033's spike) before these existed. `kafka` and `obs` each live in their own
+repository with their own CI, including the broker-backed retry/DLQ tests;
+`svc` and `worker` share
+[`loganbnielsen/sol-typescript`](https://github.com/loganbnielsen/sol-typescript).
+
+This example is the *runnable* TypeScript path, not the scaffolded one: `sol new`
+writes OCaml units only, so these two units were authored by hand (FEAT-084
+tracks the scaffolding gap). It is also deployed for real in CI
+(`golden-path-smoke-ts`).
 
 This directory is deliberately its **own npm project root**: its own
 `package.json` and `package-lock.json`, resolving `@sol-fab/*` from npm with no

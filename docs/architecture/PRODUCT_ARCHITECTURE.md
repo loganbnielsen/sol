@@ -1,7 +1,9 @@
 # Sol Product Architecture
 
-Sol is an open-source OCaml software factory for backend systems. It is not only
-a runtime framework and not only a deployment CLI; it is the productized path
+Sol is an open-source software factory for backend systems, whose application
+languages are **OCaml and TypeScript** (OCaml being the deeper-supported of the
+two — the factory, its CLI and the production profile are OCaml today). It is not
+only a runtime framework and not only a deployment CLI; it is the productized path
 from typed domain code to running production services.
 
 The product has four layers:
