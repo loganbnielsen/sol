@@ -1,7 +1,11 @@
 # FND-0024 — `Sol_cli_kubectl.probe` reports an unreadable cluster as `false`, so `sol logs`/`sol fn run` say "not deployed"
 
 - **Classification:** `VERIFIED_DEFECT`
-- **State:** `OPEN`
+- **State:** `FIXED_UNQUALIFIED` — fixed by `INFRA-063` (2026-09-22): `probe`'s bool is
+  replaced by a three-state `presence` (`Present | Absent reason | Uncheckable why`),
+  and the two callers (`sol logs`, `sol fn run`) report "could not check" with the
+  reason instead of asserting the workload is not deployed. Verified by a hermetic
+  unit test; a real unreachable cluster is what would make it `QUALIFIED`.
 - **First identified:** 2026-09-21, fail-open audit (`2026-09-21_fail-open-audit.md`)
 - **Last verified:** 2026-09-21 (`main` @ `4ae985f3`)
 - **Derived ticket:** `INFRA-063`
