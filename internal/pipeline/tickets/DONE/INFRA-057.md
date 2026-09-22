@@ -74,3 +74,26 @@ Acceptance for the capability:
 
 Giving the deploy identity `events` or `portforward`, and any cluster-wide binding
 of the namespaced diagnostic role.
+
+## Completion — verified close-out (2026-09-22)
+
+Both parts landed in their own commits and **neither moved the ticket**, so it kept
+reporting as actionable:
+
+- **Part A** — #397 (`4385100c`). `fetch_namespace_events`
+  (`sol_cli_rollout_diagnosis.ml:452`) returns
+  `Events … | Events_unavailable reason` instead of collapsing every failure into
+  `[]`, and the sibling reads report through `kubectl_read_failure` (DEC-038 §7).
+  Coverage: `test_unavailable_events_are_named_not_empty` (AC1, including the
+  denied read), the successful-but-empty case (AC2, asserted to be
+  distinguishable), and `test_format_cronjob_diagnosis_unavailable_is_undetermined`
+  (AC3's cronjob read).
+- **Part B** — #398 (`b0d26e74`) with #401 (`5e07d8b9`). The operator identity
+  exists end to end, and `internal/ci/check_operator_diagnostics.sh` plus its
+  falsifiability test (`test_operator_diagnostics_check.sh`) are both present and
+  wired into CI, which is Part B's ACs 1–5 as written.
+
+**Outstanding, and live:** AC 6 and 7 of the capability — `sol status` through the
+operator identity against the flapping `notify-worker`, and the negative
+`auth can-i` checks. Those need a real cluster, so `FND-0017` stays
+`FIXED_UNQUALIFIED` and the live half belongs to the next qualification run.
