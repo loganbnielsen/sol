@@ -61,6 +61,22 @@ cd "$ROOT" || exit 2
 
 [ -n "$BRANCH" ] || BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 WORKTREE="$(basename "$ROOT")"
+
+# A guard that cannot read the branch's commits must not conclude "no declaration".
+# That is the fail-open this file exists to prevent, one level up: in a shallow
+# checkout `git log "$BASE..HEAD"` yields nothing, so the documented "(<ID>, part A)"
+# escape hatch looks absent when the branch actually carries it — the branch name
+# still names the ticket (it is a plain string), and a legitimate partial PR is
+# refused with advice that cannot be followed. CI's test job checks out shallow by
+# default; the guard refuses and says how to fix it instead of guessing.
+if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+  echo "✗ this checkout is shallow, so this branch's commit subjects cannot be read." >&2
+  echo "  Deepen it first: git fetch --unshallow (or --deepen=<n> covering the branch)." >&2
+  echo "  Refusing rather than reporting 'no declaration': a guard that cannot see the" >&2
+  echo "  commits must not conclude that there were none." >&2
+  exit 2
+fi
+
 SUBJECTS="$(git log --format=%s "$BASE..HEAD" 2>/dev/null || true)"
 
 # Ticket ids, lowercased for comparison. `infra-057a` yields `infra-057`, which is
