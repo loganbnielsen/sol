@@ -1,7 +1,11 @@
 # FND-0023 — `omit` is honoured by the resolved-config accessors and bypassed by the deploy inventory and the profile preflight
 
 - **Classification:** `VERIFIED_DEFECT`
-- **State:** `OPEN`
+- **State:** `FIXED_UNQUALIFIED` — fixed by `INFRA-049` (2026-09-22, DEC-041): the
+  deploy selection is now derived from the omit-filtered config instead of directly
+  from discovery, so the bypass this finding recorded no longer exists on the deploy
+  path. `sol plan`'s read-only inventory view is unchanged, deliberately. Verified by
+  unit tests; a qualification run is what would make it `QUALIFIED`.
 - **First identified:** 2026-09-21, scoping `INFRA-049` for implementation
 - **Last verified:** 2026-09-21 (`main` @ `506d71a9`)
 - **Derived ticket:** `INFRA-049` (its decision selects which layer should apply `omit`)

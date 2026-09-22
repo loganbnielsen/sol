@@ -64,3 +64,28 @@ let resolve ?(what = "--scope") scope_value services =
 ;;
 
 let is_empty (resolved : resolved) = resolved.services = []
+
+(* DEC-041: `omit` means "not in this target's default set", so the omission is
+   applied *after* the scope is resolved, not as a filter on the inventory — the
+   request kind decides whether an omitted unit is dropped or allowed back in, and
+   the resolver has already canonicalised the names. *)
+type omission =
+  { selected : Sol_cli_manifest.service list
+  ; excluded : Sol_cli_manifest.service list
+  ; included : Sol_cli_manifest.service list
+  }
+
+let apply_omission ~is_omitted (resolved : resolved) =
+  let omitted, kept = List.partition is_omitted resolved.services in
+  match resolved.request with
+  | Sol_cli_deployment_scope.Unit_named _ ->
+    (* Naming a unit explicitly is intent about this invocation (DEC-036), so it
+       may name one back in. The profile preflight still runs on it, which is what
+       keeps this from re-including a unit that cannot run here at all. *)
+    { selected = resolved.services; excluded = []; included = omitted }
+  | Sol_cli_deployment_scope.Whole_workspace | Sol_cli_deployment_scope.Whole_domain _ ->
+    (* Neither names a unit, so an omitted one is never swept back in as
+       collateral: `--scope payments` must not redeploy something the target
+       deliberately leaves out. *)
+    { selected = kept; excluded = omitted; included = [] }
+;;

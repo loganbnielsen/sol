@@ -114,6 +114,17 @@ val resources : t -> resource list
 val services : t -> service list
 val format_use_ref : string -> string
 
+(** [is_omitted_service cfg ~name] is [true] when this target declares a service
+    with that name and [omit: true] (DEC-041).
+
+    The raw declaration is what matters here: [services] above is already filtered,
+    so it cannot answer "was this unit omitted?" for a unit the caller reached by
+    another route — which is exactly the question the deploy selection asks when it
+    decides whether an omitted unit may be named back in. Discovery keys a unit by
+    (domain, name) while the config keys a service by name alone, so the lookup is
+    by name. *)
+val is_omitted_service : t -> name:string -> bool
+
 (** Neutral key/value Terraform variables derived from the target
     (region/cluster_name/base_domain, active provider fields, create_rds,
     profile-required RDS HA) plus

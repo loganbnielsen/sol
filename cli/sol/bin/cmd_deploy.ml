@@ -789,6 +789,64 @@ let run (req : Sol_cli_command_request.deploy_request) =
        | Some r -> r
        | None -> "")
   in
+  (* DEC-041: `omit` means "not in this target's default set", so the selection the
+     deploy runs on is the omit-filtered one — an omitted unit is neither deployed
+     nor preflighted, by default. An explicit unit-level --scope names one back in
+     (and says so); a domain-level or whole-workspace selection drops it (and says
+     so). Applied here rather than in the resolver because only here is the
+     resolved config known, and it is the config that declares `omit` at all. *)
+  let omission =
+    Sol_cli_workload_selection.apply_omission
+      ~is_omitted:(fun (s : Sol_cli_manifest.service) ->
+        Sol_cli_config.is_omitted_service resolved_config ~name:s.Sol_cli_manifest.name)
+      selected
+  in
+  let unit_id (s : Sol_cli_manifest.service) = Printf.sprintf "%s/%s" s.domain s.name in
+  List.iter
+    (fun s ->
+       Printf.printf
+         "Note: %s is omitted by target %s, and --scope named it, so it is included.\n"
+         (unit_id s)
+         req.target)
+    omission.included;
+  List.iter
+    (fun s ->
+       Printf.printf
+         "Note: %s is omitted by target %s, so it is excluded from this deploy.\n"
+         (unit_id s)
+         req.target)
+    omission.excluded;
+  (* An --image-ref naming a unit the target omits would otherwise be resolved
+     against the pre-omission selection and then silently dropped: the operator
+     pinned bytes for a workload and got a run without it. *)
+  List.iter
+    (fun (name, _) ->
+       match
+         List.find_opt
+           (fun (s : Sol_cli_manifest.service) -> String.equal s.name name)
+           omission.excluded
+       with
+       | None -> ()
+       | Some s ->
+         Printf.eprintf
+           "error: --image-ref names %s, which target %s omits and this deploy excludes. \
+            Name it with --scope %s to deploy it, or drop the reference.\n"
+           name
+           req.target
+           (unit_id s);
+         exit 1)
+    image_refs;
+  let services = omission.selected in
+  (* A selection emptied by omission is a different situation from a workspace with
+     no services at all, and the operator's next action is different too. *)
+  if services = [] && omission.excluded <> []
+  then (
+    Printf.eprintf
+      "error: every unit in scope is omitted by target %s: %s.\n\
+      \  Name one with --scope <domain>/<name> to deploy it anyway.\n"
+      req.target
+      (String.concat ", " (List.map unit_id omission.excluded));
+    exit 1);
   if services = []
   then (
     Printf.eprintf "No services found in app/ with a Dockerfile.\n";
