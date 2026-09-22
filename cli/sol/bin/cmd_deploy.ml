@@ -493,18 +493,20 @@ let push_deploy_events
       (Printexc.to_string exn)
 ;;
 
-(* Read the release the pointer names now, warning rather than failing if it
-   cannot be read: it only feeds retention's "protect the previous release". *)
+(* Read the release the pointer names now. Deliberately three-valued: the value
+   feeds retention's "protect the previous release", so a read that failed must
+   not become "there is no previous release" -- that would drop the protection
+   exactly when it could not be established. Retention refuses to prune on
+   [Unreadable] and reports why. *)
 let read_previous_release ctx =
   match
     Sol_cli_release_store.current
       ~ctx:ctx.execution.cluster
       ~workspace:ctx.execution.workspace
   with
-  | Ok pointer -> pointer
-  | Error msg ->
-    Printf.eprintf "warning: could not read the current release pointer: %s\n%!" msg;
-    None
+  | Ok (Some release_id) -> Sol_cli_release_retention.Known release_id
+  | Ok None -> Sol_cli_release_retention.None_yet
+  | Error msg -> Sol_cli_release_retention.Unreadable msg
 ;;
 
 (* Post-apply bookkeeping, non-fatal by construction: record the release, then

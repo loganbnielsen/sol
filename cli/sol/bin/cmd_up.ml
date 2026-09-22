@@ -238,12 +238,14 @@ let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~services =
    helpers but always target the local destination. *)
 let cluster = Sol_cli_kube_destination.local_context
 
+(* Three-valued, for the same reason as cmd_deploy.ml's twin: this value is
+   retention's "protect the previous release" input, so a failed read must not
+   become "no previous release" (FND-0025). *)
 let read_previous_release ~workspace =
   match Sol_cli_release_store.current ~ctx:cluster ~workspace with
-  | Ok pointer -> pointer
-  | Error msg ->
-    Printf.eprintf "warning: could not read the current release pointer: %s\n%!" msg;
-    None
+  | Ok (Some release_id) -> Sol_cli_release_retention.Known release_id
+  | Ok None -> Sol_cli_release_retention.None_yet
+  | Error msg -> Sol_cli_release_retention.Unreadable msg
 ;;
 
 (* DEC-037: see cmd_deploy.ml's twin. The release state is part of the outcome of
