@@ -207,6 +207,40 @@ let test_stale_binary_fails_after_rename () =
       (Sys.command "./_build/default/bin/main.exe >/dev/null 2>&1" = 0))
 ;;
 
+(* BUG-033: the post-merge decision is a value, and no value means "revert". Once
+   origin/main carries the merge, a suite that fails on this machine is a report —
+   reverting locally would diverge local main from the branch of record and print a
+   rollback that never happened. The old shape also treated only rc=1 as a failure,
+   so an *unrunnable* suite (127) fell through to "record a baseline" and printed
+   "merged": that fail-open is pinned here too. *)
+let test_post_merge_action_of_rc () =
+  let show = function
+    | Soldev_merge.Record_baseline -> "record"
+    | Soldev_merge.Record_baseline_after_perf_regression -> "record-perf"
+    | Soldev_merge.Report_local_failure rc -> Printf.sprintf "report:%d" rc
+  in
+  Alcotest.(check string)
+    "0 is a clean suite"
+    "record"
+    (show (Soldev_merge.post_merge_action_of_rc 0));
+  Alcotest.(check string)
+    "2 is the perf-ratio verdict, informational"
+    "record-perf"
+    (show (Soldev_merge.post_merge_action_of_rc 2));
+  Alcotest.(check string)
+    "1 is a failure to report, never a revert"
+    "report:1"
+    (show (Soldev_merge.post_merge_action_of_rc 1));
+  Alcotest.(check string)
+    "an unrunnable suite is not a merged success"
+    "report:127"
+    (show (Soldev_merge.post_merge_action_of_rc 127));
+  Alcotest.(check string)
+    "and neither is any other non-zero"
+    "report:3"
+    (show (Soldev_merge.post_merge_action_of_rc 3))
+;;
+
 let () =
   Alcotest.run
     "soldev_merge"
@@ -253,6 +287,12 @@ let () =
             "rebuild before invoking avoids the stale-path race"
             `Quick
             test_stale_binary_fails_after_rename
+        ] )
+    ; ( "post_merge_action_of_rc"
+      , [ Alcotest.test_case
+            "a local post-merge failure is reported, never acted on"
+            `Quick
+            test_post_merge_action_of_rc
         ] )
     ; ( "pr_review_approved sha-pinning"
       , [ Alcotest.test_case

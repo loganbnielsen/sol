@@ -294,12 +294,16 @@ own author here). The mechanics that are easy to get wrong:
   branch that names no ticket is exempt. This exists because four tickets once sat in
   READY with their fix already merged (`INFRA-048`, `INFRA-050`, `INFRA-057`), each
   costing the next worker a cycle.
-- **`merge-finish` runs `./cli/platform/local/scripts/run_tests.sh` locally and
-  reverts the merge on rc=1.** That suite needs local kafka/e2e infra
-  (`localhost:9092`); without it, kafka/e2e fail and the merge is reverted
-  **locally only** (origin is untouched). Check `git log origin/main` before
-  believing a revert: if the merge is on origin, `git reset --hard origin/main` to
-  drop the spurious local revert. `rc=2` is a perf ratio and is informational only.
+- **`merge-finish` runs `./cli/platform/local/scripts/run_tests.sh` locally, but a
+  local failure is only *reported* — nothing is reverted** (BUG-033). That suite
+  needs local kafka/e2e infra (`localhost:9092`); without it, kafka/e2e fail and the
+  pipeline prints that the merge stands and `origin/main` is untouched. That is
+  correct: the merge already passed GitHub's required checks, and a local suite
+  reflects this machine, not the branch of record. Nothing to undo, so no
+  `git reset` dance — if you want a real revert, do it deliberately on the remote
+  (`git revert <sha> && git push origin main`). `rc=2` is a perf ratio and is
+  informational only. The one local commit `merge-finish` still makes is the perf
+  baseline, which is why it reminds you to push.
 - **Run the format check before pushing.** CI's *Format check* step is
   `internal/ci/check_ocamlformat.sh --all` (ocamlformat 0.29.0, janestreet
   profile); a local `dune build` does **not** cover it, so unformatted code is a
