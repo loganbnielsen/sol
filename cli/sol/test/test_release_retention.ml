@@ -6,7 +6,8 @@ let entry release_id created_at = release_id, created_at
 let ts n = Printf.sprintf "2026-01-01T00:00:%02dZ" n
 
 let contains haystack needle =
-  let n = String.length needle and h = String.length haystack in
+  let n = String.length needle
+  and h = String.length haystack in
   let rec scan i = i + n <= h && (String.sub haystack i n = needle || scan (i + 1)) in
   n = 0 || scan 0
 ;;
