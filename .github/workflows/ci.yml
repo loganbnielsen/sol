@@ -247,6 +247,21 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: bash internal/ci/test_ticket_transitions.sh
 
+      - name: Ticket-move guard (INFRA-066)
+        # Deliberately unconditional, with no `classify` condition: a ticket move is
+        # itself a docs-only change, and that is exactly the PR shape this checks.
+        # The signal is the branch name, which is how a worker already declares which
+        # ticket it is on (`fix/infra-048-...`, `INFRA-061/...`); a branch that names a
+        # READY ticket must land it, or say "(<ID>, part ...)" if it is one part of a
+        # longer ticket. `soldev pipeline submit` already requires DONE/<id>.md for the
+        # ticket it is given, but nothing covered a hand-pushed branch.
+        run: |
+          git fetch --no-tags origin main -q
+          internal/ci/check_ticket_move.sh --base origin/main --branch "${{ github.head_ref }}"
+
+      - name: Ticket-move guard mutation test
+        run: bash internal/ci/test_ticket_move.sh
+
       - name: Worktree/authority preflight (REFAC-090)
         # Cheap and offline, and deliberately unconditional: the semantics it
         # pins -- a declared context is enforced, an undeclared one is advisory,

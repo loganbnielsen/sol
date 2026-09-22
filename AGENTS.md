@@ -285,6 +285,15 @@ own author here). The mechanics that are easy to get wrong:
 - **Merge dependent PRs by hand, in order.** `soldev pipeline merge` (no argument)
   sweeps in branch-label order (`[audit]`, `[dec]`, …), which can invert a
   dependency — e.g. merging a decision PR before the finding it cites.
+- **The branch name declares the ticket, and CI holds you to it.** The *Ticket-move
+  guard* reads the id from the branch name (`fix/infra-048-namespace-create`,
+  `INFRA-061/probe-tri-state`), the worktree directory (`sol-INFRA-049-omit-authority`)
+  or a `(<ID>)` in a commit subject, and refuses a PR whose branch names a
+  `READY_FOR_ENGINEERING` ticket without moving it to `DONE/`. Landing one part of a
+  longer ticket is fine — declare it in a subject, `(INFRA-057, part A)` — but a
+  branch that names no ticket is exempt. This exists because four tickets once sat in
+  READY with their fix already merged (`INFRA-048`, `INFRA-050`, `INFRA-057`), each
+  costing the next worker a cycle.
 - **`merge-finish` runs `./cli/platform/local/scripts/run_tests.sh` locally, but a
   local failure is only *reported* — nothing is reverted** (BUG-033). That suite
   needs local kafka/e2e infra (`localhost:9092`); without it, kafka/e2e fail and the
