@@ -185,9 +185,9 @@ target:
   terraform_var_file: ../../../../../internal/qualification/gcp/qual-gcp.tfvars
 
   # The durable state backend: provisioned once by ensure_state_bucket() and merely
-  # CONSUMED here. `state_lock_table` is deliberately absent -- GCS serializes state
-  # natively, and Sol's own backend_config sends a GCP target only `bucket=` and
-  # `prefix=sol/<cloud|platform>/<target>.tfstate`.
+  # CONSUMED here. state_lock_table is deliberately absent -- GCS serializes state
+  # natively, and Sol's own backend_config sends a GCP target only bucket= and
+  # prefix=sol/<cloud|platform>/<target>.tfstate.
   state_bucket: $STATE_BUCKET
 
   # GCP's identity declaration. Same capability as AWS's provisioner role (who may
@@ -374,6 +374,11 @@ cleanup() {
     destroy || true
   fi
   say "logs: $LOG_DIR"
+  # A plan-only run applied nothing, so there is no teardown verdict to require --
+  # demanding one made PLAN_ONLY structurally unable to exit 0.
+  if plan_only; then
+    return "$rc"
+  fi
   [ "$TEARDOWN_OK" = "1" ] || rc=1
   return "$rc"
 }
