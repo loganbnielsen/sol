@@ -54,6 +54,10 @@ have failed" — it never means "false".
 | FND-0007 | `QUALIFICATION_GAP` | `BLOCKED` | GCP Cloud DNS solver gap + no delegated hostname; tracked in the GCP inventory and refused by name, and the GCP matrix (#376) now carries it as a row a run must fail on |
 | FND-0009 | `OBSERVATION` | `OPEN` | Provider substrate/prereq differences; no defect |
 | FND-0010 | `QUALIFICATION_GAP` | `OPEN` | GCP `cert_manager` `startupapicheck` failure: analysed and narrowed to the API-server → webhook path, but the cause is not yet established (needs the Attempt 5 container log). A ticket follows **only if** Attempt 5 confirms reachability |
+| FND-0024 | `VERIFIED_DEFECT` | `OPEN` | `kubectl probe` collapses "could not run" into `false`, so `sol logs`/`sol fn run` report an unreachable cluster as "not deployed"; `INFRA-063` |
+| FND-0025 | `VERIFIED_DEFECT` | `OPEN` | A failed current-release-pointer read drops the previous release's prune protection, silently weakening `--keep-releases`' documented "never pruned"; `INFRA-064` |
+| FND-0026 | `OBSERVATION` | `OPEN` | A missing *or unreadable* `migrations/` both mean "no migrations required" — the missing case is documented/test-pinned; the unreadable case is the residual | 
+| FND-0027 | `OBSERVATION` | `OPEN` | Loki stream parse failures are dropped without a trace, so `sol logs` output is best-effort; no stated completeness invariant |
 
 ## Current blockers recorded by the HARDEN epic (on `origin/main`, not audit findings)
 
