@@ -77,16 +77,6 @@ let k8s_name_or_exit name =
     exit 1
 ;;
 
-(* A short, human-scannable, low-collision suffix -- a manual run is a human
-   typing a command, not a high-frequency automated path, so a
-   seconds-resolution timestamp is enough entropy without adding a random
-   generator to reason about. Kubernetes Job names are DNS-1123 labels
-   (lowercase alphanumeric and '-'); k8s_name is already one, and this
-   suffix preserves that shape. *)
-let generate_job_name ~k8s_name =
-  Printf.sprintf "%s-manual-%d" k8s_name (int_of_float (Unix.time ()))
-;;
-
 let run ~ctx selector =
   let workspace = workspace_name () in
   let svc = resolve_fn selector in
@@ -108,7 +98,12 @@ let run ~ctx selector =
        ns
        why;
      exit 1);
-  let job_name = generate_job_name ~k8s_name in
+  (* BUG-032: the name is minted in the lib rather than here, so the uniqueness
+     rule is testable without a cluster — see Sol_cli_manual_job_name. The
+     seconds-resolution form this replaced collided whenever two runs were fired in
+     the same second, and the comment that justified it ("a manual run is a human
+     typing a command") was the assumption that turned out to be false. *)
+  let job_name = Sol_cli_manual_job_name.mint ~k8s_name in
   match
     Sol_cli_kubectl.create_job_from_cronjob ~ctx ~cronjob:k8s_name ~job_name ~namespace:ns
   with
