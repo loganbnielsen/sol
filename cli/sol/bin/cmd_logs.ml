@@ -40,14 +40,17 @@ let resolve_unit ~scope =
 ;;
 
 (* FEAT-063: even this existence check goes through the adapter, so it cannot
-   drift into an unscoped kubectl invocation. *)
-let workload_exists ~ctx ~ns ~primitive ~k8s_name =
+   drift into an unscoped kubectl invocation. It answers with the three-state
+   [presence], not a bool: "the service is not deployed" and "the check could not
+   run" are different claims, and the caller must not print the second as the
+   first (FND-0024). *)
+let workload_presence ~ctx ~ns ~primitive ~k8s_name =
   let kind =
     match (primitive : Sol_cli_manifest.primitive) with
     | Fn -> "cronjob"
     | Svc | Worker -> "deployment"
   in
-  Sol_cli_kubectl.probe ~ctx ~args:[ "get"; kind; k8s_name; "-n"; ns ]
+  Sol_cli_kubectl.presence ~ctx ~args:[ "get"; kind; k8s_name; "-n"; ns ]
 ;;
 
 let namespace_or_exit ~workspace ~domain =
@@ -174,11 +177,19 @@ let run_unit ~ctx ~target (options : log_options) scope : unit =
      Printf.printf "Grafana logs: (%s)\n%!" reason);
   let kubectl_target = kubectl_log_target ~primitive ~k8s_name in
   let fallback_to_kubectl () =
-    if not (workload_exists ~ctx ~ns ~primitive ~k8s_name)
-    then (
-      Printf.eprintf "Service %s not found in namespace %s.\n" name ns;
-      Printf.eprintf "Run 'sol status' to see deployed services.\n";
-      exit 1);
+    (match workload_presence ~ctx ~ns ~primitive ~k8s_name with
+     | Sol_cli_kubectl.Present -> ()
+     | Sol_cli_kubectl.Absent _ ->
+       Printf.eprintf "Service %s not found in namespace %s.\n" name ns;
+       Printf.eprintf "Run 'sol status' to see deployed services.\n";
+       exit 1
+     | Sol_cli_kubectl.Uncheckable why ->
+       Printf.eprintf
+         "error: could not check whether service %s exists in namespace %s: %s\n"
+         name
+         ns
+         why;
+       exit 1);
     (match
        Sol_cli_rollout_diagnosis.diagnose_service_live
          ~ctx

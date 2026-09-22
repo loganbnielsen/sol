@@ -119,13 +119,48 @@ let test_kubectl_patch_argv () =
   check_str "patch_data" "[{}]" (List.nth c.Sol_cli_process.argv 9)
 ;;
 
-let test_kubectl_probe_false_on_missing_binary () =
-  let result =
-    Sol_cli_kubectl.probe
-      ~ctx:Sol_cli_kube_destination.local_context
-      ~args:[ "nonexistent-abc123-subcommand" ]
+(* FND-0024: the point of the classifier is that an unrunnable kubectl is not a
+   negative answer. Pure, so it needs no cluster and no kubectl on PATH. *)
+let test_kubectl_presence_classification () =
+  let is_present = function
+    | Sol_cli_kubectl.Present -> true
+    | _ -> false
   in
-  check_bool "probe returns false for missing tool" false result
+  let is_absent = function
+    | Sol_cli_kubectl.Absent _ -> true
+    | _ -> false
+  in
+  let is_uncheckable = function
+    | Sol_cli_kubectl.Uncheckable _ -> true
+    | _ -> false
+  in
+  check_bool
+    "zero exit is present"
+    true
+    (is_present (Sol_cli_kubectl.presence_of_probe_result (Ok (0, ""))));
+  check_bool
+    "non-zero exit is absent"
+    true
+    (is_absent
+       (Sol_cli_kubectl.presence_of_probe_result (Ok (1, "Error from server (NotFound)"))));
+  check_bool
+    "an unrunnable kubectl is uncheckable"
+    true
+    (is_uncheckable
+       (Sol_cli_kubectl.presence_of_probe_result (Error "kubectl could not be run")));
+  check_bool
+    "an unrunnable kubectl is not reported as absent"
+    false
+    (is_absent
+       (Sol_cli_kubectl.presence_of_probe_result (Error "kubectl could not be run")));
+  (* The reason must survive into the verdict, or the operator cannot act on it. *)
+  match
+    Sol_cli_kubectl.presence_of_probe_result
+      (Ok (1, "Error from server (NotFound): deployments not found"))
+  with
+  | Sol_cli_kubectl.Absent reason ->
+    check_bool "the reason carries what kubectl said" true (String.length reason > 0)
+  | _ -> Alcotest.fail "expected Absent for a non-zero exit"
 ;;
 
 (* ── Sol_cli_docker ───────────────────────────────────────────────────────── *)
@@ -339,9 +374,9 @@ let () =
       , [ Alcotest.test_case "apply propagates error" `Quick test_kubectl_apply_failure
         ; Alcotest.test_case "get propagates error" `Quick test_kubectl_get_failure
         ; Alcotest.test_case
-            "probe false for missing"
+            "probe presence classification"
             `Quick
-            test_kubectl_probe_false_on_missing_binary
+            test_kubectl_presence_classification
         ] )
     ; ( "docker_argv"
       , [ Alcotest.test_case "build argv" `Quick test_docker_build_argv
