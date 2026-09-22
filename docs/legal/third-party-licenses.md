@@ -64,21 +64,30 @@ independent of the licence Sol's own code carries.
 
 ## TypeScript packages published to npm (`@sol-fab/*`)
 
-The two TypeScript framework packages are extracted to their own repositories
-and published under the `@sol-fab` npm scope:
+The four TypeScript framework packages are extracted to their own repositories
+and published under the `@sol-fab` npm scope — `obs` and `kafka` each in their
+own, `svc` and `worker` together in
+[`sol-typescript`](https://github.com/loganbnielsen/sol-typescript):
 
 - [`@sol-fab/obs`](https://github.com/loganbnielsen/sol-obs) — observability
   naming/shape conventions.
 - [`@sol-fab/kafka`](https://github.com/loganbnielsen/sol-kafka) — Kafka policy
   layer on top of `kafkajs`.
+- [`@sol-fab/svc`](https://github.com/loganbnielsen/sol-typescript) — the service
+  lifecycle contract (bounded drain, idempotent signals).
+- [`@sol-fab/worker`](https://github.com/loganbnielsen/sol-typescript) — the
+  worker lifecycle contract.
 
-Both are **Apache-2.0**, as is everything they *ship* (their compiled `dist/`)
-and everything consumers install at runtime:
+All four are **Apache-2.0**, as is everything they *ship* (their compiled
+`dist/`) and everything consumers install at runtime. `svc` and `worker` are
+dependency-free (Node ≥ 20 only), so they add no runtime tree of their own:
 
 | Package | Kind | Licence |
 | --- | --- | --- |
 | `@sol-fab/obs` | shipped source | Apache-2.0 |
 | `@sol-fab/kafka` | shipped source | Apache-2.0 |
+| `@sol-fab/svc` | shipped source | Apache-2.0 |
+| `@sol-fab/worker` | shipped source | Apache-2.0 |
 | `@opentelemetry/api` (peer of both) | runtime | Apache-2.0 |
 | `kafkajs` (peer of `@sol-fab/kafka`) | runtime | MIT |
 | `@sol-fab/obs` (dependency of `@sol-fab/kafka`) | runtime | Apache-2.0 |
@@ -88,7 +97,7 @@ Build/test-only dependencies (not distributed, listed for completeness):
 (MIT). No copyleft component is shipped or required at runtime.
 
 This closes the npm half of INFRA-007's "dependency licence audit" for the
-packages being externally distributed. A licence scan in CI for these two
+packages being externally distributed. A licence scan in CI for these
 repositories is still worth adding on top of the manual inventory.
 
 ## Verifying a component

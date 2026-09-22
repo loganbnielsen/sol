@@ -9,11 +9,25 @@
 Sol is not a web framework, a Kafka wrapper, a Kubernetes deployment tool, or a
 CLI wrapper around DevOps scripts.
 
-Sol is an open-source OCaml software factory for backend systems. The factory
-turns direct-style OCaml domain code into running production services by owning
-the repeatable machinery around it: scaffolding, build conventions,
+Sol is an open-source software factory for backend systems. The factory turns
+direct-style **OCaml or TypeScript** domain code into running production services
+by owning the repeatable machinery around it: scaffolding, build conventions,
 containerization, deployment-plan synthesis, Kubernetes/GitOps output,
 observability wiring, release inspection, and rollback.
+
+Both are first-class application languages against one language-neutral contract,
+but they are not equally far along, and this roadmap is written from the OCaml
+side because that is where the machinery is proven:
+
+- **OCaml** is the deeper-supported path — the CLI, the platform, the scaffolding
+  (`sol new`) and the production profile are OCaml today.
+- **TypeScript** is the broadest on-ramp. Four `@sol-fab/*` packages are published
+  (`kafka`, `obs`, `svc`, `worker`), the runnable proof is
+  [`examples/pluto/app/demo_ts`](../../examples/pluto/app/demo_ts/README.md), and
+  CI deploys it — but `sol new` does not scaffold TypeScript units yet (FEAT-084)
+  and the production profile stages TypeScript behind its parity triggers
+  (DEC-026 §2). The README's TypeScript section is the current statement of that
+  split; the roadmap below predates it and reads OCaml-first by construction.
 
 The framework pieces exist to make the intended architecture the path of least
 resistance:

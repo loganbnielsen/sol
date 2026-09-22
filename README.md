@@ -115,8 +115,8 @@ See [Product Architecture](docs/architecture/PRODUCT_ARCHITECTURE.md) for the fu
 TypeScript is a first-class application language: the same application model
 and operational conventions, implemented idiomatically on the Node ecosystem
 (`kafkajs`, `pg`, Fastify, `prom-client`) with Sol supplying only the
-semantics and integration glue those libraries do not. Today that layer is two
-published npm packages:
+semantics and integration glue those libraries do not. Today that layer is four
+published npm packages, all Apache-2.0:
 
 - [`@sol-fab/kafka`](https://github.com/loganbnielsen/sol-kafka) — Kafka policy
   layer over `kafkajs`: schema-registry ordering/fatality, explicit topic
@@ -125,11 +125,22 @@ published npm packages:
 - [`@sol-fab/obs`](https://github.com/loganbnielsen/sol-obs) — metric names,
   label vocabularies, Loki push shape, and W3C `traceparent` propagation, so TS
   and OCaml workloads land in the same Grafana panels and Tempo traces.
+- [`@sol-fab/svc`](https://github.com/loganbnielsen/sol-typescript) — the service
+  lifecycle contract: bounded drain (`drainTimeoutMs`, matching the OCaml
+  `sol-svc`'s `drain_timeout_s`) and idempotent `SIGTERM`/`SIGINT` handling.
+- [`@sol-fab/worker`](https://github.com/loganbnielsen/sol-typescript) — the
+  worker lifecycle contract, for a unit that owns no request boundary. It has no
+  `on_ready` equivalent yet (DEC-028), which is one of the triggers that stages
+  TypeScript behind the production profile (DEC-026 §2) — see
+  [compatibility](docs/deployment/compatibility.md).
 
-Both are Apache-2.0 and published with build provenance, each in its own public
-repository with its own CI — the same extraction pattern used for the OCaml
-`*-eio` packages. They are consumed from npm; this repo no longer carries
-`packages/`. Releases are tokenless (npm trusted publishing / OIDC).
+Ownership follows the extraction: `@sol-fab/kafka` and `@sol-fab/obs` each live
+in their own public repository with their own CI, while `@sol-fab/svc` and
+`@sol-fab/worker` share
+[`loganbnielsen/sol-typescript`](https://github.com/loganbnielsen/sol-typescript).
+All four are published with build provenance, the same extraction pattern used
+for the OCaml `*-eio` packages. They are consumed from npm; this repo no longer
+carries `packages/`. Releases are tokenless (npm trusted publishing / OIDC).
 
 The runnable showcase is
 [`examples/pluto/app/demo_ts`](examples/pluto/app/demo_ts/README.md): a
@@ -137,11 +148,14 @@ TypeScript `-svc` and `-worker` deployed by the same Sol CLI and Kubernetes
 machinery, exercising a live cross-service, trace-linked Kafka run. It installs
 `@sol-fab/*` from npm and is deliberately its own npm project root — it also
 serves as the conformance fixture proving a Sol workspace needs no enclosing
-JavaScript workspace to consume them (DEC-024).
+JavaScript workspace to consume them (DEC-024). CI deploys it for real
+(`golden-path-smoke-ts`, plus the demo's own install/typecheck and Dockerfile
+smoke jobs), so the deployed path is exercised, not merely claimed.
 
-TypeScript is the adoption on-ramp, and it is being built out to a complete
-golden path (`sol new --language typescript` → `sol local up` → `sol deploy`),
-not just packages.
+What is **not** available yet is the scaffolding: `sol new` writes OCaml units
+only, so a TypeScript unit is authored by hand today. The `sol new --language
+typescript` → `sol local up` → `sol deploy` path above is the target, tracked as
+FEAT-084; nothing in this README should be read as that flag existing.
 
 ---
 
@@ -185,7 +199,7 @@ sol/
 
 - [Tutorial](docs/guides/TUTORIAL.md) — full walkthrough, start to finish
 - [Contract](contract/README.md) — the language-neutral application contract
-- [TypeScript packages](https://github.com/loganbnielsen/sol-kafka) — the published `@sol-fab/kafka` and [`@sol-fab/obs`](https://github.com/loganbnielsen/sol-obs) packages, plus the [`demo_ts`](examples/pluto/app/demo_ts/README.md) showcase
+- [TypeScript packages](https://github.com/loganbnielsen/sol-typescript) — the four published `@sol-fab/*` packages ([`kafka`](https://github.com/loganbnielsen/sol-kafka), [`obs`](https://github.com/loganbnielsen/sol-obs), `svc`, `worker`), plus the [`demo_ts`](examples/pluto/app/demo_ts/README.md) showcase
 - [Product Architecture](docs/architecture/PRODUCT_ARCHITECTURE.md) — factory model, design principles, ownership lanes
 - [Factory Pipeline](docs/architecture/devops-pipeline.md) — what each `sol` command does
 - [Deployment escape hatches](docs/deployment/escape-hatches.md) — `sol.toml` reference
