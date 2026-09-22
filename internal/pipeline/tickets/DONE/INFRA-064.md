@@ -74,3 +74,32 @@ made:
 3. `Sol_cli_release_retention.select` unit tests cover `previous` inside and
    outside the keep window, so the "never pruned" guarantee is pinned by a test
    rather than by a comment.
+
+## Completion (2026-09-22)
+
+Done as the Remediation describes, with the refusal placed in `select` so no
+caller can forget it:
+
+- `Sol_cli_release_retention` gains `previous_release = Known of string | None_yet
+  | Unreadable of string`; `select` returns `(string list, string) result` and
+  answers `Error` (naming the cause) for `Unreadable`, before computing any prune
+  set. `prune` propagates it, so the deploy's existing
+  `warning: could not prune old releases: …` line becomes the diagnosed skip.
+- **Both** readers are fixed: `cmd_deploy.ml` and `cmd_up.ml` each had their own
+  `read_previous_release` collapsing `Error` into `None` (the ticket named only
+  the first; `sol up` had the identical defect and fed the same `prune`).
+- The now-redundant pointer-read warning is dropped — the prune refusal carries
+  the same cause at the point of the decision, once.
+
+Acceptance criteria: (1) and (2) are the `Unreadable`/`None_yet` arms of
+`select`, reached through `prune`; (3) is `test_release_retention.ml`, which now
+pins a `Known` previous **outside** the window being kept, its complement
+(`None_yet` does **not** protect that record, so the protection is load-bearing),
+and the `Unreadable` refusal.
+
+**Demo/example coverage:** not applicable — an internal retention-safety change
+with no app-author surface.
+
+`dune build` clean; the `release_retention` suite passes (9 tests, 2 new). The
+kafka/e2e suites fail on this machine for the no-local-infra reason recorded in
+`AGENTS.md`, unrelated to this change.
