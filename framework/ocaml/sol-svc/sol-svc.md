@@ -67,47 +67,47 @@ All examples below use the qualified form.
 ```ocaml
 (** Authentication strategy, declared explicitly on every route.
     Sol does not infer auth from path conventions. *)
-type level =
-  [ `Public
-  | `Api_key
-  | `Jwt of jwt_config
-  ]
+type jwt_algorithm = [ `HS256 | `RS256 | `ES256 | `ES384 | `ES512 ]
 
-and jwt_config =
-  { scopes       : string list
-  (** Required scopes, e.g. ["write:payments"]. All must be present. *)
-  ; verification : jwt_verification
-  (** [Verified_signature_required] is the production-facing mode: signature,
-      issuer, audience, and algorithm allowlist are all checked before a
-      token is trusted. [Unverified_dev_only] decodes unsigned v1 tokens and
-      must only be used for local development and tests. *)
-  }
-
-and jwt_verification =
-  | Verified_signature_required of jwt_verified_config
-  | Unverified_dev_only
-
-and jwt_algorithm = [ `HS256 | `RS256 | `ES256 | `ES384 | `ES512 ]
-
-and jwt_key_source =
+type jwt_key_source =
   | Hs256_secret of string
       (** Shared secret. Verified through [jose]'s HS256 path — never a
           hand-rolled HMAC comparison. *)
-  | Jwks_static  of string
+  | Jwks_static of string
       (** A JWKS document (RFC 7517), e.g. baked into config for a fixed,
           non-rotating key set. *)
-  | Jwks_url     of string
+  | Jwks_url of string
       (** HTTPS URL of a JWKS endpoint (Auth0/Cognito/Okta-style). Fetched
           over TLS and cached for 5 minutes; never fetched on every request. *)
 
-and jwt_verified_config =
-  { issuer     : string
-  ; audience   : string
+type jwt_verified_config =
+  { issuer : string
+  ; audience : string
   ; algorithms : jwt_algorithm list
   (** Allowlist. A token whose header [alg] is not in this list is rejected
       before any key lookup or signature check runs. *)
   ; key_source : jwt_key_source
   }
+
+type jwt_verification =
+  | Verified_signature_required of jwt_verified_config
+  | Unverified_dev_only
+  (** [Verified_signature_required] is the production-facing mode: signature,
+      issuer, audience, and algorithm allowlist are all checked before a
+      token is trusted. [Unverified_dev_only] decodes unsigned v1 tokens and
+      must only be used for local development and tests. *)
+
+type jwt_config =
+  { scopes : string list
+  (** Required scopes, e.g. ["write:payments"]. All must be present. *)
+  ; verification : jwt_verification
+  }
+
+type level =
+  [ `Public
+  | `Api_key
+  | `Jwt of jwt_config
+  ]
 
 (** Resolved identity after successful validation.
     Available in the handler via [Request.t.auth]. *)
@@ -207,15 +207,17 @@ driven by `kid` lookup in the JWKS, not by attacker input.
 `Peer` is the outbound helper for declared `[service] calls`.
 
 ```ocaml
+type error = [ `Config of string ]
+
 val env_var : string -> string
-val url : string -> (Uri.t, [ `Config of string ]) result
+val url : string -> (Uri.t, error) result
 
 val headers
   :  env:< fs : Eio.Fs.dir_ty Eio.Path.t ; .. >
   -> ?trace_ctx:Obs_trace.t
   -> ?headers:(string * string) list
   -> unit
-  -> ((string * string) list, [ `Config of string ]) result
+  -> ((string * string) list, error) result
 ```
 
 `Peer.url "checkout_svc"` reads `CHECKOUT_SVC_URL`, matching the env var Sol
@@ -230,15 +232,23 @@ given the current span context.
 ### Types
 
 ```ocaml
-type method_ = [ `GET | `POST | `PUT | `PATCH | `DELETE ]
-
 type handler = Request.t -> Response.t
 
+type pattern_segment =
+  | Literal of string
+  | Param of string
+
+type pattern = private
+  { source : string
+  ; segments : pattern_segment list
+  ; trailing_slash : bool
+  }
+
 type t =
-  { method_  : method_
-  ; pattern  : string   (* e.g. "/users/:id/posts/:post_id" *)
-  ; auth     : Auth.level
-  ; handler  : handler
+  { method_ : Request.method_
+  ; pattern : pattern
+  ; auth : Auth.level
+  ; handler : handler
   }
 ```
 
@@ -256,7 +266,7 @@ val delete : string -> auth:Auth.level -> handler -> t
 
 cohttp exposes `Http.Method.t`, which includes `HEAD`, `OPTIONS`, `CONNECT`,
 `TRACE`, and an open `Other of string` catch-all. The framework maps incoming
-methods to `Route.method_` internally:
+methods to `Request.method_` internally:
 
 ```ocaml
 let method_of_http : Http.Method.t -> method_ option = function
@@ -306,7 +316,7 @@ shadow it with a user route.
 
 ```ocaml
 type t =
-  { method_  : Route.method_
+  { method_  : method_
   ; path     : string
   ; headers  : Http.Header.t
   (** [Http.Header.t] from the [http] package. Case-insensitive, O(log N) lookup. *)
@@ -315,6 +325,9 @@ type t =
   (** Full request URI. Use [Uri] functions for query string access. *)
   ; body     : string                   (* pre-read, bounded by max_body_bytes *)
   ; auth     : Auth.context
+  ; trace_ctx : Obs_trace.t option
+  (** W3C [traceparent] extracted from the incoming request headers. Pass as
+      [?parent] to [Obs_eio.with_span] to link child spans to the caller. *)
   }
 
 val param : t -> string -> string option
@@ -373,7 +386,6 @@ val payload_too_large : t           (* 413, returned by framework before handler
 
 (* 5xx *)
 val internal_error  : string -> t   (* 500, Content-Type: text/plain *)
-val not_implemented : t             (* 501, returned for unsafe JWT with false flag *)
 
 (** [json ?status ?headers body] sets Content-Type: application/json automatically.
     [status] defaults to 200. *)
@@ -397,33 +409,44 @@ end
 ```ocaml
 module Make (H : HANDLER) : sig
   val run
-    :  env:_ Eio.Stdenv.t
+    :  env:
+         < net : _ Eio.Net.t
+         ; clock : _ Eio.Time.clock
+         ; fs : Eio.Fs.dir_ty Eio.Path.t
+         ; .. >
     -> ?port:int
        (** Default: 8080. Overridden by PORT env var if set. Pass 0 for
            OS-assigned port (use with [on_listen] in tests). *)
+    -> ?metrics_auth:Auth.level
+       (** Auth strategy for the built-in /metrics endpoint. Default: [`Public].
+           Set to [`Api_key] for production clusters that don't use NetworkPolicy
+           to restrict Prometheus scraper access. *)
     -> ?ot:Sol_obs.t
        (** Observability handle. When provided, sol_svc_requests_total/
            sol_svc_request_duration_seconds are emitted per request, and
            GET /metrics renders from the same handle. If omitted,
            GET /metrics → 404. *)
-    -> ?metrics_auth:Auth.level
-       (** Auth strategy for the built-in /metrics endpoint. Default: [`Public].
-           Set to [`Api_key] for production clusters that don't use NetworkPolicy
-           to restrict Prometheus scraper access. *)
     -> ?max_body_bytes:int
        (** Maximum request body size in bytes. Default: 10_485_760 (10 MB).
            Requests exceeding this limit receive 413 before the handler is called. *)
     -> ?drain_timeout_s:float
        (** Seconds to wait for active requests after shutdown signal. Default: 30.0. *)
+    -> ?stop:unit Eio.Promise.t
+       (** External stop signal. Resolve to request graceful shutdown; in-flight
+           requests get up to [drain_timeout_s] before forced cancellation. *)
     -> ?on_listen:(int -> unit)
        (** Called with the actual bound port immediately before the accept loop.
            Use with [~port:0] in tests to discover the OS-assigned port. *)
     -> unit
-    -> unit
+    -> (unit, run_error) result
 end
 ```
 
-`run` never returns under normal operation. Exits after SIGTERM/SIGINT + drain.
+`run` returns only when the accept loop has stopped and drained — normally because
+`?stop` was resolved or a shutdown signal arrived. The functional
+`Service.run` (routes passed directly rather than through a `HANDLER` module) takes
+the same arguments with the routes list first, and the same
+`(unit, run_error) result`.
 
 ---
 
@@ -530,7 +553,7 @@ in use at implementation time.
 
 ```
 TCP accept
-  └─ map Http.Method.t → Route.method_
+  └─ map Http.Method.t → Request.method_
   │     unknown method  → 405, close
   └─ read headers       (Http.Header.t)
   └─ read body, enforce max_body_bytes

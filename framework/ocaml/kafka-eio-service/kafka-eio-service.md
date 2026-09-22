@@ -75,23 +75,27 @@ end
 ## Configuration
 
 ```ocaml
-type config = {
-  brokers             : string list;
-  schema_registry_url : string;       (* "http://localhost:8081" *)
-  admin_url           : string;       (* Redpanda admin API, e.g. "http://localhost:9644" *)
-  linger_ms           : int;          (* batch window; 50ms recommended *)
-  partitions          : int;          (* partition count for auto-provisioned topics *)
-  topic_durability    : topic_durability;
-  security            : Kafka_security.t;
-  (* Transport security. Use Kafka_security.default for local dev.
+type topic_durability =
+  | Broker_default
+  | Single_broker_loss
+
+type config =
+  { brokers : string list
+  ; schema_registry_url : string       (* "http://localhost:8081" *)
+  ; admin_url : string                 (* Redpanda admin API, e.g. "http://localhost:9644" *)
+  ; linger_ms : int                    (* batch window; 50ms recommended *)
+  ; partitions : int                   (* partition count for auto-provisioned topics *)
+  ; topic_durability : topic_durability
+  ; security : Kafka.Security.t
+  (* Transport security. Use Kafka.Security.default for local dev.
      In production, set KAFKA_SECURITY_PROTOCOL=sasl_ssl and supply SASL credentials. *)
-}
+  }
 ```
 
 **Preferred: build config from environment variables** using `config_of_env`:
 
 ```ocaml
-val config_of_env : unit -> config
+val config_of_env : unit -> (config, error) result
 (* Reads:
    KAFKA_BROKERS           — comma-separated broker addresses (default: ["localhost:9092"])
    SCHEMA_REGISTRY_URL     — schema registry HTTP URL (default: "http://localhost:8081")
@@ -101,7 +105,9 @@ val config_of_env : unit -> config
    KAFKA_SSL_CA_LOCATION   — path to CA cert bundle (optional)
    KAFKA_SASL_MECHANISM    — e.g. "SCRAM-SHA-256" (optional)
    KAFKA_SASL_USERNAME / KAFKA_SASL_PASSWORD — SASL credentials (optional)
-   linger_ms = 50, partitions = 1 *)
+   linger_ms = 50, partitions = 1)
+(* Returns Error when a supplied Kafka security setting is malformed or
+   incomplete. *)
 ```
 
 `config_of_env` is the standard path for Sol workers and services; the generated
@@ -138,7 +144,7 @@ val publish
   -> 'a topic
   -> ?trace_ctx:Obs_trace.t
   -> 'a
-  -> (unit, Kafka_error.t) result Eio.Promise.t
+  -> (unit, Kafka.Error.t) result Eio.Promise.t
 
 (** Subscribe and process messages. New consumer groups start from the earliest
     retained offset. ack () commits the offset after processing and returns
@@ -148,19 +154,31 @@ val publish
     traceparent header from the Kafka message — pass it as ?parent:trace_ctx
     to Obs_eio.with_span to link spans. on_ready is called once when the broker
     assigns partitions to this consumer. on_decode_error overrides the default
-    decode-error behavior (log + ack + continue). Returns when handler returns
-    Error. *)
+    decode-error behavior (log + ack + continue); raw_bytes is None when the
+    record could not be framed at all. Returns when handler returns Error. *)
 val consume
   :  t
   -> 'a topic
   -> group_id:string
   -> sw:Eio.Switch.t
+  -> clock:_ Eio.Time.clock
   -> ?on_ready:(unit -> unit)
-  -> ?on_decode_error:(string -> raw_bytes:bytes -> ack:(unit -> (unit, Kafka_error.t) result) -> Kafka_error.t Kafka_consumer.handler_result)
+  -> ?on_assigned:(unit -> unit)
+  -> ?on_revoked:(unit -> unit)
+  -> ?on_poll:(unit -> unit)
+  -> ?on_decode_error:
+       (string
+        -> raw_bytes:bytes option
+        -> ack:(unit -> (unit, Kafka.Error.t) result)
+        -> Kafka.Error.t Kafka.Consumer.handler_result)
   -> ?ot:Obs_eio.t
-  -> handler:('a -> ack:(unit -> (unit, Kafka_error.t) result) -> trace_ctx:Obs_trace.t option -> Kafka_error.t Kafka_consumer.handler_result)
+  -> handler:
+       ('a
+        -> ack:(unit -> (unit, Kafka.Error.t) result)
+        -> trace_ctx:Obs_trace.t option
+        -> Kafka.Error.t Kafka.Consumer.handler_result)
   -> unit
-  -> (unit, Kafka_error.t) result
+  -> (unit, Kafka.Error.t) result
 ```
 
 ### `consume_partitioned` — per-partition fiber isolation
@@ -175,15 +193,29 @@ val consume_partitioned
   -> 'a topic
   -> group_id:string
   -> sw:Eio.Switch.t
+  -> net:_ Eio.Net.t
   -> clock:_ Eio.Time.clock
   -> ?on_ready:(unit -> unit)
-  -> ?on_decode_error:(string -> raw_bytes:bytes -> ack:(unit -> (unit, Kafka_error.t) result) -> Kafka_error.t Kafka_consumer.handler_result)
+  -> ?on_assigned:(unit -> unit)
+  -> ?on_revoked:(unit -> unit)
+  -> ?on_poll:(unit -> unit)
+  -> ?on_decode_error:
+       (string
+        -> raw_bytes:bytes option
+        -> ack:(unit -> (unit, Kafka.Error.t) result)
+        -> Kafka.Error.t Kafka.Consumer.handler_result)
   -> retry_strategy:retry_strategy
   -> ?on_retry:(partition:int32 -> attempt:int -> delay_s:float -> unit)
+  -> ?on_relay_publish:
+       (partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit)
   -> ?ot:Obs_eio.t
-  -> handler:('a -> ack:(unit -> (unit, Kafka_error.t) result) -> trace_ctx:Obs_trace.t option -> Kafka_service.handler_error Kafka_consumer.handler_result)
+  -> handler:
+       ('a
+        -> ack:(unit -> (unit, Kafka.Error.t) result)
+        -> trace_ctx:Obs_trace.t option
+        -> handler_error Kafka.Consumer.handler_result)
   -> unit
-  -> (unit, Kafka_error.t) result
+  -> (unit, consume_partitioned_error) result
 ```
 
 ### Message ordering
@@ -232,7 +264,7 @@ never promised in the first place.
 
 ```ocaml
 type retry_strategy =
-  | In_memory    of Kafka_consumer.retry_policy
+  | In_memory of Kafka.Consumer.retry_policy
     (* Exponential back-off sleep inside the partition fiber (delay =
        base_delay_s * 2^(attempt-1), jittered by jitter_ratio, clamped to
        max_delay_s). Simple, zero infra. Pauses that Kafka partition for the
@@ -240,7 +272,7 @@ type retry_strategy =
        exhaustion, or on Dead_letter (In_memory has no DLQ to route it to):
        terminal handler failure -- the message is left unacknowledged
        (FEAT-078). *)
-  | Retry_topics of Kafka_consumer.retry_policy
+  | Retry_topics of Kafka.Consumer.retry_policy
     (* Both variants share this one retry_policy vocabulary (FEAT-078) but
        are not feature-equivalent -- exhaustion disposition below is
        strategy-specific by design.
@@ -367,23 +399,34 @@ end
 
 ## Example: Payments Producer
 
+*The two examples below are illustrative, not compiled in CI — they show the shape
+of a caller, and the signatures above are the authority. `MESSAGE` module plumbing
+and `Eio_main` setup are elided where they would obscure that shape.*
+
 ```ocaml
 let () =
   Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-      let cfg = Kafka_service.config_of_env () in
-      match Kafka_service.create cfg ~sw with
-      | Error e -> failwith e
-      | Ok svc ->
-        match Kafka_service.register svc ~net:env#net ~clock:env#clock (module PaymentEvent) with
-        | Error e -> failwith e
-        | Ok topic ->
-          let p = Kafka_service.publish svc topic
-            { payment_id = "pay-001"; amount_cents = 9900; currency = "USD" }
-          in
-          match Eio.Promise.await p with
-          | Ok ()   -> print_endline "published"
-          | Error e -> Printf.eprintf "error: %s\n" (Kafka_error.to_string e)
+      match Kafka_service.config_of_env () with
+      | Error e -> Printf.eprintf "config: %s\n" (Kafka_service.error_to_string e)
+      | Ok cfg ->
+        (match Kafka_service.create cfg ~sw with
+         | Error e -> Printf.eprintf "error: %s\n" (Kafka_service.error_to_string e)
+         | Ok svc ->
+           (match
+              Kafka_service.register svc ~net:env#net ~clock:env#clock (module PaymentEvent)
+            with
+            | Error e -> Printf.eprintf "error: %s\n" (Kafka_service.error_to_string e)
+            | Ok topic ->
+              let p =
+                Kafka_service.publish
+                  svc
+                  topic
+                  { payment_id = "pay-001"; amount_cents = 9900; currency = "USD" }
+              in
+              (match Eio.Promise.await p with
+               | Ok () -> print_endline "published"
+               | Error e -> Printf.eprintf "error: %s\n" (Kafka_service.error_to_string e))))
 ```
 
 ## Example: Audit Consumer
@@ -393,8 +436,8 @@ Kafka_service.consume svc topic ~group_id:"audit-svc" ~sw
   ~handler:(fun event ~ack ~trace_ctx:_ ->
     record_audit_log event;
     ignore (ack ());
-    Kafka_consumer.Continue
-  ) ()
+    Kafka.Consumer.Continue)
+  ()
 ```
 
 Multiple services (`audit-svc`, `financials-svc`) can consume the same `payments`

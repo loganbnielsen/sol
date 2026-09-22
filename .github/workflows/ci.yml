@@ -262,6 +262,15 @@ jobs:
       - name: Ticket-move guard mutation test
         run: bash internal/ci/test_ticket_move.sh
 
+      - name: Framework spec signature guard (DOCS-017)
+        # Unconditional, and deliberately so: a spec-only change is classified
+        # docs-only, and a spec-only change is exactly what drifts.
+        run: internal/ci/check_framework_doc_signatures.sh
+
+      - name: Framework spec signature guard mutation test
+        # Python 3 is what the guard uses to parse declarations; the runner has it.
+        run: bash internal/ci/test_framework_doc_signatures.sh
+
       - name: Worktree/authority preflight (REFAC-090)
         # Cheap and offline, and deliberately unconditional: the semantics it
         # pins -- a declared context is enforced, an undeclared one is advisory,
