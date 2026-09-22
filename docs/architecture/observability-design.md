@@ -24,6 +24,28 @@ stack.
 > is what `project` was actually describing. No new layer — `workspace ->
 > domain -> service` is the whole model.
 
+## One Model, Three Representations
+
+`sol`, Grafana, and automation (CI, a script, an agent) are three *representations
+of one model*, not three platforms with their own facts:
+
+| Representation | What it is for |
+|---|---|
+| `sol status` / `sol logs` / `sol open` | The deterministic, greppable surface: scope resolution, health, and the command or URL that opens the right view. Works over SSH, in CI, and for an agent with no browser. |
+| Grafana | The visual surface: rendering, exploration and time-series navigation over the same labels and the same dashboards Sol provisions. |
+| Automation | The same model consumed without a human: `--links` output, the provisioned dashboard definitions, and the status output, all as data. |
+
+A capability belongs to the model and appears in every representation; a
+representation may expose less, but must not invent its own identity or its own
+scope vocabulary. Concretely: a dashboard's template variables resolve the same
+labels `sol status` accepts, and `--links` prints the URL for the same view
+`sol open` would open.
+
+Two capabilities are not in all three yet, and they carry their owner rather than
+leaving the gap implied: **traces have no CLI surface** — `sol open` covers `logs`,
+`metrics` and `dashboard` today, and OBS-045 owns the traces entry point — and
+**alerts are not exposed per scope** (FEAT-092).
+
 ## Goals
 
 - A developer can open one dashboard and inspect the whole workspace.
@@ -80,6 +102,48 @@ must carry the same ownership identity:
 
 These labels are the API. Kubernetes namespaces, pod names, Helm release
 names, bucket names, and cloud resource names are implementation details.
+
+## Who Is Authoritative For What
+
+Sol supplies shared identity and navigation. It does not become the system of
+record for a fact another system already owns, and it does not keep a second copy
+of that fact where the two can drift apart:
+
+| Information | System of record | Sol's role |
+|---|---|---|
+| What infrastructure exists | Terraform state (`sol cloud plan/apply`) | Read and present it; never keep a parallel inventory |
+| What was released, and when | Sol release records (`sol releases`) and deployment events (`sol deployments`) | Own these — they are Sol's own facts, so nothing else is authoritative for them |
+| What the applications emitted | The observability backend (Loki, Prometheus, Tempo, or an external provider) | Own the labels, definitions, scope mapping and links that make it navigable; never the raw storage |
+| What the cloud provider measured | The provider's own metrics system (CloudWatch on AWS) | Surface it through a managed-resource dashboard (OBS-044) rather than duplicating it |
+
+Stated plainly: when `sol status` reports health, it reports what the authoritative
+system said. A number maintained in two systems is a number that will eventually
+disagree with itself, and the observability surface is where that becomes visible
+to a user at the worst moment.
+
+**The target axis.** A *target* is not a scope. DEC-032 settled target, scope and
+view as three separate axes, so an infrastructure view is addressed by target with
+no application scope attached — the positional form DEC-031 fixed, the same one
+`sol cloud plan|apply|destroy` already take. Extending the status surface with cloud
+health, drift and last operation is **FEAT-090**; target-scoped infrastructure views
+(nodes, Postgres, Redpanda, the observability stack itself) are **INFRA-027**.
+Neither is claimed here as shipped.
+
+## Lifecycle
+
+Deploy and destroy move a target through named phases, and **ADR 0003**
+(`adr/0003-lifecycle-phases-authority-and-policy.md`) owns that model: the phase
+names, what each phase may change, and which authority applies during it. This
+document does not restate the phases. Two documents stating one model is exactly
+the failure this design's own product rule forbids, and the review that produced
+this section proposed a different phase vocabulary than the accepted one — copying
+it here would have created the contradiction it was meant to remove.
+
+The one principle worth repeating, because it is about observability: **the phase
+is not infrastructure truth.** A phase says which mutations are allowed and which
+authority applies; it does not say what exists. That answer comes from the system
+of record in the table above, which is why a phase transition must never stand in
+as a proxy for "the infrastructure is in state X".
 
 ## Backend Modes
 
@@ -175,18 +239,39 @@ Links
 
 ## Dashboard Shape
 
-Grafana is the default self-hosted dashboard shell today. Sol should provision
-one workspace dashboard entrypoint plus scoped dashboards:
+Grafana is the default self-hosted dashboard shell today. Sol provisions one
+workspace dashboard entrypoint plus scoped dashboards, as JSON in the tree:
 
-- workspace overview
-- domain overview
-- service dashboard for service-specific metrics
-- service logs view
-- deploy/release timeline when available
+- workspace overview — `cli/platform/infra/base/dashboards/workspace-overview.json`
+- domain overview — `dashboards/domain-overview.json`
+- service dashboard for service-specific metrics — `dashboards/service-template.json`
+- service logs view — Loki-backed log panels inside the dashboards above, plus the
+  scoped `sol open logs` link; not a separate file
+- deploy/release timeline — `dashboards/release-timeline.json`
+
+All four files are provisioned by `cli/platform/infra/base/main.tf`.
 
 The dashboard should filter by Sol labels, not by namespace/pod names. A
 single incident often crosses an HTTP service, Kafka worker, scheduled
 function, database, and deploy event — cross-domain search is the point.
+
+### What Sol owns, what Grafana owns
+
+The split is narrow on purpose, and it is what keeps Grafana a choice rather than a
+dependency:
+
+| Sol owns | Grafana owns |
+|---|---|
+| Dashboard *definitions* — the JSON above, provisioned from the tree | Rendering them |
+| The telemetry label and attribute vocabulary (`workspace`, `env`, `domain`, `service`, `primitive`, `release`) | Label storage — Loki, Prometheus and Tempo stay the systems that hold the data |
+| Template variables and the scope -> label mapping they resolve | The variable UI and query editing |
+| Deep links, and the `sol open <view> <scope>` -> URL mapping | Navigation inside a panel or a time range |
+| Provisioning: datasources, dashboards, folders | Exploration: ad-hoc queries, zooming, panel edits |
+
+Sol does not implement a bespoke frontend, fork Grafana, or white-label it, and no
+capability is defined in a way that only a Grafana-specific feature could satisfy
+(see Non-Goals). If the renderer were replaced, the definitions and the labels would
+still be the model; only the renderer would change.
 
 ### Managed resource dashboards (OBS-044)
 
@@ -228,6 +313,11 @@ one-off dashboard implementation.
 
 ## Hosted Path
 
+> **No ticket owns this section.** It records a product direction, not a committed
+> deliverable: there is no hosted Sol today, so nothing here should be read as
+> scheduled work or as a promise about a future release. When the hosted path is
+> taken up it gets a ticket, and that ticket owns the design.
+
 Future Sol-hosted observability should keep the same shape:
 
 ```text
@@ -246,3 +336,10 @@ path exists to remove operations work.
 - No product promise that `local` preserves history.
 - No provider-specific UX as the core model.
 - No `project` layer above `domain` — see the note under Goals.
+- No second system of record. Sol does not mirror Terraform state, the
+  observability backends' raw data, or the cloud provider's metrics as its own
+  copies; it reads them and supplies the identity and navigation over them.
+- No becoming the composition. Sol does not become Terraform, Kubernetes,
+  Grafana, Prometheus, Loki, or Tempo. It composes them, owns the model that makes
+  them one surface, and leaves each to be the expert in its own job — which is the
+  same separation the CLI/Grafana split above describes.
