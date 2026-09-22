@@ -106,13 +106,28 @@ val delete
   -> namespace:string
   -> (unit, Sol_cli_process.error) result
 
-val probe : ctx:Sol_cli_kube_destination.context -> args:string list -> bool
+(** What a probe established. Three states, because a bool cannot distinguish
+    "kubectl answered no" from "kubectl could not be run", and presenting the
+    second as the first asserts an absence that was never observed (FND-0024). *)
+type presence =
+  | Present
+  | Absent of string
+    (* kubectl ran and answered no; the reason is what it said. *)
+  | Uncheckable of string
+    (* kubectl could not be run at all: the state was never established. *)
 
-(** The same probe, but keeping what kubectl said: the exit code and the reason
-    a human should see (stderr when present, else stdout). [Error] means kubectl
-    could not be run at all, which is a different failure from running and
-    failing. Bounded by a timeout, and non-interactive because the runner gives
-    children /dev/null on stdin. *)
+(** [presence ~ctx ~args] probes through [probe_result]. *)
+val presence : ctx:Sol_cli_kube_destination.context -> args:string list -> presence
+
+(** The pure classifier behind {!presence}, exposed so the distinction can be
+    tested without a cluster. *)
+val presence_of_probe_result : (int * string, string) result -> presence
+
+(** The probe keeping what kubectl said: the exit code and the reason a human
+    should see (stderr when present, else stdout). [Error] means kubectl could
+    not be run at all, which is a different failure from running and failing.
+    Bounded by a timeout, and non-interactive because the runner gives children
+    /dev/null on stdin. *)
 val probe_result
   :  ctx:Sol_cli_kube_destination.context
   -> args:string list

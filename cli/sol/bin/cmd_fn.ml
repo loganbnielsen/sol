@@ -94,11 +94,20 @@ let run ~ctx selector =
   let name = svc.Sol_cli_manifest.name in
   let ns = namespace_or_exit ~workspace ~domain in
   let k8s_name = k8s_name_or_exit name in
-  if not (Sol_cli_kubectl.probe ~ctx ~args:[ "get"; "cronjob"; k8s_name; "-n"; ns ])
-  then (
-    Printf.eprintf "-fn %s/%s is not deployed in namespace %s.\n" domain name ns;
-    Printf.eprintf "Run 'sol status' to see deployed services.\n";
-    exit 1);
+  (match Sol_cli_kubectl.presence ~ctx ~args:[ "get"; "cronjob"; k8s_name; "-n"; ns ] with
+   | Sol_cli_kubectl.Present -> ()
+   | Sol_cli_kubectl.Absent _ ->
+     Printf.eprintf "-fn %s/%s is not deployed in namespace %s.\n" domain name ns;
+     Printf.eprintf "Run 'sol status' to see deployed services.\n";
+     exit 1
+   | Sol_cli_kubectl.Uncheckable why ->
+     Printf.eprintf
+       "error: could not check whether -fn %s/%s is deployed in namespace %s: %s\n"
+       domain
+       name
+       ns
+       why;
+     exit 1);
   let job_name = generate_job_name ~k8s_name in
   match
     Sol_cli_kubectl.create_job_from_cronjob ~ctx ~cronjob:k8s_name ~job_name ~namespace:ns

@@ -123,8 +123,22 @@ let probe_result ~ctx ~args =
     Ok (r.Sol_cli_process.exit_code, reason)
 ;;
 
-let probe ~ctx ~args =
-  match probe_result ~ctx ~args with
-  | Ok (0, _) -> true
-  | Ok _ | Error _ -> false
+(* A boolean probe cannot say the third thing: "kubectl could not be run" and
+   "kubectl ran and said no" both collapse to `false`, and a caller that prints
+   that as a fact about the cluster reports an absence it never established
+   (FND-0024). The classifier is pure so the distinction is unit-testable
+   without a cluster. *)
+type presence =
+  | Present
+  | Absent of string
+    (* kubectl ran and answered no; the reason is what it said. *)
+  | Uncheckable of string
+    (* kubectl could not be run at all: the state was never established. *)
+
+let presence_of_probe_result = function
+  | Ok (0, _) -> Present
+  | Ok (code, reason) -> Absent (Printf.sprintf "kubectl exited %d: %s" code reason)
+  | Error why -> Uncheckable why
 ;;
+
+let presence ~ctx ~args = presence_of_probe_result (probe_result ~ctx ~args)
