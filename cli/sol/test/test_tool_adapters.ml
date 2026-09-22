@@ -141,23 +141,26 @@ let test_kubectl_presence_classification () =
   check_bool
     "non-zero exit is absent"
     true
-    (is_absent (Sol_cli_kubectl.presence_of_probe_result (Ok (1, "Error from server (NotFound)"))));
+    (is_absent
+       (Sol_cli_kubectl.presence_of_probe_result (Ok (1, "Error from server (NotFound)"))));
   check_bool
     "an unrunnable kubectl is uncheckable"
     true
-    (is_uncheckable (Sol_cli_kubectl.presence_of_probe_result (Error "kubectl could not be run")));
+    (is_uncheckable
+       (Sol_cli_kubectl.presence_of_probe_result (Error "kubectl could not be run")));
   check_bool
     "an unrunnable kubectl is not reported as absent"
     false
-    (is_absent (Sol_cli_kubectl.presence_of_probe_result (Error "kubectl could not be run")));
+    (is_absent
+       (Sol_cli_kubectl.presence_of_probe_result (Error "kubectl could not be run")));
   (* The reason must survive into the verdict, or the operator cannot act on it. *)
-  (match
-     Sol_cli_kubectl.presence_of_probe_result
-       (Ok (1, "Error from server (NotFound): deployments not found"))
-   with
-   | Sol_cli_kubectl.Absent reason ->
-     check_bool "the reason carries what kubectl said" true (String.length reason > 0)
-   | _ -> Alcotest.fail "expected Absent for a non-zero exit")
+  match
+    Sol_cli_kubectl.presence_of_probe_result
+      (Ok (1, "Error from server (NotFound): deployments not found"))
+  with
+  | Sol_cli_kubectl.Absent reason ->
+    check_bool "the reason carries what kubectl said" true (String.length reason > 0)
+  | _ -> Alcotest.fail "expected Absent for a non-zero exit"
 ;;
 
 (* ── Sol_cli_docker ───────────────────────────────────────────────────────── *)

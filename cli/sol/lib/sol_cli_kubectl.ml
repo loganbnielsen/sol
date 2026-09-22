@@ -126,14 +126,13 @@ let probe_result ~ctx ~args =
 (* A boolean probe cannot say the third thing: "kubectl could not be run" and
    "kubectl ran and said no" both collapse to `false`, and a caller that prints
    that as a fact about the cluster reports an absence it never established
-   (FND-0024). The classifier is pure so the distinction is unit-testable
-   without a cluster. *)
+   (FND-0024). [Present] and [Absent reason] are what kubectl answered; [reason]
+   is what it said. [Uncheckable why] is that it could not be asked at all. The
+   classifier is pure so the distinction is unit-testable without a cluster. *)
 type presence =
   | Present
   | Absent of string
-    (* kubectl ran and answered no; the reason is what it said. *)
   | Uncheckable of string
-    (* kubectl could not be run at all: the state was never established. *)
 
 let presence_of_probe_result = function
   | Ok (0, _) -> Present

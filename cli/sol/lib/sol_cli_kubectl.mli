@@ -108,13 +108,13 @@ val delete
 
 (** What a probe established. Three states, because a bool cannot distinguish
     "kubectl answered no" from "kubectl could not be run", and presenting the
-    second as the first asserts an absence that was never observed (FND-0024). *)
+    second as the first asserts an absence that was never observed (FND-0024).
+    [Absent reason] carries what kubectl said; [Uncheckable why] is that kubectl
+    could not be asked at all. *)
 type presence =
   | Present
   | Absent of string
-    (* kubectl ran and answered no; the reason is what it said. *)
   | Uncheckable of string
-    (* kubectl could not be run at all: the state was never established. *)
 
 (** [presence ~ctx ~args] probes through [probe_result]. *)
 val presence : ctx:Sol_cli_kube_destination.context -> args:string list -> presence
