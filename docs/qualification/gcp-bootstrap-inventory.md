@@ -206,9 +206,10 @@ the zone from state by hand.
 The target root no longer manages the zone (`create_dns_zone = false` in
 `internal/qualification/gcp/qual-gcp.tfvars`): two roots must never manage one zone.
 Adopting the two resources produced a plan of *0 to add, 2 to change, 0 to destroy* -- the
-bucket's `sol-role` label and the zone's description, metadata only -- left **unapplied**
-deliberately, since these are live durable resources and the bucket holds every root's
-state.
+bucket's `sol-role` label and the zone's description, metadata only -- left **unapplied at
+adoption time** deliberately, since these are live durable resources and the bucket holds
+every root's state. The next attempt reconciles it: the harness ensures the durable root by
+applying it.
 
 ## Quotas and blockers
 

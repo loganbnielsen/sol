@@ -318,6 +318,12 @@ ensure_state_bucket() {
   #  * manage_dns_zone/base_domain make this root the owner of the qualification zone
   #    (DEC-043), so the target root's create_dns_zone is false and the two never manage
   #    one zone between them.
+  # This APPLIES the durable root, so it reconciles anything that root declares and the
+  # live resources do not yet carry -- today the bucket's `sol-role` label and the zone's
+  # description, i.e. metadata (adopting the two by import left that diff unapplied at the
+  # time). Worth knowing rather than discovering: the operator's durable root is
+  # reconciled by every attempt, which is the point of owning the resources, but it does
+  # mean the metadata diff lands on the next run rather than never.
   if ! ( cd "$BOOTSTRAP_ROOT" \
       && timeout "$PHASE_TIMEOUT" terraform init -input=false \
            -backend-config="bucket=$STATE_BUCKET" -backend-config="prefix=bootstrap/gcp" \
