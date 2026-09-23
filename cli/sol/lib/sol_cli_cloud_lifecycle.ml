@@ -331,6 +331,25 @@ let platform_inputs (target : cloud_target) (outputs : cloud_outputs) =
    was edited by hand. ADR 0003 invariant 6 makes destruction an abort edge available
    from every phase; a creation-time requirement must not be what closes that edge.
    Install-time validation stays exactly as strict. *)
+(* Which resources a DESTRUCTIVE preparation may target.
+
+   The preparation lowers deletion guards so that destruction can proceed, and it does so
+   with `terraform apply -target=<address>`. Terraform's targeted apply *creates* a target
+   that is in the configuration but absent from state -- so preparing a resource the target
+   does not have makes the destroy path the thing that creates it, which is the opposite of
+   its purpose. Attempt 6 hit exactly that: the cluster existed in the provider, was absent
+   from state, and the preparation failed with `409 Already exists` while trying to create
+   the cluster it had been asked to remove (FND-0030).
+
+   So eligibility is `configuration INTERSECT state`. A resource absent from state is not a
+   resource to prepare: for a half-built target the eligible set is empty, and the
+   preparation has nothing to do and cannot introduce anything. That makes the property
+   mechanical -- a destructive preparation cannot introduce a resource that was not
+   represented in state when destruction began. *)
+let preparations_eligible ~state ~desired =
+  List.filter (fun address -> List.mem address state) desired
+;;
+
 type platform_vars_context =
   | Install
   | Destruction

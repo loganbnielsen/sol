@@ -269,6 +269,37 @@ let test_platform_terraform_vars () =
   | Error message -> Alcotest.fail message
 ;;
 
+(* FND-0030: the destructive preparation targets only what state already represents, so a
+   half-built target cannot be made to create the resource it was asked to remove. This is
+   the property, not the mechanism: eligibility is configuration INTERSECT state. *)
+let test_preparations_eligible () =
+  let desired =
+    [ "google_sql_database_instance.postgres"; "google_container_cluster.main" ]
+  in
+  let eligible state = L.preparations_eligible ~state ~desired in
+  Alcotest.(check (list string))
+    "both represented: both are eligible"
+    desired
+    (eligible desired);
+  Alcotest.(check (list string))
+    "the half-built case: the cluster exists in the provider but not in state, so it is \
+     NOT prepared -- preparing it would create it"
+    [ "google_sql_database_instance.postgres" ]
+    (eligible [ "google_sql_database_instance.postgres" ]);
+  Alcotest.(check (list string))
+    "nothing represented: nothing to prepare"
+    []
+    (eligible []);
+  Alcotest.(check (list string))
+    "state that holds neither of the desired resources yields nothing"
+    []
+    (eligible [ "aws_db_instance.postgres" ]);
+  Alcotest.(check (list string))
+    "order follows the configuration, not the state"
+    desired
+    (eligible (List.rev desired))
+;;
+
 (* INFRA-067 / FND-0029: the refusal above is an INSTALL-time capability guarantee, so
    it belongs to installation. Evaluating it while computing the DESTRUCTION variables
    refused a target that `apply` had already accepted and created, which left billable
@@ -1572,6 +1603,10 @@ let () =
             "provider-shaped platform variables"
             `Quick
             test_platform_terraform_vars
+        ; Alcotest.test_case
+            "preparation targets only what state represents"
+            `Quick
+            test_preparations_eligible
         ; Alcotest.test_case
             "destruction is not refused by an install-time requirement"
             `Quick

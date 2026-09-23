@@ -78,6 +78,7 @@ val platform_inputs : cloud_target -> cloud_outputs -> (platform_inputs, string)
     can ask for a capability its provider's root cannot wire yet, and a refusal
     naming the gap is the honest answer there rather than a variable set that
     silently omits it. *)
+
 type platform_vars_context =
   | Install
   | Destruction
@@ -86,6 +87,12 @@ val platform_terraform_vars
   :  ?context:platform_vars_context
   -> platform_inputs
   -> (string list, string) result
+
+(** Which resources a destructive preparation may target: those the target's state already
+    represents. `terraform apply -target` creates a target that is absent from state, so
+    eligibility is [configuration INTERSECT state] and a half-built target yields [[]] --
+    nothing to prepare, and nothing that can be created (FND-0030). *)
+val preparations_eligible : state:string list -> desired:string list -> string list
 
 type plan_phase =
   | Plannable
