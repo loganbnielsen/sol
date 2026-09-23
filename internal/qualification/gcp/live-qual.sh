@@ -140,7 +140,11 @@ assert_environment() {
   # This harness writes the untracked target into the example workspace, so it must not
   # run in the canonical checkout, which belongs to the human operator (REFAC-090).
   local canonical
-  canonical="$(git -C "$ROOT" worktree list --porcelain | awk '/^worktree /{print $2; exit}')"
+  # NOT `awk '...exit'`: an early-exiting reader SIGPIPEs git, and with `set -o pipefail`
+  # that kills the harness outright -- which it did, silently, once enough worktrees
+  # existed for git's output to outlive the reader. It failed in the verification path,
+  # where silence is the worst possible symptom. Consume the whole stream, then choose.
+  canonical="$(git -C "$ROOT" worktree list --porcelain | awk '/^worktree /{ if (!found) { print $2; found = 1 } }')"
   if [ "$(cd "$canonical" && pwd -P)" = "$(cd "$ROOT" && pwd -P)" ] && [ "${ALLOW_CANONICAL:-0}" != "1" ]; then
     echo "✗ refusing to run in the canonical checkout ($ROOT)." >&2
     echo "  Run from a worktree, or set ALLOW_CANONICAL=1 if you own this checkout." >&2
@@ -306,12 +310,27 @@ ensure_state_bucket() {
     say "bootstrap: state bucket gs://$STATE_BUCKET present (durable; left untouched)"
     return 0
   fi
-  say "bootstrap: creating the durable state bucket via $BOOTSTRAP_ROOT"
+  say "bootstrap: ensuring the durable prerequisites via $BOOTSTRAP_ROOT"
+  # Two things this invocation has to get right, both of them learned the hard way:
+  #  * the root declares `backend "gcs" {}`, so init must be told where its OWN state
+  #    goes -- an owner whose state lives in a working directory is one `rm -rf` from
+  #    unowning the delegated zone;
+  #  * manage_dns_zone/base_domain make this root the owner of the qualification zone
+  #    (DEC-043), so the target root's create_dns_zone is false and the two never manage
+  #    one zone between them.
+  # This APPLIES the durable root, so it reconciles anything that root declares and the
+  # live resources do not yet carry -- today the bucket's `sol-role` label and the zone's
+  # description, i.e. metadata (adopting the two by import left that diff unapplied at the
+  # time). Worth knowing rather than discovering: the operator's durable root is
+  # reconciled by every attempt, which is the point of owning the resources, but it does
+  # mean the metadata diff lands on the next run rather than never.
   if ! ( cd "$BOOTSTRAP_ROOT" \
       && timeout "$PHASE_TIMEOUT" terraform init -input=false \
+           -backend-config="bucket=$STATE_BUCKET" -backend-config="prefix=bootstrap/gcp" \
       && timeout "$PHASE_TIMEOUT" terraform apply -input=false -auto-approve \
            -var="project_id=$PROJECT" -var="region=$REGION" \
-           -var="state_bucket=$STATE_BUCKET" ) >"$LOG_DIR/bootstrap.log" 2>&1; then
+           -var="state_bucket=$STATE_BUCKET" \
+           -var="manage_dns_zone=true" -var="base_domain=$BASE_DOMAIN" ) >"$LOG_DIR/bootstrap.log" 2>&1; then
     say "bootstrap FAILED — a prerequisite, not a target failure. See $LOG_DIR/bootstrap.log"
     tail -n 20 "$LOG_DIR/bootstrap.log" || true
     return 1
@@ -503,8 +522,11 @@ phase_cloud() {
   local deadline=$(( $(date +%s) + DELEGATION_WAIT_MINUTES * 60 ))
   say "waiting up to ${DELEGATION_WAIT_MINUTES}m for the delegation to resolve (Ctrl-C to continue later)"
   while [ "$(date +%s)" -lt "$deadline" ]; do
-    if [ -n "$(dns_ns "$BASE_DOMAIN" | head -1)" ]; then
-      say "delegation observed: $(dns_ns "$BASE_DOMAIN" | tr '\n' ' ')"
+    # Capture, then test: piping into `head -1` would SIGPIPE the lookup and, under
+    # `set -o pipefail`, kill the harness in the middle of the delegation wait.
+    ns_now="$(dns_ns "$BASE_DOMAIN")"
+    if [ -n "$ns_now" ]; then
+      say "delegation observed: $(printf '%s' "$ns_now" | tr '\n' ' ')"
       KEEP=1
       return 0
     fi
