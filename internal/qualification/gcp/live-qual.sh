@@ -182,6 +182,11 @@ export TF_VAR_db_password="$DB_PASSWORD"
 
 KEEP=0            # set to 1 only at the deliberate delegation boundary
 CLOUD_APPLIED=0   # whether a cloud root may exist and therefore need destroying
+# Teardown has ONE owner (cleanup), and this is how it knows whether it has already run.
+# Without it, `destroy` (the command) ran the teardown and then the EXIT trap ran it again,
+# byte-identical, on a run that had already verified absent -- two independently active
+# owners of cleanup, which is how later changes turn into races and misleading logs.
+TEARDOWN_ATTEMPTED=0
 
 # Run one phase, logging it, failing the script if it fails. Used for everything whose
 # failure is not itself the evidence we came for.
@@ -405,11 +410,24 @@ verify_absent() {
 
   probe_gone() { # name, command...
     local name="$1"; shift
-    if "$@" >"$LOG_DIR/verify-$name.log" 2>&1; then
+    local log="$LOG_DIR/verify-$name.log"
+    if "$@" >"$log" 2>&1; then
       say "  ✗ $name still exists"
       rc=1
-    else
+      return
+    fi
+    # Three states, not two. A non-zero exit is not absence: a permission failure, an
+    # expired credential or a transport error all exit non-zero without saying anything
+    # about the resource, and reading those as "absent" makes the postcondition that is
+    # the last line of defence fail OPEN -- reporting a clean account because it could not
+    # read the account. Absence needs evidence of absence; anything else is unknown, and
+    # unknown fails the verification.
+    if grep -qiE '(not[ -]?found|does not exist|was not found|notFound|404)' "$log"; then
       say "  ✓ $name absent"
+    else
+      say "  ✗ $name: could NOT determine absence — the read failed without reporting 'not found'"
+      say "      (this is not evidence the resource exists, and not evidence it does not)"
+      rc=1
     fi
   }
 
@@ -474,6 +492,9 @@ destroy() {
   # same reason: it resolves the provider, the lifecycle and the backend from them.
   # Attempt 5's first teardown failed precisely because the target file had already been
   # deleted by cleanup, and the second because the variables were not passed.
+  # Claim the attempt first: this is the single "ensure teardown has happened" owner, and
+  # an attempt that fails must not be retried by the EXIT trap behind the operator's back.
+  TEARDOWN_ATTEMPTED=1
   local vars
   mapfile -t vars < <(destroy_vars)
   say "teardown: sol cloud destroy $TARGET"
@@ -500,7 +521,8 @@ cleanup() {
   # A plan-only run creates nothing, so a failure there must not reach for the
   # teardown path. Every other failure does: a run of this harness that failed is
   # presumed to have possibly created something, and the verification decides.
-  if [ "$CLOUD_APPLIED" = "1" ] || { [ "$rc" != "0" ] && ! plan_only; }; then
+  if [ "$TEARDOWN_ATTEMPTED" = "0" ] \
+    && { [ "$CLOUD_APPLIED" = "1" ] || { [ "$rc" != "0" ] && ! plan_only; }; }; then
     destroy || true
   fi
   say "logs: $LOG_DIR"

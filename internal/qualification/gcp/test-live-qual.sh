@@ -71,6 +71,11 @@ esac
 if [ "${STUB_TARGET_PRESENT:-0}" = "1" ]; then
   case "$*" in *list* | *describe*) printf 'test-cluster\n'; exit 0 ;; esac
 fi
+# Absence must be EVIDENCED, not merely a non-zero exit: the harness reads absence from
+# gcloud's own not-found vocabulary, so the stub has to speak it. Exiting 1 in silence
+# made the harness refuse to call the teardown verified -- which was the harness being
+# right, for the third time in this suite.
+printf 'ERROR: (gcloud) NOT_FOUND: resource does not exist%s' '\n' >&2
 exit 1
 STUB
 
