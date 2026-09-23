@@ -208,8 +208,12 @@ The target root no longer manages the zone (`create_dns_zone = false` in
 Adopting the two resources produced a plan of *0 to add, 2 to change, 0 to destroy* -- the
 bucket's `sol-role` label and the zone's description, metadata only -- left **unapplied at
 adoption time** deliberately, since these are live durable resources and the bucket holds
-every root's state. The next attempt reconciles it: the harness ensures the durable root by
-applying it.
+every root's state. A target run **reconciles** the durable root rather than merely checking that it exists
+(`DEC-043`): presence was adequate while the root's only job was to create a backend, but
+it is not ownership now that the root declares bucket policy and the delegated zone. A plan
+that would replace or destroy either resource is refused rather than applied, since a
+recreated zone gets different nameservers and a recreated bucket is the state store for
+every root.
 
 ## Quotas and blockers
 
