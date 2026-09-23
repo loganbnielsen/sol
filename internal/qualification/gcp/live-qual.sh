@@ -104,8 +104,22 @@ esac
 
 # The zone's name in Cloud DNS is derived from base_domain by the cloud root.
 ZONE_NAME="$(printf '%s' "$BASE_DOMAIN" | tr '.' '-')"
+ZONE_LABEL="${BASE_DOMAIN%%.*}"   # the registrar's Name field takes the label alone
 
 say() { printf '[%(%H:%M:%S)T] %s\n' -1 "$*"; }
+
+# Nameserver lookup that does not assume outbound port 53. Attempt 5's environment
+# blocks plain DNS entirely -- `dig` answered nothing even for the apex, while the
+# delegation was in fact live -- so a dig-only wait would have sat for its full
+# timeout and then reported "not delegated". DoH travels over HTTPS, which is the same
+# path everything else here uses.
+dns_ns() {
+  local name="$1" out
+  out="$(curl -s -H 'accept: application/dns-json' \
+      "https://dns.google/resolve?name=$name&type=NS" 2>/dev/null \
+    | python3 -c "import sys,json;print('\n'.join(sorted(a.get('data','') for a in json.load(sys.stdin).get('Answer',[]))))" 2>/dev/null)"
+  if [ -n "$out" ]; then printf '%s\n' "$out"; else dig +short NS "$name" 2>/dev/null || true; fi
+}
 
 # ── environment identity, asserted rather than remembered ────────────────────
 # Three times in one session the environment was not what the operator believed: a
@@ -151,6 +165,10 @@ mkdir -p "$LOG_DIR"
 # The per-run password is generated, never stored in the repository, and never needed
 # again after the attempt (the instance is destroyed).
 DB_PASSWORD="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 20)"
+# Passed to Terraform through the environment, never through argv: a `-var=` argument
+# is echoed into every phase log (and is visible in the process table), which is how
+# Attempt 5's generated password ended up written to disk.
+export TF_VAR_db_password="$DB_PASSWORD"
 
 KEEP=0            # set to 1 only at the deliberate delegation boundary
 CLOUD_APPLIED=0   # whether a cloud root may exist and therefore need destroying
@@ -224,7 +242,6 @@ cloud_vars() {
     "--var=cluster_name=$CLUSTER" \
     "--var=base_domain=$BASE_DOMAIN" \
     "--var=create_dns_zone=true" \
-    "--var=db_password=$DB_PASSWORD" \
     "--var=provisioner_impersonators=[\"$IMPERSONATOR\"]"
 }
 
@@ -233,12 +250,56 @@ cloud_vars() {
 # prerequisite, and a recreated zone gets new nameservers that silently invalidate
 # the delegation). Everything else must be gone, including the service-networking
 # peering, which has twice been the abandoned resource in this workstream.
+# ── the delegation hand-off, surfaced as early as the zone allows ─────────────
+# Attempt 5 captured the nameservers only after `cloud apply` returned, so the human
+# step waited behind a ~10 minute stage while the zone had existed for most of it. The
+# watcher publishes them the moment Cloud DNS has the zone, overlapping the rest of the
+# apply with the registrar work.
+start_ns_watcher() {
+  (
+    for _ in $(seq 1 360); do
+      if gcloud dns managed-zones describe "$ZONE_NAME" --project "$PROJECT" \
+          --format='value(nameServers)' >"$LOG_DIR/nameservers.txt" 2>/dev/null; then
+        : >"$LOG_DIR/nameservers.ready"
+        printf '\n[%(%H:%M:%S)T] DELEGATION HAND-OFF READY — paste these four NS records at the registrar, named %s:\n' -1 "$ZONE_LABEL"
+        tr ';' '\n' <"$LOG_DIR/nameservers.txt" | sed 's/^/    /'
+        break
+      fi
+      sleep 5
+    done
+  ) &
+  NS_WATCHER=$!
+}
+
 # ── durable prerequisites: ENSURED, never recreated, never destroyed ──────────
 # "Durable" must not drift into meaning "created every run". This ensures the bucket
 # is present and otherwise does nothing, so a second attempt against the same project
 # is a no-op; and nothing here ever destroys it. The target lifecycle only consumes
 # what this provides -- which is the FND-0028 lifetime distinction, executable today,
 # before DEC-043 changes any product semantics.
+# The variables a destroy needs. Deliberately the same set apply used, with one
+# documented exception: whether the delegated Cloud DNS zone is destroyed with the
+# target.
+#
+# The lifecycle cannot express "this resource is durable" (FND-0028), so a faithful
+# product destroy removes the zone — and the registrar NS records outside every
+# provider API then point at a zone that no longer exists, silently, with new
+# nameservers on any recreate (DEC-042). KEEP_DNS_ZONE=1 (default) therefore passes
+# create_dns_zone=false so the zone is simply not managed by this destroy, and the
+# run reports it as residue rather than hiding it. Set KEEP_DNS_ZONE=0 to exercise the
+# product's own behaviour. Either way this is a harness default, NOT the resolution of
+# DEC-043: the zone still needs a deliberate owner.
+destroy_vars() {
+  local zone_var="create_dns_zone=false"
+  [ "${KEEP_DNS_ZONE:-1}" = "0" ] && zone_var="create_dns_zone=true"
+  printf '%s\n' \
+    "--var-file=$TFVARS" \
+    "--var=cluster_name=$CLUSTER" \
+    "--var=base_domain=$BASE_DOMAIN" \
+    "--var=$zone_var" \
+    "--var=provisioner_impersonators=[\"$IMPERSONATOR\"]"
+}
+
 ensure_state_bucket() {
   if gcloud storage buckets describe "gs://$STATE_BUCKET" --project "$PROJECT" \
     >/dev/null 2>&1; then
@@ -345,8 +406,14 @@ PY
 }
 
 destroy() {
+  # Destroy needs the same target file and the same variables that apply used, for the
+  # same reason: it resolves the provider, the lifecycle and the backend from them.
+  # Attempt 5's first teardown failed precisely because the target file had already been
+  # deleted by cleanup, and the second because the variables were not passed.
+  local vars
+  mapfile -t vars < <(destroy_vars)
   say "teardown: sol cloud destroy $TARGET"
-  ( cd "$WORKSPACE" && "$SOL" cloud destroy "$TARGET" --apply ) \
+  ( cd "$WORKSPACE" && "$SOL" cloud destroy "$TARGET" --apply "${vars[@]}" ) \
     >"$LOG_DIR/destroy.log" 2>&1 || say "  (destroy exited non-zero; the verification below decides)"
   # A destroy that exits 0 is not evidence of cost-cleanliness, and one that exits
   # non-zero may still have removed everything. The provider decides.
@@ -361,7 +428,6 @@ destroy() {
 
 cleanup() {
   local rc=$?
-  rm -f "$TARGET_FILE"
   if [ "$KEEP" = "1" ]; then
     say "not tearing down: ${KEEP_REASON:-the delegation boundary is deliberate, not a leak}"
     say "logs: $LOG_DIR"
@@ -377,7 +443,19 @@ cleanup() {
   # A plan-only run applied nothing, so there is no teardown verdict to require --
   # demanding one made PLAN_ONLY structurally unable to exit 0.
   if plan_only; then
+    rm -f "$TARGET_FILE"
     return "$rc"
+  fi
+  # The target file is what makes a destroy possible at all. Remove it only once
+  # teardown has been VERIFIED; on an unverified teardown keep it and say so, because
+  # deleting it is exactly what turned this harness's "unconditional teardown" into no
+  # teardown at all during Attempt 5.
+  if [ "$TEARDOWN_OK" = "1" ]; then
+    rm -f "$TARGET_FILE"
+  elif [ "$CLOUD_APPLIED" = "0" ]; then
+    rm -f "$TARGET_FILE"
+  else
+    say "KEEPING $TARGET_FILE — teardown was not verified, and destroy requires this file."
   fi
   [ "$TEARDOWN_OK" = "1" ] || rc=1
   return "$rc"
@@ -405,12 +483,13 @@ phase_cloud() {
   fi
 
   CLOUD_APPLIED=1
+  start_ns_watcher
   run cloud-apply "$SOL" cloud apply "$TARGET" "${vars[@]}" || return 1
 
   # Capture the delegation hand-off the moment the zone exists. This is the one
   # value the run cannot produce for itself: the parent zone is managed at a
   # registrar with no API, so a human pastes these four records.
-  if ! gcloud dns managed-zones describe "$ZONE_NAME" --project "$PROJECT" \
+  if [ ! -s "$LOG_DIR/nameservers.txt" ] && ! gcloud dns managed-zones describe "$ZONE_NAME" --project "$PROJECT" \
     --format='value(nameServers)' >"$LOG_DIR/nameservers.txt" 2>"$LOG_DIR/nameservers.err"; then
     say "could not read the zone's nameservers — the delegation half cannot proceed"
     return 1
@@ -424,8 +503,8 @@ phase_cloud() {
   local deadline=$(( $(date +%s) + DELEGATION_WAIT_MINUTES * 60 ))
   say "waiting up to ${DELEGATION_WAIT_MINUTES}m for the delegation to resolve (Ctrl-C to continue later)"
   while [ "$(date +%s)" -lt "$deadline" ]; do
-    if dig +short NS "$BASE_DOMAIN" @1.1.1.1 2>/dev/null | grep -q .; then
-      say "delegation observed: $(dig +short NS "$BASE_DOMAIN" @1.1.1.1 | tr '\n' ' ')"
+    if [ -n "$(dns_ns "$BASE_DOMAIN" | head -1)" ]; then
+      say "delegation observed: $(dns_ns "$BASE_DOMAIN" | tr '\n' ' ')"
       KEEP=1
       return 0
     fi
@@ -491,6 +570,7 @@ capture_fnd0010() {
 }
 
 phase_destroy() {
+  write_target   # destroy resolves everything from the target file
   CLOUD_APPLIED=1
   destroy
 }
