@@ -28,8 +28,14 @@ region     = "us-central1"
 # the disposable substrate: the harness's absent-verification expects it to SURVIVE
 # teardown, because a recreated zone gets new nameservers and silently invalidates
 # the delegation.
-base_domain     = "qual-gcp.sol-fab.dev"
-create_dns_zone = true
+base_domain = "qual-gcp.sol-fab.dev"
+
+# DEC-043: the delegated zone is a durable prerequisite whose registrar delegation lives
+# outside every provider API, so it is owned by cli/platform/infra/bootstrap-gcp, not by
+# the disposable cloud root. Two roots must never manage one zone, so this is false here.
+# (Before DEC-043 this root created the zone; Attempt 5 showed what that costs when the
+# target that owns it is destroyed.)
+create_dns_zone = false
 
 # The platform stack the attempt is trying to install (cert-manager, ingress, Argo CD,
 # Redpanda, Loki/Grafana, Prometheus) fits the defaults; no durable object storage is

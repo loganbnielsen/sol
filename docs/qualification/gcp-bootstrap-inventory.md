@@ -195,14 +195,20 @@ just accepted, in the `PreparingDestroy` phase (`FND-0029` / `INFRA-067`). Every
 billable was torn down and verified absent through the provider's API. Full chronology
 and inventory: `docs/qualification/2026-09-22-gcp-attempt5.md`.
 
-**Residue, deliberately unresolved:** the Cloud DNS zone `qual-gcp-sol-fab-dev` exists
-and is delegated (`qual-gcp.sol-fab.dev NS → ns-cloud-c1..c4.googledomains.com`,
-verified over DNS-over-HTTPS), but it is **not in Terraform state** — it was removed to
-protect it from a destroy that cannot distinguish durable prerequisites. That is
-incident residue, **not** the intended implementation of `DEC-042`, and it must not
-become the baseline for Attempt 6: the zone needs a deliberate Terraform owner, which
-`DEC-043` should determine. The state bucket `gs://sol-qualification-tfstate` is
-present and untouched.
+**Residue resolved (2026-09-23).** The Cloud DNS zone `qual-gcp-sol-fab-dev` is now owned
+by the durable root, `cli/platform/infra/bootstrap-gcp`, beside the state bucket -- both
+adopted by `terraform import`, which preserves the nameservers, so the delegation pasted at
+the registrar keeps working. That is `DEC-043`'s narrow ownership decision, taken after
+Attempt 5 showed what the previous arrangement cost: the zone was created by the disposable
+cloud root, so destroying the target either destroyed the delegation or required removing
+the zone from state by hand.
+
+The target root no longer manages the zone (`create_dns_zone = false` in
+`internal/qualification/gcp/qual-gcp.tfvars`): two roots must never manage one zone.
+Adopting the two resources produced a plan of *0 to add, 2 to change, 0 to destroy* -- the
+bucket's `sol-role` label and the zone's description, metadata only -- left **unapplied**
+deliberately, since these are live durable resources and the bucket holds every root's
+state.
 
 ## Quotas and blockers
 

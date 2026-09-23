@@ -306,12 +306,21 @@ ensure_state_bucket() {
     say "bootstrap: state bucket gs://$STATE_BUCKET present (durable; left untouched)"
     return 0
   fi
-  say "bootstrap: creating the durable state bucket via $BOOTSTRAP_ROOT"
+  say "bootstrap: ensuring the durable prerequisites via $BOOTSTRAP_ROOT"
+  # Two things this invocation has to get right, both of them learned the hard way:
+  #  * the root declares `backend "gcs" {}`, so init must be told where its OWN state
+  #    goes -- an owner whose state lives in a working directory is one `rm -rf` from
+  #    unowning the delegated zone;
+  #  * manage_dns_zone/base_domain make this root the owner of the qualification zone
+  #    (DEC-043), so the target root's create_dns_zone is false and the two never manage
+  #    one zone between them.
   if ! ( cd "$BOOTSTRAP_ROOT" \
       && timeout "$PHASE_TIMEOUT" terraform init -input=false \
+           -backend-config="bucket=$STATE_BUCKET" -backend-config="prefix=bootstrap/gcp" \
       && timeout "$PHASE_TIMEOUT" terraform apply -input=false -auto-approve \
            -var="project_id=$PROJECT" -var="region=$REGION" \
-           -var="state_bucket=$STATE_BUCKET" ) >"$LOG_DIR/bootstrap.log" 2>&1; then
+           -var="state_bucket=$STATE_BUCKET" \
+           -var="manage_dns_zone=true" -var="base_domain=$BASE_DOMAIN" ) >"$LOG_DIR/bootstrap.log" 2>&1; then
     say "bootstrap FAILED — a prerequisite, not a target failure. See $LOG_DIR/bootstrap.log"
     tail -n 20 "$LOG_DIR/bootstrap.log" || true
     return 1
