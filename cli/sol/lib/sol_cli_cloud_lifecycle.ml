@@ -320,7 +320,22 @@ let platform_inputs (target : cloud_target) (outputs : cloud_outputs) =
    definition branch reads, GCP passes its GCS buckets and Workload Identity
    service accounts. Neither set is emitted for the other provider, because a
    variable a provider's root does not declare is an error rather than a no-op. *)
-let platform_terraform_vars inputs =
+(* Whether these variables are being computed to INSTALL the platform or to REMOVE
+   it. It matters because some of what this function checks is a capability guarantee
+   for installation -- "if you ask for this, the platform must be able to deliver it"
+   -- and a destruction is not an installation.
+
+   FND-0029: evaluating an install-time guarantee while destroying a target that was
+   already created made the only supported destruction path refuse a target that
+   `apply` had accepted, which stranded billable infrastructure until the declaration
+   was edited by hand. ADR 0003 invariant 6 makes destruction an abort edge available
+   from every phase; a creation-time requirement must not be what closes that edge.
+   Install-time validation stays exactly as strict. *)
+type platform_vars_context =
+  | Install
+  | Destruction
+
+let platform_terraform_vars ?(context = Install) inputs =
   let add_opt key value vars =
     match value with
     | None -> vars
@@ -364,8 +379,8 @@ let platform_terraform_vars inputs =
        optional, so this is a refusal only when a target actually asks for the
        capability -- and a target that does not ask for it gets a platform with no
        issuer rather than an issuer that cannot work. *)
-    (match inputs.cluster_issuer with
-     | Some _ ->
+    (match inputs.cluster_issuer, context with
+     | Some _, Install ->
        Error
          "this GCP target declares cluster_issuer, but Sol cannot yet wire a certificate \
           issuer on GCP: the shared platform definition's ClusterIssuers use the Route \
@@ -373,7 +388,7 @@ let platform_terraform_vars inputs =
           Identity for cert-manager yet. Remove cluster_issuer from the target to \
           provision the platform without public TLS, or qualify the GCP issuer path \
           first"
-     | None ->
+     | Some _, Destruction | None, _ ->
        Ok
          (optional (shared @ [ "cloud_provider=gcp"; "storage_class_name=standard-rwo" ])
           |> add_opt "loki_gcs_bucket" outputs.loki_gcs_bucket

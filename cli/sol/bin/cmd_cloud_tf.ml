@@ -735,13 +735,19 @@ let cloud_outputs_of provider infra_dir =
 (* The trailing [()] is not decoration: an optional argument followed by only
    labelled ones cannot be erased, so a caller that omits [on_error] would be
    typing a partial application rather than a value. *)
-let platform_vars_of ?(on_error = Fun.id) ~cloud_target ~outputs () =
+let platform_vars_of
+      ?(on_error = Fun.id)
+      ?(context = Sol_cli_cloud_lifecycle.Install)
+      ~cloud_target
+      ~outputs
+      ()
+  =
   match Sol_cli_cloud_lifecycle.platform_inputs cloud_target outputs with
   | Error message ->
     on_error ();
     lifecycle_error message
   | Ok inputs ->
-    (match Sol_cli_cloud_lifecycle.platform_terraform_vars inputs with
+    (match Sol_cli_cloud_lifecycle.platform_terraform_vars ~context inputs with
      | Ok vars -> vars
      | Error message ->
        on_error ();
@@ -2649,7 +2655,13 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
   let destroy_platform ?(on_error = Fun.id) outputs =
     let platform_dir = platform_dir provider in
     let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
-    let platform_vars = platform_vars_of ~cloud_target ~outputs () in
+    let platform_vars =
+      platform_vars_of
+        ~context:Sol_cli_cloud_lifecycle.Destruction
+        ~cloud_target
+        ~outputs
+        ()
+    in
     with_cluster_access ~on_error ~region:target_cfg.region outputs (fun env ->
       let init = terraform_init run_log platform_dir platform_backend in
       (match init with
@@ -2749,7 +2761,13 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
      | Some outputs ->
        let platform_dir = platform_dir provider in
        let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
-       let platform_vars = platform_vars_of ~cloud_target ~outputs () in
+       let platform_vars =
+         platform_vars_of
+           ~context:Sol_cli_cloud_lifecycle.Destruction
+           ~cloud_target
+           ~outputs
+           ()
+       in
        with_cluster_access ~region:target_cfg.region outputs (fun env ->
          (* INFRA-039: credentials are resolved again here, per mutating stage,
        rather than assumed from process start -- a platform stage runs many

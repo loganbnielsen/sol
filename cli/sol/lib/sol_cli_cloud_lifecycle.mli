@@ -78,7 +78,14 @@ val platform_inputs : cloud_target -> cloud_outputs -> (platform_inputs, string)
     can ask for a capability its provider's root cannot wire yet, and a refusal
     naming the gap is the honest answer there rather than a variable set that
     silently omits it. *)
-val platform_terraform_vars : platform_inputs -> (string list, string) result
+type platform_vars_context =
+  | Install
+  | Destruction
+
+val platform_terraform_vars
+  :  ?context:platform_vars_context
+  -> platform_inputs
+  -> (string list, string) result
 
 type plan_phase =
   | Plannable

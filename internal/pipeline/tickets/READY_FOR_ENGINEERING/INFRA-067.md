@@ -83,9 +83,12 @@ definition's variable computation**:
 - The destroy sequence is: lower the cloud guards → reconciliation apply → **the
   platform-destroy step**, where the platform's variables are computed and the guard
   fires.
-- **`destroy --plan` never reaches it.** The plan path plans the *cloud* root only,
-  which is exactly why plan and apply disagree about whether the same target is
-  destroyable.
+- **Both branches reach it.** `cloud_destroy` computes the platform's variables in its
+  `Plan` branch as well as its mutating one (`cmd_cloud_tf.ml:2658, 2758`), so the guard
+  is reachable from either. An earlier revision of this section claimed `destroy --plan`
+  "never reaches" it and that this explained a plan/apply disagreement; that was wrong —
+  the recorded plan run passed because the substrate was already absent, so the platform
+  step was deferred and the variables were never computed. *Corrected 2026-09-23.*
 
 So the fix is a **context distinction, not a field exception**: the guard encodes a
 capability requirement for *installing* the platform, and a destruction must not
@@ -95,6 +98,26 @@ gives `destroy --apply` the same destruction-relevant contract as `destroy --pla
 while install/apply keeps the refusal. `cli/sol/test/test_cloud_lifecycle.ml:260-263`
 already asserts the install-side refusal and is the natural home for the destroy-side
 acceptance test.
+
+## Fix (2026-09-23)
+
+`Sol_cli_cloud_lifecycle.platform_terraform_vars` takes `?context:Install | Destruction`,
+defaulting to `Install` so no other caller's behaviour changes, and evaluates the GCP
+issuer refusal only under `Install`. `platform_vars_of` threads the context through, and
+`cloud_destroy`'s two call sites pass `Destruction`; `cloud_init`'s still passes the
+default, so installation is exactly as strict as it was.
+
+Regression: `test_platform_vars_destruction_context` asserts both directions together —
+installation refuses a GCP target asking for TLS, destruction accepts it — so neither can
+drift. Mutation-checked: with the context ignored (the pre-fix behaviour, written so it
+still compiles) that single test fails and the rest pass; reverting restores 27/27.
+
+**Not machine-verified, stated rather than implied:** that `cloud_destroy` *passes*
+`Destruction` is a call-site fact. The executable that owns it is not linkable from the
+test suite, and a live reproduction needs substrate — the very thing the defect made hard
+to remove. So the wiring is reviewed, not tested. A path that could still reach the guard
+with `Install` during destruction is a new instance of this defect, not a regression of
+this fix.
 
 ## Out of scope
 

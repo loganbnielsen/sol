@@ -269,6 +269,39 @@ let test_platform_terraform_vars () =
   | Error message -> Alcotest.fail message
 ;;
 
+(* INFRA-067 / FND-0029: the refusal above is an INSTALL-time capability guarantee, so
+   it belongs to installation. Evaluating it while computing the DESTRUCTION variables
+   refused a target that `apply` had already accepted and created, which left billable
+   infrastructure with no supported way to remove it until the target declaration was
+   edited by hand. Both directions are asserted together so neither can drift:
+   installation still refuses, destruction must not. *)
+let test_platform_vars_destruction_context () =
+  let tls_target = { (gcp_target ()) with cluster_issuer = Some "letsencrypt-prod" } in
+  let tls_cloud = Result.get_ok (L.cloud_target tls_target) in
+  let gcp_cloud =
+    L.Gcp_outputs
+      (Result.get_ok
+         (L.gcp_outputs_of_json (Yojson.Safe.to_string (valid_gcp_outputs ()))))
+  in
+  let inputs = Result.get_ok (L.platform_inputs tls_cloud gcp_cloud) in
+  (match L.platform_terraform_vars inputs with
+   | Error message ->
+     Alcotest.(check bool)
+       "installation still refuses a GCP target asking for TLS"
+       true
+       (String.starts_with ~prefix:"this GCP target declares cluster_issuer" message)
+   | Ok _ -> Alcotest.fail "installation must still refuse a GCP target asking for TLS");
+  match L.platform_terraform_vars ~context:L.Destruction inputs with
+  | Ok vars ->
+    Alcotest.(check bool)
+      "destruction gets the variables it needs to remove the platform"
+      true
+      (List.mem "cluster_issuer=letsencrypt-prod" vars)
+  | Error message ->
+    Alcotest.fail
+      ("destruction must not be refused by an install-time requirement: " ^ message)
+;;
+
 (* HARDEN-002 run 4, finding 12: the base providers (hashicorp/kubernetes,
    hashicorp/helm) resolve the kubeconfig from KUBE_CONFIG_PATH/KUBE_CONFIG_PATHS,
    not KUBECONFIG. Every name must point at the ephemeral provisioner kubeconfig,
@@ -1539,6 +1572,10 @@ let () =
             "provider-shaped platform variables"
             `Quick
             test_platform_terraform_vars
+        ; Alcotest.test_case
+            "destruction is not refused by an install-time requirement"
+            `Quick
+            test_platform_vars_destruction_context
         ; Alcotest.test_case "provisioner kubeconfig env" `Quick test_provisioner_kube_env
         ; Alcotest.test_case "lifecycle phases and policy" `Quick test_lifecycle_phases
         ; Alcotest.test_case "separate backends" `Quick test_backends
