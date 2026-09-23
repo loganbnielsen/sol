@@ -65,6 +65,37 @@ has *already* been created in the refused shape must still be destroyable.
   recorded as out of scope.
 - Install-time validation is demonstrated unchanged.
 
+## Localization (2026-09-23)
+
+The refusal is not in the target parser and not in the destroy policy variables
+(`policy_vars` carries only provider facts). It is a **guard inside the platform
+definition's variable computation**:
+
+- `Sol_cli_cloud_lifecycle.platform_terraform_vars`, GCP branch
+  (`cli/sol/lib/sol_cli_cloud_lifecycle.ml:363-372`):
+  `match inputs.cluster_issuer with Some _ -> Error "…" | None -> Ok …`. The guard
+  exists so Sol cannot provision a platform that looks TLS-wired and cannot issue —
+  and it produces no variable the non-refusing branch would not also produce, so it is
+  a guard rather than a branch.
+- Its callers: `cli/sol/bin/cmd_cloud_tf.ml:739-744` (`platform_inputs` →
+  `platform_terraform_vars`), used by **every platform phase, including
+  `platform-destroy`** (`cmd_cloud_tf.ml:2669`).
+- The destroy sequence is: lower the cloud guards → reconciliation apply → **the
+  platform-destroy step**, where the platform's variables are computed and the guard
+  fires.
+- **`destroy --plan` never reaches it.** The plan path plans the *cloud* root only,
+  which is exactly why plan and apply disagree about whether the same target is
+  destroyable.
+
+So the fix is a **context distinction, not a field exception**: the guard encodes a
+capability requirement for *installing* the platform, and a destruction must not
+evaluate it. A `?context` (`` `Install `` / `` `Destroy ``) on
+`platform_terraform_vars`, passed as `` `Destroy `` from the platform-destroy path,
+gives `destroy --apply` the same destruction-relevant contract as `destroy --plan`
+while install/apply keeps the refusal. `cli/sol/test/test_cloud_lifecycle.ml:260-263`
+already asserts the install-side refusal and is the natural home for the destroy-side
+acceptance test.
+
 ## Out of scope
 
 - The Cloud DNS solver itself (`FND-0007`), which is what makes the refusal correct

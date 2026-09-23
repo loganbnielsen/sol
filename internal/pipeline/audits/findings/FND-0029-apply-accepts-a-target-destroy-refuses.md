@@ -56,6 +56,17 @@ path available again. That is evidence about severity, not about the fix: an ope
 tearing down infrastructure should not have to edit the declaration to satisfy a phase
 that is not installing anything.
 
+## Call path (localized 2026-09-23)
+
+The guard is in `Sol_cli_cloud_lifecycle.platform_terraform_vars`'s GCP branch
+(`sol_cli_cloud_lifecycle.ml:363-372`), reached from
+`cmd_cloud_tf.ml:739-744` — which every platform phase calls, including
+`platform-destroy` (`cmd_cloud_tf.ml:2669`). The destroy sequence lowers the cloud
+guards, reconciles, and then computes the platform's variables to remove it, and that
+computation is where a creation-time capability requirement is enforced against a
+teardown. `destroy --plan` plans the cloud root only and never reaches it, which is the
+whole of the plan/apply disagreement. Recorded in full in `INFRA-067`.
+
 ## What is established
 
 - A real, reproducible asymmetry in the lifecycle contract: accepted for creation,
