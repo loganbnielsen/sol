@@ -17,8 +17,12 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 HARNESS="$HERE/live-qual.sh"
 REPO="$(cd "$HERE/../../.." && pwd)"
-TARGET_FILE="$REPO/examples/pluto/sol/qual/gcp/us-central1.yml"
 TMP="$(mktemp -d)"
+
+SCRATCH_WS="$TMP/workspace"
+TARGET_FILE="$SCRATCH_WS/sol/qual/gcp/us-central1.yml"
+mkdir -p "$SCRATCH_WS/sol/qual/gcp"
+printf 'project: scratch\n' >"$SCRATCH_WS/sol.yml"
 cleanup() {
   rm -f "$TARGET_FILE"
   # The harness creates the target's directory; removing the file alone leaves it behind and
@@ -28,6 +32,7 @@ cleanup() {
   rm -rf "$TMP"
 }
 trap cleanup EXIT
+
 
 pass=0
 fail=0
@@ -62,28 +67,25 @@ STUB
 
 cat >"$TMP/bin/gcloud" <<'STUB'
 #!/usr/bin/env bash
-printf 'gcloud %s\n' "$*" >>"$ARGV_LOG"
+printf "gcloud %s" "$*" >>"$ARGV_LOG"; printf "\n" >>"$ARGV_LOG"
 case "$*" in
   *"storage buckets describe"*) exit 0 ;;
-  *"dns managed-zones"*)        printf 'qual-gcp-sol-fab-dev\n' ; exit 0 ;;
-  *"compute regions describe"*) printf 'CPUS;IN_USE_ADDRESSES;SSD_TOTAL_GB;DISKS_TOTAL_GB;INSTANCES,0;0;0;0;0\n' ; exit 0 ;;
-  *" container clusters list"*) [ "${STUB_TARGET_PRESENT:-0}" = "1" ] && printf 'test-cluster\n' ;;
-  *" compute networks list"*)   printf 'default\n' ; exit 0 ;;
-  *)                            : ;;
+  *"dns managed-zones"*)        printf "qual-gcp-sol-fab-dev\n"; exit 0 ;;
+  *"compute regions describe"*) printf "CPUS;IN_USE_ADDRESSES;SSD_TOTAL_GB;DISKS_TOTAL_GB;INSTANCES,0;0;0;0;0\n"; exit 0 ;;
+  *"compute networks list"*)    printf "default\n"; exit 0 ;;
 esac
-# STUB_TARGET_PRESENT=1 is the "teardown did not finish" world: every existence probe
-# succeeds. Otherwise an unmatched probe means the resource is NOT there, so it must fail --
-# an earlier version exited 0 here, which made the harness report "still exists" for every
-# resource (the stub was answering "yes" to questions nobody asked).
+# STUB_TARGET_PRESENT=1 is the world where teardown did not finish.
 if [ "${STUB_TARGET_PRESENT:-0}" = "1" ]; then
-  case "$*" in *list* | *describe*) printf 'test-cluster\n'; exit 0 ;; esac
+  case "$*" in *list* | *describe*) printf "test-cluster\n"; exit 0 ;; esac
 fi
-# Absence must be EVIDENCED, not merely a non-zero exit: the harness reads absence from
-# gcloud's own not-found vocabulary, so the stub has to speak it. Exiting 1 in silence
-# made the harness refuse to call the teardown verified -- which was the harness being
-# right, for the third time in this suite.
-printf 'ERROR: (gcloud) NOT_FOUND: resource does not exist\n' >&2
-exit 1
+# Only the provider's own not-found vocabulary means ABSENT. Everything else is UNKNOWN,
+# and UNKNOWN must fail the verification -- including shapes a future reader might be
+# tempted to treat as absence (permission denied is the classic one).
+case "${STUB_PROBE_MODE:-notfound}" in
+  permission) printf "ERROR: (gcloud) The caller does not have permission\n" >&2; exit 1 ;;
+  unknown)    printf "ERROR: (gcloud) transport layer gave up after 3 attempts\n" >&2; exit 1 ;;
+  *)          printf "ERROR: (gcloud) NOT_FOUND: resource does not exist\n" >&2; exit 1 ;;
+esac
 STUB
 
 cat >"$TMP/bin/curl" <<'STUB'
@@ -104,6 +106,9 @@ run_case() { # run_case <name> <subcommand> [VAR=VALUE ...]
   shift 2
   export ARGV_LOG="$TMP/$name.argv"
   export LOG_DIR="$TMP/$name.logs"
+  # Scratch workspace: the harness writes the target file into it, so the repository is never
+  # touched and "nothing was left behind" is an assertion about scratch, not a hope.
+  export WORKSPACE="$SCRATCH_WS"
   : >"$ARGV_LOG"
   rm -f "$TARGET_FILE"
   rm -rf "$LOG_DIR"
@@ -154,7 +159,31 @@ has "a failed apply still tears down" "cloud destroy" "$TMP/cloud-fail.argv"
 lacks "a failed apply never reaches the platform" "deploy" "$TMP/cloud-fail.argv"
 if [ "$(cat "$TMP/cloud-fail.rc")" = "0" ]; then no "a failed apply exits non-zero" "non-zero" "0"; else ok "a failed apply exits non-zero"; fi
 
-# ── 5. one authoritative input for create_dns_zone, across every invocation ──
+# ── 5. UNKNOWN is not absence: both shapes pinned, separately ────────────────
+# Mandatory evidence for the probe_gone fix. Only explicit provider not-found evidence
+# establishes absence; pinning one unreadable shape and not the other invites the
+# implementation to drift into an allowlist of errors that get called absence.
+for mode in permission unknown; do
+  printf '\nscenario: absence probe unreadable (%s)\n' "$mode"
+  run_case "probe-$mode" destroy "STUB_PROBE_MODE=$mode"
+  if [ "$(cat "$TMP/probe-$mode.rc")" = "0" ]; then
+    no "an unreadable probe ($mode) fails the verification" "non-zero" "0"
+  else
+    ok "an unreadable probe ($mode) fails the verification"
+  fi
+  if grep -q 'could NOT determine absence' "$TMP/probe-$mode.out"; then
+    ok "it names the failure to determine absence ($mode)"
+  else
+    no "it names the failure to determine absence ($mode)" "named" "unmentioned"
+  fi
+  if [ -f "$TARGET_FILE" ]; then
+    ok "the target is retained ($mode)"
+  else
+    no "the target is retained ($mode)" "present" "removed"
+  fi
+done
+
+# ── 6. one authoritative input for create_dns_zone, across every invocation ──
 printf '\nscenario: no contradictory configuration is ever rendered\n'
 if cat "$TMP"/*.argv | grep -qE 'create_dns_zone=true'; then
   no "no invocation asks for the durable zone to be created" "no create_dns_zone=true" "rendered somewhere"
@@ -167,7 +196,7 @@ printf '\n%d passed, %d failed\n' "$pass" "$fail"
 # Only leftovers matter: the harness writes the target file and its directory, and the
 # person running this suite is usually mid-edit on the scripts themselves. Flagging those
 # would make the suite fail for the developer's own working state.
-dirty="$(git -C "$REPO" status --porcelain --untracked-files=all -- examples/pluto/sol/qual/)"
+dirty="$(git -C "$REPO" status --porcelain --untracked-files=all -- examples/pluto/)"
 if [ -n "$dirty" ]; then
   printf '[FAIL] the suite left the checkout dirty:\n%s\n' "$dirty"; exit 1
 fi

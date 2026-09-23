@@ -218,6 +218,15 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: bash internal/ci/test_ocamlformat.sh
 
+      # The harness is part of the qualification system, not a script beside it: it
+      # constructs part of the effective configuration handed to Sol/Terraform and it owns
+      # teardown. Its defects -- an override that contradicted the var-file, a teardown
+      # invoked twice, absence probes that read 'could not look' as 'not there' -- belong
+      # here, not an hour into a live run. Unconditional: it stubs every external command
+      # and spends nothing.
+      - name: Qualification harness state-machine test
+        run: internal/qualification/gcp/test-live-qual.sh
+
       - name: Platform-component drift guardrail (ADR 0001 / CODE_LAYER-005)
         if: needs.classify.outputs.kind != 'docs-only'
         run: internal/ci/check_platform_component_drift.sh

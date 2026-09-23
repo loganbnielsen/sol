@@ -65,7 +65,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 # The CLI under test. Defaults to this checkout's build so an attempt is identifiable
 # by commit; overridable for a plan-only validation.
 SOL="${SOL:-$ROOT/_build/default/cli/sol/bin/main.exe}"
-WORKSPACE="$ROOT/examples/pluto"
+# Overridable so a test can point the harness at a scratch workspace: the target file is
+# written into it, and a suite that writes into the repository cannot assert that nothing
+# was left behind.
+WORKSPACE="${WORKSPACE:-$ROOT/examples/pluto}"
 TFVARS="$ROOT/internal/qualification/gcp/qual-gcp.tfvars"
 
 # The qualification target is generated, not committed: check_no_account_artifacts.sh
