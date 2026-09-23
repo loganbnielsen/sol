@@ -140,7 +140,11 @@ assert_environment() {
   # This harness writes the untracked target into the example workspace, so it must not
   # run in the canonical checkout, which belongs to the human operator (REFAC-090).
   local canonical
-  canonical="$(git -C "$ROOT" worktree list --porcelain | awk '/^worktree /{print $2; exit}')"
+  # NOT `awk '...exit'`: an early-exiting reader SIGPIPEs git, and with `set -o pipefail`
+  # that kills the harness outright -- which it did, silently, once enough worktrees
+  # existed for git's output to outlive the reader. It failed in the verification path,
+  # where silence is the worst possible symptom. Consume the whole stream, then choose.
+  canonical="$(git -C "$ROOT" worktree list --porcelain | awk '/^worktree /{ if (!found) { print $2; found = 1 } }')"
   if [ "$(cd "$canonical" && pwd -P)" = "$(cd "$ROOT" && pwd -P)" ] && [ "${ALLOW_CANONICAL:-0}" != "1" ]; then
     echo "✗ refusing to run in the canonical checkout ($ROOT)." >&2
     echo "  Run from a worktree, or set ALLOW_CANONICAL=1 if you own this checkout." >&2
@@ -512,8 +516,11 @@ phase_cloud() {
   local deadline=$(( $(date +%s) + DELEGATION_WAIT_MINUTES * 60 ))
   say "waiting up to ${DELEGATION_WAIT_MINUTES}m for the delegation to resolve (Ctrl-C to continue later)"
   while [ "$(date +%s)" -lt "$deadline" ]; do
-    if [ -n "$(dns_ns "$BASE_DOMAIN" | head -1)" ]; then
-      say "delegation observed: $(dns_ns "$BASE_DOMAIN" | tr '\n' ' ')"
+    # Capture, then test: piping into `head -1` would SIGPIPE the lookup and, under
+    # `set -o pipefail`, kill the harness in the middle of the delegation wait.
+    ns_now="$(dns_ns "$BASE_DOMAIN")"
+    if [ -n "$ns_now" ]; then
+      say "delegation observed: $(printf '%s' "$ns_now" | tr '\n' ' ')"
       KEEP=1
       return 0
     fi
