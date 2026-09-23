@@ -411,8 +411,19 @@ verify_absent() {
   probe_gone() { # name, command...
     local name="$1"; shift
     local log="$LOG_DIR/verify-$name.log"
+    # Print the whole evaluation, not just the verdict: which command, what it returned, and
+    # the classification that follows. A postcondition that says only "✗ exists" forces the
+    # reader to reconstruct the reasoning, and a wrong verdict looks identical to a wrong
+    # world.
+    local status=0
     if "$@" >"$log" 2>&1; then
-      say "  ✗ $name still exists"
+      status=0
+    else
+      status=$?
+    fi
+    say "    probe $name: exit=$status, output: $(head -1 "$log" 2>/dev/null | cut -c1-90)"
+    if [ "$status" = "0" ]; then
+      say "  ✗ $name still exists (PRESENT)"
       rc=1
       return
     fi
@@ -423,9 +434,9 @@ verify_absent() {
     # read the account. Absence needs evidence of absence; anything else is unknown, and
     # unknown fails the verification.
     if grep -qiE '(not[ -]?found|does not exist|was not found|notFound|404)' "$log"; then
-      say "  ✓ $name absent"
+      say "  ✓ $name absent (ABSENT: the provider said not-found)"
     else
-      say "  ✗ $name: could NOT determine absence — the read failed without reporting 'not found'"
+      say "  ✗ $name: could NOT determine absence (UNKNOWN: the read failed without reporting not-found)"
       say "      (this is not evidence the resource exists, and not evidence it does not)"
       rc=1
     fi

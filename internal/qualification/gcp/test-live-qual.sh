@@ -19,7 +19,14 @@ HARNESS="$HERE/live-qual.sh"
 REPO="$(cd "$HERE/../../.." && pwd)"
 TARGET_FILE="$REPO/examples/pluto/sol/qual/gcp/us-central1.yml"
 TMP="$(mktemp -d)"
-cleanup() { [ "${KEEP_TMP:-0}" = "1" ] && { echo "kept: $TMP"; return; }; rm -rf "$TMP"; rm -f "$TARGET_FILE"; }
+cleanup() {
+  rm -f "$TARGET_FILE"
+  # The harness creates the target's directory; removing the file alone leaves it behind and
+  # the suite then reports the checkout dirty for a directory it made.
+  rmdir "$(dirname "$TARGET_FILE")" 2>/dev/null || true
+  [ "${KEEP_TMP:-0}" = "1" ] && { echo "kept: $TMP"; return; }
+  rm -rf "$TMP"
+}
 trap cleanup EXIT
 
 pass=0
@@ -58,10 +65,10 @@ cat >"$TMP/bin/gcloud" <<'STUB'
 printf 'gcloud %s\n' "$*" >>"$ARGV_LOG"
 case "$*" in
   *"storage buckets describe"*) exit 0 ;;
-  *"dns managed-zones"*)        printf 'qual-gcp-sol-fab-dev\n' ;;
-  *"compute regions describe"*) printf 'CPUS;IN_USE_ADDRESSES;SSD_TOTAL_GB;DISKS_TOTAL_GB;INSTANCES,0;0;0;0;0\n' ;;
+  *"dns managed-zones"*)        printf 'qual-gcp-sol-fab-dev\n' ; exit 0 ;;
+  *"compute regions describe"*) printf 'CPUS;IN_USE_ADDRESSES;SSD_TOTAL_GB;DISKS_TOTAL_GB;INSTANCES,0;0;0;0;0\n' ; exit 0 ;;
   *" container clusters list"*) [ "${STUB_TARGET_PRESENT:-0}" = "1" ] && printf 'test-cluster\n' ;;
-  *" compute networks list"*)   printf 'default\n' ;;
+  *" compute networks list"*)   printf 'default\n' ; exit 0 ;;
   *)                            : ;;
 esac
 # STUB_TARGET_PRESENT=1 is the "teardown did not finish" world: every existence probe
@@ -75,7 +82,7 @@ fi
 # gcloud's own not-found vocabulary, so the stub has to speak it. Exiting 1 in silence
 # made the harness refuse to call the teardown verified -- which was the harness being
 # right, for the third time in this suite.
-printf 'ERROR: (gcloud) NOT_FOUND: resource does not exist%s' '\n' >&2
+printf 'ERROR: (gcloud) NOT_FOUND: resource does not exist\n' >&2
 exit 1
 STUB
 
@@ -157,7 +164,11 @@ fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = "0" ] || exit 1
-if [ -n "$(git -C "$REPO" status --porcelain -- examples internal/qualification | head -1)" ]; then
-  printf '[FAIL] the suite left the checkout dirty\n'; exit 1
+# Only leftovers matter: the harness writes the target file and its directory, and the
+# person running this suite is usually mid-edit on the scripts themselves. Flagging those
+# would make the suite fail for the developer's own working state.
+dirty="$(git -C "$REPO" status --porcelain --untracked-files=all -- examples/pluto/sol/qual/)"
+if [ -n "$dirty" ]; then
+  printf '[FAIL] the suite left the checkout dirty:\n%s\n' "$dirty"; exit 1
 fi
 printf 'checkout clean\n'
