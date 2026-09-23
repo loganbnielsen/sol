@@ -166,6 +166,12 @@ if [ "${1:-}" != "verify" ]; then
 fi
 
 mkdir -p "$LOG_DIR"
+# A run records its own identity so it can be stopped by pid/pgid rather than by matching
+# a command line. Pattern matching is the wrong primitive here: it kills whatever happens
+# to contain the pattern, including the shell issuing the kill, and killing a run at the
+# wrong moment is how an orphaned `terraform apply` left provider resources outside state.
+echo "$$" >"$LOG_DIR/run.pid"
+ps -o pgid= -p "$$" 2>/dev/null | tr -d " " >"$LOG_DIR/run.pgid" || true
 # The per-run password is generated, never stored in the repository, and never needed
 # again after the attempt (the instance is destroyed).
 DB_PASSWORD="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 20)"
@@ -245,7 +251,9 @@ cloud_vars() {
     "--var-file=$TFVARS" \
     "--var=cluster_name=$CLUSTER" \
     "--var=base_domain=$BASE_DOMAIN" \
-    "--var=create_dns_zone=true" \
+    # No create_dns_zone here: the durable root owns the zone (DEC-043) and the var-file
+    # says so. An explicit override is how the tfvars and the CLI came to disagree -- two
+    # sources for one setting, each individually reasonable, and the override silently won.
     "--var=provisioner_impersonators=[\"$IMPERSONATOR\"]"
 }
 
@@ -273,6 +281,32 @@ start_ns_watcher() {
     done
   ) &
   NS_WATCHER=$!
+}
+
+# The variables a destroy needs: the same set apply used, with one deliberate exception,
+# whether the delegated zone is destroyed with the target. The lifecycle cannot express
+# "this resource is durable" (FND-0028), so a faithful product destroy removes the zone --
+# and the registrar NS records outside every provider API would then point at a zone that
+# no longer exists, with new nameservers on any recreate (DEC-042). KEEP_DNS_ZONE=1
+# (default) therefore passes create_dns_zone=false so the zone is not managed by this
+# destroy, and the run reports it as residue rather than hiding it. That is a harness
+# default, NOT the resolution of DEC-043.
+#
+# These existed before and were deleted by the refactor that introduced
+# reconcile_durable_root, which left the teardown path calling `sol cloud destroy` with no
+# variables at all -- a dead safety net in merged code, discovered only by running it.
+# That is why the next step is a stub-based state-machine test for this script: the
+# harness is part of the qualification system now, and "the teardown works" must be a
+# tested claim rather than a memory of a green run.
+destroy_vars() {
+  local zone_var="create_dns_zone=false"
+  [ "${KEEP_DNS_ZONE:-1}" = "0" ] && zone_var="create_dns_zone=true"
+  printf '%s\n' \
+    "--var-file=$TFVARS" \
+    "--var=cluster_name=$CLUSTER" \
+    "--var=base_domain=$BASE_DOMAIN" \
+    "--var=$zone_var" \
+    "--var=provisioner_impersonators=[\"$IMPERSONATOR\"]"
 }
 
 # ── durable prerequisites: RECONCILED, never replaced, never destroyed ────────
@@ -604,6 +638,18 @@ phase_destroy() {
 case "${1:-}" in
   cloud)    phase_cloud ;;
   platform) phase_platform ;;
+  stop)
+    # Stop a recorded run by IDENTITY, then tear down: a TERM does not run the EXIT trap,
+    # so stopping without destroying would leave the resources this run created.
+    if [ -s "$LOG_DIR/run.pgid" ]; then
+      say "stopping the run in $LOG_DIR (process group $(cat "$LOG_DIR/run.pgid"))"
+      kill -TERM -"$(cat "$LOG_DIR/run.pgid")" 2>/dev/null || true
+      sleep 3
+    else
+      say "no run.pgid in $LOG_DIR — nothing recorded to stop"
+    fi
+    phase_destroy
+    ;;
   destroy)  phase_destroy ;;
   verify)
     if verify_absent; then say "verify: absent"; else say "verify: resources remain"; exit 1; fi
