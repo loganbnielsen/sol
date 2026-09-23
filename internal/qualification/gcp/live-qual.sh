@@ -202,7 +202,12 @@ target:
   cluster_name: $CLUSTER
   base_domain: $BASE_DOMAIN
   profile: $PROFILE_NAME
-  cluster_issuer: letsencrypt-staging
+  # NO cluster_issuer, deliberately. Installing a GCP platform through the shared
+  # definition is still refused while its ClusterIssuers are Route 53-only (FND-0007), and
+  # that refusal is correct and stays: it stops Sol provisioning a platform that looks
+  # TLS-wired and cannot issue. This run is not asking the TLS question -- its job is to
+  # reach the cert-manager boundary and capture FND-0010's discriminator -- so it asks for
+  # a platform without an issuer rather than for one it cannot have.
   letsencrypt_email: $LE_EMAIL
   terraform_var_file: ../../../../../internal/qualification/gcp/qual-gcp.tfvars
 
