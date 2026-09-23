@@ -187,7 +187,24 @@ features are queryable.
 This is a qualification choice, not a new cross-region abstraction. One region
 is enough for `production-single-region/v1`.
 
-### Quotas and blockers
+### Attempt 5 (2026-09-22) and its residue
+
+The attempt applied the cloud root cleanly (592.2s, 14 resources) and then stopped:
+`sol cloud destroy --apply` refused the same target that `sol cloud apply --apply` had
+just accepted, in the `PreparingDestroy` phase (`FND-0029` / `INFRA-067`). Everything
+billable was torn down and verified absent through the provider's API. Full chronology
+and inventory: `docs/qualification/2026-09-22-gcp-attempt5.md`.
+
+**Residue, deliberately unresolved:** the Cloud DNS zone `qual-gcp-sol-fab-dev` exists
+and is delegated (`qual-gcp.sol-fab.dev NS → ns-cloud-c1..c4.googledomains.com`,
+verified over DNS-over-HTTPS), but it is **not in Terraform state** — it was removed to
+protect it from a destroy that cannot distinguish durable prerequisites. That is
+incident residue, **not** the intended implementation of `DEC-042`, and it must not
+become the baseline for Attempt 6: the zone needs a deliberate Terraform owner, which
+`DEC-043` should determine. The state bucket `gs://sol-qualification-tfstate` is
+present and untouched.
+
+## Quotas and blockers
 
 **Correction (2026-09-22).** This section used to say quota usage "could not be
 obtained because billing and the Compute, GKE, Artifact Registry, Cloud SQL, and DNS
