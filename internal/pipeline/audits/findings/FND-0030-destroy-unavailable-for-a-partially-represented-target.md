@@ -2,7 +2,7 @@
 
 - **Classification:** `VERIFIED_DEFECT` — the behaviour is observed; the *mechanism* is an
   open design question
-- **State:** `OPEN` — needs a design decision before a fix; not derived from `INFRA-067`
+- **State:** `OPEN` — design recorded 2026-09-23 (below); implementation not started; not derived from `INFRA-067`
 - **First identified:** 2026-09-23 (GCP Attempt 6)
 - **Last verified:** 2026-09-23, `main @ 835841a8`
 - **Provider:** GCP observed (GKE); the shape is in shared lifecycle code — see "NOT established"
@@ -59,6 +59,47 @@ with different fixes, and `INFRA-067`'s fix remains correct on its own.
 Whether that is achieved by bypassing constructive preparation, by refreshing/adopting
 resources, by invoking Terraform differently, or by an explicit recovery operation is a
 design decision. Today's manual procedure **must not** be encoded as the product contract.
+
+## Design (2026-09-23) — smallest change consistent with invariant 6 and the acceptance criterion
+
+Three mechanisms, in increasing cost. The first two are strictly local to the destroy path and
+become the implementation; the third exists because adoption is the only thing that converges
+a *divergence*.
+
+**1. The destructive preparation is a means, not a gate.** `prepare_destruction`
+(`cmd_cloud_tf.ml`, the `rds-destroy-prepare` and `gcp-destroy-prepare` phases) lowers
+deletion guards so the destroy can proceed. A failed preparation must not block the destroy:
+report it and continue. Today a failure to *prepare* becomes a refusal to *attempt* the very
+operation whose failure it was trying to avoid — the inversion ADR 0003 invariant 6 forbids.
+The destroy's own error is the accurate signal, and it names the real cause.
+
+**2. The preparation targets only resources present in the target's state.** Terraform's
+`apply -target=<x>` **creates** `x` when it is in the configuration but absent from state —
+exactly the `409 Already exists` of Attempt 6. The targeted list must come from
+`terraform state list` (the resources the target's state actually holds). A resource absent
+from state is not a resource to un-guard; for a half-built target the preparation then has
+nothing to do, and it cannot create anything. This is the part that makes **zero create
+operations during recovery** observable rather than hoped for: the targeted apply is the only
+constructive step in the destroy path.
+
+**3. Adoption, because convergence needs it.** With 1 and 2, destroy *proceeds* on a
+divergence — and then honestly reports residue, because a resource present in the provider
+and absent from state is neither created nor destroyed by Terraform. Converging it requires
+adopting it and then destroying it: a Sol-driven import from an inventory of target-owned
+resources. That is a **new capability**, not a repair of this defect, and it is the piece that
+makes "Sol, not the operator, owns getting back to zero" true for divergence. Not designed
+here beyond this paragraph.
+
+### Evidence plan
+
+- Pure, offline: the target-selection function takes state entries plus the desired targets
+  and returns the targeted list — unit-tested for the three cases (present, absent, mixed),
+  because that is where the `409` came from. Plus a regression that a failed preparation does
+  not abort the destroy.
+- Attempt 7 (live, gated): controlled half-built target, then **positive** — reproduction via
+  the supported path converges to absence; **negative** — zero target-owned create operations,
+  no declaration edited, no Terraform state surgery, no provider-native deletion, not by the
+  operator and not by the harness.
 
 ## What is NOT established
 
