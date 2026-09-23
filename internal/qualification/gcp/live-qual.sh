@@ -275,71 +275,75 @@ start_ns_watcher() {
   NS_WATCHER=$!
 }
 
-# ── durable prerequisites: ENSURED, never recreated, never destroyed ──────────
-# "Durable" must not drift into meaning "created every run". This ensures the bucket
-# is present and otherwise does nothing, so a second attempt against the same project
-# is a no-op; and nothing here ever destroys it. The target lifecycle only consumes
-# what this provides -- which is the FND-0028 lifetime distinction, executable today,
-# before DEC-043 changes any product semantics.
-# The variables a destroy needs. Deliberately the same set apply used, with one
-# documented exception: whether the delegated Cloud DNS zone is destroyed with the
-# target.
+# ── durable prerequisites: RECONCILED, never replaced, never destroyed ────────
+# The durable root owns the state bucket and the delegated DNS zone, so it is an IaC
+# owner and is reconciled to its declared state -- a presence check is not ownership
+# (DEC-043). "Ensure it exists" was adequate while the root's only job was to make a
+# backend; it is not adequate now that it declares bucket policy and the zone itself.
 #
-# The lifecycle cannot express "this resource is durable" (FND-0028), so a faithful
-# product destroy removes the zone — and the registrar NS records outside every
-# provider API then point at a zone that no longer exists, silently, with new
-# nameservers on any recreate (DEC-042). KEEP_DNS_ZONE=1 (default) therefore passes
-# create_dns_zone=false so the zone is simply not managed by this destroy, and the
-# run reports it as residue rather than hiding it. Set KEEP_DNS_ZONE=0 to exercise the
-# product's own behaviour. Either way this is a harness default, NOT the resolution of
-# DEC-043: the zone still needs a deliberate owner.
-destroy_vars() {
-  local zone_var="create_dns_zone=false"
-  [ "${KEEP_DNS_ZONE:-1}" = "0" ] && zone_var="create_dns_zone=true"
-  printf '%s\n' \
-    "--var-file=$TFVARS" \
-    "--var=cluster_name=$CLUSTER" \
-    "--var=base_domain=$BASE_DOMAIN" \
-    "--var=$zone_var" \
-    "--var=provisioner_impersonators=[\"$IMPERSONATOR\"]"
-}
+# Two distinct things happen here, and they are not the same operation:
+#
+#   1. STRUCTURAL: the backend must exist before Terraform can store state in it. That is
+#      the one recursion a bootstrap root cannot escape, and it is why a presence check
+#      survives at all -- but presence is NOT the contract for the resources themselves.
+#   2. RECONCILE: init, plan, apply. Note what this may change: bucket labels and the
+#      zone's description. Note what it must never do: replace or destroy either, because
+#      a recreated zone gets *different* nameservers -- silently breaking the delegation
+#      pasted at the registrar -- and a recreated bucket is the state store for every
+#      root. A plan that would replace or destroy therefore stops the run instead of
+#      being applied.
+reconcile_durable_root() {
+  local base=(-backend-config="bucket=$STATE_BUCKET" -backend-config="prefix=bootstrap/gcp")
+  local v=(-var="project_id=$PROJECT" -var="region=$REGION" -var="state_bucket=$STATE_BUCKET"
+           -var="manage_dns_zone=true" -var="base_domain=$BASE_DOMAIN")
 
-ensure_state_bucket() {
-  if gcloud storage buckets describe "gs://$STATE_BUCKET" --project "$PROJECT" \
-    >/dev/null 2>&1; then
-    say "bootstrap: state bucket gs://$STATE_BUCKET present (durable; left untouched)"
-    return 0
+  if ! gcloud storage buckets describe "gs://$STATE_BUCKET" --project "$PROJECT" >/dev/null 2>&1; then
+    say "bootstrap: state bucket absent — creating it first (the backend cannot create itself)"
+  else
+    say "bootstrap: state bucket gs://$STATE_BUCKET present"
   fi
-  say "bootstrap: ensuring the durable prerequisites via $BOOTSTRAP_ROOT"
-  # Two things this invocation has to get right, both of them learned the hard way:
-  #  * the root declares `backend "gcs" {}`, so init must be told where its OWN state
-  #    goes -- an owner whose state lives in a working directory is one `rm -rf` from
-  #    unowning the delegated zone;
-  #  * manage_dns_zone/base_domain make this root the owner of the qualification zone
-  #    (DEC-043), so the target root's create_dns_zone is false and the two never manage
-  #    one zone between them.
-  # This APPLIES the durable root, so it reconciles anything that root declares and the
-  # live resources do not yet carry -- today the bucket's `sol-role` label and the zone's
-  # description, i.e. metadata (adopting the two by import left that diff unapplied at the
-  # time). Worth knowing rather than discovering: the operator's durable root is
-  # reconciled by every attempt, which is the point of owning the resources, but it does
-  # mean the metadata diff lands on the next run rather than never.
-  if ! ( cd "$BOOTSTRAP_ROOT" \
-      && timeout "$PHASE_TIMEOUT" terraform init -input=false \
-           -backend-config="bucket=$STATE_BUCKET" -backend-config="prefix=bootstrap/gcp" \
-      && timeout "$PHASE_TIMEOUT" terraform apply -input=false -auto-approve \
-           -var="project_id=$PROJECT" -var="region=$REGION" \
-           -var="state_bucket=$STATE_BUCKET" \
-           -var="manage_dns_zone=true" -var="base_domain=$BASE_DOMAIN" ) >"$LOG_DIR/bootstrap.log" 2>&1; then
-    say "bootstrap FAILED — a prerequisite, not a target failure. See $LOG_DIR/bootstrap.log"
-    tail -n 20 "$LOG_DIR/bootstrap.log" || true
+
+  say "bootstrap: reconciling the durable root against its declared state"
+  ( cd "$BOOTSTRAP_ROOT" && timeout "$PHASE_TIMEOUT" terraform init -input=false "${base[@]}" ) \
+    >"$LOG_DIR/bootstrap.log" 2>&1 || {
+      say "bootstrap FAILED at init — see $LOG_DIR/bootstrap.log"; tail -n 20 "$LOG_DIR/bootstrap.log"; return 1;
+    }
+
+  local plan_rc=0
+  ( cd "$BOOTSTRAP_ROOT" && timeout "$PHASE_TIMEOUT" terraform plan -input=false -detailed-exitcode \
+      -out="$LOG_DIR/durable.tfplan" "${v[@]}" ) >>"$LOG_DIR/bootstrap.log" 2>&1 || plan_rc=$?
+
+  case "$plan_rc" in
+    0)
+      say "bootstrap: durable root already matches its declared state"
+      return 0
+      ;;
+    1)
+      say "bootstrap FAILED at plan — see $LOG_DIR/bootstrap.log"
+      tail -n 20 "$LOG_DIR/bootstrap.log"
+      return 1
+      ;;
+  esac
+
+  # It wants changes. Refuse the ones that cannot be reconciled in place.
+  ( cd "$BOOTSTRAP_ROOT" && terraform show -no-color "$LOG_DIR/durable.tfplan" ) \
+    >"$LOG_DIR/durable.plan.txt" 2>&1 || true
+  if grep -qE 'must be replaced|will be destroyed' "$LOG_DIR/durable.plan.txt"; then
+    say "bootstrap REFUSED: the durable root's plan would replace or destroy a durable resource."
+    say "  A recreated zone gets different nameservers (breaking the registrar delegation) and a"
+    say "  recreated bucket is the state store for every root. Review $LOG_DIR/durable.plan.txt;"
+    say "  this needs a human decision, not an automatic apply."
     return 1
   fi
-  say "bootstrap: state bucket created"
+
+  say "bootstrap: applying in-place changes to the durable root (metadata only today)"
+  ( cd "$BOOTSTRAP_ROOT" && timeout "$PHASE_TIMEOUT" terraform apply -input=false "$LOG_DIR/durable.tfplan" ) \
+    >>"$LOG_DIR/bootstrap.log" 2>&1 || {
+      say "bootstrap FAILED at apply — see $LOG_DIR/bootstrap.log"; tail -n 20 "$LOG_DIR/bootstrap.log"; return 1;
+    }
+  say "bootstrap: durable root reconciled"
 }
 
-# EXPECTED PRESENT — the durable prerequisites. A run must verify these SURVIVE, not
-# assume it: the whole point of the lifetime distinction is that it is checked.
 verify_durable_present() {
   local rc=0
   say "verify: expected PRESENT (durable prerequisites outlive the target)"
@@ -493,7 +497,7 @@ phase_cloud() {
   # Terraform cannot even initialize against a backend that does not exist, so the
   # durable prerequisite is ensured in both modes. PLAN_ONLY still means "no target
   # infrastructure": this only guarantees the bucket, idempotently.
-  ensure_state_bucket || return 1
+  reconcile_durable_root || return 1
 
   if plan_only; then
     run cloud-plan "$SOL" cloud plan "$TARGET" "${vars[@]}"
