@@ -1814,12 +1814,6 @@ let gcp_protection_state infra_dir =
   | Error _ -> Error "could not read terraform state"
 ;;
 
-let gcp_guarded_targets =
-  Sol_cli_terraform.targets
-    "google_sql_database_instance.postgres"
-    [ "google_container_cluster.main" ]
-;;
-
 (* Deletion protection is not retention, and the distinction is the whole point of
    DEC-033: this transition makes the target *destructible*, it does not decide what
    survives. Both of GCP's guards are Terraform/provider attributes, and a destroy
@@ -1828,25 +1822,60 @@ let gcp_guarded_targets =
    transition, verified from state afterwards rather than assumed. Doing nothing here
    does not skip a preparation, it makes the destroy impossible and the target
    billable. *)
+(* What a destructive preparation may target: the configuration, filtered by what the
+   target's state actually represents (FND-0030). `apply -target` CREATES a target that is
+   absent from state, so preparing a resource this target does not have would make the
+   destroy path the thing that creates it -- Attempt 6's `409 Already exists`, raised while
+   trying to create the cluster it had been asked to remove. *)
+let gcp_guarded_desired =
+  [ "google_sql_database_instance.postgres"; "google_container_cluster.main" ]
+;;
+
 let gcp_prepare_destroy run_log infra_dir var_files vars =
   match gcp_protection_state infra_dir with
-  | Error message -> lifecycle_error message
-  | Ok (None, None) ->
+  | Error message ->
+    (* Report the failed read here rather than raising: a preparation that could not run
+       must not decide whether destruction is attempted. The destroy below carries the
+       postcondition and its own error names the real cause. *)
     Printf.printf
-      "  prepare: no guarded resource for this target, nothing to prepare.\n%!";
+      "  prepare: could not read this target's state (%s); preparing nothing.\n%!"
+      message;
     false
-  | Ok _ ->
-    Printf.printf "  prepare: disabling the Cloud SQL and GKE deletion guards...\n%!";
-    require_terraform_success
-      (Sol_cli_run_log.run_phase run_log ~name:"gcp-destroy-prepare" (fun () ->
-         Sol_cli_terraform.apply
-           ~scope:gcp_guarded_targets
-           ~chdir:infra_dir
-           ~var_files
-           ~vars:
-             (vars @ [ "sql_deletion_protection=false"; "gke_deletion_protection=false" ])
-           ()));
-    true
+  | Ok (sql, cluster) ->
+    let represented =
+      List.filter_map
+        (fun (address, present) -> if present then Some address else None)
+        [ "google_sql_database_instance.postgres", Option.is_some sql
+        ; "google_container_cluster.main", Option.is_some cluster
+        ]
+    in
+    let eligible =
+      Sol_cli_cloud_lifecycle.preparations_eligible
+        ~state:represented
+        ~desired:gcp_guarded_desired
+    in
+    (match eligible with
+     | [] ->
+       Printf.printf
+         "  prepare: no guarded resource in this target's state, nothing to prepare (and \
+          nothing that could be created).\n\
+          %!";
+       false
+     | first :: rest ->
+       Printf.printf
+         "  prepare: disabling the deletion guards on %s...\n%!"
+         (String.concat ", " eligible);
+       require_terraform_success
+         (Sol_cli_run_log.run_phase run_log ~name:"gcp-destroy-prepare" (fun () ->
+            Sol_cli_terraform.apply
+              ~scope:(Sol_cli_terraform.targets first rest)
+              ~chdir:infra_dir
+              ~var_files
+              ~vars:
+                (vars
+                 @ [ "sql_deletion_protection=false"; "gke_deletion_protection=false" ])
+              ()));
+       true)
 ;;
 
 let verify_gcp_destroy_preparation infra_dir ~prepared =
