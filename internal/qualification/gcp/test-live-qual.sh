@@ -19,7 +19,7 @@ HARNESS="$HERE/live-qual.sh"
 REPO="$(cd "$HERE/../../.." && pwd)"
 TARGET_FILE="$REPO/examples/pluto/sol/qual/gcp/us-central1.yml"
 TMP="$(mktemp -d)"
-cleanup() { rm -rf "$TMP"; rm -f "$TARGET_FILE"; }
+cleanup() { [ "${KEEP_TMP:-0}" = "1" ] && { echo "kept: $TMP"; return; }; rm -rf "$TMP"; rm -f "$TARGET_FILE"; }
 trap cleanup EXIT
 
 pass=0
@@ -59,12 +59,19 @@ printf 'gcloud %s\n' "$*" >>"$ARGV_LOG"
 case "$*" in
   *"storage buckets describe"*) exit 0 ;;
   *"dns managed-zones"*)        printf 'qual-gcp-sol-fab-dev\n' ;;
-  *"compute regions describe"*) printf 'CPUS;IN_USE_ADDRESSES;SSD_TOTAL_GB;DISKS_TOTAL_GB;INSTANCES\n0;0;0;0;0\n' ;;
+  *"compute regions describe"*) printf 'CPUS;IN_USE_ADDRESSES;SSD_TOTAL_GB;DISKS_TOTAL_GB;INSTANCES,0;0;0;0;0\n' ;;
   *" container clusters list"*) [ "${STUB_TARGET_PRESENT:-0}" = "1" ] && printf 'test-cluster\n' ;;
   *" compute networks list"*)   printf 'default\n' ;;
   *)                            : ;;
 esac
-exit 0
+# STUB_TARGET_PRESENT=1 is the "teardown did not finish" world: every existence probe
+# succeeds. Otherwise an unmatched probe means the resource is NOT there, so it must fail --
+# an earlier version exited 0 here, which made the harness report "still exists" for every
+# resource (the stub was answering "yes" to questions nobody asked).
+if [ "${STUB_TARGET_PRESENT:-0}" = "1" ]; then
+  case "$*" in *list* | *describe*) printf 'test-cluster\n'; exit 0 ;; esac
+fi
+exit 1
 STUB
 
 cat >"$TMP/bin/curl" <<'STUB'
@@ -88,7 +95,7 @@ run_case() { # run_case <name> <subcommand> [VAR=VALUE ...]
   : >"$ARGV_LOG"
   rm -f "$TARGET_FILE"
   rm -rf "$LOG_DIR"
-  ALLOW_CANONICAL=1 SOL="$TMP/bin/sol" CLUSTER=test-cluster \
+  env ALLOW_CANONICAL=1 SOL="$TMP/bin/sol" CLUSTER=test-cluster \
     IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
     PATH="$TMP/bin:$PATH" "$@" \
     "$HARNESS" "$sub" >"$TMP/$name.out" 2>&1
@@ -106,7 +113,14 @@ has "the target is written for the run" "cluster_name" "$TARGET_FILE"
 printf '\nscenario: destroy\n'
 run_case destroy-ok destroy
 is "exit 0" "$(cat "$TMP/destroy-ok.rc")" "0"
-is "teardown invoked exactly once" "$(grep -c 'cloud destroy' "$TMP/destroy-ok.argv")" "1"
+is "teardown is invoked" "$([ "$(grep -c 'cloud destroy' "$TMP/destroy-ok.argv")" -ge 1 ] && echo yes)" "yes"
+# OPEN HARNESS DEFECT (found by this suite, not by reading code): the count is 2, and the two
+# invocations are BYTE-IDENTICAL -- same subcommand, same variables. The run ended verified
+# (exit 0, target removed, every postcondition checked), so a failure-retry cannot explain
+# the second one, and an unconditional teardown at EXIT is the shape that fits. Not yet
+# localized. Left red deliberately: a teardown invoked twice is the class of thing this
+# suite exists to catch, and relaxing the assertion would have hidden it.
+is "teardown is invoked exactly once" "$(grep -c 'cloud destroy' "$TMP/destroy-ok.argv")" "1"
 has "destroy carries the cluster" "--var=cluster_name=test-cluster" "$TMP/destroy-ok.argv"
 has "destroy carries the base domain" "--var=base_domain=" "$TMP/destroy-ok.argv"
 has "destroy carries the impersonator" "provisioner_impersonators" "$TMP/destroy-ok.argv"

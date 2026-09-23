@@ -454,6 +454,13 @@ for m, u in zip(metrics.split(";"), usage.split(";")):
 PY
   say "  quota usage (CPUS/addresses/disk/instances):"
   sed 's/^/    /' "$LOG_DIR/verify-quota-usage.log" || true
+  # A read that could not be PARSED is not a read that found usage. Reporting the first
+  # as the second sends the operator looking for resources that may not exist, and hides
+  # that the verification is inconclusive -- this suite caught exactly that, first run.
+  if grep -q 'Traceback' "$LOG_DIR/verify-quota-usage.log" 2>/dev/null; then
+    say "  ✗ could NOT read the quota usage — unparsable, which is not evidence of zero"
+    return 1
+  fi
   if grep -qvE '	0(\.0)?$' "$LOG_DIR/verify-quota-usage.log" 2>/dev/null; then
     say "  ✗ some quota usage is non-zero — read $LOG_DIR/verify-quota.log"
     rc=1
