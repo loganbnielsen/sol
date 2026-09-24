@@ -27,6 +27,36 @@ val plan
   -> unit
   -> (Sol_cli_process.result, Sol_cli_process.error) result
 
+(** [plan] saved to a file, so the plan that is asserted is the plan that is
+    applied (HARDEN-004 step 3). *)
+val plan_saved
+  :  ?env:(string * string) list
+  -> scope:scope
+  -> chdir:string
+  -> var_files:string list
+  -> vars:string list
+  -> out:string
+  -> unit
+  -> (Sol_cli_process.result, Sol_cli_process.error) result
+
+(** [`terraform show -json <saved plan>`] — the plan representation, whose
+    resource changes {!Sol_cli_terraform_plan} classifies. *)
+val show_json_plan
+  :  ?env:(string * string) list
+  -> chdir:string
+  -> plan_file:string
+  -> unit
+  -> (Sol_cli_process.result, Sol_cli_process.error) result
+
+(** Apply a saved plan file. No `-auto-approve`: a saved plan applies without
+    confirmation, and nothing re-plans between the assertion and the apply. *)
+val apply_saved
+  :  ?env:(string * string) list
+  -> chdir:string
+  -> plan_file:string
+  -> unit
+  -> (Sol_cli_process.result, Sol_cli_process.error) result
+
 val plan_destroy
   :  ?env:(string * string) list
   -> chdir:string

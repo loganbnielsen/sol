@@ -448,3 +448,81 @@ let execute ~deps =
                      | Error message -> fail ~cleanup (Verification_failed message)
                      | Ok () -> succeed ~cleanup preparation))))))
 ;;
+
+(* ── Phase allowlists for the destroy-path applies (HARDEN-004 step 3) ────────
+
+   Every apply reachable from destroy is planned and classified against one of
+   these before it runs (see [Sol_cli_terraform_plan.guarded_apply]). They are
+   phase-specific on purpose: "reconciliation" and "cleanup" are names, not
+   safety properties, and the bootstrap-access *removal* apply is asserted like
+   any other.
+
+   Each allowlist is stated in terms of Terraform addresses/actions. Nothing here
+   permits a create or a replacement of target-owned infrastructure except the
+   narrowly identified temporary bootstrap-access mechanism, whose creation is
+   the point of the window and whose removal is bracketed by [execute]. *)
+
+let guard_preparation_policy ~addresses : Sol_cli_terraform_plan.policy =
+  let open Sol_cli_terraform_plan in
+  { phase = "guard-preparation"
+  ; rules =
+      [ { matches = List.map (fun address -> Exact address) addresses
+        ; allows = [ Update ]
+        ; reason =
+            "a guarded resource the inventory already represents may only have its \
+             deletion protection lowered"
+        }
+      ]
+  }
+;;
+
+let bootstrap_enable_policy ~bootstrap : Sol_cli_terraform_plan.policy =
+  let open Sol_cli_terraform_plan in
+  { phase = "bootstrap-access-enable"
+  ; rules =
+      [ { matches = bootstrap
+        ; allows = [ Create; Update ]
+        ; reason =
+            "the temporary bootstrap-access mechanism may be created or updated to \
+             obtain destruction authority"
+        }
+      ]
+  }
+;;
+
+(* The reconciliation apply exists to hold the bootstrap window open while the
+   destroy policy is in force. It may touch the bootstrap mechanism and reconcile
+   the guarded resources the inventory represents -- nothing else. *)
+let reconciliation_policy ~bootstrap ~guarded : Sol_cli_terraform_plan.policy =
+  let open Sol_cli_terraform_plan in
+  { phase = "destroy-reconciliation"
+  ; rules =
+      [ { matches = bootstrap
+        ; allows = [ Create; Update ]
+        ; reason =
+            "the temporary bootstrap-access mechanism may be created or updated to \
+             obtain destruction authority"
+        }
+      ; { matches = List.map (fun address -> Exact address) guarded
+        ; allows = [ Update ]
+        ; reason =
+            "a guarded resource the inventory represents may only be reconciled to the \
+             destroy policy"
+        }
+      ]
+  }
+;;
+
+let bootstrap_removal_policy ~bootstrap : Sol_cli_terraform_plan.policy =
+  let open Sol_cli_terraform_plan in
+  { phase = "bootstrap-access-removal"
+  ; rules =
+      [ { matches = bootstrap
+        ; allows = [ Create; Update; Delete ]
+        ; reason =
+            "the temporary bootstrap-access mechanism may be created, updated or removed \
+             to close the elevation"
+        }
+      ]
+  }
+;;
