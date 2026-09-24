@@ -1260,7 +1260,7 @@ locals {
             }
             annotations = merge({
               summary     = "{{ $labels.service }} cannot publish to its retry/DLQ topics ({{ $labels.domain }}/{{ $labels.workspace }})"
-              description = "{{ $labels.service }} in domain {{ $labels.domain }} (workspace {{ $labels.workspace }}, env {{ $labels.env }}) failed {{ $value | humanize }} retry/DLQ publish(es) after exhausting in-process retries in the last 5 minutes. The records stay unacknowledged; retry delivery is not progressing."
+              description = "{{ $labels.service }} in domain {{ $labels.domain }} (workspace {{ $labels.workspace }}, env {{ $labels.env }}) failed {{ $value | humanize }} retry/DLQ publish(es) after exhausting in-process retries since the pod started. The records stay unacknowledged; retry delivery is not progressing."
             }, local.alert_annotations)
           },
           {
