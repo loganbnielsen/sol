@@ -1,7 +1,7 @@
 # FND-0031 — `sol secret set/delete/list` read an unreadable Secret as absent; `set` rewrites it without its existing data and reports success
 
 - **Classification:** `VERIFIED_DEFECT`
-- **State:** `OPEN`
+- **State:** `FIXED_UNQUALIFIED` (BUG-040, 2026-09-23: unreadable reads are errors; fake-kubectl regression + mutation check; not exercised against a live API server)
 - **First identified:** 2026-09-23, correctness audit (`2026-09-23_correctness_audit.md`)
 - **Last verified:** 2026-09-23 (`origin/main @ f3e9480b`)
 - **Derived ticket:** `BUG-040`

@@ -152,13 +152,46 @@ let apply_manifest ~ctx yaml =
   result
 ;;
 
+(* BUG-040 / FND-0031: only kubectl's own NotFound means the Secret is absent.
+   Every other failure -- no connection, Forbidden, a timeout, a body that does not
+   parse -- is an error. [set] writes what it read back into the Secret, so reading
+   "could not ask" as "nothing there" would rewrite it without its other keys. *)
 let get_named_secret_json ~ctx ~name namespace =
   match Sol_cli_kubectl.get ~ctx ~resource:"secret" ~name ~namespace ~output:"json" with
-  | Error _ -> Ok None
-  | Ok r when r.Sol_cli_process.exit_code <> 0 -> Ok None
   | Ok r ->
     (try Ok (Some (Yojson.Safe.from_string r.Sol_cli_process.stdout)) with
-     | _ -> Ok None)
+     | Yojson.Json_error message ->
+       Error (Printf.sprintf "could not parse Secret %s/%s: %s" namespace name message))
+  | Error (Sol_cli_process.Non_zero { stderr; _ })
+    when Sol_cli_port_forward.string_contains ~needle:"NotFound" stderr -> Ok None
+  | Error e ->
+    Error
+      (Printf.sprintf
+         "could not read Secret %s/%s: %s"
+         namespace
+         name
+         (Sol_cli_process.error_to_string e))
+;;
+
+(* The names a listing printed, or why it could not be read. A listing that
+   failed is never an empty one (BUG-040). *)
+let listed_names ~what (result : (Sol_cli_process.result, Sol_cli_process.error) result) =
+  match result with
+  | Ok r when r.Sol_cli_process.exit_code = 0 ->
+    Ok
+      (String.split_on_char '\n' r.Sol_cli_process.stdout
+       |> List.map String.trim
+       |> List.filter (fun name -> name <> ""))
+  | Ok r ->
+    Error
+      (Printf.sprintf
+         "could not list %s: %s"
+         what
+         (let detail = String.trim r.Sol_cli_process.stderr in
+          if detail = "" then Printf.sprintf "kubectl exited %d" r.exit_code else detail))
+  | Error e ->
+    Error
+      (Printf.sprintf "could not list %s: %s" what (Sol_cli_process.error_to_string e))
 ;;
 
 let get_secret_json ~ctx namespace =
@@ -188,20 +221,14 @@ let existing_data = function
    Argo Rollout compatibility. *)
 let list_workload_secrets ~ctx namespace =
   let jsonpath = "{range .items[*]}{.metadata.name}{\"\\n\"}{end}" in
-  match
-    Sol_cli_kubectl.get_raw
-      ~ctx
-      ~args:[ "get"; "secrets"; "-n"; namespace; "-o"; "jsonpath=" ^ jsonpath ]
-  with
-  | Error _ -> []
-  | Ok r when r.Sol_cli_process.exit_code <> 0 -> []
-  | Ok r ->
-    String.split_on_char '\n' r.Sol_cli_process.stdout
-    |> List.map String.trim
-    |> List.filter (fun name ->
-      name <> ""
-      && name <> Sol_cli_manifest.runtime_secret_name
-      && String.ends_with ~suffix:"-secrets" name)
+  Sol_cli_kubectl.get_raw
+    ~ctx
+    ~args:[ "get"; "secrets"; "-n"; namespace; "-o"; "jsonpath=" ^ jsonpath ]
+  |> listed_names ~what:(Printf.sprintf "Secrets in namespace %s" namespace)
+  |> Result.map
+       (List.filter (fun name ->
+          name <> Sol_cli_manifest.runtime_secret_name
+          && String.ends_with ~suffix:"-secrets" name))
 ;;
 
 let apply_to_named_secret ~ctx ~secret_name ~namespace ~key ~value =
@@ -249,21 +276,24 @@ let list_live_workloads ~ctx ~kind ~namespace =
   match
     Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; kind; "-n"; namespace; "-o"; "name" ]
   with
-  | Error _ -> []
-  | Ok r when r.Sol_cli_process.exit_code <> 0 -> []
-  | Ok r ->
-    String.split_on_char '\n' r.Sol_cli_process.stdout
-    |> List.map String.trim
-    |> List.filter (fun name -> name <> "")
+  | Ok r
+    when r.Sol_cli_process.exit_code <> 0
+         && (Sol_cli_port_forward.string_contains
+               ~needle:"doesn't have a resource type"
+               r.Sol_cli_process.stderr
+             || Sol_cli_port_forward.string_contains
+                  ~needle:"could not find the requested resource"
+                  r.Sol_cli_process.stderr) -> Ok []
+  | result ->
+    listed_names ~what:(Printf.sprintf "%ss in namespace %s" kind namespace) result
 ;;
 
 (* Rollouts only exist when progressive delivery is enabled; an absent CRD
    yields an empty list rather than a failure, so listing tolerates it. *)
 let restart_and_verify ~ctx ~namespace =
-  let names =
-    list_live_workloads ~ctx ~kind:"deployment" ~namespace
-    @ list_live_workloads ~ctx ~kind:"rollout" ~namespace
-  in
+  let* deployments = list_live_workloads ~ctx ~kind:"deployment" ~namespace in
+  let* rollouts = list_live_workloads ~ctx ~kind:"rollout" ~namespace in
+  let names = deployments @ rollouts in
   let* () =
     iter_namespaces names ~f:(fun name ->
       let* () =
@@ -298,13 +328,9 @@ let restart_and_verify ~ctx ~namespace =
 ;;
 
 let patch_workload_secrets ~ctx ~namespace ~key ~value =
-  list_workload_secrets ~ctx namespace
-  |> List.map (fun secret_name ->
+  let* secret_names = list_workload_secrets ~ctx namespace in
+  iter_namespaces secret_names ~f:(fun secret_name ->
     apply_to_named_secret ~ctx ~secret_name ~namespace ~key ~value)
-  |> List.find_opt Result.is_error
-  |> function
-  | Some (Error _ as e) -> e
-  | _ -> Ok ()
 ;;
 
 let set ~ctx ~env ~workspace:_ ~namespaces ~key ~value =
@@ -338,9 +364,8 @@ let list ~ctx ~env ~workspace:_ ~namespaces =
   let* namespaces = validate_operation_context ~env ~namespaces in
   let* keys =
     fold_namespaces namespaces ~init:[] ~f:(fun acc namespace ->
-      match read_keys ~ctx namespace with
-      | Ok keys -> Ok (keys @ acc)
-      | Error _ -> Ok acc)
+      let* keys = read_keys ~ctx namespace in
+      Ok (keys @ acc))
   in
   Ok (Listed (List.sort_uniq String.compare keys))
 ;;
@@ -377,8 +402,9 @@ let delete ~ctx ~env ~workspace:_ ~namespaces ~key =
   let* () =
     iter_namespaces namespaces ~f:(fun namespace ->
       let* () = remove_from namespace Sol_cli_manifest.runtime_secret_name in
+      let* secret_names = list_workload_secrets ~ctx namespace in
       let* () =
-        iter_namespaces (list_workload_secrets ~ctx namespace) ~f:(fun secret_name ->
+        iter_namespaces secret_names ~f:(fun secret_name ->
           remove_from namespace secret_name)
       in
       let* _names = restart_and_verify ~ctx ~namespace in

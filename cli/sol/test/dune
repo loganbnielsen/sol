@@ -25,6 +25,7 @@
   test_rollback
   test_migration_disposition
   test_secret_strategy
+  test_secret_reads
   test_rollout_diagnosis
   test_loki
   test_run_log
