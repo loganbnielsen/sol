@@ -392,6 +392,144 @@ let test_jwt_verified_malformed_static_jwks_fails_closed () =
   | Error _ -> Alcotest.fail "expected Server_error for malformed static JWKS"
 ;;
 
+(* ── BUG-053 / FND-0050 ──────────────────────────────────────────────── *)
+
+let test_jwt_payload_not_an_object () =
+  match
+    Test_auth_internal.validate (jwt_cfg []) (bearer (make_jwt_with_payload "[]"))
+  with
+  | Error (`Unauthorized _) -> ()
+  | Error _ -> Alcotest.fail "expected Unauthorized"
+  | Ok _ -> Alcotest.fail "a non-object payload must be rejected"
+  | exception e ->
+    Alcotest.failf "a non-object payload must be a 401, not %s" (Printexc.to_string e)
+;;
+
+(* Each test uses its own URL, so the process-wide cache never carries over. *)
+let jwks_cfg_for url =
+  `Jwt
+    Auth.
+      { scopes = []
+      ; verification =
+          Verified_signature_required
+            { issuer; audience; algorithms = [ `RS256 ]; key_source = Jwks_url url }
+      }
+;;
+
+let test_concurrent_cache_misses_share_one_fetch () =
+  Eio_main.run
+  @@ fun env ->
+  let url = "https://idp.example.com/concurrent/jwks.json" in
+  let fetches = ref 0 in
+  let slow_fetch _ =
+    incr fetches;
+    (* Suspends the fiber, as a network fetch does. *)
+    Eio.Time.sleep env#clock 0.1;
+    Ok (Jose.Jwks.of_string rsa_jwks_doc)
+  in
+  let tok = sign_rs256 () in
+  let validate () =
+    match
+      Test_auth_internal.validate ~fetch_jwks:slow_fetch (jwks_cfg_for url) (bearer tok)
+    with
+    | Ok _ -> "ok"
+    | Error (`Unauthorized m | `Forbidden m | `Server_error m) -> "error: " ^ m
+    | exception e -> "raised: " ^ Printexc.to_string e
+  in
+  let a, b = Eio.Fiber.pair validate validate in
+  Alcotest.(check (pair string string)) "both requests verified" ("ok", "ok") (a, b);
+  Alcotest.(check int) "one fetch served both" 1 !fetches
+;;
+
+let seed_jwks_cache ~url ~age_s doc =
+  Atomic.set
+    Test_auth_internal.jwks_cache
+    (Some
+       { Test_auth_internal.url
+       ; fetched_at = Unix.gettimeofday () -. age_s
+       ; jwks = Jose.Jwks.of_string doc
+       })
+;;
+
+let empty_jwks_doc = Jose.Jwks.to_string { Jose.Jwks.keys = [] }
+
+let test_unknown_kid_refetches () =
+  let url = "https://idp.example.com/rotated/jwks.json" in
+  (* A set older than the refetch interval but inside the TTL, without the key. *)
+  seed_jwks_cache ~url ~age_s:60.0 empty_jwks_doc;
+  let fetches = ref 0 in
+  let fetch _ =
+    incr fetches;
+    Ok (Jose.Jwks.of_string rsa_jwks_doc)
+  in
+  (match
+     Test_auth_internal.validate
+       ~fetch_jwks:fetch
+       (jwks_cfg_for url)
+       (bearer (sign_rs256 ()))
+   with
+   | Ok _ -> ()
+   | Error _ -> Alcotest.fail "a key rotated in after the last fetch must be found");
+  Alcotest.(check int) "refetched once" 1 !fetches
+;;
+
+let test_unknown_kid_refetch_is_rate_limited () =
+  let url = "https://idp.example.com/recent/jwks.json" in
+  seed_jwks_cache ~url ~age_s:5.0 empty_jwks_doc;
+  let fetches = ref 0 in
+  let fetch _ =
+    incr fetches;
+    Ok (Jose.Jwks.of_string rsa_jwks_doc)
+  in
+  (match
+     Test_auth_internal.validate
+       ~fetch_jwks:fetch
+       (jwks_cfg_for url)
+       (bearer (sign_rs256 ()))
+   with
+   | Error (`Unauthorized _) -> ()
+   | _ -> Alcotest.fail "expected Unauthorized without a refetch");
+  Alcotest.(check int) "no refetch inside the interval" 0 !fetches
+;;
+
+let test_failed_fetch_is_shared_not_repeated () =
+  Eio_main.run
+  @@ fun env ->
+  let url = "https://idp.example.com/outage/jwks.json" in
+  let fetches = ref 0 in
+  let failing_fetch _ =
+    incr fetches;
+    Eio.Time.sleep env#clock 0.1;
+    Error "connection refused"
+  in
+  let tok = sign_rs256 () in
+  let validate () =
+    match
+      Test_auth_internal.validate
+        ~fetch_jwks:failing_fetch
+        (jwks_cfg_for url)
+        (bearer tok)
+    with
+    | Error (`Server_error _) -> ()
+    | _ -> Alcotest.fail "expected Server_error while the IdP is down"
+  in
+  Eio.Fiber.all [ validate; validate; validate; validate; validate ];
+  Alcotest.(check int) "one fetch for five waiting requests" 1 !fetches
+;;
+
+let test_unknown_kid_with_failed_refetch_is_401 () =
+  let url = "https://idp.example.com/down-rotated/jwks.json" in
+  seed_jwks_cache ~url ~age_s:60.0 empty_jwks_doc;
+  match
+    Test_auth_internal.validate
+      ~fetch_jwks:(fun _ -> Error "connection refused")
+      (jwks_cfg_for url)
+      (bearer (sign_rs256 ()))
+  with
+  | Error (`Unauthorized _) -> ()
+  | _ -> Alcotest.fail "an unknown kid is a 401 even when the refetch fails"
+;;
+
 let () =
   Alcotest.run
     "auth"
@@ -420,6 +558,29 @@ let () =
         ; Alcotest.test_case "bad payload b64 → 401" `Quick test_jwt_payload_not_base64
         ; Alcotest.test_case "bad payload JSON → 401" `Quick test_jwt_payload_not_json
         ; Alcotest.test_case "missing header → 401" `Quick test_jwt_missing_header
+        ] )
+    ; ( "jwks (BUG-053)"
+      , [ Alcotest.test_case
+            "non-object payload → 401"
+            `Quick
+            test_jwt_payload_not_an_object
+        ; Alcotest.test_case
+            "concurrent cache misses share one fetch"
+            `Quick
+            test_concurrent_cache_misses_share_one_fetch
+        ; Alcotest.test_case "unknown kid refetches" `Quick test_unknown_kid_refetches
+        ; Alcotest.test_case
+            "unknown kid refetch is rate-limited"
+            `Quick
+            test_unknown_kid_refetch_is_rate_limited
+        ; Alcotest.test_case
+            "failed fetch is shared, not repeated"
+            `Quick
+            test_failed_fetch_is_shared_not_repeated
+        ; Alcotest.test_case
+            "unknown kid with failed refetch → 401"
+            `Quick
+            test_unknown_kid_with_failed_refetch_is_401
         ] )
     ; ( "jwt_verified"
       , [ Alcotest.test_case "HS256 valid → ok" `Quick test_jwt_verified_hs256_valid

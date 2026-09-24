@@ -162,12 +162,19 @@ For production mode (`verification = Verified_signature_required vconfig`):
    - `Jwks_url url` — fetch the JWKS over HTTPS (`https-eio`, so RNG seeding and
      CA-bundle handling are inherited, not reimplemented), cache it for 5 minutes,
      look up by `kid`. A fetch or parse failure returns `Server_error` (500) —
-     it never falls back to `Unverified_dev_only` behavior.
+     it never falls back to `Unverified_dev_only` behavior. The refresh is
+     single-flight under an `Eio.Mutex`: requests that miss the cache together
+     wait for one fetch (BUG-053). A `kid` missing from the cached set triggers one
+     refetch, at most every 30 s, so a key the IdP just rotated in is accepted; if
+     that refetch fails the token is a 401 (the cached set is authoritative). A
+     failed fetch is shared with every waiting request for 5 s rather than repeated.
 4. Verify the signature and `exp` via `Jose.Jwt.validate`.
 5. Check `iss` equals `vconfig.issuer` and `aud` contains `vconfig.audience`
    (`aud` may be a single string or a JSON array per RFC 7519).
 6. Check every scope in `config.scopes` is present in the token's `scope` claim.
 7. Return `User { sub; scopes = token_scopes; claims = full_payload_json }`.
+
+A payload that is valid JSON but not an object is a 401 in both modes (BUG-053).
 
 HS256 support exists alongside JWKS-based RS256/ES256/ES384/ES512 because plenty
 of real deployments are HS256-only — but it always goes through the same `jose`
@@ -565,6 +572,8 @@ TCP accept
   │     JWKS unavailable → 500, close
   └─ call handler
   │     exception       → 500, log via obs, close
+  │  (any exception from the steps above, outside the handler too → 500, logged;
+  │   every request gets a response — BUG-053)
   └─ write response     (cohttp-eio)
   └─ close connection
 ```
@@ -746,9 +755,6 @@ let () =
 
 ## Out of Scope (v1)
 
-- **JWKS refresh on an unknown `kid`** — a fetched JWKS is cached for 5 minutes, and a
-  token whose `kid` is not in the cached set is rejected (401) until the cache expires,
-  so an IdP key rotation can reject valid tokens for up to 5 minutes
 - **Tokens without `exp`** — accepted without an expiry check; issue tokens with `exp`
 - **HTTPS / TLS** — terminate at k8s ingress; plain HTTP inside the cluster
 - **HTTP keep-alive** — one request per TCP connection
