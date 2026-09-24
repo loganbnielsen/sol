@@ -103,7 +103,7 @@ let strip_sol_hdrs headers =
     already-fully-resolved [headers] to send (no further header policy is
     decided at publish time) plus [attempt]/[delay_s] for metrics
     ([on_retry]/[on_relay_publish]) — not for serialization. Built exclusively
-    by [retry_message]/[dead_letter_message]/[retry_decode_failure_message]
+    by [retry_message]/[dead_letter_message]/[decode_failure_message]
     below; nothing else should construct one by hand. *)
 type relay =
   { source : Kafka.Consumer.message
@@ -135,12 +135,12 @@ let dead_letter_message ~raw_msg ~attempt ~group_id =
   { base with headers = (hdr_origin_group, Some group_id) :: base.headers }
 ;;
 
-(** A retry record that couldn't even be decoded: preserves [raw_msg]'s
-    existing headers untouched (including whatever [X-Sol-Attempt]/
-    [X-Sol-Retry-At] it already carried — this is not another scheduled
-    attempt), and appends a decode diagnostic plus [X-Sol-Origin-Group]
-    (BUG-030, see {!dead_letter_message}). *)
-let retry_decode_failure_message ~raw_msg ~attempt ~decode_error ~group_id =
+(** A source or retry record that couldn't even be decoded: preserves
+    [raw_msg]'s existing headers untouched (including whatever [X-Sol-Attempt]/
+    [X-Sol-Retry-At] a retry record already carried — this is not another
+    scheduled attempt), and appends a decode diagnostic plus
+    [X-Sol-Origin-Group] (BUG-030, see {!dead_letter_message}). *)
+let decode_failure_message ~raw_msg ~attempt ~decode_error ~group_id =
   { source = raw_msg
   ; headers =
       (hdr_decode_error, Some decode_error)
@@ -205,10 +205,13 @@ let execute_action ~group_id action ~raw_msg ~attempt ~publish ~ack =
      | Error e -> Error e)
 ;;
 
-(** A retry record that couldn't even be decoded always goes to the DLQ; it
-    doesn't need [execute_action]'s [retry_action] dispatch, so it builds its
-    own relay command and publishes directly. *)
-let route_retry_decode_error
+(** A record that couldn't be decoded goes to the DLQ: always on the retry
+    topic, and on the source topic under [Route_to_dlq] (BUG-051). It doesn't
+    need [execute_action]'s [retry_action] dispatch, so it builds its own relay
+    command and publishes directly; the record is acked only once that publish
+    succeeds. *)
+let route_decode_error
+      ~stage
       ~dlq_topic
       ~raw_msg
       ~attempt
@@ -217,11 +220,16 @@ let route_retry_decode_error
       ~publish
       ~ack
   =
-  Printf.eprintf "sol-worker: RETRY_DECODE_ERROR to_dlq=true error=%S\n%!" decode_error;
+  Printf.eprintf
+    "sol-worker: %s to_dlq=true error=%S\n%!"
+    (match stage with
+     | `Source -> "DECODE_ERROR"
+     | `Retry -> "RETRY_DECODE_ERROR")
+    decode_error;
   match
     publish
       ~target_topic:dlq_topic
-      (retry_decode_failure_message ~raw_msg ~attempt ~decode_error ~group_id)
+      (decode_failure_message ~raw_msg ~attempt ~decode_error ~group_id)
   with
   | Ok () -> ack ()
   | Error e -> Error e
@@ -283,7 +291,8 @@ let consume
       ~on_assigned
       ~on_revoked
       ~on_poll
-      ~on_decode_error
+      ~decode_error_policy
+      ~observe_decode_error
       ~on_retry
       ~on_relay_publish
       ~handler
@@ -457,7 +466,8 @@ let consume
           | Error (e, raw_bytes) ->
             ignore raw_bytes;
             (match
-               route_retry_decode_error
+               route_decode_error
+                 ~stage:`Retry
                  ~dlq_topic:dlq_topic_name
                  ~raw_msg
                  ~attempt
@@ -579,10 +589,29 @@ let consume
     let decode_and_handle raw_msg ~ack =
       match Kafka_service_schema.decode_message topic raw_msg with
       | Error (e, raw_bytes) ->
-        (match on_decode_error e ~raw_bytes ~ack with
-         | Kafka.Consumer.Continue -> Kafka.Consumer.Continue
-         | Kafka.Consumer.Stop -> Kafka.Consumer.Stop
-         | Kafka.Consumer.Error e -> Kafka.Consumer.Error e)
+        (match (decode_error_policy : Kafka_service_intf.decode_error_policy) with
+         | Ack_and_drop ->
+           observe_decode_error e ~raw_bytes ~disposition:`Dropped;
+           Kafka_service_intf.ack_and_drop_decode_error e ~raw_bytes ~ack
+         | Route_to_dlq ->
+           (* BUG-051 / FND-0049: a provisioned DLQ exists, so an undecodable
+              source record is diverted there, never acked through. A failed
+              publish leaves it unacked and fails the partition, like any
+              other relay failure. *)
+           observe_decode_error e ~raw_bytes ~disposition:`Dead_lettered;
+           (match
+              route_decode_error
+                ~stage:`Source
+                ~dlq_topic:dlq_topic_name
+                ~raw_msg
+                ~attempt:1
+                ~decode_error:e
+                ~group_id
+                ~publish
+                ~ack
+            with
+            | Ok () -> Kafka.Consumer.Continue
+            | Error e -> Kafka.Consumer.Error e))
       | Ok (msg, trace_ctx) ->
         (match handler msg ~ack ~trace_ctx with
          | Kafka.Consumer.Continue -> Kafka.Consumer.Continue
