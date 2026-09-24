@@ -16,9 +16,12 @@
 
 let signals = [ Sys.sigterm; Sys.sigint ]
 
-(* Write ends of every live registration. Signal handlers run synchronously on
-   the main domain at safe points, so a snapshot taken inside the handler cannot
-   race with an unregister that removes an fd before closing it. *)
+(* Write ends of every live registration. OCaml 5 runs signal handlers
+   synchronously at a safe point of whichever domain polls, so on a single domain
+   a snapshot taken inside the handler cannot race with an unregister that removes
+   an fd before closing it. [register]/[unregister] and [previous] assume that
+   single-domain use -- every current caller (svc, worker, fn, jobs) runs on one
+   domain; spawning domains that also install handlers would need a lock here. *)
 let registered : Unix.file_descr list Atomic.t = Atomic.make []
 
 (* The dispositions to put back when the last registration goes. *)
