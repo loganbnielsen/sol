@@ -434,6 +434,33 @@ let write_file path content =
   close_out oc
 ;;
 
+let discover_topics_ok () =
+  match Sol_cli_deployment_plan.discover_topics () with
+  | Ok topics -> topics
+  | Error e -> Alcotest.fail (Sol_cli_toml.parse_error_to_string e)
+;;
+
+(* BUG-042: a misspelled key in an event sol.toml used to drop its topics silently. *)
+let test_discover_topics_rejects_misspelled_event_toml () =
+  let tmp = Filename.temp_dir "sol_test_topics" "" in
+  with_cwd tmp (fun () ->
+    mkdirs "events/payments";
+    write_file
+      "events/payments/sol.toml"
+      {|[service]
+topic = ["payments.charged"]
+|};
+    match Sol_cli_deployment_plan.discover_topics () with
+    | Ok _ -> Alcotest.fail "expected a misspelled event sol.toml to be an error"
+    | Error e ->
+      Alcotest.(check bool)
+        "names the unknown key"
+        true
+        (Sol_cli_port_forward.string_contains
+           ~needle:"\"topic\""
+           (Sol_cli_toml.parse_error_to_string e)))
+;;
+
 let test_discover_topics_finds_topic () =
   let tmp = Filename.temp_dir "sol_test_topics" "" in
   with_cwd tmp (fun () ->
@@ -443,7 +470,7 @@ let test_discover_topics_finds_topic () =
       {|[service]
 topics = ["payments.charged"]
 |};
-    let topics = Sol_cli_deployment_plan.discover_topics () in
+    let topics = discover_topics_ok () in
     check_ids
       "topic found"
       Sol_cli_plan_ids.Topic_name.to_string
@@ -454,7 +481,7 @@ topics = ["payments.charged"]
 let test_discover_topics_empty_when_no_dir () =
   let tmp = Filename.temp_dir "sol_test_topics_nodir" "" in
   with_cwd tmp (fun () ->
-    let topics = Sol_cli_deployment_plan.discover_topics () in
+    let topics = discover_topics_ok () in
     Alcotest.(check int) "empty without events dir" 0 (List.length topics))
 ;;
 
@@ -467,7 +494,7 @@ let test_discover_topics_multiple_topics_in_toml () =
       {|[service]
 topics = ["payments.charged", "payments.refunded"]
 |};
-    let topics = Sol_cli_deployment_plan.discover_topics () in
+    let topics = discover_topics_ok () in
     check_ids
       "multiple topics in one toml"
       Sol_cli_plan_ids.Topic_name.to_string
@@ -491,7 +518,7 @@ topics = ["dup.topic"]
       {|[service]
 topics = ["dup.topic"]
 |};
-    let topics = Sol_cli_deployment_plan.discover_topics () in
+    let topics = discover_topics_ok () in
     check_ids
       "deduplicates"
       Sol_cli_plan_ids.Topic_name.to_string
@@ -508,7 +535,7 @@ let test_discover_topics_subdirectory () =
       {|[service]
 topics = ["payments.charged"]
 |};
-    let topics = Sol_cli_deployment_plan.discover_topics () in
+    let topics = discover_topics_ok () in
     check_ids
       "subdirectory topic found"
       Sol_cli_plan_ids.Topic_name.to_string
@@ -525,7 +552,7 @@ let test_discover_topics_top_level_toml () =
       {|[service]
 topics = ["top.event"]
 |};
-    let topics = Sol_cli_deployment_plan.discover_topics () in
+    let topics = discover_topics_ok () in
     check_ids
       "top-level events/sol.toml"
       Sol_cli_plan_ids.Topic_name.to_string
@@ -553,7 +580,7 @@ topics = ["payments.charged"]
       {|[service]
 topics = ["orders.placed"]
 |};
-    let topics = Sol_cli_deployment_plan.discover_topics () in
+    let topics = discover_topics_ok () in
     check_ids
       "mixed top-level and subdir topics"
       Sol_cli_plan_ids.Topic_name.to_string
@@ -577,7 +604,7 @@ let test_discover_topics_no_false_positives_from_ml_files () =
        let topic_name = Kafka_service.topic_name_exn \"payments.charged\"\n\
        let s = \"let topic_name = not-a-real-topic\"\n";
     (* No sol.toml — so discover_topics should return [] *)
-    let topics = Sol_cli_deployment_plan.discover_topics () in
+    let topics = discover_topics_ok () in
     Alcotest.(check int)
       "ml files are not scanned — no false positives from comments or strings"
       0
@@ -1745,6 +1772,10 @@ let () =
             "subdirectory discovery"
             `Quick
             test_discover_topics_subdirectory
+        ; Alcotest.test_case
+            "misspelled event sol.toml is an error"
+            `Quick
+            test_discover_topics_rejects_misspelled_event_toml
         ; Alcotest.test_case
             "top-level events/sol.toml"
             `Quick
