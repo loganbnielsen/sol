@@ -2359,6 +2359,14 @@ let test_sol_secret_rejects_unverified_jwt_opt_in () =
     (Result.is_error (Sol_cli_secret.validate_key "SOL_ALLOW_UNVERIFIED_JWT"))
 ;;
 
+(* A secret already stored under the reserved name must still be removable. *)
+let test_sol_secret_delete_accepts_reserved_key_format () =
+  check_bool
+    "sol secret delete may remove the reserved key"
+    true
+    (Result.is_ok (Sol_cli_secret.validate_key_format "SOL_ALLOW_UNVERIFIED_JWT"))
+;;
+
 let test_deploy_render_has_no_unverified_jwt_opt_in () =
   let _, workload = render_spec_ok svc_spec in
   check_bool
@@ -2391,6 +2399,10 @@ let () =
             "sol secret set refuses it"
             `Quick
             test_sol_secret_rejects_unverified_jwt_opt_in
+        ; Alcotest.test_case
+            "sol secret delete can still remove it"
+            `Quick
+            test_sol_secret_delete_accepts_reserved_key_format
         ] )
     ; ( "SOL_ENV reaches every primitive"
       , [ Alcotest.test_case
