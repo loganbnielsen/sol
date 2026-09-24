@@ -130,10 +130,13 @@ type plan_error =
       }
 
 (** Scan [events/] subdirectories for [sol.toml] files with topic arrays.
-    Returns validated {!Sol_cli_plan_ids.Topic_name.t} values, sorted and
-    deduplicated. Invalid names are skipped with a warning. Returns [[]] when
-    the [events/] directory does not exist. *)
-val discover_topics : unit -> Sol_cli_plan_ids.Topic_name.t list
+    Returns [Ok] validated {!Sol_cli_plan_ids.Topic_name.t} values, sorted and
+    deduplicated. Invalid names are skipped with a warning. Returns [Ok []] when
+    the [events/] directory does not exist. [Error] when an event [sol.toml] is
+    malformed or has an unknown key (BUG-042); a missing one declares no topics. *)
+val discover_topics
+  :  unit
+  -> (Sol_cli_plan_ids.Topic_name.t list, Sol_cli_toml.parse_error) result
 
 (** Scan [db/migrations/*.sql] in the current directory and return validated
     {!Sol_cli_plan_ids.Migration_file.t} values, sorted by filename. Returns

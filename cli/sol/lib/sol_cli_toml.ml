@@ -1,5 +1,6 @@
-(* Parser for sol.toml (otoml-backed, TOML 1.0.0). Unknown keys/sections are
-   forward-compatible; malformed TOML raises Parse_error. *)
+(* Parser for sol.toml (otoml-backed, TOML 1.0.0). Malformed TOML, a wrong value
+   type, and an unknown key or table are all errors (BUG-042): a misspelled key used
+   to load as if it had not been written, so the setting silently took its default. *)
 
 type rollout_strategy =
   | Recreate
@@ -608,6 +609,114 @@ let parse_steps path doc =
     loop [] items
 ;;
 
+(* ── Known keys (BUG-042 / FND-0033) ─────────────────────────────────────────
+   The schema, table by table. [User_table] marks a table whose keys are the
+   author's own data (env config, extra labels, volume names), which is not
+   checked further here; each value is validated by its own parser below. *)
+
+type key_schema =
+  | Leaf
+  | Table of (string * key_schema) list
+  | User_table
+  | Volumes
+  | Canary_steps
+
+let volume_schema = [ "mount_path", Leaf; "size", Leaf; "access_mode", Leaf ]
+
+let schema =
+  [ ( "infra"
+    , Table
+        [ ( "scale"
+          , Table [ "replicas", Leaf; "availability", Leaf; "cpu", Leaf; "memory", Leaf ]
+          )
+        ; "env", Table [ "config", User_table; "secrets", Leaf ]
+        ; "volumes", Volumes
+        ; ( "deploy"
+          , Table [ "rollout_strategy", Leaf; "ingress_host", Leaf; "ingress_path", Leaf ]
+          )
+        ; "labels", Table [ "extra_labels", User_table ]
+        ; "rollout", Table [ "strategy", Leaf; "steps", Canary_steps ]
+        ] )
+  ; ( "service"
+    , Table
+        [ "schedule", Leaf
+        ; "scheduled_concurrency", Leaf
+        ; "backoff_limit", Leaf
+        ; "calls", Leaf
+        ; "topics", Leaf
+        ] )
+  ]
+;;
+
+let table_name = function
+  | [] -> "the top level"
+  | keys -> "[" ^ String.concat "." keys ^ "]"
+;;
+
+let rec check_keys path ~at known pairs =
+  match pairs with
+  | [] -> Ok ()
+  | (key, value) :: rest ->
+    (match List.assoc_opt key known with
+     | None ->
+       validation_error
+         path
+         (Printf.sprintf
+            "sol.toml: unknown key %S in %s; the keys Sol reads there are: %s"
+            key
+            (table_name at)
+            (String.concat ", " (List.map fst known)))
+     | Some sub ->
+       let* () = check_value path ~at:(at @ [ key ]) sub value in
+       check_keys path ~at known rest)
+
+and check_value path ~at sub value =
+  match sub with
+  | Leaf | User_table -> Ok ()
+  | Table known ->
+    (match value with
+     | Otoml.TomlTable pairs | Otoml.TomlInlineTable pairs ->
+       check_keys path ~at known pairs
+     | _ ->
+       validation_error
+         path
+         (Printf.sprintf "sol.toml: %s must be a table" (table_name at)))
+  | Volumes ->
+    (match value with
+     | Otoml.TomlTable volumes | Otoml.TomlInlineTable volumes ->
+       List.fold_left
+         (fun acc (name, volume) ->
+            let* () = acc in
+            check_value path ~at:(at @ [ name ]) (Table volume_schema) volume)
+         (Ok ())
+         volumes
+     | _ -> Ok ())
+  | Canary_steps ->
+    (match value with
+     | Otoml.TomlArray steps | Otoml.TomlTableArray steps ->
+       List.fold_left
+         (fun acc step ->
+            let* () = acc in
+            match step with
+            | Otoml.TomlTable pairs | Otoml.TomlInlineTable pairs ->
+              check_keys
+                path
+                ~at
+                [ "weight", Leaf; "pause", Table [ "duration", Leaf ] ]
+                pairs
+            | _ -> Ok ())
+         (Ok ())
+         steps
+     | _ -> Ok ())
+;;
+
+let check_known_keys path doc =
+  match doc with
+  | Otoml.TomlTable pairs | Otoml.TomlInlineTable pairs ->
+    check_keys path ~at:[] schema pairs
+  | _ -> Ok ()
+;;
+
 (* ── Loader ──────────────────────────────────────────────────────────────── *)
 
 let load_result path =
@@ -621,6 +730,7 @@ let load_result path =
         | Error msg ->
           Error (Toml_syntax { path; message = Printf.sprintf "sol.toml: %s" msg })
       in
+      let* () = check_known_keys path doc in
       (* [infra.scale] *)
       let replicas =
         Otoml.Helpers.find_integer_opt doc [ "infra"; "scale"; "replicas" ]

@@ -53,7 +53,11 @@ resources. You retain full control and full responsibility.
 
 ## Supported `sol.toml` overrides
 
-All overrides live under sections in the per-service `sol.toml` file.
+All overrides live under sections in the per-service `sol.toml` file. The keys and
+tables below are the whole schema: **an unknown key or table is an error** that names
+it, so a typo such as `replica = 3` or `[infra.sacle]` stops `sol plan`/`sol deploy`
+instead of silently deploying the default. Only the contents of `config`,
+`extra_labels` and the volume names under `[infra.volumes]` are yours to choose.
 
 ### `[service]`
 

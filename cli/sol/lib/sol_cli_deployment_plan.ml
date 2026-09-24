@@ -1070,7 +1070,7 @@ let of_services_result
       ; workloads = List.map release_workload_of_spec resolved_services
       }
   in
-  let topics = discover_topics () in
+  let* topics = discover_topics () |> Result.map_error (fun err -> Toml_error err) in
   let migrations = discover_migrations () in
   let schema_subjects = discover_schema_subjects () in
   Ok
