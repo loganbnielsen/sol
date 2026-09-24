@@ -28,3 +28,46 @@ After destroy, query the provider (`aws rds describe-db-snapshots …`, automate
 - Offline test with stubbed aws: missing snapshot → non-zero exit naming it; residue under `none` → non-zero exit listing it.
 - Report text is derived from observed evidence (snapshot id from the provider response).
 - Demo/example: not applicable — state in completion notes.
+
+## Completion notes (2026-09-24, landed as HARDEN-004 step 5)
+
+**Premise re-verified** against `origin/main @ 71d3ee79` before starting: `retention_report`
+was still called from the destroy edge and still rendered the policy, and
+`grep -rn 'describe-db-snapshots' cli/sol/bin/` still returned nothing. The premise held.
+
+**What landed.** `Sol_cli_cloud_lifecycle.retention_report` is deleted; retention is reported
+from a typed observation (`Sol_cli_destroy_verification`). AWS `final-snapshot` queries
+`aws rds describe-db-snapshots --db-snapshot-identifier <the id the preparation established>`
+and requires the provider to report it `available`; AWS `none` queries
+`--db-instance-identifier <the captured instance>` and requires no manual or automated
+snapshot for it; GCP has no snapshot surface and the report says so instead of claiming "no
+residual billable artifacts". A provider answer about a different identifier is not evidence
+about this one.
+
+**Acceptance criteria, as observed:**
+
+- missing snapshot → non-zero exit naming it: `test_destroy_verification.ml` pins
+  `DBSnapshotNotFound` → `Retention_violated` naming the identifier, and the offline harness
+  scenario `RDS_SNAPSHOT_MISSING=1` asserts the destroy fails with
+  `final-snapshot NOT observed` and `the target declared it keeps its final snapshot`.
+- residue under `none` → non-zero exit listing it: the harness scenario
+  `RDS_SNAPSHOT_RESIDUE=1` asserts failure with `leaked-manual` named and
+  `retain-nothing NOT observed` in the message.
+- report text derived from observed evidence: the harness asserts the report contains
+  `final snapshot <id> observed available` for the identifier the *preparation* established,
+  and that the old policy-only wording ("no residual billable artifacts") is **absent** from
+  the output.
+
+Also covered beyond the criteria: a snapshot still being created is observed for a bounded
+time and then reported UNKNOWN (a failure, never a met guarantee), and a snapshot that is
+`creating` once and then `available` is *observed* — so a retry that did not happen fails.
+An unobservable query (timeout, permission, unavailable CLI) is UNKNOWN and fails.
+
+**Dependency note.** `Depends on: REFAC-091` is satisfied in substance for this ticket: the
+destroy half (`Sol_cli_cloud_destroy.execute ~deps`, Step 2) is merged. REFAC-091's *install*
+half remains open, which is why that ticket is still in `READY_FOR_ENGINEERING` — but nothing
+INFRA-072 needed from it is outstanding.
+
+**Demo/example: not applicable** — this changes what a destroy *reports and refuses*, not what
+an application author writes; no `sol.toml` field, generated manifest or runtime contract
+changed. **No language-parity impact** (DEC-022): nothing application-facing changed.
