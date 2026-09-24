@@ -5,7 +5,7 @@
 - **State:** `OPEN`
 - **First identified:** 2026-09-23, by a second reviewer at `main @ f2e1773`; re-verified at
   `origin/main @ f3e9480b`
-- **Derived ticket:** `INFRA-071`
+- **Derived ticket:** `REFAC-091` (absorbed; see HARDEN-004 handoff step 2)
 - **Evidence class:** `STATIC`
 
 ## What is established

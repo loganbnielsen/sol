@@ -122,4 +122,4 @@ here beyond this paragraph.
   the very resource the preparation skipped. The design text above is left as written (it is
   the record of what was believed); the "zero create operations during recovery" criterion
   must be tested against the real sequence. See **FND-0044** / `INFRA-068`; the precision
-  issues in the #451 implementation are **FND-0048** / `INFRA-071`.
+  issues in the #451 implementation are **FND-0048** / `REFAC-091`.

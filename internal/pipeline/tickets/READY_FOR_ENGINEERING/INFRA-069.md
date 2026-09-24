@@ -7,9 +7,11 @@ source: internal/pipeline/audits/2026-09-23_correctness_audit.md
 
 Verify destroy against the IDs and regions recorded in state, not guessed names in a defaulted region
 
-**Depends on:** None.
+**Depends on:** REFAC-091.
 
 **Finding:** FND-0045 (`internal/pipeline/audits/findings/`).
+
+**Sequencing:** this is step 5 of the HARDEN-004 order in `internal/pipeline/audits/HARDEN-004-handoff.md` ("The order now"). Coordinate with the HARDEN-004 owner; land it as that step, not in parallel.
 
 **Premise verified 2026-09-23** against `origin/main @ f3e9480b` while filing (see the finding for the command/probe and observed output).
 

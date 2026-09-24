@@ -11,6 +11,8 @@ GCP `with_cluster_access` must honour `on_error` so a credential failure removes
 
 **Finding:** FND-0047 (`internal/pipeline/audits/findings/`).
 
+**Sequencing:** a small standalone fix (item E in `internal/pipeline/audits/HARDEN-004-handoff.md`); REFAC-091 removes the class. If REFAC-091 lands first, verify it covers this and close this ticket with that note.
+
 **Premise verified 2026-09-23** against `origin/main @ f3e9480b` while filing (see the finding for the command/probe and observed output).
 
 ## Problem

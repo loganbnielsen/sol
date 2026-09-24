@@ -4,7 +4,7 @@
 - **State:** `OPEN`
 - **First identified:** 2026-09-23. The alerting gap and the policy argument were raised by
   a second reviewer; re-verified in this audit.
-- **Derived ticket:** `OBS-047` (alerts), `DEC-044` (BACKLOG — decode policy)
+- **Derived ticket:** `OBS-047` (alerts), `BUG-051` (decode policy — decided in HARDEN-004 handoff step 6)
 - **Evidence class:** `STATIC`
 
 ## What is established
@@ -32,7 +32,7 @@ through the topic at full throughput, and the only trace is a counter nobody is 
 on. This audit records that argument without overturning the recorded decision. It needs
 an explicit re-decision (DEC).
 
-## Decision needed
+## Decision (recorded 2026-09-23 in the HARDEN-004 handoff, step 6)
 
 (1) Route source-topic decode failures to the DLQ whenever `Retry_topics` configures one,
 and make ack-and-drop an explicit opt-in exposed through `Worker.Make*`. (2) Add starter

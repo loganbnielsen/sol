@@ -60,8 +60,8 @@ probe sources are recorded in each finding; none was committed.
 | FND-0045 — destroy verification describes guessed names in a guessed region (default `us-central1`), via a line-based tfvars parser that swallows errors; any "not found" counts as absent | `VERIFIED_DEFECT` | high | `STATIC` | INFRA-069 |
 | FND-0046 — the retention report is printed from the policy, never observed from the provider | `VERIFIED_DEFECT` | medium | `STATIC` | INFRA-072 |
 | FND-0047 — on GCP, `with_cluster_access` ignores `on_error`, so a credential failure exits with bootstrap access still elevated (install and destroy) | `VERIFIED_DEFECT` | high | `STATIC` | INFRA-070, REFAC-091 |
-| FND-0048 — `gcp_protection_state` matches guarded resources by type in `root_module`, not by address; an empty state is reported as "could not read state" | `VERIFIED_DEFECT` | medium | `STATIC` | INFRA-071 |
-| FND-0049 — decode drops, DLQ inflow and `relay_failed` have metrics but no starter alerts; the source-topic ack-and-drop default is contested | `DESIGN_GAP` | medium | `STATIC` | OBS-047; DEC-044 (backlog) |
+| FND-0048 — `gcp_protection_state` matches guarded resources by type in `root_module`, not by address; an empty state is reported as "could not read state" | `VERIFIED_DEFECT` | medium | `STATIC` | REFAC-091 |
+| FND-0049 — decode drops, DLQ inflow and `relay_failed` have metrics but no starter alerts; the source-topic ack-and-drop default is contested | `DESIGN_GAP` | medium | `STATIC` | OBS-047, BUG-051 |
 
 ## What the findings share
 
@@ -119,17 +119,16 @@ per-workload Secrets) is adjacent to FND-0031 but distinct.
 
 ## Recommended order
 
-1. **FND-0047 / INFRA-070** — small; closes an elevated-authority leak on every GCP failure.
-2. **FND-0044** — settle which outputs case the frozen Attempt-6 state is in, offline
-   (`terraform output -json` + `terraform plan` on a copy), **before** Attempt 7. Then
-   INFRA-068.
-3. **Port the cloud lifecycle to the `cmd_rollback.ml` shape** (`execute ~deps` returning a
-   typed outcome; exit only at the command edge). This is the structural fix behind FND-0047
-   and makes INFRA-068/069/071/072 small and testable offline with fakes. Filed as REFAC-091.
-4. **FND-0031 / BUG-040** and **FND-0032 / BUG-041** — destructive or silent data outcomes.
-5. INFRA-069, INFRA-071, INFRA-072 on the shared state inventory.
-6. The remaining tickets. Owner decisions are in BACKLOG: FEAT-093 (Kafka TLS), DEC-044
-   (decode policy), FEAT-094 (migration checksums).
+The cloud items (FND-0044 to FND-0048) follow the order already recorded in
+`HARDEN-004-handoff.md` ("The order now"). That note independently confirmed the same
+premises: step 1 is the offline Attempt-6 replay, step 2 is REFAC-091, step 3 is INFRA-068,
+step 4 is policy wiring (HARDEN-004's own), step 5 is INFRA-069 and INFRA-072, and step 6 is
+BUG-051 and OBS-047. INFRA-070 is a small standalone fix that closes an elevated-authority
+leak and can land at any time.
+
+Outside that track, in priority order: BUG-040 (secret data loss), BUG-041 (silent
+migration skip), SEC-006 + DOCS-021 (auth bypass), SEC-007, then the remaining BUG tickets.
+Owner decisions are in BACKLOG: FEAT-093 (Kafka TLS) and FEAT-094 (migration checksums).
 
 ## What is not established
 
