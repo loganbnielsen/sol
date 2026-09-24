@@ -331,6 +331,54 @@ let platform_inputs (target : cloud_target) (outputs : cloud_outputs) =
    was edited by hand. ADR 0003 invariant 6 makes destruction an abort edge available
    from every phase; a creation-time requirement must not be what closes that edge.
    Install-time validation stays exactly as strict. *)
+(* What happens to destruction when a preparation fails.
+
+   A preparation is not one kind of thing. Most of it is best-effort: it lowers a deletion
+   guard or reconciles a setting so that destruction can proceed, and if it fails the honest
+   response is to say so and attempt the destruction anyway, because destruction is an abort
+   edge available from every phase (ADR 0003 invariant 6) and the destroy's own error is the
+   accurate signal.
+
+   Some of it is a destruction precondition. An AWS target that declares
+   `destroy_retention: final-snapshot` is promised that its recovery data survives the
+   destroy; if the preparation that sets that up fails, proceeding would silently discard
+   the data the target asked to keep (DEC-033). That must block.
+
+   The preparation declares which it is, so the destruction path carries no list of
+   provider-and-feature exceptions that grows every time a new guarantee appears. That is
+   also the honest reading of the invariant: destruction remains available from a half-built
+   target UNLESS proceeding would violate an explicit destruction-time safety guarantee that
+   the target itself declared. *)
+type failure_policy =
+  | Continue_to_destroy
+  | Block_destroy
+
+(* [Prepared] carries whatever the caller needs from a successful preparation -- the AWS
+   final-snapshot identifier, [()] where there is nothing to carry. *)
+type 'a preparation_outcome =
+  | Nothing_to_prepare
+  | Prepared of 'a
+  | Preparation_failed of
+      { reason : string
+      ; policy : failure_policy
+      }
+
+(* The reason to report, for a failure of either policy: a failure that permits destruction
+   must still be visible in the result rather than swallowed by it. *)
+let preparation_failure = function
+  | Nothing_to_prepare | Prepared _ -> None
+  | Preparation_failed { reason; _ } -> Some reason
+;;
+
+(* [Some reason] only when destruction must not proceed. Nothing else blocks. *)
+let destruction_blocked = function
+  | Nothing_to_prepare | Prepared _ -> None
+  | Preparation_failed { reason; policy = Continue_to_destroy } ->
+    ignore reason;
+    None
+  | Preparation_failed { reason; policy = Block_destroy } -> Some reason
+;;
+
 (* Which resources a DESTRUCTIVE preparation may target.
 
    The preparation lowers deletion guards so that destruction can proceed, and it does so

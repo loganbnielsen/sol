@@ -269,6 +269,50 @@ let test_platform_terraform_vars () =
   | Error message -> Alcotest.fail message
 ;;
 
+(* FND-0030 / DEC-033: the preparation declares the consequence of its own failure. An
+   ordinary failure preserves the reason and lets destruction be attempted; a failure that
+   stands for a declared retention guarantee blocks, and says why. Both directions are
+   asserted here so neither can drift into the other. *)
+let test_preparation_failure_policies () =
+  let open L in
+  let ordinary =
+    Preparation_failed
+      { reason = "guard-lowering apply exited 1"; policy = Continue_to_destroy }
+  in
+  let required =
+    Preparation_failed
+      { reason = "final snapshot could not be prepared"; policy = Block_destroy }
+  in
+  Alcotest.(check (option string))
+    "an ordinary failure is reported"
+    (Some "guard-lowering apply exited 1")
+    (preparation_failure ordinary);
+  Alcotest.(check (option string))
+    "and it does NOT block destruction"
+    None
+    (destruction_blocked ordinary);
+  Alcotest.(check (option string))
+    "a required-preparation failure is reported"
+    (Some "final snapshot could not be prepared")
+    (preparation_failure required);
+  Alcotest.(check (option string))
+    "and it blocks, with the reason the target's own guarantee gives"
+    (Some "final snapshot could not be prepared")
+    (destruction_blocked required);
+  Alcotest.(check (option string))
+    "nothing to prepare never blocks"
+    None
+    (destruction_blocked Nothing_to_prepare);
+  Alcotest.(check (option string))
+    "a success never blocks"
+    None
+    (destruction_blocked (Prepared "snap-1"));
+  Alcotest.(check (option string))
+    "a success is not a failure"
+    None
+    (preparation_failure (Prepared "snap-1"))
+;;
+
 (* FND-0030: the destructive preparation targets only what state already represents, so a
    half-built target cannot be made to create the resource it was asked to remove. This is
    the property, not the mechanism: eligibility is configuration INTERSECT state. *)
@@ -1603,6 +1647,10 @@ let () =
             "provider-shaped platform variables"
             `Quick
             test_platform_terraform_vars
+        ; Alcotest.test_case
+            "a preparation failure's policy decides"
+            `Quick
+            test_preparation_failure_policies
         ; Alcotest.test_case
             "preparation targets only what state represents"
             `Quick
