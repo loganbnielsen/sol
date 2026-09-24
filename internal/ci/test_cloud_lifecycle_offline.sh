@@ -119,6 +119,16 @@ JSON
     if fail_once plan; then exit 20; fi
     ;;
   *" show -json")
+    # HARDEN-004 step 2 / FND-0044 point 2: the destroy path decides "the
+    # substrate exists" from what Terraform's state represents, not from the
+    # install-time outputs. A fixture that means "absent target" must therefore
+    # empty the state too -- a target whose outputs are missing while its state
+    # still owns resources is the half-built case the OCaml suite pins with fakes,
+    # and it must NOT be read as absent.
+    if [ "${OUTPUT_ABSENT:-}" = 1 ]; then
+      printf '{"values":{"root_module":{"resources":[]}}}\n'
+      exit 0
+    fi
     case " $* " in
       *infra/base-gcp*|*infra/base*)
         # INFRA-042: the platform root's state. PARTIAL_INSTALL models Attempt 3 --
@@ -144,27 +154,35 @@ JSON
         gke_guard=true
         [ -e "${GCP_SQL_PREPARED_FILE:-/nonexistent}" ] && sql_guard=false
         [ -e "${GKE_PREPARED_FILE:-/nonexistent}" ] && gke_guard=false
-        printf '{"values":{"root_module":{"resources":[{"type":"google_sql_database_instance","values":{"deletion_protection":%s}},{"type":"google_container_cluster","values":{"deletion_protection":%s}}]}}}\n' \
+        # The real `terraform show -json` always carries each resource's real
+        # `address`; the guarded resources are found by address, not by type
+        # (FND-0048), so the fixture has to model that or it is not modelling
+        # Terraform.
+        printf '{"values":{"root_module":{"resources":[{"address":"google_sql_database_instance.postgres","type":"google_sql_database_instance","values":{"deletion_protection":%s}},{"address":"google_container_cluster.main","type":"google_container_cluster","values":{"deletion_protection":%s}}]}}}\n' \
           "$sql_guard" "$gke_guard"
         exit 0
         ;;
     esac
     if [ "${RDS_ABSENT:-}" = 1 ]; then
-      printf '{"values":{"root_module":{"resources":[]}}}\n'
+      # The cloud substrate exists (the EKS cluster is represented) but this target
+      # never created an RDS instance. Under HARDEN-004 step 2 the substrate's
+      # existence is what the state represents, so this must stay distinct from the
+      # wholly-absent case (empty state) -- hence a non-RDS resource, not `[]`.
+      printf '{"values":{"root_module":{"resources":[{"address":"aws_eks_cluster.main","type":"aws_eks_cluster","values":{"id":"lifecycle-test"}}]}}}\n'
     elif [ -e "$RDS_PREPARED_FILE" ]; then
       prepared_value="$(cat "$RDS_PREPARED_FILE")"
       if [ "$prepared_value" = "skip" ]; then
-        printf '{"values":{"root_module":{"resources":[{"type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":true,"final_snapshot_identifier":null}}]}}}\n'
+        printf '{"values":{"root_module":{"resources":[{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":true,"final_snapshot_identifier":null}}]}}}\n'
       else
         # RDS_SNAPSHOT_MISMATCH makes the provider's record disagree with what was
         # prepared, so the production guarantee can be shown to still fail closed.
         printf \
-          '{"values":{"root_module":{"resources":[{"type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":false,"final_snapshot_identifier":"%s"}}]}}}\n' \
+          '{"values":{"root_module":{"resources":[{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":false,"final_snapshot_identifier":"%s"}}]}}}\n' \
           "${prepared_value}${RDS_SNAPSHOT_MISMATCH:+-other}"
       fi
     else
       printf \
-        '{"values":{"root_module":{"resources":[{"type":"aws_db_instance","values":{"deletion_protection":true,"skip_final_snapshot":false,"final_snapshot_identifier":null}}]}}}\n'
+        '{"values":{"root_module":{"resources":[{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":true,"skip_final_snapshot":false,"final_snapshot_identifier":null}}]}}}\n'
     fi
     ;;
   *infra/aws*" apply "*"-target=aws_db_instance.postgres"*)
