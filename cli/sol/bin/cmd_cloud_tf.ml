@@ -177,6 +177,112 @@ let terraform_outcome (r : (Sol_cli_process.result, Sol_cli_process.error) resul
          (Sol_cli_process.error_to_string error))
 ;;
 
+(* Like [terraform_outcome], but keeps the command's stdout -- [terraform show
+   -json <plan>] is read, not just checked. *)
+let terraform_stdout (r : (Sol_cli_process.result, Sol_cli_process.error) result)
+  : (string, string) result
+  =
+  match r with
+  | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok r.Sol_cli_process.stdout
+  | Ok r ->
+    let detail = String.trim r.Sol_cli_process.stderr in
+    Error
+      (Printf.sprintf
+         "terraform exited %d%s"
+         r.Sol_cli_process.exit_code
+         (if detail = "" then "." else ":\n" ^ detail))
+  | Error error ->
+    Error
+      (Printf.sprintf
+         "could not run terraform: %s"
+         (Sol_cli_process.error_to_string error))
+;;
+
+(* HARDEN-004 step 3: the one way a destroy-path apply runs. The exact scope and
+   variables are planned first; the plan is classified against [policy]; the
+   saved plan is applied only when every change is permitted. A plan that cannot
+   be produced, read or classified refuses, and the apply is never invoked. The
+   saved plan is removed however this returns. *)
+let apply_asserted ~run_log ~phase_name ~policy ~scope ~chdir ~var_files ~vars ()
+  : (unit, string) result
+  =
+  let plan_file = Filename.temp_file "sol-destroy-" ".tfplan" in
+  Fun.protect
+    ~finally:(fun () ->
+      try Sys.remove plan_file with
+      | Sys_error _ -> ())
+    (fun () ->
+       match
+         Sol_cli_terraform_plan.guarded_apply
+           ~policy
+           ~plan:(fun () ->
+             match
+               terraform_stdout
+                 (Sol_cli_run_log.run_phase
+                    run_log
+                    ~name:(phase_name ^ "-plan")
+                    (fun () ->
+                       Sol_cli_terraform.plan_saved
+                         ~scope
+                         ~chdir
+                         ~var_files
+                         ~vars
+                         ~out:plan_file
+                         ()))
+             with
+             | Ok _ -> Ok plan_file
+             | Error message -> Error message)
+           ~show_plan:(fun file ->
+             terraform_stdout
+               (Sol_cli_run_log.run_phase run_log ~name:(phase_name ^ "-show") (fun () ->
+                  Sol_cli_terraform.show_json_plan ~chdir ~plan_file:file ())))
+           ~apply_plan:(fun file ->
+             terraform_outcome
+               (Sol_cli_run_log.run_phase run_log ~name:phase_name (fun () ->
+                  Sol_cli_terraform.apply_saved ~chdir ~plan_file:file ())))
+           ()
+       with
+       | Ok () -> Ok ()
+       | Error failure -> Error (Sol_cli_terraform_plan.apply_failure_to_string failure))
+;;
+
+(* The bootstrap-access mechanism's Terraform identity, per provider.
+
+   GCP's is a root-level resource with a stable address. AWS's is an access-policy
+   association owned by the `eks` module, whose internal address is
+   module-version-dependent -- naming it here by address would be a guess that
+   could not be validated offline, and a wrong `-target` fails closed but strands
+   the target. So the module is the smallest *stable* scope that contains it, the
+   rule names the resource type, and the plan assertion is what keeps it narrow. *)
+let bootstrap_matchers = function
+  | Sol_cli_provider.Gcp ->
+    [ Sol_cli_terraform_plan.Exact
+        "kubernetes_cluster_role_binding.provisioner_bootstrap_admin"
+    ]
+  | Sol_cli_provider.Aws ->
+    [ Sol_cli_terraform_plan.Type "aws_eks_access_policy_association" ]
+;;
+
+let bootstrap_scope = function
+  | Sol_cli_provider.Gcp ->
+    Sol_cli_terraform.targets
+      "kubernetes_cluster_role_binding.provisioner_bootstrap_admin"
+      []
+  | Sol_cli_provider.Aws -> Sol_cli_terraform.targets "module.eks" []
+;;
+
+(* The reconciliation apply's scope: the bootstrap mechanism plus the guarded
+   resources the inventory represents -- never the whole root, so a configured-
+   but-unrepresented cluster is not even planned. *)
+let reconciliation_scope provider guarded =
+  match provider with
+  | Sol_cli_provider.Gcp ->
+    Sol_cli_terraform.targets
+      "kubernetes_cluster_role_binding.provisioner_bootstrap_admin"
+      guarded
+  | Sol_cli_provider.Aws -> Sol_cli_terraform.targets "module.eks" guarded
+;;
+
 (* [cleanup] is best-effort: the run is already failing, so a cleanup failure cannot
    change the exit path -- but it must be reported, or the operator is left believing the
    elevated access was removed when it may not have been. *)
@@ -1799,24 +1905,27 @@ let prepare_destroy_result run_log infra_dir var_files vars ~cluster_name ~reten
          ", final snapshot " ^ snapshot_id
        | Sol_cli_cloud_lifecycle.Retain_nothing -> ", retaining nothing");
     let* () =
-      terraform_outcome
-        (Sol_cli_run_log.run_phase run_log ~name:"rds-destroy-prepare" (fun () ->
-           Sol_cli_terraform.apply
-             ~scope:rds_target
-             ~chdir:infra_dir
-             ~var_files
-             ~vars:
-               (vars
-                @ [ "rds_deletion_protection=false" ]
-                @
-                match retention with
-                | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
-                  [ "rds_skip_final_snapshot=false"
-                  ; "rds_final_snapshot_identifier=" ^ snapshot_id
-                  ]
-                | Sol_cli_cloud_lifecycle.Retain_nothing ->
-                  [ "rds_skip_final_snapshot=true" ])
-             ()))
+      apply_asserted
+        ~run_log
+        ~phase_name:"rds-destroy-prepare"
+        ~policy:
+          (Sol_cli_cloud_destroy.guard_preparation_policy
+             ~addresses:[ "aws_db_instance.postgres" ])
+        ~scope:rds_target
+        ~chdir:infra_dir
+        ~var_files
+        ~vars:
+          (vars
+           @ [ "rds_deletion_protection=false" ]
+           @
+           match retention with
+           | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
+             [ "rds_skip_final_snapshot=false"
+             ; "rds_final_snapshot_identifier=" ^ snapshot_id
+             ]
+           | Sol_cli_cloud_lifecycle.Retain_nothing -> [ "rds_skip_final_snapshot=true" ]
+          )
+        ()
     in
     Ok (Some snapshot_id)
 ;;
@@ -1939,6 +2048,21 @@ let gcp_guarded_resources =
   [ "google_sql_database_instance.postgres"; "google_container_cluster.main" ]
 ;;
 
+(* The guarded resources the Step-2 inventory actually represents, by declared
+   address. This is the state side of the scope decision: a configured-but-
+   unrepresented resource is not targeted (FND-0030), and the plan assertion
+   catches anything a `-target` pulls in anyway. *)
+let guarded_addresses_of provider state =
+  let desired =
+    match provider with
+    | Sol_cli_provider.Gcp -> gcp_guarded_resources
+    | Sol_cli_provider.Aws -> [ "aws_db_instance.postgres" ]
+  in
+  Sol_cli_cloud_lifecycle.preparations_eligible
+    ~state:(Sol_cli_cloud_destroy.addresses state)
+    ~desired
+;;
+
 let gcp_prepare_destroy_result run_log infra_dir var_files vars state =
   let open Sol_cli_cloud_destroy in
   let report_unrepresented unrepresented =
@@ -1985,17 +2109,17 @@ let gcp_prepare_destroy_result run_log infra_dir var_files vars state =
           final-snapshot preparation block instead, because there the failure stands for a
           declared retention guarantee -- is the wiring that follows (FND-0030). *)
        let* () =
-         terraform_outcome
-           (Sol_cli_run_log.run_phase run_log ~name:"gcp-destroy-prepare" (fun () ->
-              Sol_cli_terraform.apply
-                ~scope:(Sol_cli_terraform.targets first rest)
-                ~chdir:infra_dir
-                ~var_files
-                ~vars:
-                  (vars
-                   @ [ "sql_deletion_protection=false"; "gke_deletion_protection=false" ]
-                  )
-                ()))
+         apply_asserted
+           ~run_log
+           ~phase_name:"gcp-destroy-prepare"
+           ~policy:
+             (Sol_cli_cloud_destroy.guard_preparation_policy ~addresses:(first :: rest))
+           ~scope:(Sol_cli_terraform.targets first rest)
+           ~chdir:infra_dir
+           ~var_files
+           ~vars:
+             (vars @ [ "sql_deletion_protection=false"; "gke_deletion_protection=false" ])
+           ()
        in
        Ok true)
 ;;
@@ -3065,19 +3189,24 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
             Ok preparation)
       ; reconcile_and_enable =
           (fun () ->
-            terraform_outcome
-              (Sol_cli_run_log.run_phase
-                 run_log
-                 ~name:"destroy-reconciliation-apply"
-                 (fun () ->
-                    Sol_cli_terraform.apply
-                      ~scope:Sol_cli_terraform.whole_root
-                      ~chdir:infra_dir
-                      ~var_files
-                      ~vars:
-                        (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:true)
-                         @ destroy_apply_vars ())
-                      ())))
+            (* Scope is bootstrap + the guarded resources the inventory represents,
+               and the plan is asserted: a missing cluster the `-target` pulls in
+               plans a create and is refused (HARDEN-004 step 3). *)
+            let guarded = guarded_addresses_of provider !state_ref in
+            apply_asserted
+              ~run_log
+              ~phase_name:"destroy-reconciliation-apply"
+              ~policy:
+                (Sol_cli_cloud_destroy.reconciliation_policy
+                   ~bootstrap:(bootstrap_matchers provider)
+                   ~guarded)
+              ~scope:(reconciliation_scope provider guarded)
+              ~chdir:infra_dir
+              ~var_files
+              ~vars:
+                (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:true)
+                 @ destroy_apply_vars ())
+              ())
       ; destroy_platform =
           (fun () ->
             match !outputs_ref with
@@ -3087,19 +3216,22 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
                 "the platform teardown requires install outputs, which are unavailable")
       ; remove_elevated_access =
           (fun () ->
-            terraform_outcome
-              (Sol_cli_run_log.run_phase
-                 run_log
-                 ~name:"provisioner-bootstrap-access-remove"
-                 (fun () ->
-                    Sol_cli_terraform.apply
-                      ~scope:Sol_cli_terraform.whole_root
-                      ~chdir:infra_dir
-                      ~var_files
-                      ~vars:
-                        (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:false)
-                         @ destroy_apply_vars ())
-                      ())))
+            (* The removal is asserted like any other apply: "cleanup" is a name,
+               not a safety property. If its plan is not permitted, the apply does
+               not run and the outcome records that the access may remain --
+               [with_elevated_access] carries the cleanup failure as evidence. *)
+            apply_asserted
+              ~run_log
+              ~phase_name:"provisioner-bootstrap-access-remove"
+              ~policy:
+                (Sol_cli_cloud_destroy.bootstrap_removal_policy
+                   ~bootstrap:(bootstrap_matchers provider))
+              ~scope:(bootstrap_scope provider)
+              ~chdir:infra_dir
+              ~var_files
+              ~vars:
+                (vars @ Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:false))
+              ())
       ; observe_window_before =
           (fun () ->
             (* DEC-040 acceptance: the destroy path revokes the same bootstrap access

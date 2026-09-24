@@ -1,0 +1,75 @@
+(** One plan-classification and assertion mechanism for destructive applies
+    (HARDEN-004 step 3).
+
+    Terraform's own plan is the evidence: {!changes_of_plan_json} reads the
+    resource changes (real addresses, actions) from a saved plan, {!violations}
+    classifies them against a phase {!policy}, and {!guarded_apply} refuses before
+    applying when any change is outside that policy.
+
+    Strictness is the point: a plan that cannot be produced, read or parsed, and
+    any action Terraform emits that this module does not recognise, are refused --
+    never allowed. *)
+
+type action =
+  | Create
+  | Update
+  | Delete
+  | Replace
+  | Read
+  | No_op
+  | Unknown of string list
+
+type change =
+  { address : string
+  ; resource_type : string
+  ; mode : string
+  ; action : action
+  }
+
+(** [Exact address] for a stable root-level address; [Type type] only for a
+    Terraform-owned mechanism inside a module whose internal address is not
+    stable (documented at the rule). *)
+type matcher =
+  | Exact of string
+  | Type of string
+
+type rule =
+  { matches : matcher list
+  ; allows : action list
+  ; reason : string
+  }
+
+type policy =
+  { phase : string
+  ; rules : rule list
+  }
+
+val action_to_string : action -> string
+
+(** Parse `terraform show -json <saved plan>`. A document without a
+    `resource_changes` array is an error, and the caller refuses. *)
+val changes_of_plan_json : string -> (change list, string) result
+
+(** Classified changes outside the policy's allowlist. Empty means permitted.
+    [no-op] anywhere and a data-source [read] are always permitted. *)
+val violations : policy -> change list -> string list
+
+type apply_failure =
+  | Plan_failed of string
+  | Plan_unreadable of string
+  | Refused of string list
+  | Apply_failed of string
+
+val apply_failure_to_string : apply_failure -> string
+val was_refused : apply_failure -> bool
+
+(** [plan] produces a saved plan and returns its path; [show_plan] reads it;
+    [apply_plan] applies that same file. The apply runs only when the plan is
+    permitted, so what ran is what was asserted. *)
+val guarded_apply
+  :  policy:policy
+  -> plan:(unit -> (string, string) result)
+  -> show_plan:(string -> (string, string) result)
+  -> apply_plan:(string -> (unit, string) result)
+  -> unit
+  -> (unit, apply_failure) result
