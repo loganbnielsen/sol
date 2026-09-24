@@ -211,6 +211,7 @@ let dispatch
       ~metrics_auth
       ~max_body_bytes
       ?route_observer
+      ~ready
       req
       body
   =
@@ -223,6 +224,7 @@ let dispatch
       ~metrics_auth
       ~max_body_bytes
       ?route_observer
+      ~ready
       req
       body)
 ;;
@@ -237,6 +239,7 @@ module For_testing = struct
       ~metrics_renderer:None
       ~metrics_auth:`Public
       ~max_body_bytes:1_048_576
+      ~ready:(fun () -> true)
       req
       body
   ;;
