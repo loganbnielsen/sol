@@ -2408,6 +2408,45 @@ let test_deploy_render_has_no_unverified_jwt_opt_in () =
     (contains workload "SOL_ALLOW_UNVERIFIED_JWT")
 ;;
 
+(* INFRA-073: -svc readiness is /readyz (it turns 503 as shutdown begins);
+   liveness and startup stay on /healthz. *)
+let test_svc_readiness_probe_uses_readyz () =
+  let _, workload =
+    render_spec_ok { svc_spec with language = Some Sol_cli_compat.Ocaml }
+  in
+  check_bool
+    "readinessProbe path is /readyz"
+    true
+    (contains workload "readinessProbe:\n          httpGet:\n            path: /readyz");
+  check_bool
+    "livenessProbe path is /healthz"
+    true
+    (contains workload "livenessProbe:\n          httpGet:\n            path: /healthz")
+;;
+
+(* A TypeScript -svc keeps /healthz for readiness until its framework serves
+   /readyz (FEAT-096); pointing it at a 404 would leave its pods never ready. *)
+(* An undeclared language is unknown, not OCaml: /healthz. This is what `sol up`
+   renders for every service today (BUG-056); the TypeScript golden path failed
+   with a /readyz probe on its order_svc. *)
+let test_undeclared_language_readiness_stays_on_healthz () =
+  let _, workload = render_spec_ok { svc_spec with language = None } in
+  check_bool
+    "undeclared-language readinessProbe path is /healthz"
+    true
+    (contains workload "readinessProbe:\n          httpGet:\n            path: /healthz")
+;;
+
+let test_ts_svc_readiness_stays_on_healthz () =
+  let _, workload =
+    render_spec_ok { svc_spec with language = Some Sol_cli_compat.Typescript }
+  in
+  check_bool
+    "TypeScript readinessProbe path is /healthz"
+    true
+    (contains workload "readinessProbe:\n          httpGet:\n            path: /healthz")
+;;
+
 let () =
   Alcotest.run
     "manifest_render"
@@ -2447,6 +2486,20 @@ let () =
             "sol secret delete can still remove it"
             `Quick
             test_sol_secret_delete_accepts_reserved_key_format
+        ] )
+    ; ( "svc readiness (INFRA-073)"
+      , [ Alcotest.test_case
+            "readiness uses /readyz"
+            `Quick
+            test_svc_readiness_probe_uses_readyz
+        ; Alcotest.test_case
+            "TypeScript stays on /healthz"
+            `Quick
+            test_ts_svc_readiness_stays_on_healthz
+        ; Alcotest.test_case
+            "undeclared language stays on /healthz"
+            `Quick
+            test_undeclared_language_readiness_stays_on_healthz
         ] )
     ; ( "SOL_ENV reaches every primitive"
       , [ Alcotest.test_case

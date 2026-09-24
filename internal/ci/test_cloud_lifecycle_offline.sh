@@ -304,6 +304,14 @@ JSON
     # recorded beside the plan file; the side effects are the same the direct
     # applies used to have, so the existing assertions still observe them.
     plan_args="$(cat "${!#}.args")"
+    # HARDEN-004 step 4 regression: under the refusal fixture the refused plan must
+    # never reach an apply. Failing loudly here means "the unsafe apply ran", which
+    # the scenario's assertions turn into a failure.
+    if [ "${PLAN_CREATES_MISSING_CLUSTER:-}" = 1 ]; then
+      case " $plan_args " in
+        *" -var=provisioner_bootstrap_admin=true "*) exit 99 ;;
+      esac
+    fi
     case " $plan_args " in
       *" -target=aws_db_instance.postgres "*)
         if fail_once rds-prepare; then exit 20; fi
@@ -1364,28 +1372,43 @@ grep -F 'credentials: Google Application Default Credentials resolved' \
   exit 1
 }
 
-# HARDEN-004 step 3, the governing invariant end to end: a reconciliation plan
-# that would reconstruct the missing cluster (a target-owned CREATE) must be
-# refused *before* its apply. The run fails, the cloud is not destroyed on the
-# strength of a plan that would build it, and the bootstrap window is still
-# removed -- cleanup stays structural, it just may not execute an unsafe apply.
+# HARDEN-004 steps 3 + 4, the governing invariant end to end: a reconciliation plan
+# that would reconstruct the missing cluster (a target-owned CREATE) is refused
+# *before* its apply -- and the refusal is an outcome, not a refusal of the destroy.
+# Step 4: the protected platform teardown cannot run without the authority, so it is
+# skipped, but the substrate destroy does run -- stranding a half-built target is the
+# failure this whole path exists to remove. The run reaches absence, says what
+# degraded, and exits 3: neither the clean 0 nor the failure 1.
 refuse_log="$tmp/gcp-refuse.log"
 rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/bootstrap-window"
-if (cd "$tmp/work" && PLAN_CREATES_MISSING_CLUSTER=1 DESTROYING=1 \
-      LIFECYCLE_LOG="$refuse_log" "$sol" cloud destroy prod/gcp/us-central1 --apply) \
-  >"$refuse_log.out" 2>&1
-then
-  echo "the GCP destroy proceeded although its plan reconstructed the missing cluster" >&2
+refuse_rc=0
+(cd "$tmp/work" && PLAN_CREATES_MISSING_CLUSTER=1 DESTROYING=1 \
+   LIFECYCLE_LOG="$refuse_log" "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$refuse_log.out" 2>&1 || refuse_rc=$?
+if [ "$refuse_rc" -eq 0 ]; then
+  echo "the GCP destroy reported a clean success although its plan reconstructed the missing cluster" >&2
+  cat "$refuse_log.out" >&2
+  exit 1
+fi
+if [ "$refuse_rc" -ne 3 ]; then
+  echo "a degraded destroy must exit 3, not $refuse_rc:" >&2
   cat "$refuse_log.out" >&2
   exit 1
 fi
 grep -F 'refused before apply' "$refuse_log.out" >/dev/null || {
-  echo "the refused plan was not the reason the GCP destroy stopped:" >&2
+  echo "the refused plan was not the reason the reconciliation did not run:" >&2
   cat "$refuse_log.out" >&2
   exit 1
 }
-if grep -E -- '-chdir=[^ ]*infra/gcp ' "$refuse_log" | grep -F ' destroy ' >/dev/null; then
-  echo "the substrate destroy ran on a refused reconciliation plan:" >&2
+grep -F 'a preparation degraded and destruction continued' "$refuse_log.out" >/dev/null || {
+  echo "the degradation was not reported:" >&2
+  cat "$refuse_log.out" >&2
+  exit 1
+}
+# The refused apply never ran (the stub exits 99 if it did), and the substrate destroy
+# -- the step that removes billable infrastructure -- did.
+if ! grep -E -- '-chdir=[^ ]*infra/gcp ' "$refuse_log" | grep -F ' destroy ' >/dev/null; then
+  echo "the substrate destroy did not run after a refused reconciliation:" >&2
   cat "$refuse_log" >&2
   exit 1
 fi
@@ -1758,6 +1781,20 @@ if (cd "$tmp/work" && DESTROYING=1 RDS_SNAPSHOT_MISMATCH=1 \
 fi
 assert_contains "the snapshot mismatch was reported" "$mismatch_log.out" \
   'final snapshot identifier is' || exit 1
+# HARDEN-004 step 4: this failure stands for the target's own declared retention
+# guarantee, so it carries Block_destroy -- the target is left standing, the guarantee
+# is named as the blocker, and the substrate destroy (the step that removes billable
+# infrastructure) is never invoked. "The destroy failed" and "the target remains
+# because its retention could not be established" are not the same claim.
+assert_contains "the retention guarantee is named as the blocker" "$mismatch_log.out" \
+  'destruction is blocked' || exit 1
+assert_contains "the guarantee is identified" "$mismatch_log.out" \
+  'destroy_retention is final-snapshot' || exit 1
+if grep -E -- '-chdir=[^ ]*infra/aws ' "$mismatch_log" | grep -F ' destroy ' >/dev/null; then
+  echo "the substrate destroy ran although the retention guarantee could not be prepared:" >&2
+  cat "$mismatch_log" >&2
+  exit 1
+fi
 
 # The disposable case, named by the target file. The field is inserted inside the
 # target block using that block's own indentation, taken from the line following
