@@ -1247,8 +1247,13 @@ locals {
           {
             # relay_failed: a retry/DLQ publish exhausted its in-process retries,
             # so retry delivery is failing (BUG-029's metric-level signal).
+            # A value test, not increase(): the labelled series does not exist
+            # until its first failure, so it first appears already at 1, which
+            # increase() never counts. The relay also stops after that failure,
+            # so the count does not rise again. "Nonzero since this pod started"
+            # is the signal, and a restart resets it.
             alert = "SolWorkerRelayPublishFailed"
-            expr  = "sum by (workspace, env, domain, service) (increase(sol_worker_messages_total{status=\"relay_failed\"}[5m])) > 0"
+            expr  = "sum by (workspace, env, domain, service) (sol_worker_messages_total{status=\"relay_failed\"}) > 0"
             for   = "0s"
             labels = {
               severity = "critical"

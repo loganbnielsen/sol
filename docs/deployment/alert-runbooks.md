@@ -16,7 +16,7 @@ The indicators are deliberately threshold rules, not burn-rate SLOs
 | Node loss | `SolNodeNotReady` | `kube_node_status_condition{condition="Ready",status="true"} == 0` for 5m | [§ Node loss](#node-loss) |
 | Postgres dependency loss/restore | `SolPostgresUnavailable` | `pg_up == 0` for 5m | [§ Postgres](#postgres-dependency-lossrestore) |
 | Kafka lag / broker loss | `SolKafkaConsumerLagHigh`, `SolKafkaBrokerDown` | `redpanda_kafka_consumer_group_lag > 10000` for 10m; `up{job=~".*redpanda.*"} == 0` for 5m | [§ Kafka](#kafka-lag--broker-loss) |
-| Message drop / diversion (OBS-047) | `SolWorkerDecodeDrops`, `SolWorkerRelayPublishFailed`, `SolWorkerDeadLetterInflow` | `increase(sol_worker_decode_errors_total[5m]) > 0`; `increase(sol_worker_messages_total{status="relay_failed"}[5m]) > 0`; `rate(sol_worker_messages_total{status="dead_letter"}[10m]) > 0` for 15m | [§ Message drop](#message-drop--diversion) |
+| Message drop / diversion (OBS-047) | `SolWorkerDecodeDrops`, `SolWorkerRelayPublishFailed`, `SolWorkerDeadLetterInflow` | `increase(sol_worker_decode_errors_total[5m]) > 0`; `sol_worker_messages_total{status="relay_failed"} > 0` (since the pod started); `rate(sol_worker_messages_total{status="dead_letter"}[10m]) > 0` for 15m | [§ Message drop](#message-drop--diversion) |
 | Telemetry loss | `SolTelemetryTargetDown` | `up{namespace="monitoring"} == 0` for 10m | [§ Telemetry](#telemetry-loss) |
 
 Two of the five (`SolPostgresUnavailable`, the Kafka pair) depend on the target
@@ -103,8 +103,8 @@ show this: a worker that acks and drops keeps lag at zero.
   input is gone from this consumer group. The usual cause is a producer deploying
   a schema this consumer cannot read.
 - `SolWorkerRelayPublishFailed` (critical): publishing to the group's retry or DLQ
-  topic failed after in-process retries. Those records stay unacknowledged, but
-  retry delivery is not progressing (BUG-029).
+  topic failed after in-process retries, at least once since the pod started. Those
+  records stay unacknowledged, but retry delivery is not progressing (BUG-029).
 - `SolWorkerDeadLetterInflow` (warning): the handler has been dead-lettering work
   for 15 minutes, meaning a dependency is failing or a deploy is rejecting valid
   input.
@@ -116,8 +116,11 @@ show this: a worker that acks and drops keeps lag at zero.
    expires, so replay is possible by resetting the group's offset. Plan it before
    retention runs out.
 2. Relay failures: check broker health and ACLs/quotas on `<topic>.<group>.retry`
-   and `.dlq`. The worker exits once its retry budget is exhausted, and a restart
-   resumes from the last committed offset.
+   and `.dlq`. A failed publish from the *source* consumer stops the worker. A
+   failed publish inside the *retry relay* stops only that relay partition, and the
+   worker keeps running and looks healthy (FND-0035, BUG-043), so restart it once
+   the cause is fixed. A restart resumes from the last committed offset and clears
+   this alert.
 3. DLQ inflow: inspect the DLQ records (`X-Sol-Origin-Group`,
    `X-Sol-Decode-Error`) and the handler's `Dead_letter` reasons. Fix the cause,
    then replay the DLQ deliberately.
