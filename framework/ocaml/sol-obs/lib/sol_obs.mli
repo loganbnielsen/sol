@@ -31,7 +31,9 @@ type span = Obs_eio.span
 (** Reads [LOKI_URL] and [TEMPO_URL] from the environment and composes whichever
     backends are configured: a Prometheus backend is always present; Loki is
     added when [LOKI_URL] is a non-empty env var, Tempo when [TEMPO_URL] is.
-    Logs fall back to stdout when [LOKI_URL] is unset (Sol's local-dev default —
+    Log lines always go to stdout as well, so [kubectl logs] has them and a Loki
+    outage does not lose them (OBS-048); metrics go to stdout only when [LOKI_URL]
+    is unset. Logs fall back to stdout when [LOKI_URL] is unset (Sol's local-dev default —
     see the top-level CLAUDE.md's "dev mirrors prod" principle: the same
     [of_env] call works unmodified against `sol local infra up`'s real Loki/Tempo
     instances once those env vars are set by the platform). *)

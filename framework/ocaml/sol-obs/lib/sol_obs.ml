@@ -18,13 +18,23 @@ let env_nonempty name =
   | _ -> None
 ;;
 
+(* OBS-048 / FND-0051: log lines always reach stdout, Loki or not. With Loki as
+   the only log backend, `kubectl logs` showed no application lines, and a Loki
+   outage lost them outright (a failed push is reported without its content).
+   Spans only: metrics already have Prometheus, and a line per counter increment
+   would drown the log. Stdout goes first, so the line is written before any
+   wait on Loki. *)
+let stdout_logs =
+  { Obs_eio.stdout with emit_metric = (fun _ -> ()); declare_metric = (fun _ -> ()) }
+;;
+
 let of_env ~net ~clock ~mono_clock ~service ?(context = []) () =
   let log_backend =
     match env_nonempty "LOKI_URL" with
     | None -> Obs_eio.stdout
     | Some url ->
       let label_names = List.map (fun (k, _) -> Obs_loki.stream_label_exn k) context in
-      Obs_loki.create ~net ~clock ~url ~label_names ()
+      Obs_eio.compose stdout_logs (Obs_loki.create ~net ~clock ~url ~label_names ())
   in
   let prom_backend, renderer = Obs_prometheus.create () in
   let backend = Obs_eio.compose log_backend prom_backend in

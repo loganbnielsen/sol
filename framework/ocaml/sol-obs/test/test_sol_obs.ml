@@ -145,6 +145,59 @@ let test_loki_url_wires_loki_backend () =
            (contains body "pushed to loki")))
 ;;
 
+(* OBS-048: with LOKI_URL set, the line still reaches stdout. *)
+let capture_stdout f =
+  let path = Filename.temp_file "sol-obs-stdout-" ".log" in
+  let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_TRUNC ] 0o600 in
+  let saved = Unix.dup Unix.stdout in
+  Unix.dup2 fd Unix.stdout;
+  Unix.close fd;
+  let restore () =
+    flush stdout;
+    Unix.dup2 saved Unix.stdout;
+    Unix.close saved
+  in
+  (match f () with
+   | () -> restore ()
+   | exception e ->
+     restore ();
+     raise e);
+  let out = In_channel.with_open_text path In_channel.input_all in
+  Sys.remove path;
+  out
+;;
+
+let test_loki_url_keeps_a_stdout_copy () =
+  Eio_main.run
+  @@ fun env ->
+  with_mock_server env (fun ~port ~body_promise ->
+    with_env
+      [ "LOKI_URL", local_url port; "TEMPO_URL", "" ]
+      (fun () ->
+         let obs =
+           Sol_obs.of_env
+             ~net:env#net
+             ~clock:env#clock
+             ~mono_clock:env#mono_clock
+             ~service:"test-svc"
+             ()
+         in
+         let out =
+           capture_stdout (fun () ->
+             Sol_obs.log_info obs "also on stdout";
+             Sol_obs.counter obs ~name:"test_total" ~help:"h" ~label_names:[] 1)
+         in
+         Alcotest.(check bool)
+           "the line is on stdout"
+           true
+           (contains out "also on stdout");
+         Alcotest.(check bool) "metrics are not" false (contains out "METRIC");
+         Alcotest.(check bool)
+           "and still pushed to Loki"
+           true
+           (contains (Eio.Promise.await body_promise) "also on stdout")))
+;;
+
 let test_context_promoted_to_loki_stream_labels () =
   Eio_main.run
   @@ fun env ->
@@ -308,6 +361,10 @@ let () =
             "LOKI_URL wires the Loki backend"
             `Quick
             test_loki_url_wires_loki_backend
+        ; test_case
+            "LOKI_URL keeps a stdout copy of log lines"
+            `Quick
+            test_loki_url_keeps_a_stdout_copy
         ; test_case
             "?context is promoted to Loki stream labels"
             `Quick
