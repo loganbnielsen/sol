@@ -105,3 +105,22 @@ type deps =
 
 (** Run the destruction. Returns a typed {!outcome}; never exits. *)
 val execute : deps:deps -> outcome
+
+(** Phase allowlists for the destroy-path applies. Each apply is planned and
+    classified against one of these before it runs; a change outside the list is
+    refused and the apply is never invoked. See {!Sol_cli_terraform_plan}. *)
+
+val guard_preparation_policy : addresses:string list -> Sol_cli_terraform_plan.policy
+
+val bootstrap_enable_policy
+  :  bootstrap:Sol_cli_terraform_plan.matcher list
+  -> Sol_cli_terraform_plan.policy
+
+val reconciliation_policy
+  :  bootstrap:Sol_cli_terraform_plan.matcher list
+  -> guarded:string list
+  -> Sol_cli_terraform_plan.policy
+
+val bootstrap_removal_policy
+  :  bootstrap:Sol_cli_terraform_plan.matcher list
+  -> Sol_cli_terraform_plan.policy

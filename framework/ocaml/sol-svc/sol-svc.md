@@ -405,7 +405,8 @@ module Make (H : HANDLER) : sig
          ; fs : Eio.Fs.dir_ty Eio.Path.t
          ; .. >
     -> ?port:int
-       (** Default: 8080. Overridden by PORT env var if set. Pass 0 for
+       (** Default: 8080. Overridden by PORT env var if set (empty counts as unset);
+           a PORT that is not a port number is a startup [`Config] error. Pass 0 for
            OS-assigned port (use with [on_listen] in tests). *)
     -> ?metrics_auth:Auth.level
        (** Auth strategy for the built-in /metrics endpoint. Default: [`Public].
@@ -445,7 +446,7 @@ the same arguments with the routes list first, and the same
 ### Startup sequence
 
 ```
-1. Resolve port: PORT env var > ~port arg > 8080
+1. Resolve port: PORT env var > ~port arg > 8080 (a malformed PORT → `Config` error)
 2. Bind: Eio.Net.listen ~sw env#net (`Tcp (Eio.Net.Ipaddr.V4.any, port))
 3. Discover actual port via Eio.Net.listening_addr (handles port 0)
 4. Call on_listen actual_port (if provided)
