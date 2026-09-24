@@ -21,7 +21,19 @@ import { initTracing, startChildSpan } from "./tracing.js";
 import { makeWorkerMetrics } from "./metrics.js";
 import { makeDb } from "./db.js";
 
-const KAFKA_BROKERS = (process.env.KAFKA_BROKERS ?? "localhost:9092").split(",");
+// BUG-055 (DEC-022 parity with OCaml's config_of_env): the Kafka substrate
+// addresses are stated, never defaulted to localhost. In a pod nothing listens
+// there, so a missing one must fail at startup naming the variable. `sol local
+// run` and Sol-rendered manifests set them.
+function requiredEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`${name} is not set: state the Kafka substrate addresses explicitly`);
+  }
+  return value;
+}
+
+const KAFKA_BROKERS = requiredEnv("KAFKA_BROKERS").split(",");
 const TOPIC_NAME = process.env.ORDERS_TOPIC ?? "sol-demo-ts-orders";
 const GROUP_ID = "sol-demo-ts-fulfillment-worker";
 // Same defensive fallback as order_svc/src/index.ts's intEnv — a malformed
