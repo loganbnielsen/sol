@@ -2,11 +2,14 @@
 
 - **Classification:** `VERIFIED_DEFECT` — the behaviour is observed; the *mechanism* is an
   open design question
-- **State:** `OPEN` — design recorded 2026-09-23 (below); implementation not started; not derived from `INFRA-067`
+- **State:** `OPEN` — mechanisms 1 and 2 landed 2026-09-24 (HARDEN-004 steps 2–4); the
+  *convergence* half (design point 3, adoption) is unwritten and undecided, so the acceptance
+  criterion below is still not met. See the 2026-09-24 transition at the end of this file.
 - **First identified:** 2026-09-23 (GCP Attempt 6)
-- **Last verified:** 2026-09-23, `main @ 835841a8`
+- **Last verified:** 2026-09-24, `origin/main @ 2775d5b1` (pre-live, no provider call)
 - **Provider:** GCP observed (GKE); the shape is in shared lifecycle code — see "NOT established"
-- **Derived ticket:** none yet — the acceptance criterion is behavioural and the mechanism is open
+- **Derived ticket:** the ownership half is `DEC-044` (undecided) → the implementation that
+  decision authorizes; the verification half is FND-0055
 - **Related invariant:** **ADR 0003 invariant 6** — destruction is an abort edge available
   from every phase, including a half-built one
 - **Related:** `INFRA-067` (the same family, a different manifestation), `FND-0028`,
@@ -123,3 +126,46 @@ here beyond this paragraph.
   the record of what was believed); the "zero create operations during recovery" criterion
   must be tested against the real sequence. See **FND-0044** / `INFRA-068`; the precision
   issues in the #451 implementation are **FND-0048** / `REFAC-091`.
+
+## Transition (2026-09-24) — mechanisms 1 and 2 landed; the convergence half is what remains
+
+Verified at `origin/main @ 2775d5b1`, pre-live (no provider call was made).
+
+**Mechanisms 1 and 2 of the Design section are implemented, and the "destroy is unavailable"
+half of this finding is fixed.** Mechanism 1 (the destructive preparation is a means, not a
+gate) — `Sol_cli_cloud_destroy.execute` decides the consequence of a preparation failure from
+the typed `preparation_outcome`, and only `Block_destroy` stops destruction. Mechanism 2 (the
+preparation targets only resources present in the target's state) — eligibility is
+`configuration INTERSECT state` (`preparations_eligible`,
+`cli/sol/lib/sol_cli_cloud_lifecycle.ml:411-421`), and **every** apply reachable from destroy is
+now planned to a saved plan, classified from Terraform's own resource changes, and refused
+before it runs when a change is outside that phase's allowlist
+(`cli/sol/lib/sol_cli_terraform_plan.ml`; the phase policies are in
+`cli/sol/lib/sol_cli_cloud_destroy.ml:626-711`). The reconciliation apply is no longer
+`whole_root`. So the specific failure of Attempt 6 — a `-target` on the cluster planning a
+**create** of something that already exists — is refused rather than attempted.
+
+**The acceptance criterion is nevertheless still not met, because convergence is mechanism 3
+(adoption), and mechanism 3 does not exist.** A resource present in the provider and absent
+from state is neither created nor destroyed by Terraform, so with mechanisms 1–2 the destroy
+*proceeds and completes on everything state owns* while the divergent resource survives. That
+is what the design text above says, and it is confirmed on current `main`:
+
+- `destroy_substrate` is state-driven only (`cli/sol/lib/sol_cli_terraform.ml:85-92`, called from
+  `cli/sol/bin/cmd_cloud_tf.ml:3590-3612`), and no `terraform import` wrapper exists anywhere in
+  the CLI;
+- the divergence is reported as a **warning** over the guarded set only
+  (`cmd_cloud_tf.ml:2213-2273`, helper at `sol_cli_cloud_lifecycle.ml:411-421`) and never
+  reaches the verification verdict.
+
+**Attempt 7 was opened under explicit authorization and stopped before any live resource was
+created**, because the positive postcondition it requires cannot be reached for a divergent
+resource without adopting it — the mechanism this finding's design point 3 names as "a new
+capability". The pre-live falsification is recorded as **FND-0056**, the verification blind spot
+it exposed as **FND-0055**, and the undecided design question as **`DEC-044`**. A provider
+*cascade* (a parent's deletion removing the child) can make a particular orphan disappear, but
+that is provider behaviour, not this contract, and it is explicitly not being reported as a
+qualification.
+
+Nothing in this finding's classification changes: the behaviour was observed (Attempt 6), and
+the remaining work is still a mechanism decision.

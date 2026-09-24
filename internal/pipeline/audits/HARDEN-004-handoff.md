@@ -663,3 +663,90 @@ records such a mismatch, and searching the workflow's pin/scaffold steps found n
 assertion to disagree with. Recording an unreproducible finding would break this repo's own
 rule (reproduce, don't summarize), so it is **not** filed here — it is noted, and left out
 of Step 5's scope.
+
+---
+
+# Attempt 7 — opened, then stopped pre-live as a falsification (2026-09-24)
+
+**Outcome: no live resource was created, nothing was mutated, and the attempt's positive
+postcondition was found to be unreachable as written on current `main`.** `main` at the time of
+writing: `2775d5b1`. The authorization was explicit, and it was used for Phase 0 (read-only
+baseline) and Phase 1 (offline preflight) only; Phase 2 was reached as a *decision*, not as a
+fixture.
+
+The canonical record is `docs/qualification/2026-09-24-gcp-attempt7-prelive-falsification.md`
+(run identity, baseline, probes, evidence-bundle location). The reusable analysis is **FND-0056**
+(the qualification gap), **FND-0055** (the verification defect it exposed) and updated **FND-0030**
+(ownership). Raw probes are frozen at `~/sol-attempt7-evidence/`, outside the repository.
+
+## Why it was stopped rather than run
+
+The brief carried its own stop condition — *"if current-main evidence materially contradicts the
+qualification design, stop before creating live resources and report the contradiction"* — and it
+was met, decidable before spending:
+
+1. A resource removed from Terraform state is outside `terraform destroy`'s ownership set.
+   `terraform destroy` is `apply -destroy` on Terraform-**managed** infrastructure, and
+   `terraform state rm` "causes Terraform to 'forget' those items **without first destroying them
+   in the remote system**". Reproduced locally, no cloud (`falsification-probes/`): `state rm`
+   then `destroy` exits 0, destroys 0 objects, and the object is still there.
+2. Sol has no import/adoption step — `rg -n "import" cli/sol/bin/*.ml cli/sol/lib/*.ml` matches
+   only an unrelated comment (positive control: `rg -n "terraform import"` does find it in
+   `docs/`). So nothing restores destructive ownership.
+3. Step 5's verification is driven by the **captured** state inventory
+   (`cmd_cloud_tf.ml:898-911`), so a resource that was never represented is invisible to it: the
+   verdict can be "postcondition established" while the object is PRESENT (FND-0055).
+4. Therefore the required postcondition — the divergent resource `ABSENT` — is reachable only if
+   the *provider* cascades its removal behind a represented parent. That is provider behaviour
+   and not this contract, so it was explicitly rejected as a fixture (it would have produced a
+   "PASS" that demonstrated a special case).
+5. And the attempt's own criteria forbid the one mechanism the repository's own design names for
+   convergence: FND-0030 §Design point 3 — *"Converging it requires adopting it and then
+   destroying it … a new capability"* — against the brief's "Success must NOT require: importing
+   the provider resource; re-adding it to Terraform state". Nor is that a contradiction the
+   repository can resolve by preference: `INV-DESTROY-2` already phrases the requirement as
+   "outside the **documented recovery**", i.e. it presumes one exists.
+
+Buying a GKE cluster and a Cloud SQL instance to demonstrate a limitation already established
+from the code, FND-0030's recorded design, and Terraform's own documented semantics would have
+spent the account to learn nothing. **The falsification is the result; the live run is not owed.**
+
+## What changed in the ledger
+
+| Artifact | Change |
+|---|---|
+| `FND-0030` | remains **`OPEN`**; dated transition recording that its mechanisms 1–2 landed in steps 2–4, that its acceptance criterion is unmet because mechanism 3 (adoption) does not exist, and that Attempt 7 was stopped pre-live |
+| `FND-0055` | **new** — `VERIFIED_DEFECT` (fail-open verification): the postcondition's evidence set is the state inventory, so a target-declared/provider-present/state-absent resource is invisible and its survival can be reported as established |
+| `FND-0056` | **new** — `DESIGN_GAP`: the Attempt-7 property is not establishable by current `main`, and the attempt's criteria exclude the only mechanism the repo's own design names for convergence |
+| `FND-0045` | → **`FIXED_UNQUALIFIED`**: its remedy landed as `INFRA-069` in step 5, with the "keep name-based describes as an orphan sweep" clause implemented narrower than written — which is where FND-0055's hole comes from |
+| `DEC-044` | **new, `BACKLOG`, `## Decision Required`** — the ownership + coverage decision, its options, the recommendation, and the acceptance criteria of the implementation it would authorize |
+
+`INFRA-069` is deliberately left where it is: its primary obligation is discharged, its sweep
+clause is now FND-0055's subject, and moving another workstream's ticket is the HARDEN-004
+owner's call, not this session's.
+
+## The order now
+
+1. **`DEC-044` — decide** the two questions (does the supported path adopt-then-destroy; and what
+   the expected-resource set is). Recommended: **B2** (declared set from a read-only non-destroy
+   `plan -json`, unioned with the state inventory; PRESENT ⇒ violation, unqueryable ⇒ UNKNOWN)
+   **then A1** (`terraform import` behind the existing saved-plan assertion, then the ordinary
+   destroy). Until both land, the correct behaviour is to **fail loudly and name the divergence**.
+2. **The `INFRA-*` that implements step 1** (materialise only after the decision). Its acceptance
+   criteria are drafted in `DEC-044`; the first unit is offline-testable and removes the
+   fail-open, so a later live attempt fails for the *real* reason.
+3. **Attempt 7 (or its successor) re-run live** — needs its own explicit authorization and a
+   fresh Phase-0 baseline, because the property it qualifies will have been restated to name the
+   recovery mechanism.
+
+Unchanged and still parked: adoption/import beyond what step 2 authorizes, runtime finding G,
+FND-0010, and the parked `cluster_issuer` change. **Do not merge the parked `cluster_issuer`
+change, and do not launch Attempt 8.**
+
+## Session hygiene
+
+Canonical checkout clean; no qualification target left in the tree; nothing created in
+`sol-qualification`; durable DEC-043 prerequisites (state bucket, DNS zone) verified present and
+healthy with the delegation resolving before the session ended. The baseline inventory is in the
+Attempt-7 evidence bundle, not in the repository — it carries project identifiers, the same rule
+Attempt 6's raw logs followed.

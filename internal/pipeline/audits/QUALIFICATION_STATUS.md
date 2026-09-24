@@ -362,3 +362,46 @@ bootstrap rather than only against a repeatedly reconciled cluster.
 **Open before that sequence:** the destroy path removes the bootstrap elevation but does
 not verify the effective surface (DEC-040 applies to every revoking path) — a remaining
 piece of INFRA-061, exposed by the teardown itself.
+
+## Recovery-contract frontier (2026-09-24) — Attempt 7 stopped pre-live
+
+`main @ 2775d5b1`. The tables above stop at FND-0027 and have not tracked the destroy-path
+findings (FND-0030/FND-0044–0048/FND-0055–0056); this section brings the one frontier this
+session touched current rather than reconstructing the whole index. Detail:
+`HARDEN-004-handoff.md` (last section), `docs/qualification/2026-09-24-gcp-attempt7-prelive-falsification.md`.
+
+The HARDEN-004 destroy-path programme landed its steps 2–5 between 2026-09-23 and 2026-09-24:
+a typed destroy execution core with one state inventory, plan-and-assert on every destroy-path
+apply, the wired failure policy with decided exit codes, and provider/retention verification taken
+from observed evidence. **Verified**, from the code on `main` and those steps' own records:
+destroy no longer performs an unasserted constructive apply; reconciliation is scoped to the
+bootstrap mechanism plus the guarded addresses state represents; a preparation failure permits
+destruction with the degradation reported; and retention is a typed observation rather than a
+rendered policy string.
+
+**What did not come with them is the ability to converge a *divergence*** — a target-declared
+resource that the provider holds while Terraform state does not represent it (Attempt 6's shape).
+
+| Finding | What | State |
+|---|---|---|
+| FND-0030 | Destroy unavailable for a partially-represented target | `OPEN` — mechanisms 1–2 landed; the convergence half (adoption) does not exist |
+| FND-0044 / FND-0048 | Whole-root constructive applies; type-mapped address identities | fixed in steps 2–3 (`STATIC`/`MECHANISM`) |
+| FND-0045 | Verification checked guessed names in a defaulted region | `FIXED_UNQUALIFIED` — remedy landed in step 5, with its orphan-sweep clause implemented narrower than written |
+| FND-0046 | Retention printed from the policy | `FIXED_UNQUALIFIED` (INFRA-072); the query has never run live |
+| FND-0055 | **New** — the verification's evidence set is the state inventory, so a divergent resource is invisible and its survival can be reported as "postcondition established" | `OPEN` |
+| FND-0056 | **New** — the Attempt-7 property is not establishable by current `main`, and the attempt's criteria exclude the only mechanism the repository names for convergence | `OPEN` |
+| DEC-044 | **New** — the ownership + coverage decision (options, recommendation, acceptance criteria) | `BACKLOG`, `Decision Required` |
+
+**Attempt 7 was authorized, opened, and stopped before Phase 2** — no resource created, nothing
+mutated, zero exposure re-verified from the provider. The required postcondition (divergent
+resource `ABSENT`) is reachable only if the *provider* cascades the object's removal behind a
+represented parent, which is provider behaviour, not this contract; that fixture was therefore
+rejected rather than reported as a pass. Falsification, not qualification.
+
+**Frontier consequence:** the next live GCP attempt is not the next *step* — it is the next step
+*after* the fail-open is closed and adoption is decided. The recommended first unit is
+offline-testable and needs no provider: compute the declared address set from a read-only
+non-destroy `plan -json`, union it with the state inventory, and require a provider observation
+for every declared address state does not represent (PRESENT ⇒ violation, unqueryable ⇒ UNKNOWN,
+UNKNOWN ⇒ failure). Until that lands, the honest behaviour for a divergence is to fail loudly and
+name it.
