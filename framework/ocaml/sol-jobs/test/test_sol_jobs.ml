@@ -69,7 +69,17 @@ let test_validate_retry_policy_rejects_zero_max_attempts () =
     true
     (match Sol_jobs.For_testing.validate_retry_policy policy with
      | Error (`Config _) -> true
-     | Ok () -> false)
+     | Error (`Database _) | Ok () -> false)
+;;
+
+(* BUG-044: kinds are the claim filter, joined with ',' into one parameter. *)
+let test_validate_kinds () =
+  let ok kinds = Result.is_ok (Sol_jobs.For_testing.validate_kinds kinds) in
+  Alcotest.(check bool) "typical kinds accepted" true (ok [ "send_email"; "report.v2-x" ]);
+  Alcotest.(check bool) "empty list refused" false (ok []);
+  Alcotest.(check bool) "empty kind refused" false (ok [ "a"; "" ]);
+  Alcotest.(check bool) "separator refused" false (ok [ "a,b" ]);
+  Alcotest.(check bool) "uppercase refused" false (ok [ "SendEmail" ])
 ;;
 
 let test_validate_retry_policy_accepts_positive_and_negative () =
@@ -89,7 +99,8 @@ let () =
   let open Alcotest in
   run
     "sol_jobs"
-    [ ( "backoff_s"
+    [ "kinds", [ test_case "validate_kinds" `Quick test_validate_kinds ]
+    ; ( "backoff_s"
       , [ test_case
             "early attempt within jittered bounds"
             `Quick

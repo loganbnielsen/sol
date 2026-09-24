@@ -10,6 +10,12 @@ type action_result =
   | Hosted_unavailable of string
 
 val mode_of_env : string -> (mode, string) result
+
+(** The key syntax a Secret key must have (uppercase, digits, underscores). *)
+val validate_key_format : string -> (unit, string) result
+
+(** [validate_key_format] plus reserved names (SEC-006): what [set] accepts.
+    [delete] checks only the format, so a reserved key can still be removed. *)
 val validate_key : string -> (unit, string) result
 
 val secret_manifest

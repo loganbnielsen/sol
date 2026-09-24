@@ -1,7 +1,7 @@
 # FND-0034 — A `-fn`'s schedule has two sources; the one that schedules defaults to hourly, and the other only names the Pushgateway job
 
 - **Classification:** `DESIGN_GAP`
-- **State:** `OPEN`
+- **State:** `FIXED_UNQUALIFIED` (BUG-048, 2026-09-24: schedule required in sol.toml, single source; Pushgateway job = workload; fn pushes via PUSHGATEWAY_URL; tests + mutation checks)
 - **First identified:** 2026-09-23, correctness audit
 - **Last verified:** 2026-09-23 (`origin/main @ f3e9480b`)
 - **Derived ticket:** `BUG-048` (subsumes EXP-022)

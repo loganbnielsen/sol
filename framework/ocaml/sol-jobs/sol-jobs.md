@@ -21,6 +21,7 @@
 module type JOB = sig
   type t
   val kind : t -> string
+  val kinds : string list
   val encode : t -> string
   val decode : string -> (t, string) result
   val handle : t -> (unit, string) result
@@ -39,6 +40,7 @@ module J = struct
   let kind = function
     | Send_welcome_email _ -> "send_welcome_email"
     | Generate_pdf _ -> "generate_pdf"
+  let kinds = [ "send_welcome_email"; "generate_pdf" ]
   let encode t = (* Yojson.Safe.to_string ... *)
   let decode s = (* Yojson.Safe.from_string, then decode ... *)
   let handle = function
@@ -47,7 +49,7 @@ module J = struct
 end
 ```
 
-Multiple job "kinds" are just constructors of one `t` — the same way an app's Kafka `MESSAGE` type can carry a variant payload. `kind` is a label for observability (metrics/logs) only, never used for routing, storage identity, or dispatch — dispatch is `J.handle`'s own pattern match.
+Multiple job "kinds" are just constructors of one `t` — the same way an app's Kafka `MESSAGE` type can carry a variant payload. Dispatch is `J.handle`'s own pattern match. `kind` labels metrics and logs, and it is also what a poller **claims by** (BUG-044): `kinds` lists every value `kind` can return, and a `Make(J)` poller claims only rows whose `kind` is in `J.kinds`. So separate `Make` instances with different job types can share the one table without claiming — and failing to decode — each other's jobs. Each kind is non-empty and uses only `a-z`, `0-9`, `_`, `.`, `-`; `run` refuses anything else with `` `Config ``, and `enqueue` refuses a job whose `kind` is not in `J.kinds`, because no poller would ever claim it.
 
 `decode`'s `Error _` is treated exactly like a `handle` failure: retried per the configured `retry_policy`, eventually terminal. There is no separate poison-message path the way Kafka's decode-error handling needs one — unlike a Kafka partition, one bad row can never block any other job's claim.
 
@@ -86,6 +88,7 @@ SET locked_until = now() + (?::float8 * interval '1 second'),
 WHERE id = (
   SELECT id FROM sol_jobs
   WHERE status = 'pending'
+    AND kind = ANY(string_to_array(?, ','))   -- J.kinds, comma-joined
     AND run_at <= now()
     AND (locked_until IS NULL OR locked_until <= now())
   ORDER BY run_at
@@ -95,7 +98,7 @@ WHERE id = (
 RETURNING id, kind, payload, attempts
 ```
 
-`FOR UPDATE SKIP LOCKED` is the whole mechanism: Postgres's own row locking gives mutual exclusion across any number of pollers (multiple replicas of the same `-worker`, or multiple distinct `Make` instances sharing the table) with no coordinator, no `LISTEN`/`NOTIFY`, no external lease service. This is a **polling** claim loop by design (FEAT-077 non-goal: no `LISTEN`/`NOTIFY` push) — `poll_interval_s` (default `1.0`) is how long the loop sleeps when it finds nothing claimable; it never sleeps between consecutive jobs while the queue is non-empty.
+`FOR UPDATE SKIP LOCKED` is the whole mechanism: Postgres's own row locking gives mutual exclusion across any number of pollers (multiple replicas of the same `-worker`, or multiple distinct `Make` instances sharing the table — each claims only its own `J.kinds`) with no coordinator, no `LISTEN`/`NOTIFY`, no external lease service. This is a **polling** claim loop by design (FEAT-077 non-goal: no `LISTEN`/`NOTIFY` push) — `poll_interval_s` (default `1.0`) is how long the loop sleeps when it finds nothing claimable; it never sleeps between consecutive jobs while the queue is non-empty.
 
 The claim query updates `locked_until` and commits immediately — `J.handle` then runs **outside** any open database transaction or connection hold. This matters for a Postgres connection pool of limited size: a slow job never ties up a pooled connection for its own duration, only for the brief claim/finalize queries around it. `locked_until` (`lease_s`, default `300.0`) exists purely as the crash-recovery mechanism: if this process dies or is killed mid-`handle`, the row's lease eventually expires and another poller (or this same process, restarted) can reclaim it. A clean run always finalizes well before the lease expires; `lease_s` only needs to comfortably exceed the slowest realistic `J.handle` call.
 
@@ -124,6 +127,7 @@ module Make (J : JOB) : sig
     -> ?on_ready:(unit -> unit)
     -> ?stop:unit Eio.Promise.t
     -> ?max_jobs:int
+    -> ?max_claim_failures:int
     -> unit
     -> (unit, Sol_jobs.run_error) result
 end
@@ -131,7 +135,9 @@ end
 
 `run`'s shape deliberately mirrors `Worker.Make(_).run` (`env`/`ot`/`metrics_port`/`on_ready`/`stop`) so a `-worker` hosting `sol-jobs` looks and behaves like any other Sol primitive: `?ot:Sol_obs.t` wires the same logs/metrics/traces facade, exposing `sol_jobs_processed_total{status,kind}` (`status`: `ok`/`retry`/`failed`) and `sol_jobs_job_duration_seconds` on `GET /metrics`, scraped by Prometheus the same way.
 
-`run` returns `Error (\`Config msg)` immediately, before ever touching Postgres, if `retry_policy.max_attempts = 0` — a `0` value can never mean anything valid (it isn't "no retry", `max_attempts = 1` is; it isn't "unlimited", negative is) so it is rejected up front rather than silently misbehaving the first time a job fails, the same fail-fast discipline FEAT-078 applied to `sol-worker`'s mandatory `retry_strategy`.
+`run` returns `Error (\`Config msg)` immediately, before ever touching Postgres, if `retry_policy.max_attempts = 0` — a `0` value can never mean anything valid (it isn't "no retry", `max_attempts = 1` is; it isn't "unlimited", negative is) so it is rejected up front rather than silently misbehaving the first time a job fails, the same fail-fast discipline FEAT-078 applied to `sol-worker`'s mandatory `retry_strategy`. Invalid `J.kinds` is the same kind of `` `Config `` error.
+
+Database trouble is loud (BUG-044). `run` reads the `sol_jobs` table before its first claim and returns `` Error (`Database msg) `` if it cannot — a missing migration is a startup error, not an idle-looking loop. A claim query that fails is logged (to `ot`, or to stderr without it) and retried every `poll_interval_s`; `max_claim_failures` consecutive failures (default `30`) end `run` with `` `Database ``, so a `-worker` whose database stays unreachable exits and is restarted visibly rather than polling in silence. Every other database failure the loop meets (a failed completion, retry or terminal mark) is logged the same way.
 
 ## Example: transactional enqueue
 

@@ -207,6 +207,17 @@ JSON
             esac
             ;;
         esac
+        # INFRA-074 fixture: the cloud apply's untargeted plan drops a workload's
+        # ECR repository (a checkout without that workload's Dockerfile). The apply
+        # must refuse it unless --confirm-ecr-removal is given.
+        if [ "${ECR_REMOVAL:-}" = 1 ]; then
+          case " $plan_args " in
+            *" -target="*) : ;;
+            *infra/aws*)
+              add_change 'aws_ecr_repository.services[\"old-svc\"]' "aws_ecr_repository" "delete"
+              ;;
+          esac
+        fi
         # HARDEN-004 step 3 refusal fixture: a reconciliation plan that would
         # reconstruct the missing cluster. The assertion must refuse it and never
         # apply it. Guarded merely by the bootstrap variable so the preparation
@@ -1449,6 +1460,47 @@ if [ -z "$access_line" ] || [ -z "$close_line" ] || [ "$close_line" -le "$access
   grep -nE 'get-credentials|provisioner_bootstrap_admin' "$gcp_apply_access_log" >&2 || true
   exit 1
 fi
+
+# INFRA-074 / FND-0043: `sol cloud apply` plans to a file and reads it first. A plan
+# that deletes an ECR repository (and with it every image) is refused before
+# anything changes, unless --confirm-ecr-removal is given. What is applied is the
+# plan that was read.
+ecr_log="$tmp/ecr-removal.log"
+rm -f "$FAIL_MARKER_DIR/bootstrap-window"
+if (export FAIL_ON=""; export ECR_REMOVAL=1; run_apply "$ecr_log"); then
+  cat "$ecr_log.out" >&2
+  echo "cloud apply went ahead with a plan that deletes an ECR repository" >&2
+  exit 1
+fi
+grep -F 'would delete ECR repositories' "$ecr_log.out" >/dev/null || {
+  echo "the ECR refusal did not say what it refused:" >&2
+  cat "$ecr_log.out" >&2
+  exit 1
+}
+grep -F 'old-svc' "$ecr_log.out" >/dev/null || {
+  echo "the ECR refusal did not name the repository:" >&2
+  cat "$ecr_log.out" >&2
+  exit 1
+}
+if grep -E -- '-chdir=[^ ]*infra/aws apply ' "$ecr_log" >/dev/null; then
+  echo "a refused cloud apply still ran terraform apply:" >&2
+  grep -E ' apply ' "$ecr_log" >&2
+  exit 1
+fi
+ecr_confirmed_log="$tmp/ecr-removal-confirmed.log"
+if ! (cd "$tmp/work" && FAIL_ON="" ECR_REMOVAL=1 LIFECYCLE_LOG="$ecr_confirmed_log" \
+        "$sol" cloud apply prod/aws/us-east-1 --confirm-ecr-removal) \
+  >"$ecr_confirmed_log.out" 2>&1
+then
+  cat "$ecr_confirmed_log.out" >&2
+  echo "a confirmed ECR removal was refused" >&2
+  exit 1
+fi
+grep -E -- '-chdir=[^ ]*infra/aws apply .*\.tfplan' "$ecr_confirmed_log" >/dev/null || {
+  echo "the confirmed cloud apply did not apply the saved plan it read:" >&2
+  grep -E ' apply ' "$ecr_confirmed_log" >&2
+  exit 1
+}
 
 # Attempt 3 spent a billable apply before discovering that the host lacked the
 # plugin the platform stage needs. It must be refused up front instead -- the check

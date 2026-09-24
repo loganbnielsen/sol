@@ -64,4 +64,4 @@ val record_applied
   -> workspace:string
   -> sha:string
   -> Sol_cli_deployment_plan.t
-  -> unit
+  -> (unit, string) result

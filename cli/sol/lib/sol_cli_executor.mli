@@ -70,3 +70,10 @@ val run_plan
   -> ?before_apply:(Sol_cli_deployment_plan.service_spec -> (unit, string) Stdlib.result)
   -> Sol_cli_deployment_plan.t
   -> (result list, string) Stdlib.result
+
+(** [local_development_spec spec] is [spec] with [SOL_ALLOW_UNVERIFIED_JWT=1] in its
+    config: the opt-in [Service.Make.run] requires before it will serve a route that
+    uses [Unverified_dev_only] JWT auth (SEC-006). Only {!local} applies it. *)
+val local_development_spec
+  :  Sol_cli_deployment_plan.service_spec
+  -> Sol_cli_deployment_plan.service_spec

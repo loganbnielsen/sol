@@ -136,8 +136,10 @@ validated key. Missing header or wrong value → 401.
 > **`Unverified_dev_only` does not check the signature.** Anyone can mint a token with
 > any `sub` and any scopes, and it will be accepted. It exists for local development
 > and tests only. Never put it on a route reachable from outside a developer machine;
-> use `Verified_signature_required` (below) everywhere else. Nothing refuses it at
-> runtime today; SEC-006 adds that guard.
+> use `Verified_signature_required` (below) everywhere else. `Service.Make.run` refuses
+> to start (`Config` error) when a route or `metrics_auth` uses it, unless
+> `SOL_ALLOW_UNVERIFIED_JWT=1`. `sol up` sets that on the local cluster only;
+> `sol deploy` and GitOps emission never do (SEC-006).
 
 For local development only (`verification = Unverified_dev_only`):
 
