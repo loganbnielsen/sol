@@ -133,8 +133,8 @@ async function main() {
   });
 
   const onDecodeError = (err: unknown) => {
-    console.error(`[worker] rejected message: ${String(err)}`);
-    log("error", "rejected message", { error: String(err) });
+    console.error(`[worker] undecodable message, dead-lettered: ${String(err)}`);
+    log("error", "undecodable message, dead-lettered", { error: String(err) });
   };
 
   // Source path: decode + handle, expressing retry via the configured strategy.
@@ -143,6 +143,10 @@ async function main() {
       decode: decodeOrderPlaced,
       decodeErrorCounter: decodeErrorsTotal,
       onDecodeError,
+      // FEAT-098: an undecodable record goes, raw, to <topic>.<group>.dlq (the
+      // retry-topics default, parity with the OCaml worker); "ack-and-drop" is
+      // the explicit opt-in to count it and commit past it.
+      decodeErrorPolicy: "route-to-dlq",
       retryStrategy: RETRY_STRATEGY,
       groupId: GROUP_ID,
       sourceTopic: TOPIC_NAME,
