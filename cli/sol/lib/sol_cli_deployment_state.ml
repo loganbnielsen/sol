@@ -32,12 +32,41 @@ let load_deployed_groups ~ctx workspace =
       ~namespace:"default"
       ~output:"jsonpath={.data.consumer_groups}"
   with
-  | Error _ -> []
-  | Ok r when r.Sol_cli_process.exit_code <> 0 -> []
   | Ok r ->
-    String.split_on_char '\n' r.Sol_cli_process.stdout
-    |> List.map String.trim
-    |> List.filter (fun s -> s <> "")
+    Ok
+      (String.split_on_char '\n' r.Sol_cli_process.stdout
+       |> List.map String.trim
+       |> List.filter (fun s -> s <> ""))
+  (* BUG-045 / FND-0038: only "no record yet" (a first deploy) means no previous
+     groups. Any other failure used to read the same way, so the removal guard
+     passed silently exactly when the cluster could not be asked. *)
+  | Error (Sol_cli_process.Non_zero { stderr; _ })
+    when Sol_cli_port_forward.string_contains ~needle:"NotFound" stderr -> Ok []
+  | Error e ->
+    Error
+      (Printf.sprintf
+         "could not read the recorded consumer groups (configmap default/%s): %s"
+         name
+         (Sol_cli_process.error_to_string e))
+;;
+
+(* The hazard the removal guard exists for, stated for Sol's own consumers:
+   they all use [offset_reset = Earliest]. *)
+let removed_groups_message removed =
+  String.concat
+    ""
+    [ "\n\
+       error: the following consumer group(s) are no longer present in this deploy plan:\n"
+    ; String.concat "" (List.map (fun g -> Printf.sprintf "  - %s\n" g) removed)
+    ; "\n\
+       While a group is absent, nothing consumes its messages. If it is added back, it \
+       resumes\n\
+       from its committed offset while Kafka still retains it; once that offset has \
+       expired\n\
+       it starts from the EARLIEST retained offset and reprocesses the retained log, \
+       repeating\n\
+       side effects. Pass --confirm-group-change to acknowledge and proceed.\n\n"
+    ]
 ;;
 
 let save_deployed_groups ~ctx workspace groups =
@@ -53,26 +82,57 @@ let save_deployed_groups ~ctx workspace groups =
   let oc = open_out path in
   output_string oc apply_json;
   close_out oc;
-  (* BUG-025: report a failed write. The consumer-group drift check depends on
-     this object existing, so ignoring the result let the check run against
-     nothing while looking healthy. *)
-  (match Sol_cli_kubectl.apply ~ctx ~file:path with
-   | Ok () -> ()
-   | Error e ->
-     Printf.eprintf
-       "warning: could not record deploy state (%s): %s\n%!"
-       name
-       (Sol_cli_process.error_to_string e));
-  try Sys.remove path with
-  | _ -> ()
+  (* BUG-025 reported a failed write; BUG-045 makes it an error. The next deploy's
+     consumer-group removal check reads this record, so a failed write is a
+     deploy whose safety check the next deploy cannot run. *)
+  let result =
+    match Sol_cli_kubectl.apply ~ctx ~file:path with
+    | Ok () -> Ok ()
+    | Error e ->
+      Error
+        (Printf.sprintf
+           "could not record the deployed consumer groups (configmap default/%s): %s"
+           name
+           (Sol_cli_process.error_to_string e))
+  in
+  (try Sys.remove path with
+   | Sys_error _ -> ());
+  result
 ;;
 
 let record_outcome ~ctx workspace outcome =
   match outcome with
   | Applied { consumer_groups; _ } -> save_deployed_groups ~ctx workspace consumer_groups
-  | Emitted _ | Dry_run | Failed _ -> ()
+  | Emitted _ | Dry_run | Failed _ -> Ok ()
 ;;
 
 let removed_consumer_groups ~prev ~next =
   List.filter (fun g -> not (List.mem g next)) prev
+;;
+
+(* The consumer-group removal guard shared by [sol deploy] and [sol up]. An
+   unreadable record is not "no previous groups" (BUG-045): it refuses unless the
+   operator already acknowledges group changes, in which case it warns. *)
+let check_removed_groups ~ctx ~workspace ~confirm_group_change ~next =
+  match load_deployed_groups ~ctx workspace with
+  | Error msg when confirm_group_change ->
+    Printf.eprintf
+      "warning: %s\n\
+       The consumer-group removal check could not run; proceeding because \
+       --confirm-group-change was passed.\n\
+       %!"
+      msg;
+    Ok ()
+  | Error msg ->
+    Error
+      (Printf.sprintf
+         "%s\n\
+          The consumer-group removal check cannot run without it. Fix access to that \
+          ConfigMap, or pass --confirm-group-change to proceed without the check."
+         msg)
+  | Ok prev ->
+    (match removed_consumer_groups ~prev ~next with
+     | _ :: _ as removed when not confirm_group_change ->
+       Error (removed_groups_message removed)
+     | _ -> Ok ())
 ;;
