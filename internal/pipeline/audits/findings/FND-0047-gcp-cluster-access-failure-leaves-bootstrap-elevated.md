@@ -2,7 +2,7 @@
 
 - **Classification:** `VERIFIED_DEFECT`, against DEC-040 (the bootstrap window is closed on
   every exit path)
-- **State:** `OPEN`
+- **State:** `FIXED_UNQUALIFIED` for the immediate defect (INFRA-070, 2026-09-23: GCP now honours `on_error`; offline regression + mutation check). The structural class stays open under REFAC-091.
 - **First identified:** 2026-09-23, by a second reviewer at `main @ f2e1773`; re-verified at
   `origin/main @ f3e9480b`
 - **Derived ticket:** `INFRA-070`, `REFAC-091` (lifecycle port)
