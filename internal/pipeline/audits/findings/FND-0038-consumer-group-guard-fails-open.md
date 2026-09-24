@@ -1,7 +1,7 @@
 # FND-0038 — The consumer-group-removal guard reads unreadable deploy state as "no previous groups", and its rationale contradicts `offset_reset = Earliest`
 
 - **Classification:** `VERIFIED_DEFECT`
-- **State:** `OPEN`
+- **State:** `FIXED_UNQUALIFIED` (BUG-045, 2026-09-24: unreadable record refuses, failed write fails the deploy before "Done", message corrected; fake-kubectl tests + mutation checks)
 - **First identified:** 2026-09-23, correctness audit
 - **Last verified:** 2026-09-23 (`origin/main @ f3e9480b`)
 - **Derived ticket:** `BUG-045`

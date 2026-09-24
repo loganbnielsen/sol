@@ -223,3 +223,16 @@ let guarded_apply ~policy ~plan ~show_plan ~apply_plan () =
                 Error (Apply_failed (Printf.sprintf "%s: %s" policy.phase message)))
            | violations -> Error (Refused violations))))
 ;;
+
+(* INFRA-074: the addresses of [resource_type] a plan deletes or replaces. A
+   replace destroys the resource first, so for a repository it loses the images
+   as surely as a delete does. *)
+let removed_of_type ~resource_type changes =
+  List.filter_map
+    (fun c ->
+       match c.action with
+       | (Delete | Replace) when String.equal c.resource_type resource_type ->
+         Some c.address
+       | _ -> None)
+    changes
+;;

@@ -182,6 +182,9 @@ one-page runbooks in [`alert-runbooks.md`](alert-runbooks.md).
 | `SolPostgresUnavailable` | Postgres dependency | `pg_up == 0` | sustained 5 minutes, `critical` |
 | `SolKafkaConsumerLagHigh` | Kafka lag | `redpanda_kafka_consumer_group_lag` | > 10000, sustained 10 minutes |
 | `SolKafkaBrokerDown` | Kafka broker loss | `up{job=~".*redpanda.*"} == 0` | sustained 5 minutes, `critical` |
+| `SolWorkerDecodeDrops` | messages acked and dropped as undecodable | `sol_worker_decode_errors_total` | any increase in 5 minutes, `critical` |
+| `SolWorkerRelayPublishFailed` | retry/DLQ publish failing | `sol_worker_messages_total{status="relay_failed"}` | nonzero since the pod started, `critical` |
+| `SolWorkerDeadLetterInflow` | sustained dead-lettering | `sol_worker_messages_total{status="dead_letter"}` | nonzero rate, sustained 15 minutes |
 | `SolTelemetryTargetDown` | telemetry loss | `up{namespace="monitoring"} == 0` | sustained 10 minutes |
 
 `SolPodRestartLoop` alerts on kube-state-metrics' own `namespace`/`pod`/

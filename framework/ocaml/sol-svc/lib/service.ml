@@ -193,6 +193,35 @@ let api_key_required routes metrics_auth =
   || List.exists (fun route -> auth_uses_api_key route.Route.auth) routes
 ;;
 
+(* SEC-006 / FND-0037: [Unverified_dev_only] trusts any token without checking its
+   signature. Its name was the only thing keeping it off a real route, so a service
+   that uses it refuses to start unless the environment opts in explicitly.
+   [sol up] renders the opt-in for the local cluster only; [sol deploy] never does. *)
+let unverified_jwt_opt_in = "SOL_ALLOW_UNVERIFIED_JWT"
+
+let auth_is_unverified_jwt = function
+  | `Jwt { Auth.verification = Auth.Unverified_dev_only; _ } -> true
+  | `Jwt { Auth.verification = Auth.Verified_signature_required _; _ }
+  | `Public | `Api_key -> false
+;;
+
+let refuse_unverified_jwt routes metrics_auth =
+  let used =
+    auth_is_unverified_jwt metrics_auth
+    || List.exists (fun route -> auth_is_unverified_jwt route.Route.auth) routes
+  in
+  if used && Sys.getenv_opt unverified_jwt_opt_in <> Some "1"
+  then
+    Error
+      (`Config
+          (Printf.sprintf
+             "a route uses Unverified_dev_only JWT auth, which accepts tokens without \
+              checking their signature. It runs only where %s=1 (sol up sets this on the \
+              local cluster). Use Verified_signature_required."
+             unverified_jwt_opt_in))
+  else Ok ()
+;;
+
 let env_nonempty name =
   match Sys.getenv_opt name with
   | Some value when String.trim value <> "" -> Some value
@@ -271,6 +300,7 @@ module Make (H : HANDLER) = struct
         Some (req_count, req_duration)
     in
     let fetch_jwks = Auth_internal.fetch_jwks_over_https ~env in
+    let* () = refuse_unverified_jwt H.routes metrics_auth in
     let* read_api_key =
       api_key_reader ~env ~required:(api_key_required H.routes metrics_auth)
     in
