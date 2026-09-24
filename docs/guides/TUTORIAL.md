@@ -517,7 +517,7 @@ Generates `app/ops/admin_svc/` with a stub handler. Add routes and redeploy.
 sol new fn billing/invoice
 ```
 
-Generates `app/billing/invoice_fn/` with a `schedule` field (default `"0 * * * *"`) and a `run` function. Sol reads the schedule literal from source and generates a Kubernetes `CronJob`.
+Generates `app/billing/invoice_fn/` with a `run` function and a `sol.toml` whose `[service] schedule` (scaffolded as `"0 * * * *"`) is required. Sol reads the schedule from `sol.toml` and generates a Kubernetes `CronJob`; a `-fn` without one is a plan error rather than an hourly job.
 
 ---
 

@@ -746,13 +746,6 @@ let test_fn_no_deployment () =
   assert_absent "fn no Deployment" workload "kind: Deployment"
 ;;
 
-let test_fn_default_schedule () =
-  (* When schedule=None the default cron expression is used *)
-  let spec = { fn_spec with schedule = None } in
-  let _ns, workload = render_spec_ok spec in
-  assert_contains "fn default schedule" workload {|schedule: "0 * * * *"|}
-;;
-
 (* AUDIT-040: CronJob pod template must carry app: <k8s_name> so that the
    generated NetworkPolicy (which selects on app: <name>) matches fn pods. *)
 let test_fn_cronjob_pod_template_has_app_label () =
@@ -2313,10 +2306,51 @@ let test_fn_sol_env_configmap_absent_by_default () =
   assert_absent "fn SOL_ENV config" cm_block {|SOL_ENV: |}
 ;;
 
+(* BUG-048: a -fn's Pushgateway group is its workload identity; only -fn gets it. *)
+let test_fn_render_carries_pushgateway_job () =
+  let _, workload = render_spec_ok fn_spec in
+  check_bool
+    "SOL_PUSHGATEWAY_JOB is <namespace>.<name>"
+    true
+    (contains
+       workload
+       (Printf.sprintf
+          "SOL_PUSHGATEWAY_JOB: \"%s.%s\""
+          (Sol_cli_kubernetes_name.namespace_to_string fn_spec.namespace)
+          (Sol_cli_kubernetes_name.k8s_name_to_string fn_spec.k8s_name)))
+;;
+
+let test_svc_render_has_no_pushgateway_job () =
+  let _, workload = render_spec_ok svc_spec in
+  check_bool "svc has no Pushgateway job" false (contains workload "SOL_PUSHGATEWAY_JOB")
+;;
+
+let test_fn_without_schedule_is_refused_at_render () =
+  match
+    Sol_cli_deployment_render.render_spec
+      ~workspace:"myapp"
+      ~release_id:release_id_of_test
+      { fn_spec with schedule = None }
+  with
+  | Ok _ -> Alcotest.fail "a -fn spec without a schedule must not render hourly"
+  | Error msg -> check_bool "names the schedule" true (contains msg "schedule")
+;;
+
 let () =
   Alcotest.run
     "manifest_render"
-    [ ( "SOL_ENV reaches every primitive"
+    [ ( "fn Pushgateway job and schedule (BUG-048)"
+      , [ Alcotest.test_case
+            "fn carries SOL_PUSHGATEWAY_JOB"
+            `Quick
+            test_fn_render_carries_pushgateway_job
+        ; Alcotest.test_case "svc does not" `Quick test_svc_render_has_no_pushgateway_job
+        ; Alcotest.test_case
+            "fn without schedule refused"
+            `Quick
+            test_fn_without_schedule_is_refused_at_render
+        ] )
+    ; ( "SOL_ENV reaches every primitive"
       , [ Alcotest.test_case
             "worker SOL_ENV when resolved"
             `Quick
@@ -2469,7 +2503,6 @@ let () =
             `Quick
             test_fn_env_label_present_when_resolved
         ; Alcotest.test_case "no Deployment" `Quick test_fn_no_deployment
-        ; Alcotest.test_case "default schedule" `Quick test_fn_default_schedule
         ; Alcotest.test_case
             "user secret key in Secret resource"
             `Quick

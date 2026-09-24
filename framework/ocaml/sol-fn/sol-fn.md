@@ -32,16 +32,23 @@ val push
 # sol-fn — Function Primitive
 
 `sol-fn` implements the `-fn` primitive: a unit of business logic that executes once
-and exits. In v1 the only trigger is a cron schedule deployed as a Kubernetes CronJob.
+and exits: on a schedule as a Kubernetes CronJob (`Cron`), or hosted on AWS Lambda
+(`Lambda`).
 
 ## Module type
 
 ```ocaml
+type trigger = Cron | Lambda
+
 module type FN = sig
-  val schedule : string                        (* cron expression *)
+  val trigger : trigger
   val run : unit -> (unit, string) result
 end
 ```
+
+**The schedule lives in `sol.toml`, and only there** (BUG-048): `[service] schedule` in
+the workload's `sol.toml` is required for a `-fn`. A missing one is a plan error; it
+used to default to hourly. The code carries no cron string, so the two cannot disagree.
 
 ## Functor
 
@@ -50,13 +57,19 @@ module Make (F : FN) : sig
   val run
     :  env:< net : _ Eio.Net.t; clock : _ Eio.Time.clock;
              mono_clock : _ Eio.Time.Mono.t; .. >
-    -> ?pushgateway_url:string
-    -> ?job:string
-    -> ?backend:(Obs_eio.backend * (unit -> string))
+    -> ?pushgateway_url:string   (* default: PUSHGATEWAY_URL from the environment *)
+    -> ?job:string               (* default: SOL_PUSHGATEWAY_JOB, else "sol-fn"/"lambda" *)
+    -> ?ot:Sol_obs.t
+    -> ?stop:unit Eio.Promise.t
     -> unit
-    -> unit
+    -> (unit, run_error) result
 end
 ```
+
+Sol's manifests render `PUSHGATEWAY_URL` and `SOL_PUSHGATEWAY_JOB=<namespace>.<name>`
+into every `-fn`, so a generated `main` that passes neither still pushes, and each
+function's metrics land in its own Pushgateway group. The job used to default to the
+cron string, so two functions on one schedule overwrote each other (BUG-048).
 
 ## Lifecycle
 
@@ -65,7 +78,7 @@ end
 3. Record `t0`
 4. `Switch.run`:  install signal handler (self-pipe); `Fiber.first` returning typed outcome
 5. Record duration + increment counter — **outside** Fiber.first, so never cancelled
-6. Push to Pushgateway if `~pushgateway_url` provided; all exceptions swallowed
+6. Push to Pushgateway if a URL is configured (`~pushgateway_url` or `PUSHGATEWAY_URL`); push errors are logged and never fail the run
 7. `Ok ()` → return; function failure → `Error (`Run msg)`; signal → `Error `Signalled`
 
 ## Signal handling
@@ -79,11 +92,15 @@ exist in the installed eio version; the self-pipe approach is async-signal-safe 
 (* app/payments/deposit-fn/bin/main.ml *)
 let () =
   Eio_main.run @@ fun env ->
-    let module M = Sol_fn.Fn.Make(Deposit_fn) in
-    match M.run ~env ~pushgateway_url:"http://pushgateway:9091" () with
+    let obs =
+      Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+        ~service:"deposit-fn" ()
+    in
+    let module M = Fn.Make (Deposit_fn) in
+    match M.run ~env ~ot:obs () with          (* URL and job come from the manifest env *)
     | Ok () -> ()
     | Error `Signalled -> exit 130
-    | Error e -> failwith (Sol_fn.Fn.run_error_to_string e)
+    | Error e -> failwith (Fn.run_error_to_string e)
 ```
 
 ## Exit codes
