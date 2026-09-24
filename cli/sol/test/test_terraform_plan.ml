@@ -202,6 +202,16 @@ let test_removal_with_unexpected_create_is_refused () =
           [ delete
               "kubernetes_cluster_role_binding.provisioner_bootstrap_admin"
               "kubernetes_cluster_role_binding"
+          ]));
+  Alcotest.(check bool)
+    "removal may not create the elevation it is closing"
+    false
+    (allowlist
+       policy
+       (plan_of
+          [ create
+              "kubernetes_cluster_role_binding.provisioner_bootstrap_admin"
+              "kubernetes_cluster_role_binding"
           ]))
 ;;
 
