@@ -20,6 +20,7 @@ type deployment_fields =
   ; volumes : Sol_cli_toml.volume list
   ; availability : Sol_cli_availability.t
   ; consumes_kafka : bool
+  ; readiness_path : string
   }
 
 type http_fields =
@@ -187,6 +188,7 @@ let render
                ; volumes
                ; availability
                ; consumes_kafka
+               ; readiness_path
                }
              =
              deployment
@@ -203,6 +205,7 @@ let render
                    ~volumes
                    ~availability
                    ~consumes_kafka
+                   ~readiness_path
                    ~config_hash:cfg_hash
                    ?env
                    ~shape
@@ -266,6 +269,7 @@ let render
                    ~volumes
                    ~availability
                    ~consumes_kafka
+                   ~readiness_path
                    ?env
                    ~shape
                    ~replicas
@@ -391,6 +395,10 @@ let render_spec
     ; volumes = s.volumes
     ; availability = s.availability
     ; consumes_kafka = s.consumes_kafka
+    ; readiness_path =
+        (match s.language with
+         | Some Sol_cli_compat.Typescript -> "/healthz"
+         | Some Sol_cli_compat.Ocaml | None -> "/readyz")
     }
   in
   let workload =

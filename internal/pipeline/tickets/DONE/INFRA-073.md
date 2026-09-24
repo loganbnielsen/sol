@@ -39,3 +39,20 @@ Add a readiness endpoint (`/readyz`) that returns 503 once shutdown begins; on S
 - **Part B (manifests), after A is on `main`:** `-svc` `readinessProbe` → `/readyz` for
   OCaml; TypeScript services stay on `/healthz` (their framework serves no `/readyz`),
   tracked as FEAT-096. Then the ticket moves to DONE.
+
+## Completion notes (2026-09-24)
+
+- **Part B, done:** the `-svc` Deployment renders `readinessProbe` against `/readyz`
+  for OCaml services (`?readiness_path`, chosen from the spec's `language`). Liveness
+  and startup stay on `/healthz`. A TypeScript `-svc` keeps `/healthz` for readiness
+  until its framework serves `/readyz` (FEAT-096). Render tests cover both. Mutation
+  check (built, failed the intended test): an OCaml service rendered with `/healthz`.
+- Timing: the worst-case shutdown (5 s delay plus the 30 s drain) stays under the
+  rendered `terminationGracePeriodSeconds: 45`.
+- **Demo/example:** generated `-svc` manifests change (readiness path). The commented
+  probe in `cli/platform/local/k8s/svc-template.yaml` now points at `/readyz`. Since
+  BUG-048's CI change, the golden-path smoke builds the scaffolded workspace against
+  this commit's `sol-svc`, so the smoke deploys a service that serves `/readyz` behind
+  a `/readyz` probe.
+- **Language parity:** TypeScript stays on `/healthz`; FEAT-096 (BACKLOG) records
+  what its framework needs.
