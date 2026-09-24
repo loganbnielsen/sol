@@ -1,0 +1,29 @@
+---
+id: INFRA-073
+type: bug
+severity: medium
+source: internal/pipeline/audits/2026-09-23_correctness_audit.md
+---
+
+`-svc` graceful shutdown: fail readiness and delay listener close so rolling deploys do not refuse requests
+
+**Depends on:** None.
+
+**Finding:** FND-0041 (`internal/pipeline/audits/findings/`).
+
+**Premise verified 2026-09-23** against `origin/main @ f3e9480b` while filing (see the finding).
+
+## Problem
+
+On SIGTERM `sol-svc` stops accepting immediately while Kubernetes removes the endpoint asynchronously; manifests have no `preStop`, and `/healthz` serves readiness and never turns unready during drain.
+
+## Remediation
+
+Add a readiness endpoint (`/readyz`) that returns 503 once shutdown begins; on SIGTERM flip readiness, keep serving for a short configurable delay (default ~5s, below `terminationGracePeriodSeconds`), then stop accepting and drain. Render `readinessProbe` against `/readyz` for `Http_service`.
+
+## Acceptance criteria
+
+- Test: after stop, `/readyz` is 503 while requests still succeed during the delay.
+- Rendered `-svc` manifest uses `/readyz` for readiness (render test).
+- Demo/example: generated svc manifests change — note in completion notes.
+- TS parity: record verdict for the TS svc.
