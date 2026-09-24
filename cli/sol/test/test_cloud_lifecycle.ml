@@ -269,6 +269,81 @@ let test_platform_terraform_vars () =
   | Error message -> Alcotest.fail message
 ;;
 
+(* FND-0030 / DEC-033: the preparation declares the consequence of its own failure. An
+   ordinary failure preserves the reason and lets destruction be attempted; a failure that
+   stands for a declared retention guarantee blocks, and says why. Both directions are
+   asserted here so neither can drift into the other. *)
+let test_preparation_failure_policies () =
+  let open L in
+  let ordinary =
+    Preparation_failed
+      { reason = "guard-lowering apply exited 1"; policy = Continue_to_destroy }
+  in
+  let required =
+    Preparation_failed
+      { reason = "final snapshot could not be prepared"; policy = Block_destroy }
+  in
+  Alcotest.(check (option string))
+    "an ordinary failure is reported"
+    (Some "guard-lowering apply exited 1")
+    (preparation_failure ordinary);
+  Alcotest.(check (option string))
+    "and it does NOT block destruction"
+    None
+    (destruction_blocked ordinary);
+  Alcotest.(check (option string))
+    "a required-preparation failure is reported"
+    (Some "final snapshot could not be prepared")
+    (preparation_failure required);
+  Alcotest.(check (option string))
+    "and it blocks, with the reason the target's own guarantee gives"
+    (Some "final snapshot could not be prepared")
+    (destruction_blocked required);
+  Alcotest.(check (option string))
+    "nothing to prepare never blocks"
+    None
+    (destruction_blocked Nothing_to_prepare);
+  Alcotest.(check (option string))
+    "a success never blocks"
+    None
+    (destruction_blocked (Prepared "snap-1"));
+  Alcotest.(check (option string))
+    "a success is not a failure"
+    None
+    (preparation_failure (Prepared "snap-1"))
+;;
+
+(* FND-0030: the destructive preparation targets only what state already represents, so a
+   half-built target cannot be made to create the resource it was asked to remove. This is
+   the property, not the mechanism: eligibility is configuration INTERSECT state. *)
+let test_preparations_eligible () =
+  let desired =
+    [ "google_sql_database_instance.postgres"; "google_container_cluster.main" ]
+  in
+  let eligible state = L.preparations_eligible ~state ~desired in
+  Alcotest.(check (list string))
+    "both represented: both are eligible"
+    desired
+    (eligible desired);
+  Alcotest.(check (list string))
+    "the half-built case: the cluster exists in the provider but not in state, so it is \
+     NOT prepared -- preparing it would create it"
+    [ "google_sql_database_instance.postgres" ]
+    (eligible [ "google_sql_database_instance.postgres" ]);
+  Alcotest.(check (list string))
+    "nothing represented: nothing to prepare"
+    []
+    (eligible []);
+  Alcotest.(check (list string))
+    "state that holds neither of the desired resources yields nothing"
+    []
+    (eligible [ "aws_db_instance.postgres" ]);
+  Alcotest.(check (list string))
+    "order follows the configuration, not the state"
+    desired
+    (eligible (List.rev desired))
+;;
+
 (* INFRA-067 / FND-0029: the refusal above is an INSTALL-time capability guarantee, so
    it belongs to installation. Evaluating it while computing the DESTRUCTION variables
    refused a target that `apply` had already accepted and created, which left billable
@@ -1572,6 +1647,14 @@ let () =
             "provider-shaped platform variables"
             `Quick
             test_platform_terraform_vars
+        ; Alcotest.test_case
+            "a preparation failure's policy decides"
+            `Quick
+            test_preparation_failure_policies
+        ; Alcotest.test_case
+            "preparation targets only what state represents"
+            `Quick
+            test_preparations_eligible
         ; Alcotest.test_case
             "destruction is not refused by an install-time requirement"
             `Quick
