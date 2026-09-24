@@ -1,5 +1,44 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: correctness audits and their fixes — fail-loud and modeling (2026-09-23 → 2026-09-24)
+
+Two correctness passes (`internal/pipeline/audits/2026-09-23_correctness_audit.md`,
+`2026-09-24_correctness_audit_pass2.md`; findings FND-0031..0054) and the tickets
+they produced. The common shape: a read that cannot happen collapsed into "absent",
+or a mechanism was correct on its own but not for the concurrency or ownership
+around it.
+
+- **Now fail loudly:** unreadable Secrets in `sol secret` (BUG-040); migration
+  identity and `.down.sql` handling (BUG-041, pg-eio #21); unknown `sol.toml` keys
+  (BUG-042); a dead retry relay, which now fails the worker (BUG-043); the
+  consumer-group guard on unreadable state (BUG-045); a malformed `PORT` and an
+  external `stop` in `sol-svc` (BUG-046); schema compatibility, with FULL set
+  before registering (BUG-049); an unset Kafka protocol (SEC-007); a `-fn` with
+  no schedule (BUG-048).
+- **Modeling fixes:** one process-wide signal handler (BUG-047). `sol-jobs` claims
+  by kind, surfaces database errors, and fences finalize on the claimed attempt
+  (BUG-044, BUG-050). Undecodable source records go to the DLQ under
+  `Retry_topics` (BUG-051). The JWKS refresh is single-flight and Eio-safe, and
+  every request gets a response (BUG-053). `/readyz` plus a shutdown delay
+  (INFRA-073): the probe uses `/readyz` for services that declare
+  `language: ocaml`. Loki/Tempo export is asynchronous, with a stdout copy and a
+  flush on exit (OBS-048; obs-loki-eio/obs-tempo-eio 0.2.0). Kafka addresses are
+  required, not defaulted (BUG-055). TypeScript routes undecodable records to the DLQ
+  (FEAT-098).
+- **Security:** `Unverified_dev_only` refused outside local (SEC-006); plan JSON
+  kept out of run logs, which are now 0600 (SEC-008); `Jwks_url` must be https
+  (SEC-009).
+- **CI:** golden-path and example Dockerfile smokes build scaffolded and example
+  workspaces against the commit under test, not `sol.git#main`, so a framework API
+  change and its scaffold can land in one PR.
+
+**Open, needing a decision:** BUG-054 (who owns workload Secret values: a direct
+deploy or rollback currently re-renders them from the operator's shell and can
+revert a `sol secret set` rotation); BUG-052 (how generated workspaces' CI reaches
+a schema registry). **Open work:** BUG-056 (`sol up` builds its plan without the resolved `sol.yml`,
+so it renders less than `sol deploy`); TypeScript parity tickets FEAT-096, FEAT-097
+and FEAT-099.
+
 ## Latest: AUDIT-069 — migration ordering enforced across the deploy path (2026-09-17)
 
 A production deploy now verifies, after the static preflight and before any

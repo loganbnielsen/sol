@@ -69,8 +69,8 @@ pin-depends: [
   #
   # Pinned by immutable commit SHA rather than a branch: unlike the channel
   # choice above, these carry no "track development" intent.
-  [ "obs-loki-eio.0.1.0"  "git+https://github.com/loganbnielsen/obs-loki-eio.git#20ff330a8f03aedf71c600f113e2bf0f8a14f205" ]
-  [ "obs-tempo-eio.0.1.0" "git+https://github.com/loganbnielsen/obs-tempo-eio.git#31fd441cbae2a3fc5435539248524f00a6c6fd3d" ]
+  [ "obs-loki-eio.0.2.0"  "git+https://github.com/loganbnielsen/obs-loki-eio.git#148a970651b299114b881bb382d3590caf8d38fa" ]
+  [ "obs-tempo-eio.0.2.0" "git+https://github.com/loganbnielsen/obs-tempo-eio.git#e117aece43bd498ea4b2af62a4572f2f3c8fc93a" ]
   [ "pg-eio.0.1.0"        "git+https://github.com/loganbnielsen/pg-eio.git#3ef3a20f6d9a81ce2d8e3a439e5f5f8862fba3bb" ]
   [ "lambda-eio.0.1.0"    "git+https://github.com/loganbnielsen/lambda-eio.git#c07c367b0f8919ae6efb9c3af2cd39d9061b1fdd" ]
 
