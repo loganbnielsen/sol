@@ -28,7 +28,11 @@ let read_file path =
    - unreachable: every get fails like an API server that cannot be reached;
    - missing:     the Secret is NotFound, listings succeed and are empty;
    - present:     the Secret exists with key EXISTING, listings are empty;
-   - no-rollouts: as [missing], but the Rollout kind is not served (CRD absent). *)
+   - no-rollouts: as [missing], but the Rollout kind is not served (CRD absent);
+   - listing-fails:   [sol-secrets] is readable, the per-workload Secret listing is Forbidden;
+   - workloads-fail:  Secrets are readable, the Deployment listing is Forbidden.
+   The last two get past the first read, so they prove every read happens before the
+   first write: a failure there must leave nothing applied, patched or restarted. *)
 let fake_kubectl ~log ~mode_file =
   Printf.sprintf
     {|#!/bin/sh
@@ -50,8 +54,20 @@ if [ "$verb" = "get" ]; then
     exit 1
   fi
   case "$kind" in
+    secrets)
+      if [ "$mode" = "listing-fails" ]; then
+        echo 'Error from server (Forbidden): secrets is forbidden: cannot list resource "secrets"' >&2
+        exit 1
+      fi
+      exit 0 ;;
+    deployment)
+      if [ "$mode" = "workloads-fail" ]; then
+        echo 'Error from server (Forbidden): deployments.apps is forbidden: cannot list resource' >&2
+        exit 1
+      fi
+      exit 0 ;;
     secret)
-      if [ "$mode" = "present" ]; then
+      if [ "$mode" = "present" ] || [ "$mode" = "listing-fails" ] || [ "$mode" = "workloads-fail" ]; then
         echo '{"apiVersion":"v1","kind":"Secret","data":{"EXISTING":"ZXhpc3Rpbmc="}}'
         exit 0
       fi
@@ -162,6 +178,35 @@ let test_list_refuses_an_unreadable_secret () =
       (is_error result))
 ;;
 
+let nothing_written calls =
+  not
+    (contains ~needle:"apply" calls
+     || contains ~needle:"patch" calls
+     || contains ~needle:"rollout " calls)
+;;
+
+let test_later_read_failure_writes_nothing mode () =
+  with_fake_kubectl ~mode (fun ~calls ~manifests:_ ->
+    Alcotest.(check bool) "set returns Error" true (is_error (set ()));
+    Alcotest.(check bool)
+      "set wrote and restarted nothing"
+      true
+      (nothing_written (calls ()));
+    let deleted =
+      Sol_cli_secret.delete
+        ~ctx
+        ~env:"cloud"
+        ~workspace:"demo"
+        ~namespaces
+        ~key:"EXISTING"
+    in
+    Alcotest.(check bool) "delete returns Error" true (is_error deleted);
+    Alcotest.(check bool)
+      "delete patched and restarted nothing"
+      true
+      (nothing_written (calls ())))
+;;
+
 let test_set_creates_a_secret_that_is_absent () =
   with_fake_kubectl ~mode:"missing" (fun ~calls:_ ~manifests ->
     Alcotest.(check bool) "set succeeds on NotFound" false (is_error (set ()));
@@ -195,6 +240,14 @@ let () =
       , [ Alcotest.test_case "set" `Quick test_set_refuses_an_unreadable_secret
         ; Alcotest.test_case "delete" `Quick test_delete_refuses_an_unreadable_secret
         ; Alcotest.test_case "list" `Quick test_list_refuses_an_unreadable_secret
+        ; Alcotest.test_case
+            "workload Secret listing fails"
+            `Quick
+            (test_later_read_failure_writes_nothing "listing-fails")
+        ; Alcotest.test_case
+            "Deployment listing fails"
+            `Quick
+            (test_later_read_failure_writes_nothing "workloads-fail")
         ] )
     ; ( "absent and present still work"
       , [ Alcotest.test_case

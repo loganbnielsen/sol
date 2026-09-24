@@ -231,13 +231,6 @@ let list_workload_secrets ~ctx namespace =
           && String.ends_with ~suffix:"-secrets" name))
 ;;
 
-let apply_to_named_secret ~ctx ~secret_name ~namespace ~key ~value =
-  let* existing = get_named_secret_json ~ctx ~name:secret_name namespace in
-  let existing_data = existing_data existing in
-  let yaml = named_secret_manifest ~secret_name ~existing_data ~namespace ~key ~value in
-  apply_manifest ~ctx yaml
-;;
-
 let hosted_stub _env =
   Error
     "hosted secret management will use the Sol control-plane API; no hosted endpoint is \
@@ -288,12 +281,47 @@ let list_live_workloads ~ctx ~kind ~namespace =
     listed_names ~what:(Printf.sprintf "%ss in namespace %s" kind namespace) result
 ;;
 
-(* Rollouts only exist when progressive delivery is enabled; an absent CRD
-   yields an empty list rather than a failure, so listing tolerates it. *)
-let restart_and_verify ~ctx ~namespace =
+(* BUG-040: everything a rotation depends on is read before its first write. A read
+   that fails after [sol-secrets] was already rewritten would leave the namespace
+   half-rotated with nothing restarted. So [set] and [delete] take one read of each
+   namespace -- every Secret's current data and the live workloads -- for all
+   namespaces, and only then write. Rollouts exist only with progressive delivery;
+   an absent CRD is an empty list, not a failure. *)
+type rotation =
+  { namespace : string
+  ; secrets : (string * (string * string) list) list
+  ; workloads : string list
+  }
+
+let read_rotation ~ctx namespace =
+  let* runtime = get_secret_json ~ctx namespace in
+  let* workload_secret_names = list_workload_secrets ~ctx namespace in
+  let* workload_secrets =
+    fold_namespaces workload_secret_names ~init:[] ~f:(fun acc name ->
+      let* json = get_named_secret_json ~ctx ~name namespace in
+      Ok ((name, existing_data json) :: acc))
+  in
   let* deployments = list_live_workloads ~ctx ~kind:"deployment" ~namespace in
   let* rollouts = list_live_workloads ~ctx ~kind:"rollout" ~namespace in
-  let names = deployments @ rollouts in
+  Ok
+    { namespace
+    ; secrets =
+        (Sol_cli_manifest.runtime_secret_name, existing_data runtime)
+        :: List.rev workload_secrets
+    ; workloads = deployments @ rollouts
+    }
+;;
+
+let read_rotations ~ctx namespaces =
+  let* rotations =
+    fold_namespaces namespaces ~init:[] ~f:(fun acc namespace ->
+      let* rotation = read_rotation ~ctx namespace in
+      Ok (rotation :: acc))
+  in
+  Ok (List.rev rotations)
+;;
+
+let restart_workloads ~ctx ~namespace names =
   let* () =
     iter_namespaces names ~f:(fun name ->
       let* () =
@@ -327,27 +355,22 @@ let restart_and_verify ~ctx ~namespace =
   Ok names
 ;;
 
-let patch_workload_secrets ~ctx ~namespace ~key ~value =
-  let* secret_names = list_workload_secrets ~ctx namespace in
-  iter_namespaces secret_names ~f:(fun secret_name ->
-    apply_to_named_secret ~ctx ~secret_name ~namespace ~key ~value)
-;;
-
+(* sol-secrets serves Argo Rollout workloads; each per-service <svc>-secrets serves
+   the Deployment that mounts it. Both are written, then every live workload is
+   restarted so the new value takes effect. *)
 let set ~ctx ~env ~workspace:_ ~namespaces ~key ~value =
   let* () = validate_key key in
   let* namespaces = validate_operation_context ~env ~namespaces in
+  let* rotations = read_rotations ~ctx namespaces in
   let* () =
-    iter_namespaces namespaces ~f:(fun namespace ->
-      (* Patch sol-secrets for Argo Rollout workloads *)
-      let* existing = get_secret_json ~ctx namespace in
-      let existing_data = existing_data existing in
-      let yaml = secret_manifest ~existing_data ~namespace ~key ~value in
-      let* () = apply_manifest ~ctx yaml in
-      (* Also patch each per-service secret so standard Deployment workloads
-         (which mount <svc>-secrets, not sol-secrets) see the updated value
-         immediately on next restart. *)
-      let* () = patch_workload_secrets ~ctx ~namespace ~key ~value in
-      let* _names = restart_and_verify ~ctx ~namespace in
+    iter_namespaces rotations ~f:(fun { namespace; secrets; workloads } ->
+      let* () =
+        iter_namespaces secrets ~f:(fun (secret_name, existing_data) ->
+          apply_manifest
+            ~ctx
+            (named_secret_manifest ~secret_name ~existing_data ~namespace ~key ~value))
+      in
+      let* _names = restart_workloads ~ctx ~namespace workloads in
       Ok ())
   in
   Ok (Applied namespaces)
@@ -373,41 +396,35 @@ let list ~ctx ~env ~workspace:_ ~namespaces =
 let delete ~ctx ~env ~workspace:_ ~namespaces ~key =
   let* () = validate_key key in
   let* namespaces = validate_operation_context ~env ~namespaces in
+  let* rotations = read_rotations ~ctx namespaces in
   let patch = Printf.sprintf "[{\"op\":\"remove\",\"path\":\"/data/%s\"}]" key in
   let remove_from namespace name =
-    let* existing = get_named_secret_json ~ctx ~name namespace in
-    let data = existing_data existing in
-    if not (List.mem_assoc key data)
-    then Ok ()
-    else (
-      match
-        Sol_cli_kubectl.patch
-          ~ctx
-          ~resource:"secret"
-          ~name
-          ~namespace
-          ~patch_type:"json"
-          ~patch
-      with
-      | Ok result when result.Sol_cli_process.exit_code = 0 -> Ok ()
-      | Ok result ->
-        Error
-          (Printf.sprintf
-             "kubectl patch secret/%s in namespace %s failed: %s"
-             name
-             namespace
-             result.Sol_cli_process.stderr)
-      | Error e -> Error (Sol_cli_process.error_to_string e))
+    match
+      Sol_cli_kubectl.patch
+        ~ctx
+        ~resource:"secret"
+        ~name
+        ~namespace
+        ~patch_type:"json"
+        ~patch
+    with
+    | Ok result when result.Sol_cli_process.exit_code = 0 -> Ok ()
+    | Ok result ->
+      Error
+        (Printf.sprintf
+           "kubectl patch secret/%s in namespace %s failed: %s"
+           name
+           namespace
+           result.Sol_cli_process.stderr)
+    | Error e -> Error (Sol_cli_process.error_to_string e)
   in
   let* () =
-    iter_namespaces namespaces ~f:(fun namespace ->
-      let* () = remove_from namespace Sol_cli_manifest.runtime_secret_name in
-      let* secret_names = list_workload_secrets ~ctx namespace in
+    iter_namespaces rotations ~f:(fun { namespace; secrets; workloads } ->
       let* () =
-        iter_namespaces secret_names ~f:(fun secret_name ->
-          remove_from namespace secret_name)
+        iter_namespaces secrets ~f:(fun (name, data) ->
+          if List.mem_assoc key data then remove_from namespace name else Ok ())
       in
-      let* _names = restart_and_verify ~ctx ~namespace in
+      let* _names = restart_workloads ~ctx ~namespace workloads in
       Ok ())
   in
   Ok (Deleted namespaces)
