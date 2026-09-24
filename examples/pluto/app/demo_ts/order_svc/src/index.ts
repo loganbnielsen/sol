@@ -21,8 +21,20 @@ function intEnv(name: string, fallback: number): number {
 }
 
 const PORT = intEnv("PORT", 8080);
-const KAFKA_BROKERS = (process.env.KAFKA_BROKERS ?? "localhost:9092").split(",");
-const SCHEMA_REGISTRY_URL = process.env.SCHEMA_REGISTRY_URL ?? "http://localhost:8081";
+// BUG-055 (DEC-022 parity with OCaml's config_of_env): the Kafka substrate
+// addresses are stated, never defaulted to localhost. In a pod nothing listens
+// there, so a missing one must fail at startup naming the variable. `sol local
+// run` and Sol-rendered manifests set them.
+function requiredEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`${name} is not set: state the Kafka substrate addresses explicitly`);
+  }
+  return value;
+}
+
+const KAFKA_BROKERS = requiredEnv("KAFKA_BROKERS").split(",");
+const SCHEMA_REGISTRY_URL = requiredEnv("SCHEMA_REGISTRY_URL");
 const LOKI_URL = process.env.LOKI_URL;
 const TEMPO_URL = process.env.TEMPO_URL;
 const TOPIC_NAME = process.env.ORDERS_TOPIC ?? "sol-demo-ts-orders";

@@ -99,7 +99,7 @@ curl -sf http://localhost:8080/healthz        # charge_svc health probe
 rpk topic list --brokers localhost:9092       # Kafka broker reachable
 
 # 4. Produce a message and verify round-trip through the worker
-KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 dune exec internal/fixtures/local-demo/bin/demo.exe 2>&1 | grep -v "^$"
+KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 dune exec internal/fixtures/local-demo/bin/demo.exe 2>&1 | grep -v "^$"
 ```
 
 **Invariants:**
@@ -150,7 +150,7 @@ curl -s 'http://localhost:3100/loki/api/v1/query?query={service="charge_svc"}' \
   | python3 -m json.tool | head -40
 
 # Trace propagation: verify traceparent is forwarded through Kafka
-KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 dune exec internal/fixtures/local-demo/bin/demo.exe 2>&1 \
+KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 dune exec internal/fixtures/local-demo/bin/demo.exe 2>&1 \
   | grep -i traceparent
 ```
 
@@ -258,7 +258,7 @@ kubectl logs -n payments -l app=charge_svc --since=2m | grep -i "error\|connect"
 
 ```bash
 # Attempt to register a schema that breaks existing consumers
-KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 \
+KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 REDPANDA_ADMIN_URL=http://localhost:9644 SCHEMA_REGISTRY_URL=http://localhost:8081 \
   dune exec app/payments/charge_worker/bin/main.exe -- --register-only 2>&1
 ```
 

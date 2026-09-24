@@ -182,7 +182,7 @@ eval $(opam env) && dune test framework/
 # Full integration tests (requires Redpanda + Loki running)
 bash cli/platform/local/scripts/ensure-broker.sh
 bash cli/platform/local/scripts/ensure-loki.sh
-KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 LOKI_URL=http://localhost:3100 dune test --force
+KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 LOKI_URL=http://localhost:3100 dune test --force
 ```
 
 If CLI tests report `Multiple rules generated` for `vendor/framework/...` paths
@@ -201,7 +201,7 @@ bash cli/platform/local/scripts/ensure-grafana.sh
 bash cli/platform/local/scripts/ensure-prometheus.sh
 
 # Run the full-stack demo (svc → Kafka → worker, with Loki logs + Prometheus metrics)
-KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 LOKI_URL=http://localhost:3100 \
+KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 LOKI_URL=http://localhost:3100 \
   dune exec internal/fixtures/local-demo/bin/demo.exe
 
 # Then browse to http://localhost:3000 (Grafana)

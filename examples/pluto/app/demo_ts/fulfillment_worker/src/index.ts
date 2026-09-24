@@ -21,7 +21,19 @@ import { initTracing, startChildSpan } from "./tracing.js";
 import { makeWorkerMetrics } from "./metrics.js";
 import { makeDb } from "./db.js";
 
-const KAFKA_BROKERS = (process.env.KAFKA_BROKERS ?? "localhost:9092").split(",");
+// BUG-055 (DEC-022 parity with OCaml's config_of_env): the Kafka substrate
+// addresses are stated, never defaulted to localhost. In a pod nothing listens
+// there, so a missing one must fail at startup naming the variable. `sol local
+// run` and Sol-rendered manifests set them.
+function requiredEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`${name} is not set: state the Kafka substrate addresses explicitly`);
+  }
+  return value;
+}
+
+const KAFKA_BROKERS = requiredEnv("KAFKA_BROKERS").split(",");
 const TOPIC_NAME = process.env.ORDERS_TOPIC ?? "sol-demo-ts-orders";
 const GROUP_ID = "sol-demo-ts-fulfillment-worker";
 // Same defensive fallback as order_svc/src/index.ts's intEnv — a malformed
@@ -133,8 +145,8 @@ async function main() {
   });
 
   const onDecodeError = (err: unknown) => {
-    console.error(`[worker] rejected message: ${String(err)}`);
-    log("error", "rejected message", { error: String(err) });
+    console.error(`[worker] undecodable message, dead-lettered: ${String(err)}`);
+    log("error", "undecodable message, dead-lettered", { error: String(err) });
   };
 
   // Source path: decode + handle, expressing retry via the configured strategy.
@@ -143,6 +155,10 @@ async function main() {
       decode: decodeOrderPlaced,
       decodeErrorCounter: decodeErrorsTotal,
       onDecodeError,
+      // FEAT-098: an undecodable record goes, raw, to <topic>.<group>.dlq (the
+      // retry-topics default, parity with the OCaml worker); "ack-and-drop" is
+      // the explicit opt-in to count it and commit past it.
+      decodeErrorPolicy: "route-to-dlq",
       retryStrategy: RETRY_STRATEGY,
       groupId: GROUP_ID,
       sourceTopic: TOPIC_NAME,

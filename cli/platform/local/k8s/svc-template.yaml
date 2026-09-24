@@ -63,6 +63,8 @@ spec:
               value: "redpanda.sol.svc.cluster.local:9092"
             - name: SCHEMA_REGISTRY_URL
               value: "http://redpanda.sol.svc.cluster.local:8081"
+            - name: REDPANDA_ADMIN_URL
+              value: "http://redpanda.sol.svc.cluster.local:9644"
           resources:
             requests:
               cpu: "100m"

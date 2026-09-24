@@ -41,3 +41,24 @@ Bump the dependency in `examples/pluto/app/demo_ts/fulfillment_worker`.
   the DLQ with raw payload, key, headers and the diagnostic before its offset
   commits; a failed publish leaves it uncommitted; `ack-and-drop` still skips.
 - `demo_ts/fulfillment_worker` uses the new release.
+
+## Completion notes
+
+- **sol-kafka** (loganbnielsen/sol-kafka#1, merged as `0a859061`; released as
+  `@sol-fab/kafka` **0.2.0**, tag `v0.2.0`, npm provenance on Sigstore): under
+  `retry-topics` an undecodable source record is published raw (value, key, original
+  headers) with `X-Sol-Decode-Error`/`X-Sol-Origin-Group` to `<source>.<group>.dlq`. Its
+  offset commits only once that publish lands; a failed publish throws and reports
+  `relay_failed`. `decodeErrorPolicy: "route-to-dlq" | "ack-and-drop"` defaults to
+  `route-to-dlq` there; `in-memory` allows only `ack-and-drop`, and `route-to-dlq` there
+  is a construction error, as in OCaml. Review round 1 fixes for parity with OCaml:
+  tombstones stay tombstones (`null`, not an empty value), and a redriven record's stale
+  diagnostic headers are replaced by the fresh ones. Tests cover all of this; each
+  fix's mutant fails its test; the real-broker retry/DLQ CI job passed.
+- **Sol:** `examples/pluto/app/demo_ts` moves to `@sol-fab/kafka ^0.2.0` (both
+  workloads, with the lockfile resolved from the registry). `fulfillment_worker` states
+  `decodeErrorPolicy: "route-to-dlq"` explicitly, and its decode-error log says
+  "dead-lettered". `npm ci && npm run build --workspaces` passes locally.
+- Demo/example: this is the demo change.
+- Language parity: this ticket is the TypeScript side of BUG-051. Verdict for
+  source-topic decode routing: implemented.

@@ -101,8 +101,9 @@ The environment variables your services expect are inherited directly from the s
 | Variable | Value (set by `sol local infra up`) |
 |---|---|
 | `KAFKA_SECURITY_PROTOCOL` | `plaintext` (required; set by `sol local run`) |
-| `KAFKA_BROKERS` | `localhost:9092` |
-| `SCHEMA_REGISTRY_URL` | `http://localhost:8081` |
+| `KAFKA_BROKERS` | `localhost:9092` (required) |
+| `SCHEMA_REGISTRY_URL` | `http://localhost:8081` (required) |
+| `REDPANDA_ADMIN_URL` | `http://localhost:9644` (required) |
 | `POSTGRES_URL` | `postgresql://postgres:dev@localhost:5432/dev` |
 | `LOKI_URL` | `http://localhost:3100` |
 
@@ -311,6 +312,7 @@ The generated ConfigMap injects cluster-internal service addresses so pods commu
 KAFKA_SECURITY_PROTOCOL plaintext
 KAFKA_BROKERS       redpanda.redpanda.svc.cluster.local:9093
 SCHEMA_REGISTRY_URL http://redpanda.redpanda.svc.cluster.local:8081
+REDPANDA_ADMIN_URL  http://redpanda.redpanda.svc.cluster.local:9644
 LOKI_URL            http://loki.monitoring.svc.cluster.local:3100
 TEMPO_URL           http://tempo.monitoring.svc.cluster.local:4318
 ```

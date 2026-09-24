@@ -15,7 +15,7 @@
     "@opentelemetry/sdk-trace-node": "^2.11.0",
     "@opentelemetry/semantic-conventions": "^1.43.0",
     "@prometheus-io/client": "^0.16.1",
-    "@sol-fab/kafka": "^0.1.0",
+    "@sol-fab/kafka": "^0.2.0",
     "@sol-fab/obs": "^0.1.0",
     "@sol-fab/svc": "^0.1.0",
     "fastify": "^5.1.0",
