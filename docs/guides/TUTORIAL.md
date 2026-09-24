@@ -100,6 +100,7 @@ The environment variables your services expect are inherited directly from the s
 
 | Variable | Value (set by `sol local infra up`) |
 |---|---|
+| `KAFKA_SECURITY_PROTOCOL` | `plaintext` (required; set by `sol local run`) |
 | `KAFKA_BROKERS` | `localhost:9092` |
 | `SCHEMA_REGISTRY_URL` | `http://localhost:8081` |
 | `POSTGRES_URL` | `postgresql://postgres:dev@localhost:5432/dev` |
@@ -307,6 +308,7 @@ For each service that has a `Dockerfile`, Sol:
 The generated ConfigMap injects cluster-internal service addresses so pods communicate via k8s DNS, not localhost port-forwards:
 
 ```
+KAFKA_SECURITY_PROTOCOL plaintext
 KAFKA_BROKERS       redpanda.redpanda.svc.cluster.local:9093
 SCHEMA_REGISTRY_URL http://redpanda.redpanda.svc.cluster.local:8081
 LOKI_URL            http://loki.monitoring.svc.cluster.local:3100
