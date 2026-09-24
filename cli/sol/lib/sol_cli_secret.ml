@@ -355,6 +355,12 @@ let restart_workloads ~ctx ~namespace names =
   Ok names
 ;;
 
+let restart_all ~ctx rotations =
+  iter_namespaces rotations ~f:(fun { namespace; workloads; _ } ->
+    let* _names = restart_workloads ~ctx ~namespace workloads in
+    Ok ())
+;;
+
 (* sol-secrets serves Argo Rollout workloads; each per-service <svc>-secrets serves
    the Deployment that mounts it. Both are written, then every live workload is
    restarted so the new value takes effect. *)
@@ -362,17 +368,17 @@ let set ~ctx ~env ~workspace:_ ~namespaces ~key ~value =
   let* () = validate_key key in
   let* namespaces = validate_operation_context ~env ~namespaces in
   let* rotations = read_rotations ~ctx namespaces in
+  (* Every write, in every namespace, before any restart: a restart waits on
+     `rollout status`, and data read before that wait would be stale by the time a
+     later namespace's write used it. *)
   let* () =
-    iter_namespaces rotations ~f:(fun { namespace; secrets; workloads } ->
-      let* () =
-        iter_namespaces secrets ~f:(fun (secret_name, existing_data) ->
-          apply_manifest
-            ~ctx
-            (named_secret_manifest ~secret_name ~existing_data ~namespace ~key ~value))
-      in
-      let* _names = restart_workloads ~ctx ~namespace workloads in
-      Ok ())
+    iter_namespaces rotations ~f:(fun { namespace; secrets; _ } ->
+      iter_namespaces secrets ~f:(fun (secret_name, existing_data) ->
+        apply_manifest
+          ~ctx
+          (named_secret_manifest ~secret_name ~existing_data ~namespace ~key ~value)))
   in
+  let* () = restart_all ~ctx rotations in
   Ok (Applied namespaces)
 ;;
 
@@ -419,13 +425,10 @@ let delete ~ctx ~env ~workspace:_ ~namespaces ~key =
     | Error e -> Error (Sol_cli_process.error_to_string e)
   in
   let* () =
-    iter_namespaces rotations ~f:(fun { namespace; secrets; workloads } ->
-      let* () =
-        iter_namespaces secrets ~f:(fun (name, data) ->
-          if List.mem_assoc key data then remove_from namespace name else Ok ())
-      in
-      let* _names = restart_workloads ~ctx ~namespace workloads in
-      Ok ())
+    iter_namespaces rotations ~f:(fun { namespace; secrets; _ } ->
+      iter_namespaces secrets ~f:(fun (name, data) ->
+        if List.mem_assoc key data then remove_from namespace name else Ok ()))
   in
+  let* () = restart_all ~ctx rotations in
   Ok (Deleted namespaces)
 ;;
