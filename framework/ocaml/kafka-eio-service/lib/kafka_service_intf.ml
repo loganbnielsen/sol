@@ -65,6 +65,10 @@ type handler_error =
   | Dead_letter of string
   | Kafka_error of Kafka.Error.t
 
+type decode_error_policy =
+  | Route_to_dlq
+  | Ack_and_drop
+
 let ensure_topic producer ~topic_name ~partitions ~topic_durability =
   let replication_factor =
     match topic_durability with
@@ -143,7 +147,10 @@ let query_topic_partitions net ~clock ~admin_url ~topic_name =
   | Ok (status, body) -> Error (Topic_admin_unexpected_status (status, body))
 ;;
 
-let wrap_on_decode_error ~ot ~topic_name user_on_decode_error =
+(* Counts and logs one source-topic decode failure. [disposition] says what
+   happens to the record next -- BUG-051: under Retry_topics it is dead-lettered,
+   not dropped, so the log line must not claim it was skipped. *)
+let observe_decode_error ~ot ~topic_name =
   let decode_err_count =
     match ot with
     | None -> None
@@ -152,25 +159,42 @@ let wrap_on_decode_error ~ot ~topic_name user_on_decode_error =
         (Obs_eio.register_counter
            o
            ~name:"sol_worker_decode_errors_total"
-           ~help:"Total Kafka messages dropped due to decode errors"
+           ~help:
+             "Total source-topic Kafka messages that failed to decode (dead-lettered or \
+              acked-and-dropped, per the decode_error_policy)"
            ~label_names:[])
   in
-  fun e ~raw_bytes ~ack ->
+  fun e ~raw_bytes ~disposition ->
     (match decode_err_count with
      | Some c -> c 1
      | None -> ());
-    (match ot with
-     | None -> ()
-     | Some o ->
-       Obs_eio.log_standalone
-         o
-         Obs_eio.Error
-         ~fields:
-           [ "error", e
-           ; ( "raw_bytes_len"
-             , string_of_int (Option.fold ~none:0 ~some:Bytes.length raw_bytes) )
-           ; "topic", topic_name
-           ]
-         "sol-worker: decode error, skipping message");
+    match ot with
+    | None -> ()
+    | Some o ->
+      Obs_eio.log_standalone
+        o
+        Obs_eio.Error
+        ~fields:
+          [ "error", e
+          ; ( "raw_bytes_len"
+            , string_of_int (Option.fold ~none:0 ~some:Bytes.length raw_bytes) )
+          ; "topic", topic_name
+          ]
+        (match disposition with
+         | `Dropped -> "sol-worker: decode error, skipping message"
+         | `Dead_lettered -> "sol-worker: decode error, routing message to the DLQ")
+;;
+
+let wrap_on_decode_error ~ot ~topic_name user_on_decode_error =
+  let observe = observe_decode_error ~ot ~topic_name in
+  fun e ~raw_bytes ~ack ->
+    observe e ~raw_bytes ~disposition:`Dropped;
     user_on_decode_error e ~raw_bytes ~ack
+;;
+
+(* The explicit ack-and-drop disposition: log, ack, continue. *)
+let ack_and_drop_decode_error e ~raw_bytes:_ ~ack =
+  Printf.eprintf "sol-worker: DECODE_ERROR skip=true error=%S\n%!" e;
+  ignore (ack ());
+  Kafka.Consumer.Continue
 ;;

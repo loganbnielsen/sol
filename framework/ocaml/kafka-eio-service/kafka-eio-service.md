@@ -185,6 +185,20 @@ val consume
 ### `consume_partitioned` — per-partition fiber isolation
 
 ```ocaml
+(* What consume_partitioned does with a source-topic record that cannot be
+   decoded (BUG-051):
+   - Route_to_dlq: publish the raw record (payload, key, headers) to the
+     group-scoped DLQ with X-Sol-Decode-Error and X-Sol-Origin-Group, ack only
+     once that publish succeeds; a failed publish leaves it unacked and fails
+     the partition. Default under Retry_topics; a Consumer_error under
+     In_memory, which has no DLQ.
+   - Ack_and_drop: log, count, ack -- the record is gone. Explicit opt-in under
+     Retry_topics; the only (default) disposition under In_memory.
+   Both count on sol_worker_decode_errors_total when ?ot is given. *)
+type decode_error_policy =
+  | Route_to_dlq
+  | Ack_and_drop
+
 (** Like consume but routes each message to a dedicated per-partition fiber.
     A partition's in-memory retry sleep pauses that Kafka partition for the retry
     delay; other partitions continue unaffected. During the sleep the partition is
@@ -200,11 +214,7 @@ val consume_partitioned
   -> ?on_assigned:(unit -> unit)
   -> ?on_revoked:(unit -> unit)
   -> ?on_poll:(unit -> unit)
-  -> ?on_decode_error:
-       (string
-        -> raw_bytes:bytes option
-        -> ack:(unit -> (unit, Kafka.Error.t) result)
-        -> Kafka.Error.t Kafka.Consumer.handler_result)
+  -> ?decode_error_policy:decode_error_policy
   -> retry_strategy:retry_strategy
   -> ?on_retry:(partition:int32 -> attempt:int -> delay_s:float -> unit)
   -> ?on_relay_publish:
@@ -316,10 +326,11 @@ type retry_strategy =
        and the retry offset acked only once that publish succeeds. Both
        topics are auto-provisioned. retry_policy.max_attempts must be at
        least 1.
-       If a retry record cannot be decoded, the retry path does not call
-       on_decode_error; it publishes the raw retry record and original headers
-       to the DLQ topic with decode diagnostics, then acks only after that
-       publish succeeds (BUG-028).
+       If a retry record cannot be decoded, it publishes the raw retry record
+       and original headers to the DLQ topic with decode diagnostics, then
+       acks only after that publish succeeds (BUG-028). A source record that
+       cannot be decoded does the same under the default
+       decode_error_policy, Route_to_dlq (BUG-051).
        Ack/drop behavior follows sol-worker.md's acknowledgement ownership
        invariant. Retry_topics does not preserve strict source-partition or
        per-key ordering; workloads that need independent per-message retry

@@ -50,7 +50,7 @@ val action_of_handler_error
     already-fully-resolved [headers] to send (no further header policy is
     decided at publish time) plus [attempt]/[delay_s] for metrics
     ([on_retry]/[on_relay_publish]) — not for serialization. Built exclusively
-    by [retry_message]/[dead_letter_message]/[retry_decode_failure_message]
+    by [retry_message]/[dead_letter_message]/[decode_failure_message]
     below; nothing else should construct one by hand. *)
 type relay =
   { source : Kafka.Consumer.message
@@ -77,11 +77,11 @@ val dead_letter_message
   -> group_id:string
   -> relay
 
-(** A retry record that couldn't even be decoded: preserves [raw_msg]'s
-    existing headers untouched (this is not another scheduled attempt), and
-    appends a decode diagnostic plus [X-Sol-Origin-Group] (BUG-030, see
-    {!dead_letter_message}). *)
-val retry_decode_failure_message
+(** A source or retry record that couldn't even be decoded: preserves
+    [raw_msg]'s existing headers untouched (this is not another scheduled
+    attempt), and appends a decode diagnostic plus [X-Sol-Origin-Group]
+    (BUG-030, see {!dead_letter_message}). *)
+val decode_failure_message
   :  raw_msg:Kafka.Consumer.message
   -> attempt:int
   -> decode_error:string
@@ -104,14 +104,16 @@ val execute_action
   -> ack:(unit -> (unit, Kafka.Error.t) result)
   -> (unit, Kafka.Error.t) result
 
-(** On a retry-topic decode failure, publish the raw retry record (with decode
-    diagnostics attached) to the DLQ rather than reaching the source-path
-    [on_decode_error] skip-and-ack contract (BUG-028: that contract would
-    ack-drop the last durable copy of the message). Always targets the DLQ, so
-    it builds its own relay command rather than going through
-    {!execute_action}'s [retry_action] dispatch. *)
-val route_retry_decode_error
-  :  dlq_topic:Kafka_service_intf.topic_name
+(** Publish an undecodable record, raw, with decode diagnostics attached, to the
+    DLQ, then ack it -- only once the publish succeeded; a failed publish is
+    returned and nothing is acked. Used for every retry-topic decode failure
+    (BUG-028: acking would drop the last durable copy) and, under
+    [Route_to_dlq], every source-topic one (BUG-051). [stage] only labels the
+    stderr line. Always targets the DLQ, so it builds its own relay command
+    rather than going through {!execute_action}'s [retry_action] dispatch. *)
+val route_decode_error
+  :  stage:[ `Source | `Retry ]
+  -> dlq_topic:Kafka_service_intf.topic_name
   -> raw_msg:Kafka.Consumer.message
   -> attempt:int
   -> decode_error:string
@@ -151,11 +153,12 @@ val consume
   -> on_assigned:(unit -> unit)
   -> on_revoked:(unit -> unit)
   -> on_poll:(unit -> unit)
-  -> on_decode_error:
+  -> decode_error_policy:Kafka_service_intf.decode_error_policy
+  -> observe_decode_error:
        (string
         -> raw_bytes:bytes option
-        -> ack:(unit -> (unit, Kafka.Error.t) result)
-        -> Kafka.Error.t Kafka.Consumer.handler_result)
+        -> disposition:[ `Dropped | `Dead_lettered ]
+        -> unit)
   -> on_retry:(partition:int32 -> attempt:int -> delay_s:float -> unit)
   -> on_relay_publish:
        (partition:int32 -> attempt:int -> outcome:[ `Published | `Failed ] -> unit)

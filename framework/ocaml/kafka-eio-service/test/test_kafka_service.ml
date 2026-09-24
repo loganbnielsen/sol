@@ -522,7 +522,8 @@ let test_retry_decode_error_routes_to_dlq_and_acks_after_publish () =
     Ok ()
   in
   match
-    Kafka_service.Retry_topics.route_retry_decode_error
+    Kafka_service.Retry_topics.route_decode_error
+      ~stage:`Retry
       ~dlq_topic
       ~raw_msg
       ~attempt:2
@@ -585,7 +586,8 @@ let test_retry_decode_error_publish_failure_does_not_ack () =
     Ok ()
   in
   match
-    Kafka_service.Retry_topics.route_retry_decode_error
+    Kafka_service.Retry_topics.route_decode_error
+      ~stage:`Retry
       ~dlq_topic
       ~raw_msg:(raw_retry_msg ())
       ~attempt:1
