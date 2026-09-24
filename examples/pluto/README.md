@@ -18,7 +18,7 @@ bash <path-to-sol>/cli/platform/local/scripts/ensure-broker.sh
 bash <path-to-sol>/cli/platform/local/scripts/ensure-postgres.sh
 
 # Run the worker (POSTGRES_URL is required — both services depend on Postgres)
-KAFKA_BROKERS=localhost:9092 POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
+KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
   dune exec app/comms/notify_worker/bin/main.exe
 
 # In another terminal, run checkout. SOL_API_KEY is the shared internal key.

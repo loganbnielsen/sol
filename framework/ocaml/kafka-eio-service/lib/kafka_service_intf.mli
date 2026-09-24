@@ -60,6 +60,11 @@ type handler_error =
   | Dead_letter of string
   | Kafka_error of Kafka.Error.t
 
+(** What happens to a source-topic record that cannot be decoded (BUG-051). *)
+type decode_error_policy =
+  | Route_to_dlq
+  | Ack_and_drop
+
 (** Provision [topic_name] via the producer's admin client if it doesn't already
     exist. *)
 val ensure_topic
@@ -98,6 +103,23 @@ val query_topic_partitions
   -> admin_url:string
   -> topic_name:string
   -> (topic_partition_metadata, topic_partition_error) result
+
+(** Count ([sol_worker_decode_errors_total]) and log through [ot] (when given)
+    one source-topic decode failure, whose record is next [disposition]. *)
+val observe_decode_error
+  :  ot:Obs_eio.t option
+  -> topic_name:string
+  -> string
+  -> raw_bytes:bytes option
+  -> disposition:[ `Dropped | `Dead_lettered ]
+  -> unit
+
+(** The [Ack_and_drop] disposition: log to stderr, ack, continue. *)
+val ack_and_drop_decode_error
+  :  string
+  -> raw_bytes:bytes option
+  -> ack:(unit -> (unit, Kafka.Error.t) result)
+  -> Kafka.Error.t Kafka.Consumer.handler_result
 
 (** Wrap a caller-supplied [on_decode_error] so every decode error also
     increments a counter and logs through [ot] (when given) before delegating to

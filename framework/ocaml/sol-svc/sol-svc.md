@@ -423,9 +423,15 @@ module Make (H : HANDLER) : sig
        (** Maximum request body size in bytes. Default: 10_485_760 (10 MB).
            Requests exceeding this limit receive 413 before the handler is called. *)
     -> ?drain_timeout_s:float
-       (** Seconds to wait for active requests after shutdown signal. Default: 30.0. *)
+       (** Seconds to wait for active requests after the listener closes. Default: 30.0. *)
+    -> ?shutdown_delay_s:float
+       (** On a stop, GET /readyz turns 503 at once and the listener keeps serving
+           for this long before it closes (INFRA-073). Default: 5.0. Keep
+           shutdown_delay_s + drain_timeout_s under terminationGracePeriodSeconds
+           (Sol renders 45). *)
     -> ?stop:unit Eio.Promise.t
-       (** External stop signal. Resolve to request graceful shutdown; in-flight
+       (** External stop signal. Resolve to request graceful shutdown: readiness
+           turns 503, the listener closes after [shutdown_delay_s], and in-flight
            requests get up to [drain_timeout_s] before forced cancellation. *)
     -> ?on_listen:(int -> unit)
        (** Called with the actual bound port immediately before the accept loop.
@@ -575,11 +581,17 @@ Checked before any route in `H.routes`. Cannot be shadowed by user routes.
 
 | Path | Method | Auth | Response |
 |---|---|---|---|
-| `/healthz` | GET | `` `Public `` | 200 `{"status":"ok"}`, `application/json` |
+| `/healthz` | GET | `` `Public `` | 200 `{"status":"ok"}`, `application/json` (liveness, startup) |
+| `/readyz` | GET | `` `Public `` | 200 `{"status":"ready"}`; 503 `{"status":"shutting down"}` once a stop begins (readiness) |
 | `/metrics` | GET | `~metrics_auth` arg | 200 Prometheus text (if renderer wired), else 404 |
 
-**`/healthz` always `Public`:** k8s `livenessProbe` and `readinessProbe` call this
-without credentials. It must never require auth.
+**`/healthz` and `/readyz` always `Public`:** k8s probes call them without
+credentials. `/healthz` is for the `startupProbe` and `livenessProbe`; `/readyz` is the
+readiness endpoint (INFRA-073), and Sol's rendered manifests switch their
+`readinessProbe` to it once this framework change is released on `main`. On SIGTERM (or `?stop`) `/readyz` turns 503
+while the listener keeps serving for `shutdown_delay_s`, so the pod leaves the
+Service's endpoints before it stops accepting. Closing the listener at once, as
+before, refused requests that kube-proxy was still routing to the pod.
 
 **`/healthz` not `/health`:** The `z` suffix is the k8s control-plane convention
 (kube-apiserver, etcd, kubelet). The ROADMAP listed `/health`; this spec supersedes it.
@@ -669,7 +681,7 @@ Eio.Promise.await server_ready;
 - POST to `Jwt` route with valid token → 200
 - Handler raising exception → 500, server continues accepting
 - Unknown path → 404; wrong method → 405
-- Graceful shutdown: SIGTERM stops new accepts, active request completes cleanly
+- Graceful shutdown: SIGTERM turns `/readyz` 503, keeps serving for `shutdown_delay_s`, then stops new accepts; active request completes cleanly
 - Drain timeout: active request that exceeds drain window is cancelled
 
 ---

@@ -708,7 +708,7 @@ let dev_env_vars =
   ; "LOKI_URL", "http://localhost:3100"
   ; "PUSHGATEWAY_URL", "http://localhost:9091"
   ; "TEMPO_URL", "http://localhost:4318"
-  ; "KAFKA_SECURITY_PROTOCOL", "Plaintext"
+  ; "KAFKA_SECURITY_PROTOCOL", "plaintext"
   ]
 ;;
 
