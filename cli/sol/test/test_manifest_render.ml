@@ -2338,6 +2338,27 @@ let test_sol_toml_cannot_set_unverified_jwt_opt_in () =
   | Error (Sol_cli_toml.Toml_syntax _) -> Alcotest.fail "expected a validation error"
 ;;
 
+let test_sol_toml_secrets_cannot_name_unverified_jwt_opt_in () =
+  let path = Filename.temp_file "sol-toml-optin-secret-" ".toml" in
+  let oc = open_out path in
+  output_string oc "[infra.env]\nsecrets = [\"SOL_ALLOW_UNVERIFIED_JWT\"]\n";
+  close_out oc;
+  let result = Sol_cli_toml.load_result path in
+  Sys.remove path;
+  match result with
+  | Error (Sol_cli_toml.Validation { message; _ }) ->
+    check_bool "names the reserved key" true (contains message "SOL_ALLOW_UNVERIFIED_JWT")
+  | Ok _ -> Alcotest.fail "a sol.toml secret must not be able to carry the opt-in"
+  | Error (Sol_cli_toml.Toml_syntax _) -> Alcotest.fail "expected a validation error"
+;;
+
+let test_sol_secret_rejects_unverified_jwt_opt_in () =
+  check_bool
+    "sol secret set refuses the reserved key"
+    true
+    (Result.is_error (Sol_cli_secret.validate_key "SOL_ALLOW_UNVERIFIED_JWT"))
+;;
+
 let test_deploy_render_has_no_unverified_jwt_opt_in () =
   let _, workload = render_spec_ok svc_spec in
   check_bool
@@ -2362,6 +2383,14 @@ let () =
             "sol.toml cannot set it"
             `Quick
             test_sol_toml_cannot_set_unverified_jwt_opt_in
+        ; Alcotest.test_case
+            "sol.toml secrets cannot name it"
+            `Quick
+            test_sol_toml_secrets_cannot_name_unverified_jwt_opt_in
+        ; Alcotest.test_case
+            "sol secret set refuses it"
+            `Quick
+            test_sol_secret_rejects_unverified_jwt_opt_in
         ] )
     ; ( "SOL_ENV reaches every primitive"
       , [ Alcotest.test_case

@@ -44,6 +44,13 @@ let validate_key key =
   then Error "secret key must start with an uppercase letter"
   else if not (String.for_all is_key_char key)
   then Error "secret key may contain only uppercase letters, digits, and underscores"
+  else if String.equal key "SOL_ALLOW_UNVERIFIED_JWT"
+  then
+    (* SEC-006: every Secret key reaches the pod's environment (envFrom), and this
+       one would switch on JWT auth without signature checks outside local. *)
+    Error
+      "SOL_ALLOW_UNVERIFIED_JWT is reserved: it allows JWT auth without signature \
+       checks, and `sol up` sets it on the local cluster only"
   else Ok ()
 ;;
 
