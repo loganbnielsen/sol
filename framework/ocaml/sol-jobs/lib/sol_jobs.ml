@@ -153,7 +153,7 @@ let default_metrics_port = 9090
 let default_poll_interval_s = 1.0
 let default_lease_s = 300.0
 
-let with_runtime
+let with_runtime_unflushed
       ~(env : (_, _, _, _) Sol_env.timed)
       ~ot
       ~metrics_port
@@ -210,6 +210,13 @@ let with_runtime
            render)
       metrics_renderer;
     body ~sw ~ot:obs_eio_t ~job_count ~job_duration ~should_stop ~record_terminal)
+;;
+
+(* OBS-048: flush the asynchronous Loki/Tempo export before [run] returns. *)
+let with_runtime ~env ~ot ~metrics_port ~stop ~max_jobs ~body =
+  let result = with_runtime_unflushed ~env ~ot ~metrics_port ~stop ~max_jobs ~body in
+  Option.iter (fun o -> Sol_obs.flush o) ot;
+  result
 ;;
 
 module Make (J : JOB) = struct

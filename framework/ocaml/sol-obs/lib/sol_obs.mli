@@ -9,7 +9,7 @@
     intentionally doing provider-specific work.
 
     {[
-      let obs = Sol_obs.of_env ~net:env#net ~clock:env#clock
+      let obs = Sol_obs.of_env ~sw ~net:env#net ~clock:env#clock
                   ~mono_clock:env#mono_clock ~service:"payments-charge-svc"
                   ~context:[("team", "payments")] () in
       Sol_obs.log_info obs "starting up";
@@ -38,7 +38,11 @@ type span = Obs_eio.span
     [of_env] call works unmodified against `sol local infra up`'s real Loki/Tempo
     instances once those env vars are set by the platform). *)
 val of_env
-  :  net:_ Eio.Net.t
+  :  sw:Eio.Switch.t
+       (** Owns the Loki/Tempo export fibers (OBS-048): log lines and spans are
+        exported asynchronously, so a slow or unreachable backend never blocks
+        the caller. Call {!flush} before the process exits. *)
+  -> net:_ Eio.Net.t
   -> clock:_ Eio.Time.clock
   -> mono_clock:_ Eio.Time.Mono.t
   -> service:string
@@ -50,6 +54,13 @@ val of_env
         []. *)
   -> unit
   -> t
+
+(** Export everything still queued for Loki and Tempo, waiting at most [timeout]
+    seconds (default [5.0]) for each. Sol's runtimes ([Service], [Worker], [Fn],
+    [Sol_jobs]) call it when [run] returns; call it yourself before exiting a
+    process that does not end through one of them. A no-op when neither
+    [LOKI_URL] nor [TEMPO_URL] is set. *)
+val flush : ?timeout:float -> t -> unit
 
 val log_debug : t -> ?fields:(string * string) list -> string -> unit
 val log_info : t -> ?fields:(string * string) list -> string -> unit

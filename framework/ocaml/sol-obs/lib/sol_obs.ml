@@ -10,6 +10,7 @@ type t =
   { ot : Obs_eio.t
   ; backend : Obs_eio.backend
   ; renderer : unit -> string
+  ; flushers : (float -> unit) list
   }
 
 let env_nonempty name =
@@ -28,20 +29,28 @@ let stdout_logs =
   { Obs_eio.stdout with emit_metric = (fun _ -> ()); declare_metric = (fun _ -> ()) }
 ;;
 
-let of_env ~net ~clock ~mono_clock ~service ?(context = []) () =
-  let log_backend =
+(* OBS-048 part B: Loki and Tempo export asynchronously on [sw], so a slow or
+   unreachable backend no longer blocks the fiber that logs. The price is
+   [flush]: lines still queued when the process exits are lost unless it runs. *)
+let of_env ~sw ~net ~clock ~mono_clock ~service ?(context = []) () =
+  let log_backend, loki_flush =
     match env_nonempty "LOKI_URL" with
-    | None -> Obs_eio.stdout
+    | None -> Obs_eio.stdout, []
     | Some url ->
       let label_names = List.map (fun (k, _) -> Obs_loki.stream_label_exn k) context in
-      Obs_eio.compose stdout_logs (Obs_loki.create ~net ~clock ~url ~label_names ())
+      let loki = Obs_loki.create ~sw ~net ~clock ~url ~label_names () in
+      ( Obs_eio.compose stdout_logs (Obs_loki.backend loki)
+      , [ (fun timeout -> Obs_loki.flush ~timeout loki) ] )
   in
   let prom_backend, renderer = Obs_prometheus.create () in
   let backend = Obs_eio.compose log_backend prom_backend in
-  let backend =
+  let backend, tempo_flush =
     match env_nonempty "TEMPO_URL" with
-    | None -> backend
-    | Some url -> Obs_eio.compose backend (Obs_tempo.create ~net ~clock ~url ())
+    | None -> backend, []
+    | Some url ->
+      let tempo = Obs_tempo.create ~sw ~net ~clock ~url () in
+      ( Obs_eio.compose backend (Obs_tempo.backend tempo)
+      , [ (fun timeout -> Obs_tempo.flush ~timeout tempo) ] )
   in
   let ot = Obs_eio.create ~service ~mono_clock ~backend () in
   let ot =
@@ -49,9 +58,10 @@ let of_env ~net ~clock ~mono_clock ~service ?(context = []) () =
     | [] -> ot
     | fields -> Obs_eio.with_context ot fields
   in
-  { ot; backend; renderer }
+  { ot; backend; renderer; flushers = loki_flush @ tempo_flush }
 ;;
 
+let flush ?(timeout = 5.0) t = List.iter (fun f -> f timeout) t.flushers
 let log_debug t ?fields msg = Obs_eio.log_standalone t.ot Debug ?fields msg
 let log_info t ?fields msg = Obs_eio.log_standalone t.ot Info ?fields msg
 let log_warn t ?fields msg = Obs_eio.log_standalone t.ot Warn ?fields msg

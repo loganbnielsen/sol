@@ -38,8 +38,11 @@ let test_relative_url_fails () =
 let test_headers_from_span env () =
   with_env "SOL_API_KEY_FILE" "" (fun () ->
     with_env "SOL_API_KEY" "secret" (fun () ->
+      Eio.Switch.run
+      @@ fun sw ->
       let obs =
         Sol_obs.of_env
+          ~sw
           ~net:env#net
           ~clock:env#clock
           ~mono_clock:env#mono_clock

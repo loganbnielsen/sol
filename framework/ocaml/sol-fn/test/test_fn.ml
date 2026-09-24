@@ -94,9 +94,12 @@ let test_external_stop_before_cron_run () =
 let test_metrics_ok_counter () =
   Eio_main.run
   @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
   let module M = Fn.Make (Ok_fn) in
   let obs =
     Sol_obs.of_env
+      ~sw
       ~net:env#net
       ~clock:env#clock
       ~mono_clock:env#mono_clock
@@ -118,9 +121,12 @@ let test_metrics_ok_counter () =
 let test_metrics_error_counter () =
   Eio_main.run
   @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
   let module M = Fn.Make (Err_fn) in
   let obs =
     Sol_obs.of_env
+      ~sw
       ~net:env#net
       ~clock:env#clock
       ~mono_clock:env#mono_clock
@@ -141,9 +147,12 @@ let test_metrics_error_counter () =
 let test_metrics_duration () =
   Eio_main.run
   @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
   let module M = Fn.Make (Ok_fn) in
   let obs =
     Sol_obs.of_env
+      ~sw
       ~net:env#net
       ~clock:env#clock
       ~mono_clock:env#mono_clock

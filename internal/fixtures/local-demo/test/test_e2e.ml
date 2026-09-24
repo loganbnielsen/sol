@@ -190,6 +190,7 @@ let run_golden_path () =
   (* Observability *)
   let svc_obs =
     Sol_obs.of_env
+      ~sw
       ~net:env#net
       ~clock:env#clock
       ~mono_clock:env#mono_clock
@@ -198,6 +199,7 @@ let run_golden_path () =
   in
   let worker_obs =
     Sol_obs.of_env
+      ~sw
       ~net:env#net
       ~clock:env#clock
       ~mono_clock:env#mono_clock
@@ -206,6 +208,7 @@ let run_golden_path () =
   in
   let jobs_obs =
     Sol_obs.of_env
+      ~sw
       ~net:env#net
       ~clock:env#clock
       ~mono_clock:env#mono_clock

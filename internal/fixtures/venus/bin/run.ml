@@ -153,12 +153,15 @@ let () =
     (Option.value ~default:"(disabled)" postgres_url);
   Eio_main.run
   @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
   (* ── Observability ─────────────────────────────────────────────────────── *)
   (match loki_url with
    | None -> Printf.printf "\n  Note: LOKI_URL not set — logs go to stdout.\n%!"
    | Some url -> Printf.printf "\n  Logs -> Loki at %s\n%!" url);
   let svc_obs =
     Sol_obs.of_env
+      ~sw
       ~net:env#net
       ~clock:env#clock
       ~mono_clock:env#mono_clock
@@ -168,6 +171,7 @@ let () =
   in
   let worker_obs =
     Sol_obs.of_env
+      ~sw
       ~net:env#net
       ~clock:env#clock
       ~mono_clock:env#mono_clock
@@ -183,8 +187,6 @@ let () =
   in
   let svc_ot = Sol_obs.obs_eio svc_obs in
   let worker_ot = Sol_obs.obs_eio worker_obs in
-  Eio.Switch.run
-  @@ fun sw ->
   (* ── Storage (comms team) ───────────────────────────────────────────────── *)
   let db_pool =
     optional_db_pool ~sw ~stdenv:(env :> Caqti_eio.stdenv) ~fs:env#fs postgres_url

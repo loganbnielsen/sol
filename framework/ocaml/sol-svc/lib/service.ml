@@ -313,109 +313,112 @@ module Make (H : HANDLER) = struct
           (fun () -> Eio.Promise.await signal_stop)
           (fun () -> Eio.Promise.await external_stop)
     in
-    Ok
-      (try
-         Eio.Switch.run (fun sw ->
-           Sol_runtime.install_signal_handler ~sw signal_stop_r;
-           let socket =
-             Eio.Net.listen
-               ~sw
-               ~reuse_addr:true
-               ~backlog:128
-               env#net
-               (`Tcp (Eio.Net.Ipaddr.V4.any, port))
+    (try
+       Eio.Switch.run (fun sw ->
+         Sol_runtime.install_signal_handler ~sw signal_stop_r;
+         let socket =
+           Eio.Net.listen
+             ~sw
+             ~reuse_addr:true
+             ~backlog:128
+             env#net
+             (`Tcp (Eio.Net.Ipaddr.V4.any, port))
+         in
+         let actual_port =
+           match Eio.Net.listening_addr socket with
+           | `Tcp (_, p) -> p
+           | _ -> port
+         in
+         (match on_listen with
+          | Some f -> f actual_port
+          | None -> ());
+         Printf.eprintf "sol-svc listening on :%d\n%!" actual_port;
+         let callback _conn req body =
+           let t0 =
+             match metrics_fns with
+             | Some _ -> Some (Eio.Time.now env#clock)
+             | None -> None
            in
-           let actual_port =
-             match Eio.Net.listening_addr socket with
-             | `Tcp (_, p) -> p
-             | _ -> port
+           let route_ref = ref "unmatched" in
+           let route_observer =
+             match metrics_fns with
+             | None -> None
+             | Some _ -> Some (fun lbl -> route_ref := lbl)
            in
-           (match on_listen with
-            | Some f -> f actual_port
-            | None -> ());
-           Printf.eprintf "sol-svc listening on :%d\n%!" actual_port;
-           let callback _conn req body =
-             let t0 =
-               match metrics_fns with
-               | Some _ -> Some (Eio.Time.now env#clock)
-               | None -> None
-             in
-             let route_ref = ref "unmatched" in
-             let route_observer =
-               match metrics_fns with
-               | None -> None
-               | Some _ -> Some (fun lbl -> route_ref := lbl)
-             in
-             let sol_resp =
-               dispatch
-                 ~fetch_jwks
-                 ~routes:H.routes
-                 ~metrics_renderer
-                 ~metrics_auth
-                 ~read_api_key
-                 ~max_body_bytes
-                 ?route_observer
-                 req
-                 body
-             in
-             (match metrics_fns, t0 with
-              | Some (req_count, req_duration), Some t0 ->
-                let dt = Eio.Time.now env#clock -. t0 in
-                let meth_str =
-                  match Http.Request.meth req with
-                  | `GET -> "GET"
-                  | `POST -> "POST"
-                  | `PUT -> "PUT"
-                  | `PATCH -> "PATCH"
-                  | `DELETE -> "DELETE"
-                  | _ -> "OTHER"
-                in
-                let route = !route_ref in
-                let sc = string_of_int (sol_resp.Response.status / 100) ^ "xx" in
-                req_count
-                  ~labels:[ "method", meth_str; "route", route; "status_class", sc ]
-                  1;
-                req_duration ~labels:[ "method", meth_str; "route", route ] dt
-              | _ -> ());
-             let body_str = sol_resp.Response.body in
-             let headers =
-               Http.Header.of_list
-                 (("content-length", string_of_int (String.length body_str))
-                  :: sol_resp.Response.headers)
-             in
-             Cohttp_eio.Server.respond
-               ~status:(http_status_of_int sol_resp.Response.status)
-               ~headers
-               ~body:(Cohttp_eio.Body.of_string body_str)
-               ()
+           let sol_resp =
+             dispatch
+               ~fetch_jwks
+               ~routes:H.routes
+               ~metrics_renderer
+               ~metrics_auth
+               ~read_api_key
+               ~max_body_bytes
+               ?route_observer
+               req
+               body
            in
-           let server = Cohttp_eio.Server.make ~callback () in
-           (* BUG-046: the server stops accepting on a signal *or* on the caller's
+           (match metrics_fns, t0 with
+            | Some (req_count, req_duration), Some t0 ->
+              let dt = Eio.Time.now env#clock -. t0 in
+              let meth_str =
+                match Http.Request.meth req with
+                | `GET -> "GET"
+                | `POST -> "POST"
+                | `PUT -> "PUT"
+                | `PATCH -> "PATCH"
+                | `DELETE -> "DELETE"
+                | _ -> "OTHER"
+              in
+              let route = !route_ref in
+              let sc = string_of_int (sol_resp.Response.status / 100) ^ "xx" in
+              req_count
+                ~labels:[ "method", meth_str; "route", route; "status_class", sc ]
+                1;
+              req_duration ~labels:[ "method", meth_str; "route", route ] dt
+            | _ -> ());
+           let body_str = sol_resp.Response.body in
+           let headers =
+             Http.Header.of_list
+               (("content-length", string_of_int (String.length body_str))
+                :: sol_resp.Response.headers)
+           in
+           Cohttp_eio.Server.respond
+             ~status:(http_status_of_int sol_resp.Response.status)
+             ~headers
+             ~body:(Cohttp_eio.Body.of_string body_str)
+             ()
+         in
+         let server = Cohttp_eio.Server.make ~callback () in
+         (* BUG-046: the server stops accepting on a signal *or* on the caller's
               [stop]. It used to watch only the signal, so an external stop kept it
               accepting for the whole drain window and then reported a drain
               timeout even with nothing in flight. *)
-           let server_stop, server_stop_r = Eio.Promise.create () in
-           Eio.Fiber.fork_daemon ~sw (fun () ->
-             await_stop ();
-             ignore (Eio.Promise.try_resolve server_stop_r ());
-             `Stop_daemon);
-           (* Race: serve exits naturally when connections drain, or drain guard fires
+         let server_stop, server_stop_r = Eio.Promise.create () in
+         Eio.Fiber.fork_daemon ~sw (fun () ->
+           await_stop ();
+           ignore (Eio.Promise.try_resolve server_stop_r ());
+           `Stop_daemon);
+         (* Race: serve exits naturally when connections drain, or drain guard fires
          after drain_timeout_s and raises Drain_timeout to force cancellation. *)
-           Eio.Fiber.first
-             (fun () ->
-                Cohttp_eio.Server.run
-                  ~stop:server_stop
-                  ~on_error:(fun e ->
-                    Printf.eprintf "sol-svc: %s\n%!" (Printexc.to_string e))
-                  socket
-                  server)
-             (fun () ->
-                await_stop ();
-                Eio.Time.sleep env#clock drain_timeout_s;
-                raise Drain_timeout))
-       with
-       | Drain_timeout ->
-         Printf.eprintf "sol-svc: drain timeout reached, forcing shutdown\n%!")
+         Eio.Fiber.first
+           (fun () ->
+              Cohttp_eio.Server.run
+                ~stop:server_stop
+                ~on_error:(fun e ->
+                  Printf.eprintf "sol-svc: %s\n%!" (Printexc.to_string e))
+                socket
+                server)
+           (fun () ->
+              await_stop ();
+              Eio.Time.sleep env#clock drain_timeout_s;
+              raise Drain_timeout))
+     with
+     | Drain_timeout ->
+       Printf.eprintf "sol-svc: drain timeout reached, forcing shutdown\n%!");
+    (* OBS-048: flush the asynchronous Loki/Tempo export on the way out, drained
+       or not. *)
+    Option.iter (fun o -> Sol_obs.flush o) ot;
+    Ok ()
   ;;
 end
 

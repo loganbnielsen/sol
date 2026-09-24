@@ -46,8 +46,11 @@ type level = Obs_eio.level = Debug | Info | Warn | Error
 type span = Obs_eio.span
 
 val of_env
-  :  net:_ Eio.Net.t -> clock:_ Eio.Time.clock -> mono_clock:_ Eio.Time.Mono.t
+  :  sw:Eio.Switch.t -> net:_ Eio.Net.t -> clock:_ Eio.Time.clock
+  -> mono_clock:_ Eio.Time.Mono.t
   -> service:string -> ?context:(string * string) list -> unit -> t
+
+val flush : ?timeout:float -> t -> unit
 
 val log_debug : t -> ?fields:(string * string) list -> string -> unit
 val log_info  : t -> ?fields:(string * string) list -> string -> unit
@@ -71,7 +74,13 @@ val backend_and_renderer : t -> Obs_eio.backend * (unit -> string)
 ```
 
 `of_env` reads `LOKI_URL`/`TEMPO_URL` and composes whichever backends are
-configured; Prometheus is always present. `?context` is applied once via
+configured; Prometheus is always present. Log lines always go to stdout too
+(OBS-048 part A). Loki and Tempo export **asynchronously** on `sw` (OBS-048 part
+B, obs-loki-eio/obs-tempo-eio 0.2): a slow or unreachable backend never blocks a
+log call or a span. The cost is `flush`, which sends what is still queued (a hard
+`timeout`, default 5 s). The `Service`, `Worker`, `Fn` and `Sol_jobs` runtimes
+call it when `run` returns (a Lambda `-fn` after every invocation). Code that
+exits some other way calls it itself. `?context` is applied once via
 `Obs_eio.with_context` and every key in it is also promoted to a Loki
 stream label — keep it low-cardinality (team/domain/env), not per-request
 data.
@@ -111,7 +120,7 @@ configured.
 
 ```ocaml
 let obs =
-  Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+  Sol_obs.of_env ~sw ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
     ~service:"payments-charge-svc" ~context:[("team", "payments")] ()
 in
 Sol_obs.log_info obs "starting up";
