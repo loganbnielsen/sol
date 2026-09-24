@@ -242,9 +242,9 @@ val default_destroy_retention : destroy_retention
 val destroy_retention_to_string : destroy_retention -> string
 val destroy_retention_of_string : string -> (destroy_retention, string) result
 
-(** What the destroy says afterwards, by identifier, so an operator never has to
-    infer what survived. *)
-val retention_report : retention:destroy_retention -> destroy_snapshot_id:string -> string
+(** HARDEN-004 step 5 removed [retention_report]: retention is reported from
+    observed evidence by {!Sol_cli_destroy_verification}, not rendered from the
+    policy (FND-0046 / INFRA-072). *)
 
 (** The desired-state overrides a phase imposes, appended *after* the caller's own
     variables so the phase policy wins. The levers are the provider's: AWS lifts RDS
