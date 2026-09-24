@@ -1218,6 +1218,33 @@ if [ -z "$access_line" ] || [ -z "$close_line" ] || [ "$close_line" -le "$access
   exit 1
 fi
 
+# The install path hands the same cleanup to the same helper (`cloud apply` opens the
+# bootstrap window before it needs cluster access), so it gets the same assertion.
+gcp_apply_access_log="$tmp/gcp-apply-access-failure.log"
+rm -f "$FAIL_MARKER_DIR/access"
+if (cd "$tmp/work" && FAIL_ON=access LIFECYCLE_LOG="$gcp_apply_access_log" \
+      "$sol" cloud apply prod/gcp/us-central1) \
+  >"$gcp_apply_access_log.out" 2>&1
+then
+  cat "$gcp_apply_access_log.out" >&2
+  echo "GCP apply succeeded although cluster access could not be established" >&2
+  exit 1
+fi
+grep -F 'could not establish ephemeral cluster access' "$gcp_apply_access_log.out" \
+  >/dev/null || {
+  echo "the injected get-credentials failure was not the reason the GCP apply stopped:" >&2
+  cat "$gcp_apply_access_log.out" >&2
+  exit 1
+}
+access_line="$(grep -nF 'get-credentials' "$gcp_apply_access_log" | tail -1 | cut -d: -f1 || true)"
+close_line="$(grep -nE -- '-chdir=[^ ]*infra/gcp apply ' "$gcp_apply_access_log" \
+  | grep -F -- 'provisioner_bootstrap_admin=false' | tail -1 | cut -d: -f1 || true)"
+if [ -z "$access_line" ] || [ -z "$close_line" ] || [ "$close_line" -le "$access_line" ]; then
+  echo "a GCP cluster-access failure during apply exited without closing the bootstrap window:" >&2
+  grep -nE 'get-credentials|provisioner_bootstrap_admin' "$gcp_apply_access_log" >&2 || true
+  exit 1
+fi
+
 # Attempt 3 spent a billable apply before discovering that the host lacked the
 # plugin the platform stage needs. It must be refused up front instead -- the check
 # costs nothing and the alternative costs an apply.
