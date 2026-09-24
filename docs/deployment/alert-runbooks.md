@@ -99,9 +99,11 @@ failing; the `SolPostgresUnavailable` rule is `critical`.
 show this: a worker that acks and drops keeps lag at zero.
 
 - `SolWorkerDecodeDrops` (critical): messages on the source topic could not be
-  decoded, so they were **acked and dropped** (the default `on_decode_error`). The
-  input is gone from this consumer group. The usual cause is a producer deploying
-  a schema this consumer cannot read.
+  decoded. Under `Retry_topics` (default `decode_error_policy = Route_to_dlq`,
+  BUG-051) they were diverted, raw, to the group's DLQ with `X-Sol-Decode-Error`.
+  Under `In_memory`, a plain `Make` worker, or an explicit `Ack_and_drop`, they
+  were **acked and dropped**, and the input is gone from this consumer group. The
+  usual cause is a producer deploying a schema this consumer cannot read.
 - `SolWorkerRelayPublishFailed` (critical): publishing to the group's retry or DLQ
   topic failed after in-process retries, at least once since the pod started. Those
   records stay unacknowledged, but retry delivery is not progressing (BUG-029).
@@ -112,15 +114,15 @@ show this: a worker that acks and drops keeps lag at zero.
 **First response.**
 1. Decode drops: find the producer change (the worker's error log names the
    decode error and topic). Roll back the producer, or deploy a consumer that reads
-   the new schema. Dropped messages are still in the source topic until retention
-   expires, so replay is possible by resetting the group's offset. Plan it before
-   retention runs out.
+   the new schema. Dead-lettered records are in `<topic>.<group>.dlq`; replay them
+   once the consumer can read them. Dropped messages are still in the source topic
+   until retention expires, so replay is possible by resetting the group's offset.
+   Plan it before retention runs out.
 2. Relay failures: check broker health and ACLs/quotas on `<topic>.<group>.retry`
-   and `.dlq`. A failed publish from the *source* consumer stops the worker. A
-   failed publish inside the *retry relay* stops only that relay partition, and the
-   worker keeps running and looks healthy (FND-0035, BUG-043), so restart it once
-   the cause is fixed. A restart resumes from the last committed offset and clears
-   this alert.
+   and `.dlq`. A failed publish stops the worker, whether it came from the
+   *source* consumer or the *retry relay* (the relay closes the source consumer,
+   BUG-043), so the pod restarts. A restart resumes from the last committed offset
+   and clears this alert.
 3. DLQ inflow: inspect the DLQ records (`X-Sol-Origin-Group`,
    `X-Sol-Decode-Error`) and the handler's `Dead_letter` reasons. Fix the cause,
    then replay the DLQ deliberately.

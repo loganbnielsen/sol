@@ -114,6 +114,21 @@ type retry_strategy = Kafka_service.retry_strategy =
   | In_memory of retry_policy
   | Retry_topics of retry_policy
 
+(** What happens to a source-topic record that cannot be decoded, so never
+    reaches [W.handle] (BUG-051):
+
+    - [Route_to_dlq] — the raw record goes to the group-scoped DLQ with an
+      [X-Sol-Decode-Error] header, acked only once that publish succeeds.
+      The default under [Retry_topics]; refused under [In_memory] (no DLQ).
+    - [Ack_and_drop] — logged, counted, acked: the record is gone. An explicit
+      opt-in under [Retry_topics]; the only (and default) disposition under
+      [In_memory], and what {!Make} (no retry strategy) always does.
+
+    Both count on [sol_worker_decode_errors_total] when [?ot] is given. *)
+type decode_error_policy = Kafka_service.decode_error_policy =
+  | Route_to_dlq
+  | Ack_and_drop
+
 type run_error =
   [ `Create of Kafka_service.error
   | `Register of Kafka_service.error
@@ -125,7 +140,12 @@ val run_error_to_string : run_error -> string
 (** Plain Kafka worker: consume, handle, ack. No [retry_strategy] to pass —
     a basic [WORKER] cannot express failure at all, so there is nothing for
     one to select (FEAT-078). Use {!Make_with_retry} for a worker whose
-    [handle] returns [Retry]/[Dead_letter]. *)
+    [handle] returns [Retry]/[Dead_letter].
+
+    With no DLQ, an undecodable record is acked and dropped (counted on
+    [sol_worker_decode_errors_total]). A worker that must not lose such records
+    uses {!Make_with_retry} with [Retry_topics], whose default diverts them to
+    the DLQ (BUG-051). *)
 module Make (W : WORKER) : sig
   val run
     :  env:(_, _, _, _) Sol_env.timed
@@ -178,6 +198,10 @@ module Make_with_retry (W : RETRYABLE_WORKER) : sig
          (** Failure strategy for [Retry]/[Dead_letter] results from
           [W.handle]. Mandatory, not optional (FEAT-078): there is no implicit
           fallback. See [retry_strategy] for the two modes. *)
+    -> ?decode_error_policy:decode_error_policy
+         (** Disposition of an undecodable source record; see
+          {!decode_error_policy}. Default: [Route_to_dlq] under
+          [Retry_topics], [Ack_and_drop] under [In_memory]. *)
     -> ?ot:Sol_obs.t
          (** Observability handle. When provided,
           [sol_worker_messages_total{status}] (labels: [ok], [retry], [error],
@@ -242,6 +266,7 @@ module For_testing : sig
       :  env:(_, _, _, _) Sol_env.timed
       -> config:Kafka_service.config
       -> retry_strategy:retry_strategy
+      -> ?decode_error_policy:decode_error_policy
       -> ?ot:Sol_obs.t
       -> ?metrics_port:int
       -> ?on_ready:(unit -> unit)

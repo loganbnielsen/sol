@@ -52,9 +52,10 @@ The following substrate inputs must exist before running `sol deploy`.
 
 - Comma-separated broker addresses, e.g. `broker-1:9092,broker-2:9092`.
 - A Confluent-compatible schema registry URL, e.g. `http://schema-registry:8081`.
-- Sol workers and services read `KAFKA_BROKERS` and `SCHEMA_REGISTRY_URL` from
+- Sol workers and services read `KAFKA_BROKERS`, `SCHEMA_REGISTRY_URL` and the
+  required `KAFKA_SECURITY_PROTOCOL` (plus `KAFKA_SSL_*`/`KAFKA_SASL_*` when used) from
   their environment. The generated ConfigMap points at Sol's in-cluster
-  Redpanda defaults. For an external Kafka substrate, override those values via
+  Redpanda defaults, including `KAFKA_SECURITY_PROTOCOL=plaintext`. For an external Kafka substrate, override those values via
   `[infra.env] config = { ... }` in each service's `sol.toml` or through a
   GitOps overlay.
 - Sol's workspace scan discovers topic intent from `events/**/sol.toml`, but

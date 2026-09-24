@@ -21,9 +21,17 @@ module Make (H : HANDLER) : sig
           built-in [/metrics] endpoint renders from the same handle. *)
     -> ?max_body_bytes:int
     -> ?drain_timeout_s:float
+    -> ?shutdown_delay_s:float
+         (** On a stop (SIGTERM/SIGINT or [stop]), [GET /readyz] turns 503 at once
+          and the listener keeps serving for this long before it stops accepting,
+          so Kubernetes removes the endpoint first (INFRA-073). Default [5.0];
+          keep [shutdown_delay_s + drain_timeout_s] under the pod's
+          [terminationGracePeriodSeconds] (Sol renders 45). Tests pass [0.0]. *)
     -> ?stop:unit Eio.Promise.t
-         (** External stop signal. Resolve to request graceful shutdown; in-flight
-          requests get up to [drain_timeout_s] before forced cancellation. *)
+         (** External stop signal. Resolve to request graceful shutdown: readiness
+          turns 503, then after [shutdown_delay_s] the listener closes and
+          in-flight requests get up to [drain_timeout_s] before forced
+          cancellation. *)
     -> ?on_listen:(int -> unit)
     -> unit
     -> (unit, run_error) result
@@ -44,6 +52,7 @@ val run
   -> ?ot:Sol_obs.t
   -> ?max_body_bytes:int
   -> ?drain_timeout_s:float
+  -> ?shutdown_delay_s:float
   -> ?stop:unit Eio.Promise.t
   -> ?on_listen:(int -> unit)
   -> unit
