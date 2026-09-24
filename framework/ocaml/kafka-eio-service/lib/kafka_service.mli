@@ -313,12 +313,12 @@ end
 
 (** Build a [config] from environment variables with sensible local-dev
     defaults.
-    - [KAFKA_BROKERS] — comma-separated broker addresses (default:
-      ["localhost:9092"])
-    - [SCHEMA_REGISTRY_URL] — schema registry HTTP URL (default:
-      ["http://localhost:8081"])
-    - [REDPANDA_ADMIN_URL] — Redpanda admin API URL (default:
-      ["http://localhost:9644"])
+    - [KAFKA_BROKERS] — comma-separated broker addresses. **Required**.
+    - [SCHEMA_REGISTRY_URL] — schema registry HTTP URL. **Required**.
+    - [REDPANDA_ADMIN_URL] — Redpanda admin API URL. **Required**.
+      None of the three defaults to localhost (BUG-055): an unset one is an
+      [Error] naming every missing variable, so a pod that omitted one fails at
+      startup instead of later against an address nothing listens on.
     - [SOL_KAFKA_DURABILITY] — ["broker-default" | "single-broker-loss"]
       (default: ["broker-default"])
     - [KAFKA_SECURITY_PROTOCOL] —

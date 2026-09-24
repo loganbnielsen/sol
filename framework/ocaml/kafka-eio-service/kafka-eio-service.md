@@ -97,9 +97,11 @@ type config =
 ```ocaml
 val config_of_env : unit -> (config, error) result
 (* Reads:
-   KAFKA_BROKERS           — comma-separated broker addresses (default: ["localhost:9092"])
-   SCHEMA_REGISTRY_URL     — schema registry HTTP URL (default: "http://localhost:8081")
-   REDPANDA_ADMIN_URL      — Redpanda admin API URL   (default: "http://localhost:9644")
+   KAFKA_BROKERS           — comma-separated broker addresses (required)
+   SCHEMA_REGISTRY_URL     — schema registry HTTP URL (required)
+   REDPANDA_ADMIN_URL      — Redpanda admin API URL   (required)
+   None of the three defaults to localhost (BUG-055); an unset one is an Error
+   naming every missing variable.
    SOL_KAFKA_DURABILITY    — "broker-default" | "single-broker-loss"
    KAFKA_SECURITY_PROTOCOL — "plaintext" | "ssl" | "sasl_plaintext" | "sasl_ssl"
                              REQUIRED, no default (SEC-007); Sol manifests set it

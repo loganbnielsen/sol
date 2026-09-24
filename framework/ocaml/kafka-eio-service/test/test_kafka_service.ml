@@ -137,7 +137,18 @@ let with_env name value f =
   Fun.protect f ~finally:(fun () -> Unix.putenv name (Option.value old ~default:""))
 ;;
 
+(* A complete local Kafka environment: SEC-007's posture plus BUG-055's
+   addresses, none of which config_of_env defaults any more. *)
+let with_kafka_env f =
+  with_env "KAFKA_SECURITY_PROTOCOL" "plaintext" (fun () ->
+    with_env "KAFKA_BROKERS" "localhost:9092" (fun () ->
+      with_env "SCHEMA_REGISTRY_URL" "http://localhost:8081" (fun () ->
+        with_env "REDPANDA_ADMIN_URL" "http://localhost:9644" f)))
+;;
+
 let test_config_of_env_rejects_unknown_security_protocol () =
+  with_kafka_env
+  @@ fun () ->
   with_env "KAFKA_SECURITY_PROTOCOL" "scram" (fun () ->
     match Kafka_service.config_of_env () with
     | Ok _ -> Alcotest.fail "expected invalid security protocol to fail"
@@ -151,6 +162,8 @@ let test_config_of_env_rejects_unknown_security_protocol () =
 (* SEC-007 / FND-0039: an absent (or blank) protocol is an error, not an
    implicit plaintext. *)
 let test_config_of_env_requires_security_protocol () =
+  with_kafka_env
+  @@ fun () ->
   with_env "KAFKA_SECURITY_PROTOCOL" "" (fun () ->
     match Kafka_service.config_of_env () with
     | Ok _ -> Alcotest.fail "an unstated transport posture must not default to plaintext"
@@ -159,15 +172,47 @@ let test_config_of_env_requires_security_protocol () =
         "names the variable"
         true
         (contains (Kafka_service.error_to_string e) "KAFKA_SECURITY_PROTOCOL"));
-  with_env "KAFKA_SECURITY_PROTOCOL" "plaintext" (fun () ->
+  with_kafka_env (fun () ->
     Alcotest.(check bool)
       "stated plaintext is accepted"
       true
       (Result.is_ok (Kafka_service.config_of_env ())))
 ;;
 
+(* BUG-055: no substrate address defaults to localhost. Each unset one is an
+   error that names it; all missing ones are named together. *)
+let test_config_of_env_requires_addresses () =
+  with_kafka_env
+  @@ fun () ->
+  Alcotest.(check bool)
+    "all stated is accepted"
+    true
+    (Result.is_ok (Kafka_service.config_of_env ()));
+  List.iter
+    (fun missing ->
+       with_env missing "" (fun () ->
+         match Kafka_service.config_of_env () with
+         | Ok _ -> Alcotest.failf "expected an unset %s to be an error" missing
+         | Error e ->
+           Alcotest.(check bool)
+             ("names " ^ missing)
+             true
+             (contains (Kafka_service.error_to_string e) missing)))
+    [ "KAFKA_BROKERS"; "SCHEMA_REGISTRY_URL"; "REDPANDA_ADMIN_URL" ];
+  with_env "KAFKA_BROKERS" "" (fun () ->
+    with_env "REDPANDA_ADMIN_URL" "" (fun () ->
+      match Kafka_service.config_of_env () with
+      | Ok _ -> Alcotest.fail "expected two unset addresses to be an error"
+      | Error e ->
+        let msg = Kafka_service.error_to_string e in
+        Alcotest.(check bool)
+          "names both"
+          true
+          (contains msg "KAFKA_BROKERS" && contains msg "REDPANDA_ADMIN_URL")))
+;;
+
 let test_config_of_env_topic_durability () =
-  with_env "KAFKA_SECURITY_PROTOCOL" "plaintext"
+  with_kafka_env
   @@ fun () ->
   with_env "SOL_KAFKA_DURABILITY" "single-broker-loss" (fun () ->
     match Kafka_service.config_of_env () with
@@ -842,6 +887,7 @@ let () =
             `Quick
             test_config_of_env_requires_security_protocol
         ; test_case "topic durability" `Quick test_config_of_env_topic_durability
+        ; test_case "addresses are required" `Quick test_config_of_env_requires_addresses
         ] )
     ; ( "retry_topics"
       , [ test_case
