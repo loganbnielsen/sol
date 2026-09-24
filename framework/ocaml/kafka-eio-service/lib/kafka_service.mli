@@ -311,8 +311,8 @@ module Confluent_wire : sig
   val decode : bytes -> (int * string, string) result
 end
 
-(** Build a [config] from environment variables with sensible local-dev
-    defaults.
+(** Build a [config] from environment variables. The substrate addresses and
+    the transport posture are required; only the tuning knobs below default.
     - [KAFKA_BROKERS] — comma-separated broker addresses. **Required**.
     - [SCHEMA_REGISTRY_URL] — schema registry HTTP URL. **Required**.
     - [REDPANDA_ADMIN_URL] — Redpanda admin API URL. **Required**.
