@@ -391,7 +391,11 @@ let test_external_stop_is_prompt env () =
 let test_malformed_port_is_config_error env () =
   with_env "PORT" "80800x" (fun () ->
     let module S = Service.Make (H) in
-    match S.run ~env ~drain_timeout_s:0.1 () with
+    (* An already-resolved stop on an OS-assigned port makes a missing check return
+       [Ok ()] promptly, so the test fails instead of serving forever on 8080. *)
+    let stop, stop_r = Promise.create () in
+    Promise.resolve stop_r ();
+    match S.run ~env ~port:0 ~stop ~drain_timeout_s:0.1 () with
     | Error (`Config msg) ->
       Alcotest.(check bool) "names PORT and the value" true (contains "80800x" msg)
     | Ok () -> Alcotest.fail "expected a malformed PORT to be a startup Config error")
