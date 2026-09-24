@@ -151,8 +151,11 @@ let test_handle_dead_letter_returns_consumer_error () =
 
 let test_metrics_ok_counter () =
   Eio_main.run (fun env ->
+    Eio.Switch.run
+    @@ fun sw ->
     let obs =
       Sol_obs.of_env
+        ~sw
         ~net:env#net
         ~clock:env#clock
         ~mono_clock:env#mono_clock
@@ -197,8 +200,11 @@ let test_metrics_ok_counter () =
 
 let test_metrics_error_counter () =
   Eio_main.run (fun env ->
+    Eio.Switch.run
+    @@ fun sw ->
     let obs =
       Sol_obs.of_env
+        ~sw
         ~net:env#net
         ~clock:env#clock
         ~mono_clock:env#mono_clock
@@ -233,8 +239,11 @@ let test_metrics_error_counter () =
 
 let test_metrics_duration () =
   Eio_main.run (fun env ->
+    Eio.Switch.run
+    @@ fun sw ->
     let obs =
       Sol_obs.of_env
+        ~sw
         ~net:env#net
         ~clock:env#clock
         ~mono_clock:env#mono_clock
@@ -285,6 +294,7 @@ let test_metrics_endpoint_served () =
       Eio.Flow.close socket;
       let obs =
         Sol_obs.of_env
+          ~sw
           ~net:env#net
           ~clock:env#clock
           ~mono_clock:env#mono_clock
@@ -386,8 +396,11 @@ let test_max_messages_stops_cleanly () =
 
 let test_ack_failure_non_fatal_continues_and_is_metered () =
   Eio_main.run (fun env ->
+    Eio.Switch.run
+    @@ fun sw ->
     let obs =
       Sol_obs.of_env
+        ~sw
         ~net:env#net
         ~clock:env#clock
         ~mono_clock:env#mono_clock

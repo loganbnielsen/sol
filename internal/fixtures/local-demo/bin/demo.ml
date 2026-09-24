@@ -271,6 +271,8 @@ let () =
     (Option.value ~default:"(disabled)" postgres_url);
   Eio_main.run
   @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
   (* ── Observability ─────────────────────────────────────────────────────── *)
   (* Sol_obs.of_env reads LOKI_URL/TEMPO_URL itself and composes whichever
      backends are configured (Prometheus always on) — both services get the
@@ -283,6 +285,7 @@ let () =
    | Some url -> Printf.printf "\n  Traces -> Tempo at %s\n%!" url);
   let svc_obs =
     Sol_obs.of_env
+      ~sw
       ~net:env#net
       ~clock:env#clock
       ~mono_clock:env#mono_clock
@@ -291,6 +294,7 @@ let () =
   in
   let worker_obs =
     Sol_obs.of_env
+      ~sw
       ~net:env#net
       ~clock:env#clock
       ~mono_clock:env#mono_clock
@@ -299,6 +303,7 @@ let () =
   in
   let jobs_obs =
     Sol_obs.of_env
+      ~sw
       ~net:env#net
       ~clock:env#clock
       ~mono_clock:env#mono_clock
@@ -314,8 +319,6 @@ let () =
     ^ Sol_obs.metrics_renderer worker_obs ()
     ^ Sol_obs.metrics_renderer jobs_obs ()
   in
-  Eio.Switch.run
-  @@ fun sw ->
   let run_id = Printf.sprintf "%06x" (Random.int 0xFFFFFF) in
   let module Demo_order = struct
     include Events.OrderPlaced

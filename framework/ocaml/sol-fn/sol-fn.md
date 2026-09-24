@@ -92,8 +92,9 @@ exist in the installed eio version; the self-pipe approach is async-signal-safe 
 (* app/payments/deposit-fn/bin/main.ml *)
 let () =
   Eio_main.run @@ fun env ->
+    Eio.Switch.run @@ fun sw ->
     let obs =
-      Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+      Sol_obs.of_env ~sw ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
         ~service:"deposit-fn" ()
     in
     let module M = Fn.Make (Deposit_fn) in

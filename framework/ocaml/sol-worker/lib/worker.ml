@@ -78,7 +78,7 @@ let default_metrics_port = 9090
    per-message handler wrapping (what W.handle can return, which
    Kafka_service entry point to call) differs. [body] receives everything a
    tier needs to build and run its own handler/consume-loop. *)
-let with_runtime
+let with_runtime_unflushed
       ~(env : (_, _, _, _) Sol_env.timed)
       ~ot
       ~metrics_port
@@ -141,6 +141,14 @@ let with_runtime
         | Some render -> render ()
         | None -> ""));
     body ~sw ~ot ~msg_count ~msg_duration ~should_stop ~advance ~health)
+;;
+
+(* OBS-048: Loki/Tempo export is asynchronous, so what the worker logged on its
+   way out is still queued when [run] returns. Flush it before handing back. *)
+let with_runtime ~env ~ot ~metrics_port ~stop ~max_messages ~body =
+  let result = with_runtime_unflushed ~env ~ot ~metrics_port ~stop ~max_messages ~body in
+  Option.iter (fun o -> Sol_obs.flush o) ot;
+  result
 ;;
 
 (* Ack after the handler succeeds, so a side effect is never acked before it
