@@ -105,6 +105,10 @@ type handler_error = Kafka_service_intf.handler_error =
   | Dead_letter of string
   | Kafka_error of Kafka.Error.t
 
+type decode_error_policy = Kafka_service_intf.decode_error_policy =
+  | Route_to_dlq
+  | Ack_and_drop
+
 module Schema = struct
   let check ~net ~clock ~registry_url (module M : MESSAGE) =
     let topic = M.topic_name in
@@ -155,14 +159,10 @@ module Retry_topics = struct
   let retry_produce = Kafka_service_retry_topics.retry_produce
   let retry_message = Kafka_service_retry_topics.retry_message
   let dead_letter_message = Kafka_service_retry_topics.dead_letter_message
-
-  let retry_decode_failure_message =
-    Kafka_service_retry_topics.retry_decode_failure_message
-  ;;
-
+  let decode_failure_message = Kafka_service_retry_topics.decode_failure_message
   let action_of_handler_error = Kafka_service_retry_topics.action_of_handler_error
   let execute_action = Kafka_service_retry_topics.execute_action
-  let route_retry_decode_error = Kafka_service_retry_topics.route_retry_decode_error
+  let route_decode_error = Kafka_service_retry_topics.route_decode_error
   let relay_topic_name = Kafka_service_retry_topics.relay_topic_name
 end
 
@@ -303,11 +303,7 @@ type retry_strategy =
   | In_memory of Kafka.Consumer.retry_policy
   | Retry_topics of Kafka.Consumer.retry_policy
 
-let default_on_decode_error e ~raw_bytes:_ ~ack =
-  Printf.eprintf "sol-worker: DECODE_ERROR skip=true error=%S\n%!" e;
-  ignore (ack ());
-  Kafka.Consumer.Continue
-;;
+let default_on_decode_error = Kafka_service_intf.ack_and_drop_decode_error
 
 let consume
       svc
@@ -373,7 +369,7 @@ let consume_partitioned
       ?(on_assigned = ignore)
       ?(on_revoked = ignore)
       ?(on_poll = ignore)
-      ?(on_decode_error = default_on_decode_error)
+      ?decode_error_policy
       ~retry_strategy
       ?(on_retry = fun ~partition:_ ~attempt:_ ~delay_s:_ -> ())
       ?(on_relay_publish = fun ~partition:_ ~attempt:_ ~outcome:_ -> ())
@@ -381,14 +377,25 @@ let consume_partitioned
       ~handler
       ()
   =
-  let on_decode_error =
-    Kafka_service_intf.wrap_on_decode_error
+  let observe_decode_error =
+    Kafka_service_intf.observe_decode_error
       ~ot
       ~topic_name:(topic_name_to_string topic.name)
-      on_decode_error
   in
-  match retry_strategy with
-  | In_memory retry ->
+  match retry_strategy, decode_error_policy with
+  | In_memory _, Some Route_to_dlq ->
+    Error
+      (Consumer_error
+         (Kafka.Error.Config_error
+            "decode_error_policy Route_to_dlq needs a DLQ, which only Retry_topics \
+             provisions; use Retry_topics, or state Ack_and_drop for In_memory"))
+  | In_memory retry, (None | Some Ack_and_drop) ->
+    (* BUG-051: In_memory has no DLQ, so ack-and-drop is its only decode
+       disposition -- the documented default, not a silent one. *)
+    let on_decode_error e ~raw_bytes ~ack =
+      observe_decode_error e ~raw_bytes ~disposition:`Dropped;
+      Kafka_service_intf.ack_and_drop_decode_error e ~raw_bytes ~ack
+    in
     let consumer_cfg : Kafka.Consumer.config =
       { brokers = svc.brokers
       ; group_id
@@ -458,7 +465,7 @@ let consume_partitioned
        in
        Kafka.Consumer.close consumer;
        result)
-  | Retry_topics retry_policy ->
+  | Retry_topics retry_policy, decode_error_policy ->
     Kafka_service_retry_topics.consume
       svc
       topic
@@ -471,7 +478,8 @@ let consume_partitioned
       ~on_assigned
       ~on_revoked
       ~on_poll
-      ~on_decode_error
+      ~decode_error_policy:(Option.value decode_error_policy ~default:Route_to_dlq)
+      ~observe_decode_error
       ~on_retry
       ~on_relay_publish
       ~handler

@@ -39,14 +39,19 @@ val plan_saved
   -> unit
   -> (Sol_cli_process.result, Sol_cli_process.error) result
 
-(** [`terraform show -json <saved plan>`] — the plan representation, whose
-    resource changes {!Sol_cli_terraform_plan} classifies. *)
-val show_json_plan
+(** Read a saved plan (`terraform show -json <plan_file>`) and classify it. Only
+    the classified changes are appended to [phase]'s run log (see
+    {!Sol_cli_terraform_plan.show_and_record}); the JSON, which carries sensitive
+    values in plain text, is returned to the caller and never logged. The raw
+    `show -json` of a plan is deliberately not exported (SEC-008). *)
+val show_saved_plan
   :  ?env:(string * string) list
+  -> run_log:Sol_cli_run_log.t
+  -> phase:string
   -> chdir:string
   -> plan_file:string
   -> unit
-  -> (Sol_cli_process.result, Sol_cli_process.error) result
+  -> (string * Sol_cli_terraform_plan.change list, string) result
 
 (** Apply a saved plan file. No `-auto-approve`: a saved plan applies without
     confirmation, and nothing re-plans between the assertion and the apply. *)

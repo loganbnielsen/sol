@@ -27,7 +27,12 @@ type workload_shape =
 (* ── YAML templates ─────────────────────────────────────────────────────── *)
 
 let default_cluster_env =
-  [ "KAFKA_BROKERS", "redpanda.redpanda.svc.cluster.local:9093"
+  [ (* SEC-007 / FND-0039: the transport posture is declared, not defaulted.
+       In-cluster Kafka is plaintext and unauthenticated today (TLS/SASL is
+       FEAT-093); rendering it explicitly makes that visible in every manifest,
+       and config_of_env refuses a workload that does not state it. *)
+    "KAFKA_SECURITY_PROTOCOL", "plaintext"
+  ; "KAFKA_BROKERS", "redpanda.redpanda.svc.cluster.local:9093"
   ; "SCHEMA_REGISTRY_URL", "http://redpanda.redpanda.svc.cluster.local:8081"
   ; "REDPANDA_ADMIN_URL", "http://redpanda.redpanda.svc.cluster.local:9644"
   ; "LOKI_URL", "http://loki.monitoring.svc.cluster.local:3100"

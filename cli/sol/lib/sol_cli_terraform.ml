@@ -104,9 +104,27 @@ let show_json ?(env = []) ~chdir () =
 ;;
 
 (* `terraform show -json <saved plan>`: the plan representation, with its
-   resource changes, for [Sol_cli_terraform_plan] to classify. *)
+   resource changes, for [Sol_cli_terraform_plan] to classify. Not exported
+   (SEC-008): the JSON carries sensitive values in plain text, so the only way
+   out is [show_saved_plan], which logs the classified changes and never the
+   JSON -- a caller cannot route it through [Sol_cli_run_log.run_phase]. *)
 let show_json_plan ?(env = []) ~chdir ~plan_file () =
   run (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "show"; "-json"; plan_file ])
+;;
+
+let show_saved_plan ?env ~run_log ~phase ~chdir ~plan_file () =
+  Sol_cli_terraform_plan.show_and_record ~run_log ~phase ~show:(fun () ->
+    match show_json_plan ?env ~chdir ~plan_file () with
+    | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok r.Sol_cli_process.stdout
+    | Ok r ->
+      let detail = String.trim r.Sol_cli_process.stderr in
+      Error
+        (Printf.sprintf
+           "terraform show exited %d%s"
+           r.Sol_cli_process.exit_code
+           (if detail = "" then "." else ":\n" ^ detail))
+    | Error e ->
+      Error ("could not run terraform show: " ^ Sol_cli_process.error_to_string e))
 ;;
 
 (* Apply the saved plan itself. No `-auto-approve`: a saved plan applies without
