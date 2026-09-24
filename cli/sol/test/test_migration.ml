@@ -76,6 +76,36 @@ let test_required_rejects_unnumbered () =
       Alcotest.(check bool) "names the offending file" true (contains msg "init_db.sql"))
 ;;
 
+(* BUG-041 / FND-0032: two branches that each add "the next" migration produce two
+   files with one version. The runner keys on version alone, so once one is applied
+   the other is skipped forever, and a version-only gate calls it satisfied. *)
+let test_required_rejects_a_shared_version () =
+  with_tmp_dir (fun dir ->
+    write_file (Filename.concat dir "001_create_orders.sql") "";
+    write_file (Filename.concat dir "004_add_refunds.sql") "";
+    write_file (Filename.concat dir "004_add_invoices.sql") "";
+    match M.required ~dir with
+    | Ok _ -> Alcotest.fail "expected an error for two migrations sharing version 4"
+    | Error msg ->
+      Alcotest.(check bool) "names the first file" true (contains msg "004_add_invoices");
+      Alcotest.(check bool) "names the second file" true (contains msg "004_add_refunds"))
+;;
+
+(* Down files are the runner's rollback companions; the runner does not treat them as
+   migrations and neither may the gate. *)
+let test_required_ignores_down_files () =
+  with_tmp_dir (fun dir ->
+    write_file (Filename.concat dir "001_create_orders.sql") "";
+    write_file (Filename.concat dir "001_create_orders.down.sql") "";
+    match M.required ~dir with
+    | Error e -> Alcotest.fail e
+    | Ok required ->
+      Alcotest.(check (list string))
+        "the down file is not a required migration"
+        [ "001_create_orders" ]
+        (List.map M.to_string required))
+;;
+
 let test_required_missing_dir_is_empty () =
   Alcotest.(check bool)
     "a workspace with no migrations requires nothing"
@@ -244,6 +274,14 @@ let () =
             "unnumbered migration is an error"
             `Quick
             test_required_rejects_unnumbered
+        ; Alcotest.test_case
+            "shared version is an error"
+            `Quick
+            test_required_rejects_a_shared_version
+        ; Alcotest.test_case
+            "down files are not migrations"
+            `Quick
+            test_required_ignores_down_files
         ; Alcotest.test_case
             "missing directory requires nothing"
             `Quick
