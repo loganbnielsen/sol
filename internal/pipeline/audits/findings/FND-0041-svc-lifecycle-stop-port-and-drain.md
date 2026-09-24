@@ -1,7 +1,7 @@
 # FND-0041 — `sol-svc` lifecycle: external `stop` never reaches the server, a malformed `PORT` is ignored, and SIGTERM stops accepting before endpoints drain
 
 - **Classification:** (a) and (b) `VERIFIED_DEFECT`; (c) `QUALIFICATION_GAP`
-- **State:** `OPEN`
+- **State:** (a) and (b) `FIXED_UNQUALIFIED` (BUG-046, 2026-09-24: external stop reaches the server; malformed PORT is a Config error; tests + mutation checks). (c) stays `OPEN` under INFRA-073.
 - **First identified:** 2026-09-23, correctness audit
 - **Last verified:** 2026-09-23 (`origin/main @ f3e9480b`)
 - **Derived ticket:** `BUG-046` (a and b), `INFRA-073` (readiness/preStop)
