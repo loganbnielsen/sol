@@ -11,6 +11,8 @@ val decode_compatibility_response : string -> (compatibility_response, string) r
 val decode_registration_response : string -> (registration_response, string) result
 
 module Schema : sig
+  val is_subject_not_found : string -> bool
+
   val check
     :  net:_ Eio.Net.t
     -> clock:_ Eio.Time.clock

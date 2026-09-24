@@ -722,6 +722,26 @@ let test_decode_compatibility_response () =
   | Error e -> Alcotest.failf "decode failed: %s" e
 ;;
 
+(* BUG-049: only "no such subject/version" 404s mean "nothing to be compatible
+   with"; a 404 from a request that never reached the subjects API does not. *)
+let test_is_subject_not_found () =
+  let yes body = Kafka_service.Schema.is_subject_not_found body in
+  Alcotest.(check bool)
+    "40401"
+    true
+    (yes {|{"error_code":40401,"message":"Subject not found."}|});
+  Alcotest.(check bool)
+    "40402"
+    true
+    (yes {|{"error_code":40402,"message":"Version not found."}|});
+  Alcotest.(check bool)
+    "plain 404 (wrong path)"
+    false
+    (yes {|{"error_code":404,"message":"HTTP 404 Not Found"}|});
+  Alcotest.(check bool) "non-JSON 404" false (yes "<html>404</html>");
+  Alcotest.(check bool) "empty" false (yes "")
+;;
+
 let test_decode_compatibility_response_errors () =
   Alcotest.(check (result_error ()))
     "missing field"
@@ -908,6 +928,7 @@ let () =
             "compatibility response errors"
             `Quick
             test_decode_compatibility_response_errors
+        ; test_case "is_subject_not_found (BUG-049)" `Quick test_is_subject_not_found
         ; test_case "registration response" `Quick test_decode_registration_response
         ; test_case
             "registration response errors"

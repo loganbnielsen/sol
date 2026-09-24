@@ -1,7 +1,7 @@
 # FND-0040 — The schema-compatibility guarantee is best-effort at every layer
 
 - **Classification:** `DESIGN_GAP`
-- **State:** `OPEN`
+- **State:** `FIXED_UNQUALIFIED` (BUG-049, 2026-09-24: FULL set before registering and fatal; 404 parsed; CI gate fails without a registry; broker-backed tests + mutation checks)
 - **First identified:** 2026-09-23, correctness audit
 - **Last verified:** 2026-09-23 (`origin/main @ f3e9480b`)
 - **Derived ticket:** `BUG-049`

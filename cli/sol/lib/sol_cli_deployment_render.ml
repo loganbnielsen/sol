@@ -79,6 +79,16 @@ let render
     | Some env ->
       ("SOL_ENV", env) :: List.filter (fun (key, _) -> key <> "SOL_ENV") config
   in
+  (* BUG-048: a -fn's Pushgateway group is its workload identity. Keyed by its
+     cron string (the old default), two functions on one schedule overwrote each
+     other's metrics. *)
+  let config =
+    match primitive with
+    | "fn" ->
+      let key = "SOL_PUSHGATEWAY_JOB" in
+      (key, ns ^ "." ^ name) :: List.filter (fun (k, _) -> k <> key) config
+    | _ -> config
+  in
   let cfg_hash = Sol_cli_manifest.config_hash config in
   Sol_cli_manifest.(
     let ns_yaml = namespace_doc ~ns in
@@ -386,22 +396,33 @@ let render_spec
   let workload =
     match s.primitive with
     | Svc ->
-      Render_svc
-        { deployment
-        ; ingress_host = s.ingress_host
-        ; ingress_path = s.ingress_path
-        ; cluster_issuer = s.cluster_issuer
-        }
-    | Worker -> Render_worker { deployment }
+      Ok
+        (Render_svc
+           { deployment
+           ; ingress_host = s.ingress_host
+           ; ingress_path = s.ingress_path
+           ; cluster_issuer = s.cluster_issuer
+           })
+    | Worker -> Ok (Render_worker { deployment })
     | Fn ->
-      let schedule = Option.value s.schedule ~default:"0 * * * *" in
-      Render_fn
-        { schedule
-        ; cpu = s.cpu
-        ; memory = s.memory
-        ; scheduled_concurrency = s.scheduled_concurrency
-        ; backoff_limit = s.backoff_limit
-        }
+      (match s.schedule with
+       | Some schedule ->
+         Ok
+           (Render_fn
+              { schedule
+              ; cpu = s.cpu
+              ; memory = s.memory
+              ; scheduled_concurrency = s.scheduled_concurrency
+              ; backoff_limit = s.backoff_limit
+              })
+       | None ->
+         (* BUG-048: the plan requires a -fn schedule; a spec without one (e.g. an
+             old recorded release) is refused rather than rendered hourly. *)
+         Error
+           (Printf.sprintf
+              "the -fn %s has no schedule; set [service] schedule in its sol.toml"
+              (Sol_cli_kubernetes_name.k8s_name_to_string s.k8s_name)))
   in
-  render ~workspace ?env ~image ~release_id ~secret_backend { common; workload }
+  Result.bind workload (fun workload ->
+    render ~workspace ?env ~image ~release_id ~secret_backend { common; workload })
 ;;

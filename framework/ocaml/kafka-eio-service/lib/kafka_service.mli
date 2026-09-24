@@ -55,7 +55,9 @@ type handler_error =
 module Schema : sig
   (** Check whether a MESSAGE schema is compatible with the latest registered
       version for its topic. Returns [Ok ()] if compatible or if no version has
-      been registered yet (new topic). Returns [Error _] if incompatible.
+      been registered yet (new topic) -- a 404 whose body carries error code 40401
+      or 40402. Any other 404 (e.g. a wrong registry base URL) is an [Error], not
+      "compatible" (BUG-049). Returns [Error _] if incompatible.
 
       Does not register the schema — safe to call in CI without side effects. *)
   val check
@@ -77,6 +79,11 @@ module Schema : sig
 
   type compatibility_response = { is_compatible : bool }
   type registration_response = { id : int }
+
+  (** [is_subject_not_found body]: the registry 404 body means "no such subject or
+      version" (error codes 40401/40402), as opposed to a 404 from a request that
+      never reached the subjects API. Exposed for tests. *)
+  val is_subject_not_found : string -> bool
 
   (** Decode a schema-registry compatibility-check response body. Exposed so
       tests can exercise the response codec directly instead of duplicating it —

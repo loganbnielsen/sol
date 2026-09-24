@@ -1,17 +1,17 @@
 (* ── Fixtures ───────────────────────────────────────────────────────────── *)
 
 module Ok_fn = struct
-  let trigger = Fn.Cron "0 * * * *"
+  let trigger = Fn.Cron
   let run () = Ok ()
 end
 
 module Err_fn = struct
-  let trigger = Fn.Cron "0 * * * *"
+  let trigger = Fn.Cron
   let run () = Error "something went wrong"
 end
 
 module Exn_fn = struct
-  let trigger = Fn.Cron "0 * * * *"
+  let trigger = Fn.Cron
   let run () = raise (Failure "boom")
 end
 
@@ -21,7 +21,7 @@ module Lambda_fn = struct
 end
 
 module Should_not_run_fn = struct
-  let trigger = Fn.Cron "* * * * *"
+  let trigger = Fn.Cron
   let run () = Alcotest.fail "stopped cron should not run"
 end
 
@@ -173,6 +173,58 @@ let test_push_error_no_raise () =
     (M.run ~env ~pushgateway_url:"http://127.0.0.1:1" () = Ok ())
 ;;
 
+(* ── Test: env-configured push (BUG-048 / EXP-022) ─────────────────────── *)
+
+(* Generated -fn mains call [F.run ~env ~ot ()] with no URL and no job. The
+   manifest renders PUSHGATEWAY_URL and SOL_PUSHGATEWAY_JOB, so with only the
+   environment set the function must push, to its own workload's group. A stub
+   Pushgateway records the request line. *)
+let with_env name value f =
+  let old = Sys.getenv_opt name in
+  Unix.putenv name value;
+  Fun.protect f ~finally:(fun () -> Unix.putenv name (Option.value old ~default:""))
+;;
+
+let test_push_uses_env_url_and_workload_job () =
+  Eio_main.run
+  @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
+  let socket =
+    Eio.Net.listen
+      ~sw
+      ~backlog:4
+      ~reuse_addr:true
+      env#net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  let port =
+    match Eio.Net.listening_addr socket with
+    | `Tcp (_, p) -> p
+    | _ -> Alcotest.fail "no port"
+  in
+  let request_line, request_line_r = Eio.Promise.create () in
+  Eio.Fiber.fork_daemon ~sw (fun () ->
+    Eio.Net.accept_fork ~sw socket ~on_error:raise (fun flow _ ->
+      let buf = Eio.Buf_read.of_flow flow ~max_size:65536 in
+      ignore (Eio.Promise.try_resolve request_line_r (Eio.Buf_read.line buf));
+      Eio.Flow.copy_string
+        "HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+        flow);
+    `Stop_daemon);
+  with_env "PUSHGATEWAY_URL" (Printf.sprintf "http://127.0.0.1:%d" port) (fun () ->
+    with_env "SOL_PUSHGATEWAY_JOB" "myapp-billing.invoice-fn" (fun () ->
+      let module M = Fn.Make (Ok_fn) in
+      Alcotest.(check bool) "run returns Ok" true (M.run ~env () = Ok ())));
+  let line =
+    Eio.Time.with_timeout_exn env#clock 5.0 (fun () -> Eio.Promise.await request_line)
+  in
+  Alcotest.(check bool)
+    (Printf.sprintf "pushed to the workload's own group (%S)" line)
+    true
+    (contains "/metrics/job/myapp-billing.invoice-fn" line)
+;;
+
 (* ── Test: lambda_trigger_requires_runtime_api ──────────────────────────── *)
 
 (* Lambda_runtime.run_loop itself is tested in lambda-eio; here we only verify
@@ -217,7 +269,13 @@ let () =
         ; Alcotest.test_case "metrics_error_counter" `Quick test_metrics_error_counter
         ; Alcotest.test_case "metrics_duration" `Quick test_metrics_duration
         ] )
-    ; "push", [ Alcotest.test_case "push_error_no_raise" `Quick test_push_error_no_raise ]
+    ; ( "push"
+      , [ Alcotest.test_case "push_error_no_raise" `Quick test_push_error_no_raise
+        ; Alcotest.test_case
+            "push uses PUSHGATEWAY_URL and SOL_PUSHGATEWAY_JOB"
+            `Quick
+            test_push_uses_env_url_and_workload_job
+        ] )
     ; ( "lambda"
       , [ Alcotest.test_case
             "requires AWS_LAMBDA_RUNTIME_API"

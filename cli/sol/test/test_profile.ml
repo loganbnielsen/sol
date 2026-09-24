@@ -981,7 +981,11 @@ let test_availability_rejects_a_function () =
     let message =
       availability_rejection
         charge_fn
-        ~toml:"[infra.scale]\navailability = \"node-failure-tolerant\"\n"
+        ~toml:
+          "[service]\n\
+           schedule = \"0 3 * * *\"\n\n\
+           [infra.scale]\n\
+           availability = \"node-failure-tolerant\"\n"
     in
     check_bool
       "explains functions are scheduled jobs"

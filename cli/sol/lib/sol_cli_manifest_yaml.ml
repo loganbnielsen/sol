@@ -24,18 +24,6 @@ type workload_shape =
   | Http_service
   | Background_worker
 
-(* ── Schedule extraction for -fn ─────────────────────────────────────────── *)
-
-let extract_schedule ~dir ~name:_ =
-  (* Read from sol.toml's [service] section, not by scanning OCaml source
-     (which false-positived on stray "schedule = " literals). Defaults hourly. *)
-  let toml_path = Filename.concat dir "sol.toml" in
-  match Sol_cli_toml.load_result toml_path with
-  | Ok { Sol_cli_toml.schedule = Some s; _ } -> s
-  | Ok _ -> "0 * * * *"
-  | Error _ -> "0 * * * *"
-;;
-
 (* ── YAML templates ─────────────────────────────────────────────────────── *)
 
 let default_cluster_env =
