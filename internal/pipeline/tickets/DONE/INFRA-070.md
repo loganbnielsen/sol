@@ -27,3 +27,21 @@ Call `on_error` before exiting on GCP (or return a result and let the caller cle
 
 - Offline test (stub gcloud failing get-credentials) observes the bootstrap-access-remove apply being invoked before exit, on both install and destroy.
 - Demo/example: not applicable — state in completion notes.
+
+## Completion notes
+
+- `with_cluster_access` now passes `on_error` to `gcp_provisioner_kubeconfig`, which calls it
+  before every exit: the auth-plugin check, a non-zero `get-credentials`, and gcloud failing
+  to run. This matches `with_provisioner_kubeconfig` on AWS.
+- Regressions in `internal/ci/test_cloud_lifecycle_offline.sh`, destroy and install: a GCP
+  `cloud destroy --apply` and a GCP `cloud apply`, each with the `get-credentials` stub
+  failing (`FAIL_ON=access`), must stop on that error and must issue the
+  `provisioner_bootstrap_admin=false` apply after the failed `get-credentials`.
+- Mutation checks (`audits/README.md`): reverting the helper call site to
+  `gcp_provisioner_kubeconfig ~region outputs f` builds (rc=0) and fails the destroy case
+  ("a GCP cluster-access failure exited without closing the bootstrap window"). Dropping
+  `~on_error:cleanup_bootstrap_access` from the install call site builds (rc=0) and fails
+  the install case ("... during apply exited without closing the bootstrap window").
+- Demo/example: not applicable (cloud lifecycle internals, no author-facing change).
+- Language parity: no language-parity impact (CLI-only).
+- FND-0047 state → `FIXED_UNQUALIFIED` for the INFRA-070 half. REFAC-091 removes the class.

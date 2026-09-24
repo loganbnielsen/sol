@@ -76,6 +76,53 @@ let test_required_rejects_unnumbered () =
       Alcotest.(check bool) "names the offending file" true (contains msg "init_db.sql"))
 ;;
 
+(* BUG-041 / FND-0032: two branches that each add "the next" migration produce two
+   files with one version. The runner keys on version alone, so once one is applied
+   the other is skipped forever, and a version-only gate calls it satisfied. *)
+let test_required_rejects_a_shared_version () =
+  with_tmp_dir (fun dir ->
+    write_file (Filename.concat dir "001_create_orders.sql") "";
+    write_file (Filename.concat dir "004_add_refunds.sql") "";
+    write_file (Filename.concat dir "004_add_invoices.sql") "";
+    match M.required ~dir with
+    | Ok _ -> Alcotest.fail "expected an error for two migrations sharing version 4"
+    | Error msg ->
+      Alcotest.(check bool)
+        "names both files exactly as they are on disk"
+        true
+        (contains msg "migrations 004_add_invoices.sql and 004_add_refunds.sql"))
+;;
+
+(* The repo's own examples use four-digit versions; the error must name the files
+   that exist, not a reformatted version of them. *)
+let test_shared_version_names_four_digit_files () =
+  with_tmp_dir (fun dir ->
+    write_file (Filename.concat dir "0004_a.sql") "";
+    write_file (Filename.concat dir "0004_b.sql") "";
+    match M.required ~dir with
+    | Ok _ -> Alcotest.fail "expected an error for two migrations sharing version 4"
+    | Error msg ->
+      Alcotest.(check bool)
+        "names the real four-digit files"
+        true
+        (contains msg "migrations 0004_a.sql and 0004_b.sql"))
+;;
+
+(* Down files are the runner's rollback companions; the runner does not treat them as
+   migrations and neither may the gate. *)
+let test_required_ignores_down_files () =
+  with_tmp_dir (fun dir ->
+    write_file (Filename.concat dir "001_create_orders.sql") "";
+    write_file (Filename.concat dir "001_create_orders.down.sql") "";
+    match M.required ~dir with
+    | Error e -> Alcotest.fail e
+    | Ok required ->
+      Alcotest.(check (list string))
+        "the down file is not a required migration"
+        [ "001_create_orders" ]
+        (List.map M.to_string required))
+;;
+
 let test_required_missing_dir_is_empty () =
   Alcotest.(check bool)
     "a workspace with no migrations requires nothing"
@@ -244,6 +291,18 @@ let () =
             "unnumbered migration is an error"
             `Quick
             test_required_rejects_unnumbered
+        ; Alcotest.test_case
+            "shared version is an error"
+            `Quick
+            test_required_rejects_a_shared_version
+        ; Alcotest.test_case
+            "down files are not migrations"
+            `Quick
+            test_required_ignores_down_files
+        ; Alcotest.test_case
+            "shared version names four-digit files"
+            `Quick
+            test_shared_version_names_four_digit_files
         ; Alcotest.test_case
             "missing directory requires nothing"
             `Quick
