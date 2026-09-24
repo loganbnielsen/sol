@@ -36,12 +36,12 @@ import re, sys, pathlib
 
 # (doc, section heading, mli files the section specifies)
 MANIFEST = [
-    ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Sol_svc.Auth`", ["framework/ocaml/sol-svc/lib/auth.mli"]),
+    ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Auth`", ["framework/ocaml/sol-svc/lib/auth.mli"]),
     ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Peer`", ["framework/ocaml/sol-svc/lib/peer.mli"]),
-    ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Sol_svc.Route`", ["framework/ocaml/sol-svc/lib/route.mli"]),
-    ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Sol_svc.Request`", ["framework/ocaml/sol-svc/lib/request.mli"]),
-    ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Sol_svc.Response`", ["framework/ocaml/sol-svc/lib/response.mli"]),
-    ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Sol_svc.Service`", ["framework/ocaml/sol-svc/lib/service.mli"]),
+    ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Route`", ["framework/ocaml/sol-svc/lib/route.mli"]),
+    ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Request`", ["framework/ocaml/sol-svc/lib/request.mli"]),
+    ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Response`", ["framework/ocaml/sol-svc/lib/response.mli"]),
+    ("framework/ocaml/sol-svc/sol-svc.md", "## Module: `Service`", ["framework/ocaml/sol-svc/lib/service.mli"]),
     ("framework/ocaml/kafka-eio-service/kafka-eio-service.md", "## Configuration", ["framework/ocaml/kafka-eio-service/lib/kafka_service.mli"]),
     ("framework/ocaml/kafka-eio-service/kafka-eio-service.md", "## Public API", ["framework/ocaml/kafka-eio-service/lib/kafka_service.mli"]),
 ]
