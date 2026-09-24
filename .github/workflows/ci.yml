@@ -485,6 +485,8 @@ jobs:
           sudo mv kubectl /usr/local/bin/kubectl
 
       - name: Golden-path smoke test
+        env:
+          SOL_FRAMEWORK_REF: ${{ github.event.pull_request.head.sha || github.sha }}
         # Measured across the first 3 real runs on this branch: 11m43s,
         # 8m20s, 10m59s -- a ~40% swing with no code change touching this
         # step's actual work (cluster boot, chart install, health-wait,
@@ -533,6 +535,17 @@ jobs:
           # existing block instead, right after `schedule = ...`.
           sed -i '/^schedule = /a scheduled_concurrency = "forbid"\nbackoff_limit = 5' \
             app/ops/heartbeat_fn/sol.toml
+
+          # The scaffolded workspace pins the framework to sol.git#main, so its
+          # images would build this PR's scaffold against main's framework: any
+          # PR changing a framework API the scaffold uses (BUG-048's Fn.trigger)
+          # could never pass. Build against the commit under test instead.
+          internal_ci_pin_ref="${SOL_FRAMEWORK_REF:?}"
+          grep -rl 'loganbnielsen/sol.git#main' --include='*.opam' . \
+            | xargs -r sed -i "s|loganbnielsen/sol.git#main|loganbnielsen/sol.git#${internal_ci_pin_ref}|g"
+          if grep -rq 'loganbnielsen/sol.git#main' --include='*.opam' .; then
+            echo "::error::scaffolded workspace still pins sol.git#main"; exit 1
+          fi
 
           eval $(opam env)
           dune build
@@ -879,7 +892,14 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Build ${{ matrix.dockerfile }}
-        run: docker build --no-cache -f ${{ matrix.dockerfile }} ${{ matrix.context }}
+        env:
+          SOL_FRAMEWORK_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        # Same reason as golden-path-smoke: the example's *.opam pins sol.git#main;
+        # build it against the commit under test, not main's framework.
+        run: |
+          grep -rl 'loganbnielsen/sol.git#main' --include='*.opam' ${{ matrix.context }} \
+            | xargs -r sed -i "s|loganbnielsen/sol.git#main|loganbnielsen/sol.git#${SOL_FRAMEWORK_REF:?}|g"
+          docker build --no-cache -f ${{ matrix.dockerfile }} ${{ matrix.context }}
 
   # FEAT-039/FEAT-085: example-dockerfile-smoke above deliberately excludes
   # examples/pluto/app/demo_ts/ (hand-maintained, no Sol template to drift
