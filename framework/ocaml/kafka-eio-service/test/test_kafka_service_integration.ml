@@ -500,6 +500,80 @@ let test_consume_partitioned_dead_letter_without_retry_topics_fails_closed () =
             (errs <> [])))
 ;;
 
+(* BUG-043 / FND-0035: a retry relay that stops must fail the worker promptly.
+   The handler asks for a retry on the source delivery, so the record goes to the
+   retry topic; on the relay's redelivery it returns a Kafka error, which stops
+   the relay (it runs with a zero-tolerance policy). The source topic then sits
+   idle. Before the fix the relay failure was reported only when the source
+   consumer next returned -- never, for an idle healthy source -- so this timed
+   out. *)
+module RelayDeathEvent = struct
+  include PartitionFailEvent
+
+  let topic_name =
+    Kafka_service.topic_name_exn (Printf.sprintf "sol-svc-relaydeath-%05d" run_id)
+  ;;
+end
+
+let test_retry_topics_dead_relay_fails_the_worker () =
+  Eio_main.run
+  @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
+  match Kafka_service.create (make_config ()) ~sw with
+  | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
+  | Ok svc ->
+    (match
+       Kafka_service.register svc ~net:env#net ~clock:env#clock (module RelayDeathEvent)
+     with
+     | Error e -> Alcotest.failf "register failed: %s" (Kafka_service.error_to_string e)
+     | Ok topic ->
+       (match
+          Eio.Promise.await (Kafka_service.publish svc topic RelayDeathEvent.{ n = 1 })
+        with
+        | Error e -> Alcotest.failf "publish failed: %s" (Kafka.Error.to_string e)
+        | Ok () -> ());
+       let group_id =
+         Printf.sprintf "sol-test-relaydeath-%d-%d" (Unix.getpid ()) (Random.int 9999)
+       in
+       let retry_strategy =
+         Kafka_service.Retry_topics
+           { base_delay_s = 0.0; max_delay_s = 0.0; max_attempts = 3; jitter_ratio = 0.0 }
+       in
+       let deliveries = ref 0 in
+       let result =
+         Eio.Time.with_timeout env#clock 45.0 (fun () ->
+           Ok
+             (Kafka_service.consume_partitioned
+                svc
+                topic
+                ~group_id
+                ~sw
+                ~net:env#net
+                ~clock:env#clock
+                ~retry_strategy
+                ~handler:(fun _msg ~ack:_ ~trace_ctx:_ ->
+                  incr deliveries;
+                  if !deliveries = 1
+                  then Kafka.Consumer.Error Kafka_service.Retry
+                  else
+                    Kafka.Consumer.Error
+                      (Kafka_service.Kafka_error Kafka.Error.Application))
+                ()))
+       in
+       (match result with
+        | Error `Timeout ->
+          Alcotest.failf
+            "the relay stopped (after %d deliveries) but the worker kept running"
+            !deliveries
+        | Ok (Ok ()) -> Alcotest.fail "a dead relay must not end in Ok ()"
+        | Ok (Error _) ->
+          Alcotest.(check bool)
+            "the relay saw the retried record before it stopped"
+            true
+            (!deliveries >= 2)))
+;;
+
 (* ------------------------------------------------------------------ *)
 (* on_decode_error callback                                            *)
 (* ------------------------------------------------------------------ *)
@@ -619,6 +693,10 @@ let () =
             "dead-letter without Retry_topics fails closed, not acked"
             `Slow
             test_consume_partitioned_dead_letter_without_retry_topics_fails_closed
+        ; test_case
+            "a stopped Retry_topics relay fails the worker promptly"
+            `Slow
+            test_retry_topics_dead_relay_fails_the_worker
         ] )
     ; ( "error_handling"
       , [ test_case
