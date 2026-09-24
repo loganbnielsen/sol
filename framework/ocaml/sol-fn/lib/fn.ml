@@ -1,5 +1,5 @@
 type trigger =
-  | Cron of string
+  | Cron
   | Lambda
 
 type run_error =
@@ -27,13 +27,32 @@ end
 (* ── Make functor ───────────────────────────────────────────────────────── *)
 
 module Make (F : FN) = struct
+  let env_nonempty name =
+    match Sys.getenv_opt name with
+    | Some v when String.trim v <> "" -> Some (String.trim v)
+    | _ -> None
+  ;;
+
+  (* BUG-048: the job label is the workload's identity (rendered as
+     SOL_PUSHGATEWAY_JOB), never the schedule. *)
   let default_job = function
-    | Cron sched -> sched
+    | Cron -> "sol-fn"
     | Lambda -> "lambda"
   ;;
 
   let run ~(env : (_, _, _, _) Sol_env.timed) ?pushgateway_url ?job ?ot ?stop () =
-    let job = Option.value job ~default:(default_job F.trigger) in
+    let job =
+      match job, env_nonempty "SOL_PUSHGATEWAY_JOB" with
+      | Some job, _ | None, Some job -> job
+      | None, None -> default_job F.trigger
+    in
+    (* BUG-048 / EXP-022: generated -fn mains never passed a URL, so metrics were
+       recorded and discarded. The manifest's PUSHGATEWAY_URL is the default. *)
+    let pushgateway_url =
+      match pushgateway_url with
+      | Some _ as url -> url
+      | None -> env_nonempty "PUSHGATEWAY_URL"
+    in
     let backend, renderer =
       match ot with
       | Some o -> Sol_obs.backend_and_renderer o
@@ -81,7 +100,7 @@ module Make (F : FN) = struct
       | exn -> Error (Printexc.to_string exn)
     in
     match F.trigger with
-    | Cron _ ->
+    | Cron ->
       let signal_stop, signal_stop_r = Eio.Promise.create () in
       let await_stop () =
         match stop with
