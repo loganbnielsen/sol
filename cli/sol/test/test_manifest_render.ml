@@ -2411,7 +2411,9 @@ let test_deploy_render_has_no_unverified_jwt_opt_in () =
 (* INFRA-073: -svc readiness is /readyz (it turns 503 as shutdown begins);
    liveness and startup stay on /healthz. *)
 let test_svc_readiness_probe_uses_readyz () =
-  let _, workload = render_spec_ok svc_spec in
+  let _, workload =
+    render_spec_ok { svc_spec with language = Some Sol_cli_compat.Ocaml }
+  in
   check_bool
     "readinessProbe path is /readyz"
     true
@@ -2424,6 +2426,17 @@ let test_svc_readiness_probe_uses_readyz () =
 
 (* A TypeScript -svc keeps /healthz for readiness until its framework serves
    /readyz (FEAT-096); pointing it at a 404 would leave its pods never ready. *)
+(* An undeclared language is unknown, not OCaml: /healthz. This is what `sol up`
+   renders for every service today (BUG-056); the TypeScript golden path failed
+   with a /readyz probe on its order_svc. *)
+let test_undeclared_language_readiness_stays_on_healthz () =
+  let _, workload = render_spec_ok { svc_spec with language = None } in
+  check_bool
+    "undeclared-language readinessProbe path is /healthz"
+    true
+    (contains workload "readinessProbe:\n          httpGet:\n            path: /healthz")
+;;
+
 let test_ts_svc_readiness_stays_on_healthz () =
   let _, workload =
     render_spec_ok { svc_spec with language = Some Sol_cli_compat.Typescript }
@@ -2483,6 +2496,10 @@ let () =
             "TypeScript stays on /healthz"
             `Quick
             test_ts_svc_readiness_stays_on_healthz
+        ; Alcotest.test_case
+            "undeclared language stays on /healthz"
+            `Quick
+            test_undeclared_language_readiness_stays_on_healthz
         ] )
     ; ( "SOL_ENV reaches every primitive"
       , [ Alcotest.test_case

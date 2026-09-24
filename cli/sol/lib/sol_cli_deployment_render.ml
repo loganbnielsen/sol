@@ -396,9 +396,14 @@ let render_spec
     ; availability = s.availability
     ; consumes_kafka = s.consumes_kafka
     ; readiness_path =
+        (* Only a service that declares OCaml (sol-svc serves /readyz) gets it.
+           An undeclared language is unknown, not OCaml (DEC-022 §7): /healthz
+           is the probe every framework serves. `sol up` renders every service
+           with no declared language today (BUG-056), and a TypeScript service
+           probed on /readyz is never ready. *)
         (match s.language with
-         | Some Sol_cli_compat.Typescript -> "/healthz"
-         | Some Sol_cli_compat.Ocaml | None -> "/readyz")
+         | Some Sol_cli_compat.Ocaml -> "/readyz"
+         | Some Sol_cli_compat.Typescript | None -> "/healthz")
     }
   in
   let workload =

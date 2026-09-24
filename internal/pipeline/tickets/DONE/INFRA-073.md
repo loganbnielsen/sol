@@ -56,3 +56,15 @@ Add a readiness endpoint (`/readyz`) that returns 503 once shutdown begins; on S
   a `/readyz` probe.
 - **Language parity:** TypeScript stays on `/healthz`; FEAT-096 (BACKLOG) records
   what its framework needs.
+
+**CI round (2026-09-24):** golden-path-smoke-ts failed. The TypeScript `order_svc`
+deployed by `sol up` was probed on `/readyz` and got 404. `sol up` builds its plan
+without the resolved `sol.yml`, so every service's language is `None` there, and part
+B had treated `None` as OCaml. It is now fail-safe: only a service that *declares*
+`language: ocaml` gets `/readyz`; an undeclared language is unknown and stays on
+`/healthz`, which every framework serves (DEC-022 §7: language is never inferred). New
+render test "undeclared language stays on /healthz", with a mutation check (`None →
+/readyz` fails it). The `sol up`/`sol deploy` divergence is filed as BUG-056.
+Consequence: scaffolded OCaml services (whose `sol.yml` declares no language) and
+anything deployed by `sol up` keep `/healthz` for readiness until they declare
+`language: ocaml` / BUG-056 lands. Part A's shutdown delay still applies to them.
