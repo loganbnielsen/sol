@@ -238,12 +238,18 @@ module Make (H : HANDLER) = struct
         ?on_listen
         ()
     =
-    let port =
-      match Sys.getenv_opt "PORT" with
-      | Some s ->
-        (try int_of_string (String.trim s) with
-         | _ -> port)
-      | None -> port
+    (* BUG-046: a PORT that is set but is not a port number is a configuration
+       error. Falling back to the default made the service listen somewhere the
+       Service and its probes do not point, with nothing naming the bad value. *)
+    let* port =
+      (* Set-but-empty is treated as unset, like every other variable here. *)
+      match env_nonempty "PORT" with
+      | None -> Ok port
+      | Some raw ->
+        (match int_of_string_opt (String.trim raw) with
+         | Some p when p >= 0 && p <= 65535 -> Ok p
+         | _ ->
+           Error (`Config (Printf.sprintf "PORT=%S is not a port number (0-65535)" raw)))
     in
     let ot_eio = Option.map Sol_obs.obs_eio ot in
     let metrics_renderer = Option.map Sol_obs.metrics_renderer ot in
@@ -354,12 +360,21 @@ module Make (H : HANDLER) = struct
                ()
            in
            let server = Cohttp_eio.Server.make ~callback () in
+           (* BUG-046: the server stops accepting on a signal *or* on the caller's
+              [stop]. It used to watch only the signal, so an external stop kept it
+              accepting for the whole drain window and then reported a drain
+              timeout even with nothing in flight. *)
+           let server_stop, server_stop_r = Eio.Promise.create () in
+           Eio.Fiber.fork_daemon ~sw (fun () ->
+             await_stop ();
+             ignore (Eio.Promise.try_resolve server_stop_r ());
+             `Stop_daemon);
            (* Race: serve exits naturally when connections drain, or drain guard fires
          after drain_timeout_s and raises Drain_timeout to force cancellation. *)
            Eio.Fiber.first
              (fun () ->
                 Cohttp_eio.Server.run
-                  ~stop:signal_stop
+                  ~stop:server_stop
                   ~on_error:(fun e ->
                     Printf.eprintf "sol-svc: %s\n%!" (Printexc.to_string e))
                   socket
