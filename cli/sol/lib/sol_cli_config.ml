@@ -1304,19 +1304,28 @@ let is_omitted_service cfg ~name =
    form and degrades to "no auto-detected repositories" instead of inheriting
    that exit. *)
 let ecr_repositories_var () =
-  let services =
-    match Sol_cli_manifest.discover_services_result () with
-    | Ok services -> services
-    | Error _ -> []
-  in
-  services
-  |> List.filter_map (fun (s : Sol_cli_manifest.service) ->
-    match Sol_cli_kubernetes_name.k8s_name_of_source s.Sol_cli_manifest.name with
-    | Ok name -> Some (Sol_cli_kubernetes_name.k8s_name_to_string name)
-    | Error _ -> None)
-  |> List.map (Printf.sprintf "%S")
-  |> String.concat ","
-  |> Printf.sprintf "[%s]"
+  (* INFRA-074: a discovery failure is an error, never "no repositories". The
+     list drives [for_each] over repositories with [force_delete], so an empty
+     list is an instruction to delete every image the target holds. *)
+  match Sol_cli_manifest.discover_services_result () with
+  (* The workspace resolved and has no [app/]: an infra-first workspace with no
+     workloads yet, so no repositories. The plan guard in [cloud apply] still
+     refuses a plan that would delete existing ones. *)
+  | Error Sol_cli_manifest.Missing_app_dir -> Ok "[]"
+  | Error e ->
+    Error
+      ("cannot determine the workspace's ECR repositories: "
+       ^ Sol_cli_manifest.discover_error_to_string e)
+  | Ok services ->
+    Ok
+      (services
+       |> List.filter_map (fun (s : Sol_cli_manifest.service) ->
+         match Sol_cli_kubernetes_name.k8s_name_of_source s.Sol_cli_manifest.name with
+         | Ok name -> Some (Sol_cli_kubernetes_name.k8s_name_to_string name)
+         | Error _ -> None)
+       |> List.map (Printf.sprintf "%S")
+       |> String.concat ","
+       |> Printf.sprintf "[%s]")
 ;;
 
 let terraform_vars ~workspace cfg =
@@ -1448,14 +1457,16 @@ let terraform_vars ~workspace cfg =
        credential is not silently skipped: `TF_VAR_db_password` is what carries it,
        and [Sol_cli_db_credential] refuses a target that provisions one without a
        credential source. *)
-    Ok
-      (match target.provider with
-       | Sol_cli_provider.Aws ->
-         ("create_rds", string_of_bool has_postgres)
-         :: ("rds_multi_az", string_of_bool is_production_postgres)
-         :: ("ecr_repositories", ecr_repositories_var ())
-         :: vars
-       | Sol_cli_provider.Gcp -> vars)
+    (match target.provider with
+     | Sol_cli_provider.Aws ->
+       Result.map
+         (fun ecr_repositories ->
+            ("create_rds", string_of_bool has_postgres)
+            :: ("rds_multi_az", string_of_bool is_production_postgres)
+            :: ("ecr_repositories", ecr_repositories)
+            :: vars)
+         (ecr_repositories_var ())
+     | Sol_cli_provider.Gcp -> Ok vars)
 ;;
 
 let vars_with_profile_precedence ~has_profile ~cli_vars ~config_vars =

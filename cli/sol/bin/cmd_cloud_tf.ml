@@ -2408,7 +2408,7 @@ let config_vars ~strict target =
              , Some resolved_target ))))
 ;;
 
-let cloud_init ~target ~var_file ~vars ~action () =
+let cloud_init ?(confirm_ecr_removal = false) ~target ~var_file ~vars ~action () =
   check_terraform ();
   let provider = provider_of_target_path target in
   let pname, infra_dir = infra_dir provider in
@@ -2579,14 +2579,65 @@ let cloud_init ~target ~var_file ~vars ~action () =
          "  lifecycle phase: %s\n%!"
          (Sol_cli_cloud_lifecycle.phase_to_string Sol_cli_cloud_lifecycle.Cloud_bootstrap)
      | Error message -> lifecycle_error message);
+    (* INFRA-074 / FND-0043: the cloud apply runs from a saved plan that is read
+       first. ECR repositories are derived from the workloads with a Dockerfile in
+       this checkout and carry [force_delete], so a plan that drops one would
+       delete its images. Such a plan is refused unless the operator confirms it,
+       and what is applied is the plan that was read. Nothing has changed when it
+       refuses: the plan creates no resources and the bootstrap window is not open. *)
+    let plan_file = Filename.temp_file "sol-cloud-apply-" ".tfplan" in
+    let remove_plan () =
+      List.iter
+        (fun f ->
+           try Sys.remove f with
+           | Sys_error _ -> ())
+        [ plan_file; plan_file ^ ".args" ]
+    in
+    at_exit remove_plan;
     require_terraform_success
-      (Sol_cli_run_log.run_phase run_log ~name:"terraform-apply" (fun () ->
-         Sol_cli_terraform.apply
+      (Sol_cli_run_log.run_phase run_log ~name:"terraform-plan" (fun () ->
+         Sol_cli_terraform.plan_saved
            ~scope:Sol_cli_terraform.whole_root
            ~chdir:infra_dir
            ~var_files
            ~vars:(Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:true) @ vars)
+           ~out:plan_file
            ()));
+    let changes =
+      match
+        terraform_stdout
+          (Sol_cli_run_log.run_phase run_log ~name:"terraform-plan-show" (fun () ->
+             Sol_cli_terraform.show_json_plan ~chdir:infra_dir ~plan_file ()))
+      with
+      | Error message -> lifecycle_error ("could not read the cloud plan: " ^ message)
+      | Ok json ->
+        (match Sol_cli_terraform_plan.changes_of_plan_json json with
+         | Ok changes -> changes
+         | Error message -> lifecycle_error ("could not read the cloud plan: " ^ message))
+    in
+    (match
+       Sol_cli_terraform_plan.removed_of_type ~resource_type:"aws_ecr_repository" changes
+     with
+     | [] -> ()
+     | removed when confirm_ecr_removal ->
+       Printf.printf
+         "  ECR: removing %s and every image in them (confirmed with           \
+          --confirm-ecr-removal)\n\
+          %!"
+         (String.concat ", " removed)
+     | removed ->
+       lifecycle_error
+         (Printf.sprintf
+            "this apply would delete ECR repositories and every image in them: %s\n\
+            \  The repository list comes from the workloads with a Dockerfile in this \
+             checkout, so a branch that lacks one of them removes it. Run from the \
+             checkout that deploys this target, or pass --confirm-ecr-removal if \
+             removing them is intended. Nothing was changed."
+            (String.concat ", " removed)));
+    require_terraform_success
+      (Sol_cli_run_log.run_phase run_log ~name:"terraform-apply" (fun () ->
+         Sol_cli_terraform.apply_saved ~chdir:infra_dir ~plan_file ()));
+    remove_plan ();
     let deescalate () =
       Sol_cli_run_log.run_phase
         run_log
@@ -3419,6 +3470,17 @@ let apply_flag =
 
 let action_term = Term.(ret (const action_of_flags $ plan_flag $ apply_flag))
 
+let confirm_ecr_removal_flag =
+  Arg.(
+    value
+    & flag
+    & info
+        [ "confirm-ecr-removal" ]
+        ~doc:
+          "Allow an apply whose plan deletes ECR repositories (and every image in them). \
+           Without it such an apply is refused before anything changes.")
+;;
+
 let plan_cmd =
   Cmd.v
     (Cmd.info "plan" ~doc:"Preview cloud infrastructure changes for a target.")
@@ -3434,11 +3496,12 @@ let apply_cmd =
   Cmd.v
     (Cmd.info "apply" ~doc:"Apply cloud infrastructure changes for a target.")
     Term.(
-      const (fun target var_file vars ->
-        cloud_init ~target ~var_file ~vars ~action:Apply ())
+      const (fun target var_file vars confirm_ecr_removal ->
+        cloud_init ~confirm_ecr_removal ~target ~var_file ~vars ~action:Apply ())
       $ target_arg
       $ var_file_arg
-      $ var_arg)
+      $ var_arg
+      $ confirm_ecr_removal_flag)
 ;;
 
 let destroy_cmd =
