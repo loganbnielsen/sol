@@ -136,8 +136,10 @@ validated key. Missing header or wrong value → 401.
 > **`Unverified_dev_only` does not check the signature.** Anyone can mint a token with
 > any `sub` and any scopes, and it will be accepted. It exists for local development
 > and tests only. Never put it on a route reachable from outside a developer machine;
-> use `Verified_signature_required` (below) everywhere else. Nothing refuses it at
-> runtime today; SEC-006 adds that guard.
+> use `Verified_signature_required` (below) everywhere else. `Service.Make.run` refuses
+> to start (`Config` error) when a route or `metrics_auth` uses it, unless
+> `SOL_ALLOW_UNVERIFIED_JWT=1`. `sol up` sets that on the local cluster only;
+> `sol deploy` and GitOps emission never do (SEC-006).
 
 For local development only (`verification = Unverified_dev_only`):
 
@@ -403,7 +405,8 @@ module Make (H : HANDLER) : sig
          ; fs : Eio.Fs.dir_ty Eio.Path.t
          ; .. >
     -> ?port:int
-       (** Default: 8080. Overridden by PORT env var if set. Pass 0 for
+       (** Default: 8080. Overridden by PORT env var if set (empty counts as unset);
+           a PORT that is not a port number is a startup [`Config] error. Pass 0 for
            OS-assigned port (use with [on_listen] in tests). *)
     -> ?metrics_auth:Auth.level
        (** Auth strategy for the built-in /metrics endpoint. Default: [`Public].
@@ -443,7 +446,7 @@ the same arguments with the routes list first, and the same
 ### Startup sequence
 
 ```
-1. Resolve port: PORT env var > ~port arg > 8080
+1. Resolve port: PORT env var > ~port arg > 8080 (a malformed PORT → `Config` error)
 2. Bind: Eio.Net.listen ~sw env#net (`Tcp (Eio.Net.Ipaddr.V4.any, port))
 3. Discover actual port via Eio.Net.listening_addr (handles port 0)
 4. Call on_listen actual_port (if provided)

@@ -62,31 +62,20 @@ let ensure_postgres_url () =
 ;;
 
 let check_consumer_group_changes ~workspace ~confirm_group_change plan =
-  let prev_groups =
-    Sol_cli_deployment_state.load_deployed_groups
+  match
+    Sol_cli_deployment_state.check_removed_groups
       ~ctx:Sol_cli_kube_destination.local_context
-      workspace
-  in
-  let next_groups =
-    List.map
-      Sol_cli_plan_ids.Consumer_group.to_string
-      plan.Sol_cli_deployment_plan.consumer_groups
-  in
-  let removed =
-    Sol_cli_deployment_state.removed_consumer_groups ~prev:prev_groups ~next:next_groups
-  in
-  if removed <> [] && not confirm_group_change
-  then (
-    Printf.eprintf
-      "\n\
-       warning: the following consumer group(s) are no longer present in this deploy plan:\n";
-    List.iter (fun g -> Printf.eprintf "  - %s\n" g) removed;
-    Printf.eprintf
-      "\n\
-       Messages produced while the old group is absent will be consumed\n\
-       from the latest offset when the group is re-added, silently skipping\n\
-       any backlog.  Pass --confirm-group-change to acknowledge and proceed.\n\n";
-    exit 1)
+      ~workspace
+      ~confirm_group_change
+      ~next:
+        (List.map
+           Sol_cli_plan_ids.Consumer_group.to_string
+           plan.Sol_cli_deployment_plan.consumer_groups)
+  with
+  | Ok () -> ()
+  | Error msg ->
+    Printf.eprintf "%s\n%!" msg;
+    exit 1
 ;;
 
 let prepare_context ~repo_root =
@@ -348,7 +337,7 @@ let report_surplus_workloads ~workspace (plan : Sol_cli_deployment_plan.t) =
            %!"))
 ;;
 
-let report_apply_success ~workspace ~sha plan =
+let report_apply_success ~workspace plan =
   let summary = Sol_cli_up_execution.post_deploy_summary ~cwd:(Sys.getcwd ()) plan in
   Printf.printf "Done. %d service(s) deployed.\n" summary.deployed_count;
   Printf.printf "Run 'sol local status' to check pod health.\n";
@@ -358,8 +347,7 @@ let report_apply_success ~workspace ~sha plan =
       "\n\
        Note: %d migration file(s) found in db/migrations/ — run 'sol migrate' to apply.\n"
       summary.pending_migrations;
-  report_surplus_workloads ~workspace plan;
-  Sol_cli_up_execution.record_applied ~ctx:cluster ~workspace ~sha plan
+  report_surplus_workloads ~workspace plan
 ;;
 
 (* The apply path, under the workspace boundary lease. Returns a result; the
@@ -407,8 +395,14 @@ let run_apply
            (* DEC-037: record before reporting success. *)
            Sol_cli_release.finish_deployment
              ~record_release:(fun () ->
-               record_release_and_prune ~workspace ~keep:keep_releases ~previous plan)
-             ~report_success:(fun () -> report_apply_success ~workspace ~sha plan))
+               let ( let* ) = Result.bind in
+               let* () =
+                 record_release_and_prune ~workspace ~keep:keep_releases ~previous plan
+               in
+               (* BUG-045: the next deploy's consumer-group guard reads this record,
+                  so failing to write it is a failure, reported before "Done". *)
+               Sol_cli_up_execution.record_applied ~ctx:cluster ~workspace ~sha plan)
+             ~report_success:(fun () -> report_apply_success ~workspace plan))
   in
   match result with
   | Error msg -> Error msg

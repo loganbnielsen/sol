@@ -53,10 +53,17 @@ val default_retry_policy : retry_policy
 module type JOB = sig
   type t
 
-  (** A short, stable label for observability (metrics/logs) only -- never
-      used for routing, storage identity, or dispatch. E.g.
-      ["send_welcome_email"]. *)
+  (** A short, stable label for a job, e.g. ["send_welcome_email"]: it labels
+      metrics and logs, and (BUG-044) it is what a poller claims by. *)
   val kind : t -> string
+
+  (** Every value [kind] can return. A [Make(J)] poller claims only rows whose
+      [kind] is in this list, so several [Make] instances with different job
+      types can share the one [sol_jobs] table without claiming -- and then
+      failing to decode -- each other's jobs. Each entry must be non-empty and
+      use only [a-z], [0-9], [_], [.], [-]; [run] refuses anything else, and
+      [enqueue] refuses a job whose [kind] is not listed (nobody would claim it). *)
+  val kinds : string list
 
   (** Serialize a job to its stored [payload] text. JSON is the conventional
       choice (matching the rest of Sol's wire format) but not enforced. *)
@@ -79,11 +86,18 @@ module type JOB = sig
   val handle : t -> (unit, string) result
 end
 
-(** [`Config msg]: the [retry_policy] passed to [run] is invalid (currently:
-    [max_attempts = 0]) -- caught before the loop starts, not discovered
-    only after the first job fails (same fail-fast discipline FEAT-078
-    applied to [sol-worker]'s mandatory [retry_strategy]). *)
-type run_error = [ `Config of string ]
+(** [`Config msg]: [run] was given something it cannot run with -- an invalid
+    [retry_policy] ([max_attempts = 0]) or invalid [J.kinds] -- caught before
+    the loop starts (the fail-fast discipline FEAT-078 applied to [sol-worker]).
+
+    [`Database msg] (BUG-044): the job table cannot be used -- it does not exist
+    or cannot be read when [run] starts, or [max_claim_failures] claims in a row
+    failed. A missing migration or a lost database used to look exactly like an
+    idle queue. *)
+type run_error =
+  [ `Config of string
+  | `Database of string
+  ]
 
 val run_error_to_string : run_error -> string
 
@@ -138,6 +152,11 @@ module Make (J : JOB) : sig
     -> ?max_jobs:int
          (** Stop cleanly after this many jobs reach a terminal outcome
              (completed or permanently failed). *)
+    -> ?max_claim_failures:int
+         (** Consecutive failed claim queries after which [run] returns
+             [`Database]. Default [30]. A transient blip is retried each
+             [poll_interval_s]; a database that stays unreachable ends the
+             process so it is restarted and seen, not left looking idle. *)
     -> unit
     -> (unit, run_error) result
 end
@@ -150,4 +169,5 @@ module For_testing : sig
   val backoff_s : rng:Random.State.t -> retry_policy -> int -> float
 
   val validate_retry_policy : retry_policy -> (unit, run_error) result
+  val validate_kinds : string list -> (unit, run_error) result
 end
