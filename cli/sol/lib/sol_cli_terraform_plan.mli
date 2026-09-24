@@ -50,6 +50,18 @@ val action_to_string : action -> string
     `resource_changes` array is an error, and the caller refuses. *)
 val changes_of_plan_json : string -> (change list, string) result
 
+(** [show_and_record ~run_log ~phase ~show] runs [show] (which returns
+    `terraform show -json <saved plan>`), parses it, and appends only the
+    classified changes -- one "<action> <address>" line each -- to [phase]'s run
+    log. Returns the JSON and its changes. The JSON itself never reaches the run
+    log: it carries sensitive values in plain text (SEC-008), so callers must not
+    run [show] through {!Sol_cli_run_log.run_phase}. *)
+val show_and_record
+  :  run_log:Sol_cli_run_log.t
+  -> phase:string
+  -> show:(unit -> (string, string) result)
+  -> (string * change list, string) result
+
 (** Classified changes outside the policy's allowlist. Empty means permitted.
     [no-op] anywhere and a data-source [read] are always permitted. *)
 val violations : policy -> change list -> string list
