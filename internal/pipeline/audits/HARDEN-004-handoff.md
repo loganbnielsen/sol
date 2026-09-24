@@ -360,11 +360,114 @@ structurally attempted; it just may not execute an unsafe apply.
 
 ## Deliberately not done (Step 4+)
 
-Step 4's policy vocabulary and exit codes are not wired: a refused preparation/reconciliation
-currently stops the destroy as a failure (fail-closed). Whether a refused *guard* preparation
-should instead continue to destruction (the FND-0030 best-effort semantics) is Step 4's
-decision, not silently taken here. Step 5's provider verification/retention observation,
-adoption/import, and the parked items remain untouched.
+Step 5's provider verification/retention observation, adoption/import, FND-0010, the parked
+`cluster_issuer` change and runtime finding G remain untouched. (Step 4 landed — see below.)
+REFAC-091's install half is still open, so that ticket stays in `READY_FOR_ENGINEERING`.
+
+**Demo/example: not applicable** — internal lifecycle refactor. **No language-parity impact**
+(DEC-022): no application-facing contract changed.
+
+# Step 4 — the failure policy is wired, with decided exit codes (2026-09-24)
+
+**Outcome: landed.** Step 3 answers "may this Terraform operation execute safely?"; Step 4
+answers "if a preparation cannot safely execute or fails, what does destruction do next?".
+The two stay independent: `eligibility` (does the preparation apply to a represented
+resource?) → `outcome` (did it succeed, fail, or get refused?) → `consequence` (may
+destruction continue?).
+
+The governing invariant: **destruction remains available from a half-built target unless
+proceeding would violate an explicit destruction-time safety guarantee the target declared.**
+Neither extreme is reachable — "every preparation failure blocks" is gone, and "preparation
+failure can never block" was never true.
+
+## The exit-code contract (decided by the operator, 2026-09-24)
+
+| code | meaning |
+| --- | --- |
+| `0` | clean: every applicable preparation succeeded or had nothing to do, destruction reached absence, verification confirmed it, and no cleanup failure remains |
+| `3` | degraded success: absence was reached and verified, but one or more `Continue_to_destroy` preparations failed or were refused |
+| `1` | failure or block: destruction did not reach its postcondition, including a `Block_destroy` guarantee preventing destruction |
+| `2` | *not used here* — reserved for this CLI's refusal / cannot-proceed-as-requested semantics |
+
+Documented in `sol cloud destroy`'s `EXIT STATUS` man section and pinned in
+`test_cloud_destroy.ml` (`exit_clean` / `exit_degraded` / `exit_failure`).
+
+## What is wired
+
+- `Sol_cli_cloud_lifecycle`'s existing vocabulary (from #451: types only, not wired) is now
+  the destroy path's: `deps.prepare` returns
+  `preparation Sol_cli_cloud_lifecycle.preparation_outcome`, and the core decides the
+  consequence with `destruction_blocked` / `preparation_failure`.
+- Edge typed outcomes: `prepare_destroy_result` → `string preparation_outcome` (the AWS
+  snapshot identity, or nothing, or a failure); `gcp_prepare_destroy_result` → `unit
+  preparation_outcome`; `prepare_destruction_result` → `preparation preparation_outcome`.
+  Verification is part of the preparation (an unconfirmed snapshot identity is not a
+  preparation), and the old `~prepared:false` ambiguity is gone — the "nothing was prepared"
+  case is `Nothing_to_prepare`, and the verify function is only reached once a preparation
+  applied.
+- Policies: AWS `Retain_final_snapshot` → `Block_destroy` (the canonical DEC-033 case, and the
+  reason names the target's own retention guarantee); AWS `Retain_nothing` → best-effort;
+  GCP guard lowering → `Continue_to_destroy`; GCP's "cannot retain anything on GCP yet"
+  refusal → `Block_destroy` (a retention guarantee, not a guard-lowering failure).
+- Unreadable state → `Preparation_failed {policy = Continue_to_destroy}`, deliberately
+  **distinct** from `Nothing_to_prepare`. UNKNOWN is never absence and never silently a
+  best-effort failure: the preparation runs, the substrate stays `Substrate_unknown`, and the
+  failure is reported.
+- Plan refusal is an outcome, not permission to weaken Step 3. Nothing in the assertions
+  changed: the refused apply still never runs, and Step 4 only decides what follows.
+- The outcome distinguishes the histories:
+  `Destroy_succeeded { preparation; degradations; substrate; cleanup }` (empty `degradations`
+  = clean, non-empty = degraded), `Destroy_blocked { guarantee; cleanup }`, and
+  `Destroy_failed { failure; degradations; cleanup }`. A degraded preparation survives a later
+  destroy failure; a cleanup failure is evidence alongside the primary failure, never a
+  replacement for it.
+
+## The reconciliation boundary, inspected (§4)
+
+The combined bootstrap-access enable/reconciliation was examined for whether its typed
+dependency can honestly represent the two responsibilities' different consequences. It can:
+the apply's two halves share the fate of one plan, and a failure means *the authority was not
+obtained*, so the operation the window exists to authorise (the platform teardown) cannot run.
+That is now `Protected_skipped`, a degradation: the platform teardown is skipped and reported,
+the substrate destroy — which needs no cluster authority — proceeds, and removal is still
+attempted. No provider conditional, phase-name inspection, or string matching was added.
+
+Keeping "we chose not to perform an unsafe preparation" separate from "we lack the authority
+required" is what `Protected_skipped` vs `Protected_failed` encodes: the first degrades the
+destroy, the second fails it.
+
+## §8 — the removal allowlist's CREATE, tightened
+
+Step 3 allowed `Create | Update | Delete` on the bootstrap mechanism during removal. Nothing
+requires the create: GCP expresses the closed window as
+`count = var.provisioner_bootstrap_admin ? 1 : 0` (so `false` plans a delete, or nothing), and
+AWS's `access_entries` map drops the `bootstrap` policy association when the variable is false
+(so the association is removed). A create there would be the apply *adding* the elevation it
+was asked to close. The policy is now `Update | Delete`, with a regression
+(`test_terraform_plan.ml`: "removal may not create the elevation it is closing"). The AWS
+`module.eks` compromise from Step 3 is preserved unchanged — no module-internal address was
+guessed.
+
+## Evidence (all offline)
+
+- `test_cloud_destroy.ml` grew a `failure policy` group: `Continue_to_destroy` failure destroys
+  and stays visible (exit 3); `Block_destroy` failure blocks, names the guarantee, and never
+  invokes the substrate destroy (exit 1); a clean preparation and destroy stay clean (exit 0);
+  a degradation is preserved when the destroy then fails; UNKNOWN is not absence and not
+  silent; a refused plan becomes a continue failure with the unsafe apply still unexecuted.
+  Existing coverage now pins the reconciliation split: a skipped teardown is a degradation with
+  removal attempted, a *failed* protected operation is a failure, and a skipped teardown plus a
+  cleanup failure keep all three facts separate.
+- The harness's end-to-end refusal scenario now carries Step 4's semantics: the refused
+  reconciliation never applies (the stub exits 99 if it does), the substrate destroy runs, the
+  window is still closed, the degradation is reported, and the run exits 3.
+- `dune build`, CI's unit-test command, `check_ocamlformat.sh --all` and the full offline
+  harness all green (29 destroy tests, 18 plan tests).
+
+## Deliberately not done (Step 5+)
+
+Step 5's provider absence verification from the inventory, observed retention, adoption/import,
+runtime finding G, FND-0010 and the parked `cluster_issuer` work remain untouched.
 
 **Demo/example: not applicable** — internal lifecycle refactor. **No language-parity impact**
 (DEC-022): no application-facing contract changed.

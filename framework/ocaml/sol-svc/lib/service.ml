@@ -80,7 +80,7 @@ let body_result headers body max_bytes =
   | Some s -> Ok s
 ;;
 
-let dispatch
+let dispatch_unguarded
       ?read_api_key
       ?fetch_jwks
       ~routes
@@ -189,6 +189,61 @@ let dispatch
            (match result with
             | Ok r | Error r -> r)))
 ;;
+
+(* BUG-053 / FND-0050: every request gets a response. The handler has its own
+   boundary above, but authentication and body reading ran outside it, so an
+   exception there escaped into cohttp-eio, which closes the connection without
+   a response -- and the request was never counted. *)
+let respond_or_500 f =
+  try f () with
+  | Eio.Cancel.Cancelled _ as exn -> raise exn
+  | (Out_of_memory | Stack_overflow | Sys.Break) as exn -> raise exn
+  | exn ->
+    Printf.eprintf "sol-svc: request failed: %s\n%!" (Printexc.to_string exn);
+    Response.internal_error "Internal server error"
+;;
+
+let dispatch
+      ?read_api_key
+      ?fetch_jwks
+      ~routes
+      ~metrics_renderer
+      ~metrics_auth
+      ~max_body_bytes
+      ?route_observer
+      ~ready
+      req
+      body
+  =
+  respond_or_500 (fun () ->
+    dispatch_unguarded
+      ?read_api_key
+      ?fetch_jwks
+      ~routes
+      ~metrics_renderer
+      ~metrics_auth
+      ~max_body_bytes
+      ?route_observer
+      ~ready
+      req
+      body)
+;;
+
+module For_testing = struct
+  let respond_or_500 = respond_or_500
+
+  let dispatch ?fetch_jwks ~routes req body =
+    dispatch
+      ?fetch_jwks
+      ~routes
+      ~metrics_renderer:None
+      ~metrics_auth:`Public
+      ~max_body_bytes:1_048_576
+      ~ready:(fun () -> true)
+      req
+      body
+  ;;
+end
 
 (* ── Make functor ──────────────────────────────────────────────────────── *)
 

@@ -609,6 +609,71 @@ let test_public_oversized_body_gets_413 env () =
       Alcotest.(check int) "413 on oversized public upload" 413 status))
 ;;
 
+(* BUG-053: an exception outside the handler used to close the connection with
+   no response. A non-object JWT payload was one real trigger. *)
+let test_non_object_jwt_payload_gets_401 env () =
+  Switch.run (fun sw ->
+    with_server env ~sw (fun port ->
+      let enc = Base64.encode_exn ~pad:false ~alphabet:Base64.uri_safe_alphabet in
+      let tok = enc {|{"alg":"HS256"}|} ^ "." ^ enc "[]" ^ ".sig" in
+      let status, _ =
+        http_call
+          env
+          ~sw
+          ~port
+          ~meth:`GET
+          ~path:"/protected"
+          ~headers:[ "authorization", "Bearer " ^ tok ]
+          ()
+      in
+      Alcotest.(check int) "status 401" 401 status))
+;;
+
+let test_boundary_turns_exceptions_into_500 _env () =
+  let r =
+    Service.For_testing.respond_or_500 (fun () ->
+      raise (Sys_error "Mutex.lock: Resource deadlock avoided"))
+  in
+  Alcotest.(check int) "500" 500 r.Response.status;
+  Alcotest.(check int)
+    "a normal response passes through"
+    201
+    (Service.For_testing.respond_or_500 (fun () -> Response.created "x")).Response.status
+;;
+
+(* BUG-053: an exception raised in authentication, through dispatch itself. *)
+let test_dispatch_turns_auth_exception_into_500 _env () =
+  let enc = Base64.encode_exn ~pad:false ~alphabet:Base64.uri_safe_alphabet in
+  let tok = enc {|{"alg":"RS256","kid":"k1"}|} ^ "." ^ enc "{}" ^ "." ^ enc "sig" in
+  let auth =
+    `Jwt
+      Auth.
+        { scopes = []
+        ; verification =
+            Verified_signature_required
+              { issuer = "https://issuer.example.com"
+              ; audience = "svc"
+              ; algorithms = [ `RS256 ]
+              ; key_source = Jwks_url "https://idp.example.com/raising/jwks.json"
+              }
+        }
+  in
+  let req =
+    Http.Request.make
+      ~meth:`GET
+      ~headers:(Http.Header.of_list [ "authorization", "Bearer " ^ tok ])
+      "/jwt"
+  in
+  let r =
+    Service.For_testing.dispatch
+      ~fetch_jwks:(fun _ -> failwith "boom")
+      ~routes:[ Route.get "/jwt" ~auth get_json ]
+      req
+      (Cohttp_eio.Body.of_string "")
+  in
+  Alcotest.(check int) "500, not a dropped connection" 500 r.Response.status
+;;
+
 let () =
   Unix.putenv "SOL_ALLOW_UNVERIFIED_JWT" "1";
   Eio_main.run (fun env ->
@@ -657,6 +722,18 @@ let () =
           ] )
       ; ( "resilience"
         , [ Alcotest.test_case
+              "non-object JWT payload → 401, not a closed connection"
+              `Quick
+              (test_non_object_jwt_payload_gets_401 env)
+          ; Alcotest.test_case
+              "exception outside the handler → 500"
+              `Quick
+              (test_boundary_turns_exceptions_into_500 env)
+          ; Alcotest.test_case
+              "auth exception through dispatch → 500"
+              `Quick
+              (test_dispatch_turns_auth_exception_into_500 env)
+          ; Alcotest.test_case
               "handler exception → 500, server survives"
               `Quick
               (test_handler_exception env)
