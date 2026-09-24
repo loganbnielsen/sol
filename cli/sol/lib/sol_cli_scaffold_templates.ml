@@ -207,7 +207,7 @@ let tpl_fn_sol_toml =
   {tpl|# Sol service configuration — all fields are optional.
 
 [service]
-schedule = "0 * * * *"   # cron schedule (default: every hour)
+schedule = "0 * * * *"   # cron schedule (required)
 # scheduled_concurrency = "forbid"  # allow (default) | forbid | replace -- overlap
                                      # between scheduled runs only; a manual
                                      # `sol fn run` is never constrained by this.
@@ -1153,7 +1153,8 @@ let worker_bin_dune =
 
 (* Generic fn: lib/<name>_fn.ml — satisfies Fn.FN *)
 let fn_lib_ml =
-  {tpl|let trigger = Fn.Cron "0 * * * *"
+  {tpl|(* The schedule lives in this workload's sol.toml ([service] schedule). *)
+let trigger = Fn.Cron
 
 let run () =
   Printf.printf "[{{name}}-fn] running\n%!";

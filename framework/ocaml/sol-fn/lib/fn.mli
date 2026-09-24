@@ -1,5 +1,9 @@
 type trigger =
-  | Cron of string (** Cron expression, e.g. ["0 * * * *"] for hourly. *)
+  | Cron
+  (** Runs once and exits, on the schedule a Kubernetes CronJob gives it. The
+      schedule itself lives only in the workload's [sol.toml] ([[service]
+      schedule], required): BUG-048 removed the cron string that used to sit here
+      too, because nothing scheduled from it and it could silently disagree. *)
   | Lambda
   (** Runs via the AWS Lambda Runtime API loop ([lambda-eio]) instead of
           once-and-exit — see [aws-audit.md] and [lambda-eio.md] for the full
@@ -47,11 +51,15 @@ module Make (F : FN) : sig
   val run
     :  env:(_, _, _, _) Sol_env.timed
     -> ?pushgateway_url:string
-         (** Pushgateway base URL, e.g. "http://pushgateway:9091". If absent,
-          metrics are recorded in-process but not pushed. *)
+         (** Pushgateway base URL, e.g. "http://pushgateway:9091". Defaults to
+          [PUSHGATEWAY_URL] from the environment (which Sol's manifests set);
+          if neither is set, metrics are recorded in-process but not pushed. *)
     -> ?job:string
-         (** Pushgateway job label. Defaults to the cron schedule string for
-          [Cron], or ["lambda"] for [Lambda]. *)
+         (** Pushgateway job label, i.e. the group this function's metrics
+          replace on each push. Defaults to [SOL_PUSHGATEWAY_JOB] (Sol renders
+          [<namespace>.<name>], unique per workload), else ["sol-fn"] for [Cron]
+          or ["lambda"] for [Lambda]. It used to default to the cron string, so
+          two functions on one schedule overwrote each other (BUG-048). *)
     -> ?ot:Sol_obs.t
          (** Observability handle. Its composed backend + renderer are used for
           this invocation's metrics and push; defaults to a bare
