@@ -567,11 +567,19 @@ let test_retry_topics_dead_relay_fails_the_worker () =
             "the relay stopped (after %d deliveries) but the worker kept running"
             !deliveries
         | Ok (Ok ()) -> Alcotest.fail "a dead relay must not end in Ok ()"
-        | Ok (Error _) ->
+        | Ok (Error (Kafka_service.Partition_errors errs)) ->
           Alcotest.(check bool)
             "the relay saw the retried record before it stopped"
             true
-            (!deliveries >= 2)))
+            (!deliveries >= 2);
+          Alcotest.(check bool)
+            "the error returned is the relay's own, not a side effect of the close"
+            true
+            (List.exists (fun (_, e) -> e = Kafka.Error.Application) errs)
+        | Ok (Error (Kafka_service.Consumer_error e)) ->
+          Alcotest.failf
+            "expected the relay's Partition_errors, got Consumer_error %s"
+            (Kafka.Error.to_string e)))
 ;;
 
 (* ------------------------------------------------------------------ *)

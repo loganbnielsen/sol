@@ -420,6 +420,10 @@ let consume
   let relay_failure : Kafka_service_intf.consume_partitioned_error option ref =
     ref None
   in
+  (* Set when the relay closed the source consumer (BUG-043). A source error after
+     that close -- e.g. an in-flight ack answered with Destroy -- is a consequence
+     of the relay failure, so the relay's error is the one reported. *)
+  let relay_closed_source = ref false in
   match
     Kafka.Consumer.create
       ~on_ready
@@ -526,6 +530,7 @@ let consume
            ends its consume_partitioned (kafka-eio treats a direct close as a
            stop), and the relay_failure check below turns that into Error. *)
         let stop_source_after_relay_failure () =
+          relay_closed_source := true;
           Printf.eprintf
             "error: kafka_service: RETRY_RELAY_STOPPED -- stopping the source consumer \
              so the worker fails instead of running without retry delivery\n\
@@ -626,6 +631,12 @@ let consume
        consumer, so this point is reached as soon as the relay stops. *)
     let result =
       match result, !relay_failure with
+      | Error _, Some relay_err when !relay_closed_source ->
+        Printf.eprintf
+          "error: kafka_service: failing -- the retry relay stopped and closed the \
+           source consumer (BUG-043)\n\
+           %!";
+        Error relay_err
       | Ok (), Some relay_err ->
         Printf.eprintf
           "error: kafka_service: failing -- the retry relay stopped earlier and never \
