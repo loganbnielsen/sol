@@ -10,6 +10,7 @@ type action_result =
   | Hosted_unavailable of string
 
 val mode_of_env : string -> (mode, string) result
+
 (** The key syntax a Secret key must have (uppercase, digits, underscores). *)
 val validate_key_format : string -> (unit, string) result
 
