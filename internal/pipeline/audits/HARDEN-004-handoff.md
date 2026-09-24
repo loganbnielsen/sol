@@ -277,14 +277,94 @@ hand-threaded `on_error` every failing branch had to remember is gone from the d
 
 ## Deliberately not done (later steps)
 
-Step 3 (plan-and-assert on **every** destroy-path apply), Step 4 (wire the policy vocabulary
+Step 4 (wire the policy vocabulary
 and the decided exit codes), Step 5 (verification/retention from the inventory), adoption
-inspection, FND-0010, the parked `cluster_issuer` change and runtime finding G. The
-whole-root reconciliation apply is still whole-root and still constructive: the inventory now
-keeps the Attempt-6 shape from running it (an empty state means no reconciliation), but a
-state that represents a *subset* still relies on Step 3. REFAC-091's install half is also still
-open, so that ticket stays in `READY_FOR_ENGINEERING`.
+inspection, FND-0010, the parked `cluster_issuer` change and runtime finding G. (Step 3
+landed — see below.) REFAC-091's install half is also still open, so that ticket stays in
+`READY_FOR_ENGINEERING`.
 
 **Demo/example: not applicable** — internal lifecycle refactor with no change to what an
 application author writes. **No language-parity impact** (DEC-022): no application-facing
 contract changed.
+
+# Step 3 — every destroy-path apply is plan-asserted (2026-09-24)
+
+**Outcome: landed.** Destroy no longer performs an unasserted constructive Terraform
+operation. Each apply reachable from the destroy path is planned to a saved plan, classified
+from Terraform's own resource changes (addresses and actions), refused when any change is
+outside that phase's allowlist, and applied *as the saved plan* only then.
+
+## The applies reachable from destroy, and what each may do
+
+| phase | scope | why it exists | permitted in destruction | refused |
+| --- | --- | --- | --- | --- |
+| `rds-destroy-prepare` | `-target=aws_db_instance.postgres` | lower RDS deletion protection and set the final-snapshot policy | `update` of `aws_db_instance.postgres` | any create/replace/delete, anything else |
+| `gcp-destroy-prepare` | `-target=` the guarded addresses the inventory represents | lower Cloud SQL / GKE deletion protection | `update` of those addresses | any create/replace, anything else |
+| `destroy-reconciliation-apply` | bootstrap mechanism + guarded addresses the inventory represents | hold the Destroy policy in force and open the bootstrap window | create/update the bootstrap mechanism; `update` a represented guarded address | create/replace of anything else — including a missing cluster the `-target` pulls in |
+| `provisioner-bootstrap-access-remove` | bootstrap mechanism only | close the elevation | create/update/delete the bootstrap mechanism | anything else |
+
+`terraform destroy` (platform + substrate) is not an apply and is non-constructive by
+construction — a destroy plan removes what state holds and creates nothing — so it is not
+asserted here.
+
+## Mechanism
+
+- `Sol_cli_terraform_plan`: one reusable mechanism. `changes_of_plan_json` reads
+  `resource_changes` (real `address`/`type`/`mode`/`actions`); `violations` classifies against a
+  phase `policy`; `guarded_apply` refuses before applying. `no-op` anywhere and a data-source
+  `read` are always permitted; an unrecognised action, a document with no `resource_changes`, a
+  plan-command failure, and an unreadable plan are all REFUSE.
+- `Sol_cli_terraform.plan_saved` / `show_json_plan` / `apply_saved`: the apply receives the
+  saved plan file, so what ran is what was asserted — not a re-plan that could differ.
+- `Sol_cli_cloud_destroy`: the phase allowlists (`guard_preparation_policy`,
+  `bootstrap_enable_policy`, `reconciliation_policy`, `bootstrap_removal_policy`), stated in
+  addresses and actions.
+
+## Scope narrowing
+
+- Reconciliation moved off `whole_root` to bootstrap + the guarded addresses the Step-2
+  inventory represents. GCP targets the stable root address
+  `kubernetes_cluster_role_binding.provisioner_bootstrap_admin`; **AWS targets `module.eks`**,
+  because its bootstrap access is an access-policy association *inside* the `eks` module whose
+  internal address is module-version-dependent. A guessed `-target` there would fail closed but
+  strand the target, and it cannot be validated offline against the real module — so the module
+  is the smallest stable scope, the rule names the resource type, and the plan assertion is the
+  enforcement. Configured-but-unrepresented resources are not targeted at all.
+- Removal moved off `whole_root` to the bootstrap mechanism alone (the Destroy policy vars are
+  unnecessary once the guarded resources are out of scope; the config vars stay).
+
+## "Cleanup" is a name, not a safety property
+
+The removal apply is asserted like any other. If its plan is refused the apply does not run,
+`with_elevated_access` records `Cleanup_failed`, and the outcome says the elevated access may
+remain (`Elevated_access_not_removed` on the otherwise-successful path). Cleanup stays
+structurally attempted; it just may not execute an unsafe apply.
+
+## Evidence
+
+- 17 new offline unit tests (`test_terraform_plan.ml`): action classification; malformed
+  documents; empty/read-only plans; the phase allowlists (missing-cluster CREATE refused,
+  unrepresented guarded CREATE refused, unexpected CREATE refused, unexpected REPLACE refused,
+  bootstrap CREATE allowed, represented guarded UPDATE allowed, removal with an unexpected
+  CREATE refused, out-of-scope DELETE refused, Attempt-6 inventory prunes the scope,
+  unrecognised action refused); and `guarded_apply` — refusal / malformed / plan-failure each
+  never invoke the apply, permitted applies once.
+- 2 new execution-level tests in `test_cloud_destroy.ml`: a refused reconciliation never applies
+  and still attempts removal; a refused removal is not reported as successful cleanup.
+- The offline harness models the saved-plan flow (plan with `-out`, `show -json <plan>`,
+  `apply <plan>`), and gained an end-to-end refusal scenario: a reconciliation plan that would
+  reconstruct the missing cluster is refused, the substrate destroy never runs, and the
+  bootstrap window is still closed.
+- `dune build`, CI's unit-test command, `check_ocamlformat.sh --all` and the full offline
+  harness all green.
+
+## Deliberately not done (Step 4+)
+
+Step 4's policy vocabulary and exit codes are not wired: a refused preparation/reconciliation
+currently stops the destroy as a failure (fail-closed). Whether a refused *guard* preparation
+should instead continue to destruction (the FND-0030 best-effort semantics) is Step 4's
+decision, not silently taken here. Step 5's provider verification/retention observation,
+adoption/import, and the parked items remain untouched.
+
+**Demo/example: not applicable** — internal lifecycle refactor. **No language-parity impact**
+(DEC-022): no application-facing contract changed.

@@ -117,8 +117,111 @@ JSON
     ;;
   *" plan "*)
     if fail_once plan; then exit 20; fi
+    case " $* " in
+      *" -out="*)
+        # HARDEN-004 step 3: a destroy-path apply is planned to a file first, the
+        # plan is classified, and the *saved plan* is applied. Record the plan's
+        # scope and variables beside the file, so `show -json` and `apply` model
+        # the same plan. A stub that re-derived them would not be exercising the
+        # property that what was applied is what was asserted.
+        plan_file=""
+        for arg in "$@"; do
+          case "$arg" in
+            -out=*) plan_file="${arg#-out=}" ;;
+          esac
+        done
+        [ -n "$plan_file" ] || {
+          echo "plan without a -out path" >&2
+          exit 92
+        }
+        # Both of GCP's guards are lifted by one planned transition, and the
+        # target's root defaults are protection-on, so a plan in the destroy
+        # window that omits either override silently turns protection back on.
+        case " $* " in
+          *" -target=google_sql_database_instance.postgres "*)
+            case " $* " in
+              *" -var=sql_deletion_protection=false "*) : ;;
+              *) exit 95 ;;
+            esac
+            case " $* " in
+              *" -target=google_container_cluster.main "*) : ;;
+              *) exit 96 ;;
+            esac
+            case " $* " in
+              *" -var=gke_deletion_protection=false "*) : ;;
+              *) exit 97 ;;
+            esac
+            ;;
+        esac
+        : >"$plan_file"
+        printf '%s\n' "$*" >"$plan_file.args"
+        ;;
+    esac
     ;;
-  *" show -json")
+  *" show -json"*)
+    # A saved-plan read (HARDEN-004 step 3): the last argument is the plan file.
+    # The resource changes are what the plan assertion classifies, so the fixture
+    # has to carry real addresses and actions.
+    case "${!#}" in
+      *.tfplan)
+        plan_args="$(cat "${!#}.args")"
+        changes=""
+        add_change() {
+          [ -z "$changes" ] || changes="$changes,"
+          changes="$changes{\"address\":\"$1\",\"type\":\"$2\",\"mode\":\"managed\",\"change\":{\"actions\":[\"$3\"]}}"
+        }
+        case " $plan_args " in
+          *" -target=aws_db_instance.postgres "*)
+            add_change "aws_db_instance.postgres" "aws_db_instance" "update"
+            ;;
+        esac
+        case " $plan_args " in
+          *" -target=google_sql_database_instance.postgres "*)
+            add_change "google_sql_database_instance.postgres" "google_sql_database_instance" "update"
+            ;;
+        esac
+        case " $plan_args " in
+          *" -target=google_container_cluster.main "*)
+            add_change "google_container_cluster.main" "google_container_cluster" "update"
+            ;;
+        esac
+        case " $plan_args " in
+          *" -var=provisioner_bootstrap_admin=true "*)
+            case " $plan_args " in
+              *" -target=kubernetes_cluster_role_binding.provisioner_bootstrap_admin "*)
+                add_change "kubernetes_cluster_role_binding.provisioner_bootstrap_admin" "kubernetes_cluster_role_binding" "create"
+                ;;
+              *" -target=module.eks "*)
+                add_change "module.eks.aws_eks_access_policy_association.this" "aws_eks_access_policy_association" "create"
+                ;;
+            esac
+            ;;
+          *" -var=provisioner_bootstrap_admin=false "*)
+            case " $plan_args " in
+              *" -target=kubernetes_cluster_role_binding.provisioner_bootstrap_admin "*)
+                add_change "kubernetes_cluster_role_binding.provisioner_bootstrap_admin" "kubernetes_cluster_role_binding" "delete"
+                ;;
+              *" -target=module.eks "*)
+                add_change "module.eks.aws_eks_access_policy_association.this" "aws_eks_access_policy_association" "delete"
+                ;;
+            esac
+            ;;
+        esac
+        # HARDEN-004 step 3 refusal fixture: a reconciliation plan that would
+        # reconstruct the missing cluster. The assertion must refuse it and never
+        # apply it. Guarded merely by the bootstrap variable so the preparation
+        # plans are unaffected and the refusal lands on the reconciliation.
+        if [ "${PLAN_CREATES_MISSING_CLUSTER:-}" = 1 ]; then
+          case " $plan_args " in
+            *" -var=provisioner_bootstrap_admin=true "*)
+              add_change "google_container_cluster.main" "google_container_cluster" "create"
+              ;;
+          esac
+        fi
+        printf '{"resource_changes":[%s]}\n' "$changes"
+        exit 0
+        ;;
+    esac
     # HARDEN-004 step 2 / FND-0044 point 2: the destroy path decides "the
     # substrate exists" from what Terraform's state represents, not from the
     # install-time outputs. A fixture that means "absent target" must therefore
@@ -184,6 +287,49 @@ JSON
       printf \
         '{"values":{"root_module":{"resources":[{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":true,"skip_final_snapshot":false,"final_snapshot_identifier":null}}]}}}\n'
     fi
+    ;;
+  *" apply "*".tfplan")
+    # A saved-plan apply (HARDEN-004 step 3). The plan's scope and variables were
+    # recorded beside the plan file; the side effects are the same the direct
+    # applies used to have, so the existing assertions still observe them.
+    plan_args="$(cat "${!#}.args")"
+    case " $plan_args " in
+      *" -target=aws_db_instance.postgres "*)
+        if fail_once rds-prepare; then exit 20; fi
+        for arg in $plan_args; do
+          case "$arg" in
+            -var=rds_final_snapshot_identifier=*)
+              printf '%s' "${arg#-var=rds_final_snapshot_identifier=}" >"$RDS_PREPARED_FILE"
+              ;;
+            # A prepare that keeps nothing has no identifier to record, and the
+            # setting itself is what the verification has to establish.
+            -var=rds_skip_final_snapshot=true)
+              printf 'skip' >"$RDS_PREPARED_FILE"
+              ;;
+          esac
+        done
+        ;;
+    esac
+    case " $plan_args " in
+      *" -target=google_sql_database_instance.postgres "*)
+        if fail_once gcp-prepare; then exit 20; fi
+        : >"$GCP_SQL_PREPARED_FILE"
+        : >"$GKE_PREPARED_FILE"
+        ;;
+    esac
+    case " $plan_args " in
+      *" -var=provisioner_bootstrap_admin=true "*)
+        # DEC-040: this variable *is* the bootstrap window, so the stub records it
+        # and the kubectl stub answers the de-escalation probes from it --
+        # permitted while open, denied once closed.
+        printf 'true\n' >"$FAIL_MARKER_DIR/bootstrap-window"
+        if fail_once cloud; then exit 20; fi
+        ;;
+      *" -var=provisioner_bootstrap_admin=false "*)
+        printf 'false\n' >"$FAIL_MARKER_DIR/bootstrap-window"
+        if fail_once deescalate; then exit 20; fi
+        ;;
+    esac
     ;;
   *infra/aws*" apply "*"-target=aws_db_instance.postgres"*)
     if fail_once rds-prepare; then exit 20; fi
@@ -1207,13 +1353,45 @@ grep -F 'credentials: Google Application Default Credentials resolved' \
   exit 1
 }
 
+# HARDEN-004 step 3, the governing invariant end to end: a reconciliation plan
+# that would reconstruct the missing cluster (a target-owned CREATE) must be
+# refused *before* its apply. The run fails, the cloud is not destroyed on the
+# strength of a plan that would build it, and the bootstrap window is still
+# removed -- cleanup stays structural, it just may not execute an unsafe apply.
+refuse_log="$tmp/gcp-refuse.log"
+rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/bootstrap-window"
+if (cd "$tmp/work" && PLAN_CREATES_MISSING_CLUSTER=1 DESTROYING=1 \
+      LIFECYCLE_LOG="$refuse_log" "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$refuse_log.out" 2>&1
+then
+  echo "the GCP destroy proceeded although its plan reconstructed the missing cluster" >&2
+  cat "$refuse_log.out" >&2
+  exit 1
+fi
+grep -F 'refused before apply' "$refuse_log.out" >/dev/null || {
+  echo "the refused plan was not the reason the GCP destroy stopped:" >&2
+  cat "$refuse_log.out" >&2
+  exit 1
+}
+if grep -E -- '-chdir=[^ ]*infra/gcp ' "$refuse_log" | grep -F ' destroy ' >/dev/null; then
+  echo "the substrate destroy ran on a refused reconciliation plan:" >&2
+  cat "$refuse_log" >&2
+  exit 1
+fi
+if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null)" != "false" ]; then
+  echo "the bootstrap window was not removed after the refused reconciliation:" >&2
+  grep -nE 'bootstrap|refused' "$refuse_log" >&2 || true
+  exit 1
+fi
+
 # INFRA-070 / FND-0047: on GCP a failed `get-credentials` exits the lifecycle. It used to
 # do so without running the caller's cleanup (`with_cluster_access` ignored `on_error` on
 # GCP), which left the provisioner elevated after the destroy's reconciliation apply had
 # opened the bootstrap window. The window must be closed -- an apply with
 # provisioner_bootstrap_admin=false after the failed get-credentials -- before exit.
 gcp_access_log="$tmp/gcp-access-failure.log"
-rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/access"
+rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/access" \
+  "$FAIL_MARKER_DIR/bootstrap-window"
 if (cd "$tmp/work" && FAIL_ON=access DESTROYING=1 LIFECYCLE_LOG="$gcp_access_log" \
       "$sol" cloud destroy prod/gcp/us-central1 --apply) \
   >"$gcp_access_log.out" 2>&1
@@ -1228,10 +1406,19 @@ grep -F 'could not establish ephemeral cluster access' "$gcp_access_log.out" >/d
   exit 1
 }
 access_line="$(grep -nF 'get-credentials' "$gcp_access_log" | tail -1 | cut -d: -f1 || true)"
-close_line="$(grep -nE -- '-chdir=[^ ]*infra/gcp apply ' "$gcp_access_log" \
+# HARDEN-004 step 3: the window is closed by a planned, asserted apply, so the
+# variable is on the plan line and the apply is the saved plan. The stub writes
+# the window marker on the apply, so asserting it proves the closing apply ran --
+# not merely that it was planned.
+close_plan_line="$(grep -nE -- '-chdir=[^ ]*infra/gcp plan ' "$gcp_access_log" \
   | grep -F -- 'provisioner_bootstrap_admin=false' | tail -1 | cut -d: -f1 || true)"
-if [ -z "$access_line" ] || [ -z "$close_line" ] || [ "$close_line" -le "$access_line" ]; then
+if [ -z "$access_line" ] || [ -z "$close_plan_line" ] || [ "$close_plan_line" -le "$access_line" ]; then
   echo "a GCP cluster-access failure exited without closing the bootstrap window:" >&2
+  grep -nE 'get-credentials|provisioner_bootstrap_admin' "$gcp_access_log" >&2 || true
+  exit 1
+fi
+if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null)" != "false" ]; then
+  echo "the bootstrap window was not closed by an apply after the failed get-credentials:" >&2
   grep -nE 'get-credentials|provisioner_bootstrap_admin' "$gcp_access_log" >&2 || true
   exit 1
 fi
@@ -1450,8 +1637,11 @@ fi
 # and they must be appended AFTER the production profile's
 # rds_deletion_protection=true (injected by terraform_vars) so the Destroy policy
 # wins rather than Ready policy silently re-enabling protection.
-admin_apply_line="$(grep 'infra/aws.* apply ' "$log" | grep -F 'provisioner_bootstrap_admin=true' | head -1 || true)"
-case "$admin_apply_line" in
+#
+# HARDEN-004 step 3: the variables are carried by the *plan* the reconciliation is
+# asserted from, and the apply is that saved plan.
+admin_plan_line="$(grep 'infra/aws.* plan ' "$log" | grep -F 'provisioner_bootstrap_admin=true' | head -1 || true)"
+case "$admin_plan_line" in
   *'rds_deletion_protection=false'*) : ;;
   *)
     echo "the post-prepare bootstrap-admin apply did not carry the Destroy policy" >&2
@@ -1459,7 +1649,7 @@ case "$admin_apply_line" in
     exit 1
     ;;
 esac
-last_protection="$(printf '%s\n' "$admin_apply_line" | grep -oE 'rds_deletion_protection=[a-z]+' | tail -1)"
+last_protection="$(printf '%s\n' "$admin_plan_line" | grep -oE 'rds_deletion_protection=[a-z]+' | tail -1)"
 if [ "$last_protection" != "rds_deletion_protection=false" ]; then
   echo "Ready policy overrode the Destroy policy after PrepareDestroy ($last_protection)" >&2
   cat "$log" >&2

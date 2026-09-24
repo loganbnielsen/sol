@@ -65,6 +65,7 @@
   Sol_cli_db_credential
   Sol_cli_cloud_lifecycle
   Sol_cli_cloud_destroy
+  Sol_cli_terraform_plan
   Sol_cli_substrate
   Sol_cli_migration
   Sol_cli_rollback
