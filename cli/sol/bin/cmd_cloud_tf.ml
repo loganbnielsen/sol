@@ -2603,11 +2603,12 @@ let cloud_init ?(confirm_ecr_removal = false) ~target ~var_file ~vars ~action ()
            ~vars:(Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:true) @ vars)
            ~out:plan_file
            ()));
+    (* The plan JSON carries sensitive values in plain text (e.g. db_password), so
+       it is read directly and never passes through [run_phase], which writes a
+       phase's stdout to the run log. Only the classified changes are logged. *)
     let changes =
       match
-        terraform_stdout
-          (Sol_cli_run_log.run_phase run_log ~name:"terraform-plan-show" (fun () ->
-             Sol_cli_terraform.show_json_plan ~chdir:infra_dir ~plan_file ()))
+        terraform_stdout (Sol_cli_terraform.show_json_plan ~chdir:infra_dir ~plan_file ())
       with
       | Error message -> lifecycle_error ("could not read the cloud plan: " ^ message)
       | Ok json ->
@@ -2615,6 +2616,18 @@ let cloud_init ?(confirm_ecr_removal = false) ~target ~var_file ~vars ~action ()
          | Ok changes -> changes
          | Error message -> lifecycle_error ("could not read the cloud plan: " ^ message))
     in
+    Sol_cli_run_log.append_phase_log
+      run_log
+      ~phase:"terraform-plan-show"
+      (String.concat
+         "\n"
+         (List.map
+            (fun (c : Sol_cli_terraform_plan.change) ->
+               Printf.sprintf
+                 "%s %s"
+                 (Sol_cli_terraform_plan.action_to_string c.action)
+                 c.address)
+            changes));
     (match
        Sol_cli_terraform_plan.removed_of_type ~resource_type:"aws_ecr_repository" changes
      with

@@ -49,6 +49,10 @@ Before `terraform apply` on AWS, run a plan and refuse if it deletes any `aws_ec
 - Mutation checks (`audits/README.md`), builds rc=0: forcing the refusal branch off
   fails the harness ("went ahead with a plan that deletes an ECR repository"); dropping
   `Replace` from `removed_of_type` fails its unit test.
+- Review round 1: the plan JSON carries sensitive values (e.g. `db_password`) in plain
+  text, and reading it through `run_phase` wrote them to the run log. It is now read
+  directly; only `<action> <address>` lines are appended to the phase log. The
+  destroy path's `apply_asserted` has the same leak and is filed as SEC-008.
 - Docs: `docs/guides/TUTORIAL.md` (cloud apply section) explains the guard and the flag.
 - Demo/example: the CLI surface gains a flag that is documented in the tutorial. No
   example workspace changes, since examples do not run `sol cloud apply`.
