@@ -485,6 +485,16 @@ let test_svc_default_redpanda_admin_url () =
     {|REDPANDA_ADMIN_URL: "http://redpanda.redpanda.svc.cluster.local:9644"|}
 ;;
 
+(* SEC-007 / FND-0039: config_of_env refuses an unstated protocol, so every
+   rendered workload must declare it. *)
+let test_svc_declares_kafka_security_protocol () =
+  let _ns, workload = render_spec_ok svc_spec in
+  assert_contains
+    "svc declares the Kafka transport posture"
+    workload
+    {|KAFKA_SECURITY_PROTOCOL: "plaintext"|}
+;;
+
 let test_svc_secret_refs_without_values () =
   (* Use Kubernetes_placeholder so the test does not require DATABASE_URL and
      API_TOKEN to be set in the environment.  We are checking for structural
@@ -744,13 +754,6 @@ let test_fn_schedule () =
 let test_fn_no_deployment () =
   let _ns, workload = render_spec_ok fn_spec in
   assert_absent "fn no Deployment" workload "kind: Deployment"
-;;
-
-let test_fn_default_schedule () =
-  (* When schedule=None the default cron expression is used *)
-  let spec = { fn_spec with schedule = None } in
-  let _ns, workload = render_spec_ok spec in
-  assert_contains "fn default schedule" workload {|schedule: "0 * * * *"|}
 ;;
 
 (* AUDIT-040: CronJob pod template must carry app: <k8s_name> so that the
@@ -2313,10 +2316,139 @@ let test_fn_sol_env_configmap_absent_by_default () =
   assert_absent "fn SOL_ENV config" cm_block {|SOL_ENV: |}
 ;;
 
+(* BUG-048: a -fn's Pushgateway group is its workload identity; only -fn gets it. *)
+let test_fn_render_carries_pushgateway_job () =
+  let _, workload = render_spec_ok fn_spec in
+  check_bool
+    "SOL_PUSHGATEWAY_JOB is <namespace>.<name>"
+    true
+    (contains
+       workload
+       (Printf.sprintf
+          "SOL_PUSHGATEWAY_JOB: \"%s.%s\""
+          (Sol_cli_kubernetes_name.namespace_to_string fn_spec.namespace)
+          (Sol_cli_kubernetes_name.k8s_name_to_string fn_spec.k8s_name)))
+;;
+
+let test_svc_render_has_no_pushgateway_job () =
+  let _, workload = render_spec_ok svc_spec in
+  check_bool "svc has no Pushgateway job" false (contains workload "SOL_PUSHGATEWAY_JOB")
+;;
+
+let test_fn_without_schedule_is_refused_at_render () =
+  match
+    Sol_cli_deployment_render.render_spec
+      ~workspace:"myapp"
+      ~release_id:release_id_of_test
+      { fn_spec with schedule = None }
+  with
+  | Ok _ -> Alcotest.fail "a -fn spec without a schedule must not render hourly"
+  | Error msg -> check_bool "names the schedule" true (contains msg "schedule")
+;;
+
+(* SEC-006: only the local executor renders the Unverified_dev_only opt-in. *)
+let test_local_executor_renders_unverified_jwt_opt_in () =
+  let _, workload = render_spec_ok (Sol_cli_executor.local_development_spec svc_spec) in
+  check_bool
+    "local render carries SOL_ALLOW_UNVERIFIED_JWT=1"
+    true
+    (contains workload "SOL_ALLOW_UNVERIFIED_JWT: \"1\"")
+;;
+
+(* SEC-006 review: [infra.env] config is the only author-controlled path into a
+   workload's env, so the opt-in is refused there. *)
+let test_sol_toml_cannot_set_unverified_jwt_opt_in () =
+  let path = Filename.temp_file "sol-toml-optin-" ".toml" in
+  let oc = open_out path in
+  output_string oc "[infra.env]\nconfig = { SOL_ALLOW_UNVERIFIED_JWT = \"1\" }\n";
+  close_out oc;
+  let result = Sol_cli_toml.load_result path in
+  Sys.remove path;
+  match result with
+  | Error (Sol_cli_toml.Validation { message; _ }) ->
+    check_bool "names the reserved key" true (contains message "SOL_ALLOW_UNVERIFIED_JWT")
+  | Ok _ -> Alcotest.fail "sol.toml must not be able to set SOL_ALLOW_UNVERIFIED_JWT"
+  | Error (Sol_cli_toml.Toml_syntax _) -> Alcotest.fail "expected a validation error"
+;;
+
+let test_sol_toml_secrets_cannot_name_unverified_jwt_opt_in () =
+  let path = Filename.temp_file "sol-toml-optin-secret-" ".toml" in
+  let oc = open_out path in
+  output_string oc "[infra.env]\nsecrets = [\"SOL_ALLOW_UNVERIFIED_JWT\"]\n";
+  close_out oc;
+  let result = Sol_cli_toml.load_result path in
+  Sys.remove path;
+  match result with
+  | Error (Sol_cli_toml.Validation { message; _ }) ->
+    check_bool "names the reserved key" true (contains message "SOL_ALLOW_UNVERIFIED_JWT")
+  | Ok _ -> Alcotest.fail "a sol.toml secret must not be able to carry the opt-in"
+  | Error (Sol_cli_toml.Toml_syntax _) -> Alcotest.fail "expected a validation error"
+;;
+
+let test_sol_secret_rejects_unverified_jwt_opt_in () =
+  check_bool
+    "sol secret set refuses the reserved key"
+    true
+    (Result.is_error (Sol_cli_secret.validate_key "SOL_ALLOW_UNVERIFIED_JWT"))
+;;
+
+(* A secret already stored under the reserved name must still be removable. *)
+let test_sol_secret_delete_accepts_reserved_key_format () =
+  check_bool
+    "sol secret delete may remove the reserved key"
+    true
+    (Result.is_ok (Sol_cli_secret.validate_key_format "SOL_ALLOW_UNVERIFIED_JWT"))
+;;
+
+let test_deploy_render_has_no_unverified_jwt_opt_in () =
+  let _, workload = render_spec_ok svc_spec in
+  check_bool
+    "a deploy/GitOps render never carries the opt-in"
+    false
+    (contains workload "SOL_ALLOW_UNVERIFIED_JWT")
+;;
+
 let () =
   Alcotest.run
     "manifest_render"
-    [ ( "SOL_ENV reaches every primitive"
+    [ ( "fn Pushgateway job and schedule (BUG-048)"
+      , [ Alcotest.test_case
+            "fn carries SOL_PUSHGATEWAY_JOB"
+            `Quick
+            test_fn_render_carries_pushgateway_job
+        ; Alcotest.test_case "svc does not" `Quick test_svc_render_has_no_pushgateway_job
+        ; Alcotest.test_case
+            "fn without schedule refused"
+            `Quick
+            test_fn_without_schedule_is_refused_at_render
+        ] )
+    ; ( "unverified JWT opt-in (SEC-006)"
+      , [ Alcotest.test_case
+            "local executor renders it"
+            `Quick
+            test_local_executor_renders_unverified_jwt_opt_in
+        ; Alcotest.test_case
+            "deploy render does not"
+            `Quick
+            test_deploy_render_has_no_unverified_jwt_opt_in
+        ; Alcotest.test_case
+            "sol.toml cannot set it"
+            `Quick
+            test_sol_toml_cannot_set_unverified_jwt_opt_in
+        ; Alcotest.test_case
+            "sol.toml secrets cannot name it"
+            `Quick
+            test_sol_toml_secrets_cannot_name_unverified_jwt_opt_in
+        ; Alcotest.test_case
+            "sol secret set refuses it"
+            `Quick
+            test_sol_secret_rejects_unverified_jwt_opt_in
+        ; Alcotest.test_case
+            "sol secret delete can still remove it"
+            `Quick
+            test_sol_secret_delete_accepts_reserved_key_format
+        ] )
+    ; ( "SOL_ENV reaches every primitive"
       , [ Alcotest.test_case
             "worker SOL_ENV when resolved"
             `Quick
@@ -2390,6 +2522,10 @@ let () =
             "default redpanda admin"
             `Quick
             test_svc_default_redpanda_admin_url
+        ; Alcotest.test_case
+            "svc declares KAFKA_SECURITY_PROTOCOL"
+            `Quick
+            test_svc_declares_kafka_security_protocol
         ; Alcotest.test_case
             "secret refs no values"
             `Quick
@@ -2469,7 +2605,6 @@ let () =
             `Quick
             test_fn_env_label_present_when_resolved
         ; Alcotest.test_case "no Deployment" `Quick test_fn_no_deployment
-        ; Alcotest.test_case "default schedule" `Quick test_fn_default_schedule
         ; Alcotest.test_case
             "user secret key in Secret resource"
             `Quick

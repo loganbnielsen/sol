@@ -45,6 +45,7 @@
                                                            # dashboard (logs, metrics, and a Tempo pointer)
                                                            # once the above are up
 
+     KAFKA_SECURITY_PROTOCOL=plaintext \
      KAFKA_BROKERS=localhost:9092 \
      POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
      LOKI_URL=http://localhost:3100 \
@@ -234,6 +235,7 @@ module EmailJobCodec = struct
   type t = { order_id : string }
 
   let kind (_ : t) = "send_confirmation_email"
+  let kinds = [ "send_confirmation_email" ]
 
   let encode (t : t) =
     Printf.sprintf {|{"order_id":%s}|} (Yojson.Safe.to_string (`String t.order_id))

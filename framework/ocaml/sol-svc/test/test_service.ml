@@ -62,6 +62,7 @@ let with_server env ~sw f =
       ~env
       ~port:0
       ~stop
+      ~shutdown_delay_s:0.0
       ~drain_timeout_s:0.1
       ~on_listen:(fun p -> Promise.resolve port_r p)
       ()
@@ -95,6 +96,7 @@ let with_server_obs env ~sw f =
       ~port:0
       ~ot:obs
       ~stop
+      ~shutdown_delay_s:0.0
       ~drain_timeout_s:0.1
       ~on_listen:(fun p -> Promise.resolve port_r p)
       ()
@@ -247,6 +249,7 @@ let test_handler_exception env () =
         ~env
         ~port:0
         ~stop
+        ~shutdown_delay_s:0.0
         ~drain_timeout_s:0.1
         ~on_listen:(fun p -> Promise.resolve port_r p)
         ()
@@ -271,6 +274,7 @@ let test_external_stop_on_listen env () =
         ~env
         ~port:0
         ~stop
+        ~shutdown_delay_s:0.0
         ~drain_timeout_s:0.1
         ~on_listen:(fun _ -> Promise.resolve stop_r ())
         ()
@@ -364,6 +368,54 @@ let test_api_key_file_error_is_startup_error env () =
       | Ok () -> Alcotest.fail "expected API key file config error"))
 ;;
 
+(* SEC-006: a service using Unverified_dev_only refuses to start unless the
+   environment opts in. The test binary opts in globally (it is a development
+   environment); these cases take the opt-in away. *)
+module Hunverified = struct
+  let routes = [ Route.get "/jwt" ~auth:(jwt_cfg [ "read" ]) get_json ]
+end
+
+let expect_unverified_refused result =
+  match result with
+  | Error (`Config msg) ->
+    Alcotest.(check bool)
+      "names the opt-in"
+      true
+      (contains "SOL_ALLOW_UNVERIFIED_JWT" msg)
+  | Ok () -> Alcotest.fail "expected Unverified_dev_only to be refused without the opt-in"
+;;
+
+(* An already-resolved [stop] and a short drain make a missing guard return
+   [Ok ()] promptly instead of serving forever, so the test fails, not hangs. *)
+let stopped () =
+  let p, r = Promise.create () in
+  Promise.resolve r ();
+  p
+;;
+
+let test_unverified_jwt_refused_without_opt_in env () =
+  with_env "SOL_ALLOW_UNVERIFIED_JWT" "" (fun () ->
+    let module S = Service.Make (Hunverified) in
+    expect_unverified_refused
+      (S.run ~env ~port:0 ~stop:(stopped ()) ~drain_timeout_s:0.1 ()))
+;;
+
+let test_unverified_metrics_auth_refused_without_opt_in env () =
+  with_env "SOL_ALLOW_UNVERIFIED_JWT" "0" (fun () ->
+    let module S = Service.Make (struct
+        let routes = []
+      end)
+    in
+    expect_unverified_refused
+      (S.run
+         ~env
+         ~port:0
+         ~stop:(stopped ())
+         ~drain_timeout_s:0.1
+         ~metrics_auth:(jwt_cfg [])
+         ()))
+;;
+
 (* BUG-046: an external [stop] must reach the server. With nothing in flight it
    used to wait out the whole drain window and then report a drain timeout. *)
 let test_external_stop_is_prompt env () =
@@ -375,6 +427,7 @@ let test_external_stop_is_prompt env () =
        ~env
        ~port:0
        ~stop
+       ~shutdown_delay_s:0.0
        ~drain_timeout_s:3.0
        ~on_listen:(fun _ -> Promise.resolve stop_r ())
        ()
@@ -395,10 +448,48 @@ let test_malformed_port_is_config_error env () =
        [Ok ()] promptly, so the test fails instead of serving forever on 8080. *)
     let stop, stop_r = Promise.create () in
     Promise.resolve stop_r ();
-    match S.run ~env ~port:0 ~stop ~drain_timeout_s:0.1 () with
+    match S.run ~env ~port:0 ~stop ~shutdown_delay_s:0.0 ~drain_timeout_s:0.1 () with
     | Error (`Config msg) ->
       Alcotest.(check bool) "names PORT and the value" true (contains "80800x" msg)
     | Ok () -> Alcotest.fail "expected a malformed PORT to be a startup Config error")
+;;
+
+(* INFRA-073: on stop, readiness turns 503 at once while the listener keeps
+   serving for [shutdown_delay_s], so Kubernetes can drop the endpoint before the
+   pod stops accepting. *)
+let test_readyz_flips_before_listener_closes env () =
+  Switch.run (fun sw ->
+    let port_p, port_r = Promise.create () in
+    let stop, stop_r = Promise.create () in
+    let finished, finished_r = Promise.create () in
+    Fiber.fork ~sw (fun () ->
+      let module S = Service.Make (H) in
+      ignore
+        (S.run
+           ~env
+           ~port:0
+           ~stop
+           ~shutdown_delay_s:1.5
+           ~drain_timeout_s:0.1
+           ~on_listen:(fun p -> Promise.resolve port_r p)
+           ());
+      Promise.resolve finished_r ());
+    let port = Promise.await port_p in
+    let ready_status, _ = http_call env ~sw ~port ~meth:`GET ~path:"/readyz" () in
+    Alcotest.(check int) "ready before stop" 200 ready_status;
+    Promise.resolve stop_r ();
+    Eio.Time.sleep env#clock 0.2;
+    let status, _ = http_call env ~sw ~port ~meth:`GET ~path:"/readyz" () in
+    Alcotest.(check int) "readyz is 503 once stopping" 503 status;
+    let hello, _ = http_call env ~sw ~port ~meth:`GET ~path:"/hello" () in
+    Alcotest.(check int) "requests still served during the delay" 200 hello;
+    let live, _ = http_call env ~sw ~port ~meth:`GET ~path:"/healthz" () in
+    Alcotest.(check int) "liveness is unaffected" 200 live;
+    Alcotest.(check bool)
+      "run has not returned during the delay"
+      false
+      (Promise.is_resolved finished);
+    Eio.Time.with_timeout_exn env#clock 5.0 (fun () -> Promise.await finished))
 ;;
 
 let with_small_body_server env ~sw ?(max_body_bytes = 50) f =
@@ -411,6 +502,7 @@ let with_small_body_server env ~sw ?(max_body_bytes = 50) f =
       ~port:0
       ~max_body_bytes
       ~stop
+      ~shutdown_delay_s:0.0
       ~drain_timeout_s:0.1
       ~on_listen:(fun p -> Promise.resolve port_r p)
       ()
@@ -469,6 +561,7 @@ let test_public_oversized_body_gets_413 env () =
 ;;
 
 let () =
+  Unix.putenv "SOL_ALLOW_UNVERIFIED_JWT" "1";
   Eio_main.run (fun env ->
     Alcotest.run
       "service"
@@ -496,6 +589,14 @@ let () =
               "JWT route, wrong scope → 403"
               `Quick
               (test_jwt_missing_scope env)
+          ; Alcotest.test_case
+              "Unverified_dev_only without opt-in → startup Config error"
+              `Quick
+              (test_unverified_jwt_refused_without_opt_in env)
+          ; Alcotest.test_case
+              "Unverified_dev_only metrics_auth without opt-in → startup Config error"
+              `Quick
+              (test_unverified_metrics_auth_refused_without_opt_in env)
           ] )
       ; ( "resilience"
         , [ Alcotest.test_case
@@ -510,6 +611,10 @@ let () =
               "external stop does not wait out the drain window"
               `Quick
               (test_external_stop_is_prompt env)
+          ; Alcotest.test_case
+              "readyz flips to 503 before the listener closes"
+              `Quick
+              (test_readyz_flips_before_listener_closes env)
           ; Alcotest.test_case
               "malformed PORT is a startup Config error"
               `Quick

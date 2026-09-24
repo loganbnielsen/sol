@@ -16,9 +16,22 @@ let of_env () =
             single-broker-loss)"
            value)
   in
-  match topic_durability, Kafka.Security.of_env () with
-  | Error msg, _ | _, Error msg -> Error msg
-  | Ok topic_durability, Ok security ->
+  (* SEC-007 / FND-0039: the transport posture is stated, never defaulted.
+     [Kafka.Security.of_env] reads an absent protocol as plaintext, which let
+     every environment ship plaintext without saying so; Sol-rendered manifests
+     now always set it, and anything else must too (plaintext locally). *)
+  let declared_protocol =
+    match Sys.getenv_opt "KAFKA_SECURITY_PROTOCOL" with
+    | Some v when String.trim v <> "" -> Ok ()
+    | _ ->
+      Error
+        "KAFKA_SECURITY_PROTOCOL is not set: state the Kafka transport posture \
+         explicitly (plaintext | ssl | sasl_plaintext | sasl_ssl). Sol-rendered \
+         manifests set it; for a local process use KAFKA_SECURITY_PROTOCOL=plaintext."
+  in
+  match declared_protocol, topic_durability, Kafka.Security.of_env () with
+  | Error msg, _, _ | _, Error msg, _ | _, _, Error msg -> Error msg
+  | Ok (), Ok topic_durability, Ok security ->
     Ok
       { Kafka_service_intf.brokers = String.split_on_char ',' brokers_str
       ; schema_registry_url = env_or "SCHEMA_REGISTRY_URL" "http://localhost:8081"

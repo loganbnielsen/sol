@@ -26,6 +26,7 @@
      bash cli/platform/local/scripts/ensure-loki.sh       # optional — stdout fallback
      bash cli/platform/local/scripts/ensure-grafana.sh    # optional
 
+     KAFKA_SECURITY_PROTOCOL=plaintext \
      KAFKA_BROKERS=localhost:9092 \
      POSTGRES_URL=postgresql://postgres:dev@localhost:5432/sol_dev \
      LOKI_URL=http://localhost:3100 \

@@ -88,6 +88,7 @@ let dispatch
       ~metrics_auth
       ~max_body_bytes
       ?route_observer
+      ?(ready = fun () -> true)
       req
       body
   =
@@ -112,6 +113,20 @@ let dispatch
         | `GET, "/healthz" ->
           observe "/healthz";
           Some (Response.json {|{"status":"ok"}|})
+        (* INFRA-073 / FND-0041(c): readiness, distinct from liveness. It turns 503
+           as soon as shutdown begins, while the listener keeps serving for
+           [shutdown_delay_s], so Kubernetes removes the endpoint before the pod
+           stops accepting instead of refusing requests routed to it. *)
+        | `GET, "/readyz" ->
+          observe "/readyz";
+          Some
+            (if ready ()
+             then Response.json {|{"status":"ready"}|}
+             else
+               { Response.status = 503
+               ; headers = [ "content-type", "application/json" ]
+               ; body = {|{"status":"shutting down"}|}
+               })
         | `GET, "/metrics" ->
           observe "/metrics";
           (match metrics_renderer with
@@ -193,6 +208,35 @@ let api_key_required routes metrics_auth =
   || List.exists (fun route -> auth_uses_api_key route.Route.auth) routes
 ;;
 
+(* SEC-006 / FND-0037: [Unverified_dev_only] trusts any token without checking its
+   signature. Its name was the only thing keeping it off a real route, so a service
+   that uses it refuses to start unless the environment opts in explicitly.
+   [sol up] renders the opt-in for the local cluster only; [sol deploy] never does. *)
+let unverified_jwt_opt_in = "SOL_ALLOW_UNVERIFIED_JWT"
+
+let auth_is_unverified_jwt = function
+  | `Jwt { Auth.verification = Auth.Unverified_dev_only; _ } -> true
+  | `Jwt { Auth.verification = Auth.Verified_signature_required _; _ }
+  | `Public | `Api_key -> false
+;;
+
+let refuse_unverified_jwt routes metrics_auth =
+  let used =
+    auth_is_unverified_jwt metrics_auth
+    || List.exists (fun route -> auth_is_unverified_jwt route.Route.auth) routes
+  in
+  if used && Sys.getenv_opt unverified_jwt_opt_in <> Some "1"
+  then
+    Error
+      (`Config
+          (Printf.sprintf
+             "a route uses Unverified_dev_only JWT auth, which accepts tokens without \
+              checking their signature. It runs only where %s=1 (sol up sets this on the \
+              local cluster). Use Verified_signature_required."
+             unverified_jwt_opt_in))
+  else Ok ()
+;;
+
 let env_nonempty name =
   match Sys.getenv_opt name with
   | Some value when String.trim value <> "" -> Some value
@@ -234,6 +278,7 @@ module Make (H : HANDLER) = struct
         ?ot
         ?(max_body_bytes = 10_485_760)
         ?(drain_timeout_s = 30.0)
+        ?(shutdown_delay_s = 5.0)
         ?stop
         ?on_listen
         ()
@@ -271,9 +316,11 @@ module Make (H : HANDLER) = struct
         Some (req_count, req_duration)
     in
     let fetch_jwks = Auth_internal.fetch_jwks_over_https ~env in
+    let* () = refuse_unverified_jwt H.routes metrics_auth in
     let* read_api_key =
       api_key_reader ~env ~required:(api_key_required H.routes metrics_auth)
     in
+    let ready = Atomic.make true in
     let signal_stop, signal_stop_r = Eio.Promise.create () in
     let await_stop () =
       match stop with
@@ -325,6 +372,7 @@ module Make (H : HANDLER) = struct
                  ~read_api_key
                  ~max_body_bytes
                  ?route_observer
+                 ~ready:(fun () -> Atomic.get ready)
                  req
                  body
              in
@@ -365,8 +413,13 @@ module Make (H : HANDLER) = struct
               accepting for the whole drain window and then reported a drain
               timeout even with nothing in flight. *)
            let server_stop, server_stop_r = Eio.Promise.create () in
+           (* INFRA-073: on stop, readiness goes 503 first; the listener keeps
+              serving for [shutdown_delay_s] so endpoint removal can propagate,
+              then stops accepting and drains. *)
            Eio.Fiber.fork_daemon ~sw (fun () ->
              await_stop ();
+             Atomic.set ready false;
+             if shutdown_delay_s > 0.0 then Eio.Time.sleep env#clock shutdown_delay_s;
              ignore (Eio.Promise.try_resolve server_stop_r ());
              `Stop_daemon);
            (* Race: serve exits naturally when connections drain, or drain guard fires
@@ -381,7 +434,7 @@ module Make (H : HANDLER) = struct
                   server)
              (fun () ->
                 await_stop ();
-                Eio.Time.sleep env#clock drain_timeout_s;
+                Eio.Time.sleep env#clock (shutdown_delay_s +. drain_timeout_s);
                 raise Drain_timeout))
        with
        | Drain_timeout ->

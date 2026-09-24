@@ -131,6 +131,7 @@ module Schema = struct
 
   type registration_response = Kafka_service_schema.registration_response = { id : int }
 
+  let is_subject_not_found = Kafka_service_schema.Schema.is_subject_not_found
   let decode_compatibility_response = Kafka_service_schema.decode_compatibility_response
   let decode_registration_response = Kafka_service_schema.decode_registration_response
 end
@@ -253,6 +254,18 @@ let register
       ~topic_durability:svc.topic_durability
     |> Result.map_error (fun msg -> Provision_topic (M.topic_name, msg))
   in
+  (* BUG-049 / FND-0040: FULL compatibility is set before the first registration
+     and a failure is an error. It used to be set afterwards with only a warning,
+     so a subject whose PUT ever failed stayed at the registry default (BACKWARD)
+     and every later registration was checked against that weaker level. *)
+  let* () =
+    Kafka_service_schema.set_subject_compatibility
+      net
+      ~clock
+      ~registry_url:svc.schema_registry_url
+      ~topic_name:raw_topic_name
+    |> Result.map_error (fun msg -> Schema_registry (M.topic_name, msg))
+  in
   let* schema_id =
     Kafka_service_schema.register_schema
       net
@@ -262,19 +275,6 @@ let register
       ~schema:M.schema
     |> Result.map_error (fun msg -> Schema_registry (M.topic_name, msg))
   in
-  (match
-     Kafka_service_schema.set_subject_compatibility
-       net
-       ~clock
-       ~registry_url:svc.schema_registry_url
-       ~topic_name:raw_topic_name
-   with
-   | Error e ->
-     Printf.eprintf
-       "warn: could not set schema compatibility for %s: %s\n%!"
-       raw_topic_name
-       e
-   | Ok () -> ());
   Ok
     { Kafka_service_intf.name = M.topic_name
     ; schema_id

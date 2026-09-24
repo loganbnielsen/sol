@@ -27,3 +27,15 @@ Add a readiness endpoint (`/readyz`) that returns 503 once shutdown begins; on S
 - Rendered `-svc` manifest uses `/readyz` for readiness (render test).
 - Demo/example: generated svc manifests change — note in completion notes.
 - TS parity: record verdict for the TS svc.
+
+## Progress
+
+- **Part A (framework):** `sol-svc` serves `/readyz` (200, then 503 once a stop
+  begins), and `?shutdown_delay_s` (default 5s) keeps the listener serving after readiness
+  flips, with the drain deadline measured after the delay. The manifests are unchanged
+  in part A, because generated workspaces and the pluto images install `sol-svc` from
+  `main`: switching the probe in the same PR would have CI deploy a `main`-built service
+  (no `/readyz` yet) against a `/readyz` probe.
+- **Part B (manifests), after A is on `main`:** `-svc` `readinessProbe` → `/readyz` for
+  OCaml; TypeScript services stay on `/healthz` (their framework serves no `/readyz`),
+  tracked as FEAT-096. Then the ticket moves to DONE.

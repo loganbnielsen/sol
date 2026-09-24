@@ -148,7 +148,27 @@ let test_config_of_env_rejects_unknown_security_protocol () =
         (contains (Kafka_service.error_to_string e) "KAFKA_SECURITY_PROTOCOL"))
 ;;
 
+(* SEC-007 / FND-0039: an absent (or blank) protocol is an error, not an
+   implicit plaintext. *)
+let test_config_of_env_requires_security_protocol () =
+  with_env "KAFKA_SECURITY_PROTOCOL" "" (fun () ->
+    match Kafka_service.config_of_env () with
+    | Ok _ -> Alcotest.fail "an unstated transport posture must not default to plaintext"
+    | Error e ->
+      Alcotest.(check bool)
+        "names the variable"
+        true
+        (contains (Kafka_service.error_to_string e) "KAFKA_SECURITY_PROTOCOL"));
+  with_env "KAFKA_SECURITY_PROTOCOL" "plaintext" (fun () ->
+    Alcotest.(check bool)
+      "stated plaintext is accepted"
+      true
+      (Result.is_ok (Kafka_service.config_of_env ())))
+;;
+
 let test_config_of_env_topic_durability () =
+  with_env "KAFKA_SECURITY_PROTOCOL" "plaintext"
+  @@ fun () ->
   with_env "SOL_KAFKA_DURABILITY" "single-broker-loss" (fun () ->
     match Kafka_service.config_of_env () with
     | Error e -> Alcotest.fail (Kafka_service.error_to_string e)
@@ -704,6 +724,26 @@ let test_decode_compatibility_response () =
   | Error e -> Alcotest.failf "decode failed: %s" e
 ;;
 
+(* BUG-049: only "no such subject/version" 404s mean "nothing to be compatible
+   with"; a 404 from a request that never reached the subjects API does not. *)
+let test_is_subject_not_found () =
+  let yes body = Kafka_service.Schema.is_subject_not_found body in
+  Alcotest.(check bool)
+    "40401"
+    true
+    (yes {|{"error_code":40401,"message":"Subject not found."}|});
+  Alcotest.(check bool)
+    "40402"
+    true
+    (yes {|{"error_code":40402,"message":"Version not found."}|});
+  Alcotest.(check bool)
+    "plain 404 (wrong path)"
+    false
+    (yes {|{"error_code":404,"message":"HTTP 404 Not Found"}|});
+  Alcotest.(check bool) "non-JSON 404" false (yes "<html>404</html>");
+  Alcotest.(check bool) "empty" false (yes "")
+;;
+
 let test_decode_compatibility_response_errors () =
   Alcotest.(check (result_error ()))
     "missing field"
@@ -797,6 +837,10 @@ let () =
             "unknown security protocol fails clearly"
             `Quick
             test_config_of_env_rejects_unknown_security_protocol
+        ; test_case
+            "requires KAFKA_SECURITY_PROTOCOL"
+            `Quick
+            test_config_of_env_requires_security_protocol
         ; test_case "topic durability" `Quick test_config_of_env_topic_durability
         ] )
     ; ( "retry_topics"
@@ -886,6 +930,7 @@ let () =
             "compatibility response errors"
             `Quick
             test_decode_compatibility_response_errors
+        ; test_case "is_subject_not_found (BUG-049)" `Quick test_is_subject_not_found
         ; test_case "registration response" `Quick test_decode_registration_response
         ; test_case
             "registration response errors"
