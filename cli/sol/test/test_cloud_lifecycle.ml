@@ -341,7 +341,24 @@ let test_preparations_eligible () =
   Alcotest.(check (list string))
     "order follows the configuration, not the state"
     desired
-    (eligible (List.rev desired))
+    (eligible (List.rev desired));
+  (* The other half of the same read: what a destroy CANNOT reach. Terraform destroys what
+     its state knows about, so these can survive it -- the Attempt-6 cluster, still
+     billable. Reporting them is why this exists. *)
+  Alcotest.(check (list string))
+    "the unrepresented set is the complement of the eligible one"
+    [ "google_container_cluster.main" ]
+    (L.preparations_unrepresented
+       ~state:[ "google_sql_database_instance.postgres" ]
+       ~desired);
+  Alcotest.(check (list string))
+    "nothing unrepresented when state holds everything"
+    []
+    (L.preparations_unrepresented ~state:desired ~desired);
+  Alcotest.(check (list string))
+    "everything is unrepresented when state holds nothing"
+    desired
+    (L.preparations_unrepresented ~state:[] ~desired)
 ;;
 
 (* INFRA-067 / FND-0029: the refusal above is an INSTALL-time capability guarantee, so

@@ -113,10 +113,18 @@ val preparation_failure : 'a preparation_outcome -> string option
 val destruction_blocked : 'a preparation_outcome -> string option
 
 (** Which resources a destructive preparation may target: those the target's state already
-    represents. `terraform apply -target` creates a target that is absent from state, so
-    eligibility is [configuration INTERSECT state] and a half-built target yields [[]] --
-    nothing to prepare, and nothing that can be created (FND-0030). *)
+    represents, i.e. [configuration INTERSECT state].
+
+    This bounds what may be TARGETED, not what Terraform plans: [-target] pulls in
+    dependencies and reconciles the whole resource, so a preparation must also assert on its
+    plan before applying it -- only updates, only eligible addresses -- before the claim
+    "nothing can be created during destruction" holds (FND-0030). *)
 val preparations_eligible : state:string list -> desired:string list -> string list
+
+(** The declared addresses the state does NOT hold. A destroy cannot reach these: Terraform
+    destroys what its state knows about, so they may survive a successful destroy and remain
+    billable. Reporting them is the minimum (FND-0030). *)
+val preparations_unrepresented : state:string list -> desired:string list -> string list
 
 type plan_phase =
   | Plannable
