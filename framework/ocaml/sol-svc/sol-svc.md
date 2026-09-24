@@ -1,11 +1,11 @@
 # sol-svc
 
 HTTP service layer for Sol. Provides route definition, authentication middleware,
-request/response types, and the `Sol_svc.Service.Make` functor that owns the
+request/response types, and the `Service.Make` functor that owns the
 complete server lifecycle under Eio. Route handlers are pure OCaml functions —
 they never import cohttp types.
 
-HTTP engine: **cohttp-eio**. Entirely hidden behind `Sol_svc.Service.Make`.
+HTTP engine: **cohttp-eio**. Entirely hidden behind `Service.Make`.
 Swappable without touching user space.
 
 ---
@@ -13,54 +13,35 @@ Swappable without touching user space.
 ## Package Structure
 
 ```
-http/
-  dune-project
-  sol-svc/
-    lib/
-      sol_svc.ml          ← entry point: re-exports Auth, Route, Request, Response, Service
-      auth.ml/.mli        ← auth levels, principals, internal validation
-      request.ml/.mli     ← request type seen by handlers
-      response.ml/.mli    ← response helpers
-      route.ml/.mli       ← route type and constructors
-      service.ml/.mli     ← HANDLER module type + Make functor
-      dune
-    test/
-      test_routing.ml     ← path matching, method dispatch (no server)
-      test_auth.ml        ← auth validation logic (no server)
-      test_service.ml     ← full round-trip tests (live server, OS-assigned port)
-      dune
-    sol-svc.md
+framework/ocaml/sol-svc/
+  lib/
+    auth.ml/.mli          ← auth levels, principals (types only in the .mli)
+    auth_internal.ml      ← validation (private module)
+    peer.ml/.mli          ← peer address of the connection
+    request.ml/.mli       ← request type seen by handlers
+    response.ml/.mli      ← response helpers
+    route.ml/.mli         ← route type and constructors
+    route_internal.ml     ← path matching (private module)
+    service.ml/.mli       ← HANDLER module type + Make functor
+    dune                  ← (name sol_svc) (public_name sol-svc) (wrapped false)
+  test/
+    test_routing.ml       ← path matching, method dispatch (no server)
+    test_auth.ml          ← auth validation logic (no server)
+    test_peer.ml
+    test_service.ml       ← full round-trip tests (live server, OS-assigned port)
+  sol-svc.md
 ```
 
-Single dune workspace under `http/`. Library name `sol-svc`, OCaml name `sol_svc`,
-**`(wrapped true)` (default)** — all modules are namespaced under `Sol_svc`.
+### Module names
 
-### Why `(wrapped true)`
-
-The existing packages use `(wrapped false)` for internal packages where names are
-unique enough to be safe globally (`Kafka_error`, `Obs_trace`, etc.). For
-`sol-svc`, the module names (`Auth`, `Route`, `Request`, `Response`, `Service`)
-are short and highly collision-prone with third-party libraries. `(wrapped true)` is
-the ecosystem-standard convention; modules live under `Sol_svc` and cannot clash
-with anything external.
-
-### Entry point: `sol_svc.ml`
-
-```ocaml
-(* sol_svc.ml — re-exports internal modules under clean names *)
-module Auth     = Auth
-module Route    = Route
-module Request  = Request
-module Response = Response
-module Service  = Service
-```
-
-Users either fully qualify (`Sol_svc.Route.post`) or `open Sol_svc` once.
-All examples below use the qualified form.
+`sol-svc` is `(wrapped false)`, like every Sol library, so its modules are used
+directly at top level: `Auth`, `Route`, `Request`, `Response`, `Service`. There is no
+`Sol_svc` namespace module to open. The names are short; an application that links a
+library exporting the same top-level names must alias one side.
 
 ---
 
-## Module: `Sol_svc.Auth`
+## Module: `Auth`
 
 ### Types
 
@@ -139,19 +120,26 @@ called by `Service.Make`, not by user code.
 **`` `Api_key ``** — validates `X-Api-Key: <key>` header. Key source resolution
 (checked in order):
 
-1. `SOL_API_KEY_FILE` env var — path to a file containing the key. Read on every
-   validation so k8s secret volume remounts take effect without restart.
+1. `SOL_API_KEY_FILE` env var — path to a file containing the key.
 2. `SOL_API_KEY` env var — direct value; for local development only.
 
-Environment variables do not update in a running process on Linux. Relying on
-`SOL_API_KEY` alone means a secret rotation requires a pod restart. Use
-`SOL_API_KEY_FILE` pointing to a k8s `Secret` volume mount for production.
+Either source is read **once, when the service starts** (`Service.Make.run`), and an
+empty or unreadable file is a startup `Config` error. A rotated key therefore takes
+effect only after a restart, whichever source is used: `sol secret set` restarts the
+workloads for this reason.
 
 On success: `Service { key_id }` where `key_id` is the first 8 characters of the
 validated key. Missing header or wrong value → 401.
 
 **`` `Jwt config ``** — validates `Authorization: Bearer <token>`.
-For v1 development mode (`verification = Unverified_dev_only`):
+
+> **`Unverified_dev_only` does not check the signature.** Anyone can mint a token with
+> any `sub` and any scopes, and it will be accepted. It exists for local development
+> and tests only. Never put it on a route reachable from outside a developer machine;
+> use `Verified_signature_required` (below) everywhere else. Nothing refuses it at
+> runtime today; SEC-006 adds that guard.
+
+For local development only (`verification = Unverified_dev_only`):
 
 1. Split on `.`, assert three segments (header.payload.signature).
 2. Base64url-decode the payload. Parse as JSON with `Yojson.Safe.from_string`.
@@ -227,7 +215,7 @@ given the current span context.
 
 ---
 
-## Module: `Sol_svc.Route`
+## Module: `Route`
 
 ### Types
 
@@ -312,7 +300,7 @@ shadow it with a user route.
 
 ---
 
-## Module: `Sol_svc.Request`
+## Module: `Request`
 
 ```ocaml
 type t =
@@ -362,7 +350,7 @@ up to `max_body_bytes`. Streaming bodies deferred to a later phase.
 
 ---
 
-## Module: `Sol_svc.Response`
+## Module: `Response`
 
 ```ocaml
 type t =
@@ -394,7 +382,7 @@ val json : ?status:int -> ?headers:(string * string) list -> string -> t
 
 ---
 
-## Module: `Sol_svc.Service`
+## Module: `Service`
 
 ### `HANDLER` module type
 
@@ -565,7 +553,6 @@ TCP accept
   └─ validate auth      (Auth internal)
   │     Unauthorized    → 401, close
   │     Forbidden       → 403, close
-  │     v2 not ready    → 501, close
   │     misconfigured   → 500, close
   └─ call handler
   │     exception       → 500, log via obs, close
@@ -602,21 +589,9 @@ shadowing routes, which the routing order would make unreachable anyway.
 
 ## Dune Setup
 
-```
-http/dune-project:
-  (lang dune 3.23.1)
-
-http/sol-svc/lib/dune:
-  (library
-   (name sol_svc)
-   (libraries cohttp-eio http uri yojson obs-eio eio eio.unix))
-   (* wrapped true is the dune default — omit the flag *)
-
-http/sol-svc/test/dune:
-  (tests
-   (names test_routing test_auth test_service)
-   (libraries sol_svc obs-eio eio eio_main alcotest cohttp-eio))
-```
+The build files are `framework/ocaml/sol-svc/lib/dune` and `framework/ocaml/sol-svc/test/dune`;
+they are the source of truth for the library's dependencies. Note `(wrapped false)` and
+`(private_modules auth_internal route_internal)` in the library stanza.
 
 **opam packages:** `cohttp-eio`, `http` (bundled with cohttp), `uri`, `yojson`.
 
@@ -633,12 +608,13 @@ listener on an OS-assigned port.
 let actual_port = ref 0 in
 let server_ready, resolve_ready = Eio.Promise.create () in
 Eio.Fiber.fork ~sw (fun () ->
-  Sol_svc.Service.Make(H).run ~env ~obs ~port:0
-    ~on_listen:(fun p ->
-      actual_port := p;
-      Eio.Promise.resolve resolve_ready ())
-    ()
-);
+  let module S = Service.Make (H) in
+  ignore
+    (S.run ~env ~port:0 ~stop
+       ~on_listen:(fun p ->
+         actual_port := p;
+         Eio.Promise.resolve resolve_ready ())
+       ()));
 Eio.Promise.await server_ready;
 (* fire client requests at localhost:!actual_port *)
 ```
@@ -696,8 +672,8 @@ Eio.Promise.await server_ready;
 ## Example Usage
 
 ```ocaml
-(* app/payments/charge-svc/bin/main.ml *)
-open Sol_svc
+(* app/payments/charge-svc/bin/main.ml -- sol-svc's modules are unwrapped, so there is
+   nothing to open *)
 
 let handle_charge req =
   let _body = req.Request.body in
@@ -708,31 +684,57 @@ let handle_internal req =
   let _who = req.Request.auth.Auth.principal in
   Response.json ~status:201 {|{"status":"charged"}|}
 
+(* Verified JWTs: signature, issuer, audience and the algorithm allowlist are all
+   checked before the handler runs. Never use [Unverified_dev_only] on a real route. *)
+let payments_jwt =
+  `Jwt
+    { Auth.scopes = [ "write:payments" ]
+    ; verification =
+        Verified_signature_required
+          { issuer = "https://auth.example.com/"
+          ; audience = "charge-svc"
+          ; algorithms = [ `RS256 ]
+          ; key_source = Jwks_url "https://auth.example.com/.well-known/jwks.json"
+          }
+    }
+
 module H = struct
   let routes =
-    [ Route.post "/payments/charge"
-        ~auth:(`Jwt { scopes = ["write:payments"]; verification = Unverified_dev_only })
-        handle_charge
+    [ Route.post "/payments/charge" ~auth:payments_jwt handle_charge
     ; Route.post "/payments/internal/charge"
         ~auth:`Api_key
         handle_internal
     ]
 end
 
+module S = Service.Make (H)
+
 let () =
-  Eio_main.run (fun env ->
-    let obs = Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
-                ~service:"charge-svc" () in
-    Service.Make(H).run ~env ~ot:obs ()
-  )
+  Eio_main.run
+  @@ fun env ->
+  let obs =
+    Sol_obs.of_env
+      ~net:env#net
+      ~clock:env#clock
+      ~mono_clock:env#mono_clock
+      ~service:"charge-svc"
+      ()
+  in
+  S.run ~env ~ot:obs ()
+  |> Result.map_error Service.run_error_to_string
+  |> function
+  | Ok () -> ()
+  | Error e -> failwith e
 ```
 
 ---
 
 ## Out of Scope (v1)
 
-- **JWT signature verification** — `Unverified_dev_only` is the v1 local-development mode;
-  `Verified_signature_required` triggers a 501 until v2 JWKS verification is implemented
+- **JWKS refresh on an unknown `kid`** — a fetched JWKS is cached for 5 minutes, and a
+  token whose `kid` is not in the cached set is rejected (401) until the cache expires,
+  so an IdP key rotation can reject valid tokens for up to 5 minutes
+- **Tokens without `exp`** — accepted without an expiry check; issue tokens with `exp`
 - **HTTPS / TLS** — terminate at k8s ingress; plain HTTP inside the cluster
 - **HTTP keep-alive** — one request per TCP connection
 - **Request body streaming** — body pre-read to string (bounded by `max_body_bytes`)
