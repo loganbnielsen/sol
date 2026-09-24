@@ -418,6 +418,7 @@ let deployment_doc
       ?(config_hash = "")
       ?(availability = Sol_cli_availability.Single)
       ?(consumes_kafka = false)
+      ?(readiness_path = "/readyz")
       ~shape
       ~replicas
       ~cpu
@@ -452,7 +453,11 @@ let deployment_doc
   let probe_section =
     match shape, consumes_kafka with
     | Http_service, _ ->
-      {|        startupProbe:
+      (* INFRA-073: readiness is /readyz, which sol-svc turns 503 as shutdown
+         begins; liveness and startup stay on /healthz. A TypeScript service
+         renders /healthz until its framework serves /readyz (FEAT-096). *)
+      f
+        {|        startupProbe:
           httpGet:
             path: /healthz
             port: 8080
@@ -466,11 +471,12 @@ let deployment_doc
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /healthz
+            path: %s
             port: 8080
           initialDelaySeconds: 5
           periodSeconds: 10
 |}
+        readiness_path
     | Background_worker, true ->
       {|        startupProbe:
           httpGet:
@@ -675,6 +681,7 @@ let rollout_doc
       ?env
       ?(availability = Sol_cli_availability.Single)
       ?(consumes_kafka = false)
+      ?(readiness_path = "/readyz")
       ~shape
       ~replicas
       ~cpu
@@ -705,7 +712,11 @@ let rollout_doc
   let probe_section =
     match shape, consumes_kafka with
     | Http_service, _ ->
-      {|        startupProbe:
+      (* INFRA-073: readiness is /readyz, which sol-svc turns 503 as shutdown
+         begins; liveness and startup stay on /healthz. A TypeScript service
+         renders /healthz until its framework serves /readyz (FEAT-096). *)
+      f
+        {|        startupProbe:
           httpGet:
             path: /healthz
             port: 8080
@@ -719,11 +730,12 @@ let rollout_doc
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /healthz
+            path: %s
             port: 8080
           initialDelaySeconds: 5
           periodSeconds: 10
 |}
+        readiness_path
     | Background_worker, true ->
       {|        startupProbe:
           httpGet:

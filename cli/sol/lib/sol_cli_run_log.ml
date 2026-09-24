@@ -96,7 +96,8 @@ type t =
   ; dir : string
   }
 
-let create ?(keep = 20) ~prefix () : t =
+let create ?(base = base_dir) ?(keep = 20) ~prefix () : t =
+  let base_dir = base in
   Sol_cli_scaffold.mkdir_p base_dir;
   let run_id =
     generate_run_id ~prefix ~now:(Unix.gettimeofday ()) ~pid:(Unix.getpid ())
@@ -151,9 +152,11 @@ let dir t = t.dir
    recreate the run directory if it is gone and keep going. *)
 let ensure_parent path = Sol_cli_scaffold.mkdir_p (Filename.dirname path)
 
+(* SEC-008: 0600. A phase log is a subprocess's full output, which can carry
+   credentials a tool echoes; other local users have no reason to read it. *)
 let write_file path contents =
   ensure_parent path;
-  let oc = open_out path in
+  let oc = open_out_gen [ Open_wronly; Open_creat; Open_trunc; Open_text ] 0o600 path in
   output_string oc contents;
   close_out oc
 ;;
@@ -177,7 +180,7 @@ let finish_phase t ~name ~elapsed_s ~ok ~contents =
 let append_phase_log t ~phase text =
   let path = phase_log_path t ~phase in
   ensure_parent path;
-  let oc = open_out_gen [ Open_creat; Open_append; Open_text ] 0o644 path in
+  let oc = open_out_gen [ Open_wronly; Open_creat; Open_append; Open_text ] 0o600 path in
   output_string oc text;
   close_out oc
 ;;

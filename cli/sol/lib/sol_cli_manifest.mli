@@ -148,6 +148,7 @@ val deployment_doc
   -> ?config_hash:string
   -> ?availability:Sol_cli_availability.t
   -> ?consumes_kafka:bool
+  -> ?readiness_path:string
   -> shape:workload_shape
   -> replicas:int
   -> cpu:string
@@ -173,6 +174,7 @@ val rollout_doc
   -> ?env:string
   -> ?availability:Sol_cli_availability.t
   -> ?consumes_kafka:bool
+  -> ?readiness_path:string
   -> shape:workload_shape
   -> replicas:int
   -> cpu:string

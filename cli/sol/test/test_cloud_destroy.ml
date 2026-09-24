@@ -193,7 +193,7 @@ type calls =
 let fake_deps
       ?(state = Ok {|{}|})
       ?(outputs = Outputs_available)
-      ?(prepare = fun ~state:_ -> Ok Nothing_prepared)
+      ?(prepare = fun ~state:_ -> Sol_cli_cloud_lifecycle.Nothing_to_prepare)
       ?(reconcile = fun () -> Ok ())
       ?(platform = fun () -> Ok ())
       ?(remove = fun () -> Ok ())
@@ -274,6 +274,8 @@ let test_empty_state_destroys_without_outputs () =
        "no elevated access was opened"
        true
        (cleanup = Cleanup_not_needed)
+   | Destroy_blocked { guarantee; _ } ->
+     Alcotest.failf "an empty, output-less target must not be blocked: %s" guarantee
    | Destroy_failed { failure; _ } ->
      Alcotest.failf
        "an empty, output-less target must still destroy: %s"
@@ -295,6 +297,8 @@ let test_half_built_state_is_destroyable () =
   (match outcome with
    | Destroy_succeeded { substrate; _ } ->
      Alcotest.(check bool) "the subset is represented" true (substrate = Substrate_present)
+   | Destroy_blocked { guarantee; _ } ->
+     Alcotest.failf "a half-built target must not be blocked: %s" guarantee
    | Destroy_failed { failure; _ } ->
      Alcotest.failf
        "a half-built target must be destroyable: %s"
@@ -334,6 +338,8 @@ let test_state_read_failure_is_not_absence () =
   (match outcome with
    | Destroy_succeeded { substrate; _ } ->
      Alcotest.(check bool) "UNKNOWN, not absent" true (substrate = Substrate_unknown)
+   | Destroy_blocked { guarantee; _ } ->
+     Alcotest.failf "an unreadable state must not be blocked: %s" guarantee
    | Destroy_failed { failure; _ } ->
      Alcotest.failf
        "an unreadable state must not block destruction: %s"
@@ -359,6 +365,7 @@ let test_elevated_access_opened_and_removed () =
       "cleanup recorded as succeeding"
       true
       (cleanup = Cleanup_succeeded)
+  | Destroy_blocked { guarantee; _ } -> Alcotest.failf "unexpected block: %s" guarantee
   | Destroy_failed { failure; _ } ->
     Alcotest.failf "expected success: %s" (failure_message failure)
 ;;
@@ -376,7 +383,7 @@ let test_protected_operation_failure_still_removes () =
   in
   let outcome = execute ~deps in
   (match outcome with
-   | Destroy_failed { failure = Platform_destroy_failed message; cleanup } ->
+   | Destroy_failed { failure = Platform_destroy_failed message; cleanup; _ } ->
      Alcotest.(check string)
        "the platform failure is reported"
        "platform destroy refused"
@@ -386,9 +393,11 @@ let test_protected_operation_failure_still_removes () =
   Alcotest.(check int) "removal was attempted after the failure" 1 calls.remove
 ;;
 
-let test_enable_failure_still_removes () =
-  (* The control-flow correction: the reconciliation apply enables the access, so
-     even when it fails the removal must be attempted. *)
+let test_skipped_teardown_is_a_degradation () =
+  (* Step 4 + the Step-2 guarantee: the reconciliation apply obtains the authority
+     the platform teardown needs. When it fails, the protected operation is skipped
+     -- a degradation, not a refusal, because the substrate destroy needs no cluster
+     authority -- and removal is still attempted. *)
   let deps, calls =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
@@ -397,10 +406,66 @@ let test_enable_failure_still_removes () =
   in
   let outcome = execute ~deps in
   (match outcome with
-   | Destroy_failed { failure = Reconciliation_failed _; _ } -> ()
-   | _ -> Alcotest.fail "expected a reconciliation failure");
+   | Destroy_succeeded { degradations = [ message ]; cleanup = Cleanup_succeeded; _ } ->
+     Alcotest.(check bool)
+       "the skipped teardown says what it was waiting on"
+       true
+       (contains (Str.regexp_string "bootstrap authority") message)
+   | _ -> Alcotest.fail "a failed reconciliation must degrade, not refuse the destroy");
   Alcotest.(check int) "the platform operation did not run" 0 calls.platform;
-  Alcotest.(check int) "removal was still attempted" 1 calls.remove
+  Alcotest.(check int) "removal was still attempted" 1 calls.remove;
+  Alcotest.(check int) "the substrate destroy still ran" 1 calls.substrate;
+  Alcotest.(check int) "degraded success exits 3" exit_degraded (exit_code outcome)
+;;
+
+let test_platform_failure_is_not_a_degradation () =
+  (* "We could not obtain the authority, so the protected operation could not run"
+     and "the protected operation ran and failed" are different consequences. Only
+     the first is a degradation. *)
+  let deps, _ =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~platform:(fun () -> Error "platform destroy exited 1")
+      ()
+  in
+  let outcome = execute ~deps in
+  match outcome with
+  | Destroy_failed { failure = Platform_destroy_failed message; degradations = []; _ } ->
+    Alcotest.(check string)
+      "the platform failure stands"
+      "platform destroy exited 1"
+      message
+  | _ -> Alcotest.fail "a failed protected operation is a failure, not a degradation"
+;;
+
+let test_skipped_teardown_and_cleanup_failure_are_both_preserved () =
+  (* The three facts of a degraded-and-dirty run stay separate: the skipped
+     protected operation, the primary failure the cleanup failure stands for, and
+     the cleanup evidence itself. *)
+  let deps, _ =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~reconcile:(fun () -> Error "no authority")
+      ~remove:(fun () -> Error "cleanup refused")
+      ()
+  in
+  let outcome = execute ~deps in
+  match outcome with
+  | Destroy_failed
+      { failure = Elevated_access_not_removed message
+      ; degradations = [ degraded ]
+      ; cleanup = Cleanup_failed cleanup_message
+      } ->
+    Alcotest.(check string) "the removal failure is the failure" "cleanup refused" message;
+    Alcotest.(check string)
+      "and is carried as cleanup evidence"
+      "cleanup refused"
+      cleanup_message;
+    Alcotest.(check bool)
+      "and the skipped teardown is still there"
+      true
+      (contains (Str.regexp_string "bootstrap authority") degraded)
+  | _ -> Alcotest.fail "primary, cleanup and degradation facts must all be preserved"
 ;;
 
 let test_cleanup_failure_is_not_replaced_by_success () =
@@ -414,7 +479,7 @@ let test_cleanup_failure_is_not_replaced_by_success () =
   in
   let outcome = execute ~deps in
   match outcome with
-  | Destroy_failed { failure = Elevated_access_not_removed message; cleanup } ->
+  | Destroy_failed { failure = Elevated_access_not_removed message; cleanup; _ } ->
     Alcotest.(check bool)
       "the removal failure is the message"
       true
@@ -439,7 +504,7 @@ let test_cleanup_failure_preserved_when_operation_fails () =
   let outcome = execute ~deps in
   match outcome with
   | Destroy_failed
-      { failure = Platform_destroy_failed _; cleanup = Cleanup_failed message } ->
+      { failure = Platform_destroy_failed _; cleanup = Cleanup_failed message; _ } ->
     Alcotest.(check string)
       "the cleanup failure is preserved"
       "removal refused too"
@@ -447,22 +512,191 @@ let test_cleanup_failure_preserved_when_operation_fails () =
   | _ -> Alcotest.fail "expected the platform failure with its cleanup evidence"
 ;;
 
-let test_preparation_failure_blocks_destruction () =
+(* ── Failure policy (HARDEN-004 step 4) ────────────────────────────────────
+
+   "Preparation failed" and "destruction must not proceed" are different claims.
+   The preparation declares the consequence of its own failure (DEC-033), and these
+   pin both directions so neither can drift into the other. *)
+
+let continue_failure reason =
+  Sol_cli_cloud_lifecycle.Preparation_failed
+    { reason; policy = Sol_cli_cloud_lifecycle.Continue_to_destroy }
+;;
+
+let block_failure reason =
+  Sol_cli_cloud_lifecycle.Preparation_failed
+    { reason; policy = Sol_cli_cloud_lifecycle.Block_destroy }
+;;
+
+let test_continue_preparation_failure_destroys () =
+  (* Regression 1 + 3: a best-effort preparation fails; the destroy proceeds, and
+     the failure stays visible rather than being erased by the success. *)
   let deps, calls =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
-      ~prepare:(fun ~state:_ -> Error "deletion protection is still enabled")
+      ~prepare:(fun ~state:_ ->
+        continue_failure "the deletion guards could not be lowered")
       ()
   in
   let outcome = execute ~deps in
   (match outcome with
-   | Destroy_failed { failure = Preparation_failed message; _ } ->
+   | Destroy_succeeded { preparation = Nothing_prepared; degradations = [ message ]; _ }
+     ->
      Alcotest.(check string)
-       "the preparation failure is reported"
-       "deletion protection is still enabled"
+       "the preparation failure is preserved as evidence"
+       "preparation: the deletion guards could not be lowered"
        message
-   | _ -> Alcotest.fail "a failed preparation must block destruction");
-  Alcotest.(check int) "the substrate was not destroyed" 0 calls.substrate
+   | _ ->
+     Alcotest.fail
+       "a Continue_to_destroy preparation failure must let destruction proceed, and stay \
+        visible");
+  Alcotest.(check int) "the substrate was destroyed" 1 calls.substrate;
+  Alcotest.(check int)
+    "a degraded destroy is not a clean success"
+    exit_degraded
+    (exit_code outcome)
+;;
+
+let test_block_preparation_failure_blocks_destruction () =
+  (* Regression 4 + 5: a Block_destroy preparation names the guarantee the target
+     declared, and destruction does not run at all. *)
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~prepare:(fun ~state:_ ->
+        block_failure
+          "the target's destroy_retention is final-snapshot, so its declared retention \
+           guarantee could not be established before destroying: snapshot refused")
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_blocked { guarantee } ->
+     Alcotest.(check bool)
+       "the retention guarantee is identified as the blocker"
+       true
+       (contains (Str.regexp_string "destroy_retention is final-snapshot") guarantee)
+   | _ -> Alcotest.fail "a Block_destroy preparation failure must block destruction");
+  Alcotest.(check int) "the substrate was not destroyed" 0 calls.substrate;
+  Alcotest.(check int)
+    "a blocked destroy exits as a failure"
+    exit_failure
+    (exit_code outcome)
+;;
+
+let test_clean_destruction_is_clean () =
+  (* Regression 10. *)
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~prepare:(fun ~state:_ -> Sol_cli_cloud_lifecycle.Prepared Gcp_prepared)
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_succeeded { preparation = Gcp_prepared; degradations = []; _ } -> ()
+   | _ -> Alcotest.fail "a clean preparation and a clean destroy must be a clean success");
+  Alcotest.(check int) "the substrate was destroyed" 1 calls.substrate;
+  Alcotest.(check int) "clean success exits 0" exit_clean (exit_code outcome)
+;;
+
+let test_degradation_preserved_when_destroy_fails () =
+  (* Regression 8: a degraded preparation is preserved even when a later step fails;
+     neither fact may collapse into the other. *)
+  let deps, _ =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~prepare:(fun ~state:_ -> continue_failure "guards not lowered")
+      ~destroy_substrate:(fun () -> Error "terraform destroy exited 1")
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_failed
+       { failure = Substrate_destroy_failed message; degradations = [ degraded ]; _ } ->
+     Alcotest.(check string)
+       "the destroy failure stands"
+       "terraform destroy exited 1"
+       message;
+     Alcotest.(check string)
+       "the preparation degradation is preserved separately"
+       "preparation: guards not lowered"
+       degraded
+   | _ ->
+     Alcotest.fail "a failed destroy must preserve the earlier preparation degradation");
+  Alcotest.(check int)
+    "a failed destroy exits as a failure"
+    exit_failure
+    (exit_code outcome)
+;;
+
+let test_unknown_state_is_not_absence_and_not_silent () =
+  (* Regression 11: an unreadable state is not absence, and it does not silently
+     become a best-effort preparation failure -- the preparation runs (it is not
+     skipped as "nothing to prepare"), the substrate stays UNKNOWN, and the failure
+     is reported. *)
+  let deps, calls =
+    fake_deps
+      ~state:(Error "terraform show failed with exit 1")
+      ~prepare:(fun ~state:_ -> continue_failure "the target's state could not be read")
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_succeeded { substrate = Substrate_unknown; degradations = [ _ ]; _ } -> ()
+   | _ -> Alcotest.fail "UNKNOWN must remain UNKNOWN and be reported, never absence");
+  Alcotest.(check int)
+    "the preparation was attempted, not skipped as empty"
+    1
+    (List.length calls.prepare);
+  Alcotest.(check int) "the substrate destroy still ran" 1 calls.substrate
+;;
+
+(* Regression 12 / step 3 preserved: a refused plan is an outcome, not permission to
+   weaken the assertion, and the *policy* controls only what follows. Composed here
+   with the real step-3 mechanism, the way [cmd_cloud_tf] wires it. *)
+let test_refused_plan_is_a_continue_failure () =
+  let applied = ref 0 in
+  let policy =
+    { Sol_cli_terraform_plan.phase = "guard-preparation"
+    ; rules =
+        [ { matches = [ Sol_cli_terraform_plan.Exact "google_container_cluster.main" ]
+          ; allows = [ Sol_cli_terraform_plan.Update ]
+          ; reason = ""
+          }
+        ]
+    }
+  in
+  let refused_plan =
+    {|{"resource_changes":[{"address":"google_container_cluster.main","type":"google_container_cluster","mode":"managed","change":{"actions":["create"]}}]}|}
+  in
+  let preparation =
+    match
+      Sol_cli_terraform_plan.guarded_apply
+        ~policy
+        ~plan:(fun () -> Ok "/tmp/plan")
+        ~show_plan:(fun _ -> Ok refused_plan)
+        ~apply_plan:(fun _ ->
+          applied := !applied + 1;
+          Ok ())
+        ()
+    with
+    | Ok () -> Sol_cli_cloud_lifecycle.Nothing_to_prepare
+    | Error failure ->
+      continue_failure (Sol_cli_terraform_plan.apply_failure_to_string failure)
+  in
+  Alcotest.(check int) "the unsafe apply never ran" 0 !applied;
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~prepare:(fun ~state:_ -> preparation)
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_succeeded { degradations = [ _ ]; _ } -> ()
+   | _ -> Alcotest.fail "a refused plan must let destruction continue, not block it");
+  Alcotest.(check int) "the substrate destroy still ran" 1 calls.substrate
 ;;
 
 let test_substrate_destroy_failure () =
@@ -519,11 +753,10 @@ let refused_apply plan_ref policy plan_json () =
   | Error failure -> Error (Sol_cli_terraform_plan.apply_failure_to_string failure)
 ;;
 
-(* The property the step names: if the assertion refuses a plan, the
-   corresponding apply is never invoked -- here at the execution level, with the
-   refusing reconcile composed into [execute] through the real deps shape.
-   Removal is still attempted (the Step-2 guarantee), and the run stops before the
-   substrate destroy. *)
+(* Step 3's property, unchanged by step 4: if the assertion refuses a plan, the
+   corresponding apply is never invoked. Step 4 changes only what *follows* -- the
+   refusal is a degradation, so the substrate destroy still runs, which is exactly
+   the half-built target this path exists to keep destroyable. *)
 let test_refused_reconciliation_never_applies () =
   let open Sol_cli_terraform_plan in
   let applied = ref 0 in
@@ -541,11 +774,10 @@ let test_refused_reconciliation_never_applies () =
   let outcome = execute ~deps in
   Alcotest.(check int) "the refused apply was never invoked" 0 !applied;
   (match outcome with
-   | Destroy_failed { failure = Reconciliation_failed _; cleanup = Cleanup_succeeded } ->
-     ()
-   | _ -> Alcotest.fail "expected a reconciliation failure with the cleanup attempted");
+   | Destroy_succeeded { degradations = [ _ ]; cleanup = Cleanup_succeeded; _ } -> ()
+   | _ -> Alcotest.fail "a refused plan must degrade the destroy, never be executed");
   Alcotest.(check int) "removal was still attempted" 1 calls.remove;
-  Alcotest.(check int) "the substrate destroy did not run" 0 calls.substrate
+  Alcotest.(check int) "the substrate destroy still ran" 1 calls.substrate
 ;;
 
 (* "Cleanup" is a name, not a safety property: a removal whose plan is refused
@@ -569,7 +801,7 @@ let test_refused_removal_is_not_success () =
   Alcotest.(check int) "the refused cleanup apply was never invoked" 0 !applied;
   (match outcome with
    | Destroy_failed
-       { failure = Elevated_access_not_removed _; cleanup = Cleanup_failed _ } -> ()
+       { failure = Elevated_access_not_removed _; cleanup = Cleanup_failed _; _ } -> ()
    | _ -> Alcotest.fail "a refused removal must not be reported as a successful cleanup");
   Alcotest.(check int) "the substrate destroy did not run" 0 calls.substrate
 ;;
@@ -619,9 +851,17 @@ let () =
             `Quick
             test_protected_operation_failure_still_removes
         ; Alcotest.test_case
-            "enable failure still removes"
+            "skipped teardown is a degradation"
             `Quick
-            test_enable_failure_still_removes
+            test_skipped_teardown_is_a_degradation
+        ; Alcotest.test_case
+            "platform failure is not a degradation"
+            `Quick
+            test_platform_failure_is_not_a_degradation
+        ; Alcotest.test_case
+            "skipped teardown + cleanup failure preserved"
+            `Quick
+            test_skipped_teardown_and_cleanup_failure_are_both_preserved
         ; Alcotest.test_case
             "cleanup failure is not success"
             `Quick
@@ -631,10 +871,6 @@ let () =
             `Quick
             test_cleanup_failure_preserved_when_operation_fails
         ; Alcotest.test_case
-            "preparation failure blocks"
-            `Quick
-            test_preparation_failure_blocks_destruction
-        ; Alcotest.test_case
             "substrate destroy failure"
             `Quick
             test_substrate_destroy_failure
@@ -642,6 +878,32 @@ let () =
             "absent state with outputs"
             `Quick
             test_absent_state_with_outputs_skips_teardown
+        ] )
+    ; ( "failure policy"
+      , [ Alcotest.test_case
+            "continue failure destroys"
+            `Quick
+            test_continue_preparation_failure_destroys
+        ; Alcotest.test_case
+            "block failure blocks destruction"
+            `Quick
+            test_block_preparation_failure_blocks_destruction
+        ; Alcotest.test_case
+            "clean destruction is clean"
+            `Quick
+            test_clean_destruction_is_clean
+        ; Alcotest.test_case
+            "degradation preserved when destroy fails"
+            `Quick
+            test_degradation_preserved_when_destroy_fails
+        ; Alcotest.test_case
+            "UNKNOWN is not absence and not silent"
+            `Quick
+            test_unknown_state_is_not_absence_and_not_silent
+        ; Alcotest.test_case
+            "refused plan is a continue failure"
+            `Quick
+            test_refused_plan_is_a_continue_failure
         ] )
     ; ( "plan assertion"
       , [ Alcotest.test_case
