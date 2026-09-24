@@ -77,7 +77,7 @@ spec:
           # running process as ready by default.
           # readinessProbe:
           #   httpGet:
-          #     path: /healthz
+          #     path: /readyz   # sol-svc: 503 once shutdown begins (INFRA-073)
           #     port: 8080
           #   initialDelaySeconds: 5
           #   periodSeconds: 10

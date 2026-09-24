@@ -20,6 +20,7 @@ type deployment_fields =
   ; volumes : Sol_cli_toml.volume list
   ; availability : Sol_cli_availability.t
   ; consumes_kafka : bool
+  ; readiness_path : string
   }
 
 type http_fields =
@@ -187,6 +188,7 @@ let render
                ; volumes
                ; availability
                ; consumes_kafka
+               ; readiness_path
                }
              =
              deployment
@@ -203,6 +205,7 @@ let render
                    ~volumes
                    ~availability
                    ~consumes_kafka
+                   ~readiness_path
                    ~config_hash:cfg_hash
                    ?env
                    ~shape
@@ -266,6 +269,7 @@ let render
                    ~volumes
                    ~availability
                    ~consumes_kafka
+                   ~readiness_path
                    ?env
                    ~shape
                    ~replicas
@@ -391,6 +395,15 @@ let render_spec
     ; volumes = s.volumes
     ; availability = s.availability
     ; consumes_kafka = s.consumes_kafka
+    ; readiness_path =
+        (* Only a service that declares OCaml (sol-svc serves /readyz) gets it.
+           An undeclared language is unknown, not OCaml (DEC-022 §7): /healthz
+           is the probe every framework serves. `sol up` renders every service
+           with no declared language today (BUG-056), and a TypeScript service
+           probed on /readyz is never ready. *)
+        (match s.language with
+         | Some Sol_cli_compat.Ocaml -> "/readyz"
+         | Some Sol_cli_compat.Typescript | None -> "/healthz")
     }
   in
   let workload =

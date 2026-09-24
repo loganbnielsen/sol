@@ -1895,13 +1895,48 @@ let rds_of_state state =
    the RDS resource, with a snapshot identity unique to this destroy attempt
    so re-running destroy after a fresh apply can never collide with a prior
    attempt's final snapshot. *)
+(* HARDEN-004 step 4: the preparation declares the consequence of its own failure,
+   and the policy is a function of the *target's* own declaration rather than a
+   provider special case inside the execution core. AWS's final-snapshot mode is the
+   canonical [Block_destroy] -- its failure stands for the declared retention
+   guarantee (DEC-033). A disposable target that retains nothing has no such
+   guarantee to lose, so a failure there is best-effort and destruction continues.
+   GCP's analogue of the guarantee ("Sol cannot retain anything on GCP yet") carries
+   [Block_destroy] where it is produced, in [prepare_destruction_result]. *)
+let aws_preparation_policy ~retention =
+  match retention with
+  | Sol_cli_cloud_lifecycle.Retain_final_snapshot -> Sol_cli_cloud_lifecycle.Block_destroy
+  | Sol_cli_cloud_lifecycle.Retain_nothing -> Sol_cli_cloud_lifecycle.Continue_to_destroy
+;;
+
+(* A blocked preparation must name the guarantee that blocked it, so the operator
+   reads *why* the target was left standing rather than a bare apply failure. *)
+let aws_preparation_reason ~retention reason =
+  match retention with
+  | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
+    Printf.sprintf
+      "the target's destroy_retention is final-snapshot, so its declared retention \
+       guarantee could not be established before destroying: %s"
+      reason
+  | Sol_cli_cloud_lifecycle.Retain_nothing -> reason
+;;
+
 let prepare_destroy_result run_log infra_dir var_files vars ~cluster_name ~retention state
+  : string Sol_cli_cloud_lifecycle.preparation_outcome
   =
+  (* Qualified deliberately: `Sol_cli_cloud_lifecycle` also exports a
+     `cluster_name` function, and opening it would shadow this parameter. *)
+  let failed reason =
+    Sol_cli_cloud_lifecycle.Preparation_failed
+      { reason = aws_preparation_reason ~retention reason
+      ; policy = aws_preparation_policy ~retention
+      }
+  in
   match rds_of_state state with
-  | Error message -> Error message
+  | Error message -> failed message
   | Ok None ->
     Printf.printf "  prepare: no RDS instance for this target, nothing to prepare.\n%!";
-    Ok None
+    Sol_cli_cloud_lifecycle.Nothing_to_prepare
   | Ok (Some _) ->
     let snapshot_id = unique_rds_snapshot_id cluster_name in
     Printf.printf
@@ -1910,30 +1945,31 @@ let prepare_destroy_result run_log infra_dir var_files vars ~cluster_name ~reten
        | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
          ", final snapshot " ^ snapshot_id
        | Sol_cli_cloud_lifecycle.Retain_nothing -> ", retaining nothing");
-    let* () =
-      apply_asserted
-        ~run_log
-        ~phase_name:"rds-destroy-prepare"
-        ~policy:
-          (Sol_cli_cloud_destroy.guard_preparation_policy
-             ~addresses:[ "aws_db_instance.postgres" ])
-        ~scope:rds_target
-        ~chdir:infra_dir
-        ~var_files
-        ~vars:
-          (vars
-           @ [ "rds_deletion_protection=false" ]
-           @
-           match retention with
-           | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
-             [ "rds_skip_final_snapshot=false"
-             ; "rds_final_snapshot_identifier=" ^ snapshot_id
-             ]
-           | Sol_cli_cloud_lifecycle.Retain_nothing -> [ "rds_skip_final_snapshot=true" ]
-          )
-        ()
-    in
-    Ok (Some snapshot_id)
+    (match
+       apply_asserted
+         ~run_log
+         ~phase_name:"rds-destroy-prepare"
+         ~policy:
+           (Sol_cli_cloud_destroy.guard_preparation_policy
+              ~addresses:[ "aws_db_instance.postgres" ])
+         ~scope:rds_target
+         ~chdir:infra_dir
+         ~var_files
+         ~vars:
+           (vars
+            @ [ "rds_deletion_protection=false" ]
+            @
+            match retention with
+            | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
+              [ "rds_skip_final_snapshot=false"
+              ; "rds_final_snapshot_identifier=" ^ snapshot_id
+              ]
+            | Sol_cli_cloud_lifecycle.Retain_nothing -> [ "rds_skip_final_snapshot=true" ]
+           )
+         ()
+     with
+     | Error message -> failed message
+     | Ok () -> Sol_cli_cloud_lifecycle.Prepared snapshot_id)
 ;;
 
 (* DEC-033: what "prepared" means depends on what the target selected, so the
@@ -2069,8 +2105,16 @@ let guarded_addresses_of provider state =
     ~desired
 ;;
 
-let gcp_prepare_destroy_result run_log infra_dir var_files vars state =
+let gcp_prepare_destroy_result run_log infra_dir var_files vars state
+  : unit Sol_cli_cloud_lifecycle.preparation_outcome
+  =
+  let open Sol_cli_cloud_lifecycle in
   let open Sol_cli_cloud_destroy in
+  (* Guard lowering is best-effort preparation (FND-0030): a failure here must not
+     strand a half-built target, so it permits destruction to continue and stays
+     visible in the outcome. The state-side of the decision is the same inventory
+     the sequence classified. *)
+  let failed reason = Preparation_failed { reason; policy = Continue_to_destroy } in
   let report_unrepresented unrepresented =
     (* FND-0030's actual leak, said out loud. Terraform destroys what its state holds, so a
        resource this target declares and its state does not know about survives the destroy
@@ -2090,11 +2134,14 @@ let gcp_prepare_destroy_result run_log infra_dir var_files vars state =
   in
   match substrate_presence state with
   | Substrate_unknown ->
-    (* Report the unknown read rather than raising: a preparation that could not run must
-       not decide whether destruction is attempted. UNKNOWN is not absence, so nothing is
-       claimed about what is represented. *)
+    (* The state could not be read, so nothing can be claimed about what is
+       represented. That is a preparation that could not run -- deliberately
+       distinct from "there was nothing to prepare" -- and it permits destruction
+       to continue; UNKNOWN is never read as absence. *)
     Printf.printf "  prepare: could not read this target's state; preparing nothing.\n%!";
-    Ok false
+    failed
+      "the target's Terraform state could not be read, so no deletion guard could be \
+       lowered"
   | Substrate_present | Substrate_absent ->
     let represented = addresses state in
     let desired = gcp_guarded_resources in
@@ -2104,63 +2151,56 @@ let gcp_prepare_destroy_result run_log infra_dir var_files vars state =
      | [] ->
        Printf.printf
          "  prepare: no guarded resource in this target's state, nothing is targeted.\n%!";
-       Ok false
+       Nothing_to_prepare
      | first :: rest ->
        Printf.printf
          "  prepare: disabling the deletion guards on %s...\n%!"
          (String.concat ", " (first :: rest));
-       (* STILL ABORTS ON FAILURE, and the policy vocabulary does not hide it: a failed
-          guard-lowering apply blocks destruction here, which is the opposite of what this
-          path should do. Making it report and continue -- and making AWS's
-          final-snapshot preparation block instead, because there the failure stands for a
-          declared retention guarantee -- is the wiring that follows (FND-0030). *)
-       let* () =
-         apply_asserted
-           ~run_log
-           ~phase_name:"gcp-destroy-prepare"
-           ~policy:
-             (Sol_cli_cloud_destroy.guard_preparation_policy ~addresses:(first :: rest))
-           ~scope:(Sol_cli_terraform.targets first rest)
-           ~chdir:infra_dir
-           ~var_files
-           ~vars:
-             (vars @ [ "sql_deletion_protection=false"; "gke_deletion_protection=false" ])
-           ()
-       in
-       Ok true)
+       (match
+          apply_asserted
+            ~run_log
+            ~phase_name:"gcp-destroy-prepare"
+            ~policy:(guard_preparation_policy ~addresses:(first :: rest))
+            ~scope:(Sol_cli_terraform.targets first rest)
+            ~chdir:infra_dir
+            ~var_files
+            ~vars:
+              (vars @ [ "sql_deletion_protection=false"; "gke_deletion_protection=false" ])
+            ()
+        with
+        | Error message -> failed message
+        | Ok () -> Prepared ()))
 ;;
 
-let verify_gcp_destroy_preparation_result infra_dir ~prepared =
-  if not prepared
-  then (
-    Printf.printf "  verify preparation: nothing was prepared.\n%!";
-    Ok ())
+(* Only reached once an apply has actually targeted the guards, so there is no
+   "nothing was prepared" case to represent -- which is what resolves the old
+   `~prepared:false` ambiguity. *)
+let verify_gcp_destroy_preparation_result infra_dir =
+  let* state = read_cloud_state infra_dir in
+  let open Sol_cli_cloud_destroy in
+  let guard address =
+    Option.bind (find_address state address) (fun resource ->
+      resource.deletion_protection)
+  in
+  if
+    find_address state "google_sql_database_instance.postgres" = None
+    && find_address state "google_container_cluster.main" = None
+  then Error "GCP destroy preparation ran but no guarded resource is in state"
   else
-    let* state = read_cloud_state infra_dir in
-    let open Sol_cli_cloud_destroy in
-    let guard address =
-      Option.bind (find_address state address) (fun resource ->
-        resource.deletion_protection)
+    let* () =
+      match guard "google_sql_database_instance.postgres" with
+      | Some true ->
+        Error "Cloud SQL deletion protection is still enabled after preparation"
+      | Some false | None -> Ok ()
     in
-    if
-      find_address state "google_sql_database_instance.postgres" = None
-      && find_address state "google_container_cluster.main" = None
-    then Error "GCP destroy preparation ran but no guarded resource is in state"
-    else
-      let* () =
-        match guard "google_sql_database_instance.postgres" with
-        | Some true ->
-          Error "Cloud SQL deletion protection is still enabled after preparation"
-        | Some false | None -> Ok ()
-      in
-      let* () =
-        match guard "google_container_cluster.main" with
-        | Some true -> Error "GKE deletion protection is still enabled after preparation"
-        | Some false | None -> Ok ()
-      in
-      Printf.printf
-        "  verify preparation: Cloud SQL and GKE deletion protection disabled.\n%!";
-      Ok ()
+    let* () =
+      match guard "google_container_cluster.main" with
+      | Some true -> Error "GKE deletion protection is still enabled after preparation"
+      | Some false | None -> Ok ()
+    in
+    Printf.printf
+      "  verify preparation: Cloud SQL and GKE deletion protection disabled.\n%!";
+    Ok ()
 ;;
 
 (* What destruction preparation did. The providers differ in what there is to carry
@@ -2179,25 +2219,44 @@ let prepare_destruction_result
       ~cluster_name
       ~retention
       ~state
-  : (Sol_cli_cloud_destroy.preparation, string) result
+  : Sol_cli_cloud_destroy.preparation Sol_cli_cloud_lifecycle.preparation_outcome
   =
+  (* No [open Sol_cli_cloud_lifecycle] here: it exports a `cluster_name` function
+     that would shadow this function's own parameter. *)
   match provider with
   | Sol_cli_provider.Aws ->
-    let* prepared =
-      prepare_destroy_result
-        run_log
-        infra_dir
-        var_files
-        vars
-        ~cluster_name
-        ~retention
-        state
-    in
-    let* () = verify_destroy_preparation_result infra_dir ~retention ~prepared in
-    Ok
-      (match prepared with
-       | None -> Sol_cli_cloud_destroy.Nothing_prepared
-       | Some snapshot_id -> Sol_cli_cloud_destroy.Aws_prepared snapshot_id)
+    (* The verification is part of the preparation: a snapshot identity that could
+       not be confirmed is not a preparation, and it fails with the same
+       consequence the preparation would have (final-snapshot blocks). *)
+    (match
+       prepare_destroy_result
+         run_log
+         infra_dir
+         var_files
+         vars
+         ~cluster_name
+         ~retention
+         state
+     with
+     | Sol_cli_cloud_lifecycle.Prepared snapshot_id ->
+       (match
+          verify_destroy_preparation_result
+            infra_dir
+            ~retention
+            ~prepared:(Some snapshot_id)
+        with
+        | Ok () ->
+          Sol_cli_cloud_lifecycle.Prepared
+            (Sol_cli_cloud_destroy.Aws_prepared snapshot_id)
+        | Error reason ->
+          Sol_cli_cloud_lifecycle.Preparation_failed
+            { reason = aws_preparation_reason ~retention reason
+            ; policy = aws_preparation_policy ~retention
+            })
+     | Sol_cli_cloud_lifecycle.Nothing_to_prepare ->
+       Sol_cli_cloud_lifecycle.Nothing_to_prepare
+     | Sol_cli_cloud_lifecycle.Preparation_failed failure ->
+       Sol_cli_cloud_lifecycle.Preparation_failed failure)
   | Sol_cli_provider.Gcp ->
     (* DEC-033: a target that destroys must say what it keeps, and GCP cannot keep
        anything today -- Cloud SQL deletes its backups with the instance, so there is
@@ -2205,25 +2264,39 @@ let prepare_destruction_result
        [Retain_final_snapshot] *default* quietly become "destroy the recovery data
        anyway", which is the laundering DEC-033 exists to prevent, Sol refuses and
        names the gap. A disposable target opts in with `destroy_retention: none`,
-       which is a statement rather than a default. *)
+       which is a statement rather than a default.
+
+       Step 4: that refusal is a declared destruction-time guarantee, so it carries
+       [Block_destroy] and the target is left standing -- with the guarantee named --
+       rather than being destroyed while discarding the recovery data it asked to
+       keep. *)
     (match retention with
      | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
-       Error
-         "this GCP target's destroy_retention is final-snapshot (the default), but Sol \
-          cannot retain anything on GCP yet: Cloud SQL deletes its backups together with \
-          the instance, so there is no final-artifact equivalent of the RDS snapshot and \
-          the recovery data would be discarded without saying so. Declare \
-          `destroy_retention: none` on a disposable target, or export the database first \
-          -- Sol will not decide this for you"
+       Sol_cli_cloud_lifecycle.Preparation_failed
+         { reason =
+             "this GCP target's destroy_retention is final-snapshot (the default), but \
+              Sol cannot retain anything on GCP yet: Cloud SQL deletes its backups \
+              together with the instance, so there is no final-artifact equivalent of \
+              the RDS snapshot and the recovery data would be discarded without saying \
+              so. Declare `destroy_retention: none` on a disposable target, or export \
+              the database first -- Sol will not decide this for you"
+         ; policy = Sol_cli_cloud_lifecycle.Block_destroy
+         }
      | Sol_cli_cloud_lifecycle.Retain_nothing ->
-       let* prepared =
-         gcp_prepare_destroy_result run_log infra_dir var_files vars state
-       in
-       let* () = verify_gcp_destroy_preparation_result infra_dir ~prepared in
-       Ok
-         (if prepared
-          then Sol_cli_cloud_destroy.Gcp_prepared
-          else Sol_cli_cloud_destroy.Nothing_prepared))
+       (* The verification is part of the preparation here too: an applied transition
+          that did not actually lower the guards is not a preparation. Guard lowering
+          is best-effort, so this failure permits destruction to continue. *)
+       (match gcp_prepare_destroy_result run_log infra_dir var_files vars state with
+        | Sol_cli_cloud_lifecycle.Prepared () ->
+          (match verify_gcp_destroy_preparation_result infra_dir with
+           | Ok () -> Sol_cli_cloud_lifecycle.Prepared Sol_cli_cloud_destroy.Gcp_prepared
+           | Error reason ->
+             Sol_cli_cloud_lifecycle.Preparation_failed
+               { reason; policy = Sol_cli_cloud_lifecycle.Continue_to_destroy })
+        | Sol_cli_cloud_lifecycle.Nothing_to_prepare ->
+          Sol_cli_cloud_lifecycle.Nothing_to_prepare
+        | Sol_cli_cloud_lifecycle.Preparation_failed failure ->
+          Sol_cli_cloud_lifecycle.Preparation_failed failure))
 ;;
 
 (* The Destroy policy's overrides for this provider, given what preparation found.
@@ -2957,6 +3030,39 @@ let cloud_init ?(confirm_ecr_removal = false) ~target ~var_file ~vars ~action ()
     Printf.printf "\nDone.\n%!"
 ;;
 
+(* Cleanup is independent evidence: a removal failure is reported alongside whatever
+   else the run did, never replaced by it and never replacing it (HARDEN-004 step 4,
+   preserving steps 2 and 3). *)
+let report_cleanup_evidence = function
+  | Sol_cli_cloud_destroy.Cleanup_failed message ->
+    Printf.eprintf
+      "warning: removing the bootstrap access failed (%s); the elevated access may still \
+       be applied\n\
+       %!"
+      message
+  | Sol_cli_cloud_destroy.Cleanup_not_needed | Sol_cli_cloud_destroy.Cleanup_succeeded ->
+    ()
+;;
+
+(* A preparation that failed but permitted destruction is evidence the exit code
+   depends on, so it is said out loud rather than left to be inferred from the
+   absence of a failure. *)
+let report_degradations = function
+  | [] -> ()
+  | degradations ->
+    List.iter
+      (fun message ->
+         Printf.eprintf
+           "warning: a preparation degraded and destruction continued -- %s\n%!"
+           message)
+      degradations;
+    Printf.eprintf
+      "warning: destruction reached absence with %d degraded preparation(s); exiting %d\n\
+       %!"
+      (List.length degradations)
+      Sol_cli_cloud_destroy.exit_degraded
+;;
+
 let cloud_destroy ~target ~var_file ~vars ~action () =
   check_terraform ();
   let provider = provider_of_target_path target in
@@ -3234,7 +3340,11 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
             | Error reason -> Sol_cli_cloud_destroy.Outputs_unavailable reason)
       ; prepare =
           (fun ~state ->
-            let* preparation =
+            (* The edge answers with the typed preparation; the core decides the
+               consequence. Only a successful preparation updates [prepared_ref],
+               which is what the Destroy policy's variables are computed from --
+               a failed preparation must never look like a finished one. *)
+            let outcome =
               prepare_destruction_result
                 ~provider
                 run_log
@@ -3245,8 +3355,11 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
                 ~retention
                 ~state
             in
-            prepared_ref := preparation;
-            Ok preparation)
+            (match outcome with
+             | Sol_cli_cloud_lifecycle.Prepared preparation -> prepared_ref := preparation
+             | Sol_cli_cloud_lifecycle.Nothing_to_prepare
+             | Sol_cli_cloud_lifecycle.Preparation_failed _ -> ());
+            outcome)
       ; reconcile_and_enable =
           (fun () ->
             (* Scope is bootstrap + the guarded resources the inventory represents,
@@ -3382,18 +3495,16 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
       ; warn = (fun message -> Printf.eprintf "%s\n%!" message)
       }
     in
-    (* One place maps the typed outcome to a process exit. *)
-    (match Sol_cli_cloud_destroy.execute ~deps with
-     | Sol_cli_cloud_destroy.Destroy_succeeded { preparation; cleanup; _ } ->
-       (match cleanup with
-        | Sol_cli_cloud_destroy.Cleanup_failed message ->
-          Printf.eprintf
-            "warning: removing the bootstrap access failed (%s); the elevated access may \
-             still be applied\n\
-             %!"
-            message
-        | Sol_cli_cloud_destroy.Cleanup_not_needed
-        | Sol_cli_cloud_destroy.Cleanup_succeeded -> ());
+    (* One place maps the typed outcome to a process exit. Step 4's contract: 0 only
+       for a clean destroy; 3 when absence was reached but a preparation degraded;
+       1 for a blocked or failed destroy. 2 stays reserved for this CLI's
+       refusal / cannot-proceed-as-requested semantics. *)
+    let outcome = Sol_cli_cloud_destroy.execute ~deps in
+    (match outcome with
+     | Sol_cli_cloud_destroy.Destroy_succeeded { preparation; degradations; cleanup; _ }
+       ->
+       report_cleanup_evidence cleanup;
+       report_degradations degradations;
        (* DEC-033: the destroy states what it kept, by identifier, so an operator
           never has to infer it from the absence of a snapshot listing. *)
        (match preparation with
@@ -3407,27 +3518,33 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
           Printf.printf
             "\n%s\n%!"
             (Sol_cli_cloud_lifecycle.retention_report ~retention ~destroy_snapshot_id:"")
-        | Sol_cli_cloud_destroy.Nothing_prepared ->
+        | Sol_cli_cloud_destroy.Nothing_prepared when degradations = [] ->
           Printf.printf
             "\n\
             \  retention: nothing to decide -- this target had no database whose \
              retention a destroy had to settle\n\
-             %!");
-       Printf.printf "\nDone.\n%!"
-     | Sol_cli_cloud_destroy.Destroy_failed { failure; cleanup } ->
+             %!"
+        | Sol_cli_cloud_destroy.Nothing_prepared ->
+          (* A degraded preparation is the news here; the warnings above already say
+             what happened, and "nothing to decide" would read as if nothing did. *)
+          ());
+       Printf.printf
+         (if degradations = []
+          then "\nDone.\n%!"
+          else "\nDone, with a degraded preparation.\n%!")
+     | Sol_cli_cloud_destroy.Destroy_blocked { guarantee } ->
+       Printf.eprintf
+         "error: destruction is blocked -- proceeding would violate a destruction-time \
+          guarantee this target declared: %s\n\
+          %!"
+         guarantee
+     | Sol_cli_cloud_destroy.Destroy_failed { failure; degradations; cleanup } ->
        (* A cleanup failure is evidence, not silence: it is reported alongside the
           failure that stopped the run, never replaced by it. *)
-       (match cleanup with
-        | Sol_cli_cloud_destroy.Cleanup_failed message ->
-          Printf.eprintf
-            "warning: removing the bootstrap access failed (%s); the elevated access may \
-             still be applied\n\
-             %!"
-            message
-        | Sol_cli_cloud_destroy.Cleanup_not_needed
-        | Sol_cli_cloud_destroy.Cleanup_succeeded -> ());
-       Printf.eprintf "error: %s\n%!" (Sol_cli_cloud_destroy.failure_message failure);
-       exit 1)
+       report_cleanup_evidence cleanup;
+       report_degradations degradations;
+       Printf.eprintf "error: %s\n%!" (Sol_cli_cloud_destroy.failure_message failure));
+    exit (Sol_cli_cloud_destroy.exit_code outcome)
 ;;
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
@@ -3514,12 +3631,37 @@ let apply_cmd =
 ;;
 
 let destroy_cmd =
+  let doc =
+    "Destroy cloud infrastructure via Terraform. Requires the same target/provider used \
+     with apply."
+  in
+  (* HARDEN-004 step 4's exit-code contract, in the interface an operator or a script
+     actually reads. *)
+  let man =
+    [ `S Manpage.s_description
+    ; `P
+        "Destruction proceeds even when a best-effort preparation -- lowering a deletion \
+         guard -- fails or its plan is refused: the failure is reported, the unsafe \
+         apply is never executed, and what Terraform represents is still destroyed. Only \
+         a failure that stands for a destruction-time guarantee the target itself \
+         declared (such as `destroy_retention: final-snapshot`, which could not be \
+         prepared) blocks destruction and leaves the target standing."
+    ; `S "EXIT STATUS"
+    ; `P
+        "0 -- destruction reached absence, and every applicable preparation succeeded or \
+         had nothing to do."
+    ; `P
+        "3 -- destruction reached absence, but one or more best-effort preparations \
+         failed or were refused. Each one is reported on stderr."
+    ; `P
+        "1 -- destruction did not reach its postcondition: it failed, it was blocked by \
+         a declared guarantee, absence could not be verified, or the elevated bootstrap \
+         access could not be removed. The reason is named on stderr."
+    ; `P "2 is not used by this command."
+    ]
+  in
   Cmd.v
-    (Cmd.info
-       "destroy"
-       ~doc:
-         "Destroy cloud infrastructure via Terraform. Requires the same target/provider \
-          used with apply.")
+    (Cmd.info "destroy" ~doc ~man)
     Term.(
       const (fun target var_file vars action ->
         cloud_destroy ~target ~var_file ~vars ~action ())
