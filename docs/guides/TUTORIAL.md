@@ -768,6 +768,14 @@ sol cloud apply prod/aws/us-east-1 --var-file prod.tfvars
 sol cloud apply prod/aws/us-east-1 --var cluster_name=acme-prod --var db_password=...
 ```
 
+**ECR repositories follow the checkout.** The AWS root keeps one ECR repository per
+workload that has a Dockerfile in the checkout you run `sol cloud apply` from, and a
+repository is deleted with its images when it leaves that set. So `sol cloud apply`
+plans first, reads the plan, and refuses (changing nothing) when it would delete any
+ECR repository. It names the repositories. Run from the checkout that deploys the
+target, or pass `--confirm-ecr-removal` when the removal is intended. The plan that
+was read is the plan that is applied.
+
 During platform reconciliation Sol creates an ephemeral kubeconfig for the declared steady-state cluster-access identity, separate from the cloud-provisioning identity. It passes that file explicitly to child processes and removes it afterward; it does not read or update the user's ambient kubeconfig. Installing the platform is privileged platform establishment (ADR 0003): the cluster-access identity holds a temporary managed cluster-admin association through the full platform apply and verified readiness, and Sol revokes it before leaving the target Ready. In steady state it holds neither Kubernetes `escalate`/`bind` nor IAM access-entry/policy-association mutation. On success the command prints the non-sensitive provisioned endpoints:
 
 ```

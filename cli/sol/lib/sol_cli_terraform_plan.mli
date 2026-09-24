@@ -73,3 +73,7 @@ val guarded_apply
   -> apply_plan:(string -> (unit, string) result)
   -> unit
   -> (unit, apply_failure) result
+
+(** [removed_of_type ~resource_type changes] is the address of every [resource_type]
+    that the plan deletes or replaces (INFRA-074). *)
+val removed_of_type : resource_type:string -> change list -> string list
