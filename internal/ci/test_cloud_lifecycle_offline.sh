@@ -1189,6 +1189,35 @@ grep -F 'credentials: Google Application Default Credentials resolved' \
   exit 1
 }
 
+# INFRA-070 / FND-0047: on GCP a failed `get-credentials` exits the lifecycle. It used to
+# do so without running the caller's cleanup (`with_cluster_access` ignored `on_error` on
+# GCP), which left the provisioner elevated after the destroy's reconciliation apply had
+# opened the bootstrap window. The window must be closed -- an apply with
+# provisioner_bootstrap_admin=false after the failed get-credentials -- before exit.
+gcp_access_log="$tmp/gcp-access-failure.log"
+rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/access"
+if (cd "$tmp/work" && FAIL_ON=access DESTROYING=1 LIFECYCLE_LOG="$gcp_access_log" \
+      "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$gcp_access_log.out" 2>&1
+then
+  cat "$gcp_access_log.out" >&2
+  echo "GCP destroy succeeded although cluster access could not be established" >&2
+  exit 1
+fi
+grep -F 'could not establish ephemeral cluster access' "$gcp_access_log.out" >/dev/null || {
+  echo "the injected get-credentials failure was not the reason the GCP destroy stopped:" >&2
+  cat "$gcp_access_log.out" >&2
+  exit 1
+}
+access_line="$(grep -nF 'get-credentials' "$gcp_access_log" | tail -1 | cut -d: -f1 || true)"
+close_line="$(grep -nE -- '-chdir=[^ ]*infra/gcp apply ' "$gcp_access_log" \
+  | grep -F -- 'provisioner_bootstrap_admin=false' | tail -1 | cut -d: -f1 || true)"
+if [ -z "$access_line" ] || [ -z "$close_line" ] || [ "$close_line" -le "$access_line" ]; then
+  echo "a GCP cluster-access failure exited without closing the bootstrap window:" >&2
+  grep -nE 'get-credentials|provisioner_bootstrap_admin' "$gcp_access_log" >&2 || true
+  exit 1
+fi
+
 # Attempt 3 spent a billable apply before discovering that the host lacked the
 # plugin the platform stage needs. It must be refused up front instead -- the check
 # costs nothing and the alternative costs an apply.
