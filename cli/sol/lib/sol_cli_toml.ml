@@ -762,6 +762,19 @@ let load_result path =
                "sol.toml: [infra.env] config must be an inline table of string values, \
                 e.g. config = { KEY = \"val\" }")
       in
+      (* SEC-006: SOL_ALLOW_UNVERIFIED_JWT is the runtime opt-in for a JWT mode that
+         does not check signatures. Only `sol up` renders it, on the local cluster;
+         accepting it here would let one line of sol.toml carry it into a deploy. *)
+      let* () =
+        if List.mem_assoc "SOL_ALLOW_UNVERIFIED_JWT" env_config
+        then
+          validation_error
+            path
+            "sol.toml: [infra.env] config may not set SOL_ALLOW_UNVERIFIED_JWT -- it \
+             allows JWT auth without signature checks, and `sol up` sets it on the local \
+             cluster only"
+        else Ok ()
+      in
       let* secret_keys =
         match Otoml.find_opt doc Otoml.get_value [ "infra"; "env"; "secrets" ] with
         | None -> Ok []

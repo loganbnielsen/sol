@@ -2322,6 +2322,22 @@ let test_local_executor_renders_unverified_jwt_opt_in () =
     (contains workload "SOL_ALLOW_UNVERIFIED_JWT: \"1\"")
 ;;
 
+(* SEC-006 review: [infra.env] config is the only author-controlled path into a
+   workload's env, so the opt-in is refused there. *)
+let test_sol_toml_cannot_set_unverified_jwt_opt_in () =
+  let path = Filename.temp_file "sol-toml-optin-" ".toml" in
+  let oc = open_out path in
+  output_string oc "[infra.env]\nconfig = { SOL_ALLOW_UNVERIFIED_JWT = \"1\" }\n";
+  close_out oc;
+  let result = Sol_cli_toml.load_result path in
+  Sys.remove path;
+  match result with
+  | Error (Sol_cli_toml.Validation { message; _ }) ->
+    check_bool "names the reserved key" true (contains message "SOL_ALLOW_UNVERIFIED_JWT")
+  | Ok _ -> Alcotest.fail "sol.toml must not be able to set SOL_ALLOW_UNVERIFIED_JWT"
+  | Error (Sol_cli_toml.Toml_syntax _) -> Alcotest.fail "expected a validation error"
+;;
+
 let test_deploy_render_has_no_unverified_jwt_opt_in () =
   let _, workload = render_spec_ok svc_spec in
   check_bool
@@ -2342,6 +2358,10 @@ let () =
             "deploy render does not"
             `Quick
             test_deploy_render_has_no_unverified_jwt_opt_in
+        ; Alcotest.test_case
+            "sol.toml cannot set it"
+            `Quick
+            test_sol_toml_cannot_set_unverified_jwt_opt_in
         ] )
     ; ( "SOL_ENV reaches every primitive"
       , [ Alcotest.test_case

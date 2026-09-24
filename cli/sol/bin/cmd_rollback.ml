@@ -40,10 +40,16 @@ let wait_s = Sol_cli_boundary_lease.rollback_wait_s
    a direct (non-GitOps) apply -- the release record only ever carries secret
    key names, never values. GitOps-mode rollback (content and pointer
    travelling in one emitted commit) is not this pass's concern. *)
-let apply_specs ~ctx ~release ~release_id_t specs =
+let apply_specs ~ctx ~local ~release ~release_id_t specs =
   try
     List.iter
       (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+         (* SEC-006: a local rollback re-renders what `sol up` recorded, which
+            does not carry the local-only Unverified_dev_only opt-in (only
+            [Sol_cli_executor.local] adds it); restore it here, locally only. *)
+         let spec =
+           if local then Sol_cli_executor.local_development_spec spec else spec
+         in
          match
            Sol_cli_deployment_render.render_spec
              ~workspace:release.Sol_cli_release.workspace
@@ -65,7 +71,7 @@ let apply_specs ~ctx ~release ~release_id_t specs =
   | Sol_cli_manifest.Deploy_failed msg -> Error msg
 ;;
 
-let run_locked ~ctx ~workspace release_id : (unit, string) result =
+let run_locked ~ctx ~local ~workspace release_id : (unit, string) result =
   let* release = Sol_cli_release_store.get ~ctx ~workspace ~release_id in
   Printf.printf
     "Rolling back %s to release %s\n%!"
@@ -81,7 +87,7 @@ let run_locked ~ctx ~workspace release_id : (unit, string) result =
      only once the live set agrees -- lives in Sol_cli_rollback.execute, where
      it's tested. This wires the concrete, cluster-touching deps. *)
   let deps : Sol_cli_rollback.transaction_deps =
-    { apply = apply_specs ~ctx ~release ~release_id_t
+    { apply = apply_specs ~ctx ~local ~release ~release_id_t
     ; live_workloads =
         (fun () ->
           Sol_cli_rollback.live_workloads
@@ -145,7 +151,7 @@ let resolve_release_id ~ctx ~workspace ~target_string release_id commit scope
                resolution)))
 ;;
 
-let run ~ctx ~target_string release_id commit scope =
+let run ~ctx ?(local = false) ~target_string release_id commit scope =
   let workspace = workspace_name () in
   match resolve_release_id ~ctx ~workspace ~target_string release_id commit scope with
   | Error msg ->
@@ -159,7 +165,7 @@ let run ~ctx ~target_string release_id commit scope =
          ~holder:Sol_cli_boundary_lease.Rollback
          ~ttl:ttl_s
          ~wait_s
-         (fun _lease -> run_locked ~ctx ~workspace release_id)
+         (fun _lease -> run_locked ~ctx ~local ~workspace release_id)
      with
      | Ok () -> ()
      | Error msg ->
@@ -237,7 +243,13 @@ let local_cmd =
     (Cmd.info "rollback" ~doc:"Restore a recorded release boundary on the local cluster.")
     Term.(
       const (fun release_id commit scope ->
-        run ~ctx:Cmd_destination.local ~target_string:"local" release_id commit scope)
+        run
+          ~ctx:Cmd_destination.local
+          ~local:true
+          ~target_string:"local"
+          release_id
+          commit
+          scope)
       $ release_id_arg
       $ commit_arg
       $ scope_arg)
