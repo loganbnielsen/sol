@@ -1,7 +1,7 @@
 # FND-0032 — A migration is identified by version alone: a second `NNN_` file after `NNN` is applied is never run, and the deploy gate reports OK
 
 - **Classification:** `VERIFIED_DEFECT`
-- **State:** `OPEN`
+- **State:** `FIXED_UNQUALIFIED` for the version-identity defect (BUG-041, 2026-09-23: Sol and pg-eio refuse shared versions; down files excluded; unit tests + mutation checks). Checksums remain open as FEAT-094.
 - **First identified:** 2026-09-23, correctness audit
 - **Last verified:** 2026-09-23 (`origin/main @ f3e9480b`; pg-eio from the opam switch sources)
 - **Derived ticket:** `BUG-041`, `FEAT-094` (BACKLOG — checksums)

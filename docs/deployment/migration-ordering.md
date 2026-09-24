@@ -12,7 +12,13 @@ required (db/migrations in this revision)  ⊆  applied (schema_migrations)
 ```
 
 - **Required** is every `.sql` file in the workspace's `db/migrations`
-  directory. The file name carries the version (`001_create_orders.sql`).
+  directory except `*.down.sql` (a rollback companion, not a migration). The file
+  name carries the version (`001_create_orders.sql`).
+- **Each version must be unique.** The tracking table records versions only, so of
+  two files that share one, the second would be skipped forever once the first is
+  applied. `sol migrate` and the deploy gate therefore refuse such a directory and
+  name both files. Two branches that each add "the next" number produce exactly
+  this; renumber one of them (BUG-041).
 - **Applied** is what the workspace's tracking table
   (`sol_<workspace>_schema_migrations`, the table `sol migrate` writes) reports.
 - Sol keeps **no second record** of "which migrations matter". A declaration in

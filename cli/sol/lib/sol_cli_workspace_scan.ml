@@ -66,32 +66,32 @@ let derive_consumer_groups workspace workers =
     strings
 ;;
 
-(** Load topics from a [sol.toml] file at [path], returning [] if absent or
-    unparseable. Silently ignores errors so a missing/malformed sol.toml in an
-    event directory does not abort workspace scanning. *)
+(** Topics declared by the [sol.toml] at [path]; [Ok []] when the file does not
+    exist. A malformed or misspelled event [sol.toml] is an error (BUG-042): skipping
+    it used to drop its topics from the deploy without a word. *)
 let topics_of_toml path =
-  match Sol_cli_toml.load_result path with
-  | Ok t -> t.Sol_cli_toml.topics
-  | Error _ -> []
+  Sol_cli_toml.load_result path |> Result.map (fun t -> t.Sol_cli_toml.topics)
 ;;
 
 (** Discover topics from [sol.toml]'s [[service] topics = [...]] array in
     [events/] subdirectories and [events/sol.toml]; sorted, deduplicated. Never
     scans [*.ml] source, to avoid false positives from string literals. *)
 let discover_topics () =
-  let top_level = topics_of_toml "events/sol.toml" in
-  let sub_topics =
-    fold_dir "events" ~init:[] ~f:(fun acc entry path ->
+  let ( let* ) = Result.bind in
+  let* top_level = topics_of_toml "events/sol.toml" in
+  let* sub_topics =
+    fold_dir "events" ~init:(Ok []) ~f:(fun acc entry path ->
+      let* acc = acc in
       if entry.[0] = '.'
-      then acc
+      then Ok acc
       else if Sys.is_directory path
-      then (
-        let toml_path = Filename.concat path "sol.toml" in
-        topics_of_toml toml_path @ acc)
-      else acc)
+      then
+        let* topics = topics_of_toml (Filename.concat path "sol.toml") in
+        Ok (topics @ acc)
+      else Ok acc)
   in
   let sorted = List.sort_uniq String.compare (top_level @ sub_topics) in
-  filter_validated ~kind:"topic name" Sol_cli_plan_ids.Topic_name.of_string sorted
+  Ok (filter_validated ~kind:"topic name" Sol_cli_plan_ids.Topic_name.of_string sorted)
 ;;
 
 (** Scan [db/migrations/] for SQL files, sorted by filename. *)

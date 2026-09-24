@@ -998,9 +998,21 @@ let verify_migration_prerequisite ~ctx ~target ~workspace ~dir =
         | missing -> Unsatisfied missing))
 ;;
 
+(* BUG-041: every entry point that hands [dir] to the runner validates it with the
+   same rule the deploy gate uses first, so a shared version stops here instead of
+   being applied once and skipped once. *)
+let require_valid_migrations dir =
+  match Sol_cli_migration.required ~dir with
+  | Ok _ -> ()
+  | Error message ->
+    Printf.eprintf "error: %s\n" message;
+    exit 1
+;;
+
 (* ── status ──────────────────────────────────────────────────────────────── *)
 
 let run_status ~ctx ?(json = false) dir table () =
+  require_valid_migrations dir;
   let url = get_postgres_url ~ctx () in
   with_pool url (fun ~fs pool ->
     match Migration.status ~table pool ~dir ~fs with
@@ -1032,6 +1044,7 @@ let run_status ~ctx ?(json = false) dir table () =
 (* ── rollback ────────────────────────────────────────────────────────────── *)
 
 let run_rollback ~ctx dir table () =
+  require_valid_migrations dir;
   let url = get_postgres_url ~ctx () in
   with_pool url (fun ~fs pool ->
     match Migration.rollback ~table pool ~dir ~fs with
@@ -1044,6 +1057,7 @@ let run_rollback ~ctx dir table () =
 (* ── apply dispatch: local direct-connect vs in-cluster Job ────────────────── *)
 
 let run_apply ~ctx dir table dry_run target registry =
+  require_valid_migrations dir;
   if dry_run
   then print_pending_sql dir
   else (

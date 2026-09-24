@@ -56,21 +56,51 @@ let parse_version fname =
 
 (* Every migration in [dir], ordered by version. An unparsable file name is an
    error rather than a silent skip: a migration the deploy would not require is
-   exactly the failure this check exists to prevent. *)
+   exactly the failure this check exists to prevent.
+
+   BUG-041 / FND-0032: a migration's identity in [schema_migrations] -- and so in
+   the runner's "pending" set -- is its version alone. Two files with one version
+   would let the second be skipped forever once the first is applied, with this
+   gate still reporting the version as applied. So a shared version is an error
+   that names both files. Down files ([NNN_x.down.sql]) are the runner's rollback
+   companions, not migrations, and are excluded exactly as the runner excludes them. *)
+let duplicate_versions named =
+  let rec scan acc = function
+    | (fa, a) :: ((fb, b) :: _ as rest) when a.version = b.version ->
+      scan ((fa, fb, a.version) :: acc) rest
+    | _ :: rest -> scan acc rest
+    | [] -> List.rev acc
+  in
+  scan [] (List.stable_sort (fun (_, a) (_, b) -> compare a.version b.version) named)
+;;
+
+let shared_version_error ~dir (a, b, version) =
+  let message =
+    String.concat
+      " "
+      [ Printf.sprintf "migrations %s and %s in %s share version %d;" a b dir version
+      ; "each migration needs its own version, or the runner applies one and silently"
+      ; "skips the other -- renumber one of them"
+      ]
+  in
+  Error message
+;;
+
 let required ~dir =
   match Sys.readdir dir with
   | exception Sys_error _ -> Ok []
   | arr ->
     let sql =
       Array.to_list arr
-      |> List.filter (fun f -> Filename.check_suffix f ".sql")
+      |> List.filter (fun f ->
+        Filename.check_suffix f ".sql" && not (Filename.check_suffix f ".down.sql"))
       |> List.sort String.compare
     in
     let rec parse acc = function
       | [] -> Ok (List.rev acc)
       | fname :: rest ->
         (match parse_version fname with
-         | Some (version, name) -> parse ({ version; name } :: acc) rest
+         | Some (version, name) -> parse ((fname, { version; name }) :: acc) rest
          | None ->
            Error
              (Printf.sprintf
@@ -78,7 +108,12 @@ let required ~dir =
                  `_` (expected e.g. `001_create_orders.sql`)"
                 (Filename.concat dir fname)))
     in
-    parse [] sql
+    (match parse [] sql with
+     | Error _ as e -> e
+     | Ok named ->
+       (match duplicate_versions named with
+        | [] -> Ok (List.map snd named)
+        | shared :: _ -> shared_version_error ~dir shared))
 ;;
 
 let to_string (p : prerequisite) = Printf.sprintf "%03d_%s" p.version p.name

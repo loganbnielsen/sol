@@ -47,7 +47,7 @@ pin-depends: [
   # choice above, these carry no "track development" intent.
   [ "obs-loki-eio.0.1.0"  "git+https://github.com/loganbnielsen/obs-loki-eio.git#20ff330a8f03aedf71c600f113e2bf0f8a14f205" ]
   [ "obs-tempo-eio.0.1.0" "git+https://github.com/loganbnielsen/obs-tempo-eio.git#31fd441cbae2a3fc5435539248524f00a6c6fd3d" ]
-  [ "pg-eio.0.1.0"        "git+https://github.com/loganbnielsen/pg-eio.git#16d8c66e111f345b672d51e4dcf8dd5b4368e5d2" ]
+  [ "pg-eio.0.1.0"        "git+https://github.com/loganbnielsen/pg-eio.git#3ef3a20f6d9a81ce2d8e3a439e5f5f8862fba3bb" ]
   [ "lambda-eio.0.1.0"    "git+https://github.com/loganbnielsen/lambda-eio.git#c07c367b0f8919ae6efb9c3af2cd39d9061b1fdd" ]
 
   # These are published, but the published releases LAG what the framework needs

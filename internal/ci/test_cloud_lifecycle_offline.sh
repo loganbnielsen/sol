@@ -119,6 +119,16 @@ JSON
     if fail_once plan; then exit 20; fi
     ;;
   *" show -json")
+    # HARDEN-004 step 2 / FND-0044 point 2: the destroy path decides "the
+    # substrate exists" from what Terraform's state represents, not from the
+    # install-time outputs. A fixture that means "absent target" must therefore
+    # empty the state too -- a target whose outputs are missing while its state
+    # still owns resources is the half-built case the OCaml suite pins with fakes,
+    # and it must NOT be read as absent.
+    if [ "${OUTPUT_ABSENT:-}" = 1 ]; then
+      printf '{"values":{"root_module":{"resources":[]}}}\n'
+      exit 0
+    fi
     case " $* " in
       *infra/base-gcp*|*infra/base*)
         # INFRA-042: the platform root's state. PARTIAL_INSTALL models Attempt 3 --
@@ -144,27 +154,35 @@ JSON
         gke_guard=true
         [ -e "${GCP_SQL_PREPARED_FILE:-/nonexistent}" ] && sql_guard=false
         [ -e "${GKE_PREPARED_FILE:-/nonexistent}" ] && gke_guard=false
-        printf '{"values":{"root_module":{"resources":[{"type":"google_sql_database_instance","values":{"deletion_protection":%s}},{"type":"google_container_cluster","values":{"deletion_protection":%s}}]}}}\n' \
+        # The real `terraform show -json` always carries each resource's real
+        # `address`; the guarded resources are found by address, not by type
+        # (FND-0048), so the fixture has to model that or it is not modelling
+        # Terraform.
+        printf '{"values":{"root_module":{"resources":[{"address":"google_sql_database_instance.postgres","type":"google_sql_database_instance","values":{"deletion_protection":%s}},{"address":"google_container_cluster.main","type":"google_container_cluster","values":{"deletion_protection":%s}}]}}}\n' \
           "$sql_guard" "$gke_guard"
         exit 0
         ;;
     esac
     if [ "${RDS_ABSENT:-}" = 1 ]; then
-      printf '{"values":{"root_module":{"resources":[]}}}\n'
+      # The cloud substrate exists (the EKS cluster is represented) but this target
+      # never created an RDS instance. Under HARDEN-004 step 2 the substrate's
+      # existence is what the state represents, so this must stay distinct from the
+      # wholly-absent case (empty state) -- hence a non-RDS resource, not `[]`.
+      printf '{"values":{"root_module":{"resources":[{"address":"aws_eks_cluster.main","type":"aws_eks_cluster","values":{"id":"lifecycle-test"}}]}}}\n'
     elif [ -e "$RDS_PREPARED_FILE" ]; then
       prepared_value="$(cat "$RDS_PREPARED_FILE")"
       if [ "$prepared_value" = "skip" ]; then
-        printf '{"values":{"root_module":{"resources":[{"type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":true,"final_snapshot_identifier":null}}]}}}\n'
+        printf '{"values":{"root_module":{"resources":[{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":true,"final_snapshot_identifier":null}}]}}}\n'
       else
         # RDS_SNAPSHOT_MISMATCH makes the provider's record disagree with what was
         # prepared, so the production guarantee can be shown to still fail closed.
         printf \
-          '{"values":{"root_module":{"resources":[{"type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":false,"final_snapshot_identifier":"%s"}}]}}}\n' \
+          '{"values":{"root_module":{"resources":[{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":false,"final_snapshot_identifier":"%s"}}]}}}\n' \
           "${prepared_value}${RDS_SNAPSHOT_MISMATCH:+-other}"
       fi
     else
       printf \
-        '{"values":{"root_module":{"resources":[{"type":"aws_db_instance","values":{"deletion_protection":true,"skip_final_snapshot":false,"final_snapshot_identifier":null}}]}}}\n'
+        '{"values":{"root_module":{"resources":[{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":true,"skip_final_snapshot":false,"final_snapshot_identifier":null}}]}}}\n'
     fi
     ;;
   *infra/aws*" apply "*"-target=aws_db_instance.postgres"*)
@@ -1188,6 +1206,62 @@ grep -F 'credentials: Google Application Default Credentials resolved' \
   cat "$gcp_destroy_log.out" >&2
   exit 1
 }
+
+# INFRA-070 / FND-0047: on GCP a failed `get-credentials` exits the lifecycle. It used to
+# do so without running the caller's cleanup (`with_cluster_access` ignored `on_error` on
+# GCP), which left the provisioner elevated after the destroy's reconciliation apply had
+# opened the bootstrap window. The window must be closed -- an apply with
+# provisioner_bootstrap_admin=false after the failed get-credentials -- before exit.
+gcp_access_log="$tmp/gcp-access-failure.log"
+rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/access"
+if (cd "$tmp/work" && FAIL_ON=access DESTROYING=1 LIFECYCLE_LOG="$gcp_access_log" \
+      "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$gcp_access_log.out" 2>&1
+then
+  cat "$gcp_access_log.out" >&2
+  echo "GCP destroy succeeded although cluster access could not be established" >&2
+  exit 1
+fi
+grep -F 'could not establish ephemeral cluster access' "$gcp_access_log.out" >/dev/null || {
+  echo "the injected get-credentials failure was not the reason the GCP destroy stopped:" >&2
+  cat "$gcp_access_log.out" >&2
+  exit 1
+}
+access_line="$(grep -nF 'get-credentials' "$gcp_access_log" | tail -1 | cut -d: -f1 || true)"
+close_line="$(grep -nE -- '-chdir=[^ ]*infra/gcp apply ' "$gcp_access_log" \
+  | grep -F -- 'provisioner_bootstrap_admin=false' | tail -1 | cut -d: -f1 || true)"
+if [ -z "$access_line" ] || [ -z "$close_line" ] || [ "$close_line" -le "$access_line" ]; then
+  echo "a GCP cluster-access failure exited without closing the bootstrap window:" >&2
+  grep -nE 'get-credentials|provisioner_bootstrap_admin' "$gcp_access_log" >&2 || true
+  exit 1
+fi
+
+# The install path hands the same cleanup to the same helper (`cloud apply` opens the
+# bootstrap window before it needs cluster access), so it gets the same assertion.
+gcp_apply_access_log="$tmp/gcp-apply-access-failure.log"
+rm -f "$FAIL_MARKER_DIR/access"
+if (cd "$tmp/work" && FAIL_ON=access LIFECYCLE_LOG="$gcp_apply_access_log" \
+      "$sol" cloud apply prod/gcp/us-central1) \
+  >"$gcp_apply_access_log.out" 2>&1
+then
+  cat "$gcp_apply_access_log.out" >&2
+  echo "GCP apply succeeded although cluster access could not be established" >&2
+  exit 1
+fi
+grep -F 'could not establish ephemeral cluster access' "$gcp_apply_access_log.out" \
+  >/dev/null || {
+  echo "the injected get-credentials failure was not the reason the GCP apply stopped:" >&2
+  cat "$gcp_apply_access_log.out" >&2
+  exit 1
+}
+access_line="$(grep -nF 'get-credentials' "$gcp_apply_access_log" | tail -1 | cut -d: -f1 || true)"
+close_line="$(grep -nE -- '-chdir=[^ ]*infra/gcp apply ' "$gcp_apply_access_log" \
+  | grep -F -- 'provisioner_bootstrap_admin=false' | tail -1 | cut -d: -f1 || true)"
+if [ -z "$access_line" ] || [ -z "$close_line" ] || [ "$close_line" -le "$access_line" ]; then
+  echo "a GCP cluster-access failure during apply exited without closing the bootstrap window:" >&2
+  grep -nE 'get-credentials|provisioner_bootstrap_admin' "$gcp_apply_access_log" >&2 || true
+  exit 1
+fi
 
 # Attempt 3 spent a billable apply before discovering that the host lacked the
 # plugin the platform stage needs. It must be refused up front instead -- the check
