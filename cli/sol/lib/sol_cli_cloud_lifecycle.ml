@@ -331,6 +331,17 @@ let platform_inputs (target : cloud_target) (outputs : cloud_outputs) =
    was edited by hand. ADR 0003 invariant 6 makes destruction an abort edge available
    from every phase; a creation-time requirement must not be what closes that edge.
    Install-time validation stays exactly as strict. *)
+(* Whether these variables are being computed to INSTALL the platform or to REMOVE
+   it. It matters because some of what this function checks is a capability guarantee
+   for installation -- "if you ask for this, the platform must be able to deliver it"
+   -- and a destruction is not an installation.
+
+   FND-0029: evaluating an install-time guarantee while destroying a target that was
+   already created made the only supported destruction path refuse a target that
+   `apply` had accepted, which stranded billable infrastructure until the declaration
+   was edited by hand. ADR 0003 invariant 6 makes destruction an abort edge available
+   from every phase; a creation-time requirement must not be what closes that edge.
+   Install-time validation stays exactly as strict. *)
 (* What happens to destruction when a preparation fails.
 
    A preparation is not one kind of thing. Most of it is best-effort: it lowers a deletion
@@ -373,9 +384,7 @@ let preparation_failure = function
 (* [Some reason] only when destruction must not proceed. Nothing else blocks. *)
 let destruction_blocked = function
   | Nothing_to_prepare | Prepared _ -> None
-  | Preparation_failed { reason; policy = Continue_to_destroy } ->
-    ignore reason;
-    None
+  | Preparation_failed { policy = Continue_to_destroy; _ } -> None
   | Preparation_failed { reason; policy = Block_destroy } -> Some reason
 ;;
 
@@ -390,12 +399,26 @@ let destruction_blocked = function
    the cluster it had been asked to remove (FND-0030).
 
    So eligibility is `configuration INTERSECT state`. A resource absent from state is not a
-   resource to prepare: for a half-built target the eligible set is empty, and the
-   preparation has nothing to do and cannot introduce anything. That makes the property
-   mechanical -- a destructive preparation cannot introduce a resource that was not
-   represented in state when destruction began. *)
+   resource to prepare, and for a half-built target the eligible set is empty.
+
+   What this does NOT do, on its own: bound what Terraform plans. `-target` includes
+   everything the target depends on, so a targeted apply can still plan to create an
+   unrepresented network or private-IP range; and a targeted apply reconciles the WHOLE
+   resource against configuration, so drift on a ForceNew attribute plans a replacement,
+   which creates on the destroy path. The intersection bounds what may be targeted; the
+   guarantee that nothing is created has to be asserted on the plan itself, before applying
+   it (FND-0030). *)
 let preparations_eligible ~state ~desired =
   List.filter (fun address -> List.mem address state) desired
+;;
+
+(* The addresses the target's configuration declares and its state does not hold. These are
+   the ones a destroy cannot reach: Terraform destroys what its state knows about, so a
+   resource in this set may still exist in the provider after a successful destroy -- and
+   still be billable. Reporting them is the minimum: staying quiet turns a loud failure into
+   a quiet one (FND-0030). *)
+let preparations_unrepresented ~state ~desired =
+  List.filter (fun address -> not (List.mem address state)) desired
 ;;
 
 type platform_vars_context =

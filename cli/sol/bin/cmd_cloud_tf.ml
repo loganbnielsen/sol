@@ -1822,21 +1822,40 @@ let gcp_protection_state infra_dir =
    transition, verified from state afterwards rather than assumed. Doing nothing here
    does not skip a preparation, it makes the destroy impossible and the target
    billable. *)
-(* What a destructive preparation may target: the configuration, filtered by what the
-   target's state actually represents (FND-0030). `apply -target` CREATES a target that is
-   absent from state, so preparing a resource this target does not have would make the
-   destroy path the thing that creates it -- Attempt 6's `409 Already exists`, raised while
-   trying to create the cluster it had been asked to remove. *)
-let gcp_guarded_desired =
-  [ "google_sql_database_instance.postgres"; "google_container_cluster.main" ]
+(* The guarded resources, once: the address and an accessor into the state read. Written
+   once because two spellings of the same address list is how they drift.
+
+   The preparation below lowers deletion guards so that destruction can proceed. It is NOT
+   a retention mechanism: deletion protection and "keep the final snapshot" are different
+   promises, and only the second one is a destruction precondition (DEC-033). *)
+let gcp_guarded_resources =
+  [ ("google_sql_database_instance.postgres", fun (sql, _) -> Option.is_some sql)
+  ; ("google_container_cluster.main", fun (_, cluster) -> Option.is_some cluster)
+  ]
 ;;
 
 let gcp_prepare_destroy run_log infra_dir var_files vars =
+  let report_unrepresented unrepresented =
+    (* FND-0030's actual leak, said out loud. Terraform destroys what its state holds, so a
+       resource this target declares and its state does not know about survives the destroy
+       -- and stays billable. Skipping it avoids the 409 of Attempt 6; without this report,
+       that turns a loud failure into a quiet success. Adopting it is the only way to reach
+       it, and that is a separate capability. *)
+    match unrepresented with
+    | [] -> ()
+    | addresses ->
+      Printf.printf
+        "  WARNING: %d resource(s) this target declares are ABSENT from its state and \
+         will therefore NOT be destroyed: %s\n\
+        \  They may still exist in the provider and remain billable (FND-0030).\n\
+         %!"
+        (List.length addresses)
+        (String.concat ", " addresses)
+  in
   match gcp_protection_state infra_dir with
   | Error message ->
-    (* Report the failed read here rather than raising: a preparation that could not run
-       must not decide whether destruction is attempted. The destroy below carries the
-       postcondition and its own error names the real cause. *)
+    (* Report the failed read rather than raising: a preparation that could not run must not
+       decide whether destruction is attempted. *)
     Printf.printf
       "  prepare: could not read this target's state (%s); preparing nothing.\n%!"
       message;
@@ -1844,27 +1863,26 @@ let gcp_prepare_destroy run_log infra_dir var_files vars =
   | Ok (sql, cluster) ->
     let represented =
       List.filter_map
-        (fun (address, present) -> if present then Some address else None)
-        [ "google_sql_database_instance.postgres", Option.is_some sql
-        ; "google_container_cluster.main", Option.is_some cluster
-        ]
+        (fun (address, present) -> if present (sql, cluster) then Some address else None)
+        gcp_guarded_resources
     in
-    let eligible =
-      Sol_cli_cloud_lifecycle.preparations_eligible
-        ~state:represented
-        ~desired:gcp_guarded_desired
-    in
-    (match eligible with
+    let desired = List.map fst gcp_guarded_resources in
+    report_unrepresented
+      (Sol_cli_cloud_lifecycle.preparations_unrepresented ~state:represented ~desired);
+    (match Sol_cli_cloud_lifecycle.preparations_eligible ~state:represented ~desired with
      | [] ->
        Printf.printf
-         "  prepare: no guarded resource in this target's state, nothing to prepare (and \
-          nothing that could be created).\n\
-          %!";
+         "  prepare: no guarded resource in this target's state, nothing is targeted.\n%!";
        false
      | first :: rest ->
        Printf.printf
          "  prepare: disabling the deletion guards on %s...\n%!"
-         (String.concat ", " eligible);
+         (String.concat ", " (first :: rest));
+       (* STILL ABORTS ON FAILURE, and the policy vocabulary does not hide it: a failed
+          guard-lowering apply blocks destruction here, which is the opposite of what this
+          path should do. Making it report and continue -- and making AWS's
+          final-snapshot preparation block instead, because there the failure stands for a
+          declared retention guarantee -- is the wiring that follows (FND-0030). *)
        require_terraform_success
          (Sol_cli_run_log.run_phase run_log ~name:"gcp-destroy-prepare" (fun () ->
             Sol_cli_terraform.apply
