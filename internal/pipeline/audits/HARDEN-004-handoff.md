@@ -106,3 +106,68 @@ inspection.
 - Evidence: Attempt-6 raw logs frozen at `~/sol-attempt6-evidence/` (outside the repo — they
   carry project identifiers); the readable chronology is
   `docs/qualification/2026-09-23-gcp-attempt6.md`.
+
+---
+
+# Handoff, part 2 — the correctness review reorders the plan (2026-09-24)
+
+`main` at the time of writing: `0d062112`. A correctness review of the destroy path was run
+against `f2e1773`; each finding below was re-verified against current `main` before being
+treated as a premise. **All seven are confirmed in substance, with two corrections**, noted
+inline.
+
+## Verification of the review's premises
+
+| | Finding | Verdict |
+|---|---|---|
+| **A** | The destroy path has constructive applies beyond the preparation. | **Confirmed.** `destroy-reconciliation-apply` (`cmd_cloud_tf.ml:2906`) is `Sol_cli_terraform.apply ~scope:whole_root` with `bootstrap_access_vars ~enabled:true @ destroy_apply_vars` (`:2909-2915`), and `provisioner-bootstrap-access-remove` is whole-root too. A whole-root apply **creates** anything in configuration and absent from state, so in the Attempt-6 shape the step *after* the now-skipped preparation plans to create the cluster. |
+| **B** | Destroy decides "substrate exists" from the install-time output contract. | **Confirmed.** `cloud_outputs_of` (`:717`) parses with `gcp_outputs_of_json` (`sol_cli_cloud_lifecycle.ml:211`), whose required fields are `cluster_name`, `project_id`, `region`, `artifact_registry` (+ optional ones). *Correction to the finding's field list: it is those four, not the three named.* So `{}` reads as absent, partial outputs are a parse error that refuses destroy, and complete outputs hit A. |
+| **C** | The CLI's absence verification fails open. | **Confirmed in substance.** `verify_gcp_destroy` (`:538`) / `verify_aws_destroy` (`:433`) derive names and region via `var_file_value` (`:194`), a line-based tfvars parser, with a `| None -> default` fallback (`:228`). A wrong region or project yields not-found, which reads as absent. Its parser-limitation details (JSON tfvars, multi-line HCL, `TF_VAR_*`, `*.auto.tfvars`) are inferred from that shape, not traced line by line. #449 fixed this class in the **harness**, not here. |
+| **D** | Retention is printed, not observed. | **Confirmed.** `retention_report` is only ever *called* (`:3040`, `:3046`); there is no `describe-db-snapshots` anywhere under `cli/sol/bin/`. Nothing checks that a final snapshot exists and is available, and nothing checks that `none` left zero snapshots and zero retained automated backups. |
+| **E** | `exit`-in-helpers is why the wiring is all-or-nothing, and the `on_error` threading already has a hole. | **Confirmed.** `with_cluster_access` (`:1418`) takes `~on_error`, and its **GCP branch is `ignore on_error`** (`:1423`): a failed `get-credentials` after bootstrap-admin was enabled exits without removing the elevated access — on install and on destroy. `require_terraform_success`/`lifecycle_error` exit 1 deep in helpers, so cleanup depends on `at_exit` plus hand-threaded callbacks. `cmd_rollback.ml` already has the target shape. |
+| **F** | `gcp_protection_state` identifies resources by *type* in `root_module` only. | **Confirmed in substance.** It reads `values.root_module.resources` and `List.find_opt`s on `type`, mapping that onto a fixed address: child modules are invisible, a second instance of a type is mis-handled, and a benign `null` `deletion_protection` surfaces as an error. *Correction: the message is "unexpected `terraform show -json` shape", not "could not read state" — the latter is the process-failure branch.* |
+| **G** | Decode failures ack-and-drop even where a DLQ exists. | **Confirmed in substance.** `kafka_service.ml` defaults `on_decode_error` to a handler that acks (`n e ~raw_bytes:_ ~ack`), on both the normal and retry paths. BUG-028 covered retry-topic records only. The exact `Retry_topics`-vs-source conditionality was not traced. |
+
+## Record correction (A's consequence)
+
+`FND-0030`'s design said "the targeted apply is the only constructive step in the destroy
+path". **That is false**, and the finding's design section should be corrected: the
+reconciliation apply and the bootstrap-access apply are whole-root and constructive. The
+plan-and-assert therefore has to cover **every** destroy-path apply, not only the preparation,
+and the reconciliation apply should be scoped to the bootstrap-window resource plus the
+eligible guarded resources rather than `whole_root`.
+
+## The order now (same operating rules: own PR each, merge on green, stop at green boundaries)
+
+1. **Offline replay of Attempt 6** (no spend; may be a doc PR). Against a **copy** of
+   `~/sol-attempt6-evidence` **state** — never the original, and nothing that can mutate a
+   provider — record: `terraform output -json` and which case of B it hits, and `terraform
+   plan` with the destroy path's vars (bootstrap admin on + destroy policy vars) together with
+   its create/replace set. This tells us whether A would have fired. **If it cannot be done
+   without any chance of touching the real project, stop and say so.**
+2. **Port destroy to the rollback shape**: `Sol_cli_cloud_destroy.execute ~deps` returning a
+   typed outcome, with terraform/gcloud/aws injected, exits only at the command edge, cleanup
+   bracketed. Begin with one state observation turned into a **typed inventory** (addresses,
+   ids/self-links, regions from state) and derive everything below from it — which fixes F.
+   Replace the outputs-based "substrate exists" with the inventory — which fixes B. An offline
+   test replays the Attempt-6 state through `execute` with fake deps. Behaviour-preserving
+   apart from B and F; say so in the PR.
+3. **Plan-and-assert on EVERY destroy-path apply.** The allow/refuse table already in this
+   note, plus one explicit allowlist: the bootstrap-access window resource may be created
+   (that create is the point of that apply). Scope the reconciliation apply to that resource
+   plus the eligible guarded resources instead of `whole_root`. Fixtures: the six already
+   listed, **plus** a whole-root-shaped plan with a missing cluster (refused) and a
+   bootstrap-window create (allowed).
+4. **Wire the policy vocabulary and the decided exit codes** (small once 2 exists).
+5. **Verification and retention from the inventory**: verify the ids and regions captured
+   *before* destroy, plus `terraform state list` empty as a postcondition; keep the name-based
+   describes only as an extra orphan sweep. Retention becomes observed evidence (snapshot `X`
+   exists and is available / zero snapshots and retained backups for `none`); a missing
+   snapshot under `final-snapshot` is a loud failure. Fixes C and D.
+6. **Runtime track (G)**, after 1–5 or in parallel if a session has room: source-topic decode
+   failures go to the DLQ where one exists, ack-and-drop only as explicit opt-in; add starter
+   alerts for decode drops, DLQ inflow and consumer lag. Check TypeScript parity per DEC-022.
+
+**Adoption inspection is paused until 5 lands.** **Attempt 7 stays closed**, and its negative
+criterion — zero target-owned creates — now depends on 1–5, because it rests on every
+destroy-path apply being asserted, not just the preparation.
