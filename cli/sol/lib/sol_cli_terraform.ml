@@ -50,6 +50,20 @@ let plan ?(env = []) ~scope ~chdir ~var_files ~vars () =
         @ var_args ~var_files ~vars))
 ;;
 
+(* A plan saved to a file, so the plan that was asserted is the plan that is
+   applied -- an apply that re-plans with the same arguments could differ from
+   the asserted plan (HARDEN-004 step 3). *)
+let plan_saved ?(env = []) ~scope ~chdir ~var_files ~vars ~out () =
+  run
+    ~echo:true
+    (cmd
+       ~env
+       ([ "terraform"; "-chdir=" ^ chdir; "plan" ]
+        @ scope_args scope
+        @ var_args ~var_files ~vars
+        @ [ "-out=" ^ out ]))
+;;
+
 let plan_destroy ?(env = []) ~chdir ~var_files ~vars () =
   run
     ~echo:true
@@ -87,4 +101,16 @@ let output_json ?(env = []) ~chdir () =
 
 let show_json ?(env = []) ~chdir () =
   run (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "show"; "-json" ])
+;;
+
+(* `terraform show -json <saved plan>`: the plan representation, with its
+   resource changes, for [Sol_cli_terraform_plan] to classify. *)
+let show_json_plan ?(env = []) ~chdir ~plan_file () =
+  run (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "show"; "-json"; plan_file ])
+;;
+
+(* Apply the saved plan itself. No `-auto-approve`: a saved plan applies without
+   confirmation, and the point is that no re-plan happens here. *)
+let apply_saved ?(env = []) ~chdir ~plan_file () =
+  run ~echo:true (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "apply"; plan_file ])
 ;;

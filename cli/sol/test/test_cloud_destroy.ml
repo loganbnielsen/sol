@@ -493,6 +493,87 @@ let test_absent_state_with_outputs_skips_teardown () =
   Alcotest.(check int) "the substrate destroy still ran" 1 calls.substrate
 ;;
 
+(* ── Plan assertion composed with the execution core (HARDEN-004 step 3) ──── *)
+
+let binding =
+  Sol_cli_terraform_plan.Exact
+    "kubernetes_cluster_role_binding.provisioner_bootstrap_admin"
+;;
+
+let guard_json =
+  {|{"resource_changes":[{"address":"google_container_cluster.main","type":"google_container_cluster","mode":"managed","change":{"actions":["create"]}}]}|}
+;;
+
+let refused_apply plan_ref policy plan_json () =
+  match
+    Sol_cli_terraform_plan.guarded_apply
+      ~policy
+      ~plan:(fun () -> Ok "/tmp/plan")
+      ~show_plan:(fun _ -> Ok plan_json)
+      ~apply_plan:(fun _ ->
+        plan_ref := !plan_ref + 1;
+        Ok ())
+      ()
+  with
+  | Ok () -> Ok ()
+  | Error failure -> Error (Sol_cli_terraform_plan.apply_failure_to_string failure)
+;;
+
+(* The property the step names: if the assertion refuses a plan, the
+   corresponding apply is never invoked -- here at the execution level, with the
+   refusing reconcile composed into [execute] through the real deps shape.
+   Removal is still attempted (the Step-2 guarantee), and the run stops before the
+   substrate destroy. *)
+let test_refused_reconciliation_never_applies () =
+  let open Sol_cli_terraform_plan in
+  let applied = ref 0 in
+  let policy =
+    { phase = "destroy-reconciliation"
+    ; rules = [ { matches = [ binding ]; allows = [ Update ]; reason = "" } ]
+    }
+  in
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~reconcile:(refused_apply applied policy guard_json)
+      ()
+  in
+  let outcome = execute ~deps in
+  Alcotest.(check int) "the refused apply was never invoked" 0 !applied;
+  (match outcome with
+   | Destroy_failed { failure = Reconciliation_failed _; cleanup = Cleanup_succeeded } ->
+     ()
+   | _ -> Alcotest.fail "expected a reconciliation failure with the cleanup attempted");
+  Alcotest.(check int) "removal was still attempted" 1 calls.remove;
+  Alcotest.(check int) "the substrate destroy did not run" 0 calls.substrate
+;;
+
+(* "Cleanup" is a name, not a safety property: a removal whose plan is refused
+   does not run, is not reported as a successful cleanup, and leaves the outcome
+   saying the elevated access may remain. *)
+let test_refused_removal_is_not_success () =
+  let open Sol_cli_terraform_plan in
+  let applied = ref 0 in
+  let policy =
+    { phase = "bootstrap-access-removal"
+    ; rules = [ { matches = [ binding ]; allows = [ Update ]; reason = "" } ]
+    }
+  in
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~remove:(refused_apply applied policy guard_json)
+      ()
+  in
+  let outcome = execute ~deps in
+  Alcotest.(check int) "the refused cleanup apply was never invoked" 0 !applied;
+  (match outcome with
+   | Destroy_failed
+       { failure = Elevated_access_not_removed _; cleanup = Cleanup_failed _ } -> ()
+   | _ -> Alcotest.fail "a refused removal must not be reported as a successful cleanup");
+  Alcotest.(check int) "the substrate destroy did not run" 0 calls.substrate
+;;
+
 let () =
   Alcotest.run
     "cloud_destroy"
@@ -561,6 +642,16 @@ let () =
             "absent state with outputs"
             `Quick
             test_absent_state_with_outputs_skips_teardown
+        ] )
+    ; ( "plan assertion"
+      , [ Alcotest.test_case
+            "refused reconciliation never applies"
+            `Quick
+            test_refused_reconciliation_never_applies
+        ; Alcotest.test_case
+            "refused removal is not success"
+            `Quick
+            test_refused_removal_is_not_success
         ] )
     ]
 ;;
