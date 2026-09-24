@@ -219,3 +219,72 @@ not weaken it — it is evidence about the code, not about a plan output.
 The teardown evidence bundle should capture `terraform show -json` (or `terraform state pull`)
 **before** any destroy runs. It is a local read, it costs nothing, it is not a mutation, and it
 would have made this step executable offline. Harness improvement candidate; not done here.
+
+---
+
+# Step 2 — destroy runs through a typed execution core with a state inventory (2026-09-24)
+
+**Outcome: landed.** `Sol_cli_cloud_destroy.execute ~deps` (own library module,
+`cli/sol/lib/sol_cli_cloud_destroy.ml`) is now the destroy sequence. It returns a typed
+`outcome` and never calls `exit`; `cmd_cloud_tf.ml`'s `cloud_destroy` resolves the request
+and owns the one process exit. Terraform/gcloud/aws operations are injected through `deps`;
+`Sol_cli_rollback.execute` is the precedent. Behaviour is unchanged except for B, F and the
+control-flow correction that makes cleanup reliable.
+
+## Fix B / FND-0044 point 2 — existence from state, not from install outputs
+
+One `terraform show -json` observation is classified into a typed inventory
+(`State_empty | State_represented of resource list | State_unreadable`), and
+`substrate_presence` is three-valued (`Present | Absent | Unknown`). Substrate existence, the
+destruction phase, which resources may be prepared, the reconciliation apply and the platform
+teardown are all derived from it. The install-time output contract no longer decides anything:
+a target with no outputs, partial outputs or complete outputs destroys the same way. An
+unreadable state is UNKNOWN and is never read as absence.
+
+## Fix F / FND-0048 — the real addresses, root and child modules
+
+`inventory_of_show_json` walks `root_module` and every `child_modules` entry, retaining
+Terraform's own `address`. Guarded resources are matched by address
+(`google_sql_database_instance.postgres`, `google_container_cluster.main`), never by a type
+mapped back onto a fixed address; a second instance of a type is a different address, not a
+mis-attributed first one. `deletion_protection` is `bool option`, so a benign null is `None`;
+a missing `values` is the empty state rather than a read failure. The inventory also captures
+the provider id/self-link, project/account and region/location, so Step 5 can verify from it.
+
+## Fix E structurally — cleanup is bracketed, not hand-threaded
+
+`with_elevated_access` enables the bootstrap access, runs the one operation that uses it, and
+removes the access **unconditionally** — including when enabling itself failed. The removal's
+result is carried as `cleanup` evidence in the outcome, never swallowed, and a cleanup failure
+on the otherwise-successful path is fatal rather than replaced by an unrelated success. The
+hand-threaded `on_error` every failing branch had to remember is gone from the destroy path.
+
+## Evidence
+
+- `cli/sol/test/test_cloud_destroy.ml` — 20 offline cases with fake deps: the eight the step
+  named (empty state; half-built/partial-outputs; a partial-outputs parse failure cannot refuse;
+  child-module address preserved; same type, distinct instances; state-read failure classified
+  UNKNOWN and not absence; elevated-access failure still removes; cleanup failure preserved as
+  evidence) plus identity, region-from-zone and null-guard cases. No terraform, gcloud, aws or
+  network.
+- `internal/ci/test_cloud_lifecycle_offline.sh` — the fixture now models what
+  `terraform show -json` actually emits (every resource carries its real `address`), and the
+  "absent target" fixture empties the state as well as the outputs. The RDS-absent fixture
+  keeps an EKS representation, so "substrate exists, no RDS" stays distinct from "wholly
+  absent". Full offline harness green.
+- `internal/ci/check_ocamlformat.sh --all` green; CI's unit-test command
+  (`dune test framework/… cli/sol/test/`) green.
+
+## Deliberately not done (later steps)
+
+Step 3 (plan-and-assert on **every** destroy-path apply), Step 4 (wire the policy vocabulary
+and the decided exit codes), Step 5 (verification/retention from the inventory), adoption
+inspection, FND-0010, the parked `cluster_issuer` change and runtime finding G. The
+whole-root reconciliation apply is still whole-root and still constructive: the inventory now
+keeps the Attempt-6 shape from running it (an empty state means no reconciliation), but a
+state that represents a *subset* still relies on Step 3. REFAC-091's install half is also still
+open, so that ticket stays in `READY_FOR_ENGINEERING`.
+
+**Demo/example: not applicable** — internal lifecycle refactor with no change to what an
+application author writes. **No language-parity impact** (DEC-022): no application-facing
+contract changed.
