@@ -17,14 +17,15 @@
   hard-coded in `cmd_rollback.ml:58`), `render`
   (`cli/sol/lib/sol_cli_deployment_render.ml:96-128`) writes the workload's
   `<svc>-secrets` with values taken from the CLI process's environment:
-  - declared `[infra.env] secrets`: required, and missing ones are an error;
+  - declared `[infra.env] secrets`: required, and an unset one is an error (but one
+    set to `""` passes and is written empty);
   - the default keys `POSTGRES_URL` and `SOL_API_KEY` (`default_secrets`): read with
     `value_from_env`, which returns `""` when unset. That is not an error.
 - `sol deploy` refuses an unset `POSTGRES_URL` (`cmd_deploy.ml:93-123`). It does not
   check `SOL_API_KEY`. `sol rollback` checks neither. `sol up` substitutes the local
   cluster's Postgres.
-- `sol secret set` patches the same `<svc>-secrets` objects
-  (`cli/sol/lib/sol_cli_secret.ml:378-393`).
+- `sol secret set` re-applies the same `<svc>-secrets` objects as full manifests,
+  keeping their other keys (`cli/sol/lib/sol_cli_secret.ml:378-393`).
 
 Render with both variables unset (`render_spec ~secret_backend:Kubernetes_live`, test
 helper `svc_spec`):

@@ -50,6 +50,8 @@ spec:
           image: sol-demo:local
           imagePullPolicy: Never   # use local image in k3s
           env:
+            - name: KAFKA_SECURITY_PROTOCOL
+              value: "plaintext"
             - name: KAFKA_BROKERS
               value: "redpanda.sol.svc.cluster.local:9092"
             - name: SCHEMA_REGISTRY_URL

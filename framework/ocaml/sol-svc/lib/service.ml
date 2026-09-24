@@ -88,6 +88,7 @@ let dispatch_unguarded
       ~metrics_auth
       ~max_body_bytes
       ?route_observer
+      ?(ready = fun () -> true)
       req
       body
   =
@@ -112,6 +113,20 @@ let dispatch_unguarded
         | `GET, "/healthz" ->
           observe "/healthz";
           Some (Response.json {|{"status":"ok"}|})
+        (* INFRA-073 / FND-0041(c): readiness, distinct from liveness. It turns 503
+           as soon as shutdown begins, while the listener keeps serving for
+           [shutdown_delay_s], so Kubernetes removes the endpoint before the pod
+           stops accepting instead of refusing requests routed to it. *)
+        | `GET, "/readyz" ->
+          observe "/readyz";
+          Some
+            (if ready ()
+             then Response.json {|{"status":"ready"}|}
+             else
+               { Response.status = 503
+               ; headers = [ "content-type", "application/json" ]
+               ; body = {|{"status":"shutting down"}|}
+               })
         | `GET, "/metrics" ->
           observe "/metrics";
           (match metrics_renderer with
@@ -315,6 +330,7 @@ module Make (H : HANDLER) = struct
         ?ot
         ?(max_body_bytes = 10_485_760)
         ?(drain_timeout_s = 30.0)
+        ?(shutdown_delay_s = 5.0)
         ?stop
         ?on_listen
         ()
@@ -356,6 +372,7 @@ module Make (H : HANDLER) = struct
     let* read_api_key =
       api_key_reader ~env ~required:(api_key_required H.routes metrics_auth)
     in
+    let ready = Atomic.make true in
     let signal_stop, signal_stop_r = Eio.Promise.create () in
     let await_stop () =
       match stop with
@@ -407,6 +424,7 @@ module Make (H : HANDLER) = struct
                  ~read_api_key
                  ~max_body_bytes
                  ?route_observer
+                 ~ready:(fun () -> Atomic.get ready)
                  req
                  body
              in
@@ -447,8 +465,13 @@ module Make (H : HANDLER) = struct
               accepting for the whole drain window and then reported a drain
               timeout even with nothing in flight. *)
            let server_stop, server_stop_r = Eio.Promise.create () in
+           (* INFRA-073: on stop, readiness goes 503 first; the listener keeps
+              serving for [shutdown_delay_s] so endpoint removal can propagate,
+              then stops accepting and drains. *)
            Eio.Fiber.fork_daemon ~sw (fun () ->
              await_stop ();
+             Atomic.set ready false;
+             if shutdown_delay_s > 0.0 then Eio.Time.sleep env#clock shutdown_delay_s;
              ignore (Eio.Promise.try_resolve server_stop_r ());
              `Stop_daemon);
            (* Race: serve exits naturally when connections drain, or drain guard fires
@@ -463,7 +486,7 @@ module Make (H : HANDLER) = struct
                   server)
              (fun () ->
                 await_stop ();
-                Eio.Time.sleep env#clock drain_timeout_s;
+                Eio.Time.sleep env#clock (shutdown_delay_s +. drain_timeout_s);
                 raise Drain_timeout))
        with
        | Drain_timeout ->
