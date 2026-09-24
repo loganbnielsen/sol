@@ -64,13 +64,26 @@ let parse_version fname =
    gate still reporting the version as applied. So a shared version is an error
    that names both files. Down files ([NNN_x.down.sql]) are the runner's rollback
    companions, not migrations, and are excluded exactly as the runner excludes them. *)
-let duplicate_versions migrations =
+let duplicate_versions named =
   let rec scan acc = function
-    | a :: (b :: _ as rest) when a.version = b.version -> scan ((a, b) :: acc) rest
+    | (fa, a) :: ((fb, b) :: _ as rest) when a.version = b.version ->
+      scan ((fa, fb, a.version) :: acc) rest
     | _ :: rest -> scan acc rest
     | [] -> List.rev acc
   in
-  scan [] (List.stable_sort (fun a b -> compare a.version b.version) migrations)
+  scan [] (List.stable_sort (fun (_, a) (_, b) -> compare a.version b.version) named)
+;;
+
+let shared_version_error ~dir (a, b, version) =
+  let message =
+    String.concat
+      " "
+      [ Printf.sprintf "migrations %s and %s in %s share version %d;" a b dir version
+      ; "each migration needs its own version, or the runner applies one and silently"
+      ; "skips the other -- renumber one of them"
+      ]
+  in
+  Error message
 ;;
 
 let required ~dir =
@@ -87,7 +100,7 @@ let required ~dir =
       | [] -> Ok (List.rev acc)
       | fname :: rest ->
         (match parse_version fname with
-         | Some (version, name) -> parse ({ version; name } :: acc) rest
+         | Some (version, name) -> parse ((fname, { version; name }) :: acc) rest
          | None ->
            Error
              (Printf.sprintf
@@ -97,19 +110,10 @@ let required ~dir =
     in
     (match parse [] sql with
      | Error _ as e -> e
-     | Ok migrations ->
-       (match duplicate_versions migrations with
-        | [] -> Ok migrations
-        | (a, b) :: _ ->
-          Error
-            (Printf.sprintf
-               "migrations %s.sql and %s.sql in %s share version %d; each migration \
-                needs                 its own version, or the runner applies one and \
-                silently skips the other                 -- renumber one of them"
-               (Printf.sprintf "%03d_%s" a.version a.name)
-               (Printf.sprintf "%03d_%s" b.version b.name)
-               dir
-               a.version)))
+     | Ok named ->
+       (match duplicate_versions named with
+        | [] -> Ok (List.map snd named)
+        | shared :: _ -> shared_version_error ~dir shared))
 ;;
 
 let to_string (p : prerequisite) = Printf.sprintf "%03d_%s" p.version p.name

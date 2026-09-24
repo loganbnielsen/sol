@@ -87,8 +87,25 @@ let test_required_rejects_a_shared_version () =
     match M.required ~dir with
     | Ok _ -> Alcotest.fail "expected an error for two migrations sharing version 4"
     | Error msg ->
-      Alcotest.(check bool) "names the first file" true (contains msg "004_add_invoices");
-      Alcotest.(check bool) "names the second file" true (contains msg "004_add_refunds"))
+      Alcotest.(check bool)
+        "names both files exactly as they are on disk"
+        true
+        (contains msg "migrations 004_add_invoices.sql and 004_add_refunds.sql"))
+;;
+
+(* The repo's own examples use four-digit versions; the error must name the files
+   that exist, not a reformatted version of them. *)
+let test_shared_version_names_four_digit_files () =
+  with_tmp_dir (fun dir ->
+    write_file (Filename.concat dir "0004_a.sql") "";
+    write_file (Filename.concat dir "0004_b.sql") "";
+    match M.required ~dir with
+    | Ok _ -> Alcotest.fail "expected an error for two migrations sharing version 4"
+    | Error msg ->
+      Alcotest.(check bool)
+        "names the real four-digit files"
+        true
+        (contains msg "migrations 0004_a.sql and 0004_b.sql"))
 ;;
 
 (* Down files are the runner's rollback companions; the runner does not treat them as
@@ -282,6 +299,10 @@ let () =
             "down files are not migrations"
             `Quick
             test_required_ignores_down_files
+        ; Alcotest.test_case
+            "shared version names four-digit files"
+            `Quick
+            test_shared_version_names_four_digit_files
         ; Alcotest.test_case
             "missing directory requires nothing"
             `Quick
