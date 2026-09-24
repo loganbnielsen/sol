@@ -1124,6 +1124,39 @@ target:
            target.Sol_cli_config.provisioner_impersonator))
 ;;
 
+(* INFRA-074: the ECR repository list is derived from the workloads with a
+   Dockerfile. A workspace with no [app/] yet has no repositories; a workload
+   without a Dockerfile has none either (and the cloud-apply plan guard is what
+   stops that from silently deleting an existing one). *)
+let ecr_repositories_of_workspace () =
+  write "sol.yml" "target:\n  aws:\n    vpc_cidr: \"10.42.0.0/16\"\n";
+  match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+  | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+  | Ok cfg ->
+    (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+     | Error msg -> Alcotest.fail msg
+     | Ok vars -> List.assoc_opt "ecr_repositories" vars)
+;;
+
+let test_ecr_repositories_without_app_dir_are_empty () =
+  with_temp_dir (fun () ->
+    check_str_opt
+      "no app/ -> no repositories"
+      (Some "[]")
+      (ecr_repositories_of_workspace ()))
+;;
+
+let test_ecr_repositories_follow_dockerfiles () =
+  with_temp_dir (fun () ->
+    mkdir_p "app/payments/charge_svc";
+    write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
+    mkdir_p "app/payments/refund_svc";
+    check_str_opt
+      "only the workload with a Dockerfile"
+      (Some {|["charge-svc"]|})
+      (ecr_repositories_of_workspace ()))
+;;
+
 let test_terraform_vars_are_provider_shaped () =
   with_temp_dir (fun () ->
     write
@@ -1633,6 +1666,14 @@ let () =
             "provider fields feed terraform vars"
             `Quick
             test_provider_fields_feed_active_terraform_provider
+        ; Alcotest.test_case
+            "ECR repositories: no app/ is empty (INFRA-074)"
+            `Quick
+            test_ecr_repositories_without_app_dir_are_empty
+        ; Alcotest.test_case
+            "ECR repositories follow Dockerfiles (INFRA-074)"
+            `Quick
+            test_ecr_repositories_follow_dockerfiles
         ; Alcotest.test_case
             "destroy_retention survives the merge"
             `Quick

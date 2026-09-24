@@ -6,9 +6,15 @@
     are libraries inside the single [sol] opam package, so this adds no opam
     metadata and no release path. *)
 
-(** [install_signal_handler ~sw resolver] installs handlers for SIGTERM and
-    SIGINT that resolve [resolver] exactly once, and forks a daemon fiber on
-    [sw] that awaits the self-pipe and then exits.
+(** [install_signal_handler ~sw resolver] registers [resolver] with the
+    process-wide SIGTERM/SIGINT handler (installed on the first registration)
+    and forks a daemon fiber on [sw] that awaits this registration's self-pipe,
+    resolves [resolver] once, and exits. Every live registration is signalled,
+    so several primitives in one process all shut down (BUG-047). The
+    registration ends when [sw] does: its fd is removed from the handler before
+    it is closed, and when none remain the previous dispositions are restored.
+    A second signal while the first is being handled restores the default
+    disposition and re-raises it, so a second Ctrl-C terminates the process.
 
     The write end of the self-pipe is non-blocking and cloexec, and the handler
     only performs an async-signal-safe single-byte write. Consumers await the

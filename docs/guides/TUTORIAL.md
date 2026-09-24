@@ -517,7 +517,7 @@ Generates `app/ops/admin_svc/` with a stub handler. Add routes and redeploy.
 sol new fn billing/invoice
 ```
 
-Generates `app/billing/invoice_fn/` with a `schedule` field (default `"0 * * * *"`) and a `run` function. Sol reads the schedule literal from source and generates a Kubernetes `CronJob`.
+Generates `app/billing/invoice_fn/` with a `run` function and a `sol.toml` whose `[service] schedule` (scaffolded as `"0 * * * *"`) is required. Sol reads the schedule from `sol.toml` and generates a Kubernetes `CronJob`; a `-fn` without one is a plan error rather than an hourly job.
 
 ---
 
@@ -767,6 +767,14 @@ sol cloud apply prod/aws/us-east-1 --var-file prod.tfvars
 ```bash
 sol cloud apply prod/aws/us-east-1 --var cluster_name=acme-prod --var db_password=...
 ```
+
+**ECR repositories follow the checkout.** The AWS root keeps one ECR repository per
+workload that has a Dockerfile in the checkout you run `sol cloud apply` from, and a
+repository is deleted with its images when it leaves that set. So `sol cloud apply`
+plans first, reads the plan, and refuses (changing nothing) when it would delete any
+ECR repository. It names the repositories. Run from the checkout that deploys the
+target, or pass `--confirm-ecr-removal` when the removal is intended. The plan that
+was read is the plan that is applied.
 
 During platform reconciliation Sol creates an ephemeral kubeconfig for the declared steady-state cluster-access identity, separate from the cloud-provisioning identity. It passes that file explicitly to child processes and removes it afterward; it does not read or update the user's ambient kubeconfig. Installing the platform is privileged platform establishment (ADR 0003): the cluster-access identity holds a temporary managed cluster-admin association through the full platform apply and verified readiness, and Sol revokes it before leaving the target Ready. In steady state it holds neither Kubernetes `escalate`/`bind` nor IAM access-entry/policy-association mutation. On success the command prints the non-sensitive provisioned endpoints:
 

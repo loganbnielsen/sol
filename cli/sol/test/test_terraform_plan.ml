@@ -329,11 +329,42 @@ let test_guarded_apply_permitted_applies_once () =
     Alcotest.failf "expected success: %s" (apply_failure_to_string failure)
 ;;
 
+(* INFRA-074: the ECR repositories a cloud-apply plan would remove. A replace
+   destroys the repository first, so it counts as a removal in both orderings. *)
+let test_removed_of_type () =
+  let changes =
+    match
+      changes_of_plan_json
+        (plan_of
+           [ delete {|aws_ecr_repository.services["old-svc"]|} "aws_ecr_repository"
+           ; replace {|aws_ecr_repository.services["renamed"]|} "aws_ecr_repository"
+           ; change
+               {|aws_ecr_repository.services["create-first"]|}
+               "aws_ecr_repository"
+               [ "create"; "delete" ]
+           ; update {|aws_ecr_repository.services["kept"]|} "aws_ecr_repository"
+           ; create {|aws_ecr_repository.services["new-svc"]|} "aws_ecr_repository"
+           ; delete "aws_ecr_lifecycle_policy.services" "aws_ecr_lifecycle_policy"
+           ])
+    with
+    | Ok c -> c
+    | Error e -> Alcotest.fail e
+  in
+  Alcotest.(check (list string))
+    "deletes and replaces of the type, nothing else"
+    [ {|aws_ecr_repository.services["old-svc"]|}
+    ; {|aws_ecr_repository.services["renamed"]|}
+    ; {|aws_ecr_repository.services["create-first"]|}
+    ]
+    (removed_of_type ~resource_type:"aws_ecr_repository" changes)
+;;
+
 let () =
   Alcotest.run
     "terraform_plan"
     [ ( "classification"
       , [ Alcotest.test_case "actions" `Quick test_actions
+        ; Alcotest.test_case "removed_of_type (INFRA-074)" `Quick test_removed_of_type
         ; Alcotest.test_case "malformed is an error" `Quick test_malformed_is_error
         ; Alcotest.test_case
             "empty and read-only are allowed"

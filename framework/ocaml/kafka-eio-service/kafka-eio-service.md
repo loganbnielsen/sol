@@ -341,10 +341,14 @@ produce error self-heals rather than reaching `consume_partitioned`'s own
 zero-tolerance retry policy for the relay. If those in-process attempts are
 exhausted, that **is** treated as a real failure, and the policy is explicit
 rather than an accident of internal retry-count configuration: **the relay
-failing and never recovering fails the worker** (surfaced as an `Error` from
-`consume_partitioned`/`Worker.Make(W).run` once the source consumer itself
-stops), rather than leaving the process running with retry delivery silently
-dead. `on_relay_publish` distinguishes a publish that ultimately succeeded
+failing and never recovering fails the worker**, rather than leaving the
+process running with retry delivery silently dead. It fails promptly: when the
+relay stops, it closes the source consumer, so `consume_partitioned` (and
+`Worker.Make_with_retry(W).run`) returns the relay's `Error` straight away
+rather than when the source next stops on its own, which for a healthy idle
+source is never (BUG-043). An error the source consumer reports after that close
+(for instance an in-flight ack answered with `Destroy`) is a consequence of the
+relay failure, so the relay's error is the one returned. `on_relay_publish` distinguishes a publish that ultimately succeeded
 from one that was exhausted, separately from `on_retry`, which fires once per
 record when a retry is *scheduled* — before publication is even attempted.
 

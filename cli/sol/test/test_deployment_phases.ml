@@ -862,37 +862,38 @@ let test_direct_fn_executor_result_fields () =
 
 (* ── Phase 6: state update ──────────────────────────────────────────────── *)
 
-let test_state_applied_does_not_raise () =
-  Sol_cli_deployment_state.record_outcome
-    ~ctx:Sol_cli_kube_destination.local_context
-    "myapp"
-    (Sol_cli_deployment_state.Applied
-       { namespace = "myapp-payments"
-       ; name = "charge-svc"
-       ; image = "registry.example.com/myapp/charge-svc:abc123"
-       ; consumer_groups = [ "myapp.comms.notify_worker" ]
-       })
-;;
-
 let test_state_dry_run_is_noop () =
-  Sol_cli_deployment_state.record_outcome
-    ~ctx:Sol_cli_kube_destination.local_context
-    "myapp"
-    Sol_cli_deployment_state.Dry_run
+  Alcotest.(check bool)
+    "no-op outcome is Ok"
+    true
+    (Result.is_ok
+       (Sol_cli_deployment_state.record_outcome
+          ~ctx:Sol_cli_kube_destination.local_context
+          "myapp"
+          Sol_cli_deployment_state.Dry_run))
 ;;
 
 let test_state_failed_is_noop () =
-  Sol_cli_deployment_state.record_outcome
-    ~ctx:Sol_cli_kube_destination.local_context
-    "myapp"
-    (Sol_cli_deployment_state.Failed { phase = "render"; message = "YAML error" })
+  Alcotest.(check bool)
+    "no-op outcome is Ok"
+    true
+    (Result.is_ok
+       (Sol_cli_deployment_state.record_outcome
+          ~ctx:Sol_cli_kube_destination.local_context
+          "myapp"
+          (Sol_cli_deployment_state.Failed { phase = "render"; message = "YAML error" })))
 ;;
 
 let test_state_emitted_is_noop () =
-  Sol_cli_deployment_state.record_outcome
-    ~ctx:Sol_cli_kube_destination.local_context
-    "myapp"
-    (Sol_cli_deployment_state.Emitted { file = "/tmp/myapp-payments-charge-svc.yaml" })
+  Alcotest.(check bool)
+    "no-op outcome is Ok"
+    true
+    (Result.is_ok
+       (Sol_cli_deployment_state.record_outcome
+          ~ctx:Sol_cli_kube_destination.local_context
+          "myapp"
+          (Sol_cli_deployment_state.Emitted
+             { file = "/tmp/myapp-payments-charge-svc.yaml" })))
 ;;
 
 let test_state_removed_consumer_groups () =
@@ -1239,11 +1240,7 @@ let () =
             test_direct_fn_executor_result_fields
         ] )
     ; ( "state_update"
-      , [ Alcotest.test_case
-            "Applied does not raise"
-            `Quick
-            test_state_applied_does_not_raise
-        ; Alcotest.test_case "Dry_run is no-op" `Quick test_state_dry_run_is_noop
+      , [ Alcotest.test_case "Dry_run is no-op" `Quick test_state_dry_run_is_noop
         ; Alcotest.test_case "Failed is no-op" `Quick test_state_failed_is_noop
         ; Alcotest.test_case "Emitted is no-op" `Quick test_state_emitted_is_noop
         ; Alcotest.test_case

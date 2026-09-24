@@ -102,27 +102,20 @@ let ensure_postgres_url () =
 ;;
 
 let check_consumer_group_changes ~ctx ~workspace ~confirm_group_change plan =
-  let prev_groups = Sol_cli_deployment_state.load_deployed_groups ~ctx workspace in
-  let next_groups =
-    List.map
-      Sol_cli_plan_ids.Consumer_group.to_string
-      plan.Sol_cli_deployment_plan.consumer_groups
-  in
-  let removed =
-    Sol_cli_deployment_state.removed_consumer_groups ~prev:prev_groups ~next:next_groups
-  in
-  if removed <> [] && not confirm_group_change
-  then (
-    Printf.eprintf
-      "\n\
-       warning: the following consumer group(s) are no longer present in this deploy plan:\n";
-    List.iter (fun g -> Printf.eprintf "  - %s\n" g) removed;
-    Printf.eprintf
-      "\n\
-       Messages produced while the old group is absent will be consumed\n\
-       from the latest offset when the group is re-added, silently skipping\n\
-       any backlog.  Pass --confirm-group-change to acknowledge and proceed.\n\n";
-    exit 1)
+  match
+    Sol_cli_deployment_state.check_removed_groups
+      ~ctx
+      ~workspace
+      ~confirm_group_change
+      ~next:
+        (List.map
+           Sol_cli_plan_ids.Consumer_group.to_string
+           plan.Sol_cli_deployment_plan.consumer_groups)
+  with
+  | Ok () -> ()
+  | Error msg ->
+    Printf.eprintf "%s\n%!" msg;
+    exit 1
 ;;
 
 let check_apply_environment ~services =
@@ -603,19 +596,7 @@ let report_apply_success ctx plan results =
   Printf.printf "\nDone. %d service(s) deployed.\n" (List.length ctx.services);
   print_service_urls ~ctx:ctx.execution.cluster results;
   Printf.printf "Run 'sol status' to check pod health.\n";
-  report_surplus_workloads ctx plan;
-  Sol_cli_deployment_state.record_outcome
-    ~ctx:ctx.execution.cluster
-    ctx.execution.workspace
-    (Sol_cli_deployment_state.Applied
-       { namespace = "default"
-       ; name = ctx.execution.workspace
-       ; image = ctx.sha
-       ; consumer_groups =
-           List.map
-             Sol_cli_plan_ids.Consumer_group.to_string
-             plan.Sol_cli_deployment_plan.consumer_groups
-       })
+  report_surplus_workloads ctx plan
 ;;
 
 (* FEAT-071: the Loki marker is a join key to the authoritative event, so it is
@@ -708,7 +689,22 @@ let run_apply ctx ~confirm_group_change ~loki_push_url =
             neither print a success line nor exit zero -- and the message names
             that the workloads may already be running. *)
          Sol_cli_release.finish_deployment
-           ~record_release:(fun () -> record_release_and_prune ctx ~previous plan)
+           ~record_release:(fun () ->
+             let ( let* ) = Result.bind in
+             let* () = record_release_and_prune ctx ~previous plan in
+             (* BUG-045: see Sol_cli_deployment_state.save_deployed_groups. *)
+             Sol_cli_deployment_state.record_outcome
+               ~ctx:ctx.execution.cluster
+               ctx.execution.workspace
+               (Sol_cli_deployment_state.Applied
+                  { namespace = "default"
+                  ; name = ctx.execution.workspace
+                  ; image = ctx.sha
+                  ; consumer_groups =
+                      List.map
+                        Sol_cli_plan_ids.Consumer_group.to_string
+                        plan.Sol_cli_deployment_plan.consumer_groups
+                  }))
            ~report_success:(fun () -> report_apply_success ctx plan results))
 ;;
 
