@@ -98,12 +98,20 @@ let decode_jwt_payload parts =
   |> Option.to_result ~none:(`Unauthorized "Malformed JWT: cannot decode payload")
 ;;
 
+(* BUG-053: claims are read with [Yojson.Safe.Util.member], which raises on a
+   non-object. A token whose payload is, say, a JSON array must be a 401, not an
+   exception out of authentication. *)
+let require_claims_object = function
+  | `Assoc _ as json -> Ok json
+  | _ -> Error (`Unauthorized "Malformed JWT: payload is not a JSON object")
+;;
+
 let parse_jwt_payload payload_str =
   match Yojson.Safe.from_string payload_str with
   | exception ((Out_of_memory | Stack_overflow | Sys.Break) as exn) -> raise exn
   | exception Yojson.Json_error _ ->
     Error (`Unauthorized "Malformed JWT: payload is not valid JSON")
-  | json -> Ok json
+  | json -> require_claims_object json
 ;;
 
 let jwt_expired ~now json =
@@ -151,9 +159,22 @@ type jwks_cache_entry =
   }
 
 let jwks_cache : jwks_cache_entry option Atomic.t = Atomic.make None
-let jwks_cache_mutex = Mutex.create ()
+
+(* BUG-053 / FND-0050: an Eio mutex, not [Stdlib.Mutex]. The fetch it guards
+   suspends the fiber; another request fiber on the same domain that took a
+   [Stdlib.Mutex] held by its own thread raised [Sys_error "Resource deadlock
+   avoided"], which surfaced as an empty reply. An Eio mutex suspends the second
+   fiber instead, and it then finds the refreshed cache (single flight).
+   [use_ro], not [use_rw]: a cancelled or failed fetch must release the mutex,
+   not poison it for every later request. *)
+let jwks_refresh_mutex = Eio.Mutex.create ()
 let jwks_ttl_s = 300.0
 (* ponytail: fixed rotation window; make configurable if a real IdP needs faster/slower *)
+
+(* A token signed with a key the IdP has just rotated in names a [kid] the cached
+   set lacks. Refetch for it, but at most once per this interval, so tokens with
+   made-up [kid]s cannot drive a fetch per request. *)
+let jwks_unknown_kid_refetch_interval_s = 30.0
 
 (* Real transport for [Jwks_url]. [Service.Make.run] builds this once, closing
    over [env], and passes it into [validate] as the injected [fetch_jwks]
@@ -179,16 +200,20 @@ let fetch_jwks_over_https ~env url =
      | exn -> Error ("JWKS parse failed: " ^ Printexc.to_string exn))
 ;;
 
-let get_jwks ~fetch_jwks url =
-  let fresh entry =
-    entry.url = url && Unix.gettimeofday () -. entry.fetched_at < jwks_ttl_s
+(* [~max_age_s] is how old a cached set may be and still be used: the TTL
+   normally, and the refetch interval when the caller is looking for an unknown
+   [kid]. *)
+let get_jwks ?(max_age_s = jwks_ttl_s) ~fetch_jwks url =
+  let usable entry =
+    entry.url = url && Unix.gettimeofday () -. entry.fetched_at < max_age_s
   in
   match Atomic.get jwks_cache with
-  | Some entry when fresh entry -> Ok entry.jwks
+  | Some entry when usable entry -> Ok entry.jwks
   | _ ->
-    Mutex.protect jwks_cache_mutex (fun () ->
+    Eio.Mutex.use_ro jwks_refresh_mutex (fun () ->
+      (* Another fiber may have refreshed while this one waited. *)
       match Atomic.get jwks_cache with
-      | Some entry when fresh entry -> Ok entry.jwks
+      | Some entry when usable entry -> Ok entry.jwks
       | _ ->
         (match fetch_jwks url with
          | Ok jwks ->
@@ -213,13 +238,23 @@ let verify_with_key_source ?fetch_jwks ~kid parsed key_source =
     | Error `Invalid_signature -> Error (`Unauthorized "JWT signature invalid")
     | Error (`Msg m) -> Error (`Unauthorized ("JWT invalid: " ^ m))
   in
-  let jwks_lookup jwks =
+  let jwks_lookup ?refetch jwks =
     match kid with
     | None -> Error (`Unauthorized "JWT missing kid")
     | Some kid ->
       (match Jose.Jwks.find_key jwks kid with
        | Some jwk -> with_jwk jwk
-       | None -> Error (`Unauthorized "JWT key id not found in JWKS"))
+       | None ->
+         let not_found = Error (`Unauthorized "JWT key id not found in JWKS") in
+         (match refetch with
+          | None -> not_found
+          | Some refetch ->
+            (match refetch () with
+             | Error msg -> Error (`Server_error ("JWKS fetch failed: " ^ msg))
+             | Ok jwks ->
+               (match Jose.Jwks.find_key jwks kid with
+                | Some jwk -> with_jwk jwk
+                | None -> not_found))))
   in
   match key_source with
   | Hs256_secret secret -> with_jwk (Jose.Jwk.make_oct secret)
@@ -235,7 +270,11 @@ let verify_with_key_source ?fetch_jwks ~kid parsed key_source =
      | Some fetch_jwks ->
        (match get_jwks ~fetch_jwks url with
         | Error msg -> Error (`Server_error ("JWKS fetch failed: " ^ msg))
-        | Ok jwks -> jwks_lookup jwks))
+        | Ok jwks ->
+          jwks_lookup
+            ~refetch:(fun () ->
+              get_jwks ~max_age_s:jwks_unknown_kid_refetch_interval_s ~fetch_jwks url)
+            jwks))
 ;;
 
 let jwt_alg_allowed algorithms (alg : Jose.Jwa.alg) =
@@ -290,7 +329,7 @@ let validate_verified_jwt ?fetch_jwks vconfig ~scopes headers =
   in
   let kid = parsed.Jose.Jwt.header.Jose.Header.kid in
   let* verified = verify_with_key_source ?fetch_jwks ~kid parsed vconfig.key_source in
-  let json = verified.Jose.Jwt.payload in
+  let* json = require_claims_object verified.Jose.Jwt.payload in
   let* () = check_issuer ~issuer:vconfig.issuer json in
   let* () = check_audience ~audience:vconfig.audience json in
   let token_scopes = token_scopes json in

@@ -48,3 +48,10 @@ val run
   -> ?on_listen:(int -> unit)
   -> unit
   -> (unit, run_error) result
+
+(** Test-only access to the request boundary (BUG-053): runs [f] and turns any
+    exception other than cancellation and fatal ones into a logged 500, so every
+    request gets a response. *)
+module For_testing : sig
+  val respond_or_500 : (unit -> Response.t) -> Response.t
+end
