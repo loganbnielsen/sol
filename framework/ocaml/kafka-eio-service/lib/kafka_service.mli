@@ -296,8 +296,9 @@ end
     - [SOL_KAFKA_DURABILITY] — ["broker-default" | "single-broker-loss"]
       (default: ["broker-default"])
     - [KAFKA_SECURITY_PROTOCOL] —
-      ["plaintext" | "ssl" | "sasl_plaintext" | "sasl_ssl"] (default:
-      ["plaintext"])
+      ["plaintext" | "ssl" | "sasl_plaintext" | "sasl_ssl"]. **Required**, no
+      default (SEC-007): an absent value is an [Error], so every environment
+      states its transport posture. Sol-rendered manifests set it.
     - [KAFKA_SSL_CA_LOCATION] — path to CA cert bundle (optional)
     - [KAFKA_SASL_MECHANISM] — e.g. ["SCRAM-SHA-256"] (optional)
     - [KAFKA_SASL_USERNAME] / [KAFKA_SASL_PASSWORD] — SASL credentials

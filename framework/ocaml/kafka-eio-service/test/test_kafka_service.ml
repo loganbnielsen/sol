@@ -148,7 +148,27 @@ let test_config_of_env_rejects_unknown_security_protocol () =
         (contains (Kafka_service.error_to_string e) "KAFKA_SECURITY_PROTOCOL"))
 ;;
 
+(* SEC-007 / FND-0039: an absent (or blank) protocol is an error, not an
+   implicit plaintext. *)
+let test_config_of_env_requires_security_protocol () =
+  with_env "KAFKA_SECURITY_PROTOCOL" "" (fun () ->
+    match Kafka_service.config_of_env () with
+    | Ok _ -> Alcotest.fail "an unstated transport posture must not default to plaintext"
+    | Error e ->
+      Alcotest.(check bool)
+        "names the variable"
+        true
+        (contains (Kafka_service.error_to_string e) "KAFKA_SECURITY_PROTOCOL"));
+  with_env "KAFKA_SECURITY_PROTOCOL" "plaintext" (fun () ->
+    Alcotest.(check bool)
+      "stated plaintext is accepted"
+      true
+      (Result.is_ok (Kafka_service.config_of_env ())))
+;;
+
 let test_config_of_env_topic_durability () =
+  with_env "KAFKA_SECURITY_PROTOCOL" "plaintext"
+  @@ fun () ->
   with_env "SOL_KAFKA_DURABILITY" "single-broker-loss" (fun () ->
     match Kafka_service.config_of_env () with
     | Error e -> Alcotest.fail (Kafka_service.error_to_string e)
@@ -795,6 +815,10 @@ let () =
             "unknown security protocol fails clearly"
             `Quick
             test_config_of_env_rejects_unknown_security_protocol
+        ; test_case
+            "requires KAFKA_SECURITY_PROTOCOL"
+            `Quick
+            test_config_of_env_requires_security_protocol
         ; test_case "topic durability" `Quick test_config_of_env_topic_durability
         ] )
     ; ( "retry_topics"
