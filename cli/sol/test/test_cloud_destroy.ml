@@ -174,6 +174,38 @@ let test_zone_reduces_to_region () =
   | _ -> Alcotest.fail "expected a represented resource"
 ;;
 
+(* An AWS resource carries no region attribute, but its ARN does -- so the region
+   step 5's provider lookups query with is captured from the provider's own
+   identifier rather than taken from a target default. *)
+let test_arn_identity_is_captured () =
+  let json =
+    show_json_resources
+      {|{"address":"module.eks.aws_eks_cluster.this[0]","type":"aws_eks_cluster","values":{"arn":"arn:aws:eks:eu-west-1:111122223333:cluster/captured","id":"captured"}}|}
+  in
+  match inventory_of_show_json json with
+  | State_represented [ resource ] ->
+    Alcotest.(check (option string))
+      "the ARN is retained"
+      (Some "arn:aws:eks:eu-west-1:111122223333:cluster/captured")
+      resource.arn;
+    Alcotest.(check (option string))
+      "the region comes from the ARN"
+      (Some "eu-west-1")
+      resource.region;
+    Alcotest.(check (option string))
+      "the account comes from the ARN"
+      (Some "111122223333")
+      resource.project;
+    (match identities (State_represented [ resource ]) with
+     | [ identity ] ->
+       Alcotest.(check (option string))
+         "the identity handed to verification carries the same region"
+         (Some "eu-west-1")
+         identity.Sol_cli_destroy_verification.region
+     | _ -> Alcotest.fail "expected one captured identity")
+  | _ -> Alcotest.fail "expected a represented resource"
+;;
+
 (* ── Execution core ──────────────────────────────────────────────────────── *)
 
 (* A recording set of fakes. Every operation is counted, so "was cleanup
@@ -190,6 +222,19 @@ type calls =
   ; mutable verify : int
   }
 
+(* A verification observation that establishes absence: nothing was represented
+   before destruction, the state read is empty afterwards, the sweep found nothing
+   and no retention promise was declared. Every case below overrides exactly the
+   leg it is about, so the others cannot mask it. *)
+let verified_observation =
+  { Sol_cli_destroy_verification.state = State_absent
+  ; identities = []
+  ; unqueried = []
+  ; sweep = Sweep_ran { residues = []; indeterminate = [] }
+  ; retention = Retention_not_required "this fixture declares no retention"
+  }
+;;
+
 let fake_deps
       ?(state = Ok {|{}|})
       ?(outputs = Outputs_available)
@@ -198,7 +243,7 @@ let fake_deps
       ?(platform = fun () -> Ok ())
       ?(remove = fun () -> Ok ())
       ?(destroy_substrate = fun () -> Ok ())
-      ?(verify_absent = fun () -> Ok ())
+      ?(verify_destruction = fun ~pre_destroy:_ ~preparation:_ -> verified_observation)
       ()
   =
   let calls =
@@ -249,10 +294,10 @@ let fake_deps
         (fun () ->
           calls.substrate <- calls.substrate + 1;
           destroy_substrate ())
-    ; verify_absent =
-        (fun () ->
+    ; verify_destruction =
+        (fun ~pre_destroy ~preparation ->
           calls.verify <- calls.verify + 1;
-          verify_absent ())
+          verify_destruction ~pre_destroy ~preparation)
     ; report = (fun _ -> ())
     ; warn = (fun _ -> ())
     }
@@ -455,6 +500,7 @@ let test_skipped_teardown_and_cleanup_failure_are_both_preserved () =
       { failure = Elevated_access_not_removed message
       ; degradations = [ degraded ]
       ; cleanup = Cleanup_failed cleanup_message
+      ; verification = _
       } ->
     Alcotest.(check string) "the removal failure is the failure" "cleanup refused" message;
     Alcotest.(check string)
@@ -806,6 +852,209 @@ let test_refused_removal_is_not_success () =
   Alcotest.(check int) "the substrate destroy did not run" 0 calls.substrate
 ;;
 
+(* ── Verification composed with the outcome (HARDEN-004 step 5) ─────────────
+
+   Verification is an additional dimension, not a replacement: it does not erase a
+   Step-4 degradation, and a preparation degradation does not soften an
+   unestablished postcondition. The exit contract is unchanged -- 0 clean, 3
+   degraded-but-verified, 1 failure -- and UNKNOWN is a failure, never exit 3,
+   because exit 3 means the primary postcondition *succeeded*. *)
+
+let unknown_identity =
+  { Sol_cli_destroy_verification.address = "google_container_cluster.main"
+  ; kind = "google_container_cluster"
+  ; provider_id = Some "captured"
+  ; arn = None
+  ; project = Some "captured-project"
+  ; region = Some "us-central1"
+  }
+;;
+
+let provider_leg verdict =
+  { Sol_cli_destroy_verification.identity = unknown_identity
+  ; operation = "gcloud container clusters describe captured"
+  ; status = None
+  ; evidence = "test evidence"
+  ; verdict
+  }
+;;
+
+let observation_with
+      ?(state = Sol_cli_destroy_verification.State_absent)
+      ?(identities = [])
+      ?(retention = Sol_cli_destroy_verification.Retention_not_required "fixture")
+      ()
+  =
+  { Sol_cli_destroy_verification.state
+  ; identities
+  ; unqueried = []
+  ; sweep = Sol_cli_destroy_verification.Sweep_ran { residues = []; indeterminate = [] }
+  ; retention
+  }
+;;
+
+(* Regression 23: a preparation degradation plus verified absence is a degraded
+   success. *)
+let test_degradation_with_verified_absence () =
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~prepare:(fun ~state:_ -> continue_failure "guards not lowered")
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_succeeded { degradations = [ _ ]; verification; _ } ->
+     Alcotest.(check bool)
+       "the observation is carried, and it is the verified one"
+       true
+       (verification = verified_observation)
+   | _ ->
+     Alcotest.fail "a degraded preparation with verified absence is a degraded success");
+  Alcotest.(check int) "degraded success exits 3" exit_degraded (exit_code outcome);
+  Alcotest.(check int) "the substrate destroy ran" 1 calls.substrate
+;;
+
+(* Regression 24: a clean preparation whose verification is UNKNOWN is a failure. *)
+let test_verification_unknown_is_a_failure () =
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~verify_destruction:(fun ~pre_destroy:_ ~preparation:_ ->
+        observation_with ~identities:[ provider_leg (Unknown "permission denied") ] ())
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_failed
+       { failure = Verification_failed message
+       ; degradations = []
+       ; verification = Some _
+       ; _
+       } ->
+     Alcotest.(check bool)
+       "the failure says the postcondition was not established"
+       true
+       (contains (Str.regexp_string "could not be established") message)
+   | _ -> Alcotest.fail "an UNKNOWN observation must fail the destroy");
+  Alcotest.(check int)
+    "UNKNOWN is failure, not degraded success"
+    exit_failure
+    (exit_code outcome);
+  Alcotest.(check int) "the destroy itself was still attempted" 1 calls.substrate
+;;
+
+(* Regression 25: a degradation and a PRESENT resource both survive, and the exit
+   is a failure -- the earlier degradation is not erased by the later violation. *)
+let test_degradation_preserved_when_verification_fails () =
+  let deps, _ =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~prepare:(fun ~state:_ -> continue_failure "guards not lowered")
+      ~verify_destruction:(fun ~pre_destroy:_ ~preparation:_ ->
+        observation_with
+          ~identities:[ provider_leg Present ]
+          ~retention:(Retention_not_required "fixture")
+          ())
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_failed
+       { failure = Verification_failed message
+       ; degradations = [ degraded ]
+       ; verification = Some _
+       ; _
+       } ->
+     Alcotest.(check string)
+       "the preparation degradation is preserved"
+       "preparation: guards not lowered"
+       degraded;
+     Alcotest.(check bool)
+       "and the violation is what failed the run"
+       true
+       (contains (Str.regexp_string "violated") message)
+   | _ -> Alcotest.fail "a violation must fail the destroy and keep the degradation");
+  Alcotest.(check int) "a violation exits 1" exit_failure (exit_code outcome)
+;;
+
+(* Regression 26: a clean destruction whose promised final snapshot is missing
+   fails. The retention observation is the evidence, and it is a violation rather
+   than a degradation. *)
+let test_missing_retention_fails () =
+  let deps, _ =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~verify_destruction:(fun ~pre_destroy:_ ~preparation:_ ->
+        observation_with
+          ~retention:
+            (Retention_violated
+               "final-snapshot NOT observed (destroy_retention = final-snapshot): the \
+                target declared it keeps its final snapshot, and the provider explicitly \
+                reports that snap-1 does not exist")
+          ())
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_failed { failure = Verification_failed message; degradations = []; _ } ->
+     Alcotest.(check bool)
+       "the promised snapshot is named"
+       true
+       (contains (Str.regexp_string "snap-1") message)
+   | _ -> Alcotest.fail "a missing promised snapshot must fail the destroy");
+  Alcotest.(check int) "it exits 1" exit_failure (exit_code outcome)
+;;
+
+(* Regression 27: everything clean -- preparation, destroy, state, provider and
+   retention evidence. *)
+let test_fully_clean_is_exit_0 () =
+  let observed =
+    observation_with
+      ~identities:[ provider_leg Absent ]
+      ~retention:
+        (Retention_required_and_observed
+           "final snapshot snap-1 observed available (destroy_retention = final-snapshot)")
+      ()
+  in
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~prepare:(fun ~state:_ -> Sol_cli_cloud_lifecycle.Prepared Gcp_prepared)
+      ~verify_destruction:(fun ~pre_destroy:_ ~preparation:_ -> observed)
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_succeeded { degradations = []; verification; _ } ->
+     Alcotest.(check bool) "the evidence is carried" true (verification = observed)
+   | _ -> Alcotest.fail "a fully clean destroy must be a clean success");
+  Alcotest.(check int) "clean success exits 0" exit_clean (exit_code outcome);
+  Alcotest.(check int) "the verification ran" 1 calls.verify
+;;
+
+(* A Block_destroy never reaches verification: destruction did not happen, so there
+   is no postcondition to observe, and observing one would be reporting on a
+   destruction that never ran. *)
+let test_blocked_destroy_never_verifies () =
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~prepare:(fun ~state:_ ->
+        Sol_cli_cloud_lifecycle.Preparation_failed
+          { reason = "the target's retention guarantee could not be established"
+          ; policy = Sol_cli_cloud_lifecycle.Block_destroy
+          })
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_blocked _ -> ()
+   | _ -> Alcotest.fail "a Block_destroy preparation must block");
+  Alcotest.(check int) "verification never ran" 0 calls.verify;
+  Alcotest.(check int) "the substrate destroy never ran" 0 calls.substrate
+;;
+
 let () =
   Alcotest.run
     "cloud_destroy"
@@ -824,6 +1073,10 @@ let () =
             test_same_type_instances_are_distinct
         ; Alcotest.test_case "unreadable is UNKNOWN" `Quick test_unreadable_is_unknown
         ; Alcotest.test_case "zone reduces to region" `Quick test_zone_reduces_to_region
+        ; Alcotest.test_case
+            "ARN identity is captured"
+            `Quick
+            test_arn_identity_is_captured
         ] )
     ; ( "execute"
       , [ Alcotest.test_case
@@ -914,6 +1167,26 @@ let () =
             "refused removal is not success"
             `Quick
             test_refused_removal_is_not_success
+        ] )
+    ; ( "verification"
+      , [ Alcotest.test_case
+            "degradation + verified absence exits 3"
+            `Quick
+            test_degradation_with_verified_absence
+        ; Alcotest.test_case
+            "verification UNKNOWN exits 1"
+            `Quick
+            test_verification_unknown_is_a_failure
+        ; Alcotest.test_case
+            "degradation preserved when verification fails"
+            `Quick
+            test_degradation_preserved_when_verification_fails
+        ; Alcotest.test_case "missing retention fails" `Quick test_missing_retention_fails
+        ; Alcotest.test_case "fully clean exits 0" `Quick test_fully_clean_is_exit_0
+        ; Alcotest.test_case
+            "blocked destroy never verifies"
+            `Quick
+            test_blocked_destroy_never_verifies
         ] )
     ]
 ;;

@@ -314,8 +314,10 @@ asserted here.
   phase `policy`; `guarded_apply` refuses before applying. `no-op` anywhere and a data-source
   `read` are always permitted; an unrecognised action, a document with no `resource_changes`, a
   plan-command failure, and an unreadable plan are all REFUSE.
-- `Sol_cli_terraform.plan_saved` / `show_json_plan` / `apply_saved`: the apply receives the
+- `Sol_cli_terraform.plan_saved` / `show_saved_plan` / `apply_saved`: the apply receives the
   saved plan file, so what ran is what was asserted — not a re-plan that could differ.
+  (`show_saved_plan` is the SEC-008 name; this note said `show_json_plan`, the pre-SEC-008
+  spelling that is no longer exported.)
 - `Sol_cli_cloud_destroy`: the phase allowlists (`guard_preparation_policy`,
   `bootstrap_enable_policy`, `reconciliation_policy`, `bootstrap_removal_policy`), stated in
   addresses and actions.
@@ -471,3 +473,193 @@ runtime finding G, FND-0010 and the parked `cluster_issuer` work remain untouche
 
 **Demo/example: not applicable** — internal lifecycle refactor. **No language-parity impact**
 (DEC-022): no application-facing contract changed.
+
+# Step 5 — destruction is verified from observed provider/state evidence (2026-09-24)
+
+**Outcome: landed.** Steps 2–4 established what destruction is *allowed* to do. Step 5
+establishes what Sol is justified in *claiming* happened. The governing rule is that
+failure to obtain evidence is not evidence of the desired postcondition, and its
+destruction-specific form is that **a successful destroy command is not itself evidence
+that the target is absent**.
+
+## The model that landed
+
+`Sol_cli_destroy_verification` (`cli/sol/lib/`) is a new pure module: it builds the
+provider lookup for one captured identity, classifies a provider answer, and combines
+every evidence leg. Nothing in it queries a provider, reads a clock or reads a file, so
+all of it is testable without a cloud.
+
+```ocaml
+type provider_verdict = Present | Absent | Unknown of string
+
+type queryability =
+  | Queryable of recipe          (* a lookup exists for this kind *)
+  | No_recipe of string          (* no lookup exists: coverage, reported not fatal *)
+  | Identity_incomplete of string(* a lookup exists but the capture is not enough: UNKNOWN *)
+
+type state_evidence = State_absent | State_residue of string list | State_unreadable of string
+type sweep          = Sweep_not_run | Sweep_ran { residues : string list; indeterminate : string list }
+type retention      = Retention_required_and_observed of string
+                    | Retention_not_required of string
+                    | Retention_violated of string | Retention_unknown of string
+type retention_probe = Settled of retention | Pending of string
+
+type observation = { state; identities; unqueried; sweep; retention }
+type verdict     = { violations : string list; unknowns : string list }
+```
+
+`classify : observation -> verdict` keeps the two failure modes apart: `violations` are
+postconditions with positive evidence against them, `unknowns` are required observations
+that could not be obtained. Both fail (`is_verified` demands both lists be empty), and
+neither is a degraded success — exit 3 still means "the primary postcondition *succeeded*
+but a preparation degraded".
+
+## The identity rule, and the lookup it makes queryable
+
+`Sol_cli_cloud_destroy.identities` projects the inventory captured *before* destruction into
+`Sol_cli_destroy_verification.identity` (Terraform address, provider id/self-link, ARN,
+project/account, region). The recipes build each query from those fields only — the site
+and object come out of the provider's own self-link, the GCP project from the self-link's
+`projects/<p>/`, and the AWS region from the ARN (an AWS resource carries no region of its
+own; `region_of_values` now reads one out of the captured ARN rather than defaulting).
+Nothing reads a workspace name, a naming convention, a fallback region, a tfvars file, the
+current configuration or the install outputs.
+
+The recipes are one per kind the provider API can be asked about: GCP
+`google_container_cluster`, `google_sql_database_instance`, `google_compute_network`,
+`google_compute_subnetwork`, `google_compute_router`, `google_compute_address`,
+`google_compute_global_address`, `google_artifact_registry_repository`,
+`google_storage_bucket`, `google_dns_managed_zone`; AWS `aws_eks_cluster`, `aws_db_instance`,
+`aws_ecr_repository`, `aws_s3_bucket`, `aws_vpc`, `aws_subnet`, `aws_security_group`,
+`aws_nat_gateway`. A represented kind with no recipe is listed in the report as **not
+provider-verified**, and its absence rests on the state postcondition alone — said out
+loud, never silently dropped.
+
+## Finding C, closed in the place it actually bites
+
+GCP answers 404 both for "the object is gone" and for "that project is not visible to
+you". `gcp_absence_message ?project` therefore checks the **subject** of the answer: if the
+message names a project that is not the one the identity was captured in (`projects/<p>/…`
+or `the project '<p>'`), the answer is about something else and is UNKNOWN. The project
+recorded on the recipe is the one the query was *made in* — a GCP recipe rewrites the
+identity's project from the self-link for exactly this reason, so "the identity queried" and
+"the context a not-found is checked against" cannot drift apart.
+
+The wording list stays (gcloud publishes no structured result): `code=404`, `HTTPError 404`,
+`NOT_FOUND`, `not found`, `does not exist`. AWS is branchable on its typed error code, which
+is extracted structurally from `An error occurred (Code) when calling …`.
+
+## The Terraform-state postcondition, and the root it pins
+
+After the substrate destroy, `post_destroy_state` re-reads **the disposable root's own**
+state (`infra_dir` — `cli/platform/infra/gcp` or `…/aws`). `State_empty` is state-absence
+evidence, `State_residue addresses` is a violation naming each address, and a failed read is
+UNKNOWN. DEC-043's durable GCP prerequisites live in `cli/platform/infra/bootstrap-gcp`, a
+different root, so they are not teardown residue and are never asserted about here.
+
+## Retention, observed rather than printed
+
+`Sol_cli_cloud_lifecycle.retention_report` is **deleted**. It rendered the policy — "final
+snapshot X", or "destroyed to Absent with no residual billable artifacts" — with nothing
+observing either (FND-0046 / INFRA-072). Retention is now reported from evidence:
+
+| declared | what is queried | observed | failing |
+|---|---|---|---|
+| AWS `final-snapshot` | `aws rds describe-db-snapshots --db-snapshot-identifier <the id the preparation established>` | the snapshot exists and the provider reports it `available` | explicit `DBSnapshotNotFound`, or a status that is not `available`; `creating` is kept under observation for a bounded time and then reported UNKNOWN |
+| AWS `none` | `aws rds describe-db-snapshots --db-instance-identifier <the captured instance>` (no `--snapshot-type`, which AWS documents as automated + manual) | the provider returns no snapshot for this target's own database | any residual snapshot, named |
+| GCP `none` | nothing — there is no GCP snapshot surface, because Cloud SQL deletes its backups with the instance | the verified absence of the instance is the whole guarantee, and the report says exactly that | — |
+
+A provider answer about a *different* snapshot identifier is not evidence about this one. The
+retention sentence an operator reads is the one a provider query supports.
+
+## The sweep is demoted, and the query context stops being a guess
+
+The name/tag-derived checks (EIPs, NAT gateways, EBS volumes, load balancers, ECR prefixes,
+the service-networking peering) still run, because they catch what Terraform's state cannot
+speak for (INFRA-047) — but they are secondary, and their type says so
+(`Probe_gone` / `Probe_found` / `Probe_indeterminate`). A residue is a violation; an
+indeterminate check is reported and never converted into absence; and neither can override a
+captured identity's evidence in either direction. Where the sweep needs a query context it
+takes it from the capture (the network the inventory represents; the region in a captured
+ARN; the cluster name from the captured EKS cluster) or from the target, and if neither is
+available it reports that it could not run rather than guessing a name and reading the miss
+as absence.
+
+## Interaction with Step 4 (nothing is erased)
+
+`outcome` gains one *dimension* rather than a fifth case: `Destroy_succeeded` now carries a
+non-optional `verification : observation`, and `Destroy_failed` carries
+`verification : observation option` — `None` exactly when the run never reached the
+verification stage. `Destroy_blocked` carries none, because destruction did not happen and
+observing a postcondition for it would report on a destruction that never ran. The exit
+contract is unchanged, and the composition is pinned: a preparation degradation plus verified
+absence is exit 3; a clean preparation plus verification UNKNOWN is exit 1; a degradation plus
+a PRESENT resource is exit 1 with the degradation preserved; a clean destruction with a
+missing promised snapshot is exit 1; everything clean is exit 0.
+
+## Evidence
+
+- **`cli/sol/test/test_destroy_verification.ml` (new, 23 cases)** — the required provider,
+  state, combined, identity, retention and diagnostics cases: explicit not-found is ABSENT
+  (both providers, including gcloud's real `code=404` wording); a returned resource is
+  PRESENT; permission/auth/timeout/transport/wrong-project/malformed/unavailable are all
+  UNKNOWN and UNKNOWN never becomes absence; the subject rule and its positive control;
+  state empty/residue/unreadable; the five combined cases; captured-not-configured identity;
+  a misleading sweep cannot override a PRESENT or UNKNOWN captured identity; coverage gaps;
+  the retention cases including `creating` → `Pending`; and that the report answers the
+  diagnostic questions.
+- **`cli/sol/test/test_cloud_destroy.ml` (36 cases, +7)** — the ARN/region capture, and a new
+  `verification` group composing the observation with the outcome (the five composition
+  cases above, plus "a blocked destroy never verifies": `verify_destruction` is not invoked).
+- **`internal/ci/test_cloud_lifecycle_offline.sh`** — the fixtures now model what Terraform
+  actually emits: captured self-links/projects/locations on the GCP root, `id`+`arn` on the
+  AWS resources, the EKS cluster in every non-absent AWS case, and a **run-scoped**
+  `$LIFECYCLE_LOG.destroyed` marker standing for "the substrate destroy emptied this root"
+  (per-run, so one scenario cannot make the next one's *pre*-destroy state read empty). New
+  end-to-end scenarios: the GCP/AWS reports name the query made with each captured identity;
+  a missing final snapshot fails; a final snapshot still `creating` fails as UNKNOWN; a
+  snapshot that is `creating` once and then `available` is *observed* (so a retry that did not
+  happen would fail); retain-nothing residue fails; a provider that still returns the resource
+  fails (exit 1, not 3); a provider answer of UNKNOWN fails; and a state that still represents
+  something fails.
+- `dune build`, CI's unit-test command (`dune test cli/sol/test/`), `check_ocamlformat.sh
+  --all` and the full offline harness are all green. (29 lifecycle, 36 destroy, 23
+  verification, 20 plan tests.)
+
+## What remains UNKNOWN / unverifiable, stated rather than implied
+
+- **A represented kind with no recipe is not provider-verified.** Its absence rests on the
+  state postcondition alone, and the report lists it with the reason. This is coverage, not a
+  passing observation.
+- **The recipes have never run against a real provider.** They are derived from each CLI's
+  documented surface; Step 5 authorizes no live operation. A wrong AWS error code fails closed
+  (a genuinely-absent resource reads UNKNOWN and the destroy fails loudly); a wrong GCP
+  location would fail open, which is why no recipe derives one — GKE's location comes from the
+  self-link verbatim. Validating the recipes is Attempt-7 work.
+- **A GCP project that is invisible reads as absence only if its 404 names no project.** The
+  subject rule closes the case the message describes; GCP publishes no machine-readable
+  distinction beyond the path it names.
+- **`SOL_DESTROY_SNAPSHOT_INTERVAL_S`** (default 10s, 12 attempts) bounds how long a
+  still-being-created final snapshot is observed. A snapshot that never settles is reported
+  UNKNOWN and fails the destroy.
+
+## Deliberately not done (Step 5+)
+
+Adoption/import inspection, runtime finding G, FND-0010, the parked `cluster_issuer` change
+and **Attempt 7 stay untouched**; Attempt 7 remains closed and needs a fresh explicit
+authorization. No live provider operation was performed and no Terraform state was mutated.
+
+**Demo/example: not applicable** — internal lifecycle verification; an app author's
+`sol.toml`, generated manifests and runtime contract are unchanged. **No language-parity
+impact** (DEC-022): nothing application-facing changed. (This step subsumes `INFRA-072`,
+whose only scope was retention observed from the provider; the ticket moves to `DONE` here.)
+
+## Note on the golden-path-smoke revision mismatch
+
+The Step-5 brief mentioned a discovered `golden-path-smoke` revision/scaffold mismatch to
+record "if repository process makes that routine". It could not be reproduced from
+current main: nothing under `internal/pipeline/`, `docs/` or `.github/workflows/ci.yml`
+records such a mismatch, and searching the workflow's pin/scaffold steps found no revision
+assertion to disagree with. Recording an unreproducible finding would break this repo's own
+rule (reproduce, don't summarize), so it is **not** filed here — it is noted, and left out
+of Step 5's scope.

@@ -1,4 +1,4 @@
-(** The destroy execution core (HARDEN-004 steps 2-4; REFAC-091).
+(** The destroy execution core (HARDEN-004 steps 2-5; REFAC-091).
 
     A typed inventory of what Terraform's state representation owns, plus a
     result-returning destroy sequence with every provider operation injected
@@ -12,12 +12,20 @@
     destruction to continue (best-effort) or must block it (an explicit
     destruction-time safety guarantee the target declared, DEC-033). Destruction
     remains available from a half-built target unless proceeding would violate such
-    a guarantee. *)
+    a guarantee.
+
+    Step 5 adds the *evidence*: success is no longer "the sequence reached its
+    end", it is "every required postcondition was positively established from the
+    provider and from Terraform state" ({!Sol_cli_destroy_verification}). An
+    UNKNOWN observation is a failure, never a degraded success. *)
 
 type resource =
   { address : string (** The real Terraform address, module prefix included. *)
   ; kind : string (** The provider resource type. *)
   ; provider_id : string option (** The provider's own id/self-link. *)
+  ; arn : string option
+    (** The fully-qualified cloud identifier where the provider publishes one; for
+        AWS it is also where the resource's region is recorded. *)
   ; project : string option (** GCP project or AWS account id. *)
   ; region : string option (** Region/location; a zone is reduced to its region. *)
   ; deletion_protection : bool option
@@ -49,6 +57,11 @@ val resources : state_read -> resource list
 val addresses : state_read -> string list
 val substrate_presence : state_read -> substrate_presence
 val find_address : state_read -> string -> resource option
+
+(** The provider identities this state represents, captured *before* destruction
+    so step 5 can verify the same identities after it. A projection of the
+    inventory, never a re-derivation from configuration or naming. *)
+val identities : state_read -> Sol_cli_destroy_verification.identity list
 
 (** What destruction preparation did, carried to the report. *)
 type preparation =
@@ -94,19 +107,29 @@ type failure =
     [Destroy_failed] means destruction did not reach its postcondition; it carries
     [degradations] too, so a degraded preparation is preserved even when a later
     step fails, and a cleanup failure is evidence alongside the primary failure
-    rather than a replacement for it. *)
+    rather than a replacement for it.
+
+    Step 5 adds one *dimension* rather than a fifth outcome: [verification] is the
+    observed evidence that justifies -- or refuses to justify -- the claim of
+    absence. It is required on [Destroy_succeeded] (success now *is* "every
+    required postcondition was positively established") and [None] on
+    [Destroy_failed] exactly when the run never reached the verification stage. A
+    `Block_destroy` block reaches neither: destruction did not happen, so there is
+    no postcondition to verify. *)
 type outcome =
   | Destroy_succeeded of
       { preparation : preparation
       ; degradations : string list
       ; substrate : substrate_presence
       ; cleanup : cleanup
+      ; verification : Sol_cli_destroy_verification.observation
       }
   | Destroy_blocked of { guarantee : string }
   | Destroy_failed of
       { failure : failure
       ; degradations : string list
       ; cleanup : cleanup
+      ; verification : Sol_cli_destroy_verification.observation option
       }
 
 val failure_message : failure -> string
@@ -142,7 +165,15 @@ type deps =
   ; observe_window_before : unit -> (unit, string) result
   ; verify_window_after : unit -> (unit, string) result
   ; destroy_substrate : unit -> (unit, string) result
-  ; verify_absent : unit -> (unit, string) result
+  ; verify_destruction :
+      pre_destroy:state_read
+      -> preparation:preparation
+      -> Sol_cli_destroy_verification.observation
+    (** Step 5's one observation, taken against the identities captured *before*
+        destruction (including the retention identity the preparation established)
+        and against a fresh read of the disposable root's own state. Not a
+        [result]: every evidence leg is itself three-valued, and composing them is
+        {!Sol_cli_destroy_verification.classify}'s job. *)
   ; report : string -> unit
   ; warn : string -> unit
   }
