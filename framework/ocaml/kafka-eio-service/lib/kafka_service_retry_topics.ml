@@ -420,6 +420,10 @@ let consume
   let relay_failure : Kafka_service_intf.consume_partitioned_error option ref =
     ref None
   in
+  (* Set when the relay closed the source consumer (BUG-043). A source error after
+     that close -- e.g. an in-flight ack answered with Destroy -- is a consequence
+     of the relay failure, so the relay's error is the one reported. *)
+  let relay_closed_source = ref false in
   match
     Kafka.Consumer.create
       ~on_ready
@@ -519,6 +523,20 @@ let consume
             if delay > 0.001 then Eio.Time.sleep clock delay;
             decode_retry raw_msg ~ack ~attempt
         in
+        (* BUG-043 / FND-0035: a relay that has stopped must stop the worker too.
+           Recording the failure alone surfaced it only when the source consumer
+           next returned -- which a healthy source never does, so retry delivery
+           stayed dead behind a green health check. Closing the source consumer
+           ends its consume_partitioned (kafka-eio treats a direct close as a
+           stop), and the relay_failure check below turns that into Error. *)
+        let stop_source_after_relay_failure () =
+          relay_closed_source := true;
+          Printf.eprintf
+            "error: kafka_service: RETRY_RELAY_STOPPED -- stopping the source consumer \
+             so the worker fails instead of running without retry delivery\n\
+             %!";
+          Kafka.Consumer.close consumer
+        in
         Eio.Fiber.fork ~sw (fun () ->
           (try
              match
@@ -542,7 +560,8 @@ let consume
                       partition
                       (Kafka.Error.to_string e))
                  errs;
-               relay_failure := Some (Kafka_service_intf.Partition_errors errs)
+               relay_failure := Some (Kafka_service_intf.Partition_errors errs);
+               stop_source_after_relay_failure ()
              | Error (Kafka.Consumer.Invalid_config msg) ->
                Printf.eprintf
                  "error: kafka_service: RETRY_RELAY_STOPPED config=%s -- retry delivery \
@@ -550,7 +569,8 @@ let consume
                   %!"
                  msg;
                relay_failure
-               := Some (Kafka_service_intf.Consumer_error (Kafka.Error.Config_error msg))
+               := Some (Kafka_service_intf.Consumer_error (Kafka.Error.Config_error msg));
+               stop_source_after_relay_failure ()
            with
            | Eio.Cancel.Cancelled _ -> ());
           Kafka.Consumer.close retry_consumer);
@@ -606,9 +626,17 @@ let consume
        healthy-looking source result must not mask an earlier relay failure
        -- that is exactly the silent-degradation shape this ticket exists to
        close. This is the documented exhaustion policy: a stopped retry
-       relay fails the worker rather than leaving it running degraded. *)
+       relay fails the worker rather than leaving it running degraded, and
+       since BUG-043 it does so promptly -- the relay closes the source
+       consumer, so this point is reached as soon as the relay stops. *)
     let result =
       match result, !relay_failure with
+      | Error _, Some relay_err when !relay_closed_source ->
+        Printf.eprintf
+          "error: kafka_service: failing -- the retry relay stopped and closed the \
+           source consumer (BUG-043)\n\
+           %!";
+        Error relay_err
       | Ok (), Some relay_err ->
         Printf.eprintf
           "error: kafka_service: failing -- the retry relay stopped earlier and never \
