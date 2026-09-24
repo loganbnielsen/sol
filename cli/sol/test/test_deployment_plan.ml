@@ -611,70 +611,6 @@ let test_discover_topics_no_false_positives_from_ml_files () =
       (List.length topics))
 ;;
 
-(* ── extract_schedule tests ─────────────────────────────────────────────── *)
-
-let test_extract_schedule_reads_from_sol_toml () =
-  let tmp = Filename.temp_dir "sol_test_sched" "" in
-  with_cwd tmp (fun () ->
-    mkdirs "app/cron/report_fn";
-    write_file
-      "app/cron/report_fn/sol.toml"
-      {|[service]
-schedule = "30 6 * * 1"
-|};
-    let schedule =
-      Sol_cli_manifest.extract_schedule ~dir:"app/cron/report_fn" ~name:"report_fn"
-    in
-    Alcotest.(check string) "schedule from sol.toml" "30 6 * * 1" schedule)
-;;
-
-let test_extract_schedule_defaults_when_no_toml () =
-  let tmp = Filename.temp_dir "sol_test_sched_default" "" in
-  with_cwd tmp (fun () ->
-    mkdirs "app/cron/report_fn";
-    (* No sol.toml — default hourly schedule *)
-    let schedule =
-      Sol_cli_manifest.extract_schedule ~dir:"app/cron/report_fn" ~name:"report_fn"
-    in
-    Alcotest.(check string) "default schedule" "0 * * * *" schedule)
-;;
-
-let test_extract_schedule_defaults_when_no_schedule_key () =
-  let tmp = Filename.temp_dir "sol_test_sched_nokey" "" in
-  with_cwd tmp (fun () ->
-    mkdirs "app/cron/report_fn";
-    write_file
-      "app/cron/report_fn/sol.toml"
-      {|[infra.scale]
-replicas = 1
-|};
-    (* sol.toml exists but has no [service] schedule *)
-    let schedule =
-      Sol_cli_manifest.extract_schedule ~dir:"app/cron/report_fn" ~name:"report_fn"
-    in
-    Alcotest.(check string) "default when no schedule key" "0 * * * *" schedule)
-;;
-
-let test_extract_schedule_ignores_ml_source_pattern () =
-  let tmp = Filename.temp_dir "sol_test_sched_ml" "" in
-  with_cwd tmp (fun () ->
-    mkdirs "app/cron/report_fn/lib";
-    (* Write an ML file with the old schedule pattern — must be ignored *)
-    write_file
-      "app/cron/report_fn/lib/report_fn.ml"
-      {|let schedule = "0 3 * * *"
-let run () = Ok ()
-|};
-    (* No sol.toml — so we get the default, not the ml-file value *)
-    let schedule =
-      Sol_cli_manifest.extract_schedule ~dir:"app/cron/report_fn" ~name:"report_fn"
-    in
-    Alcotest.(check string)
-      "ml source not scanned — default returned"
-      "0 * * * *"
-      schedule)
-;;
-
 let test_discover_migrations_finds_sql () =
   let tmp = Filename.temp_dir "sol_test_mig" "" in
   with_cwd tmp (fun () ->
@@ -1349,13 +1285,63 @@ let test_zero_replica_volume_fails () =
     | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err))
 ;;
 
+(* ── -fn schedule (BUG-048) ───────────────────────────────────────────── *)
+
+let plan_for_fn toml =
+  let tmp = Filename.temp_dir "sol_test_fn_sched" "" in
+  with_cwd tmp (fun () ->
+    mkdirs "app/cron/report_fn";
+    Option.iter (write_file "app/cron/report_fn/sol.toml") toml;
+    let fn =
+      { Sol_cli_manifest.domain = "cron"
+      ; name = "report_fn"
+      ; primitive = Sol_cli_manifest.Fn
+      ; dir = "app/cron/report_fn"
+      }
+    in
+    Sol_cli_deployment_plan.of_services_result
+      ~workspace:"myworkspace"
+      ~env:deploy_env
+      [ fn ])
+;;
+
+let test_fn_schedule_comes_from_sol_toml () =
+  match plan_for_fn (Some "[service]\nschedule = \"30 6 * * 1\"\n") with
+  | Error e -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string e)
+  | Ok plan ->
+    Alcotest.(check (list (option string)))
+      "schedule from sol.toml"
+      [ Some "30 6 * * 1" ]
+      (List.map
+         (fun (s : Sol_cli_deployment_plan.service_spec) -> s.schedule)
+         plan.Sol_cli_deployment_plan.services)
+;;
+
+(* The old behaviour: a -fn with no schedule (no sol.toml, or no key) deployed
+   hourly. A schedule is what defines a -fn, so its absence is an error. *)
+let test_fn_without_schedule_is_a_plan_error toml () =
+  match plan_for_fn toml with
+  | Ok _ ->
+    Alcotest.fail "a -fn without [service] schedule must not plan (hourly default)"
+  | Error e ->
+    let msg = Sol_cli_deployment_plan.plan_error_to_string e in
+    Alcotest.(check bool)
+      "names the missing key"
+      true
+      (contains (Str.regexp_string "[service] schedule is required") msg)
+;;
+
 let test_function_volume_fails () =
   let tmp = Filename.temp_dir "sol_test_plan_fn_volume" "" in
   with_cwd tmp (fun () ->
     mkdirs "app/payments/charge_fn";
     write_file
       "app/payments/charge_fn/sol.toml"
-      "[infra.volumes.data]\nmount_path = \"/data\"\nsize = \"10Gi\"\n";
+      "[service]\n\
+       schedule = \"0 3 * * *\"\n\n\
+       [infra.volumes.data]\n\
+       mount_path = \"/data\"\n\
+       size = \"10Gi\"\n";
     let fn =
       { charge_svc_service with
         name = "charge_fn"
@@ -1789,23 +1775,20 @@ let () =
             `Quick
             test_discover_topics_no_false_positives_from_ml_files
         ] )
-    ; ( "extract_schedule"
+    ; ( "fn schedule (BUG-048)"
       , [ Alcotest.test_case
-            "reads schedule from sol.toml"
+            "comes from sol.toml"
             `Quick
-            test_extract_schedule_reads_from_sol_toml
+            test_fn_schedule_comes_from_sol_toml
         ; Alcotest.test_case
-            "default when no sol.toml"
+            "no sol.toml is a plan error"
             `Quick
-            test_extract_schedule_defaults_when_no_toml
+            (test_fn_without_schedule_is_a_plan_error None)
         ; Alcotest.test_case
-            "default when no schedule key in toml"
+            "no schedule key is a plan error"
             `Quick
-            test_extract_schedule_defaults_when_no_schedule_key
-        ; Alcotest.test_case
-            "ignores ml source schedule pattern"
-            `Quick
-            test_extract_schedule_ignores_ml_source_pattern
+            (test_fn_without_schedule_is_a_plan_error
+               (Some "[infra.scale]\nreplicas = 1\n"))
         ] )
     ; ( "discover_migrations"
       , [ Alcotest.test_case "finds sql" `Quick test_discover_migrations_finds_sql

@@ -127,10 +127,13 @@ module Make (J : JOB) : sig
              waiting a full interval per job. *)
     -> ?lease_s:float
          (** How long a claimed job's lease lasts before another poller
-             could reclaim it. Only matters if this process crashes or is
-             killed mid-[handle]; a clean run always finalizes the job well
-             before the lease expires. Default [300.0] -- must comfortably
-             exceed the slowest realistic [J.handle] call. *)
+             could reclaim it. Default [300.0] -- must comfortably exceed the
+             slowest realistic [J.handle] call. The lease is never renewed: a
+             [handle] that runs longer can see the job re-claimed and run
+             concurrently elsewhere. Every finalize is fenced on the claimed
+             attempt, so the stale holder cannot delete or unlock the new
+             holder's claim, and both the overrun and the lost lease are
+             logged (BUG-050). *)
     -> ?ot:Sol_obs.t
          (** Observability handle. When provided,
              [sol_jobs_processed_total{status}] (labels: [ok], [retry],

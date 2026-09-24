@@ -188,6 +188,170 @@ let test_persistent_claim_failure_ends_run () =
     | None -> Alcotest.fail "run did not report")
 ;;
 
+(* ── BUG-050: finalize is fenced on the claimed attempt ────────────────── *)
+
+(* Set by each test: the pool, so [Slow.handle] can re-claim its own job the way
+   a second poller would once the lease expired. *)
+let current_pool = ref None
+
+let reclaim_now () =
+  match !current_pool with
+  | None -> Alcotest.fail "no pool"
+  | Some pool ->
+    exec_sql
+      pool
+      "UPDATE sol_jobs SET attempts = attempts + 1, locked_until = now() + interval '1 \
+       hour'"
+;;
+
+module Slow = struct
+  type t = string
+
+  let kind (_ : t) = "slow"
+  let kinds = [ "slow" ]
+  let encode t = t
+  let decode s = Ok s
+  let on_handle : (unit -> (unit, string) result) ref = ref (fun () -> Ok ())
+  let handle (_ : t) = !on_handle ()
+end
+
+module Slows = Sol_jobs.Make (Slow)
+
+let lease_state pool =
+  match
+    Pg_db.collect
+      pool
+      (Caqti_request.Infix.(Caqti_type.unit ->* Caqti_type.(t4 string int bool bool))
+         ~oneshot:true
+         "SELECT status, attempts, locked_until IS NOT NULL, last_error IS NOT NULL FROM \
+          sol_jobs")
+      ()
+  with
+  | Ok rows -> List.map (fun (st, n, locked, err) -> st, (n, locked, err)) rows
+  | Error e -> Alcotest.failf "select: %s" (Pg_error.to_string e)
+;;
+
+(* Run [f] with fd 2 redirected to a file; return what was written. *)
+let capture_stderr f =
+  let path = Filename.temp_file "sol-jobs-stderr-" ".log" in
+  let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_TRUNC ] 0o600 in
+  let saved = Unix.dup Unix.stderr in
+  Unix.dup2 fd Unix.stderr;
+  Unix.close fd;
+  let restore () =
+    Unix.dup2 saved Unix.stderr;
+    Unix.close saved
+  in
+  let result =
+    match f () with
+    | v ->
+      restore ();
+      v
+    | exception e ->
+      restore ();
+      raise e
+  in
+  let out = In_channel.with_open_text path In_channel.input_all in
+  Sys.remove path;
+  result, out
+;;
+
+let contains ~needle s =
+  let n = String.length needle
+  and m = String.length s in
+  let rec go i = i + n <= m && (String.sub s i n = needle || go (i + 1)) in
+  go 0
+;;
+
+let run_slow ?retry_policy ?stop ?lease_s ?max_jobs env pool =
+  match
+    Slows.run ~env ~pool ?retry_policy ?stop ?lease_s ?max_jobs ~poll_interval_s:0.05 ()
+  with
+  | Ok () -> ()
+  | Error e -> Alcotest.fail (Sol_jobs.run_error_to_string e)
+;;
+
+let enqueue_slow pool =
+  match Slows.enqueue pool "work" with
+  | Ok () -> ()
+  | Error e -> Alcotest.failf "enqueue: %s" (Pg_error.to_string e)
+;;
+
+let test_stale_complete_is_a_no_op () =
+  with_pool (fun env pool ->
+    List.iter (exec_sql pool) ddl;
+    current_pool := Some pool;
+    enqueue_slow pool;
+    (Slow.on_handle
+     := fun () ->
+          reclaim_now ();
+          Ok ());
+    let (), err = capture_stderr (fun () -> run_slow ~max_jobs:1 env pool) in
+    Alcotest.(check (list (pair string (triple int bool bool))))
+      "the new holder's claim survives: not deleted, still locked"
+      [ "pending", (2, true, false) ]
+      (lease_state pool);
+    Alcotest.(check bool)
+      "the lost lease is logged"
+      true
+      (contains ~needle:"lease lost" err))
+;;
+
+let test_stale_fail_is_a_no_op () =
+  with_pool (fun env pool ->
+    List.iter (exec_sql pool) ddl;
+    current_pool := Some pool;
+    enqueue_slow pool;
+    (Slow.on_handle
+     := fun () ->
+          reclaim_now ();
+          Error "boom");
+    let retry_policy =
+      { Sol_jobs.base_delay_s = 0.0
+      ; max_delay_s = 0.0
+      ; max_attempts = 1
+      ; jitter_ratio = 0.0
+      }
+    in
+    let (), _ = capture_stderr (fun () -> run_slow ~retry_policy ~max_jobs:1 env pool) in
+    Alcotest.(check (list (pair string (triple int bool bool))))
+      "not marked failed, lease not cleared"
+      [ "pending", (2, true, false) ]
+      (lease_state pool))
+;;
+
+let test_stale_retry_is_a_no_op () =
+  with_pool (fun env pool ->
+    List.iter (exec_sql pool) ddl;
+    current_pool := Some pool;
+    enqueue_slow pool;
+    let stop, stop_r = Eio.Promise.create () in
+    (Slow.on_handle
+     := fun () ->
+          reclaim_now ();
+          ignore (Eio.Promise.try_resolve stop_r ());
+          Error "transient");
+    let (), _ = capture_stderr (fun () -> run_slow ~stop env pool) in
+    Alcotest.(check (list (pair string (triple int bool bool))))
+      "retry did not clear the new holder's lease"
+      [ "pending", (2, true, false) ]
+      (lease_state pool))
+;;
+
+let test_lease_overrun_is_logged () =
+  with_pool (fun env pool ->
+    List.iter (exec_sql pool) ddl;
+    current_pool := Some pool;
+    enqueue_slow pool;
+    (Slow.on_handle
+     := fun () ->
+          Unix.sleepf 0.3;
+          Ok ());
+    let (), err = capture_stderr (fun () -> run_slow ~lease_s:0.1 ~max_jobs:1 env pool) in
+    Alcotest.(check bool) "overrun logged" true (contains ~needle:"lease overrun" err);
+    Alcotest.(check int) "its own fenced finalize still won" 0 (List.length (rows pool)))
+;;
+
 let () =
   Alcotest.run
     "sol_jobs_pg"
@@ -210,6 +374,15 @@ let () =
             "persistent claim failure ends run"
             `Quick
             test_persistent_claim_failure_ends_run
+        ] )
+    ; ( "lease fencing (BUG-050)"
+      , [ Alcotest.test_case
+            "stale complete is a no-op"
+            `Quick
+            test_stale_complete_is_a_no_op
+        ; Alcotest.test_case "stale fail is a no-op" `Quick test_stale_fail_is_a_no_op
+        ; Alcotest.test_case "stale retry is a no-op" `Quick test_stale_retry_is_a_no_op
+        ; Alcotest.test_case "lease overrun is logged" `Quick test_lease_overrun_is_logged
         ] )
     ]
 ;;

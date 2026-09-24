@@ -476,7 +476,7 @@ failure this reconciliation exists to prevent.
 | **`In_memory`/`Retry_topics`, group-scoped `<source>.<group>.retry`/`.dlq`, `X-Sol-Retry-At`, ack only after durable publish, `Dead_letter` fails closed with no DLQ** | `kafka_service*.ml`, `kafka_service_retry_topics.ml` | **absent** — `kafkajs`'s implicit retry only | **GAP** |
 | **Worker retry metric statuses `dead_letter`/`relay_published`/`relay_failed`** | `worker.ml` | `@sol/obs` enum is `{ok,error,retry,ack_failed}` only | **GAP** (small) |
 | `-fn` `scheduled_concurrency`/`backoff_limit` + `sol fn run` | `sol.toml` → `CronJob`; CLI | n/a for the deploy surface; the runtime invocation contract is app-facing | not applicable (deploy-side); **re-verdict 2026-09-15:** the `-fn` runtime contract is app-facing → carried by FEAT-082 |
-| `sol-jobs` durable leased jobs + `sol_jobs_*` metrics | `framework/sol-jobs` (FEAT-077) | none yet | **re-verdict 2026-09-15 (DEC-022):** intentionally deferred but a *real parity obligation* — sequenced after FEAT-082; TS must implement the stabilised Sol Jobs contract, not mirror the first OCaml API |
+| `sol-jobs` durable leased jobs + `sol_jobs_*` metrics | `framework/sol-jobs` (FEAT-077) | none yet | **re-verdict 2026-09-15 (DEC-022):** intentionally deferred but a *real parity obligation* — sequenced after FEAT-082; TS must implement the stabilised Sol Jobs contract, not mirror the first OCaml API. That contract now includes claim-by-kind (BUG-044) and attempt-fenced finalize with lease-loss/overrun logging (BUG-050) |
 
 ### The one confirmed capability gap
 
