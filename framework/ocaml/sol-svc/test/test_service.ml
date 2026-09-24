@@ -364,6 +364,91 @@ let test_api_key_file_error_is_startup_error env () =
       | Ok () -> Alcotest.fail "expected API key file config error"))
 ;;
 
+(* SEC-006: a service using Unverified_dev_only refuses to start unless the
+   environment opts in. The test binary opts in globally (it is a development
+   environment); these cases take the opt-in away. *)
+module Hunverified = struct
+  let routes = [ Route.get "/jwt" ~auth:(jwt_cfg [ "read" ]) get_json ]
+end
+
+let expect_unverified_refused result =
+  match result with
+  | Error (`Config msg) ->
+    Alcotest.(check bool)
+      "names the opt-in"
+      true
+      (contains "SOL_ALLOW_UNVERIFIED_JWT" msg)
+  | Ok () -> Alcotest.fail "expected Unverified_dev_only to be refused without the opt-in"
+;;
+
+(* An already-resolved [stop] and a short drain make a missing guard return
+   [Ok ()] promptly instead of serving forever, so the test fails, not hangs. *)
+let stopped () =
+  let p, r = Promise.create () in
+  Promise.resolve r ();
+  p
+;;
+
+let test_unverified_jwt_refused_without_opt_in env () =
+  with_env "SOL_ALLOW_UNVERIFIED_JWT" "" (fun () ->
+    let module S = Service.Make (Hunverified) in
+    expect_unverified_refused
+      (S.run ~env ~port:0 ~stop:(stopped ()) ~drain_timeout_s:0.1 ()))
+;;
+
+let test_unverified_metrics_auth_refused_without_opt_in env () =
+  with_env "SOL_ALLOW_UNVERIFIED_JWT" "0" (fun () ->
+    let module S = Service.Make (struct
+        let routes = []
+      end)
+    in
+    expect_unverified_refused
+      (S.run
+         ~env
+         ~port:0
+         ~stop:(stopped ())
+         ~drain_timeout_s:0.1
+         ~metrics_auth:(jwt_cfg [])
+         ()))
+;;
+
+(* BUG-046: an external [stop] must reach the server. With nothing in flight it
+   used to wait out the whole drain window and then report a drain timeout. *)
+let test_external_stop_is_prompt env () =
+  let module S = Service.Make (H) in
+  let stop, stop_r = Promise.create () in
+  let t0 = Unix.gettimeofday () in
+  (match
+     S.run
+       ~env
+       ~port:0
+       ~stop
+       ~drain_timeout_s:3.0
+       ~on_listen:(fun _ -> Promise.resolve stop_r ())
+       ()
+   with
+   | Ok () -> ()
+   | Error e -> Alcotest.fail (Service.run_error_to_string e));
+  let elapsed = Unix.gettimeofday () -. t0 in
+  Alcotest.(check bool)
+    (Printf.sprintf "returned in %.2fs, well inside the 3s drain window" elapsed)
+    true
+    (elapsed < 1.5)
+;;
+
+let test_malformed_port_is_config_error env () =
+  with_env "PORT" "80800x" (fun () ->
+    let module S = Service.Make (H) in
+    (* An already-resolved stop on an OS-assigned port makes a missing check return
+       [Ok ()] promptly, so the test fails instead of serving forever on 8080. *)
+    let stop, stop_r = Promise.create () in
+    Promise.resolve stop_r ();
+    match S.run ~env ~port:0 ~stop ~drain_timeout_s:0.1 () with
+    | Error (`Config msg) ->
+      Alcotest.(check bool) "names PORT and the value" true (contains "80800x" msg)
+    | Ok () -> Alcotest.fail "expected a malformed PORT to be a startup Config error")
+;;
+
 let with_small_body_server env ~sw ?(max_body_bytes = 50) f =
   let port_p, port_r = Promise.create () in
   let stop, stop_r = Promise.create () in
@@ -432,6 +517,7 @@ let test_public_oversized_body_gets_413 env () =
 ;;
 
 let () =
+  Unix.putenv "SOL_ALLOW_UNVERIFIED_JWT" "1";
   Eio_main.run (fun env ->
     Alcotest.run
       "service"
@@ -459,6 +545,14 @@ let () =
               "JWT route, wrong scope → 403"
               `Quick
               (test_jwt_missing_scope env)
+          ; Alcotest.test_case
+              "Unverified_dev_only without opt-in → startup Config error"
+              `Quick
+              (test_unverified_jwt_refused_without_opt_in env)
+          ; Alcotest.test_case
+              "Unverified_dev_only metrics_auth without opt-in → startup Config error"
+              `Quick
+              (test_unverified_metrics_auth_refused_without_opt_in env)
           ] )
       ; ( "resilience"
         , [ Alcotest.test_case
@@ -469,6 +563,14 @@ let () =
               "external stop on listen"
               `Quick
               (test_external_stop_on_listen env)
+          ; Alcotest.test_case
+              "external stop does not wait out the drain window"
+              `Quick
+              (test_external_stop_is_prompt env)
+          ; Alcotest.test_case
+              "malformed PORT is a startup Config error"
+              `Quick
+              (test_malformed_port_is_config_error env)
           ] )
       ; ( "metrics"
         , [ Alcotest.test_case

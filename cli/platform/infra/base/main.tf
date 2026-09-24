@@ -1224,6 +1224,60 @@ locals {
             }, local.alert_annotations)
           },
           {
+            # OBS-047 / FND-0049: the three worker signals that messages are being
+            # dropped or diverted rather than processed. All come from sol-worker's
+            # own auto-metrics (framework/ocaml/sol-worker, kafka-eio-service) and
+            # carry the workspace/env/domain/service taxonomy through pod-label
+            # scraping, like SolHighErrorRate. Consumer lag alone cannot see these:
+            # a worker acking poison messages keeps lag at zero.
+            #
+            # A decode failure on the source topic is acked and dropped by default,
+            # so any increase is lost input, not a transient.
+            alert = "SolWorkerDecodeDrops"
+            expr  = "sum by (workspace, env, domain, service) (increase(sol_worker_decode_errors_total[5m])) > 0"
+            for   = "0s"
+            labels = {
+              severity = "critical"
+            }
+            annotations = merge({
+              summary     = "{{ $labels.service }} dropped undecodable messages ({{ $labels.domain }}/{{ $labels.workspace }})"
+              description = "{{ $labels.service }} in domain {{ $labels.domain }} (workspace {{ $labels.workspace }}, env {{ $labels.env }}) acked and dropped about {{ $value | humanize }} message(s) it could not decode in the last 5 minutes. Usually a producer deployed an incompatible schema."
+            }, local.alert_annotations)
+          },
+          {
+            # relay_failed: a retry/DLQ publish exhausted its in-process retries,
+            # so retry delivery is failing (BUG-029's metric-level signal).
+            # A value test, not increase(): the labelled series does not exist
+            # until its first failure, so it first appears already at 1, which
+            # increase() never counts. The relay also stops after that failure,
+            # so the count does not rise again. "Nonzero since this pod started"
+            # is the signal, and a restart resets it.
+            alert = "SolWorkerRelayPublishFailed"
+            expr  = "sum by (workspace, env, domain, service) (sol_worker_messages_total{status=\"relay_failed\"}) > 0"
+            for   = "0s"
+            labels = {
+              severity = "critical"
+            }
+            annotations = merge({
+              summary     = "{{ $labels.service }} cannot publish to its retry/DLQ topics ({{ $labels.domain }}/{{ $labels.workspace }})"
+              description = "{{ $labels.service }} in domain {{ $labels.domain }} (workspace {{ $labels.workspace }}, env {{ $labels.env }}) failed {{ $value | humanize }} retry/DLQ publish(es) after exhausting in-process retries since the pod started. The records stay unacknowledged; retry delivery is not progressing."
+            }, local.alert_annotations)
+          },
+          {
+            # dead_letter: work the handler declared unprocessable. A trickle can be
+            # normal; a sustained stream is a failing dependency or a bad deploy.
+            alert = "SolWorkerDeadLetterInflow"
+            expr  = "sum by (workspace, env, domain, service) (rate(sol_worker_messages_total{status=\"dead_letter\"}[10m])) > 0"
+            for   = "15m"
+            labels = {
+              severity = "warning"
+            }
+            annotations = merge({
+              summary     = "{{ $labels.service }} is dead-lettering messages ({{ $labels.domain }}/{{ $labels.workspace }})"
+              description = "{{ $labels.service }} in domain {{ $labels.domain }} (workspace {{ $labels.workspace }}, env {{ $labels.env }}) has sent messages to its DLQ continuously for 15 minutes ({{ $value | humanize }}/s)."
+            }, local.alert_annotations)
+          },
+          {
             alert = "SolKafkaBrokerDown"
             expr  = "up{job=~\".*redpanda.*\"} == 0"
             for   = "5m"

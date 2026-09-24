@@ -2313,10 +2313,98 @@ let test_fn_sol_env_configmap_absent_by_default () =
   assert_absent "fn SOL_ENV config" cm_block {|SOL_ENV: |}
 ;;
 
+(* SEC-006: only the local executor renders the Unverified_dev_only opt-in. *)
+let test_local_executor_renders_unverified_jwt_opt_in () =
+  let _, workload = render_spec_ok (Sol_cli_executor.local_development_spec svc_spec) in
+  check_bool
+    "local render carries SOL_ALLOW_UNVERIFIED_JWT=1"
+    true
+    (contains workload "SOL_ALLOW_UNVERIFIED_JWT: \"1\"")
+;;
+
+(* SEC-006 review: [infra.env] config is the only author-controlled path into a
+   workload's env, so the opt-in is refused there. *)
+let test_sol_toml_cannot_set_unverified_jwt_opt_in () =
+  let path = Filename.temp_file "sol-toml-optin-" ".toml" in
+  let oc = open_out path in
+  output_string oc "[infra.env]\nconfig = { SOL_ALLOW_UNVERIFIED_JWT = \"1\" }\n";
+  close_out oc;
+  let result = Sol_cli_toml.load_result path in
+  Sys.remove path;
+  match result with
+  | Error (Sol_cli_toml.Validation { message; _ }) ->
+    check_bool "names the reserved key" true (contains message "SOL_ALLOW_UNVERIFIED_JWT")
+  | Ok _ -> Alcotest.fail "sol.toml must not be able to set SOL_ALLOW_UNVERIFIED_JWT"
+  | Error (Sol_cli_toml.Toml_syntax _) -> Alcotest.fail "expected a validation error"
+;;
+
+let test_sol_toml_secrets_cannot_name_unverified_jwt_opt_in () =
+  let path = Filename.temp_file "sol-toml-optin-secret-" ".toml" in
+  let oc = open_out path in
+  output_string oc "[infra.env]\nsecrets = [\"SOL_ALLOW_UNVERIFIED_JWT\"]\n";
+  close_out oc;
+  let result = Sol_cli_toml.load_result path in
+  Sys.remove path;
+  match result with
+  | Error (Sol_cli_toml.Validation { message; _ }) ->
+    check_bool "names the reserved key" true (contains message "SOL_ALLOW_UNVERIFIED_JWT")
+  | Ok _ -> Alcotest.fail "a sol.toml secret must not be able to carry the opt-in"
+  | Error (Sol_cli_toml.Toml_syntax _) -> Alcotest.fail "expected a validation error"
+;;
+
+let test_sol_secret_rejects_unverified_jwt_opt_in () =
+  check_bool
+    "sol secret set refuses the reserved key"
+    true
+    (Result.is_error (Sol_cli_secret.validate_key "SOL_ALLOW_UNVERIFIED_JWT"))
+;;
+
+(* A secret already stored under the reserved name must still be removable. *)
+let test_sol_secret_delete_accepts_reserved_key_format () =
+  check_bool
+    "sol secret delete may remove the reserved key"
+    true
+    (Result.is_ok (Sol_cli_secret.validate_key_format "SOL_ALLOW_UNVERIFIED_JWT"))
+;;
+
+let test_deploy_render_has_no_unverified_jwt_opt_in () =
+  let _, workload = render_spec_ok svc_spec in
+  check_bool
+    "a deploy/GitOps render never carries the opt-in"
+    false
+    (contains workload "SOL_ALLOW_UNVERIFIED_JWT")
+;;
+
 let () =
   Alcotest.run
     "manifest_render"
-    [ ( "SOL_ENV reaches every primitive"
+    [ ( "unverified JWT opt-in (SEC-006)"
+      , [ Alcotest.test_case
+            "local executor renders it"
+            `Quick
+            test_local_executor_renders_unverified_jwt_opt_in
+        ; Alcotest.test_case
+            "deploy render does not"
+            `Quick
+            test_deploy_render_has_no_unverified_jwt_opt_in
+        ; Alcotest.test_case
+            "sol.toml cannot set it"
+            `Quick
+            test_sol_toml_cannot_set_unverified_jwt_opt_in
+        ; Alcotest.test_case
+            "sol.toml secrets cannot name it"
+            `Quick
+            test_sol_toml_secrets_cannot_name_unverified_jwt_opt_in
+        ; Alcotest.test_case
+            "sol secret set refuses it"
+            `Quick
+            test_sol_secret_rejects_unverified_jwt_opt_in
+        ; Alcotest.test_case
+            "sol secret delete can still remove it"
+            `Quick
+            test_sol_secret_delete_accepts_reserved_key_format
+        ] )
+    ; ( "SOL_ENV reaches every primitive"
       , [ Alcotest.test_case
             "worker SOL_ENV when resolved"
             `Quick
