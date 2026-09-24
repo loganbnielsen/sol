@@ -1339,12 +1339,13 @@ let process_output ?(env = []) argv =
    That is a host prerequisite in the same class as terraform itself, so it is
    checked before the first platform call rather than discovered by one. Failing
    here costs nothing; failing there costs an apply. *)
-let require_gcp_platform_toolchain () =
+let require_gcp_platform_toolchain ?(on_error = Fun.id) () =
   match
     Sol_cli_process.run (Sol_cli_process.cmd [ "gke-gcloud-auth-plugin"; "--version" ])
   with
   | Ok result when result.Sol_cli_process.exit_code = 0 -> ()
   | _ ->
+    on_error ();
     lifecycle_error
       "the platform cannot reach a GKE cluster without `gke-gcloud-auth-plugin`, which \
        is not on PATH: the kubeconfig gcloud writes names it as its credential plugin, \
@@ -1353,8 +1354,12 @@ let require_gcp_platform_toolchain () =
        re-run. Nothing has been changed."
 ;;
 
-let gcp_provisioner_kubeconfig ~region outputs f =
-  require_gcp_platform_toolchain ();
+(* INFRA-070 / FND-0047: [on_error] runs before every exit, as it does in
+   [with_provisioner_kubeconfig]. A caller that opened the bootstrap window hands
+   in the cleanup that closes it; exiting without calling it would leave the
+   provisioner elevated. *)
+let gcp_provisioner_kubeconfig ?(on_error = Fun.id) ~region outputs f =
+  require_gcp_platform_toolchain ~on_error ();
   let path = Filename.temp_file "sol-platform-provisioner-" ".kubeconfig" in
   let cleanup () =
     try Sys.remove path with
@@ -1401,6 +1406,7 @@ let gcp_provisioner_kubeconfig ~region outputs f =
       (* Attempt 2 also showed why this failed without saying so. The message named
          the step and nothing else, so the reason -- a missing impersonation grant
          versus a wrong flag -- had to be reconstructed by hand. *)
+      on_error ();
       lifecycle_error
         (Printf.sprintf
            "could not establish ephemeral cluster access as %s: gcloud exited %d%s"
@@ -1409,6 +1415,7 @@ let gcp_provisioner_kubeconfig ~region outputs f =
            (let detail = String.trim result.Sol_cli_process.stderr in
             if detail = "" then "" else ":\n" ^ detail))
     | Error error ->
+      on_error ();
       lifecycle_error
         (Printf.sprintf
            "could not run gcloud to establish cluster access: %s"
@@ -1420,8 +1427,7 @@ let with_cluster_access ?(on_error = Fun.id) ~region outputs f =
   | Sol_cli_cloud_lifecycle.Aws_outputs outputs ->
     with_provisioner_kubeconfig ~on_error ~region outputs f
   | Sol_cli_cloud_lifecycle.Gcp_outputs outputs ->
-    ignore on_error;
-    gcp_provisioner_kubeconfig ~region outputs f
+    gcp_provisioner_kubeconfig ~on_error ~region outputs f
 ;;
 
 (* INFRA-039 resolved credentials per mutating stage, because a platform stage runs
