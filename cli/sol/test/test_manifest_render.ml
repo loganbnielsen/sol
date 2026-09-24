@@ -2313,10 +2313,37 @@ let test_fn_sol_env_configmap_absent_by_default () =
   assert_absent "fn SOL_ENV config" cm_block {|SOL_ENV: |}
 ;;
 
+(* SEC-006: only the local executor renders the Unverified_dev_only opt-in. *)
+let test_local_executor_renders_unverified_jwt_opt_in () =
+  let _, workload = render_spec_ok (Sol_cli_executor.local_development_spec svc_spec) in
+  check_bool
+    "local render carries SOL_ALLOW_UNVERIFIED_JWT=1"
+    true
+    (contains workload "SOL_ALLOW_UNVERIFIED_JWT: \"1\"")
+;;
+
+let test_deploy_render_has_no_unverified_jwt_opt_in () =
+  let _, workload = render_spec_ok svc_spec in
+  check_bool
+    "a deploy/GitOps render never carries the opt-in"
+    false
+    (contains workload "SOL_ALLOW_UNVERIFIED_JWT")
+;;
+
 let () =
   Alcotest.run
     "manifest_render"
-    [ ( "SOL_ENV reaches every primitive"
+    [ ( "unverified JWT opt-in (SEC-006)"
+      , [ Alcotest.test_case
+            "local executor renders it"
+            `Quick
+            test_local_executor_renders_unverified_jwt_opt_in
+        ; Alcotest.test_case
+            "deploy render does not"
+            `Quick
+            test_deploy_render_has_no_unverified_jwt_opt_in
+        ] )
+    ; ( "SOL_ENV reaches every primitive"
       , [ Alcotest.test_case
             "worker SOL_ENV when resolved"
             `Quick
