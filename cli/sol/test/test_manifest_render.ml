@@ -485,6 +485,16 @@ let test_svc_default_redpanda_admin_url () =
     {|REDPANDA_ADMIN_URL: "http://redpanda.redpanda.svc.cluster.local:9644"|}
 ;;
 
+(* SEC-007 / FND-0039: config_of_env refuses an unstated protocol, so every
+   rendered workload must declare it. *)
+let test_svc_declares_kafka_security_protocol () =
+  let _ns, workload = render_spec_ok svc_spec in
+  assert_contains
+    "svc declares the Kafka transport posture"
+    workload
+    {|KAFKA_SECURITY_PROTOCOL: "plaintext"|}
+;;
+
 let test_svc_secret_refs_without_values () =
   (* Use Kubernetes_placeholder so the test does not require DATABASE_URL and
      API_TOKEN to be set in the environment.  We are checking for structural
@@ -2512,6 +2522,10 @@ let () =
             "default redpanda admin"
             `Quick
             test_svc_default_redpanda_admin_url
+        ; Alcotest.test_case
+            "svc declares KAFKA_SECURITY_PROTOCOL"
+            `Quick
+            test_svc_declares_kafka_security_protocol
         ; Alcotest.test_case
             "secret refs no values"
             `Quick

@@ -1,7 +1,10 @@
 # FND-0039 — The production profile ships Kafka in plaintext without authentication; "plaintext only in dev" is not realised by any Sol path
 
 - **Classification:** `DESIGN_GAP`
-- **State:** `OPEN`
+- **State:** `OPEN` — partly addressed by `SEC-007` (2026-09-24): the posture is
+  now declared in every rendered manifest, required by `config_of_env`, and the
+  documents state it honestly. Kafka is still plaintext and unauthenticated;
+  closing this finding is FEAT-093.
 - **First identified:** 2026-09-23, correctness audit
 - **Last verified:** 2026-09-23 (`origin/main @ f3e9480b`; kafka-eio 0.3.0)
 - **Derived ticket:** `SEC-007` (declare the posture), `FEAT-093` (BACKLOG — TLS/SASL, decision required)

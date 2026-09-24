@@ -87,8 +87,8 @@ type config =
   ; partitions : int                   (* partition count for auto-provisioned topics *)
   ; topic_durability : topic_durability
   ; security : Kafka.Security.t
-  (* Transport security. Use Kafka.Security.default for local dev.
-     In production, set KAFKA_SECURITY_PROTOCOL=sasl_ssl and supply SASL credentials. *)
+  (* Transport security. Use Kafka.Security.default for local dev. With
+     config_of_env it comes from KAFKA_SECURITY_PROTOCOL, which is required. *)
   }
 ```
 
@@ -102,12 +102,13 @@ val config_of_env : unit -> (config, error) result
    REDPANDA_ADMIN_URL      — Redpanda admin API URL   (default: "http://localhost:9644")
    SOL_KAFKA_DURABILITY    — "broker-default" | "single-broker-loss"
    KAFKA_SECURITY_PROTOCOL — "plaintext" | "ssl" | "sasl_plaintext" | "sasl_ssl"
+                             REQUIRED, no default (SEC-007); Sol manifests set it
    KAFKA_SSL_CA_LOCATION   — path to CA cert bundle (optional)
    KAFKA_SASL_MECHANISM    — e.g. "SCRAM-SHA-256" (optional)
    KAFKA_SASL_USERNAME / KAFKA_SASL_PASSWORD — SASL credentials (optional)
    linger_ms = 50, partitions = 1)
-(* Returns Error when a supplied Kafka security setting is malformed or
-   incomplete. *)
+(* Returns Error when KAFKA_SECURITY_PROTOCOL is unset, or a supplied Kafka
+   security setting is malformed or incomplete. *)
 ```
 
 `config_of_env` is the standard path for Sol workers and services; the generated
