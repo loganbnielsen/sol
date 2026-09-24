@@ -83,6 +83,7 @@ let with_server_obs env ~sw f =
   let stop, stop_r = Promise.create () in
   let obs =
     Sol_obs.of_env
+      ~sw
       ~net:env#net
       ~clock:env#clock
       ~mono_clock:env#mono_clock

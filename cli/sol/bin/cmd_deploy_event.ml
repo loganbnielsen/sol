@@ -165,13 +165,21 @@ let deploy_event_stream_labels =
    promotes them for application pod logs (cli/platform/infra/base/alloy/
    logs.alloy.tftpl's observability_taxonomy_labels) -- deliberately
    excluding env, matching that same set. *)
-let push_event ~net ~clock ~mono_clock ~url (event : Sol_cli_deploy_event.t) =
+(* obs-loki-eio 0.2 exports asynchronously (OBS-048), so the event is flushed
+   before this returns -- the CLI exits right after. A failed push is reported
+   on stderr by the exporter ("[obs-loki] push failed ..."); it never fails the
+   deploy. *)
+let push_event ~sw ~net ~clock ~mono_clock ~url (event : Sol_cli_deploy_event.t) =
   try
-    let backend =
-      Obs_loki.create ~net ~clock ~url ~label_names:deploy_event_stream_labels ()
+    let loki =
+      Obs_loki.create ~sw ~net ~clock ~url ~label_names:deploy_event_stream_labels ()
     in
     let ot =
-      Obs_eio.create ~service:event.Sol_cli_deploy_event.service ~mono_clock ~backend ()
+      Obs_eio.create
+        ~service:event.Sol_cli_deploy_event.service
+        ~mono_clock
+        ~backend:(Obs_loki.backend loki)
+        ()
     in
     let ot =
       Obs_eio.with_context
@@ -186,7 +194,8 @@ let push_event ~net ~clock ~mono_clock ~url (event : Sol_cli_deploy_event.t) =
       ot
       Obs_eio.Info
       ~fields:(Sol_cli_deploy_event.fields event)
-      (Sol_cli_deploy_event.message event)
+      (Sol_cli_deploy_event.message event);
+    Obs_loki.flush loki
   with
   | Eio.Cancel.Cancelled _ as exn -> raise exn
   | (Out_of_memory | Stack_overflow | Sys.Break) as exn -> raise exn
@@ -208,7 +217,9 @@ let push_all ~ctx ~backend ~explicit_url (events : Sol_cli_deploy_event.t list) 
     | None -> ()
     | Some url ->
       Eio_main.run (fun env ->
+        Eio.Switch.run
+        @@ fun sw ->
         List.iter
-          (push_event ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock ~url)
+          (push_event ~sw ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock ~url)
           events))
 ;;

@@ -40,8 +40,11 @@ let () =
   let kafka_config = Kafka_service.config_of_env () |> require_kafka "kafka config" in
   Eio_main.run
   @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
   let obs =
     Sol_obs.of_env
+      ~sw
       ~net:env#net
       ~clock:env#clock
       ~mono_clock:env#mono_clock
@@ -49,8 +52,6 @@ let () =
       ~context:[ "team", "comms" ]
       ()
   in
-  Eio.Switch.run
-  @@ fun sw ->
   let db_pool =
     optional_db_pool
       ~sw

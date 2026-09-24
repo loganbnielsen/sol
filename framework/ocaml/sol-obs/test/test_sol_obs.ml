@@ -67,11 +67,14 @@ let with_env pairs f =
 let test_default_env_logs_and_counts_without_network () =
   Eio_main.run
   @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
   with_env
     [ "LOKI_URL", ""; "TEMPO_URL", "" ]
     (fun () ->
        let obs =
          Sol_obs.of_env
+           ~sw
            ~net:env#net
            ~clock:env#clock
            ~mono_clock:env#mono_clock
@@ -94,11 +97,14 @@ let test_default_env_logs_and_counts_without_network () =
 let test_gauge_and_histogram_round_trip () =
   Eio_main.run
   @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
   with_env
     [ "LOKI_URL", ""; "TEMPO_URL", "" ]
     (fun () ->
        let obs =
          Sol_obs.of_env
+           ~sw
            ~net:env#net
            ~clock:env#clock
            ~mono_clock:env#mono_clock
@@ -125,12 +131,15 @@ let test_gauge_and_histogram_round_trip () =
 let test_loki_url_wires_loki_backend () =
   Eio_main.run
   @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
   with_mock_server env (fun ~port ~body_promise ->
     with_env
       [ "LOKI_URL", local_url port; "TEMPO_URL", "" ]
       (fun () ->
          let obs =
            Sol_obs.of_env
+             ~sw
              ~net:env#net
              ~clock:env#clock
              ~mono_clock:env#mono_clock
@@ -145,15 +154,107 @@ let test_loki_url_wires_loki_backend () =
            (contains body "pushed to loki")))
 ;;
 
-let test_context_promoted_to_loki_stream_labels () =
+(* OBS-048: with LOKI_URL set, the line still reaches stdout. *)
+let capture_stdout f =
+  let path = Filename.temp_file "sol-obs-stdout-" ".log" in
+  let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_TRUNC ] 0o600 in
+  let saved = Unix.dup Unix.stdout in
+  Unix.dup2 fd Unix.stdout;
+  Unix.close fd;
+  let restore () =
+    flush stdout;
+    Unix.dup2 saved Unix.stdout;
+    Unix.close saved
+  in
+  (match f () with
+   | () -> restore ()
+   | exception e ->
+     restore ();
+     raise e);
+  let out = In_channel.with_open_text path In_channel.input_all in
+  Sys.remove path;
+  out
+;;
+
+let test_loki_url_keeps_a_stdout_copy () =
   Eio_main.run
   @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
   with_mock_server env (fun ~port ~body_promise ->
     with_env
       [ "LOKI_URL", local_url port; "TEMPO_URL", "" ]
       (fun () ->
          let obs =
            Sol_obs.of_env
+             ~sw
+             ~net:env#net
+             ~clock:env#clock
+             ~mono_clock:env#mono_clock
+             ~service:"test-svc"
+             ()
+         in
+         let out =
+           capture_stdout (fun () ->
+             Sol_obs.log_info obs "also on stdout";
+             Sol_obs.counter obs ~name:"test_total" ~help:"h" ~label_names:[] 1)
+         in
+         Alcotest.(check bool)
+           "the line is on stdout"
+           true
+           (contains out "also on stdout");
+         Alcotest.(check bool) "metrics are not" false (contains out "METRIC");
+         Alcotest.(check bool)
+           "and still pushed to Loki"
+           true
+           (contains (Eio.Promise.await body_promise) "also on stdout")))
+;;
+
+(* OBS-048 part B: export is asynchronous; [flush] delivers what is queued. *)
+let test_flush_delivers_queued_lines () =
+  Eio_main.run
+  @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
+  with_mock_server env (fun ~port ~body_promise ->
+    with_env
+      [ "LOKI_URL", local_url port; "TEMPO_URL", "" ]
+      (fun () ->
+         let obs =
+           Sol_obs.of_env
+             ~sw
+             ~net:env#net
+             ~clock:env#clock
+             ~mono_clock:env#mono_clock
+             ~service:"test-svc"
+             ()
+         in
+         let (_ : string) =
+           capture_stdout (fun () -> Sol_obs.log_info obs "queued then flushed")
+         in
+         Sol_obs.flush obs;
+         Alcotest.(check bool)
+           "delivered by the time flush returns"
+           true
+           (Eio.Promise.is_resolved body_promise);
+         Alcotest.(check bool)
+           "the line"
+           true
+           (contains (Eio.Promise.await body_promise) "queued then flushed")))
+;;
+
+let test_context_promoted_to_loki_stream_labels () =
+  Eio_main.run
+  @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
+  with_mock_server env (fun ~port ~body_promise ->
+    with_env
+      [ "LOKI_URL", local_url port; "TEMPO_URL", "" ]
+      (fun () ->
+         let obs =
+           Sol_obs.of_env
+             ~sw
              ~net:env#net
              ~clock:env#clock
              ~mono_clock:env#mono_clock
@@ -172,12 +273,15 @@ let test_context_promoted_to_loki_stream_labels () =
 let test_tempo_url_wires_tempo_backend () =
   Eio_main.run
   @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
   with_mock_server env (fun ~port ~body_promise ->
     with_env
       [ "LOKI_URL", ""; "TEMPO_URL", local_url port ]
       (fun () ->
          let obs =
            Sol_obs.of_env
+             ~sw
              ~net:env#net
              ~clock:env#clock
              ~mono_clock:env#mono_clock
@@ -196,11 +300,14 @@ let test_tempo_url_wires_tempo_backend () =
 let test_metrics_renderer_matches_backend_and_renderer () =
   Eio_main.run
   @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
   with_env
     [ "LOKI_URL", ""; "TEMPO_URL", "" ]
     (fun () ->
        let obs =
          Sol_obs.of_env
+           ~sw
            ~net:env#net
            ~clock:env#clock
            ~mono_clock:env#mono_clock
@@ -219,11 +326,14 @@ let test_metrics_renderer_matches_backend_and_renderer () =
 let test_with_context_does_not_mutate_original () =
   Eio_main.run
   @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
   with_env
     [ "LOKI_URL", ""; "TEMPO_URL", "" ]
     (fun () ->
        let obs =
          Sol_obs.of_env
+           ~sw
            ~net:env#net
            ~clock:env#clock
            ~mono_clock:env#mono_clock
@@ -242,11 +352,14 @@ let test_with_context_does_not_mutate_original () =
 let test_current_trace_context_links_child_span () =
   Eio_main.run
   @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
   with_env
     [ "LOKI_URL", ""; "TEMPO_URL", "" ]
     (fun () ->
        let obs =
          Sol_obs.of_env
+           ~sw
            ~net:env#net
            ~clock:env#clock
            ~mono_clock:env#mono_clock
@@ -265,11 +378,14 @@ let test_current_trace_context_links_child_span () =
 let test_trace_id_string_is_32_hex_chars () =
   Eio_main.run
   @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
   with_env
     [ "LOKI_URL", ""; "TEMPO_URL", "" ]
     (fun () ->
        let obs =
          Sol_obs.of_env
+           ~sw
            ~net:env#net
            ~clock:env#clock
            ~mono_clock:env#mono_clock
@@ -308,6 +424,11 @@ let () =
             "LOKI_URL wires the Loki backend"
             `Quick
             test_loki_url_wires_loki_backend
+        ; test_case
+            "LOKI_URL keeps a stdout copy of log lines"
+            `Quick
+            test_loki_url_keeps_a_stdout_copy
+        ; test_case "flush delivers queued lines" `Quick test_flush_delivers_queued_lines
         ; test_case
             "?context is promoted to Loki stream labels"
             `Quick

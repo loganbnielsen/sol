@@ -53,6 +53,11 @@ module Make (F : FN) = struct
       | Some _ as url -> url
       | None -> env_nonempty "PUSHGATEWAY_URL"
     in
+    (* OBS-048: Loki/Tempo export is asynchronous; [flush_logs] sends what is
+       queued. A cron job exits right after [run], and a Lambda sandbox is frozen
+       between invocations (its export fiber cannot run), so both flush
+       explicitly. *)
+    let flush_logs () = Option.iter (fun o -> Sol_obs.flush o) ot in
     let backend, renderer =
       match ot with
       | Some o -> Sol_obs.backend_and_renderer o
@@ -124,6 +129,7 @@ module Make (F : FN) = struct
                  `Signalled))
       in
       record_and_push ~t0 outcome;
+      flush_logs ();
       (match outcome with
        | `Completed (Ok ()) -> Ok ()
        | `Completed (Error msg) -> Error (`Run msg)
@@ -160,6 +166,7 @@ module Make (F : FN) = struct
                       let t0 = Eio.Time.now env#clock in
                       let result = run_body () in
                       record_and_push ~t0 (`Completed result);
+                      flush_logs ();
                       match result with
                       | Ok () -> Ok {|{"status":"ok"}|}
                       | Error msg -> Error msg)

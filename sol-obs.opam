@@ -19,8 +19,8 @@ depends: [
   "eio" "obs-eio" "obs-loki-eio" "obs-prometheus-eio" "obs-tempo-eio"
 ]
 pin-depends: [
-  [ "obs-loki-eio.0.1.0"  "git+https://github.com/loganbnielsen/obs-loki-eio.git#20ff330a8f03aedf71c600f113e2bf0f8a14f205" ]
-  [ "obs-tempo-eio.0.1.0" "git+https://github.com/loganbnielsen/obs-tempo-eio.git#31fd441cbae2a3fc5435539248524f00a6c6fd3d" ]
+  [ "obs-loki-eio.0.2.0"  "git+https://github.com/loganbnielsen/obs-loki-eio.git#148a970651b299114b881bb382d3590caf8d38fa" ]
+  [ "obs-tempo-eio.0.2.0" "git+https://github.com/loganbnielsen/obs-tempo-eio.git#e117aece43bd498ea4b2af62a4572f2f3c8fc93a" ]
 ]
 build: [
   [ "dune" "build" "-p" name "-j" jobs "@install" "@runtest" {with-test} ]

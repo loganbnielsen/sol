@@ -69,8 +69,8 @@ pin-depends: [
   #
   # Pinned by immutable commit SHA rather than a branch: unlike the channel
   # choice above, these carry no "track development" intent.
-  [ "obs-loki-eio.0.1.0"  "git+https://github.com/loganbnielsen/obs-loki-eio.git#20ff330a8f03aedf71c600f113e2bf0f8a14f205" ]
-  [ "obs-tempo-eio.0.1.0" "git+https://github.com/loganbnielsen/obs-tempo-eio.git#31fd441cbae2a3fc5435539248524f00a6c6fd3d" ]
+  [ "obs-loki-eio.0.2.0"  "git+https://github.com/loganbnielsen/obs-loki-eio.git#148a970651b299114b881bb382d3590caf8d38fa" ]
+  [ "obs-tempo-eio.0.2.0" "git+https://github.com/loganbnielsen/obs-tempo-eio.git#e117aece43bd498ea4b2af62a4572f2f3c8fc93a" ]
   [ "pg-eio.0.1.0"        "git+https://github.com/loganbnielsen/pg-eio.git#3ef3a20f6d9a81ce2d8e3a439e5f5f8862fba3bb" ]
   [ "lambda-eio.0.1.0"    "git+https://github.com/loganbnielsen/lambda-eio.git#c07c367b0f8919ae6efb9c3af2cd39d9061b1fdd" ]
 
@@ -839,11 +839,11 @@ let require_db_pool ~sw ~stdenv =
 let () =
   let kafka_config = Kafka_service.config_of_env () |> require_kafka "kafka config" in
   Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
   let obs =
-    Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+    Sol_obs.of_env ~sw ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
       ~service:"{{name}}-charge-svc" ~context:[("team", "payments")] ()
   in
-  Eio.Switch.run @@ fun sw ->
   let pool = require_db_pool ~sw ~stdenv:(env :> Caqti_eio.stdenv) in
   let kafka = Kafka_service.create kafka_config ~sw |> require_kafka "kafka create" in
   let charged_topic =
@@ -940,11 +940,11 @@ let require_kafka label = function
 let () =
   let kafka_config = Kafka_service.config_of_env () |> require_kafka "kafka config" in
   Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
   let obs =
-    Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+    Sol_obs.of_env ~sw ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
       ~service:"{{name}}-notify-worker" ~context:[("team", "comms")] ()
   in
-  Eio.Switch.run @@ fun sw ->
   let pool = require_db_pool ~sw ~stdenv:(env :> Caqti_eio.stdenv) in
   let module W = Notify_worker.Make(struct
     let pool = pool
@@ -1067,8 +1067,9 @@ let svc_bin_ml =
   exit 1
 
 let () = Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
   let obs =
-    Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+    Sol_obs.of_env ~sw ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
       ~service:"{{name}}-svc" ()
   in
   Service.run Handler.routes ~env ~ot:obs ()
@@ -1146,9 +1147,10 @@ let require_kafka label = function
   | Error e  -> fatal (label ^ ": " ^ Kafka_service.error_to_string e)
 
 let () = Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
   let config = Kafka_service.config_of_env () |> require_kafka "kafka config" in
   let obs =
-    Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+    Sol_obs.of_env ~sw ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
       ~service:"{{name}}-worker" ()
   in
   let module W = Worker.Make({{Mod}}) in
@@ -1194,8 +1196,9 @@ let fn_bin_ml =
   exit 1
 
 let () = Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
   let obs =
-    Sol_obs.of_env ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
+    Sol_obs.of_env ~sw ~net:env#net ~clock:env#clock ~mono_clock:env#mono_clock
       ~service:"{{name}}-fn" ()
   in
   let module F = Fn.Make({{Mod}}) in
