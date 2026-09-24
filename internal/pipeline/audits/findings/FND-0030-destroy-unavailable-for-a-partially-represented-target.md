@@ -115,4 +115,11 @@ here beyond this paragraph.
 
 ## Supersession
 
-None.
+- **2026-09-23 — correction to the Design section's claim that "the targeted apply is the
+  only constructive step in the destroy path."** It is not: after preparation, `cloud_destroy`
+  runs `destroy-reconciliation-apply` and `provisioner-bootstrap-access-remove`, both
+  `whole_root` applies (`cmd_cloud_tf.ml:2906-2925` at `f3e9480b`), which would plan to create
+  the very resource the preparation skipped. The design text above is left as written (it is
+  the record of what was believed); the "zero create operations during recovery" criterion
+  must be tested against the real sequence. See **FND-0044** / `INFRA-068`; the precision
+  issues in the #451 implementation are **FND-0048** / `INFRA-071`.
