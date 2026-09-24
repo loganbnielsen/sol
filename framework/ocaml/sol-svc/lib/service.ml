@@ -193,6 +193,35 @@ let api_key_required routes metrics_auth =
   || List.exists (fun route -> auth_uses_api_key route.Route.auth) routes
 ;;
 
+(* SEC-006 / FND-0037: [Unverified_dev_only] trusts any token without checking its
+   signature. Its name was the only thing keeping it off a real route, so a service
+   that uses it refuses to start unless the environment opts in explicitly.
+   [sol up] renders the opt-in for the local cluster only; [sol deploy] never does. *)
+let unverified_jwt_opt_in = "SOL_ALLOW_UNVERIFIED_JWT"
+
+let auth_is_unverified_jwt = function
+  | `Jwt { Auth.verification = Auth.Unverified_dev_only; _ } -> true
+  | `Jwt { Auth.verification = Auth.Verified_signature_required _; _ }
+  | `Public | `Api_key -> false
+;;
+
+let refuse_unverified_jwt routes metrics_auth =
+  let used =
+    auth_is_unverified_jwt metrics_auth
+    || List.exists (fun route -> auth_is_unverified_jwt route.Route.auth) routes
+  in
+  if used && Sys.getenv_opt unverified_jwt_opt_in <> Some "1"
+  then
+    Error
+      (`Config
+          (Printf.sprintf
+             "a route uses Unverified_dev_only JWT auth, which accepts tokens without \
+              checking their signature. It runs only where %s=1 (sol up sets this on the \
+              local cluster). Use Verified_signature_required."
+             unverified_jwt_opt_in))
+  else Ok ()
+;;
+
 let env_nonempty name =
   match Sys.getenv_opt name with
   | Some value when String.trim value <> "" -> Some value
@@ -238,12 +267,18 @@ module Make (H : HANDLER) = struct
         ?on_listen
         ()
     =
-    let port =
-      match Sys.getenv_opt "PORT" with
-      | Some s ->
-        (try int_of_string (String.trim s) with
-         | _ -> port)
-      | None -> port
+    (* BUG-046: a PORT that is set but is not a port number is a configuration
+       error. Falling back to the default made the service listen somewhere the
+       Service and its probes do not point, with nothing naming the bad value. *)
+    let* port =
+      (* Set-but-empty is treated as unset, like every other variable here. *)
+      match env_nonempty "PORT" with
+      | None -> Ok port
+      | Some raw ->
+        (match int_of_string_opt (String.trim raw) with
+         | Some p when p >= 0 && p <= 65535 -> Ok p
+         | _ ->
+           Error (`Config (Printf.sprintf "PORT=%S is not a port number (0-65535)" raw)))
     in
     let ot_eio = Option.map Sol_obs.obs_eio ot in
     let metrics_renderer = Option.map Sol_obs.metrics_renderer ot in
@@ -265,6 +300,7 @@ module Make (H : HANDLER) = struct
         Some (req_count, req_duration)
     in
     let fetch_jwks = Auth_internal.fetch_jwks_over_https ~env in
+    let* () = refuse_unverified_jwt H.routes metrics_auth in
     let* read_api_key =
       api_key_reader ~env ~required:(api_key_required H.routes metrics_auth)
     in
@@ -354,12 +390,21 @@ module Make (H : HANDLER) = struct
                ()
            in
            let server = Cohttp_eio.Server.make ~callback () in
+           (* BUG-046: the server stops accepting on a signal *or* on the caller's
+              [stop]. It used to watch only the signal, so an external stop kept it
+              accepting for the whole drain window and then reported a drain
+              timeout even with nothing in flight. *)
+           let server_stop, server_stop_r = Eio.Promise.create () in
+           Eio.Fiber.fork_daemon ~sw (fun () ->
+             await_stop ();
+             ignore (Eio.Promise.try_resolve server_stop_r ());
+             `Stop_daemon);
            (* Race: serve exits naturally when connections drain, or drain guard fires
          after drain_timeout_s and raises Drain_timeout to force cancellation. *)
            Eio.Fiber.first
              (fun () ->
                 Cohttp_eio.Server.run
-                  ~stop:signal_stop
+                  ~stop:server_stop
                   ~on_error:(fun e ->
                     Printf.eprintf "sol-svc: %s\n%!" (Printexc.to_string e))
                   socket
