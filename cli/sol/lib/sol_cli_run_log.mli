@@ -55,10 +55,10 @@ val runs_to_prune
 
 type t
 
-(** Create a fresh run directory under [base_dir], named
+(** Create a fresh run directory under [base] (default {!base_dir}), named
     [<prefix>-<timestamp>-<pid>], and prune old run directories beyond [keep]
-    (default 20). *)
-val create : ?keep:int -> prefix:string -> unit -> t
+    (default 20). Phase log files are created 0600 (SEC-008). *)
+val create : ?base:string -> ?keep:int -> prefix:string -> unit -> t
 
 (** The run's id and directory, so a command can print them at the start rather
     than only when something fails. *)

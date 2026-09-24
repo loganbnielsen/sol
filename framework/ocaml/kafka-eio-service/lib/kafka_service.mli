@@ -50,12 +50,32 @@ type handler_error =
   | Dead_letter of string
   | Kafka_error of Kafka.Error.t
 
+(** What [consume_partitioned] does with a source-topic record that cannot be
+    decoded (bad wire format, failed JSON parse, failed [MESSAGE.decode])
+    (BUG-051). Retry-topic records that fail to decode always go to the DLQ.
+
+    - [Route_to_dlq] — publish the raw record (payload, key, headers) to the
+      group-scoped DLQ with an [X-Sol-Decode-Error] diagnostic and
+      [X-Sol-Origin-Group], and ack only once that publish succeeds; a failed
+      publish leaves it unacknowledged and fails the partition. The default
+      under [Retry_topics]; refused under [In_memory], which has no DLQ.
+    - [Ack_and_drop] — log, count, ack: the record is gone. An explicit opt-in
+      under [Retry_topics]; the only (and default) disposition under
+      [In_memory].
+
+    Both count on [sol_worker_decode_errors_total] when [?ot] is given. *)
+type decode_error_policy =
+  | Route_to_dlq
+  | Ack_and_drop
+
 (** Schema compatibility checking against a live schema registry. Use in tests
     to catch breaking schema changes before deployment. *)
 module Schema : sig
   (** Check whether a MESSAGE schema is compatible with the latest registered
       version for its topic. Returns [Ok ()] if compatible or if no version has
-      been registered yet (new topic). Returns [Error _] if incompatible.
+      been registered yet (new topic) -- a 404 whose body carries error code 40401
+      or 40402. Any other 404 (e.g. a wrong registry base URL) is an [Error], not
+      "compatible" (BUG-049). Returns [Error _] if incompatible.
 
       Does not register the schema — safe to call in CI without side effects. *)
   val check
@@ -77,6 +97,11 @@ module Schema : sig
 
   type compatibility_response = { is_compatible : bool }
   type registration_response = { id : int }
+
+  (** [is_subject_not_found body]: the registry 404 body means "no such subject or
+      version" (error codes 40401/40402), as opposed to a 404 from a request that
+      never reached the subjects API. Exposed for tests. *)
+  val is_subject_not_found : string -> bool
 
   (** Decode a schema-registry compatibility-check response body. Exposed so
       tests can exercise the response codec directly instead of duplicating it —
@@ -140,7 +165,7 @@ module Retry_topics : sig
       decided at publish time) plus [attempt]/[delay_s] for metrics
       ([on_retry]/[on_relay_publish]) — not for serialization. Built
       exclusively by [retry_message]/[dead_letter_message]/
-      [retry_decode_failure_message] below; nothing else should construct one
+      [decode_failure_message] below; nothing else should construct one
       by hand. *)
   type relay =
     { source : Kafka.Consumer.message
@@ -167,11 +192,11 @@ module Retry_topics : sig
     -> group_id:string
     -> relay
 
-  (** A retry record that couldn't even be decoded: preserves [raw_msg]'s
-      existing headers untouched (this is not another scheduled attempt), and
-      appends a decode diagnostic plus [X-Sol-Origin-Group] (BUG-030, see
-      {!dead_letter_message}). *)
-  val retry_decode_failure_message
+  (** A source or retry record that couldn't even be decoded: preserves
+      [raw_msg]'s existing headers untouched (this is not another scheduled
+      attempt), and appends a decode diagnostic plus [X-Sol-Origin-Group]
+      (BUG-030, see {!dead_letter_message}). *)
+  val decode_failure_message
     :  raw_msg:Kafka.Consumer.message
     -> attempt:int
     -> decode_error:string
@@ -191,13 +216,14 @@ module Retry_topics : sig
     -> ack:(unit -> (unit, Kafka.Error.t) result)
     -> (unit, Kafka.Error.t) result
 
-  (** On a retry-topic decode failure, publish the raw retry record (with
-      decode diagnostics attached) to the DLQ rather than reaching the
-      source-path [on_decode_error] skip-and-ack contract (BUG-028). Always
-      targets the DLQ, so it builds its own relay command rather than going
-      through {!execute_action}'s [retry_action] dispatch. *)
-  val route_retry_decode_error
-    :  dlq_topic:topic_name
+  (** Publish an undecodable record, raw, with decode diagnostics attached, to
+      the DLQ, and ack it only once that publish succeeded; a failed publish is
+      returned and nothing is acked. Used for every retry-topic decode failure
+      (BUG-028) and, under [Route_to_dlq], every source-topic one (BUG-051).
+      [stage] only labels the stderr line. *)
+  val route_decode_error
+    :  stage:[ `Source | `Retry ]
+    -> dlq_topic:topic_name
     -> raw_msg:Kafka.Consumer.message
     -> attempt:int
     -> decode_error:string
@@ -296,8 +322,9 @@ end
     - [SOL_KAFKA_DURABILITY] — ["broker-default" | "single-broker-loss"]
       (default: ["broker-default"])
     - [KAFKA_SECURITY_PROTOCOL] —
-      ["plaintext" | "ssl" | "sasl_plaintext" | "sasl_ssl"] (default:
-      ["plaintext"])
+      ["plaintext" | "ssl" | "sasl_plaintext" | "sasl_ssl"]. **Required**, no
+      default (SEC-007): an absent value is an [Error], so every environment
+      states its transport posture. Sol-rendered manifests set it.
     - [KAFKA_SSL_CA_LOCATION] — path to CA cert bundle (optional)
     - [KAFKA_SASL_MECHANISM] — e.g. ["SCRAM-SHA-256"] (optional)
     - [KAFKA_SASL_USERNAME] / [KAFKA_SASL_PASSWORD] — SASL credentials
@@ -434,6 +461,9 @@ type consume_partitioned_error =
     [retry_strategy] selects the failure-handling mode; see [retry_strategy].
     Mandatory, not optional (FEAT-078): a missing retry strategy must never
     become an implicit fallback discovered only when a handler first fails.
+    [decode_error_policy] defaults per strategy — [Route_to_dlq] under
+    [Retry_topics], [Ack_and_drop] under [In_memory]; [Route_to_dlq] with
+    [In_memory] is a [Consumer_error] (see {!decode_error_policy}).
     Pass [on_retry] to emit metrics on each retry event regardless of mode.
     [on_relay_publish] (Retry_topics only, BUG-029) distinguishes a scheduled
     retry ([on_retry]) from the relay's own publish to the retry/DLQ topic
@@ -449,11 +479,7 @@ val consume_partitioned
   -> ?on_assigned:(unit -> unit)
   -> ?on_revoked:(unit -> unit)
   -> ?on_poll:(unit -> unit)
-  -> ?on_decode_error:
-       (string
-        -> raw_bytes:bytes option
-        -> ack:(unit -> (unit, Kafka.Error.t) result)
-        -> Kafka.Error.t Kafka.Consumer.handler_result)
+  -> ?decode_error_policy:decode_error_policy
   -> retry_strategy:retry_strategy
   -> ?on_retry:(partition:int32 -> attempt:int -> delay_s:float -> unit)
   -> ?on_relay_publish:

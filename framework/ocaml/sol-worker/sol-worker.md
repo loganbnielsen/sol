@@ -66,6 +66,7 @@ module Make_with_retry (W : RETRYABLE_WORKER) : sig
     :  env:(same as above)
     -> config:Kafka_service.config
     -> retry_strategy:retry_strategy
+    -> ?decode_error_policy:decode_error_policy
     -> ?ot:Sol_obs.t
     -> ?metrics_port:int
     -> ?on_ready:(unit -> unit)
@@ -256,14 +257,14 @@ A failed commit is **not** treated like a handler failure. The side effect in `W
 >
 > Valid transfer includes successfully publishing a retry record to the retry topic or a terminal record to the DLQ. Logging an error, exhausting retries, or deciding not to process a message does not itself constitute durable transfer.
 
-"Failed work" is the deliberate scope: a source-topic decode error may still skip-and-ack a message that was never accepted, and that is not a violation.
+A source-topic record that cannot be decoded is covered too (BUG-051, superseding BUG-028's carve-out): where a DLQ exists (`Retry_topics`) it is dead-lettered by default, acked only once that publish succeeds. Acking it without a transfer is an explicit opt-in — `~decode_error_policy:Ack_and_drop` — or the documented behaviour of a worker with no DLQ at all (`In_memory`, or `Make` with no retry strategy); never a silent default where a destination exists.
 
 ## Error handling
 
 - `W.handle` returning `Retry msg` (`RETRYABLE_WORKER` only) triggers the retry strategy. After the retry budget is exhausted, `run` returns `Error`; ack/drop behavior follows the [acknowledgement ownership invariant](#acknowledgement-ownership-invariant).
 - `W.handle` returning `Dead_letter msg` (`RETRYABLE_WORKER` only) routes the raw message to the group-scoped DLQ topic (BUG-030) when `Retry_topics` is configured, acking only once that publish succeeds. Under `In_memory` (no DLQ exists to route to), it **fails closed** (FEAT-078): the message is left unacknowledged and treated as a terminal failure, exactly like an exhausted retry — never acknowledged-and-discarded, per the [acknowledgement ownership invariant](#acknowledgement-ownership-invariant).
 - `W.handle` returning `Ack` but the subsequent ack failing: see [ack semantics](#ack-semantics) above — handled separately from retry, via `ack_failed`.
-- Decode errors on the source topic: default behavior from `Kafka_service.consume`/`consume_partitioned` logs to stderr, acks the message, and continues. Override via `on_decode_error` by calling `Kafka_service.consume`/`consume_partitioned` directly. Source-topic skip-and-ack is permitted by the invariant above because the message was never accepted. Retry-topic decode errors are different: `Retry_topics` publishes the raw retry record to the DLQ with decode diagnostics and only then acks it.
+- Decode errors on the source topic follow `decode_error_policy` (`Make_with_retry`'s `?decode_error_policy`, BUG-051). Under `Retry_topics` the default, `Route_to_dlq`, publishes the raw record (payload, key, headers) to the group-scoped DLQ with an `X-Sol-Decode-Error` diagnostic and acks only once that publish succeeds; a failed publish leaves it unacked and fails the partition. `Ack_and_drop` (log, count, ack) is the explicit opt-in. Under `In_memory` there is no DLQ: `Ack_and_drop` is the only disposition, `Route_to_dlq` is refused at startup, and `Make` (no retry strategy) always acks and drops. Retry-topic decode errors always go to the DLQ.
 - Lifecycle errors (`create`, `register`, Kafka error) are returned as `run_error` values.
 
 ## Test injection

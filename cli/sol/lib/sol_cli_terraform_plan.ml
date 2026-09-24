@@ -236,3 +236,25 @@ let removed_of_type ~resource_type changes =
        | _ -> None)
     changes
 ;;
+
+(* SEC-008: `terraform show -json <plan>` carries sensitive values (e.g. a
+   [sensitive] db_password passed through TF_VAR_) in plain text, so it must never
+   pass through [Sol_cli_run_log.run_phase], which writes a phase's full stdout to
+   disk. It is read here, and only the classified changes are recorded. *)
+let show_and_record ~run_log ~phase ~show =
+  match show () with
+  | Error message -> Error message
+  | Ok json ->
+    (match changes_of_plan_json json with
+     | Error message -> Error message
+     | Ok changes ->
+       Sol_cli_run_log.append_phase_log
+         run_log
+         ~phase
+         (String.concat
+            ""
+            (List.map
+               (fun c -> Printf.sprintf "%s %s\n" (action_to_string c.action) c.address)
+               changes));
+       Ok (json, changes))
+;;

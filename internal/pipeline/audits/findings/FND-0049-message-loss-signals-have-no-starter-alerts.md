@@ -1,7 +1,9 @@
 # FND-0049 — Message drop and diversion signals exist as metrics but have no starter alerts; the source-topic decode default is contested
 
 - **Classification:** `DESIGN_GAP`
-- **State:** `OPEN`
+- **State:** `FIXED_UNQUALIFIED` — alerts by `OBS-047`; the decode policy by `BUG-051`
+  (2026-09-24: under `Retry_topics` an undecodable source record is dead-lettered,
+  ack-and-drop is an explicit opt-in). TypeScript parity: FEAT-098.
 - **First identified:** 2026-09-23. The alerting gap and the policy argument were raised by
   a second reviewer; re-verified in this audit.
 - **Derived ticket:** `OBS-047` (alerts), `BUG-051` (decode policy — decided in HARDEN-004 handoff step 6)

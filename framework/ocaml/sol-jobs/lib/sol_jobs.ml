@@ -116,26 +116,34 @@ let claim_q =
        table)
 ;;
 
+(* BUG-050 / FND-0036: every finalize is fenced on the attempt the claim
+   returned. A lease is never renewed, so a handler that outlives [lease_s] can
+   see its job re-claimed (which increments [attempts]); the stale holder's
+   write then matches no row instead of deleting or unlocking the new holder's
+   claim. [RETURNING id] makes "matched no row" observable. *)
 let complete_q =
-  Caqti_request.Infix.(Caqti_type.int ->. Caqti_type.unit)
-    (Printf.sprintf "DELETE FROM %s WHERE id = ?" table)
+  Caqti_request.Infix.(Caqti_type.(t2 int int) ->? Caqti_type.int)
+    (Printf.sprintf "DELETE FROM %s WHERE id = ? AND attempts = ? RETURNING id" table)
 ;;
 
 let retry_q =
-  Caqti_request.Infix.(Caqti_type.(t3 float string int) ->. Caqti_type.unit)
+  Caqti_request.Infix.(Caqti_type.(t4 float string int int) ->? Caqti_type.int)
     (Printf.sprintf
        {|UPDATE %s
          SET run_at = now() + (?::float8 * interval '1 second'),
              locked_until = NULL,
              last_error = ?
-         WHERE id = ?|}
+         WHERE id = ? AND attempts = ?
+         RETURNING id|}
        table)
 ;;
 
 let fail_q =
-  Caqti_request.Infix.(Caqti_type.(t2 string int) ->. Caqti_type.unit)
+  Caqti_request.Infix.(Caqti_type.(t3 string int int) ->? Caqti_type.int)
     (Printf.sprintf
-       {|UPDATE %s SET status = 'failed', locked_until = NULL, last_error = ? WHERE id = ?|}
+       {|UPDATE %s SET status = 'failed', locked_until = NULL, last_error = ?
+         WHERE id = ? AND attempts = ?
+         RETURNING id|}
        table)
 ;;
 
@@ -294,9 +302,21 @@ module Make (J : JOB) = struct
           | Some c -> c ~labels:[ "status", status; "kind", kind ] 1
           | None -> ()
         in
-        let finalize_success id ~kind ~t0 =
-          (match Pg_db.exec pool complete_q id with
-           | Ok () -> ()
+        (* BUG-050: the stale holder's finalize matched no row -- the job was
+           re-claimed after this lease expired, so it may have run twice. *)
+        let lease_lost id ~attempts ~action =
+          log_warn
+            [ "job_id", string_of_int id
+            ; "attempt", string_of_int attempts
+            ; "action", action
+            ]
+            "sol-jobs: lease lost -- the job was re-claimed while this handler ran; this \
+             outcome was not recorded and the job may have run concurrently"
+        in
+        let finalize_success id ~kind ~attempts ~t0 =
+          (match Pg_db.find pool complete_q (id, attempts) with
+           | Ok (Some _) -> ()
+           | Ok None -> lease_lost id ~attempts ~action:"complete"
            | Error e ->
              log_warn
                [ "job_id", string_of_int id; "error", Pg_error.to_string e ]
@@ -317,8 +337,9 @@ module Make (J : JOB) = struct
           in
           if exhausted
           then (
-            (match Pg_db.exec pool fail_q (msg, id) with
-             | Ok () -> ()
+            (match Pg_db.find pool fail_q (msg, id, attempts) with
+             | Ok (Some _) -> ()
+             | Ok None -> lease_lost id ~attempts ~action:"fail"
              | Error e ->
                log_warn
                  [ "job_id", string_of_int id; "error", Pg_error.to_string e ]
@@ -327,8 +348,9 @@ module Make (J : JOB) = struct
             record_terminal ())
           else (
             let delay = locked_backoff_s retry_policy attempts in
-            (match Pg_db.exec pool retry_q (delay, msg, id) with
-             | Ok () -> ()
+            (match Pg_db.find pool retry_q (delay, msg, id, attempts) with
+             | Ok (Some _) -> ()
+             | Ok None -> lease_lost id ~attempts ~action:"retry"
              | Error e ->
                log_warn
                  [ "job_id", string_of_int id; "error", Pg_error.to_string e ]
@@ -361,12 +383,28 @@ module Make (J : JOB) = struct
               loop ~failures:0
             | Ok (Some (id, kind, payload, attempts)) ->
               let t0 = Eio.Time.now env#clock in
-              (match J.decode payload with
-               | Error msg -> finalize_failure id ~kind ~attempts ~t0 ~msg
-               | Ok job ->
-                 (match J.handle job with
-                  | Ok () -> finalize_success id ~kind ~t0
-                  | Error msg -> finalize_failure id ~kind ~attempts ~t0 ~msg));
+              let outcome =
+                match J.decode payload with
+                | Error msg -> Error msg
+                | Ok job -> J.handle job
+              in
+              (* BUG-050: leases are not renewed, so a handler that outran its
+                 lease may have run concurrently with a re-claim. Say so even
+                 when the fenced finalize below still wins. *)
+              let elapsed = Eio.Time.now env#clock -. t0 in
+              if elapsed > lease_s
+              then
+                log_warn
+                  [ "job_id", string_of_int id
+                  ; "kind", kind
+                  ; "elapsed_s", Printf.sprintf "%.1f" elapsed
+                  ; "lease_s", Printf.sprintf "%.1f" lease_s
+                  ]
+                  "sol-jobs: lease overrun -- the handler ran longer than lease_s, so \
+                   another poller may have claimed the job meanwhile; raise ?lease_s";
+              (match outcome with
+               | Ok () -> finalize_success id ~kind ~attempts ~t0
+               | Error msg -> finalize_failure id ~kind ~attempts ~t0 ~msg);
               loop ~failures:0)
         in
         loop ~failures:0)

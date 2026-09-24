@@ -30,6 +30,10 @@ type retry_strategy = Kafka_service.retry_strategy =
   | In_memory of retry_policy
   | Retry_topics of retry_policy
 
+type decode_error_policy = Kafka_service.decode_error_policy =
+  | Route_to_dlq
+  | Ack_and_drop
+
 type run_error =
   [ `Create of Kafka_service.error
   | `Register of Kafka_service.error
@@ -296,6 +300,7 @@ module Make_with_retry_and_test_seam (W : RETRYABLE_WORKER) = struct
         ~(env : (_, _, _, _) Sol_env.timed)
         ~config
         ~retry_strategy
+        ?decode_error_policy
         ?ot
         ?(metrics_port = default_metrics_port)
         ?on_ready
@@ -383,6 +388,7 @@ module Make_with_retry_and_test_seam (W : RETRYABLE_WORKER) = struct
                 ~on_assigned:(fun () -> Worker_health.on_assigned health)
                 ~on_revoked:(fun () -> Worker_health.on_revoked health)
                 ~on_poll:(fun () -> Worker_health.on_poll health)
+                ?decode_error_policy
                 ~retry_strategy
                 ~on_retry
                 ~on_relay_publish
@@ -401,11 +407,23 @@ end
 module Make_with_retry (W : RETRYABLE_WORKER) = struct
   module Impl = Make_with_retry_and_test_seam (W)
 
-  let run ~env ~config ~retry_strategy ?ot ?metrics_port ?on_ready ?stop ?max_messages () =
+  let run
+        ~env
+        ~config
+        ~retry_strategy
+        ?decode_error_policy
+        ?ot
+        ?metrics_port
+        ?on_ready
+        ?stop
+        ?max_messages
+        ()
+    =
     Impl.run
       ~env
       ~config
       ~retry_strategy
+      ?decode_error_policy
       ?ot
       ?metrics_port
       ?on_ready

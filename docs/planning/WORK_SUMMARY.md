@@ -2028,7 +2028,7 @@ The production deployment pipeline is complete. All Phase 6 deliverables are don
 
 **Kafka security wiring to C — verify `apply` correctness with live cluster:**
 - `Kafka_security.apply` calls `Kafka_raw.conf_set`; verified at compile time; exercise with a SASL-authenticated Redpanda to confirm end-to-end
-- TLS dev gap: Redpanda in k3d runs with `tls.enabled=false` because cert-manager CRDs aren't provisioned in the dev cluster; this is a documented conscious choice, not an oversight — production deployments set `KAFKA_SECURITY_PROTOCOL=ssl` and the code picks it up automatically
+- TLS dev gap: Redpanda in k3d runs with `tls.enabled=false` because cert-manager CRDs aren't provisioned in the dev cluster; this is a documented conscious choice, not an oversight. *(Corrected 2026-09-24, SEC-007 / FND-0039: the original note said production deployments set `KAFKA_SECURITY_PROTOCOL=ssl`; no Sol path did. Production Redpanda also runs without TLS, and every rendered manifest now declares `KAFKA_SECURITY_PROTOCOL=plaintext` explicitly. Production TLS/SASL is FEAT-093.)*
 
 ---
 

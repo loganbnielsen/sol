@@ -37,6 +37,20 @@ let decode_registration_response resp_body =
 ;;
 
 module Schema = struct
+  (* BUG-049 / FND-0040: the registry answers 404 both for "no such subject"
+     (error_code 40401) or "no such version" (40402) -- a new topic, nothing to be
+     compatible with -- and for a request that never reached the subjects API at
+     all (a wrong base URL or proxy path). Only the first means "compatible". *)
+  let is_subject_not_found body =
+    match Yojson.Safe.from_string body with
+    | `Assoc fields ->
+      (match List.assoc_opt "error_code" fields with
+       | Some (`Int (40401 | 40402)) -> true
+       | _ -> false)
+    | _ -> false
+    | exception Yojson.Json_error _ -> false
+  ;;
+
   let check ~net ~clock ~registry_url (module M : Kafka_service_intf.MESSAGE) =
     let topic_name = Kafka_service_intf.topic_name_to_string M.topic_name in
     let subject = topic_name ^ "-value" in
@@ -63,7 +77,14 @@ module Schema = struct
            (Printf.sprintf
               "schema for topic '%s' is not compatible with the registered version"
               topic_name))
-    | Ok (404, _) -> Ok ()
+    | Ok (404, body) when is_subject_not_found body -> Ok ()
+    | Ok (404, body) ->
+      Error
+        (Printf.sprintf
+           "schema registry HTTP 404 that is not 'subject not found' (is %s the \
+            registry's base URL?): %s"
+           registry_url
+           body)
     | Ok (status, body) ->
       Error (Printf.sprintf "schema registry HTTP %d: %s" status body)
   ;;
