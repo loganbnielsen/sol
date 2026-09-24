@@ -930,12 +930,6 @@ let test_readiness_invocations_are_provider_specific () =
    destroy promises for every target -- and an unparseable mode must be refused
    rather than quietly falling back to it. *)
 let test_destroy_retention () =
-  let has needle haystack =
-    let n = String.length needle
-    and h = String.length haystack in
-    let rec go i = i + n <= h && (String.sub haystack i n = needle || go (i + 1)) in
-    go 0
-  in
   let destroy_vars retention =
     L.policy_vars
       ~provider:Sol_cli_provider.Aws
@@ -974,22 +968,13 @@ let test_destroy_retention () =
     "retention still lifts deletion protection either way"
     true
     (List.assoc_opt "rds_deletion_protection" (destroy_vars L.Retain_nothing)
-     = Some "false");
-  Alcotest.(check bool)
-    "the report names the snapshot and how to remove it"
-    true
-    (let report =
-       L.retention_report ~retention:L.Retain_final_snapshot ~destroy_snapshot_id:"snap-1"
-     in
-     has "snap-1" report && has "delete-db-snapshot" report);
-  Alcotest.(check bool)
-    "the report says a disposable destroy keeps nothing"
-    true
-    (let report =
-       L.retention_report ~retention:L.Retain_nothing ~destroy_snapshot_id:"snap-1"
-     in
-     has "no residual billable artifacts" report)
+     = Some "false")
 ;;
+
+(* HARDEN-004 step 5 / FND-0046: the two assertions that used to live here pinned
+   [retention_report]'s *policy* text -- including "no residual billable
+   artifacts", which nothing observed. Retention reporting is now evidence-driven
+   and is pinned in `test_destroy_verification.ml` instead. *)
 
 let test_convergence_predicates () =
   let summary_with kind output =

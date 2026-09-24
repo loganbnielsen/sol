@@ -1080,21 +1080,12 @@ let destroy_retention_of_string = function
          other)
 ;;
 
-(* What the destroy says afterwards. For retention, "what survives", "why" and
-   "how it is eventually removed" are all part of the claim. *)
-let retention_report ~retention ~destroy_snapshot_id =
-  match retention with
-  | Retain_final_snapshot ->
-    Printf.sprintf
-      "  retention: final snapshot %s (target destroy_retention = final-snapshot, so the \
-       target outlives its compute; remove it with `aws rds delete-db-snapshot \
-       --db-snapshot-identifier %s` once it is no longer needed)"
-      destroy_snapshot_id
-      destroy_snapshot_id
-  | Retain_nothing ->
-    "  retention: none (target destroy_retention = none) -- destroyed to Absent with no \
-     residual billable artifacts"
-;;
+(* HARDEN-004 step 5: there is deliberately no [retention_report] here any more.
+   It rendered the retention *policy* -- "final snapshot X", or "destroyed to
+   Absent with no residual billable artifacts" -- with nothing observing whether
+   either was true (FND-0046 / INFRA-072). Retention is now reported from
+   evidence, by [Sol_cli_destroy_verification], so the sentence an operator reads
+   is the one a provider query supports. *)
 
 let policy_vars ~provider ~phase ~destroy_snapshot_id ~retention =
   match policy_of_phase phase with

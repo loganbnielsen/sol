@@ -67,13 +67,6 @@ let print_outputs infra_dir =
      | _ -> Printf.printf "  (error parsing terraform outputs)\n%!")
 ;;
 
-let contains ~needle s =
-  let nlen = String.length needle in
-  let slen = String.length s in
-  let rec loop i = i + nlen <= slen && (String.sub s i nlen = needle || loop (i + 1)) in
-  nlen = 0 || loop 0
-;;
-
 (* ── cloud apply/plan ───────────────────────────────────────────────────── *)
 
 let provider_of_target_path target =
@@ -367,27 +360,57 @@ let resolved_var key ~var_files ~vars ~default =
      | None -> default)
 ;;
 
-let aws_absent ~region ~kind ~missing_marker ~argv =
-  match
-    Sol_cli_process.run (Sol_cli_process.cmd (("aws" :: argv) @ [ "--region"; region ]))
-  with
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    Printf.eprintf "error: AWS %s still exists after destroy.\n" kind;
-    false
-  | Ok r when contains ~needle:missing_marker r.Sol_cli_process.stderr -> true
-  | Ok r ->
-    Printf.eprintf "error: AWS %s verification failed: %s\n" kind r.Sol_cli_process.stderr;
-    false
-  | Error _ ->
-    Printf.eprintf "error: AWS %s verification failed: aws CLI unavailable.\n" kind;
-    false
-;;
-
 (* DEC-024: the workspace name comes from the resolved root, so it is the same
    from any descendant directory. *)
 let workspace_name = Sol_cli_workspace.current_name
 
-let aws_no_ecr_repositories ~region ~workspace_name =
+(* ── the orphan sweep (HARDEN-004 step 5) ────────────────────────────────────
+
+   These are the name/tag-derived checks that used to *be* the whole verification.
+   They still catch what Terraform's own state cannot speak for -- EIPs, NAT
+   gateways and EBS volumes created indirectly by the VPC/EKS modules, load
+   balancers created by the in-tree cloud controller, the service-networking
+   peering GCP refuses to delete while a producer is registered (INFRA-047) -- but
+   they are **secondary** now, and their type says so:
+
+   - [Probe_gone] / [Probe_found] are answers about the resources;
+   - [Probe_indeterminate] means the check established nothing (an API error, a
+     missing tool, a query context that could not be reconstructed). It is
+     reported, and it is never read as absence.
+
+   Two things follow, and both matter. A guessed name can no longer be the reason a
+   captured identity is declared gone, and it can no longer turn an UNKNOWN
+   observation into a pass. Where a query context is needed, it is taken from the
+   identity captured *before* destruction (the network the inventory represents,
+   the region in a captured ARN) or from the target's own configuration -- and if
+   neither is available the check reports that it could not run rather than
+   guessing a name and reading the miss as absence (step 5 section 5). *)
+
+type probe_outcome =
+  | Probe_gone
+  | Probe_found of string
+  | Probe_indeterminate of string
+
+let orphan_sweep ?(gaps = []) probes : Sol_cli_destroy_verification.sweep =
+  let residues =
+    List.filter_map
+      (function
+        | Probe_found r -> Some r
+        | _ -> None)
+      probes
+  in
+  let indeterminate =
+    gaps
+    @ List.filter_map
+        (function
+          | Probe_indeterminate r -> Some r
+          | _ -> None)
+        probes
+  in
+  Sol_cli_destroy_verification.Sweep_ran { residues; indeterminate }
+;;
+
+let aws_ecr_prefix_probe ~region ~workspace_name =
   let prefix = workspace_name ^ "/" in
   let query =
     Printf.sprintf
@@ -409,25 +432,26 @@ let aws_no_ecr_repositories ~region ~workspace_name =
          ])
   with
   | Ok r when r.Sol_cli_process.exit_code = 0 && String.trim r.Sol_cli_process.stdout = ""
-    -> true
+    -> Probe_gone
   | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    Printf.eprintf
-      "error: AWS ECR repositories still exist after destroy: %s\n"
-      r.Sol_cli_process.stdout;
-    false
+    Probe_found
+      (Printf.sprintf
+         "AWS ECR repositories still exist after destroy: %s"
+         (String.trim r.Sol_cli_process.stdout))
   | Ok r ->
-    Printf.eprintf "error: AWS ECR verification failed: %s\n" r.Sol_cli_process.stderr;
-    false
+    Probe_indeterminate
+      ("AWS ECR repositories could not be checked: "
+       ^ String.trim r.Sol_cli_process.stderr)
   | Error _ ->
-    Printf.eprintf "error: AWS ECR verification failed: aws CLI unavailable.\n";
-    false
+    Probe_indeterminate
+      "AWS ECR repositories could not be checked: the aws CLI is unavailable"
 ;;
 
 (* Works for both Classic ELB and ALB/NLB uniformly: the in-cluster AWS
    cloud-controller tags every load balancer it creates for a Service with
    kubernetes.io/cluster/<cluster-name>, regardless of LB type. Only
-   covers that in-tree tagging convention -- a load balancer created by
-   the standalone AWS Load Balancer Controller instead tags primarily with
+   covers that in-tree tagging convention -- a load balancer created by the
+   standalone AWS Load Balancer Controller instead tags primarily with
    elbv2.k8s.aws/cluster, which this does not check. Not a gap today
    (cli/platform/infra/base/main.tf only installs ingress-nginx, which uses
    the in-tree cloud-controller path), but would need extending if Sol
@@ -461,93 +485,17 @@ let load_balancers_gone ~region ~cluster_name =
   | _ -> None
 ;;
 
-let aws_no_load_balancers ~region ~cluster_name =
+let aws_load_balancer_probe ~region ~cluster_name =
   match load_balancers_gone ~region ~cluster_name with
-  | Some true -> true
+  | Some true -> Probe_gone
   | Some false ->
-    Printf.eprintf
-      "error: AWS load balancer(s) still exist after destroy (tag \
-       kubernetes.io/cluster/%s).\n"
-      cluster_name;
-    false
+    Probe_found
+      (Printf.sprintf
+         "AWS load balancer(s) still exist after destroy (tag kubernetes.io/cluster/%s)"
+         cluster_name)
   | None ->
-    Printf.eprintf
-      "error: AWS load balancer verification failed: aws CLI unavailable or errored.\n";
-    false
-;;
-
-(* INFRA-047: Terraform state being empty is not an absence proof for resources
-   created indirectly by the VPC module or by Kubernetes.  These queries use
-   the target's stable cluster name/tags and treat an API error as a failed
-   verification, never as absence. *)
-let aws_no_listed_resources ~region ~kind ~argv =
-  match
-    Sol_cli_process.run (Sol_cli_process.cmd (("aws" :: argv) @ [ "--region"; region ]))
-  with
-  | Ok r when r.Sol_cli_process.exit_code = 0 && String.trim r.Sol_cli_process.stdout = ""
-    -> true
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    Printf.eprintf
-      "error: AWS %s still exist after destroy: %s\n"
-      kind
-      r.Sol_cli_process.stdout;
-    false
-  | Ok r ->
-    Printf.eprintf "error: AWS %s verification failed: %s\n" kind r.Sol_cli_process.stderr;
-    false
-  | Error _ ->
-    Printf.eprintf "error: AWS %s verification failed: aws CLI unavailable.\n" kind;
-    false
-;;
-
-let aws_no_elastic_ips ~region ~cluster_name =
-  aws_no_listed_resources
-    ~region
-    ~kind:"elastic IPs"
-    ~argv:
-      [ "ec2"
-      ; "describe-addresses"
-      ; "--filters"
-      ; Printf.sprintf "Name=tag:Name,Values=%s-*" cluster_name
-      ; "--query"
-      ; "Addresses[].AllocationId"
-      ; "--output"
-      ; "text"
-      ]
-;;
-
-let aws_no_nat_gateways ~region ~cluster_name =
-  aws_no_listed_resources
-    ~region
-    ~kind:"NAT gateways"
-    ~argv:
-      [ "ec2"
-      ; "describe-nat-gateways"
-      ; "--filter"
-      ; Printf.sprintf "Name=tag:Name,Values=%s-*" cluster_name
-      ; "--query"
-      ; "NatGateways[?State != `deleted`].NatGatewayId"
-      ; "--output"
-      ; "text"
-      ]
-;;
-
-let aws_no_ebs_volumes ~region ~cluster_name =
-  aws_no_listed_resources
-    ~region
-    ~kind:"EBS volumes"
-    ~argv:
-      [ "ec2"
-      ; "describe-volumes"
-      ; "--filters"
-      ; Printf.sprintf
-          "Name=tag:kubernetes.io/cluster/%s,Values=owned,shared"
-          cluster_name
-      ; "--query"
-      ; "Volumes[].VolumeId"
-      ; "--output"
-      ; "text"
-      ]
+    Probe_indeterminate
+      "AWS load balancers could not be checked: the aws CLI is unavailable or errored"
 ;;
 
 (* The platform destroy removes the ingress Service through the named
@@ -569,237 +517,413 @@ let rec wait_for_load_balancers_gone ~region ~cluster_name attempts =
       wait_for_load_balancers_gone ~region ~cluster_name (attempts - 1))
 ;;
 
-let verify_aws_destroy ~var_files ~vars : (unit, string) result =
-  match resolved_var "cluster_name" ~var_files ~vars ~default:None with
+(* INFRA-047: Terraform state being empty is not an absence proof for resources
+   created indirectly by the VPC module or by Kubernetes. *)
+let aws_list_probe ~region ~kind ~argv =
+  match
+    Sol_cli_process.run (Sol_cli_process.cmd (("aws" :: argv) @ [ "--region"; region ]))
+  with
+  | Ok r when r.Sol_cli_process.exit_code = 0 && String.trim r.Sol_cli_process.stdout = ""
+    -> Probe_gone
+  | Ok r when r.Sol_cli_process.exit_code = 0 ->
+    Probe_found
+      (Printf.sprintf
+         "AWS %s still exist after destroy: %s"
+         kind
+         (String.trim r.Sol_cli_process.stdout))
+  | Ok r ->
+    Probe_indeterminate
+      (Printf.sprintf
+         "AWS %s could not be checked: %s"
+         kind
+         (String.trim r.Sol_cli_process.stderr))
+  | Error _ ->
+    Probe_indeterminate
+      (Printf.sprintf "AWS %s could not be checked: the aws CLI is unavailable" kind)
+;;
+
+let aws_no_elastic_ips ~region ~cluster_name =
+  aws_list_probe
+    ~region
+    ~kind:"elastic IPs"
+    ~argv:
+      [ "ec2"
+      ; "describe-addresses"
+      ; "--filters"
+      ; Printf.sprintf "Name=tag:Name,Values=%s-*" cluster_name
+      ; "--query"
+      ; "Addresses[].AllocationId"
+      ; "--output"
+      ; "text"
+      ]
+;;
+
+let aws_no_nat_gateways ~region ~cluster_name =
+  aws_list_probe
+    ~region
+    ~kind:"NAT gateways"
+    ~argv:
+      [ "ec2"
+      ; "describe-nat-gateways"
+      ; "--filter"
+      ; Printf.sprintf "Name=tag:Name,Values=%s-*" cluster_name
+      ; "--query"
+      ; "NatGateways[?State != `deleted`].NatGatewayId"
+      ; "--output"
+      ; "text"
+      ]
+;;
+
+let aws_no_ebs_volumes ~region ~cluster_name =
+  aws_list_probe
+    ~region
+    ~kind:"EBS volumes"
+    ~argv:
+      [ "ec2"
+      ; "describe-volumes"
+      ; "--filters"
+      ; Printf.sprintf
+          "Name=tag:kubernetes.io/cluster/%s,Values=owned,shared"
+          cluster_name
+      ; "--query"
+      ; "Volumes[].VolumeId"
+      ; "--output"
+      ; "text"
+      ]
+;;
+
+(* The captured, pre-destroy identity for a resource kind, by the kind the provider
+   reports. Used to give the sweep the same identity the primary verification
+   uses, instead of reconstructing one from the target's naming. *)
+let captured_identity pre_destroy kind =
+  List.find_opt
+    (fun identity -> identity.Sol_cli_destroy_verification.kind = kind)
+    (Sol_cli_cloud_destroy.identities pre_destroy)
+;;
+
+(* ── HARDEN-004 step 5: the observation ────────────────────────────────────── *)
+
+let run_provider_query argv : Sol_cli_destroy_verification.lookup_result =
+  match Sol_cli_process.run (Sol_cli_process.cmd argv) with
+  | Ok result ->
+    Sol_cli_destroy_verification.Answered
+      { status = result.Sol_cli_process.exit_code
+      ; stdout = result.stdout
+      ; stderr = result.stderr
+      }
+  | Error error -> Unavailable (Sol_cli_process.error_to_string error)
+;;
+
+(* The region a sweep needs, taken from a captured ARN before the target's own
+   configuration. A guessed region would make a wrong lookup read as absence. *)
+let captured_region pre_destroy =
+  List.find_map
+    (fun identity -> identity.Sol_cli_destroy_verification.region)
+    (Sol_cli_cloud_destroy.identities pre_destroy)
+;;
+
+let aws_orphan_sweep ~pre_destroy ~var_files ~vars =
+  let region =
+    match captured_region pre_destroy with
+    | Some region -> Some region
+    | None -> resolved_var "region" ~var_files ~vars ~default:None
+  in
+  let cluster_name =
+    match captured_identity pre_destroy "aws_eks_cluster" with
+    | Some cluster -> cluster.Sol_cli_destroy_verification.provider_id
+    | None -> resolved_var "cluster_name" ~var_files ~vars ~default:None
+  in
+  let workspace =
+    Option.value
+      (resolved_var "workspace_name" ~var_files ~vars ~default:None)
+      ~default:(workspace_name ())
+  in
+  match region with
   | None ->
-    Error
-      "cannot verify AWS destroy without cluster_name. Pass the same --var \
-       cluster_name=... or --var-file used for init."
-  | Some cluster_name ->
-    let region =
-      Option.value
-        (resolved_var "region" ~var_files ~vars ~default:(Some "us-east-1"))
-        ~default:"us-east-1"
-    in
-    let eks_gone =
-      aws_absent
-        ~region
-        ~kind:"EKS cluster"
-        ~missing_marker:"ResourceNotFoundException"
-        ~argv:[ "eks"; "describe-cluster"; "--name"; cluster_name ]
-    in
-    let rds_gone =
-      aws_absent
-        ~region
-        ~kind:"RDS instance"
-        ~missing_marker:"DBInstanceNotFound"
-        ~argv:
-          [ "rds"
-          ; "describe-db-instances"
-          ; "--db-instance-identifier"
-          ; cluster_name ^ "-postgres"
+    (* The ECR prefix probe is region-scoped too, so nothing here can run. *)
+    orphan_sweep
+      ~gaps:
+        [ "the AWS orphan sweep could not establish a region from a captured identity or \
+           from the target, so its name/tag-derived checks were not run"
+        ]
+      []
+  | Some region ->
+    let cluster_probes, cluster_gap =
+      match cluster_name with
+      | Some cluster_name ->
+        ( [ aws_load_balancer_probe ~region ~cluster_name
+          ; aws_no_elastic_ips ~region ~cluster_name
+          ; aws_no_nat_gateways ~region ~cluster_name
+          ; aws_no_ebs_volumes ~region ~cluster_name
           ]
+        , [] )
+      | None ->
+        ( []
+        , [ "the AWS orphan sweep could not establish the target's cluster name from a \
+             captured identity or from the target, so its tag-derived checks were not \
+             run"
+          ] )
     in
-    let workspace_name =
-      Option.value
-        (resolved_var "workspace_name" ~var_files ~vars ~default:None)
-        ~default:(workspace_name ())
-    in
-    let ecr_gone = aws_no_ecr_repositories ~region ~workspace_name in
-    let elb_gone = aws_no_load_balancers ~region ~cluster_name in
-    let eips_gone = aws_no_elastic_ips ~region ~cluster_name in
-    let nat_gone = aws_no_nat_gateways ~region ~cluster_name in
-    let ebs_gone = aws_no_ebs_volumes ~region ~cluster_name in
-    if
-      not
-        (eks_gone && rds_gone && ecr_gone && elb_gone && eips_gone && nat_gone && ebs_gone)
-    then Error "AWS absence verification failed"
-    else (
-      Printf.printf
-        "  AWS verification passed: \
-         EKS/RDS/ECR/load-balancers/EIPs/NAT-gateways/EBS-volumes not found.\n\
-         %!";
-      Ok ())
+    orphan_sweep
+      ~gaps:cluster_gap
+      (aws_ecr_prefix_probe ~region ~workspace_name:workspace :: cluster_probes)
 ;;
 
-(* The GCP counterpart. Deliberately its own list rather than a shared "enumerate
-   the target's resources" abstraction: the two providers name the same resources
-   differently (a name plus a region against a project plus a self-link), and a
-   shared shape would have to be the union of both -- which is exactly how a
-   verification quietly stops checking something. *)
-(* Does this error mean the resource is absent, or that the check could not tell?
-   Attempt 4 showed how easy it is to get that wrong in the direction that looks
-   safest.
-
-   The check recognised `NOT_FOUND` and `was not found`. gcloud actually answers a
-   deleted GKE cluster with
-
-     ResponseError: code=404, message=Not found: projects/.../clusters/sol-qual
-
-   and a deleted Cloud SQL instance with `HTTPError 404: The Cloud SQL instance does
-   not exist`. Neither matched, so a destroy that had removed everything was
-   reported as a failed verification. Failing closed is the right instinct, but a
-   check that cannot recognise absence makes [Absent] unreachable -- and [Absent] is
-   the postcondition the whole lifecycle is measured against.
-
-   So absence is recognised by the provider's own wording, in the provider's own
-   case, and anything else remains a verification failure rather than an
-   assumption. *)
-let gcp_absence_message stderr =
-  let text = String.lowercase_ascii stderr in
-  List.exists
-    (fun needle -> contains ~needle text)
-    [ "code=404"; "httperror 404"; "not_found"; "not found"; "does not exist" ]
-;;
-
-let gcp_absent ~project ~kind ~argv =
+let gcp_peering_probe ~project ~network =
   match
     Sol_cli_process.run
-      (Sol_cli_process.cmd (("gcloud" :: argv) @ [ "--project"; project ]))
+      (Sol_cli_process.cmd
+         [ "gcloud"
+         ; "services"
+         ; "vpc-peerings"
+         ; "list"
+         ; "--network=" ^ network
+         ; "--service=servicenetworking.googleapis.com"
+         ; "--project"
+         ; project
+         ; "--format=value(peering)"
+         ])
   with
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    Printf.eprintf "error: GCP %s still exists after destroy.\n" kind;
-    false
-  | Ok r when gcp_absence_message r.Sol_cli_process.stderr -> true
-  | Ok r ->
-    Printf.eprintf
-      "error: GCP %s verification failed, and the failure does not say the resource is \
-       absent: %s\n"
-      kind
-      r.Sol_cli_process.stderr;
-    false
+  | Ok result when result.Sol_cli_process.exit_code = 0 ->
+    let peerings =
+      String.split_on_char '\n' result.Sol_cli_process.stdout
+      |> List.map String.trim
+      |> List.filter (fun peering -> peering <> "" && peering <> "---")
+    in
+    if peerings = []
+    then Probe_gone
+    else
+      Probe_found
+        (Printf.sprintf
+           "the service-networking peering survived the destroy: %s"
+           (String.concat ", " peerings))
+  | Ok result
+    when Sol_cli_destroy_verification.gcp_absence_message
+           ~project
+           result.Sol_cli_process.stderr -> Probe_gone
+  | Ok result ->
+    Probe_indeterminate
+      (Printf.sprintf
+         "the service-networking peering could not be checked: %s"
+         (String.trim result.Sol_cli_process.stderr))
   | Error _ ->
-    Printf.eprintf "error: GCP %s verification failed: gcloud unavailable.\n" kind;
-    false
+    Probe_indeterminate
+      "the service-networking peering could not be checked: gcloud is unavailable"
 ;;
 
-(* Absence is graded the same way it is on AWS: a resource that is merely stopped
-   has not been torn down, and one that still bills has not been either. The VPC
-   also covers its subnetwork, router and NAT, which cannot outlive it. *)
-let verify_gcp_destroy ~var_files ~vars : (unit, string) result =
-  let* project =
-    match resolved_var "project_id" ~var_files ~vars ~default:None with
-    | Some project -> Ok project
-    | None ->
-      Error
-        "cannot verify GCP destroy without project_id. Pass the same --var \
-         project_id=... or --var-file used for init."
-  in
-  let* cluster_name =
-    match resolved_var "cluster_name" ~var_files ~vars ~default:None with
-    | Some cluster_name -> Ok cluster_name
-    | None ->
-      Error
-        "cannot verify GCP destroy without cluster_name. Pass the same --var \
-         cluster_name=... or --var-file used for init."
-  in
-  let region =
-    Option.value
-      (resolved_var "region" ~var_files ~vars ~default:(Some "us-central1"))
-      ~default:"us-central1"
-  in
-  let cluster_gone =
-    gcp_absent
-      ~project
-      ~kind:"GKE cluster"
-      ~argv:[ "container"; "clusters"; "describe"; cluster_name; "--region"; region ]
-  in
-  let sql_gone =
-    gcp_absent
-      ~project
-      ~kind:"Cloud SQL instance"
-      ~argv:[ "sql"; "instances"; "describe"; cluster_name ^ "-postgres" ]
-  in
-  let network_gone =
-    gcp_absent
-      ~project
-      ~kind:"VPC network"
-      ~argv:[ "compute"; "networks"; "describe"; cluster_name ]
-  in
-  let registry_gone =
-    gcp_absent
-      ~project
-      ~kind:"Artifact Registry repository"
-      ~argv:
-        [ "artifacts"; "repositories"; "describe"; cluster_name; "--location"; region ]
-  in
-  let address_gone =
-    gcp_absent
-      ~project
-      ~kind:"Cloud SQL peering address"
-      ~argv:
-        [ "compute"; "addresses"; "describe"; cluster_name ^ "-sql-peering"; "--global" ]
-  in
-  (* The connection itself, asked of the provider rather than inferred from the
-     root's exit status. Attempt 2 is why: the root now *abandons* the peering
-     (`deletion_policy = "ABANDON"`) because GCP refuses to delete it while a
-     producer is registered, so terraform will report success without the API ever
-     being asked to remove it -- which is exactly the case where "terraform
-     succeeded" and "the resource is gone" part company.
+(* GCP's peering check asks about the network the inventory actually represented,
+   not one rebuilt from the cluster name: a network that does not exist has no
+   peerings, so asking about the wrong one would answer "gone" for the wrong
+   reason. *)
+let gcp_orphan_sweep ~pre_destroy =
+  match captured_identity pre_destroy "google_compute_network" with
+  | None ->
+    orphan_sweep
+      ~gaps:
+        [ "the GCP orphan sweep could not identify the target's VPC from a captured \
+           identity, so the service-networking peering check was not run"
+        ]
+      []
+  | Some network ->
+    (match Sol_cli_destroy_verification.object_name network, network.project with
+     | Some name, Some project ->
+       orphan_sweep [ gcp_peering_probe ~project ~network:name ]
+     | _ ->
+       orphan_sweep
+         ~gaps:
+           [ "the GCP orphan sweep could not name the target's VPC from its captured \
+              identity, so the service-networking peering check was not run"
+           ]
+         [])
+;;
 
-     A network that does not exist has no peerings, so the absence of the network is
-     itself evidence; what this rules out is the peering surviving some other way,
-     and it is checked by listing rather than by describing, because a peering has
-     no name of its own to describe. *)
-  let peering_gone =
-    match
-      Sol_cli_process.run
-        (Sol_cli_process.cmd
-           [ "gcloud"
-           ; "services"
-           ; "vpc-peerings"
-           ; "list"
-           ; "--network=" ^ cluster_name
-           ; "--service=servicenetworking.googleapis.com"
-           ; "--project"
-           ; project
-           ; "--format=value(peering)"
-           ])
-    with
-    | Ok result when result.Sol_cli_process.exit_code = 0 ->
-      let peerings =
-        String.split_on_char '\n' result.Sol_cli_process.stdout
-        |> List.map String.trim
-        |> List.filter (fun p -> p <> "" && p <> "---")
-      in
-      if peerings = []
-      then true
-      else (
-        Printf.eprintf
-          "error: the service-networking peering survived the destroy: %s\n%!"
-          (String.concat ", " peerings);
-        false)
-    | Ok result
-      when contains ~needle:"NOT_FOUND" result.Sol_cli_process.stderr
-           || contains ~needle:"was not found" result.Sol_cli_process.stderr -> true
-    | Ok result ->
-      Printf.eprintf
-        "error: could not determine whether the service-networking peering is gone: %s\n\
-         %!"
-        result.Sol_cli_process.stderr;
-      false
-    | Error _ ->
-      Printf.eprintf
-        "error: could not determine whether the service-networking peering is gone: \
-         gcloud unavailable.\n\
-         %!";
-      false
+(* The independent postcondition: a fresh read of *this root's* own state. The root
+   is [infra_dir], the disposable cloud root -- DEC-043's durable GCP prerequisites
+   live in `cli/platform/infra/bootstrap-gcp`, a different root, so they are not
+   residue and are never asserted about here. *)
+let post_destroy_state ~infra_dir =
+  Sol_cli_destroy_verification.state_evidence
+    (match Sol_cli_terraform.show_json ~chdir:infra_dir () with
+     | Ok result when result.Sol_cli_process.exit_code = 0 ->
+       (match Sol_cli_cloud_destroy.inventory_of_show_json result.stdout with
+        | Sol_cli_cloud_destroy.State_empty -> Ok []
+        | Sol_cli_cloud_destroy.State_represented _ as state ->
+          Ok (Sol_cli_cloud_destroy.addresses state)
+        | Sol_cli_cloud_destroy.State_unreadable reason -> Error reason)
+     | Ok result -> Error (Printf.sprintf "terraform show exited %d" result.exit_code)
+     | Error error ->
+       Error ("terraform show could not be run: " ^ Sol_cli_process.error_to_string error))
+;;
+
+(* How long to keep observing a final snapshot that the provider reports as still
+   being created. A snapshot that never reaches `available` is reported unknown --
+   never as a met guarantee -- and this only bounds how long that takes to say.
+
+   The interval is an operator knob (`SOL_DESTROY_SNAPSHOT_INTERVAL_S`), because a
+   large database's final snapshot takes longer than a small one's. The offline
+   harness sets it to 0 so the pending path is exercised without sleeping, and an
+   unparseable value is refused loudly rather than silently replaced. *)
+let final_snapshot_attempts = 12
+
+let final_snapshot_interval_s =
+  match Sys.getenv_opt "SOL_DESTROY_SNAPSHOT_INTERVAL_S" with
+  | None -> 10.
+  | Some raw ->
+    (match float_of_string_opt raw with
+     | Some seconds when seconds >= 0. -> seconds
+     | _ ->
+       Printf.eprintf
+         "error: SOL_DESTROY_SNAPSHOT_INTERVAL_S=%S is not a non-negative number of \
+          seconds.\n\
+          %!"
+         raw;
+       exit 2)
+;;
+
+let rec observe_final_snapshot ~declared ~snapshot_id ~region ~attempts =
+  let lookup =
+    run_provider_query
+      (Sol_cli_destroy_verification.final_snapshot_query ~snapshot_id ~region)
   in
-  if
-    not
-      (cluster_gone
-       && sql_gone
-       && network_gone
-       && registry_gone
-       && address_gone
-       && peering_gone)
-  then Error "GCP absence verification failed"
-  else (
-    Printf.printf
-      "  GCP verification passed: GKE/Cloud SQL/network/registry/peering-address not \
-       found, and no service-networking peering remains.\n\
-       %!";
-    Ok ())
+  match
+    Sol_cli_destroy_verification.classify_final_snapshot ~declared ~snapshot_id lookup
+  with
+  | Sol_cli_destroy_verification.Settled retention -> retention
+  | Sol_cli_destroy_verification.Pending message ->
+    if attempts <= 0
+    then
+      Sol_cli_destroy_verification.Retention_unknown
+        (Printf.sprintf
+           "%s; the retention guarantee is not established while it has not reached \
+            available"
+           message)
+    else (
+      Unix.sleepf final_snapshot_interval_s;
+      observe_final_snapshot ~declared ~snapshot_id ~region ~attempts:(attempts - 1))
+;;
+
+(* Retention, observed. What is checked is stated for each mode rather than
+   inferred: the promised snapshot must exist *and* be available, and a target that
+   keeps nothing must have no manual or automated snapshot attributable to its own
+   captured database identity. GCP has no snapshot surface, so the absence of the
+   instance is the whole guarantee and that is said rather than dressed up. *)
+let retention_evidence ~provider ~retention ~pre_destroy ~preparation =
+  let open Sol_cli_destroy_verification in
+  let database = captured_identity pre_destroy "aws_db_instance" in
+  match provider with
+  | Sol_cli_provider.Gcp ->
+    (match retention with
+     | Sol_cli_cloud_lifecycle.Retain_nothing ->
+       Retention_not_required
+         "none declared, and there is no GCP snapshot surface to observe -- Cloud SQL \
+          deletes its backups together with the instance, so the verified absence of the \
+          instance is the whole guarantee (destroy_retention = none)"
+     | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
+       (* Unreachable: a GCP target whose retention is final-snapshot is blocked in
+          preparation, so destruction never runs. Reaching here means the block was
+          not applied, which must not read as a met guarantee. *)
+       Retention_unknown
+         "this destroy reached verification with destroy_retention = final-snapshot on \
+          GCP, which cannot retain anything: the block was not applied, so no retention \
+          guarantee can be observed")
+  | Sol_cli_provider.Aws ->
+    (match preparation with
+     | Sol_cli_cloud_destroy.Nothing_prepared ->
+       Retention_not_required
+         "nothing to decide -- this target had no database whose retention a destroy had \
+          to settle"
+     | Sol_cli_cloud_destroy.Gcp_prepared ->
+       Retention_unknown
+         "an AWS destroy reported a GCP preparation, so there is no retention identity \
+          to observe"
+     | Sol_cli_cloud_destroy.Aws_prepared snapshot_id ->
+       (match retention with
+        | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
+          (match database with
+           | Some database ->
+             (match database.region with
+              | Some region ->
+                observe_final_snapshot
+                  ~declared:retention
+                  ~snapshot_id
+                  ~region
+                  ~attempts:final_snapshot_attempts
+              | None ->
+                Retention_unknown
+                  (Printf.sprintf
+                     "the promised final snapshot %s could not be queried: the captured \
+                      database identity carries no region"
+                     snapshot_id))
+           | None ->
+             Retention_unknown
+               (Printf.sprintf
+                  "the promised final snapshot %s could not be queried: no database \
+                   identity was captured before destruction"
+                  snapshot_id))
+        | Sol_cli_cloud_lifecycle.Retain_nothing ->
+          (match database with
+           | None ->
+             Retention_not_required
+               "nothing to decide -- this target had no database whose retention a \
+                destroy had to settle"
+           | Some database ->
+             (match database.provider_id, database.region with
+              | Some instance, Some region ->
+                classify_instance_snapshots
+                  (run_provider_query (instance_snapshots_query ~instance ~region))
+              | _ ->
+                Retention_unknown
+                  "no-residue could not be observed: the captured database identity \
+                   carries no identifier or region to query by"))))
+;;
+
+(* Step 5's one observation, assembling every leg. The identity comes from the
+   inventory captured *before* destruction; the state comes from a fresh read
+   after it; the sweep and retention are derived, and both say which of their
+   answers is an observation and which is a gap. *)
+let verification_observation
+      ~provider
+      ~infra_dir
+      ~var_files
+      ~vars
+      ~retention
+      ~pre_destroy
+      ~preparation
+  =
+  let open Sol_cli_destroy_verification in
+  (* The postcondition first, then what the provider says, then the two derived legs.
+     All three are post-mutation observations, so this order is for readability
+     rather than correctness -- but it is stated, not left to the unspecified
+     evaluation order of record fields. *)
+  let state = post_destroy_state ~infra_dir in
+  let identities, unqueried =
+    List.fold_left
+      (fun (observations, unqueried) identity ->
+         match query_of ~provider identity with
+         | Queryable recipe ->
+           ( observation_of_lookup ~recipe (run_provider_query recipe.argv) :: observations
+           , unqueried )
+         | Identity_incomplete reason ->
+           unqueryable identity ~reason :: observations, unqueried
+         | No_recipe reason -> observations, (identity, reason) :: unqueried)
+      ([], [])
+      (Sol_cli_cloud_destroy.identities pre_destroy)
+  in
+  let sweep =
+    match provider with
+    | Sol_cli_provider.Gcp -> gcp_orphan_sweep ~pre_destroy
+    | Sol_cli_provider.Aws -> aws_orphan_sweep ~pre_destroy ~var_files ~vars
+  in
+  { state
+  ; identities = List.rev identities
+  ; unqueried = List.rev unqueried
+  ; sweep
+  ; retention = retention_evidence ~provider ~retention ~pre_destroy ~preparation
+  }
+;;
+
+let report_verification observation =
+  Printf.printf "%s%!" (Sol_cli_destroy_verification.report observation)
 ;;
 
 let terraform_init run_log infra_dir backend_config =
@@ -3486,11 +3610,16 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
                    ~var_files
                    ~vars:(destroy_apply_vars ())
                    ())))
-      ; verify_absent =
-          (fun () ->
-            match provider with
-            | Sol_cli_provider.Aws -> verify_aws_destroy ~var_files ~vars
-            | Sol_cli_provider.Gcp -> verify_gcp_destroy ~var_files ~vars)
+      ; verify_destruction =
+          (fun ~pre_destroy ~preparation ->
+            verification_observation
+              ~provider
+              ~infra_dir
+              ~var_files
+              ~vars
+              ~retention
+              ~pre_destroy
+              ~preparation)
       ; report = (fun message -> Printf.printf "%s\n%!" message)
       ; warn = (fun message -> Printf.eprintf "%s\n%!" message)
       }
@@ -3498,51 +3627,41 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
     (* One place maps the typed outcome to a process exit. Step 4's contract: 0 only
        for a clean destroy; 3 when absence was reached but a preparation degraded;
        1 for a blocked or failed destroy. 2 stays reserved for this CLI's
-       refusal / cannot-proceed-as-requested semantics. *)
+       refusal / cannot-proceed-as-requested semantics. Step 5 adds no code: success
+       already *means* "every required postcondition was positively established",
+       and an UNKNOWN observation is a failure rather than a degraded success. *)
     let outcome = Sol_cli_cloud_destroy.execute ~deps in
     (match outcome with
-     | Sol_cli_cloud_destroy.Destroy_succeeded { preparation; degradations; cleanup; _ }
+     | Sol_cli_cloud_destroy.Destroy_succeeded { degradations; cleanup; verification; _ }
        ->
        report_cleanup_evidence cleanup;
        report_degradations degradations;
-       (* DEC-033: the destroy states what it kept, by identifier, so an operator
-          never has to infer it from the absence of a snapshot listing. *)
-       (match preparation with
-        | Sol_cli_cloud_destroy.Aws_prepared snapshot_id ->
-          Printf.printf
-            "\n%s\n%!"
-            (Sol_cli_cloud_lifecycle.retention_report
-               ~retention
-               ~destroy_snapshot_id:snapshot_id)
-        | Sol_cli_cloud_destroy.Gcp_prepared ->
-          Printf.printf
-            "\n%s\n%!"
-            (Sol_cli_cloud_lifecycle.retention_report ~retention ~destroy_snapshot_id:"")
-        | Sol_cli_cloud_destroy.Nothing_prepared when degradations = [] ->
-          Printf.printf
-            "\n\
-            \  retention: nothing to decide -- this target had no database whose \
-             retention a destroy had to settle\n\
-             %!"
-        | Sol_cli_cloud_destroy.Nothing_prepared ->
-          (* A degraded preparation is the news here; the warnings above already say
-             what happened, and "nothing to decide" would read as if nothing did. *)
-          ());
+       (* The evidence report carries the retention statement, because retention is
+          now observed rather than rendered from the policy (DEC-033 / FND-0046). *)
+       report_verification verification;
        Printf.printf
          (if degradations = []
           then "\nDone.\n%!"
           else "\nDone, with a degraded preparation.\n%!")
      | Sol_cli_cloud_destroy.Destroy_blocked { guarantee } ->
+       (* Destruction did not happen, so there is no postcondition to verify and the
+          step-5 observation deliberately never ran. *)
        Printf.eprintf
          "error: destruction is blocked -- proceeding would violate a destruction-time \
           guarantee this target declared: %s\n\
           %!"
          guarantee
-     | Sol_cli_cloud_destroy.Destroy_failed { failure; degradations; cleanup } ->
+     | Sol_cli_cloud_destroy.Destroy_failed
+         { failure; degradations; cleanup; verification } ->
        (* A cleanup failure is evidence, not silence: it is reported alongside the
-          failure that stopped the run, never replaced by it. *)
+          failure that stopped the run, never replaced by it. The verification
+          evidence is reported too when the run reached it -- what was observed is
+          part of why the run failed. *)
        report_cleanup_evidence cleanup;
        report_degradations degradations;
+       (match verification with
+        | Some verification -> report_verification verification
+        | None -> ());
        Printf.eprintf "error: %s\n%!" (Sol_cli_cloud_destroy.failure_message failure));
     exit (Sol_cli_cloud_destroy.exit_code outcome)
 ;;

@@ -29,6 +29,11 @@ type resource =
   ; provider_id : string option
     (* The provider's own identity: [`self_link`] where the provider publishes
        one, otherwise [`id`]. *)
+  ; arn : string option
+    (* The fully-qualified cloud identifier, where the provider publishes one.
+       For AWS it is also the only place an individual resource's region is
+       recorded, so it is both the strongest identity available and the source of
+       the region step 5's provider lookups query with. *)
   ; project : string option (* GCP project, or the AWS account id. *)
   ; region : string option (* Region or location; a bare zone is reduced to its region. *)
   ; deletion_protection : bool option
@@ -87,7 +92,17 @@ let region_of_values values =
   | None ->
     (match string_attr "location" values with
      | Some _ as location -> location
-     | None -> Option.map region_of_zone (string_attr "zone" values))
+     | None ->
+       (match string_attr "zone" values with
+        | Some zone -> Some (region_of_zone zone)
+        | None ->
+          (* An AWS resource carries no region attribute of its own; its ARN does
+             (`arn:aws:eks:us-east-1:...:cluster/...`). Reading the region out of
+             the provider's own identifier keeps step 5's lookups on captured
+             identity rather than on a fallback region. *)
+          Option.bind
+            (string_attr "arn" values)
+            Sol_cli_destroy_verification.region_of_arn))
 ;;
 
 let resource_of_json json =
@@ -106,10 +121,17 @@ let resource_of_json json =
           (match string_attr "self_link" values with
            | Some _ as self_link -> self_link
            | None -> string_attr "id" values)
+      ; arn = string_attr "arn" values
       ; project =
           (match string_attr "project" values with
            | Some _ as project -> project
-           | None -> string_attr "account_id" values)
+           | None ->
+             (match string_attr "account_id" values with
+              | Some _ as account -> account
+              | None ->
+                Option.bind
+                  (string_attr "arn" values)
+                  Sol_cli_destroy_verification.account_of_arn))
       ; region = region_of_values values
       ; deletion_protection
       ; final_snapshot_identifier = string_attr "final_snapshot_identifier" values
@@ -201,6 +223,23 @@ let find_address state address =
   List.find_opt (fun resource -> resource.address = address) (resources state)
 ;;
 
+(* Step 5: the provider identities this state represents, captured *before*
+   destruction so the same identities can be verified after it. This is the
+   projection, not a re-derivation -- nothing here reads configuration, a
+   workspace name or a naming convention. *)
+let identities state =
+  List.map
+    (fun resource ->
+       { Sol_cli_destroy_verification.address = resource.address
+       ; kind = resource.kind
+       ; provider_id = resource.provider_id
+       ; arn = resource.arn
+       ; project = resource.project
+       ; region = resource.region
+       })
+    (resources state)
+;;
+
 (* What destruction preparation did, carried so the command edge can report what
    survived by identifier. Kept provider-shaped because the difference is real:
    AWS's final snapshot has no GCP counterpart (DEC-033). *)
@@ -251,19 +290,30 @@ type failure =
    - [Destroy_failed] means destruction did not reach its postcondition. It carries
      [degradations] too, so "a preparation failed and then the destroy failed"
      cannot collapse into one fact -- and a cleanup failure is evidence alongside
-     the primary failure, never a replacement for it. *)
+     the primary failure, never a replacement for it.
+
+   Step 5 adds one *dimension* rather than a fifth outcome: [verification]. It is
+   the observed evidence ([Sol_cli_destroy_verification.observation]) that
+   justifies -- or refuses to justify -- the claim of absence. It is not optional
+   on [Destroy_succeeded] (success now *is* "every required postcondition was
+   positively established"), and it is [None] on [Destroy_failed] exactly when the
+   run never reached the verification stage, which is itself a fact worth keeping.
+   A `Block_destroy` block reaches neither: destruction did not happen, so there is
+   no postcondition to verify and step 5 must not run as though it had. *)
 type outcome =
   | Destroy_succeeded of
       { preparation : preparation
       ; degradations : string list
       ; substrate : substrate_presence
       ; cleanup : cleanup
+      ; verification : Sol_cli_destroy_verification.observation
       }
   | Destroy_blocked of { guarantee : string }
   | Destroy_failed of
       { failure : failure
       ; degradations : string list
       ; cleanup : cleanup
+      ; verification : Sol_cli_destroy_verification.observation option
       }
 
 let failure_message = function
@@ -322,7 +372,20 @@ type deps =
   ; observe_window_before : unit -> (unit, string) result
   ; verify_window_after : unit -> (unit, string) result
   ; destroy_substrate : unit -> (unit, string) result
-  ; verify_absent : unit -> (unit, string) result
+  ; verify_destruction :
+      pre_destroy:state_read
+      -> preparation:preparation
+      -> Sol_cli_destroy_verification.observation
+    (* Step 5's one observation. It is not a [result]: every evidence leg is
+       itself three-valued (the provider answers, the post-destroy state read, the
+       orphan sweep, the retention probe), so "the verification failed" is not one
+       thing. Composing them is [Sol_cli_destroy_verification.classify]'s job, in
+       the library, so the sequence stays ordering and the edge stays I/O.
+
+       [pre_destroy] is the identity captured *before* destruction -- the same
+       inventory the sequence decided from -- and [preparation] carries the
+       retention identity the destruction promised, which is established before
+       the destroy, never rediscovered after it. *)
   ; report : string -> unit (* operator-facing progress, stdout *)
   ; warn : string -> unit (* operator-facing warning, stderr *)
   }
@@ -449,12 +512,18 @@ let execute ~deps =
     deps.warn ("warning: " ^ message);
     degradations := message :: !degradations
   in
-  let succeed ?(cleanup = Cleanup_not_needed) preparation =
+  let succeed ?(cleanup = Cleanup_not_needed) ~verification preparation =
     Destroy_succeeded
-      { preparation; degradations = List.rev !degradations; substrate; cleanup }
+      { preparation
+      ; degradations = List.rev !degradations
+      ; substrate
+      ; cleanup
+      ; verification
+      }
   in
-  let fail ?(cleanup = Cleanup_not_needed) failure =
-    Destroy_failed { failure; degradations = List.rev !degradations; cleanup }
+  let fail ?(cleanup = Cleanup_not_needed) ?verification failure =
+    Destroy_failed
+      { failure; degradations = List.rev !degradations; cleanup; verification }
   in
   let block guarantee = Destroy_blocked { guarantee } in
   match deps.require_credentials () with
@@ -533,9 +602,25 @@ let execute ~deps =
                   | Error message -> fail ~cleanup (Substrate_destroy_failed message)
                   | Ok () ->
                     deps.report "\nVerifying teardown...";
-                    (match deps.verify_absent () with
-                     | Error message -> fail ~cleanup (Verification_failed message)
-                     | Ok () -> succeed ~cleanup preparation))))))
+                    (* Step 5: what Sol is justified in claiming. The evidence is
+                       taken against the identities captured *before* destruction
+                       (including the retention identity the preparation
+                       established), and success is now "every required
+                       postcondition was positively established" -- an UNKNOWN
+                       observation is a failure, never a degraded success, because
+                       exit 3 means the primary postcondition *succeeded*. *)
+                    let observation =
+                      deps.verify_destruction ~pre_destroy:state ~preparation
+                    in
+                    let verdict = Sol_cli_destroy_verification.classify observation in
+                    if Sol_cli_destroy_verification.is_verified verdict
+                    then succeed ~cleanup ~verification:observation preparation
+                    else
+                      fail
+                        ~cleanup
+                        ~verification:observation
+                        (Verification_failed
+                           (Sol_cli_destroy_verification.verdict_message verdict)))))))
 ;;
 
 (* ── Phase allowlists for the destroy-path applies (HARDEN-004 step 3) ────────

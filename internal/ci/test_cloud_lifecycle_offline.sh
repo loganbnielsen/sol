@@ -264,6 +264,23 @@ JSON
         exit 0
         ;;
       *infra/gcp*)
+        # HARDEN-004 step 5: the fixture carries the identities a real `terraform
+        # show -json` carries -- self-link, project, location -- because
+        # verification queries the identity captured *here* rather than one
+        # reconstructed from the cluster name. Without them the captured-identity
+        # lookups are UNKNOWN and the destroy is (correctly) unverifiable, which is
+        # not what a real target produces.
+        #
+        # The ${LIFECYCLE_LOG}.destroyed marker is what the substrate destroy leaves
+        # behind: Terraform no longer represents anything in this root. That is the
+        # postcondition step 5 reads for itself instead of inferring from destroy's
+        # exit status. It is scoped to this run's log so one scenario cannot make the
+        # next scenario's *pre*-destroy state read empty.
+        if [ -e "${LIFECYCLE_LOG}.destroyed" ] \
+          && [ "${STATE_RESIDUE_AFTER_DESTROY:-}" != 1 ]; then
+          printf '{"values":{"root_module":{"resources":[]}}}\n'
+          exit 0
+        fi
         sql_guard=true
         gke_guard=true
         [ -e "${GCP_SQL_PREPARED_FILE:-/nonexistent}" ] && sql_guard=false
@@ -271,32 +288,51 @@ JSON
         # The real `terraform show -json` always carries each resource's real
         # `address`; the guarded resources are found by address, not by type
         # (FND-0048), so the fixture has to model that or it is not modelling
-        # Terraform.
-        printf '{"values":{"root_module":{"resources":[{"address":"google_sql_database_instance.postgres","type":"google_sql_database_instance","values":{"deletion_protection":%s}},{"address":"google_container_cluster.main","type":"google_container_cluster","values":{"deletion_protection":%s}}]}}}\n' \
+        # Terraform. The names are the ones cli/platform/infra/gcp/main.tf declares.
+        printf '{"values":{"root_module":{"resources":[
+          {"address":"google_compute_network.main","type":"google_compute_network","values":{"self_link":"https://www.googleapis.com/compute/v1/projects/sol-qualification/global/networks/sol-qual","project":"sol-qualification","name":"sol-qual"}},
+          {"address":"google_artifact_registry_repository.images","type":"google_artifact_registry_repository","values":{"id":"projects/sol-qualification/locations/us-central1/repositories/sol-qual","project":"sol-qualification","location":"us-central1","name":"sol-qual"}},
+          {"address":"google_compute_global_address.sql_peering","type":"google_compute_global_address","values":{"self_link":"https://www.googleapis.com/compute/v1/projects/sol-qualification/global/addresses/sol-qual-sql-peering","project":"sol-qualification","name":"sol-qual-sql-peering"}},
+          {"address":"google_sql_database_instance.postgres","type":"google_sql_database_instance","values":{"deletion_protection":%s,"self_link":"https://sqladmin.googleapis.com/sql/v1beta4/projects/sol-qualification/instances/sol-qual-postgres","project":"sol-qualification","region":"us-central1"}},
+          {"address":"google_container_cluster.main","type":"google_container_cluster","values":{"deletion_protection":%s,"self_link":"https://container.googleapis.com/v1/projects/sol-qualification/locations/us-central1/clusters/sol-qual","project":"sol-qualification","location":"us-central1"}},
+          {"address":"google_project_iam_member.provisioner_cluster_access","type":"google_project_iam_member","values":{"project":"sol-qualification","role":"projects/sol-qualification/roles/solProvisionerClusterAccess"}}
+        ]}}}\n' \
           "$sql_guard" "$gke_guard"
         exit 0
         ;;
     esac
+    if [ -e "${LIFECYCLE_LOG}.destroyed" ] \
+      && [ "${STATE_RESIDUE_AFTER_DESTROY:-}" != 1 ]; then
+      # The AWS cloud root, emptied by its own destroy (see the GCP branch above).
+      printf '{"values":{"root_module":{"resources":[]}}}\n'
+      exit 0
+    fi
+    # The EKS cluster every non-absent case represents: a real substrate has one, and
+    # HARDEN-004 step 5 verifies it by its captured identity, so the fixture carries
+    # the `id` and `arn` a real state does.
+    eks_resource='{"address":"module.eks.aws_eks_cluster.this[0]","type":"aws_eks_cluster","values":{"id":"lifecycle-test","arn":"arn:aws:eks:us-east-1:111122223333:cluster/lifecycle-test"}}'
     if [ "${RDS_ABSENT:-}" = 1 ]; then
       # The cloud substrate exists (the EKS cluster is represented) but this target
       # never created an RDS instance. Under HARDEN-004 step 2 the substrate's
       # existence is what the state represents, so this must stay distinct from the
       # wholly-absent case (empty state) -- hence a non-RDS resource, not `[]`.
-      printf '{"values":{"root_module":{"resources":[{"address":"aws_eks_cluster.main","type":"aws_eks_cluster","values":{"id":"lifecycle-test"}}]}}}\n'
+      printf '{"values":{"root_module":{"resources":[%s]}}}\n' "$eks_resource"
     elif [ -e "$RDS_PREPARED_FILE" ]; then
       prepared_value="$(cat "$RDS_PREPARED_FILE")"
       if [ "$prepared_value" = "skip" ]; then
-        printf '{"values":{"root_module":{"resources":[{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":true,"final_snapshot_identifier":null}}]}}}\n'
+        printf '{"values":{"root_module":{"resources":[%s,{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":true,"final_snapshot_identifier":null,"id":"lifecycle-test-postgres","arn":"arn:aws:rds:us-east-1:111122223333:db:lifecycle-test-postgres"}}]}}}\n' \
+          "$eks_resource"
       else
         # RDS_SNAPSHOT_MISMATCH makes the provider's record disagree with what was
         # prepared, so the production guarantee can be shown to still fail closed.
         printf \
-          '{"values":{"root_module":{"resources":[{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":false,"final_snapshot_identifier":"%s"}}]}}}\n' \
-          "${prepared_value}${RDS_SNAPSHOT_MISMATCH:+-other}"
+          '{"values":{"root_module":{"resources":[%s,{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":false,"final_snapshot_identifier":"%s","id":"lifecycle-test-postgres","arn":"arn:aws:rds:us-east-1:111122223333:db:lifecycle-test-postgres"}}]}}}\n' \
+          "$eks_resource" "${prepared_value}${RDS_SNAPSHOT_MISMATCH:+-other}"
       fi
     else
       printf \
-        '{"values":{"root_module":{"resources":[{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":true,"skip_final_snapshot":false,"final_snapshot_identifier":null}}]}}}\n'
+        '{"values":{"root_module":{"resources":[%s,{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":true,"skip_final_snapshot":false,"final_snapshot_identifier":null,"id":"lifecycle-test-postgres","arn":"arn:aws:rds:us-east-1:111122223333:db:lifecycle-test-postgres"}}]}}}\n' \
+        "$eks_resource"
     fi
     ;;
   *" apply "*".tfplan")
@@ -381,6 +417,14 @@ JSON
       exit 1
     fi
     ;;
+  *infra/gcp*" destroy "*|*infra/aws*" destroy "*)
+    # HARDEN-004 step 5: the substrate destroy empties this root's state. That is
+    # what step 5 reads as its independent postcondition -- rather than trusting
+    # this command's exit status -- so the fixture has to model the consequence.
+    # STATE_RESIDUE_AFTER_DESTROY models a destroy that left something represented,
+    # so the residue path is exercised rather than asserted.
+    [ "${STATE_RESIDUE_AFTER_DESTROY:-}" = 1 ] || : >"${LIFECYCLE_LOG}.destroyed"
+    ;;
   *infra/gcp*" apply "*"-target=google_sql_database_instance.postgres"*)
     if fail_once gcp-prepare; then exit 20; fi
     # Both of GCP's guards are lifted by one applied transition, and the target's
@@ -453,14 +497,68 @@ printf 'aws %s\n' "$*" >>"$LIFECYCLE_LOG"
 # env toggle (set only around destroy invocations below) is enough to flip
 # the whole mock rather than keying every case on both directions.
 if [ "${DESTROYING:-}" = 1 ]; then
+  # HARDEN-004 step 5: the captured-identity lookups are what the destroy now
+  # verifies with, and each of the three answers has to be reachable from here --
+  # an explicit not-found (the ordinary case), a returned resource (a residue that
+  # must fail), and an error that says nothing about the resource (UNKNOWN, which
+  # must fail rather than pass).
   case "$1 $2" in
-    "eks describe-cluster"|"eks describe-addon")
-      echo "An error occurred (ResourceNotFoundException) when calling the operation" >&2
+    "eks describe-cluster"|"eks describe-addon"|"rds describe-db-instances")
+      if [ "${AWS_VERIFY_UNKNOWN:-}" = 1 ]; then
+        echo "An error occurred (Throttling) when calling the operation" >&2
+        exit 254
+      fi
+      if [ "${DESTROYED_RESOURCE_PRESENT:-}" = 1 ]; then
+        printf '{"resource":"still here"}\n'
+        exit 0
+      fi
+      case "$1 $2" in
+        "rds describe-db-instances")
+          echo "An error occurred (DBInstanceNotFound) when calling the operation" >&2
+          ;;
+        *)
+          echo "An error occurred (ResourceNotFoundException) when calling the operation" >&2
+          ;;
+      esac
       exit 254
       ;;
-    "rds describe-db-instances")
-      echo "An error occurred (DBInstanceNotFound) when calling the operation" >&2
-      exit 254
+    "rds describe-db-snapshots")
+      # Retention, observed. The final-snapshot query names the identifier the
+      # preparation established; the retain-nothing query names the captured
+      # instance. RDS_SNAPSHOT_MISSING / RDS_SNAPSHOT_PENDING model the two ways a
+      # promised snapshot is not established, and RDS_SNAPSHOT_RESIDUE models a
+      # snapshot a retain-nothing destroy should not have left.
+      snapshot_id=""
+      want_id=0
+      for arg in "$@"; do
+        if [ "$want_id" = 1 ]; then snapshot_id="$arg"; want_id=0; continue; fi
+        [ "$arg" = "--db-snapshot-identifier" ] && want_id=1
+      done
+      if [ -n "$snapshot_id" ]; then
+        if [ "${RDS_SNAPSHOT_MISSING:-}" = 1 ]; then
+          echo "An error occurred (DBSnapshotNotFound) when calling the DescribeDBSnapshots operation" >&2
+          exit 254
+        fi
+        status=available
+        [ "${RDS_SNAPSHOT_PENDING:-}" = 1 ] && status=creating
+        # The first read says `creating`, the second says `available`: a final
+        # snapshot is created asynchronously, so the observation has to ride that
+        # out rather than abandon the guarantee on the first look.
+        if [ "${RDS_SNAPSHOT_CREATING_ONCE:-}" = 1 ] \
+          && [ ! -e "$FAIL_MARKER_DIR/snapshot-creating" ]; then
+          : >"$FAIL_MARKER_DIR/snapshot-creating"
+          status=creating
+        fi
+        printf '{"DBSnapshots":[{"DBSnapshotIdentifier":"%s","SnapshotType":"manual","Status":"%s"}]}\n' \
+          "$snapshot_id" "$status"
+        exit 0
+      fi
+      if [ "${RDS_SNAPSHOT_RESIDUE:-}" = 1 ]; then
+        printf '{"DBSnapshots":[{"DBSnapshotIdentifier":"leaked-manual","SnapshotType":"manual","Status":"available"}]}\n'
+      else
+        printf '{"DBSnapshots":[]}\n'
+      fi
+      exit 0
       ;;
     "ecr describe-repositories") printf '\n'; exit 0 ;;
     "resourcegroupstaggingapi get-resources") printf '\n'; exit 0 ;;
@@ -604,7 +702,19 @@ case "$1 $2" in
     printf 'servicenetworking-googleapis-com\n'
     exit 0
     ;;
-  "compute networks"|"artifacts repositories"|"compute addresses")
+  "compute networks")
+    if [ "${DESTROYING:-}" = 1 ]; then
+      # HARDEN-004 step 5: the real wording names the resource's own path, and the
+      # verification checks that subject against the project the identity was
+      # captured in. A stub that answers without one would leave that check
+      # untested -- and the check is the difference between "this object is gone"
+      # and "that project is not visible to you", both of which gcloud answers 404.
+      echo "ERROR: (gcloud.compute.networks.describe) Could not fetch resource: - The resource 'projects/sol-qualification/global/networks/sol-qual' was not found" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  "artifacts repositories"|"compute addresses")
     if [ "${DESTROYING:-}" = 1 ]; then
       echo "ERROR: (gcloud.$1.$2.describe) NOT_FOUND: Resource was not found" >&2
       exit 1
@@ -1348,16 +1458,45 @@ for override in sql_deletion_protection=false gke_deletion_protection=false; do
     exit 1
   }
 done
-grep -F 'GCP verification passed' "$gcp_destroy_log.out" >/dev/null || {
-  echo "GCP destroy did not verify absence through the provider's API:" >&2
-  cat "$gcp_destroy_log.out" >&2
-  exit 1
-}
+# HARDEN-004 step 5: absence is claimed from observed evidence. The report has to
+# name the state postcondition, the identity each query was made with, and how the
+# provider's answer was classified -- a bare "verification passed" would be the
+# summary this step exists to replace.
+assert_contains "the GCP destroy read its own state postcondition" "$gcp_destroy_log.out" \
+  'terraform state (disposable root): no target-owned resource remains represented' || exit 1
+assert_contains "the GCP destroy queried the captured cluster identity" "$gcp_destroy_log.out" \
+  'gcloud container clusters describe sol-qual --location us-central1 --project sol-qualification' || exit 1
+assert_contains "the GCP destroy queried the captured Cloud SQL identity" "$gcp_destroy_log.out" \
+  'gcloud sql instances describe sol-qual-postgres --project sol-qualification' || exit 1
+assert_contains "the GCP destroy classified the answers ABSENT" "$gcp_destroy_log.out" \
+  '[ABSENT] google_container_cluster.main' || exit 1
+assert_contains "the GCP destroy queried the captured network identity" "$gcp_destroy_log.out" \
+  'gcloud compute networks describe sol-qual --project sol-qualification' || exit 1
+assert_contains "the GCP destroy queried the captured registry identity" "$gcp_destroy_log.out" \
+  'gcloud artifacts repositories describe sol-qual --location us-central1 --project sol-qualification' || exit 1
+assert_contains "the GCP destroy queried the captured peering address identity" "$gcp_destroy_log.out" \
+  'gcloud compute addresses describe sol-qual-sql-peering --global --project sol-qualification' || exit 1
+assert_contains "the GCP orphan sweep saw the captured network" "$gcp_destroy_log.out" \
+  'orphan sweep (names derived from the target): found nothing remaining' || exit 1
+assert_contains "a kind with no provider lookup is reported as coverage" "$gcp_destroy_log.out" \
+  'not provider-verified' || exit 1
+assert_contains "and the coverage line names the kind" "$gcp_destroy_log.out" \
+  'google_project_iam_member.provisioner_cluster_access' || exit 1
 grep -F 'retention: none' "$gcp_destroy_log.out" >/dev/null || {
   echo "the GCP destroy did not say what it kept:" >&2
   cat "$gcp_destroy_log.out" >&2
   exit 1
 }
+# FND-0046: the old report claimed "no residual billable artifacts" from the policy
+# alone. GCP has no snapshot surface to observe, and the report has to say that
+# rather than assert an absence nothing checked.
+assert_contains "the GCP retention claim names what was actually checked" "$gcp_destroy_log.out" \
+  'there is no GCP snapshot surface to observe' || exit 1
+if grep -F 'no residual billable artifacts' "$gcp_destroy_log.out" >/dev/null; then
+  echo "the GCP destroy claimed no residual billable artifacts, which nothing observed:" >&2
+  cat "$gcp_destroy_log.out" >&2
+  exit 1
+fi
 # INFRA-039's guarantee applies to GCP too, through GCP's own credential: a mutating
 # stage resolves it rather than assuming it inherited a working environment.
 grep -F 'gcloud auth application-default print-access-token' "$gcp_destroy_log" >/dev/null || {
@@ -1597,7 +1736,8 @@ grep -F 'ClusterIssuer is not served by this cluster' "$partial_log.out" >/dev/n
   exit 1
 }
 # ...and the lifecycle still ends where it must.
-grep -F 'GCP verification passed' "$partial_log.out" >/dev/null || {
+assert_contains "INFRA-042: the destroy completed after the recovery" "$partial_log.out" \
+  '[ABSENT] google_container_cluster.main' || {
   echo "INFRA-042: the destroy did not complete after the recovery:" >&2
   cat "$partial_log.out" >&2
   exit 1
@@ -1767,6 +1907,76 @@ case "$retain_line" in
 esac
 assert_contains "the default destroy reports what it retained" "$log_retain.out" \
   'retention: final snapshot' || exit 1
+# HARDEN-004 step 5 / FND-0046: the retention claim is now an observation. The
+# report has to name the identifier the preparation established *before* destroy and
+# the state the provider says it reached -- not just the policy that was configured.
+retained_id="$(printf '%s\n' "$retain_line" | grep -oE 'rds_final_snapshot_identifier=[^ ]+' | cut -d= -f2)"
+if [ -z "$retained_id" ]; then
+  echo "the default destroy did not name a final snapshot identifier:" >&2
+  cat "$log_retain.out" >&2
+  exit 1
+fi
+assert_contains "the retained snapshot was observed, not assumed" "$log_retain.out" \
+  "final snapshot $retained_id observed available" || exit 1
+assert_contains "the retention observation names how to remove it" "$log_retain.out" \
+  'delete-db-snapshot' || exit 1
+# The identity queried is the one captured before destroy -- both for the database
+# and for the cluster -- and its region comes from the captured ARN.
+assert_contains "the destroy queried the captured database identity" "$log_retain.out" \
+  'aws rds describe-db-instances --db-instance-identifier lifecycle-test-postgres --region us-east-1' || exit 1
+assert_contains "the destroy queried the captured cluster identity" "$log_retain.out" \
+  'aws eks describe-cluster --name lifecycle-test --region us-east-1' || exit 1
+
+# HARDEN-004 step 5 / INFRA-072: retention is observed, so each way the observation
+# can fail must fail the command. Separate runs, so short-circuiting one into
+# another is observable rather than inferred.
+missing_snapshot_log="$tmp/destroy-retention-missing.log"
+rm -f "$RDS_PREPARED_FILE"
+if (export RDS_SNAPSHOT_MISSING=1; run_destroy "$missing_snapshot_log"); then
+  echo "a destroy whose promised final snapshot does not exist must fail" >&2
+  cat "$missing_snapshot_log.out" >&2
+  exit 1
+fi
+assert_contains "the missing final snapshot was reported" "$missing_snapshot_log.out" \
+  'final-snapshot NOT observed' || exit 1
+assert_contains "the missing snapshot failure names the guarantee" "$missing_snapshot_log.out" \
+  'the target declared it keeps its final snapshot' || exit 1
+assert_contains "the missing snapshot is a violation, not a degradation" \
+  "$missing_snapshot_log.out" 'the destruction postcondition is violated' || exit 1
+
+pending_snapshot_log="$tmp/destroy-retention-pending.log"
+rm -f "$RDS_PREPARED_FILE"
+if (export RDS_SNAPSHOT_PENDING=1 SOL_DESTROY_SNAPSHOT_INTERVAL_S=0; run_destroy "$pending_snapshot_log"); then
+  echo "a destroy whose final snapshot never becomes available must fail" >&2
+  cat "$pending_snapshot_log.out" >&2
+  exit 1
+fi
+assert_contains "a snapshot still creating is not a met guarantee" "$pending_snapshot_log.out" \
+  'the retention guarantee is not established while it has not reached available' || exit 1
+
+# ...and the opposite direction: a snapshot the provider first reports as still being
+# created and then as available must be *observed*, not abandoned. The fake says
+# `creating` on the first read only, so a retry that did not happen would report
+# UNKNOWN and fail this scenario.
+creating_log="$tmp/destroy-retention-creating.log"
+rm -f "$RDS_PREPARED_FILE" "$FAIL_MARKER_DIR/snapshot-creating"
+if ! (export RDS_SNAPSHOT_CREATING_ONCE=1 SOL_DESTROY_SNAPSHOT_INTERVAL_S=0; \
+      run_destroy "$creating_log"); then
+  echo "a destroy whose final snapshot needed a second observation must succeed" >&2
+  cat "$creating_log.out" >&2
+  exit 1
+fi
+assert_contains "the promised snapshot was observed once it settled" "$creating_log.out" \
+  'observed available' || exit 1
+
+invalid_interval_log="$tmp/destroy-invalid-interval.log"
+rm -f "$RDS_PREPARED_FILE" "$FAIL_MARKER_DIR/snapshot-creating"
+if (export SOL_DESTROY_SNAPSHOT_INTERVAL_S=soon; run_destroy "$invalid_interval_log"); then
+  echo "a destroy accepted an unparseable SOL_DESTROY_SNAPSHOT_INTERVAL_S" >&2
+  exit 1
+fi
+assert_contains "an unparseable interval is refused, naming the variable" \
+  "$invalid_interval_log.out" 'SOL_DESTROY_SNAPSHOT_INTERVAL_S' || exit 1
 
 # The production guarantee must not be weakened by the new mode: a target that
 # retains its snapshot still fails closed when the provider's record disagrees with
@@ -1847,8 +2057,79 @@ assert_contains "preparation established that the snapshot will be skipped" "$lo
   'final snapshot skipped (skip_final_snapshot=true)' || exit 1
 assert_contains "the disposable destroy reports retaining nothing" "$log_none.out" \
   'retention: none' || exit 1
-assert_contains "the disposable destroy states no artifacts remain" "$log_none.out" \
-  'no residual billable artifacts' || exit 1
+# FND-0046 again: the old report said "no residual billable artifacts" because the
+# policy said `none`. The claim now has to name what was actually checked, which is
+# the captured database's own manual and automated snapshots.
+assert_contains "the disposable destroy names what it checked for residue" "$log_none.out" \
+  "no manual or automated snapshot for this target's database" || exit 1
+if grep -F 'no residual billable artifacts' "$log_none.out" >/dev/null; then
+  echo "the disposable destroy claimed no residual billable artifacts without observing any:" >&2
+  cat "$log_none.out" >&2
+  exit 1
+fi
+
+residue_log="$tmp/destroy-retention-residue.log"
+rm -f "$RDS_PREPARED_FILE"
+if (export RDS_SNAPSHOT_RESIDUE=1; run_destroy "$residue_log"); then
+  echo "a retain-nothing destroy that left a snapshot must fail" >&2
+  cat "$residue_log.out" >&2
+  exit 1
+fi
+assert_contains "the residual snapshot was reported by name" "$residue_log.out" \
+  'leaked-manual' || exit 1
+assert_contains "the residue failure names how many remain" "$residue_log.out" \
+  'retain-nothing NOT observed' || exit 1
+
+# The captured-identity evidence itself: a resource the provider still returns, and a
+# provider answer that says nothing about the resource. Neither may pass, and neither
+# may be softened into a degraded success.
+present_log="$tmp/destroy-provider-present.log"
+rm -f "$RDS_PREPARED_FILE"
+present_rc=0
+(export DESTROYED_RESOURCE_PRESENT=1; run_destroy "$present_log") || present_rc=$?
+if [ "$present_rc" -eq 0 ]; then
+  echo "a destroy whose provider still returns the resource reported success" >&2
+  cat "$present_log.out" >&2
+  exit 1
+fi
+if [ "$present_rc" -eq 3 ]; then
+  echo "a provider residue is a failure, not a degraded success (exit 3)" >&2
+  cat "$present_log.out" >&2
+  exit 1
+fi
+assert_contains "the provider residue was classified PRESENT" "$present_log.out" \
+  '[PRESENT] aws_db_instance.postgres' || exit 1
+
+unknown_log="$tmp/destroy-provider-unknown.log"
+rm -f "$RDS_PREPARED_FILE"
+unknown_rc=0
+(export AWS_VERIFY_UNKNOWN=1; run_destroy "$unknown_log") || unknown_rc=$?
+if [ "$unknown_rc" -eq 0 ]; then
+  echo "a destroy whose provider answer was UNKNOWN reported success" >&2
+  cat "$unknown_log.out" >&2
+  exit 1
+fi
+if [ "$unknown_rc" -eq 3 ]; then
+  echo "an UNKNOWN observation is a failure, not a degraded success (exit 3)" >&2
+  cat "$unknown_log.out" >&2
+  exit 1
+fi
+assert_contains "the UNKNOWN classification is visible" "$unknown_log.out" \
+  '[UNKNOWN] aws_db_instance.postgres' || exit 1
+assert_contains "UNKNOWN is explicitly not absence" "$unknown_log.out" \
+  'could not be established' || exit 1
+
+# The independent state postcondition: a destroy that leaves something represented in
+# this root's state is a residue, whatever the provider answers.
+residue_state_log="$tmp/destroy-state-residue.log"
+rm -f "$RDS_PREPARED_FILE"
+if (export STATE_RESIDUE_AFTER_DESTROY=1; run_destroy "$residue_state_log"); then
+  echo "a destroy that left the state representing a resource must fail" >&2
+  cat "$residue_state_log.out" >&2
+  exit 1
+fi
+assert_contains "the state residue was reported, by address" "$residue_state_log.out" \
+  'STILL REPRESENTS module.eks.aws_eks_cluster.this[0], aws_db_instance.postgres' || exit 1
 
 # DEC-040 acceptance on the destroy path, and the decision it makes: the destroy revokes
 # the bootstrap access too, so it must observe the window and check the effective surface,
