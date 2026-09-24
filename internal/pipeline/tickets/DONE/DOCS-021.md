@@ -52,5 +52,9 @@ Rewrite the Out-of-Scope entry and the full example to use `Verified_signature_r
   - `SOL_API_KEY_FILE` was documented as "read on every validation", but
     `Service.api_key_reader` reads it once at startup. The doc now says rotation requires
     a restart.
+- Review round 1 (non-blocking, taken): the error table and flow diagram described a
+  missing API key as a request-time 500. `api_key_reader` makes it a startup `Config`
+  error, so both now say so. The diagram's 500 is kept, relabelled for its real cause
+  (JWKS unavailable).
 - Demo/example: docs-only. The compile-check above covers the spec's example.
 - Language parity: no language-parity impact (OCaml package spec only).

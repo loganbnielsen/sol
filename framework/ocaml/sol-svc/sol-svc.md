@@ -181,7 +181,7 @@ driven by `kid` lookup in the JWKS, not by attacker input.
 |---|---|
 | Missing `Authorization` / `X-Api-Key` header | 401 |
 | Wrong API key | 401 |
-| `SOL_API_KEY` and `SOL_API_KEY_FILE` both unset | 500 (misconfiguration) |
+| `SOL_API_KEY` and `SOL_API_KEY_FILE` both unset while a route (or `metrics_auth`) uses `` `Api_key `` | the service does not start: `run` returns a `Config` error |
 | Malformed JWT (not three base64 segments, in dev mode) | 401 |
 | Expired JWT | 401 |
 | JWT missing a required scope | 403 |
@@ -553,7 +553,7 @@ TCP accept
   └─ validate auth      (Auth internal)
   │     Unauthorized    → 401, close
   │     Forbidden       → 403, close
-  │     misconfigured   → 500, close
+  │     JWKS unavailable → 500, close
   └─ call handler
   │     exception       → 500, log via obs, close
   └─ write response     (cohttp-eio)
