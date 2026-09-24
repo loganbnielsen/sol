@@ -233,9 +233,15 @@ let apply_asserted ~run_log ~phase_name ~policy ~scope ~chdir ~var_files ~vars (
              | Ok _ -> Ok plan_file
              | Error message -> Error message)
            ~show_plan:(fun file ->
-             terraform_stdout
-               (Sol_cli_run_log.run_phase run_log ~name:(phase_name ^ "-show") (fun () ->
-                  Sol_cli_terraform.show_json_plan ~chdir ~plan_file:file ())))
+             (* SEC-008: the plan JSON carries sensitive values; only the
+                classified changes reach the run log. *)
+             Sol_cli_terraform.show_saved_plan
+               ~run_log
+               ~phase:(phase_name ^ "-show")
+               ~chdir
+               ~plan_file:file
+               ()
+             |> Result.map fst)
            ~apply_plan:(fun file ->
              terraform_outcome
                (Sol_cli_run_log.run_phase run_log ~name:phase_name (fun () ->
@@ -2677,30 +2683,20 @@ let cloud_init ?(confirm_ecr_removal = false) ~target ~var_file ~vars ~action ()
            ~out:plan_file
            ()));
     (* The plan JSON carries sensitive values in plain text (e.g. db_password), so
-       it is read directly and never passes through [run_phase], which writes a
-       phase's stdout to the run log. Only the classified changes are logged. *)
+       it never passes through [run_phase]; only the classified changes are
+       logged (SEC-008). *)
     let changes =
       match
-        terraform_stdout (Sol_cli_terraform.show_json_plan ~chdir:infra_dir ~plan_file ())
+        Sol_cli_terraform.show_saved_plan
+          ~run_log
+          ~phase:"terraform-plan-show"
+          ~chdir:infra_dir
+          ~plan_file
+          ()
       with
+      | Ok (_, changes) -> changes
       | Error message -> lifecycle_error ("could not read the cloud plan: " ^ message)
-      | Ok json ->
-        (match Sol_cli_terraform_plan.changes_of_plan_json json with
-         | Ok changes -> changes
-         | Error message -> lifecycle_error ("could not read the cloud plan: " ^ message))
     in
-    Sol_cli_run_log.append_phase_log
-      run_log
-      ~phase:"terraform-plan-show"
-      (String.concat
-         "\n"
-         (List.map
-            (fun (c : Sol_cli_terraform_plan.change) ->
-               Printf.sprintf
-                 "%s %s"
-                 (Sol_cli_terraform_plan.action_to_string c.action)
-                 c.address)
-            changes));
     (match
        Sol_cli_terraform_plan.removed_of_type ~resource_type:"aws_ecr_repository" changes
      with

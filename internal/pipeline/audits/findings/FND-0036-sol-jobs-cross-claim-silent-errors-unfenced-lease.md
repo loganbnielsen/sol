@@ -1,7 +1,7 @@
 # FND-0036 — `sol-jobs`: the claim ignores `kind`, DB errors are invisible without `?ot`, and leases are neither renewed nor fenced
 
 - **Classification:** (a) and (c) `VERIFIED_DEFECT`; (b) `DESIGN_GAP`
-- **State:** (a) and (c) `FIXED_UNQUALIFIED` (BUG-044, 2026-09-24: claim by `J.kinds`; startup table check; stderr fallback; failure limit; Postgres-backed tests + mutation checks). (b) `OPEN` under BUG-050.
+- **State:** (a) and (c) `FIXED_UNQUALIFIED` (BUG-044, 2026-09-24: claim by `J.kinds`; startup table check; stderr fallback; failure limit; Postgres-backed tests + mutation checks). (b) `FIXED_UNQUALIFIED` (BUG-050, 2026-09-24: finalize fenced on the claimed attempt; lease loss and overrun logged; renewal stays out of scope).
 - **First identified:** 2026-09-23, correctness audit
 - **Last verified:** 2026-09-23 (`origin/main @ f3e9480b`)
 - **Derived ticket:** `BUG-044` (a and c), `BUG-050` (lease fencing)

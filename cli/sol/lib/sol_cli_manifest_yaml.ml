@@ -24,22 +24,15 @@ type workload_shape =
   | Http_service
   | Background_worker
 
-(* ── Schedule extraction for -fn ─────────────────────────────────────────── *)
-
-let extract_schedule ~dir ~name:_ =
-  (* Read from sol.toml's [service] section, not by scanning OCaml source
-     (which false-positived on stray "schedule = " literals). Defaults hourly. *)
-  let toml_path = Filename.concat dir "sol.toml" in
-  match Sol_cli_toml.load_result toml_path with
-  | Ok { Sol_cli_toml.schedule = Some s; _ } -> s
-  | Ok _ -> "0 * * * *"
-  | Error _ -> "0 * * * *"
-;;
-
 (* ── YAML templates ─────────────────────────────────────────────────────── *)
 
 let default_cluster_env =
-  [ "KAFKA_BROKERS", "redpanda.redpanda.svc.cluster.local:9093"
+  [ (* SEC-007 / FND-0039: the transport posture is declared, not defaulted.
+       In-cluster Kafka is plaintext and unauthenticated today (TLS/SASL is
+       FEAT-093); rendering it explicitly makes that visible in every manifest,
+       and config_of_env refuses a workload that does not state it. *)
+    "KAFKA_SECURITY_PROTOCOL", "plaintext"
+  ; "KAFKA_BROKERS", "redpanda.redpanda.svc.cluster.local:9093"
   ; "SCHEMA_REGISTRY_URL", "http://redpanda.redpanda.svc.cluster.local:8081"
   ; "REDPANDA_ADMIN_URL", "http://redpanda.redpanda.svc.cluster.local:9644"
   ; "LOKI_URL", "http://loki.monitoring.svc.cluster.local:3100"

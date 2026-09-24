@@ -369,6 +369,94 @@ let test_removed_of_type () =
     (removed_of_type ~resource_type:"aws_ecr_repository" changes)
 ;;
 
+(* SEC-008: `terraform show -json <plan>` carries sensitive values in plain text.
+   show_and_record must record only the classified changes, never the JSON. *)
+let secret = "s3cr3t-db-password-7f1c"
+
+let plan_with_secret =
+  Printf.sprintf
+    {|{"variables":{"db_password":{"value":"%s"}},"resource_changes":[{"address":"aws_db_instance.main","type":"aws_db_instance","mode":"managed","change":{"actions":["delete"],"before":{"password":"%s"}}}]}|}
+    secret
+    secret
+;;
+
+let temp_dir () =
+  let d = Filename.temp_file "sol-runlog-" "" in
+  Sys.remove d;
+  Unix.mkdir d 0o700;
+  d
+;;
+
+let rec files_under dir =
+  Array.to_list (Sys.readdir dir)
+  |> List.concat_map (fun f ->
+    let p = Filename.concat dir f in
+    if Sys.is_directory p then files_under p else [ p ])
+;;
+
+let read path = In_channel.with_open_bin path In_channel.input_all
+
+let contains ~needle s =
+  let n = String.length needle
+  and m = String.length s in
+  let rec go i = i + n <= m && (String.sub s i n = needle || go (i + 1)) in
+  go 0
+;;
+
+let test_show_and_record_never_logs_plan_json () =
+  let base = temp_dir () in
+  let run_log = Sol_cli_run_log.create ~base ~prefix:"sec008" () in
+  (match
+     Sol_cli_terraform_plan.show_and_record
+       ~run_log
+       ~phase:"destroy-show"
+       ~show:(fun () -> Ok plan_with_secret)
+   with
+   | Error m -> Alcotest.failf "unexpected error: %s" m
+   | Ok (json, changes) ->
+     Alcotest.(check string) "the JSON is returned to the caller" plan_with_secret json;
+     Alcotest.(check int) "one change" 1 (List.length changes));
+  let files = files_under base in
+  Alcotest.(check bool) "a phase log was written" true (files <> []);
+  List.iter
+    (fun f ->
+       Alcotest.(check bool)
+         (Printf.sprintf "%s holds no secret" f)
+         false
+         (contains ~needle:secret (read f));
+       Alcotest.(check int)
+         (Printf.sprintf "%s is 0600" f)
+         0o600
+         ((Unix.stat f).st_perm land 0o777))
+    files;
+  Alcotest.(check bool)
+    "the classified change is recorded"
+    true
+    (contains
+       ~needle:"delete aws_db_instance.main"
+       (read (Sol_cli_run_log.phase_log_path run_log ~phase:"destroy-show")))
+;;
+
+let test_show_and_record_unreadable_plan_is_an_error () =
+  let run_log = Sol_cli_run_log.create ~base:(temp_dir ()) ~prefix:"sec008" () in
+  Alcotest.(check bool)
+    "malformed JSON refuses"
+    true
+    (Result.is_error
+       (Sol_cli_terraform_plan.show_and_record
+          ~run_log
+          ~phase:"destroy-show"
+          ~show:(fun () -> Ok "not json")));
+  Alcotest.(check bool)
+    "a failed show refuses"
+    true
+    (Result.is_error
+       (Sol_cli_terraform_plan.show_and_record
+          ~run_log
+          ~phase:"destroy-show"
+          ~show:(fun () -> Error "terraform exited 1")))
+;;
+
 let () =
   Alcotest.run
     "terraform_plan"
@@ -440,6 +528,16 @@ let () =
             "permitted applies once"
             `Quick
             test_guarded_apply_permitted_applies_once
+        ] )
+    ; ( "show_and_record (SEC-008)"
+      , [ Alcotest.test_case
+            "plan JSON never reaches the run log"
+            `Quick
+            test_show_and_record_never_logs_plan_json
+        ; Alcotest.test_case
+            "unreadable plan is an error"
+            `Quick
+            test_show_and_record_unreadable_plan_is_an_error
         ] )
     ]
 ;;

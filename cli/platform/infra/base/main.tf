@@ -1231,8 +1231,9 @@ locals {
             # scraping, like SolHighErrorRate. Consumer lag alone cannot see these:
             # a worker acking poison messages keeps lag at zero.
             #
-            # A decode failure on the source topic is acked and dropped by default,
-            # so any increase is lost input, not a transient.
+            # A decode failure on the source topic is lost input for this group:
+            # dead-lettered under Retry_topics (BUG-051), acked and dropped under
+            # In_memory or an explicit Ack_and_drop. Either way, not a transient.
             alert = "SolWorkerDecodeDrops"
             expr  = "sum by (workspace, env, domain, service) (increase(sol_worker_decode_errors_total[5m])) > 0"
             for   = "0s"
@@ -1240,8 +1241,8 @@ locals {
               severity = "critical"
             }
             annotations = merge({
-              summary     = "{{ $labels.service }} dropped undecodable messages ({{ $labels.domain }}/{{ $labels.workspace }})"
-              description = "{{ $labels.service }} in domain {{ $labels.domain }} (workspace {{ $labels.workspace }}, env {{ $labels.env }}) acked and dropped about {{ $value | humanize }} message(s) it could not decode in the last 5 minutes. Usually a producer deployed an incompatible schema."
+              summary     = "{{ $labels.service }} could not decode messages ({{ $labels.domain }}/{{ $labels.workspace }})"
+              description = "{{ $labels.service }} in domain {{ $labels.domain }} (workspace {{ $labels.workspace }}, env {{ $labels.env }}) could not decode about {{ $value | humanize }} message(s) in the last 5 minutes; they were dead-lettered (Retry_topics) or acked and dropped. Usually a producer deployed an incompatible schema."
             }, local.alert_annotations)
           },
           {

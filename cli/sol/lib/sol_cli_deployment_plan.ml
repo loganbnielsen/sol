@@ -925,14 +925,28 @@ let of_services_result
              ; message = "call URL env var conflicts with [infra.env] config"
              })
     in
-    let schedule =
+    (* BUG-048 / FND-0034: a -fn's schedule is the one thing that defines it, so it
+       is required in sol.toml. It used to default to hourly, from a second read of
+       the same file, so a missing or misspelled key deployed an hourly job. *)
+    let* schedule =
       match primitive with
       | Fn ->
-        Some
-          (Sol_cli_manifest.extract_schedule
-             ~dir:(Sol_cli_workspace.at_root svc.Sol_cli_manifest.dir)
-             ~name:svc.Sol_cli_manifest.name)
-      | _ -> None
+        (match toml.Sol_cli_toml.schedule with
+         | Some schedule -> Ok (Some schedule)
+         | None ->
+           Error
+             (Toml_error
+                (Sol_cli_toml.Validation
+                   { path =
+                       Sol_cli_workspace.at_root
+                         (Filename.concat svc.Sol_cli_manifest.dir "sol.toml")
+                   ; message =
+                       Printf.sprintf
+                         "sol.toml: [service] schedule is required for the -fn %S (e.g. \
+                          schedule = \"0 3 * * *\")"
+                         svc.Sol_cli_manifest.name
+                   })))
+      | _ -> Ok None
     in
     let replicas =
       match

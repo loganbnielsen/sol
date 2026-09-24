@@ -59,7 +59,6 @@ val primitive_label : primitive -> string
 val discover_error_to_string : discover_error -> string
 val discover_services_result : unit -> (service list, discover_error) result
 val discover_services : unit -> service list
-val extract_schedule : dir:string -> name:string -> string
 val default_cluster_env : (string * string) list
 val default_secrets : (string * string) list
 val runtime_secret_name : string
