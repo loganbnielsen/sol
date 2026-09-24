@@ -417,6 +417,55 @@ let test_unverified_metrics_auth_refused_without_opt_in env () =
          ()))
 ;;
 
+(* SEC-009: a Jwks_url that is not https:// is a startup error. *)
+let jwks_url_auth url =
+  `Jwt
+    Auth.
+      { scopes = []
+      ; verification =
+          Verified_signature_required
+            { issuer = "https://issuer.example.com"
+            ; audience = "svc"
+            ; algorithms = [ `RS256 ]
+            ; key_source = Jwks_url url
+            }
+      }
+;;
+
+let run_with_jwks_url env ?(on_route = true) url =
+  let auth = jwks_url_auth url in
+  let module S = Service.Make (struct
+      let routes = if on_route then [ Route.get "/jwt" ~auth get_json ] else []
+    end)
+  in
+  S.run
+    ~env
+    ~port:0
+    ~stop:(stopped ())
+    ~drain_timeout_s:0.1
+    ?metrics_auth:(if on_route then None else Some auth)
+    ()
+;;
+
+let test_http_jwks_url_refused env () =
+  List.iter
+    (fun (url, on_route) ->
+       match run_with_jwks_url env ~on_route url with
+       | Error (`Config msg) ->
+         Alcotest.(check bool) ("names the URL: " ^ url) true (contains url msg)
+       | Ok () -> Alcotest.failf "a Jwks_url of %S must not start" url)
+    [ "http://idp.example.com/jwks.json", true
+    ; "idp.example.com/jwks.json", true
+    ; "http://idp.example.com/jwks.json", false
+    ]
+;;
+
+let test_https_jwks_url_starts env () =
+  match run_with_jwks_url env "https://idp.example.com/jwks.json" with
+  | Ok () -> ()
+  | Error e -> Alcotest.fail (Service.run_error_to_string e)
+;;
+
 (* BUG-046: an external [stop] must reach the server. With nothing in flight it
    used to wait out the whole drain window and then report a drain timeout. *)
 let test_external_stop_is_prompt env () =
@@ -561,6 +610,71 @@ let test_public_oversized_body_gets_413 env () =
       Alcotest.(check int) "413 on oversized public upload" 413 status))
 ;;
 
+(* BUG-053: an exception outside the handler used to close the connection with
+   no response. A non-object JWT payload was one real trigger. *)
+let test_non_object_jwt_payload_gets_401 env () =
+  Switch.run (fun sw ->
+    with_server env ~sw (fun port ->
+      let enc = Base64.encode_exn ~pad:false ~alphabet:Base64.uri_safe_alphabet in
+      let tok = enc {|{"alg":"HS256"}|} ^ "." ^ enc "[]" ^ ".sig" in
+      let status, _ =
+        http_call
+          env
+          ~sw
+          ~port
+          ~meth:`GET
+          ~path:"/protected"
+          ~headers:[ "authorization", "Bearer " ^ tok ]
+          ()
+      in
+      Alcotest.(check int) "status 401" 401 status))
+;;
+
+let test_boundary_turns_exceptions_into_500 _env () =
+  let r =
+    Service.For_testing.respond_or_500 (fun () ->
+      raise (Sys_error "Mutex.lock: Resource deadlock avoided"))
+  in
+  Alcotest.(check int) "500" 500 r.Response.status;
+  Alcotest.(check int)
+    "a normal response passes through"
+    201
+    (Service.For_testing.respond_or_500 (fun () -> Response.created "x")).Response.status
+;;
+
+(* BUG-053: an exception raised in authentication, through dispatch itself. *)
+let test_dispatch_turns_auth_exception_into_500 _env () =
+  let enc = Base64.encode_exn ~pad:false ~alphabet:Base64.uri_safe_alphabet in
+  let tok = enc {|{"alg":"RS256","kid":"k1"}|} ^ "." ^ enc "{}" ^ "." ^ enc "sig" in
+  let auth =
+    `Jwt
+      Auth.
+        { scopes = []
+        ; verification =
+            Verified_signature_required
+              { issuer = "https://issuer.example.com"
+              ; audience = "svc"
+              ; algorithms = [ `RS256 ]
+              ; key_source = Jwks_url "https://idp.example.com/raising/jwks.json"
+              }
+        }
+  in
+  let req =
+    Http.Request.make
+      ~meth:`GET
+      ~headers:(Http.Header.of_list [ "authorization", "Bearer " ^ tok ])
+      "/jwt"
+  in
+  let r =
+    Service.For_testing.dispatch
+      ~fetch_jwks:(fun _ -> failwith "boom")
+      ~routes:[ Route.get "/jwt" ~auth get_json ]
+      req
+      (Cohttp_eio.Body.of_string "")
+  in
+  Alcotest.(check int) "500, not a dropped connection" 500 r.Response.status
+;;
+
 let () =
   Unix.putenv "SOL_ALLOW_UNVERIFIED_JWT" "1";
   Eio_main.run (fun env ->
@@ -598,9 +712,29 @@ let () =
               "Unverified_dev_only metrics_auth without opt-in → startup Config error"
               `Quick
               (test_unverified_metrics_auth_refused_without_opt_in env)
+          ; Alcotest.test_case
+              "Jwks_url not https → startup Config error"
+              `Quick
+              (test_http_jwks_url_refused env)
+          ; Alcotest.test_case
+              "Jwks_url https → starts"
+              `Quick
+              (test_https_jwks_url_starts env)
           ] )
       ; ( "resilience"
         , [ Alcotest.test_case
+              "non-object JWT payload → 401, not a closed connection"
+              `Quick
+              (test_non_object_jwt_payload_gets_401 env)
+          ; Alcotest.test_case
+              "exception outside the handler → 500"
+              `Quick
+              (test_boundary_turns_exceptions_into_500 env)
+          ; Alcotest.test_case
+              "auth exception through dispatch → 500"
+              `Quick
+              (test_dispatch_turns_auth_exception_into_500 env)
+          ; Alcotest.test_case
               "handler exception → 500, server survives"
               `Quick
               (test_handler_exception env)

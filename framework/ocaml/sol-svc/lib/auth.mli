@@ -15,7 +15,9 @@ type jwt_key_source =
           non-rotating key set. *)
   | Jwks_url of string
   (** HTTPS URL of a JWKS endpoint. Fetched over TLS and cached with a fixed
-          rotation window; never fetched on every request. *)
+          rotation window; never fetched on every request. Enforced: a service
+          whose [Jwks_url] is not an absolute [https://] URL refuses to start
+          with a [`Config] error (SEC-009). *)
 
 type jwt_verified_config =
   { issuer : string
