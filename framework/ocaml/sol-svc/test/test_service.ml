@@ -416,6 +416,55 @@ let test_unverified_metrics_auth_refused_without_opt_in env () =
          ()))
 ;;
 
+(* SEC-009: a Jwks_url that is not https:// is a startup error. *)
+let jwks_url_auth url =
+  `Jwt
+    Auth.
+      { scopes = []
+      ; verification =
+          Verified_signature_required
+            { issuer = "https://issuer.example.com"
+            ; audience = "svc"
+            ; algorithms = [ `RS256 ]
+            ; key_source = Jwks_url url
+            }
+      }
+;;
+
+let run_with_jwks_url env ?(on_route = true) url =
+  let auth = jwks_url_auth url in
+  let module S = Service.Make (struct
+      let routes = if on_route then [ Route.get "/jwt" ~auth get_json ] else []
+    end)
+  in
+  S.run
+    ~env
+    ~port:0
+    ~stop:(stopped ())
+    ~drain_timeout_s:0.1
+    ?metrics_auth:(if on_route then None else Some auth)
+    ()
+;;
+
+let test_http_jwks_url_refused env () =
+  List.iter
+    (fun (url, on_route) ->
+       match run_with_jwks_url env ~on_route url with
+       | Error (`Config msg) ->
+         Alcotest.(check bool) ("names the URL: " ^ url) true (contains url msg)
+       | Ok () -> Alcotest.failf "a Jwks_url of %S must not start" url)
+    [ "http://idp.example.com/jwks.json", true
+    ; "idp.example.com/jwks.json", true
+    ; "http://idp.example.com/jwks.json", false
+    ]
+;;
+
+let test_https_jwks_url_starts env () =
+  match run_with_jwks_url env "https://idp.example.com/jwks.json" with
+  | Ok () -> ()
+  | Error e -> Alcotest.fail (Service.run_error_to_string e)
+;;
+
 (* BUG-046: an external [stop] must reach the server. With nothing in flight it
    used to wait out the whole drain window and then report a drain timeout. *)
 let test_external_stop_is_prompt env () =
@@ -662,6 +711,14 @@ let () =
               "Unverified_dev_only metrics_auth without opt-in → startup Config error"
               `Quick
               (test_unverified_metrics_auth_refused_without_opt_in env)
+          ; Alcotest.test_case
+              "Jwks_url not https → startup Config error"
+              `Quick
+              (test_http_jwks_url_refused env)
+          ; Alcotest.test_case
+              "Jwks_url https → starts"
+              `Quick
+              (test_https_jwks_url_starts env)
           ] )
       ; ( "resilience"
         , [ Alcotest.test_case

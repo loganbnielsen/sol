@@ -59,7 +59,9 @@ type jwt_key_source =
           non-rotating key set. *)
   | Jwks_url of string
       (** HTTPS URL of a JWKS endpoint (Auth0/Cognito/Okta-style). Fetched
-          over TLS and cached for 5 minutes; never fetched on every request. *)
+          over TLS and cached for 5 minutes; never fetched on every request.
+          A URL that is not absolute https:// is a startup [`Config] error
+          (SEC-009). *)
 
 type jwt_verified_config =
   { issuer : string

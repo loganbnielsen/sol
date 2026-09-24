@@ -292,6 +292,43 @@ let refuse_unverified_jwt routes metrics_auth =
   else Ok ()
 ;;
 
+(* SEC-009 / FND-0053: [Jwks_url] is documented as fetched over TLS, but the
+   HTTP client falls back to plain HTTP for any other scheme, and the keys it
+   returns are trusted to verify signatures. An http:// JWKS lets anyone on the
+   path substitute them, so it is a startup error, not a runtime surprise. *)
+let jwks_url_of = function
+  | `Jwt { Auth.verification = Auth.Verified_signature_required { key_source; _ }; _ } ->
+    (match key_source with
+     | Auth.Jwks_url url -> Some url
+     | Auth.Jwks_static _ | Auth.Hs256_secret _ -> None)
+  | `Jwt { Auth.verification = Auth.Unverified_dev_only; _ } | `Public | `Api_key -> None
+;;
+
+let refuse_non_https_jwks routes metrics_auth =
+  let is_https url =
+    let uri = Uri.of_string url in
+    match Uri.scheme uri, Uri.host uri with
+    | Some scheme, Some host -> String.lowercase_ascii scheme = "https" && host <> ""
+    | _ -> false
+  in
+  match
+    List.find_map
+      (fun auth ->
+         match jwks_url_of auth with
+         | Some url when not (is_https url) -> Some url
+         | _ -> None)
+      (metrics_auth :: List.map (fun route -> route.Route.auth) routes)
+  with
+  | None -> Ok ()
+  | Some url ->
+    Error
+      (`Config
+          (Printf.sprintf
+             "Jwks_url must be an absolute https:// URL (the keys verify token \
+              signatures, so they must not travel in plaintext): %S"
+             url))
+;;
+
 let env_nonempty name =
   match Sys.getenv_opt name with
   | Some value when String.trim value <> "" -> Some value
@@ -372,6 +409,7 @@ module Make (H : HANDLER) = struct
     in
     let fetch_jwks = Auth_internal.fetch_jwks_over_https ~env in
     let* () = refuse_unverified_jwt H.routes metrics_auth in
+    let* () = refuse_non_https_jwks H.routes metrics_auth in
     let* read_api_key =
       api_key_reader ~env ~required:(api_key_required H.routes metrics_auth)
     in
