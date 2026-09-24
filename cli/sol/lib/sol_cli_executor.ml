@@ -43,7 +43,16 @@ let dispatch_rendered ~ctx ~mode spec yaml =
 
 (* ── executors ───────────────────────────────────────────────────────────── *)
 
+(* SEC-006: the local cluster is the one place a service may run
+   [Unverified_dev_only] JWT auth, so only this executor renders the opt-in that
+   [Service.Make.run] requires for it. [sol deploy] and GitOps emission never do. *)
+let local_development_spec (spec : Sol_cli_deployment_plan.service_spec) =
+  let key = "SOL_ALLOW_UNVERIFIED_JWT" in
+  { spec with config = (key, "1") :: List.remove_assoc key spec.config }
+;;
+
 let local ~ctx ~workspace ~release_id ~dry_run spec =
+  let spec = local_development_spec spec in
   match Sol_cli_deployment_render.render_spec ~workspace ~release_id spec with
   | Error msg -> failwith msg
   | Ok yaml -> dispatch_rendered ~ctx ~mode:(if dry_run then Dry_run else Apply) spec yaml

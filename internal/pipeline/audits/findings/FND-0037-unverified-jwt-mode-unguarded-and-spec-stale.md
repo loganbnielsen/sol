@@ -1,7 +1,7 @@
 # FND-0037 — `Unverified_dev_only` JWT mode has no runtime guard, and the `sol-svc` spec still steers to it
 
 - **Classification:** `DESIGN_GAP` (the runtime guard) + `DOCUMENTATION_GAP` (the spec)
-- **State:** `OPEN`
+- **State:** `FIXED_UNQUALIFIED` (DOCS-021 corrected the spec; SEC-006, 2026-09-24, refuses the mode at startup without an explicit opt-in that only `sol up` renders)
 - **First identified:** 2026-09-23, correctness audit
 - **Last verified:** 2026-09-23 (`origin/main @ f3e9480b`)
 - **Derived ticket:** `DOCS-021` (spec), `SEC-006` (runtime guard)

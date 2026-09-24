@@ -364,6 +364,54 @@ let test_api_key_file_error_is_startup_error env () =
       | Ok () -> Alcotest.fail "expected API key file config error"))
 ;;
 
+(* SEC-006: a service using Unverified_dev_only refuses to start unless the
+   environment opts in. The test binary opts in globally (it is a development
+   environment); these cases take the opt-in away. *)
+module Hunverified = struct
+  let routes = [ Route.get "/jwt" ~auth:(jwt_cfg [ "read" ]) get_json ]
+end
+
+let expect_unverified_refused result =
+  match result with
+  | Error (`Config msg) ->
+    Alcotest.(check bool)
+      "names the opt-in"
+      true
+      (contains "SOL_ALLOW_UNVERIFIED_JWT" msg)
+  | Ok () -> Alcotest.fail "expected Unverified_dev_only to be refused without the opt-in"
+;;
+
+(* An already-resolved [stop] and a short drain make a missing guard return
+   [Ok ()] promptly instead of serving forever, so the test fails, not hangs. *)
+let stopped () =
+  let p, r = Promise.create () in
+  Promise.resolve r ();
+  p
+;;
+
+let test_unverified_jwt_refused_without_opt_in env () =
+  with_env "SOL_ALLOW_UNVERIFIED_JWT" "" (fun () ->
+    let module S = Service.Make (Hunverified) in
+    expect_unverified_refused
+      (S.run ~env ~port:0 ~stop:(stopped ()) ~drain_timeout_s:0.1 ()))
+;;
+
+let test_unverified_metrics_auth_refused_without_opt_in env () =
+  with_env "SOL_ALLOW_UNVERIFIED_JWT" "0" (fun () ->
+    let module S = Service.Make (struct
+        let routes = []
+      end)
+    in
+    expect_unverified_refused
+      (S.run
+         ~env
+         ~port:0
+         ~stop:(stopped ())
+         ~drain_timeout_s:0.1
+         ~metrics_auth:(jwt_cfg [])
+         ()))
+;;
+
 (* BUG-046: an external [stop] must reach the server. With nothing in flight it
    used to wait out the whole drain window and then report a drain timeout. *)
 let test_external_stop_is_prompt env () =
@@ -469,6 +517,7 @@ let test_public_oversized_body_gets_413 env () =
 ;;
 
 let () =
+  Unix.putenv "SOL_ALLOW_UNVERIFIED_JWT" "1";
   Eio_main.run (fun env ->
     Alcotest.run
       "service"
@@ -496,6 +545,14 @@ let () =
               "JWT route, wrong scope → 403"
               `Quick
               (test_jwt_missing_scope env)
+          ; Alcotest.test_case
+              "Unverified_dev_only without opt-in → startup Config error"
+              `Quick
+              (test_unverified_jwt_refused_without_opt_in env)
+          ; Alcotest.test_case
+              "Unverified_dev_only metrics_auth without opt-in → startup Config error"
+              `Quick
+              (test_unverified_metrics_auth_refused_without_opt_in env)
           ] )
       ; ( "resilience"
         , [ Alcotest.test_case

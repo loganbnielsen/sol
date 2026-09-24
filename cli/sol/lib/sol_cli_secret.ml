@@ -34,7 +34,7 @@ let is_key_char = function
   | _ -> false
 ;;
 
-let validate_key key =
+let validate_key_format key =
   let len = String.length key in
   if len = 0
   then Error "secret key must not be empty"
@@ -44,6 +44,20 @@ let validate_key key =
   then Error "secret key must start with an uppercase letter"
   else if not (String.for_all is_key_char key)
   then Error "secret key may contain only uppercase letters, digits, and underscores"
+  else Ok ()
+;;
+
+(* Every key a Secret may be written under. [delete] checks only the format, so a
+   secret already stored under a reserved name can still be removed. *)
+let validate_key key =
+  let* () = validate_key_format key in
+  if String.equal key "SOL_ALLOW_UNVERIFIED_JWT"
+  then
+    (* SEC-006: every Secret key reaches the pod's environment (envFrom), and this
+       one would switch on JWT auth without signature checks outside local. *)
+    Error
+      "SOL_ALLOW_UNVERIFIED_JWT is reserved: it allows JWT auth without signature \
+       checks, and `sol up` sets it on the local cluster only"
   else Ok ()
 ;;
 
@@ -400,7 +414,7 @@ let list ~ctx ~env ~workspace:_ ~namespaces =
 ;;
 
 let delete ~ctx ~env ~workspace:_ ~namespaces ~key =
-  let* () = validate_key key in
+  let* () = validate_key_format key in
   let* namespaces = validate_operation_context ~env ~namespaces in
   let* rotations = read_rotations ~ctx namespaces in
   let patch = Printf.sprintf "[{\"op\":\"remove\",\"path\":\"/data/%s\"}]" key in
