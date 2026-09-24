@@ -1,7 +1,7 @@
 # FND-0054 — `config_of_env` defaults unset Kafka, registry and admin addresses to localhost
 
 - **Classification:** `DESIGN_GAP`
-- **State:** `OPEN`
+- **State:** `FIXED_UNQUALIFIED` (BUG-055, 2026-09-24: the three addresses are required, callers state them; tests + mutation check)
 - **First identified:** 2026-09-24, correctness audit pass 2
 - **Last verified:** 2026-09-24 (`origin/main @ fd5c7e0c`)
 - **Derived ticket:** `BUG-055`
