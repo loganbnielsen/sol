@@ -500,6 +500,126 @@ let test_consume_partitioned_dead_letter_without_retry_topics_fails_closed () =
             (errs <> [])))
 ;;
 
+(* BUG-049 / FND-0040: schema compatibility is enforced, not best-effort. *)
+
+(* A registry reached through a wrong base path answers 404 without the
+   "subject not found" error code; that used to read as "no prior version", so
+   a misconfigured CI gate passed every schema. *)
+let test_schema_check_wrong_registry_path_is_an_error () =
+  Eio_main.run
+  @@ fun env ->
+  match
+    Kafka_service.Schema.check
+      ~net:env#net
+      ~clock:env#clock
+      ~registry_url:(registry_url ^ "/not-the-registry")
+      (module PaymentEvent)
+  with
+  | Ok () -> Alcotest.fail "a 404 that is not 'subject not found' must not pass the gate"
+  | Error _ -> ()
+;;
+
+(* A stub registry whose compatibility PUT fails. [register] must return an error
+   and must not have registered the schema first: FULL is set before the first
+   registration, and a failure to set it is fatal (it used to be a warning after
+   the fact, leaving the subject at the registry default). *)
+module StubRegistryEvent = struct
+  include RawTestEvent
+
+  let topic_name =
+    Kafka_service.topic_name_exn (Printf.sprintf "sol-svc-stubreg-%05d" run_id)
+  ;;
+end
+
+let serve_stub_registry ~sw ~net ~log =
+  let socket =
+    Eio.Net.listen
+      ~sw
+      ~backlog:8
+      ~reuse_addr:true
+      net
+      (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
+  in
+  Eio.Fiber.fork_daemon ~sw (fun () ->
+    Eio.Net.run_server socket ~on_error:ignore (fun flow _ ->
+      let buf = Eio.Buf_read.of_flow flow ~max_size:1_000_000 in
+      let request_line = Eio.Buf_read.line buf in
+      let rec headers len =
+        match Eio.Buf_read.line buf with
+        | "" -> len
+        | h ->
+          let lower = String.lowercase_ascii h in
+          let len =
+            if String.starts_with ~prefix:"content-length:" lower
+            then int_of_string (String.trim (String.sub h 15 (String.length h - 15)))
+            else len
+          in
+          headers len
+      in
+      let len = headers 0 in
+      if len > 0 then ignore (Eio.Buf_read.take len buf);
+      log := request_line :: !log;
+      let status, body =
+        if String.starts_with ~prefix:"PUT /config/" request_line
+        then "500 Internal Server Error", {|{"error_code":50001,"message":"boom"}|}
+        else "200 OK", {|{"id":1}|}
+      in
+      Eio.Flow.copy_string
+        (Printf.sprintf
+           "HTTP/1.1 %s\r\n\
+            content-type: application/json\r\n\
+            content-length: %d\r\n\
+            connection: close\r\n\
+            \r\n\
+            %s"
+           status
+           (String.length body)
+           body)
+        flow));
+  match Eio.Net.listening_addr socket with
+  | `Tcp (_, port) -> Printf.sprintf "http://127.0.0.1:%d" port
+  | _ -> Alcotest.fail "stub registry has no port"
+;;
+
+let test_register_sets_full_before_registering_and_fails_loudly () =
+  Eio_main.run
+  @@ fun env ->
+  Eio.Switch.run
+  @@ fun sw ->
+  let log = ref [] in
+  let stub_url = serve_stub_registry ~sw ~net:env#net ~log in
+  let config = { (make_config ()) with schema_registry_url = stub_url } in
+  match Kafka_service.create config ~sw with
+  | Error e -> Alcotest.failf "create failed: %s" (Kafka_service.error_to_string e)
+  | Ok svc ->
+    (match
+       Kafka_service.register svc ~net:env#net ~clock:env#clock (module StubRegistryEvent)
+     with
+     | Ok _ -> Alcotest.fail "a failed compatibility PUT must fail register"
+     | Error (Kafka_service.Schema_registry _) -> ()
+     | Error e ->
+       Alcotest.failf "expected Schema_registry, got %s" (Kafka_service.error_to_string e));
+    let requests = List.rev !log in
+    Alcotest.(check bool)
+      "the compatibility PUT was attempted"
+      true
+      (List.exists (String.starts_with ~prefix:"PUT /config/") requests);
+    Alcotest.(check bool)
+      (Printf.sprintf
+         "no schema was registered before compatibility was set (%s)"
+         (String.concat " | " requests))
+      false
+      (List.exists
+         (fun r ->
+            String.starts_with ~prefix:"POST /subjects/" r
+            &&
+            let n = String.length "/versions"
+            and m = String.length r in
+            let rec go i = i + n <= m && (String.sub r i n = "/versions" || go (i + 1)) in
+            go 0)
+         requests)
+;;
+
 (* ------------------------------------------------------------------ *)
 (* on_decode_error callback                                            *)
 (* ------------------------------------------------------------------ *)
@@ -601,6 +721,14 @@ let () =
             `Slow
             test_schema_check_incompatible
         ; test_case "check_all fails fast" `Slow test_schema_check_all_fails_fast
+        ; test_case
+            "wrong registry path is an error, not compatible"
+            `Slow
+            test_schema_check_wrong_registry_path_is_an_error
+        ; test_case
+            "register sets FULL first and fails loudly"
+            `Slow
+            test_register_sets_full_before_registering_and_fails_loudly
         ] )
     ; ( "roundtrip"
       , [ test_case "publish and consume" `Slow test_publish_consume_roundtrip ] )
