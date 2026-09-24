@@ -171,3 +171,51 @@ eligible guarded resources rather than `whole_root`.
 **Adoption inspection is paused until 5 lands.** **Attempt 7 stays closed**, and its negative
 criterion — zero target-owned creates — now depends on 1–5, because it rests on every
 destroy-path apply being asserted, not just the preparation.
+
+---
+
+# Step 1 — the offline replay cannot be constructed safely (2026-09-24)
+
+**Outcome: deliberately not run.** The instruction carries its own rule: if reproducing the
+historical plan requires credentials or connectivity to the real project, do not run it, and
+record that the retrospective plan cannot safely be reproduced offline. That is what the
+inspection found.
+
+## What the inspection found
+
+- The frozen evidence is **logs only** — 21 files at `~/sol-attempt6-evidence/`, no state
+  snapshot. There is nothing local to replay against.
+- The only local `terraform.tfstate` files are backend **initialization records**, and both
+  point at the real project:
+
+  | root | backend | bucket | prefix |
+  |---|---|---|---|
+  | `cli/platform/infra/gcp` | `gcs` | `sol-qualification-tfstate` | `sol/qual/gcp/us-central1/cloud.tfstate` |
+  | `cli/platform/infra/bootstrap-gcp` | `gcs` | `sol-qualification-tfstate` | `bootstrap/gcp` |
+
+- So any `terraform plan` would (a) read state from the real bucket and (b) refresh against the
+  real Google project. **A plan is a network operation on `sol-qualification`.** Calling that
+  an offline replay would be a fiction, and it would put the surviving qualification account in
+  the path of a command whose purpose is retrospective.
+
+**Therefore the Attempt-6 destroy-path plan set was not reproduced.** Recorded, not worked
+around.
+
+## What still stands — source-level evidence, not inference
+
+- `destroy-reconciliation-apply` is `Sol_cli_terraform.apply ~scope:whole_root` with
+  `bootstrap_access_vars ~enabled:true @ destroy_apply_vars` (`cmd_cloud_tf.ml:2906-2915`).
+- `provisioner-bootstrap-access-remove` is whole-root (`:2334-2349`), and the install-side
+  enable is whole-root (`:2304`).
+- A whole-root apply constructs configured-but-absent resources by definition.
+
+So the preparation is **not** the only constructive step on the destroy path: the Attempt-6
+shape has constructive applies **before and after** the preparation that mechanism 2 now skips.
+This is what the correctness review's finding A rests on, and the replay being unrunnable does
+not weaken it — it is evidence about the code, not about a plan output.
+
+## Forward lesson, cheap and worth taking
+
+The teardown evidence bundle should capture `terraform show -json` (or `terraform state pull`)
+**before** any destroy runs. It is a local read, it costs nothing, it is not a mutation, and it
+would have made this step executable offline. Harness improvement candidate; not done here.
