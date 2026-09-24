@@ -91,7 +91,10 @@ let save_deployed_groups ~ctx workspace groups =
     | Error e ->
       Error
         (Printf.sprintf
-           "could not record the deployed consumer groups (configmap default/%s): %s"
+           "the workloads were applied and the release recorded, but the deployed \
+            consumer groups could not be recorded (configmap default/%s): %s\n\
+            The next deploy's consumer-group removal check will not know this deploy's \
+            groups; fix access to that ConfigMap and deploy again."
            name
            (Sol_cli_process.error_to_string e))
   in
