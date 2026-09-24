@@ -1,11 +1,18 @@
-(** The destroy execution core (HARDEN-004 step 2; REFAC-091).
+(** The destroy execution core (HARDEN-004 steps 2-4; REFAC-091).
 
     A typed inventory of what Terraform's state representation owns, plus a
     result-returning destroy sequence with every provider operation injected
     through {!deps}. The sequence never exits; the caller owns the process exit
     (see {!exit_code}). The elevated bootstrap access is bracketed around the one
     operation that uses it, so its removal cannot be skipped by a failing branch
-    (FND-0047). *)
+    (FND-0047).
+
+    Step 4 adds the *consequence* of a failed preparation: the preparation declares,
+    through {!Sol_cli_cloud_lifecycle.failure_policy}, whether its failure permits
+    destruction to continue (best-effort) or must block it (an explicit
+    destruction-time safety guarantee the target declared, DEC-033). Destruction
+    remains available from a half-built target unless proceeding would violate such
+    a guarantee. *)
 
 type resource =
   { address : string (** The real Terraform address, module prefix included. *)
@@ -65,25 +72,54 @@ type failure =
   | Credentials_failed of string
   | Init_failed of string
   | Preparation_refused of string
-  | Preparation_failed of string
-  | Reconciliation_failed of string
   | Platform_destroy_failed of string
   | Substrate_destroy_failed of string
   | Verification_failed of string
   | Elevated_access_not_removed of string
 
+(** What the destruction ultimately did.
+
+    [Destroy_succeeded] with no [degradations] is the clean history.
+    [Destroy_succeeded] with [degradations] is a different one: a
+    [Continue_to_destroy] preparation failed or its plan was refused, destruction
+    proceeded anyway, and absence was still reached -- both end at absence, and
+    they are not the same run.
+
+    [Destroy_blocked] means a [Block_destroy] preparation failed, so destruction
+    did not run: proceeding would have violated an explicit destruction-time
+    guarantee the target declared (DEC-033). The guarantee is named. There is no
+    cleanup to report -- a block happens before the elevated-access bracket is ever
+    entered -- so the outcome carries none.
+
+    [Destroy_failed] means destruction did not reach its postcondition; it carries
+    [degradations] too, so a degraded preparation is preserved even when a later
+    step fails, and a cleanup failure is evidence alongside the primary failure
+    rather than a replacement for it. *)
 type outcome =
   | Destroy_succeeded of
       { preparation : preparation
+      ; degradations : string list
       ; substrate : substrate_presence
       ; cleanup : cleanup
       }
+  | Destroy_blocked of { guarantee : string }
   | Destroy_failed of
       { failure : failure
+      ; degradations : string list
       ; cleanup : cleanup
       }
 
 val failure_message : failure -> string
+
+(** The exit-code contract (HARDEN-004 step 4): [0] only when every applicable
+    preparation succeeded or had nothing to do *and* the destroy reached and
+    verified absence; [3] when it reached absence with a [Continue_to_destroy]
+    preparation degraded; [1] for a failed or blocked destroy. [2] is reserved for
+    this CLI's refusal / cannot-proceed-as-requested semantics. *)
+val exit_clean : int
+
+val exit_degraded : int
+val exit_failure : int
 val exit_code : outcome -> int
 
 type deps =
@@ -91,8 +127,16 @@ type deps =
   ; terraform_init : unit -> (unit, string) result
   ; observe_state : unit -> (string, string) result
   ; cloud_outputs : unit -> outputs_read
-  ; prepare : state:state_read -> (preparation, string) result
+  ; prepare : state:state_read -> preparation Sol_cli_cloud_lifecycle.preparation_outcome
+    (** The preparation declares the consequence of its own failure (DEC-033), so
+        this is not a [result]: only [Block_destroy] stops destruction, and
+        everything else is a degradation the sequence carries and reports. *)
   ; reconcile_and_enable : unit -> (unit, string) result
+    (** Obtain the bootstrap authority and reconcile the guarded resources in one
+        asserted apply. A failure means the authority was not obtained, so the
+        operation the window authorises cannot run -- the protected operation is
+        skipped and reported as a degradation, while the substrate destroy, which
+        needs no cluster authority, proceeds. *)
   ; destroy_platform : unit -> (unit, string) result
   ; remove_elevated_access : unit -> (unit, string) result
   ; observe_window_before : unit -> (unit, string) result
