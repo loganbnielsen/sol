@@ -214,6 +214,17 @@ let dispatch
 
 module For_testing = struct
   let respond_or_500 = respond_or_500
+
+  let dispatch ?fetch_jwks ~routes req body =
+    dispatch
+      ?fetch_jwks
+      ~routes
+      ~metrics_renderer:None
+      ~metrics_auth:`Public
+      ~max_body_bytes:1_048_576
+      req
+      body
+  ;;
 end
 
 (* ── Make functor ──────────────────────────────────────────────────────── *)

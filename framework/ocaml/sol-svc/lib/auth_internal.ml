@@ -176,6 +176,13 @@ let jwks_ttl_s = 300.0
    made-up [kid]s cannot drive a fetch per request. *)
 let jwks_unknown_kid_refetch_interval_s = 30.0
 
+(* A failed fetch is remembered for this long and returned to every request that
+   would otherwise fetch again: without it, requests queued behind the mutex each
+   ran their own fetch in turn during an IdP outage, so the Nth waited about N
+   request timeouts. *)
+let jwks_failure_backoff_s = 5.0
+let jwks_last_failure : (string * float * string) option Atomic.t = Atomic.make None
+
 (* Real transport for [Jwks_url]. [Service.Make.run] builds this once, closing
    over [env], and passes it into [validate] as the injected [fetch_jwks]
    capability — [validate] itself stays Eio-free. *)
@@ -211,15 +218,21 @@ let get_jwks ?(max_age_s = jwks_ttl_s) ~fetch_jwks url =
   | Some entry when usable entry -> Ok entry.jwks
   | _ ->
     Eio.Mutex.use_ro jwks_refresh_mutex (fun () ->
-      (* Another fiber may have refreshed while this one waited. *)
-      match Atomic.get jwks_cache with
-      | Some entry when usable entry -> Ok entry.jwks
+      (* Another fiber may have refreshed -- or failed to -- while this one
+         waited. *)
+      match Atomic.get jwks_cache, Atomic.get jwks_last_failure with
+      | Some entry, _ when usable entry -> Ok entry.jwks
+      | _, Some (u, at, msg)
+        when u = url && Unix.gettimeofday () -. at < jwks_failure_backoff_s -> Error msg
       | _ ->
         (match fetch_jwks url with
          | Ok jwks ->
            Atomic.set jwks_cache (Some { url; fetched_at = Unix.gettimeofday (); jwks });
+           Atomic.set jwks_last_failure None;
            Ok jwks
-         | Error _ as e -> e))
+         | Error msg as e ->
+           Atomic.set jwks_last_failure (Some (url, Unix.gettimeofday (), msg));
+           e))
 ;;
 
 let now_ptime () =
@@ -249,8 +262,11 @@ let verify_with_key_source ?fetch_jwks ~kid parsed key_source =
          (match refetch with
           | None -> not_found
           | Some refetch ->
+            (* The cached set is authoritative within its TTL; the refetch is
+               best effort. If it fails, the key is simply not known: 401, not
+               a 500 an attacker could trigger with made-up kids. *)
             (match refetch () with
-             | Error msg -> Error (`Server_error ("JWKS fetch failed: " ^ msg))
+             | Error _ -> not_found
              | Ok jwks ->
                (match Jose.Jwks.find_key jwks kid with
                 | Some jwk -> with_jwk jwk

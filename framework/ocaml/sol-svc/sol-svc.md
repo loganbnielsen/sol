@@ -165,7 +165,9 @@ For production mode (`verification = Verified_signature_required vconfig`):
      it never falls back to `Unverified_dev_only` behavior. The refresh is
      single-flight under an `Eio.Mutex`: requests that miss the cache together
      wait for one fetch (BUG-053). A `kid` missing from the cached set triggers one
-     refetch, at most every 30 s, so a key the IdP just rotated in is accepted.
+     refetch, at most every 30 s, so a key the IdP just rotated in is accepted; if
+     that refetch fails the token is a 401 (the cached set is authoritative). A
+     failed fetch is shared with every waiting request for 5 s rather than repeated.
 4. Verify the signature and `exp` via `Jose.Jwt.validate`.
 5. Check `iss` equals `vconfig.issuer` and `aud` contains `vconfig.audience`
    (`aud` may be a single string or a JSON array per RFC 7519).

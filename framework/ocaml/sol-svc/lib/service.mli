@@ -54,4 +54,12 @@ val run
     request gets a response. *)
 module For_testing : sig
   val respond_or_500 : (unit -> Response.t) -> Response.t
+
+  (** The request path as the server runs it, with the JWKS fetch injectable. *)
+  val dispatch
+    :  ?fetch_jwks:(string -> (Jose.Jwks.t, string) result)
+    -> routes:Route.t list
+    -> Http.Request.t
+    -> Cohttp_eio.Body.t
+    -> Response.t
 end

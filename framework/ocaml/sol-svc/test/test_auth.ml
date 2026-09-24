@@ -492,6 +492,44 @@ let test_unknown_kid_refetch_is_rate_limited () =
   Alcotest.(check int) "no refetch inside the interval" 0 !fetches
 ;;
 
+let test_failed_fetch_is_shared_not_repeated () =
+  Eio_main.run
+  @@ fun env ->
+  let url = "https://idp.example.com/outage/jwks.json" in
+  let fetches = ref 0 in
+  let failing_fetch _ =
+    incr fetches;
+    Eio.Time.sleep env#clock 0.1;
+    Error "connection refused"
+  in
+  let tok = sign_rs256 () in
+  let validate () =
+    match
+      Test_auth_internal.validate
+        ~fetch_jwks:failing_fetch
+        (jwks_cfg_for url)
+        (bearer tok)
+    with
+    | Error (`Server_error _) -> ()
+    | _ -> Alcotest.fail "expected Server_error while the IdP is down"
+  in
+  Eio.Fiber.all [ validate; validate; validate; validate; validate ];
+  Alcotest.(check int) "one fetch for five waiting requests" 1 !fetches
+;;
+
+let test_unknown_kid_with_failed_refetch_is_401 () =
+  let url = "https://idp.example.com/down-rotated/jwks.json" in
+  seed_jwks_cache ~url ~age_s:60.0 empty_jwks_doc;
+  match
+    Test_auth_internal.validate
+      ~fetch_jwks:(fun _ -> Error "connection refused")
+      (jwks_cfg_for url)
+      (bearer (sign_rs256 ()))
+  with
+  | Error (`Unauthorized _) -> ()
+  | _ -> Alcotest.fail "an unknown kid is a 401 even when the refetch fails"
+;;
+
 let () =
   Alcotest.run
     "auth"
@@ -535,6 +573,14 @@ let () =
             "unknown kid refetch is rate-limited"
             `Quick
             test_unknown_kid_refetch_is_rate_limited
+        ; Alcotest.test_case
+            "failed fetch is shared, not repeated"
+            `Quick
+            test_failed_fetch_is_shared_not_repeated
+        ; Alcotest.test_case
+            "unknown kid with failed refetch → 401"
+            `Quick
+            test_unknown_kid_with_failed_refetch_is_401
         ] )
     ; ( "jwt_verified"
       , [ Alcotest.test_case "HS256 valid → ok" `Quick test_jwt_verified_hs256_valid
