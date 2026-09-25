@@ -897,9 +897,13 @@ let test_declared_identity_never_fabricated () =
           "google_container_cluster"
           {|{"name":42,"location":"us-central1"}|} )
     ; ( "the resource declares no values at all"
-      , declared_resource "google_container_cluster.main" "google_container_cluster" "null" )
+      , declared_resource
+          "google_container_cluster.main"
+          "google_container_cluster"
+          "null" )
     ; ( "the values are not an object"
-      , declared_resource "google_container_cluster.main" "google_container_cluster" "[]" )
+      , declared_resource "google_container_cluster.main" "google_container_cluster" "[]"
+      )
     ];
   (* No project anywhere means no scope to query in, so there is no query. *)
   match
