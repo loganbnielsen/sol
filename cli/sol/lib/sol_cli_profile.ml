@@ -216,7 +216,7 @@ let satisfies_capacity ~envelope ~shape ~headroom_nodes =
 
 (* The provider variables that select the shape. A profile target contributes
    these through the profile-precedence path
-   ([Sol_cli_config.terraform_vars] -> [vars_with_profile_precedence]), so the
+   ([Sol_cli_terraform_vars.of_config] -> [vars_with_profile_precedence]), so the
    shape cannot be weakened by a target field, a var-file or a --var — the same
    mechanism that already protects [rds_multi_az] and [rds_deletion_protection].
    [node_min_size] leaves room for exactly the reserved headroom, so the cluster

@@ -29,7 +29,7 @@ val init
   -> (Sol_cli_process.result, Sol_cli_process.error) result
 
 (** ["key=value"] Terraform CLI syntax for a list of neutral key/value pairs —
-    e.g. {!Sol_cli_config.terraform_vars}'s result, before it's combined with
+    e.g. {!Sol_cli_terraform_vars.of_config}'s result, before it's combined with
     any raw ["key=value"] strings a caller already has (such as [sol cloud]'s
     own [--var] CLI flag) and passed as [~vars] below. *)
 val kv_args : (string * string) list -> string list

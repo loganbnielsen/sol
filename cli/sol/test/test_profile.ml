@@ -1222,7 +1222,7 @@ let test_profile_target_pins_the_node_shape () =
     write_target prod_aws selecting;
     let vars =
       match
-        Sol_cli_config.terraform_vars ~workspace:"pluto" (load "prod/aws/us-east-1")
+        Sol_cli_terraform_vars.of_config ~workspace:"pluto" (load "prod/aws/us-east-1")
       with
       | Ok vars -> vars
       | Error e -> Alcotest.fail e
@@ -1248,7 +1248,7 @@ let test_ordinary_target_keeps_its_own_shape () =
     write_target prod_aws "target:\n  cluster_name: mine\n";
     let vars =
       match
-        Sol_cli_config.terraform_vars ~workspace:"pluto" (load "prod/aws/us-east-1")
+        Sol_cli_terraform_vars.of_config ~workspace:"pluto" (load "prod/aws/us-east-1")
       with
       | Ok vars -> vars
       | Error e -> Alcotest.fail e

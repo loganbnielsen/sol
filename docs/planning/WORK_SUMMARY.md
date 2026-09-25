@@ -1,6 +1,21 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: REFAC-094 — destroy trusts Terraform state for what Terraform manages (2026-09-24)
+## Latest: REFAC-095 — provider knowledge becomes data behind `capabilities_of` (2026-09-25)
+
+`Sol_cli_provider_capabilities` holds one record per provider, and `capabilities_of` is the
+only provider match, with no wildcard. The record covers:
+- the platform root and address prefix, the backend arguments and the cluster-access role;
+- the platform StorageClass;
+- the root's variables and the Destroy guard variables;
+- the bootstrap matchers and scopes, and the guarded addresses;
+- the ready-check wording and production qualification.
+
+A new provider does not compile until it declares all of these. `terraform_vars` moved to
+`Sol_cli_terraform_vars.of_config`. Behaviour is unchanged, including variable order.
+REFAC-092's ratchet goes from 73 to 44 dispatch sites and from 2 to 0 wildcard arms. Next:
+REFAC-091 (generic apply sequence), then REFAC-096 (opaque cluster access).
+
+## Previous: REFAC-094 — destroy trusts Terraform state for what Terraform manages (2026-09-24)
 
 The runtime ownership model is deleted. It had per-kind provider recipes, captured identities,
 B2 declared-coverage, and a destroy-time read-only plan. Following DEC-045, a successful

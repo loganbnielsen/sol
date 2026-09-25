@@ -120,9 +120,9 @@ echo "$reconcile" | grep -Eq 'operator_role_binding_doc|operator_binding_docs' |
 
 # A declared ARN that never reaches the provider root is exactly how the deploy
 # entry was missed once (HARDEN-002 run 3, finding 11). The root declares
-# operator_role_arn now, so Sol_cli_config.terraform_vars must route it, or the
+# operator_role_arn now, so the AWS capabilities' own_vars must route it, or the
 # access entry is never created and the identity stays unreachable.
-grep -q 'add_opt "operator_role_arn" target.operator_role_arn' "$root/cli/sol/lib/sol_cli_config.ml" ||
+grep -q 'add_opt "operator_role_arn" target.operator_role_arn' "$root/cli/sol/lib/sol_cli_provider_capabilities.ml" ||
   fail "operator_role_arn is declared by the AWS root but never routed to it, so no access entry is created"
 
 # ── the cross-check: what the diagnostic path reads, the operator must see ───

@@ -35,9 +35,11 @@ if [ ! -f "$allowlist" ]; then
   exit 1
 fi
 
-# The provider module itself defines the constructors; it is the one place they belong.
+# The provider module defines the constructors, and the capabilities registry
+# (REFAC-095) is the one place that selects a provider's capabilities by them.
 files="$(cd "$root" && find cli/sol/lib cli/sol/bin -type f \( -name '*.ml' -o -name '*.mli' \) \
-  ! -name 'sol_cli_provider.ml' ! -name 'sol_cli_provider.mli' | sort)"
+  ! -name 'sol_cli_provider.ml' ! -name 'sol_cli_provider.mli' \
+  ! -name 'sol_cli_provider_capabilities.ml' ! -name 'sol_cli_provider_capabilities.mli' | sort)"
 
 count_dispatch() {
   { grep -oE 'Sol_cli_provider\.(Aws|Gcp)\b|\b(Aws|Gcp)_outputs\b' "$root/$1" || true; } | wc -l | tr -d ' '
@@ -115,4 +117,4 @@ done <"$allowlist"
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
-echo "check_provider_dispatch: $total provider-dispatch occurrence(s) and $wild_total wildcard provider arm(s) outside sol_cli_provider, each within its allowlist."
+echo "check_provider_dispatch: $total provider-dispatch occurrence(s) and $wild_total wildcard provider arm(s) outside sol_cli_provider and its capabilities registry, each within its allowlist."

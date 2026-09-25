@@ -32,23 +32,10 @@ let backend_config (target : Sol_cli_config.target) ~root =
   let object_key = Printf.sprintf "sol/%s/%s.tfstate" target.name layer in
   match target.state_bucket with
   | Some bucket when String.trim bucket <> "" ->
-    let bucket = String.trim bucket in
-    (match target.provider with
-     | Sol_cli_provider.Aws ->
-       (match target.state_lock_table with
-        | Some table when String.trim table <> "" ->
-          Ok
-            [ "bucket=" ^ bucket
-            ; "key=" ^ object_key
-            ; "region=" ^ target.region
-            ; "dynamodb_table=" ^ String.trim table
-            ; "encrypt=true"
-            ]
-        | _ ->
-          Error
-            "an AWS target must declare state_lock_table: S3 has no native state \
-             locking, so two applies could corrupt the same state")
-     | Sol_cli_provider.Gcp -> Ok [ "bucket=" ^ bucket; "prefix=" ^ object_key ])
+    (Sol_cli_provider_capabilities.capabilities_of target.provider).backend_config
+      target
+      ~bucket:(String.trim bucket)
+      ~object_key
   | _ -> Error "target must declare state_bucket before `sol cloud` can use durable state"
 ;;
 
@@ -80,12 +67,9 @@ let cloud_target target =
   let* base_domain = required "base_domain" target.Sol_cli_config.base_domain in
   let* letsencrypt_email = required "letsencrypt_email" target.letsencrypt_email in
   let* cluster_access_role_arn =
-    match target.provider with
-    | Sol_cli_provider.Aws ->
-      Result.map
-        Option.some
-        (required "cluster_access_role_arn" target.cluster_access_role_arn)
-    | Sol_cli_provider.Gcp -> Ok None
+    (Sol_cli_provider_capabilities.capabilities_of target.provider)
+      .cluster_access_role_arn
+      target
   in
   Ok
     { target
@@ -102,18 +86,15 @@ let cloud_target target =
    Terraform root's backend type is part of its own configuration -- so `base`
    declares the S3 backend and is AWS's root, while `base-gcp` declares the GCS
    backend and uses `base` as the shared definition. *)
-let platform_root = function
-  | Sol_cli_provider.Aws -> "cli/platform/infra/base"
-  | Sol_cli_provider.Gcp -> "cli/platform/infra/base-gcp"
+let platform_root provider =
+  (Sol_cli_provider_capabilities.capabilities_of provider).platform_root
 ;;
 
 (* A resource address inside the platform root. A provider whose root reaches the
    shared definition through a module addresses its resources through it, so the
    provider prefix lives next to [platform_root] rather than at each `-target`. *)
 let platform_address provider address =
-  match provider with
-  | Sol_cli_provider.Aws -> address
-  | Sol_cli_provider.Gcp -> "module.platform." ^ address
+  (Sol_cli_provider_capabilities.capabilities_of provider).platform_address address
 ;;
 
 let target config = config.target
@@ -711,15 +692,13 @@ let all_nodes_ready output =
    a cluster whose default is some unrelated class backed by the same driver
    still fails, because the platform's volumes are then not on the class Sol
    established. *)
-type platform_storage =
+type platform_storage = Sol_cli_provider_capabilities.platform_storage =
   { storage_class : string
   ; csi_driver : string
   }
 
-let platform_storage = function
-  | Sol_cli_provider.Aws -> { storage_class = "gp3"; csi_driver = "ebs.csi.aws.com" }
-  | Sol_cli_provider.Gcp ->
-    { storage_class = "standard-rwo"; csi_driver = "pd.csi.storage.gke.io" }
+let platform_storage provider =
+  (Sol_cli_provider_capabilities.capabilities_of provider).platform_storage
 ;;
 
 (* `name|provisioner|is-default` per StorageClass, then space-separated. A CSI
@@ -1091,18 +1070,11 @@ let policy_vars ~provider ~phase ~destroy_snapshot_id ~retention =
   match policy_of_phase phase with
   | Bootstrap | Installation | Production -> []
   | Destroy ->
-    (match provider with
-     | Sol_cli_provider.Aws ->
-       ("rds_deletion_protection", "false")
-       ::
-       (match retention with
-        | Retain_final_snapshot ->
-          [ "rds_skip_final_snapshot", "false"
-          ; "rds_final_snapshot_identifier", destroy_snapshot_id
-          ]
-        | Retain_nothing -> [ "rds_skip_final_snapshot", "true" ])
-     | Sol_cli_provider.Gcp ->
-       [ "sql_deletion_protection", "false"; "gke_deletion_protection", "false" ])
+    (Sol_cli_provider_capabilities.capabilities_of provider).destroy_guard_vars
+      ~final_snapshot:
+        (match retention with
+         | Retain_final_snapshot -> Some destroy_snapshot_id
+         | Retain_nothing -> None)
 ;;
 
 (* The operator-facing name of a phase (ADR 0003's own spelling). Kept here so a

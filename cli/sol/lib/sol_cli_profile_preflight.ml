@@ -13,7 +13,12 @@ type finding =
   ; reason : string
   }
 
-let qualified_providers = [ Sol_cli_provider.Aws ]
+let qualified_providers =
+  List.filter
+    (fun provider ->
+       (Sol_cli_provider_capabilities.capabilities_of provider).production_qualified)
+    Sol_cli_provider.all
+;;
 
 (* Every capability in the profile now has a real establishment branch: none is
    staged or assumed. Each branch asserts only what is observable offline (a
@@ -253,7 +258,7 @@ let establish
        *configuration* consistency DEC-026 §4 asks a profile target to declare:
        for exactly this (Postgres in use + profile selected) pair Sol drives the
        provider root with `create_rds = true` and `rds_multi_az = true`
-       (Sol_cli_config.terraform_vars derives the latter from the profile), and
+       (Sol_cli_terraform_vars.of_config derives the latter from the profile), and
        that module renders encrypted storage with a 7-day PITR window. What
        preflight cannot observe, and therefore must not claim: that a failover
        or a point-in-time restore has actually been performed or met its bound.
