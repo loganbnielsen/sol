@@ -125,8 +125,8 @@ and its own canonical merge SHA (`git log --oneline -1 -- internal/pipeline/tick
 | Finding | Ticket | Landed |
 | --- | --- | --- |
 | AUDIT-POST-001 | `AUDIT-POST-001.md` | #511 |
-| AUDIT-POST-002 | `AUDIT-POST-002.md` | this PR |
-| AUDIT-POST-003 | `AUDIT-POST-003.md` | this PR |
+| AUDIT-POST-002 | `AUDIT-POST-002.md` | #512 |
+| AUDIT-POST-003 | `AUDIT-POST-003.md` | #512 |
 | AUDIT-POST-004 | `AUDIT-POST-004.md` | #510 |
 | AUDIT-POST-005 | `AUDIT-POST-005.md` | #510 |
 | AUDIT-POST-006 | `AUDIT-POST-006.md` | #510 |
