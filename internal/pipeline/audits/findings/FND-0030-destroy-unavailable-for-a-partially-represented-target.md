@@ -169,3 +169,23 @@ qualification.
 
 Nothing in this finding's classification changes: the behaviour was observed (Attempt 6), and
 the remaining work is still a mechanism decision.
+
+## Correction and restatement (2026-09-24, DOCS-022)
+
+**The causal premise is falsified.** "An apply was interrupted after the provider had created
+resources but before Terraform's state recorded all of them" is true, but it omits *who*
+interrupted it and *how*: the operator force-unlocked the live apply's lock, then SIGTERM'd
+Terraform and its provider plugin (corrected Attempt 6 record). Nothing in Sol's supported lifecycle
+produced the divergence. The only Sol-caused route to that shape is Sol's own death SIGPIPE-killing
+Terraform: reproduced locally, fix pending (INFRA-076).
+
+**Design point 3 (adoption) is withdrawn** with DEC-044's A1 (DEC-045; plan § Decisions 6).
+
+**What remains required, restated:** (1) destroy never constructs: every destroy-path apply is
+saved-plan asserted (landed); (2) a half-built target is always destructible: preparation targets
+only what state represents, and preparation failure is a degradation unless a declared guarantee
+blocks it (landed); (3) divergence Sol cannot vouch for **fails closed and is named**. It is not
+converged by Sol. Reconciling it is the operator's job, using Terraform's own tools. Under that
+restatement the acceptance criterion is met by mechanisms 1–2 plus the fail-closed report, and
+convergence is out of contract. State stays `OPEN` only until INFRA-076 removes the Sol-caused route;
+the plan (`internal/pipeline/audits/2026-09-24_cloud_lifecycle_simplification_plan.md`) tracks it.

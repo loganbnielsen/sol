@@ -190,6 +190,10 @@ Add a CI check under `internal/ci/` (same style as the existing guards):
     its root default (`sql_deletion_protection` defaults to `true`). Not a live defect; unchecked
     for a new provider.
   - `sol_cli_cloud_lifecycle.ml:52` — backend-config fallback error.
+  - **Correction (2026-09-25, REFAC-092/DOCS-022):** the line above is wrong. That `| _` belongs
+    to the enclosing `match target.state_bucket`, not to the provider match. The two real
+    survivors are both in `sol_cli_config.ml`: `:1432` (production DB deletion protection) and
+    `:1452` (the production profile's node shape, applied for AWS only).
 
 Record every other hazard found while auditing wildcards; do not refactor them in S1.
 

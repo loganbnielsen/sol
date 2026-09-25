@@ -31,3 +31,27 @@ Add dated correction/supersession notes to the Attempt 5 and Attempt 6 records, 
 - Demo/example: not applicable (cloud lifecycle internals) — state it.
 - Language parity (DEC-022): no application-facing impact — state it.
 - Update `docs/planning/WORK_SUMMARY.md`, and any finding/decision whose status this changes.
+
+## Completion notes (2026-09-25)
+
+Dated correction sections were appended; no earlier text was deleted or rewritten:
+
+- `docs/qualification/2026-09-22-gcp-attempt5.md`: the zone divergence came from the operator's
+  `state rm`; the SIGKILL came from the agent's interrupted monitoring call.
+- `docs/qualification/2026-09-23-gcp-attempt6.md`: the "orphaned apply produced the divergence" claim
+  and the "no Terraform process remained" claim are falsified, citing the transcript
+  (`cc1eb286…`, lines 606–621) and `~/sol-attempt6-evidence/`. SIGPIPE on Sol's death is the separate
+  Sol-caused route; this note says "fix pending (INFRA-076)" because INFRA-076 was still an open PR
+  when this was written.
+- FND-0030: premise falsified; design point 3 (adoption) withdrawn; restated around what remains
+  required (destroy never constructs; half-built targets destructible; divergence fails closed and is
+  named).
+- FND-0055: premise operator-created; B2 scheduled for removal (REFAC-094); the DEC-040 citation is
+  noted as over-reaching (DEC-040 decides authorization, not resource absence).
+- FND-0056: the pre-live falsification stands; the property is withdrawn as a product requirement.
+- DEC-044: A1 withdrawn; B2 conditional and scheduled for removal.
+- `PROVIDER-NEUTRAL-INVARIANTS.md` INV-DESTROY-1 and INV-DESTROY-4: "provider-verified" means
+  qualification's inventory; INV-DESTROY-4 is scoped by DEC-045's exception classes.
+- The plan's § S1.c wildcard list, and `QUALIFICATION_STATUS.md`'s "not yet corrected" line.
+
+- Demo/example: not applicable (records only). Language parity (DEC-022): no impact.
