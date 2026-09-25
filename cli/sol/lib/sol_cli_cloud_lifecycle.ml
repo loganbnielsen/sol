@@ -1,15 +1,3 @@
-type aws_outputs =
-  { cluster_name : string
-  ; cluster_access_role_arn : string
-  ; cert_manager_irsa_role_arn : string
-  ; loki_s3_bucket : string option
-  ; loki_irsa_role_arn : string option
-  ; thanos_s3_bucket : string option
-  ; thanos_irsa_role_arn : string option
-  ; grafana_irsa_role_arn : string option
-  ; managed_resource_dashboards : Yojson.Safe.t
-  }
-
 (* Remote state for one root. A backend's *type* is part of a Terraform root's own
    configuration -- `-backend-config` sets attributes, never the type -- so each
    provider's roots declare their own backend and this supplies the attributes
@@ -101,159 +89,6 @@ let target config = config.target
 let cloud_backend config = config.cloud_backend
 let platform_backend config = config.platform_backend
 
-(* Shared by both providers' parsers, because the one thing that has actually
-   bitten the output contract is provider-independent. (HARDEN-002 run 3, finding
-   10: Terraform *omits* an output whose value is `null` (v1.9.8) rather than
-   emitting it as present-with-null. `member` yields `Null` for a missing key and
-   `member "value"` on `Null` raises, so an absent *optional* output — every
-   `loki_*`/`thanos_*` bucket unless durable observability is enabled — must
-   resolve to `Null` and behave like a null value, while an absent *required*
-   output still fails closed with a named error instead of crashing the
-   lifecycle.) *)
-let outputs_reader ~provider text =
-  let open Yojson.Safe.Util in
-  let json = Yojson.Safe.from_string text in
-  let value name =
-    match json |> member name with
-    | `Null -> `Null
-    | output -> output |> member "value"
-  in
-  let string name =
-    match value name with
-    | `String s when String.trim s <> "" -> Ok s
-    | _ ->
-      Error
-        (Printf.sprintf "%s Terraform output %S is missing or not a string" provider name)
-  in
-  let optional_string name =
-    match value name with
-    | `Null -> Ok None
-    | `String s -> Ok (if String.trim s = "" then None else Some s)
-    | _ ->
-      Error
-        (Printf.sprintf "%s Terraform output %S is not a string or null" provider name)
-  in
-  value, string, optional_string
-;;
-
-let aws_outputs_of_json text =
-  try
-    let value, string, optional_string = outputs_reader ~provider:"AWS" text in
-    let ( let* ) = Result.bind in
-    let* cluster_name = string "cluster_name" in
-    let* cluster_access_role_arn = string "cluster_access_role_arn" in
-    let* cert_manager_irsa_role_arn = string "cert_manager_irsa_arn" in
-    let* loki_s3_bucket = optional_string "loki_s3_bucket" in
-    let* loki_irsa_role_arn = optional_string "loki_irsa_arn" in
-    let* thanos_s3_bucket = optional_string "thanos_s3_bucket" in
-    let* thanos_irsa_role_arn = optional_string "thanos_irsa_arn" in
-    let* grafana_irsa_role_arn = optional_string "grafana_irsa_arn" in
-    let managed_resource_dashboards = value "managed_resource_dashboards" in
-    match managed_resource_dashboards with
-    | `Assoc _ ->
-      Ok
-        { cluster_name
-        ; cluster_access_role_arn
-        ; cert_manager_irsa_role_arn
-        ; loki_s3_bucket
-        ; loki_irsa_role_arn
-        ; thanos_s3_bucket
-        ; thanos_irsa_role_arn
-        ; grafana_irsa_role_arn
-        ; managed_resource_dashboards
-        }
-    | _ -> Error "AWS Terraform output \"managed_resource_dashboards\" is not an object"
-  with
-  | Yojson.Json_error message -> Error ("invalid AWS Terraform output JSON: " ^ message)
-  | Yojson.Safe.Util.Type_error (message, _) ->
-    Error ("invalid AWS Terraform outputs: " ^ message)
-;;
-
-(* GCP's cloud-root contract: its own type, deliberately, rather than a relabelled
-   [aws_outputs]. The two providers publish different facts, not the same facts
-   under different names -- a GCP root names the project and region because every
-   GCP API is addressed through them *and* the cluster credential is derived from
-   them, and names no role ARN because a caller there impersonates a service
-   account through short-lived credentials. One record carrying both shapes would
-   make every field optional and leave every reader responsible for knowing which
-   fields its provider actually fills in. *)
-type gcp_outputs =
-  { cluster_name : string
-  ; project_id : string
-  ; region : string
-  ; artifact_registry : string
-  ; loki_gcs_bucket : string option
-  ; loki_workload_identity_sa_email : string option
-  ; thanos_gcs_bucket : string option
-  ; thanos_workload_identity_sa_email : string option
-  ; provisioner_service_account : string
-  }
-
-let gcp_outputs_of_json text =
-  try
-    let _, string, optional_string = outputs_reader ~provider:"GCP" text in
-    let ( let* ) = Result.bind in
-    let* cluster_name = string "cluster_name" in
-    let* project_id = string "project_id" in
-    let* region = string "region" in
-    let* artifact_registry = string "artifact_registry" in
-    let* loki_gcs_bucket = optional_string "loki_gcs_bucket" in
-    let* loki_workload_identity_sa_email =
-      optional_string "loki_workload_identity_sa_email"
-    in
-    let* thanos_gcs_bucket = optional_string "thanos_gcs_bucket" in
-    let* thanos_workload_identity_sa_email =
-      optional_string "thanos_workload_identity_sa_email"
-    in
-    (* Required, not optional: without it the platform would be installed as
-       whatever identity happened to call Sol, which is the thing Attempt 1 did
-       and the review named as not being an authority model. *)
-    let* provisioner_service_account = string "provisioner_service_account" in
-    Ok
-      { cluster_name
-      ; project_id
-      ; region
-      ; artifact_registry
-      ; loki_gcs_bucket
-      ; loki_workload_identity_sa_email
-      ; thanos_gcs_bucket
-      ; thanos_workload_identity_sa_email
-      ; provisioner_service_account
-      }
-  with
-  | Yojson.Json_error message -> Error ("invalid GCP Terraform output JSON: " ^ message)
-  | Yojson.Safe.Util.Type_error (message, _) ->
-    Error ("invalid GCP Terraform outputs: " ^ message)
-;;
-
-(* Either provider's outputs. This is the whole of what "provider-neutral" means
-   at this layer: the lifecycle carries one, and the provider-shaped facts are
-   read through the branch that knows which it has. *)
-type cloud_outputs =
-  | Aws_outputs of aws_outputs
-  | Gcp_outputs of gcp_outputs
-
-let cluster_name = function
-  | Aws_outputs outputs -> outputs.cluster_name
-  | Gcp_outputs outputs -> outputs.cluster_name
-;;
-
-let cluster_access_role_arn (outputs : aws_outputs) = outputs.cluster_access_role_arn
-
-(* HARDEN-002 run 4, finding 12. The base-platform providers are hashicorp/
-   kubernetes and hashicorp/helm, configured implicitly (cli/platform/infra/base
-   declares no `provider` block). hashicorp/kubernetes 2.38.0 resolves the
-   kubeconfig from `KUBE_CONFIG_PATH`/`KUBE_CONFIG_PATHS` and falls back to
-   `~/.kube/config` -- it does NOT consult `KUBECONFIG`, which is the only name
-   Sol used to export. So the platform phase silently used the operator's
-   ambient kubeconfig (or none) and could not reach the provisioned cluster
-   (`dial tcp 127.0.0.1:80`). Export every name the providers read, all pointing
-   at the same ephemeral provisioner kubeconfig, so the phase is deterministic
-   and never ambient. *)
-let provisioner_kube_env path =
-  [ "KUBECONFIG", path; "KUBE_CONFIG_PATH", path; "KUBE_CONFIG_PATHS", path ]
-;;
-
 type platform_inputs =
   { base_domain : string
   ; letsencrypt_email : string
@@ -264,18 +99,18 @@ type platform_inputs =
   ; alert_receiver_url : string option
   ; alert_owner : string option
   ; alert_runbook_url : string option
-  ; outputs : cloud_outputs
+  ; cluster : Sol_cli_cluster.t
   }
 
-let platform_inputs (target : cloud_target) (outputs : cloud_outputs) =
+let platform_inputs (target : cloud_target) (cluster : Sol_cli_cluster.t) =
   (* The cloud root reports the identity the platform root will act as; the
-     target's declaration is what authorized it, so a mismatch means the platform
-     would be wired to an identity Sol did not validate. Providers without a
-     role-shaped identity have nothing to compare. *)
-  match target.cluster_access_role_arn, outputs with
-  | Some arn, Aws_outputs aws when arn <> cluster_access_role_arn aws ->
-    Error "AWS cluster_access_role_arn output does not match the validated target"
-  | _ ->
+     target's declaration is what authorized it, so the cluster checks one against
+     the other. Providers without a role-shaped identity have nothing to compare. *)
+  match
+    cluster.check_identity ~cluster_access_role_arn:target.cluster_access_role_arn
+  with
+  | Error _ as refused -> refused
+  | Ok () ->
     Ok
       { base_domain = target.base_domain
       ; letsencrypt_email = target.letsencrypt_email
@@ -286,7 +121,7 @@ let platform_inputs (target : cloud_target) (outputs : cloud_outputs) =
       ; alert_receiver_url = target.target.alert_receiver_url
       ; alert_owner = target.target.alert_owner
       ; alert_runbook_url = target.target.alert_runbook_url
-      ; outputs
+      ; cluster
       }
 ;;
 
@@ -402,7 +237,7 @@ let preparations_unrepresented ~state ~desired =
   List.filter (fun address -> not (List.mem address state)) desired
 ;;
 
-type platform_vars_context =
+type platform_vars_context = Sol_cli_cluster.platform_vars_context =
   | Install
   | Destruction
 
@@ -427,57 +262,16 @@ let platform_terraform_vars ?(context = Install) inputs =
     ; "install_postgresql=false"
     ]
   in
-  match inputs.outputs with
-  | Aws_outputs outputs ->
-    Ok
-      (optional
-         (shared
-          @ [ "cloud_provider=aws"
-            ; "aws_region=" ^ inputs.region
-            ; "cert_manager_irsa_role_arn=" ^ outputs.cert_manager_irsa_role_arn
-            ; "managed_resource_dashboards="
-              ^ Yojson.Safe.to_string outputs.managed_resource_dashboards
-            ])
-       |> add_opt "loki_s3_bucket" outputs.loki_s3_bucket
-       |> add_opt "loki_irsa_role_arn" outputs.loki_irsa_role_arn
-       |> add_opt "thanos_s3_bucket" outputs.thanos_s3_bucket
-       |> add_opt "thanos_irsa_role_arn" outputs.thanos_irsa_role_arn
-       |> add_opt "grafana_irsa_role_arn" outputs.grafana_irsa_role_arn)
-  | Gcp_outputs outputs ->
-    (* Refused rather than half-wired: the definition's ClusterIssuers are still
-       the Route 53 DNS-01 solver, so a GCP target that expects TLS would get a
-       platform that looks wired for it and cannot issue. `cluster_issuer` is
-       optional, so this is a refusal only when a target actually asks for the
-       capability -- and a target that does not ask for it gets a platform with no
-       issuer rather than an issuer that cannot work. *)
-    (match inputs.cluster_issuer, context with
-     | Some _, Install ->
-       Error
-         "this GCP target declares cluster_issuer, but Sol cannot yet wire a certificate \
-          issuer on GCP: the shared platform definition's ClusterIssuers use the Route \
-          53 DNS-01 solver and there is no qualified Cloud DNS solver or scoped Workload \
-          Identity for cert-manager yet. Remove cluster_issuer from the target to \
-          provision the platform without public TLS, or qualify the GCP issuer path \
-          first"
-     | Some _, Destruction | None, _ ->
-       Ok
-         (optional (shared @ [ "cloud_provider=gcp"; "storage_class_name=standard-rwo" ])
-          |> add_opt "loki_gcs_bucket" outputs.loki_gcs_bucket
-          |> add_opt
-               "loki_workload_identity_sa_email"
-               outputs.loki_workload_identity_sa_email
-          |> add_opt "thanos_gcs_bucket" outputs.thanos_gcs_bucket
-          |> add_opt
-               "thanos_workload_identity_sa_email"
-               outputs.thanos_workload_identity_sa_email
-          (* The identity that holds the platform's authorities on GCP. It is
-             provider-shaped data for the same reason the buckets are: the
-             definition binds *this* identity to the same ClusterRoles the AWS
-             provisioner's group receives, so the authority model is shared and
-             the identity is not. *)
-          |> add_opt
-               "gcp_provisioner_service_account"
-               (Some outputs.provisioner_service_account)))
+  Result.map
+    (fun { Sol_cli_cluster.fixed; optional = provider_optional } ->
+       List.fold_left
+         (fun vars (key, value) -> add_opt key value vars)
+         (optional (shared @ fixed))
+         provider_optional)
+    (inputs.cluster.platform_vars
+       context
+       ~cluster_issuer:inputs.cluster_issuer
+       ~region:inputs.region)
 ;;
 
 type plan_phase =

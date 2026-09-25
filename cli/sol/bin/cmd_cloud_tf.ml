@@ -507,11 +507,11 @@ let run_provider_query argv : Sol_cli_destroy_verification.lookup_result =
   | Error error -> Unavailable (Sol_cli_process.error_to_string error)
 ;;
 
-let aws_orphan_sweep ~pre_destroy ~region ~outputs =
+let aws_orphan_sweep ~pre_destroy ~region ~cluster =
   let cluster_name =
     match state_name pre_destroy "aws_eks_cluster" with
     | Some _ as name -> name
-    | None -> Option.map Sol_cli_cloud_lifecycle.cluster_name outputs
+    | None -> Option.map (fun (cluster : Sol_cli_cluster.t) -> cluster.name) cluster
   in
   let region = if String.trim region = "" then None else Some region in
   (* REFAC-093 / DEC-045: only what Terraform does not own is swept -- load
@@ -592,11 +592,16 @@ let gcp_peering_probe ~project ~network =
    about the wrong one would answer "gone" for the wrong reason. The project comes
    from the root's own outputs; without them the check is a reported gap, never a
    guess. *)
-let gcp_orphan_sweep ~pre_destroy ~outputs =
+let gcp_orphan_sweep ~pre_destroy ~(target_cfg : Sol_cli_config.target) =
+  (* The project the root was applied in: the target's own `gcp.project_id`, which
+     is the variable the root receives (its `project_id` output only echoes it). *)
   let project =
-    match outputs with
-    | Some (Sol_cli_cloud_lifecycle.Gcp_outputs gcp) -> Some gcp.project_id
-    | Some (Sol_cli_cloud_lifecycle.Aws_outputs _) | None -> None
+    List.assoc_opt "gcp" target_cfg.provider_fields
+    |> Option.map (List.assoc_opt "project_id")
+    |> Option.join
+    |> Option.map String.trim
+    |> Option.to_list
+    |> List.find_opt (fun project -> project <> "")
   in
   match state_name pre_destroy "google_compute_network", project with
   | Some network, Some project -> orphan_sweep [ gcp_peering_probe ~project ~network ]
@@ -610,8 +615,9 @@ let gcp_orphan_sweep ~pre_destroy ~outputs =
   | Some _, None ->
     orphan_sweep
       ~gaps:
-        [ "the GCP residue check could not establish the target's project (no install \
-           outputs), so the service-networking peering check was not run"
+        [ "the GCP residue check could not establish the target's project (the target \
+           declares no gcp.project_id), so the service-networking peering check was not \
+           run"
         ]
       []
 ;;
@@ -767,7 +773,8 @@ let verification_observation
       ~provider
       ~infra_dir
       ~region
-      ~outputs
+      ~target_cfg
+      ~cluster
       ~retention
       ~pre_destroy
       ~preparation
@@ -778,8 +785,8 @@ let verification_observation
   let state = post_destroy_state ~infra_dir in
   let sweep =
     match provider with
-    | Sol_cli_provider.Gcp -> gcp_orphan_sweep ~pre_destroy ~outputs
-    | Sol_cli_provider.Aws -> aws_orphan_sweep ~pre_destroy ~region ~outputs
+    | Sol_cli_provider.Gcp -> gcp_orphan_sweep ~pre_destroy ~target_cfg
+    | Sol_cli_provider.Aws -> aws_orphan_sweep ~pre_destroy ~region ~cluster
   in
   { state
   ; sweep
@@ -855,52 +862,14 @@ let established_target = function
   | None -> lifecycle_error "cloud lifecycle requires a resolved target"
 ;;
 
-let aws_outputs infra_dir =
-  match Sol_cli_terraform.output_json ~chdir:infra_dir () with
-  | Ok result when result.Sol_cli_process.exit_code = 0 ->
-    (match Yojson.Safe.from_string result.stdout with
-     | `Assoc [] -> Ok None
-     | _ ->
-       Result.map
-         (fun outputs -> Some outputs)
-         (Sol_cli_cloud_lifecycle.aws_outputs_of_json result.stdout)
-     | exception Yojson.Json_error message ->
-       Error ("invalid AWS Terraform output JSON: " ^ message))
-  | Ok result ->
-    Error (Printf.sprintf "terraform output failed with exit %d" result.exit_code)
-  | Error _ -> Error "could not read AWS Terraform outputs"
+(* The cluster the cloud root produced, built by its provider's module
+   (REFAC-096); [None] when the root has no outputs yet. *)
+let cluster_of ~(target_cfg : Sol_cli_config.target) provider infra_dir =
+  Sol_cli_provider_clusters.of_root provider ~target:target_cfg ~chdir:infra_dir
 ;;
 
-let gcp_outputs infra_dir =
-  match Sol_cli_terraform.output_json ~chdir:infra_dir () with
-  | Ok result when result.Sol_cli_process.exit_code = 0 ->
-    (match Yojson.Safe.from_string result.stdout with
-     | `Assoc [] -> Ok None
-     | _ ->
-       Result.map
-         (fun outputs -> Some outputs)
-         (Sol_cli_cloud_lifecycle.gcp_outputs_of_json result.stdout)
-     | exception Yojson.Json_error message ->
-       Error ("invalid GCP Terraform output JSON: " ^ message))
-  | Ok result ->
-    Error (Printf.sprintf "terraform output failed with exit %d" result.exit_code)
-  | Error _ -> Error "could not read GCP Terraform outputs"
-;;
-
-(* The cloud root's outputs, whichever provider's root published them. Every
-   consumer below either dispatches on this value or is genuinely
-   provider-neutral. *)
-let cloud_outputs_of provider infra_dir =
-  match provider with
-  | Sol_cli_provider.Aws ->
-    Result.map
-      (Option.map (fun outputs -> Sol_cli_cloud_lifecycle.Aws_outputs outputs))
-      (aws_outputs infra_dir)
-  | Sol_cli_provider.Gcp ->
-    Result.map
-      (Option.map (fun outputs -> Sol_cli_cloud_lifecycle.Gcp_outputs outputs))
-      (gcp_outputs infra_dir)
-;;
+let process_ok = Sol_cli_cluster.process_ok
+let process_output = Sol_cli_cluster.process_output
 
 (* One place that turns a cloud root's outputs into the platform definition's
    variables, so the four lifecycle stages cannot disagree about the mapping, and
@@ -915,10 +884,10 @@ let platform_vars_of
       ?(on_error = Fun.id)
       ?(context = Sol_cli_cloud_lifecycle.Install)
       ~cloud_target
-      ~outputs
+      ~cluster
       ()
   =
-  match Sol_cli_cloud_lifecycle.platform_inputs cloud_target outputs with
+  match Sol_cli_cloud_lifecycle.platform_inputs cloud_target cluster with
   | Error message ->
     on_error ();
     lifecycle_error message
@@ -936,554 +905,29 @@ let platform_vars_of
 let platform_vars_of_result
       ?(context = Sol_cli_cloud_lifecycle.Install)
       ~cloud_target
-      ~outputs
+      ~cluster
       ()
   : (string list, string) result
   =
-  let* inputs = Sol_cli_cloud_lifecycle.platform_inputs cloud_target outputs in
+  let* inputs = Sol_cli_cloud_lifecycle.platform_inputs cloud_target cluster in
   Sol_cli_cloud_lifecycle.platform_terraform_vars ~context inputs
 ;;
 
-let provisioner_kubeconfig ?role_arn ~region outputs f =
-  let path = Filename.temp_file "sol-platform-provisioner-" ".kubeconfig" in
-  let cleanup () =
-    try Sys.remove path with
-    | Sys_error _ -> ()
-  in
-  (* Phase failures terminate through [lifecycle_error] -> [exit], which does not
-     unwind the stack, so [Fun.protect]'s finalizer alone would leak this
-     privileged kubeconfig on every injected failure. Register the same cleanup
-     with [at_exit] as well; it is idempotent. *)
-  at_exit cleanup;
-  Fun.protect ~finally:cleanup (fun () ->
-    Printf.printf
-      "  cluster access identity: %s\n%!"
-      (Sol_cli_cloud_lifecycle.cluster_access_role_arn outputs);
-    (* Finding 12: the base providers resolve the kubeconfig from
-       KUBE_CONFIG_PATH/KUBE_CONFIG_PATHS, not KUBECONFIG. *)
-    let env = Sol_cli_cloud_lifecycle.provisioner_kube_env path in
-    match
-      Sol_cli_process.run
-        (Sol_cli_process.cmd
-           ~env
-           [ "aws"
-           ; "eks"
-           ; "update-kubeconfig"
-           ; "--region"
-           ; region
-           ; "--name"
-           ; Sol_cli_cloud_lifecycle.cluster_name
-               (Sol_cli_cloud_lifecycle.Aws_outputs outputs)
-           ; "--alias"
-           ; Sol_cli_cloud_lifecycle.cluster_name
-               (Sol_cli_cloud_lifecycle.Aws_outputs outputs)
-           ; "--role-arn"
-           ; (match role_arn with
-              | Some arn -> arn
-              | None -> Sol_cli_cloud_lifecycle.cluster_access_role_arn outputs)
-           ; "--kubeconfig"
-           ; path
-           ])
-    with
-    | Ok result when result.exit_code = 0 -> Ok (f env)
-    | _ -> Error "could not establish ephemeral provisioner cluster access")
+let with_cluster_access (cluster : Sol_cli_cluster.t) f =
+  match cluster.with_access (fun ~env -> Ok (f env)) with
+  | Ok () -> ()
+  | Error message -> lifecycle_error message
 ;;
 
-let with_provisioner_kubeconfig ?(on_error = Fun.id) ?role_arn ~region outputs f =
-  match provisioner_kubeconfig ?role_arn ~region outputs f with
-  | Ok value -> value
-  | Error message ->
-    on_error ();
-    lifecycle_error message
-;;
-
-(* DEC-040 / FND-0021: de-escalation is not complete because a control plane said so.
-
-   Live, an EKS access-policy disassociation was accepted, `describe-access-entry`
-   reported no access policies, and the authorizer went on granting cluster-admin for
-   over five minutes.
-
-   Two things make this evidence rather than ceremony. The probe runs as **the principal
-   whose bootstrap elevation this phase removes** -- the provisioner, not the
-   steady-state cluster-access identity, whose refusals would say nothing about the
-   provisioner's authority. And it establishes *which* principal answered before
-   believing any answer: a probe that quietly authenticated as somebody else would
-   "prove" exactly the thing FND-0021 showed can be false. *)
-let bootstrap_only_capabilities =
-  List.map
-    (fun (verb, resource) -> { Sol_cli_cloud_lifecycle.verb; resource })
-    [ "create", "clusterroles"
-    ; "create", "clusterrolebindings"
-    ; "escalate", "clusterroles"
-    ]
-;;
-
-(* Run `kubectl auth can-i` and classify its result. The classification itself is a lib
-   function so it can be unit tested; this only performs the call. *)
-let capability_answer_of_can_i ~env { Sol_cli_cloud_lifecycle.verb; resource } =
-  match
-    Sol_cli_process.run
-      (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "can-i"; verb; resource ])
-  with
-  | Ok r ->
-    Sol_cli_cloud_lifecycle.capability_answer_of_can_i_output
-      ~exit_code:r.Sol_cli_process.exit_code
-      ~stdout:r.Sol_cli_process.stdout
-      ~stderr:r.Sol_cli_process.stderr
-  | Error e -> Sol_cli_cloud_lifecycle.Indeterminate (Sol_cli_process.error_to_string e)
-;;
-
-(* One definition of the retry interval, so the shape gate, the bootstrap-window
-   control and the post-de-escalation loop cannot drift apart. Production uses the
-   default; a harness overrides it to exercise the retry without sleeping through it.
-   A negative or non-finite override is ignored rather than slept on -- a NaN reaches
-   [Unix.sleepf] as an exception, and a negative would spend the whole retry budget in
-   one pass. *)
-let whoami_retry_interval_s () =
-  match Sys.getenv_opt "SOL_WHOAMI_RETRY_INTERVAL_S" with
-  | None -> 10.
-  | Some raw ->
-    (match float_of_string_opt raw with
-     | Some seconds when Float.is_finite seconds && seconds >= 0. -> seconds
-     | _ -> 10.)
-;;
-
-(* Bounds for the retry loops, named so they cannot drift apart silently. The shape
-   gate and the window control both wait out a fresh endpoint's propagation; the
-   post-removal await is longer, because FND-0021 saw an access-policy disassociation
-   take over five minutes to propagate while a deletion took under 45 s. *)
-let cluster_propagation_attempts = 10
-let deescalation_attempts = 18
-
-(* A refusal from the cluster, as opposed to a failure to reach it. Shared because the
-   de-escalation probe treats it as evidence of de-escalation while the shape gate treats it
-   as a reason to stop immediately: retrying cannot change an identity. *)
-let cluster_refused detail =
-  List.exists
-    (fun needle -> Sol_cli_port_forward.string_contains ~needle detail)
-    [ "Unauthorized"
-    ; "You must be logged in"
-    ; "the server has asked for the client to provide credentials"
-    ; "is forbidden"
-    ]
-;;
-
-(* Compares the **full** canonical ARN, account and path included.
-
-   Comparing an extracted role name was a fail-*open*: the same role name in another
-   account, or reached through a different role path, would look like the same principal,
-   and a different principal being denied afterwards would then read as Deescalated. The
-   strict comparison is the safe direction -- its worst case is a false mismatch, which
-   lands in Undetermined and does not announce Ready. INFRA-061 records the precise
-   comparison (account plus normalised role) as the follow-up that makes it exact. *)
-let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
-  match
-    Sol_cli_process.run
-      (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ])
-  with
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    (match Sol_cli_cloud_lifecycle.whoami_identity_of_json r.Sol_cli_process.stdout with
-     | Ok identity ->
-       let shown =
-         match identity.Sol_cli_cloud_lifecycle.canonical_arn, identity.arn with
-         | Some a, _ | None, Some a -> a
-         | None, None -> "(unnamed)"
-       in
-       (match
-          Sol_cli_cloud_lifecycle.principal_matches ~expected:expected_arn identity
-        with
-        | Some true -> Sol_cli_cloud_lifecycle.Principal_confirmed shown
-        | Some false -> Sol_cli_cloud_lifecycle.Principal_unexpected shown
-        | None ->
-          Sol_cli_cloud_lifecycle.Principal_probe_failed "the response named no principal")
-     | Error why -> Sol_cli_cloud_lifecycle.Principal_probe_failed why)
-  | Ok r ->
-    let detail =
-      String.trim (r.Sol_cli_process.stderr ^ " " ^ r.Sol_cli_process.stdout)
-    in
-    (* A refusal from the cluster is the expected post-de-escalation state. Anything
-       else -- a credential that could not be assumed, a token that could not be
-       generated, no reachable API -- is a measurement failure, and absence of evidence
-       must not become evidence of de-escalation. Only the cluster's own answer counts. *)
-    if cluster_refused detail
-    then (
-      (* A refusal is evidence of removal only if the credential is still good. "You must be
-         logged in" is also what a working credential gets when the role's trust policy is
-         broken, the clock is skewed, or the wrong role was assumed -- and reading that as
-         removal would be a fail-open into Deescalated. The raw configured ARN is used here,
-         not the path-free form the comparison wants, because this is an IAM call. *)
-      let assumption =
-        match
-          Sol_cli_process.run
-            (Sol_cli_process.cmd
-               ~env
-               [ "aws"
-               ; "sts"
-               ; "assume-role"
-               ; "--role-arn"
-               ; provisioner_role_arn
-               ; "--role-session-name"
-               ; "sol-deescalation-check"
-               ])
-        with
-        | Ok r when r.Sol_cli_process.exit_code = 0 ->
-          Sol_cli_cloud_lifecycle.Credential_assumable
-        | Ok _ -> Sol_cli_cloud_lifecycle.Credential_refused
-        | Error _ -> Sol_cli_cloud_lifecycle.Credential_unchecked
-      in
-      Sol_cli_cloud_lifecycle.refusal_is_deescalation assumption detail)
-    else Sol_cli_cloud_lifecycle.Principal_probe_failed detail
-  | Error e ->
-    Sol_cli_cloud_lifecycle.Principal_probe_failed (Sol_cli_process.error_to_string e)
-;;
-
-(* Deliberately *not* [with_provisioner_kubeconfig]: that raises through
-   [lifecycle_error] when the ephemeral access cannot be established, which would abort
-   paths that must degrade gracefully -- the offline lifecycle harness injects a cloud
-   failure and requires `cloud apply` to resume, and it does not have a real cluster to
-   reach. Failing to obtain the probe is a measurement failure, which the transition
-   verdict already handles as [Undetermined]; it must not become a crash. *)
-let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
-  match
-    provisioner_kubeconfig ~role_arn:provisioner_role_arn ~region outputs (fun env ->
-      let principal =
-        deescalation_principal_check
-          ~expected_arn:(Sol_cli_cloud_lifecycle.normalize_role_arn provisioner_role_arn)
-          ~provisioner_role_arn
-          env
-      in
-      let probes =
-        match principal with
-        | Sol_cli_cloud_lifecycle.Principal_unexpected _
-        | Sol_cli_cloud_lifecycle.Principal_probe_failed _
-        | Sol_cli_cloud_lifecycle.Principal_refused_by_cluster _ ->
-          (* Never interrogate another principal's capabilities and call it evidence. *)
-          []
-        | _ ->
-          List.map
-            (fun capability -> capability, capability_answer_of_can_i ~env capability)
-            bootstrap_only_capabilities
-      in
-      principal, probes)
-  with
-  | Ok v -> v
-  | Error e -> Sol_cli_cloud_lifecycle.Principal_probe_failed e, []
-;;
-
-(* Bounded and fail-closed: access-entry changes are eventually consistent so a retry
-   is expected, but an unverified claim is not an acceptable outcome. *)
-(* DEC-040 gate: the shape of the authorizer's answer is the one thing a fixture cannot
-   settle, because the fixtures encode a shape recalled from the API rather than captured
-   from a cluster.
-
-   It runs as soon as the cluster is reachable -- after the cloud apply and before the
-   platform install, which is the expensive part -- and it **fails the run** unless it
-   observes, in order:
-
-   1. an answer at all, retried with backoff because a freshly created EKS endpoint is
-      briefly unable to authenticate its own principal. Unreachability is retried and then
-      fatal: the gate not having run is a failure, not a pass;
-   2. a response the parser can identify a principal from;
-   3. that the principal is **the expected provisioner**, not merely that some principal was
-      named -- otherwise a leftover credential of another identity passes the shape check;
-   4. that the identity came from `canonicalArn`. The de-escalation comparison depends on
-      that field, so a pass via the `arn` or `username` fallbacks would be validating a path
-      the comparison does not use.
-
-   The raw response is written to a run artifact that survives teardown, so it can be
-   promoted to a fixture even if the run later fails. *)
-(* The filename carries the run, so a second run cannot overwrite the first one's
-   evidence. *)
-let whoami_capture_path ~run_id =
-  let name = Printf.sprintf "whoami-capture-%s.json" run_id in
-  match Sys.getenv_opt "SOL_QUALIFICATION_CAPTURE_DIR" with
-  | Some dir -> Some (Filename.concat dir name)
-  | None ->
-    (match Sys.getenv_opt "HOME" with
-     | Some home -> Some (Filename.concat (Filename.concat home ".sol-qual") name)
-     | None -> None)
-;;
-
-let persist_whoami_capture ~run_id json =
-  match whoami_capture_path ~run_id with
-  | None ->
-    Printf.printf
-      "  whoami capture: no writable path (set HOME or SOL_QUALIFICATION_CAPTURE_DIR)\n%!"
-  | Some path ->
-    (try
-       let dir = Filename.dirname path in
-       (* The raw capture holds real ARNs and account ids, so the directory is 0700 and the
-          file 0600 -- created or tightened, since an existing directory may be looser. *)
-       if not (Sys.file_exists dir) then Unix.mkdir dir 0o700;
-       (try Unix.chmod dir 0o700 with
-        | _ -> ());
-       let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ] 0o600 in
-       let oc = Unix.out_channel_of_descr fd in
-       output_string oc json;
-       close_out oc;
-       (try Unix.chmod path 0o600 with
-        | _ -> ());
-       Printf.printf "  whoami capture: %s\n%!" path
-     with
-     | _ ->
-       Printf.printf
-         "  whoami capture: could not write %s -- the raw response is in this log above\n\
-          %!"
-         path)
-;;
-
-let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
-  (* This gate runs after the bootstrap window is open, so a failure here is returned
-     to [Sol_cli_cloud_apply.execute], which removes that access before the run
-     stops -- otherwise the run would end with [provisioner_bootstrap_admin=true]
-     still applied on a cluster it has just decided it cannot verify. *)
-  let fail message = Error message in
-  let interval_s = whoami_retry_interval_s () in
-  (* The expectation is the configured intent -- the target's provisioner role, normalised
-     to the path-free form canonicalArn reports, so a role with a path does not produce a
-     false mismatch on a healthy cluster. The observation is the authorizer's own answer
-     about who authenticated. They are not the same value read back from one place: the
-     kubeconfig is built from the config, but the ARN compared against it comes from the
-     cluster, so a leftover credential of another identity answers with that other ARN and
-     is caught. *)
-  let expected = Sol_cli_cloud_lifecycle.normalize_role_arn provisioner_role_arn in
-  let run_id = Printf.sprintf "%d" (int_of_float (Unix.gettimeofday ())) in
-  let rec attempt remaining =
-    let outcome =
-      provisioner_kubeconfig ~role_arn:provisioner_role_arn ~region outputs (fun env ->
-        Sol_cli_process.run
-          (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ]))
-    in
-    match outcome with
-    | Ok (Ok r) when r.Sol_cli_process.exit_code = 0 ->
-      let json = String.trim r.Sol_cli_process.stdout in
-      (* Persisted before anything is asserted, on every attempt: the run that fails on a
-         shape mismatch is the one whose capture matters most, and writing afterwards would
-         leave nothing behind for exactly that case. *)
-      persist_whoami_capture ~run_id json;
-      let identity_result = Sol_cli_cloud_lifecycle.whoami_identity_of_json json in
-      (match identity_result with
-       | Error why ->
-         fail
-           (Printf.sprintf
-              "the authorizer's whoami response did not match the parser (%s). The run \
-               stops here rather than spending a bootstrap on a verification that cannot \
-               succeed. Raw response: %s"
-              why
-              json)
-       | Ok identity ->
-         let source = identity.Sol_cli_cloud_lifecycle.source in
-         Printf.printf "  whoami shape: parsed (identity source: %s)\n%!" source;
-         let matched = Sol_cli_cloud_lifecycle.principal_matches ~expected identity in
-         let named =
-           match identity.Sol_cli_cloud_lifecycle.canonical_arn, identity.arn with
-           | Some a, _ -> a
-           | None, Some a -> a
-           | None, None -> "(unnamed)"
-         in
-         (match matched with
-          | Some false ->
-            fail
-              (Printf.sprintf
-                 "the authorizer answered as a different principal than the provisioner \
-                  whose elevation this run manages (%s, from %s). The run stops here: \
-                  the de-escalation comparison would be about somebody else."
-                 named
-                 source)
-          | None -> fail "the authorizer's answer named no principal at all"
-          | Some true ->
-            if source <> "extra.canonicalArn" && source <> "userInfo.canonicalArn"
-            then
-              fail
-                (Printf.sprintf
-                   "the principal came from %s rather than canonicalArn, which is the \
-                    field the de-escalation comparison depends on. The run stops rather \
-                    than validating a path the verification does not use. Raw response: \
-                    %s"
-                   source
-                   json)
-            else Ok ()))
-    | unreachable ->
-      let why =
-        match unreachable with
-        | Ok (Ok r) ->
-          Printf.sprintf
-            "kubectl exited %d (%s)"
-            r.Sol_cli_process.exit_code
-            (String.trim (r.Sol_cli_process.stderr ^ " " ^ r.Sol_cli_process.stdout))
-        | Ok (Error e) -> Sol_cli_process.error_to_string e
-        | Error e -> e
-      in
-      (* Retried, not treated as terminal. A 401 or an authentication failure immediately
-         after cluster creation is usually access-entry or aws-auth propagation lag for the
-         *correct* principal, and connection errors are the endpoint not being ready -- both
-         fix themselves. A 403 on this call is unusual (SelfSubjectReview is normally allowed
-         for any authenticated user) and is retried on the same terms, then fails when the
-         window expires.
-
-         The one thing that *is* terminal is a successful answer naming a different identity,
-         which is handled above: that is a wrong credential, and no amount of waiting changes
-         it. Treating every Unauthorized as terminal here would fail healthy runs in the first
-         minute. *)
-      if remaining <= 1
-      then
-        fail
-          (Printf.sprintf
-             "the authorizer could not be reached to check the whoami shape (%s). The \
-              gate not having run is a failure, not a pass: the run stops before the \
-              platform install rather than discovering an unreadable shape at \
-              de-escalation."
-             why)
-      else (
-        Printf.printf
-          "  whoami shape: not reachable yet (%s); retrying in %.0fs\n%!"
-          why
-          interval_s;
-        Unix.sleepf interval_s;
-        attempt (remaining - 1))
-  in
-  attempt cluster_propagation_attempts
-;;
-
-(* The verdict after the removal, once it stops changing or the bounded window expires.
-   Never exits: the install path treats anything but [Deescalated] as fatal because Ready
-   is a least-privilege claim, while the destroy path must not let a probe that can fail
-   block teardown (ADR 0003 invariant 6) and reports the verdict instead. *)
-let await_deescalation ~region ~outputs ~provisioner_role_arn ~before =
-  let interval_s = whoami_retry_interval_s () in
-  let rec loop remaining =
-    (* The after-probe builds its kubeconfig the same way the window control did, against
-       the same cluster and region. That is what makes a refusal attributable to the removal
-       rather than to a wrong cluster name, a different endpoint or a region mismatch -- none
-       of which the IAM identity check can see. If these two paths ever diverge, the
-       guarantee goes with them, so change both or neither. *)
-    let principal, probes =
-      deescalation_probe ~region ~outputs ~provisioner_role_arn ()
-    in
-    let verdict =
-      Sol_cli_cloud_lifecycle.deescalation_transition
-        ~before
-        ~after_principal:principal
-        ~after:probes
-    in
-    match verdict with
-    | Sol_cli_cloud_lifecycle.Deescalated -> verdict
-    | _ when remaining <= 1 -> verdict
-    | verdict ->
-      Printf.printf
-        "  awaiting effective de-escalation: %s\n%!"
-        (Sol_cli_cloud_lifecycle.deescalation_verdict_to_string verdict);
-      Unix.sleepf interval_s;
-      loop (remaining - 1)
-  in
-  loop deescalation_attempts
-;;
-
-let verify_deescalation ~region ~outputs ~provisioner_role_arn ~before =
-  match await_deescalation ~region ~outputs ~provisioner_role_arn ~before with
-  | Sol_cli_cloud_lifecycle.Deescalated ->
-    Printf.printf "  de-escalation verified as %s\n%!" provisioner_role_arn;
-    Ok ()
-  | verdict ->
-    Error
-      ("de-escalation could not be established: "
-       ^ Sol_cli_cloud_lifecycle.deescalation_verdict_to_string verdict)
-;;
-
-(* Operator-facing wording for the control line, kept out of the library: this is how a
-   probe result is reported, not part of the verdict. *)
-let deescalation_principal_to_string = function
-  | Sol_cli_cloud_lifecycle.Principal_confirmed arn -> "confirmed " ^ arn
-  | Sol_cli_cloud_lifecycle.Principal_refused_by_cluster why ->
-    "refused by the cluster: " ^ why
-  | Sol_cli_cloud_lifecycle.Principal_probe_failed why -> "no evidence: " ^ why
-  | Sol_cli_cloud_lifecycle.Principal_unexpected who -> "unexpected " ^ who
-;;
-
-let capability_answer_to_string = function
-  | Sol_cli_cloud_lifecycle.Permitted -> "permitted"
-  | Sol_cli_cloud_lifecycle.Denied -> "denied"
-  | Sol_cli_cloud_lifecycle.Indeterminate why -> "indeterminate: " ^ why
-;;
-
-(* The window control's failure, with every reason it could not be established: an
-   operator needs to see which capability was indeterminate and why, not only that the
-   window never opened. *)
-let window_control_failure ~permitted indeterminate =
-  let stop =
-    "The run stops rather than proceeding to a verification that can only come back \
-     undetermined."
-  in
-  if not permitted
-  then
-    Printf.sprintf
-      "the bootstrap window never showed a capability permitted, so a later denial could \
-       not be told apart from a credential that never worked. %s"
-      stop
-  else
-    Printf.sprintf
-      "the bootstrap window showed a capability permitted but also an indeterminate \
-       probe (%s), which a later denial could not be told apart from. %s"
-      (indeterminate
-       |> List.map (fun (capability, why) -> capability ^ ": " ^ why)
-       |> String.concat ", ")
-      stop
-;;
-
-(* [Ok control] once the window shows at least one bootstrap-only capability permitted
-   *and* no indeterminate probe -- an indeterminate capability would make the later
-   transition [Undetermined] anyway, so failing here catches it before the platform
-   install rather than at de-escalation. [Error reason] otherwise; never exits, so the
-   destroy path can report rather than be blocked. *)
-let observe_bootstrap_window_result ~region ~outputs ~provisioner_role_arn () =
-  let interval_s = whoami_retry_interval_s () in
-  let rec attempt remaining =
-    let control = deescalation_probe ~region ~outputs ~provisioner_role_arn () in
-    let principal, probes = control in
-    let permitted =
-      List.exists
-        (fun (_, answer) -> Sol_cli_cloud_lifecycle.answer_is_permitted answer)
-        probes
-    in
-    let indeterminate =
-      List.filter_map Sol_cli_cloud_lifecycle.indeterminate_reason probes
-    in
-    match permitted, indeterminate with
-    | true, [] ->
-      Printf.printf
-        "  bootstrap window control: principal=%s; %s\n%!"
-        (deescalation_principal_to_string principal)
-        (probes
-         |> List.map (fun (capability, answer) ->
-           Printf.sprintf
-             "%s=%s"
-             (Sol_cli_cloud_lifecycle.capability_label capability)
-             (capability_answer_to_string answer))
-         |> String.concat ", ");
-      Ok control
-    | _ ->
-      if remaining <= 1
-      then Error (window_control_failure ~permitted indeterminate)
-      else (
-        Printf.printf
-          "  bootstrap window control: not yet permitted; retrying in %.0fs\n%!"
-          interval_s;
-        Unix.sleepf interval_s;
-        attempt (remaining - 1))
-  in
-  attempt cluster_propagation_attempts
-;;
-
-let process_ok ?(env = []) argv =
-  match Sol_cli_process.run (Sol_cli_process.cmd ~env argv) with
-  | Ok result -> result.exit_code = 0
-  | Error _ -> false
-;;
-
-let process_output ?(env = []) argv =
-  match Sol_cli_process.run (Sol_cli_process.cmd ~env argv) with
-  | Ok result when result.exit_code = 0 -> Some result.stdout
-  | _ -> None
+(* The result-returning cluster access: no [on_error] threading, because the
+   elevated-access removal is bracketed structurally around the operation rather
+   than handed to each failure branch (FND-0047 / REFAC-091). *)
+let with_cluster_access_result
+      (cluster : Sol_cli_cluster.t)
+      (f : env:(string * string) list -> (unit, string) result)
+  : (unit, string) result
+  =
+  cluster.with_access f
 ;;
 
 (* INFRA-039: resolve provider credentials for this operation, report the principal
@@ -1494,162 +938,6 @@ let process_output ?(env = []) argv =
    against a billable target. [leaves_target_standing] says the part that matters —
    a destroy that cannot authenticate leaves infrastructure running and disables the
    only supported path to remove it. *)
-(* The GCP counterpart of [provisioner_kubeconfig], and the same semantic: an
-   ephemeral kubeconfig for *this target's* cluster, in a temp file, exported
-   under every name the platform providers read (finding 12), never the
-   operator's ambient one.
-
-   What differs is how a credential is obtained. AWS assumes a role through
-   `aws eks update-kubeconfig --role-arn`; GCP asks the cluster for credentials
-   with the caller's Application Default Credentials. Sol does not yet narrow
-   that caller to a provisioner service account of its own on GCP -- there is no
-   GCP equivalent of the AWS root's provisioner role -- so this is the target's
-   Owner identity in the privileged install window, which is a recorded gap and
-   not something this function should paper over. *)
-(* Attempt 3's first meaningful failure, moved to where it belongs.
-
-   The platform applies authenticate to GKE through the kubeconfig gcloud writes,
-   and that kubeconfig names `gke-gcloud-auth-plugin` as its client-go exec
-   credential plugin. Without it, every Kubernetes call dies with
-   `exec: executable gke-gcloud-auth-plugin not found` -- *inside* the platform
-   apply, which is to say after GKE and Cloud SQL have been provisioned and paid
-   for, and after Sol has spent its way to the interesting part.
-
-   That is a host prerequisite in the same class as terraform itself, so it is
-   checked before the first platform call rather than discovered by one. Failing
-   here costs nothing; failing there costs an apply. *)
-(* REFAC-091: result-returning cores for the two GCP entry points, so the destroy
-   execution sequence carries a cluster-access failure as a typed outcome and the
-   caller's elevated-access cleanup runs from one structural place instead of
-   every failing branch remembering an [on_error]. The install path keeps the
-   exiting wrappers, which are now thin adapters over the cores. *)
-let gcp_platform_toolchain_result () : (unit, string) result =
-  match
-    Sol_cli_process.run (Sol_cli_process.cmd [ "gke-gcloud-auth-plugin"; "--version" ])
-  with
-  | Ok result when result.Sol_cli_process.exit_code = 0 -> Ok ()
-  | _ ->
-    Error
-      "the platform cannot reach a GKE cluster without `gke-gcloud-auth-plugin`, which \
-       is not on PATH: the kubeconfig gcloud writes names it as its credential plugin, \
-       so every Kubernetes call would fail with \"executable gke-gcloud-auth-plugin not \
-       found\". Install it (`gcloud components install gke-gcloud-auth-plugin`) and \
-       re-run. Nothing has been changed."
-;;
-
-let require_gcp_platform_toolchain ?(on_error = Fun.id) () =
-  match gcp_platform_toolchain_result () with
-  | Ok () -> ()
-  | Error message ->
-    on_error ();
-    lifecycle_error message
-;;
-
-(* INFRA-070 / FND-0047: [on_error] runs before every exit, as it does in
-   [with_provisioner_kubeconfig]. A caller that opened the bootstrap window hands
-   in the cleanup that closes it; exiting without calling it would leave the
-   provisioner elevated. *)
-let gcp_provisioner_kubeconfig_result
-      ~region
-      outputs
-      (f : env:(string * string) list -> (unit, string) result)
-  : (unit, string) result
-  =
-  let* () = gcp_platform_toolchain_result () in
-  let path = Filename.temp_file "sol-platform-provisioner-" ".kubeconfig" in
-  let cleanup () =
-    try Sys.remove path with
-    | Sys_error _ -> ()
-  in
-  at_exit cleanup;
-  Fun.protect ~finally:cleanup (fun () ->
-    let env = Sol_cli_cloud_lifecycle.provisioner_kube_env path in
-    match
-      Sol_cli_process.run
-        (Sol_cli_process.cmd
-           ~env
-           [ "gcloud"
-           ; "container"
-           ; "clusters"
-           ; "get-credentials"
-           ; Sol_cli_cloud_lifecycle.cluster_name
-               (Sol_cli_cloud_lifecycle.Gcp_outputs outputs)
-           ; "--region"
-           ; region
-           ; "--project"
-           ; outputs.Sol_cli_cloud_lifecycle.project_id
-             (* Impersonation is the point: Sol acts as the target's named
-              provisioner, through short-lived tokens, rather than as whoever
-              happened to run the command. *)
-           ; "--impersonate-service-account"
-           ; outputs.Sol_cli_cloud_lifecycle.provisioner_service_account
-             (* No `--kubeconfig`. Attempt 2's first live failure was
-                "unrecognized arguments: --kubeconfig": the flag does not exist on
-                this subcommand. gcloud writes to the kubeconfig named by
-                `$KUBECONFIG`, which [provisioner_kube_env] has already exported for
-                this child, and that is the interface it actually has.
-
-                The offline stub accepted the flag because it was written from this
-                implementation, which is the limitation worth remembering: a stub
-                cannot falsify the interface it was modelled on.
-                `check_gcloud_interface.sh` now validates the argv against gcloud's
-                own help output instead. *)
-           ; "--quiet"
-           ])
-    with
-    | Ok result when result.exit_code = 0 -> f ~env
-    | Ok result ->
-      (* Attempt 2 also showed why this failed without saying so. The message named
-         the step and nothing else, so the reason -- a missing impersonation grant
-         versus a wrong flag -- had to be reconstructed by hand. *)
-      Error
-        (Printf.sprintf
-           "could not establish ephemeral cluster access as %s: gcloud exited %d%s"
-           outputs.Sol_cli_cloud_lifecycle.provisioner_service_account
-           result.Sol_cli_process.exit_code
-           (let detail = String.trim result.Sol_cli_process.stderr in
-            if detail = "" then "" else ":\n" ^ detail))
-    | Error error ->
-      Error
-        (Printf.sprintf
-           "could not run gcloud to establish cluster access: %s"
-           (Sol_cli_process.error_to_string error)))
-;;
-
-let gcp_provisioner_kubeconfig ?(on_error = Fun.id) ~region outputs f =
-  match gcp_provisioner_kubeconfig_result ~region outputs (fun ~env -> Ok (f env)) with
-  | Ok () -> ()
-  | Error message ->
-    on_error ();
-    lifecycle_error message
-;;
-
-let with_cluster_access ?(on_error = Fun.id) ~region outputs f =
-  match outputs with
-  | Sol_cli_cloud_lifecycle.Aws_outputs outputs ->
-    with_provisioner_kubeconfig ~on_error ~region outputs f
-  | Sol_cli_cloud_lifecycle.Gcp_outputs outputs ->
-    gcp_provisioner_kubeconfig ~on_error ~region outputs f
-;;
-
-(* The destroy path's result-returning cluster access: no [on_error] threading,
-   because the elevated-access removal is bracketed structurally around the
-   operation rather than handed to each failure branch (FND-0047 / REFAC-091). *)
-let with_cluster_access_result
-      ~region
-      outputs
-      (f : env:(string * string) list -> (unit, string) result)
-  : (unit, string) result
-  =
-  match outputs with
-  | Sol_cli_cloud_lifecycle.Aws_outputs outputs ->
-    (match provisioner_kubeconfig ~region outputs (fun env -> f ~env) with
-     | Ok result -> result
-     | Error message -> Error message)
-  | Sol_cli_cloud_lifecycle.Gcp_outputs outputs ->
-    gcp_provisioner_kubeconfig_result ~region outputs f
-;;
-
 (* INFRA-039 resolved credentials per mutating stage, because a platform stage runs
    many minutes after the cloud stage and a run can lose its session in between.
    GCP's credential is Application Default Credentials and the reasoning is
@@ -1707,88 +995,6 @@ let require_credentials ~provider ~operation ~leaves_target_standing =
   match credentials_result ~provider ~operation ~leaves_target_standing with
   | Ok () -> ()
   | Error message -> lifecycle_error message
-;;
-
-let aws_cloud_ready ~region outputs =
-  let cluster =
-    Sol_cli_cloud_lifecycle.cluster_name (Sol_cli_cloud_lifecycle.Aws_outputs outputs)
-  in
-  let status args = process_output ([ "aws" ] @ args @ [ "--region"; region ]) in
-  match
-    ( status
-        [ "eks"
-        ; "describe-cluster"
-        ; "--name"
-        ; cluster
-        ; "--query"
-        ; "cluster.status"
-        ; "--output"
-        ; "text"
-        ]
-    , status
-        [ "eks"
-        ; "describe-addon"
-        ; "--cluster-name"
-        ; cluster
-        ; "--addon-name"
-        ; "aws-ebs-csi-driver"
-        ; "--query"
-        ; "addon.status"
-        ; "--output"
-        ; "text"
-        ] )
-  with
-  | Some cluster_status, Some addon_status
-    when String.trim cluster_status = "ACTIVE" && String.trim addon_status = "ACTIVE" ->
-    true
-  | _ -> false
-;;
-
-(* What "the cloud substrate is Ready" means on GCP: the GKE control plane is
-   RUNNING and the Cloud SQL instance is RUNNABLE. The AWS check also asserts the
-   EBS CSI addon is ACTIVE because Sol creates it; on GKE the block-storage
-   provisioner is part of the platform the provider manages, and the storage
-   contract is asserted at the Kubernetes layer instead -- the provider's
-   StorageClass is the sole default and is backed by its CSI driver, which is the
-   check that actually covers what a workload binds to. *)
-let gcp_cloud_ready outputs =
-  let project = outputs.Sol_cli_cloud_lifecycle.project_id in
-  let region = outputs.region in
-  let cluster = outputs.cluster_name in
-  let status argv = process_output ([ "gcloud" ] @ argv) in
-  match
-    ( status
-        [ "container"
-        ; "clusters"
-        ; "describe"
-        ; cluster
-        ; "--region"
-        ; region
-        ; "--project"
-        ; project
-        ; "--format"
-        ; "value(status)"
-        ]
-    , status
-        [ "sql"
-        ; "instances"
-        ; "describe"
-        ; cluster ^ "-postgres"
-        ; "--project"
-        ; project
-        ; "--format"
-        ; "value(state)"
-        ] )
-  with
-  | Some cluster_status, Some sql_state
-    when String.trim cluster_status = "RUNNING" && String.trim sql_state = "RUNNABLE" ->
-    true
-  | _ -> false
-;;
-
-let cloud_ready ~region = function
-  | Sol_cli_cloud_lifecycle.Aws_outputs outputs -> aws_cloud_ready ~region outputs
-  | Sol_cli_cloud_lifecycle.Gcp_outputs outputs -> gcp_cloud_ready outputs
 ;;
 
 (* What that check means, in the words its failure is reported with. *)
@@ -2531,32 +1737,21 @@ let report_cleanup_evidence = function
 ;;
 
 (* REFAC-091: the concrete dependencies of [Sol_cli_cloud_apply.execute] for one
-   target. Provider-specific steps -- the AWS whoami gate, window control and
-   de-escalation check, which have no GCP counterpart because GCP's window lives in
-   the platform root -- are chosen here, never inside the sequence. *)
+   target. Provider-specific steps come from the target's cluster (REFAC-096): on
+   AWS the whoami gate, window control and de-escalation check are the cluster's
+   bootstrap window; GCP's window lives in the platform root, so its cluster has
+   none to observe. Nothing here selects a provider for them. *)
 let terraform_failure r =
   terraform_outcome r
   |> Result.map_error (fun message -> Sol_cli_cloud_apply.Terraform_failed message)
 ;;
 
-let with_cluster_access_apply ~region outputs f =
-  (* [with_cluster_access_result] carries a string; keep the callback's own typed
-     failure so a Terraform failure inside is still reported as one. *)
-  let inner = ref None in
-  match
-    with_cluster_access_result ~region outputs (fun ~env ->
-      match f env with
-      | Ok () -> Ok ()
-      | Error failure ->
-        inner := Some failure;
-        Error (Sol_cli_cloud_apply.failure_to_string failure))
-  with
-  | Ok () -> Ok ()
-  | Error message ->
-    Error
-      (match !inner with
-       | Some failure -> failure
-       | None -> Sol_cli_cloud_apply.Refused message)
+let with_cluster_access_apply (cluster : Sol_cli_cluster.t) f =
+  (* The access itself fails with a string; the callback keeps its own typed
+     failure, so a Terraform failure inside is still reported as one. *)
+  match cluster.with_access (fun ~env -> Ok (f env)) with
+  | Ok result -> result
+  | Error message -> Error (Sol_cli_cloud_apply.Refused message)
 ;;
 
 (* INFRA-034: the install must not be judged on one sample taken the instant the
@@ -2621,7 +1816,6 @@ let apply_deps
       ~cloud_target
       ~(target_cfg : Sol_cli_config.target)
   =
-  let region = target_cfg.region in
   (* INFRA-074 / FND-0043: the cloud apply runs from a saved plan that is read
      first, and what is applied is the plan that was read. *)
   let plan_file = Filename.temp_file "sol-cloud-apply-" ".tfplan" in
@@ -2647,7 +1841,7 @@ let apply_deps
            ()))
   in
   { Sol_cli_cloud_apply.substrate_exists =
-      (fun () -> cloud_outputs_of provider infra_dir |> Result.map Option.is_some)
+      (fun () -> cluster_of ~target_cfg provider infra_dir |> Result.map Option.is_some)
   ; plan =
       (fun () ->
         let* () =
@@ -2684,31 +1878,23 @@ let apply_deps
           (Sol_cli_run_log.run_phase run_log ~name:"terraform-apply" (fun () ->
              Sol_cli_terraform.apply_saved ~chdir:infra_dir ~plan_file ())))
   ; discard_plan
-  ; outputs = (fun () -> cloud_outputs_of provider infra_dir)
+  ; outputs = (fun () -> cluster_of ~target_cfg provider infra_dir)
   ; (* DEC-040. The gate first: it fires at the moment a fresh endpoint is least
        likely to answer, so it must not be preceded by anything else that needs a
        working cluster. Then the control, which must observe a bootstrap-only
        capability *permitted*, because a later denial is not a transition unless
        the capability was shown to work first. *)
     open_window =
-      (fun outputs ->
-        match target_cfg.provisioner_role_arn, outputs with
-        | Some provisioner_role_arn, Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ->
-          let* () =
-            verify_whoami_shape ~region ~outputs:aws_outputs ~provisioner_role_arn
-          in
-          Result.map
-            Option.some
-            (observe_bootstrap_window_result
-               ~region
-               ~outputs:aws_outputs
-               ~provisioner_role_arn
-               ())
-        | _ -> Ok None)
-  ; platform_vars = (fun outputs -> platform_vars_of_result ~cloud_target ~outputs ())
+      (fun (cluster : Sol_cli_cluster.t) ->
+        match cluster.bootstrap_window with
+        | Verified window ->
+          let* () = window.gate () in
+          Result.map Option.some (window.observe ())
+        | No_role_declared | Closed_by_platform_root -> Ok None)
+  ; platform_vars = (fun cluster -> platform_vars_of_result ~cloud_target ~cluster ())
   ; cloud_ready =
-      (fun outputs ->
-        if cloud_ready ~region outputs
+      (fun (cluster : Sol_cli_cluster.t) ->
+        if cluster.ready ()
         then Ok ()
         else
           Error
@@ -2716,7 +1902,7 @@ let apply_deps
                "%s cloud substrate is not Ready: %s"
                pname
                (cloud_ready_expectation provider)))
-  ; with_cluster_access = with_cluster_access_apply ~region
+  ; with_cluster_access = with_cluster_access_apply
   ; platform_init =
       (fun () -> terraform_failure (terraform_init run_log platform_dir platform_backend))
   ; platform_installed = (fun env -> crds_established env)
@@ -2757,27 +1943,22 @@ let apply_deps
        window lives in the platform root and is closed by applying that root, so
        there is no Sol-side revocation to verify. *)
     verify_deescalation =
-      (fun outputs control ->
-        match outputs with
-        | Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ->
-          (match target_cfg.provisioner_role_arn with
-           | Some provisioner_role_arn ->
-             verify_deescalation
-               ~region
-               ~outputs:aws_outputs
-               ~before:
-                 (match control with
-                  | Some (_, probes) -> probes
-                  | None -> [])
-               ~provisioner_role_arn
-           | None ->
-             (* A target that declares no provisioner role had nothing elevated. Said
-                out loud rather than skipped: a silently skipped verification is the
-                false-pass shape DEC-040 exists to remove. *)
-             Printf.printf
-               "  no provisioner role declared: no bootstrap elevation to verify\n%!";
-             Ok ())
-        | Sol_cli_cloud_lifecycle.Gcp_outputs _ -> Ok ())
+      (fun (cluster : Sol_cli_cluster.t) _control ->
+        match cluster.bootstrap_window with
+        | Verified window ->
+          (match window.deescalated () with
+           | Ok () ->
+             Printf.printf "  de-escalation verified as %s\n%!" window.principal;
+             Ok ()
+           | Error verdict -> Error ("de-escalation could not be established: " ^ verdict))
+        | No_role_declared ->
+          (* A target that declares no provisioner role had nothing elevated. Said out
+             loud rather than skipped: a silently skipped verification is the
+             false-pass shape DEC-040 exists to remove. *)
+          Printf.printf
+            "  no provisioner role declared: no bootstrap elevation to verify\n%!";
+          Ok ()
+        | Closed_by_platform_root -> Ok ())
   ; provisioner_effective = provisioner_rbac_established
   ; report = (fun line -> Printf.printf "%s\n%!" line)
   }
@@ -2868,7 +2049,7 @@ let cloud_init
       | Sol_cli_cloud_lifecycle.Deferred reason ->
         Printf.printf "\n%s\n  DEFERRED — %s\n%!" name reason
     in
-    (match cloud_outputs_of provider infra_dir with
+    (match cluster_of ~target_cfg provider infra_dir with
      | Ok None ->
        report_phase
          "Platform prerequisites"
@@ -2877,13 +2058,13 @@ let cloud_init
          "Platform substrate"
          (Sol_cli_cloud_lifecycle.Deferred "requires cloud substrate to exist")
      | Error message -> lifecycle_error message
-     | Ok (Some outputs) ->
-       let platform_vars = platform_vars_of ~cloud_target ~outputs () in
+     | Ok (Some cluster) ->
+       let platform_vars = platform_vars_of ~cloud_target ~cluster () in
        (* An unavailable cluster credential is not a deferred phase: it is an
           unavailable lifecycle prerequisite, so plan exits non-zero. Deferral is
           reserved for phases whose concrete prerequisite is simply not
           established yet and whose establishment would itself be a mutation. *)
-       with_cluster_access ~region:target_cfg.region outputs (fun env ->
+       with_cluster_access cluster (fun env ->
          (* [can-i --list] needs authentication only, so it succeeds with an empty
             rule set when the provisioner's RBAC is simply not established yet, and
             fails when the cluster credential is unavailable. Deferral is honest
@@ -3051,18 +2232,18 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
        is absent. *)
     let preview () : (unit, string) result =
       let* () =
-        match cloud_outputs_of provider infra_dir with
-        | Ok (Some outputs) ->
+        match cluster_of ~target_cfg provider infra_dir with
+        | Ok (Some cluster) ->
           let platform_dir = platform_dir provider in
           let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
           let* platform_vars =
             platform_vars_of_result
               ~context:Sol_cli_cloud_lifecycle.Destruction
               ~cloud_target
-              ~outputs
+              ~cluster
               ()
           in
-          with_cluster_access_result ~region:target_cfg.region outputs (fun ~env ->
+          with_cluster_access_result cluster (fun ~env ->
             let* () = run_terraform_init_result run_log platform_dir platform_backend in
             terraform_outcome
               (Sol_cli_run_log.run_phase run_log ~name:"platform-plan-destroy" (fun () ->
@@ -3106,8 +2287,8 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
        install-time outputs contract (B / FND-0044 point 2). *)
     let state_ref = ref Sol_cli_cloud_destroy.State_empty in
     let prepared_ref = ref Sol_cli_cloud_destroy.Nothing_prepared in
-    let outputs_ref = ref None in
-    let before_ref = ref None in
+    let cluster_ref = ref None in
+    let observed_window = ref None in
     let destroy_phase () =
       let substrate = Sol_cli_cloud_destroy.substrate_presence !state_ref in
       let cloud_exists = substrate <> Sol_cli_cloud_destroy.Substrate_absent in
@@ -3134,8 +2315,8 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
        install outputs when they are usable, otherwise the target's own
        declaration, so a half-built output-less target is still preparable (B). *)
     let prepare_cluster_name () =
-      match !outputs_ref with
-      | Some outputs -> Sol_cli_cloud_lifecycle.cluster_name outputs
+      match !cluster_ref with
+      | Some (cluster : Sol_cli_cluster.t) -> cluster.name
       | None ->
         (match resolved_var "cluster_name" ~var_files ~vars ~default:None with
          | Some name -> name
@@ -3145,17 +2326,17 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
        opened by the bracket ([reconcile_and_enable]) and removed by its cleanup,
        so this never threads an [on_error]: a failure returns, and the removal
        happens structurally (FND-0047). *)
-    let destroy_platform_result ~outputs () : (unit, string) result =
+    let destroy_platform_result ~cluster () : (unit, string) result =
       let platform_dir = platform_dir provider in
       let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
       let* platform_vars =
         platform_vars_of_result
           ~context:Sol_cli_cloud_lifecycle.Destruction
           ~cloud_target
-          ~outputs
+          ~cluster
           ()
       in
-      with_cluster_access_result ~region:target_cfg.region outputs (fun ~env ->
+      with_cluster_access_result cluster (fun ~env ->
         let* () = run_terraform_init_result run_log platform_dir platform_backend in
         let destroy_once () =
           Sol_cli_terraform.destroy
@@ -3268,9 +2449,9 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
                  ^ Sol_cli_process.error_to_string error))
       ; cloud_outputs =
           (fun () ->
-            match cloud_outputs_of provider infra_dir with
-            | Ok (Some outputs) ->
-              outputs_ref := Some outputs;
+            match cluster_of ~target_cfg provider infra_dir with
+            | Ok (Some cluster) ->
+              cluster_ref := Some cluster;
               Sol_cli_cloud_destroy.Outputs_available
             | Ok None ->
               Sol_cli_cloud_destroy.Outputs_unavailable "no install outputs are published"
@@ -3319,8 +2500,8 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
               ())
       ; destroy_platform =
           (fun () ->
-            match !outputs_ref with
-            | Some outputs -> destroy_platform_result ~outputs ()
+            match !cluster_ref with
+            | Some cluster -> destroy_platform_result ~cluster ()
             | None ->
               Error
                 "the platform teardown requires install outputs, which are unavailable")
@@ -3349,57 +2530,39 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
                is best-effort: a probe that can fail must not block teardown (ADR
                0003 invariant 6). It runs while this run's window is open; the
                verification runs after the removal, through the bracket. *)
-            let deescalation_target =
-              match provider, target_cfg.provisioner_role_arn, !outputs_ref with
-              | ( Sol_cli_provider.Aws
-                , Some provisioner_role_arn
-                , Some (Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs) ) ->
-                Some (provisioner_role_arn, aws_outputs)
-              | _ -> None
-            in
-            match deescalation_target with
-            | None ->
+            match !cluster_ref with
+            | Some { Sol_cli_cluster.bootstrap_window = Verified window; _ } ->
+              let* () = window.observe () in
+              observed_window := Some window;
+              Ok ()
+            | Some { bootstrap_window = No_role_declared; _ } ->
               (* A target that declares no provisioner role elevated nothing; said out
                  loud rather than skipped, the same as on the install path. *)
-              (match provider with
-               | Sol_cli_provider.Aws ->
-                 Printf.printf
-                   "  no provisioner role declared: no bootstrap elevation to verify\n%!"
-               | Sol_cli_provider.Gcp -> ());
+              Printf.printf
+                "  no provisioner role declared: no bootstrap elevation to verify\n%!";
               Ok ()
-            | Some (provisioner_role_arn, aws_outputs) ->
-              (match
-                 observe_bootstrap_window_result
-                   ~region:target_cfg.region
-                   ~outputs:aws_outputs
-                   ~provisioner_role_arn
-                   ()
-               with
-               | Ok (_, probes) ->
-                 before_ref := Some (provisioner_role_arn, aws_outputs, probes);
-                 Ok ()
-               | Error message -> Error message))
+            | Some { bootstrap_window = Closed_by_platform_root; _ } -> Ok ()
+            | None ->
+              Printf.printf
+                "  bootstrap window: not observed (no install outputs to reach the \
+                 cluster with)\n\
+                 %!";
+              Ok ())
       ; verify_window_after =
           (fun () ->
-            match !before_ref with
+            match !observed_window with
             | None -> Ok ()
-            | Some (provisioner_role_arn, aws_outputs, before) ->
-              (match
-                 await_deescalation
-                   ~region:target_cfg.region
-                   ~outputs:aws_outputs
-                   ~before
-                   ~provisioner_role_arn
-               with
-               | Sol_cli_cloud_lifecycle.Deescalated -> Ok ()
-               | verdict ->
+            | Some window ->
+              (match window.deescalated () with
+               | Ok () -> Ok ()
+               | Error verdict ->
                  Error
                    (Printf.sprintf
                       "the bootstrap access was removed but its effective removal could \
                        not be verified (%s). Proceeding: destroying the substrate \
                        removes the access with it, and teardown is not blocked by a \
                        probe that can fail (ADR 0003 invariant 6)."
-                      (Sol_cli_cloud_lifecycle.deescalation_verdict_to_string verdict))))
+                      verdict)))
       ; destroy_substrate =
           (fun () ->
             (* The AWS load-balancer drain wait is provider glue that must run before
@@ -3429,7 +2592,8 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
               ~provider
               ~infra_dir
               ~region:target_cfg.region
-              ~outputs:!outputs_ref
+              ~target_cfg
+              ~cluster:!cluster_ref
               ~retention
               ~pre_destroy
               ~preparation)

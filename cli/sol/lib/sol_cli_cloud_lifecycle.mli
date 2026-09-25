@@ -1,45 +1,7 @@
-type aws_outputs
-
 val backend_config
   :  Sol_cli_config.target
   -> root:[ `Cloud | `Platform ]
   -> (string list, string) result
-
-val aws_outputs_of_json : string -> (aws_outputs, string) result
-val cluster_access_role_arn : aws_outputs -> string
-
-(** GCP's cloud-root contract. A separate type rather than a relabelled
-    [aws_outputs], because the two providers publish different facts: a GCP root
-    names the project and region (every GCP API is addressed through them, and the
-    cluster credential is derived from them) and names no role ARN, because a
-    caller there impersonates a service account through short-lived credentials. *)
-type gcp_outputs =
-  { cluster_name : string
-  ; project_id : string
-  ; region : string
-  ; artifact_registry : string
-  ; loki_gcs_bucket : string option
-  ; loki_workload_identity_sa_email : string option
-  ; thanos_gcs_bucket : string option
-  ; thanos_workload_identity_sa_email : string option
-  ; provisioner_service_account : string
-  }
-
-val gcp_outputs_of_json : string -> (gcp_outputs, string) result
-
-(** Either provider's outputs. This is the whole of "provider-neutral" at this
-    layer: the lifecycle carries one, and the provider-shaped facts are read
-    through the branch that knows which it has. *)
-type cloud_outputs =
-  | Aws_outputs of aws_outputs
-  | Gcp_outputs of gcp_outputs
-
-val cluster_name : cloud_outputs -> string
-
-(* HARDEN-002 run 4, finding 12: the kubeconfig env the platform Terraform
-   providers actually resolve. See the implementation for why all three names
-   are needed. *)
-val provisioner_kube_env : string -> (string * string) list
 
 (** The provider-neutral facts a lifecycle operation needs from a target, plus the
     backend config each provider's roots expect. [cluster_access_role_arn] is
@@ -72,14 +34,19 @@ val platform_address : Sol_cli_provider.t -> string -> string
 
 type platform_inputs
 
-val platform_inputs : cloud_target -> cloud_outputs -> (platform_inputs, string) result
+(** The shared platform inputs for [cluster], once the cluster has checked the
+    identity its root reports against the one the target declared. *)
+val platform_inputs
+  :  cloud_target
+  -> Sol_cli_cluster.t
+  -> (platform_inputs, string) result
 
 (** The platform definition's variables for this target. Fallible because a target
     can ask for a capability its provider's root cannot wire yet, and a refusal
     naming the gap is the honest answer there rather than a variable set that
     silently omits it. *)
 
-type platform_vars_context =
+type platform_vars_context = Sol_cli_cluster.platform_vars_context =
   | Install
   | Destruction
 

@@ -21,7 +21,8 @@
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
-source_file="$root/cli/sol/bin/cmd_cloud_tf.ml"
+# REFAC-096: GCP cluster access lives in its provider module.
+source_file="$root/cli/sol/lib/sol_cli_gcp_cluster.ml"
 
 fail=0
 report() {
@@ -83,7 +84,7 @@ fi
 # fixed number of lines silently stops covering the argv as the function's comments
 # grow, which is how the first version of this check passed with --kubeconfig
 # reintroduced.
-gcp_access_fn="$(sed -n '/^let gcp_provisioner_kubeconfig/,/^let with_cluster_access/p' "$source_file")"
+gcp_access_fn="$(sed -n '/^let gcp_provisioner_kubeconfig/,/^let gcp_cloud_ready/p' "$source_file")"
 if [ -z "$gcp_access_fn" ]; then
   report "could not extract the GCP cluster-access function for inspection"
 fi

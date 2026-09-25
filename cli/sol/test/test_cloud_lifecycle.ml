@@ -56,7 +56,7 @@ let valid_outputs () =
     ]
 ;;
 
-let parse json = L.aws_outputs_of_json (Yojson.Safe.to_string json)
+let parse json = Sol_cli_aws_cluster.aws_outputs_of_json (Yojson.Safe.to_string json)
 
 let test_outputs () =
   (match parse (valid_outputs ()) with
@@ -138,7 +138,7 @@ let valid_gcp_outputs () =
     ]
 ;;
 
-let parse_gcp json = L.gcp_outputs_of_json (Yojson.Safe.to_string json)
+let parse_gcp json = Sol_cli_gcp_cluster.gcp_outputs_of_json (Yojson.Safe.to_string json)
 
 let without_output name json =
   match json with
@@ -149,9 +149,12 @@ let without_output name json =
 let test_gcp_outputs () =
   (match parse_gcp (valid_gcp_outputs ()) with
    | Ok outputs ->
-     Alcotest.(check string) "cluster" "sol-qual" outputs.L.cluster_name;
-     Alcotest.(check string) "project" "sol-qualification" outputs.L.project_id;
-     Alcotest.(check string) "region" "us-central1" outputs.L.region;
+     Alcotest.(check string) "cluster" "sol-qual" outputs.Sol_cli_gcp_cluster.cluster_name;
+     Alcotest.(check string)
+       "project"
+       "sol-qualification"
+       outputs.Sol_cli_gcp_cluster.project_id;
+     Alcotest.(check string) "region" "us-central1" outputs.Sol_cli_gcp_cluster.region;
      Alcotest.(check (option string)) "no loki bucket" None outputs.loki_gcs_bucket
    | Error message -> Alcotest.fail message);
   (* The project and region are contract, not incidental context: every GCP API
@@ -203,6 +206,38 @@ let gcp_target () =
   }
 ;;
 
+(* REFAC-096: the identity check moved behind the cluster handle. The cloud root
+   reports the role the platform root will act as; one that differs from the role
+   the target declared must refuse the platform wiring, and the matching one must
+   not (the positive control). *)
+let test_cluster_identity_check () =
+  let aws_target = Result.get_ok (L.cloud_target target) in
+  let cluster role =
+    let outputs =
+      match valid_outputs () with
+      | `Assoc fields ->
+        `Assoc
+          (("cluster_access_role_arn", `Assoc [ "value", `String role ])
+           :: List.remove_assoc "cluster_access_role_arn" fields)
+      | _ -> assert false
+    in
+    Sol_cli_aws_cluster.cluster
+      ~region:"us-east-1"
+      ~provisioner_role_arn:None
+      (Result.get_ok (parse outputs))
+  in
+  Alcotest.(check bool)
+    "a different role is refused"
+    true
+    (Result.is_error
+       (L.platform_inputs aws_target (cluster "arn:aws:iam::1:role/somebody-else")));
+  Alcotest.(check bool)
+    "the declared role is accepted"
+    true
+    (Result.is_ok
+       (L.platform_inputs aws_target (cluster "arn:aws:iam::1:role/cluster-access")))
+;;
+
 let test_platform_terraform_vars () =
   let vars inputs =
     match L.platform_terraform_vars inputs with
@@ -214,8 +249,10 @@ let test_platform_terraform_vars () =
     List.filter (fun entry -> String.starts_with ~prefix entry) vars
   in
   let aws_cloud =
-    L.Aws_outputs
-      (Result.get_ok (L.aws_outputs_of_json (Yojson.Safe.to_string (valid_outputs ()))))
+    Sol_cli_aws_cluster.cluster
+      ~region:"us-east-1"
+      ~provisioner_role_arn:None
+      (Result.get_ok (parse (valid_outputs ())))
   in
   let aws_target = Result.get_ok (L.cloud_target target) in
   let aws_inputs = Result.get_ok (L.platform_inputs aws_target aws_cloud) in
@@ -232,9 +269,9 @@ let test_platform_terraform_vars () =
     (prefixed aws "loki_gcs_bucket=" @ prefixed aws "thanos_gcs_bucket=");
   let gcp = Result.get_ok (L.cloud_target (gcp_target ())) in
   let gcp_cloud =
-    L.Gcp_outputs
-      (Result.get_ok
-         (L.gcp_outputs_of_json (Yojson.Safe.to_string (valid_gcp_outputs ()))))
+    Sol_cli_gcp_cluster.cluster
+      ~region:"us-central1"
+      (Result.get_ok (parse_gcp (valid_gcp_outputs ())))
   in
   let gcp_inputs = Result.get_ok (L.platform_inputs gcp gcp_cloud) in
   let gcp_vars = vars gcp_inputs in
@@ -371,9 +408,9 @@ let test_platform_vars_destruction_context () =
   let tls_target = { (gcp_target ()) with cluster_issuer = Some "letsencrypt-prod" } in
   let tls_cloud = Result.get_ok (L.cloud_target tls_target) in
   let gcp_cloud =
-    L.Gcp_outputs
-      (Result.get_ok
-         (L.gcp_outputs_of_json (Yojson.Safe.to_string (valid_gcp_outputs ()))))
+    Sol_cli_gcp_cluster.cluster
+      ~region:"us-central1"
+      (Result.get_ok (parse_gcp (valid_gcp_outputs ())))
   in
   let inputs = Result.get_ok (L.platform_inputs tls_cloud gcp_cloud) in
   (match L.platform_terraform_vars inputs with
@@ -400,7 +437,7 @@ let test_platform_vars_destruction_context () =
    or the platform phase silently uses the ambient ~/.kube/config. *)
 let test_provisioner_kube_env () =
   let path = "/tmp/sol-platform-provisioner-test.kubeconfig" in
-  let env = L.provisioner_kube_env path in
+  let env = Sol_cli_cluster.provisioner_kube_env path in
   List.iter
     (fun key -> Alcotest.(check (option string)) key (Some path) (List.assoc_opt key env))
     [ "KUBECONFIG"; "KUBE_CONFIG_PATH"; "KUBE_CONFIG_PATHS" ]
@@ -1649,6 +1686,7 @@ let () =
             "provider-shaped platform variables"
             `Quick
             test_platform_terraform_vars
+        ; Alcotest.test_case "cluster identity check" `Quick test_cluster_identity_check
         ; Alcotest.test_case
             "a preparation failure's policy decides"
             `Quick
