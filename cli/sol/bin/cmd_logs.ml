@@ -544,9 +544,8 @@ let loki_username_arg =
         ~doc:
           "Basic-auth username for the Loki query request (e.g. a Grafana Cloud stack's \
            instance ID) -- the read-side counterpart of Alloy's external_loki_username \
-           (platform/infra/base). Falls back to SOL_LOKI_USERNAME; the flag wins \
-           when both are set. Must be paired with --loki-password (or \
-           SOL_LOKI_PASSWORD).")
+           (platform/infra/base). Falls back to SOL_LOKI_USERNAME; the flag wins when \
+           both are set. Must be paired with --loki-password (or SOL_LOKI_PASSWORD).")
 ;;
 
 let loki_password_arg =
@@ -558,11 +557,11 @@ let loki_password_arg =
         ~docv:"PASSWORD"
         ~doc:
           "Basic-auth password/API key for the Loki query request -- the read-side \
-           counterpart of Alloy's external_loki_password (platform/infra/base). \
-           Falls back to SOL_LOKI_PASSWORD; the flag wins when both are set. Must be \
-           paired with --loki-username (or SOL_LOKI_USERNAME). Prefer SOL_LOKI_PASSWORD \
-           on shared hosts because command-line flags can be visible in shell history \
-           and process listings.")
+           counterpart of Alloy's external_loki_password (platform/infra/base). Falls \
+           back to SOL_LOKI_PASSWORD; the flag wins when both are set. Must be paired \
+           with --loki-username (or SOL_LOKI_USERNAME). Prefer SOL_LOKI_PASSWORD on \
+           shared hosts because command-line flags can be visible in shell history and \
+           process listings.")
 ;;
 
 let follow_term =

@@ -361,8 +361,7 @@ let dev_up () =
       "loki"
       "grafana-community/loki"
       ~namespace:"monitoring"
-      ~version:"18.12.1"
-        (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin *)
+      ~version:"18.12.1" (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin *)
       ~values_yaml:
         (Sol_cli_platform_component.merged_values_yaml ~component:"loki" ~profile:"local")
       ();
@@ -404,8 +403,7 @@ let dev_up () =
       "alloy"
       "grafana/alloy"
       ~namespace:"monitoring"
-      ~version:"1.12.1"
-        (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin *)
+      ~version:"1.12.1" (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin *)
       ~values_yaml:(Sol_cli_dev_observability.alloy_values_yaml ())
       ());
   if req.tempo
@@ -457,8 +455,7 @@ let dev_up () =
       "prometheus"
       "prometheus-community/prometheus"
       ~namespace:"monitoring"
-      ~version:"25.20.1"
-        (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin *)
+      ~version:"25.20.1" (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin *)
       ~values:[ "prometheus-node-exporter.enabled", Bool false ]
       ~values_yaml:
         (Sol_cli_platform_component.merged_values_yaml
