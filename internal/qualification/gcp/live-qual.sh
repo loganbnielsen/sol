@@ -684,10 +684,21 @@ case "${1:-}" in
   stop)
     # Stop a recorded run by IDENTITY, then tear down: a TERM does not run the EXIT trap,
     # so stopping without destroying would leave the resources this run created.
+    #
+    # INFRA-076: the TERM reaches the harness and `sol`, never Terraform or its provider
+    # plugins -- Sol runs Terraform in a session of its own and forwards exactly one
+    # SIGINT to Terraform's pid, which then stops itself (persisting state, releasing
+    # the lock). So wait for the whole group to exit before destroying: a fixed sleep
+    # would start the destroy against a lock a live Terraform still holds, which is how
+    # Attempt 6 ended in a force-unlock. Never force-unlock; never signal a provider.
     if [ -s "$LOG_DIR/run.pgid" ]; then
-      say "stopping the run in $LOG_DIR (process group $(cat "$LOG_DIR/run.pgid"))"
-      kill -TERM -"$(cat "$LOG_DIR/run.pgid")" 2>/dev/null || true
-      sleep 3
+      pgid="$(cat "$LOG_DIR/run.pgid")"
+      say "stopping the run in $LOG_DIR (process group $pgid)"
+      kill -TERM -"$pgid" 2>/dev/null || true
+      while kill -0 -"$pgid" 2>/dev/null; do
+        say "  waiting for the run (and the Terraform it is stopping) to exit..."
+        sleep 5
+      done
     else
       say "no run.pgid in $LOG_DIR — nothing recorded to stop"
     fi

@@ -1,4 +1,6 @@
 let () =
+  (* INFRA-076: this binary is also Terraform's supervisor. *)
+  Sol_cli_supervised.dispatch_if_supervisor ();
   (* Root-discovery chdir (OBS-013) is scoped to sol status/logs/open's own
      workspace_name(), not done here globally -- a global chdir here would
      also change relative-path resolution for sol deploy --emit-to/
