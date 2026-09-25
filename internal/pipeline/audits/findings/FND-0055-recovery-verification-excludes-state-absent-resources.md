@@ -270,3 +270,16 @@ a declared/state-absent provider-present resource must exit 1, not 0
 exited **0**; the old report has no declared-set line at all (the reproduction is in the session
 that landed this, and the mechanism is the one "Evidence" above describes). The same scenarios
 against the branch binary exit 1 / 1 / 0 respectively, naming the address.
+
+## Correction (2026-09-24, DOCS-022)
+
+This finding's scenario (a target-declared resource the provider holds while state does not
+represent it) rests on Attempt 6, whose divergence was **operator-created** (corrected Attempt 6
+record). Its coverage requirement also follows from treating provider re-verification of every
+Terraform-managed resource as a product duty. DEC-045 decides the opposite for configured-to-delete
+resources: a successful destroy plus empty state is the authority, and provider observation is kept
+for four named exception classes. The declared-universe unit that closed this finding (B2) is
+therefore scheduled for deletion by REFAC-094, once INFRA-076 removes the Sol-caused route. The
+"independent provider inventory" this finding wanted belongs to qualification
+(`docs/qualification/README.md`). DEC-040 is cited above as "absence must be observed". DEC-040
+decides **authorization** de-escalation, not resource absence; that citation over-reaches.

@@ -442,8 +442,9 @@ stays `OPEN`, and Attempt 7 stays closed.
   operator-created, so the A1 authority question is no longer the gate. The authoritative plan is
   `2026-09-24_cloud_lifecycle_simplification_plan.md` (#491): **DEC-045** (Terraform destruction
   authority) gates every deletion, and **DOCS-022** carries the dated corrections to FND-0030,
-  FND-0055, FND-0056 and DEC-044. Those records are **not yet corrected**; until DOCS-022 lands,
-  read them together with that plan.
+  FND-0055, FND-0056 and DEC-044. **Corrected by DOCS-022 (2026-09-25):** each record, plus the
+  Attempt 5/6 records and INV-DESTROY-1/4, now carries a dated correction note. A1 is withdrawn,
+  and DEC-045 records Terraform's destruction authority with its four exception classes.
 - **FND-0044** → `FIXED_UNQUALIFIED` (HARDEN-004 parts 2–3); **INFRA-068** and **INFRA-069** moved to
   `DONE`, having been implemented under the epic's name (parts 3 and 5) without the ticket-move guard
   firing.

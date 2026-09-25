@@ -84,3 +84,14 @@ cleanup.
 - Whether the profile requires the alert quartet or a registry on GCP.
 - Whether AWS is affected by the same lifecycle asymmetry (the check lives in the
   shared platform definition, so the mechanism is provider-neutral).
+
+## Correction (2026-09-24, DOCS-022)
+
+The "second attempt" row records a `terraform state rm` of the zone followed by a `409
+alreadyExists` from the `PreparingDestroy` reconciliation apply. That provider-present /
+state-absent zone was **created by the operator's state surgery**, not by Sol's lifecycle. The
+defect it exposed was real: a whole-root reconciliation apply on the destroy path would recreate
+anything configured but missing. It was fixed by plan-and-assert (HARDEN-004 part 3), and DEC-045
+keeps that invariant. The "third attempt" row's SIGKILL came from an interrupted monitoring call in
+the agent's session, not from Sol. The stale lock and the later force-unlock follow from that
+kill. Operating rules now forbid pattern kills and unlocking a live lock (`docs/qualification/README.md`).
