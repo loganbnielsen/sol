@@ -2373,6 +2373,71 @@ if ! grep -lF 'whoami shape: parsed' "$tmp"/*.out >/dev/null 2>&1; then
   exit 1
 fi
 
+# INFRA-076: the previous Terraform operation against a state decides whether an apply
+# may proceed. Every lock-taking terraform call above ran under Sol's supervisor, which
+# left an operation record per state under $XDG_DATA_HOME/sol/operations.
+ops="$XDG_DATA_HOME/sol/operations"
+pre_log="$tmp/infra076-pre.log"
+if ! (export FAIL_ON=""; run_apply "$pre_log"); then
+  cat "$pre_log.out" >&2
+  echo "INFRA-076: the baseline apply failed" >&2
+  exit 1
+fi
+aws_key="$(ls -t "$ops" 2>/dev/null | grep '^aws-' | head -1 || true)"
+if [ -z "$aws_key" ] || [ ! -s "$ops/$aws_key/latest" ]; then
+  echo "INFRA-076: no operation record for the AWS cloud root under $ops" >&2
+  ls -la "$ops" >&2 || true
+  exit 1
+fi
+latest="$ops/$aws_key/$(cat "$ops/$aws_key/latest")"
+assert_contains "INFRA-076: the supervisor recorded terraform's outcome" "$latest/exit" 'exited 0' || exit 1
+
+# Unresolved: Terraform was killed before finishing its own protocol. An apply must not
+# proceed as though nothing happened.
+printf 'signaled 9\n' >"$latest/exit"
+unresolved_log="$tmp/infra076-unresolved.log"
+if (export FAIL_ON=""; run_apply "$unresolved_log"); then
+  cat "$unresolved_log.out" >&2
+  echo "INFRA-076: an apply proceeded past an unresolved previous operation" >&2
+  exit 1
+fi
+assert_contains "INFRA-076: the unresolved operation is named" "$unresolved_log.out" \
+  'refusing to apply: the previous Terraform operation against this state is unresolved' || exit 1
+assert_not_contains "INFRA-076: no terraform apply ran" "$unresolved_log.out" '[terraform-apply]' || exit 1
+
+# ...and proceeds once the operator says it is reconciled, recording that.
+accept_log="$tmp/infra076-accept.log"
+if ! (cd "$tmp/work" && FAIL_ON="" LIFECYCLE_LOG="$accept_log" \
+        "$sol" cloud apply prod/aws/us-east-1 --accept-unresolved) >"$accept_log.out" 2>&1; then
+  cat "$accept_log.out" >&2
+  echo "INFRA-076: --accept-unresolved did not let the apply proceed" >&2
+  exit 1
+fi
+[ -e "$latest/acknowledged" ] || {
+  echo "INFRA-076: accepting an unresolved operation was not recorded" >&2
+  exit 1
+}
+
+# Running: a live supervisor holds this state. Never race it, never unlock it.
+sleep 60 &
+live_pid=$!
+running="$ops/$aws_key/99999999T000000Z-running"
+mkdir -p "$running"
+printf 'host=%s\nsupervisor_pid=%s\nsupervisor_start=\nstarted_at=%s\nroot=%s\n' \
+  "$(hostname)" "$live_pid" "$(date +%s)" "$root/cli/platform/infra/aws" >"$running/meta"
+printf '%s\n' "$(basename "$running")" >"$ops/$aws_key/latest"
+running_log="$tmp/infra076-running.log"
+if (export FAIL_ON=""; run_apply "$running_log"); then
+  kill "$live_pid" 2>/dev/null || true
+  cat "$running_log.out" >&2
+  echo "INFRA-076: an apply raced a running previous operation" >&2
+  exit 1
+fi
+kill "$live_pid" 2>/dev/null || true
+wait "$live_pid" 2>/dev/null || true
+assert_contains "INFRA-076: the running operation is reported" "$running_log.out" \
+  'is still running and holds its lock' || exit 1
+
 # INFRA-075 canary. The scenarios above ran the real `sol cloud` commands; their run logs must
 # have landed in the isolated data home. If none did, Sol is writing somewhere else -- most
 # likely the operator's real ~/.local/share/sol, where the keep-20 pruning deletes real runs.
