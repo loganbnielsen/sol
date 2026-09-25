@@ -20,9 +20,13 @@ fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+repo="$(cd "$(dirname "$0")/../.." && pwd)"
+
 mk() {
-  # mk <dir> <file> <contents>
-  mkdir -p "$tmp/$1/cli/platform/infra/$2"
+  # mk <dir> <file> <contents>; each fake repo carries the real provider list,
+  # which is where the guard learns its target roots (HARDEN-005).
+  mkdir -p "$tmp/$1/cli/platform/infra/$2" "$tmp/$1/cli/sol/lib"
+  cp "$repo/cli/sol/lib/sol_cli_provider.ml" "$tmp/$1/cli/sol/lib/"
   printf '%s\n' "$3" >"$tmp/$1/cli/platform/infra/$2/$4"
 }
 
@@ -39,6 +43,21 @@ expect_accept() {
     fail=1
   fi
 }
+
+# 0. HARDEN-005: a provider added to the provider list has its root checked
+#    without the guard being edited. The fake provider module names `azure`, and
+#    the azure root carries the defect rule 1 rejects.
+mk newprovider azure 'resource "aws_ecr_repository" "services" {
+  name = "x"
+}' main.tf
+cat >"$tmp/newprovider/cli/sol/lib/sol_cli_provider.ml" <<'OCAML'
+let to_string = function
+  | Aws -> "aws"
+  | Gcp -> "gcp"
+  | Azure -> "azure"
+;;
+OCAML
+expect_reject newprovider "a new provider's root that the hard-coded list never named"
 
 # 1. The defect that actually stranded a live target: ECR without force_delete.
 mk ecr aws 'resource "aws_ecr_repository" "services" {

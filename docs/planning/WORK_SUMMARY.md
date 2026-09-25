@@ -1,6 +1,18 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: REFAC-098 — provider-native target configuration lives in the provider's block (2026-09-25)
+## Latest: HARDEN-005 — the cloud lifecycle simplification programme is complete (2026-09-25)
+
+Credential readiness moved behind the provider registry, so provider dispatch outside the
+registry is at 1, a justified placeholder, and there are 0 wildcards. The Azure-on-paper
+fitness test was measured with a hypothetical constructor. It needs 4 registry arms and no
+edits to generic lifecycle code, against about 45 edits in the baseline.
+
+The destroy-completeness guard now derives its roots from the provider list, so a new
+provider cannot escape it. The end-state report is at
+`internal/pipeline/audits/2026-09-25_cloud_lifecycle_end_state.md`. Live qualification of the
+simplified code is the authorization-gated HARDEN-006 (GCP) and HARDEN-007 (AWS).
+
+## Previous: REFAC-098 — provider-native target configuration lives in the provider's block (2026-09-25)
 
 **Target-file migration.** `state_lock_table` and the AWS role ARNs now go under the
 target's `aws:` block, and `provisioner_impersonator` under `gcp:`. A flat key is refused,
