@@ -8,7 +8,7 @@ set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/qualification_assertions.sh"
 
 root="$(git rev-parse --show-toplevel)"
-sol="$(realpath "${1:-$root/_build/default/cli/sol/bin/main.exe}")"
+sol="$(realpath "${1:-$root/_build/default/cli/bin/main.exe}")"
 tmp="$(mktemp -d)"
 # DEC-040: a green exit code must not be able to mean a fixture is corrupt. If a splice
 # swallows a heredoc terminator the generated stub runs to end-of-file, and this harness

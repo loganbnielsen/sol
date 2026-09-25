@@ -175,7 +175,7 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: opam exec -- dune build
 
-      # INFRA-035: the unit-test step below runs cli/sol/test's runtest rule that
+      # INFRA-035: the unit-test step below runs cli/test's runtest rule that
       # validates the readiness checks' kubectl argv against a real kubectl (*), so
       # kubectl has to exist. Pinned to the version the dogfood job installs
       # (docs/dogfood/DOGFOOD.md), because whether an argv is accepted is a property
@@ -198,7 +198,7 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         # framework/ocaml/kafka-eio-service/ excluded: its test/dune also builds a
         # broker-requiring integration suite (see run_tests.sh's run_kafka()).
-        run: opam exec -- dune test framework/ocaml/sol-env/ framework/ocaml/sol-fn/ framework/ocaml/sol-obs/ framework/ocaml/sol-runtime/ framework/ocaml/sol-svc/ framework/ocaml/sol-worker/ cli/sol/test/
+        run: opam exec -- dune test framework/ocaml/sol-env/ framework/ocaml/sol-fn/ framework/ocaml/sol-obs/ framework/ocaml/sol-runtime/ framework/ocaml/sol-svc/ framework/ocaml/sol-worker/ cli/test/
 
       # INFRA-006: formatting check runs after unit tests on purpose — running
       # `dune fmt --preview` first populates _build/default/framework, which
@@ -335,7 +335,7 @@ jobs:
       # INFRA-035: the guard itself is exercised on every run, because a guard that
       # would not have failed on the bug it exists for is worse than no guard — it
       # buys confidence it has not earned. The guard proper runs as part of the
-      # unit-test step above (cli/sol/test's runtest rule), so it only runs where
+      # unit-test step above (cli/test's runtest rule), so it only runs where
       # kubectl exists; this proves it rejects the invocation that shipped broken.
       - name: Readiness-probe invocation guard mutation test (INFRA-035)
         run: internal/ci/test_readiness_invocations_check.sh
@@ -487,7 +487,7 @@ jobs:
 
       - name: Build sol CLI
         timeout-minutes: 5
-        run: opam exec -- dune build cli/sol/bin/main.exe
+        run: opam exec -- dune build cli/bin/main.exe
 
       - name: Install k3d/kubectl/helm (pinned versions — docs/dogfood/DOGFOOD.md)
         timeout-minutes: 5
@@ -525,7 +525,7 @@ jobs:
           set -eo pipefail
           export SOL_HOME="$GITHUB_WORKSPACE"
           mkdir -p "$SOL_HOME/.ci-bin"
-          ln -sf "$SOL_HOME/_build/default/cli/sol/bin/main.exe" "$SOL_HOME/.ci-bin/sol"
+          ln -sf "$SOL_HOME/_build/default/cli/bin/main.exe" "$SOL_HOME/.ci-bin/sol"
           export PATH="$SOL_HOME/.ci-bin:$PATH"
           hash -r
 
@@ -650,7 +650,7 @@ jobs:
           # namespaces and ignores egress policy entirely, so an allow-probe is
           # denied even though the policy is correct per the Kubernetes spec.
           # BUG-022 has the deterministic repro. Rendering is unit-tested in
-          # cli/sol/test/test_manifest_render.ml, and customer-cloud CNIs
+          # cli/test/test_manifest_render.ml, and customer-cloud CNIs
           # enforce it.
           #
           # Derive namespaces from the cluster rather than assuming the
@@ -867,7 +867,7 @@ jobs:
   # FRIC-014: nothing else catches the checked-in example workspaces
   # (examples/pluto, internal/fixtures/venus) drifting out of sync with what `sol
   # new`'s scaffold template (tpl_dockerfile in
-  # cli/sol/lib/sol_cli_scaffold_templates.ml) actually generates.
+  # cli/lib/sol_cli_scaffold_templates.ml) actually generates.
   # DOGFOOD-011 found a real, live instance: a stale base image tag and a
   # missing `opam install` step, invisible locally only because a stale
   # Docker layer cache papered over it. --no-cache is deliberate for the
@@ -1092,7 +1092,7 @@ jobs:
 
       - name: Build sol CLI
         timeout-minutes: 5
-        run: opam exec -- dune build cli/sol/bin/main.exe
+        run: opam exec -- dune build cli/bin/main.exe
 
       - name: Install k3d/kubectl/helm (pinned versions — docs/dogfood/DOGFOOD.md)
         timeout-minutes: 5
@@ -1114,7 +1114,7 @@ jobs:
           set -eo pipefail
           export SOL_HOME="$GITHUB_WORKSPACE"
           mkdir -p "$SOL_HOME/.ci-bin"
-          ln -sf "$SOL_HOME/_build/default/cli/sol/bin/main.exe" "$SOL_HOME/.ci-bin/sol"
+          ln -sf "$SOL_HOME/_build/default/cli/bin/main.exe" "$SOL_HOME/.ci-bin/sol"
           export PATH="$SOL_HOME/.ci-bin:$PATH"
           hash -r
 

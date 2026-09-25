@@ -308,7 +308,7 @@ editing either:
   ones — `aws_region`, the S3 buckets and their IRSA roles, and
   `cert_manager_irsa_role_arn`, none of which a GCP install can use. Adding a
   variable to the definition without adding it to `base-gcp` fails
-  `cli/sol/test/check_production_infra.sh` rather than silently defaulting on GCP.
+  `cli/test/check_production_infra.sh` rather than silently defaulting on GCP.
 
 Everything a target addresses inside the platform root goes through
 `Sol_cli_cloud_lifecycle.platform_address`, because a root that reaches the

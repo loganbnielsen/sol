@@ -124,7 +124,7 @@ run_unit() {
   # framework/ocaml/kafka-eio-service/ is excluded here — its test/dune also
   # builds a broker-requiring integration suite; run_kafka() below covers
   # it explicitly with KAFKA_BROKERS set.
-  dune test --root "$REPO_ROOT" framework/ocaml/sol-env/ framework/ocaml/sol-fn/ framework/ocaml/sol-obs/ framework/ocaml/sol-svc/ framework/ocaml/sol-worker/ cli/sol/test/ --force 2>&1
+  dune test --root "$REPO_ROOT" framework/ocaml/sol-env/ framework/ocaml/sol-fn/ framework/ocaml/sol-obs/ framework/ocaml/sol-svc/ framework/ocaml/sol-worker/ cli/test/ --force 2>&1
 }
 
 run_kafka() {

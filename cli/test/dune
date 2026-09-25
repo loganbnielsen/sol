@@ -82,22 +82,22 @@
  (alias runtest)
  (deps
   print_readiness_invocations.exe
-  ../../../internal/ci/check_readiness_invocations.sh)
+  ../../internal/ci/check_readiness_invocations.sh)
  (action
   (pipe-stdout
    (run %{dep:print_readiness_invocations.exe})
-   (run bash %{dep:../../../internal/ci/check_readiness_invocations.sh}))))
+   (run bash %{dep:../../internal/ci/check_readiness_invocations.sh}))))
 
 (rule
  (alias runtest)
  (deps
   ../bin/main.exe
-  ../../../internal/ci/test_cloud_lifecycle_offline.sh
-  ../../../internal/ci/qualification_assertions.sh)
+  ../../internal/ci/test_cloud_lifecycle_offline.sh
+  ../../internal/ci/qualification_assertions.sh)
  (action
   (run
    bash
-   %{dep:../../../internal/ci/test_cloud_lifecycle_offline.sh}
+   %{dep:../../internal/ci/test_cloud_lifecycle_offline.sh}
    %{dep:../bin/main.exe})))
 
 (rule
@@ -150,11 +150,11 @@
  (alias runtest)
  (deps
   check_production_infra.sh
-  (source_tree ../../../platform/infra/aws)
-  (source_tree ../../../platform/infra/base)
-  (source_tree ../../../platform/infra/base-gcp)
-  (source_tree ../../../platform/infra/bootstrap)
-  (source_tree ../../../platform/infra/gcp))
+  (source_tree ../../platform/infra/aws)
+  (source_tree ../../platform/infra/base)
+  (source_tree ../../platform/infra/base-gcp)
+  (source_tree ../../platform/infra/bootstrap)
+  (source_tree ../../platform/infra/gcp))
  (action
   (run bash %{dep:check_production_infra.sh} %{workspace_root})))
 
@@ -170,7 +170,7 @@
  (alias runtest)
  (action
   (bash
-   "set -eu\ncase \"${XDG_DATA_HOME:-}\" in\n  '') echo 'INFRA-075: XDG_DATA_HOME is unset for cli/sol/test actions; sol would write runs into the real ~/.local/share/sol' >&2; exit 1 ;;\nesac\nif [ -n \"${HOME:-}\" ] && [ \"$(cd \"$(dirname \"$XDG_DATA_HOME\")\" 2>/dev/null && pwd -P)/$(basename \"$XDG_DATA_HOME\")\" = \"$HOME/.local/share\" ]; then\n  echo 'INFRA-075: XDG_DATA_HOME points at the real data home' >&2; exit 1\nfi")))
+   "set -eu\ncase \"${XDG_DATA_HOME:-}\" in\n  '') echo 'INFRA-075: XDG_DATA_HOME is unset for cli/test actions; sol would write runs into the real ~/.local/share/sol' >&2; exit 1 ;;\nesac\nif [ -n \"${HOME:-}\" ] && [ \"$(cd \"$(dirname \"$XDG_DATA_HOME\")\" 2>/dev/null && pwd -P)/$(basename \"$XDG_DATA_HOME\")\" = \"$HOME/.local/share\" ]; then\n  echo 'INFRA-075: XDG_DATA_HOME points at the real data home' >&2; exit 1\nfi")))
 
 ; SEC-010: the sensitive-variable guard reads the real roots, so they are deps.
 
@@ -178,8 +178,8 @@
  (name test_sensitive_vars)
  (modules test_sensitive_vars)
  (deps
-  (source_tree ../../../platform/infra/aws)
-  (source_tree ../../../platform/infra/gcp))
+  (source_tree ../../platform/infra/aws)
+  (source_tree ../../platform/infra/gcp))
  (libraries sol_cli alcotest str))
 
 ; INFRA-076: Terraform supervision, with a fake terraform and a fake provider

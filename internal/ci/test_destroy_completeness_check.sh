@@ -25,8 +25,8 @@ repo="$(cd "$(dirname "$0")/../.." && pwd)"
 mk() {
   # mk <dir> <file> <contents>; each fake repo carries the real provider list,
   # which is where the guard learns its target roots (HARDEN-005).
-  mkdir -p "$tmp/$1/platform/infra/$2" "$tmp/$1/cli/sol/lib"
-  cp "$repo/cli/sol/lib/sol_cli_provider.ml" "$tmp/$1/cli/sol/lib/"
+  mkdir -p "$tmp/$1/platform/infra/$2" "$tmp/$1/cli/lib"
+  cp "$repo/cli/lib/sol_cli_provider.ml" "$tmp/$1/cli/lib/"
   printf '%s\n' "$3" >"$tmp/$1/platform/infra/$2/$4"
 }
 
@@ -50,7 +50,7 @@ expect_accept() {
 mk newprovider azure 'resource "aws_ecr_repository" "services" {
   name = "x"
 }' main.tf
-cat >"$tmp/newprovider/cli/sol/lib/sol_cli_provider.ml" <<'OCAML'
+cat >"$tmp/newprovider/cli/lib/sol_cli_provider.ml" <<'OCAML'
 let to_string = function
   | Aws -> "aws"
   | Gcp -> "gcp"

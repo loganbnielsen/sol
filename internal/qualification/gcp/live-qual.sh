@@ -81,7 +81,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 # The CLI under test. Defaults to this checkout's build so an attempt is identifiable
 # by commit; overridable for a plan-only validation.
-SOL="${SOL:-$ROOT/_build/default/cli/sol/bin/main.exe}"
+SOL="${SOL:-$ROOT/_build/default/cli/bin/main.exe}"
 # Overridable so a test can point the harness at a scratch workspace: the target file is
 # written into it, and a suite that writes into the repository cannot assert that nothing
 # was left behind.
@@ -180,7 +180,7 @@ if [ "${1:-}" != "verify" ]; then
   [ -x "$SOL" ] || {
     echo "✗ CLI not built at $SOL" >&2
     echo "  Build it in this checkout so the attempt is identifiable by commit:" >&2
-    echo "    eval \$(opam env) && dune build cli/sol/bin/main.exe" >&2
+    echo "    eval \$(opam env) && dune build cli/bin/main.exe" >&2
     exit 2
   }
 fi

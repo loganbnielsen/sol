@@ -8,7 +8,7 @@
 # knowledge behind provider capabilities, one step at a time. This guard makes the
 # migration a number:
 #
-#   1. Every file under cli/sol/{lib,bin} has an allowed count of provider-constructor
+#   1. Every file under cli/{lib,bin} has an allowed count of provider-constructor
 #      and output-variant occurrences (internal/ci/provider_dispatch_allowlist.txt).
 #      More than allowed -> fail (new dispatch). Fewer -> fail too, asking for the
 #      allowlist to be lowered, so the ratchet is recorded in the same PR.
@@ -26,8 +26,8 @@ set -euo pipefail
 root="${1:-.}"
 allowlist="${2:-$root/internal/ci/provider_dispatch_allowlist.txt}"
 
-if [ ! -d "$root/cli/sol/lib" ]; then
-  echo "check_provider_dispatch: no cli/sol/lib under '$root'." >&2
+if [ ! -d "$root/cli/lib" ]; then
+  echo "check_provider_dispatch: no cli/lib under '$root'." >&2
   exit 1
 fi
 if [ ! -f "$allowlist" ]; then
@@ -39,7 +39,7 @@ fi
 # provider's implementation by them: its table-shaped capabilities (REFAC-095) and
 # its cluster and its destruction steps (REFAC-096/097, one layer up because
 # those modules depend on the lifecycle). Those are the places provider selection belongs.
-files="$(cd "$root" && find cli/sol/lib cli/sol/bin -type f \( -name '*.ml' -o -name '*.mli' \) \
+files="$(cd "$root" && find cli/lib cli/bin -type f \( -name '*.ml' -o -name '*.mli' \) \
   ! -name 'sol_cli_provider.ml' ! -name 'sol_cli_provider.mli' \
   ! -name 'sol_cli_provider_capabilities.ml' ! -name 'sol_cli_provider_capabilities.mli' \
   ! -name 'sol_cli_provider_registry.ml' ! -name 'sol_cli_provider_registry.mli' | sort)"
@@ -65,7 +65,7 @@ identity_declarations='^[[:space:]]*type[[:space:]]+(whoami_identity|credential_
 # check_destroy_completeness.sh reads its target roots (HARDEN-005), rather than written out
 # here: a provider added later must be admitted without anyone remembering to edit this
 # guard, and a provider list that cannot be read is a refusal rather than an empty one.
-provider_module="$root/cli/sol/lib/sol_cli_provider.ml"
+provider_module="$root/cli/lib/sol_cli_provider.ml"
 providers="$(sed -n '/^let to_string/,/^;;/p' "$provider_module" 2>/dev/null | grep -oE '"[a-z0-9-]+"' | tr -d '"')"
 if [ -z "$providers" ]; then
   echo "check_provider_dispatch: could not read the provider list from $provider_module -- refusing to decide the boundary from an empty list." >&2

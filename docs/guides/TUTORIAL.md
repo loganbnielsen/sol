@@ -50,7 +50,7 @@ The tarball includes the `sol` binary and the framework source tree (`framework/
 > export SOL_HOME=~/sol   # add to ~/.bashrc or ~/.zshrc
 > eval $(opam env)  # requires OCaml 5.4.1 + opam
 > dune build cli/
-> ln -sf "$(pwd)/_build/default/cli/sol/bin/main.exe" ~/.local/bin/sol
+> ln -sf "$(pwd)/_build/default/cli/bin/main.exe" ~/.local/bin/sol
 > ln -sf "$(pwd)/_build/default/internal/tooling/soldev/bin/main.exe" ~/.local/bin/soldev
 > ```
 

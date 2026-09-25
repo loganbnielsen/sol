@@ -20,7 +20,7 @@
 # follows. No cluster is contacted and nothing is mutated.
 #
 # Input: tab separated `<check name> \t <argv item> ...`, one check per line,
-# printed by cli/sol/test/print_readiness_invocations.ml.
+# printed by cli/test/print_readiness_invocations.ml.
 #
 # Usage:
 #   internal/ci/check_readiness_invocations.sh < invocations.tsv

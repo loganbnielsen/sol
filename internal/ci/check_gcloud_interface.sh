@@ -22,7 +22,7 @@ set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 # REFAC-096: GCP cluster access lives in its provider module.
-source_file="$root/cli/sol/lib/sol_cli_gcp_cluster.ml"
+source_file="$root/cli/lib/sol_cli_gcp_cluster.ml"
 
 fail=0
 report() {
@@ -133,11 +133,11 @@ fi
 # the provider tier, so the assignment to check is the provider-owned one; the mapping is
 # read by Sol_cli_config.target_key_of_string.
 if ! grep -q '"provisioner_impersonator", Gcp' \
-  "$root/cli/sol/lib/sol_cli_provider.ml"; then
+  "$root/cli/lib/sol_cli_provider.ml"; then
   report "Sol's provider tier does not assign provisioner_impersonator to the gcp block (Sol_cli_provider.owned_legacy_keys)"
 fi
 if ! grep -q 'provider_field target "provisioner_impersonator"' \
-  "$root/cli/sol/lib/sol_cli_provider_capabilities.ml"; then
+  "$root/cli/lib/sol_cli_provider_capabilities.ml"; then
   report "the GCP capabilities do not read the target's provisioner_impersonator"
 fi
 

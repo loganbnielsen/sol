@@ -217,9 +217,9 @@ let fatal msg =
 
 let fatal_p fmt = Printf.ksprintf fatal fmt
 
-(* Same opam-pin/base-image block cli/sol/lib/sol_cli_scaffold_templates.ml's
+(* Same opam-pin/base-image block cli/lib/sol_cli_scaffold_templates.ml's
    tpl_dockerfile and the example workspace Dockerfiles use, trimmed to just
-   what cli/sol/bin/main.exe itself links (see cli/sol/bin/dune) -- kept in
+   what cli/bin/main.exe itself links (see cli/bin/dune) -- kept in
    sync by hand, same as every other place this block is duplicated. *)
 let sol_cli_dockerfile =
   {docker|FROM ocaml/opam:ubuntu-24.04-ocaml-5.4 AS build
@@ -234,11 +234,11 @@ RUN opam install -y --no-self-upgrade \
     caqti-eio caqti-driver-postgresql
 COPY --chown=opam:opam . /workspace
 WORKDIR /workspace
-RUN opam exec -- dune build cli/sol/bin/main.exe
+RUN opam exec -- dune build cli/bin/main.exe
 
 FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y libpq5 ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build /workspace/_build/default/cli/sol/bin/main.exe /usr/local/bin/sol
+COPY --from=build /workspace/_build/default/cli/bin/main.exe /usr/local/bin/sol
 ENTRYPOINT ["/usr/local/bin/sol"]
 |docker}
 ;;

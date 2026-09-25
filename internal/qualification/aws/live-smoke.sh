@@ -18,7 +18,7 @@ PROFILE="${AWS_PROFILE:?Set AWS_PROFILE to a profile that can reach the target A
 REGION="${AWS_REGION:-us-east-1}"
 CLUSTER="${CLUSTER:?Set CLUSTER to the EKS cluster name for this run}"
 LOG_DIR="${LOG_DIR:-/tmp/sol-aws-live-smoke-$(date +%Y%m%d-%H%M%S)}"
-SOL="$ROOT/_build/default/cli/sol/bin/main.exe"
+SOL="$ROOT/_build/default/cli/bin/main.exe"
 
 PHASE_TIMEOUT="${PHASE_TIMEOUT:-900}" # ponytail: single knob, tune per-phase if one step needs more
 

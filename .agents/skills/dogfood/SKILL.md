@@ -53,10 +53,10 @@ Build the current CLI from the Sol checkout and place it first on PATH:
 ```bash
 cd <sol-checkout>
 eval $(opam env)
-dune build cli/sol/bin/main.exe
+dune build cli/bin/main.exe
 export SOL_HOME=$(pwd)
 mkdir -p "$SOL_HOME/.dogfood-bin"
-ln -sf "$SOL_HOME/_build/default/cli/sol/bin/main.exe" "$SOL_HOME/.dogfood-bin/sol"
+ln -sf "$SOL_HOME/_build/default/cli/bin/main.exe" "$SOL_HOME/.dogfood-bin/sol"
 export PATH="$SOL_HOME/.dogfood-bin:$PATH"
 hash -r
 ```

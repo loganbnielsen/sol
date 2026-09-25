@@ -42,7 +42,7 @@ Check all `internal/pipeline/tickets/` subdirectories for existing EXP-* ticket 
 
 **Stage 2 — Project Creation:**
 - Read `README.md` for `sol new workspace` instructions
-- Read `cli/sol/bin/cmd_new.ml` — count the generated files, verify library names are workspace-namespaced
+- Read `cli/bin/cmd_new.ml` — count the generated files, verify library names are workspace-namespaced
 - Check whether the generated README explains the project layout clearly enough without prior Sol knowledge
 
 **Stage 3 — Local Development:**
