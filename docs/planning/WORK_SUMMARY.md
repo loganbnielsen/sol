@@ -1,6 +1,17 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: REFAC-097 — retention and residue are provider answers, not generic code (2026-09-25)
+## Latest: REFAC-098 — provider-native target configuration lives in the provider's block (2026-09-25)
+
+**Target-file migration.** `state_lock_table` and the AWS role ARNs now go under the
+target's `aws:` block, and `provisioner_impersonator` under `gcp:`. A flat key is refused,
+and the error names its new location.
+
+Each target reads only its own provider's block, so a GCP target cannot carry AWS role ARNs,
+even when a shared `sol.yml` declares both blocks. Keys Sol consumes are no longer passed
+through as Terraform variables. The docs, the Run 8 example target, the offline harness and
+the GCP qualification script are migrated. Next: HARDEN-005 (the cloud boundary fitness test).
+
+## Previous: REFAC-097 — retention and residue are provider answers, not generic code (2026-09-25)
 
 Each provider now answers a destroy through `Sol_cli_destruction.t`. That covers preparation
 (including GCP's refusal when a target asks to keep a final snapshot), the retention verdict,
