@@ -503,3 +503,23 @@ pattern kill each fail the suite). **No live resource was created and no provide
 preparing it**; the read-only Phase-0 baseline of `sol-qualification` was re-taken — project ACTIVE,
 billing enabled, no disposable resource, quota usage 0, durable bucket and delegated zone PRESENT and
 resolving.
+
+## Attempt 8 Phase 0 stopped pre-live (2026-09-25)
+
+`main @ 1aad2623`. The authorized GCP Attempt 8 began and stopped in its **read-only Phase 0**: four
+provider classes came back `UNKNOWN`, which is one of the run's stop conditions. **No provider was
+mutated, nothing was created, no Terraform state was touched**, and the authorized
+live-infrastructure attempt is **not** consumed by it.
+
+Record: `docs/qualification/2026-09-25-gcp-attempt8-phase0-stop.md`. Ticket: **`INFRA-078`**.
+
+Two harness defects, both found by running the merged harness against the real provider rather than by
+reasoning about it:
+
+| Defect | Evidence | Effect |
+|---|---|---|
+| `provider_probe` does not recognise the provider's own `NOT_FOUND` (underscore) form | the captured stderr in that stop's bundle (`inventory-service-account-provisioner.stderr`) | fail-closed `UNKNOWN` for four classes (the three service-account describes and the SA IAM policy), so the continuation gate is unreachable until it is fixed |
+| `verify` sets `KEEP=1` *after* its failure branch, so the EXIT trap escalates to `destroy` | `destroy.log` in the same bundle | a failing `verify` can tear down the target it was asked merely to inspect; harmless in this execution only because no target file existed |
+
+Nothing in this ledger advances because of it: no matrix row, no finding state, and `FND-0010` stays
+`OPEN` — `NOT_REACHED`. Both fixes are harness-only and tracked by `INFRA-078`.
