@@ -54,4 +54,8 @@ type t =
     (** Whether the production profile is qualified on this provider. *)
   }
 
+(** Each provider's own record, for that provider's modules. *)
+val aws : t
+
+val gcp : t
 val capabilities_of : Sol_cli_provider.t -> t

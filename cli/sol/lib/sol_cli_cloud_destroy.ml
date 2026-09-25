@@ -186,12 +186,14 @@ let find_address state address =
 ;;
 
 (* What destruction preparation did, carried so the command edge can report what
-   survived by identifier. Kept provider-shaped because the difference is real:
-   AWS's final snapshot has no GCP counterpart (DEC-033). *)
+   survived by identifier. Provider-neutral since REFAC-097: whether a provider can
+   keep anything at all is its own retention capability (DEC-033), and what it keeps
+   is named by the provider's own identifier. *)
 type preparation =
   | Nothing_prepared
-  | Aws_prepared of string
-  | Gcp_prepared
+  | Prepared of { retained : string option }
+  (** A preparation ran. [retained] names the artifact the destroy promises to
+      keep (the provider's own identifier for it), when there is one. *)
 
 (* The outcome of the elevated bootstrap-access window. A failure to remove it is
    evidence, never silently swallowed, and never replaced by an unrelated

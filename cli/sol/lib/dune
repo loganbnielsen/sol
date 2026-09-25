@@ -5,10 +5,14 @@
  (modules
   Sol_cli_process
   Sol_cli_provider_capabilities
+  Sol_cli_destruction
+  Sol_cli_terraform_steps
   Sol_cli_cluster
   Sol_cli_aws_cluster
   Sol_cli_gcp_cluster
-  Sol_cli_provider_clusters
+  Sol_cli_aws_destruction
+  Sol_cli_gcp_destruction
+  Sol_cli_provider_registry
   Sol_cli_cloud_apply
   Sol_cli_terraform_vars
   Sol_cli_redaction

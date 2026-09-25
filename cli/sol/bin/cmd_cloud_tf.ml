@@ -148,102 +148,9 @@ let require_terraform_success r =
     exit 1
 ;;
 
-(* REFAC-091: the same classification [require_terraform_success] makes, returned
-   as a value rather than exiting, so the destroy execution sequence can carry a
-   terraform failure in its typed outcome. *)
-let terraform_outcome (r : (Sol_cli_process.result, Sol_cli_process.error) result)
-  : (unit, string) result
-  =
-  match r with
-  | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
-  | Ok r ->
-    let detail = String.trim r.Sol_cli_process.stderr in
-    Error
-      (Printf.sprintf
-         "terraform exited %d%s"
-         r.Sol_cli_process.exit_code
-         (if detail = "" then "." else ":\n" ^ detail))
-  | Error error ->
-    Error
-      (Printf.sprintf
-         "could not run terraform: %s"
-         (Sol_cli_process.error_to_string error))
-;;
-
-(* Like [terraform_outcome], but keeps the command's stdout -- [terraform show
-   -json <plan>] is read, not just checked. *)
-let terraform_stdout (r : (Sol_cli_process.result, Sol_cli_process.error) result)
-  : (string, string) result
-  =
-  match r with
-  | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok r.Sol_cli_process.stdout
-  | Ok r ->
-    let detail = String.trim r.Sol_cli_process.stderr in
-    Error
-      (Printf.sprintf
-         "terraform exited %d%s"
-         r.Sol_cli_process.exit_code
-         (if detail = "" then "." else ":\n" ^ detail))
-  | Error error ->
-    Error
-      (Printf.sprintf
-         "could not run terraform: %s"
-         (Sol_cli_process.error_to_string error))
-;;
-
-(* HARDEN-004 step 3: the one way a destroy-path apply runs. The exact scope and
-   variables are planned first; the plan is classified against [policy]; the
-   saved plan is applied only when every change is permitted. A plan that cannot
-   be produced, read or classified refuses, and the apply is never invoked. The
-   saved plan is removed however this returns. *)
-let apply_asserted ~run_log ~phase_name ~policy ~scope ~chdir ~var_files ~vars ()
-  : (unit, string) result
-  =
-  let plan_file = Filename.temp_file "sol-destroy-" ".tfplan" in
-  Fun.protect
-    ~finally:(fun () ->
-      try Sys.remove plan_file with
-      | Sys_error _ -> ())
-    (fun () ->
-       match
-         Sol_cli_terraform_plan.guarded_apply
-           ~policy
-           ~plan:(fun () ->
-             match
-               terraform_stdout
-                 (Sol_cli_run_log.run_phase
-                    run_log
-                    ~name:(phase_name ^ "-plan")
-                    (fun () ->
-                       Sol_cli_terraform.plan_saved
-                         ~scope
-                         ~chdir
-                         ~var_files
-                         ~vars
-                         ~out:plan_file
-                         ()))
-             with
-             | Ok _ -> Ok plan_file
-             | Error message -> Error message)
-           ~show_plan:(fun file ->
-             (* SEC-008: the plan JSON carries sensitive values; only the
-                classified changes reach the run log. *)
-             Sol_cli_terraform.show_saved_plan
-               ~run_log
-               ~phase:(phase_name ^ "-show")
-               ~chdir
-               ~plan_file:file
-               ()
-             |> Result.map fst)
-           ~apply_plan:(fun file ->
-             terraform_outcome
-               (Sol_cli_run_log.run_phase run_log ~name:phase_name (fun () ->
-                  Sol_cli_terraform.apply_saved ~chdir ~plan_file:file ())))
-           ()
-       with
-       | Ok () -> Ok ()
-       | Error failure -> Error (Sol_cli_terraform_plan.apply_failure_to_string failure))
-;;
+let terraform_outcome = Sol_cli_terraform_steps.terraform_outcome
+let terraform_stdout = Sol_cli_terraform_steps.terraform_stdout
+let apply_asserted = Sol_cli_terraform_steps.apply_asserted
 
 (* The bootstrap-access mechanism's Terraform identity and scope, and the
    reconciliation apply's scope -- the bootstrap mechanism plus the guarded
@@ -321,307 +228,6 @@ let resolved_var key ~var_files ~vars ~default =
    from any descendant directory. *)
 let workspace_name = Sol_cli_workspace.current_name
 
-(* ── the orphan sweep (HARDEN-004 step 5) ────────────────────────────────────
-
-   These are the name/tag-derived checks that used to *be* the whole verification.
-   They still catch what Terraform's own state cannot speak for -- EBS volumes
-   created for PersistentVolumeClaims, load balancers created by the in-tree cloud
-   controller, the service-networking peering GCP refuses to delete while a
-   producer is registered (INFRA-047). Kinds Terraform manages itself (elastic IPs,
-   NAT gateways, ECR repositories) are not swept: its destroy plus the empty-state
-   check is their authority (DEC-045, REFAC-093). They are **secondary**, and their
-   type says so:
-
-   - [Probe_gone] / [Probe_found] are answers about the resources;
-   - [Probe_indeterminate] means the check established nothing (an API error, a
-     missing tool, a query context that could not be reconstructed). It is
-     reported, and it is never read as absence.
-
-   Two things follow, and both matter. A guessed name can no longer be the reason a
-   captured identity is declared gone, and it can no longer turn an UNKNOWN
-   observation into a pass. Where a query context is needed, it is taken from the
-   identity captured *before* destruction (the network the inventory represents,
-   the region in a captured ARN) or from the target's own configuration -- and if
-   neither is available the check reports that it could not run rather than
-   guessing a name and reading the miss as absence (step 5 section 5). *)
-
-type probe_outcome =
-  | Probe_gone
-  | Probe_found of string
-  | Probe_indeterminate of string
-
-let orphan_sweep ?(gaps = []) probes : Sol_cli_destroy_verification.sweep =
-  let residues =
-    List.filter_map
-      (function
-        | Probe_found r -> Some r
-        | _ -> None)
-      probes
-  in
-  let indeterminate =
-    gaps
-    @ List.filter_map
-        (function
-          | Probe_indeterminate r -> Some r
-          | _ -> None)
-        probes
-  in
-  Sol_cli_destroy_verification.Sweep_ran { residues; indeterminate }
-;;
-
-(* Works for both Classic ELB and ALB/NLB uniformly: the in-cluster AWS
-   cloud-controller tags every load balancer it creates for a Service with
-   kubernetes.io/cluster/<cluster-name>, regardless of LB type. Only
-   covers that in-tree tagging convention -- a load balancer created by the
-   standalone AWS Load Balancer Controller instead tags primarily with
-   elbv2.k8s.aws/cluster, which this does not check. Not a gap today
-   (cli/platform/infra/base/main.tf only installs ingress-nginx, which uses
-   the in-tree cloud-controller path), but would need extending if Sol
-   ever supports the standalone LBC.
-
-   Returns None (not a bool) on a query failure so callers can tell "no
-   load balancers" apart from "couldn't check" -- the two calling sites
-   below need to react differently to each. *)
-let load_balancers_gone ~region ~cluster_name =
-  let tag_key = Printf.sprintf "kubernetes.io/cluster/%s" cluster_name in
-  match
-    Sol_cli_process.run
-      (Sol_cli_process.cmd
-         [ "aws"
-         ; "resourcegroupstaggingapi"
-         ; "get-resources"
-         ; "--resource-type-filters"
-         ; "elasticloadbalancing"
-         ; "--tag-filters"
-         ; Printf.sprintf "Key=%s" tag_key
-         ; "--query"
-         ; "ResourceTagMappingList[].ResourceARN"
-         ; "--output"
-         ; "text"
-         ; "--region"
-         ; region
-         ])
-  with
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    Some (String.trim r.Sol_cli_process.stdout = "")
-  | _ -> None
-;;
-
-let aws_load_balancer_probe ~region ~cluster_name =
-  match load_balancers_gone ~region ~cluster_name with
-  | Some true -> Probe_gone
-  | Some false ->
-    Probe_found
-      (Printf.sprintf
-         "AWS load balancer(s) still exist after destroy (tag kubernetes.io/cluster/%s)"
-         cluster_name)
-  | None ->
-    Probe_indeterminate
-      "AWS load balancers could not be checked: the aws CLI is unavailable or errored"
-;;
-
-(* The platform destroy removes the ingress Service through the named
-   provisioner. AWS deprovisions its load balancer asynchronously, so wait
-   before Terraform removes the VPC. The final absence check remains the hard
-   gate if this best-effort wait times out. *)
-let rec wait_for_load_balancers_gone ~region ~cluster_name attempts =
-  if attempts = 0
-  then
-    Printf.printf
-      "  (warning: load balancer(s) may still be deprovisioning; proceeding to cloud \
-       destroy and retaining the final absence check)\n\
-       %!"
-  else (
-    match load_balancers_gone ~region ~cluster_name with
-    | Some true -> ()
-    | Some false | None ->
-      Unix.sleepf 5.;
-      wait_for_load_balancers_gone ~region ~cluster_name (attempts - 1))
-;;
-
-(* INFRA-047: Terraform state being empty is not an absence proof for resources
-   created indirectly by the VPC module or by Kubernetes. *)
-let aws_list_probe ~region ~kind ~argv =
-  match
-    Sol_cli_process.run (Sol_cli_process.cmd (("aws" :: argv) @ [ "--region"; region ]))
-  with
-  | Ok r when r.Sol_cli_process.exit_code = 0 && String.trim r.Sol_cli_process.stdout = ""
-    -> Probe_gone
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    Probe_found
-      (Printf.sprintf
-         "AWS %s still exist after destroy: %s"
-         kind
-         (String.trim r.Sol_cli_process.stdout))
-  | Ok r ->
-    Probe_indeterminate
-      (Printf.sprintf
-         "AWS %s could not be checked: %s"
-         kind
-         (String.trim r.Sol_cli_process.stderr))
-  | Error _ ->
-    Probe_indeterminate
-      (Printf.sprintf "AWS %s could not be checked: the aws CLI is unavailable" kind)
-;;
-
-let aws_no_ebs_volumes ~region ~cluster_name =
-  aws_list_probe
-    ~region
-    ~kind:"EBS volumes"
-    ~argv:
-      [ "ec2"
-      ; "describe-volumes"
-      ; "--filters"
-      ; Printf.sprintf
-          "Name=tag:kubernetes.io/cluster/%s,Values=owned,shared"
-          cluster_name
-      ; "--query"
-      ; "Volumes[].VolumeId"
-      ; "--output"
-      ; "text"
-      ]
-;;
-
-(* The `name` Terraform recorded for the first represented resource of [kind]
-   (REFAC-094). The residue checks ask about objects Terraform does not own by
-   reference to ones it did -- the cluster a load balancer belongs to, the network
-   a peering is on -- and take that name from state rather than rebuilding it from
-   a naming convention. *)
-let state_name pre_destroy kind =
-  List.find_map
-    (fun (resource : Sol_cli_cloud_destroy.resource) ->
-       if String.equal resource.kind kind then resource.name else None)
-    (Sol_cli_cloud_destroy.resources pre_destroy)
-;;
-
-(* ── HARDEN-004 step 5: the observation ────────────────────────────────────── *)
-
-let run_provider_query argv : Sol_cli_destroy_verification.lookup_result =
-  match Sol_cli_process.run (Sol_cli_process.cmd argv) with
-  | Ok result ->
-    Sol_cli_destroy_verification.Answered
-      { status = result.Sol_cli_process.exit_code
-      ; stdout = result.stdout
-      ; stderr = result.stderr
-      }
-  | Error error -> Unavailable (Sol_cli_process.error_to_string error)
-;;
-
-let aws_orphan_sweep ~pre_destroy ~region ~cluster =
-  let cluster_name =
-    match state_name pre_destroy "aws_eks_cluster" with
-    | Some _ as name -> name
-    | None -> Option.map (fun (cluster : Sol_cli_cluster.t) -> cluster.name) cluster
-  in
-  let region = if String.trim region = "" then None else Some region in
-  (* REFAC-093 / DEC-045: only what Terraform does not own is swept -- load
-     balancers the in-cluster cloud controller creates, and volumes created for
-     PersistentVolumeClaims. Elastic IPs, NAT gateways and ECR repositories are
-     Terraform-managed (the VPC module and the root); a successful destroy plus the
-     empty-state check is the authority for them. *)
-  match region with
-  | None ->
-    orphan_sweep
-      ~gaps:
-        [ "the AWS residue checks could not establish the target's region, so they were \
-           not run"
-        ]
-      []
-  | Some region ->
-    let cluster_probes, cluster_gap =
-      match cluster_name with
-      | Some cluster_name ->
-        ( [ aws_load_balancer_probe ~region ~cluster_name
-          ; aws_no_ebs_volumes ~region ~cluster_name
-          ]
-        , [] )
-      | None ->
-        ( []
-        , [ "the AWS residue checks could not establish the target's cluster name from \
-             Terraform state or the install outputs, so its tag-derived checks were not \
-             run"
-          ] )
-    in
-    orphan_sweep ~gaps:cluster_gap cluster_probes
-;;
-
-let gcp_peering_probe ~project ~network =
-  match
-    Sol_cli_process.run
-      (Sol_cli_process.cmd
-         [ "gcloud"
-         ; "services"
-         ; "vpc-peerings"
-         ; "list"
-         ; "--network=" ^ network
-         ; "--service=servicenetworking.googleapis.com"
-         ; "--project"
-         ; project
-         ; "--format=value(peering)"
-         ])
-  with
-  | Ok result when result.Sol_cli_process.exit_code = 0 ->
-    let peerings =
-      String.split_on_char '\n' result.Sol_cli_process.stdout
-      |> List.map String.trim
-      |> List.filter (fun peering -> peering <> "" && peering <> "---")
-    in
-    if peerings = []
-    then Probe_gone
-    else
-      Probe_found
-        (Printf.sprintf
-           "the service-networking peering survived the destroy: %s"
-           (String.concat ", " peerings))
-  | Ok result
-    when Sol_cli_destroy_verification.gcp_absence_message
-           ~project
-           result.Sol_cli_process.stderr -> Probe_gone
-  | Ok result ->
-    Probe_indeterminate
-      (Printf.sprintf
-         "the service-networking peering could not be checked: %s"
-         (String.trim result.Sol_cli_process.stderr))
-  | Error _ ->
-    Probe_indeterminate
-      "the service-networking peering could not be checked: gcloud is unavailable"
-;;
-
-(* GCP's peering check asks about the network Terraform recorded, not one rebuilt
-   from the cluster name: a network that does not exist has no peerings, so asking
-   about the wrong one would answer "gone" for the wrong reason. The project comes
-   from the root's own outputs; without them the check is a reported gap, never a
-   guess. *)
-let gcp_orphan_sweep ~pre_destroy ~(target_cfg : Sol_cli_config.target) =
-  (* The project the root was applied in: the target's own `gcp.project_id`, which
-     is the variable the root receives (its `project_id` output only echoes it). *)
-  let project =
-    List.assoc_opt "gcp" target_cfg.provider_fields
-    |> Option.map (List.assoc_opt "project_id")
-    |> Option.join
-    |> Option.map String.trim
-    |> Option.to_list
-    |> List.find_opt (fun project -> project <> "")
-  in
-  match state_name pre_destroy "google_compute_network", project with
-  | Some network, Some project -> orphan_sweep [ gcp_peering_probe ~project ~network ]
-  | None, _ ->
-    orphan_sweep
-      ~gaps:
-        [ "the GCP residue check could not name the target's VPC from Terraform state, \
-           so the service-networking peering check was not run"
-        ]
-      []
-  | Some _, None ->
-    orphan_sweep
-      ~gaps:
-        [ "the GCP residue check could not establish the target's project (the target \
-           declares no gcp.project_id), so the service-networking peering check was not \
-           run"
-        ]
-      []
-;;
-
 (* The independent postcondition: a fresh read of *this root's* own state. The root
    is [infra_dir], the disposable cloud root -- DEC-043's durable GCP prerequisites
    live in `cli/platform/infra/bootstrap-gcp`, a different root, so they are not
@@ -640,140 +246,13 @@ let post_destroy_state ~infra_dir =
        Error ("terraform show could not be run: " ^ Sol_cli_process.error_to_string error))
 ;;
 
-(* How long to keep observing a final snapshot that the provider reports as still
-   being created. A snapshot that never reaches `available` is reported unknown --
-   never as a met guarantee -- and this only bounds how long that takes to say.
-
-   The interval is an operator knob (`SOL_DESTROY_SNAPSHOT_INTERVAL_S`), because a
-   large database's final snapshot takes longer than a small one's. The offline
-   harness sets it to 0 so the pending path is exercised without sleeping, and an
-   unparseable value is refused loudly rather than silently replaced. *)
-let final_snapshot_attempts = 12
-
-let final_snapshot_interval_s =
-  match Sys.getenv_opt "SOL_DESTROY_SNAPSHOT_INTERVAL_S" with
-  | None -> 10.
-  | Some raw ->
-    (match float_of_string_opt raw with
-     | Some seconds when seconds >= 0. -> seconds
-     | _ ->
-       Printf.eprintf
-         "error: SOL_DESTROY_SNAPSHOT_INTERVAL_S=%S is not a non-negative number of \
-          seconds.\n\
-          %!"
-         raw;
-       exit 2)
-;;
-
-let rec observe_final_snapshot ~declared ~snapshot_id ~region ~attempts =
-  let lookup =
-    run_provider_query
-      (Sol_cli_destroy_verification.final_snapshot_query ~snapshot_id ~region)
-  in
-  match
-    Sol_cli_destroy_verification.classify_final_snapshot ~declared ~snapshot_id lookup
-  with
-  | Sol_cli_destroy_verification.Settled retention -> retention
-  | Sol_cli_destroy_verification.Pending message ->
-    if attempts <= 0
-    then
-      Sol_cli_destroy_verification.Retention_unknown
-        (Printf.sprintf
-           "%s; the retention guarantee is not established while it has not reached \
-            available"
-           message)
-    else (
-      Unix.sleepf final_snapshot_interval_s;
-      observe_final_snapshot ~declared ~snapshot_id ~region ~attempts:(attempts - 1))
-;;
-
-(* Retention, observed. What is checked is stated for each mode rather than
-   inferred: the promised snapshot must exist *and* be available, and a target that
-   keeps nothing must have no manual or automated snapshot attributable to its own
-   captured database identity. GCP has no snapshot surface, so the absence of the
-   instance is the whole guarantee and that is said rather than dressed up. *)
-let retention_evidence ~provider ~region ~retention ~pre_destroy ~preparation =
-  let open Sol_cli_destroy_verification in
-  (* REFAC-094: the database this destruction owned, from Terraform state -- its
-     `identifier` is what a retain-nothing target must leave no snapshot of. The
-     region is the target's declared one, which the AWS root is configured in. *)
-  let database =
-    List.find_opt
-      (fun (resource : Sol_cli_cloud_destroy.resource) ->
-         String.equal resource.kind "aws_db_instance")
-      (Sol_cli_cloud_destroy.resources pre_destroy)
-  in
-  let region = if String.trim region = "" then None else Some region in
-  match provider with
-  | Sol_cli_provider.Gcp ->
-    (match retention with
-     | Sol_cli_cloud_lifecycle.Retain_nothing ->
-       Retention_not_required
-         "none declared, and there is no GCP snapshot surface to observe -- Cloud SQL \
-          deletes its backups together with the instance (no final backup is requested), \
-          and the observability buckets were created with soft delete off (retention 0, \
-          INFRA-077), so the verified absence of the instance is the whole guarantee \
-          (destroy_retention = none)"
-     | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
-       (* Unreachable: a GCP target whose retention is final-snapshot is blocked in
-          preparation, so destruction never runs. Reaching here means the block was
-          not applied, which must not read as a met guarantee. *)
-       Retention_unknown
-         "this destroy reached verification with destroy_retention = final-snapshot on \
-          GCP, which cannot retain anything: the block was not applied, so no retention \
-          guarantee can be observed")
-  | Sol_cli_provider.Aws ->
-    (match preparation with
-     | Sol_cli_cloud_destroy.Nothing_prepared ->
-       Retention_not_required
-         "nothing to decide -- this target had no database whose retention a destroy had \
-          to settle"
-     | Sol_cli_cloud_destroy.Gcp_prepared ->
-       Retention_unknown
-         "an AWS destroy reported a GCP preparation, so there is no retention identity \
-          to observe"
-     | Sol_cli_cloud_destroy.Aws_prepared snapshot_id ->
-       (match retention with
-        | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
-          (match region with
-           | Some region ->
-             observe_final_snapshot
-               ~declared:retention
-               ~snapshot_id
-               ~region
-               ~attempts:final_snapshot_attempts
-           | None ->
-             Retention_unknown
-               (Printf.sprintf
-                  "the promised final snapshot %s could not be queried: the target \
-                   declares no region"
-                  snapshot_id))
-        | Sol_cli_cloud_lifecycle.Retain_nothing ->
-          (match database with
-           | None ->
-             Retention_not_required
-               "nothing to decide -- this target had no database whose retention a \
-                destroy had to settle"
-           | Some database ->
-             (match database.identifier, region with
-              | Some instance, Some region ->
-                classify_instance_snapshots
-                  (run_provider_query (instance_snapshots_query ~instance ~region))
-              | _ ->
-                Retention_unknown
-                  "no-residue could not be observed: Terraform state records no database \
-                   identifier, or the target declares no region"))))
-;;
-
 (* Step 5's one observation, narrowed by DEC-045 / REFAC-094. Terraform's destroy
    plus the empty-state check is the authority for everything Terraform manages,
    so the provider is asked only about what Terraform does not own (residue) and
    what the target promised to keep or not keep (retention). *)
 let verification_observation
-      ~provider
+      ~(destruction : Sol_cli_destruction.t)
       ~infra_dir
-      ~region
-      ~target_cfg
       ~cluster
       ~retention
       ~pre_destroy
@@ -783,15 +262,8 @@ let verification_observation
   (* The postcondition first, then the derived legs -- stated, not left to the
      unspecified evaluation order of record fields. *)
   let state = post_destroy_state ~infra_dir in
-  let sweep =
-    match provider with
-    | Sol_cli_provider.Gcp -> gcp_orphan_sweep ~pre_destroy ~target_cfg
-    | Sol_cli_provider.Aws -> aws_orphan_sweep ~pre_destroy ~region ~cluster
-  in
-  { state
-  ; sweep
-  ; retention = retention_evidence ~provider ~region ~retention ~pre_destroy ~preparation
-  }
+  let sweep = destruction.residue ~pre_destroy ~cluster in
+  { state; sweep; retention = destruction.retention ~retention ~pre_destroy ~preparation }
 ;;
 
 let report_verification observation =
@@ -865,7 +337,7 @@ let established_target = function
 (* The cluster the cloud root produced, built by its provider's module
    (REFAC-096); [None] when the root has no outputs yet. *)
 let cluster_of ~(target_cfg : Sol_cli_config.target) provider infra_dir =
-  Sol_cli_provider_clusters.of_root provider ~target:target_cfg ~chdir:infra_dir
+  Sol_cli_provider_registry.of_root provider ~target:target_cfg ~chdir:infra_dir
 ;;
 
 let process_ok = Sol_cli_cluster.process_ok
@@ -1043,236 +515,6 @@ let platform_prerequisite_targets provider =
        ])
 ;;
 
-let rds_target = Sol_cli_terraform.targets "aws_db_instance.postgres" []
-
-let unique_rds_snapshot_id cluster_name =
-  (* Millisecond resolution: a `.0f` second timestamp could collide if a
-     destroy were retried within the same second. AWS snapshot identifiers
-     disallow `.`, hence the truncated int rather than a raw float. *)
-  Printf.sprintf
-    "%s-postgres-final-%d"
-    cluster_name
-    (int_of_float (Unix.gettimeofday () *. 1000.))
-;;
-
-(* This root's own applied state, not the named cross-root output contract in
-   Sol_cli_cloud_lifecycle -- that contract exists for wiring the platform
-   root, not for a root checking its own resource against itself. [Ok None]
-   means the instance does not exist (create_rds = false), which is
-   trivially prepared for destruction. *)
-(* HARDEN-004 step 2 / REFAC-091: the state inventory.
-
-   The destroy path takes ONE observation of the root's own applied state and
-   turns it into the typed inventory in [Sol_cli_cloud_destroy]. Every decision
-   below -- what is represented, which guarded resources may be targeted, what
-   verification has to see -- is derived from that inventory. It is deliberately
-   NOT derived from the install-time output contract: a half-built target may
-   have no outputs, partial outputs, or complete outputs, and none of those decide
-   whether destruction is available (FND-0044 point 2). *)
-let read_cloud_state infra_dir : (Sol_cli_cloud_destroy.state_read, string) result =
-  match Sol_cli_terraform.show_json ~chdir:infra_dir () with
-  | Ok result when result.Sol_cli_process.exit_code = 0 ->
-    Ok (Sol_cli_cloud_destroy.inventory_of_show_json result.Sol_cli_process.stdout)
-  | Ok result ->
-    Error (Printf.sprintf "terraform show failed with exit %d" result.exit_code)
-  | Error error ->
-    Error ("could not read terraform state: " ^ Sol_cli_process.error_to_string error)
-;;
-
-(* The RDS instance, by its real declared address. Finding it by address rather
-   than by type is the FND-0048 correction: a second [aws_db_instance] (a read
-   replica) is a different address and is never mistaken for this one. An
-   unreadable state is UNKNOWN, never "no instance". *)
-let rds_of_state state =
-  let open Sol_cli_cloud_destroy in
-  match find_address state "aws_db_instance.postgres" with
-  | Some resource when resource.kind = "aws_db_instance" ->
-    (match resource.deletion_protection with
-     | Some deletion_protection ->
-       Ok
-         (Some
-            ( deletion_protection
-            , resource.final_snapshot_identifier
-            , resource.skip_final_snapshot ))
-     | None -> Error "RDS deletion_protection is absent from its state representation")
-  | Some resource ->
-    Error
-      (Printf.sprintf
-         "address aws_db_instance.postgres is a %s, not an aws_db_instance"
-         resource.kind)
-  | None ->
-    (match substrate_presence state with
-     | Substrate_unknown -> Error "could not read this target's state"
-     | Substrate_present | Substrate_absent -> Ok None)
-;;
-
-(* ADR 0002 / HARDEN-002 finding 9b: lifting RDS deletion protection is a
-   state transition (ModifyDBInstance), and a destroy plan contains only
-   deletes -- a `-var` passed to `terraform destroy` never reaches the
-   provider, which is handed prior state (see the now-resolved comment this
-   replaced). Preparation is therefore its own targeted apply against just
-   the RDS resource, with a snapshot identity unique to this destroy attempt
-   so re-running destroy after a fresh apply can never collide with a prior
-   attempt's final snapshot. *)
-(* HARDEN-004 step 4: the preparation declares the consequence of its own failure,
-   and the policy is a function of the *target's* own declaration rather than a
-   provider special case inside the execution core. AWS's final-snapshot mode is the
-   canonical [Block_destroy] -- its failure stands for the declared retention
-   guarantee (DEC-033). A disposable target that retains nothing has no such
-   guarantee to lose, so a failure there is best-effort and destruction continues.
-   GCP's analogue of the guarantee ("Sol cannot retain anything on GCP yet") carries
-   [Block_destroy] where it is produced, in [prepare_destruction_result]. *)
-let aws_preparation_policy ~retention =
-  match retention with
-  | Sol_cli_cloud_lifecycle.Retain_final_snapshot -> Sol_cli_cloud_lifecycle.Block_destroy
-  | Sol_cli_cloud_lifecycle.Retain_nothing -> Sol_cli_cloud_lifecycle.Continue_to_destroy
-;;
-
-(* A blocked preparation must name the guarantee that blocked it, so the operator
-   reads *why* the target was left standing rather than a bare apply failure. *)
-let aws_preparation_reason ~retention reason =
-  match retention with
-  | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
-    Printf.sprintf
-      "the target's destroy_retention is final-snapshot, so its declared retention \
-       guarantee could not be established before destroying: %s"
-      reason
-  | Sol_cli_cloud_lifecycle.Retain_nothing -> reason
-;;
-
-let prepare_destroy_result run_log infra_dir var_files vars ~cluster_name ~retention state
-  : string Sol_cli_cloud_lifecycle.preparation_outcome
-  =
-  (* Qualified deliberately: `Sol_cli_cloud_lifecycle` also exports a
-     `cluster_name` function, and opening it would shadow this parameter. *)
-  let failed reason =
-    Sol_cli_cloud_lifecycle.Preparation_failed
-      { reason = aws_preparation_reason ~retention reason
-      ; policy = aws_preparation_policy ~retention
-      }
-  in
-  match rds_of_state state with
-  | Error message -> failed message
-  | Ok None ->
-    Printf.printf "  prepare: no RDS instance for this target, nothing to prepare.\n%!";
-    Sol_cli_cloud_lifecycle.Nothing_to_prepare
-  | Ok (Some _) ->
-    let snapshot_id = unique_rds_snapshot_id cluster_name in
-    Printf.printf
-      "  prepare: disabling RDS deletion protection%s...\n%!"
-      (match retention with
-       | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
-         ", final snapshot " ^ snapshot_id
-       | Sol_cli_cloud_lifecycle.Retain_nothing -> ", retaining nothing");
-    (match
-       apply_asserted
-         ~run_log
-         ~phase_name:"rds-destroy-prepare"
-         ~policy:
-           (Sol_cli_cloud_destroy.guard_preparation_policy
-              ~addresses:[ "aws_db_instance.postgres" ])
-         ~scope:rds_target
-         ~chdir:infra_dir
-         ~var_files
-         ~vars:
-           (vars
-            @ [ "rds_deletion_protection=false" ]
-            @
-            match retention with
-            | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
-              [ "rds_skip_final_snapshot=false"
-              ; "rds_final_snapshot_identifier=" ^ snapshot_id
-              ]
-            | Sol_cli_cloud_lifecycle.Retain_nothing -> [ "rds_skip_final_snapshot=true" ]
-           )
-         ()
-     with
-     | Error message -> failed message
-     | Ok () -> Sol_cli_cloud_lifecycle.Prepared snapshot_id)
-;;
-
-(* DEC-033: what "prepared" means depends on what the target selected, so the
-   verification is driven by the policy rather than by a single expected value.
-
-     final-snapshot -> deletion protection disabled, snapshot creation ENABLED,
-                       and the identifier is the one this run prepared
-     none           -> deletion protection disabled, snapshot creation DISABLED,
-                       and no identifier is required
-
-   Deliberately not `if actual <> "" then check_identifier`: that would let a
-   missing identifier pass for a target that explicitly asked to keep its snapshot,
-   which is the production guarantee this must not weaken. *)
-let verify_destroy_preparation_result infra_dir ~retention ~prepared =
-  match prepared with
-  | None ->
-    Printf.printf "  verify preparation: nothing was prepared.\n%!";
-    Ok ()
-  | Some snapshot_id ->
-    let* state = read_cloud_state infra_dir in
-    (match rds_of_state state with
-     | Error message -> Error message
-     | Ok None ->
-       Error "RDS destroy preparation ran but the instance is now absent from state"
-     | Ok (Some (deletion_protection, final_snapshot_identifier, skip_final_snapshot)) ->
-       let* () =
-         if deletion_protection
-         then Error "RDS deletion protection is still enabled after preparation"
-         else Ok ()
-       in
-       let* () =
-         match retention with
-         | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
-           let* () =
-             match skip_final_snapshot with
-             | Some true ->
-               Error
-                 "the target retains its final snapshot, but preparation disabled \
-                  snapshot creation"
-             | None ->
-               Error
-                 "cannot establish that the final snapshot will be retained: \
-                  skip_final_snapshot is absent from state"
-             | Some false -> Ok ()
-           in
-           if final_snapshot_identifier <> Some snapshot_id
-           then
-             Error
-               (Printf.sprintf
-                  "RDS final snapshot identifier is %s, expected the prepared %s"
-                  (Option.value final_snapshot_identifier ~default:"<none>")
-                  snapshot_id)
-           else Ok ()
-         | Sol_cli_cloud_lifecycle.Retain_nothing ->
-           (match skip_final_snapshot with
-            | Some true -> Ok ()
-            | Some false ->
-              Error
-                "the target retains nothing, but preparation left snapshot creation \
-                 enabled"
-            | None ->
-              Error
-                "cannot establish that snapshot creation is disabled: \
-                 skip_final_snapshot is absent from state")
-       in
-       Printf.printf
-         "  verify preparation: RDS deletion protection disabled, final snapshot %s \
-          (target destroy_retention = %s)\n\
-          %!"
-         (match retention with
-          | Sol_cli_cloud_lifecycle.Retain_final_snapshot -> snapshot_id ^ " confirmed"
-          | Sol_cli_cloud_lifecycle.Retain_nothing ->
-            (* Say what will happen, not just the setting: `skip_final_snapshot=true`
-               reads as "enabled" to anyone skimming, which is the opposite of what
-               it means. *)
-            Printf.sprintf
-              "skipped (skip_final_snapshot=%s)"
-              (match skip_final_snapshot with
-               | Some value -> string_of_bool value
-               | None -> "absent"))
-         (Sol_cli_cloud_lifecycle.destroy_retention_to_string retention);
-       Ok ())
-;;
-
 (* The GCP counterpart of [rds_state]: what this root's state represents.
 
    Two resources carry a deletion guard on GCP, by two different mechanisms: Cloud
@@ -1315,104 +557,6 @@ let guarded_addresses_of provider state =
     ~desired:(capabilities provider).guarded_addresses
 ;;
 
-let gcp_prepare_destroy_result ~guarded run_log infra_dir var_files vars state
-  : unit Sol_cli_cloud_lifecycle.preparation_outcome
-  =
-  let open Sol_cli_cloud_lifecycle in
-  let open Sol_cli_cloud_destroy in
-  (* Guard lowering is best-effort preparation (FND-0030): a failure here must not
-     strand a half-built target, so it permits destruction to continue and stays
-     visible in the outcome. The state-side of the decision is the same inventory
-     the sequence classified. *)
-  let failed reason = Preparation_failed { reason; policy = Continue_to_destroy } in
-  let report_unrepresented unrepresented =
-    (* FND-0030's actual leak, said out loud. Terraform destroys what its state holds, so a
-       resource this target declares and its state does not know about survives the destroy
-       -- and stays billable. Skipping it avoids the 409 of Attempt 6; without this report,
-       that turns a loud failure into a quiet success. Adopting it is the only way to reach
-       it, and that is a separate capability. *)
-    match unrepresented with
-    | [] -> ()
-    | addresses ->
-      Printf.printf
-        "  WARNING: %d resource(s) this target declares are ABSENT from its state and \
-         will therefore NOT be destroyed: %s\n\
-        \  They may still exist in the provider and remain billable (FND-0030).\n\
-         %!"
-        (List.length addresses)
-        (String.concat ", " addresses)
-  in
-  match substrate_presence state with
-  | Substrate_unknown ->
-    (* The state could not be read, so nothing can be claimed about what is
-       represented. That is a preparation that could not run -- deliberately
-       distinct from "there was nothing to prepare" -- and it permits destruction
-       to continue; UNKNOWN is never read as absence. *)
-    Printf.printf "  prepare: could not read this target's state; preparing nothing.\n%!";
-    failed
-      "the target's Terraform state could not be read, so no deletion guard could be \
-       lowered"
-  | Substrate_present | Substrate_absent ->
-    let represented = addresses state in
-    let desired = guarded in
-    report_unrepresented
-      (Sol_cli_cloud_lifecycle.preparations_unrepresented ~state:represented ~desired);
-    (match Sol_cli_cloud_lifecycle.preparations_eligible ~state:represented ~desired with
-     | [] ->
-       Printf.printf
-         "  prepare: no guarded resource in this target's state, nothing is targeted.\n%!";
-       Nothing_to_prepare
-     | first :: rest ->
-       Printf.printf
-         "  prepare: disabling the deletion guards on %s...\n%!"
-         (String.concat ", " (first :: rest));
-       (match
-          apply_asserted
-            ~run_log
-            ~phase_name:"gcp-destroy-prepare"
-            ~policy:(guard_preparation_policy ~addresses:(first :: rest))
-            ~scope:(Sol_cli_terraform.targets first rest)
-            ~chdir:infra_dir
-            ~var_files
-            ~vars:
-              (vars @ [ "sql_deletion_protection=false"; "gke_deletion_protection=false" ])
-            ()
-        with
-        | Error message -> failed message
-        | Ok () -> Prepared ()))
-;;
-
-(* Only reached once an apply has actually targeted the guards, so there is no
-   "nothing was prepared" case to represent -- which is what resolves the old
-   `~prepared:false` ambiguity. *)
-let verify_gcp_destroy_preparation_result infra_dir =
-  let* state = read_cloud_state infra_dir in
-  let open Sol_cli_cloud_destroy in
-  let guard address =
-    Option.bind (find_address state address) (fun resource ->
-      resource.deletion_protection)
-  in
-  if
-    find_address state "google_sql_database_instance.postgres" = None
-    && find_address state "google_container_cluster.main" = None
-  then Error "GCP destroy preparation ran but no guarded resource is in state"
-  else
-    let* () =
-      match guard "google_sql_database_instance.postgres" with
-      | Some true ->
-        Error "Cloud SQL deletion protection is still enabled after preparation"
-      | Some false | None -> Ok ()
-    in
-    let* () =
-      match guard "google_container_cluster.main" with
-      | Some true -> Error "GKE deletion protection is still enabled after preparation"
-      | Some false | None -> Ok ()
-    in
-    Printf.printf
-      "  verify preparation: Cloud SQL and GKE deletion protection disabled.\n%!";
-    Ok ()
-;;
-
 (* What destruction preparation did. The providers differ in what there is to carry
    forward -- AWS's prepared final-snapshot identity has no GCP counterpart, because
    Cloud SQL destroys its backups with the instance -- so the difference is named in
@@ -1420,120 +564,17 @@ let verify_gcp_destroy_preparation_result infra_dir =
    things. The type lives in [Sol_cli_cloud_destroy], because the execution core
    carries it in its typed outcome. *)
 
-let prepare_destruction_result
-      ~provider
-      run_log
-      infra_dir
-      var_files
-      vars
-      ~cluster_name
-      ~retention
-      ~state
-  : Sol_cli_cloud_destroy.preparation Sol_cli_cloud_lifecycle.preparation_outcome
-  =
-  (* No [open Sol_cli_cloud_lifecycle] here: it exports a `cluster_name` function
-     that would shadow this function's own parameter. *)
-  match provider with
-  | Sol_cli_provider.Aws ->
-    (* The verification is part of the preparation: a snapshot identity that could
-       not be confirmed is not a preparation, and it fails with the same
-       consequence the preparation would have (final-snapshot blocks). *)
-    (match
-       prepare_destroy_result
-         run_log
-         infra_dir
-         var_files
-         vars
-         ~cluster_name
-         ~retention
-         state
-     with
-     | Sol_cli_cloud_lifecycle.Prepared snapshot_id ->
-       (match
-          verify_destroy_preparation_result
-            infra_dir
-            ~retention
-            ~prepared:(Some snapshot_id)
-        with
-        | Ok () ->
-          Sol_cli_cloud_lifecycle.Prepared
-            (Sol_cli_cloud_destroy.Aws_prepared snapshot_id)
-        | Error reason ->
-          Sol_cli_cloud_lifecycle.Preparation_failed
-            { reason = aws_preparation_reason ~retention reason
-            ; policy = aws_preparation_policy ~retention
-            })
-     | Sol_cli_cloud_lifecycle.Nothing_to_prepare ->
-       Sol_cli_cloud_lifecycle.Nothing_to_prepare
-     | Sol_cli_cloud_lifecycle.Preparation_failed failure ->
-       Sol_cli_cloud_lifecycle.Preparation_failed failure)
-  | Sol_cli_provider.Gcp ->
-    (* DEC-033: a target that destroys must say what it keeps, and GCP cannot keep
-       anything today -- Cloud SQL deletes its backups with the instance, so there is
-       no final-artifact equivalent of the RDS snapshot. Rather than let the
-       [Retain_final_snapshot] *default* quietly become "destroy the recovery data
-       anyway", which is the laundering DEC-033 exists to prevent, Sol refuses and
-       names the gap. A disposable target opts in with `destroy_retention: none`,
-       which is a statement rather than a default.
-
-       Step 4: that refusal is a declared destruction-time guarantee, so it carries
-       [Block_destroy] and the target is left standing -- with the guarantee named --
-       rather than being destroyed while discarding the recovery data it asked to
-       keep. *)
-    (match retention with
-     | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
-       Sol_cli_cloud_lifecycle.Preparation_failed
-         { reason =
-             "this GCP target's destroy_retention is final-snapshot (the default), but \
-              Sol cannot retain anything on GCP yet: Cloud SQL deletes its backups \
-              together with the instance, so there is no final-artifact equivalent of \
-              the RDS snapshot and the recovery data would be discarded without saying \
-              so. Declare `destroy_retention: none` on a disposable target, or export \
-              the database first -- Sol will not decide this for you"
-         ; policy = Sol_cli_cloud_lifecycle.Block_destroy
-         }
-     | Sol_cli_cloud_lifecycle.Retain_nothing ->
-       (* The verification is part of the preparation here too: an applied transition
-          that did not actually lower the guards is not a preparation. Guard lowering
-          is best-effort, so this failure permits destruction to continue. *)
-       (match
-          gcp_prepare_destroy_result
-            ~guarded:(capabilities provider).guarded_addresses
-            run_log
-            infra_dir
-            var_files
-            vars
-            state
-        with
-        | Sol_cli_cloud_lifecycle.Prepared () ->
-          (match verify_gcp_destroy_preparation_result infra_dir with
-           | Ok () -> Sol_cli_cloud_lifecycle.Prepared Sol_cli_cloud_destroy.Gcp_prepared
-           | Error reason ->
-             Sol_cli_cloud_lifecycle.Preparation_failed
-               { reason; policy = Sol_cli_cloud_lifecycle.Continue_to_destroy })
-        | Sol_cli_cloud_lifecycle.Nothing_to_prepare ->
-          Sol_cli_cloud_lifecycle.Nothing_to_prepare
-        | Sol_cli_cloud_lifecycle.Preparation_failed failure ->
-          Sol_cli_cloud_lifecycle.Preparation_failed failure))
-;;
-
 (* The Destroy policy's overrides for this provider, given what preparation found.
    Appended after the caller's own variables so the phase policy wins (ADR 0003 /
    HARDEN-002 finding 15). *)
 let destroy_policy_vars ~provider ~phase ~retention ~prepared =
   match prepared with
   | Sol_cli_cloud_destroy.Nothing_prepared -> []
-  | Sol_cli_cloud_destroy.Aws_prepared snapshot_id ->
+  | Sol_cli_cloud_destroy.Prepared { retained } ->
     Sol_cli_cloud_lifecycle.policy_vars
       ~provider
       ~phase
-      ~destroy_snapshot_id:snapshot_id
-      ~retention
-  | Sol_cli_cloud_destroy.Gcp_prepared ->
-    Sol_cli_cloud_lifecycle.policy_vars
-      ~provider
-      ~phase
-      ~destroy_snapshot_id:""
+      ~destroy_snapshot_id:(Option.value retained ~default:"")
       ~retention
 ;;
 
@@ -2220,6 +1261,18 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
     | None -> []
     | Some f -> [ normalize_var_file f ]
   in
+  (* REFAC-097: the provider's retention and residue steps for this destroy. *)
+  let destruction =
+    Sol_cli_provider_registry.destruction
+      provider
+      { Sol_cli_destruction.run_log
+      ; infra_dir
+      ; var_files
+      ; vars
+      ; target = target_cfg
+      ; resolved_var = (fun key -> resolved_var key ~var_files ~vars ~default:None)
+      }
+  in
   Printf.printf "\nDestroying cloud infrastructure (%s)...\n%!" pname;
   (* The command edge: the destroy sequence itself lives in
      [Sol_cli_cloud_destroy.execute], which never exits; this function resolves
@@ -2463,14 +1516,9 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
                which is what the Destroy policy's variables are computed from --
                a failed preparation must never look like a finished one. *)
             let outcome =
-              prepare_destruction_result
-                ~provider
-                run_log
-                infra_dir
-                var_files
-                vars
-                ~cluster_name:(prepare_cluster_name ())
+              destruction.prepare
                 ~retention
+                ~cluster_name:(prepare_cluster_name ())
                 ~state
             in
             (match outcome with
@@ -2565,20 +1613,9 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
                       verdict)))
       ; destroy_substrate =
           (fun () ->
-            (* The AWS load-balancer drain wait is provider glue that must run before
-               the substrate destroy that needs it; it is a no-op on GCP. *)
-            (match provider with
-             | Sol_cli_provider.Aws ->
-               (match resolved_var "cluster_name" ~var_files ~vars ~default:None with
-                | None -> ()
-                | Some cluster_name ->
-                  let region =
-                    Option.value
-                      (resolved_var "region" ~var_files ~vars ~default:(Some "us-east-1"))
-                      ~default:"us-east-1"
-                  in
-                  wait_for_load_balancers_gone ~region ~cluster_name 24)
-             | Sol_cli_provider.Gcp -> ());
+            (* Provider glue that must run before the substrate destroy that needs
+               it: on AWS, waiting for the ingress load balancer to drain. *)
+            destruction.before_substrate_destroy ();
             terraform_outcome
               (Sol_cli_run_log.run_phase run_log ~name:"terraform-destroy" (fun () ->
                  Sol_cli_terraform.destroy
@@ -2589,10 +1626,8 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
       ; verify_destruction =
           (fun ~pre_destroy ~preparation ->
             verification_observation
-              ~provider
+              ~destruction
               ~infra_dir
-              ~region:target_cfg.region
-              ~target_cfg
               ~cluster:!cluster_ref
               ~retention
               ~pre_destroy

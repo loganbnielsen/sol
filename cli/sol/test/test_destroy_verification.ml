@@ -11,6 +11,11 @@
 
 open Sol_cli_destroy_verification
 
+(* REFAC-097: the provider-evidence classifiers live with their providers. *)
+let gcp_absence_message = Sol_cli_gcp_destruction.gcp_absence_message
+let classify_final_snapshot = Sol_cli_aws_destruction.classify_final_snapshot
+let classify_instance_snapshots = Sol_cli_aws_destruction.classify_instance_snapshots
+
 let contains needle haystack =
   let needle_length = String.length needle in
   let haystack_length = String.length haystack in
@@ -163,13 +168,15 @@ let test_retention_final_snapshot_observed () =
       (final_snapshot
          {|{"DBSnapshots":[{"DBSnapshotIdentifier":"snap-1","SnapshotType":"manual","Status":"available"}]}|})
   with
-  | Settled (Retention_required_and_observed evidence) ->
+  | Sol_cli_aws_destruction.Settled (Retention_required_and_observed evidence) ->
     Alcotest.(check bool)
       "the observation names the identifier and the state"
       true
       (contains "snap-1" evidence && contains "available" evidence)
-  | Settled _ -> Alcotest.fail "an available snapshot is a met retention guarantee"
-  | Pending message -> Alcotest.failf "an available snapshot is not pending: %s" message
+  | Sol_cli_aws_destruction.Settled _ ->
+    Alcotest.fail "an available snapshot is a met retention guarantee"
+  | Sol_cli_aws_destruction.Pending message ->
+    Alcotest.failf "an available snapshot is not pending: %s" message
 ;;
 
 (* Case 18: the snapshot explicitly does not exist. *)
@@ -181,12 +188,13 @@ let test_retention_final_snapshot_missing () =
        operation"
   in
   (match classify_final_snapshot ~declared ~snapshot_id:"snap-1" lookup with
-   | Settled (Retention_violated reason) ->
+   | Sol_cli_aws_destruction.Settled (Retention_violated reason) ->
      Alcotest.(check bool)
        "the failure names the identifier and the declaration"
        true
        (contains "snap-1" reason && contains "final-snapshot" reason)
-   | Settled _ | Pending _ -> Alcotest.fail "a missing promised snapshot must fail");
+   | Sol_cli_aws_destruction.Settled _ | Sol_cli_aws_destruction.Pending _ ->
+     Alcotest.fail "a missing promised snapshot must fail");
   (* A provider answer about a *different* snapshot is not evidence about this one. *)
   (match
      classify_final_snapshot
@@ -195,8 +203,8 @@ let test_retention_final_snapshot_missing () =
        (final_snapshot
           {|{"DBSnapshots":[{"DBSnapshotIdentifier":"snap-other","SnapshotType":"manual","Status":"available"}]}|})
    with
-   | Settled (Retention_violated _) -> ()
-   | Settled _ | Pending _ ->
+   | Sol_cli_aws_destruction.Settled (Retention_violated _) -> ()
+   | Sol_cli_aws_destruction.Settled _ | Sol_cli_aws_destruction.Pending _ ->
      Alcotest.fail "an answer about another snapshot must not establish this one");
   (* A snapshot the provider reports as failed is not a met guarantee either. *)
   match
@@ -206,8 +214,9 @@ let test_retention_final_snapshot_missing () =
       (final_snapshot
          {|{"DBSnapshots":[{"DBSnapshotIdentifier":"snap-1","SnapshotType":"manual","Status":"failed"}]}|})
   with
-  | Settled (Retention_violated _) -> ()
-  | Settled _ | Pending _ -> Alcotest.fail "a failed snapshot must not read as retained"
+  | Sol_cli_aws_destruction.Settled (Retention_violated _) -> ()
+  | Sol_cli_aws_destruction.Settled _ | Sol_cli_aws_destruction.Pending _ ->
+    Alcotest.fail "a failed snapshot must not read as retained"
 ;;
 
 (* Case 19: an unobservable final snapshot is a failure, and a snapshot still being
@@ -219,8 +228,8 @@ let test_retention_final_snapshot_unknown () =
        ~snapshot_id:"snap-1"
        (Unavailable "aws CLI missing")
    with
-   | Settled (Retention_unknown _) -> ()
-   | Settled _ | Pending _ ->
+   | Sol_cli_aws_destruction.Settled (Retention_unknown _) -> ()
+   | Sol_cli_aws_destruction.Settled _ | Sol_cli_aws_destruction.Pending _ ->
      Alcotest.fail "an unavailable provider is UNKNOWN, not success");
   (match
      classify_final_snapshot
@@ -228,8 +237,9 @@ let test_retention_final_snapshot_unknown () =
        ~snapshot_id:"snap-1"
        (answered 1 "ERROR: request timed out")
    with
-   | Settled (Retention_unknown _) -> ()
-   | Settled _ | Pending _ -> Alcotest.fail "a timeout is UNKNOWN, not success");
+   | Sol_cli_aws_destruction.Settled (Retention_unknown _) -> ()
+   | Sol_cli_aws_destruction.Settled _ | Sol_cli_aws_destruction.Pending _ ->
+     Alcotest.fail "a timeout is UNKNOWN, not success");
   (* Still being created: "not yet", and the caller keeps observing. *)
   (match
      classify_final_snapshot
@@ -238,12 +248,13 @@ let test_retention_final_snapshot_unknown () =
        (final_snapshot
           {|{"DBSnapshots":[{"DBSnapshotIdentifier":"snap-1","SnapshotType":"manual","Status":"creating"}]}|})
    with
-   | Pending message ->
+   | Sol_cli_aws_destruction.Pending message ->
      Alcotest.(check bool)
        "the pending report says what it is waiting for"
        true
        (contains "creating" message)
-   | Settled _ -> Alcotest.fail "a snapshot still being created is not a met guarantee");
+   | Sol_cli_aws_destruction.Settled _ ->
+     Alcotest.fail "a snapshot still being created is not a met guarantee");
   (* And an UNKNOWN retention is a failure when combined, not a degraded success. *)
   let verdict =
     classify (observation ~retention:(Retention_unknown "the snapshot query failed") ())
