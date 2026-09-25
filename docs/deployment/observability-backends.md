@@ -296,7 +296,7 @@ the standalone `grafana` chart's sidecar ConfigMap-loading
   `event=deploy` log lines (OBS-037), filtered by the same `$workspace`/
   `$domain`/`$service` template variables as the other dashboards. Those
   deploy-event lines are pushed directly by the `sol` CLI rather than
-  tailed from a pod (`cli/sol/bin/cmd_deploy_event.ml`), but carry real
+  tailed from a pod (`cli/bin/cmd_deploy_event.ml`), but carry real
   Loki stream labels the same way an application pod's own logs do:
   `service` is the deployed service's real name (`Obs_eio.create`'s
   built-in stream label), and `workspace`/`domain`/`primitive`/`release`

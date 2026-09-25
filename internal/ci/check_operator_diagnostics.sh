@@ -21,8 +21,8 @@ root="${1:-$(git rev-parse --show-toplevel)}"
 role="$root/platform/infra/base/platform_operator_rbac.tf"
 aws_main="$root/platform/infra/aws/main.tf"
 aws_vars="$root/platform/infra/aws/variables.tf"
-rbac_doc="$root/cli/sol/lib/sol_cli_manifest_yaml.ml"
-substrate="$root/cli/sol/lib/sol_cli_substrate.ml"
+rbac_doc="$root/cli/lib/sol_cli_manifest_yaml.ml"
+substrate="$root/cli/lib/sol_cli_substrate.ml"
 
 fail() {
   echo "check_operator_diagnostics: $1" >&2
@@ -107,7 +107,7 @@ echo "$bind_allowlist" | grep -q 'sol_operator_diagnostics' ||
 # grant exists to observe. Still true if someone later "simplifies" it to [ensure].
 reconcile="$(
   awk '/^let reconcile_operator_bindings/,/^;;$/' \
-    "$root/cli/sol/lib/sol_cli_substrate.ml"
+    "$root/cli/lib/sol_cli_substrate.ml"
 )"
 [ -n "$reconcile" ] || fail "no reconcile_operator_bindings: the grant is still command-scoped"
 
@@ -123,7 +123,7 @@ echo "$reconcile" | grep -Eq 'operator_role_binding_doc|operator_binding_docs' |
 # operator_role_arn now, so the AWS capabilities' own_vars must route it, or the
 # access entry is never created and the identity stays unreachable.
 # REFAC-098: the ARN is read from the target's aws block.
-grep -q 'provider_field target "operator_role_arn"' "$root/cli/sol/lib/sol_cli_provider_capabilities.ml" ||
+grep -q 'provider_field target "operator_role_arn"' "$root/cli/lib/sol_cli_provider_capabilities.ml" ||
   fail "operator_role_arn is declared by the AWS root but never routed to it, so no access entry is created"
 
 # ── the cross-check: what the diagnostic path reads, the operator must see ───
@@ -140,9 +140,9 @@ canonical() {
 
 reads=$(
   grep -hoE '"get"; "[a-z/]+"' \
-    "$root/cli/sol/lib/sol_cli_rollout_diagnosis.ml" \
-    "$root/cli/sol/bin/cmd_status.ml" \
-    "$root/cli/sol/bin/cmd_logs.ml" |
+    "$root/cli/lib/sol_cli_rollout_diagnosis.ml" \
+    "$root/cli/bin/cmd_status.ml" \
+    "$root/cli/bin/cmd_logs.ml" |
     sed 's/.*"\([a-z/]*\)"$/\1/' |
     sort -u
 )

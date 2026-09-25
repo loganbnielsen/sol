@@ -50,14 +50,14 @@ jobs:
         run: opam install . --deps-only -y
 
       - name: Build sol binary
-        run: opam exec -- dune build cli/sol/bin/main.exe
+        run: opam exec -- dune build cli/bin/main.exe
 
       - name: Stage artifact
         run: |
           VERSION="${{ github.ref_name }}"
           BUNDLE="sol-${VERSION}-linux-x86_64"
           mkdir -p dist/${BUNDLE}/bin
-          cp _build/default/cli/sol/bin/main.exe dist/${BUNDLE}/bin/sol
+          cp _build/default/cli/bin/main.exe dist/${BUNDLE}/bin/sol
           chmod +x dist/${BUNDLE}/bin/sol
           cp -r framework dist/${BUNDLE}/framework
           cd dist

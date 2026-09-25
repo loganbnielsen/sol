@@ -412,7 +412,7 @@ sol status              # show running pods and endpoints
 
 ### Implementation
 
-**Package:** `cli/sol/` — binary at `_build/default/cli/sol/bin/main.exe`
+**Package:** `cli/` — binary at `_build/default/cli/bin/main.exe`
 
 **Stack:** `cmdliner` 2.x for argument parsing. Templates are OCaml string literals embedded directly in the binary — no external template files, no runtime file resolution. Self-contained and relocatable.
 
@@ -428,7 +428,7 @@ All five scaffold commands fully implemented and verified. `sol new workspace ac
 
 ### ~~Step 2~~ ✓ — `sol local infra up/down/status`
 
-Implemented in `cli/sol/bin/cmd_local.ml`. k3d cluster lifecycle, Helm chart installs (Redpanda, PostgreSQL, Loki, kube-prometheus-stack), port-forward manager (PID files in `.sol/`), endpoint summary table.
+Implemented in `cli/bin/cmd_local.ml`. k3d cluster lifecycle, Helm chart installs (Redpanda, PostgreSQL, Loki, kube-prometheus-stack), port-forward manager (PID files in `.sol/`), endpoint summary table.
 
 **Testing status:** k3d v5.6.0 and Helm v3.21.0 are now installed. End-to-end test pending (Step 2a below).
 
@@ -436,7 +436,7 @@ Implemented in `cli/sol/bin/cmd_local.ml`. k3d cluster lifecycle, Helm chart ins
 
 ### ~~Step 7~~ ✓ — `sol migrate`
 
-Implemented in `cli/sol/bin/cmd_migrate.ml`. Thin Eio + caqti wrapper over `Sol.Storage.Migration`. Verified end-to-end against live postgres. See `docs/planning/WORK_SUMMARY.md` §16.
+Implemented in `cli/bin/cmd_migrate.ml`. Thin Eio + caqti wrapper over `Sol.Storage.Migration`. Verified end-to-end against live postgres. See `docs/planning/WORK_SUMMARY.md` §16.
 
 ---
 
@@ -605,7 +605,7 @@ This is the real acceptance test: a new domain stood up in a running cluster wit
 
 | Deliverable | Status |
 |---|---|
-| `cli/sol/` package skeleton + `cmdliner` wiring | ✓ done |
+| `cli/` package skeleton + `cmdliner` wiring | ✓ done |
 | `sol new workspace <name>` — 17-file scaffold, compiles first try | ✓ done |
 | `sol new svc/worker/fn/event` | ✓ done |
 | `sol local infra up/down/status` — k3d + Helm orchestration | ✓ done, validated |

@@ -133,7 +133,7 @@ Record, without modifying anything:
 2. whether the control plane can reach a node's kubelet — `kubectl logs` against a
    pod on a known node is the observable;
 3. which Sol capabilities actually depend on that path, from the surfaces in
-   `cli/sol/` (`sol logs`, port-forward, exec).
+   `cli/` (`sol logs`, port-forward, exec).
 
 Then state the conclusion in exactly one of two forms:
 
@@ -301,7 +301,7 @@ In practice, for every behavioural row:
 
 1. **Static/configuration evidence** — Terraform variable defaults, RBAC
    rule text, IAM policy JSON shape. This session's offline additions
-   (`cli/sol/test/check_production_infra.sh`,
+   (`cli/test/check_production_infra.sh`,
    `internal/ci/test_cloud_lifecycle_offline.sh`,
    `internal/ci/test_publisher_deployer_boundary.sh`) are entirely this
    tier. Necessary, never sufficient.

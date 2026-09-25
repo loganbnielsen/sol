@@ -70,7 +70,7 @@ let expect_load_error expected =
 let example_pluto_dir () =
   if Sys.file_exists "examples/pluto/sol.yml"
   then "examples/pluto"
-  else "../../../../../examples/pluto"
+  else "../../../../examples/pluto"
 ;;
 
 let write_base () =

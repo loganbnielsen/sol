@@ -362,7 +362,7 @@ resource "aws_db_instance" "postgres" {
 # wiring already used for loki_s3_bucket/thanos_irsa_arn) to provision one
 # Grafana dashboard per resource_type from a single shared template
 # (dashboards/managed-resource.json.tftpl) plus a CloudWatch datasource.
-# `sol open dashboard resource/<type>/<name>` (cli/sol/lib/sol_cli_open.ml)
+# `sol open dashboard resource/<type>/<name>` (cli/lib/sol_cli_open.ml)
 # resolves the matching Grafana URL by that same resource_type value.
 locals {
   managed_resources = var.create_rds ? {

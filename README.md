@@ -71,8 +71,8 @@ a little more, and none of it is covered by `dune build` alone:
   not on opam yet, so pin them from source first, e.g.
   `opam pin add kafka-eio https://github.com/loganbnielsen/kafka-eio.git`
   (repeat per package), then `opam install --deps-only --with-test .`.
-- **Build:** `dune build cli/sol/bin/main.exe`; the binary lands at
-  `_build/default/cli/sol/bin/main.exe`.
+- **Build:** `dune build cli/bin/main.exe`; the binary lands at
+  `_build/default/cli/bin/main.exe`.
 
 **[`docs/dogfood/DOGFOOD.md`](docs/dogfood/DOGFOOD.md)** has the full
 local-substrate walkthrough, including the exact dependency commands.

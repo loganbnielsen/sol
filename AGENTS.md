@@ -25,7 +25,7 @@ and update call sites in the same pass. Full policy: `~/Code/CLAUDE.md`.
 
 **Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform modules live at `platform/infra/base/`, `platform/infra/aws/`, and `platform/infra/gcp/`. Remaining hosted-product work is tracked in `internal/pipeline/tickets/`. See `docs/planning/WORK_SUMMARY.md` for full details.
 
-Package: `cli/sol/` — binary at `_build/default/cli/sol/bin/main.exe`.
+Package: `cli/` — binary at `_build/default/cli/bin/main.exe`.
 
 ## Ticket system
 
@@ -70,7 +70,7 @@ Do not add a `status:` field — the directory encodes status.
 **Ticket premises:** A ticket is written at discovery time and rarely re-read, while the code moves on — so before starting a non-`DONE` ticket, verify its *premise* (the claim that the work is still missing) and record that in one line in the ticket, with what was checked. For findings that reduce to an existence check, declare the probe instead and let the pipeline evaluate it:
 
 ```yaml
-premise: "rg -q 'fallback_to_kubectl' cli/sol/bin/cmd_logs.ml"
+premise: "rg -q 'fallback_to_kubectl' cli/bin/cmd_logs.ml"
 ```
 
 **The probe succeeds when the premise is stale** — the finding has already been fixed. The inverted form is deliberate: the natural form would need every probe wrapped in a negation, and a mis-negated probe fails in the direction of "still actionable", which is the exact failure this exists to catch. `soldev pipeline check` runs it and reports `premise-stale` or `premise-unverified` instead of `actionable`; `pipeline ls` shows the same in its label column. A probe that cannot run at all (exit 126/127) is `unverified`, never "holds".
@@ -146,8 +146,9 @@ The tree below is today's. It moves toward the target layout as REFAC-099…105 
 ```
 sol/
   # ── product ───────────────────────────────────────────────────────────────
-  cli/                          ← the `sol` CLI — code only (DEC-046 rule 2)
-    sol/{bin,lib,test}/         ← command parsing, shared implementation, tests
+  cli/                          ← the `sol` CLI — the binary and what it needs (DEC-046 rule 2)
+    bin/ lib/ test/             ← command parsing, shared implementation, tests
+    migrations/                 ← hosted control-plane SQL (currently unreferenced)
   platform/                     ← what the CLI drives — no OCaml
     components/ infra/ local/   ← Helm values, Terraform roots, local k3s tooling
   contract/                     ← language-neutral application contract (runtime, substrate)

@@ -25,7 +25,7 @@ let default_dir = "db/migrations"
 
 (* Same per-workspace naming as [sol migrate], so the deploy reads exactly the
    table [sol migrate apply] writes. Kept identical to
-   cli/sol/bin/cmd_migrate.ml's [default_table_name]. *)
+   cli/bin/cmd_migrate.ml's [default_table_name]. *)
 let table_name ~workspace =
   let buf = Buffer.create (String.length workspace) in
   String.iter

@@ -7,7 +7,7 @@ this directory is the product-level definition both of them target.
 
 | Concept | Where the contract is defined |
 | --- | --- |
-| Project/workspace declarations (`sol.yml`, `sol.toml`) | `cli/sol/lib/sol_cli_config.ml`, `cli/sol/lib/sol_cli_manifest*.ml` |
+| Project/workspace declarations (`sol.yml`, `sol.toml`) | `cli/lib/sol_cli_config.ml`, `cli/lib/sol_cli_manifest*.ml` |
 | Container build + discovery (`app/<domain>/<name>_{svc,worker,fn}/` + `Dockerfile`) | [`runtime.md`](runtime.md) |
 | `PORT`, `GET /healthz`, `GET /metrics`, `SIGTERM`/drain | [`runtime.md`](runtime.md) |
 | `-svc` / `-worker` / `-fn` runtime expectations | [`runtime.md`](runtime.md) |

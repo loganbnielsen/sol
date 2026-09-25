@@ -174,14 +174,14 @@ jobs:
         run: opam install . --deps-only -y
 
       - name: Build sol binary
-        run: eval $(opam env) && dune build cli/sol/bin/main.exe
+        run: eval $(opam env) && dune build cli/bin/main.exe
         # TODO: replace with a pre-built binary download once Sol publishes releases.
 
       - name: Export deployment plan
         run: |
           eval $(opam env)
           # Equivalent Sol command: sol deploy <target> --emit-plan-to plan.json --dry-run
-          _build/default/cli/sol/bin/main.exe deploy "$SOL_TARGET" \
+          _build/default/cli/bin/main.exe deploy "$SOL_TARGET" \
             --registry  "$REGISTRY" \
             --image-tag "${IMAGE_TAG::7}" \
             --emit-plan-to plan.json \
@@ -198,7 +198,7 @@ jobs:
         run: |
           eval $(opam env)
           # Equivalent Sol command: sol deploy <target> --emit-to manifests/
-          _build/default/cli/sol/bin/main.exe deploy "$SOL_TARGET" \
+          _build/default/cli/bin/main.exe deploy "$SOL_TARGET" \
             --registry  "$REGISTRY" \
             --image-tag "${IMAGE_TAG::7}" \
             --emit-to   manifests/

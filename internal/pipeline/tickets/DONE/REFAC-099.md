@@ -61,3 +61,25 @@ Line numbers are as of `origin/main` `50449a1a`; re-run `rg -n 'cli/(platform|so
 - **Remaining references, all intentional:** dated records; the mutation test's dead fixture paths; and the `note` string in `internal/tooling/perf/perf_baseline.json`, which is main-only by policy (REFAC-078) and so is left for a baseline update on `main`.
 
 Part B (`cli/sol` → `cli/`) follows as its own PR.
+
+**Part B (`cli/sol/*` → `cli/*`), 2026-09-25.**
+- `cli/sol/{bin,lib,test}` → `cli/{bin,lib,test}`, and `cli/sol/control_plane_migrations` → `cli/migrations`. 57 live files that named `cli/sol/` were rewritten; the binary is now `_build/default/cli/bin/main.exe`.
+- **Depth fixes:** `cli/test/dune`'s `source_tree` and `internal/ci` dependencies (`../../../` → `../../`); `test_sensitive_vars.ml`; and `test_config.ml`'s build-directory route to pluto (5 → 4 levels). `check_production_infra.sh` receives `%{workspace_root}`, so depth doesn't affect it.
+- **Verified:**
+  - `dune build` and `dune test cli/test/` pass (0 `[FAIL]`);
+  - every `internal/ci/check_*.sh` and `test_*.sh` passes;
+  - `check_ocamlformat.sh --staged` is clean;
+  - `rg -l --hidden -g '!.git' 'cli/sol/'` outside `internal/pipeline/` and dated records returns nothing.
+
+  The one remaining slash-less `cli/sol` is a historical rename note in `WORK_SUMMARY.md` (`cli/sun -> cli/sol`), left as written.
+- **Found, not acted on:** `cli/migrations/{001_hosted_control_plane,002_hosted_release_digest}.sql` are unreferenced. `rg -n --hidden -g '!.git' '001_hosted_control_plane|002_hosted_release_digest|control_plane_migrations'` matches only this ticket and the proposal, and `git log` shows no change since the history baseline. Nothing the binary runs needs them. Deleting them is a product call, so they're moved as the ticket specifies and flagged.
+
+## Completion notes
+
+- Both parts landed: A in #520, B in this PR. Acceptance:
+  - `cli/` holds the binary and what it needs, and no platform assets;
+  - `platform/` has no OCaml;
+  - the workflow `paths:` guard is in CI (part A);
+  - no live reference to either old path remains.
+- **Demo/example:** not applicable; this is repository layout, with no change to what an app author writes.
+- **Language parity (DEC-022):** no application-facing impact.

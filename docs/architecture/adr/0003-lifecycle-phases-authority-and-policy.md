@@ -164,7 +164,7 @@ a stored description of the world:
 The phase and policy vocabulary lives in `Sol_cli_cloud_lifecycle` (`phase`,
 `phase_policy`, `policy_of_phase`, `transition_allowed`, `destruction_available`,
 `enter_destruction`, `ready_policy_applies`, `policy_vars`). The operations in
-`cli/sol/bin/cmd_cloud_tf.ml` perform only legal transitions -- forward progress
+`cli/bin/cmd_cloud_tf.ml` perform only legal transitions -- forward progress
 through `enter`, which refuses any edge `transition_allowed` rejects, and entry to
 destruction through `enter_destruction`, the abort edge of invariant 6 -- and
 `policy_vars` supplies the phase's desired-state overrides, appended after caller
@@ -188,7 +188,7 @@ Regression coverage asserts the semantics, not just the original bugs:
   profile's `rds_deletion_protection=true`), and that a partially installed
   target -- substrate present, platform never fully installed -- is still
   destructible (invariant 6); and
-- `cli/sol/test/check_production_infra.sh` asserts the steady-state cluster-access identity
+- `cli/test/check_production_infra.sh` asserts the steady-state cluster-access identity
   RBAC still grants no `escalate`/`bind`, preserving invariant 2 structurally.
 
 ## Consequences

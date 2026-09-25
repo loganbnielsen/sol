@@ -1,5 +1,10 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: REFAC-099 — code and assets are separate: `platform/` and a flat `cli/` (2026-09-25)
+
+- Part A (#520): `cli/platform` → `platform/`, plus a new CI guard that fails when a workflow `paths:` entry names something gone (it would otherwise silently stop the workflow triggering).
+- Part B: `cli/sol/{bin,lib,test}` → `cli/{bin,lib,test}`, and the binary is now `_build/default/cli/bin/main.exe`. `control_plane_migrations` → `cli/migrations`; those two SQL files are unreferenced and flagged for a delete-or-keep decision.
+- **Unblocked:** REFAC-100, 102, 103 and 104.
 ## Latest: REFAC-105 — the pluto example no longer reaches into internal/ (2026-09-25)
 
 - Pluto's `dev` and `customer_cloud` targets are user-shaped. The AWS smoke harness now generates its own untracked `sol/qual2/` target with an absolute var file, the same pattern as the GCP harness.
