@@ -84,7 +84,33 @@ mk fixed gcp 'resource "google_storage_bucket" "loki" {
 }' main.tf
 expect_accept fixed "both providers repaired"
 
-# 5. A missing target root is not silently a pass.
+# 5. DEC-045: a relinquished deletion with no residue owner is refused...
+mk abandon aws '' empty.tf
+mk abandon gcp 'resource "google_service_networking_connection" "sql" {
+  network = "x"
+
+  deletion_policy = "ABANDON"
+}' main.tf
+expect_reject abandon "an ABANDON deletion_policy with no residue annotation"
+
+mk skip aws 'resource "aws_cloudwatch_log_group" "x" {
+  name         = "x"
+  skip_destroy = true
+}' main.tf
+mk skip gcp '' empty.tf
+expect_reject skip "a skip_destroy with no residue annotation"
+
+# ...and accepted once it names who handles what it leaves behind.
+mk abandonok aws '' empty.tf
+mk abandonok gcp 'resource "google_service_networking_connection" "sql" {
+  network = "x"
+
+  # residue: released by deleting the network; the destroy residue check asks for it.
+  deletion_policy = "ABANDON"
+}' main.tf
+expect_accept abandonok "an annotated ABANDON"
+
+# 6. A missing target root is not silently a pass.
 if "$guard" "$tmp/does-not-exist" >/dev/null 2>&1; then
   echo "test_destroy_completeness_check: guard ACCEPTED a nonexistent root." >&2
   fail=1
@@ -94,4 +120,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "test_destroy_completeness_check: guard rejects ECR-without-force-delete, prevent_destroy, and GCP force_destroy = false; accepts the repaired shape."
+echo "test_destroy_completeness_check: guard rejects ECR-without-force-delete, prevent_destroy, GCP force_destroy = false and unannotated relinquished deletion; accepts the repaired shapes."
