@@ -523,3 +523,25 @@ reasoning about it:
 
 Nothing in this ledger advances because of it: no matrix row, no finding state, and `FND-0010` stays
 `OPEN` — `NOT_REACHED`. Both fixes are harness-only and tracked by `INFRA-078`.
+
+## GCP Attempt 8 (2026-09-25) — the FND-0010 cause, and a degraded teardown
+
+`main @ dae9540d` (run record: `docs/qualification/2026-09-25-gcp-attempt8.md`; the pre-live stop
+that preceded it: `docs/qualification/2026-09-25-gcp-attempt8-phase0-stop.md`). Live infrastructure
+22:01:03Z → 22:26:22Z. **No billable residue**; durable prerequisites intact and the delegation
+still resolving; `main`'s canonical checkout untouched throughout.
+
+| Item | State after the run |
+|---|---|
+| `FND-0010` | cause **established**: `TLS_CA_OR_CERTIFICATE`. The check's own output is `x509: certificate signed by unknown authority`; the webhook Service had live endpoints (`10.1.0.78:10250`, `targetPort: https`) and the `ValidatingWebhookConfiguration` carried no injected `caBundle` at capture time. **The reachability hypothesis is falsified — no firewall rule is warranted.** Still `OPEN`: the fix is a separate authorization. |
+| `FND-0058` (**new**) | `OPEN` — after a failed platform install, the supported destroy **skips the platform teardown** (reopening the window is a create, which the destroy's own scope refuses), leaving the platform state stale (11 resources) while the provider reality is gone. Ticket `INFRA-079` (decision required). |
+| `INFRA-080` (**new**) | harness verdict refinements: the `impersonator-binding` class can never verify absence (the provider answers PERMISSION_DENIED for a deleted SA), `custom-role` must read GCP's `deleted: true` as absent, and `cloud_vars`' comment broke its own `printf` (harmless — Sol passes the var from the target). |
+| `INV-AUTH-3` | failure-path window closure **OBSERVED** (`provisioner-bootstrap-access-remove` ok, 12.9 s); the success path still untested. |
+| `INV-DESTROY-1` | failed-`PlatformInstalling` case exercised but **degraded** (`FND-0058`), so the row is not satisfied. |
+| `INV-DESTROY-4` | cloud root queried class by class and absent (state serial 47, 0 resources); platform root not destroyed. |
+| `INV-RET-1` | `destroy_retention: none` **OBSERVED live** on GCP (`-var=gcs_soft_delete_retention_seconds=0` in the applied plan). |
+| `INV-SUBSTRATE-*`, `INV-IDENT-1` | `NOT REACHED` — the platform never installed. |
+
+Nothing is `QUALIFIED` by this run: the discriminator is evidence about a cause, not a conformant
+profile. Three harness defects found by the two executions (the Phase-0 stop and the run) were fixed
+in #514/#516 before the attempt; the follow-ups above are recorded, not fixed.

@@ -109,6 +109,13 @@ Before the platform stage gives up, capture:
 - `gcloud compute firewall-rules list --filter="name~<cluster>"` beside the
   cluster's `masterIpv4CidrBlock`.
 
+**Attempt 8 (2026-09-25) answered this, and it is the second branch.** The check's
+output was `x509: certificate signed by unknown authority`, the webhook Service had live
+endpoints (`10.1.0.78:10250`, `targetPort: https`), and the webhook configuration carried
+no injected `caBundle` at capture time — so the cause is the CA bundle, not reachability,
+and **no `google_compute_firewall` is warranted**. Evidence:
+`docs/qualification/2026-09-25-gcp-attempt8.md`.
+
 If reachability is confirmed, the fix is a `google_compute_firewall` allowing the
 master CIDR to the webhook's **pod** port, and FND-0010 becomes a `VERIFIED_DEFECT`
 with a ticket. Disabling `startupapicheck` is not a fix: it discards the only

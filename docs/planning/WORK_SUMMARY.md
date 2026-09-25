@@ -1,5 +1,27 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: GCP Attempt 8 ran — FND-0010's cause established (2026-09-25)
+
+Authorized, Phase-0-gated and executed. **`main @ dae9540d`**, live 22:01:03Z → 22:26:22Z, no
+billable residue, durable prerequisites intact, canonical checkout untouched.
+
+- **The discriminator, captured before any teardown**: `TLS_CA_OR_CERTIFICATE`. The check's own
+  output is `x509: certificate signed by unknown authority`; the webhook had live endpoints
+  (`10.1.0.78:10250`, `targetPort: https`) and the `ValidatingWebhookConfiguration` carried **no
+  injected `caBundle`**. The GCP matrix's own decision rule resolves here: that is the CA-bundle
+  branch, **not** reachability, so no firewall rule is warranted. `FND-0010`'s cause is established
+  and it stays `OPEN` (no remediation was authorized).
+- **`Ready` was not reached** — the platform install failed at its first component, as in Attempts
+  4–5. The failure path closed the install window in the same invocation (12.9 s) and the bundle was
+  frozen before the teardown.
+- **`FND-0058` (new)**: the destroy **skipped the platform teardown** — reopening the window is a
+  create, which destroy's own scope refuses — leaving the platform state stale (11 resources) while
+  the provider is empty. `INFRA-079`, decision required.
+- **`INFRA-080` (new)**: three harness verdict refinements (a class that can never verify absence, a
+  soft-deleted role read as present, and a comment that broke its own `printf`; the last was harmless
+  because Sol passes the var from the target).
+- Records: `docs/qualification/2026-09-25-gcp-attempt8.md` and the phase-0 stop it continues.
+
 ## Latest: Attempt 8 stopped in Phase 0 — two harness defects filed (2026-09-25)
 
 The authorized GCP Attempt 8 began from `1aad2623` and stopped in its **read-only Phase 0** with four

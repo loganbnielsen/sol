@@ -11,10 +11,35 @@ source: docs/qualification/README.md (the run that replaces the HARDEN-004 epic'
 **Related:** HARDEN-004 (closed epic), FND-0010, FND-0007, FND-0029, DEC-042, DEC-043,
 `internal/qualification/gcp/live-qual.sh` (the harness this run drives).
 
-## Blocked On
+## Result (2026-09-25) — the run happened
 
-Explicit operator authorization for a live, billable GCP run, and a fresh Phase-0 read-only
-baseline of `sol-qualification`. Promote to `READY_FOR_ENGINEERING` only when both exist.
+Authorized, Phase-0-gated and executed at `main @ dae9540d` (after the corrective harness PRs
+#514 and #516). Run record: `docs/qualification/2026-09-25-gcp-attempt8.md`. The pre-live stop that
+preceded it, with its own evidence, is `docs/qualification/2026-09-25-gcp-attempt8-phase0-stop.md`.
+
+- **The discriminator was obtained, before any teardown**: classification `TLS_CA_OR_CERTIFICATE`.
+  The check's own output is `x509: certificate signed by unknown authority`; the webhook Service had
+  live endpoints (`10.1.0.78:10250`, `targetPort: https`) and the `ValidatingWebhookConfiguration`
+  carried **no injected `caBundle`** at capture time. That is the branch the GCP matrix names as
+  "a different cause with a different fix": **reachability is excluded, and no firewall rule is
+  warranted.** FND-0010's cause is established; it remains `OPEN` (no remediation was authorized).
+- **`Ready` was not reached**: the platform install failed at its first component, as in Attempts 4–5.
+- The failure path closed the install window in the same invocation
+  (`provisioner-bootstrap-access-remove` ok, 12.9 s), the evidence bundle was frozen **before** the
+  teardown, **no billable residue remains**, and the durable prerequisites are intact with the
+  delegation still resolving.
+- The teardown itself was **degraded** — the platform teardown was skipped because opening the window
+  is a create the destroy refuses. Filed as `FND-0058` / `INFRA-079`.
+- Three harness verdict refinements were exposed: `INFRA-080`.
+
+Acceptance criteria: no-issuer target ✓; discriminator captured before teardown and classified ✓
+(`fnd0010-classification.txt` + 12 probe files); bundle complete by the harness's own check ✓;
+supported teardown with `create_dns_zone=false` and an independent inventory ✓ (the degraded
+platform stage is the finding, not a teardown failure); run record ✓; ledger updated ✓.
+
+Demo/example: not applicable — qualification run. Language parity (DEC-022): nothing
+application-facing changed. Cost: the attempt's billable footprint is closed; see the run record's
+postcondition tables.
 
 ## Goal
 
