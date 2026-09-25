@@ -58,9 +58,34 @@ into `Sol_cli_aws_cluster` is materially simpler without making that module unwi
 - The provider registry is still the only generic credentials selection point.
 - Build and `dune test cli/sol/test/` green.
 
-## Completion notes (required)
+## Completion notes (2026-09-25)
 
-- Problem / root cause / change / executable evidence / canonical merge SHA.
-- Demo/example: not applicable (cloud lifecycle internals) — state it.
-- Language parity (DEC-022): no application-facing impact — state it.
-- Update `docs/planning/WORK_SUMMARY.md`.
+**Problem.** `cli/sol/lib/sol_cli_credentials.ml` (+ `.mli`) was entirely AWS — `aws configure
+export-credentials --format env`, `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_SESSION_TOKEN`,
+`aws sts get-caller-identity`, and a failure message written around SSO and `aws sso login` — behind
+a provider-neutral name. Its only product caller was `Sol_cli_aws_cluster`.
+
+**Root cause.** INFRA-039 added AWS credential re-resolution and named the module after the concept
+before the provider/registry split (REFAC-095/096) made the ownership question concrete. Nothing
+generic consumed it, so only the name was wrong.
+
+**Change.** Renamed to `sol_cli_aws_credentials` (`.ml` and `.mli`) and placed with the other AWS
+modules in `cli/sol/lib/dune`; the three call sites in `Sol_cli_aws_cluster` updated; the module
+header now says it is the AWS mechanism and names the generic selection point
+(`Sol_cli_provider_registry.credentials`). `PROVIDER-NEUTRAL-INVARIANTS.md`'s reference to
+`sol_cli_credentials.resolve` updated. No `gcp_credentials` module was created for symmetry — GCP's
+credential path stays in `Sol_cli_gcp_cluster`.
+
+**Executable evidence.**
+- `rg -n 'Sol_cli_credentials|sol_cli_credentials' cli/ internal/ docs/ examples/` returns nothing
+  outside the two records that describe the rename.
+- `dune build` green; `dune test cli/sol/test/ --force` green, including the harness scenarios that
+  exercise credential resolution and its failure path.
+- The provider registry is still the only generic credentials selection point
+  (`Sol_cli_provider_registry.credentials`), unchanged by this ticket.
+
+**Canonical merge SHA.** The squash commit that moved this ticket to `DONE/`; recover it with
+`git log --oneline -1 -- internal/pipeline/tickets/DONE/AUDIT-POST-007.md`.
+
+- Demo/example: not applicable (cloud lifecycle internals).
+- Language parity (DEC-022): no application-facing impact.

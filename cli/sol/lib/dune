@@ -9,6 +9,7 @@
   Sol_cli_terraform_steps
   Sol_cli_cluster
   Sol_cli_aws_cluster
+  Sol_cli_aws_credentials
   Sol_cli_gcp_cluster
   Sol_cli_aws_destruction
   Sol_cli_gcp_destruction
@@ -16,7 +17,6 @@
   Sol_cli_cloud_apply
   Sol_cli_terraform_vars
   Sol_cli_redaction
-  Sol_cli_credentials
   Sol_cli_fs_walk
   Sol_cli_kube_destination
   Sol_cli_destination

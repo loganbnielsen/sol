@@ -329,58 +329,13 @@ val deescalation_transition
   -> after:(capability * capability_answer) list
   -> deescalation_verdict
 
-(** The identity in a `kubectl auth whoami -o json` response (a SelfSubjectReview).
-
-    On EKS the AWS authenticator reports these under `status.userInfo.extra`, where every
-    value is an **array of strings** — including `arn` and `canonicalArn` — so the arn is
-    not a plain field of `userInfo`. The flat string form is also accepted, because other
-    authenticators and test stubs emit it. [Error] when the response is not JSON or names
-    no principal at all: never a default, because a default would let a wrong principal
-    look like a right one. *)
-type whoami_identity =
-  { arn : string option
-  ; canonical_arn : string option
-  ; username : string option
-  ; source : string
-    (** Which field the identity came from. The de-escalation comparison depends on
-          canonicalArn, so a caller must be able to see whether it got that one. *)
-  }
-
-val whoami_identity_of_json : string -> (whoami_identity, string) result
-
-(** The role name inside an ARN, whichever form it takes — handling the assumed-role form
-    whose final segment is a *session* name, so two probes of the same principal do not
-    read as a mismatch. *)
-val role_name_of_arn : string -> string
-
-(** The stable role name of an identity: `canonicalArn` first (a plain IAM role ARN), then
-    `arn`, then the username. *)
-val principal_role_name : whoami_identity -> string option
-
-(** The path-free form canonicalArn reports, so an expected role ARN that carries a role
-    path compares equal to the cluster's answer instead of producing a false mismatch. *)
-val normalize_role_arn : string -> string
-
-(** Whether the response names exactly the expected principal, compared as the full
-    canonical ARN (account and path included). [None] when the response names no ARN.
-
-    Strict on purpose: comparing an extracted role name fails *open* when the same role
-    name appears in another account or behind a different role path. The strict form's
-    worst case is a false mismatch, which the caller turns into [Undetermined]. *)
-val principal_matches : expected:string -> whoami_identity -> bool option
-
-(** Whether the probe's own credential could still be assumed. A named three-state
-    rather than a [bool option], because "the role was refused" and "the assumption
-    could not be attempted" are different diagnoses. *)
-type credential_assumption =
-  | Credential_assumable
-  | Credential_refused
-  | Credential_unchecked
-
-(** A cluster refusal counts as de-escalation only when the credential is still good: a
-    broken trust policy, clock skew or a wrong assumed role produces the same refusal as a
-    revoked grant, and reading it as removal would be a fail-open into [Deescalated]. *)
-val refusal_is_deescalation : credential_assumption -> string -> deescalation_principal
+(** The AWS-native identity representation and ARN comparison live with the provider that
+    produces them, in {!Sol_cli_aws_cluster}: the EKS-specific `status.userInfo.extra`
+    shape (arrays of strings, `canonicalArn`), role-name extraction from an ARN, the
+    strict canonical-ARN comparison, and the credential-assumption check. None of it is a
+    Sol semantic, and GCP -- whose window is closed by applying the platform root -- has no
+    Sol-side identity to compare. What stays here is provider-neutral: the verdict types
+    above and the [capability] / [capability_answer] probes they compose. (AUDIT-POST-001) *)
 
 val deescalation_verdict_to_string : deescalation_verdict -> string
 

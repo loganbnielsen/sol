@@ -170,6 +170,240 @@ let cluster_refused detail =
     ]
 ;;
 
+(* AUDIT-POST-001: AWS-native identity, moved here from [Sol_cli_cloud_lifecycle].
+
+   `kubectl auth whoami -o json` answers with a SelfSubjectReview, and on EKS the AWS
+   authenticator reports it under `status.userInfo.extra` with every value an *array of
+   strings* -- including `arn` and `canonicalArn`. Nothing about that shape is a Sol
+   semantic: GCP's window is closed by applying the platform root, so it has no Sol-side
+   identity to compare and needs none of this. It belongs with the provider that produces
+   it, and the generic lifecycle keeps only the provider-neutral verdict types
+   ([deescalation_principal], [deescalation_verdict], [deescalation_transition]). *)
+
+(* DEC-040 / FND-0021: identify the principal the authorizer resolved, from the JSON
+   that kubectl auth whoami -o json emits.
+
+   That response is a SelfSubjectReview. On EKS the AWS authenticator puts identity
+   details under status.userInfo.extra, where every value is an *array of strings* --
+   including arn and canonicalArn. So the arn is not a plain field of userInfo, and an
+   earlier version that looked only for a string there would have failed closed on every
+   real install. The flat string form is still accepted, because other authenticators and
+   test stubs emit it, but the array form is the one EKS actually produces.
+
+   canonicalArn is preferred for identity: arn for an assumed role carries a session name
+   that differs between the before and after probes, so comparing raw arns would report a
+   false mismatch. *)
+type whoami_identity =
+  { arn : string option
+  ; canonical_arn : string option
+  ; username : string option
+  ; source : string
+    (** Which field the identity was taken from: extra.canonicalArn, extra.arn,
+          userInfo.canonicalArn, userInfo.arn, or username. The de-escalation comparison
+          depends on canonicalArn being present, so a caller that cares must be able to see
+          which field it got. *)
+  }
+
+(* Strict: a value that is a list must have exactly one element.
+
+   The AWS authenticator reports identity values as one-element arrays, so a two-element
+   array names more than one principal -- and taking the first element is a default in
+   disguise, which is how an ambiguous response could otherwise be read as a definite one.
+   Absent is [Ok None]; present-but-ambiguous is [Error]. *)
+let single_string_of_json ~what = function
+  | `String v -> Ok (Some v)
+  | `List [ `String v ] -> Ok (Some v)
+  | `List [] -> Error (Printf.sprintf "a %s value was an empty array" what)
+  | `List (_ :: _ :: _) ->
+    Error (Printf.sprintf "a %s value was an array of more than one element" what)
+  | `Null -> Ok None
+  | _ ->
+    Error (Printf.sprintf "a %s value was neither a string nor an array of strings" what)
+;;
+
+let whoami_identity_of_json json : (whoami_identity, string) result =
+  match Yojson.Safe.from_string json with
+  | exception _ -> Error "the whoami response was not JSON"
+  | json ->
+    (* Non-raising on purpose: Yojson's member raises when its parent is null, and a
+       response with no `extra` at all (any non-EKS authenticator, or a stub) would then
+       crash the probe instead of degrading to a stated reason. The fixtures caught
+       exactly that. *)
+    let member_opt key = function
+      | `Assoc fields -> List.assoc_opt key fields
+      | _ -> None
+    in
+    let sub key j =
+      match member_opt key j with
+      | Some v -> v
+      | None -> `Null
+    in
+    let status = sub "status" json in
+    let user = sub "userInfo" status in
+    let extra = sub "extra" user in
+    let source = ref "none" in
+    (* A present-but-ambiguous value is an error, not a first element. *)
+    let field name = single_string_of_json ~what:name (sub name user) in
+    let extra_field name = single_string_of_json ~what:name (sub name extra) in
+    Result.bind (extra_field "arn") (fun extra_arn ->
+      Result.bind (field "arn") (fun user_arn ->
+        Result.bind (extra_field "canonicalArn") (fun extra_canonical ->
+          Result.bind (field "canonicalArn") (fun user_canonical ->
+            Result.bind (field "username") (fun username ->
+              let arn, arn_source =
+                match extra_arn with
+                | Some _ as v -> v, "extra.arn"
+                | None -> user_arn, "userInfo.arn"
+              in
+              let canonical_arn, canonical_source =
+                match extra_canonical with
+                | Some _ as v -> v, "extra.canonicalArn"
+                | None -> user_canonical, "userInfo.canonicalArn"
+              in
+              (* The field the identity is *taken from*: canonicalArn is the one the
+                 comparison depends on, so it is named rather than left implicit. *)
+              (source
+               := match canonical_arn, arn, username with
+                  | Some _, _, _ -> canonical_source
+                  | None, Some _, _ -> arn_source
+                  | None, None, Some _ -> "username"
+                  | None, None, None -> "none");
+              let identity = { arn; canonical_arn; username; source = !source } in
+              match arn, canonical_arn, username with
+              | None, None, None ->
+                Error
+                  "the whoami response carried no arn and no username (is \
+                   SelfSubjectReview supported by this cluster and kubectl?)"
+              | _ -> Ok identity)))))
+;;
+
+(* The role name inside an ARN, whichever form it takes. An assumed-role ARN is
+   .../assumed-role/<role>/<session>, so the role is the second-to-last segment and a
+   naive last-segment split would compare session names -- and two probes of the same
+   principal have different session names, which would read as a principal mismatch. *)
+let index_of_substring ~needle haystack =
+  let n = String.length needle
+  and h = String.length haystack in
+  let rec scan i =
+    if i + n > h
+    then None
+    else if String.sub haystack i n = needle
+    then Some i
+    else scan (i + 1)
+  in
+  scan 0
+;;
+
+let role_name_of_arn arn =
+  let after needle =
+    match index_of_substring ~needle arn with
+    | None -> None
+    | Some i ->
+      let from = i + String.length needle in
+      Some (String.sub arn from (String.length arn - from))
+  in
+  (* The real form is ...:assumed-role/<role>/<session> -- colon before, not slash -- and
+     missing that made the role name come out as the session, which would have read as a
+     principal mismatch between two probes of the same principal. Matched without the
+     leading separator so both spellings work. *)
+  match after "assumed-role/" with
+  | Some rest ->
+    (match String.index_opt rest '/' with
+     | Some i -> String.sub rest 0 i
+     | None -> rest)
+  | None ->
+    (match after ":role/" with
+     | Some name -> name
+     | None ->
+       (match String.rindex_opt arn '/' with
+        | Some i when i + 1 < String.length arn ->
+          String.sub arn (i + 1) (String.length arn - i - 1)
+        | _ -> arn))
+;;
+
+(* The principal's stable role name: canonicalArn first, then arn, then the username. *)
+let principal_role_name (i : whoami_identity) =
+  match i.canonical_arn, i.arn, i.username with
+  | Some a, _, _ -> Some (role_name_of_arn a)
+  | None, Some a, _ -> Some (role_name_of_arn a)
+  | None, None, Some u -> Some u
+  | None, None, None -> None
+;;
+
+(* The form canonicalArn reports: role/<name>, with any role path dropped.
+
+   Normalising the *expected* side matters because the gate requires canonicalArn, which is
+   path-free: a provisioner role configured with a path (SSO roles are the common case) would
+   otherwise produce a false mismatch in the first minute on a perfectly healthy cluster. *)
+let normalize_role_arn arn =
+  match index_of_substring ~needle:":role/" arn with
+  | None -> arn
+  | Some i ->
+    let prefix = String.sub arn 0 (i + 6) in
+    let name = String.sub arn (i + 6) (String.length arn - i - 6) in
+    prefix
+    ^
+      (match String.rindex_opt name '/' with
+      | Some j when j + 1 < String.length name ->
+        String.sub name (j + 1) (String.length name - j - 1)
+      | _ -> name)
+;;
+
+(* Whether the response names exactly the expected principal.
+
+   The comparison is the **full** canonical ARN, account and path included. Comparing an
+   extracted role name was a fail-*open* -- the same role name in another account, or
+   reached through a different role path, would look like the same principal, and a
+   different principal being denied afterwards would then read as Deescalated. The strict
+   form's worst case is a false mismatch, which lands in Undetermined and does not
+   announce Ready. INFRA-061 records the precise comparison (account plus normalised role)
+   as the follow-up that makes it exact without the false mismatches. *)
+let principal_matches ~expected (identity : whoami_identity) =
+  match identity.canonical_arn with
+  | Some arn -> Some (String.equal arn expected)
+  | None ->
+    (* A bare arn carries a session name, so it cannot equal a role ARN: report the
+       mismatch rather than guess. *)
+    (match identity.arn with
+     | Some arn -> Some (String.equal arn expected)
+     | None -> None)
+;;
+
+(* A refusal by the cluster is evidence of de-escalation only if the credential itself is
+   still good.
+
+   "You must be logged in" is also what a valid credential gets when something upstream of
+   the cluster is wrong -- a broken trust policy on the role, clock skew, a wrong assumed
+   role -- and `Sol_cli_cloud_lifecycle.Principal_refused_by_cluster` maps straight to Deescalated. That would read a
+   broken credential as a verified transition, which is a fail-*open* into the one verdict
+   that has to mean something. So the caller also confirms the role can still be assumed, and
+   only a refusal with a working identity counts. If the identity check fails, the probe
+   obtained no usable evidence and says so. *)
+type credential_assumption =
+  | Credential_assumable
+  (** The role was assumed successfully, so the refusal is about the capability. *)
+  | Credential_refused
+  (** The role itself could not be assumed: a broken credential, not a revoked one. *)
+  | Credential_unchecked
+  (** The assumption attempt could not be made at all: no usable evidence either way. *)
+
+let refusal_is_deescalation assumption detail =
+  match assumption with
+  | Credential_assumable -> Sol_cli_cloud_lifecycle.Principal_refused_by_cluster detail
+  | Credential_refused ->
+    Sol_cli_cloud_lifecycle.Principal_probe_failed
+      (Printf.sprintf
+         "the cluster refused the probe (%s) and the provisioning role could not be \
+          assumed, so a broken credential cannot be told apart from a revoked one"
+         detail)
+  | Credential_unchecked ->
+    Sol_cli_cloud_lifecycle.Principal_probe_failed
+      (Printf.sprintf
+         "the cluster refused the probe (%s) and the identity check could not be \
+          performed, so the refusal is not evidence"
+         detail)
+;;
+
 (* Compares the **full** canonical ARN, account and path included.
 
    Comparing an extracted role name was a fail-*open*: the same role name in another
@@ -184,16 +418,14 @@ let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
       (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ])
   with
   | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    (match Sol_cli_cloud_lifecycle.whoami_identity_of_json r.Sol_cli_process.stdout with
+    (match whoami_identity_of_json r.Sol_cli_process.stdout with
      | Ok identity ->
        let shown =
-         match identity.Sol_cli_cloud_lifecycle.canonical_arn, identity.arn with
+         match identity.canonical_arn, identity.arn with
          | Some a, _ | None, Some a -> a
          | None, None -> "(unnamed)"
        in
-       (match
-          Sol_cli_cloud_lifecycle.principal_matches ~expected:expected_arn identity
-        with
+       (match principal_matches ~expected:expected_arn identity with
         | Some true -> Sol_cli_cloud_lifecycle.Principal_confirmed shown
         | Some false -> Sol_cli_cloud_lifecycle.Principal_unexpected shown
         | None ->
@@ -228,12 +460,11 @@ let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
                ; "sol-deescalation-check"
                ])
         with
-        | Ok r when r.Sol_cli_process.exit_code = 0 ->
-          Sol_cli_cloud_lifecycle.Credential_assumable
-        | Ok _ -> Sol_cli_cloud_lifecycle.Credential_refused
-        | Error _ -> Sol_cli_cloud_lifecycle.Credential_unchecked
+        | Ok r when r.Sol_cli_process.exit_code = 0 -> Credential_assumable
+        | Ok _ -> Credential_refused
+        | Error _ -> Credential_unchecked
       in
-      Sol_cli_cloud_lifecycle.refusal_is_deescalation assumption detail)
+      refusal_is_deescalation assumption detail)
     else Sol_cli_cloud_lifecycle.Principal_probe_failed detail
   | Error e ->
     Sol_cli_cloud_lifecycle.Principal_probe_failed (Sol_cli_process.error_to_string e)
@@ -248,7 +479,7 @@ let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
     provisioner_kubeconfig ~role_arn:provisioner_role_arn ~region outputs (fun env ->
       let principal =
         deescalation_principal_check
-          ~expected_arn:(Sol_cli_cloud_lifecycle.normalize_role_arn provisioner_role_arn)
+          ~expected_arn:(normalize_role_arn provisioner_role_arn)
           ~provisioner_role_arn
           env
       in
@@ -346,7 +577,7 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
      kubeconfig is built from the config, but the ARN compared against it comes from the
      cluster, so a leftover credential of another identity answers with that other ARN and
      is caught. *)
-  let expected = Sol_cli_cloud_lifecycle.normalize_role_arn provisioner_role_arn in
+  let expected = normalize_role_arn provisioner_role_arn in
   let run_id = Printf.sprintf "%d" (int_of_float (Unix.gettimeofday ())) in
   let rec attempt remaining =
     let outcome =
@@ -361,7 +592,7 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
          shape mismatch is the one whose capture matters most, and writing afterwards would
          leave nothing behind for exactly that case. *)
       persist_whoami_capture ~run_id json;
-      let identity_result = Sol_cli_cloud_lifecycle.whoami_identity_of_json json in
+      let identity_result = whoami_identity_of_json json in
       (match identity_result with
        | Error why ->
          fail
@@ -372,11 +603,11 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
               why
               json)
        | Ok identity ->
-         let source = identity.Sol_cli_cloud_lifecycle.source in
+         let source = identity.source in
          Printf.printf "  whoami shape: parsed (identity source: %s)\n%!" source;
-         let matched = Sol_cli_cloud_lifecycle.principal_matches ~expected identity in
+         let matched = principal_matches ~expected identity in
          let named =
-           match identity.Sol_cli_cloud_lifecycle.canonical_arn, identity.arn with
+           match identity.canonical_arn, identity.arn with
            | Some a, _ -> a
            | None, Some a -> a
            | None, None -> "(unnamed)"
@@ -682,16 +913,16 @@ let cluster ~region ~provisioner_role_arn outputs : Sol_cli_cluster.t =
    HARDEN-005), report the principal they belong to, and fail closed. *)
 let credentials ~operation ~leaves_target_standing : (unit, string) result =
   let profile = Sys.getenv_opt "AWS_PROFILE" in
-  match Sol_cli_credentials.resolve ~run:Sol_cli_cluster.process_output ~profile with
+  match Sol_cli_aws_credentials.resolve ~run:Sol_cli_cluster.process_output ~profile with
   | Error detail ->
     Error
-      (Sol_cli_credentials.unresolved_message
+      (Sol_cli_aws_credentials.unresolved_message
          ~operation
          ~profile
          ~leaves_target_standing
          ~detail)
   | Ok credentials ->
-    Sol_cli_credentials.install credentials;
+    Sol_cli_aws_credentials.install credentials;
     Printf.printf "  credentials: %s\n%!" credentials.principal;
     Ok ()
 ;;

@@ -1,4 +1,10 @@
-(* Provider credentials for a lifecycle operation (INFRA-039).
+(* AWS credentials for a lifecycle operation (INFRA-039, named by AUDIT-POST-007).
+
+   This is the AWS mechanism and nothing here is generic -- `aws configure
+   export-credentials`, the `AWS_*` variables it installs, and an
+   `aws sts get-caller-identity` principal. GCP impersonates a service account and
+   lives in Sol_cli_gcp_cluster; the generic selection point is
+   Sol_cli_provider_registry.credentials.
 
    Sol inherits the ambient environment, which is right for a short command and
    wrong for an operation that runs for hours. HARDEN-002 Run 5 Attempt 5 lost its

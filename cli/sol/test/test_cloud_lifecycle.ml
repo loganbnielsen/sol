@@ -1399,8 +1399,8 @@ let test_whoami_identity_shapes () =
       session
   in
   let role_of body =
-    match Sol_cli_cloud_lifecycle.whoami_identity_of_json body with
-    | Ok i -> Sol_cli_cloud_lifecycle.principal_role_name i
+    match Sol_cli_aws_cluster.whoami_identity_of_json body with
+    | Ok i -> Sol_cli_aws_cluster.principal_role_name i
     | Error e -> Alcotest.fail e
   in
   (* the EKS shape: arrays under extra, canonicalArn present *)
@@ -1442,37 +1442,33 @@ let test_whoami_identity_shapes () =
     (role_of pretty);
   (* username as the last resort, and no principal at all is Error -- never a default *)
   (match
-     Sol_cli_cloud_lifecycle.whoami_identity_of_json
+     Sol_cli_aws_cluster.whoami_identity_of_json
        {|{"status":{"userInfo":{"username":"system:node:ip-10-0-1-1"}}}|}
    with
    | Ok i ->
      Alcotest.(check (option string))
        "username is the last resort"
        (Some "system:node:ip-10-0-1-1")
-       (Sol_cli_cloud_lifecycle.principal_role_name i)
+       (Sol_cli_aws_cluster.principal_role_name i)
    | Error e -> Alcotest.fail e);
-  (match
-     Sol_cli_cloud_lifecycle.whoami_identity_of_json {|{"status":{"userInfo":{}}}|}
-   with
+  (match Sol_cli_aws_cluster.whoami_identity_of_json {|{"status":{"userInfo":{}}}|} with
    | Error _ -> ()
    | Ok i ->
      Alcotest.fail
        ("a response naming no principal produced "
-        ^ Option.value (Sol_cli_cloud_lifecycle.principal_role_name i) ~default:"?"));
-  (match
-     Sol_cli_cloud_lifecycle.whoami_identity_of_json "error: You must be logged in"
-   with
+        ^ Option.value (Sol_cli_aws_cluster.principal_role_name i) ~default:"?"));
+  (match Sol_cli_aws_cluster.whoami_identity_of_json "error: You must be logged in" with
    | Error _ -> ()
    | Ok _ -> Alcotest.fail "a non-JSON response was accepted");
   (* the role name extraction itself, both ARN forms *)
   Alcotest.(check string)
     "assumed-role ARN"
     "sol-provisioner"
-    (Sol_cli_cloud_lifecycle.role_name_of_arn sts);
+    (Sol_cli_aws_cluster.role_name_of_arn sts);
   Alcotest.(check string)
     "role ARN"
     "sol-provisioner"
-    (Sol_cli_cloud_lifecycle.role_name_of_arn canonical)
+    (Sol_cli_aws_cluster.role_name_of_arn canonical)
 ;;
 
 (* DEC-040: the principal comparison must fail *closed*, and a parse failure must land in
@@ -1484,18 +1480,16 @@ let test_whoami_identity_shapes () =
 let test_principal_comparison_fails_closed () =
   let expected = "arn:aws:iam::111122223333:role/sol-provisioner" in
   let identity ?canonical ?arn ?username () =
-    Sol_cli_cloud_lifecycle.{ canonical_arn = canonical; arn; username; source = "test" }
+    Sol_cli_aws_cluster.{ canonical_arn = canonical; arn; username; source = "test" }
   in
   Alcotest.(check (option bool))
     "exact match"
     (Some true)
-    (Sol_cli_cloud_lifecycle.principal_matches
-       ~expected
-       (identity ~canonical:expected ()));
+    (Sol_cli_aws_cluster.principal_matches ~expected (identity ~canonical:expected ()));
   Alcotest.(check (option bool))
     "same role name in another account"
     (Some false)
-    (Sol_cli_cloud_lifecycle.principal_matches
+    (Sol_cli_aws_cluster.principal_matches
        ~expected
        (identity
           ~canonical:("arn:aws:iam::" ^ String.make 12 '9' ^ ":role/sol-provisioner")
@@ -1503,13 +1497,13 @@ let test_principal_comparison_fails_closed () =
   Alcotest.(check (option bool))
     "same role behind a different path"
     (Some false)
-    (Sol_cli_cloud_lifecycle.principal_matches
+    (Sol_cli_aws_cluster.principal_matches
        ~expected
        (identity ~canonical:"arn:aws:iam::111122223333:role/team/sol-provisioner" ()));
   Alcotest.(check (option bool))
     "a session-carrying arn is not a role arn"
     (Some false)
-    (Sol_cli_cloud_lifecycle.principal_matches
+    (Sol_cli_aws_cluster.principal_matches
        ~expected
        (identity
           ~arn:"arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth"
@@ -1517,9 +1511,7 @@ let test_principal_comparison_fails_closed () =
   Alcotest.(check (option bool))
     "no arn at all is None, not a default"
     None
-    (Sol_cli_cloud_lifecycle.principal_matches
-       ~expected
-       (identity ~username:"somebody" ()))
+    (Sol_cli_aws_cluster.principal_matches ~expected (identity ~username:"somebody" ()))
 ;;
 
 (* A parse failure must be Undetermined on *both* sides of the transition. If it fell
@@ -1530,9 +1522,7 @@ let test_parse_failure_is_undetermined () =
   let refused = [ denied (capability "create" "clusterroles") ] in
   let confirmed = Sol_cli_cloud_lifecycle.Principal_confirmed "arn:aws:iam::1:role/p" in
   let parse_failure =
-    match
-      Sol_cli_cloud_lifecycle.whoami_identity_of_json "error: You must be logged in"
-    with
+    match Sol_cli_aws_cluster.whoami_identity_of_json "error: You must be logged in" with
     | Error why -> Sol_cli_cloud_lifecycle.Principal_probe_failed why
     | Ok _ -> Alcotest.fail "a non-JSON response was accepted by the parser"
   in
@@ -1572,16 +1562,14 @@ let test_ambiguous_array_does_not_proceed () =
   let two_entries =
     {|{"status":{"userInfo":{"extra":{"canonicalArn":["arn:aws:iam::111122223333:role/sol-provisioner","arn:aws:iam::111122223333:role/sol-cluster-access"]}}}}|}
   in
-  match Sol_cli_cloud_lifecycle.whoami_identity_of_json two_entries with
+  match Sol_cli_aws_cluster.whoami_identity_of_json two_entries with
   | Error _ -> () (* refused: the ambiguity cannot produce a verdict *)
   | Ok identity ->
     Alcotest.fail
       (Printf.sprintf
          "a two-entry canonicalArn was accepted and produced %s; taking one element is a \
           default in disguise, and the array is ambiguous about which principal this is"
-         (Option.value
-            (Sol_cli_cloud_lifecycle.principal_role_name identity)
-            ~default:"?"))
+         (Option.value (Sol_cli_aws_cluster.principal_role_name identity) ~default:"?"))
 ;;
 
 (* DEC-040: the identity must report *which field* it came from. The gate requires
@@ -1589,8 +1577,8 @@ let test_ambiguous_array_does_not_proceed () =
    via the arn or username fallbacks would validate a path the comparison does not use. *)
 let test_identity_reports_its_source () =
   let source_of body =
-    match Sol_cli_cloud_lifecycle.whoami_identity_of_json body with
-    | Ok i -> i.Sol_cli_cloud_lifecycle.source
+    match Sol_cli_aws_cluster.whoami_identity_of_json body with
+    | Ok i -> i.Sol_cli_aws_cluster.source
     | Error e -> Alcotest.fail e
   in
   Alcotest.(check string)
@@ -1621,22 +1609,22 @@ let test_refusal_needs_a_good_identity () =
     Sol_cli_cloud_lifecycle.deescalation_transition
       ~before:granted
       ~after_principal:
-        (Sol_cli_cloud_lifecycle.refusal_is_deescalation assumption "Unauthorized")
+        (Sol_cli_aws_cluster.refusal_is_deescalation assumption "Unauthorized")
       ~after:refused
   in
   (* the credential is good: the refusal is the removal *)
-  (match verdict_of Sol_cli_cloud_lifecycle.Credential_assumable with
+  (match verdict_of Sol_cli_aws_cluster.Credential_assumable with
    | Sol_cli_cloud_lifecycle.Deescalated -> ()
    | _ -> Alcotest.fail "a refusal with a working identity was not read as de-escalated");
   (* the credential is broken: a revocation cannot be told from a bad trust policy *)
-  (match verdict_of Sol_cli_cloud_lifecycle.Credential_refused with
+  (match verdict_of Sol_cli_aws_cluster.Credential_refused with
    | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
    | Sol_cli_cloud_lifecycle.Deescalated ->
      Alcotest.fail "a refusal with an unassumable role was read as de-escalated"
    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
      Alcotest.fail "a refusal with an unassumable role was read as still elevated");
   (* the identity check could not be performed at all *)
-  match verdict_of Sol_cli_cloud_lifecycle.Credential_unchecked with
+  match verdict_of Sol_cli_aws_cluster.Credential_unchecked with
   | Sol_cli_cloud_lifecycle.Undetermined _ -> ()
   | Sol_cli_cloud_lifecycle.Deescalated ->
     Alcotest.fail "a refusal with no identity check was read as de-escalated"
