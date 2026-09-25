@@ -777,11 +777,11 @@ let test_cloud_target () =
 let test_platform_root_selection () =
   Alcotest.(check string)
     "AWS keeps the shared definition as its own root"
-    "cli/platform/infra/base"
+    "platform/infra/base"
     (L.platform_root Sol_cli_provider.Aws);
   Alcotest.(check string)
     "GCP has a root that declares the GCS backend"
-    "cli/platform/infra/base-gcp"
+    "platform/infra/base-gcp"
     (L.platform_root Sol_cli_provider.Gcp);
   Alcotest.(check string)
     "an AWS address is bare"

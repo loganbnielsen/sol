@@ -41,3 +41,23 @@ Line numbers are as of `origin/main` `50449a1a`; re-run `rg -n 'cli/(platform|so
 - Demo/example: not applicable (repository layout; no change to what an app author writes) — state it.
 - Language parity (DEC-022): no application-facing impact — state it.
 - Update `docs/planning/WORK_SUMMARY.md`.
+
+## Progress
+
+**Part A (`cli/platform` → `platform/`), 2026-09-25.**
+- `git mv cli/platform platform`. Every live reference was rewritten: 115 files, excluding `internal/pipeline/` and dated qualification/audit/dogfood records, which stay as written.
+- **Depth fixes a text replacement can't make:**
+  - five scripts that reach the repo root with `$SCRIPT_DIR/../../../..`, now `../../..` (`run_tests.sh`, `perf.sh`, `install-hooks.sh`, `prepare-framework-deps.sh`, `prove-workspace-independence.sh`);
+  - `cli/sol/test/dune`'s `(source_tree ../../platform/…)`, now `../../../platform/…`;
+  - `test_sensitive_vars.ml`'s `"../../platform/infra"`.
+
+  Relative paths *inside* `platform/` (`../base`, `../../components`, `../config`) point at siblings and didn't change.
+- **New guard:** `internal/ci/check_workflow_paths.sh`, with the mutation test `test_workflow_paths.sh`, wired unconditionally into `ci.yml`. Literal entries must exist. A glob's directory prefix must exist and it must match a tracked file (`git ls-files -- ':(glob)…'`). `!` entries are exempt. Positive control: pointing `workspace-independence.yml:26` back at `cli/platform/…` fails it with the file and line.
+- **Verified:**
+  - `dune build` and `dune test cli/sol/test/` pass (0 `[FAIL]`);
+  - every `internal/ci/test_*.sh` passes;
+  - the platform-reading guards pass (`check_platform_component_drift`, `check_destroy_completeness`, `check_provider_dispatch`, `check_gcloud_interface`, `check_operator_diagnostics`, `check_gcp_provisioner_role`, `check_cluster_access_identity`, …);
+  - `platform/local/scripts/lib/port-preflight_test.sh` and `internal/qualification/gcp/test-{live-qual,verify-matrix}.sh` pass.
+- **Remaining references, all intentional:** dated records; the mutation test's dead fixture paths; and the `note` string in `internal/tooling/perf/perf_baseline.json`, which is main-only by policy (REFAC-078) and so is left for a baseline update on `main`.
+
+Part B (`cli/sol` → `cli/`) follows as its own PR.

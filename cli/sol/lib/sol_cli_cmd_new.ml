@@ -67,7 +67,7 @@ let infer_sol_home () =
    package at all (any `public_name` requires a package at the project root).
    The workspace now declares its framework dependency in its own .opam file
    instead, and the switch provides it. See
-   cli/platform/local/scripts/prepare-framework-deps.sh. *)
+   platform/local/scripts/prepare-framework-deps.sh. *)
 
 (* ── Command implementations ─────────────────────────────────────────────── *)
 
@@ -183,7 +183,7 @@ Done. 30 files generated.
   %s.opam and resolves them from your opam switch. Nothing is vendored here.
   In development, install the framework from your Sol checkout with:
 
-    bash cli/platform/local/scripts/prepare-framework-deps.sh
+    bash platform/local/scripts/prepare-framework-deps.sh
 
   (released users instead declare a version in %s.opam and let opam resolve it).
 

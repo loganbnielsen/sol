@@ -10,7 +10,7 @@
 set -euo pipefail
 
 root="$1"
-aws="$root/cli/platform/infra/aws/main.tf"
+aws="$root/platform/infra/aws/main.tf"
 
 if [ ! -f "$aws" ]; then
   echo "FAIL: $aws is missing" >&2
@@ -57,7 +57,7 @@ esac
 # These assert the wires themselves, not merely that the names still appear
 # somewhere: a check that only greps for `rds_skip_final_snapshot` passes happily
 # while its default flips to true and production destruction goes silent.
-vars_tf="$root/cli/platform/infra/aws/variables.tf"
+vars_tf="$root/platform/infra/aws/variables.tf"
 
 # [file] defaults to the AWS root's variables, which is where the first callers
 # live; the platform root's own defaults are checked through the same helper so
@@ -87,8 +87,8 @@ fi
 # SQL's live API setting. The former alone only stops this Terraform state from
 # deleting the instance; it does not establish the Ready-state provider
 # invariant or protect against other clients.
-gcp="$root/cli/platform/infra/gcp/main.tf"
-gcp_vars="$root/cli/platform/infra/gcp/variables.tf"
+gcp="$root/platform/infra/gcp/main.tf"
+gcp_vars="$root/platform/infra/gcp/variables.tf"
 gcp_sql_block="$(awk '/^resource "google_sql_database_instance" "postgres"/,/^}/' "$gcp")"
 
 if [ -z "$gcp_sql_block" ]; then
@@ -136,7 +136,7 @@ fi
 # `internal/ci/check_destroy_completeness.sh` (ADR 0004), which states the rule
 # rather than the two resources that happened to violate it. This one stays here
 # because it is about the output contract, not about destruction.
-gcp_outputs="$root/cli/platform/infra/gcp/outputs.tf"
+gcp_outputs="$root/platform/infra/gcp/outputs.tf"
 
 if [ ! -f "$gcp_outputs" ]; then
   echo "FAIL: $gcp_outputs is missing" >&2
@@ -186,7 +186,7 @@ esac
 # Encryption-by-default is an account setting Sol does not own; stating it in the
 # class is what makes it true anywhere. Comment-stripped for the reason above.
 sc_code="$(awk '/^resource "kubernetes_storage_class_v1" "platform_default"/,/^}/' \
-  "$root/cli/platform/infra/base/main.tf" | sed 's/#.*//')"
+  "$root/platform/infra/base/main.tf" | sed 's/#.*//')"
 
 if [ -z "$sc_code" ]; then
   echo "FAIL: kubernetes_storage_class_v1.platform_default not found" >&2
@@ -224,7 +224,7 @@ esac
 # that both name the same class and the same CSI driver -- a rename in one place
 # without the other would make `Ready` assert a class the platform never
 # created, or create one readiness never looks for.
-base_vars="$root/cli/platform/infra/base/variables.tf"
+base_vars="$root/platform/infra/base/variables.tf"
 capabilities_ml="$root/cli/sol/lib/sol_cli_provider_capabilities.ml"
 created_class="$(variable_default storage_class_name "$base_vars" | tr -d '"')"
 created_driver="$(printf '%s\n' "$sc_code" | sed -n 's/.*storage_provisioner *= *"\([^"]*\)".*/\1/p')"
@@ -252,7 +252,7 @@ fi
 # referencing it here would leak deploy into every platform namespace's own
 # Secrets/Deployments, silently reintroducing exactly what this ticket exists
 # to prevent.
-deploy_rbac="$root/cli/platform/infra/base/platform_deploy_rbac.tf"
+deploy_rbac="$root/platform/infra/base/platform_deploy_rbac.tf"
 
 if [ ! -f "$deploy_rbac" ]; then
   echo "FAIL: $deploy_rbac is missing" >&2
@@ -351,7 +351,7 @@ fi
 # (metadata[0]), which would end a naive range on the first entry.
 bind_allowlist=$(
   awk '/resource_names *= *\[/{f=1} f{print} f && /^[[:space:]]*\][[:space:]]*$/{f=0}' \
-    "$root/cli/platform/infra/base/platform_deploy_rbac.tf"
+    "$root/platform/infra/base/platform_deploy_rbac.tf"
 )
 
 if ! printf '%s' "$bind_allowlist" | grep -q 'kubernetes_cluster_role.sol_deploy.metadata'; then
@@ -372,7 +372,7 @@ if printf '%s' "$bind_allowlist" | grep -q '"\*"'; then
   exit 1
 fi
 
-if grep -q '"escalate"' "$root/cli/platform/infra/base/platform_deploy_rbac.tf"; then
+if grep -q '"escalate"' "$root/platform/infra/base/platform_deploy_rbac.tf"; then
   echo "FAIL: the deploy bootstrap grants escalate -- it could then grant any" >&2
   echo "      permission, which dissolves the identity boundary." >&2
   exit 1
@@ -381,7 +381,7 @@ fi
 # INFRA-025: no access entry — and therefore no deploy group membership at
 # all — when deploy_role_arn is unset, mirroring provisioner_role_arn's own
 # empty-string guard.
-aws_main="$root/cli/platform/infra/aws/main.tf"
+aws_main="$root/platform/infra/aws/main.tf"
 
 if ! grep -q 'var.deploy_role_arn == "" ? {} : {' "$aws_main"; then
   echo "FAIL: the AWS root's access_entries no longer guards deploy_role_arn" >&2
@@ -392,7 +392,7 @@ fi
 # HARDEN-002 finding 6: the provisioner must never be able to publish an
 # image, and the publisher identity must never be able to provision or
 # replace repositories -- both as explicit denies, not merely omitted grants.
-bootstrap_tf="$root/cli/platform/infra/bootstrap/main.tf"
+bootstrap_tf="$root/platform/infra/bootstrap/main.tf"
 
 provisioner_policy="$(awk '/^data "aws_iam_policy_document" "provisioner"/,/^}/' "$bootstrap_tf")"
 
@@ -435,7 +435,7 @@ case "$publisher_policy" in
     ;;
 esac
 
-if ! grep -q 'output "publisher_policy_json"' "$root/cli/platform/infra/bootstrap/outputs.tf"; then
+if ! grep -q 'output "publisher_policy_json"' "$root/platform/infra/bootstrap/outputs.tf"; then
   echo "FAIL: bootstrap root no longer outputs publisher_policy_json" >&2
   exit 1
 fi
@@ -449,7 +449,7 @@ fi
 # escalate/bind verb. Guard the invariant structurally, so a future change
 # cannot "fix" a failing apply by widening the provisioner's steady-state RBAC.
 # Comments are stripped first: the file explains this decision in prose.
-provisioner_rbac="$root/cli/platform/infra/base/platform_provisioner_rbac.tf"
+provisioner_rbac="$root/platform/infra/base/platform_provisioner_rbac.tf"
 
 if [ ! -f "$provisioner_rbac" ]; then
   echo "FAIL: $provisioner_rbac is missing" >&2
@@ -465,8 +465,8 @@ fi
 
 # A Terraform root's backend *type* is part of its own configuration --
 # `-backend-config` sets attributes, never the type -- so the platform definition
-# `cli/platform/infra/base` cannot carry both the S3 backend AWS needs and the GCS
-# backend GCP needs. `cli/platform/infra/base-gcp` is a root that supplies the GCS
+# `platform/infra/base` cannot carry both the S3 backend AWS needs and the GCS
+# backend GCP needs. `platform/infra/base-gcp` is a root that supplies the GCS
 # backend and calls the shared definition as a module, which is why `sol cloud`
 # selects a platform root per provider.
 #
@@ -476,20 +476,20 @@ fi
 # variables may be missing, and they may only be missing because a provider that
 # has no IAM roles or S3 buckets cannot use them -- so the exclusion list itself
 # is asserted, not just the count.
-wrapper_vars="$root/cli/platform/infra/base-gcp/variables.tf"
+wrapper_vars="$root/platform/infra/base-gcp/variables.tf"
 
 if [ ! -f "$wrapper_vars" ]; then
   echo "FAIL: $wrapper_vars is missing; the GCP platform root has no variables" >&2
   exit 1
 fi
 
-if ! grep -q 'backend "gcs" {}' "$root/cli/platform/infra/base-gcp/main.tf"; then
+if ! grep -q 'backend "gcs" {}' "$root/platform/infra/base-gcp/main.tf"; then
   echo "FAIL: the GCP platform root no longer declares the GCS backend, so the type" >&2
   echo "      Sol initializes it with would be the definition's S3 one." >&2
   exit 1
 fi
 
-if grep -q 'backend "s3" {}' "$root/cli/platform/infra/gcp/main.tf"; then
+if grep -q 'backend "s3" {}' "$root/platform/infra/gcp/main.tf"; then
   echo "FAIL: the GCP cloud root declares the S3 backend" >&2
   exit 1
 fi
@@ -499,7 +499,7 @@ declared_vars() {
 }
 
 # The definition's variables, in every file that declares one.
-definition_vars="$(declared_vars "$root"/cli/platform/infra/base/*.tf)"
+definition_vars="$(declared_vars "$root"/platform/infra/base/*.tf)"
 mirrored_vars="$(declared_vars "$wrapper_vars")"
 
 # The only variables a GCP root may omit: AWS IAM roles and S3 buckets.
@@ -511,7 +511,7 @@ unexpected="$(comm -13 <(printf '%s\n' "$aws_only" | tr ' ' '\n' | sort) <(print
 if [ -n "$unexpected" ]; then
   echo "FAIL: the GCP platform root does not mirror these declared variables:" >&2
   printf '      %s\n' $unexpected >&2
-  echo "      Add them to cli/platform/infra/base-gcp, or add them to the AWS-only" >&2
+  echo "      Add them to platform/infra/base-gcp, or add them to the AWS-only" >&2
   echo "      exclusion list here with the reason they cannot apply to GCP." >&2
   exit 1
 fi
@@ -526,7 +526,7 @@ if [ -n "$extra" ]; then
 fi
 
 if command -v terraform >/dev/null 2>&1; then
-  terraform fmt -check -recursive "$root/cli/platform/infra" >/dev/null
+  terraform fmt -check -recursive "$root/platform/infra" >/dev/null
   echo "production infra: precondition present, terraform fmt ok"
 else
   echo "production infra: precondition present (terraform not installed, skipped fmt)"

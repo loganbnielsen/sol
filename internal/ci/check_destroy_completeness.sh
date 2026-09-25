@@ -38,8 +38,8 @@ fi
 target_roots=()
 for provider in $providers; do
   # A provider with no root yet has nothing of its own to deploy, so nothing to check.
-  if [ -d "$root/cli/platform/infra/$provider" ]; then
-    target_roots+=("cli/platform/infra/$provider")
+  if [ -d "$root/platform/infra/$provider" ]; then
+    target_roots+=("platform/infra/$provider")
   fi
 done
 

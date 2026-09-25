@@ -162,7 +162,7 @@ let deploy_event_stream_labels =
    one, distinguished by the event="deploy" logfmt field already required
    regardless (OBS-038's dashboard always filters on it). workspace/domain/
    primitive/release are promoted to real stream labels the same way Alloy
-   promotes them for application pod logs (cli/platform/infra/base/alloy/
+   promotes them for application pod logs (platform/infra/base/alloy/
    logs.alloy.tftpl's observability_taxonomy_labels) -- deliberately
    excluding env, matching that same set. *)
 (* obs-loki-eio 0.2 exports asynchronously (OBS-048), so the event is flushed
