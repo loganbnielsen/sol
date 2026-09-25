@@ -6,7 +6,22 @@ title: Qualify and operate the first maturity-A production pilot
 source: production platform contract review 2026-09-16
 ---
 
-**Depends on:** HARDEN-002.
+**Depends on:** HARDEN-007.
+
+**Related:** HARDEN-002 (closed epic; its goal is now tracked in the qualification ledger).
+
+## Blocked On
+
+Demoted from `READY_FOR_ENGINEERING` on 2026-09-24. This ticket's entry gate was "HARDEN-002
+passes on a clean target", and HARDEN-002 was closed as a ticket (a standing goal, converted to
+the qualification ledger) — so its `DONE` state no longer means the profile is qualified, and it
+must not make this pilot look actionable. Promote only when all of these hold:
+
+- the AWS `production-single-region` matrix is qualified end to end on a clean target, as recorded
+  in `internal/pipeline/audits/QUALIFICATION_STATUS.md` (it is not today: §B deploy, §D
+  availability, §G alerting and parts of §E/§F are unrun or blocked);
+- DEC-026 and DEC-027 are decided and reflected in the shipped profile;
+- a named owning team and a real non-critical workload have accepted the terms below.
 
 ## Goal
 

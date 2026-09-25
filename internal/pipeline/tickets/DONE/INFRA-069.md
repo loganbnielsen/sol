@@ -28,3 +28,18 @@ Capture a typed state inventory at the start of destroy; verify absence of those
 - A test with a wrong region/project in vars fails verification loudly rather than reporting absent.
 - Verification inputs come from the pre-destroy inventory (test with a fixture).
 - Demo/example: not applicable — state in completion notes.
+
+## Completion notes (2026-09-24, recorded retroactively)
+
+Implemented by HARDEN-004 part 5 (#487): verification is driven by the pre-destroy state inventory,
+and a not-found whose subject names a different project is UNKNOWN, not absence
+(`cli/sol/test/test_destroy_verification.ml`, "a not-found naming another project"). The PR was named
+after the HARDEN-004 epic, so the Ticket-move guard never moved this ticket; it is moved here as
+bookkeeping. FND-0045 already records the remedy as `FIXED_UNQUALIFIED`.
+
+- Demo/example: not applicable (cloud lifecycle internals).
+- Note: REFAC-094 (`internal/pipeline/audits/2026-09-24_cloud_lifecycle_simplification_plan.md` § S5b)
+  is expected to delete most of this per-kind verification once DEC-045 confirms Terraform's
+  destruction authority. This note records what was built, not that it should stay.
+- Its declared dependency REFAC-091 is only half done: the destroy half this ticket needed landed
+  in #462 and #487; the install half remains open as REFAC-091 (plan § S7).

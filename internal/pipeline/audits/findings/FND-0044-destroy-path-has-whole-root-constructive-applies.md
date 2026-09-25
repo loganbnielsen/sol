@@ -3,7 +3,7 @@
 - **Classification:** `VERIFIED_DEFECT`, against FND-0030's recorded design ("zero create
   operations during recovery"; "the targeted apply is the only constructive step in the
   destroy path")
-- **State:** `OPEN`
+- **State:** `FIXED_UNQUALIFIED` (2026-09-24 — fixed by HARDEN-004 parts 2–3, #462/#463; see the transition at the end of this file)
 - **First identified:** 2026-09-23, by a second reviewer (another agent) at `main @ f2e1773`;
   re-verified in this audit at `origin/main @ f3e9480b` (#452 merged, unchanged)
 - **Derived ticket:** `INFRA-068`
@@ -63,3 +63,20 @@ not from install-time outputs.
 ## Related
 
 FND-0030, INFRA-067, ADR 0003 invariant 6, DEC-040; FND-0045 (single state inventory).
+
+## Transition (2026-09-24) — fixed offline; the replay was ruled out, not run
+
+- **Point 1 (whole-root constructive applies)** — fixed by HARDEN-004 part 3 (#463): every
+  destroy-path apply is planned to a saved plan and refused before it runs when a change is
+  outside its phase allowlist; reconciliation is scoped to the bootstrap mechanism plus the guarded
+  addresses state represents. Pinned by `test_terraform_plan.ml`
+  (`test_whole_root_missing_cluster_create_is_refused`, "Attempt-6 inventory prunes the scope")
+  and the offline harness's refusal scenario.
+- **Point 2 (existence from install outputs)** — fixed by HARDEN-004 part 2 (#462): substrate
+  existence comes from the typed state inventory.
+- **"Not established" above** — the offline replay of the frozen Attempt-6 state was **ruled out**
+  (#461, `HARDEN-004-handoff.md` "Step 1"): the frozen evidence is logs only, and a `plan` against
+  the real backend is a network operation on the qualification project. It stays not established.
+  The lesson — pull state before any teardown — is recorded in `docs/qualification/README.md`.
+- `FIXED_UNQUALIFIED`, not `QUALIFIED`: the evidence is offline. INFRA-068 moves to `DONE`.
+
