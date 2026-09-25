@@ -70,7 +70,7 @@ let cloud_target target =
 ;;
 
 (* The platform root, relative to the Sol home. The platform *definition* is
-   shared (`cli/platform/infra/base`); the root differs per provider because a
+   shared (`platform/infra/base`); the root differs per provider because a
    Terraform root's backend type is part of its own configuration -- so `base`
    declares the S3 backend and is AWS's root, while `base-gcp` declares the GCS
    backend and uses `base` as the shared definition. *)

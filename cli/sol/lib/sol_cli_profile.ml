@@ -123,7 +123,7 @@ type node_shape =
   }
 
 (* Derived from the platform charts' own declared requests
-   (cli/platform/infra/base/variables.tf):
+   (platform/infra/base/variables.tf):
 
    - Redpanda is the largest indivisible unit, at `redpanda_cpu_cores = 2` and
      `redpanda_memory = 4Gi` per broker, and RF>=3 means three of them;

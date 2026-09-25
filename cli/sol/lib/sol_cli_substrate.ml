@@ -125,7 +125,7 @@ let write_file path contents =
 ;;
 
 (* INFRA-025: the deploy identity's namespace-bootstrap grant is deliberately
-   create-only (see cli/platform/infra/base/platform_deploy_rbac.tf's
+   create-only (see platform/infra/base/platform_deploy_rbac.tf's
    sol-deploy-bootstrap ClusterRole) -- it can never patch/update a namespace
    or RoleBinding that already exists, including every platform one. So
    idempotency here comes from tolerating "AlreadyExists" on [create], not

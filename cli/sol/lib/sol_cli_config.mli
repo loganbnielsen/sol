@@ -22,7 +22,7 @@ type target =
   ; alert_runbook_url : string option
   ; state_bucket : string option
     (** AUDIT-072: the encrypted, versioned remote Terraform state bucket. Sol
-        provisions a conformant one by default (cli/platform/infra/bootstrap);
+        provisions a conformant one by default (platform/infra/bootstrap);
         an operator may bring their own by declaring it here. *)
   ; cluster_endpoint_cidr : string option
     (** The single CIDR allowed to reach the public Kubernetes API endpoint. A

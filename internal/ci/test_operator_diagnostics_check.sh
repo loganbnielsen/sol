@@ -16,16 +16,16 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 files=(
-  cli/platform/infra/base/platform_operator_rbac.tf
-  cli/platform/infra/aws/main.tf
-  cli/platform/infra/aws/variables.tf
+  platform/infra/base/platform_operator_rbac.tf
+  platform/infra/aws/main.tf
+  platform/infra/aws/variables.tf
   cli/sol/lib/sol_cli_manifest_yaml.ml
   cli/sol/lib/sol_cli_substrate.ml
   cli/sol/lib/sol_cli_rollout_diagnosis.ml
   cli/sol/bin/cmd_status.ml
   cli/sol/bin/cmd_logs.ml
   cli/sol/lib/sol_cli_provider_capabilities.ml
-  cli/platform/infra/base/platform_deploy_rbac.tf
+  platform/infra/base/platform_deploy_rbac.tf
 )
 
 seed() {
@@ -59,24 +59,24 @@ expect_pass
 # ── a mutating verb ─────────────────────────────────────────────────────────
 seed
 sed -i 's/    verbs      = \["get", "list"\]/    verbs      = ["get", "list", "delete"]/' \
-  "$work/root/cli/platform/infra/base/platform_operator_rbac.tf"
+  "$work/root/platform/infra/base/platform_operator_rbac.tf"
 expect_fail "a mutating verb"
 
 # ── secrets ─────────────────────────────────────────────────────────────────
 seed
 sed -i 's/resources  = \["pods", "pods\/log", "services", "events"\]/resources  = ["pods", "pods\/log", "services", "events", "secrets"]/' \
-  "$work/root/cli/platform/infra/base/platform_operator_rbac.tf"
+  "$work/root/platform/infra/base/platform_operator_rbac.tf"
 expect_fail "secrets in the grant"
 
 # ── interactive debugging ───────────────────────────────────────────────────
 seed
 sed -i 's/resources  = \["pods", "pods\/log", "services", "events"\]/resources  = ["pods", "pods\/log", "services", "events", "pods\/portforward"]/' \
-  "$work/root/cli/platform/infra/base/platform_operator_rbac.tf"
+  "$work/root/platform/infra/base/platform_operator_rbac.tf"
 expect_fail "pods/portforward"
 
 # ── the identity loses its access entry ─────────────────────────────────────
 seed
-python3 - "$work/root/cli/platform/infra/aws/main.tf" <<'PY'
+python3 - "$work/root/platform/infra/aws/main.tf" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p).read()
@@ -88,7 +88,7 @@ expect_fail "a missing access entry"
 
 # ── the entry carries a broad managed policy instead of the role ────────────
 seed
-python3 - "$work/root/cli/platform/infra/aws/main.tf" <<'PY'
+python3 - "$work/root/platform/infra/aws/main.tf" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p).read()
@@ -131,7 +131,7 @@ expect_fail "an ARN that never reaches the provider root"
 # runtime substrate (as the deploy identity), so sol-operator-diagnostics must be
 # in that identity's enumerated bind allowlist.
 seed
-python3 - "$work/root/cli/platform/infra/base/platform_deploy_rbac.tf" <<'PY'
+python3 - "$work/root/platform/infra/base/platform_deploy_rbac.tf" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p).read()

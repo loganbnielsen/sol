@@ -105,7 +105,7 @@ fi
 #    the named caller -- the two halves of "creating the identity is not the same as
 #    letting anyone use it". A project-level role, or an inferred member, would both
 #    satisfy "impersonation works" while granting far more than the window.
-gcp_root="$root/cli/platform/infra/gcp"
+gcp_root="$root/platform/infra/gcp"
 if ! grep -qE 'service_account_id = google_service_account\.provisioner\.name' \
   "$gcp_root"/*.tf; then
   report "the impersonation grant is not scoped to the provisioner service account itself"

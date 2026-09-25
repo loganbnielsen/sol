@@ -378,7 +378,7 @@ is HARDEN-002's.
 
 ## Latest: AUDIT-072 — recoverable production state and scoped identities (2026-09-17)
 
-A new `cli/platform/infra/bootstrap` root provisions the conformant remote state
+A new `platform/infra/bootstrap` root provisions the conformant remote state
 backend (versioned, encrypted, public-access-blocked S3 + DynamoDB lock) and
 emits three least-privilege IAM policy contracts; the operator supplies the role
 ARNs. Target declarations (`state_bucket`/`state_lock_table`, the three role
@@ -406,7 +406,7 @@ evidence is HARDEN-002's; the contract is in
 Alert delivery is now a provider-neutral contract (`Sol_cli_alerting`): a
 target declares a receiver type (only `webhook` qualified), a routable
 endpoint, an owner and a runbook; preflight's `Alert_delivery` fails closed
-otherwise, and applying `cli/platform/infra/base` wires the Alertmanager route.
+otherwise, and applying `platform/infra/base` wires the Alertmanager route.
 The five maturity-A threshold indicators — failed rollout, node loss, Postgres
 dependency, Kafka lag/broker loss, telemetry loss — ship as rules with one-page
 runbooks (`docs/deployment/alert-runbooks.md`), and `sol alert test` injects a

@@ -32,7 +32,7 @@ For audit-oriented work, use these workflows as the entry points:
   service contract checks.
 - [`/e2e`](../../internal/fixtures/local-demo/test/test_e2e.ml) for end-to-end local
   workflow verification.
-  [`cli/platform/local/scripts/run_tests.sh`](../../cli/platform/local/scripts/run_tests.sh)
+  [`platform/local/scripts/run_tests.sh`](../../platform/local/scripts/run_tests.sh)
   is the broader local test runner reference.
 
 ## Command Changes

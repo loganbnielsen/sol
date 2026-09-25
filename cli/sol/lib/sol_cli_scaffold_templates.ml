@@ -18,7 +18,7 @@ let tpl_dune_project =
 
    The framework version is intentionally unconstrained here: in development the
    switch provides the framework (see
-   cli/platform/local/scripts/prepare-framework-deps.sh), while a pinned or
+   platform/local/scripts/prepare-framework-deps.sh), while a pinned or
    released setup constrains it in this file. Choosing the channel is a workspace
    decision, not one the CLI makes. *)
 let ws_opam =
@@ -128,7 +128,7 @@ this directory, and the workspace has no knowledge of where Sol's source lives.
   Sol checkout, which makes your switch satisfy the declared dependency:
 
   ```bash
-  bash /path/to/sol/cli/platform/local/scripts/prepare-framework-deps.sh
+  bash /path/to/sol/platform/local/scripts/prepare-framework-deps.sh
   ```
 
   That is Sol's own bootstrap — the same one the Sol repository's CI runs — so
@@ -475,7 +475,7 @@ let tpl_github_deploy =
 # For ECR add AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION and
 # uncomment the ECR login step below.
 #
-# See cli/platform/infra/ci/ in the Sol repo for the full GitOps (Argo CD) variant.
+# See platform/infra/ci/ in the Sol repo for the full GitOps (Argo CD) variant.
 
 name: Deploy
 
