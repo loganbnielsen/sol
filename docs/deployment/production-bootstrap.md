@@ -37,9 +37,14 @@ so preflight can verify it:
 target:
   profile: production-single-region
   state_bucket: acme-tfstate
-  state_lock_table: acme-tflock
   letsencrypt_email: ops@acme.example
+  aws:
+    state_lock_table: acme-tflock
 ```
+
+Provider-native settings — the lock table here, the role ARNs below — live in the
+target's `aws:` block, so a target on another provider cannot carry them. A flat
+`state_lock_table:` is refused with the key's new location.
 
 `sol cloud` fails closed before Terraform initialization when either is missing.
 It supplies this configuration at runtime and uses deterministic, distinct
@@ -56,11 +61,12 @@ and declare the three ARNs `sol deploy` actually reads:
 
 ```yaml
 target:
-  provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
-  cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
-  deploy_role_arn:      arn:aws:iam::111122223333:role/sol-deploy
-  operator_role_arn:    arn:aws:iam::111122223333:role/sol-operator
   cluster_endpoint_cidr: 203.0.113.0/24
+  aws:
+    provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+    cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
+    deploy_role_arn:      arn:aws:iam::111122223333:role/sol-deploy
+    operator_role_arn:    arn:aws:iam::111122223333:role/sol-operator
 ```
 
 The boundary the contracts encode:

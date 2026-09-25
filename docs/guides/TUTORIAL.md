@@ -793,7 +793,7 @@ During platform reconciliation Sol creates an ephemeral kubeconfig for the decla
 
 Sensitive outputs (database passwords, connection strings) are never printed; retrieve them with `terraform output -raw <name>` if needed.
 
-**Prerequisites:** `terraform`, `aws`, and `kubectl` in PATH; AWS credentials for the declared cloud provisioner; and a target declaring the bootstrap-created `state_bucket`, `state_lock_table`, `provisioner_role_arn`, and distinct `cluster_access_role_arn`.
+**Prerequisites:** `terraform`, `aws`, and `kubectl` in PATH; AWS credentials for the declared cloud provisioner; and a target declaring the bootstrap-created `state_bucket` and, in its `aws:` block, `state_lock_table`, `provisioner_role_arn`, and a distinct `cluster_access_role_arn`.
 The target must also declare `base_domain` and `letsencrypt_email`, which are required platform inputs validated before any platform mutation.
 
 **Point DNS at the ingress** before any service with an `ingress_host` in its `sol.toml` is reachable:

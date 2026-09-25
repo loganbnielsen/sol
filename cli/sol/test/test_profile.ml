@@ -586,7 +586,8 @@ let test_remote_state_established_by_declaration () =
       "target:\n\
       \  profile: production-single-region\n\
       \  state_bucket: acme-tfstate\n\
-      \  state_lock_table: acme-tflock\n";
+      \  aws:\n\
+      \    state_lock_table: acme-tflock\n";
     let fs =
       findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
     in
@@ -622,10 +623,11 @@ let test_world_reachable_endpoint_is_rejected () =
       prod_aws
       "target:\n\
       \  profile: production-single-region\n\
-      \  provisioner_role_arn: arn:aws:iam::1:role/provisioner\n\
-      \  cluster_access_role_arn: arn:aws:iam::1:role/cluster-access\n\
-      \  deploy_role_arn: arn:aws:iam::1:role/deploy\n\
-      \  operator_role_arn: arn:aws:iam::1:role/operator\n\
+      \  aws:\n\
+      \    provisioner_role_arn: arn:aws:iam::1:role/provisioner\n\
+      \    cluster_access_role_arn: arn:aws:iam::1:role/cluster-access\n\
+      \    deploy_role_arn: arn:aws:iam::1:role/deploy\n\
+      \    operator_role_arn: arn:aws:iam::1:role/operator\n\
       \  cluster_endpoint_cidr: 0.0.0.0/0\n";
     let fs =
       findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
@@ -646,10 +648,11 @@ let test_scoped_identities_established () =
       prod_aws
       "target:\n\
       \  profile: production-single-region\n\
-      \  provisioner_role_arn: arn:aws:iam::1:role/provisioner\n\
-      \  cluster_access_role_arn: arn:aws:iam::1:role/cluster-access\n\
-      \  deploy_role_arn: arn:aws:iam::1:role/deploy\n\
-      \  operator_role_arn: arn:aws:iam::1:role/operator\n\
+      \  aws:\n\
+      \    provisioner_role_arn: arn:aws:iam::1:role/provisioner\n\
+      \    cluster_access_role_arn: arn:aws:iam::1:role/cluster-access\n\
+      \    deploy_role_arn: arn:aws:iam::1:role/deploy\n\
+      \    operator_role_arn: arn:aws:iam::1:role/operator\n\
       \  cluster_endpoint_cidr: 203.0.113.0/24\n";
     let fs =
       findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")

@@ -632,11 +632,12 @@ let test_target_recoverable_state_and_identities_parsed () =
 target:
   base_domain: pluto.example.com
   state_bucket: acme-tfstate
-  state_lock_table: acme-tflock
-  provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
-  cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
-  deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
-  operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
+  aws:
+    state_lock_table: acme-tflock
+    provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+    cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
+    deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
+    operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
   cluster_endpoint_cidr: 203.0.113.0/24
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
@@ -644,23 +645,26 @@ target:
     | Ok cfg ->
       let target = Option.get (Sol_cli_config.target cfg) in
       check_str "state_bucket" "acme-tfstate" (Option.get target.state_bucket);
-      check_str "state_lock_table" "acme-tflock" (Option.get target.state_lock_table);
+      check_str
+        "state_lock_table"
+        "acme-tflock"
+        (Option.get (Sol_cli_config.provider_field target "state_lock_table"));
       check_str
         "provisioner_role_arn"
         "arn:aws:iam::111122223333:role/sol-provisioner"
-        (Option.get target.provisioner_role_arn);
+        (Option.get (Sol_cli_config.provider_field target "provisioner_role_arn"));
       check_str
         "cluster_access_role_arn"
         "arn:aws:iam::111122223333:role/sol-cluster-access"
-        (Option.get target.cluster_access_role_arn);
+        (Option.get (Sol_cli_config.provider_field target "cluster_access_role_arn"));
       check_str
         "deploy_role_arn"
         "arn:aws:iam::111122223333:role/sol-deploy"
-        (Option.get target.deploy_role_arn);
+        (Option.get (Sol_cli_config.provider_field target "deploy_role_arn"));
       check_str
         "operator_role_arn"
         "arn:aws:iam::111122223333:role/sol-operator"
-        (Option.get target.operator_role_arn);
+        (Option.get (Sol_cli_config.provider_field target "operator_role_arn"));
       check_str
         "cluster_endpoint_cidr"
         "203.0.113.0/24"
@@ -1060,9 +1064,9 @@ let test_provisioner_impersonator_reaches_the_gcp_root () =
       "sol.yml"
       {|
 target:
-  provisioner_impersonator: user:ops@example.test
   gcp:
     project_id: sol-qualification
+    provisioner_impersonator: user:ops@example.test
 |};
     match Sol_cli_config.load_for_target ~target:"prod/gcp/us-central1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
@@ -1097,6 +1101,101 @@ target:
            (List.mem_assoc "provisioner_impersonators" vars)))
 ;;
 
+(* REFAC-098: provider-native identity lives in the provider's own block. A flat
+   key is refused with the place it moved to, never silently ignored -- a dropped
+   lock table would be a concurrent-apply hazard. *)
+let test_flat_provider_key_is_refused () =
+  with_temp_dir (fun () ->
+    write
+      "sol.yml"
+      {|
+target:
+  provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Ok _ -> Alcotest.fail "a flat provider-native key must be refused"
+    | Error e ->
+      let message = Sol_cli_config.error_to_string e in
+      check_bool
+        "names where the key now lives"
+        true
+        (contains ~needle:"aws.provisioner_role_arn" message))
+;;
+
+(* A workspace declares both providers' identity in one shared file; each target
+   reads only its own provider's block, so a GCP target cannot carry AWS role ARNs.
+   The AWS target is the positive control: the same file does give it the role. *)
+let test_gcp_target_cannot_carry_aws_identity () =
+  with_temp_dir (fun () ->
+    write
+      "sol.yml"
+      {|
+target:
+  aws:
+    provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+    state_lock_table: acme-tflock
+  gcp:
+    project_id: sol-qualification
+|};
+    let target_of name =
+      match Sol_cli_config.load_for_target ~target:name with
+      | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+      | Ok cfg -> cfg, Option.get (Sol_cli_config.target cfg)
+    in
+    let gcp_cfg, gcp = target_of "prod/gcp/us-central1" in
+    let _, aws = target_of "prod/aws/us-east-1" in
+    check_str_opt
+      "the GCP target reads no AWS role"
+      None
+      (Sol_cli_config.provider_field gcp "provisioner_role_arn");
+    check_str_opt
+      "the AWS target does (positive control)"
+      (Some "arn:aws:iam::111122223333:role/sol-provisioner")
+      (Sol_cli_config.provider_field aws "provisioner_role_arn");
+    match Sol_cli_terraform_vars.of_config ~workspace:"pluto" gcp_cfg with
+    | Error msg -> Alcotest.fail msg
+    | Ok vars ->
+      check_bool
+        "no AWS key reaches the GCP root"
+        false
+        (List.mem_assoc "provisioner_role_arn" vars
+         || List.mem_assoc "state_lock_table" vars))
+;;
+
+(* The keys Sol consumes from a provider block are not Terraform variables: the
+   lock table is backend configuration, and passing it as a `-var` would fail the
+   command on an undeclared variable. The role it routes is still there. *)
+let test_sol_owned_keys_are_not_passed_through () =
+  with_temp_dir (fun () ->
+    write
+      "sol.yml"
+      {|
+target:
+  aws:
+    state_lock_table: acme-tflock
+    provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+    some_root_variable: passed
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
+       | Error msg -> Alcotest.fail msg
+       | Ok vars ->
+         check_bool
+           "the lock table is not a -var"
+           false
+           (List.mem_assoc "state_lock_table" vars);
+         Alcotest.(check int)
+           "the provisioner role is routed exactly once"
+           1
+           (List.length (List.filter (fun (k, _) -> k = "provisioner_role_arn") vars));
+         check_str_opt
+           "an ordinary provider-block variable still passes through"
+           (Some "passed")
+           (List.assoc_opt "some_root_variable" vars)))
+;;
+
 let test_provisioner_impersonator_survives_the_merge () =
   with_temp_dir (fun () ->
     write
@@ -1110,7 +1209,8 @@ target:
       "sol/prod/gcp/us-central1.yml"
       {|
 target:
-  provisioner_impersonator: user:ops@example.test
+  gcp:
+    provisioner_impersonator: user:ops@example.test
 |};
     match Sol_cli_config.load_for_target ~target:"prod/gcp/us-central1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
@@ -1121,7 +1221,7 @@ target:
          check_str_opt
            "the declared caller survives the merge"
            (Some "user:ops@example.test")
-           target.Sol_cli_config.provisioner_impersonator))
+           (Sol_cli_config.provider_field target "provisioner_impersonator")))
 ;;
 
 (* INFRA-074: the ECR repository list is derived from the workloads with a
@@ -1421,10 +1521,11 @@ let test_terraform_vars_route_deploy_role_arn () =
       "sol.yml"
       {|
 target:
-  provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
-  cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
-  deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
-  operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
+  aws:
+    provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+    cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
+    deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
+    operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
   cluster_endpoint_cidr: 203.0.113.0/24
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
@@ -1728,6 +1829,18 @@ let () =
             "provisioner impersonator: survives the merge"
             `Quick
             test_provisioner_impersonator_survives_the_merge
+        ; Alcotest.test_case
+            "REFAC-098: a flat provider-native key is refused"
+            `Quick
+            test_flat_provider_key_is_refused
+        ; Alcotest.test_case
+            "REFAC-098: a GCP target cannot carry AWS identity"
+            `Quick
+            test_gcp_target_cannot_carry_aws_identity
+        ; Alcotest.test_case
+            "REFAC-098: Sol-owned keys are not passed through"
+            `Quick
+            test_sol_owned_keys_are_not_passed_through
         ; Alcotest.test_case
             "terraform vars: provider-shaped"
             `Quick

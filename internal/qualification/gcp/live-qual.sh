@@ -229,8 +229,10 @@ target:
   # GCP's identity declaration. Same capability as AWS's provisioner role (who may
   # enter the install window), provider-native mechanism: an impersonation grant
   # rather than a role ARN. Declared, never inferred, so that "no caller named"
-  # cannot come to mean "grant whoever is running Sol".
-  provisioner_impersonator: $IMPERSONATOR
+  # cannot come to mean "grant whoever is running Sol". Provider-owned, so it
+  # lives in the target's gcp block (REFAC-098).
+  gcp:
+    provisioner_impersonator: $IMPERSONATOR
 
   # A disposable qualification target: the postcondition is Absent with nothing
   # billable retained (DEC-033).

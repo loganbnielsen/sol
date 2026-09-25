@@ -51,6 +51,7 @@ let of_config ~workspace cfg =
     let vars =
       List.assoc_opt (Sol_cli_provider.to_string target.provider) target.provider_fields
       |> Option.value ~default:[]
+      |> List.filter (fun (key, _) -> not (List.mem key capabilities.sol_keys))
       |> List.rev_append provider_own
     in
     let has_postgres =

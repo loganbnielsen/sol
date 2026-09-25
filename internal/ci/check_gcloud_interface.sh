@@ -126,12 +126,17 @@ if ! grep -qE 'variable "provisioner_impersonators"' "$gcp_root"/*.tf; then
 fi
 # The declaration path: a target that names no caller must produce an empty list
 # rather than inheriting the running identity.
-if ! grep -q 'provisioner_impersonator' "$root/cli/sol/lib/sol_cli_config.ml"; then
-  report "Sol's config does not read the target's provisioner_impersonator"
-fi
-if ! grep -qE 'provisioner_impersonator =$|provisioner_impersonator =' \
+# REFAC-098: the caller is declared in the target's gcp block, which config
+# assigns to that provider and merges with every other provider-block key (a
+# field that is not merged is how DEC-033 lost one), and the GCP capabilities read
+# it from there.
+if ! grep -q '"provisioner_impersonator" -> Target_provider_owned (s, "gcp")' \
   "$root/cli/sol/lib/sol_cli_config.ml"; then
-  report "the target's provisioner_impersonator is not merged (DEC-033 lost a field this way)"
+  report "Sol's config does not assign provisioner_impersonator to the target's gcp block"
+fi
+if ! grep -q 'provider_field target "provisioner_impersonator"' \
+  "$root/cli/sol/lib/sol_cli_provider_capabilities.ml"; then
+  report "the GCP capabilities do not read the target's provisioner_impersonator"
 fi
 
 [ "$fail" -eq 0 ] || exit 1

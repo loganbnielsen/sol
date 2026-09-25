@@ -52,6 +52,14 @@ type t =
     (** What the substrate readiness check means, in its failure's words. *)
   ; production_qualified : bool
     (** Whether the production profile is qualified on this provider. *)
+  ; sol_keys : string list
+    (** REFAC-098: keys of the target's provider block that Sol consumes itself
+        (identity, backend locking), so they are not passed through as [-var]s. *)
+  ; state_locking : string option
+    (** The provider-block key naming the state lock, where the backend does not
+        lock natively. *)
+  ; scoped_identities : string list
+    (** The provider-block keys naming the production profile's scoped identities. *)
   }
 
 (** Each provider's own record, for that provider's modules. *)

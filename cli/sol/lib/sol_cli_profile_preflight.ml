@@ -141,15 +141,34 @@ let establish
        default (cli/platform/infra/bootstrap); an operator may bring their own by
        declaring it. Preflight asserts the declaration; the destructive recovery
        and concurrency checks are HARDEN-002's. *)
-    (match target.state_bucket, target.state_lock_table with
-     | Some bucket, Some lock when String.trim bucket <> "" && String.trim lock <> "" ->
-       Established
-     | _ ->
-       Unmet
-         ( Target
-         , "declare an encrypted, versioned remote Terraform state backend with locking: \
-            set `state_bucket` and `state_lock_table` (Sol provisions a conformant one \
-            via `cli/platform/infra/bootstrap`)" ))
+    let capabilities = Sol_cli_provider_capabilities.capabilities_of target.provider in
+    let declared = function
+      | Some value -> String.trim value <> ""
+      | None -> false
+    in
+    (* REFAC-098: the lock is declared in the provider's own block, where the
+       provider's backend does not lock natively. *)
+    let locked =
+      match capabilities.state_locking with
+      | None -> true
+      | Some key -> declared (Sol_cli_config.provider_field target key)
+    in
+    if declared target.state_bucket && locked
+    then Established
+    else
+      Unmet
+        ( Target
+        , Printf.sprintf
+            "declare an encrypted, versioned remote Terraform state backend with \
+             locking: set `state_bucket`%s (Sol provisions a conformant one via \
+             `cli/platform/infra/bootstrap`)"
+            (match capabilities.state_locking with
+             | Some key ->
+               Printf.sprintf
+                 " and `%s.%s`"
+                 (Sol_cli_provider.to_string target.provider)
+                 key
+             | None -> "") )
   | Scoped_operator_identities ->
     (* AUDIT-072: named provisioning/deploy/operator identities, distinct from
        the cluster-creator admin, plus an explicitly restricted public endpoint.
@@ -162,11 +181,12 @@ let establish
     let missing_roles =
       List.filter_map
         (fun (name, value) -> if present value then None else Some name)
-        [ "provisioner_role_arn", target.provisioner_role_arn
-        ; "cluster_access_role_arn", target.cluster_access_role_arn
-        ; "deploy_role_arn", target.deploy_role_arn
-        ; "operator_role_arn", target.operator_role_arn
-        ]
+        (List.map
+           (fun key ->
+              ( Sol_cli_provider.to_string target.provider ^ "." ^ key
+              , Sol_cli_config.provider_field target key ))
+           (Sol_cli_provider_capabilities.capabilities_of target.provider)
+             .scoped_identities)
     in
     let cidr =
       match target.cluster_endpoint_cidr with
