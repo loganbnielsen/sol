@@ -25,7 +25,23 @@
 set -u
 
 root="${1:-.}"
-target_roots=("cli/platform/infra/aws" "cli/platform/infra/gcp")
+# HARDEN-005: the target roots are the providers' own roots, derived from the
+# provider list rather than written out, so a provider added later is checked by
+# this guard without anyone remembering to add it here. A provider list that
+# cannot be read fails closed: a guard that checked nothing must not read as a pass.
+provider_module="$root/cli/sol/lib/sol_cli_provider.ml"
+providers="$(sed -n '/^let to_string/,/^;;/p' "$provider_module" 2>/dev/null | grep -oE '"[a-z0-9-]+"' | tr -d '"')"
+if [ -z "$providers" ]; then
+  echo "check_destroy_completeness: could not read the provider list from $provider_module" >&2
+  exit 1
+fi
+target_roots=()
+for provider in $providers; do
+  # A provider with no root yet has nothing of its own to deploy, so nothing to check.
+  if [ -d "$root/cli/platform/infra/$provider" ]; then
+    target_roots+=("cli/platform/infra/$provider")
+  fi
+done
 
 fail=0
 checked=0

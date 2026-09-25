@@ -425,42 +425,7 @@ let with_cluster_access_result
 let credentials_result ~provider ~operation ~leaves_target_standing
   : (unit, string) result
   =
-  let standing_remark =
-    if leaves_target_standing
-    then
-      " The target is still standing and may still be billing; nothing has been changed."
-    else " Nothing has been changed."
-  in
-  match provider with
-  | Sol_cli_provider.Aws ->
-    let profile = Sys.getenv_opt "AWS_PROFILE" in
-    (match Sol_cli_credentials.resolve ~run:process_output ~profile with
-     | Error detail ->
-       Error
-         (Sol_cli_credentials.unresolved_message
-            ~operation
-            ~profile
-            ~leaves_target_standing
-            ~detail)
-     | Ok credentials ->
-       Sol_cli_credentials.install credentials;
-       Printf.printf "  credentials: %s\n%!" credentials.principal;
-       Ok ())
-  | Sol_cli_provider.Gcp ->
-    (match
-       process_output [ "gcloud"; "auth"; "application-default"; "print-access-token" ]
-     with
-     | Some _ ->
-       Printf.printf "  credentials: Google Application Default Credentials resolved\n%!";
-       Ok ()
-     | None ->
-       Error
-         (Printf.sprintf
-            "cannot resolve Google Application Default Credentials, so Sol cannot \
-             %s              this target.%s Run `gcloud auth application-default login` \
-             (or fix the              attached service account) and re-run."
-            operation
-            standing_remark))
+  Sol_cli_provider_registry.credentials provider ~operation ~leaves_target_standing
 ;;
 
 let require_credentials ~provider ~operation ~leaves_target_standing =

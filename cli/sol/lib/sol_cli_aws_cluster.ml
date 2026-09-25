@@ -677,3 +677,21 @@ let cluster ~region ~provisioner_role_arn outputs : Sol_cli_cluster.t =
            })
   }
 ;;
+
+(* INFRA-039: resolve this operation's AWS credentials (moved from `cmd_cloud_tf.ml`,
+   HARDEN-005), report the principal they belong to, and fail closed. *)
+let credentials ~operation ~leaves_target_standing : (unit, string) result =
+  let profile = Sys.getenv_opt "AWS_PROFILE" in
+  match Sol_cli_credentials.resolve ~run:Sol_cli_cluster.process_output ~profile with
+  | Error detail ->
+    Error
+      (Sol_cli_credentials.unresolved_message
+         ~operation
+         ~profile
+         ~leaves_target_standing
+         ~detail)
+  | Ok credentials ->
+    Sol_cli_credentials.install credentials;
+    Printf.printf "  credentials: %s\n%!" credentials.principal;
+    Ok ()
+;;
