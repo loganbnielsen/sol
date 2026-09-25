@@ -47,8 +47,10 @@ When a new file has no obvious home, apply the rules rather than the tree.
    `framework`), what they read (`docs`, `examples`), and what only maintainers
    touch (`internal`). **`docs/` is for people using Sol; `internal/` is for people
    building Sol.**
-2. **Code and assets are separate.** `cli/` holds only OCaml. `platform/` holds only
-   what the CLI drives: Helm values, Terraform, templates and scripts.
+2. **Code and assets are separate.** `cli/` holds the binary and what the binary
+   itself needs: OCaml, its SQL migrations and its test scripts. It holds no
+   platform assets. `platform/` holds only what the CLI drives: Helm values,
+   Terraform, templates and scripts, and no OCaml.
 3. **Platform assets are split shared / local / cloud.** Anything both environments
    use lives in `shared/`, so neither side owns it. Platform config varies by
    **profile** (`local`, `durable`). Project config varies by **environment and
@@ -58,21 +60,50 @@ When a new file has no obvious home, apply the rules rather than the tree.
    a root don't have to match, because AWS IAM and GCP service accounts aren't
    one-to-one.
 
-   The provider list comes from the provider capability registry
-   (`Sol_cli_provider.all`), not from `ls platform/cloud/`. The set of roles
-   (`bootstrap`, `cluster`, `platform`) is fixed in one place. The check covers
-   exactly the registered providers, in both directions: every registered
-   provider has every role, and every directory under `platform/cloud/` (other
-   than `modules/` and `delivery/`) is a registered provider.
+   **The directory is the marker, and each provider's roots are all or nothing.**
+   The set of roles (`bootstrap`, `cluster`, `platform`) is fixed in one place.
+   The check has three parts:
+
+   - A registered provider with **no** directory under `platform/cloud/` exists
+     only on paper. That is allowed.
+   - Every registered provider **that has a directory under `platform/cloud/`**
+     has every role. A half-built provider fails.
+   - Every directory under `platform/cloud/` (other than `modules/` and
+     `delivery/`) is a registered provider.
+
+   The permissive part is existing policy, not a new exemption.
+   `internal/ci/check_destroy_completeness.sh:40-42` already skips a provider with
+   no root ("A provider with no root yet has nothing of its own to deploy"). The
+   role-completeness part is new. Whether a provider is *usable* stays the
+   capability layer's job (`Sol_cli_provider_capabilities.capabilities_of`), not
+   the layout check's.
 
    That handles a third provider without renegotiating anything. The
-   Azure-on-paper test (`2026-09-25_cloud_lifecycle_end_state.md` § S11) adds an
-   `Azure` constructor to `Sol_cli_provider.t` and names
-   `cli/platform/infra/azure` plus a platform root as the Terraform surface. Under
-   this rule, registering Azure is what makes the check demand its three roots, so
-   the roots and the registry entry land together. No "paper provider" marker is
-   needed; `Sol_cli_provider_capabilities.production_qualified` already records how
-   far along a provider is.
+   Azure-on-paper test (`2026-09-25_cloud_lifecycle_end_state.md` § S11) added an
+   `Azure` constructor to `Sol_cli_provider.t`, and to `all`, with no Terraform
+   roots, and built the tree to measure the change surface. Under this rule that
+   stays legal: registering a provider leaves it on paper. Creating
+   `platform/cloud/azure/` is what makes the check demand all three roles.
+
+   **One provider list for every guard.** Today there are two derivations.
+   `Sol_cli_provider.all` is used by `Sol_cli_profile_preflight`, the readiness
+   invocation printer and `test_cloud_lifecycle.ml`.
+   `check_destroy_completeness.sh:33` instead scrapes the string literals out of
+   `let to_string` with `sed`. They can disagree. The proposal standardizes on
+   `Sol_cli_provider.all`, which needs two things:
+
+   - **`all` can't silently omit a constructor.** `to_string` has that property
+     because an exhaustive match won't compile without a new arm, and `all` doesn't
+     have it today. REFAC-100 makes `all` exhaustive by construction, so adding a
+     constructor without placing it in `all` fails the build.
+   - **Shell guards read the list from a declared function, not a text scrape.** A
+     small printer executable, following the existing
+     `cli/sol/test/print_readiness_invocations.ml` →
+     `internal/ci/check_readiness_invocations.sh` pattern, prints
+     `List.map Sol_cli_provider.to_string Sol_cli_provider.all`. Both
+     `check_destroy_completeness.sh` and the rule-4 guard read it, and the `sed`
+     scrape is deleted.
+
 5. **Each kind of artifact has one home.** Every application language has a slot in
    `framework/`, audits live in one place, and qualification records live in one
    place. Implementer specs stay next to the code they describe.
@@ -334,7 +365,11 @@ that every path in a `paths:` filter exists.
 
 ## Evidence
 
-Commands run against `origin/main` `1aad2623` on 2026-09-25:
+Commands run on 2026-09-25. Items up to the review log were run against `origin/main`
+`1aad2623`; line numbers from review round 1 are against `50449a1a`, and
+round 2's (`check_destroy_completeness.sh:33,40-42`) against `dae9540d`. **Line
+numbers are only meaningful with their base commit**, since both trees moved during
+review.
 
 - `sed -n 20p cli/platform/infra/base/main.tf` → `backend "s3" {}`.
 - `head -18 cli/platform/infra/base-gcp/variables.tf`: this root exists because
@@ -358,9 +393,11 @@ Commands run against `origin/main` `1aad2623` on 2026-09-25:
 - `sed -n 3,4p cli/sol/lib/dune` → `(wrapped false)` and
   `(libraries unix yojson cmdliner otoml sol_process ptime)`, with no YAML library.
   `rg -n 'unsupported sol.yml syntax' cli/sol/lib/sol_cli_config.ml` → six
-  rejection branches (lines 493–738) in the hand-written parser.
-- `rg -n 'include_subdirs'` over the tree matches only this proposal and its
-  tickets; no `dune` file uses it today.
+  rejection branches (lines 493–738 at `50449a1a`; 492–735 at `0b3441a8`) in the
+  hand-written parser.
+- `find . -name dune -not -path './_build/*'` lists 42 `dune` files (the positive
+  control that the search sees them). Piping that list to `xargs rg -l include_subdirs`
+  finds nothing, so no `dune` file uses `include_subdirs` today.
 
 ## Review log
 
@@ -381,7 +418,30 @@ Commands run against `origin/main` `1aad2623` on 2026-09-25:
   `docs/planning/` files added to the layout; the stale ticket-type list in
   `AGENTS.md` added to DEC-046's scope.
 
-Withdrawn after checking: a separate "path guard" ticket before the move. The
+**Round 2 (2026-09-25), same reviewer.** Accepted:
+
+- **Rule 4 rewritten as "the directory is the marker".** A registered provider
+  without a directory stays on paper, and a provider with a directory must have
+  every role. This replaces a strict check that would have failed the S11
+  worktree, and a claim that `production_qualified` exempted paper providers,
+  which the check never read.
+- **One provider list:** `Sol_cli_provider.all`, made exhaustive by construction
+  and printed for shell guards. It replaces `check_destroy_completeness.sh`'s
+  `sed` scrape of `to_string`.
+- **Rule 2 reworded:** `cli/` holds the binary's SQL migrations and test scripts
+  too. "Only OCaml" could never be true
+  (`find cli/sol -type f ! -name '*.ml' ! -name '*.mli' ! -name dune`).
+- **REFAC-099's consumer list corrected:** `classify-changes.sh` removed, and
+  `internal/ci/provider_dispatch_allowlist.txt` (path-keyed data) named.
+- **Glob semantics defined** for the workflow `paths:` check.
+- **The three provider modules named separately:** `Sol_cli_provider`,
+  `Sol_cli_provider_capabilities`, `Sol_cli_provider_registry`.
+
+Withdrawn after checking: the reviewer's line numbers for the parser rejections.
+Both sets were correct for their own base commit (`0b3441a8` vs `50449a1a`), so
+the evidence now states its base.
+
+Withdrawn after checking (round 1): a separate "path guard" ticket before the move. The
 reviewer suspected `classify-changes.sh` and `perf_baseline.json` would stop
 matching after the move. Neither depends on `cli/` paths: the classifier matches
 `docs/*` and ticket paths only, and the baseline is keyed by suite name.
