@@ -68,3 +68,31 @@ contradicting the subcommand's documented contract (`verify does not mutate; not
   proves **no destroy command was invoked** — testing the invariant, not the position of a flag.
 - `live-qual.sh verify` is read-only whether verification succeeds or fails.
 - No product code changes; the GCP lifecycle, FND-0010 and the authorized live scope are untouched.
+
+## Completion notes (2026-09-25)
+
+**Found by** GCP Attempt 8's read-only Phase 0 from `1aad2623`:
+`docs/qualification/2026-09-25-gcp-attempt8-phase0-stop.md`. That execution mutated no provider and
+created nothing, and the accepted live-infrastructure attempt was not consumed by it.
+
+**A — `provider_probe`'s not-found vocabulary.** `not[ -]?found` did not cover the provider's actual
+`NOT_FOUND:` (underscore form). The pattern is now `not[_. -]?found`; the captured forms are named in
+the comment, and the redundant camel-case alternative is gone (`grep -i` already covers it). Nothing
+else was broadened — permission, transport and malformed responses stay `UNKNOWN`, and the tests pin
+that in the failing direction.
+
+**B — `verify` is observational.** `KEEP=1` and its reason are set **before** the verification call,
+so no path out of `verify` — success, failure, or a signal on the way — can reach `destroy`. The fix
+is stated as the invariant rather than as the position of a flag.
+
+**Evidence (offline, no cloud mutation).** `internal/qualification/gcp/test-live-qual.sh`:
+**87 assertions (was 74)**, all green. The new ones use the provider's **captured** wording verbatim —
+the underscore `NOT_FOUND`, the compute `was not found`, permission denied, a
+`gcloud crashed (ConnectionError)` transport failure, an `INVALID_ARGUMENT` response, and a returned
+object for PRESENT — and a `verify` case that pre-seeds a target file, makes verification fail,
+observes a non-zero result and proves no `destroy` was invoked (the invariant, not the flag).
+Mutation-checked, each failing the suite: reverting the pattern, treating every failure as ABSENT, and
+setting `KEEP` after the check.
+
+**Demo/example: not applicable** — qualification harness only. **Language parity (DEC-022): no
+application-facing impact.**

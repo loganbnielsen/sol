@@ -441,7 +441,16 @@ provider_probe() { # provider_probe <class> <expect> <command...>
   # an answer, so an empty list read as PRESENT -- observed against the live project.
   if "$@" >"$out" 2>"$err"; then
     if [ -n "$(tr -d '[:space:]' <"$out")" ]; then verdict=PRESENT; else verdict=ABSENT; fi
-  elif grep -qiE '(not[ -]?found|does not exist|was not found|notFound|404|No URLs matched)' "$err" "$out"; then
+  # `not[_. -]?found` covers every form the provider actually emits, captured from it:
+  #   `NOT_FOUND: Unknown service account. …`            (the underscore form -- the one this
+  #                                                       probe used to miss, so a genuine
+  #                                                       not-found read as UNKNOWN)
+  #   `… The resource 'projects/p/global/networks/x' was not found`
+  #   `NOTFOUND:` / `not found`
+  # The `-i` above makes the camel-case form unnecessary. Do NOT add alternatives for
+  # permission, transport or malformed failures: they are UNKNOWN, and broadening them would
+  # fail open -- which is the one thing this probe exists to prevent.
+  elif grep -qiE '(not[_. -]?found|does not exist|404|No URLs matched)' "$err" "$out"; then
     verdict=ABSENT
   else
     verdict=UNKNOWN
@@ -1010,9 +1019,15 @@ case "${1:-}" in
     ;;
   destroy)  phase_destroy ;;
   verify)
-    if verify_absent; then say "verify: absent"; else say "verify: resources remain"; exit 1; fi
-    KEEP=1 # verify must not destroy anything
+    # The no-cleanup state is set BEFORE the check, because `exit` cannot run code after it:
+    # with KEEP set later, a *failing* verify fell through to cleanup's "a failed run is
+    # presumed to have created something" rule and called destroy -- recorded live, before
+    # Attempt 8's Phase 0 was allowed to run (`docs/qualification/
+    # 2026-09-25-gcp-attempt8-phase0-stop.md`). `verify` is read-only whether it passes or
+    # fails; that is an invariant, not a property of one branch.
+    KEEP=1
     KEEP_REASON="verify does not mutate; nothing to tear down"
+    if verify_absent; then say "verify: absent"; else say "verify: resources remain"; exit 1; fi
     ;;
   *)
     sed -n '2,78p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
