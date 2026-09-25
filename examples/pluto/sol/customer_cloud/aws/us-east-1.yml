@@ -1,5 +1,7 @@
+# The customer-cloud target the tutorial deploys to (docs/guides/TUTORIAL.md,
+# "Ingress"). Replace the domain and contact address with your own; pass
+# `--registry` to `sol deploy`, or add `registry:` here.
 target:
-  cluster_name: sol-smoke-test
-  base_domain: smoke-test.invalid
-  letsencrypt_email: smoke-test@example.invalid
-  terraform_var_file: ../../../../../internal/qualification/aws/smoke-test.tfvars
+  cluster_name: pluto-customer
+  base_domain: customer.pluto.example.com
+  letsencrypt_email: ops@pluto.example.com
