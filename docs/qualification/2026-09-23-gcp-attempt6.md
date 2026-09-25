@@ -69,3 +69,25 @@ and the delegation still resolves.
 
 Raw logs (containing project identifiers, hence kept outside the repository) were frozen to
 `~/sol-attempt6-evidence/`; the chronology above is the readable extraction.
+
+## Correction (2026-09-24, DOCS-022)
+
+Two statements above are **falsified** by the Attempt 6 agent transcript (`~/.deepcode/projects/-home-logan-Code-sol-cloud-sol/cc1eb286-fbcd-4d58-b412-92e1caf06d92.jsonl`, lines 606–621) and the frozen logs in `~/sol-attempt6-evidence/`:
+
+1. *"killing the harness orphaned its `terraform apply`, which then produced the state/provider
+   divergence this attempt is remembered for"*. Orphaning the apply produced nothing: the orphaned
+   apply kept running normally. At about 19:13 the operator ran `terraform force-unlock -force`
+   on the lock the *live* apply held; the same command's `pgrep` had printed that apply as alive.
+   At 19:13:49 the operator sent SIGTERM to the `terraform apply` (pid 177743) **and to its provider
+   plugin** (pid 177871). The plugin's death cancelled the in-flight GKE create ("Request
+   cancelled"), so Terraform never recorded the cluster. Had only Terraform been interrupted, the
+   Google provider's create path is written to persist the in-flight operation and return
+   (`resource_container_cluster.go`, v5.45.2 — read from source, not observed).
+2. The Attempt-5-style note that the force-unlock came "after confirming no Terraform process
+   remained" does not hold here: the confirmation printed the live apply, and the unlock was not
+   conditional on it.
+
+The divergence was **operator-created**. The Sol-caused route to the same shape, found afterwards,
+is different: Sol's own death kills Terraform with SIGPIPE through its stdout pipe. That was
+reproduced locally; the fix is pending (INFRA-076). The destroy-path defect this attempt exposed
+(preparation planning a create) was real and is fixed.
