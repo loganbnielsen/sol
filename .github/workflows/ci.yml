@@ -348,6 +348,14 @@ jobs:
       - name: Destroy-completeness guard (INFRA-037)
         run: internal/ci/check_destroy_completeness.sh .
 
+      # REFAC-092: provider dispatch outside approved modules may only shrink, and no
+      # wildcard may stand in for a provider (SEC-010 was `Aws -> true | _ -> false`).
+      - name: Provider-dispatch guard mutation test (REFAC-092)
+        run: internal/ci/test_provider_dispatch_check.sh
+
+      - name: Provider-dispatch guard (REFAC-092)
+        run: internal/ci/check_provider_dispatch.sh .
+
       # DEC-038: the operator identity owns production observation and diagnosis,
       # and its grant must follow the evidence Sol's read-only commands consume.
       - name: Operator diagnostic grant (DEC-038 / INFRA-057)

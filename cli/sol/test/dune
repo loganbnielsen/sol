@@ -180,3 +180,11 @@
   (source_tree ../../platform/infra/aws)
   (source_tree ../../platform/infra/gcp))
  (libraries sol_cli alcotest str))
+
+; INFRA-076: Terraform supervision, with a fake terraform and a fake provider
+; plugin. The test binary is its own supervisor (it answers __supervise).
+
+(test
+ (name test_supervised)
+ (modules test_supervised)
+ (libraries sol_cli alcotest unix str))

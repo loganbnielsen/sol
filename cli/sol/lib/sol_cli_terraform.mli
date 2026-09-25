@@ -1,5 +1,21 @@
 val which_check : unit -> bool
 
+(** INFRA-076: the key of the operation record for one Terraform state -- the
+    root plus its backend configuration. Every lock-taking command ([plan*],
+    [apply*], [destroy], [state_rm]) runs under {!Sol_cli_supervised} and records
+    its operation under the key [init] last configured for its root. *)
+val operation_key : chdir:string -> backend_config:string list -> string
+
+(** The status of the latest operation against the state [chdir] +
+    [backend_config] names. *)
+val previous_operation
+  :  chdir:string
+  -> backend_config:string list
+  -> Sol_cli_supervised.status
+
+(** Record that the operator accepted the latest [Unresolved] operation. *)
+val acknowledge_previous_operation : chdir:string -> backend_config:string list -> unit
+
 type scope
 
 val whole_root : scope
@@ -52,18 +68,6 @@ val show_saved_plan
   -> plan_file:string
   -> unit
   -> (string * Sol_cli_terraform_plan.change list, string) result
-
-(** Read the same saved plan and record what configuration *declares* instead of
-    what it changes (FND-0055 / B2). Only the declared addresses reach [phase]'s
-    run log; the JSON is returned and never logged, for the same SEC-008 reason. *)
-val show_saved_plan_declared
-  :  ?env:(string * string) list
-  -> run_log:Sol_cli_run_log.t
-  -> phase:string
-  -> chdir:string
-  -> plan_file:string
-  -> unit
-  -> (string * Sol_cli_terraform_plan.declared list, string) result
 
 (** Apply a saved plan file. No `-auto-approve`: a saved plan applies without
     confirmation, and nothing re-plans between the assertion and the apply. *)

@@ -26,16 +26,17 @@ type resource =
        ["module.net.google_compute_network.vpc"]. Preserved verbatim, including
        the module prefix, because it is what `-target=` and `state rm` address. *)
   ; kind : string (* The provider resource type, e.g. ["google_container_cluster"]. *)
-  ; provider_id : string option
-    (* The provider's own identity: [`self_link`] where the provider publishes
-       one, otherwise [`id`]. *)
-  ; arn : string option
-    (* The fully-qualified cloud identifier, where the provider publishes one.
-       For AWS it is also the only place an individual resource's region is
-       recorded, so it is both the strongest identity available and the source of
-       the region step 5's provider lookups query with. *)
-  ; project : string option (* GCP project, or the AWS account id. *)
-  ; region : string option (* Region or location; a bare zone is reduced to its region. *)
+  ; name : string option
+    (* The resource's own `name` attribute, as Terraform recorded it. The residue
+       checks ask about objects Terraform does not own *by reference to* ones it
+       did (the cluster a load balancer belongs to, the network a peering is on),
+       and they take that name from state rather than rebuilding it. *)
+  ; identifier : string option
+    (* The resource's `identifier` attribute where it has one (the RDS instance):
+       used only by the retain-nothing retention check (DEC-033). REFAC-094 removed
+       the generic provider identity (id/self-link, ARN, project, region) this
+       record used to carry: Sol no longer re-verifies what Terraform manages
+       (DEC-045). *)
   ; deletion_protection : bool option
     (* The provider's deletion guard where the resource declares one. [None] is
        "this resource has no such attribute" -- a benign null, never an error. *)
@@ -67,12 +68,6 @@ type substrate_presence =
 
 let ( let* ) = Result.bind
 
-let region_of_zone zone =
-  match String.rindex_opt zone '-' with
-  | Some i when i > 0 -> String.sub zone 0 i
-  | _ -> zone
-;;
-
 let string_attr name values =
   match Yojson.Safe.Util.member name values with
   | `String s when s <> "" -> Some s
@@ -84,25 +79,6 @@ let bool_attr name values =
   | `Bool b -> Ok (Some b)
   | `Null -> Ok None
   | _ -> Error (Printf.sprintf "attribute %s is not a boolean" name)
-;;
-
-let region_of_values values =
-  match string_attr "region" values with
-  | Some _ as region -> region
-  | None ->
-    (match string_attr "location" values with
-     | Some _ as location -> location
-     | None ->
-       (match string_attr "zone" values with
-        | Some zone -> Some (region_of_zone zone)
-        | None ->
-          (* An AWS resource carries no region attribute of its own; its ARN does
-             (`arn:aws:eks:us-east-1:...:cluster/...`). Reading the region out of
-             the provider's own identifier keeps step 5's lookups on captured
-             identity rather than on a fallback region. *)
-          Option.bind
-            (string_attr "arn" values)
-            Sol_cli_destroy_verification.region_of_arn))
 ;;
 
 let resource_of_json json =
@@ -117,22 +93,8 @@ let resource_of_json json =
     Ok
       { address
       ; kind
-      ; provider_id =
-          (match string_attr "self_link" values with
-           | Some _ as self_link -> self_link
-           | None -> string_attr "id" values)
-      ; arn = string_attr "arn" values
-      ; project =
-          (match string_attr "project" values with
-           | Some _ as project -> project
-           | None ->
-             (match string_attr "account_id" values with
-              | Some _ as account -> account
-              | None ->
-                Option.bind
-                  (string_attr "arn" values)
-                  Sol_cli_destroy_verification.account_of_arn))
-      ; region = region_of_values values
+      ; name = string_attr "name" values
+      ; identifier = string_attr "identifier" values
       ; deletion_protection
       ; final_snapshot_identifier = string_attr "final_snapshot_identifier" values
       ; skip_final_snapshot
@@ -223,90 +185,6 @@ let find_address state address =
   List.find_opt (fun resource -> resource.address = address) (resources state)
 ;;
 
-(* Step 5: the provider identities this state represents, captured *before*
-   destruction so the same identities can be verified after it. This is the
-   projection, not a re-derivation -- nothing here reads configuration, a
-   workspace name or a naming convention. *)
-let identities state =
-  List.map
-    (fun resource ->
-       { Sol_cli_destroy_verification.address = resource.address
-       ; kind = resource.kind
-       ; provider_id = resource.provider_id
-       ; arn = resource.arn
-       ; project = resource.project
-       ; region = resource.region
-       })
-    (resources state)
-;;
-
-(* ── The declared universe state does not speak for (FND-0055 / B2) ───────────
-
-   Two observations with different meanings. The state inventory above is what
-   Terraform currently *represents* -- what `terraform destroy` owns. A read-only,
-   non-destroy plan of the same root is what the configuration *declares*. Neither
-   replaces the other: state stays authoritative for the identity of everything it
-   represents, and the declared set extends the verification's obligations to the
-   addresses state does not represent.
-
-   That extension is the point. A resource removed from state is outside
-   `terraform destroy`'s ownership set, so it can survive the destroy while being
-   invisible to a verification whose universe is the state inventory. It must not
-   fall out of the obligations merely because state stopped representing it. *)
-
-type declared_set =
-  | Declared_unreadable of string
-    (* the read-only plan could not be produced or read. UNKNOWN: what the root
-         declares is not "nothing", and a declared resource state does not
-         represent can no longer be ruled out. *)
-  | Declared_resources of
-      { resources : Sol_cli_terraform_plan.declared list
-      ; project : string option
-        (* the project the target's provider is configured with, as the plan
-             document records it -- the scope a declared resource that names no
-             project of its own is created in *)
-      ; region : string option (* the same, for the provider's region *)
-      }
-
-(* Only managed resources are owned; a data source is neither created nor
-   destroyed and is never a destruction obligation. *)
-let declared_managed = function
-  | Declared_unreadable _ -> []
-  | Declared_resources { resources; _ } ->
-    List.filter (fun d -> String.equal d.Sol_cli_terraform_plan.mode "managed") resources
-;;
-
-let declared_project = function
-  | Declared_unreadable _ -> None
-  | Declared_resources { project; _ } -> project
-;;
-
-let declared_region = function
-  | Declared_unreadable _ -> None
-  | Declared_resources { region; _ } -> region
-;;
-
-(* The declared addresses this state does not represent: the resources outside
-   `terraform destroy`'s ownership. The plan's order is kept, so diagnostics read
-   the same way twice. *)
-let declared_unrepresented ~state ~declared =
-  let represented = addresses state in
-  List.filter
-    (fun declared -> not (List.mem declared.Sol_cli_terraform_plan.address represented))
-    (declared_managed declared)
-;;
-
-(* Whether the pre-destroy state represented nothing. The declared set's meaning
-   depends on it, and only there: an empty state cannot distinguish a target that
-   was never applied from one whose whole state was lost, so an unqueryable
-   declared resource is a recorded coverage limitation rather than a failure --
-   while a declared resource whose kind *can* be queried is still queried and
-   judged. An unreadable state is not an empty one. *)
-let pre_state_empty = function
-  | State_empty -> true
-  | State_represented _ | State_unreadable _ -> false
-;;
-
 (* What destruction preparation did, carried so the command edge can report what
    survived by identifier. Kept provider-shaped because the difference is real:
    AWS's final snapshot has no GCP counterpart (DEC-033). *)
@@ -393,19 +271,17 @@ let failure_message = function
   | Elevated_access_not_removed message -> message
 ;;
 
-(* The exit-code contract, decided by the operator for HARDEN-004 step 4: [0] only
-   when every applicable preparation succeeded or had nothing to do *and* the
-   destroy reached and verified absence; [3] when it reached absence with a
-   [Continue_to_destroy] preparation degraded; [1] for a failed or blocked destroy.
-   [2] stays reserved for this CLI's refusal / cannot-proceed-as-requested
-   semantics, so it is deliberately not used here. *)
+(* The exit-code contract: [0] when the destroy reached and verified absence --
+   a [Continue_to_destroy] preparation that degraded on the way is a warning the
+   command prints, not a separate exit code (REFAC-094 collapsed HARDEN-004's exit
+   3); [1] for a failed or blocked destroy. [2] stays reserved for this CLI's
+   refusal / cannot-proceed-as-requested semantics, so it is deliberately not used
+   here. *)
 let exit_clean = 0
-let exit_degraded = 3
 let exit_failure = 1
 
 let exit_code = function
-  | Destroy_succeeded { degradations = []; _ } -> exit_clean
-  | Destroy_succeeded { degradations = _ :: _; _ } -> exit_degraded
+  | Destroy_succeeded _ -> exit_clean
   | Destroy_blocked _ | Destroy_failed _ -> exit_failure
 ;;
 
@@ -420,12 +296,6 @@ type deps =
     (* [Ok stdout] of `terraform show -json`, or [Error detail] when the read
        itself failed. The classification into the typed inventory is below, so a
        process failure is exercised the same way as a malformed document. *)
-  ; observe_declared : unit -> declared_set
-    (* The declared universe, from a read-only non-destroy plan of the same root.
-       Captured *before* the destruction, so it describes what configuration
-       declared while the target still existed, and deliberately not the same call
-       as any destroy-path apply's plan: that one answers "may Sol create this?",
-       this one only "what does configuration declare?". *)
   ; cloud_outputs : unit -> outputs_read
   ; prepare : state:state_read -> preparation Sol_cli_cloud_lifecycle.preparation_outcome
     (* The preparation declares the consequence of its own failure (DEC-033), so
@@ -447,19 +317,19 @@ type deps =
   ; destroy_substrate : unit -> (unit, string) result
   ; verify_destruction :
       pre_destroy:state_read
-      -> declared:declared_set
       -> preparation:preparation
       -> Sol_cli_destroy_verification.observation
-    (* Step 5's one observation. It is not a [result]: every evidence leg is
-       itself three-valued (the provider answers, the post-destroy state read, the
-       orphan sweep, the retention probe), so "the verification failed" is not one
-       thing. Composing them is [Sol_cli_destroy_verification.classify]'s job, in
-       the library, so the sequence stays ordering and the edge stays I/O.
+    (* Step 5's one observation (narrowed by DEC-045). It is not a [result]: each
+       evidence leg is itself three-valued (the post-destroy state read, the
+       residue Terraform does not own, the retention probe), so "the verification
+       failed" is not one thing. Composing them is
+       [Sol_cli_destroy_verification.classify]'s job.
 
-       [pre_destroy] is the identity captured *before* destruction -- the same
-       inventory the sequence decided from -- and [preparation] carries the
-       retention identity the destruction promised, which is established before
-       the destroy, never rediscovered after it. *)
+       [pre_destroy] is the inventory the sequence decided from, which names what
+       the residue checks refer to (the cluster, the network) and the database a
+       retain-nothing target must leave no snapshot of; [preparation] carries the
+       retention identity the destruction promised, established before the
+       destroy, never rediscovered after it. *)
   ; report : string -> unit (* operator-facing progress, stdout *)
   ; warn : string -> unit (* operator-facing warning, stderr *)
   }
@@ -606,24 +476,6 @@ let execute ~deps =
     (match deps.terraform_init () with
      | Error message -> fail (Init_failed message)
      | Ok () ->
-       (* B2 / FND-0055: the declared universe is captured here, before the
-          destruction, so what configuration declared is observed while the target
-          still exists and the divergence is recorded before it is acted on. It is
-          read-only, and it never decides whether destruction may proceed -- the
-          contract is that a declared resource state does not represent remains a
-          required post-destroy obligation. *)
-       let declared = deps.observe_declared () in
-       (match declared_unrepresented ~state ~declared with
-        | [] -> ()
-        | unrepresented ->
-          deps.report
-            (Printf.sprintf
-               "  declared but not represented in Terraform state: %s\n\
-               \  (outside `terraform destroy`'s ownership; each remains a post-destroy \
-                verification obligation)"
-               (String.concat
-                  ", "
-                  (List.map (fun d -> d.Sol_cli_terraform_plan.address) unrepresented))));
        (* B / FND-0044 point 2: substrate existence comes from what Terraform
           represents, never from the install-time output contract. *)
        let cloud_exists = substrate <> Substrate_absent in
@@ -694,15 +546,12 @@ let execute ~deps =
                   | Error message -> fail ~cleanup (Substrate_destroy_failed message)
                   | Ok () ->
                     deps.report "\nVerifying teardown...";
-                    (* Step 5: what Sol is justified in claiming. The evidence is
-                       taken against the identities captured *before* destruction
-                       (including the retention identity the preparation
-                       established), and success is now "every required
-                       postcondition was positively established" -- an UNKNOWN
-                       observation is a failure, never a degraded success, because
-                       exit 3 means the primary postcondition *succeeded*. *)
+                    (* Step 5: what Sol is justified in claiming. Terraform's
+                       destroy plus an empty state is the authority for what it
+                       manages (DEC-045); the remaining legs cover what it does not
+                       own. An UNKNOWN observation is a failure, never a success. *)
                     let observation =
-                      deps.verify_destruction ~pre_destroy:state ~declared ~preparation
+                      deps.verify_destruction ~pre_destroy:state ~preparation
                     in
                     let verdict = Sol_cli_destroy_verification.classify observation in
                     if Sol_cli_destroy_verification.is_verified verdict

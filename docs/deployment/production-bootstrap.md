@@ -163,8 +163,31 @@ aws s3api get-object --bucket <bucket> --key sol/prod/aws/us-east-1/cloud.tfstat
 # Inspect, then restore the chosen version explicitly — never in place blindly.
 ```
 
-**Two concurrent mutations** serialize through the lock table; if the lock is
-stale, `terraform force-unlock <lock-id>` is the operator's explicit override.
+**Two concurrent mutations** serialize through the lock table. A held lock is
+not stale merely because the `sol` that started it has exited (see below): only
+force-unlock after establishing that no Terraform process anywhere still holds
+it. Unlocking a live lock is how GCP qualification Attempt 6 ended up with a
+cluster the provider had and the state did not.
+
+**Interrupting `sol cloud` (INFRA-076).** Sol runs Terraform under a supervisor
+in a session of its own, with its output in a durable operation record under
+`$XDG_DATA_HOME/sol/operations/` (default `~/.local/share/sol/operations/`), so:
+
+- **Ctrl-C** (or SIGTERM/SIGHUP to `sol`) sends one SIGINT to Terraform only,
+  never to its provider plugins, and Sol waits while Terraform stops itself:
+  persisting state and releasing the lock. A second Ctrl-C asks Terraform to
+  cancel immediately, which Terraform warns may lose data.
+- **If `sol` itself dies** (killed, out of memory, terminal closed), Terraform
+  keeps running to completion and records its outcome. `sol` exiting does not
+  mean Terraform exited.
+- **The next `sol cloud` command reads the last operation against that state:**
+  - *still running* → refused. Wait for it; do not unlock.
+  - *resolved*, including a graceful Ctrl-C → proceeds normally.
+  - *unresolved* (Terraform was killed by a signal, its supervisor vanished, or it
+    left `errored.tfstate`) → `apply` is refused until you reconcile: inspect the
+    provider and the state, import or remove what diverged, and push any
+    `errored.tfstate` yourself. Then re-run with `--accept-unresolved`.
+    `plan` and `destroy` proceed with a warning.
 
 ## Evidence HARDEN-002 records
 
@@ -302,13 +325,14 @@ not relaxed for convenience. Destruction is an explicit lifecycle:
    needs a fresh `rds_final_snapshot_identifier` **applied in the same step as 2** —
    otherwise the delete fails with `DBSnapshotAlreadyExists`;
 4. `terraform destroy` completes;
-5. absence is verified independently. `verify_aws_destroy`, which `sol cloud
-   destroy` runs, covers EKS, RDS, ECR, load balancers, elastic IPs, NAT gateways,
-   and target-tagged EBS volumes. The live smoke harness
-   (`internal/qualification/aws/live-smoke.sh`) additionally asserts the VPC is gone after its
-   own `sol cloud destroy`. The verifier fails closed when any of those provider
-   queries errors or returns a resource; an operator sweep remains useful as
-   independent evidence, but it is no longer the only EIP/NAT/EBS check.
+5. absence is verified. For what Terraform manages (EKS, RDS, ECR, the VPC with its
+   NAT gateways and elastic IPs), a successful `terraform destroy` plus an empty
+   state is the authority (DEC-045). `sol cloud destroy` additionally checks what
+   Terraform does not own: load balancers created by the in-cluster cloud
+   controller, and target-tagged EBS volumes created for PersistentVolumeClaims. It
+   fails closed when any of those queries errors or returns a resource. The live
+   smoke harness (`internal/qualification/aws/live-smoke.sh`) keeps its own
+   independent inventory, including the VPC, as qualification evidence.
    Volumes are worth the operator's attention from this release onward: the EBS
    CSI driver and default gp3 StorageClass (see *Platform storage* above) are what
    first make dynamically provisioned EBS volumes possible on this substrate. The
