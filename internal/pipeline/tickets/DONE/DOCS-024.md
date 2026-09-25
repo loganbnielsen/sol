@@ -24,3 +24,11 @@ premise: "test -f framework/typescript/README.md"
 ## Completion notes (required)
 
 - Language parity (DEC-022): discoverability only; no capability change.
+
+## Completion notes
+
+- Added `framework/typescript/README.md`: the four `@sol-fab/*` packages with their repositories, taken from `README.md` § *TypeScript*, plus links to `demo_ts`, the application contract and the compatibility matrix.
+- `framework/README.md` now lists `typescript/` beside `ocaml/`. It had listed two TypeScript packages; `README.md` documents four, so it now matches.
+- **Dropped an unverifiable claim.** `framework/README.md` said "Sol hosts the TypeScript scaffold templates". `rg -il 'fastify|package\.json|@sol-fab' cli/sol/lib cli/sol/bin` matches only a comment in `sol_cli_workspace.mli`, and the same search finds the OCaml-only scaffold files positive for their own templates. So the new text doesn't repeat it. If TypeScript scaffolding lands (FEAT-082), link it from `framework/typescript/README.md`.
+- **Demo/example:** the README links `examples/pluto/app/demo_ts`. No example changes: this is discoverability only.
+- **Language parity (DEC-022):** discoverability only; no capability change.
