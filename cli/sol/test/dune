@@ -49,7 +49,6 @@
   test_workspace
   test_platform_component
   test_image_ref
-  test_db_credential
   test_cloud_lifecycle
   test_cloud_destroy
   test_destroy_verification
@@ -151,3 +150,13 @@
 ; and runs as a CI step, not here: it checks what git tracks, and dune can only
 ; offer it `_build/default`, where `git ls-files` is empty and it would pass on
 ; any tree at all.
+
+; SEC-010: the sensitive-variable guard reads the real roots, so they are deps.
+
+(test
+ (name test_sensitive_vars)
+ (modules test_sensitive_vars)
+ (deps
+  (source_tree ../../platform/infra/aws)
+  (source_tree ../../platform/infra/gcp))
+ (libraries sol_cli alcotest str))

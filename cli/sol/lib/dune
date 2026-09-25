@@ -62,7 +62,7 @@
   Sol_cli_open
   Sol_cli_status
   Sol_cli_migration_disposition
-  Sol_cli_db_credential
+  Sol_cli_sensitive_vars
   Sol_cli_cloud_lifecycle
   Sol_cli_destroy_verification
   Sol_cli_cloud_destroy
