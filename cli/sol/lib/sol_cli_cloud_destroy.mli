@@ -62,8 +62,9 @@ val find_address : state_read -> string -> resource option
 (** What destruction preparation did, carried to the report. *)
 type preparation =
   | Nothing_prepared
-  | Aws_prepared of string
-  | Gcp_prepared
+  | Prepared of { retained : string option }
+  (** A preparation ran. [retained] names the artifact the destroy promises to
+      keep (the provider's own identifier for it), when there is one. *)
 
 (** The result of the elevated bootstrap-access window. *)
 type cleanup =

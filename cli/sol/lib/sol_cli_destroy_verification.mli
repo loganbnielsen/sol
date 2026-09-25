@@ -54,34 +54,6 @@ type retention =
     failures; {!report} prints the sentence itself. *)
 val retention_to_string : retention -> string
 
-(** [Pending] is the provider saying "not yet": the promised snapshot exists and
-    has not reached the state the retention contract requires. The caller keeps
-    observing for a bounded time; it is never reported as success. *)
-type retention_probe =
-  | Settled of retention
-  | Pending of string
-
-val final_snapshot_query : snapshot_id:string -> region:string -> string list
-val instance_snapshots_query : instance:string -> region:string -> string list
-
-(** The promised final snapshot must exist *and* be `available`; a provider answer
-    about a different identifier is not evidence about this one. *)
-val classify_final_snapshot
-  :  declared:Sol_cli_cloud_lifecycle.destroy_retention
-  -> snapshot_id:string
-  -> lookup_result
-  -> retention_probe
-
-(** Retain-nothing: no manual or automated snapshot attributable to this
-    destruction's database instance may remain. *)
-val classify_instance_snapshots : lookup_result -> retention
-
-(** gcloud's "this does not exist" wording, for the residue checks that ask gcloud.
-    GCP answers 404 for a resource that is gone *and* for a project that is not
-    visible, so a not-found whose subject names a project other than [project] is
-    not absence (finding C). *)
-val gcp_absence_message : ?project:string -> string -> bool
-
 (** The combined evidence. *)
 type observation =
   { state : state_evidence

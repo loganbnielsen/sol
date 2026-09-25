@@ -611,12 +611,14 @@ let test_clean_destruction_is_clean () =
   let deps, calls =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
-      ~prepare:(fun ~state:_ -> Sol_cli_cloud_lifecycle.Prepared Gcp_prepared)
+      ~prepare:(fun ~state:_ ->
+        Sol_cli_cloud_lifecycle.Prepared (Prepared { retained = None }))
       ()
   in
   let outcome = execute ~deps in
   (match outcome with
-   | Destroy_succeeded { preparation = Gcp_prepared; degradations = []; _ } -> ()
+   | Destroy_succeeded
+       { preparation = Prepared { retained = None }; degradations = []; _ } -> ()
    | _ -> Alcotest.fail "a clean preparation and a clean destroy must be a clean success");
   Alcotest.(check int) "the substrate was destroyed" 1 calls.substrate;
   Alcotest.(check int) "clean success exits 0" exit_clean (exit_code outcome)
@@ -978,7 +980,8 @@ let test_fully_clean_is_exit_0 () =
   let deps, calls =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
-      ~prepare:(fun ~state:_ -> Sol_cli_cloud_lifecycle.Prepared Gcp_prepared)
+      ~prepare:(fun ~state:_ ->
+        Sol_cli_cloud_lifecycle.Prepared (Prepared { retained = None }))
       ~verify_destruction:(fun ~pre_destroy:_ ~preparation:_ -> observed)
       ()
   in
