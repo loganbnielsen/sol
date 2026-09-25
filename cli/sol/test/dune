@@ -170,6 +170,7 @@
  (action
   (bash
    "set -eu\ncase \"${XDG_DATA_HOME:-}\" in\n  '') echo 'INFRA-075: XDG_DATA_HOME is unset for cli/sol/test actions; sol would write runs into the real ~/.local/share/sol' >&2; exit 1 ;;\nesac\nif [ -n \"${HOME:-}\" ] && [ \"$(cd \"$(dirname \"$XDG_DATA_HOME\")\" 2>/dev/null && pwd -P)/$(basename \"$XDG_DATA_HOME\")\" = \"$HOME/.local/share\" ]; then\n  echo 'INFRA-075: XDG_DATA_HOME points at the real data home' >&2; exit 1\nfi")))
+
 ; SEC-010: the sensitive-variable guard reads the real roots, so they are deps.
 
 (test

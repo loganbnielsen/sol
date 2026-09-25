@@ -63,10 +63,12 @@ harness's fixture addresses. The other `cli/sol/test` rules that run the binary 
 `dune test cli/sol/test/` and diffed after: identical (21 entries) — previously every full run
 replaced them.
 
-**Tests run:** `dune test cli/sol/test/`. Everything passes except `test_scaffold`
-`existing_files` 6 and 7 ("freshly scaffolded workspace builds with `dune build`"), which fail
-identically with and without `XDG_DATA_HOME` set — this machine's opam switch lacks the framework
-packages (`prepare-framework-deps.sh`); unrelated to this change, CI is authoritative for it.
+**Tests run:** `dune build` then `dune test cli/sol/test/`: all pass (exit 0), including after
+merging `main` (SEC-010). An earlier local run that skipped the full `dune build` failed
+`test_scaffold` `existing_files` 6 and 7 with *Library "sol-obs" not found*. That is a build-order
+artifact of testing without building the framework first: it failed identically with and without
+`XDG_DATA_HOME`, and it passes after a full build. (An earlier version of this note blamed the opam
+switch; that was wrong.)
 
 - Demo/example: not applicable (test infrastructure only).
 - Language parity (DEC-022): no application-facing impact.
