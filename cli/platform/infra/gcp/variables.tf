@@ -151,3 +151,19 @@ variable "alert_runbook_url" {
   type    = string
   default = ""
 }
+
+# INFRA-077 / FND-0057: Cloud Storage soft delete, declared rather than defaulted.
+# GCS retains soft-deleted objects (and a deleted bucket) for the policy's duration and
+# bills them at storage rates. Sol routes 0 for a `destroy_retention: none` target, so
+# its destroy leaves nothing billable behind, and an explicit 7 days otherwise.
+variable "gcs_soft_delete_retention_seconds" {
+  description = "Soft-delete retention for the observability buckets, in seconds: 0 (disabled) or 7-90 days."
+  type        = number
+  default     = 604800
+
+  validation {
+    condition     = var.gcs_soft_delete_retention_seconds == 0 || (var.gcs_soft_delete_retention_seconds >= 604800 && var.gcs_soft_delete_retention_seconds <= 7776000)
+    error_message = "gcs_soft_delete_retention_seconds must be 0 (disabled) or between 604800 (7 days) and 7776000 (90 days)."
+  }
+}
+

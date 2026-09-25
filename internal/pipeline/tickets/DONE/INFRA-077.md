@@ -43,3 +43,19 @@ while the log and metric objects stay billed for a week (FND-0057, with the quot
   (HARDEN-006) observes it; say so.
 - Demo/example: not applicable (cloud lifecycle internals). Language parity (DEC-022): no
   application-facing impact.
+
+## Completion notes (2026-09-25)
+
+See FND-0057's 2026-09-25 transition for the mechanism and evidence. In short: the soft-delete
+policy is declared on both buckets and routed from `destroy_retention` (`none` → 0; otherwise an
+explicit 7 days); the guard enforces it, mutation-tested and positive-controlled against `main`; the
+GCP retention report names it; and the Cloud SQL question is settled from Google's documentation plus
+the locked provider's source (nothing is retained). `dune test cli/sol/test/` exit 0;
+`terraform validate` of the GCP root passes; `check_ocamlformat.sh --all` clean.
+
+- The choice was retention at creation, not a Destroy-phase lowering. Changing it at destroy time
+  would add a constructive update to the destroy path (against the plan-asserted allowlists), and
+  objects soft-deleted before a policy change keep their earlier retention, so the order would be
+  fragile.
+- Demo/example: not applicable (cloud lifecycle internals). Language parity (DEC-022): no impact.
+- REFAC-092: no new provider constructor (the change sits inside the existing GCP arm).

@@ -1402,6 +1402,16 @@ let terraform_vars ~workspace cfg =
              (Option.map
                 (fun member -> Printf.sprintf "[%S]" member)
                 target.provisioner_impersonator)
+        (* INFRA-077 / FND-0057: Cloud Storage soft-deletes and bills deleted objects
+           for 7 days by default, so a `destroy_retention: none` destroy would leave
+           the observability data billed. `none` creates the buckets with soft delete
+           off; anything else declares the 7 days explicitly. *)
+        |> add_opt
+             "gcs_soft_delete_retention_seconds"
+             (Some
+                (match Option.map String.trim target.destroy_retention with
+                 | Some "none" -> "0"
+                 | _ -> "604800"))
     in
     let vars =
       List.assoc_opt (Sol_cli_provider.to_string target.provider) target.provider_fields

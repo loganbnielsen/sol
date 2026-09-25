@@ -1544,6 +1544,8 @@ grep -F 'retention: none' "$gcp_destroy_log.out" >/dev/null || {
 # rather than assert an absence nothing checked.
 assert_contains "the GCP retention claim names what was actually checked" "$gcp_destroy_log.out" \
   'there is no GCP snapshot surface to observe' || exit 1
+assert_contains "INFRA-077: the GCP none claim names the soft-delete setting" "$gcp_destroy_log.out" \
+  'observability buckets were created with soft delete off' || exit 1
 if grep -F 'no residual billable artifacts' "$gcp_destroy_log.out" >/dev/null; then
   echo "the GCP destroy claimed no residual billable artifacts, which nothing observed:" >&2
   cat "$gcp_destroy_log.out" >&2
