@@ -2,7 +2,7 @@
 id: REFAC-104
 type: refactor
 severity: low
-title: Group cli/lib into domain subfolders from its dependency graph
+title: Split cli/lib into per-domain dune libraries along its dependency graph
 source: internal/pipeline/audits/2026-09-25_organization_proposal.md, rule 6
 ---
 
@@ -12,14 +12,18 @@ source: internal/pipeline/audits/2026-09-25_organization_proposal.md, rule 6
 
 ## Remediation
 
-1. Derive the module dependency graph (`dune describe` or `ocamldep`) and propose domain folders that minimize cross-folder edges. A starting sketch from prefixes is `workspace/`, `local/`, `cloud/`, `deploy/`, `kubernetes/`, `observability/` and `secrets/`, but the graph decides, and the chosen grouping goes in the completion notes.
-2. Move the files under `(include_subdirs unqualified)`. The libraries are `(wrapped false)`, so no module is renamed and no call site changes.
-3. If DEC-046 chose separate dune libraries (its open question 3), split them in a follow-up rather than here.
+**The deliverable is the graph and a decision for each domain.** Moving files is secondary.
+
+1. Derive the module dependency graph (`dune describe` or `ocamldep`) and propose domains that minimize cross-domain edges. A starting sketch from prefixes is `workspace`, `local`, `cloud`, `deploy`, `kubernetes`, `observability` and `secrets`, but the graph decides.
+2. For each domain, record **library** (it has no cycle with the rest) or **stays in the top-level library** (and name the cycle that keeps it there).
+3. Each library domain gets its own directory and `dune` stanza, still `(wrapped false)`. No module is renamed, but a module can only reference another domain if its `dune` lists that domain, so the boundary is enforced at build time. The top-level library keeps an explicit `(modules …)` list for the remainder, as `cli/sol/lib/dune` does today.
+4. **Mechanism:** use `(include_subdirs no)`, the default, with a `dune` per domain directory. Don't use `(include_subdirs unqualified)`: dune treats every subdirectory of such a tree as part of the enclosing library, so nested library stanzas can't coexist with it. Use it only if the graph's answer turns out to be "folders everywhere", and say so if it does.
 
 ## Acceptance criteria
 
 - No module name changes: `git diff --stat` shows renames only, apart from `dune` files.
-- The completion notes include the cross-folder edge counts, so a later split into libraries can see where the seams are.
+- The completion notes include the graph, the decision for each domain, and, for each domain left in the top-level library, the cycle that keeps it there.
+- A mutation check: adding a reference from one library domain to another that its `dune` doesn't list fails the build.
 - `dune build`, `dune test cli/` and the format check pass.
 
 ## Completion notes (required)

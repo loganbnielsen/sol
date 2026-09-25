@@ -2,9 +2,9 @@
 id: REFAC-102
 type: refactor
 severity: low
-title: Collapse the 18 platform component values files into one profile-keyed components.yml
+title: Collapse the 18 platform component values files into one profile-keyed components.json
 source: internal/pipeline/audits/2026-09-25_organization_proposal.md § Platform component values
-premise: "test -f platform/shared/components.yml"
+premise: "test -f platform/shared/components.json"
 ---
 
 **Depends on:** REFAC-099.
@@ -13,9 +13,8 @@ premise: "test -f platform/shared/components.yml"
 
 ## Remediation
 
-- Replace `components/<c>/values-{common,local,durable}.json` with `platform/shared/components.yml`, keyed `<component>.{common,local,durable}`. The layering doesn't change (ADR 0001: common deep-merged with the profile overlay).
-- Terraform reads it with `yamldecode(file(...))`.
-- `Sol_cli_platform_component.merged_values_yaml` reads the same file. Add or reuse a YAML reader, and record which one in the completion notes.
+- Replace `components/<c>/values-{common,local,durable}.json` with `platform/shared/components.json`, keyed `<component>.{common,local,durable}`. The layering doesn't change (ADR 0001: common deep-merged with the profile overlay).
+- **Stays JSON.** Terraform keeps `jsondecode(file(...))`, and `Sol_cli_platform_component.merged_values_yaml` keeps `yojson`. No new parser. The proposal's § *Platform component values* explains why YAML was dropped: there is no YAML library in the CLI, and two YAML implementations would have to agree exactly on what reaches Helm.
 - Update ADR 0001's paths and `internal/ci/check_platform_component_drift.sh`.
 - **Key by profile only.** A key named after an env, provider or region is a review failure, per the proposal's rationale.
 

@@ -19,11 +19,20 @@ premise: "test -d platform/local"
 - Move `cli/sol/{bin,lib,test}` to `cli/{bin,lib,test}`, and `cli/sol/control_plane_migrations` to `cli/migrations`.
 - Update every consumer of both paths in the same change: SOL_HOME resolution (`Sol_cli_cmd_new.infer_sol_home` and every `Filename.concat sol_home "cli/platform/…"`), Terraform `local.platform_components_dir`, `internal/ci/`, `.github/workflows/`, `internal/ci/classify-changes.sh`, the hooks, `AGENTS.md`, `CONTRIBUTING.md`, and docs. That includes the binary path `_build/default/cli/sol/bin/main.exe`.
 
-This is the first move so that the later platform tickets change each path only once.
+This is the first move so that the later platform tickets change each path only once. **It lands as two commits or PRs:** `cli/platform` → `platform/` first, then `cli/sol` → `cli/`, so the two repo-wide diffs aren't tangled together.
+
+**CI consumers that must move in the same commit.** These fail loudly rather than silently, but if they're missed CI goes red for the wrong reason:
+
+- `_build/default/cli/sol/bin/main.exe` / `dune build cli/sol/bin/main.exe`: `ci.yml:474,512,1079,1101`, `release.yml:53,60`, `fn-svc-isolation-spike.yml:76`.
+- `bash cli/platform/local/scripts/…`: `ci.yml:172,470,1075`, `workspace-independence.yml:69,72`.
+- **The one silent consumer:** the `paths:` filter at `workspace-independence.yml:26`. If it stops matching, the workflow stops triggering rather than failing.
+
+Line numbers are as of `origin/main` `50449a1a`; re-run `rg -n 'cli/(platform|sol)' .github/workflows/` when starting.
 
 ## Acceptance criteria
 
 - `cli/` contains only OCaml and dune files. `platform/` contains no OCaml.
+- A CI check fails when any path in a workflow `paths:` filter doesn't exist, with a mutation test in the style of `internal/ci/test_*.sh`.
 - `rg -n --hidden -g '!.git' '<old path>'` returns nothing outside `internal/pipeline/` and dated historical records. Put the exact commands and their empty output in the completion notes.
 - `dune build`, `dune test cli/` and `internal/ci/check_ocamlformat.sh --all` pass, and CI is green.
 
