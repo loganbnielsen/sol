@@ -1,5 +1,27 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: AUDIT-POST-002/003 — the last provider facts leave generic code (2026-09-25)
+
+The final two of the audit's seven findings, and the closure of the pass:
+
+- **AUDIT-POST-002.** The guarded-removal check in `Sol_cli_cloud_apply` no longer names
+  `aws_ecr_repository`. Which resource types discard something a re-apply cannot restore is now a
+  capability datum (`guarded_removals`): AWS declares ECR repositories, GCP declares none *with a
+  reason* (its provider refuses to delete a non-empty Artifact Registry repository). The sequence
+  keeps the policy; the CLI still supplies `--confirm-ecr-removal`, so the operator-facing contract
+  is unchanged, and a provider that declares nothing inherits nothing.
+- **AUDIT-POST-003.** The legacy-key → provider map in `Sol_cli_config` was provider identity spelled
+  as a string — invisible to the dispatch guard, which counts constructors. It moved to
+  `Sol_cli_provider.owned_legacy_keys` as constructors, and the guard now rejects a provider name
+  spelled as a string in a generic module (`aws`/`gcp`/`azure`, derived from the provider list). That
+  guard's mutation control caught a real bug in the guard itself (a joined-string membership test
+  that matched nothing); the self-test now has a multi-file case that fails against it.
+
+With this, all seven `AUDIT-POST` findings are closed. Providers live in the provider tier, the two
+reproduced guard holes are closed and executable-guarded, and the lifecycle invariants are unchanged.
+
+## Previous: AUDIT-POST-001/007 — AWS identity leaves the generic lifecycle, and the module is named for what it is (2026-09-25)
+
 ## Latest: AUDIT-POST-001/007 — AWS identity leaves the generic lifecycle, and the module is named for what it is (2026-09-25)
 
 Two more of the audit's seven findings, both ownership corrections rather than behaviour changes:

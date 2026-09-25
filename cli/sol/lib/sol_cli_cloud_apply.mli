@@ -23,7 +23,16 @@ type ('outputs, 'env, 'control) deps =
     (** Whether the cloud substrate exists before this run; an error is unknown. *)
   ; plan : unit -> (Sol_cli_terraform_plan.change list, failure) result
     (** Save the cloud plan (bootstrap window enabled) and read its changes. *)
-  ; confirm_ecr_removal : bool
+  ; guarded_removals : string list
+    (** Terraform resource types whose removal on this path discards data that
+        re-applying cannot restore, so a plan that removes one is refused unless
+        confirmed. The *provider* declares which types those are (AUDIT-POST-002);
+        the sequence owns only the policy. A provider with no such type declares
+        none, which is not the same as having AWS's. *)
+  ; confirm_guarded_removal : bool
+  ; confirmation_flag : string
+    (** The flag that confirms such a removal, for the refusal text. The CLI owns the
+        flag's spelling, so the sequence does not carry a provider's product name. *)
   ; apply_plan : unit -> (unit, failure) result (** Apply the saved plan. *)
   ; discard_plan : unit -> unit
   ; outputs : unit -> ('outputs option, string) result

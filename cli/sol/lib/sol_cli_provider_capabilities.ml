@@ -35,6 +35,11 @@ type t =
       -> (string * string) list
       -> (string * string) list
   ; profile_vars : production:bool -> production_postgres:bool -> (string * string) list
+  ; guarded_removals : string list
+    (** Resource types whose removal discards something a re-apply cannot restore, so the
+        apply sequence refuses a plan that removes one unless it is confirmed
+        (AUDIT-POST-002). Empty is a real answer for a provider whose own API refuses
+        such a deletion. *)
   ; root_declared_vars :
       has_postgres:bool
       -> production_postgres:bool
@@ -140,6 +145,11 @@ let aws =
          then Sol_cli_profile.node_shape_vars Sol_cli_profile.recommended_node_shape
          else [])
         @ if production_postgres then [ "rds_deletion_protection", "true" ] else [])
+  ; (* INFRA-074 / AUDIT-POST-002: removing one of these takes its contents with it
+       ([force_delete = true]), and the list is derived from the workloads in the invoking
+       checkout, so a branch that lacks a Dockerfile plans a deletion. Sol refuses that
+       unless the operator confirms it. *)
+    guarded_removals = [ "aws_ecr_repository" ]
   ; root_declared_vars =
       (fun ~has_postgres ~production_postgres ~ecr_repositories ->
         Result.map
@@ -231,6 +241,11 @@ let gcp =
   ; (* The GCP root keeps Cloud SQL deletion protection on by its own default
        (sql_deletion_protection = true), and declares no node-shape variables. *)
     profile_vars = (fun ~production:_ ~production_postgres:_ -> [])
+  ; (* No equivalent, and that is the honest answer: an Artifact Registry repository
+       cannot be deleted while it holds images, so the provider refuses the deletion
+       itself and there is nothing here for Sol to confirm. A different risk shape, not a
+       missing guard (AUDIT-POST-002). *)
+    guarded_removals = []
   ; (* The GCP root declares its own database variables (`project_id` and the Cloud
        SQL shapes), which a target supplies through its provider block. *)
     root_declared_vars =

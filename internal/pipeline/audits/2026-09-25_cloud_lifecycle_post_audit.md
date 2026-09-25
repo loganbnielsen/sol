@@ -119,6 +119,23 @@ isolation.
 
 ## Closure
 
-Closed by tickets `AUDIT-POST-001` … `AUDIT-POST-007` (see
-`internal/pipeline/tickets/DONE/`). Each ticket records problem, root cause, change, executable
-evidence and the canonical merge SHA.
+All seven findings are closed. Each ticket records problem, root cause, change, executable evidence
+and its own canonical merge SHA (`git log --oneline -1 -- internal/pipeline/tickets/DONE/<ID>.md`).
+
+| Finding | Ticket | Landed |
+| --- | --- | --- |
+| AUDIT-POST-001 | `AUDIT-POST-001.md` | #511 |
+| AUDIT-POST-002 | `AUDIT-POST-002.md` | this PR |
+| AUDIT-POST-003 | `AUDIT-POST-003.md` | this PR |
+| AUDIT-POST-004 | `AUDIT-POST-004.md` | #510 |
+| AUDIT-POST-005 | `AUDIT-POST-005.md` | #510 |
+| AUDIT-POST-006 | `AUDIT-POST-006.md` | #510 |
+| AUDIT-POST-007 | `AUDIT-POST-007.md` | #511 |
+
+The closure pass was bounded to these seven: no architecture change, no provider-boundary redesign,
+and nothing from the deleted Terraform ownership/verification model restored. The two guard holes the
+audit reproduced are now closed *and* executable-guarded (`check_destroy_completeness.sh` classifies
+every deletion semantic; `check_provider_dispatch.sh` rejects provider-native identity declarations
+and provider names spelled as strings in a generic module, with the provider-implementation
+exemption derived from the provider list rather than written out). The invariants listed above are
+unchanged, and the Azure-on-paper surface is measured again at the end of the pass.

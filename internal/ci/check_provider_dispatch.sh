@@ -110,6 +110,31 @@ allowed() {
   awk -v k="$1" -v p="$2" '$1 == k && $2 == p { print $3; exit }' "$allowlist"
 }
 
+# AUDIT-POST-003. Provider identity *spelled as a string* was invisible to the count above:
+# (The pattern below is built from the provider list plus the names of providers this
+# repository deliberately does not have yet: writing one of those into a generic module is
+# the same leak, and catching it before the provider exists is cheaper than after.)
+# `Target_provider_owned (s, "aws")` in the config parser is provider knowledge with no
+# constructor to count, and it passed the guard. That instance is gone -- the mapping is now
+# data in the provider tier (Sol_cli_provider.owned_legacy_keys) -- so this is zero-tolerance
+# rather than a ratchet: zero today, and a ratchet would only record how much came back. A
+# provider implementation may spell its own name; it is skipped below.
+provider_name_literals="\"($(printf '%s\n' $providers | tr '\n' '|')azure)\""
+
+count_provider_names() {
+  { grep -oE "$provider_name_literals" "$root/$1" || true; } | wc -l | tr -d ' '
+}
+
+# Membership is a loop, not a `case` on a joined string: a joined string built with an
+# unquoted `printf '%s'` loses its separators and then matches nothing, which is a guard that
+# silently checks nothing.
+is_generic_file() {
+  for g in $generic_files; do
+    if [ "$g" = "$1" ]; then return 0; fi
+  done
+  return 1
+}
+
 fail=0
 total=0
 wild_total=0
@@ -136,6 +161,16 @@ for f in $files; do
     echo "check_provider_dispatch: $f has $w wildcard provider arm(s), $aw allowed -- lower its entry in $(basename "$allowlist")." >&2
     fail=1
   fi
+  # AUDIT-POST-003: a provider's name spelled as a string is provider identity with no
+  # constructor to count. The generic set is the same one the identity rule uses, derived
+  # from the provider list, so a provider added later is exempt without editing this guard.
+  if is_generic_file "$f"; then
+    pn="$(count_provider_names "$f")"
+    if [ "${pn:-0}" -gt 0 ]; then
+      echo "check_provider_dispatch: $f spells a provider's name ($pn occurrence(s)) -- provider identity belongs in the provider tier (sol_cli_provider, its capabilities, or the provider's own module), not in generic Sol code." >&2
+      fail=1
+    fi
+  fi
 done
 
 # AUDIT-POST-001: no generic module declares provider-native identity machinery. Zero
@@ -161,4 +196,4 @@ done <"$allowlist"
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
-echo "check_provider_dispatch: $total provider-dispatch occurrence(s) and $wild_total wildcard provider arm(s) outside sol_cli_provider and its registry, each within its allowlist, and no provider-native identity declaration in a generic module."
+echo "check_provider_dispatch: $total provider-dispatch occurrence(s) and $wild_total wildcard provider arm(s) outside sol_cli_provider and its registry, each within its allowlist, and no provider-native identity declaration or provider name spelled as a string in a generic module."

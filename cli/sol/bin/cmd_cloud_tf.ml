@@ -809,6 +809,11 @@ let await_platform_readiness ~provider ~env =
   await ()
 ;;
 
+(* The flag that confirms a guarded removal (INFRA-074), named once: the refusal is
+   built in the generic apply sequence, which must not carry a provider's product name
+   (AUDIT-POST-002). *)
+let confirm_guarded_removal_flag = "confirm-ecr-removal"
+
 let apply_deps
       ~confirm_ecr_removal
       ~provider
@@ -877,7 +882,9 @@ let apply_deps
         | Error message ->
           Error
             (Sol_cli_cloud_apply.Refused ("could not read the cloud plan: " ^ message)))
-  ; confirm_ecr_removal
+  ; guarded_removals = (capabilities provider).guarded_removals
+  ; confirm_guarded_removal = confirm_ecr_removal
+  ; confirmation_flag = "--" ^ confirm_guarded_removal_flag
   ; apply_plan =
       (fun () ->
         terraform_failure
@@ -1709,10 +1716,11 @@ let confirm_ecr_removal_flag =
     value
     & flag
     & info
-        [ "confirm-ecr-removal" ]
+        [ confirm_guarded_removal_flag ]
         ~doc:
-          "Allow an apply whose plan deletes ECR repositories (and every image in them). \
-           Without it such an apply is refused before anything changes.")
+          "Allow an apply whose plan deletes a resource the provider declares guarded \
+           (AWS: ECR repositories, and every image in them). Without it such an apply is \
+           refused before anything changes.")
 ;;
 
 (* INFRA-076 *)

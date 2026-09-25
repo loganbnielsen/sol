@@ -31,7 +31,9 @@ type outcome =
 type ('outputs, 'env, 'control) deps =
   { substrate_exists : unit -> (bool, string) result
   ; plan : unit -> (Sol_cli_terraform_plan.change list, failure) result
-  ; confirm_ecr_removal : bool
+  ; guarded_removals : string list
+  ; confirm_guarded_removal : bool
+  ; confirmation_flag : string
   ; apply_plan : unit -> (unit, failure) result
   ; discard_plan : unit -> unit
   ; outputs : unit -> ('outputs option, string) result
@@ -66,31 +68,37 @@ let report_phase deps phase =
        (Sol_cli_cloud_lifecycle.phase_to_string phase))
 ;;
 
-(* INFRA-074 / FND-0043: ECR repositories are derived from the workloads in this
-   checkout and carry [force_delete], so a plan that drops one would delete its
-   images. Refused unless confirmed, before anything is applied. *)
-let check_ecr_removal deps changes =
-  match
-    Sol_cli_terraform_plan.removed_of_type ~resource_type:"aws_ecr_repository" changes
-  with
+(* INFRA-074 / FND-0043, generalised by AUDIT-POST-002: a resource type the provider
+   declares *guarded* holds something a re-apply cannot restore (AWS's ECR repositories
+   are derived from the workloads with a Dockerfile in this checkout, so a branch that
+   lacks one plans its deletion with [force_delete], taking its images with it). A plan
+   that removes one is refused before anything is applied unless the operator confirms
+   it. Which types those are is the provider's declaration; the policy is Sol's. *)
+let check_guarded_removals deps changes =
+  let removed =
+    List.concat_map
+      (fun resource_type -> Sol_cli_terraform_plan.removed_of_type ~resource_type changes)
+      deps.guarded_removals
+  in
+  match removed with
   | [] -> Ok ()
-  | removed when deps.confirm_ecr_removal ->
+  | removed when deps.confirm_guarded_removal ->
     deps.report
       (Printf.sprintf
-         "  ECR: removing %s and every image in them (confirmed with \
-          --confirm-ecr-removal)"
-         (String.concat ", " removed));
+         "  guarded removal: deleting %s (confirmed with %s)"
+         (String.concat ", " removed)
+         deps.confirmation_flag);
     Ok ()
   | removed ->
     Error
       (Refused
          (Printf.sprintf
-            "this apply would delete ECR repositories and every image in them: %s\n\
-            \  The repository list comes from the workloads with a Dockerfile in this \
-             checkout, so a branch that lacks one of them removes it. Run from the \
-             checkout that deploys this target, or pass --confirm-ecr-removal if \
-             removing them is intended. Nothing was changed."
-            (String.concat ", " removed)))
+            "this apply would delete %s and everything in them.\n\
+            \  Sol refuses to remove what a re-apply cannot restore unless the removal \
+             is intended: run from the checkout that deploys this target, or pass %s. \
+             Nothing was changed."
+            (String.concat ", " removed)
+            deps.confirmation_flag))
 ;;
 
 (* ADR 0003 invariant 3: a platform change on an already-installed target is an
@@ -187,7 +195,7 @@ let execute ~deps =
     let* exists = deps.substrate_exists () |> refused in
     if not exists then report_phase deps Sol_cli_cloud_lifecycle.Cloud_bootstrap;
     let* changes = deps.plan () in
-    let* () = check_ecr_removal deps changes in
+    let* () = check_guarded_removals deps changes in
     deps.apply_plan ()
   in
   match Fun.protect ~finally:deps.discard_plan cloud_stage with

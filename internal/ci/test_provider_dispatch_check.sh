@@ -97,6 +97,39 @@ put nested lib/a.ml 'let backend b p =
 ;;'
 expect_accept nested "a wildcard that belongs to an enclosing non-provider match"
 
+# 7b. AUDIT-POST-003: provider identity spelled as a string. The dispatch count cannot see
+#     `(s, "aws")` -- there is no constructor -- which is exactly how the config parser's
+#     legacy-key map escaped the guard while the guard reported the boundary clean.
+mkcase name ''
+put name lib/a.ml 'let provider_of_key = function
+  | "state_lock_table" -> Some "aws"
+  | "tenant" -> Some "azure"
+  | _ -> None
+;;'
+expect_reject name "a provider name spelled as a string in a generic module"
+
+# ...and a provider implementation may still spell its own name (its argv and its
+# provider-field lookups do), including one this tree does not have yet: the exemption is
+# derived from the provider list, not written out here.
+mkcase nameok ''
+put nameok lib/sol_cli_aws_destruction.ml 'let argv = [ "aws"; "sts"; "get-caller-identity" ]'
+expect_accept nameok "a provider name inside the provider's own implementation"
+
+# ...and it sees *every* generic module, not just the first: a membership test that joins the
+# file list into a string without separators silently checks nothing once there is more than
+# one file. This case exists because that bug was real -- the mutation control on the live
+# repository caught it, and a single-file fixture could not.
+mkcase namemulti ''
+put namemulti lib/a.ml 'let ok = 1'
+put namemulti lib/b.ml 'let provider = "aws"'
+expect_reject namemulti "a provider name in a second generic module"
+
+mkcase namethird ''
+printf 'let to_string = function\n  | Aws -> "aws"\n  | Gcp -> "gcp"\n  | Azure -> "azure"\n;;\n' \
+  >"$tmp/namethird/cli/sol/lib/sol_cli_provider.ml"
+put namethird lib/sol_cli_azure_cluster.ml 'let argv = [ "azure"; "identity" ]'
+expect_accept namethird "a third provider's name inside its own implementation"
+
 # 8. A stale allowlist entry for a deleted module.
 mkcase stale 'dispatch cli/sol/lib/a.ml 2
 dispatch cli/sol/lib/gone.ml 3'
@@ -150,4 +183,4 @@ expect_accept third "a third provider's own implementation"
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
-echo "test_provider_dispatch_check: guard rejects new dispatch, growth, unrecorded reductions, wildcard provider arms, stale entries and provider-native identity declared in a generic module; accepts the baseline, allowlisted wildcards, nested non-provider wildcards, the provider module, identity declared in a provider implementation, and a provider this tree does not have yet."
+echo "test_provider_dispatch_check: guard rejects new dispatch, growth, unrecorded reductions, wildcard provider arms, stale entries, provider-native identity declared in a generic module, and a provider's name spelled as a string there; accepts the baseline, allowlisted wildcards, nested non-provider wildcards, the provider module, identity or a provider name inside a provider implementation, and a provider this tree does not have yet."

@@ -1683,8 +1683,18 @@ if (export FAIL_ON=""; export ECR_REMOVAL=1; run_apply "$ecr_log"); then
   echo "cloud apply went ahead with a plan that deletes an ECR repository" >&2
   exit 1
 fi
-grep -F 'would delete ECR repositories' "$ecr_log.out" >/dev/null || {
+grep -F 'would delete' "$ecr_log.out" >/dev/null || {
   echo "the ECR refusal did not say what it refused:" >&2
+  cat "$ecr_log.out" >&2
+  exit 1
+}
+grep -F 'what a re-apply cannot restore' "$ecr_log.out" >/dev/null || {
+  echo "the refusal did not say why it refused:" >&2
+  cat "$ecr_log.out" >&2
+  exit 1
+}
+grep -F -- '--confirm-ecr-removal' "$ecr_log.out" >/dev/null || {
+  echo "the refusal did not name the flag that confirms it:" >&2
   cat "$ecr_log.out" >&2
   exit 1
 }

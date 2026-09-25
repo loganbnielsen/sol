@@ -254,8 +254,11 @@ type target_key =
   | Target_node_failure_headroom_nodes
   | Target_profile
   | Target_provider_box of Sol_cli_provider.t
-  | Target_provider_owned of string * string
-  (** A key a provider owns (REFAC-098): [(key, provider)]. *)
+  | Target_provider_owned of string * Sol_cli_provider.t
+  (** A key a provider owns (REFAC-098): [(key, provider)]. The provider is a constructor,
+      not a spelling: the knowledge is a data list in the provider tier
+      ([Sol_cli_provider.owned_legacy_keys]), where the boundary guard can see it
+      (AUDIT-POST-003). *)
   | Target_unknown of string
 
 let target_key_of_string s =
@@ -279,17 +282,15 @@ let target_key_of_string s =
   | "node_failure_headroom_nodes" -> Target_node_failure_headroom_nodes
   | "profile" -> Target_profile
   (* REFAC-098: provider-native identity lives in the provider's own block, so a
-     target on one provider can never carry another's. *)
-  | "state_lock_table"
-  | "provisioner_role_arn"
-  | "cluster_access_role_arn"
-  | "deploy_role_arn"
-  | "operator_role_arn" -> Target_provider_owned (s, "aws")
-  | "provisioner_impersonator" -> Target_provider_owned (s, "gcp")
+     target on one provider can never carry another's. Which keys those are is the
+     provider tier's to say (AUDIT-POST-003). *)
   | _ ->
-    (match Sol_cli_provider.of_string s with
-     | Some provider -> Target_provider_box provider
-     | None -> Target_unknown s)
+    (match Sol_cli_provider.owned_legacy_key s with
+     | Some provider -> Target_provider_owned (s, provider)
+     | None ->
+       (match Sol_cli_provider.of_string s with
+        | Some provider -> Target_provider_box provider
+        | None -> Target_unknown s))
 ;;
 
 let target_key_name = function
@@ -511,10 +512,12 @@ let load path =
                       | Target_unknown k, _ ->
                         fail (Printf.sprintf "unknown target key %S" k)
                       | Target_provider_owned (k, provider), _ ->
+                        let provider = Sol_cli_provider.to_string provider in
                         fail
                           (Printf.sprintf
-                             "target key %S belongs to the %s provider: declare it as \
-                              `%s.%s` inside the target block (REFAC-098)"
+                             "target key %S belongs to the %s provider: declare it \
+                              as                               `%s.%s` inside the target \
+                              block (REFAC-098)"
                              k
                              provider
                              provider

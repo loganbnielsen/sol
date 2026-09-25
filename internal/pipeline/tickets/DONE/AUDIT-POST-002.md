@@ -67,9 +67,51 @@ smallest data-shaped datum that the generic sequence can iterate.
   provider-specific removal is guarded.
 - A new provider that declares no such types inherits "nothing is guarded", never AWS's list.
 
-## Completion notes (required)
+## Completion notes (2026-09-25)
 
-- Problem / root cause / change / executable evidence / canonical merge SHA.
-- Demo/example: not applicable (cloud lifecycle internals) — state it.
-- Language parity (DEC-022): no application-facing impact — state it.
-- Update `docs/planning/WORK_SUMMARY.md`.
+**Problem.** `Sol_cli_cloud_apply.check_ecr_removal` carried the literal
+`resource_type:"aws_ecr_repository"` and an ECR-worded refusal, in a module whose whole premise
+(refactor-plan decision 3) is that every provider-specific step arrives as a dependency. It was the
+one provider fact in the generic apply sequence.
+
+**Root cause.** INFRA-074 added the guard where the sequencing already lived, because at that moment
+the only provider with the problem was AWS and the check was three lines. Nothing moved it when the
+provider boundary was drawn around everything else.
+
+**Change — the "guarded removals" datum.** A capability field
+(`Sol_cli_provider_capabilities.t.guarded_removals : string list`) says which resource types discard
+something a re-apply cannot restore:
+
+- AWS: `[ "aws_ecr_repository" ]`, with why (derived from the workloads in the invoking checkout, and
+  `force_delete = true`);
+- GCP: `[]`, with why — an Artifact Registry repository cannot be deleted while it holds images, so
+  the provider refuses the deletion itself. That is a different risk shape, not a missing guard, and
+  it is stated rather than faked.
+
+`check_guarded_removals` iterates that list through the existing
+`Sol_cli_terraform_plan.removed_of_type` and keeps the policy (refuse before anything is applied
+unless confirmed). The confirmation *flag's* spelling is passed in as `confirmation_flag`, so the
+sequence does not carry a provider product's name in a message either. `Sol_cli_cloud_apply.ml` now
+has no ECR text at all.
+
+**Preserved contract.** The CLI flag is still `--confirm-ecr-removal` (`cmd_cloud_tf.ml` defines its
+name once and passes it), so existing docs and scripts keep working; the flag is the user-facing
+contract the ticket asked not to churn.
+
+**Executable evidence.**
+- `rg -n 'ecr' cli/sol/lib/sol_cli_cloud_apply.ml` returns nothing.
+- `cli/sol/test/test_cloud_apply.ml` now declares its own `test_guarded_kind` rather than an AWS
+  type — the sequence is data-driven — and gains `test_unguarded_provider_is_unaffected`: the same
+  destructive plan *is* applied when the provider declares no guarded type, which is the "a new
+  provider inherits nothing" criterion.
+- The offline harness's ECR scenario still refuses without the flag, names the address, names the
+  reason and the flag, and still applies the saved plan when `--confirm-ecr-removal` is given (its
+  assertions were updated from the old ECR-worded sentence to the generic one).
+- `dune build`, `dune test cli/sol/test/`, the offline harness and the CI guards pass; the
+  provider-dispatch count is unchanged.
+
+**Canonical merge SHA.** The squash commit that moved this ticket to `DONE/`; recover it with
+`git log --oneline -1 -- internal/pipeline/tickets/DONE/AUDIT-POST-002.md`.
+
+- Demo/example: not applicable (cloud lifecycle internals); the observable CLI contract is unchanged.
+- Language parity (DEC-022): no application-facing impact.
