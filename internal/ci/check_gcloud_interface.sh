@@ -126,13 +126,15 @@ if ! grep -qE 'variable "provisioner_impersonators"' "$gcp_root"/*.tf; then
 fi
 # The declaration path: a target that names no caller must produce an empty list
 # rather than inheriting the running identity.
-# REFAC-098: the caller is declared in the target's gcp block, which config
-# assigns to that provider and merges with every other provider-block key (a
-# field that is not merged is how DEC-033 lost one), and the GCP capabilities read
-# it from there.
-if ! grep -q '"provisioner_impersonator" -> Target_provider_owned (s, "gcp")' \
-  "$root/cli/sol/lib/sol_cli_config.ml"; then
-  report "Sol's config does not assign provisioner_impersonator to the target's gcp block"
+# REFAC-098: the caller is declared in the target's gcp block, which config assigns to
+# that provider and merges with every other provider-block key (a field that is not merged
+# is how DEC-033 lost one), and the GCP capabilities read it from there.
+# AUDIT-POST-003 moved *which keys belong to which provider* out of generic config and into
+# the provider tier, so the assignment to check is the provider-owned one; the mapping is
+# read by Sol_cli_config.target_key_of_string.
+if ! grep -q '"provisioner_impersonator", Gcp' \
+  "$root/cli/sol/lib/sol_cli_provider.ml"; then
+  report "Sol's provider tier does not assign provisioner_impersonator to the gcp block (Sol_cli_provider.owned_legacy_keys)"
 fi
 if ! grep -q 'provider_field target "provisioner_impersonator"' \
   "$root/cli/sol/lib/sol_cli_provider_capabilities.ml"; then

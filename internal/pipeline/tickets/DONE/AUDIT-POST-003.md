@@ -118,6 +118,13 @@ on.
 - The provider list the guard excludes and the names it looks for are both *derived* from
   `Sol_cli_provider.ml` (`to_string`, the HARDEN-005 technique), plus the deliberately-absent
   `azure`: adding a provider does not require editing this guard.
+- **A second guard pinned the moved knowledge, and CI caught it.** `check_gcloud_interface.sh` asserted
+  the old assignment site by exact text (`"provisioner_impersonator" -> Target_provider_owned (s,
+  "gcp")` in `sol_cli_config.ml`). It now asserts the provider-owned assignment
+  (`"provisioner_impersonator", Gcp` in `Sol_cli_provider.owned_legacy_keys`) and is mutation-checked
+  in the same way: changing it to `Aws` makes the guard fail. The local sweep before pushing now runs
+  *every* guard the CI workflow runs (31), not a hand-picked subset — the hand-picked subset is why
+  this reached CI at all.
 - The legacy-key diagnostic is unchanged from the operator's side: `cli/sol/test/test_config.ml`'s
   "belongs to the `aws.provisioner_role_arn`" expectation still passes, because the provider value is
   rendered with `to_string`.
