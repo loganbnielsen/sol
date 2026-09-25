@@ -1,5 +1,22 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: Attempt 8 stopped in Phase 0 — two harness defects filed (2026-09-25)
+
+The authorized GCP Attempt 8 began from `1aad2623` and stopped in its **read-only Phase 0** with four
+provider classes at `UNKNOWN` (a stop condition). No provider mutation, nothing created, `FND-0010`
+`NOT_REACHED`; the authorized live-infrastructure attempt is not consumed. Record:
+`docs/qualification/2026-09-25-gcp-attempt8-phase0-stop.md`.
+
+- **INFRA-078 (A).** `provider_probe` did not recognise the provider's real not-found vocabulary:
+  `NOT_FOUND:` carries an underscore that `not[ -]?found` does not cover, so a genuine not-found was
+  read as `UNKNOWN`. Found by running the merged harness against the live project — the same class of
+  gap the harness itself exists to catch, one layer up.
+- **INFRA-078 (B).** `verify` set `KEEP=1` *after* its failure branch, so the EXIT trap escalated to
+  `destroy`: a failing `verify` could tear down the target it was asked only to inspect.
+
+Both fixes are harness-only (no product code), and both carry regression tests that use the provider's
+**actual captured wording** so a paraphrase cannot mask them again.
+
 ## Latest: HARDEN-006 preparation — the GCP Attempt-8 harness (2026-09-25)
 
 Qualification-harness preparation only; **no live run, no cloud resource created, no provider
