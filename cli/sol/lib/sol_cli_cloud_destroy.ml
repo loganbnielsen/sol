@@ -271,19 +271,17 @@ let failure_message = function
   | Elevated_access_not_removed message -> message
 ;;
 
-(* The exit-code contract, decided by the operator for HARDEN-004 step 4: [0] only
-   when every applicable preparation succeeded or had nothing to do *and* the
-   destroy reached and verified absence; [3] when it reached absence with a
-   [Continue_to_destroy] preparation degraded; [1] for a failed or blocked destroy.
-   [2] stays reserved for this CLI's refusal / cannot-proceed-as-requested
-   semantics, so it is deliberately not used here. *)
+(* The exit-code contract: [0] when the destroy reached and verified absence --
+   a [Continue_to_destroy] preparation that degraded on the way is a warning the
+   command prints, not a separate exit code (REFAC-094 collapsed HARDEN-004's exit
+   3); [1] for a failed or blocked destroy. [2] stays reserved for this CLI's
+   refusal / cannot-proceed-as-requested semantics, so it is deliberately not used
+   here. *)
 let exit_clean = 0
-let exit_degraded = 3
 let exit_failure = 1
 
 let exit_code = function
-  | Destroy_succeeded { degradations = []; _ } -> exit_clean
-  | Destroy_succeeded { degradations = _ :: _; _ } -> exit_degraded
+  | Destroy_succeeded _ -> exit_clean
   | Destroy_blocked _ | Destroy_failed _ -> exit_failure
 ;;
 

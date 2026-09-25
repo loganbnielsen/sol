@@ -414,9 +414,9 @@ let classify_instance_snapshots lookup =
    Every source keeps its own voice. [violations] are postconditions with
    positive evidence against them; [unknowns] are required observations that could
    not be obtained. Both are failure ([is_verified] demands both be empty), but
-   they are *not* the same claim, and neither is a degraded success: exit 3 means
-   "the primary destruction postcondition succeeded but a preparation degraded",
-   and an unestablished postcondition is not that. *)
+   they are *not* the same claim, and neither is a degraded success: a degraded
+   success means "the primary destruction postcondition succeeded but a
+   preparation degraded", and an unestablished postcondition is not that. *)
 
 type observation =
   { state : state_evidence

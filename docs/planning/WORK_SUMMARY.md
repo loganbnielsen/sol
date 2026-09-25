@@ -1,6 +1,19 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: the HARDEN epics become a qualification ledger (2026-09-24)
+## Latest: REFAC-094 — destroy trusts Terraform state for what Terraform manages (2026-09-24)
+
+The runtime ownership model is deleted. It had per-kind provider recipes, captured identities,
+B2 declared-coverage, and a destroy-time read-only plan. Following DEC-045, a successful
+`terraform destroy` plus empty state is now the authority for every resource Terraform manages.
+Sol still checks, independently:
+- non-Terraform residue: controller load balancers, PVC volumes, abandoned peering;
+- retention: final and instance snapshots.
+
+Exit code 3 is gone: a degraded `Continue_to_destroy` preparation that still reaches verified
+absence exits 0 with a warning. `sol_cli_destroy_verification.ml` shrank from 1669 to 527
+lines. Provider dispatch (REFAC-092's ratchet) went from 77 to 73.
+
+## Previous: the HARDEN epics become a qualification ledger (2026-09-24)
 
 HARDEN-002 (AWS) and HARDEN-004 (GCP) were standing goals that could never finish, sat in
 `READY_FOR_ENGINEERING/` where `/work` treated them as actionable, and absorbed credit for work

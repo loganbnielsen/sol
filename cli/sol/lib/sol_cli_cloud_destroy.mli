@@ -130,14 +130,13 @@ type outcome =
 
 val failure_message : failure -> string
 
-(** The exit-code contract (HARDEN-004 step 4): [0] only when every applicable
-    preparation succeeded or had nothing to do *and* the destroy reached and
-    verified absence; [3] when it reached absence with a [Continue_to_destroy]
-    preparation degraded; [1] for a failed or blocked destroy. [2] is reserved for
-    this CLI's refusal / cannot-proceed-as-requested semantics. *)
+(** The exit-code contract: [0] when the destroy reached and verified absence,
+    with any degraded [Continue_to_destroy] preparation reported as a warning
+    (REFAC-094 collapsed HARDEN-004's exit 3); [1] for a failed or blocked
+    destroy. [2] is reserved for this CLI's refusal / cannot-proceed-as-requested
+    semantics. *)
 val exit_clean : int
 
-val exit_degraded : int
 val exit_failure : int
 val exit_code : outcome -> int
 

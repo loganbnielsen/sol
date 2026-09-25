@@ -433,7 +433,10 @@ let test_skipped_teardown_is_a_degradation () =
   Alcotest.(check int) "the platform operation did not run" 0 calls.platform;
   Alcotest.(check int) "removal was still attempted" 1 calls.remove;
   Alcotest.(check int) "the substrate destroy still ran" 1 calls.substrate;
-  Alcotest.(check int) "degraded success exits 3" exit_degraded (exit_code outcome)
+  Alcotest.(check int)
+    "a degraded success exits 0 with a warning"
+    exit_clean
+    (exit_code outcome)
 ;;
 
 let test_platform_failure_is_not_a_degradation () =
@@ -571,8 +574,8 @@ let test_continue_preparation_failure_destroys () =
         visible");
   Alcotest.(check int) "the substrate was destroyed" 1 calls.substrate;
   Alcotest.(check int)
-    "a degraded destroy is not a clean success"
-    exit_degraded
+    "a degraded destroy that reached absence exits 0 with a warning"
+    exit_clean
     (exit_code outcome)
 ;;
 
@@ -829,9 +832,8 @@ let test_refused_removal_is_not_success () =
 
    Verification is an additional dimension, not a replacement: it does not erase a
    Step-4 degradation, and a preparation degradation does not soften an
-   unestablished postcondition. The exit contract is unchanged -- 0 clean, 3
-   degraded-but-verified, 1 failure -- and UNKNOWN is a failure, never exit 3,
-   because exit 3 means the primary postcondition *succeeded*. *)
+   unestablished postcondition. The exit contract -- 0 verified absence (a degradation is a warning),
+   1 failure -- makes UNKNOWN a failure, never a success. *)
 
 let observation_with
       ?(state = Sol_cli_destroy_verification.State_absent)
@@ -861,7 +863,10 @@ let test_degradation_with_verified_absence () =
        (verification = verified_observation)
    | _ ->
      Alcotest.fail "a degraded preparation with verified absence is a degraded success");
-  Alcotest.(check int) "degraded success exits 3" exit_degraded (exit_code outcome);
+  Alcotest.(check int)
+    "a degraded success exits 0 with a warning"
+    exit_clean
+    (exit_code outcome);
   Alcotest.(check int) "the substrate destroy ran" 1 calls.substrate
 ;;
 
@@ -1119,7 +1124,7 @@ let () =
         ] )
     ; ( "verification"
       , [ Alcotest.test_case
-            "degradation + verified absence exits 3"
+            "degradation + verified absence exits 0"
             `Quick
             test_degradation_with_verified_absence
         ; Alcotest.test_case

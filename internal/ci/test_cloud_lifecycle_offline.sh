@@ -1567,20 +1567,15 @@ grep -F 'credentials: Google Application Default Credentials resolved' \
 # Step 4: the protected platform teardown cannot run without the authority, so it is
 # skipped, but the substrate destroy does run -- stranding a half-built target is the
 # failure this whole path exists to remove. The run reaches absence, says what
-# degraded, and exits 3: neither the clean 0 nor the failure 1.
+# degraded, and exits 0 (REFAC-094: the degradation is a warning, not an exit code).
 refuse_log="$tmp/gcp-refuse.log"
 rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/bootstrap-window"
 refuse_rc=0
 (cd "$tmp/work" && PLAN_CREATES_MISSING_CLUSTER=1 DESTROYING=1 \
    LIFECYCLE_LOG="$refuse_log" "$sol" cloud destroy prod/gcp/us-central1 --apply) \
   >"$refuse_log.out" 2>&1 || refuse_rc=$?
-if [ "$refuse_rc" -eq 0 ]; then
-  echo "the GCP destroy reported a clean success although its plan reconstructed the missing cluster" >&2
-  cat "$refuse_log.out" >&2
-  exit 1
-fi
-if [ "$refuse_rc" -ne 3 ]; then
-  echo "a degraded destroy must exit 3, not $refuse_rc:" >&2
+if [ "$refuse_rc" -ne 0 ]; then
+  echo "a destroy that reached absence with a degraded preparation must exit 0, not $refuse_rc:" >&2
   cat "$refuse_log.out" >&2
   exit 1
 fi

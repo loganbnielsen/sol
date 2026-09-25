@@ -3206,9 +3206,8 @@ let report_cleanup_evidence = function
     ()
 ;;
 
-(* A preparation that failed but permitted destruction is evidence the exit code
-   depends on, so it is said out loud rather than left to be inferred from the
-   absence of a failure. *)
+(* A preparation that failed but permitted destruction does not change the exit
+   code, so it is said out loud rather than left to be inferred. *)
 let report_degradations = function
   | [] -> ()
   | degradations ->
@@ -3219,10 +3218,8 @@ let report_degradations = function
            message)
       degradations;
     Printf.eprintf
-      "warning: destruction reached absence with %d degraded preparation(s); exiting %d\n\
-       %!"
+      "warning: destruction reached absence with %d degraded preparation(s)\n%!"
       (List.length degradations)
-      Sol_cli_cloud_destroy.exit_degraded
 ;;
 
 let cloud_destroy ~target ~var_file ~vars ~action () =
@@ -3668,12 +3665,12 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
       ; warn = (fun message -> Printf.eprintf "%s\n%!" message)
       }
     in
-    (* One place maps the typed outcome to a process exit. Step 4's contract: 0 only
-       for a clean destroy; 3 when absence was reached but a preparation degraded;
-       1 for a blocked or failed destroy. 2 stays reserved for this CLI's
-       refusal / cannot-proceed-as-requested semantics. Step 5 adds no code: success
-       already *means* "every required postcondition was positively established",
-       and an UNKNOWN observation is a failure rather than a degraded success. *)
+    (* One place maps the typed outcome to a process exit: 0 when absence was
+       reached and verified (a degraded preparation is the warning above, not a
+       different code); 1 for a blocked or failed destroy. 2 stays reserved for this
+       CLI's refusal / cannot-proceed-as-requested semantics. Success *means* every
+       required postcondition was positively established; an UNKNOWN observation is
+       a failure. *)
     let outcome = Sol_cli_cloud_destroy.execute ~deps in
     (match outcome with
      | Sol_cli_cloud_destroy.Destroy_succeeded { degradations; cleanup; verification; _ }
