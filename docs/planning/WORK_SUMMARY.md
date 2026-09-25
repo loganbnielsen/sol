@@ -1,6 +1,18 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: REFAC-096 — the lifecycle holds an opaque cluster, not provider outputs (2026-09-25)
+## Latest: REFAC-097 — retention and residue are provider answers, not generic code (2026-09-25)
+
+Each provider now answers a destroy through `Sol_cli_destruction.t`. That covers preparation
+(including GCP's refusal when a target asks to keep a final snapshot), the retention verdict,
+the sweep of objects Terraform does not own, and pre-destroy glue.
+
+The AWS RDS and snapshot logic and the GCP peering and guard logic moved verbatim out of
+`cmd_cloud_tf.ml` (from 2791 to 1826 lines) and `Sol_cli_destroy_verification` (from 527 to
+206). The preparation type is now provider-neutral, and generic code sees only verdicts.
+Provider dispatch went from 11 to 3, and the offline harness passes in both retention
+directions. Next: REFAC-098 (provider-native identity fields out of the generic target).
+
+## Previous: REFAC-096 — the lifecycle holds an opaque cluster, not provider outputs (2026-09-25)
 
 `Sol_cli_cluster.t` replaces the variant that had one constructor per provider. It carries
 the cluster's name, the provider's platform variables, the identity check, kube access,
