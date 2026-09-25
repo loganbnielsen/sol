@@ -1,32 +1,16 @@
-(** Verifying destruction from observed provider/state evidence (HARDEN-004 step 5).
+(** What `sol cloud destroy` is justified in claiming happened (HARDEN-004 step 5,
+    narrowed by DEC-045 / REFAC-094).
 
-    Steps 2-4 established what destruction is *allowed* to do; this module
-    establishes what Sol is justified in *claiming* happened. The governing rule
-    is that failure to obtain evidence is not evidence of the desired
-    postcondition, and its destruction-specific form is that a successful destroy
-    command is not itself evidence that the target is absent.
+    For resources Terraform is configured to delete, a successful `terraform
+    destroy` plus an empty state is the authority for absence (DEC-045), so this
+    module does not re-query them and does not model provider identity.
+    Independent provider inventories belong to qualification. Three legs remain,
+    each for something Terraform's destroy cannot speak for: the post-destroy state
+    itself, residue Terraform does not own, and retention. UNKNOWN is never read as
+    absence.
 
-    The module is pure: {!query_of} builds the provider argv from the *captured*
-    pre-destroy identity, {!lookup_result} carries what running it returned, and
-    {!classify} decides what the evidence establishes. Nothing here queries a
-    provider, reads a clock or reads a file. *)
-
-type identity =
-  { address : string
-  ; kind : string
-  ; provider_id : string option
-  ; arn : string option
-  ; project : string option
-  ; region : string option
-  }
-
-val region_of_arn : string -> string option
-val account_of_arn : string -> string option
-
-(** The provider's own short name for the object this identity points at (the last
-    path segment of its id/self-link), or [None] when the captured identity does
-    not carry one. *)
-val object_name : identity -> string option
+    The module is pure: the caller runs every query and hands in what it
+    returned. *)
 
 (** What running a provider query returned. [Unavailable] is "nothing was asked"
     -- a missing tool is never absence. *)
@@ -38,75 +22,6 @@ type lookup_result =
       }
   | Unavailable of string
 
-(** The provider's own "this does not exist" signal: AWS's typed error code, or
-    gcloud's absence wordings (unstructured, so matched explicitly). *)
-type not_found =
-  | Aws_error_code of string
-  | Gcp_absence_wording
-
-type recipe =
-  { identity : identity
-  ; operation : string (** the exact query, for the operator *)
-  ; argv : string list
-  ; not_found : not_found
-  }
-
-type provider_verdict =
-  | Present
-  | Absent
-  | Unknown of string
-
-type provider_observation =
-  { identity : identity
-  ; operation : string
-  ; status : int option
-  ; evidence : string
-  ; verdict : provider_verdict
-  }
-
-(** What can be asked about one captured identity. [No_recipe] is a *coverage*
-    statement (the kind has no provider lookup, so its absence rests on
-    {!state} alone and must be reported as such); [Identity_incomplete] is an
-    observation that could not even be attempted, so it is UNKNOWN -- never
-    absence, and never a silent skip. *)
-type queryability =
-  | Queryable of recipe
-  | No_recipe of string
-  | Identity_incomplete of string
-
-val query_of : provider:Sol_cli_provider.t -> identity -> queryability
-
-(** The second identity source (FND-0055 / B2): a resource the disposable root
-    *declares* but the pre-destroy state does not represent is outside `terraform
-    destroy`'s ownership, so it has no captured identity to verify. Its query is
-    built from the plan's own declared values instead -- and deliberately weaker:
-    a declared resource has no provider-assigned id, so a value the plan does not
-    carry stays missing and the obligation is UNKNOWN rather than a guess.
-
-    [target_project]/[target_region] are the scope the target's provider block is
-    configured with, which a declared resource that names neither of its own is
-    created in; they are the only thing taken from configuration, and never a
-    default. *)
-type declared_resource =
-  { address : string
-  ; kind : string
-  ; values : Yojson.Safe.t
-  }
-
-val declared_query_of
-  :  provider:Sol_cli_provider.t
-  -> target_project:string option
-  -> target_region:string option
-  -> declared_resource
-  -> queryability
-
-val classify_lookup : recipe -> lookup_result -> provider_verdict
-val observation_of_lookup : recipe:recipe -> lookup_result -> provider_observation
-
-(** The observation for an identity whose kind *is* queryable but whose captured
-    fields are not enough: UNKNOWN, never a silent skip. *)
-val unqueryable : identity -> reason:string -> provider_observation
-
 (** Independent post-destroy Terraform-state observation. The caller supplies
     [Ok addresses] from a fresh read of the *disposable* root's own state ([Ok []]
     is the empty state); [Error] is UNKNOWN. *)
@@ -117,10 +32,8 @@ type state_evidence =
 
 val state_evidence : (string list, string) result -> state_evidence
 
-(** The name/tag-derived checks that used to *be* the verification, demoted to a
-    secondary orphan sweep. [residues] are violations; [indeterminate] checks are
-    reported and never read as absence; and neither can override a captured
-    identity's evidence. *)
+(** Residue Terraform does not own (DEC-045 classes 1 and 4). [residues] are
+    violations; [indeterminate] checks are reported and never read as absence. *)
 type sweep =
   | Sweep_not_run
   | Sweep_ran of
@@ -160,61 +73,20 @@ val classify_final_snapshot
   -> retention_probe
 
 (** Retain-nothing: no manual or automated snapshot attributable to this
-    destruction may remain, queried by the *captured* database instance
-    identifier. *)
+    destruction's database instance may remain. *)
 val classify_instance_snapshots : lookup_result -> retention
 
-(** The same absence rule for a gcloud answer that has no {!recipe} of its own:
-    the name-derived orphan sweep classifies with it, so the two cannot drift into
-    two different spellings of "not found". [project] is the project the identity
-    was captured in: GCP answers 404 for a resource that is gone *and* for a
-    project that is not visible, so a not-found whose subject names another project
-    is UNKNOWN rather than absence (finding C). *)
+(** gcloud's "this does not exist" wording, for the residue checks that ask gcloud.
+    GCP answers 404 for a resource that is gone *and* for a project that is not
+    visible, so a not-found whose subject names a project other than [project] is
+    not absence (finding C). *)
 val gcp_absence_message : ?project:string -> string -> bool
 
-(** The combined evidence. [unqueried] is not a failure and not a silence: it is
-    the set of represented resources for which no provider lookup is defined (with
-    the reason), whose absence therefore rests on {!state} alone. [declared] is the
-    other half of the universe -- what this root declares and state did not
-    represent -- where each address is instead a required obligation. *)
+(** The combined evidence. *)
 type observation =
   { state : state_evidence
-  ; identities : provider_observation list
-  ; unqueried : (identity * string) list
-  ; declared : declared_coverage
   ; sweep : sweep
   ; retention : retention
-  }
-
-and declared_requirement =
-  | Declared_observed of provider_observation
-  (** an authoritative query was built from the plan's declared values and run *)
-  | Declared_unqueryable of string
-  (** no trustworthy query could be built from what the plan declared *)
-
-and declared_obligation =
-  { address : string
-  ; kind : string
-  ; requirement : declared_requirement
-  }
-
-(** The declared half of the verification universe.
-
-    [pre_state_empty] decides exactly one thing: the consequence of
-    [Declared_unqueryable]. An empty pre-destroy state cannot distinguish a target
-    that was never applied from one whose whole state was lost, so a kind that
-    cannot be authoritatively queried from it is recorded as a coverage limitation
-    rather than redefining the [Absent] no-op as a failure. It deliberately does
-    not soften evidence that was obtained: PRESENT is still a violation and an
-    attempted-but-UNKNOWN query still fails.
-
-    [read_failure] is an unreadable read-only plan: a failed observation, and a
-    failure whatever the state looked like -- "I could not read what this root
-    declares" is not "it declares nothing". *)
-and declared_coverage =
-  { pre_state_empty : bool
-  ; read_failure : string option
-  ; obligations : declared_obligation list
   }
 
 (** [violations] are postconditions with positive evidence against them;
@@ -229,7 +101,5 @@ val classify : observation -> verdict
 val is_verified : verdict -> bool
 val verdict_message : verdict -> string
 
-(** The operator-facing evidence report (step 5 section 9): what was expected
-    absent, the exact identity queried, the evidence returned and its
-    classification, what Terraform state says, and what remains unproven. *)
+(** The operator-facing evidence report. *)
 val report : observation -> string

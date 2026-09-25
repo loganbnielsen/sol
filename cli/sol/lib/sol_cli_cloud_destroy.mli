@@ -22,12 +22,13 @@
 type resource =
   { address : string (** The real Terraform address, module prefix included. *)
   ; kind : string (** The provider resource type. *)
-  ; provider_id : string option (** The provider's own id/self-link. *)
-  ; arn : string option
-    (** The fully-qualified cloud identifier where the provider publishes one; for
-        AWS it is also where the resource's region is recorded. *)
-  ; project : string option (** GCP project or AWS account id. *)
-  ; region : string option (** Region/location; a zone is reduced to its region. *)
+  ; name : string option
+    (** The resource's `name` attribute as Terraform recorded it; the residue checks
+        name the cluster and network they refer to from it. *)
+  ; identifier : string option
+    (** The `identifier` attribute where there is one (the RDS instance), for the
+        retain-nothing retention check only. No generic provider identity is kept:
+        Sol does not re-verify what Terraform manages (DEC-045 / REFAC-094). *)
   ; deletion_protection : bool option
     (** The provider's deletion guard; [None] is "no such attribute", not false. *)
   ; final_snapshot_identifier : string option
@@ -57,41 +58,6 @@ val resources : state_read -> resource list
 val addresses : state_read -> string list
 val substrate_presence : state_read -> substrate_presence
 val find_address : state_read -> string -> resource option
-
-(** The provider identities this state represents, captured *before* destruction
-    so step 5 can verify the same identities after it. A projection of the
-    inventory, never a re-derivation from configuration or naming. *)
-val identities : state_read -> Sol_cli_destroy_verification.identity list
-
-(** The second observation (FND-0055 / B2): what the disposable root *declares*,
-    from a read-only non-destroy plan. State remains authoritative for what it
-    represents; this extends the verification's obligations to the declared
-    addresses state does not represent, which `terraform destroy` never owned.
-
-    [Declared_unreadable] is UNKNOWN -- an unreadable plan is not "the root declares
-    nothing". [project]/[region] are the scope the plan's provider block was
-    configured with, used only where a declared resource names neither of its own. *)
-type declared_set =
-  | Declared_unreadable of string
-  | Declared_resources of
-      { resources : Sol_cli_terraform_plan.declared list
-      ; project : string option
-      ; region : string option
-      }
-
-val declared_project : declared_set -> string option
-val declared_region : declared_set -> string option
-
-(** The declared addresses this state does not represent -- the resources outside
-    `terraform destroy`'s ownership. *)
-val declared_unrepresented
-  :  state:state_read
-  -> declared:declared_set
-  -> Sol_cli_terraform_plan.declared list
-
-(** Whether the pre-destroy state represented nothing. An unreadable state is not
-    an empty one. *)
-val pre_state_empty : state_read -> bool
 
 (** What destruction preparation did, carried to the report. *)
 type preparation =
@@ -179,10 +145,7 @@ type deps =
   { require_credentials : unit -> (unit, string) result
   ; terraform_init : unit -> (unit, string) result
   ; observe_state : unit -> (string, string) result
-  ; observe_declared : unit -> declared_set
-    (** The declared universe, from a read-only non-destroy plan of the same root.
-        Captured *before* the destruction; deliberately not any destroy-path
-        apply's plan, which answers a different question. *)
+    (** [Ok stdout] of `terraform show -json`, or [Error] when the read failed. *)
   ; cloud_outputs : unit -> outputs_read
   ; prepare : state:state_read -> preparation Sol_cli_cloud_lifecycle.preparation_outcome
     (** The preparation declares the consequence of its own failure (DEC-033), so
@@ -201,15 +164,12 @@ type deps =
   ; destroy_substrate : unit -> (unit, string) result
   ; verify_destruction :
       pre_destroy:state_read
-      -> declared:declared_set
       -> preparation:preparation
       -> Sol_cli_destroy_verification.observation
-    (** Step 5's one observation, taken against the identities captured *before*
-        destruction (including the retention identity the preparation established),
-        against the declared addresses state did not represent, and against a fresh
-        read of the disposable root's own state. Not a [result]: every evidence leg
-        is itself three-valued, and composing them is
-        {!Sol_cli_destroy_verification.classify}'s job. *)
+    (** Step 5's one observation (narrowed by DEC-045): a fresh read of the
+        disposable root's own state, residue Terraform does not own, and retention.
+        Not a [result]: every evidence leg is itself three-valued, and composing
+        them is {!Sol_cli_destroy_verification.classify}'s job. *)
   ; report : string -> unit
   ; warn : string -> unit
   }
