@@ -1,5 +1,17 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: DEC-046/047 — repository organization and deployment-config layering decided (2026-09-25)
+
+- **The proposal is accepted.** `internal/pipeline/audits/2026-09-25_organization_proposal.md` (#515) went through two external review rounds. DEC-046 adopts its six rules and target layout. The rules are now in `AGENTS.md` § *Organization rules* and in `internal/README.md`.
+- **Open questions answered.**
+  - `docs/planning/` is split: ROADMAP → `docs/`, the rest → `internal/planning/`.
+  - `docs/architecture/` stays, except `contributing-map.md`, which moves to `internal/`.
+  - `cli/lib` becomes per-domain dune libraries where the dependency graph allows.
+- **DEC-047:** deployment config becomes `sol.yml` → environment → target in `sol/environments.yml`, with sticky `omit` and existing key names. The ticket's per-key table (placement plus deep-merge or replace) is FEAT-100's spec. While drafting it, found that `reject_shared_profile` already keeps `profile` out of `sol.yml`; the table keeps that.
+- **Promoted to READY:** REFAC-099…105, DOCS-023/024, FEAT-100.
+- **Hold for the live GCP qualification (HARDEN-006 attempt 8):** REFAC-099/100/101/103, DOCS-023 and REFAC-105 move paths that the attempt's harness, its run record, and `examples/pluto/sol/qual/` use. Start them after attempt 8's results land, to avoid a large rebase of its branch.
+- `AGENTS.md`'s ticket `type` list is now the 14 values in use (it listed 4).
+
 ## Latest: Attempt 8 stopped in Phase 0 — two harness defects filed (2026-09-25)
 
 The authorized GCP Attempt 8 began from `1aad2623` and stopped in its **read-only Phase 0** with four

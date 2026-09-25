@@ -12,6 +12,11 @@ contract.
 | [`tooling/`](tooling/) | Maintainer tooling: `soldev` (the internal pipeline CLI), `sol_process`, the git `hooks/`, and the `perf/` baseline. |
 | [`fixtures/`](fixtures/) | Test fixtures that are not user-facing examples (the OCaml-only worker workspace, the e2e demo library). |
 
+Placement follows the organization rules in [`../AGENTS.md`](../AGENTS.md)
+(DEC-046). The one that defines this directory: **`docs/` is for people using
+Sol; `internal/` is for people building Sol.** Maintainer-only material belongs
+here even when it's prose.
+
 Product code lives in [`../cli/`](../cli/), [`../framework/`](../framework/),
 and [`../contract/`](../contract/); user-facing examples live in
 [`../examples/`](../examples/).

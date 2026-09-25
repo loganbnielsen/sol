@@ -56,7 +56,7 @@ into `main` atomically. Reverting that squash commit reverses the move too.
 
 Review and merge readiness live entirely on the PR, not on a ticket directory: `soldev pipeline review <ticket-id>` leaves its verdict as a plain PR comment either way — a `SOLDEV-REVIEW: PASS`-marked comment on pass, an ordinary violations comment on fail. It's a comment rather than a formal GitHub review because this is a solo-owned repo: the `gh` identity is always the PR's own author, and GitHub refuses to let an author formally approve their own PR. A bounce just means another commit on the same open PR, this repo's established convention, never a ticket-directory round trip. `soldev pipeline merge` checks the PR for that pass-marker comment and green CI directly against GitHub before it will act, then runs `gh pr merge --squash --delete-branch --admin` — the `--admin` bypasses branch protection's separate 1-approval requirement (which, for the same self-approval reason, this repo can never satisfy natively); required status checks still gate the merge for real. A post-merge regression is handled by reverting that one squash commit, which un-does the code *and* the ticket's `DONE` move together (they were always the same commit) — the ticket lands back in `READY_FOR_ENGINEERING` automatically, with no separate "blocked" state to move it out of.
 
-**Ticket frontmatter fields:** `id`, `type` (ux-finding | audit-finding | feature | bug), `severity`, `source`. `branch`/`worktree`/`pr` are no longer persisted on `main` — they're only meaningful while a ticket has an open PR, which `soldev pipeline ls`/`check` surface live from GitHub instead.  
+**Ticket frontmatter fields:** `id`, `type` (refactor | feature | bug | audit-finding | decision | ux-finding | dogfood-finding | docs-finding | code-layer-finding | verification | release | infra | performance | documentation), `severity`, `source`. `branch`/`worktree`/`pr` are no longer persisted on `main` — they're only meaningful while a ticket has an open PR, which `soldev pipeline ls`/`check` surface live from GitHub instead.  
 Do not add a `status:` field — the directory encodes status.
 
 **Human-judgment gates:** Tickets in `BACKLOG/` may contain `## Open Questions`, `## Decision Required`, or `## Blocked On` sections. Tickets in `READY_FOR_ENGINEERING/` are treated as actionable, so `/work` must stop before creating a worktree if any unresolved decision section or marker remains. Resolve the decision in the ticket body or keep the ticket in `BACKLOG/` until the Remediation is unambiguous.
@@ -128,7 +128,20 @@ Accepted scopes are **not** uniform, and widening one is a feature, not consiste
 
 Sol is an opinionated production platform for backend systems. Its platform/CLI is written in OCaml and is language-neutral in what it does; OCaml and TypeScript are both first-class application languages (DEC-022). Kafka layer, observability backends, all three service primitives (`-svc`, `-worker`, `-fn`), storage (PostgreSQL), and CLI scaffold commands are complete.
 
+## Organization rules (DEC-046)
+
+When a new file has no obvious home, apply these rules rather than copying the tree. The full reasoning and the target layout are in `internal/pipeline/audits/2026-09-25_organization_proposal.md`.
+
+1. **The top level is split by audience.** `docs/` is for people *using* Sol; `internal/` is for people *building* Sol.
+2. **Code and assets are separate.** `cli/` holds the binary and what it needs (OCaml, its SQL migrations, test scripts). `platform/` holds what the CLI drives (Helm values, Terraform, templates, scripts) and no OCaml.
+3. **Platform assets are split shared / local / cloud.** Platform config varies by *profile*; project config varies by *environment and target*.
+4. **Cloud providers mirror each other by role.** The directory is the marker: a registered provider with no `platform/cloud/<provider>/` is on paper, and one with a directory has every role.
+5. **Each kind of artifact has one home.** Implementer specs stay next to their code.
+6. **Code folders follow the dependency graph.** Per-domain dune libraries where the graph is clean.
+
 ## Repo layout
+
+The tree below is today's. It moves toward the target layout as REFAC-099…105 and DOCS-023/024 land, and each of those tickets updates this tree.
 
 ```
 sol/

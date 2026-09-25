@@ -17,7 +17,12 @@ premise: "test -f docs/reference/runtime.md"
 - `docs/audits/*` → `internal/pipeline/audits/`, and `docs/dogfood/*` → `internal/pipeline/dogfood/`.
 - Merge `docs/qualification/`, `internal/pipeline/qualification/` and `internal/qualification/` into `internal/qualification/{aws,gcp,records}/`. Update the ledger references in `AGENTS.md` ("Tickets are for work that can finish") and `internal/pipeline/audits/QUALIFICATION_STATUS.md`.
 - Write `internal/specs/framework-conventions.md`: the cross-language conventions from DEC-022 (schema-registry conventions, Confluent wire format, W3C trace propagation, retry/DLQ semantics, metric/label vocabulary, lifecycle/shutdown, config/secrets, job semantics). Link to each package spec that implements them. Per-package specs stay beside their code.
-- Apply DEC-046's answers on `docs/planning/` and `docs/architecture/`.
+- Apply DEC-046's answers:
+  - `docs/planning/ROADMAP.md` → `docs/ROADMAP.md`.
+  - `docs/planning/{WORK_SUMMARY,OPAM_FOUNDATION_TRACKER,LIVE_DEV_DEPLOY_ROADMAP}.md` → `internal/planning/`.
+  - `docs/architecture/contributing-map.md` → `internal/contributing-map.md`.
+  - `docs/architecture/` otherwise stays.
+- **`AGENTS.md`'s *Documentation Protocol*** names `docs/planning/ROADMAP.md` and `docs/planning/WORK_SUMMARY.md` as startup reads and the end-of-task update target. Update both paths, plus every ticket template's "Update `docs/planning/WORK_SUMMARY.md`" completion line in `READY_FOR_ENGINEERING/`.
 
 ## Acceptance criteria
 
