@@ -5,6 +5,12 @@
 - Part A (#520): `cli/platform` → `platform/`, plus a new CI guard that fails when a workflow `paths:` entry names something gone (it would otherwise silently stop the workflow triggering).
 - Part B: `cli/sol/{bin,lib,test}` → `cli/{bin,lib,test}`, and the binary is now `_build/default/cli/bin/main.exe`. `control_plane_migrations` → `cli/migrations`; those two SQL files are unreferenced and flagged for a delete-or-keep decision.
 - **Unblocked:** REFAC-100, 102, 103 and 104.
+## Latest: REFAC-105 — the pluto example no longer reaches into internal/ (2026-09-25)
+
+- Pluto's `dev` and `customer_cloud` targets are user-shaped. The AWS smoke harness now generates its own untracked `sol/qual2/` target with an absolute var file, the same pattern as the GCP harness.
+- New CI guard: `check_examples_self_contained.sh`, which requires that no example config or build file references `internal/`.
+- Found and fixed: `live-smoke.sh` on `main` did not parse (an apostrophe inside `${CLUSTER:?…}`).
+- Found and filed separately: a relative `terraform_var_file` resolves against the invocation directory, so pluto's old smoke path never loaded from the workspace.
 
 ## Latest: DEC-046/047 — repository organization and deployment-config layering decided (2026-09-25)
 
