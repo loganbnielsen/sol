@@ -112,9 +112,17 @@ workstream; they apply to every provider's live runs.
 | GCP profile matrix (+ machine-readable rows) | `gcp-production-single-region-v1-matrix.md`, `gcp-production-single-region-v1-matrix.tsv` |
 | AWS run procedure | `aws-run-procedure.md` |
 | Run record template | `run-record-template.md` |
-| Next runs | HARDEN-007 (AWS), HARDEN-006 (GCP) — both in `BACKLOG`, authorization-gated |
+| Next runs | HARDEN-007 (AWS, `BACKLOG`, authorization-gated); HARDEN-006 (GCP) **ran** on 2026-09-25 — see `2026-09-25-gcp-attempt8.md` |
 
-**GCP Attempt 8 was re-scoped on 2026-09-25** (HARDEN-006): it exists to establish the cause of the
+**GCP Attempt 8 ran on 2026-09-25** (`main @ dae9540d`, after a pre-live Phase-0 stop and two
+corrective harness PRs). It established FND-0010's cause — `TLS_CA_OR_CERTIFICATE`: the webhook was
+reachable and served TLS, the API server rejected its certificate, and the webhook configuration's
+`caBundle` was uninjected at check time. **The reachability hypothesis is falsified and no firewall
+rule is warranted.** `Ready` was not reached. The destroy degraded rather than completing the
+platform teardown (`FND-0058`). Record: `2026-09-25-gcp-attempt8.md`; stop that preceded it:
+`2026-09-25-gcp-attempt8-phase0-stop.md`.
+
+Its harness was re-scoped on 2026-09-25 (HARDEN-006): it exists to establish the cause of the
 cert-manager `startupapicheck` failure (FND-0010) — from the check's own output, classified, before any
 teardown — with platform `Ready` as the alternate outcome. The harness
 (`internal/qualification/gcp/live-qual.sh`) generates a target with no `cluster_issuer`, because a GCP

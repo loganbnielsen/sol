@@ -9,8 +9,29 @@
   - `cli/lib` becomes per-domain dune libraries where the dependency graph allows.
 - **DEC-047:** deployment config becomes `sol.yml` → environment → target in `sol/environments.yml`, with sticky `omit` and existing key names. The ticket's per-key table (placement plus deep-merge or replace) is FEAT-100's spec. While drafting it, found that `reject_shared_profile` already keeps `profile` out of `sol.yml`; the table keeps that.
 - **Promoted to READY:** REFAC-099…105, DOCS-023/024, FEAT-100.
-- **Hold for the live GCP qualification (HARDEN-006 attempt 8):** REFAC-099/100/101/103, DOCS-023 and REFAC-105 move paths that the attempt's harness, its run record, and `examples/pluto/sol/qual/` use. Start them after attempt 8's results land, to avoid a large rebase of its branch.
+- **Sequencing with qualification:** REFAC-099/100/101/103, DOCS-023 and REFAC-105 move paths the GCP qualification harness and its records use. They were held until HARDEN-006 attempt 8 landed (#518). Before starting one, check that no qualification attempt is in flight.
 - `AGENTS.md`'s ticket `type` list is now the 14 values in use (it listed 4).
+## Latest: GCP Attempt 8 ran — FND-0010's cause established (2026-09-25)
+
+Authorized, Phase-0-gated and executed. **`main @ dae9540d`**, live 22:01:03Z → 22:26:22Z, no
+billable residue, durable prerequisites intact, canonical checkout untouched.
+
+- **The discriminator, captured before any teardown**: `TLS_CA_OR_CERTIFICATE`. The check's own
+  output is `x509: certificate signed by unknown authority`; the webhook had live endpoints
+  (`10.1.0.78:10250`, `targetPort: https`) and the `ValidatingWebhookConfiguration` carried **no
+  injected `caBundle`**. The GCP matrix's own decision rule resolves here: that is the CA-bundle
+  branch, **not** reachability, so no firewall rule is warranted. `FND-0010`'s cause is established
+  and it stays `OPEN` (no remediation was authorized).
+- **`Ready` was not reached** — the platform install failed at its first component, as in Attempts
+  4–5. The failure path closed the install window in the same invocation (12.9 s) and the bundle was
+  frozen before the teardown.
+- **`FND-0058` (new)**: the destroy **skipped the platform teardown** — reopening the window is a
+  create, which destroy's own scope refuses — leaving the platform state stale (11 resources) while
+  the provider is empty. `INFRA-079`, decision required.
+- **`INFRA-080` (new)**: three harness verdict refinements (a class that can never verify absence, a
+  soft-deleted role read as present, and a comment that broke its own `printf`; the last was harmless
+  because Sol passes the var from the target).
+- Records: `docs/qualification/2026-09-25-gcp-attempt8.md` and the phase-0 stop it continues.
 
 ## Latest: Attempt 8 stopped in Phase 0 — two harness defects filed (2026-09-25)
 
