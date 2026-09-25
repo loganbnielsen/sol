@@ -225,7 +225,7 @@ esac
 # without the other would make `Ready` assert a class the platform never
 # created, or create one readiness never looks for.
 base_vars="$root/platform/infra/base/variables.tf"
-capabilities_ml="$root/cli/sol/lib/sol_cli_provider_capabilities.ml"
+capabilities_ml="$root/cli/lib/sol_cli_provider_capabilities.ml"
 created_class="$(variable_default storage_class_name "$base_vars" | tr -d '"')"
 created_driver="$(printf '%s\n' "$sc_code" | sed -n 's/.*storage_provisioner *= *"\([^"]*\)".*/\1/p')"
 
@@ -325,7 +325,7 @@ case "$lease_binding" in
     ;;
 esac
 
-lease_impl="$root/cli/sol/lib/sol_cli_boundary_lease.ml"
+lease_impl="$root/cli/lib/sol_cli_boundary_lease.ml"
 issued_lease_operations="$(
   grep -o 'Sol_cli_kubectl\.[a-z_]*' "$lease_impl" \
     | sed 's/Sol_cli_kubectl\.//' \

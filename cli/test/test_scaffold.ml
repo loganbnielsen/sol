@@ -597,7 +597,7 @@ let test_ancestor_walk_finds_bundle_root () =
 
 (* BUG-017: the ancestor walk must skip `_build/default` even when dune has
    mirrored the framework sentinel files there. If it did not, CLI tests run
-   from `_build/default/cli/sol/test` would resolve SOL_HOME to the build tree
+   from `_build/default/cli/test` would resolve SOL_HOME to the build tree
    and fail against missing source-side files/artifacts. *)
 let test_ancestor_walk_skips_build_context () =
   let tmpdir = Filename.temp_file "sol-build-context-test-" "" in
@@ -630,7 +630,7 @@ let test_ancestor_walk_skips_build_context () =
          false
          (Sol_cli_cmd_new.is_sol_home build_default);
        (* Walk from a simulated test executable under the build context. *)
-       let start = Filename.concat build_default "cli/sol/test" in
+       let start = Filename.concat build_default "cli/test" in
        let result = Sol_cli_cmd_new.find_ancestor Sol_cli_cmd_new.is_sol_home start in
        check_bool "ancestor walk skips _build/default" true (result = Some tmpdir))
 ;;

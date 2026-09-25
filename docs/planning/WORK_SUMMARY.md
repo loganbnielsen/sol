@@ -1,5 +1,11 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: REFAC-099 — code and assets are separate: `platform/` and a flat `cli/` (2026-09-25)
+
+- Part A (#520): `cli/platform` → `platform/`, plus a new CI guard that fails when a workflow `paths:` entry names something gone (it would otherwise silently stop the workflow triggering).
+- Part B: `cli/sol/{bin,lib,test}` → `cli/{bin,lib,test}`, and the binary is now `_build/default/cli/bin/main.exe`. `control_plane_migrations` → `cli/migrations`; those two SQL files are unreferenced and flagged for a delete-or-keep decision.
+- **Unblocked:** REFAC-100, 102, 103 and 104.
+
 ## Latest: DEC-046/047 — repository organization and deployment-config layering decided (2026-09-25)
 
 - **The proposal is accepted.** `internal/pipeline/audits/2026-09-25_organization_proposal.md` (#515) went through two external review rounds. DEC-046 adopts its six rules and target layout. The rules are now in `AGENTS.md` § *Organization rules* and in `internal/README.md`.

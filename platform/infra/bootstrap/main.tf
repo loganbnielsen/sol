@@ -190,7 +190,7 @@ data "aws_iam_policy_document" "deploy" {
 # names ("publisher: publish/replace application images; must not provision
 # substrate or deploy workloads") but the bootstrap root never generated a
 # contract for. `sol up` never uses this -- it is local-only and never
-# touches AWS (cli/sol/bin/cmd_up.ml: "Local-only -- no target concept"); a
+# touches AWS (cli/bin/cmd_up.ml: "Local-only -- no target concept"); a
 # CI pipeline authenticates as this identity before its own `docker push`,
 # entirely outside Sol's own execution, then calls `sol deploy` with the
 # resulting digest. Sol therefore has no runtime code path that resolves this

@@ -61,7 +61,7 @@ platform/components/loki/
 ```
 
 **Format: JSON, not YAML.** The OCaml side has no YAML dependency today
-(`cli/sol/lib/dune` pulls `yojson`+`otoml`, no `yaml`); Terraform's
+(`cli/lib/dune` pulls `yojson`+`otoml`, no `yaml`); Terraform's
 built-in `jsondecode()` needs no provider. JSON is valid input everywhere
 YAML is accepted (Helm's `-f`, Terraform's `helm_release.values`), so this
 gets both execution paths reading the same files with zero new

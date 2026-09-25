@@ -1,5 +1,5 @@
 (* sol deploy's release-event push to Loki (OBS-037). Kept out of
-   cmd_deploy.ml since it's the only place in cli/sol/bin that needs
+   cmd_deploy.ml since it's the only place in cli/bin that needs
    obs-eio/obs-loki-eio -- cmd_migrate.ml is the only other module that
    scopes an Eio_main.run to a single command's I/O rather than wrapping
    the whole binary, and this follows the same pattern. *)

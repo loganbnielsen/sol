@@ -38,11 +38,11 @@ Check all `internal/pipeline/tickets/` subdirectories for existing AUDIT-* ticke
 
 For each checklist item in `docs/audits/AUDIT.md`, read the relevant source files and determine whether the invariant passes or fails. Do not rely on memory or assumptions — read the code.
 
-**Section 1 — Local Developer Loop (`cli/sol/bin/`, `cli/sol/lib/sol_cli_scaffold.ml`):**
+**Section 1 — Local Developer Loop (`cli/bin/`, `cli/lib/sol_cli_scaffold.ml`):**
 - Read `cmd_new.ml` to verify generated workspaces compile cleanly and library names are workspace-namespaced
 - Check `cmd_up.ml` and `cmd_deploy.ml` for failure-path behaviour and rollback
 
-**Section 2 — Infrastructure Synthesis (`cli/sol/lib/sol_cli_manifest.ml`):**
+**Section 2 — Infrastructure Synthesis (`cli/lib/sol_cli_manifest.ml`):**
 - Read `sol_cli_manifest.ml` in full
 - Check `deployment_doc` and `cronjob_doc` for `runAsNonRoot`, `runAsUser`, `seccompProfile`, `readOnlyRootFilesystem`, `allowPrivilegeEscalation`
 - Check `service_doc` for `type: ClusterIP` (not `NodePort`)
@@ -50,7 +50,7 @@ For each checklist item in `docs/audits/AUDIT.md`, read the relevant source file
 - Check `network_policy_doc` is included in `render`
 - Verify all `Sys.command` calls use `Filename.quote`
 
-**Section 3 — Core Runtime (`~/Code/kafka-eio/kafka-eio-core/lib/kafka_stubs.c`, `~/Code/kafka-eio/kafka-eio-consumer/lib/kafka_consumer.ml` — extracted to the standalone `kafka-eio` opam package, no longer in this repo; `framework/ocaml/sol-worker/lib/worker.ml`, `cli/sol/bin/cmd_new.ml`):**
+**Section 3 — Core Runtime (`~/Code/kafka-eio/kafka-eio-core/lib/kafka_stubs.c`, `~/Code/kafka-eio/kafka-eio-consumer/lib/kafka_consumer.ml` — extracted to the standalone `kafka-eio` opam package, no longer in this repo; `framework/ocaml/sol-worker/lib/worker.ml`, `cli/bin/cmd_new.ml`):**
 - Read `kafka_stubs.c` — for every blocking librdkafka call, verify `caml_release_runtime_system()` before and `caml_acquire_runtime_system()` after
 - Check `pause_partition` and `resume_partition` for `CAMLparam`/`CAMLreturn`
 - Read `kafka_consumer.ml` — verify `acked` ref and warning in both `consume` and `consume_partitioned`

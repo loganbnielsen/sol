@@ -72,7 +72,7 @@ CLI flags
 
 ### `sol local infra up`
 
-**Module:** `cli/sol/bin/cmd_local.ml` → `dev_up`
+**Module:** `cli/bin/cmd_local.ml` → `dev_up`
 
 Provisions a local k3d cluster and installs the local factory substrate via
 Helm. Does **not** run the Plan/Render/Execute pipeline. Steps:
@@ -94,7 +94,7 @@ the rest of the factory targets.
 
 ### `sol local run`
 
-**Module:** `cli/sol/bin/cmd_local.ml` → `dev_run`
+**Module:** `cli/bin/cmd_local.ml` → `dev_run`
 
 Builds all workspace services with `dune build` and runs each executable directly
 on the host (not inside k3d). Injects dev environment variables
@@ -108,7 +108,7 @@ port-forwards started by `sol local infra up`. Prefixes each service's stdout/st
 
 ### `sol up`
 
-**Module:** `cli/sol/bin/cmd_up.ml` → `run`
+**Module:** `cli/bin/cmd_up.ml` → `run`
 
 Full local deploy: builds Docker images, synthesizes manifests, applies to k3d.
 This is the self-contained factory path for local smoke tests.
@@ -136,7 +136,7 @@ Pipeline:
 
 ### `sol deploy`
 
-**Module:** `cli/sol/bin/cmd_deploy.ml` → `run`
+**Module:** `cli/bin/cmd_deploy.ml` → `run`
 
 CI/CD deploy: skips image build. Images must already be in the registry. This is
 the customer-cloud factory path: Sol owns deployment intent and artifact
@@ -174,7 +174,7 @@ Pipeline:
 
 ### `sol status`
 
-**Module:** `cli/sol/bin/cmd_status.ml` → `run`
+**Module:** `cli/bin/cmd_status.ml` → `run`
 
 Reads live cluster state. No plan construction.
 
@@ -191,7 +191,7 @@ Reads live cluster state. No plan construction.
 
 ### `sol logs`
 
-**Module:** `cli/sol/bin/cmd_logs.ml`
+**Module:** `cli/bin/cmd_logs.ml`
 
 Derives the Kubernetes namespace and service name from a `domain/name` argument
 (or scans `app/` for a bare name). Checks whether the deployment exists, then
@@ -216,7 +216,7 @@ success, never reported as an unknown release.
 
 ### `sol deployments`
 
-**Module:** `cli/sol/bin/cmd_deployments.ml`
+**Module:** `cli/bin/cmd_deployments.ml`
 
 Lists the deployment events the target's cluster holds for the workspace, newest
 first: `DEPLOYMENT / RELEASE / TIME / COMMIT / STATUS`. A deployment event
@@ -246,7 +246,7 @@ timeline can never advertise a join to a record that does not exist.
 
 ### `sol migrate`
 
-**Module:** `cli/sol/bin/cmd_migrate.ml`
+**Module:** `cli/bin/cmd_migrate.ml`
 
 Runs database schema migrations.
 
@@ -269,7 +269,7 @@ network by design (e.g. RDS with `publicly_accessible = false`), currently
 `apply` only:
 
 1. Build and push a small image containing just the `sol` CLI binary
-   (`cli/sol/bin/main.exe`, from the same `SOL_HOME` checkout), pushed under
+   (`cli/bin/main.exe`, from the same `SOL_HOME` checkout), pushed under
    the first discovered service's own image repository with a distinct
    `sol-cli-migrate` tag rather than a version tag — ECR requires a
    repository to already exist before a push succeeds, and FRIC-011
@@ -298,8 +298,8 @@ derived from the workspace directory name. Override with `--table`.
 
 ### `sol rollback` (FEAT-066, DEC-018)
 
-**Module:** `cli/sol/bin/cmd_rollback.ml` → `run`  
-**Library:** `cli/sol/lib/sol_cli_rollback.ml`, `sol_cli_release_store.ml`,
+**Module:** `cli/bin/cmd_rollback.ml` → `run`  
+**Library:** `cli/lib/sol_cli_rollback.ml`, `sol_cli_release_store.ml`,
 `sol_cli_migration_disposition.ml`
 
 Takes a `RELEASE_ID` positional (`sol rollback <release-id>`, found via
@@ -416,7 +416,7 @@ and refuses a release recorded as GitOps-owned.
 
 ### Release retention (FEAT-072, DEC-018)
 
-**Module:** `cli/sol/lib/sol_cli_release_retention.ml`
+**Module:** `cli/lib/sol_cli_release_retention.ml`
 
 A successful `sol up`/`sol deploy` bounds the workspace's release history to the
 last `--keep-releases N` distinct release records (default 20, DEC-018). The
@@ -483,7 +483,7 @@ Sol_cli_deployment_state.record_outcome
 
 ## Where to add tests
 
-All test files live in `cli/sol/test/`. Each file covers one pipeline layer:
+All test files live in `cli/test/`. Each file covers one pipeline layer:
 
 | What you're changing | Test file |
 |---|---|
@@ -518,7 +518,7 @@ All test files live in `cli/sol/test/`. Each file covers one pipeline layer:
   `test_deployment_phases.ml`, which exercises the full plan → change-set →
   execute sequence using a dry-run or stubbed executor to avoid cluster access.
 
-Tests run without a cluster: `eval $(opam env) && dune test cli/sol/test/`.
+Tests run without a cluster: `eval $(opam env) && dune test cli/test/`.
 
 ---
 
@@ -561,7 +561,7 @@ Add it to `sol_cli_deployment_plan.ml` (plan phase) or `sol_cli_executor.ml`
 
 Every resource emitted by `sol up`, `sol deploy`, and `sol local infra up` must satisfy
 these invariants. The security context invariants are enforced in
-`cli/sol/test/test_manifest_render.ml` via the `assert_k8s_invariants` helper
+`cli/test/test_manifest_render.ml` via the `assert_k8s_invariants` helper
 and the `artifact_invariants` test suite.
 
 | Invariant | Kubernetes field | Status | Notes |
@@ -588,8 +588,8 @@ before the YAML is written to disk.
 
 1. Add the security context blocks (`runAsNonRoot`, `allowPrivilegeEscalation`,
    `readOnlyRootFilesystem`) to the new YAML template in
-   `cli/sol/lib/sol_cli_manifest_yaml.ml`.
+   `cli/lib/sol_cli_manifest_yaml.ml`.
 2. Add a corresponding test case to the `artifact_invariants` suite in
-   `cli/sol/test/test_manifest_render.ml` that calls `assert_k8s_invariants` on
+   `cli/test/test_manifest_render.ml` that calls `assert_k8s_invariants` on
    the rendered output.
 3. Update this table if the new resource changes the invariant surface.

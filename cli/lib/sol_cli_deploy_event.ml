@@ -5,7 +5,7 @@
    consistently, plus a fixed `event=deploy` field OBS-038's dashboard query
    filters on to separate deploy markers from ordinary application log
    lines. Pure/testable; the actual HTTP push and Loki-reachability I/O live
-   in cli/sol/bin/cmd_deploy_event.ml. *)
+   in cli/bin/cmd_deploy_event.ml. *)
 
 (* Both identities stay typed (TYPE_AUDIT-078): this record is a domain object,
    and the serialization edge is [fields]/[message] plus the stream labels the
