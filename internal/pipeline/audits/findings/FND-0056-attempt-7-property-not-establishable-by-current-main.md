@@ -107,3 +107,11 @@ both halves (recovery ownership; verification coverage), the recommendation, and
 criteria of the implementation it would authorize. FND-0030 stays `OPEN` and owns the
 ownership half; this finding owns the statement that the *qualification as written* cannot pass,
 and FND-0055 owns the verification defect.
+
+## Correction (2026-09-24, DOCS-022)
+
+The Attempt 7 property ("converge a provider-present, state-absent resource toward absence") was
+derived from Attempt 6's divergence, which was **operator-created** (corrected Attempt 6 record). The
+pre-live falsification stands as a correct reading of the code. The property itself is **withdrawn
+as a product requirement** (DEC-045; A1 withdrawn). A successor GCP run (HARDEN-006) qualifies the
+lifecycle, not adoption.

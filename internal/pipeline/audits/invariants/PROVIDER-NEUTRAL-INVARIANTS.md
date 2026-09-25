@@ -325,6 +325,11 @@ references a CRD-backed resource whose CRD is absent is destroyed through
 `sol cloud destroy` alone, with provider APIs confirming absence and no
 emergency-path deletion.
 
+**Correction (2026-09-24, DOCS-022).** "Provider-verified `Absent`" in this invariant's matrix
+row (`docs/qualification/gcp-production-single-region-v1-matrix.tsv`) means verified by
+*qualification's* independent inventory. It is not a product-runtime duty to re-query every resource
+Terraform manages (DEC-045).
+
 ---
 
 ### INV-DESTROY-2 — Normal lifecycle activity must not make a target undeletable
@@ -415,6 +420,15 @@ claim, not an absence of the invariant.
 
 **Open findings/tickets.** FND-0003 (AWS absence coverage gap: EIP/NAT/EBS);
 FND-0005 (GCP ABANDON documented-vs-observed).
+
+**Correction (2026-09-24, DOCS-022).** Scope, as decided by DEC-045: for resources Terraform is
+configured to delete, a successful destroy plus empty state *is* the product's evidence of absence.
+This invariant's independent provider inventory is qualification's, and product-runtime provider
+observation is kept only for DEC-045's four exception classes: relinquished deletion, deferred
+deletion (KMS pending deletion; GCS soft delete, FND-0057), retained backups, and controller-created
+objects. The Run 5 attempt 1 "describe after Done" observation cited above fits terminal-state
+visibility (DEC-045). The EIP/NAT/EBS gap was closed in #376; the EIP/NAT rows are scheduled for
+removal as Terraform-managed (REFAC-093).
 
 ---
 
