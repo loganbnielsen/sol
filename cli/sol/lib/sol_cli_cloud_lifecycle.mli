@@ -147,7 +147,7 @@ type readiness =
   | Established
   | Unmet of string
 
-type platform_storage =
+type platform_storage = Sol_cli_provider_capabilities.platform_storage =
   { storage_class : string
   ; csi_driver : string
   }

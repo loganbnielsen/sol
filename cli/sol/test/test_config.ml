@@ -1001,7 +1001,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+      (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
        | Error msg -> Alcotest.fail msg
        | Ok vars ->
          check_bool "aws var present" true (List.mem ("vpc_cidr", "10.42.0.0/16") vars);
@@ -1067,7 +1067,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/gcp/us-central1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+      (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
        | Error msg -> Alcotest.fail msg
        | Ok vars ->
          check_str_opt
@@ -1088,7 +1088,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/gcp/us-central1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+      (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
        | Error msg -> Alcotest.fail msg
        | Ok vars ->
          check_bool
@@ -1133,7 +1133,7 @@ let ecr_repositories_of_workspace () =
   match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
   | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
   | Ok cfg ->
-    (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+    (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
      | Error msg -> Alcotest.fail msg
      | Ok vars -> List.assoc_opt "ecr_repositories" vars)
 ;;
@@ -1173,7 +1173,7 @@ let test_gcs_soft_delete_follows_destroy_retention () =
       match Sol_cli_config.load_for_target ~target with
       | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
       | Ok cfg ->
-        (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+        (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
          | Error msg -> Alcotest.fail msg
          | Ok vars -> List.assoc_opt "gcs_soft_delete_retention_seconds" vars))
   in
@@ -1207,7 +1207,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/gcp/us-central1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+      (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
        | Error msg -> Alcotest.fail msg
        | Ok vars ->
          check_bool
@@ -1250,7 +1250,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+      (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
        | Error msg -> Alcotest.fail msg
        | Ok vars ->
          check_str_opt
@@ -1279,7 +1279,7 @@ let test_production_profile_enables_rds_multi_az () =
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+      (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
        | Error msg -> Alcotest.fail msg
        | Ok vars ->
          check_str_opt "RDS Multi-AZ" (Some "true") (List.assoc_opt "rds_multi_az" vars)))
@@ -1301,7 +1301,7 @@ let test_production_profile_enables_rds_deletion_protection () =
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+      (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
        | Error msg -> Alcotest.fail msg
        | Ok vars ->
          check_str_opt
@@ -1318,7 +1318,7 @@ let test_non_production_target_leaves_rds_deletion_protection_unset () =
     match Sol_cli_config.load_for_target ~target:"dev/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+      (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
        | Error msg -> Alcotest.fail msg
        | Ok vars ->
          (* Absent, not "false": a target with no profile must keep relying
@@ -1391,7 +1391,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+      (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
        | Error msg -> Alcotest.fail msg
        | Ok vars ->
          check_bool
@@ -1406,7 +1406,7 @@ target:
 
 (* HARDEN-002 run 3, finding 11: the AWS provider root declares
    `deploy_role_arn` and uses it to create the deploy identity's EKS access
-   entry (INFRA-025), but Sol_cli_config.terraform_vars never routed the
+   entry (INFRA-025), but Sol_cli_terraform_vars.of_config never routed the
    target's value there -- so the entry was never created and the module's
    deploy_kubeconfig_command/deploy_kube_context outputs stayed null.
 
@@ -1430,7 +1430,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+      (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
        | Error msg -> Alcotest.fail msg
        | Ok vars ->
          check_str_opt
@@ -1463,7 +1463,7 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
-      (match Sol_cli_config.terraform_vars ~workspace:"pluto" cfg with
+      (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
        | Error msg -> Alcotest.fail msg
        | Ok vars ->
          check_str_opt

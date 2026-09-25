@@ -87,8 +87,8 @@ for dir in "${target_roots[@]}"; do
       | sed 's/.*var\.//' \
       | sort -u
   ); do
-    if ! grep -qE "\"$guard_var\",[[:space:]]*\"false\"" "$root/cli/sol/lib/sol_cli_cloud_lifecycle.ml"; then
-      report "$dir routes $guard_var through a variable, but the Destroy policy in Sol_cli_cloud_lifecycle never lifts it -- so a target Sol provisioned cannot be destroyed through Sol (ADR 0004)."
+    if ! grep -qE "\"$guard_var\",[[:space:]]*\"false\"" "$root/cli/sol/lib/sol_cli_provider_capabilities.ml"; then
+      report "$dir routes $guard_var through a variable, but no provider's Destroy policy (Sol_cli_provider_capabilities.destroy_guard_vars) lifts it -- so a target Sol provisioned cannot be destroyed through Sol (ADR 0004)."
     fi
   done
 

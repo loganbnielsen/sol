@@ -4,6 +4,8 @@
  (libraries unix yojson cmdliner otoml sol_process ptime)
  (modules
   Sol_cli_process
+  Sol_cli_provider_capabilities
+  Sol_cli_terraform_vars
   Sol_cli_redaction
   Sol_cli_credentials
   Sol_cli_fs_walk

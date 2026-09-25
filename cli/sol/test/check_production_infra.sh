@@ -220,12 +220,12 @@ esac
 
 # That class is asserted in two places that cannot share a literal: Terraform
 # creates it, and the `Ready` gate checks the cluster's own answer
-# (Sol_cli_cloud_lifecycle.platform_storage). What keeps them from drifting is
+# (Sol_cli_provider_capabilities, platform_storage). What keeps them from drifting is
 # that both name the same class and the same CSI driver -- a rename in one place
 # without the other would make `Ready` assert a class the platform never
 # created, or create one readiness never looks for.
 base_vars="$root/cli/platform/infra/base/variables.tf"
-lifecycle_ml="$root/cli/sol/lib/sol_cli_cloud_lifecycle.ml"
+capabilities_ml="$root/cli/sol/lib/sol_cli_provider_capabilities.ml"
 created_class="$(variable_default storage_class_name "$base_vars" | tr -d '"')"
 created_driver="$(printf '%s\n' "$sc_code" | sed -n 's/.*storage_provisioner *= *"\([^"]*\)".*/\1/p')"
 
@@ -234,13 +234,13 @@ if [ -z "$created_class" ] || [ -z "$created_driver" ]; then
   exit 1
 fi
 
-if ! grep -F "storage_class = \"$created_class\"" "$lifecycle_ml" >/dev/null; then
+if ! grep -F "storage_class = \"$created_class\"" "$capabilities_ml" >/dev/null; then
   echo "FAIL: the Ready gate does not name the StorageClass Terraform creates" >&2
   echo "      ($created_class); the two literals must agree." >&2
   exit 1
 fi
 
-if ! grep -F "csi_driver = \"$created_driver\"" "$lifecycle_ml" >/dev/null; then
+if ! grep -F "csi_driver = \"$created_driver\"" "$capabilities_ml" >/dev/null; then
   echo "FAIL: the Ready gate does not name the CSI driver the platform StorageClass" >&2
   echo "      uses ($created_driver); the two literals must agree." >&2
   exit 1

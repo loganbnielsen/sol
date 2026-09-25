@@ -245,41 +245,17 @@ let apply_asserted ~run_log ~phase_name ~policy ~scope ~chdir ~var_files ~vars (
        | Error failure -> Error (Sol_cli_terraform_plan.apply_failure_to_string failure))
 ;;
 
-(* The bootstrap-access mechanism's Terraform identity, per provider.
+(* The bootstrap-access mechanism's Terraform identity and scope, and the
+   reconciliation apply's scope -- the bootstrap mechanism plus the guarded
+   resources the inventory represents, never the whole root, so a configured-but-
+   unrepresented cluster is not even planned. Per provider, in
+   [Sol_cli_provider_capabilities] (REFAC-095). *)
+let capabilities = Sol_cli_provider_capabilities.capabilities_of
+let bootstrap_matchers provider = (capabilities provider).bootstrap_matchers
+let bootstrap_scope provider = (capabilities provider).bootstrap_scope
 
-   GCP's is a root-level resource with a stable address. AWS's is an access-policy
-   association owned by the `eks` module, whose internal address is
-   module-version-dependent -- naming it here by address would be a guess that
-   could not be validated offline, and a wrong `-target` fails closed but strands
-   the target. So the module is the smallest *stable* scope that contains it, the
-   rule names the resource type, and the plan assertion is what keeps it narrow. *)
-let bootstrap_matchers = function
-  | Sol_cli_provider.Gcp ->
-    [ Sol_cli_terraform_plan.Exact
-        "kubernetes_cluster_role_binding.provisioner_bootstrap_admin"
-    ]
-  | Sol_cli_provider.Aws ->
-    [ Sol_cli_terraform_plan.Type "aws_eks_access_policy_association" ]
-;;
-
-let bootstrap_scope = function
-  | Sol_cli_provider.Gcp ->
-    Sol_cli_terraform.targets
-      "kubernetes_cluster_role_binding.provisioner_bootstrap_admin"
-      []
-  | Sol_cli_provider.Aws -> Sol_cli_terraform.targets "module.eks" []
-;;
-
-(* The reconciliation apply's scope: the bootstrap mechanism plus the guarded
-   resources the inventory represents -- never the whole root, so a configured-
-   but-unrepresented cluster is not even planned. *)
 let reconciliation_scope provider guarded =
-  match provider with
-  | Sol_cli_provider.Gcp ->
-    Sol_cli_terraform.targets
-      "kubernetes_cluster_role_binding.provisioner_bootstrap_admin"
-      guarded
-  | Sol_cli_provider.Aws -> Sol_cli_terraform.targets "module.eks" guarded
+  (capabilities provider).reconciliation_scope guarded
 ;;
 
 (* [cleanup] is best-effort: the run is already failing, so a cleanup failure cannot
@@ -1846,11 +1822,7 @@ let cloud_ready ~region = function
 ;;
 
 (* What that check means, in the words its failure is reported with. *)
-let cloud_ready_expectation = function
-  | Sol_cli_provider.Aws -> "the EKS cluster and its EBS CSI addon are ACTIVE"
-  | Sol_cli_provider.Gcp ->
-    "the GKE cluster is RUNNING and the Cloud SQL instance is RUNNABLE"
-;;
+let cloud_ready_expectation provider = (capabilities provider).cloud_ready_expectation
 
 let crds_established env =
   process_ok
@@ -2157,26 +2129,17 @@ let verify_destroy_preparation_result infra_dir ~retention ~prepared =
    The preparation below lowers deletion guards so that destruction can proceed. It is NOT
    a retention mechanism: deletion protection and "keep the final snapshot" are different
    promises, and only the second one is a destruction precondition (DEC-033). *)
-let gcp_guarded_resources =
-  [ "google_sql_database_instance.postgres"; "google_container_cluster.main" ]
-;;
-
 (* The guarded resources the Step-2 inventory actually represents, by declared
    address. This is the state side of the scope decision: a configured-but-
    unrepresented resource is not targeted (FND-0030), and the plan assertion
    catches anything a `-target` pulls in anyway. *)
 let guarded_addresses_of provider state =
-  let desired =
-    match provider with
-    | Sol_cli_provider.Gcp -> gcp_guarded_resources
-    | Sol_cli_provider.Aws -> [ "aws_db_instance.postgres" ]
-  in
   Sol_cli_cloud_lifecycle.preparations_eligible
     ~state:(Sol_cli_cloud_destroy.addresses state)
-    ~desired
+    ~desired:(capabilities provider).guarded_addresses
 ;;
 
-let gcp_prepare_destroy_result run_log infra_dir var_files vars state
+let gcp_prepare_destroy_result ~guarded run_log infra_dir var_files vars state
   : unit Sol_cli_cloud_lifecycle.preparation_outcome
   =
   let open Sol_cli_cloud_lifecycle in
@@ -2215,7 +2178,7 @@ let gcp_prepare_destroy_result run_log infra_dir var_files vars state
        lowered"
   | Substrate_present | Substrate_absent ->
     let represented = addresses state in
-    let desired = gcp_guarded_resources in
+    let desired = guarded in
     report_unrepresented
       (Sol_cli_cloud_lifecycle.preparations_unrepresented ~state:represented ~desired);
     (match Sol_cli_cloud_lifecycle.preparations_eligible ~state:represented ~desired with
@@ -2357,7 +2320,15 @@ let prepare_destruction_result
        (* The verification is part of the preparation here too: an applied transition
           that did not actually lower the guards is not a preparation. Guard lowering
           is best-effort, so this failure permits destruction to continue. *)
-       (match gcp_prepare_destroy_result run_log infra_dir var_files vars state with
+       (match
+          gcp_prepare_destroy_result
+            ~guarded:(capabilities provider).guarded_addresses
+            run_log
+            infra_dir
+            var_files
+            vars
+            state
+        with
         | Sol_cli_cloud_lifecycle.Prepared () ->
           (match verify_gcp_destroy_preparation_result infra_dir with
            | Ok () -> Sol_cli_cloud_lifecycle.Prepared Sol_cli_cloud_destroy.Gcp_prepared
@@ -2548,7 +2519,7 @@ let config_vars ~strict target =
               (Sol_cli_config.target_file resolved_target)
               target_path;
             exit 1);
-          (match Sol_cli_config.terraform_vars ~workspace:(workspace_name ()) cfg with
+          (match Sol_cli_terraform_vars.of_config ~workspace:(workspace_name ()) cfg with
            | Error msg ->
              Printf.eprintf "error: %s\n" msg;
              exit 1

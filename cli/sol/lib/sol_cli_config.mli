@@ -125,14 +125,10 @@ val format_use_ref : string -> string
     by name. *)
 val is_omitted_service : t -> name:string -> bool
 
-(** Neutral key/value Terraform variables derived from the target
-    (region/cluster_name/base_domain, active provider fields, create_rds,
-    profile-required RDS HA) plus
-    [workspace_name] (the given [workspace]) and [ecr_repositories]
-    (auto-derived from every service discovered under [app/], if present in the
-    current directory). Terraform CLI syntax ("key=value", "-var=...") is not
-    this module's concern — see {!Sol_cli_terraform.kv_args}. *)
-val terraform_vars : workspace:string -> t -> ((string * string) list, string) result
+(** The workspace's ECR repositories as a Terraform list literal, derived from
+    every service under [app/]; ["[]"] when the workspace has no [app/]. A
+    discovery failure is an error, never "no repositories" (INFRA-074). *)
+val ecr_repositories_var : unit -> (string, string) result
 
 (** Merges a target's profile-derived Terraform vars (e.g. [rds_multi_az],
     [rds_deletion_protection]) with the caller's own `-var`/var-file values,

@@ -24,7 +24,7 @@ files=(
   cli/sol/lib/sol_cli_rollout_diagnosis.ml
   cli/sol/bin/cmd_status.ml
   cli/sol/bin/cmd_logs.ml
-  cli/sol/lib/sol_cli_config.ml
+  cli/sol/lib/sol_cli_provider_capabilities.ml
   cli/platform/infra/base/platform_deploy_rbac.tf
 )
 
@@ -123,7 +123,7 @@ expect_fail "a new read the operator cannot perform"
 # ── the declared ARN never reaches the provider root ────────────────────────
 seed
 sed -i 's/        |> add_opt "operator_role_arn" target.operator_role_arn/        |> ignore/' \
-  "$work/root/cli/sol/lib/sol_cli_config.ml"
+  "$work/root/cli/sol/lib/sol_cli_provider_capabilities.ml"
 expect_fail "an ARN that never reaches the provider root"
 
 # ── the substrate identity cannot bind what the substrate creates ───────────
