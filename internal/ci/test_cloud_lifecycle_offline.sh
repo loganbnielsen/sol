@@ -350,18 +350,18 @@ JSON
     elif [ -e "$RDS_PREPARED_FILE" ]; then
       prepared_value="$(cat "$RDS_PREPARED_FILE")"
       if [ "$prepared_value" = "skip" ]; then
-        printf '{"values":{"root_module":{"resources":[%s,{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":true,"final_snapshot_identifier":null,"id":"lifecycle-test-postgres","arn":"arn:aws:rds:us-east-1:111122223333:db:lifecycle-test-postgres"}}]}}}\n' \
+        printf '{"values":{"root_module":{"resources":[%s,{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":true,"final_snapshot_identifier":null,"identifier":"lifecycle-test-postgres","id":"db-LIFECYCLETEST","arn":"arn:aws:rds:us-east-1:111122223333:db:lifecycle-test-postgres"}}]}}}\n' \
           "$eks_resource"
       else
         # RDS_SNAPSHOT_MISMATCH makes the provider's record disagree with what was
         # prepared, so the production guarantee can be shown to still fail closed.
         printf \
-          '{"values":{"root_module":{"resources":[%s,{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":false,"final_snapshot_identifier":"%s","id":"lifecycle-test-postgres","arn":"arn:aws:rds:us-east-1:111122223333:db:lifecycle-test-postgres"}}]}}}\n' \
+          '{"values":{"root_module":{"resources":[%s,{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":false,"final_snapshot_identifier":"%s","identifier":"lifecycle-test-postgres","id":"db-LIFECYCLETEST","arn":"arn:aws:rds:us-east-1:111122223333:db:lifecycle-test-postgres"}}]}}}\n' \
           "$eks_resource" "${prepared_value}${RDS_SNAPSHOT_MISMATCH:+-other}"
       fi
     else
       printf \
-        '{"values":{"root_module":{"resources":[%s,{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":true,"skip_final_snapshot":false,"final_snapshot_identifier":null,"id":"lifecycle-test-postgres","arn":"arn:aws:rds:us-east-1:111122223333:db:lifecycle-test-postgres"}}]}}}\n' \
+        '{"values":{"root_module":{"resources":[%s,{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":true,"skip_final_snapshot":false,"final_snapshot_identifier":null,"identifier":"lifecycle-test-postgres","id":"db-LIFECYCLETEST","arn":"arn:aws:rds:us-east-1:111122223333:db:lifecycle-test-postgres"}}]}}}\n' \
         "$eks_resource"
     fi
     ;;
@@ -1510,30 +1510,28 @@ for override in sql_deletion_protection=false gke_deletion_protection=false; do
     exit 1
   }
 done
-# HARDEN-004 step 5: absence is claimed from observed evidence. The report has to
-# name the state postcondition, the identity each query was made with, and how the
-# provider's answer was classified -- a bare "verification passed" would be the
-# summary this step exists to replace.
+# HARDEN-004 step 5, narrowed by DEC-045 / REFAC-094: Terraform's destroy plus an
+# empty state is the authority for what Terraform manages, so the report states the
+# state postcondition and the residue Terraform does not own -- and the provider is
+# not asked, resource by resource, about what Terraform just destroyed.
 assert_contains "the GCP destroy read its own state postcondition" "$gcp_destroy_log.out" \
-  'terraform state (disposable root): no target-owned resource remains represented' || exit 1
-assert_contains "the GCP destroy queried the captured cluster identity" "$gcp_destroy_log.out" \
-  'gcloud container clusters describe sol-qual --location us-central1 --project sol-qualification' || exit 1
-assert_contains "the GCP destroy queried the captured Cloud SQL identity" "$gcp_destroy_log.out" \
-  'gcloud sql instances describe sol-qual-postgres --project sol-qualification' || exit 1
-assert_contains "the GCP destroy classified the answers ABSENT" "$gcp_destroy_log.out" \
-  '[ABSENT] google_container_cluster.main' || exit 1
-assert_contains "the GCP destroy queried the captured network identity" "$gcp_destroy_log.out" \
-  'gcloud compute networks describe sol-qual --project sol-qualification' || exit 1
-assert_contains "the GCP destroy queried the captured registry identity" "$gcp_destroy_log.out" \
-  'gcloud artifacts repositories describe sol-qual --location us-central1 --project sol-qualification' || exit 1
-assert_contains "the GCP destroy queried the captured peering address identity" "$gcp_destroy_log.out" \
-  'gcloud compute addresses describe sol-qual-sql-peering --global --project sol-qualification' || exit 1
-assert_contains "the GCP orphan sweep saw the captured network" "$gcp_destroy_log.out" \
-  'orphan sweep (names derived from the target): found nothing remaining' || exit 1
-assert_contains "a kind with no provider lookup is reported as coverage" "$gcp_destroy_log.out" \
-  'not provider-verified' || exit 1
-assert_contains "and the coverage line names the kind" "$gcp_destroy_log.out" \
-  'google_project_iam_member.provisioner_cluster_access' || exit 1
+  'terraform state (disposable root): empty -- Terraform destroyed every resource it manages' || exit 1
+assert_contains "the GCP residue check ran and found nothing" "$gcp_destroy_log.out" \
+  'residue Terraform does not own (controller load balancers, PVC volumes, abandoned peering): none found' || exit 1
+# Positive control for the negative below: the peering residue query is recorded in
+# the same log.
+grep -F 'gcloud services vpc-peerings list' "$gcp_destroy_log" >/dev/null || {
+  echo "REFAC-094: the GCP residue (peering) query is missing from the destroy log" >&2
+  exit 1
+}
+for managed in 'gcloud container clusters describe' 'gcloud sql instances describe' \
+               'gcloud compute networks describe' 'gcloud artifacts repositories describe' \
+               'gcloud compute addresses describe'; do
+  if grep -F "$managed" "$gcp_destroy_log" >/dev/null; then
+    echo "REFAC-094: the GCP destroy still re-queries a Terraform-managed resource: $managed" >&2
+    exit 1
+  fi
+done
 grep -F 'retention: none' "$gcp_destroy_log.out" >/dev/null || {
   echo "the GCP destroy did not say what it kept:" >&2
   cat "$gcp_destroy_log.out" >&2
@@ -1563,101 +1561,21 @@ grep -F 'credentials: Google Application Default Credentials resolved' \
   exit 1
 }
 
-# ── FND-0055 / B2: the declared universe is part of the verification ──────────
-#
-# The GCP destroy above has no divergence: every address the plan declares, state
-# represents. These three scenarios introduce the divergence -- a resource the
-# configuration declares, the state fixture does not represent, and
-# `terraform destroy` therefore never owns -- and pin the three conclusions the
-# verification is allowed to draw from the provider's answer. The property is that
-# the address stays an obligation whatever the answer: the old verification never
-# asked, and so reported the postcondition established while the object survived.
-#
-# Before these landed, every one of them would have exited 0 with the orphan
-# invisible. That is the regression this section exists for.
-
-# 1. Leaf orphan, provider PRESENT: destruction otherwise succeeds and the
-#    post-state is empty, but the run must fail and name the address.
-orphan_present_log="$tmp/gcp-declared-orphan-present.log"
-rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/bootstrap-window"
-orphan_present_rc=0
-(cd "$tmp/work" && DECLARED_ORPHAN=1 DECLARED_ORPHAN_PRESENT=1 DESTROYING=1 \
-   LIFECYCLE_LOG="$orphan_present_log" "$sol" cloud destroy prod/gcp/us-central1 --apply) \
-  >"$orphan_present_log.out" 2>&1 || orphan_present_rc=$?
-if [ "$orphan_present_rc" -ne 1 ]; then
-  echo "a declared/state-absent provider-present resource must exit 1, not $orphan_present_rc:" >&2
-  cat "$orphan_present_log.out" >&2
-  exit 1
-fi
-assert_contains "the divergence is reported" "$orphan_present_log.out" \
-  'declared but not represented in Terraform state' || exit 1
-assert_contains "and names the orphan by address" "$orphan_present_log.out" \
-  'google_compute_network.orphan' || exit 1
-assert_contains "with the provider's PRESENT answer as its evidence" "$orphan_present_log.out" \
-  'provider observation: PRESENT' || exit 1
-assert_contains "the obligation was queried, in the declared scope" "$orphan_present_log.out" \
-  'gcloud compute networks describe sol-orphan --project sol-qualification' || exit 1
-
-# 2. The same divergence, provider UNKNOWN (an error that says nothing about the
-#    resource): failure -- and specifically 1, not the degraded 3.
-orphan_unknown_log="$tmp/gcp-declared-orphan-unknown.log"
-rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/bootstrap-window"
-orphan_unknown_rc=0
-(cd "$tmp/work" && DECLARED_ORPHAN=1 DECLARED_ORPHAN_UNKNOWN=1 DESTROYING=1 \
-   LIFECYCLE_LOG="$orphan_unknown_log" "$sol" cloud destroy prod/gcp/us-central1 --apply) \
-  >"$orphan_unknown_log.out" 2>&1 || orphan_unknown_rc=$?
-if [ "$orphan_unknown_rc" -ne 1 ]; then
-  echo "an UNKNOWN declared obligation must exit 1, not $orphan_unknown_rc:" >&2
-  cat "$orphan_unknown_log.out" >&2
-  exit 1
-fi
-assert_contains "the UNKNOWN classification is reported" "$orphan_unknown_log.out" \
-  'provider observation: UNKNOWN' || exit 1
-assert_contains "and the unproven obligation is named" "$orphan_unknown_log.out" \
-  'google_compute_network.orphan' || exit 1
-
-# 3. Cascade-shaped: the same declared/state-absent obligation, and the provider
-#    reports it absent after the destroy. The obligation is satisfied and the run
-#    is a clean success -- it is not a failure merely because it began divergent.
-orphan_absent_log="$tmp/gcp-declared-orphan-absent.log"
-rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/bootstrap-window"
-if ! (cd "$tmp/work" && DECLARED_ORPHAN=1 DESTROYING=1 \
-        LIFECYCLE_LOG="$orphan_absent_log" "$sol" cloud destroy prod/gcp/us-central1 --apply) \
-  >"$orphan_absent_log.out" 2>&1
-then
-  echo "a declared/state-absent obligation the provider reports absent must not fail:" >&2
-  cat "$orphan_absent_log.out" >&2
-  exit 1
-fi
-assert_contains "the obligation was observed, not skipped" "$orphan_absent_log.out" \
-  'google_compute_network.orphan' || exit 1
-assert_contains "its provider answer was ABSENT" "$orphan_absent_log.out" \
-  'provider observation: ABSENT' || exit 1
-assert_contains "and the outcome is the satisfied obligation" "$orphan_absent_log.out" \
-  'consequence:          obligation satisfied' || exit 1
-assert_not_contains "a satisfied obligation is not a violation" "$orphan_absent_log.out" \
-  'the destruction postcondition is violated' || exit 1
-
 # HARDEN-004 steps 3 + 4, the governing invariant end to end: a reconciliation plan
 # that would reconstruct the missing cluster (a target-owned CREATE) is refused
 # *before* its apply -- and the refusal is an outcome, not a refusal of the destroy.
 # Step 4: the protected platform teardown cannot run without the authority, so it is
 # skipped, but the substrate destroy does run -- stranding a half-built target is the
 # failure this whole path exists to remove. The run reaches absence, says what
-# degraded, and exits 3: neither the clean 0 nor the failure 1.
+# degraded, and exits 0 (REFAC-094: the degradation is a warning, not an exit code).
 refuse_log="$tmp/gcp-refuse.log"
 rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/bootstrap-window"
 refuse_rc=0
 (cd "$tmp/work" && PLAN_CREATES_MISSING_CLUSTER=1 DESTROYING=1 \
    LIFECYCLE_LOG="$refuse_log" "$sol" cloud destroy prod/gcp/us-central1 --apply) \
   >"$refuse_log.out" 2>&1 || refuse_rc=$?
-if [ "$refuse_rc" -eq 0 ]; then
-  echo "the GCP destroy reported a clean success although its plan reconstructed the missing cluster" >&2
-  cat "$refuse_log.out" >&2
-  exit 1
-fi
-if [ "$refuse_rc" -ne 3 ]; then
-  echo "a degraded destroy must exit 3, not $refuse_rc:" >&2
+if [ "$refuse_rc" -ne 0 ]; then
+  echo "a destroy that reached absence with a degraded preparation must exit 0, not $refuse_rc:" >&2
   cat "$refuse_log.out" >&2
   exit 1
 fi
@@ -1864,7 +1782,7 @@ grep -F 'ClusterIssuer is not served by this cluster' "$partial_log.out" >/dev/n
 }
 # ...and the lifecycle still ends where it must.
 assert_contains "INFRA-042: the destroy completed after the recovery" "$partial_log.out" \
-  '[ABSENT] google_container_cluster.main' || {
+  'terraform state (disposable root): empty' || {
   echo "INFRA-042: the destroy did not complete after the recovery:" >&2
   cat "$partial_log.out" >&2
   exit 1
@@ -2052,12 +1970,12 @@ assert_contains "the retained snapshot was observed, not assumed" "$log_retain.o
   "final snapshot $retained_id observed available" || exit 1
 assert_contains "the retention observation names how to remove it" "$log_retain.out" \
   'delete-db-snapshot' || exit 1
-# The identity queried is the one captured before destroy -- both for the database
-# and for the cluster -- and its region comes from the captured ARN.
-assert_contains "the destroy queried the captured database identity" "$log_retain.out" \
-  'aws rds describe-db-instances --db-instance-identifier lifecycle-test-postgres --region us-east-1' || exit 1
-assert_contains "the destroy queried the captured cluster identity" "$log_retain.out" \
-  'aws eks describe-cluster --name lifecycle-test --region us-east-1' || exit 1
+# DEC-045 / REFAC-094: the database and cluster Terraform destroyed are not re-queried;
+# the retained final snapshot is (above), because Terraform does not own it.
+assert_not_contains "the destroy does not re-query the Terraform-managed database" "$log_retain.out" \
+  'aws rds describe-db-instances' || exit 1
+assert_not_contains "the destroy does not re-query the Terraform-managed cluster" "$log_retain.out" \
+  'aws eks describe-cluster' || exit 1
 
 # HARDEN-004 step 5 / INFRA-072: retention is observed, so each way the observation
 # can fail must fail the command. Separate runs, so short-circuiting one into
@@ -2212,44 +2130,26 @@ assert_contains "the residual snapshot was reported by name" "$residue_log.out" 
 assert_contains "the residue failure names how many remain" "$residue_log.out" \
   'retain-nothing NOT observed' || exit 1
 
-# The captured-identity evidence itself: a resource the provider still returns, and a
-# provider answer that says nothing about the resource. Neither may pass, and neither
-# may be softened into a degraded success.
-present_log="$tmp/destroy-provider-present.log"
+# DEC-045 / REFAC-094: the AWS destroy does not re-query what Terraform manages (the
+# EKS cluster, the RDS instance); the EBS residue query in the same log is the
+# positive control that the log records the destroy's provider queries at all.
+managed_log="$tmp/destroy-no-managed-queries.log"
 rm -f "$RDS_PREPARED_FILE"
-present_rc=0
-(export DESTROYED_RESOURCE_PRESENT=1; run_destroy "$present_log") || present_rc=$?
-if [ "$present_rc" -eq 0 ]; then
-  echo "a destroy whose provider still returns the resource reported success" >&2
-  cat "$present_log.out" >&2
+if ! run_destroy "$managed_log"; then
+  cat "$managed_log.out" >&2
+  echo "REFAC-094: the baseline AWS destroy failed" >&2
   exit 1
 fi
-if [ "$present_rc" -eq 3 ]; then
-  echo "a provider residue is a failure, not a degraded success (exit 3)" >&2
-  cat "$present_log.out" >&2
+grep -F 'aws ec2 describe-volumes' "$managed_log" >/dev/null || {
+  echo "REFAC-094: the AWS residue (EBS) query is missing from the destroy log" >&2
   exit 1
-fi
-assert_contains "the provider residue was classified PRESENT" "$present_log.out" \
-  '[PRESENT] aws_db_instance.postgres' || exit 1
-
-unknown_log="$tmp/destroy-provider-unknown.log"
-rm -f "$RDS_PREPARED_FILE"
-unknown_rc=0
-(export AWS_VERIFY_UNKNOWN=1; run_destroy "$unknown_log") || unknown_rc=$?
-if [ "$unknown_rc" -eq 0 ]; then
-  echo "a destroy whose provider answer was UNKNOWN reported success" >&2
-  cat "$unknown_log.out" >&2
-  exit 1
-fi
-if [ "$unknown_rc" -eq 3 ]; then
-  echo "an UNKNOWN observation is a failure, not a degraded success (exit 3)" >&2
-  cat "$unknown_log.out" >&2
-  exit 1
-fi
-assert_contains "the UNKNOWN classification is visible" "$unknown_log.out" \
-  '[UNKNOWN] aws_db_instance.postgres' || exit 1
-assert_contains "UNKNOWN is explicitly not absence" "$unknown_log.out" \
-  'could not be established' || exit 1
+}
+for managed in 'aws eks describe-cluster' 'aws eks describe-addon' 'aws rds describe-db-instances'; do
+  if grep -F "$managed" "$managed_log" >/dev/null; then
+    echo "REFAC-094: the AWS destroy still re-queries a Terraform-managed resource: $managed" >&2
+    exit 1
+  fi
+done
 
 # The independent state postcondition: a destroy that leaves something represented in
 # this root's state is a residue, whatever the provider answers.

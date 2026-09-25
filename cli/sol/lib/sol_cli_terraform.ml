@@ -184,13 +184,6 @@ let show_saved_plan ?env ~run_log ~phase ~chdir ~plan_file () =
     saved_plan_json ?env ~chdir ~plan_file ())
 ;;
 
-(* The same read, recorded as the declared universe instead of as resource
-   changes. Neither recorder returns the JSON. *)
-let show_saved_plan_declared ?env ~run_log ~phase ~chdir ~plan_file () =
-  Sol_cli_terraform_plan.show_declared_and_record ~run_log ~phase ~show:(fun () ->
-    saved_plan_json ?env ~chdir ~plan_file ())
-;;
-
 (* Apply the saved plan itself. No `-auto-approve`: a saved plan applies without
    confirmation, and the point is that no re-plan happens here. *)
 let apply_saved ?(env = []) ~chdir ~plan_file () =
