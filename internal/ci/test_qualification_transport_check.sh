@@ -17,14 +17,14 @@ seed() {
   rm -rf "$work/root"
   mkdir -p "$work/root/internal/pipeline/qualification/transport" \
            "$work/root/internal/ci" \
-           "$work/root/cli/sol/lib" \
-           "$work/root/cli/platform/infra/base"
+           "$work/root/cli/lib" \
+           "$work/root/platform/infra/base"
   cp "$repo/internal/pipeline/qualification/transport/transport.yaml" \
      "$work/root/internal/pipeline/qualification/transport/transport.yaml"
   cp "$repo/internal/pipeline/qualification/transport/establish.sh" \
      "$work/root/internal/pipeline/qualification/transport/establish.sh"
-  cp "$repo/cli/sol/lib/sol_cli_config.ml" "$work/root/cli/sol/lib/sol_cli_config.ml"
-  printf '# production root\n' > "$work/root/cli/platform/infra/base/main.tf"
+  cp "$repo/cli/lib/sol_cli_config.ml" "$work/root/cli/lib/sol_cli_config.ml"
+  printf '# production root\n' > "$work/root/platform/infra/base/main.tf"
 }
 
 expect_pass() {
@@ -72,12 +72,12 @@ expect_fail "a transport without portforward"
 # ── a production root acquires the capability ───────────────────────────────
 seed
 printf 'resource "kubernetes_cluster_role_binding" "leak" {\n  subject { name = "sol:qualifiers" }\n}\n' \
-  > "$work/root/cli/platform/infra/base/leak.tf"
+  > "$work/root/platform/infra/base/leak.tf"
 expect_fail "a production root referencing the qualifier group"
 
 # ── the customer-facing contract names the qualifier ────────────────────────
 seed
-printf '\nlet qualifier_role_arn = None\n' >> "$work/root/cli/sol/lib/sol_cli_config.ml"
+printf '\nlet qualifier_role_arn = None\n' >> "$work/root/cli/lib/sol_cli_config.ml"
 expect_fail "a qualifier principal in the target schema"
 
 echo "qualification transport check: every guard rejection reproduced"

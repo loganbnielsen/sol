@@ -39,20 +39,20 @@ not qualify:
 
 | Input | Supported | Pinned in |
 |---|---|---|
-| Sol CLI | the built `sol --version` value (`git describe --tags --always --dirty` at build) | `cli/sol/bin/dune` |
+| Sol CLI | the built `sol --version` value (`git describe --tags --always --dirty` at build) | `cli/bin/dune` |
 | OCaml | `>= 5.4.0` (qualified on 5.4.1) | `dune-project`, `sol-*.opam` |
-| Kubernetes (EKS) | 1.36 | `cli/platform/infra/aws/variables.tf` (`kubernetes_version`) |
-| Provider module | AWS (`cli/platform/infra/aws/`) — the only qualified provider; GCP is not qualified for this profile | `cli/platform/infra/aws/`, `Sol_cli_provider` |
-| cert-manager chart | v1.14.4 | `cli/platform/infra/base/main.tf` |
-| ingress-nginx chart | 4.10.1 | `cli/platform/infra/base/main.tf` |
-| Argo CD chart | 6.7.3 | `cli/platform/infra/base/main.tf` |
-| Redpanda chart | 26.1.11 | `cli/platform/infra/base/main.tf`, `cli/sol/bin/cmd_local.ml` |
-| PostgreSQL chart | 18.8.17 | `cli/platform/infra/base/main.tf` |
-| Loki chart | 18.12.1 | `cli/platform/infra/base/main.tf` |
-| Grafana chart | 13.2.1 | `cli/platform/infra/base/main.tf` |
-| Alloy chart | 1.12.1 | `cli/platform/infra/base/main.tf` |
-| Tempo chart | 2.3.0 | `cli/platform/infra/base/main.tf` |
-| Prometheus chart | 25.20.1 | `cli/platform/infra/base/main.tf` |
+| Kubernetes (EKS) | 1.36 | `platform/infra/aws/variables.tf` (`kubernetes_version`) |
+| Provider module | AWS (`platform/infra/aws/`) — the only qualified provider; GCP is not qualified for this profile | `platform/infra/aws/`, `Sol_cli_provider` |
+| cert-manager chart | v1.14.4 | `platform/infra/base/main.tf` |
+| ingress-nginx chart | 4.10.1 | `platform/infra/base/main.tf` |
+| Argo CD chart | 6.7.3 | `platform/infra/base/main.tf` |
+| Redpanda chart | 26.1.11 | `platform/infra/base/main.tf`, `cli/bin/cmd_local.ml` |
+| PostgreSQL chart | 18.8.17 | `platform/infra/base/main.tf` |
+| Loki chart | 18.12.1 | `platform/infra/base/main.tf` |
+| Grafana chart | 13.2.1 | `platform/infra/base/main.tf` |
+| Alloy chart | 1.12.1 | `platform/infra/base/main.tf` |
+| Tempo chart | 2.3.0 | `platform/infra/base/main.tf` |
+| Prometheus chart | 25.20.1 | `platform/infra/base/main.tf` |
 | Workspace framework deps | per-workspace immutable pins (DEC-025) | the workspace's `dune-project` and `*.opam` |
 
 `dev` runs the same charts at single-replica scale, so the component versions

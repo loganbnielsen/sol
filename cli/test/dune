@@ -1,0 +1,191 @@
+; INFRA-075: every action in this directory -- unit tests and the rules that run the real
+; `sol` binary -- gets a data home inside the build tree. Sol keeps run logs and state under
+; $XDG_DATA_HOME/sol (else ~/.local/share/sol), pruned to the latest 20 across all commands,
+; so a test that inherited the operator's environment deleted real qualification runs.
+; Relative on purpose: it resolves inside whichever build or temp directory the action runs in.
+
+(env
+ (_
+  (env-vars
+   (XDG_DATA_HOME .sol-test-data))))
+
+(tests
+ (names
+  test_kube_destination
+  test_destination
+  test_deployment_scope
+  test_workload_selection
+  test_manual_job_name
+  test_deployment_plan
+  test_check
+  test_config
+  test_env_target
+  test_manifest_render
+  test_executor
+  test_secret
+  test_release_inspection
+  test_scaffold
+  test_logs
+  test_process
+  test_tool_adapters
+  test_deployment_state
+  test_dev_observability
+  test_change_set
+  test_deployment_phases
+  test_factory
+  test_rollback
+  test_migration_disposition
+  test_secret_strategy
+  test_toml_keys
+  test_secret_reads
+  test_rollout_diagnosis
+  test_loki
+  test_run_log
+  test_release
+  test_release_store
+  test_release_id
+  test_release_retention
+  test_boundary_lease
+  test_deployment
+  test_deployment_id
+  test_deployment_attempt
+  test_observability_url
+  test_target_report
+  test_deploy_event
+  test_open
+  test_status
+  test_runtime_secret_identity
+  test_profile
+  test_alerting
+  test_workspace
+  test_platform_component
+  test_image_ref
+  test_cloud_lifecycle
+  test_cloud_destroy
+  test_cloud_apply
+  test_destroy_verification
+  test_terraform_plan
+  test_substrate
+  test_migration)
+ (libraries sol_cli alcotest unix yojson str))
+
+(executable
+ (name print_readiness_invocations)
+ (libraries sol_cli))
+
+; INFRA-035: the readiness checks' kubectl argv, validated against a real
+; kubectl. The lifecycle harness below cannot cover this: its fake kubectl
+; accepts any argv, which is how `rollout status … --all` — a flag kubectl does
+; not have — made every platform report `Unmet` on a real target.
+
+(rule
+ (alias runtest)
+ (deps
+  print_readiness_invocations.exe
+  ../../internal/ci/check_readiness_invocations.sh)
+ (action
+  (pipe-stdout
+   (run %{dep:print_readiness_invocations.exe})
+   (run bash %{dep:../../internal/ci/check_readiness_invocations.sh}))))
+
+(rule
+ (alias runtest)
+ (deps
+  ../bin/main.exe
+  ../../internal/ci/test_cloud_lifecycle_offline.sh
+  ../../internal/ci/qualification_assertions.sh)
+ (action
+  (run
+   bash
+   %{dep:../../internal/ci/test_cloud_lifecycle_offline.sh}
+   %{dep:../bin/main.exe})))
+
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe)
+ (action
+  (bash
+   "set -eu\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\ncat > \"$tmp/sol.yml\" <<'EOF'\nservices:\n  api:\n    uses: [/us-east-1/analytics_db]\nEOF\ncd \"$tmp\"\n\"$sol\" plan prod/aws/us-east-1 | grep -F 'uses: /us-east-1/analytics_db (cross-region)' >/dev/null")))
+
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe)
+ (action
+  (bash
+   "set -eu\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nmkdir -p \"$tmp/app/payments/charge_svc\"\ncat > \"$tmp/app/payments/charge_svc/Dockerfile\" <<'EOF'\nFROM scratch\nEOF\ncd \"$tmp\"\ntouch \"$tmp/sol.yml\"\n\"$sol\" check >\"$tmp/ok.out\"\nrm \"$tmp/app/payments/charge_svc/Dockerfile\"\nif \"$sol\" check >\"$tmp/bad.out\" 2>&1; then\n  echo 'sol check unexpectedly passed without Dockerfile' >&2\n  exit 1\nfi\ngrep -F 'Dockerfile is missing' \"$tmp/bad.out\" >/dev/null")))
+
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe)
+ (action
+  (bash
+   "set -eu\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nmkdir -p \"$tmp/sol/prod/aws\"\ncat > \"$tmp/sol/prod/aws/us-east-1.yml\" <<'EOF'\ntarget:\n  kube_context: prod-us-east-1\nEOF\ncd \"$tmp\"\ntouch \"$tmp/sol.yml\"\nout=$(\"$sol\" target show --target prod/aws/us-east-1)\necho \"$out\" | grep -F 'us-east-1' >/dev/null\nif echo \"$out\" | grep -F 'prod-us-east-1' >/dev/null; then\n  echo 'sol target show leaked the kube-context without --verbose' >&2\n  exit 1\nfi\n\"$sol\" target show --target prod/aws/us-east-1 --verbose | grep -F 'prod-us-east-1' >/dev/null\nif \"$sol\" target show --target prod/aws/nope >\"$tmp/bad.out\" 2>&1; then\n  echo 'sol target show accepted an unknown target' >&2\n  exit 1\nfi\ngrep -F 'available targets:' \"$tmp/bad.out\" >/dev/null\ngrep -F 'prod/aws/us-east-1' \"$tmp/bad.out\" >/dev/null")))
+
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe)
+ (action
+  (bash
+   "set -eu\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nmkdir -p \"$tmp/sol/prod/aws\"\ncat > \"$tmp/sol/prod/aws/us-east-1.yml\" <<'EOF'\ntarget:\n  kube_context: prod-us-east-1\nEOF\ncd \"$tmp\"\ntouch \"$tmp/sol.yml\"\nif \"$sol\" target show >\"$tmp/out\" 2>&1; then\n  echo 'sol target show ran without naming a target' >&2\n  exit 1\nfi\ngrep -F 'available targets:' \"$tmp/out\" >/dev/null")))
+
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe)
+ (action
+  (bash
+   "set -eu\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nmkdir -p \"$tmp/sol/prod/aws\"\ncat > \"$tmp/sol/prod/aws/us-east-1.yml\" <<'EOF'\ntarget:\n  kube_context: no-such-context-xyz\nEOF\ncd \"$tmp\"\ntouch \"$tmp/sol.yml\"\nout=$(\"$sol\" target show --target prod/aws/us-east-1 --check)\necho \"$out\" | grep -F 'unreachable' >/dev/null\nif echo \"$out\" | grep -F 'no-such-context-xyz' >/dev/null; then\n  echo 'sol target show --check leaked the kube-context in the default output' >&2\n  exit 1\nfi\n\"$sol\" target show --target prod/aws/us-east-1 --check --verbose | grep -F 'no-such-context-xyz' >/dev/null\nif command -v kubectl >/dev/null 2>&1; then\n  \"$sol\" target show --target prod/aws/us-east-1 --check --verbose | grep -F 'does not exist' >/dev/null\nfi")))
+
+; FEAT-089: a profile target is refused before any cluster call or emitted file.
+
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe)
+ (action
+  (bash
+   "set -eu\nsol=$(pwd)/%{deps}\nroot=$(mktemp -d)\ntrap 'rm -rf \"$root\"' EXIT\ntmp=\"$root/pluto\"\nmkdir -p \"$tmp/app/payments/charge_svc\" \"$tmp/sol/prod/aws\"\necho 'FROM scratch' > \"$tmp/app/payments/charge_svc/Dockerfile\"\ntouch \"$tmp/app/payments/charge_svc/sol.toml\"\necho 'project: pluto' > \"$tmp/sol.yml\"\nprintf 'target:\\n  profile: production-single-region\\n  registry: registry.example.com\\n  kube_context: feat089-no-such-context\\n' > \"$tmp/sol/prod/aws/us-east-1.yml\"\ncd \"$tmp\"\nif \"$sol\" deploy prod/aws/us-east-1 --emit-to out --image-tag abc >\"$tmp/emit.out\" 2>&1; then\n  echo 'profile target unexpectedly emitted a GitOps bundle' >&2\n  exit 1\nfi\ngrep -F 'Nothing was changed' \"$tmp/emit.out\" >/dev/null\ngrep -F 'direct apply reconciliation authority is not established' \"$tmp/emit.out\" >/dev/null\ntest ! -e out\nif POSTGRES_URL=postgres://unused \"$sol\" deploy prod/aws/us-east-1 --image-tag abc >\"$tmp/apply.out\" 2>&1; then\n  echo 'profile target unexpectedly deployed' >&2\n  exit 1\nfi\ngrep -F 'preflight found' \"$tmp/apply.out\" >/dev/null\nif grep -F 'feat089-no-such-context' \"$tmp/apply.out\" >/dev/null; then\n  echo 'preflight ran after a cluster call' >&2\n  exit 1\nfi")))
+
+; See check_production_infra.sh: offline guard for the production Postgres path.
+
+(rule
+ (alias runtest)
+ (deps
+  check_production_infra.sh
+  (source_tree ../../platform/infra/aws)
+  (source_tree ../../platform/infra/base)
+  (source_tree ../../platform/infra/base-gcp)
+  (source_tree ../../platform/infra/bootstrap)
+  (source_tree ../../platform/infra/gcp))
+ (action
+  (run bash %{dep:check_production_infra.sh} %{workspace_root})))
+
+; The qualification-artifact guard is internal/ci/check_no_account_artifacts.sh
+; and runs as a CI step, not here: it checks what git tracks, and dune can only
+; offer it `_build/default`, where `git ls-files` is empty and it would pass on
+; any tree at all.
+
+; INFRA-075 guard: the isolation above must stay in force, and must not point at the
+; operator's real data home.
+
+(rule
+ (alias runtest)
+ (action
+  (bash
+   "set -eu\ncase \"${XDG_DATA_HOME:-}\" in\n  '') echo 'INFRA-075: XDG_DATA_HOME is unset for cli/test actions; sol would write runs into the real ~/.local/share/sol' >&2; exit 1 ;;\nesac\nif [ -n \"${HOME:-}\" ] && [ \"$(cd \"$(dirname \"$XDG_DATA_HOME\")\" 2>/dev/null && pwd -P)/$(basename \"$XDG_DATA_HOME\")\" = \"$HOME/.local/share\" ]; then\n  echo 'INFRA-075: XDG_DATA_HOME points at the real data home' >&2; exit 1\nfi")))
+
+; SEC-010: the sensitive-variable guard reads the real roots, so they are deps.
+
+(test
+ (name test_sensitive_vars)
+ (modules test_sensitive_vars)
+ (deps
+  (source_tree ../../platform/infra/aws)
+  (source_tree ../../platform/infra/gcp))
+ (libraries sol_cli alcotest str))
+
+; INFRA-076: Terraform supervision, with a fake terraform and a fake provider
+; plugin. The test binary is its own supervisor (it answers __supervise).
+
+(test
+ (name test_supervised)
+ (modules test_supervised)
+ (libraries sol_cli alcotest unix str))

@@ -32,18 +32,18 @@ For audit-oriented work, use these workflows as the entry points:
   service contract checks.
 - [`/e2e`](../../internal/fixtures/local-demo/test/test_e2e.ml) for end-to-end local
   workflow verification.
-  [`cli/platform/local/scripts/run_tests.sh`](../../cli/platform/local/scripts/run_tests.sh)
+  [`platform/local/scripts/run_tests.sh`](../../platform/local/scripts/run_tests.sh)
   is the broader local test runner reference.
 
 ## Command Changes
 
-Command parsing and user-facing CLI behavior live in `cli/sol/bin/`. Shared
-command implementation belongs in `cli/sol/lib/`, especially when more than one
+Command parsing and user-facing CLI behavior live in `cli/bin/`. Shared
+command implementation belongs in `cli/lib/`, especially when more than one
 command needs the same behavior. `internal/tooling/soldev/` is for internal repository and
 ticket workflow tooling, not customer-facing `sol` commands.
 
 Extend commands by adding typed options, shared library functions, and tests in
-`cli/sol/test/`. Keep command modules thin enough that behavior can be tested
+`cli/test/`. Keep command modules thin enough that behavior can be tested
 without invoking a full terminal workflow.
 
 Do not add raw shell commands through `Sys.command`, ad hoc `Unix.system`, or
@@ -73,14 +73,14 @@ need the same intent, put it in the plan instead of only in one executor.
 
 ## Manifest Rendering
 
-Kubernetes manifest rendering is owned by `cli/sol/lib/sol_cli_manifest.ml`,
-`cli/sol/lib/sol_cli_manifest_yaml.ml`, and deployment rendering modules that
+Kubernetes manifest rendering is owned by `cli/lib/sol_cli_manifest.ml`,
+`cli/lib/sol_cli_manifest_yaml.ml`, and deployment rendering modules that
 consume the deployment plan. Manifests are generated artifacts derived from the
 workspace structure, environment target, images, secrets policy, and `sol.toml`
 overrides.
 
 Extend manifest behavior by changing the typed manifest/rendering layer and
-covering the output in `cli/sol/test/test_manifest_render.ml` or an adjacent
+covering the output in `cli/test/test_manifest_render.ml` or an adjacent
 deployment-render test.
 
 Do not edit generated YAML paths directly, commit per-service Kubernetes YAML as
@@ -90,11 +90,11 @@ escape hatch.
 
 ## Scaffold Templates
 
-Scaffold commands are owned by `cli/sol/lib/sol_cli_cmd_new.ml`,
-`cli/sol/lib/sol_cli_scaffold.ml`, and
-`cli/sol/lib/sol_cli_scaffold_templates.ml`. The generated workspace contract is
+Scaffold commands are owned by `cli/lib/sol_cli_cmd_new.ml`,
+`cli/lib/sol_cli_scaffold.ml`, and
+`cli/lib/sol_cli_scaffold_templates.ml`. The generated workspace contract is
 validated by `docs/audits/SCAFFOLD_AUDIT.md` and tests in
-`cli/sol/test/test_scaffold.ml`.
+`cli/test/test_scaffold.ml`.
 
 Extend scaffolds by updating the template source, generated file list, and tests
 together. Generated READMEs and workflows should teach current `sol` commands
@@ -127,7 +127,7 @@ lowest package that owns the concept.
 ## Tests
 
 Unit and package tests live beside their owner package in `test/` directories.
-CLI behavior is covered in `cli/sol/test/`. End-to-end behavior is represented
+CLI behavior is covered in `cli/test/`. End-to-end behavior is represented
 by `internal/fixtures/local-demo/test/test_e2e.ml` and the `/e2e` workflow. Audit
 checklists in `docs/audits/` define manual verification expectations.
 

@@ -19,7 +19,7 @@ root="${1:-$(git rev-parse --show-toplevel)}"
 
 transport="$root/internal/pipeline/qualification/transport/transport.yaml"
 step="$root/internal/pipeline/qualification/transport/establish.sh"
-config="$root/cli/sol/lib/sol_cli_config.ml"
+config="$root/cli/lib/sol_cli_config.ml"
 
 fail() {
   echo "check_qualification_transport: $1" >&2
@@ -51,7 +51,7 @@ if grep -Eq '"(update|patch|delete|deletecollection|\*)"' "$transport"; then
 fi
 
 # ── 2. it cannot leak into production ────────────────────────────────────────
-for dir in "$root"/cli/platform/infra/*/; do
+for dir in "$root"/platform/infra/*/; do
   if grep -rqE 'sol:qualifiers|sol-qualifier-transport' "$dir" 2>/dev/null; then
     fail "a production Terraform root references the qualification transport: $dir"
   fi
@@ -61,7 +61,7 @@ if grep -qiE 'qualifier' "$config"; then
   fail "the target schema names a qualifier principal; qualification scaffolding must not enter the customer-facing contract"
 fi
 
-if grep -qE 'transport\.yaml' "$root/cli/sol/lib/sol_cli_cloud_lifecycle.ml" 2>/dev/null; then
+if grep -qE 'transport\.yaml' "$root/cli/lib/sol_cli_cloud_lifecycle.ml" 2>/dev/null; then
   fail "Sol's lifecycle applies the qualification transport manifest"
 fi
 

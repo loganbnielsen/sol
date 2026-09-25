@@ -158,7 +158,7 @@ Sol decides the default infrastructure shape:
 - release metadata
 - rollout/rollback mechanics
 
-`cli/platform/infra/` is therefore not the primary user interface. It is an
+`platform/infra/` is therefore not the primary user interface. It is an
 implementation of the substrate contract for customer-cloud and exported
 self-managed lanes, and should also inform Sol's future hosted substrate.
 
@@ -220,7 +220,7 @@ including two live round-trip tests against real Loki.
 - Stream labels: `service` always + whitelisted `label_names` from `Obs_eio.t` context
 - Unreachable Loki logs to stderr, never raises
 
-**Local infrastructure:** `cli/platform/local/scripts/ensure-loki.sh` + `ensure-grafana.sh`
+**Local infrastructure:** `platform/local/scripts/ensure-loki.sh` + `ensure-grafana.sh`
 (Grafana pre-wired with Loki datasource at `http://localhost:3000`)
 
 ### ~~obs-eio-prometheus~~ ✓ done
@@ -389,7 +389,7 @@ All operations return `(_, Sol.Storage.error) result`. No exceptions at public A
 - `Sol.Storage.Table.Make(Schema)` functor for typed table access
 - `Sol.Storage.Migration` — migration runner (`apply`, `status`, `rollback`)
 - `sol migrate` CLI command (wired in Phase 5)
-- `cli/platform/local/scripts/ensure-postgres.sh` for local dev
+- `platform/local/scripts/ensure-postgres.sh` for local dev
 - Unit tests against a real Postgres instance; gated on `POSTGRES_URL` env var (same pattern as Kafka and Loki integration tests)
 
 ---
@@ -412,7 +412,7 @@ sol status              # show running pods and endpoints
 
 ### Implementation
 
-**Package:** `cli/sol/` — binary at `_build/default/cli/sol/bin/main.exe`
+**Package:** `cli/` — binary at `_build/default/cli/bin/main.exe`
 
 **Stack:** `cmdliner` 2.x for argument parsing. Templates are OCaml string literals embedded directly in the binary — no external template files, no runtime file resolution. Self-contained and relocatable.
 
@@ -428,7 +428,7 @@ All five scaffold commands fully implemented and verified. `sol new workspace ac
 
 ### ~~Step 2~~ ✓ — `sol local infra up/down/status`
 
-Implemented in `cli/sol/bin/cmd_local.ml`. k3d cluster lifecycle, Helm chart installs (Redpanda, PostgreSQL, Loki, kube-prometheus-stack), port-forward manager (PID files in `.sol/`), endpoint summary table.
+Implemented in `cli/bin/cmd_local.ml`. k3d cluster lifecycle, Helm chart installs (Redpanda, PostgreSQL, Loki, kube-prometheus-stack), port-forward manager (PID files in `.sol/`), endpoint summary table.
 
 **Testing status:** k3d v5.6.0 and Helm v3.21.0 are now installed. End-to-end test pending (Step 2a below).
 
@@ -436,7 +436,7 @@ Implemented in `cli/sol/bin/cmd_local.ml`. k3d cluster lifecycle, Helm chart ins
 
 ### ~~Step 7~~ ✓ — `sol migrate`
 
-Implemented in `cli/sol/bin/cmd_migrate.ml`. Thin Eio + caqti wrapper over `Sol.Storage.Migration`. Verified end-to-end against live postgres. See `docs/planning/WORK_SUMMARY.md` §16.
+Implemented in `cli/bin/cmd_migrate.ml`. Thin Eio + caqti wrapper over `Sol.Storage.Migration`. Verified end-to-end against live postgres. See `docs/planning/WORK_SUMMARY.md` §16.
 
 ---
 
@@ -605,7 +605,7 @@ This is the real acceptance test: a new domain stood up in a running cluster wit
 
 | Deliverable | Status |
 |---|---|
-| `cli/sol/` package skeleton + `cmdliner` wiring | ✓ done |
+| `cli/` package skeleton + `cmdliner` wiring | ✓ done |
 | `sol new workspace <name>` — 17-file scaffold, compiles first try | ✓ done |
 | `sol new svc/worker/fn/event` | ✓ done |
 | `sol local infra up/down/status` — k3d + Helm orchestration | ✓ done, validated |
@@ -630,8 +630,8 @@ Phase 5 built the synthesis pipeline and proved it against a local k3d cluster. 
 - `sol deploy --image-tag --dry-run --emit-to` flags ✓
 - `sol deploy --emit-plan-to FILE` — plan JSON serialization (experimental schema) ✓
 - `sol.toml` parsing — all supported fields are read from real user files ✓
-- `cli/platform/infra/aws/` and `cli/platform/infra/gcp/` Terraform modules ✓
-- `cli/platform/infra/base/` cluster-agnostic Helm bootstrapping ✓
+- `platform/infra/aws/` and `platform/infra/gcp/` Terraform modules ✓
+- `platform/infra/base/` cluster-agnostic Helm bootstrapping ✓
 - Argo CD `Application` manifest + GitOps emit mode ✓
 - `contract/substrate.md` — what Sol generates vs what the user brings ✓
 - `docs/deployment/escape-hatches.md` — four-level escape hatch hierarchy ✓
@@ -690,13 +690,13 @@ strategy = "blue-green"            # or "canary" with steps
 `[infra.rollout]` canary/blue-green and `[infra.env].secrets` are implemented.
 `[infra.kafka]` extra topics remain future work.
 
-### `cli/platform/infra/` — Cloud cluster provisioning
+### `platform/infra/` — Cloud cluster provisioning
 
 Terraform modules for bootstrapping the cluster itself. Run once per environment by the platform team, not on every deploy.
 
-- `cli/platform/infra/aws/` — EKS cluster, VPC, RDS Postgres, ECR, Route53
-- `cli/platform/infra/gcp/` — GKE Autopilot cluster, VPC, Cloud SQL, Artifact Registry, Cloud DNS
-- `cli/platform/infra/base/` — cluster-agnostic: Argo CD, kube-prometheus-stack, Loki, Redpanda, cert-manager, ingress-nginx
+- `platform/infra/aws/` — EKS cluster, VPC, RDS Postgres, ECR, Route53
+- `platform/infra/gcp/` — GKE Autopilot cluster, VPC, Cloud SQL, Artifact Registry, Cloud DNS
+- `platform/infra/base/` — cluster-agnostic: Argo CD, kube-prometheus-stack, Loki, Redpanda, cert-manager, ingress-nginx
 
 After `terraform apply`, the cluster looks identical to `sol local infra up` — same infra components, same Helm charts, same Sol-generated manifests.
 
@@ -779,7 +779,7 @@ cluster observable instead, with the right data source per layer:
 **Follow-up work — status corrected 2026-09-11.** This paragraph previously described the work above as "not yet ticketed". Three of the four items had in fact already landed, and the fourth is now ticketed:
 
 - **Kubernetes-derived diagnosis** in `sol status` — done (OBS-001; `Sol_cli_status.service_diagnoses_named` → `Sol_cli_rollout_diagnosis.diagnose_service_live`).
-- **Pod-stdout collection** — done, and with **Alloy** rather than promtail: `cli/platform/infra/base/alloy/logs.alloy.tftpl` uses `discovery.kubernetes "pods"` + `loki.source.kubernetes`, so it tails pod logs through the Kubernetes API instead of depending on app-pushed lines.
+- **Pod-stdout collection** — done, and with **Alloy** rather than promtail: `platform/infra/base/alloy/logs.alloy.tftpl` uses `discovery.kubernetes "pods"` + `loki.source.kubernetes`, so it tails pod logs through the Kubernetes API instead of depending on app-pushed lines.
 - **`sol logs` runtime fallback** — done: triggered from `Sol_cli_loki.classify_process_error` (timeout, connection, other) at five call sites.
 - **Run IDs and local `.sol/runs/` logging for `sol deploy`** — done (FEAT-055, landed 2026-09-12): `sol up`/`sol deploy` create a run before doing any work, print the run id and `.sol/runs/<run-id>/` directory, and a failing phase prints the run id, log path, and tail — recoverable after the terminal that ran it is gone.
 

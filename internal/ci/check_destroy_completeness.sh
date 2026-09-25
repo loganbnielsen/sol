@@ -29,7 +29,7 @@ root="${1:-.}"
 # provider list rather than written out, so a provider added later is checked by
 # this guard without anyone remembering to add it here. A provider list that
 # cannot be read fails closed: a guard that checked nothing must not read as a pass.
-provider_module="$root/cli/sol/lib/sol_cli_provider.ml"
+provider_module="$root/cli/lib/sol_cli_provider.ml"
 providers="$(sed -n '/^let to_string/,/^;;/p' "$provider_module" 2>/dev/null | grep -oE '"[a-z0-9-]+"' | tr -d '"')"
 if [ -z "$providers" ]; then
   echo "check_destroy_completeness: could not read the provider list from $provider_module" >&2
@@ -38,8 +38,8 @@ fi
 target_roots=()
 for provider in $providers; do
   # A provider with no root yet has nothing of its own to deploy, so nothing to check.
-  if [ -d "$root/cli/platform/infra/$provider" ]; then
-    target_roots+=("cli/platform/infra/$provider")
+  if [ -d "$root/platform/infra/$provider" ]; then
+    target_roots+=("platform/infra/$provider")
   fi
 done
 
@@ -103,7 +103,7 @@ for dir in "${target_roots[@]}"; do
       | sed 's/.*var\.//' \
       | sort -u
   ); do
-    if ! grep -qE "\"$guard_var\",[[:space:]]*\"false\"" "$root/cli/sol/lib/sol_cli_provider_capabilities.ml"; then
+    if ! grep -qE "\"$guard_var\",[[:space:]]*\"false\"" "$root/cli/lib/sol_cli_provider_capabilities.ml"; then
       report "$dir routes $guard_var through a variable, but no provider's Destroy policy (Sol_cli_provider_capabilities.destroy_guard_vars) lifts it -- so a target Sol provisioned cannot be destroyed through Sol (ADR 0004)."
     fi
   done

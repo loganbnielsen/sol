@@ -73,7 +73,7 @@ jobs:
           set -eo pipefail
           export SOL_HOME="$GITHUB_WORKSPACE"
           mkdir -p "$SOL_HOME/.ci-bin"
-          ln -sf "$SOL_HOME/_build/default/cli/sol/bin/main.exe" "$SOL_HOME/.ci-bin/sol"
+          ln -sf "$SOL_HOME/_build/default/cli/bin/main.exe" "$SOL_HOME/.ci-bin/sol"
           export PATH="$SOL_HOME/.ci-bin:$PATH"
           hash -r
 
@@ -107,7 +107,7 @@ jobs:
           #
           # IMPORTANT: the scaffold's own lib module is app/ops/burst_fn/lib/
           # burst_fn.ml (component_module Function "burst" = "Burst_fn",
-          # cli/sol/lib/sol_cli_cmd_new.ml) with lib/dune's (modules Burst_fn)
+          # cli/lib/sol_cli_cmd_new.ml) with lib/dune's (modules Burst_fn)
           # naming it explicitly -- overwrite that exact file. A sibling
           # burst_fn_fn.ml would be an orphan dune silently never compiles
           # into the library (verified: an unlisted .ml file in a library

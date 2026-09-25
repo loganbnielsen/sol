@@ -49,11 +49,11 @@ npm install
 npm run build -w order-svc -w fulfillment-worker
 
 # bring up local infra (broker, schema registry, Postgres, Loki, Tempo, Prometheus)
-bash cli/platform/local/scripts/ensure-broker.sh
-bash cli/platform/local/scripts/ensure-postgres.sh
-bash cli/platform/local/scripts/ensure-loki.sh
-bash cli/platform/local/scripts/ensure-tempo.sh
-bash cli/platform/local/scripts/ensure-prometheus.sh
+bash platform/local/scripts/ensure-broker.sh
+bash platform/local/scripts/ensure-postgres.sh
+bash platform/local/scripts/ensure-loki.sh
+bash platform/local/scripts/ensure-tempo.sh
+bash platform/local/scripts/ensure-prometheus.sh
 
 KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 \
   LOKI_URL=http://localhost:3100 TEMPO_URL=http://localhost:4318 \

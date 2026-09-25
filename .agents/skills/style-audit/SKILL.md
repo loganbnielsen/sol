@@ -68,8 +68,8 @@ Flag these three categories:
 Walk these folders even if grep finds enough tickets early:
 
 - `framework/ocaml/`
-- `cli/sol/lib/`
-- `cli/sol/bin/`
+- `cli/lib/`
+- `cli/bin/`
 - `examples/`
 - `internal/tooling/`
 - tests and scaffold templates that teach users patterns
@@ -133,8 +133,8 @@ Recommended partitions:
 
 - Agent 1: `framework/`
 - Agent 2: `framework/ocaml/kafka-eio-service/`
-- Agent 3: `cli/sol/lib/`
-- Agent 4: `cli/sol/bin/`
+- Agent 3: `cli/lib/`
+- Agent 4: `cli/bin/`
 - Agent 5: `examples/` plus scaffold templates
 - Agent 6: `internal/tooling/` plus tests
 

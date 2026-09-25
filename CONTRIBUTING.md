@@ -38,7 +38,7 @@ dune build && dune test && dune fmt --preview
 ```
 
 A pre-commit hook runs the build and unit suites; install it with
-`bash cli/platform/local/scripts/install-hooks.sh`. It also validates ticket
+`bash platform/local/scripts/install-hooks.sh`. It also validates ticket
 state transitions: ticket creation and correction happen on ordinary PR
 branches, while deletion is only allowed as a same-ID state move.
 
@@ -79,7 +79,7 @@ broken for a dozen commits.
 
 ### The pre-commit hook is not the gate
 
-The hook (`cli/platform/local/scripts/install-hooks.sh`) still skips the test
+The hook (`platform/local/scripts/install-hooks.sh`) still skips the test
 suite for staged bookkeeping-only changes, which is a useful local speed-up. It
 is **not** a substitute for CI: run CI on the pull request, and do not treat "the
 hook was quiet" as evidence a change is safe. CI is the gate.
@@ -147,7 +147,7 @@ absent rather than red. If the local hooks appear inert, re-run the documented
 installer:
 
 ```bash
-bash cli/platform/local/scripts/install-hooks.sh
+bash platform/local/scripts/install-hooks.sh
 ```
 
 That path is guarded by `internal/ci/test_hook_install.sh`, which runs the

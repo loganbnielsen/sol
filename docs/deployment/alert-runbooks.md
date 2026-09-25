@@ -8,7 +8,7 @@ synthetic alert and the game-day results.
 
 The indicators are deliberately threshold rules, not burn-rate SLOs
 (DEC-026 §8; OBS-040's non-goal). Their alert definitions live in
-`cli/platform/infra/base/main.tf`'s `local.prometheus_alerting_rules`.
+`platform/infra/base/main.tf`'s `local.prometheus_alerting_rules`.
 
 | Indicator | Alert | Signal | First response |
 |---|---|---|---|

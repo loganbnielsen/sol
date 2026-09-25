@@ -80,7 +80,7 @@ check source sol.opam
 check source Dockerfile
 check source package.json
 check source examples/pluto/pluto.opam
-check source cli/sol/lib/sol_cli.ml
+check source cli/lib/sol_cli.ml
 check source helm/values.yaml
 check source terraform/main.tf
 check source unknown/path
@@ -91,7 +91,7 @@ echo "classify-changes: mixed diffs are source"
 check source README.md framework/foo.ml
 check source internal/pipeline/tickets/X.md package.json
 check source docs/foo.md .github/workflows/ci.yml
-check source internal/tooling/perf/perf_baseline.json cli/sol/bin/main.ml
+check source internal/tooling/perf/perf_baseline.json cli/bin/main.ml
 
 echo
 echo "classify-changes: empty and unresolvable input fails closed"

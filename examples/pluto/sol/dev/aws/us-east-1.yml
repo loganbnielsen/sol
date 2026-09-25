@@ -1,9 +1,11 @@
+# A low-cost development target: Postgres, Kafka and the services that need them
+# are omitted, so `sol cloud apply dev/aws/us-east-1` provisions the cluster and
+# the platform only. Replace the domain and contact address with your own.
 target:
-  cluster_name: sol-dev
-  base_domain: smoke-test.invalid
+  cluster_name: pluto-dev
+  base_domain: dev.pluto.example.com
   cluster_issuer: letsencrypt-staging
-  letsencrypt_email: smoke-test@example.invalid
-  terraform_var_file: ../../../../../internal/qualification/aws/smoke-test.tfvars
+  letsencrypt_email: ops@pluto.example.com
 
 resources:
   app_db:

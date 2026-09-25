@@ -36,7 +36,7 @@
 #   1. **A state bucket, and no GCP path that creates one.** `sol cloud` refuses to
 #      initialize Terraform until the target declares `state_bucket`, because a
 #      Terraform root cannot create its own backend. The AWS side provisions the pair
-#      from `cli/platform/infra/bootstrap/`, which is AWS-only (`provider "aws"`,
+#      from `platform/infra/bootstrap/`, which is AWS-only (`provider "aws"`,
 #      `aws_s3_bucket`, `aws_dynamodb_table`) — so on GCP the bucket is either created
 #      once out of band and recorded in the untracked target, or a GCP bootstrap root
 #      is authored. GCS needs no lock table.
@@ -81,7 +81,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 # The CLI under test. Defaults to this checkout's build so an attempt is identifiable
 # by commit; overridable for a plan-only validation.
-SOL="${SOL:-$ROOT/_build/default/cli/sol/bin/main.exe}"
+SOL="${SOL:-$ROOT/_build/default/cli/bin/main.exe}"
 # Overridable so a test can point the harness at a scratch workspace: the target file is
 # written into it, and a suite that writes into the repository cannot assert that nothing
 # was left behind.
@@ -102,7 +102,7 @@ DELEGATION_WAIT_MINUTES="${DELEGATION_WAIT_MINUTES:-25}"
 LOG_DIR="${LOG_DIR:-/tmp/sol-gcp-qual-$(date +%Y%m%d-%H%M%S)}"
 STATE_BUCKET="${STATE_BUCKET:-sol-qualification-tfstate}"
 PROFILE_NAME="${PROFILE_NAME:-production-single-region}"
-BOOTSTRAP_ROOT="$ROOT/cli/platform/infra/bootstrap-gcp"
+BOOTSTRAP_ROOT="$ROOT/platform/infra/bootstrap-gcp"
 
 # Requirements are per subcommand, and the messages deliberately avoid an apostrophe:
 # inside a ${var:?word} expansion bash treats a single quote as a quote character, so
@@ -180,7 +180,7 @@ if [ "${1:-}" != "verify" ]; then
   [ -x "$SOL" ] || {
     echo "✗ CLI not built at $SOL" >&2
     echo "  Build it in this checkout so the attempt is identifiable by commit:" >&2
-    echo "    eval \$(opam env) && dune build cli/sol/bin/main.exe" >&2
+    echo "    eval \$(opam env) && dune build cli/bin/main.exe" >&2
     exit 2
   }
 fi
@@ -460,7 +460,7 @@ provider_probe() { # provider_probe <class> <expect> <command...>
   say "    $class: $verdict"
 }
 
-# The names below are the GCP root's own (`cli/platform/infra/gcp/main.tf`) and the state
+# The names below are the GCP root's own (`platform/infra/gcp/main.tf`) and the state
 # object keys are the backend's own, read from the bucket rather than guessed. A guessed name
 # is a probe that can never answer: this harness used to ask for a network named
 # "$CLUSTER-vpc" while the root names it "$CLUSTER", so that probe could only ever return

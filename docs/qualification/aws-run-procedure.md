@@ -78,7 +78,7 @@ HARDEN runs exist to find those, not to have none.
 
 1. A fresh, disposable, isolated AWS account/profile — never reuse any previous
    run's.
-2. `cli/platform/infra/bootstrap` applied: state bucket + lock table.
+2. `platform/infra/bootstrap` applied: state bucket + lock table.
 3. **Four** IAM roles created by the operator (not Sol — AUDIT-072/INFRA-026:
    Sol owns the policy contracts, never role lifecycle) from the bootstrap
    root's four generated documents: `provisioner_policy_json`,
@@ -133,7 +133,7 @@ Record, without modifying anything:
 2. whether the control plane can reach a node's kubelet — `kubectl logs` against a
    pod on a known node is the observable;
 3. which Sol capabilities actually depend on that path, from the surfaces in
-   `cli/sol/` (`sol logs`, port-forward, exec).
+   `cli/` (`sol logs`, port-forward, exec).
 
 Then state the conclusion in exactly one of two forms:
 
@@ -301,7 +301,7 @@ In practice, for every behavioural row:
 
 1. **Static/configuration evidence** — Terraform variable defaults, RBAC
    rule text, IAM policy JSON shape. This session's offline additions
-   (`cli/sol/test/check_production_infra.sh`,
+   (`cli/test/check_production_infra.sh`,
    `internal/ci/test_cloud_lifecycle_offline.sh`,
    `internal/ci/test_publisher_deployer_boundary.sh`) are entirely this
    tier. Necessary, never sufficient.

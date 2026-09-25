@@ -16,13 +16,13 @@ fail=0
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 
 mkcase() {
-  mkdir -p "$tmp/$1/cli/sol/lib" "$tmp/$1/cli/sol/bin"
+  mkdir -p "$tmp/$1/cli/lib" "$tmp/$1/cli/bin"
   printf '%s\n' "$2" >"$tmp/$1/allow.txt"
   # Every fake repo carries the real provider list: the guard derives which modules are
   # provider implementations from it rather than naming providers itself.
-  cp "$repo/cli/sol/lib/sol_cli_provider.ml" "$tmp/$1/cli/sol/lib/"
+  cp "$repo/cli/lib/sol_cli_provider.ml" "$tmp/$1/cli/lib/"
 }
-put() { printf '%s\n' "$3" >"$tmp/$1/cli/sol/$2"; }
+put() { printf '%s\n' "$3" >"$tmp/$1/cli/$2"; }
 expect_reject() {
   if "$guard" "$tmp/$1" "$tmp/$1/allow.txt" >/dev/null 2>&1; then
     echo "test_provider_dispatch_check: guard ACCEPTED $2." >&2
@@ -43,18 +43,18 @@ exhaustive='let f = function
 ;;'
 
 # 1. The allowlisted baseline is accepted.
-mkcase base 'dispatch cli/sol/lib/a.ml 2'
+mkcase base 'dispatch cli/lib/a.ml 2'
 put base lib/a.ml "$exhaustive"
 expect_accept base "an exhaustive match within its allowlist"
 
 # 2. A provider match in a module the allowlist does not name is new dispatch.
-mkcase newfile 'dispatch cli/sol/lib/a.ml 2'
+mkcase newfile 'dispatch cli/lib/a.ml 2'
 put newfile lib/a.ml "$exhaustive"
 put newfile bin/b.ml "$exhaustive"
 expect_reject newfile "a provider match in a new module"
 
 # 3. Growth inside an allowlisted module.
-mkcase grow 'dispatch cli/sol/lib/a.ml 2'
+mkcase grow 'dispatch cli/lib/a.ml 2'
 put grow lib/a.ml "$exhaustive
 let g = function
   | Sol_cli_provider.Aws -> true
@@ -63,12 +63,12 @@ let g = function
 expect_reject grow "growth past the allowed count"
 
 # 4. A reduction the allowlist does not record (the ratchet must be written down).
-mkcase shrink 'dispatch cli/sol/lib/a.ml 4'
+mkcase shrink 'dispatch cli/lib/a.ml 4'
 put shrink lib/a.ml "$exhaustive"
 expect_reject shrink "a reduction without lowering the allowlist"
 
 # 5. The SEC-010 shape: a wildcard standing in for every other provider.
-mkcase wild 'dispatch cli/sol/lib/a.ml 1'
+mkcase wild 'dispatch cli/lib/a.ml 1'
 put wild lib/a.ml 'let creates_postgres = function
   | Sol_cli_provider.Aws -> true
   | _ -> false
@@ -76,8 +76,8 @@ put wild lib/a.ml 'let creates_postgres = function
 expect_reject wild "a wildcard arm in a provider match"
 
 # 6. ...accepted only when allowlisted.
-mkcase wildok 'dispatch cli/sol/lib/a.ml 1
-wildcard cli/sol/lib/a.ml 1 reason'
+mkcase wildok 'dispatch cli/lib/a.ml 1
+wildcard cli/lib/a.ml 1 reason'
 put wildok lib/a.ml 'let creates_postgres = function
   | Sol_cli_provider.Aws -> true
   | _ -> false
@@ -86,7 +86,7 @@ expect_accept wildok "an allowlisted wildcard provider arm"
 
 # 7. A wildcard in a *different* match next to provider arms is not a provider wildcard
 #    (the backend-config shape: an option match wrapping a provider match).
-mkcase nested 'dispatch cli/sol/lib/a.ml 2'
+mkcase nested 'dispatch cli/lib/a.ml 2'
 put nested lib/a.ml 'let backend b p =
   match b with
   | Some bucket ->
@@ -126,18 +126,18 @@ expect_reject namemulti "a provider name in a second generic module"
 
 mkcase namethird ''
 printf 'let to_string = function\n  | Aws -> "aws"\n  | Gcp -> "gcp"\n  | Azure -> "azure"\n;;\n' \
-  >"$tmp/namethird/cli/sol/lib/sol_cli_provider.ml"
+  >"$tmp/namethird/cli/lib/sol_cli_provider.ml"
 put namethird lib/sol_cli_azure_cluster.ml 'let argv = [ "azure"; "identity" ]'
 expect_accept namethird "a third provider's name inside its own implementation"
 
 # 8. A stale allowlist entry for a deleted module.
-mkcase stale 'dispatch cli/sol/lib/a.ml 2
-dispatch cli/sol/lib/gone.ml 3'
+mkcase stale 'dispatch cli/lib/a.ml 2
+dispatch cli/lib/gone.ml 3'
 put stale lib/a.ml "$exhaustive"
 expect_reject stale "an allowlist entry for a module that no longer exists"
 
 # 9. The provider module itself is exempt: it defines the constructors.
-mkcase provider 'dispatch cli/sol/lib/a.ml 2'
+mkcase provider 'dispatch cli/lib/a.ml 2'
 put provider lib/a.ml "$exhaustive"
 put provider lib/sol_cli_provider.ml 'type t = Aws | Gcp
 let to_string = function Aws -> "aws" | Gcp -> "gcp"'
@@ -173,7 +173,7 @@ expect_accept identityok "the same declarations inside the AWS implementation"
 #     provider that does not exist yet is admitted without editing this guard.
 mkcase third ''
 printf 'let to_string = function\n  | Aws -> "aws"\n  | Gcp -> "gcp"\n  | Azure -> "azure"\n;;\n' \
-  >"$tmp/third/cli/sol/lib/sol_cli_provider.ml"
+  >"$tmp/third/cli/lib/sol_cli_provider.ml"
 put third lib/sol_cli_azure_cluster.ml 'let argv = [ "azure"; "identity" ]
 ;;
 let whoami_identity_of_json _ = Ok ()

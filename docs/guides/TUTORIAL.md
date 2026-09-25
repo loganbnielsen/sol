@@ -50,7 +50,7 @@ The tarball includes the `sol` binary and the framework source tree (`framework/
 > export SOL_HOME=~/sol   # add to ~/.bashrc or ~/.zshrc
 > eval $(opam env)  # requires OCaml 5.4.1 + opam
 > dune build cli/
-> ln -sf "$(pwd)/_build/default/cli/sol/bin/main.exe" ~/.local/bin/sol
+> ln -sf "$(pwd)/_build/default/cli/bin/main.exe" ~/.local/bin/sol
 > ln -sf "$(pwd)/_build/default/internal/tooling/soldev/bin/main.exe" ~/.local/bin/soldev
 > ```
 
@@ -617,7 +617,7 @@ The `sol deploy` command is `sol up` without the build step. It is designed to r
 
 `sol deploy` takes a required `<env>/<provider>/<region>` target — same convention as `sol plan` — and the target file it resolves must exist first, even if empty. `sol new workspace` scaffolds a placeholder at `sol/prod/aws/us-east-1.yml`; rename it to match your real target if it isn't `prod/aws/us-east-1`.
 
-Set `target.cluster_issuer` in that file to override the cert-manager ClusterIssuer used for service Ingress TLS; it defaults to `letsencrypt-prod`, matching `cli/platform/infra/base`.
+Set `target.cluster_issuer` in that file to override the cert-manager ClusterIssuer used for service Ingress TLS; it defaults to `letsencrypt-prod`, matching `platform/infra/base`.
 
 ### Inspecting a target
 
@@ -740,7 +740,7 @@ strategy = "blue-green"
 
 Blue-green emits active and preview `Service` resources and disables automatic promotion. This is not a raw Argo YAML escape hatch: Sol supports only the fields above, and arbitrary Argo Rollouts features such as analysis templates and traffic-manager integrations are deferred.
 
-See `cli/platform/infra/ci/` for complete GitHub Actions workflow examples for both modes.
+See `platform/infra/ci/` for complete GitHub Actions workflow examples for both modes.
 
 ### Provisioning a production cluster
 
@@ -803,15 +803,15 @@ The target must also declare `base_domain` and `letsencrypt_email`, which are re
 kubectl get svc -n ingress-nginx ingress-nginx-controller   # EXTERNAL-IP
 ```
 
-Create an `A`/alias or `CNAME` record for each `ingress_host` — or one wildcard record such as `*.acme.com` — in the zone created by your provider module (`cli/platform/infra/aws` exposes `route53_zone_id` and `route53_nameservers`; point your registrar's NS at the latter on first setup). Sol deliberately does not run external-dns, so this is a required manual step, and cert-manager only finishes TLS once the name resolves. Locally there is nothing to do: `sol local infra up` forwards the same controller to `http://localhost:8088`, and a service with no `ingress_host` gets the dev host `<svc>.<namespace>.localhost` — send it as the `Host` header, e.g. `curl -H 'Host: charge-svc.acme-payments.localhost' http://localhost:8088/health`.
+Create an `A`/alias or `CNAME` record for each `ingress_host` — or one wildcard record such as `*.acme.com` — in the zone created by your provider module (`platform/infra/aws` exposes `route53_zone_id` and `route53_nameservers`; point your registrar's NS at the latter on first setup). Sol deliberately does not run external-dns, so this is a required manual step, and cert-manager only finishes TLS once the name resolves. Locally there is nothing to do: `sol local infra up` forwards the same controller to `http://localhost:8088`, and a service with no `ingress_host` gets the dev host `<svc>.<namespace>.localhost` — send it as the `Host` header, e.g. `curl -H 'Host: charge-svc.acme-payments.localhost' http://localhost:8088/health`.
 
 > **Advanced / manual recovery:** direct Terraform is an escape hatch, not the supported lifecycle. An operator using it must initialize each root against its correct durable backend (distinct `sol/<target>/cloud.tfstate` and `sol/<target>/platform.tfstate` keys), preserve cloud-before-platform ordering and explicit output wiring, stage cert-manager before CRD-dependent resources, and perform the same live readiness checks. Do not use a bare `terraform init`, local state, or ambient kubeconfig as a substitute for `sol cloud apply`. See `docs/deployment/production-bootstrap.md` for the recovery procedure.
 
 **Set up Argo CD GitOps** (one-time per cluster):
 
 ```bash
-# Edit cli/platform/infra/argocd/application.yaml — set GITOPS_REPO_URL and WORKSPACE_NAME
-kubectl apply -f cli/platform/infra/argocd/application.yaml
+# Edit platform/infra/argocd/application.yaml — set GITOPS_REPO_URL and WORKSPACE_NAME
+kubectl apply -f platform/infra/argocd/application.yaml
 ```
 
 From this point, every `git push` to `main` in CI runs `sol deploy --emit-to`, commits the YAML to the GitOps repo, and Argo CD reconciles the cluster automatically.

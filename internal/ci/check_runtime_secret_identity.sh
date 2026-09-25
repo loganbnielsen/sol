@@ -8,7 +8,7 @@
 # Every migration Job's container failed with CreateContainerConfigError, so the
 # migration gate could never pass and no workload could be deployed at all.
 #
-# The producer half is a rendered assertion (cli/sol/test/test_runtime_secret_identity.ml).
+# The producer half is a rendered assertion (cli/test/test_runtime_secret_identity.ml).
 # This is the consumer half: the migration Job's renderer lives in the CLI binary
 # rather than the library, so it cannot be rendered from a unit test. Both sides are
 # pinned to the same shared constant instead, which is the property that makes them
@@ -16,9 +16,9 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-substrate="$root/cli/sol/lib/sol_cli_substrate.ml"
-migrate="$root/cli/sol/bin/cmd_migrate.ml"
-manifest="$root/cli/sol/lib/sol_cli_manifest_yaml.ml"
+substrate="$root/cli/lib/sol_cli_substrate.ml"
+migrate="$root/cli/bin/cmd_migrate.ml"
+manifest="$root/cli/lib/sol_cli_manifest_yaml.ml"
 
 fail=0
 require() {
