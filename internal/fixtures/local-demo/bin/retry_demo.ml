@@ -23,7 +23,7 @@
     it, raw, to that same DLQ with an X-Sol-Decode-Error header, rather than
     acking it away. The demo publishes one and reads it back from the DLQ.
 
-    Run: bash cli/platform/local/scripts/ensure-broker.sh
+    Run: bash platform/local/scripts/ensure-broker.sh
     KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 dune exec
     internal/fixtures/local-demo/bin/retry_demo.exe *)
 

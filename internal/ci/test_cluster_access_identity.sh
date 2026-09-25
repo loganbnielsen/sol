@@ -4,8 +4,8 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 guard="$root/internal/ci/check_cluster_access_identity.sh"
-policy="$root/cli/platform/infra/bootstrap/main.tf"
-aws_root="$root/cli/platform/infra/aws/main.tf"
+policy="$root/platform/infra/bootstrap/main.tf"
+aws_root="$root/platform/infra/aws/main.tf"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 

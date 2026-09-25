@@ -31,7 +31,7 @@ region     = "us-central1"
 base_domain = "qual-gcp.sol-fab.dev"
 
 # DEC-043: the delegated zone is a durable prerequisite whose registrar delegation lives
-# outside every provider API, so it is owned by cli/platform/infra/bootstrap-gcp, not by
+# outside every provider API, so it is owned by platform/infra/bootstrap-gcp, not by
 # the disposable cloud root. Two roots must never manage one zone, so this is false here.
 # (Before DEC-043 this root created the zone; Attempt 5 showed what that costs when the
 # target that owns it is destroyed.)

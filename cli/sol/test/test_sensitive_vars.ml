@@ -128,7 +128,7 @@ let test_unclassifiable_names_the_location () =
    the guard is derived from the roots rather than from a provider list. The test
    runs in _build/default/cli/sol/test; the roots are declared deps. *)
 let real_root provider =
-  match S.declared ~root:(Filename.concat "../../platform/infra" provider) with
+  match S.declared ~root:(Filename.concat "../../../platform/infra" provider) with
   | Ok names -> names
   | Error message -> Alcotest.fail message
 ;;

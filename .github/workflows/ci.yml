@@ -169,7 +169,7 @@ jobs:
         # compile guard below must resolve the framework through INSTALLED
         # packages. A green local suite does not prove that on its own, because a
         # developer's switch already has the framework pinned to their checkout.
-        run: bash cli/platform/local/scripts/prepare-framework-deps.sh
+        run: bash platform/local/scripts/prepare-framework-deps.sh
 
       - name: Build
         if: needs.classify.outputs.kind != 'docs-only'
@@ -275,6 +275,14 @@ jobs:
 
       - name: Ticket-move guard mutation test
         run: bash internal/ci/test_ticket_move.sh
+
+      - name: Workflow paths-filter guard (REFAC-099)
+        # Unconditional: a stale `paths:` entry makes its workflow stop triggering
+        # silently, and the change that stales it can be any kind of move.
+        run: bash internal/ci/check_workflow_paths.sh
+
+      - name: Workflow paths-filter guard mutation test
+        run: bash internal/ci/test_workflow_paths.sh
 
       - name: Examples are self-contained (REFAC-105)
         # Unconditional: an example that reaches into internal/ cannot run from a
@@ -475,7 +483,7 @@ jobs:
         # Same canonical bootstrap as the test job: this job scaffolds a real
         # workspace and builds it, so it too must resolve the framework through
         # installed packages rather than a vendored copy.
-        run: bash cli/platform/local/scripts/prepare-framework-deps.sh
+        run: bash platform/local/scripts/prepare-framework-deps.sh
 
       - name: Build sol CLI
         timeout-minutes: 5
@@ -1080,7 +1088,7 @@ jobs:
 
       - name: Prepare Sol framework packages (DEC-025)
         timeout-minutes: 20
-        run: bash cli/platform/local/scripts/prepare-framework-deps.sh
+        run: bash platform/local/scripts/prepare-framework-deps.sh
 
       - name: Build sol CLI
         timeout-minutes: 5

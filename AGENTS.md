@@ -23,7 +23,7 @@ and update call sites in the same pass. Full policy: `~/Code/CLAUDE.md`.
 
 ## Current development focus
 
-**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform modules live at `cli/platform/infra/base/`, `cli/platform/infra/aws/`, and `cli/platform/infra/gcp/`. Remaining hosted-product work is tracked in `internal/pipeline/tickets/`. See `docs/planning/WORK_SUMMARY.md` for full details.
+**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform modules live at `platform/infra/base/`, `platform/infra/aws/`, and `platform/infra/gcp/`. Remaining hosted-product work is tracked in `internal/pipeline/tickets/`. See `docs/planning/WORK_SUMMARY.md` for full details.
 
 Package: `cli/sol/` — binary at `_build/default/cli/sol/bin/main.exe`.
 
@@ -146,9 +146,10 @@ The tree below is today's. It moves toward the target layout as REFAC-099…105 
 ```
 sol/
   # ── product ───────────────────────────────────────────────────────────────
-  cli/                          ← the `sol` CLI (cli/sol) + the platform it drives (cli/platform)
+  cli/                          ← the `sol` CLI — code only (DEC-046 rule 2)
     sol/{bin,lib,test}/         ← command parsing, shared implementation, tests
-    platform/{components,infra,local}/  ← Helm values, Terraform roots, local k3s tooling
+  platform/                     ← what the CLI drives — no OCaml
+    components/ infra/ local/   ← Helm values, Terraform roots, local k3s tooling
   contract/                     ← language-neutral application contract (runtime, substrate)
   framework/ocaml/              ← first-party OCaml framework packages
     sol-svc/lib/                ← REST API service (routes, auth, metrics)
@@ -195,13 +196,13 @@ dune build
 eval $(opam env) && dune test framework/
 
 # Full integration tests (requires Redpanda + Loki running)
-bash cli/platform/local/scripts/ensure-broker.sh
-bash cli/platform/local/scripts/ensure-loki.sh
+bash platform/local/scripts/ensure-broker.sh
+bash platform/local/scripts/ensure-loki.sh
 KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 LOKI_URL=http://localhost:3100 dune test --force
 ```
 
 If CLI tests report `Multiple rules generated` for `vendor/framework/...` paths
-or missing files under `_build/default/cli/platform/...`, remove `_build` and
+or missing files under `_build/default/platform/...`, remove `_build` and
 rerun — BUG-017 prevents the `_build/default` SOL_HOME mis-resolution that
 originally caused those failures, but a stale/partial build tree can still
 leave confusing artifacts. A clean rebuild is the documented recovery.
@@ -210,10 +211,10 @@ leave confusing artifacts. A clean rebuild is the documented recovery.
 
 ```bash
 # Start infrastructure
-bash cli/platform/local/scripts/ensure-broker.sh
-bash cli/platform/local/scripts/ensure-loki.sh
-bash cli/platform/local/scripts/ensure-grafana.sh
-bash cli/platform/local/scripts/ensure-prometheus.sh
+bash platform/local/scripts/ensure-broker.sh
+bash platform/local/scripts/ensure-loki.sh
+bash platform/local/scripts/ensure-grafana.sh
+bash platform/local/scripts/ensure-prometheus.sh
 
 # Run the full-stack demo (svc → Kafka → worker, with Loki logs + Prometheus metrics)
 KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 REDPANDA_ADMIN_URL=http://localhost:9644 LOKI_URL=http://localhost:3100 \
@@ -325,7 +326,7 @@ own author here). The mechanics that are easy to get wrong:
   branch that names no ticket is exempt. This exists because four tickets once sat in
   READY with their fix already merged (`INFRA-048`, `INFRA-050`, `INFRA-057`), each
   costing the next worker a cycle.
-- **`merge-finish` runs `./cli/platform/local/scripts/run_tests.sh` locally, but a
+- **`merge-finish` runs `./platform/local/scripts/run_tests.sh` locally, but a
   local failure is only *reported* — nothing is reverted** (BUG-033). That suite
   needs local kafka/e2e infra (`localhost:9092`); without it, kafka/e2e fail and the
   pipeline prints that the merge stands and `origin/main` is untouched. That is
@@ -342,7 +343,7 @@ own author here). The mechanics that are easy to get wrong:
   `internal/ci/check_ocamlformat.sh --staged` (staged files only, so unrelated
   work-in-progress cannot block you) or `dune fmt` before pushing. The pre-commit
   hook runs the `--staged` check too, once installed
-  (`cli/platform/local/scripts/install-hooks.sh`) — it is not installed by
+  (`platform/local/scripts/install-hooks.sh`) — it is not installed by
   default.
 - **`gh` gaps in this environment:** `gh pr update-branch` does not exist (update
   locally instead), and `gh pr edit` fails with a Projects-classic GraphQL

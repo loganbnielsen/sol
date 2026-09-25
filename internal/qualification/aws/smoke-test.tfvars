@@ -1,4 +1,4 @@
-# Minimal-footprint override for live smoke-testing the AWS cloud root --
+# Minimal-footprint override for live smoke-testing platform/infra/aws/ --
 # NOT for real workspaces. Two t3.medium nodes are the smallest shape we've
 # found that can run the full base platform stack in EKS; EKS control plane's
 # flat hourly charge still applies regardless of node sizing.
