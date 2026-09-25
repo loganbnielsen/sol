@@ -32,3 +32,7 @@ val run : ?echo:bool -> cmd -> (result, error) Result.t
 val run_ok : ?echo:bool -> cmd -> (unit, error) Result.t
 val run_shell : ?echo:bool -> string -> (result, error) Result.t
 val error_to_string : error -> string
+
+(** Print [argv] as the command line Sol is about to run, with each of [redact]
+    replaced by [***]. *)
+val echo_cmd : string list -> string list -> unit

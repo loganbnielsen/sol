@@ -1079,6 +1079,45 @@ let lifecycle_error message =
   exit 1
 ;;
 
+(* INFRA-076: before touching a Terraform state, look at the last operation
+   against it. Running: never race it and never unlock it -- say so and stop.
+   Unresolved (Terraform did not finish its own protocol, or left
+   errored.tfstate): a constructive command must not proceed as though nothing
+   happened, unless the operator reconciled it and says so; a plan or a destroy
+   proceeds with the warning, because neither can construct from the gap. A
+   graceful Ctrl-C is Resolved, not suspicious. *)
+let guard_previous_operation ~constructive ~accept_unresolved ~chdir ~backend_config =
+  match Sol_cli_terraform.previous_operation ~chdir ~backend_config with
+  | Sol_cli_supervised.No_previous | Sol_cli_supervised.Resolved _ -> ()
+  | Sol_cli_supervised.Running _ as status ->
+    lifecycle_error
+      (Printf.sprintf
+         "a previous Terraform operation against this state is still running and holds \
+          its lock. Wait for it to finish; do not unlock it.\n\
+         \  %s"
+         (Sol_cli_supervised.status_to_string status))
+  | Sol_cli_supervised.Unresolved _ as status when not constructive ->
+    Printf.eprintf
+      "warning: the previous Terraform operation against this state is %s\n%!"
+      (Sol_cli_supervised.status_to_string status)
+  | Sol_cli_supervised.Unresolved _ as status when accept_unresolved ->
+    Sol_cli_terraform.acknowledge_previous_operation ~chdir ~backend_config;
+    Printf.eprintf
+      "warning: proceeding past an unresolved previous operation, as --accept-unresolved \
+       asks: %s\n\
+       %!"
+      (Sol_cli_supervised.status_to_string status)
+  | Sol_cli_supervised.Unresolved _ as status ->
+    lifecycle_error
+      (Printf.sprintf
+         "refusing to apply: the previous Terraform operation against this state is %s\n\
+         \  Terraform may have changed the provider without recording it. Reconcile \
+          first (inspect the provider and the state; import or remove what diverged, \
+          push any errored.tfstate), then re-run with --accept-unresolved. Nothing was \
+          changed."
+         (Sol_cli_supervised.status_to_string status))
+;;
+
 let established_target = function
   | Some target -> target
   | None -> lifecycle_error "cloud lifecycle requires a resolved target"
@@ -2761,7 +2800,15 @@ let refuse_sensitive_vars ~infra_dir ~vars =
     exit 1
 ;;
 
-let cloud_init ?(confirm_ecr_removal = false) ~target ~var_file ~vars ~action () =
+let cloud_init
+      ?(confirm_ecr_removal = false)
+      ?(accept_unresolved = false)
+      ~target
+      ~var_file
+      ~vars
+      ~action
+      ()
+  =
   check_terraform ();
   let provider = provider_of_target_path target in
   let pname, infra_dir = infra_dir provider in
@@ -2810,6 +2857,18 @@ let cloud_init ?(confirm_ecr_removal = false) ~target ~var_file ~vars ~action ()
    | Plan -> ()
    | _ ->
      require_credentials ~provider ~operation:"applying" ~leaves_target_standing:false);
+  guard_previous_operation
+    ~constructive:(action = Apply)
+    ~accept_unresolved
+    ~chdir:infra_dir
+    ~backend_config:cloud_backend;
+  if action = Apply
+  then
+    guard_previous_operation
+      ~constructive:true
+      ~accept_unresolved
+      ~chdir:platform_dir
+      ~backend_config:platform_backend;
   run_terraform_init run_log infra_dir cloud_backend;
   match action with
   | Plan ->
@@ -3360,6 +3419,11 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
   in
   let target_cfg = Sol_cli_cloud_lifecycle.target cloud_target in
   let cloud_backend = Sol_cli_cloud_lifecycle.cloud_backend cloud_target in
+  guard_previous_operation
+    ~constructive:false
+    ~accept_unresolved:false
+    ~chdir:infra_dir
+    ~backend_config:cloud_backend;
   let var_files =
     match var_file with
     | None -> []
@@ -3867,6 +3931,21 @@ let confirm_ecr_removal_flag =
            Without it such an apply is refused before anything changes.")
 ;;
 
+(* INFRA-076 *)
+let accept_unresolved_flag =
+  Arg.(
+    value
+    & flag
+    & info
+        [ "accept-unresolved" ]
+        ~doc:
+          "Proceed although the previous Terraform operation against this state ended \
+           unresolved (Terraform was killed before finishing its own shutdown, or left \
+           errored.tfstate). Use it only after reconciling: inspecting the provider and \
+           the state, and importing, removing or pushing what diverged. Without it such \
+           an apply is refused before anything changes.")
+;;
+
 let plan_cmd =
   Cmd.v
     (Cmd.info "plan" ~doc:"Preview cloud infrastructure changes for a target.")
@@ -3882,12 +3961,20 @@ let apply_cmd =
   Cmd.v
     (Cmd.info "apply" ~doc:"Apply cloud infrastructure changes for a target.")
     Term.(
-      const (fun target var_file vars confirm_ecr_removal ->
-        cloud_init ~confirm_ecr_removal ~target ~var_file ~vars ~action:Apply ())
+      const (fun target var_file vars confirm_ecr_removal accept_unresolved ->
+        cloud_init
+          ~confirm_ecr_removal
+          ~accept_unresolved
+          ~target
+          ~var_file
+          ~vars
+          ~action:Apply
+          ())
       $ target_arg
       $ var_file_arg
       $ var_arg
-      $ confirm_ecr_removal_flag)
+      $ confirm_ecr_removal_flag
+      $ accept_unresolved_flag)
 ;;
 
 let destroy_cmd =
