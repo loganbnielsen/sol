@@ -1,6 +1,17 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: REFAC-095 — provider knowledge becomes data behind `capabilities_of` (2026-09-25)
+## Latest: REFAC-091 — the cloud apply returns a typed outcome, like destroy (2026-09-25)
+
+`Sol_cli_cloud_apply.execute ~deps` is the install sequence. It no longer exits from inside
+helpers. The bootstrap window is bracketed: any failure while it is open removes it before
+the outcome returns. Provider-specific steps are injected, and `cloud_init` maps the outcome
+to the exit code in one place.
+
+The two phase refusals that used to leave the window open (FND-0047's class) now remove it.
+Ten offline tests replay the sequence through fakes, and the offline harness passes
+unchanged. Next: REFAC-096 (opaque cluster access).
+
+## Previous: REFAC-095 — provider knowledge becomes data behind `capabilities_of` (2026-09-25)
 
 `Sol_cli_provider_capabilities` holds one record per provider, and `capabilities_of` is the
 only provider match, with no wildcard. The record covers:
