@@ -1,5 +1,16 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: DEC-046/047 — repository organization and deployment-config layering decided (2026-09-25)
+
+- **The proposal is accepted.** `internal/pipeline/audits/2026-09-25_organization_proposal.md` (#515) went through two external review rounds. DEC-046 adopts its six rules and target layout. The rules are now in `AGENTS.md` § *Organization rules* and in `internal/README.md`.
+- **Open questions answered.**
+  - `docs/planning/` is split: ROADMAP → `docs/`, the rest → `internal/planning/`.
+  - `docs/architecture/` stays, except `contributing-map.md`, which moves to `internal/`.
+  - `cli/lib` becomes per-domain dune libraries where the dependency graph allows.
+- **DEC-047:** deployment config becomes `sol.yml` → environment → target in `sol/environments.yml`, with sticky `omit` and existing key names. The ticket's per-key table (placement plus deep-merge or replace) is FEAT-100's spec. While drafting it, found that `reject_shared_profile` already keeps `profile` out of `sol.yml`; the table keeps that.
+- **Promoted to READY:** REFAC-099…105, DOCS-023/024, FEAT-100.
+- **Sequencing with qualification:** REFAC-099/100/101/103, DOCS-023 and REFAC-105 move paths the GCP qualification harness and its records use. They were held until HARDEN-006 attempt 8 landed (#518). Before starting one, check that no qualification attempt is in flight.
+- `AGENTS.md`'s ticket `type` list is now the 14 values in use (it listed 4).
 ## Latest: GCP Attempt 8 ran — FND-0010's cause established (2026-09-25)
 
 Authorized, Phase-0-gated and executed. **`main @ dae9540d`**, live 22:01:03Z → 22:26:22Z, no

@@ -1,7 +1,8 @@
 # Repository organization proposal
 
-**Status:** proposed, awaiting review (2026-09-25). Revised once after the first
-review round; see § *Review log*.
+**Status:** accepted (2026-09-25). Reviewed in two external rounds on #515 (see
+§ *Review log*). DEC-046 and DEC-047 record the decisions and the answers to the
+open questions.
 **Decisions:** DEC-046 (repository layout), DEC-047 (deployment config layering).
 **Origin:** operator review notes on `cli/platform/infra` and the `cli/` split,
 worked through with an agent session and checked against the tree at `origin/main`
@@ -147,13 +148,14 @@ sol/
   examples/                    runnable references (pluto), self-contained
 
   docs/                        users only
+    ROADMAP.md                 public direction (DEC-046 Q1)
     guides/  reference/  deployment/  architecture/  hosted/  legal/  assets/
-    planning/                  pending open question 1 (ROADMAP, WORK_SUMMARY,
-                               OPAM_FOUNDATION_TRACKER, LIVE_DEV_DEPLOY_ROADMAP)
 
   internal/                    maintainers only
     ci/  tooling/  fixtures/
     specs/                     cross-language framework conventions (DEC-022)
+    planning/                  WORK_SUMMARY, OPAM_FOUNDATION_TRACKER, LIVE_DEV_DEPLOY_ROADMAP
+    contributing-map.md
     pipeline/{tickets,audits,dogfood}/
     qualification/{aws,gcp,records}/
 ```
@@ -309,6 +311,12 @@ product-surface decision. It needs a demo update (pluto, tutorial) and a TypeScr
 parity note.
 
 ## Open questions for reviewers
+
+**Resolved 2026-09-25.** The answers are in DEC-046 (1–3) and DEC-047 (4):
+`docs/planning/` is split, with ROADMAP staying public and the rest moving to
+`internal/planning/`; `docs/architecture/` stays except `contributing-map.md`;
+rule 6's mechanism is as proposed; the file is `sol/environments.yml`. The
+questions are kept below as they were asked.
 
 1. **Where do `docs/planning/` (ROADMAP, WORK_SUMMARY) go?** Under rule 1 they're
    maintainer material and belong in `internal/`. A public roadmap is a reason to
