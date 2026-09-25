@@ -128,13 +128,27 @@ fi
 if [ "${STUB_TARGET_PRESENT:-0}" = "1" ]; then
   case "$*" in *list* | *describe*) printf "test-cluster\n"; exit 0 ;; esac
 fi
-# Only the provider's own not-found vocabulary means ABSENT. Everything else is UNKNOWN,
-# and UNKNOWN must fail the verification -- including shapes a future reader might be
-# tempted to treat as absence (permission denied is the classic one).
+# Only the provider's own not-found vocabulary means ABSENT; everything else is UNKNOWN and
+# must fail the verification. These strings are the provider's **captured** output, verbatim --
+# a paraphrase is how the underscore form went unnoticed (`NOT_FOUND: resource does not exist`
+# matched the pattern through its `does not exist` alternative while the real
+# `NOT_FOUND: Unknown service account` did not).
 case "${STUB_PROBE_MODE:-notfound}" in
-  permission) printf "ERROR: (gcloud) The caller does not have permission\n" >&2; exit 1 ;;
-  unknown)    printf "ERROR: (gcloud) transport layer gave up after 3 attempts\n" >&2; exit 1 ;;
-  *)          printf "ERROR: (gcloud) NOT_FOUND: resource does not exist\n" >&2; exit 1 ;;
+  permission)
+    printf 'ERROR: (gcloud.projects.get-iam-policy) [lbendtlynielsen@gmail.com] does not have permission to access projects instance [cloud-sdk-dev:getIamPolicy] (or it may not exist): The caller does not have permission. This command is authenticated as lbendtlynielsen@gmail.com which is the active account specified by the [core/account] property\n' >&2
+    exit 1 ;;
+  transport)
+    printf "ERROR: gcloud crashed (ConnectionError): HTTPSConnectionPool(host='127.0.0.1', port=1): Max retries exceeded with url: /compute/v1/projects/sol-qualification/global/networks?alt=json&maxResults=500 (Caused by NewConnectionError(\"HTTPSConnection(host='127.0.0.1', port=1): Failed to establish a new connection: [Errno 111] Connection refused\"))\n" >&2
+    exit 1 ;;
+  invalid)
+    printf 'ERROR: (gcloud.iam.roles.describe) INVALID_ARGUMENT: The role name must be in the form "roles/{role}", "organizations/{organization_id}/roles/{role}", or "projects/{project_id}/roles/{role}".\n' >&2
+    exit 1 ;;
+  compute-notfound)
+    printf "ERROR: (gcloud.compute.networks.describe) Could not fetch resource:\n - The resource 'projects/sol-qualification/global/networks/test-cluster' was not found\n" >&2
+    exit 1 ;;
+  *)
+    printf 'ERROR: (gcloud.iam.service-accounts.describe) NOT_FOUND: Unknown service account. This command is authenticated as lbendtlynielsen@gmail.com which is the active account specified by the [core/account] property\n' >&2
+    exit 1 ;;
 esac
 STUB
 
@@ -194,6 +208,11 @@ run_case() { # run_case <name> <subcommand> [VAR=VALUE ...]
   export XDG_DATA_HOME="$TMP/data"
   : >"$ARGV_LOG"
   rm -f "$TARGET_FILE"
+  # The `verify` invariant needs a target file to exist: with one present, the old code
+  # would actually have reached `sol cloud destroy`.
+  if [ "${PRESEED_TARGET:-0}" = "1" ]; then
+    printf 'target:\n  cluster_name: test-cluster\n  base_domain: qual-gcp.sol-fab.dev\n' >"$TARGET_FILE"
+  fi
   rm -rf "$LOG_DIR"
   env ALLOW_CANONICAL=1 SOL="$TMP/bin/sol" CLUSTER=test-cluster \
     IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
@@ -302,8 +321,17 @@ has "no usable evidence classifies as UNKNOWN (never reachability by default)" \
 # Mandatory evidence for the tri-state fix. Only explicit provider not-found evidence
 # establishes absence; pinning one unreadable shape and not the other invites the
 # implementation to drift into an allowlist of errors that get called absence.
-for mode in permission unknown; do
-  printf '\nscenario: absence probe unreadable (%s)\n' "$mode"
+# The provider's own explicit not-found forms are ABSENT -- both the underscore form (the one
+# this suite missed) and the compute "was not found" phrasing.
+printf '\nscenario: the provider says NOT_FOUND\n'
+run_case notfound-underscore destroy STUB_PROBE_MODE=notfound
+is "the provider's own NOT_FOUND (underscore) reads as ABSENT" "$(cat "$TMP/notfound-underscore.rc")" "0"
+has "and names the class absent" "gke-cluster absent" "$TMP/notfound-underscore.out"
+run_case notfound-compute destroy STUB_PROBE_MODE=compute-notfound
+is "'was not found' reads as ABSENT" "$(cat "$TMP/notfound-compute.rc")" "0"
+
+for mode in permission transport invalid; do
+  printf '\nscenario: probe failed without saying not-found (%s)\n' "$mode"
   run_case "probe-$mode" destroy "STUB_PROBE_MODE=$mode"
   if [ "$(cat "$TMP/probe-$mode.rc")" = "0" ]; then
     no "an unreadable probe ($mode) fails the verification" "non-zero" "0"
@@ -426,6 +454,30 @@ else
   ok "the warning is not read as a resource"
 fi
 is "the warned verification still passes" "$(cat "$TMP/filter-warning.rc")" "0"
+
+# ── 14. `verify` is observational, on both paths ─────────────────────────────
+# The invariant is about behaviour, not about where a flag is set: with a target file present,
+# a failing verification must still invoke no destroy. (Before the fix this case reached
+# `sol cloud destroy` -- the stop recorded in
+# docs/qualification/2026-09-25-gcp-attempt8-phase0-stop.md.)
+printf '\nscenario: verify is read-only even when it fails\n'
+PRESEED_TARGET=1 run_case verify-fail verify STUB_TARGET_PRESENT=1
+if [ "$(cat "$TMP/verify-fail.rc")" = "0" ]; then
+  no "a failing verification exits non-zero" "non-zero" "0"
+else
+  ok "a failing verification exits non-zero"
+fi
+lacks "a failing verification invokes no teardown, even with a target file present" "cloud destroy" "$TMP/verify-fail.argv"
+has "it still reports what it saw" "resources remain" "$TMP/verify-fail.out"
+PRESEED_TARGET=1 run_case verify-clean verify
+is "a clean verification exits 0" "$(cat "$TMP/verify-clean.rc")" "0"
+lacks "a clean verification invokes no teardown" "cloud destroy" "$TMP/verify-clean.argv"
+if grep -q 'NOT_FOUND: Unknown service account' "$HERE/test-live-qual.sh"; then
+  ok "the not-found fixture is the provider's captured wording (underscore form), not a paraphrase"
+else
+  no "the not-found fixture is the provider's captured wording (underscore form), not a paraphrase" \
+    "NOT_FOUND: Unknown service account" "absent"
+fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = "0" ] || exit 1
