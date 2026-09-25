@@ -106,7 +106,7 @@ reason *"the temporary bootstrap-access mechanism may be created or updated to o
 authority"*, bracketed by `with_elevated_access`.
 
 The GCP declaration named the mechanism with `Exact`, which compares strings, while
-`cli/platform/infra/gcp/main.tf` declares it `count = var.provisioner_bootstrap_admin ? 1 : 0`, so
+`platform/infra/gcp/main.tf` declares it `count = var.provisioner_bootstrap_admin ? 1 : 0`, so
 Terraform's plan address is `kubernetes_cluster_role_binding.provisioner_bootstrap_admin[0]`. The
 permission was granted and unreachable. AWS never showed it because its mechanism is matched by
 `Type`.

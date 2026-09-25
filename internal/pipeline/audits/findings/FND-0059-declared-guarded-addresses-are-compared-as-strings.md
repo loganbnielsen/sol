@@ -14,7 +14,7 @@
 
 1. `cli/sol/lib/sol_cli_provider_capabilities.ml` declares AWS's guarded resource by a bare address:
    `guarded_addresses = [ "aws_db_instance.postgres" ]`.
-2. `cli/platform/infra/aws/main.tf:276-277` declares that resource as counted:
+2. `platform/infra/aws/main.tf:276-277` declares that resource as counted:
    `resource "aws_db_instance" "postgres" { count = var.create_rds ? 1 : 0 … }`, so Terraform's
    address for it — in plan *and* in `show -json` state — is `aws_db_instance.postgres[0]`.
 3. `Sol_cli_cloud_lifecycle.preparations_eligible ~state ~desired` compares them with
