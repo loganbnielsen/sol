@@ -229,7 +229,37 @@ JSON
               ;;
           esac
         fi
-        printf '{"resource_changes":[%s]}\n' "$changes"
+        # FND-0055 / B2: the destroy path also reads the plan for what the
+        # configuration *declares*, from `planned_values` -- a different question
+        # from the `resource_changes` above, which answer "may this apply run?".
+        # The declared set here mirrors the state fixture for each root, so the
+        # ordinary scenarios have no divergence; DECLARED_ORPHAN adds one address
+        # the state fixture does not represent, which is the shape the
+        # verification regressions below are about.
+        declared=""
+        add_declared() {
+          [ -z "$declared" ] || declared="$declared,"
+          declared="$declared$1"
+        }
+        case " $plan_args " in
+          *infra/gcp*)
+            add_declared '{"address":"google_compute_network.main","mode":"managed","type":"google_compute_network","values":{"name":"sol-qual","project":"sol-qualification"}}'
+            add_declared '{"address":"google_artifact_registry_repository.images","mode":"managed","type":"google_artifact_registry_repository","values":{"repository_id":"sol-qual","location":"us-central1","project":"sol-qualification"}}'
+            add_declared '{"address":"google_compute_global_address.sql_peering","mode":"managed","type":"google_compute_global_address","values":{"name":"sol-qual-sql-peering","project":"sol-qualification"}}'
+            add_declared '{"address":"google_sql_database_instance.postgres","mode":"managed","type":"google_sql_database_instance","values":{"name":"sol-qual-postgres","region":"us-central1","project":"sol-qualification"}}'
+            add_declared '{"address":"google_container_cluster.main","mode":"managed","type":"google_container_cluster","values":{"name":"sol-qual","location":"us-central1","project":"sol-qualification"}}'
+            add_declared '{"address":"google_project_iam_member.provisioner_cluster_access","mode":"managed","type":"google_project_iam_member","values":{"project":"sol-qualification"}}'
+            if [ "${DECLARED_ORPHAN:-}" = 1 ]; then
+              add_declared '{"address":"google_compute_network.orphan","mode":"managed","type":"google_compute_network","values":{"name":"sol-orphan","project":"sol-qualification"}}'
+            fi
+            ;;
+          *infra/aws*)
+            add_declared '{"address":"module.eks.aws_eks_cluster.this[0]","mode":"managed","type":"aws_eks_cluster","values":{"name":"lifecycle-test"}}'
+            add_declared '{"address":"aws_db_instance.postgres","mode":"managed","type":"aws_db_instance","values":{"identifier":"lifecycle-test-postgres"}}'
+            ;;
+        esac
+        printf '{"resource_changes":[%s],"planned_values":{"root_module":{"resources":[%s]}}}\n' \
+          "$changes" "$declared"
         exit 0
         ;;
     esac
@@ -703,6 +733,24 @@ case "$1 $2" in
     exit 0
     ;;
   "compute networks")
+    case " $* " in
+      *" describe sol-orphan "*)
+        # FND-0055 / B2: the declared/state-absent resource the divergence
+        # regressions declare. Its three provider answers have to be reachable
+        # from here, because the whole point is which of them the verification
+        # is allowed to turn into "absent".
+        if [ "${DECLARED_ORPHAN_PRESENT:-}" = 1 ]; then
+          printf 'name: sol-orphan\nselfLink: https://www.googleapis.com/compute/v1/projects/sol-qualification/global/networks/sol-orphan\n'
+          exit 0
+        fi
+        if [ "${DECLARED_ORPHAN_UNKNOWN:-}" = 1 ]; then
+          echo "ERROR: (gcloud.compute.networks.describe) Throttling: rate exceeded" >&2
+          exit 1
+        fi
+        echo "ERROR: (gcloud.compute.networks.describe) Could not fetch resource: - The resource 'projects/sol-qualification/global/networks/sol-orphan' was not found" >&2
+        exit 1
+        ;;
+    esac
     if [ "${DESTROYING:-}" = 1 ]; then
       # HARDEN-004 step 5: the real wording names the resource's own path, and the
       # verification checks that subject against the project the identity was
@@ -1510,6 +1558,81 @@ grep -F 'credentials: Google Application Default Credentials resolved' \
   cat "$gcp_destroy_log.out" >&2
   exit 1
 }
+
+# ── FND-0055 / B2: the declared universe is part of the verification ──────────
+#
+# The GCP destroy above has no divergence: every address the plan declares, state
+# represents. These three scenarios introduce the divergence -- a resource the
+# configuration declares, the state fixture does not represent, and
+# `terraform destroy` therefore never owns -- and pin the three conclusions the
+# verification is allowed to draw from the provider's answer. The property is that
+# the address stays an obligation whatever the answer: the old verification never
+# asked, and so reported the postcondition established while the object survived.
+#
+# Before these landed, every one of them would have exited 0 with the orphan
+# invisible. That is the regression this section exists for.
+
+# 1. Leaf orphan, provider PRESENT: destruction otherwise succeeds and the
+#    post-state is empty, but the run must fail and name the address.
+orphan_present_log="$tmp/gcp-declared-orphan-present.log"
+rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/bootstrap-window"
+orphan_present_rc=0
+(cd "$tmp/work" && DECLARED_ORPHAN=1 DECLARED_ORPHAN_PRESENT=1 DESTROYING=1 \
+   LIFECYCLE_LOG="$orphan_present_log" "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$orphan_present_log.out" 2>&1 || orphan_present_rc=$?
+if [ "$orphan_present_rc" -ne 1 ]; then
+  echo "a declared/state-absent provider-present resource must exit 1, not $orphan_present_rc:" >&2
+  cat "$orphan_present_log.out" >&2
+  exit 1
+fi
+assert_contains "the divergence is reported" "$orphan_present_log.out" \
+  'declared but not represented in Terraform state' || exit 1
+assert_contains "and names the orphan by address" "$orphan_present_log.out" \
+  'google_compute_network.orphan' || exit 1
+assert_contains "with the provider's PRESENT answer as its evidence" "$orphan_present_log.out" \
+  'provider observation: PRESENT' || exit 1
+assert_contains "the obligation was queried, in the declared scope" "$orphan_present_log.out" \
+  'gcloud compute networks describe sol-orphan --project sol-qualification' || exit 1
+
+# 2. The same divergence, provider UNKNOWN (an error that says nothing about the
+#    resource): failure -- and specifically 1, not the degraded 3.
+orphan_unknown_log="$tmp/gcp-declared-orphan-unknown.log"
+rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/bootstrap-window"
+orphan_unknown_rc=0
+(cd "$tmp/work" && DECLARED_ORPHAN=1 DECLARED_ORPHAN_UNKNOWN=1 DESTROYING=1 \
+   LIFECYCLE_LOG="$orphan_unknown_log" "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$orphan_unknown_log.out" 2>&1 || orphan_unknown_rc=$?
+if [ "$orphan_unknown_rc" -ne 1 ]; then
+  echo "an UNKNOWN declared obligation must exit 1, not $orphan_unknown_rc:" >&2
+  cat "$orphan_unknown_log.out" >&2
+  exit 1
+fi
+assert_contains "the UNKNOWN classification is reported" "$orphan_unknown_log.out" \
+  'provider observation: UNKNOWN' || exit 1
+assert_contains "and the unproven obligation is named" "$orphan_unknown_log.out" \
+  'google_compute_network.orphan' || exit 1
+
+# 3. Cascade-shaped: the same declared/state-absent obligation, and the provider
+#    reports it absent after the destroy. The obligation is satisfied and the run
+#    is a clean success -- it is not a failure merely because it began divergent.
+orphan_absent_log="$tmp/gcp-declared-orphan-absent.log"
+rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/bootstrap-window"
+if ! (cd "$tmp/work" && DECLARED_ORPHAN=1 DESTROYING=1 \
+        LIFECYCLE_LOG="$orphan_absent_log" "$sol" cloud destroy prod/gcp/us-central1 --apply) \
+  >"$orphan_absent_log.out" 2>&1
+then
+  echo "a declared/state-absent obligation the provider reports absent must not fail:" >&2
+  cat "$orphan_absent_log.out" >&2
+  exit 1
+fi
+assert_contains "the obligation was observed, not skipped" "$orphan_absent_log.out" \
+  'google_compute_network.orphan' || exit 1
+assert_contains "its provider answer was ABSENT" "$orphan_absent_log.out" \
+  'provider observation: ABSENT' || exit 1
+assert_contains "and the outcome is the satisfied obligation" "$orphan_absent_log.out" \
+  'consequence:          obligation satisfied' || exit 1
+assert_not_contains "a satisfied obligation is not a violation" "$orphan_absent_log.out" \
+  'the destruction postcondition is violated' || exit 1
 
 # HARDEN-004 steps 3 + 4, the governing invariant end to end: a reconciliation plan
 # that would reconstruct the missing cluster (a target-owned CREATE) is refused

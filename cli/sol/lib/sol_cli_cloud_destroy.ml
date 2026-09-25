@@ -240,6 +240,73 @@ let identities state =
     (resources state)
 ;;
 
+(* ── The declared universe state does not speak for (FND-0055 / B2) ───────────
+
+   Two observations with different meanings. The state inventory above is what
+   Terraform currently *represents* -- what `terraform destroy` owns. A read-only,
+   non-destroy plan of the same root is what the configuration *declares*. Neither
+   replaces the other: state stays authoritative for the identity of everything it
+   represents, and the declared set extends the verification's obligations to the
+   addresses state does not represent.
+
+   That extension is the point. A resource removed from state is outside
+   `terraform destroy`'s ownership set, so it can survive the destroy while being
+   invisible to a verification whose universe is the state inventory. It must not
+   fall out of the obligations merely because state stopped representing it. *)
+
+type declared_set =
+  | Declared_unreadable of string
+    (* the read-only plan could not be produced or read. UNKNOWN: what the root
+         declares is not "nothing", and a declared resource state does not
+         represent can no longer be ruled out. *)
+  | Declared_resources of
+      { resources : Sol_cli_terraform_plan.declared list
+      ; project : string option
+        (* the project the target's provider is configured with, as the plan
+             document records it -- the scope a declared resource that names no
+             project of its own is created in *)
+      ; region : string option (* the same, for the provider's region *)
+      }
+
+(* Only managed resources are owned; a data source is neither created nor
+   destroyed and is never a destruction obligation. *)
+let declared_managed = function
+  | Declared_unreadable _ -> []
+  | Declared_resources { resources; _ } ->
+    List.filter (fun d -> String.equal d.Sol_cli_terraform_plan.mode "managed") resources
+;;
+
+let declared_project = function
+  | Declared_unreadable _ -> None
+  | Declared_resources { project; _ } -> project
+;;
+
+let declared_region = function
+  | Declared_unreadable _ -> None
+  | Declared_resources { region; _ } -> region
+;;
+
+(* The declared addresses this state does not represent: the resources outside
+   `terraform destroy`'s ownership. The plan's order is kept, so diagnostics read
+   the same way twice. *)
+let declared_unrepresented ~state ~declared =
+  let represented = addresses state in
+  List.filter
+    (fun declared -> not (List.mem declared.Sol_cli_terraform_plan.address represented))
+    (declared_managed declared)
+;;
+
+(* Whether the pre-destroy state represented nothing. The declared set's meaning
+   depends on it, and only there: an empty state cannot distinguish a target that
+   was never applied from one whose whole state was lost, so an unqueryable
+   declared resource is a recorded coverage limitation rather than a failure --
+   while a declared resource whose kind *can* be queried is still queried and
+   judged. An unreadable state is not an empty one. *)
+let pre_state_empty = function
+  | State_empty -> true
+  | State_represented _ | State_unreadable _ -> false
+;;
+
 (* What destruction preparation did, carried so the command edge can report what
    survived by identifier. Kept provider-shaped because the difference is real:
    AWS's final snapshot has no GCP counterpart (DEC-033). *)
@@ -353,6 +420,12 @@ type deps =
     (* [Ok stdout] of `terraform show -json`, or [Error detail] when the read
        itself failed. The classification into the typed inventory is below, so a
        process failure is exercised the same way as a malformed document. *)
+  ; observe_declared : unit -> declared_set
+    (* The declared universe, from a read-only non-destroy plan of the same root.
+       Captured *before* the destruction, so it describes what configuration
+       declared while the target still existed, and deliberately not the same call
+       as any destroy-path apply's plan: that one answers "may Sol create this?",
+       this one only "what does configuration declare?". *)
   ; cloud_outputs : unit -> outputs_read
   ; prepare : state:state_read -> preparation Sol_cli_cloud_lifecycle.preparation_outcome
     (* The preparation declares the consequence of its own failure (DEC-033), so
@@ -374,6 +447,7 @@ type deps =
   ; destroy_substrate : unit -> (unit, string) result
   ; verify_destruction :
       pre_destroy:state_read
+      -> declared:declared_set
       -> preparation:preparation
       -> Sol_cli_destroy_verification.observation
     (* Step 5's one observation. It is not a [result]: every evidence leg is
@@ -532,6 +606,24 @@ let execute ~deps =
     (match deps.terraform_init () with
      | Error message -> fail (Init_failed message)
      | Ok () ->
+       (* B2 / FND-0055: the declared universe is captured here, before the
+          destruction, so what configuration declared is observed while the target
+          still exists and the divergence is recorded before it is acted on. It is
+          read-only, and it never decides whether destruction may proceed -- the
+          contract is that a declared resource state does not represent remains a
+          required post-destroy obligation. *)
+       let declared = deps.observe_declared () in
+       (match declared_unrepresented ~state ~declared with
+        | [] -> ()
+        | unrepresented ->
+          deps.report
+            (Printf.sprintf
+               "  declared but not represented in Terraform state: %s\n\
+               \  (outside `terraform destroy`'s ownership; each remains a post-destroy \
+                verification obligation)"
+               (String.concat
+                  ", "
+                  (List.map (fun d -> d.Sol_cli_terraform_plan.address) unrepresented))));
        (* B / FND-0044 point 2: substrate existence comes from what Terraform
           represents, never from the install-time output contract. *)
        let cloud_exists = substrate <> Substrate_absent in
@@ -610,7 +702,7 @@ let execute ~deps =
                        observation is a failure, never a degraded success, because
                        exit 3 means the primary postcondition *succeeded*. *)
                     let observation =
-                      deps.verify_destruction ~pre_destroy:state ~preparation
+                      deps.verify_destruction ~pre_destroy:state ~declared ~preparation
                     in
                     let verdict = Sol_cli_destroy_verification.classify observation in
                     if Sol_cli_destroy_verification.is_verified verdict

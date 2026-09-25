@@ -388,9 +388,9 @@ resource that the provider holds while Terraform state does not represent it (At
 | FND-0044 / FND-0048 | Whole-root constructive applies; type-mapped address identities | fixed in steps 2–3 (`STATIC`/`MECHANISM`) |
 | FND-0045 | Verification checked guessed names in a defaulted region | `FIXED_UNQUALIFIED` — remedy landed in step 5, with its orphan-sweep clause implemented narrower than written |
 | FND-0046 | Retention printed from the policy | `FIXED_UNQUALIFIED` (INFRA-072); the query has never run live |
-| FND-0055 | **New** — the verification's evidence set is the state inventory, so a divergent resource is invisible and its survival can be reported as "postcondition established" | `OPEN` |
+| FND-0055 | **New** — the verification's evidence set is the state inventory, so a divergent resource is invisible and its survival can be reported as "postcondition established" | `FIXED_UNQUALIFIED` — closed offline by the declared-universe unit (see below); one residual named |
 | FND-0056 | **New** — the Attempt-7 property is not establishable by current `main`, and the attempt's criteria exclude the only mechanism the repository names for convergence | `OPEN` |
-| DEC-044 | **New** — the ownership + coverage decision (options, recommendation, acceptance criteria) | `BACKLOG`, `Decision Required` |
+| DEC-044 | **New** — the ownership + coverage decision (options, recommendation, acceptance criteria) | **Decided 2026-09-24** — coverage B2 landed; recovery ownership A1 accepted *in principle only* |
 
 **Attempt 7 was authorized, opened, and stopped before Phase 2** — no resource created, nothing
 mutated, zero exposure re-verified from the provider. The required postcondition (divergent
@@ -398,10 +398,28 @@ resource `ABSENT`) is reachable only if the *provider* cascades the object's rem
 represented parent, which is provider behaviour, not this contract; that fixture was therefore
 rejected rather than reported as a pass. Falsification, not qualification.
 
-**Frontier consequence:** the next live GCP attempt is not the next *step* — it is the next step
-*after* the fail-open is closed and adoption is decided. The recommended first unit is
-offline-testable and needs no provider: compute the declared address set from a read-only
-non-destroy `plan -json`, union it with the state inventory, and require a provider observation
-for every declared address state does not represent (PRESENT ⇒ violation, unqueryable ⇒ UNKNOWN,
-UNKNOWN ⇒ failure). Until that lands, the honest behaviour for a divergence is to fail loudly and
-name it.
+**The fail-open is closed (2026-09-24, offline).** `DEC-044`'s recommended first unit landed as
+HARDEN-004 step 6 (the declared-universe unit), and FND-0055 moves to `FIXED_UNQUALIFIED`: the
+verification's universe is now `declared ∪ state`, where the declared set comes from a read-only
+non-destroy `plan -json` of the disposable root and state stays authoritative for what it
+represents. For every declared address state does not represent, the provider is queried from
+identity the plan itself establishes — PRESENT ⇒ violation, ABSENT ⇒ obligation satisfied,
+attempted-UNKNOWN and unqueryable-identity ⇒ UNKNOWN ⇒ failure — and the operator output names
+the address, the query and the consequence. The observation path is read-only: no apply, no
+import, no state change, no widened Step-3 allowlist.
+
+**Two things are still not true**, and neither is claimed. (a) The evidence is offline; the
+recipes have still never run against a real provider, so `FIXED_UNQUALIFIED`, not `QUALIFIED`.
+(b) One residual is named in FND-0055: with an *empty* pre-destroy state, a declared address whose
+identity cannot be authoritatively built from configuration is recorded as a coverage limitation
+rather than a failure — B2 cannot distinguish "never applied" from total state loss, and does not
+pretend to. Positive or attempted evidence is never softened on that path.
+
+**Frontier consequence:** the next live GCP attempt is still not the next *step* — `DEC-044`'s
+recovery-ownership half is now the gate. Adoption is accepted **in principle** (A1: import into
+Terraform ownership behind the existing saved-plan assertion, then the ordinary destroy), so the
+smallest remaining decision is the A1 authority question: which per-kind identity is authoritative
+enough to `terraform import` on, and what authorizes Sol to assume ownership of an object it did
+not record. Until that is answered and implemented, a divergence fails loudly and names the
+resource — which is the honest behaviour, not a pass. Adoption is **not** implemented, FND-0030
+stays `OPEN`, and Attempt 7 stays closed.

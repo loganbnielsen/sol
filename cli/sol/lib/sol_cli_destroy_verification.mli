@@ -75,6 +75,31 @@ type queryability =
   | Identity_incomplete of string
 
 val query_of : provider:Sol_cli_provider.t -> identity -> queryability
+
+(** The second identity source (FND-0055 / B2): a resource the disposable root
+    *declares* but the pre-destroy state does not represent is outside `terraform
+    destroy`'s ownership, so it has no captured identity to verify. Its query is
+    built from the plan's own declared values instead -- and deliberately weaker:
+    a declared resource has no provider-assigned id, so a value the plan does not
+    carry stays missing and the obligation is UNKNOWN rather than a guess.
+
+    [target_project]/[target_region] are the scope the target's provider block is
+    configured with, which a declared resource that names neither of its own is
+    created in; they are the only thing taken from configuration, and never a
+    default. *)
+type declared_resource =
+  { address : string
+  ; kind : string
+  ; values : Yojson.Safe.t
+  }
+
+val declared_query_of
+  :  provider:Sol_cli_provider.t
+  -> target_project:string option
+  -> target_region:string option
+  -> declared_resource
+  -> queryability
+
 val classify_lookup : recipe -> lookup_result -> provider_verdict
 val observation_of_lookup : recipe:recipe -> lookup_result -> provider_observation
 
@@ -149,13 +174,47 @@ val gcp_absence_message : ?project:string -> string -> bool
 
 (** The combined evidence. [unqueried] is not a failure and not a silence: it is
     the set of represented resources for which no provider lookup is defined (with
-    the reason), whose absence therefore rests on {!state} alone. *)
+    the reason), whose absence therefore rests on {!state} alone. [declared] is the
+    other half of the universe -- what this root declares and state did not
+    represent -- where each address is instead a required obligation. *)
 type observation =
   { state : state_evidence
   ; identities : provider_observation list
   ; unqueried : (identity * string) list
+  ; declared : declared_coverage
   ; sweep : sweep
   ; retention : retention
+  }
+
+and declared_requirement =
+  | Declared_observed of provider_observation
+  (** an authoritative query was built from the plan's declared values and run *)
+  | Declared_unqueryable of string
+  (** no trustworthy query could be built from what the plan declared *)
+
+and declared_obligation =
+  { address : string
+  ; kind : string
+  ; requirement : declared_requirement
+  }
+
+(** The declared half of the verification universe.
+
+    [pre_state_empty] decides exactly one thing: the consequence of
+    [Declared_unqueryable]. An empty pre-destroy state cannot distinguish a target
+    that was never applied from one whose whole state was lost, so a kind that
+    cannot be authoritatively queried from it is recorded as a coverage limitation
+    rather than redefining the [Absent] no-op as a failure. It deliberately does
+    not soften evidence that was obtained: PRESENT is still a violation and an
+    attempted-but-UNKNOWN query still fails.
+
+    [read_failure] is an unreadable read-only plan: a failed observation, and a
+    failure whatever the state looked like -- "I could not read what this root
+    declares" is not "it declares nothing". *)
+and declared_coverage =
+  { pre_state_empty : bool
+  ; read_failure : string option
+  ; obligations : declared_obligation list
   }
 
 (** [violations] are postconditions with positive evidence against them;

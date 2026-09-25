@@ -245,6 +245,76 @@ let apply_asserted ~run_log ~phase_name ~policy ~scope ~chdir ~var_files ~vars (
        | Error failure -> Error (Sol_cli_terraform_plan.apply_failure_to_string failure))
 ;;
 
+(* B2 / FND-0055: what the disposable root *declares*, from a read-only,
+   non-destroy plan of the whole root. Nothing is applied and nothing is created;
+   the plan is read and immediately consumed, and only its declared addresses reach
+   the run log (SEC-008). Captured before the destruction, so it describes what
+   configuration declared while the target still existed.
+
+   This is observation only. It is deliberately not the same mechanism as Step 3's
+   permission-to-apply: that plan answers "may this apply run?", and this one only
+   "what does configuration declare?". A CREATE here is a declaration, never
+   permission to construct anything. *)
+let observe_declared ~provider ~run_log ~infra_dir ~var_files ~vars ()
+  : Sol_cli_cloud_destroy.declared_set
+  =
+  let plan_file = Filename.temp_file "sol-declared-" ".tfplan" in
+  Fun.protect
+    ~finally:(fun () ->
+      try Sys.remove plan_file with
+      | Sys_error _ -> ())
+    (fun () ->
+       match
+         Sol_cli_run_log.run_phase run_log ~name:"declared-universe-plan" (fun () ->
+           Sol_cli_terraform.plan_saved
+             ~scope:Sol_cli_terraform.whole_root
+             ~chdir:infra_dir
+             ~var_files
+             ~vars
+             ~out:plan_file
+             ())
+       with
+       | Error error ->
+         Sol_cli_cloud_destroy.Declared_unreadable
+           ("a read-only plan could not be run: " ^ Sol_cli_process.error_to_string error)
+       | Ok result when result.Sol_cli_process.exit_code <> 0 ->
+         Sol_cli_cloud_destroy.Declared_unreadable
+           (Printf.sprintf "a read-only plan exited %d" result.Sol_cli_process.exit_code)
+       | Ok _ ->
+         (match
+            Sol_cli_terraform.show_saved_plan_declared
+              ~run_log
+              ~phase:"declared-universe-show"
+              ~chdir:infra_dir
+              ~plan_file
+              ()
+          with
+          | Error message -> Sol_cli_cloud_destroy.Declared_unreadable message
+          | Ok (json, resources) ->
+            let provider_name =
+              match provider with
+              | Sol_cli_provider.Gcp -> "google"
+              | Sol_cli_provider.Aws -> "aws"
+            in
+            (* The provider block's own scope. A declared resource that names no
+               project/region of its own is created in it, and querying anywhere
+               else would make a not-found about the wrong object read as
+               absence. *)
+            Sol_cli_cloud_destroy.Declared_resources
+              { resources
+              ; project =
+                  Sol_cli_terraform_plan.provider_value
+                    ~json
+                    ~provider:provider_name
+                    ~key:"project"
+              ; region =
+                  Sol_cli_terraform_plan.provider_value
+                    ~json
+                    ~provider:provider_name
+                    ~key:"region"
+              }))
+;;
+
 (* The bootstrap-access mechanism's Terraform identity, per provider.
 
    GCP's is a root-level resource with a stable address. AWS's is an access-policy
@@ -597,7 +667,8 @@ let aws_no_ebs_volumes ~region ~cluster_name =
    uses, instead of reconstructing one from the target's naming. *)
 let captured_identity pre_destroy kind =
   List.find_opt
-    (fun identity -> identity.Sol_cli_destroy_verification.kind = kind)
+    (fun (identity : Sol_cli_destroy_verification.identity) ->
+       identity.Sol_cli_destroy_verification.kind = kind)
     (Sol_cli_cloud_destroy.identities pre_destroy)
 ;;
 
@@ -619,6 +690,16 @@ let run_provider_query argv : Sol_cli_destroy_verification.lookup_result =
 let captured_region pre_destroy =
   List.find_map
     (fun identity -> identity.Sol_cli_destroy_verification.region)
+    (Sol_cli_cloud_destroy.identities pre_destroy)
+;;
+
+(* The project the target's resources were captured in -- identity observed from
+   the same root, used only where a declared resource's own planned values do not
+   state one. Never a default: a query in another project would make a not-found
+   about the wrong object read as absence. *)
+let captured_project pre_destroy =
+  List.find_map
+    (fun identity -> identity.Sol_cli_destroy_verification.project)
     (Sol_cli_cloud_destroy.identities pre_destroy)
 ;;
 
@@ -877,6 +958,56 @@ let retention_evidence ~provider ~retention ~pre_destroy ~preparation =
                    carries no identifier or region to query by"))))
 ;;
 
+(* B2 / FND-0055: the declared half of the verification universe, turned into
+   obligations. The declared addresses are the plan's own; the ones state does not
+   represent are outside `terraform destroy`'s ownership, so each needs its own
+   provider observation. The scope a declared identity is queried in comes from the
+   plan's provider configuration first and from captured identity second, and only
+   where the resource's own planned values do not state it. Nothing else is taken
+   from configuration. *)
+let declared_coverage ~provider ~pre_destroy ~declared =
+  let open Sol_cli_destroy_verification in
+  let pre_state_empty = Sol_cli_cloud_destroy.pre_state_empty pre_destroy in
+  match declared with
+  | Sol_cli_cloud_destroy.Declared_unreadable reason ->
+    { pre_state_empty; read_failure = Some reason; obligations = [] }
+  | Sol_cli_cloud_destroy.Declared_resources _ ->
+    let target_project =
+      match Sol_cli_cloud_destroy.declared_project declared with
+      | Some _ as project -> project
+      | None -> captured_project pre_destroy
+    in
+    let target_region =
+      match Sol_cli_cloud_destroy.declared_region declared with
+      | Some _ as region -> region
+      | None -> captured_region pre_destroy
+    in
+    let obligations =
+      List.map
+        (fun planned ->
+           let resource =
+             { Sol_cli_destroy_verification.address =
+                 planned.Sol_cli_terraform_plan.address
+             ; kind = planned.resource_type
+             ; values = planned.values
+             }
+           in
+           let requirement =
+             match
+               declared_query_of ~provider ~target_project ~target_region resource
+             with
+             | Queryable recipe ->
+               Declared_observed
+                 (observation_of_lookup ~recipe (run_provider_query recipe.argv))
+             | No_recipe reason | Identity_incomplete reason ->
+               Declared_unqueryable reason
+           in
+           { address = resource.address; kind = resource.kind; requirement })
+        (Sol_cli_cloud_destroy.declared_unrepresented ~state:pre_destroy ~declared)
+    in
+    { pre_state_empty; read_failure = None; obligations }
+;;
+
 (* Step 5's one observation, assembling every leg. The identity comes from the
    inventory captured *before* destruction; the state comes from a fresh read
    after it; the sweep and retention are derived, and both say which of their
@@ -888,6 +1019,7 @@ let verification_observation
       ~vars
       ~retention
       ~pre_destroy
+      ~declared
       ~preparation
   =
   let open Sol_cli_destroy_verification in
@@ -917,6 +1049,7 @@ let verification_observation
   { state
   ; identities = List.rev identities
   ; unqueried = List.rev unqueried
+  ; declared = declared_coverage ~provider ~pre_destroy ~declared
   ; sweep
   ; retention = retention_evidence ~provider ~retention ~pre_destroy ~preparation
   }
@@ -3453,6 +3586,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
               Error
                 ("could not read terraform state: "
                  ^ Sol_cli_process.error_to_string error))
+      ; observe_declared = observe_declared ~provider ~run_log ~infra_dir ~var_files ~vars
       ; cloud_outputs =
           (fun () ->
             match cloud_outputs_of provider infra_dir with
@@ -3611,7 +3745,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
                    ~vars:(destroy_apply_vars ())
                    ())))
       ; verify_destruction =
-          (fun ~pre_destroy ~preparation ->
+          (fun ~pre_destroy ~declared ~preparation ->
             verification_observation
               ~provider
               ~infra_dir
@@ -3619,6 +3753,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
               ~vars
               ~retention
               ~pre_destroy
+              ~declared
               ~preparation)
       ; report = (fun message -> Printf.printf "%s\n%!" message)
       ; warn = (fun message -> Printf.eprintf "%s\n%!" message)

@@ -50,6 +50,28 @@ val action_to_string : action -> string
     `resource_changes` array is an error, and the caller refuses. *)
 val changes_of_plan_json : string -> (change list, string) result
 
+(** The second reading of the same document (FND-0055 / B2): what the
+    configuration *declares*, from `planned_values` -- the planned post-apply
+    state, child modules and indexed instances included. Deliberately not
+    [resource_changes]: a no-op resource is declared without appearing as a
+    change, and a resource being removed is a change but not a declaration.
+
+    A document this cannot read is an error, which the caller treats as UNKNOWN --
+    never as an empty declared set. *)
+type declared =
+  { address : string
+  ; resource_type : string
+  ; mode : string (** "managed" or "data"; only managed resources are owned *)
+  ; values : Yojson.Safe.t
+  }
+
+val declared_of_plan_json : string -> (declared list, string) result
+
+(** The value a provider block was configured with, as the plan document records
+    it: a literal, or a reference to a root variable whose resolved value the same
+    document carries. [None] when it cannot be read -- never a default. *)
+val provider_value : json:string -> provider:string -> key:string -> string option
+
 (** [show_and_record ~run_log ~phase ~show] runs [show] (which returns
     `terraform show -json <saved plan>`), parses it, and appends only the
     classified changes -- one "<action> <address>" line each -- to [phase]'s run
@@ -61,6 +83,15 @@ val show_and_record
   -> phase:string
   -> show:(unit -> (string, string) result)
   -> (string * change list, string) result
+
+(** The same, recorded as the declared universe (FND-0055 / B2). Not expressible
+    through [show_and_record]: that one requires `resource_changes`, which a plan
+    with nothing to change may not carry, and a declaration is not a change. *)
+val show_declared_and_record
+  :  run_log:Sol_cli_run_log.t
+  -> phase:string
+  -> show:(unit -> (string, string) result)
+  -> (string * declared list, string) result
 
 (** Classified changes outside the policy's allowlist. Empty means permitted.
     [no-op] anywhere and a data-source [read] are always permitted. *)

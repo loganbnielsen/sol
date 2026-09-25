@@ -53,6 +53,18 @@ val show_saved_plan
   -> unit
   -> (string * Sol_cli_terraform_plan.change list, string) result
 
+(** Read the same saved plan and record what configuration *declares* instead of
+    what it changes (FND-0055 / B2). Only the declared addresses reach [phase]'s
+    run log; the JSON is returned and never logged, for the same SEC-008 reason. *)
+val show_saved_plan_declared
+  :  ?env:(string * string) list
+  -> run_log:Sol_cli_run_log.t
+  -> phase:string
+  -> chdir:string
+  -> plan_file:string
+  -> unit
+  -> (string * Sol_cli_terraform_plan.declared list, string) result
+
 (** Apply a saved plan file. No `-auto-approve`: a saved plan applies without
     confirmation, and nothing re-plans between the assertion and the apply. *)
 val apply_saved

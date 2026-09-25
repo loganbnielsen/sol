@@ -214,48 +214,70 @@ type calls =
   { mutable credentials : int
   ; mutable init : int
   ; mutable observe : int
+  ; mutable declared : int
   ; mutable prepare : state_read list
   ; mutable reconcile : int
   ; mutable platform : int
   ; mutable remove : int
   ; mutable substrate : int
   ; mutable verify : int
+  ; mutable verified_declared : Sol_cli_cloud_destroy.declared_set option
+  ; mutable reports : string list
   }
 
 (* A verification observation that establishes absence: nothing was represented
-   before destruction, the state read is empty afterwards, the sweep found nothing
-   and no retention promise was declared. Every case below overrides exactly the
-   leg it is about, so the others cannot mask it. *)
+   before destruction, the state read is empty afterwards, the sweep found nothing,
+   no retention promise was declared, and the plan declared nothing state did not
+   represent. Every case below overrides exactly the leg it is about, so the others
+   cannot mask it. *)
+let no_declared_coverage =
+  { Sol_cli_destroy_verification.pre_state_empty = true
+  ; read_failure = None
+  ; obligations = []
+  }
+;;
+
 let verified_observation =
   { Sol_cli_destroy_verification.state = State_absent
   ; identities = []
   ; unqueried = []
+  ; declared = no_declared_coverage
   ; sweep = Sweep_ran { residues = []; indeterminate = [] }
   ; retention = Retention_not_required "this fixture declares no retention"
   }
 ;;
 
+let nothing_declared =
+  Sol_cli_cloud_destroy.Declared_resources
+    { resources = []; project = None; region = None }
+;;
+
 let fake_deps
       ?(state = Ok {|{}|})
+      ?(declared = fun () -> nothing_declared)
       ?(outputs = Outputs_available)
       ?(prepare = fun ~state:_ -> Sol_cli_cloud_lifecycle.Nothing_to_prepare)
       ?(reconcile = fun () -> Ok ())
       ?(platform = fun () -> Ok ())
       ?(remove = fun () -> Ok ())
       ?(destroy_substrate = fun () -> Ok ())
-      ?(verify_destruction = fun ~pre_destroy:_ ~preparation:_ -> verified_observation)
+      ?(verify_destruction =
+        fun ~pre_destroy:_ ~declared:_ ~preparation:_ -> verified_observation)
       ()
   =
   let calls =
     { credentials = 0
     ; init = 0
     ; observe = 0
+    ; declared = 0
     ; prepare = []
     ; reconcile = 0
     ; platform = 0
     ; remove = 0
     ; substrate = 0
     ; verify = 0
+    ; verified_declared = None
+    ; reports = []
     }
   in
   let deps =
@@ -271,6 +293,10 @@ let fake_deps
         (fun () ->
           calls.observe <- calls.observe + 1;
           state)
+    ; observe_declared =
+        (fun () ->
+          calls.declared <- calls.declared + 1;
+          declared ())
     ; cloud_outputs = (fun () -> outputs)
     ; prepare =
         (fun ~state ->
@@ -295,10 +321,11 @@ let fake_deps
           calls.substrate <- calls.substrate + 1;
           destroy_substrate ())
     ; verify_destruction =
-        (fun ~pre_destroy ~preparation ->
+        (fun ~pre_destroy ~declared ~preparation ->
           calls.verify <- calls.verify + 1;
-          verify_destruction ~pre_destroy ~preparation)
-    ; report = (fun _ -> ())
+          calls.verified_declared <- Some declared;
+          verify_destruction ~pre_destroy ~declared ~preparation)
+    ; report = (fun message -> calls.reports <- message :: calls.reports)
     ; warn = (fun _ -> ())
     }
   in
@@ -882,12 +909,14 @@ let provider_leg verdict =
 let observation_with
       ?(state = Sol_cli_destroy_verification.State_absent)
       ?(identities = [])
+      ?(declared = no_declared_coverage)
       ?(retention = Sol_cli_destroy_verification.Retention_not_required "fixture")
       ()
   =
   { Sol_cli_destroy_verification.state
   ; identities
   ; unqueried = []
+  ; declared
   ; sweep = Sol_cli_destroy_verification.Sweep_ran { residues = []; indeterminate = [] }
   ; retention
   }
@@ -920,7 +949,7 @@ let test_verification_unknown_is_a_failure () =
   let deps, calls =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
-      ~verify_destruction:(fun ~pre_destroy:_ ~preparation:_ ->
+      ~verify_destruction:(fun ~pre_destroy:_ ~declared:_ ~preparation:_ ->
         observation_with ~identities:[ provider_leg (Unknown "permission denied") ] ())
       ()
   in
@@ -951,7 +980,7 @@ let test_degradation_preserved_when_verification_fails () =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
       ~prepare:(fun ~state:_ -> continue_failure "guards not lowered")
-      ~verify_destruction:(fun ~pre_destroy:_ ~preparation:_ ->
+      ~verify_destruction:(fun ~pre_destroy:_ ~declared:_ ~preparation:_ ->
         observation_with
           ~identities:[ provider_leg Present ]
           ~retention:(Retention_not_required "fixture")
@@ -985,7 +1014,7 @@ let test_missing_retention_fails () =
   let deps, _ =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
-      ~verify_destruction:(fun ~pre_destroy:_ ~preparation:_ ->
+      ~verify_destruction:(fun ~pre_destroy:_ ~declared:_ ~preparation:_ ->
         observation_with
           ~retention:
             (Retention_violated
@@ -1021,7 +1050,7 @@ let test_fully_clean_is_exit_0 () =
     fake_deps
       ~state:(Ok (show_json_resources gcp_cluster))
       ~prepare:(fun ~state:_ -> Sol_cli_cloud_lifecycle.Prepared Gcp_prepared)
-      ~verify_destruction:(fun ~pre_destroy:_ ~preparation:_ -> observed)
+      ~verify_destruction:(fun ~pre_destroy:_ ~declared:_ ~preparation:_ -> observed)
       ()
   in
   let outcome = execute ~deps in
@@ -1053,6 +1082,352 @@ let test_blocked_destroy_never_verifies () =
    | _ -> Alcotest.fail "a Block_destroy preparation must block");
   Alcotest.(check int) "verification never ran" 0 calls.verify;
   Alcotest.(check int) "the substrate destroy never ran" 0 calls.substrate
+;;
+
+(* ── The declared universe's obligations (B2 / FND-0055) ─────────────────────
+ *
+ * A resource the disposable root declares and Terraform state does not represent
+ * is outside `terraform destroy`'s ownership. These cases pin that it stays a
+ * required post-destroy obligation, that its outcome decides the exit code, and
+ * that it does not disturb a run with no divergence. *)
+
+let declared_leg
+      ?(address = "google_artifact_registry_repository.images")
+      ?(kind = "google_artifact_registry_repository")
+      ?(operation = "gcloud artifacts repositories describe declared")
+      ?(evidence = "declared fixture")
+      verdict
+  =
+  { Sol_cli_destroy_verification.address
+  ; kind
+  ; requirement =
+      Sol_cli_destroy_verification.Declared_observed
+        { identity =
+            { address
+            ; kind
+            ; provider_id = None
+            ; arn = None
+            ; project = None
+            ; region = None
+            }
+        ; operation
+        ; status = None
+        ; evidence
+        ; verdict
+        }
+  }
+;;
+
+let declared_unqueryable_leg
+      ?(address = "google_project_iam_member.x")
+      ?(kind = "google_project_iam_member")
+      reason
+  =
+  { Sol_cli_destroy_verification.address
+  ; kind
+  ; requirement = Sol_cli_destroy_verification.Declared_unqueryable reason
+  }
+;;
+
+let coverage ?(pre_state_empty = false) ?(read_failure = None) obligations =
+  { Sol_cli_destroy_verification.pre_state_empty; read_failure; obligations }
+;;
+
+(* A declared set naming addresses the state fixture does not represent. *)
+let declared_set addresses =
+  Sol_cli_cloud_destroy.Declared_resources
+    { resources =
+        List.map
+          (fun address ->
+             { Sol_cli_terraform_plan.address
+             ; resource_type = "google_artifact_registry_repository"
+             ; mode = "managed"
+             ; values = `Assoc []
+             })
+          addresses
+    ; project = Some "sol-qualification"
+    ; region = Some "us-central1"
+    }
+;;
+
+(* The leaf orphan: destruction otherwise succeeds and the post-state is empty,
+   but the root declares a resource the provider still holds. The run must fail,
+   naming it -- this is the FND-0055 regression. *)
+let test_leaf_orphan_present_fails () =
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~declared:(fun () -> declared_set [ "google_artifact_registry_repository.images" ])
+      ~verify_destruction:(fun ~pre_destroy:_ ~declared:_ ~preparation:_ ->
+        observation_with ~declared:(coverage [ declared_leg Present ]) ())
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_failed { failure = Verification_failed message; verification = Some _; _ } ->
+     Alcotest.(check bool)
+       "the orphan is named"
+       true
+       (contains (Str.regexp_string "google_artifact_registry_repository.images") message);
+     Alcotest.(check bool)
+       "and the postcondition is reported as violated"
+       true
+       (contains (Str.regexp_string "violated") message)
+   | _ -> Alcotest.fail "a declared/state-absent provider-present resource must fail");
+  Alcotest.(check int) "it exits 1" exit_failure (exit_code outcome);
+  Alcotest.(check int)
+    "the declared universe was observed before the destroy"
+    1
+    calls.declared;
+  Alcotest.(check int) "the destroy itself still ran" 1 calls.substrate
+;;
+
+(* The cascade: the same divergence, but the provider reports it gone after the
+   destroy. Obligation satisfied -- and the run is not a failure merely because it
+   began divergent. *)
+let test_cascade_orphan_absent_succeeds () =
+  let deps, _ =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~declared:(fun () -> declared_set [ "google_artifact_registry_repository.images" ])
+      ~verify_destruction:(fun ~pre_destroy:_ ~declared:_ ~preparation:_ ->
+        observation_with ~declared:(coverage [ declared_leg Absent ]) ())
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_succeeded { degradations = []; _ } -> ()
+   | _ -> Alcotest.fail "an obligated resource the provider reports gone is satisfied");
+  Alcotest.(check int) "a satisfied obligation exits 0" exit_clean (exit_code outcome)
+;;
+
+(* Declared, state-absent, and the query could not establish anything: failure --
+   specifically 1, not 3, because exit 3 means the postcondition succeeded. *)
+let test_declared_unknown_is_a_failure () =
+  let deps, _ =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~declared:(fun () -> declared_set [ "google_artifact_registry_repository.images" ])
+      ~verify_destruction:(fun ~pre_destroy:_ ~declared:_ ~preparation:_ ->
+        observation_with ~declared:(coverage [ declared_leg (Unknown "throttled") ]) ())
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_failed { failure = Verification_failed _; verification = Some _; _ } -> ()
+   | _ -> Alcotest.fail "an UNKNOWN declared obligation must fail the destroy");
+  Alcotest.(check int) "UNKNOWN exits 1, not 3" exit_failure (exit_code outcome)
+;;
+
+(* An unqueryable declared resource fails when the state represented something... *)
+let test_declared_unqueryable_is_a_failure () =
+  let deps, _ =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~declared:(fun () -> declared_set [ "google_project_iam_member.x" ])
+      ~verify_destruction:(fun ~pre_destroy:_ ~declared:_ ~preparation:_ ->
+        observation_with
+          ~declared:(coverage [ declared_unqueryable_leg "no lookup is defined" ])
+          ())
+      ()
+  in
+  let outcome = execute ~deps in
+  Alcotest.(check int)
+    "an unqueryable declaration from a represented state exits 1"
+    exit_failure
+    (exit_code outcome)
+;;
+
+(* ... and is a recorded coverage limitation when the pre-destroy state was empty,
+   because an empty state cannot distinguish "never applied" from total state loss.
+   The Absent no-op is preserved. *)
+let test_declared_unqueryable_from_empty_state_is_not_a_failure () =
+  let deps, _ =
+    fake_deps
+      ~state:(Ok {|{}|})
+      ~declared:(fun () -> declared_set [ "google_project_iam_member.x" ])
+      ~verify_destruction:(fun ~pre_destroy:_ ~declared:_ ~preparation:_ ->
+        observation_with
+          ~declared:
+            (coverage
+               ~pre_state_empty:true
+               [ declared_unqueryable_leg "no lookup is defined" ])
+          ())
+      ()
+  in
+  let outcome = execute ~deps in
+  Alcotest.(check int)
+    "an unqueryable declaration from an empty state preserves the Absent no-op"
+    exit_clean
+    (exit_code outcome)
+;;
+
+(* A Step-4 degradation plus an orphan PRESENT: the exit is 1 and the degradation
+   survives as evidence, not erased by the violation. *)
+let test_degradation_and_orphan_present () =
+  let deps, _ =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~prepare:(fun ~state:_ -> continue_failure "guards not lowered")
+      ~declared:(fun () -> declared_set [ "google_artifact_registry_repository.images" ])
+      ~verify_destruction:(fun ~pre_destroy:_ ~declared:_ ~preparation:_ ->
+        observation_with ~declared:(coverage [ declared_leg Present ]) ())
+      ()
+  in
+  let outcome = execute ~deps in
+  (match outcome with
+   | Destroy_failed { degradations = [ "preparation: guards not lowered" ]; _ } -> ()
+   | _ -> Alcotest.fail "the degradation must survive alongside the violation");
+  Alcotest.(check int) "it exits 1" exit_failure (exit_code outcome)
+;;
+
+(* A Step-4 degradation with every declared obligation satisfied: still the
+   degraded success, exit 3. *)
+let test_degradation_and_obligations_absent_is_exit_3 () =
+  let deps, _ =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~prepare:(fun ~state:_ -> continue_failure "guards not lowered")
+      ~declared:(fun () -> declared_set [ "google_artifact_registry_repository.images" ])
+      ~verify_destruction:(fun ~pre_destroy:_ ~declared:_ ~preparation:_ ->
+        observation_with ~declared:(coverage [ declared_leg Absent ]) ())
+      ()
+  in
+  let outcome = execute ~deps in
+  Alcotest.(check int) "degraded but verified stays 3" exit_degraded (exit_code outcome)
+;;
+
+(* The declared universe is captured before the destruction, handed to
+   verification, and its divergence is recorded before anything is destroyed. *)
+let test_declared_universe_is_recorded_and_passed_through () =
+  let declared_value = declared_set [ "google_artifact_registry_repository.images" ] in
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~declared:(fun () -> declared_value)
+      ()
+  in
+  let _ = execute ~deps in
+  Alcotest.(check int) "the declared universe was observed once" 1 calls.declared;
+  Alcotest.(check bool)
+    "verification was handed the declared universe"
+    true
+    (calls.verified_declared = Some declared_value);
+  Alcotest.(check bool)
+    "the divergence was recorded before the destroy"
+    true
+    (List.exists
+       (fun message ->
+          contains
+            (Str.regexp_string "google_artifact_registry_repository.images")
+            message)
+       calls.reports)
+;;
+
+(* No divergence: the ordinary, fully-represented path is unchanged -- nothing is
+   declared/state-absent, and the run is clean. *)
+let test_no_divergence_is_unchanged () =
+  let deps, calls =
+    fake_deps
+      ~state:(Ok (show_json_resources gcp_cluster))
+      ~declared:(fun () -> declared_set [ "google_container_cluster.main" ])
+      ~verify_destruction:(fun ~pre_destroy:_ ~declared:_ ~preparation:_ ->
+        observation_with ~identities:[ provider_leg Absent ] ())
+      ()
+  in
+  let outcome = execute ~deps in
+  Alcotest.(check int) "clean" exit_clean (exit_code outcome);
+  Alcotest.(check bool)
+    "a represented declared address is not a divergence"
+    false
+    (List.exists
+       (fun message ->
+          contains (Str.regexp_string "declared but not represented") message)
+       calls.reports)
+;;
+
+(* Union semantics: the universe is state UNION declared. State keeps its captured
+   identity for what it represents, the declared set extends coverage to what it
+   does not, and neither source may silently drop an address the other has. *)
+let test_declared_unrepresented_union_semantics () =
+  let state =
+    Sol_cli_cloud_destroy.inventory_of_show_json (show_json_resources gcp_cluster)
+  in
+  let represented_address = "google_container_cluster.main" in
+  let declared_of address kind mode =
+    { Sol_cli_terraform_plan.address; resource_type = kind; mode; values = `Assoc [] }
+  in
+  let declared =
+    Sol_cli_cloud_destroy.Declared_resources
+      { resources =
+          [ declared_of represented_address "google_container_cluster" "managed"
+          ; declared_of
+              "google_artifact_registry_repository.images"
+              "google_artifact_registry_repository"
+              "managed"
+          ; declared_of "data.google_client_config.default" "google_client_config" "data"
+          ]
+      ; project = Some "sol-qualification"
+      ; region = Some "us-central1"
+      }
+  in
+  let unrepresented = Sol_cli_cloud_destroy.declared_unrepresented ~state ~declared in
+  Alcotest.(check (list string))
+    "only the declared-and-unrepresented managed address is an obligation"
+    [ "google_artifact_registry_repository.images" ]
+    (List.map (fun d -> d.Sol_cli_terraform_plan.address) unrepresented);
+  (* The declared address state *does* represent keeps the captured identity the
+     state leg verifies -- it is not re-derived, and it is not made a second,
+     declared obligation. *)
+  Alcotest.(check bool)
+    "the represented declared address keeps its captured identity"
+    true
+    (List.exists
+       (fun (identity : Sol_cli_destroy_verification.identity) ->
+          String.equal identity.address represented_address)
+       (Sol_cli_cloud_destroy.identities state));
+  Alcotest.(check bool)
+    "a represented declared address is not an obligation"
+    false
+    (List.exists
+       (fun d -> String.equal d.Sol_cli_terraform_plan.address represented_address)
+       unrepresented);
+  (* A state-only address is not dropped: it never leaves the universe, because
+     the captured identities are built from state independently of the plan. *)
+  let state_only =
+    Sol_cli_cloud_destroy.Declared_resources
+      { resources = []; project = None; region = None }
+  in
+  Alcotest.(check (list string))
+    "a state-only address is still covered by the captured identities"
+    [ represented_address ]
+    (List.map
+       (fun (identity : Sol_cli_destroy_verification.identity) -> identity.address)
+       (Sol_cli_cloud_destroy.identities state));
+  Alcotest.(check (list string))
+    "and it is not invented as a declared obligation"
+    []
+    (List.map
+       (fun d -> d.Sol_cli_terraform_plan.address)
+       (Sol_cli_cloud_destroy.declared_unrepresented ~state ~declared:state_only))
+;;
+
+(* An unreadable state is not an empty one: the carve-out must not swallow it. *)
+let test_pre_state_empty_only_for_a_read_empty_state () =
+  Alcotest.(check bool)
+    "an empty read is the empty pre-state"
+    true
+    (Sol_cli_cloud_destroy.pre_state_empty Sol_cli_cloud_destroy.State_empty);
+  Alcotest.(check bool)
+    "a represented state is not"
+    false
+    (Sol_cli_cloud_destroy.pre_state_empty
+       (Sol_cli_cloud_destroy.inventory_of_show_json (show_json_resources gcp_cluster)));
+  Alcotest.(check bool)
+    "and an unreadable state is not either"
+    false
+    (Sol_cli_cloud_destroy.pre_state_empty
+       (Sol_cli_cloud_destroy.State_unreadable "terraform show exited 1"))
 ;;
 
 let () =
@@ -1187,6 +1562,52 @@ let () =
             "blocked destroy never verifies"
             `Quick
             test_blocked_destroy_never_verifies
+        ] )
+    ; ( "the declared universe's obligations"
+      , [ Alcotest.test_case
+            "leaf orphan PRESENT exits 1"
+            `Quick
+            test_leaf_orphan_present_fails
+        ; Alcotest.test_case
+            "cascade orphan ABSENT verifies"
+            `Quick
+            test_cascade_orphan_absent_succeeds
+        ; Alcotest.test_case
+            "declared UNKNOWN exits 1, not 3"
+            `Quick
+            test_declared_unknown_is_a_failure
+        ; Alcotest.test_case
+            "unqueryable declared resource fails"
+            `Quick
+            test_declared_unqueryable_is_a_failure
+        ; Alcotest.test_case
+            "unqueryable from an empty state is not a failure"
+            `Quick
+            test_declared_unqueryable_from_empty_state_is_not_a_failure
+        ; Alcotest.test_case
+            "degradation + orphan PRESENT exits 1"
+            `Quick
+            test_degradation_and_orphan_present
+        ; Alcotest.test_case
+            "degradation + obligations ABSENT exits 3"
+            `Quick
+            test_degradation_and_obligations_absent_is_exit_3
+        ; Alcotest.test_case
+            "the declared universe is recorded and passed through"
+            `Quick
+            test_declared_universe_is_recorded_and_passed_through
+        ; Alcotest.test_case
+            "no divergence is unchanged"
+            `Quick
+            test_no_divergence_is_unchanged
+        ; Alcotest.test_case
+            "the universe is state union declared"
+            `Quick
+            test_declared_unrepresented_union_semantics
+        ; Alcotest.test_case
+            "only a read-empty state is the empty pre-state"
+            `Quick
+            test_pre_state_empty_only_for_a_read_empty_state
         ] )
     ]
 ;;
