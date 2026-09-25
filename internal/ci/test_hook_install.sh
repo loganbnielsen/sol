@@ -27,8 +27,8 @@ fail() {
 }
 
 scratch="$tmp/repo"
-mkdir -p "$scratch/cli/platform/local/scripts" "$scratch/internal/tooling/hooks"
-cp "$root/cli/platform/local/scripts/install-hooks.sh" "$scratch/cli/platform/local/scripts/"
+mkdir -p "$scratch/platform/local/scripts" "$scratch/internal/tooling/hooks"
+cp "$root/platform/local/scripts/install-hooks.sh" "$scratch/platform/local/scripts/"
 cp "$root"/internal/tooling/hooks/* "$scratch/internal/tooling/hooks/"
 chmod +x "$scratch"/internal/tooling/hooks/*
 git init -q -b main "$scratch"
@@ -39,7 +39,7 @@ source_count="$(find "$scratch/internal/tooling/hooks" -maxdepth 1 -type f | wc 
 # The exact field failure: a hook left pointing at a path that no longer exists.
 ln -sf "$tmp/devtools/hooks/pre-commit" "$scratch/.git/hooks/pre-commit"
 
-(cd "$scratch" && bash cli/platform/local/scripts/install-hooks.sh >/dev/null) \
+(cd "$scratch" && bash platform/local/scripts/install-hooks.sh >/dev/null) \
   || fail "install-hooks.sh failed in a scratch repository"
 
 installed=0
@@ -67,7 +67,7 @@ esac
 pass "a pre-existing dangling hook symlink is repaired"
 
 # Re-running is safe and must not leave anything worse behind.
-(cd "$scratch" && bash cli/platform/local/scripts/install-hooks.sh >/dev/null) \
+(cd "$scratch" && bash platform/local/scripts/install-hooks.sh >/dev/null) \
   || fail "re-running install-hooks.sh failed"
 readlink -f "$scratch/.git/hooks/pre-commit" >/dev/null \
   || fail "re-running install-hooks.sh left the pre-commit hook unresolvable"

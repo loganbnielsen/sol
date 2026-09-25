@@ -240,8 +240,8 @@ let dev_up () =
   then (
     Printf.printf "\n  Installing Redpanda...\n%!";
     (* CODE_LAYER-010: values come from
-       cli/platform/components/redpanda/{values-common,values-local}.json
-       (ADR 0001), shared with cli/platform/infra/base/main.tf --
+       platform/components/redpanda/{values-common,values-local}.json
+       (ADR 0001), shared with platform/infra/base/main.tf --
        tls.enabled/config.cluster.auto_create_topics_enabled
        (values-common.json) and statefulset.replicas/resources.cpu.cores
        (values-local.json, for cmd_local.ml's benefit only -- main.tf's own
@@ -293,7 +293,7 @@ let dev_up () =
          values-common.json/values-local.json (the console.* schema workaround
          is still required upstream). A cluster still on v24.2.7 must be
          recreated rather than upgraded in place -- see INFRA-013.
-         CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin. *)
+         CODE_LAYER-008: matches platform/infra/base/main.tf's pin. *)
       ~version:"26.1.11"
       ~values:
         [ "storage.persistentVolume.size", Str "1Gi"
@@ -317,7 +317,7 @@ let dev_up () =
       "postgresql"
       "bitnami/postgresql"
       ~namespace:"postgresql"
-        (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin. Not
+        (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin. Not
          15.5.1 -- confirmed live that version's default image tag
          (bitnami/postgresql:16.3.0-debian-12-r12) no longer exists on
          Docker Hub; main.tf was bumped to 18.8.17 in the same change (a
@@ -328,9 +328,9 @@ let dev_up () =
          (no persistent volume to be incompatible with -- see below). *)
       ~version:"18.8.17"
         (* CODE_LAYER-010: values come from
-         cli/platform/components/postgresql/{values-common,values-local}.json
+         platform/components/postgresql/{values-common,values-local}.json
          (ADR 0001) -- auth.database ("dev") is genuinely shared with
-         cli/platform/infra/base/main.tf; auth.postgresPassword and
+         platform/infra/base/main.tf; auth.postgresPassword and
          primary.persistence.enabled are dev-only local-profile content
          (main.tf keeps its own var-driven `set` for both -- a real secret
          and an "ephemeral by default" choice matching Loki/Prometheus's
@@ -346,13 +346,13 @@ let dev_up () =
     (* OBS-039: loki-stack is deprecated (no longer updated/supported per
        Grafana Labs' own chart README) and its bundled Promtail reached
        end-of-life March 2026. Split into the same three charts
-       cli/platform/infra/base/main.tf uses in production ("Dev mirrors prod
+       platform/infra/base/main.tf uses in production ("Dev mirrors prod
        exactly") -- loki (community-maintained), grafana (standalone), and
        alloy (Promtail's official successor, log-shipping role only). *)
     Printf.printf "\n  Installing Loki...\n%!";
-    (* Values come from cli/platform/components/loki/{values-common,values-local}.json
+    (* Values come from platform/components/loki/{values-common,values-local}.json
        (ADR 0001 / CODE_LAYER-005) -- the same "local" profile
-       cli/platform/infra/base/main.tf uses for its own non-durable
+       platform/infra/base/main.tf uses for its own non-durable
        observability_backend branch, so a fix like BUG-013's
        replication_factor lands here automatically instead of requiring a
        second, independently-maintained edit (BUG-016). *)
@@ -361,13 +361,12 @@ let dev_up () =
       "loki"
       "grafana-community/loki"
       ~namespace:"monitoring"
-      ~version:"18.12.1"
-        (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin *)
+      ~version:"18.12.1" (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin *)
       ~values_yaml:
         (Sol_cli_platform_component.merged_values_yaml ~component:"loki" ~profile:"local")
       ();
     Printf.printf "\n  Installing Grafana...\n%!";
-    (* Values come from cli/platform/components/grafana/{values-common,values-local}.json
+    (* Values come from platform/components/grafana/{values-common,values-local}.json
        (ADR 0001 / CODE_LAYER-005). sidecar.dashboards/datasources: moved
        from loki-stack's nested grafana.sidecar.* passthrough naming to this
        standalone chart's own top-level sidecar.* -- both now need an
@@ -379,7 +378,7 @@ let dev_up () =
       "grafana-community/grafana"
       ~namespace:"monitoring"
       ~version:"13.2.1"
-        (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin *)
+        (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin *)
         (* CODE_LAYER-008: base/main.tf sets adminPassword explicitly
          (var.grafana_admin_password); left at the chart's own default here
          previously, making sol local infra up's Grafana login undocumented and
@@ -396,16 +395,15 @@ let dev_up () =
        promtail.enabled: true played, so 'sol logs' can fall back to real
        log content even for a pod that crashed before it could push its own
        logs (OBS-004). CODE_LAYER-006: River config is rendered from
-       cli/platform/infra/base/alloy/logs.alloy.tftpl -- the single source,
-       shared with cli/platform/infra/base/main.tf's own templatefile() call
+       platform/infra/base/alloy/logs.alloy.tftpl -- the single source,
+       shared with platform/infra/base/main.tf's own templatefile() call
        for the same file -- instead of a second, hand-synced OCaml copy. *)
     helm_install
       ~label:"Alloy"
       "alloy"
       "grafana/alloy"
       ~namespace:"monitoring"
-      ~version:"1.12.1"
-        (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin *)
+      ~version:"1.12.1" (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin *)
       ~values_yaml:(Sol_cli_dev_observability.alloy_values_yaml ())
       ());
   if req.tempo
@@ -422,7 +420,7 @@ let dev_up () =
        (obs-tempo-eio's TEMPO_URL); Grafana's Tempo datasource queries port
        3200. Uses the `grafana-community` repo already added above for
        Loki/Grafana. *)
-    (* cli/platform/components/tempo/ has nothing to say today (both paths
+    (* platform/components/tempo/ has nothing to say today (both paths
        already agree by relying on the chart's own defaults) -- wiring it up
        anyway locks in the source of truth so the CI guardrail can catch the
        next Tempo value that would otherwise drift, see ADR 0001. *)
@@ -431,7 +429,7 @@ let dev_up () =
       "tempo"
       "grafana-community/tempo"
       ~namespace:"monitoring"
-      ~version:"2.3.0" (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin *)
+      ~version:"2.3.0" (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin *)
       ~values_yaml:
         (Sol_cli_platform_component.merged_values_yaml
            ~component:"tempo"
@@ -443,8 +441,8 @@ let dev_up () =
     (* prometheus-community/prometheus (not kube-prometheus-stack) — lighter weight for dev;
        includes server, alertmanager, pushgateway, kube-state-metrics, node-exporter.
        server.persistentVolume/pushgateway/alertmanager come from
-       cli/platform/components/prometheus/{values-common,values-local}.json
-       (ADR 0001 / CODE_LAYER-005), shared with cli/platform/infra/base/main.tf.
+       platform/components/prometheus/{values-common,values-local}.json
+       (ADR 0001 / CODE_LAYER-005), shared with platform/infra/base/main.tf.
        node-exporter stays a dev-only literal here -- main.tf never disables
        it (real clusters keep host metrics), so it isn't shared state.
        Note for whoever migrates the next Prometheus key: Helm's --set
@@ -457,8 +455,7 @@ let dev_up () =
       "prometheus"
       "prometheus-community/prometheus"
       ~namespace:"monitoring"
-      ~version:"25.20.1"
-        (* CODE_LAYER-008: matches cli/platform/infra/base/main.tf's pin *)
+      ~version:"25.20.1" (* CODE_LAYER-008: matches platform/infra/base/main.tf's pin *)
       ~values:[ "prometheus-node-exporter.enabled", Bool false ]
       ~values_yaml:
         (Sol_cli_platform_component.merged_values_yaml
@@ -468,13 +465,13 @@ let dev_up () =
   if need_grafana
   then install_local_grafana_config ~prometheus:req.prometheus ~tempo:req.tempo;
   (* FEAT-042: install ingress-nginx unconditionally, mirroring
-     cli/platform/infra/base's helm_release.ingress_nginx (same chart version,
+     platform/infra/base's helm_release.ingress_nginx (same chart version,
      pinned together) so the Ingress objects `sol up`/`sol deploy` generate are
      actually served locally instead of sitting inert. Service type NodePort
      matches base/variables.tf's documented k3d/local value of
      ingress_service_type; the controller is reached through the port-forward
      below, so no k3d host-port mapping is needed. Deliberately not a
-     cli/platform/components/ entry: base/main.tf's own install is a
+     platform/components/ entry: base/main.tf's own install is a
      var-driven `set` (ingress_service_type), the same category ADR 0001
      leaves inline on both sides. *)
   Printf.printf "\n  Installing ingress-nginx...\n%!";

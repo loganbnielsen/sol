@@ -122,7 +122,7 @@ let classify_process_error (e : Sol_cli_process.error) : fetch_error =
 ;;
 
 (* OBS-032: resolves the same read-side basic-auth credentials
-   cli/platform/infra/base/main.tf already collects for Alloy's write side
+   platform/infra/base/main.tf already collects for Alloy's write side
    (external_loki_username/external_loki_password, OBS-039), mirroring
    --loki-base-url's own flag-wins-over-nothing-else shape but as a
    flag/env pair like Kafka_security.config_of_env()'s KAFKA_SASL_* --

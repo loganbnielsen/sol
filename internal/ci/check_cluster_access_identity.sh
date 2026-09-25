@@ -3,8 +3,8 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-policy_file="${1:-$root/cli/platform/infra/bootstrap/main.tf}"
-aws_root="${2:-$root/cli/platform/infra/aws/main.tf}"
+policy_file="${1:-$root/platform/infra/bootstrap/main.tf}"
+aws_root="${2:-$root/platform/infra/aws/main.tf}"
 
 section="$(awk '
   /data "aws_iam_policy_document" "cluster_access"/ { found=1 }

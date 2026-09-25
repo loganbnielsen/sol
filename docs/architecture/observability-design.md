@@ -242,14 +242,14 @@ Links
 Grafana is the default self-hosted dashboard shell today. Sol provisions one
 workspace dashboard entrypoint plus scoped dashboards, as JSON in the tree:
 
-- workspace overview — `cli/platform/infra/base/dashboards/workspace-overview.json`
+- workspace overview — `platform/infra/base/dashboards/workspace-overview.json`
 - domain overview — `dashboards/domain-overview.json`
 - service dashboard for service-specific metrics — `dashboards/service-template.json`
 - service logs view — Loki-backed log panels inside the dashboards above, plus the
   scoped `sol open logs` link; not a separate file
 - deploy/release timeline — `dashboards/release-timeline.json`
 
-All four files are provisioned by `cli/platform/infra/base/main.tf`.
+All four files are provisioned by `platform/infra/base/main.tf`.
 
 The dashboard should filter by Sol labels, not by namespace/pod names. A
 single incident often crosses an HTTP service, Kafka worker, scheduled
@@ -289,12 +289,12 @@ A **managed resource dashboard** is a fourth tier, scoped by
 `resource/<type>/<name>` (e.g. `resource/rds/acme-prod-postgres`) rather
 than by `workspace/domain/service`:
 
-- `cli/platform/infra/aws/main.tf` describes each managed resource generically
+- `platform/infra/aws/main.tf` describes each managed resource generically
   (`local.managed_resources`: name -> `{resource_type,
   cloudwatch_namespace, dimension_name, dimension_value, metrics}`) and
   provisions a native CloudWatch dashboard per entry plus an IRSA role
   granting Grafana's own pod read access to CloudWatch metrics.
-- `cli/platform/infra/base/main.tf` provisions one Grafana dashboard per
+- `platform/infra/base/main.tf` provisions one Grafana dashboard per
   distinct `resource_type` (not per resource instance) from a single
   shared template (`dashboards/managed-resource.json.tftpl`), wired to a
   CloudWatch Grafana datasource. The dashboard's `resource` template

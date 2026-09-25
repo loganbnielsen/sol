@@ -74,7 +74,7 @@ let required name = function
    *stable* scope that contains it, the matcher names the resource type, and the
    plan assertion is what keeps it narrow. *)
 let aws =
-  { platform_root = "cli/platform/infra/base"
+  { platform_root = "platform/infra/base"
   ; platform_address = Fun.id
   ; backend_config =
       (fun (target : Sol_cli_config.target) ~bucket ~object_key ->
@@ -113,7 +113,7 @@ let aws =
              "cluster_access_role_arn"
              (Sol_cli_config.provider_field target "cluster_access_role_arn")
         (* HARDEN-002 run 3, finding 11: deploy_role_arn is declared by the
-           provider root (cli/platform/infra/aws) and drives the deploy EKS
+           provider root (platform/infra/aws) and drives the deploy EKS
            access entry INFRA-025 added, but was never routed here — so the entry
            was never created and the module's deploy_kubeconfig_command/
            deploy_kube_context outputs stayed null. provider_fields still follow,
@@ -204,7 +204,7 @@ let aws =
 let gcp_bootstrap_binding = "kubernetes_cluster_role_binding.provisioner_bootstrap_admin"
 
 let gcp =
-  { platform_root = "cli/platform/infra/base-gcp"
+  { platform_root = "platform/infra/base-gcp"
   ; platform_address = (fun address -> "module.platform." ^ address)
   ; backend_config =
       (fun _target ~bucket ~object_key ->

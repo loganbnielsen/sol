@@ -10,7 +10,7 @@ let ( let* ) = Result.bind
 
 (* ── Sol home resolution ─────────────────────────────────────────────────── *)
 
-(* Resolve the Sol monorepo root so we can locate cli/platform/infra/<provider>/. *)
+(* Resolve the Sol monorepo root so we can locate platform/infra/<provider>/. *)
 let resolve_sol_home () =
   match Sol_cli_cmd_new.infer_sol_home () with
   | Some dir -> dir
@@ -93,7 +93,7 @@ let check_terraform () =
 let infra_dir provider =
   let pname = Sol_cli_provider.to_string provider in
   let sol_home = resolve_sol_home () in
-  let dir = Filename.concat sol_home (Printf.sprintf "cli/platform/infra/%s" pname) in
+  let dir = Filename.concat sol_home (Printf.sprintf "platform/infra/%s" pname) in
   if not (Sys.file_exists dir)
   then (
     Printf.eprintf "error: Terraform module not found: %s\n" dir;
@@ -230,7 +230,7 @@ let workspace_name = Sol_cli_workspace.current_name
 
 (* The independent postcondition: a fresh read of *this root's* own state. The root
    is [infra_dir], the disposable cloud root -- DEC-043's durable GCP prerequisites
-   live in `cli/platform/infra/bootstrap-gcp`, a different root, so they are not
+   live in `platform/infra/bootstrap-gcp`, a different root, so they are not
    residue and are never asserted about here. *)
 let post_destroy_state ~infra_dir =
   Sol_cli_destroy_verification.state_evidence

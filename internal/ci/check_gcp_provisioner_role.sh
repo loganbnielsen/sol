@@ -4,7 +4,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-source_file="${1:-$root/cli/platform/infra/gcp/main.tf}"
+source_file="${1:-$root/platform/infra/gcp/main.tf}"
 
 section="$(awk '
   /resource "google_project_iam_custom_role" "provisioner_cluster_access"/ { found=1 }

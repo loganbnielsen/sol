@@ -1,5 +1,12 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: REFAC-105 — the pluto example no longer reaches into internal/ (2026-09-25)
+
+- Pluto's `dev` and `customer_cloud` targets are user-shaped. The AWS smoke harness now generates its own untracked `sol/qual2/` target with an absolute var file, the same pattern as the GCP harness.
+- New CI guard: `check_examples_self_contained.sh`, which requires that no example config or build file references `internal/`.
+- Found and fixed: `live-smoke.sh` on `main` did not parse (an apostrophe inside `${CLUSTER:?…}`).
+- Found and filed separately: a relative `terraform_var_file` resolves against the invocation directory, so pluto's old smoke path never loaded from the workspace.
+
 ## Latest: DEC-046/047 — repository organization and deployment-config layering decided (2026-09-25)
 
 - **The proposal is accepted.** `internal/pipeline/audits/2026-09-25_organization_proposal.md` (#515) went through two external review rounds. DEC-046 adopts its six rules and target layout. The rules are now in `AGENTS.md` § *Organization rules* and in `internal/README.md`.
@@ -401,7 +408,7 @@ is HARDEN-002's.
 
 ## Latest: AUDIT-072 — recoverable production state and scoped identities (2026-09-17)
 
-A new `cli/platform/infra/bootstrap` root provisions the conformant remote state
+A new `platform/infra/bootstrap` root provisions the conformant remote state
 backend (versioned, encrypted, public-access-blocked S3 + DynamoDB lock) and
 emits three least-privilege IAM policy contracts; the operator supplies the role
 ARNs. Target declarations (`state_bucket`/`state_lock_table`, the three role
@@ -429,7 +436,7 @@ evidence is HARDEN-002's; the contract is in
 Alert delivery is now a provider-neutral contract (`Sol_cli_alerting`): a
 target declares a receiver type (only `webhook` qualified), a routable
 endpoint, an owner and a runbook; preflight's `Alert_delivery` fails closed
-otherwise, and applying `cli/platform/infra/base` wires the Alertmanager route.
+otherwise, and applying `platform/infra/base` wires the Alertmanager route.
 The five maturity-A threshold indicators — failed rollout, node loss, Postgres
 dependency, Kafka lag/broker loss, telemetry loss — ship as rules with one-page
 runbooks (`docs/deployment/alert-runbooks.md`), and `sol alert test` injects a

@@ -326,7 +326,7 @@ JSON
         # The real `terraform show -json` always carries each resource's real
         # `address`; the guarded resources are found by address, not by type
         # (FND-0048), so the fixture has to model that or it is not modelling
-        # Terraform. The names are the ones cli/platform/infra/gcp/main.tf declares.
+        # Terraform. The names are the ones platform/infra/gcp/main.tf declares.
         printf '{"values":{"root_module":{"resources":[
           {"address":"google_compute_network.main","type":"google_compute_network","values":{"self_link":"https://www.googleapis.com/compute/v1/projects/sol-qualification/global/networks/sol-qual","project":"sol-qualification","name":"sol-qual"}},
           {"address":"google_artifact_registry_repository.images","type":"google_artifact_registry_repository","values":{"id":"projects/sol-qualification/locations/us-central1/repositories/sol-qual","project":"sol-qualification","location":"us-central1","name":"sol-qual"}},
@@ -2391,7 +2391,7 @@ live_pid=$!
 running="$ops/$aws_key/99999999T000000Z-running"
 mkdir -p "$running"
 printf 'host=%s\nsupervisor_pid=%s\nsupervisor_start=\nstarted_at=%s\nroot=%s\n' \
-  "$(hostname)" "$live_pid" "$(date +%s)" "$root/cli/platform/infra/aws" >"$running/meta"
+  "$(hostname)" "$live_pid" "$(date +%s)" "$root/platform/infra/aws" >"$running/meta"
 printf '%s\n' "$(basename "$running")" >"$ops/$aws_key/latest"
 running_log="$tmp/infra076-running.log"
 if (export FAIL_ON=""; run_apply "$running_log"); then
@@ -2419,7 +2419,7 @@ platform_key=""
 while IFS= read -r candidate; do
   [ -n "$candidate" ] || continue
   dir="$ops/$candidate/$(cat "$ops/$candidate/latest" 2>/dev/null || true)"
-  if [ -f "$dir/meta" ] && grep -qx "root=$root/cli/platform/infra/base" "$dir/meta"; then
+  if [ -f "$dir/meta" ] && grep -qx "root=$root/platform/infra/base" "$dir/meta"; then
     platform_key="$candidate"
     break
   fi
@@ -2436,7 +2436,7 @@ platform_live_pid=$!
 platform_running="$ops/$platform_key/99999999T000000Z-platform-running"
 mkdir -p "$platform_running"
 printf 'host=%s\nsupervisor_pid=%s\nsupervisor_start=\nstarted_at=%s\nroot=%s\n' \
-  "$(hostname)" "$platform_live_pid" "$(date +%s)" "$root/cli/platform/infra/base" \
+  "$(hostname)" "$platform_live_pid" "$(date +%s)" "$root/platform/infra/base" \
   >"$platform_running/meta"
 printf '%s\n' "$(basename "$platform_running")" >"$ops/$platform_key/latest"
 platform_running_log="$tmp/infra076-platform-running.log"

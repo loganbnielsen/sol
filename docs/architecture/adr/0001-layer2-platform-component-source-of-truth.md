@@ -9,7 +9,7 @@ Accepted.
 Sol's infrastructure generation splits into three layers with different
 portability requirements:
 
-1. **Cluster/cloud provisioning** — `cli/platform/infra/aws/`, `cli/platform/infra/gcp/`,
+1. **Cluster/cloud provisioning** — `platform/infra/aws/`, `platform/infra/gcp/`,
    each an independent Terraform root module (VPC, EKS/GKE, ECR, RDS,
    Route53, provider IAM). Local dev has no Terraform equivalent — `sol local
    infra up` shells `k3d cluster create` directly.
@@ -29,14 +29,14 @@ both execution paths.
 
 **Layer 2 is where the architecture breaks down.** Production/cloud
 expresses platform-component desired state as Terraform `helm_release`
-resources in `cli/platform/infra/base/main.tf`. Local development expresses
+resources in `platform/infra/base/main.tf`. Local development expresses
 the *same* desired state as hand-written `helm install`/`helm upgrade`
 calls with inline OCaml values in `cmd_local.ml`. The two are kept in sync
 only by a repeated code comment — "Dev mirrors prod exactly" — which
 describes an intended invariant but enforces nothing.
 
 This stopped being theoretical when BUG-013 fixed Loki's
-`commonConfig.replication_factor` in `cli/platform/infra/base/main.tf` and
+`commonConfig.replication_factor` in `platform/infra/base/main.tf` and
 nobody thought to check `cmd_local.ml`'s independent Loki config, which
 still lacks the fix (BUG-016): a fresh `sol local infra up` today can hit the
 exact ring-quorum failure BUG-013 already fixed in production. The
@@ -49,12 +49,12 @@ twice, forever.
 
 ## Decision
 
-Establish `cli/platform/components/<name>/` as the single authoritative home
+Establish `platform/components/<name>/` as the single authoritative home
 for platform-component desired state. Each component owns up to three
 files:
 
 ```
-cli/platform/components/loki/
+platform/components/loki/
   values-common.json
   values-local.json
   values-durable.json
@@ -107,7 +107,7 @@ through the binding, the component only declares it needs
 
 **Execution layers select and merge; they do not define.** `cmd_local.ml`
 becomes: "install Loki using `values-common.json` + `values-local.json`."
-`cli/platform/infra/base/main.tf`'s `helm_release` becomes: "install Loki
+`platform/infra/base/main.tf`'s `helm_release` becomes: "install Loki
 using `jsondecode(file(...common...))` + `jsondecode(file(...durable...))`
 + this run's infrastructure bindings." Neither owns Loki's configuration
 anymore; both own only orchestration.
@@ -115,7 +115,7 @@ anymore; both own only orchestration.
 **Guardrail, applied symmetrically to both execution paths**: CI should
 flag new inline Helm configuration growing back in either `cmd_local.ml`
 (new `helm_install ~values:[...]` literals for a component that has a
-`cli/platform/components/` entry) or `cli/platform/infra/base/main.tf` (new
+`platform/components/` entry) or `platform/infra/base/main.tf` (new
 `set {}` blocks or growing `yamlencode(...)`/`jsonencode(...)` literals
 for the same). Removing duplication from one side while letting the other
 become the new dumping ground defeats the point.
@@ -146,7 +146,7 @@ become the new dumping ground defeats the point.
 - Fixing a genuinely shared platform-component value (the next BUG-013)
   is one file edit instead of a "remember to also update the other
   system" convention that has already failed once.
-- `cmd_local.ml` and `cli/platform/infra/base/main.tf` both get smaller and
+- `cmd_local.ml` and `platform/infra/base/main.tf` both get smaller and
   more boring — they orchestrate, they no longer encode.
 - Local/durable differences become explicitly inspectable by diffing two
   adjacent files, rather than requiring a reader to hold both a Terraform

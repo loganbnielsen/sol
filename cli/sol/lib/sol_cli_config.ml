@@ -1008,7 +1008,7 @@ let discover_target_paths () =
 
 (* Matches the only providers sol.yml's target-provider boxes recognize — no
    third value invented here that nothing else in the codebase
-   (cli/platform/infra/) can actually provision against. *)
+   (platform/infra/) can actually provision against. *)
 let known_provider = Sol_cli_provider.is_known
 
 let format_use_ref ref =
