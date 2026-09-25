@@ -26,11 +26,23 @@ type change =
   ; action : action
   }
 
-(** [Exact address] for a stable root-level address; [Type type] only for a
-    Terraform-owned mechanism inside a module whose internal address is not
-    stable (documented at the rule). *)
+(** How a rule identifies the resources it governs -- identity only, never
+    permission (that is the rule's [allows]).
+
+    - [Exact address]: one address exactly as Terraform wrote it.
+    - [Resource address]: that resource, any instance of it -- the address
+      itself, or it followed by exactly one instance key ([resource[0]],
+      [resource["key"]]). This is the matcher for a declared `count`/`for_each`
+      mechanism, whose plan address carries an index the declaration does not
+      (FND-0058).
+    - [Type type]: only for a Terraform-owned mechanism inside a module whose
+      internal address is not stable (documented at the rule).
+
+    [Resource] matches one resource: not a longer name, a dotted path, a module
+    prefix, or a sibling of the same type. *)
 type matcher =
   | Exact of string
+  | Resource of string
   | Type of string
 
 type rule =

@@ -36,14 +36,35 @@ type change =
   ; action : action
   }
 
-(** How a rule identifies the resources it governs. [Type] exists for a
-    mechanism Terraform owns inside a module whose internal address is
-    module-version-dependent (the AWS bootstrap access-policy association); the
-    rule is still narrow -- it names one resource type in a root that has exactly
-    one such resource -- but it cannot be an address, and the plan assertion is
-    what enforces the boundary there. *)
+(** How a rule identifies the resources it governs. A matcher answers only "does
+    this change refer to what the rule governs?" -- never "is this action
+    allowed?", which is the rule's [allows].
+
+    - [Exact address] is one address, exactly as Terraform wrote it: no
+      interpretation at all.
+    - [Resource address] is one resource, **any instance** of it: the address
+      itself, or that address followed by exactly one Terraform instance key
+      ([resource[0]], [resource[37]], [resource["key"]]). A `count`/`for_each`
+      resource has no single plan address -- Terraform emits `resource[0]` --
+      while the capability that declares it names a stable resource, so a rule
+      written with [Exact] can never match the plan it exists for. That is
+      FND-0058: the destroy refused the very create its own authority rule
+      permitted, skipped the platform teardown, and left stale platform state.
+      Use [Resource] for a declared mechanism with an instance count.
+    - [Type kind] exists for a mechanism Terraform owns inside a module whose
+      internal address is module-version-dependent (the AWS bootstrap
+      access-policy association); the rule is still narrow -- it names one
+      resource type in a root that has exactly one such resource -- but it
+      cannot be an address, and the plan assertion is what enforces the boundary
+      there.
+
+    [Resource] is one resource and nothing else: it does not match a longer
+    name, a dotted path, a module prefix or a sibling resource of the same type.
+    An instance key containing `[` (a `for_each` map key may be any string) is
+    *refused* rather than guessed at, which fails closed. *)
 type matcher =
   | Exact of string
+  | Resource of string
   | Type of string
 
 type rule =
@@ -126,9 +147,23 @@ let changes_of_plan_json json : (change list, string) result =
     Error ("unexpected plan JSON shape: " ^ message)
 ;;
 
+(* The address with one trailing Terraform instance key removed, if it has one.
+   [resource[0]] -> [resource], [resource["key"]] -> [resource], [resource] ->
+   [resource]. Only the last bracket pair is removed, and only when it closes the
+   address: [resource[0][1]] and a key containing `[` keep an address that
+   matches nothing declared, which refuses rather than guesses. *)
+let without_instance_key address =
+  match String.rindex_opt address '[' with
+  | Some open_bracket
+    when String.length address > open_bracket + 1
+         && address.[String.length address - 1] = ']' -> String.sub address 0 open_bracket
+  | Some _ | None -> address
+;;
+
 let matches matcher change =
   match matcher with
   | Exact address -> change.address = address
+  | Resource resource -> String.equal (without_instance_key change.address) resource
   | Type kind -> change.resource_type = kind
 ;;
 

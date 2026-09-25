@@ -577,7 +577,16 @@ let execute ~deps =
    Each allowlist is stated in terms of Terraform addresses/actions. Nothing here
    permits a create or a replacement of target-owned infrastructure except the
    narrowly identified temporary bootstrap-access mechanism, whose creation is
-   the point of the window and whose removal is bracketed by [execute]. *)
+   the point of the window and whose removal is bracketed by [execute].
+
+   Identity and permission are separate, and both must hold: a rule's matchers
+   decide whether a change *is* the declared mechanism, and its [allows] decides
+   whether that action is permitted. A provider whose mechanism Terraform indexes
+   (`count`/`for_each`) must therefore declare it with
+   [Sol_cli_terraform_plan.Resource], not [Exact]: an address the plan never emits
+   can never match, so the permission is granted and unreachable -- which is
+   FND-0058, where the destroy refused the create its own authority rule
+   permitted, skipped the platform teardown and left stale platform state. *)
 
 let guard_preparation_policy ~addresses : Sol_cli_terraform_plan.policy =
   let open Sol_cli_terraform_plan in

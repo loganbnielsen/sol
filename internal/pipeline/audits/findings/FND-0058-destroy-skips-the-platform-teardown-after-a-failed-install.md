@@ -3,7 +3,7 @@
 - **Classification:** `VERIFIED_DEFECT` (live: GCP Attempt 8, 2026-09-25 — the destroy
   reported the degradation itself, and the platform state snapshot agrees), against
   DEC-045's destroy-authority contract and `INV-DESTROY-1`'s failed-`PlatformInstalling` case
-- **State:** `OPEN`
+- **State:** `FIXED_UNQUALIFIED` (fixed 2026-09-25; offline evidence only — see the correction at the end)
 - **First identified:** 2026-09-25, GCP Attempt 8 (`docs/qualification/2026-09-25-gcp-attempt8.md`)
 - **Provider:** GCP (mechanism is provider-neutral; observed on GCP)
 - **Derived ticket:** `INFRA-079`
@@ -95,3 +95,29 @@ create a cluster-admin binding during a destroy, and said so, rather than procee
 - It does not claim the refusal is wrong; the refusal is what kept the destroy honest, and
   the degradation was reported rather than hidden.
 - It does not claim the same shape occurs on a target destroyed from `Ready` — untested.
+
+## Correction (2026-09-25) — the capability existed; the declaration could not express the address
+
+The INFRA-079 investigation established that this finding's first framing ("the destroy refuses the
+create it needs to reach the platform") was right about the symptom and incomplete about the cause.
+**FACT:** the capability and its exception already existed — REFAC-094 recorded *"no CREATE/REPLACE
+except the bootstrap-authority operation"*, and `reconciliation_policy` carries that rule with the
+reason *"the temporary bootstrap-access mechanism may be created or updated to obtain destruction
+authority"*, bracketed by `with_elevated_access`.
+
+The GCP declaration named the mechanism with `Exact`, which compares strings, while
+`cli/platform/infra/gcp/main.tf` declares it `count = var.provisioner_bootstrap_admin ? 1 : 0`, so
+Terraform's plan address is `kubernetes_cluster_role_binding.provisioner_bootstrap_admin[0]`. The
+permission was granted and unreachable. AWS never showed it because its mechanism is matched by
+`Type`.
+
+**Fix:** `Sol_cli_terraform_plan.Resource` — this resource, any instance — declared by GCP, with the
+unit fixture and the offline authority fixture repaired to use the addresses Terraform emits (both
+had been written with the declaration's own index-less string, which is why neither could detect it).
+Decision recorded in `DEC-048`; ticket `INFRA-079`.
+
+Still `FIXED_UNQUALIFIED`: the fix is proven offline (unit + the offline lifecycle suite + mutations)
+and **not** live. Qualification requires a target actually left in failed `PlatformInstalling` to be
+destroyed by `sol cloud destroy` alone with both root states empty afterwards. The preserved Attempt 8
+state cannot demonstrate it (its substrate is already gone) and is `INFRA-082`'s subject; it was left
+untouched.
