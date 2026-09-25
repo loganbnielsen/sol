@@ -1,6 +1,20 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: the destruction path converges and verifies what the target *declares* (2026-09-24)
+## Latest: the cloud lifecycle simplification programme is planned and ticketed (2026-09-24)
+
+Two audits of the HARDEN-004 work converged: the observed provider/state divergences (Attempts 5
+and 6) were operator-created, not produced by Sol's lifecycle; per-kind provider verification of
+Terraform-managed resources rests on an assumed premise; and the cloud lifecycle has no provider
+adapter boundary (AWS/GCP knowledge lives in `cmd_cloud_tf.ml` and in generic types). The
+authoritative execution plan is `internal/pipeline/audits/2026-09-24_cloud_lifecycle_simplification_plan.md`,
+broken into staged tickets with explicit dependencies (plan § Ticket map). Actionable now:
+INFRA-075 (tests prune real run evidence), SEC-010 (GCP skips the `db_password` argv guard) and
+DEC-045 (Terraform destruction authority, which gates every deletion). Nothing is deleted until
+DEC-045 records its decision; the Terraform supervision fix (INFRA-076) must be on `main` before
+B2 is removed. The entry below describes the state this programme starts from; A1 is expected to
+be withdrawn (DOCS-022).
+
+## Previous: the destruction path converges and verifies what the target *declares* (2026-09-24)
 
 The HARDEN-004 destroy-path recovery programme (GCP qualification). Detail, per-step evidence and
 the decision record are in `internal/pipeline/audits/HARDEN-004-handoff.md`; the ticket system's
