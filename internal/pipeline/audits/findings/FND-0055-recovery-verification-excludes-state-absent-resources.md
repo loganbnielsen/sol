@@ -2,10 +2,13 @@
 
 - **Classification:** `VERIFIED_DEFECT` (fail-open verification; the coverage half of the
   recovery contract)
-- **State:** `OPEN`
+- **State:** `FIXED_UNQUALIFIED` (2026-09-24 — the partial-divergence fail-open is closed by
+  offline evidence; see the transition at the end of this file. The live behavioural claim is
+  still open, and one residual is named there explicitly)
 - **First identified:** 2026-09-24, while preparing GCP Attempt 7 (HARDEN-004) — before any
   live resource was created; verified against `origin/main @ 2775d5b1`
-- **Derived ticket:** `DEC-044` → the implementation that decision authorizes
+- **Derived ticket:** `DEC-044` → the implementation that decision authorized (landed as the
+  HARDEN-004 declared-universe unit; the follow-up wording below is left as written)
 - **Evidence class:** `STATIC` for the Sol claim; `BEHAVIORAL` for the Terraform semantics it
   depends on (reproduced locally, no cloud — see "Reproduction")
 - **Related:** FND-0030 (the same divergence, seen from the ownership side), FND-0045 (the
@@ -160,3 +163,110 @@ FND-0030 (ownership: the divergent resource is not destroyable either), FND-0044
 inventory that decides what may be targeted), FND-0045 (the remedy that narrowed this
 coverage), FND-0046, `DEC-040`, `DEC-033`, ADR 0003 invariant 6, ADR 0004, `docs/qualification/
 2026-09-24-gcp-attempt7-prelive-falsification.md`.
+
+---
+
+## Transition (2026-09-24) — B2 landed: the declared universe is part of the verification
+
+**State: `OPEN` → `FIXED_UNQUALIFIED`.** Implemented on the HARDEN-004 declared-universe branch,
+against `origin/main @ c1d9b67d`, offline only (no provider call, no cloud).
+
+What changed, in the terms this finding fixed:
+
+- **The evidence set is no longer the state inventory alone.** A read-only, non-destroy
+  `terraform plan -out` of the disposable root is read for `planned_values` — Terraform's own
+  account of what the configuration declares, including child modules and indexed instances —
+  and its managed addresses are UNIONed with the state inventory. Structurally: the state
+  inventory stays authoritative for the identity of everything it represents; the declared set
+  extends the verification's obligations to the addresses it does not. Nothing is derived from
+  Sol's naming conventions.
+- **A declared/state-absent resource is now a required post-destroy obligation.** For each, the
+  provider query is built from the plan's own declared values (the object's name plus its
+  project/region, the latter resolved from the plan's provider block, or from the target's
+  captured identity where the resource declares none of its own). PRESENT is a **violation**;
+  an explicit ABSENT satisfies the obligation; an attempted query that returns anything else,
+  or a kind/identity whose query cannot be built at all, is **UNKNOWN** and fails the command.
+  A run can no longer report the postcondition established while such an address was never
+  asked about. The operator output names the address, the safe query identity, the provider's
+  answer and the consequence.
+- **`terraform destroy` ignoring the resource no longer hides it.** The old report — "the
+  destruction postcondition is established", exit 0, the object alive — is now impossible for
+  this shape: the regression that pins it is the leaf orphan (declared in the plan, absent from
+  state, PRESENT at the provider, destroy otherwise clean and post-state empty) and it must
+  fail, naming the address. The provider cascade is treated distinctly: the same obligation
+  whose provider answer is ABSENT after the destroy is satisfied, and the run is a clean
+  success — "cascade may satisfy an obligation; it may not erase it".
+- **The observation path is read-only.** One extra `plan`; no apply, no import, no `state rm`,
+  no provider mutation, no Step-3 allowlist widened. The observation plan is a different
+  question from Step 3's permission-to-apply, and the two are kept apart in the code.
+- **SEC-008 holds.** The plan JSON is read and never logged: only the declared addresses
+  (`declared managed <address>`) reach the run log, and the diagnostics carry addresses and
+  the provider query, never a planned value.
+
+### What is still not established
+
+- **No live provider observation.** The claim remains `STATIC`/`MECHANISM` plus an offline
+  regression; the recipes have still never run against a real provider. That is why this is
+  `FIXED_UNQUALIFIED`, not `QUALIFIED`.
+- **One residual, named explicitly: B2 does not establish absence after total Terraform-state
+  loss for resource kinds that cannot be authoritatively identified from declared
+  configuration.** The verification's obligations are computed as `declared \ state`, and the
+  consequence of a declaration whose query cannot be built depends on the *pre-destroy state*:
+
+  | pre-destroy state | declared address state does not represent | consequence |
+  | --- | --- | --- |
+  | represents something | provider PRESENT | violation (exit 1) |
+  | represents something | provider ABSENT | obligation satisfied |
+  | represents something | query attempted, UNKNOWN | failure (exit 1) |
+  | represents something | no trustworthy query can be built | failure (exit 1) |
+  | empty | query attempted, PRESENT | violation (exit 1) |
+  | empty | query attempted, UNKNOWN | failure (exit 1) |
+  | empty | no trustworthy query can be built | **recorded coverage limitation** — reported, and deliberately not read as absence |
+
+  The last row is deliberate. An empty pre-destroy state cannot distinguish a target that was
+  never applied (a reachable, documented lifecycle phase in which `sol cloud destroy` is a
+  no-op) from one whose whole state was lost; making every unqueryable declaration fatal would
+  redefine the `Absent` → destroy → `Absent` contract rather than close this finding, and would
+  not actually purchase the missing capability. Positive or attempted evidence is never
+  softened: a PRESENT answer and a query that was made and came back UNKNOWN both fail even
+  from an empty state. Closing the residual needs a stronger mechanism than B2 — an
+  authoritative ownership record outside disposable Terraform state, or complete provider
+  discovery per kind — and is not claimed here.
+
+### Evidence
+
+- `cli/sol/test/test_terraform_plan.ml` — the declared set from `planned_values`: real root and
+  child-module addresses, indexed instances, data sources excluded, a no-op still declared,
+  CREATE explicitly not the declared set, malformed documents failing closed, the provider
+  block's own configuration read through the plan's resolved variables, and the declared read
+  never logging a plan value (SEC-008).
+- `cli/sol/test/test_destroy_verification.ml` — the declared identity source (planned values →
+  query; incomplete/malformed → UNKNOWN; no fabricated provider ids; no lookup → `No_recipe`)
+  and the declared obligations (PRESENT violates, ABSENT satisfies, attempted-UNKNOWN fails,
+  unqueryable fails from a represented state and is a recorded limitation from an empty one, a
+  read failure fails closed), plus an equivalence test that the captured and declared paths
+  build the *same* query for the same object.
+- `cli/sol/test/test_cloud_destroy.ml` — composition: the leaf orphan exits 1, the cascade
+  obligation verifies, declared UNKNOWN exits 1 and not 3, a degradation plus an orphan PRESENT
+  exits 1 with the degradation preserved, a degradation with every obligation satisfied stays
+  3, a clean run stays 0, and `Block_destroy` still never reaches verification. Plus the union
+  semantics and `pre_state_empty` (an unreadable state is not an empty one).
+- `internal/ci/test_cloud_lifecycle_offline.sh` — three end-to-end GCP scenarios over the same
+  divergence (provider PRESENT → exit 1 and the address named; provider UNKNOWN → exit 1;
+  provider ABSENT → exit 0 with the obligation reported satisfied), with the ordinary GCP and
+  AWS destroy scenarios unchanged. The assertions use `assert_contains`/`assert_not_contains`
+  so a missing or empty log is a failure rather than a vacuous pass.
+
+### Before / after, reproduced
+
+The leaf-orphan regression is a genuine before/after, not just a green assertion. Running the
+same three scenarios against the pre-change `main` binary (`2775d5b1`) fails the first one with:
+
+```text
+a declared/state-absent provider-present resource must exit 1, not 0
+```
+
+— the diverged resource survived, `terraform destroy` reported success around it, and the run
+exited **0**; the old report has no declared-set line at all (the reproduction is in the session
+that landed this, and the mechanism is the one "Evidence" above describes). The same scenarios
+against the branch binary exit 1 / 1 / 0 respectively, naming the address.

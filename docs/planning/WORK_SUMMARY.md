@@ -1,6 +1,41 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: correctness audits and their fixes — fail-loud and modeling (2026-09-23 → 2026-09-24)
+## Latest: the destruction path converges and verifies what the target *declares* (2026-09-24)
+
+The HARDEN-004 destroy-path recovery programme (GCP qualification). Detail, per-step evidence and
+the decision record are in `internal/pipeline/audits/HARDEN-004-handoff.md`; the ticket system's
+copy of the frontier is `internal/pipeline/audits/QUALIFICATION_STATUS.md`.
+
+- **Steps 2–5 landed:** one typed destroy execution core with a single state inventory, substrate
+  existence decided from state rather than from install outputs; every apply reachable from
+  destroy planned to a saved plan and refused before it runs when a change falls outside that
+  phase's allowlist; the failure policy wired with decided exit codes (0 clean / 3 degraded
+  success / 1 failure); and destruction verified from observed provider and state evidence rather
+  than from `terraform destroy`'s exit status.
+- **Attempt 7 was opened and stopped before creating anything.** Its pre-live falsification
+  (FND-0056) found that the property it was authorized to qualify is not reachable as written on
+  `main`: a resource removed from Terraform state is outside `terraform destroy`'s ownership, and
+  Sol had no adoption path, so the destroy completed *around* it.
+- **Step 6 (this change): the declared universe is part of the verification (FND-0055 / B2).** The
+  verification's universe is now the declared set from a read-only, non-destroy `plan -json`
+  UNIONed with the state inventory. A declared address state does not represent is a required
+  post-destroy obligation: PRESENT ⇒ violation, ABSENT ⇒ satisfied, attempted-UNKNOWN or an
+  identity that cannot be built ⇒ UNKNOWN ⇒ exit 1 — so the old fail-open, where such a resource
+  was invisible and its survival could be reported as "postcondition established", is closed.
+  Offline only: no apply, no import, no state surgery, no provider deletion, and the plan document
+  never reaches the run log (SEC-008).
+- **No adoption.** FND-0030 stays `OPEN`, `DEC-044` records recovery ownership (A1: import into
+  Terraform ownership behind the existing saved-plan assertion, then the ordinary destroy) as
+  accepted **in principle only**, and the smallest remaining decision — which per-kind identity is
+  authoritative enough to `terraform import` on, and what authorizes Sol to assume ownership — is
+  the next unit's subject. **Attempt 7 remains closed** and the next live GCP attempt is not
+  implied by any of this.
+- One residual is named rather than hidden: B2 does not establish absence after total
+  Terraform-state loss for kinds that cannot be authoritatively identified from declared
+  configuration; from an empty pre-state that is a recorded coverage limitation, never absence
+  (FND-0055 carries the full table).
+
+## Previous: correctness audits and their fixes — fail-loud and modeling (2026-09-23 → 2026-09-24)
 
 Two correctness passes (`internal/pipeline/audits/2026-09-23_correctness_audit.md`,
 `2026-09-24_correctness_audit_pass2.md`; findings FND-0031..0054) and the tickets

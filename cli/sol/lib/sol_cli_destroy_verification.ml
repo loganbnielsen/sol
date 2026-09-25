@@ -572,6 +572,344 @@ let query_of ~provider identity : queryability =
   | Sol_cli_provider.Aws -> aws_recipe identity
 ;;
 
+(* ── The declared identity source (FND-0055 / B2) ─────────────────────────────
+
+   A resource the disposable root declares but the pre-destroy state does not
+   represent is outside `terraform destroy`'s ownership set: Terraform will not
+   remove it, and Step 2's inventory -- state's own projection -- cannot speak
+   for it. This is the second identity source: the read-only, non-destroy plan's
+   own declared values, from which the provider query for such a resource is
+   built.
+
+   It is deliberately weaker than the captured path, and it says so. There is no
+   provider-assigned id (the object may not exist at all), so only configuration
+   values are used; a value the plan does not carry stays missing, and the
+   obligation is UNKNOWN rather than a query built from a guess. The one thing
+   taken from outside the resource's own values is the target's provider
+   configuration -- the project/region its provider block is scoped by, which the
+   plan document records and which a resource declaring neither of its own is
+   created in. That is not a fallback default: a query in another project's scope
+   would make a not-found answer about the wrong object read as absence. *)
+
+type declared_resource =
+  { address : string
+  ; kind : string
+  ; values : Yojson.Safe.t
+  }
+
+(* The planned values of a resource Terraform has not created yet carry only the
+   configuration's own attributes -- provider-generated ones are left out -- so a
+   value that is not there is *missing*, not empty. [values] itself may be absent
+   (the JSON key is simply not emitted), which is a missing value rather than an
+   error: `member` on a non-object raises, so the shape is checked first. *)
+let declared_string declared name =
+  match declared.values with
+  | `Assoc _ as values ->
+    (match Yojson.Safe.Util.member name values with
+     | `String value when value <> "" -> Some value
+     | _ -> None)
+  | _ -> None
+;;
+
+let declared_identity ?project ?region declared =
+  { address = declared.address
+  ; kind = declared.kind
+  ; provider_id = None
+  ; arn = None
+  ; project
+  ; region
+  }
+;;
+
+let declared_missing declared what =
+  Error
+    (Printf.sprintf
+       "%s: the plan's declared values do not establish the %s"
+       declared.address
+       what)
+;;
+
+let declared_need declared what = function
+  | Some value -> Ok value
+  | None -> declared_missing declared what
+;;
+
+(* The same query shapes the captured recipes build, but from configuration. The
+   project resolution `?"project"` then `target_project` is what makes this the
+   *declared* identity rather than a reconstruction of a captured one. *)
+let gcp_declared_recipe ~target_project declared : queryability =
+  let project =
+    match declared_string declared "project" with
+    | Some _ as project -> project
+    | None -> target_project
+  in
+  let identity = declared_identity ?project declared in
+  let name = declared_string declared "name" in
+  match declared.kind with
+  | "google_container_cluster" ->
+    queryable
+      (let* name = declared_need declared "cluster name" name in
+       let* location =
+         declared_need declared "location" (declared_string declared "location")
+       in
+       let* project = declared_need declared "project" project in
+       gcp_query
+         ~identity
+         ~project
+         ~not_found:Gcp_absence_wording
+         [ "gcloud"
+         ; "container"
+         ; "clusters"
+         ; "describe"
+         ; name
+         ; "--location"
+         ; location
+         ; "--project"
+         ; project
+         ])
+  | "google_sql_database_instance" ->
+    queryable
+      (let* name = declared_need declared "instance name" name in
+       let* project = declared_need declared "project" project in
+       gcp_query
+         ~identity
+         ~project
+         ~not_found:Gcp_absence_wording
+         [ "gcloud"; "sql"; "instances"; "describe"; name; "--project"; project ])
+  | "google_compute_network" ->
+    queryable
+      (let* name = declared_need declared "network name" name in
+       let* project = declared_need declared "project" project in
+       gcp_query
+         ~identity
+         ~project
+         ~not_found:Gcp_absence_wording
+         [ "gcloud"; "compute"; "networks"; "describe"; name; "--project"; project ])
+  | "google_compute_subnetwork" ->
+    queryable
+      (let* name = declared_need declared "subnetwork name" name in
+       let* region =
+         declared_need declared "region" (declared_string declared "region")
+       in
+       let* project = declared_need declared "project" project in
+       gcp_query
+         ~identity
+         ~project
+         ~not_found:Gcp_absence_wording
+         [ "gcloud"
+         ; "compute"
+         ; "subnetworks"
+         ; "describe"
+         ; name
+         ; "--region"
+         ; region
+         ; "--project"
+         ; project
+         ])
+  | "google_compute_router" ->
+    queryable
+      (let* name = declared_need declared "router name" name in
+       let* region =
+         declared_need declared "region" (declared_string declared "region")
+       in
+       let* project = declared_need declared "project" project in
+       gcp_query
+         ~identity
+         ~project
+         ~not_found:Gcp_absence_wording
+         [ "gcloud"
+         ; "compute"
+         ; "routers"
+         ; "describe"
+         ; name
+         ; "--region"
+         ; region
+         ; "--project"
+         ; project
+         ])
+  | "google_compute_address" ->
+    queryable
+      (let* name = declared_need declared "address name" name in
+       let* region =
+         declared_need declared "region" (declared_string declared "region")
+       in
+       let* project = declared_need declared "project" project in
+       gcp_query
+         ~identity
+         ~project
+         ~not_found:Gcp_absence_wording
+         [ "gcloud"
+         ; "compute"
+         ; "addresses"
+         ; "describe"
+         ; name
+         ; "--region"
+         ; region
+         ; "--project"
+         ; project
+         ])
+  | "google_compute_global_address" ->
+    queryable
+      (let* name = declared_need declared "address name" name in
+       let* project = declared_need declared "project" project in
+       gcp_query
+         ~identity
+         ~project
+         ~not_found:Gcp_absence_wording
+         [ "gcloud"
+         ; "compute"
+         ; "addresses"
+         ; "describe"
+         ; name
+         ; "--global"
+         ; "--project"
+         ; project
+         ])
+  | "google_artifact_registry_repository" ->
+    queryable
+      (let* name =
+         declared_need declared "repository id" (declared_string declared "repository_id")
+       in
+       let* location =
+         declared_need declared "location" (declared_string declared "location")
+       in
+       let* project = declared_need declared "project" project in
+       gcp_query
+         ~identity
+         ~project
+         ~not_found:Gcp_absence_wording
+         [ "gcloud"
+         ; "artifacts"
+         ; "repositories"
+         ; "describe"
+         ; name
+         ; "--location"
+         ; location
+         ; "--project"
+         ; project
+         ])
+  | "google_storage_bucket" ->
+    queryable
+      (let* name = declared_need declared "bucket name" name in
+       let* project = declared_need declared "project" project in
+       gcp_query
+         ~identity
+         ~project
+         ~not_found:Gcp_absence_wording
+         [ "gcloud"
+         ; "storage"
+         ; "buckets"
+         ; "describe"
+         ; "gs://" ^ name
+         ; "--project"
+         ; project
+         ])
+  | "google_dns_managed_zone" ->
+    queryable
+      (let* name = declared_need declared "zone name" name in
+       let* project = declared_need declared "project" project in
+       gcp_query
+         ~identity
+         ~project
+         ~not_found:Gcp_absence_wording
+         [ "gcloud"; "dns"; "managed-zones"; "describe"; name; "--project"; project ])
+  | kind ->
+    No_recipe
+      (Printf.sprintf
+         "%s: no GCP provider lookup is defined for %s"
+         declared.address
+         kind)
+;;
+
+let aws_declared_recipe ~target_region declared : queryability =
+  let region =
+    match declared_string declared "region" with
+    | Some _ as region -> region
+    | None -> target_region
+  in
+  let identity = declared_identity ?region declared in
+  match declared.kind with
+  | "aws_eks_cluster" ->
+    queryable
+      (let* name =
+         declared_need declared "cluster name" (declared_string declared "name")
+       in
+       let* region = declared_need declared "region" region in
+       query
+         ~identity
+         ~not_found:(Aws_error_code "ResourceNotFoundException")
+         [ "aws"; "eks"; "describe-cluster"; "--name"; name; "--region"; region ])
+  | "aws_db_instance" ->
+    queryable
+      (let* id =
+         declared_need declared "identifier" (declared_string declared "identifier")
+       in
+       let* region = declared_need declared "region" region in
+       query
+         ~identity
+         ~not_found:(Aws_error_code "DBInstanceNotFound")
+         [ "aws"
+         ; "rds"
+         ; "describe-db-instances"
+         ; "--db-instance-identifier"
+         ; id
+         ; "--region"
+         ; region
+         ])
+  | "aws_ecr_repository" ->
+    queryable
+      (let* name =
+         declared_need declared "repository name" (declared_string declared "name")
+       in
+       let* region = declared_need declared "region" region in
+       query
+         ~identity
+         ~not_found:(Aws_error_code "RepositoryNotFoundException")
+         [ "aws"
+         ; "ecr"
+         ; "describe-repositories"
+         ; "--repository-names"
+         ; name
+         ; "--region"
+         ; region
+         ])
+  | "aws_s3_bucket" ->
+    queryable
+      (let* name =
+         declared_need declared "bucket name" (declared_string declared "bucket")
+       in
+       query
+         ~identity
+         ~not_found:(Aws_error_code "NoSuchBucket")
+         [ "aws"; "s3api"; "get-bucket-location"; "--bucket"; name ])
+  | "aws_vpc" | "aws_subnet" | "aws_security_group" | "aws_nat_gateway" ->
+    (* Kinds whose provider identity is assigned at creation. The plan cannot
+       establish it, so the obligation is UNKNOWN -- never a name-shaped guess. *)
+    Identity_incomplete
+      (Printf.sprintf
+         "%s: the provider assigns a %s's id when the resource is created, and the \
+          plan's declared values cannot establish it"
+         declared.address
+         declared.kind)
+  | kind ->
+    No_recipe
+      (Printf.sprintf
+         "%s: no AWS provider lookup is defined for %s"
+         declared.address
+         kind)
+;;
+
+(* [target_project] and [target_region] are the scope the target's provider is
+   configured with, resolved from the plan's own provider block (or, failing
+   that, from the target's resolved configuration). They are passed only to the
+   identity source that needs them: a declared GCP resource that does not name a
+   project, and a declared AWS resource, whose resource types carry no region. *)
+let declared_query_of ~provider ~target_project ~target_region declared : queryability =
+  match provider with
+  | Sol_cli_provider.Gcp -> gcp_declared_recipe ~target_project declared
+  | Sol_cli_provider.Aws -> aws_declared_recipe ~target_region declared
+;;
+
 (* ── Classifying a provider answer ─────────────────────────────────────────── *)
 
 (* The name that follows a literal marker, lowercased text assumed. Used to read
@@ -1010,8 +1348,47 @@ type observation =
     (* represented before destruction, with no provider lookup defined for the
          kind, and why: their absence rests on [state] alone, and saying so -- with
          the reason -- is the point *)
+  ; declared : declared_coverage
+    (* the addresses this root declares but state did not represent, and what was
+         observed about them after destruction (B2, FND-0055) *)
   ; sweep : sweep
   ; retention : retention
+  }
+
+and declared_requirement =
+  | Declared_observed of provider_observation
+    (* an authoritative query was built from the plan's own declared values and
+         run against the provider *)
+  | Declared_unqueryable of string
+(* no trustworthy query could be built from what the plan declared. Never
+         absence -- see [declared_coverage.pre_state_empty] for the one case in
+         which it is a recorded limitation rather than a failure *)
+
+and declared_obligation =
+  { address : string
+  ; kind : string
+  ; requirement : declared_requirement
+  }
+
+and declared_coverage =
+  { pre_state_empty : bool
+    (* whether the pre-destroy state represented nothing. It decides exactly one
+         thing: the consequence of [Declared_unqueryable]. An empty state cannot
+         distinguish "this target was never applied" from "its whole state was
+         lost", and both histories are reachable through the public lifecycle, so
+         a kind that cannot be authoritatively queried from an empty state is
+         recorded as a coverage limitation rather than redefining the [Absent]
+         no-op as a failure.
+
+         It deliberately does not soften evidence that *was* obtained: a query
+         that came back PRESENT is still a violation, and a query that was
+         attempted and came back UNKNOWN still fails, because neither is the same
+         as having no way to ask. *)
+  ; read_failure : string option
+    (* the read-only plan itself could not be read or parsed, so what the root
+         declares is unknown. That is a failure whatever the state looked like:
+         an unreadable plan is a failed observation, not an absent capability *)
+  ; obligations : declared_obligation list
   }
 
 type verdict =
@@ -1079,6 +1456,57 @@ let classify observation =
               provider.operation
               reason))
     observation.identities;
+  (* B2: a resource the root declares but state did not represent is outside
+     `terraform destroy`'s ownership, so [state] cannot speak for it and it is
+     never reached by [identities] above. Each one carries its own required
+     observation. A query that was built and run is judged exactly like a captured
+     identity's -- PRESENT violates, ABSENT satisfies, anything else is UNKNOWN --
+     and one that could not be built is UNKNOWN too, except from an empty pre-state,
+     where it is a recorded coverage limitation rather than a failure. *)
+  (match observation.declared.read_failure with
+   | Some reason ->
+     unknown
+       (Printf.sprintf
+          "the resources this root declares could not be established from a read-only \
+           plan (%s), so a declared resource that Terraform state does not represent \
+           cannot be ruled out"
+          reason)
+   | None -> ());
+  List.iter
+    (fun obligation ->
+       match obligation.requirement with
+       | Declared_observed provider ->
+         (match provider.verdict with
+          | Present ->
+            violate
+              (Printf.sprintf
+                 "this root declares %s and the provider still has it (`%s`) although \
+                  Terraform state does not represent it, so `terraform destroy` never \
+                  owned it"
+                 (identity_to_string provider.identity)
+                 provider.operation)
+          | Absent -> ()
+          | Unknown reason ->
+            unknown
+              (Printf.sprintf
+                 "this root declares %s but Terraform state does not represent it, and \
+                  its provider reality could not be established (`%s`): %s"
+                 (identity_to_string provider.identity)
+                 provider.operation
+                 reason))
+       | Declared_unqueryable reason ->
+         if observation.declared.pre_state_empty
+         then ()
+         else
+           unknown
+             (Printf.sprintf
+                "this root declares %s (%s) but Terraform state does not represent it, \
+                 so `terraform destroy` never owned it, and no trustworthy provider \
+                 query could be built: %s"
+                obligation.address
+                obligation.kind
+                reason))
+    observation.declared.obligations;
   (* Only a sweep's *residues* are violations. Its indeterminate checks are reported
      by [report] and are deliberately not promoted here: step 5 section 5 refuses to
      let an unestablished name-derived query decide the result. *)
@@ -1147,6 +1575,79 @@ let report observation =
       (fun (identity, reason) ->
          line "      %s\n        %s\n" (identity_to_string identity) reason)
       observation.unqueried);
+  (* B2 / FND-0055: the half of the universe state could not speak for. Naming the
+     Terraform address, the safe query identity (never a plan value), the provider's
+     answer and the consequence is the point -- the old failure was silence, not a
+     wrong answer. *)
+  (match observation.declared.read_failure with
+   | Some reason ->
+     line
+       "    declared set (read-only plan): UNKNOWN -- what this root declares could not \
+        be established (%s), which is not the same as declaring nothing\n"
+       reason
+   | None -> ());
+  let observed, unqueryable =
+    List.partition
+      (fun obligation ->
+         match obligation.requirement with
+         | Declared_observed _ -> true
+         | Declared_unqueryable _ -> false)
+      observation.declared.obligations
+  in
+  if observed <> []
+  then (
+    line
+      "    declared but not represented in Terraform state -- queried after destroy, \
+       because `terraform destroy` never owned them:\n";
+    List.iter
+      (fun obligation ->
+         match obligation.requirement with
+         | Declared_observed provider ->
+           line
+             "      address:              %s\n\
+             \        provider observation: %s\n\
+             \        queried:              %s\n\
+             \        answered:             %s\n\
+             \        consequence:          %s\n"
+             (identity_to_string provider.identity)
+             (verdict_label provider.verdict)
+             provider.operation
+             provider.evidence
+             (match provider.verdict with
+              | Absent -> "obligation satisfied"
+              | Present | Unknown _ -> "destruction postcondition not established")
+         | Declared_unqueryable _ -> ())
+      observed);
+  if unqueryable <> []
+  then (
+    if observation.declared.pre_state_empty
+    then
+      line
+        "    declared but not represented in Terraform state -- not provider-queryable, \
+         and the pre-destroy state was empty (a coverage limitation, not absence):\n"
+    else
+      line
+        "    declared but not represented in Terraform state -- provider reality could \
+         not be established:\n";
+    List.iter
+      (fun obligation ->
+         match obligation.requirement with
+         | Declared_unqueryable reason ->
+           line
+             "      address:              %s [%s]\n\
+             \        provider observation: UNKNOWN\n\
+             \        reason:               %s\n\
+             \        consequence:          %s\n"
+             obligation.address
+             obligation.kind
+             reason
+             (if observation.declared.pre_state_empty
+              then
+                "recorded, and deliberately not read as absence; an empty pre-state does \
+                 not by itself make this a failure"
+              else "destruction postcondition not established")
+         | Declared_observed _ -> ())
+      unqueryable);
   (match observation.sweep with
    | Sweep_not_run -> ()
    | Sweep_ran { residues = []; indeterminate = [] } ->

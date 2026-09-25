@@ -112,19 +112,33 @@ let show_json_plan ?(env = []) ~chdir ~plan_file () =
   run (cmd ~env [ "terraform"; "-chdir=" ^ chdir; "show"; "-json"; plan_file ])
 ;;
 
+(* One read of a saved plan, shared by the two things that need it: the apply
+   assertion, which classifies resource changes, and the declared-universe
+   observation (FND-0055 / B2). Neither caller receives the JSON directly -- both
+   go through a [Sol_cli_terraform_plan] recorder, which enforces SEC-008. *)
+let saved_plan_json ?env ~chdir ~plan_file () =
+  match show_json_plan ?env ~chdir ~plan_file () with
+  | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok r.Sol_cli_process.stdout
+  | Ok r ->
+    let detail = String.trim r.Sol_cli_process.stderr in
+    Error
+      (Printf.sprintf
+         "terraform show exited %d%s"
+         r.Sol_cli_process.exit_code
+         (if detail = "" then "." else ":\n" ^ detail))
+  | Error e -> Error ("could not run terraform show: " ^ Sol_cli_process.error_to_string e)
+;;
+
 let show_saved_plan ?env ~run_log ~phase ~chdir ~plan_file () =
   Sol_cli_terraform_plan.show_and_record ~run_log ~phase ~show:(fun () ->
-    match show_json_plan ?env ~chdir ~plan_file () with
-    | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok r.Sol_cli_process.stdout
-    | Ok r ->
-      let detail = String.trim r.Sol_cli_process.stderr in
-      Error
-        (Printf.sprintf
-           "terraform show exited %d%s"
-           r.Sol_cli_process.exit_code
-           (if detail = "" then "." else ":\n" ^ detail))
-    | Error e ->
-      Error ("could not run terraform show: " ^ Sol_cli_process.error_to_string e))
+    saved_plan_json ?env ~chdir ~plan_file ())
+;;
+
+(* The same read, recorded as the declared universe instead of as resource
+   changes. Neither recorder returns the JSON. *)
+let show_saved_plan_declared ?env ~run_log ~phase ~chdir ~plan_file () =
+  Sol_cli_terraform_plan.show_declared_and_record ~run_log ~phase ~show:(fun () ->
+    saved_plan_json ?env ~chdir ~plan_file ())
 ;;
 
 (* Apply the saved plan itself. No `-auto-approve`: a saved plan applies without

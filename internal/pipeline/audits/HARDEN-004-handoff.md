@@ -750,3 +750,108 @@ Canonical checkout clean; no qualification target left in the tree; nothing crea
 healthy with the delegation resolving before the session ended. The baseline inventory is in the
 Attempt-7 evidence bundle, not in the repository — it carries project identifiers, the same rule
 Attempt 6's raw logs followed.
+
+# Step 6 — the declared universe is part of the verification (FND-0055 / B2, 2026-09-24)
+
+**Outcome: landed, offline.** `main` at the time of writing: `c1d9b67d`. This is `DEC-044`'s
+recommended first unit — the one that stops a divergent resource being invisible — and it
+deliberately does *not* adopt, import, mutate state, or delete anything through a provider.
+
+## The two observations, and why neither replaces the other
+
+```text
+pre-destroy `terraform show -json`      -> what Terraform currently represents / owns
+read-only, non-destroy `terraform plan` -> what the disposable root currently declares
+```
+
+The verification's universe is `declared ∪ state`. State stays authoritative for the identity of
+everything it represents (the captured-identity path is untouched); the declared set extends
+coverage to the addresses state does not represent — which are exactly the ones
+`terraform destroy` never owned and therefore never removes. The declared set is read from
+`planned_values`, not from `resource_changes`: a no-op resource is declared without appearing as
+a change, and a resource the configuration drops is a change but not a declaration. The
+observation plan is a *different* Terraform call from Step 3's permission-to-apply, and the code
+says so — a CREATE in it is a declaration, never permission to construct anything.
+
+## What a declared/state-absent resource now does
+
+For each such address the provider is queried from identity the read-only plan itself can
+establish: the object's configured name, plus its project/region — taken from the resource's own
+planned values where they carry it, otherwise from the provider block's own expression resolved
+through the plan's variables, and otherwise from the target's captured identity. The scope
+matters: a query in the wrong project would make a not-found about the wrong object read as
+absence.
+
+| provider answer | consequence |
+| --- | --- |
+| PRESENT | **violation**, exit 1, address and query named |
+| ABSENT | obligation satisfied |
+| attempted, anything else (UNKNOWN) | failure, exit 1 |
+| no trustworthy query can be built, pre-state represented something | failure, exit 1 |
+| no trustworthy query can be built, pre-state empty | recorded coverage limitation — reported, never absence |
+
+The last row is the one judgement call in this unit, and it is deliberate. An empty pre-destroy
+state cannot distinguish a target that was never applied (a real, documented phase in which
+`sol cloud destroy` is a no-op) from one whose whole state was lost, so making every unqueryable
+declaration fatal would redefine `Absent → destroy → Absent` rather than close this finding. It
+does not soften evidence that was obtained: PRESENT and attempted-UNKNOWN both fail from an empty
+state too. `terraform destroy` still runs; this changes only what Sol is willing to *claim*.
+
+**Named residual:** B2 does not establish absence after total Terraform-state loss for kinds that
+cannot be authoritatively identified from declared configuration. Closing that needs a stronger
+mechanism than B2 — an ownership record outside disposable state, or complete per-kind provider
+discovery — and is not claimed here. FND-0055 carries the full table.
+
+## No adoption in this unit, and FND-0030 stays OPEN
+
+When the detection path sees declared + state-absent + PRESENT, the correct behaviour *here* is to
+report the divergence and fail. No `terraform import`, no state surgery, no provider-native
+delete, no constructive apply, no recovery mode, no widened Step-3 allowlist. FND-0030's
+convergence half (adoption) is still unwritten, and `DEC-044` now records A1 as accepted **in
+principle only**; the exact import-id recipe per kind and the authority that selects it are the
+next unit's subject.
+
+## Read-only, and SEC-008
+
+One extra `terraform plan -out`; the saved plan is read and removed. Nothing is applied from it.
+The plan document carries sensitive values in plain text, so it is read and never logged — only
+`declared <mode> <address>` lines reach the run log, and the diagnostics name addresses and the
+provider query, never a planned value. The four destroy-path phase policies are unchanged.
+
+## Evidence
+
+- `cli/sol/test/test_terraform_plan.ml` — 9 new cases: declared-set extraction (root, child
+  module, indexed instances, data sources excluded, no-op still declared, CREATE not the declared
+  set, malformed fails closed), the provider block's configuration, and SEC-008 on the declared
+  read.
+- `cli/sol/test/test_destroy_verification.ml` — 11 new cases: declared identity (planned values →
+  query; incomplete/malformed → UNKNOWN; no fabricated provider ids; no lookup → `No_recipe`; the
+  captured and declared paths build the same query for the same object) and the declared
+  obligations (PRESENT/ABSENT/UNKNOWN/unqueryable, the empty-state carve-out, the read failure,
+  and the diagnostic report).
+- `cli/sol/test/test_cloud_destroy.ml` — 11 new cases: leaf orphan → exit 1; cascade obligation
+  → exit 0; declared UNKNOWN → exit 1 (not 3); unqueryable with/without a represented state;
+  degradation + orphan PRESENT → exit 1 with the degradation preserved; degradation with every
+  obligation satisfied → still 3; clean → 0; the declared universe recorded before the destroy
+  and passed to verification; no divergence unchanged; union semantics; `pre_state_empty` (an
+  unreadable state is not an empty one).
+- `internal/ci/test_cloud_lifecycle_offline.sh` — three end-to-end GCP scenarios over the same
+  divergence (PRESENT → exit 1 naming the address; UNKNOWN → exit 1; ABSENT → exit 0 with the
+  obligation reported satisfied). Their assertions use `assert_contains`/`assert_not_contains`,
+  and the section was negative-controlled (flipping the stub's PRESENT answer to absent makes the
+  scenario fail) so it cannot pass vacuously. The ordinary GCP and AWS destroy scenarios are
+  unchanged. **Before/after:** the same three scenarios run against the pre-change `main` binary
+  (`2775d5b1`) fail at the first with `must exit 1, not 0` — the orphan survived and the run
+  reported the postcondition established, which is the fail-open reproduced rather than asserted.
+- `dune build`, CI's unit-test command, `internal/ci/check_ocamlformat.sh --all`, the full
+  offline harness, and the destroy/public-cloud-lifecycle guards all green.
+
+## What is next
+
+**A review/decision of `DEC-044`'s recovery-ownership mechanism — not a live attempt.** The
+smallest remaining decision is the A1 authority question above. Until it is answered, a
+divergence fails loudly and names the resource, which is the honest behaviour, and the live
+frontier is unchanged: platform `Ready` on GCP is still not reached, and Attempt 7 stays closed.
+
+**Demo/example: not applicable** — cloud lifecycle internals; nothing an application author
+writes changes. **No language-parity impact** (DEC-022): no application-facing contract changed.
