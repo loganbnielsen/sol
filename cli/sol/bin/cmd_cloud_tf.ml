@@ -747,8 +747,10 @@ let retention_evidence ~provider ~region ~retention ~pre_destroy ~preparation =
      | Sol_cli_cloud_lifecycle.Retain_nothing ->
        Retention_not_required
          "none declared, and there is no GCP snapshot surface to observe -- Cloud SQL \
-          deletes its backups together with the instance, so the verified absence of the \
-          instance is the whole guarantee (destroy_retention = none)"
+          deletes its backups together with the instance (no final backup is requested), \
+          and the observability buckets were created with soft delete off (retention 0, \
+          INFRA-077), so the verified absence of the instance is the whole guarantee \
+          (destroy_retention = none)"
      | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
        (* Unreachable: a GCP target whose retention is final-snapshot is blocked in
           preparation, so destruction never runs. Reaching here means the block was

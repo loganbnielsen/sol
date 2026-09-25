@@ -409,6 +409,12 @@ resource "google_storage_bucket" "loki" {
   uniform_bucket_level_access = true
   force_destroy               = true
 
+  # INFRA-077: routed from the target's destroy_retention (0 for `none`), never the
+  # provider default -- see variables.tf.
+  soft_delete_policy {
+    retention_duration_seconds = var.gcs_soft_delete_retention_seconds
+  }
+
   lifecycle_rule {
     condition {
       age = var.loki_retention_days
@@ -454,6 +460,12 @@ resource "google_storage_bucket" "thanos" {
   project                     = var.project_id
   uniform_bucket_level_access = true
   force_destroy               = true
+
+  # INFRA-077: routed from the target's destroy_retention (0 for `none`), never the
+  # provider default -- see variables.tf.
+  soft_delete_policy {
+    retention_duration_seconds = var.gcs_soft_delete_retention_seconds
+  }
   # INFRA-037: same invariant as AWS (ADR 0004) -- these buckets are populated by
   # running the platform, so [force_destroy = false] together with
   # [prevent_destroy] left a durable-observability target undeletable through
