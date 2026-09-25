@@ -16,9 +16,19 @@
 #
 # What it deliberately does NOT do: speculate about, or remediate, the
 # `startupapicheck` failure the previous attempts stopped at (FND-0010). It runs the
-# platform install, captures what the cluster actually says, and stops. Classifying
-# that evidence is a separate, deliberate step — a harness that "tries the likely
-# firewall fix" destroys the experiment it was written to perform.
+# platform install, captures what the cluster actually says, *classifies* the captured
+# evidence against the candidate causes, and stops. Classification is not remediation: a
+# harness that "tries the likely firewall fix" destroys the experiment it was written to
+# perform.
+#
+# Which invocation installs the platform (H2 of the HARDEN-006 attempt-8 re-scope):
+# `sol cloud apply`.
+# It opens the install window, applies the cloud root, installs the platform, waits for
+# readiness and verifies de-escalation, all in one sequence (`Sol_cli_cloud_apply.execute`,
+# reached from `cmd_cloud_tf.ml`'s Apply branch). `sol deploy` is the *application* deploy:
+# it never installs a platform, so a failure there is not FND-0010's. There is therefore no
+# separate `platform` phase: the discriminator is captured in the `cloud` phase,
+# immediately after a failed `sol cloud apply` and before any teardown.
 #
 # Two prerequisites this harness does NOT yet satisfy, both found by running it (a
 # PLAN_ONLY cloud run fails closed on the first, which is the point of having it):
@@ -41,10 +51,17 @@
 #      rather than guessing.
 #
 # Usage:
-#   internal/qualification/gcp/live-qual.sh cloud      # bootstrap + zone + NS capture, then STOP
-#   internal/qualification/gcp/live-qual.sh platform   # platform install + FND-0010 probes, then teardown
-#   internal/qualification/gcp/live-qual.sh destroy    # teardown + independent absence verification
-#   internal/qualification/gcp/live-qual.sh verify     # absence verification only (no mutation)
+#   internal/qualification/gcp/live-qual.sh cloud      # preflight, durable reconcile, sol cloud apply
+#                                                      #   failure -> FND-0010 discriminator, evidence
+#                                                      #              freeze, then teardown (same
+#                                                      #              invocation: the cost rule)
+#                                                      #   success -> Ready-path evidence + NS hand-off
+#   internal/qualification/gcp/live-qual.sh destroy    # evidence freeze (idempotent) + supported
+#                                                      #   teardown + post-teardown inventory
+#   internal/qualification/gcp/live-qual.sh verify     # post-teardown inventory only (no mutation)
+#
+# `platform` is refused rather than implemented: this harness has no platform phase, because
+# `sol cloud apply` is the platform install.
 #
 # Required environment (no defaults, deliberately):
 #   CLUSTER       unique cluster name for this run, e.g. sol-qual-gcp-5
@@ -184,6 +201,12 @@ DB_PASSWORD="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 20)"
 export TF_VAR_db_password="$DB_PASSWORD"
 
 KEEP=0            # set to 1 only at the deliberate delegation boundary
+BUNDLE_ATTEMPTED=0 # whether this invocation froze an evidence bundle
+BUNDLE_OK=0       # whether that bundle contains what the runbook promises
+# One value with three meanings, because "attempted, neither succeeded nor failed" is not a
+# state the install can be in. `none` -> no install in this invocation (a standalone destroy,
+# a plan-only run); `succeeded` -> the Ready path; `failed` -> the discriminator's path.
+INSTALL_STATE=none
 CLOUD_APPLIED=0   # whether a cloud root may exist and therefore need destroying
 # Teardown has ONE owner (cleanup), and this is how it knows whether it has already run.
 # Without it, `destroy` (the command) ran the teardown and then the EXIT trap ran it again,
@@ -216,7 +239,16 @@ target:
   cluster_name: $CLUSTER
   base_domain: $BASE_DOMAIN
   profile: $PROFILE_NAME
-  cluster_issuer: letsencrypt-staging
+  # NO cluster_issuer, deliberately (H1 of the HARDEN-006 attempt-8 re-scope). Installing a GCP
+  # platform through the shared definition is still refused while its ClusterIssuers are
+  # Route 53-only (FND-0007), and that refusal is correct and stays: it stops Sol
+  # provisioning a platform that looks TLS-wired and cannot issue. INFRA-067 made
+  # *destruction* stop evaluating it; installation must keep refusing. This run is not
+  # asking the TLS question -- its job is to reach the cert-manager boundary and capture
+  # FND-0010's discriminator -- so it asks for a platform without an issuer rather than
+  # for one it cannot have. The reason this change sat parked (the recovery work came
+  # first) is gone: INFRA-067 landed in #445 and the fix survives in
+  # Sol_cli_gcp_cluster.platform_vars' Install/Destruction context.
   letsencrypt_email: $LE_EMAIL
   terraform_var_file: ../../../../../internal/qualification/gcp/qual-gcp.tfvars
 
@@ -388,120 +420,277 @@ reconcile_durable_root() {
   say "bootstrap: durable root reconciled"
 }
 
-verify_durable_present() {
-  local rc=0
-  say "verify: expected PRESENT (durable prerequisites outlive the target)"
-  if gcloud storage buckets describe "gs://$STATE_BUCKET" --project "$PROJECT" \
-    >"$LOG_DIR/verify-state-bucket.log" 2>&1; then
-    say "  ✓ state bucket gs://$STATE_BUCKET present"
+# ── provider inventory: the provider's own answer, not Terraform's ────────────
+#
+# One tri-state probe. "The read failed" is not "the resource is gone": a permission
+# failure, an expired credential or a transport error all exit non-zero without saying
+# anything about the resource, and reading those as ABSENT is how a postcondition that is
+# the last line of defence fails open -- reporting a clean account because it could not read
+# the account. PRESENT / ABSENT / UNKNOWN, and UNKNOWN always fails a postcondition.
+#
+# The probe command must exit 0 and PRINT what it found, or fail with the provider's own
+# not-found vocabulary. One shape covers both kinds this inventory needs:
+#   describe <name>    -> exit 0 and prints the object   => PRESENT
+#   list --filter=...  -> exit 0 and prints nothing      => ABSENT
+provider_probe() { # provider_probe <class> <expect> <command...>
+  local class="$1" expect="$2"; shift 2
+  local out="$LOG_DIR/inventory-$class.log" err="$LOG_DIR/inventory-$class.stderr" verdict
+  # stdout and stderr are kept apart on purpose: the verdict is about what the provider
+  # *returned*, and real `gcloud` writes a warning to stderr when a filtered list is empty
+  # ("filter keys were not present in any resource"). Merging them made that warning look like
+  # an answer, so an empty list read as PRESENT -- observed against the live project.
+  if "$@" >"$out" 2>"$err"; then
+    if [ -n "$(tr -d '[:space:]' <"$out")" ]; then verdict=PRESENT; else verdict=ABSENT; fi
+  elif grep -qiE '(not[ -]?found|does not exist|was not found|notFound|404|No URLs matched)' "$err" "$out"; then
+    verdict=ABSENT
   else
-    say "  ✗ state bucket gs://$STATE_BUCKET is MISSING — a disposable destroy removed a durable prerequisite"
-    rc=1
+    verdict=UNKNOWN
   fi
-  if gcloud dns managed-zones describe "$ZONE_NAME" --project "$PROJECT" \
-    >"$LOG_DIR/verify-dns-zone.log" 2>&1; then
-    say "  ✓ dns zone $ZONE_NAME present (DEC-042: durable by design)"
-  else
-    say "  · dns zone $ZONE_NAME not created yet (nothing delegated)"
-  fi
-  return "$rc"
+  printf '%s\t%s\t%s\t%s\n' \
+    "$class" "$verdict" "$expect" "$(head -1 "$err" "$out" 2>/dev/null | cut -c1-100)" >>"$INVENTORY_TSV"
+  say "    $class: $verdict"
 }
 
-# EXPECTED ABSENT — everything the target owns.
-verify_absent() {
-  local rc=0
-  verify_durable_present || rc=1
-  say "verify: expected ABSENT (target-owned; independence from Terraform's exit status)"
+# The names below are the GCP root's own (`cli/platform/infra/gcp/main.tf`) and the state
+# object keys are the backend's own, read from the bucket rather than guessed. A guessed name
+# is a probe that can never answer: this harness used to ask for a network named
+# "$CLUSTER-vpc" while the root names it "$CLUSTER", so that probe could only ever return
+# not-found and reported a vacuous "absent" -- the class FND-0045 named, in the harness.
+GCP_ROLE_ID="sol_$(printf '%s' "$CLUSTER" | tr '-' '_')_cluster_access"
+GCP_PROVISIONER_SA="$CLUSTER-provisioner@$PROJECT.iam.gserviceaccount.com"
 
-  probe_gone() { # name, command...
-    local name="$1"; shift
-    local log="$LOG_DIR/verify-$name.log"
-    # Print the whole evaluation, not just the verdict: which command, what it returned, and
-    # the classification that follows. A postcondition that says only "✗ exists" forces the
-    # reader to reconstruct the reasoning, and a wrong verdict looks identical to a wrong
-    # world.
-    local status=0
-    if "$@" >"$log" 2>&1; then
-      status=0
-    else
-      status=$?
-    fi
-    say "    probe $name: exit=$status, output: $(head -1 "$log" 2>/dev/null | cut -c1-90)"
-    if [ "$status" = "0" ]; then
-      say "  ✗ $name still exists (PRESENT)"
-      rc=1
-      return
-    fi
-    # Three states, not two. A non-zero exit is not absence: a permission failure, an
-    # expired credential or a transport error all exit non-zero without saying anything
-    # about the resource, and reading those as "absent" makes the postcondition that is
-    # the last line of defence fail OPEN -- reporting a clean account because it could not
-    # read the account. Absence needs evidence of absence; anything else is unknown, and
-    # unknown fails the verification.
-    if grep -qiE '(not[ -]?found|does not exist|was not found|notFound|404)' "$log"; then
-      say "  ✓ $name absent (ABSENT: the provider said not-found)"
-    else
-      say "  ✗ $name: could NOT determine absence (UNKNOWN: the read failed without reporting not-found)"
-      say "      (this is not evidence the resource exists, and not evidence it does not)"
-      rc=1
-    fi
-  }
-
-  probe_gone gke-cluster gcloud container clusters describe "$CLUSTER" \
-    --region "$REGION" --project "$PROJECT"
-  probe_gone sql-instance gcloud sql instances describe "$CLUSTER-postgres" \
-    --project "$PROJECT"
-  probe_gone network gcloud compute networks describe "$CLUSTER-vpc" \
-    --project "$PROJECT"
-
-  local n
-  for pair in "addresses:$CLUSTER" "disks:$CLUSTER" "forwarding-rules:$CLUSTER"; do
-    local what="${pair%%:*}" filt="${pair##*:}"
-    n="$(gcloud compute "$what" list --project "$PROJECT" \
-      --filter="name~$filt" --format='value(name)' 2>/dev/null | wc -l)"
-    if [ "$n" = "0" ]; then say "  ✓ no $what matching $filt"; else say "  ✗ $n $what remain"; rc=1; fi
-  done
-
-  # Service-networking peering: abandoned twice in this workstream, so it is checked
-  # by name rather than inferred from the network's absence.
-  if gcloud compute networks peerings list --project "$PROJECT" \
-    --format='value(name)' 2>/dev/null | grep -q 'servicenetworking'; then
-    say "  ✗ servicenetworking peering remains"
-    rc=1
-  else
-    say "  ✓ no servicenetworking peering"
-  fi
-
-  # Quota usage is the cheap global cross-check: usage 0 across the board means the
-  # project is idle. Ubuntu-style per-resource probes above are the precise answer;
-  # this catches anything they do not know how to look for.
+# Quota usage is the cheap global cross-check: usage 0 across the board means the project is
+# idle. A read that could not be PARSED is not a read that found usage, and reporting the
+# first as the second sends the operator looking for resources that may not exist.
+quota_usage() {
   gcloud compute regions describe "$REGION" --project "$PROJECT" \
     --format='csv[no-heading](quotas.metric,quotas.usage)' \
-    >"$LOG_DIR/verify-quota.log" 2>&1 || true
-  python3 - "$LOG_DIR/verify-quota.log" <<'PY' >"$LOG_DIR/verify-quota-usage.log" 2>&1 || true
+    >"$LOG_DIR/inventory-quota-raw.log" 2>&1 || true
+  # The parser decides the verdict, in the same code that reads the values. A bash pattern
+  # trying to match a tab-and-zero is one escape away from calling a zero-usage account busy
+  # (or the reverse), so the verdict comes from the numbers rather than from a regex dialect.
+  python3 - "$LOG_DIR/inventory-quota-raw.log" <<'PY' >"$LOG_DIR/inventory-quota.log" 2>&1 || true
 import sys
 metrics, usage = open(sys.argv[1]).read().strip().split(",")
-want = {"CPUS", "IN_USE_ADDRESSES", "SSD_TOTAL_GB", "DISKS_TOTAL_GB", "INSTANCES"}
-for m, u in zip(metrics.split(";"), usage.split(";")):
-    if m in want:
-        print(f"{m}\t{u or '0'}")
+want = ["CPUS", "IN_USE_ADDRESSES", "SSD_TOTAL_GB", "DISKS_TOTAL_GB", "INSTANCES"]
+read = dict(zip(metrics.split(";"), usage.split(";")))
+busy = []
+for m in want:
+    value = (read.get(m) or "0").strip()
+    print(f"{m}\t{value}")
+    if float(value or 0) != 0:
+        busy.append(m)
+print("VERDICT:" + ("PRESENT" if busy else "ABSENT"))
 PY
-  say "  quota usage (CPUS/addresses/disk/instances):"
-  sed 's/^/    /' "$LOG_DIR/verify-quota-usage.log" || true
-  # A read that could not be PARSED is not a read that found usage. Reporting the first
-  # as the second sends the operator looking for resources that may not exist, and hides
-  # that the verification is inconclusive -- this suite caught exactly that, first run.
-  if grep -q 'Traceback' "$LOG_DIR/verify-quota-usage.log" 2>/dev/null; then
-    say "  ✗ could NOT read the quota usage — unparsable, which is not evidence of zero"
-    return 1
-  fi
-  if grep -qvE '	0(\.0)?$' "$LOG_DIR/verify-quota-usage.log" 2>/dev/null; then
-    say "  ✗ some quota usage is non-zero — read $LOG_DIR/verify-quota.log"
-    rc=1
-  fi
+  local verdict
+  verdict="$(sed -n 's/^VERDICT://p' "$LOG_DIR/inventory-quota.log" | tail -1)"
+  case "${verdict:-}" in
+    ABSENT)
+      say "    quota: ABSENT (no usage)"
+      printf 'quota\tABSENT\tabsent\tall zero\n' >>"$INVENTORY_TSV"
+      ;;
+    PRESENT)
+      say "    quota: PRESENT (some usage is non-zero; read $LOG_DIR/inventory-quota-raw.log)"
+      printf 'quota\tPRESENT\tabsent\tnon-zero usage\n' >>"$INVENTORY_TSV"
+      ;;
+    *)
+      # An unparsable read is not a read that found zero.
+      say "    quota: UNKNOWN (the usage read could not be parsed, which is not zero)"
+      printf 'quota\tUNKNOWN\tabsent\tcould not parse the usage read\n' >>"$INVENTORY_TSV"
+      ;;
+  esac
+}
 
+# The disposable surface the qualification contract names (GKE, Cloud SQL, storage, database,
+# network/peering, addresses, disks, load balancers, registry, service accounts, grants) plus
+# the two durable prerequisites. ONE list, so the pre-teardown and post-teardown inventories
+# cannot drift apart.
+inventory() { # inventory <pre|post>
+  local mode="$1"
+  INVENTORY_TSV="$LOG_DIR/inventory-$mode.tsv"
+  : >"$INVENTORY_TSV"
+  say "inventory ($mode): provider reads only, no mutation"
+  provider_probe gke-cluster    absent  gcloud container clusters describe "$CLUSTER" --region "$REGION" --project "$PROJECT" --format='value(name)'
+  provider_probe sql-instance   absent  gcloud sql instances describe "$CLUSTER-postgres" --project "$PROJECT" --format='value(name)'
+  provider_probe network        absent  gcloud compute networks describe "$CLUSTER" --project "$PROJECT" --format='value(name)'
+  provider_probe subnetwork     absent  gcloud compute networks subnets describe "$CLUSTER-nodes" --region "$REGION" --project "$PROJECT" --format='value(name)'
+  provider_probe router         absent  gcloud compute routers describe "$CLUSTER-router" --region "$REGION" --project "$PROJECT" --format='value(name)'
+  provider_probe nat            absent  gcloud compute routers nats describe "$CLUSTER-nat" --router "$CLUSTER-router" --region "$REGION" --project "$PROJECT" --format='value(name)'
+  provider_probe address-regional absent gcloud compute addresses list --project "$PROJECT" --filter="name~$CLUSTER" --format='value(name)'
+  provider_probe address-global absent  gcloud compute addresses list --global --project "$PROJECT" --filter="name~$CLUSTER" --format='value(name)'
+  provider_probe disks          absent  gcloud compute disks list --project "$PROJECT" --filter="name~$CLUSTER" --format='value(name)'
+  provider_probe forwarding-rules absent gcloud compute forwarding-rules list --project "$PROJECT" --filter="name~$CLUSTER" --format='value(name)'
+  provider_probe artifact-registry absent gcloud artifacts repositories describe "$CLUSTER" --location "$REGION" --project "$PROJECT" --format='value(name)'
+  provider_probe service-account-provisioner absent gcloud iam service-accounts describe "$GCP_PROVISIONER_SA" --project "$PROJECT" --format='value(email)'
+  provider_probe service-account-loki        absent gcloud iam service-accounts describe "$CLUSTER-loki@$PROJECT.iam.gserviceaccount.com" --project "$PROJECT" --format='value(email)'
+  provider_probe service-account-thanos      absent gcloud iam service-accounts describe "$CLUSTER-thanos@$PROJECT.iam.gserviceaccount.com" --project "$PROJECT" --format='value(email)'
+  provider_probe custom-role    absent  gcloud iam roles describe "$GCP_ROLE_ID" --project "$PROJECT" --format='value(name)'
+  provider_probe role-binding   absent  gcloud projects get-iam-policy "$PROJECT" --flatten='bindings[].members' --filter="bindings.members=serviceAccount:$GCP_PROVISIONER_SA" --format='value(bindings.role)'
+  provider_probe impersonator-binding absent gcloud iam service-accounts get-iam-policy "$GCP_PROVISIONER_SA" --project "$PROJECT" --format='value(bindings.role)'
+  provider_probe peering        absent  gcloud compute networks peerings list --project "$PROJECT" --filter="name~servicenetworking" --format='value(name)'
+  provider_probe state-bucket   present gcloud storage buckets describe "gs://$STATE_BUCKET" --project "$PROJECT" --format='value(name)'
+  provider_probe dns-zone       present gcloud dns managed-zones describe "$ZONE_NAME" --project "$PROJECT" --format='value(name,dnsName)'
+  quota_usage
+}
+
+# EXPECTED ABSENT — everything the target owns. Judged from the inventory, never from
+# Terraform's exit status, and never promoting an unreadable probe into absence.
+verify_absent() {
+  local rc=0 class verdict expect detail
+  inventory post
+  while IFS=$'\t' read -r class verdict expect detail; do
+    case "$expect:$verdict" in
+      absent:ABSENT)   say "  ✓ $class absent" ;;
+      present:PRESENT) say "  ✓ $class present (durable prerequisite)" ;;
+      absent:PRESENT)  say "  ✗ $class still exists (PRESENT) — $detail"; rc=1 ;;
+      present:ABSENT)  say "  ✗ $class is MISSING — a disposable destroy removed a durable prerequisite"; rc=1 ;;
+      absent:UNKNOWN)  say "  ✗ $class: could NOT determine absence (UNKNOWN) — $detail"; rc=1 ;;
+      present:UNKNOWN) say "  ✗ $class: could NOT be read (UNKNOWN) — $detail"; rc=1 ;;
+    esac
+  done <"$INVENTORY_TSV"
   return "$rc"
 }
+
+# ── the evidence bundle ──────────────────────────────────────────────────────
+# Sol prunes its own run directories to the latest 20, shared across commands, so a bundle
+# that merely *points at* Sol's run directory can lose the run that mattered (INFRA-075's
+# lesson; it is why Attempt 6 could not be replayed offline). Copy the artifacts out. Do not
+# change product retention for qualification.
+sol_data_dir() {
+  if [ -n "${SOL_DATA_DIR:-}" ]; then printf '%s\n' "$SOL_DATA_DIR"; return; fi
+  if [ -n "${XDG_DATA_HOME:-}" ]; then printf '%s/sol\n' "$XDG_DATA_HOME"; return; fi
+  printf '%s/.local/share/sol\n' "${HOME:-/root}"
+}
+
+capture_sol_runs() {
+  local src="$1/runs" n
+  if [ ! -d "$src" ]; then
+    say "  sol runs: no run directory at $src (recorded as absent, not as an error)"
+    return 0
+  fi
+  mkdir -p "$LOG_DIR/sol-runs"
+  n="$(find "$src" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
+  cp -a "$src/." "$LOG_DIR/sol-runs/" 2>/dev/null || true
+  say "  sol runs: copied $n director(ies) from $src"
+}
+
+# H3: the Terraform state the provider holds, read straight from the backend object. The key
+# is the backend's own (<prefix>/default.tfstate, prefix = sol/<target>/<layer>.tfstate),
+# verified against the bucket rather than guessed -- the same rule as the provider names.
+# Read-only: no init, no lock, no mutation, nothing written into the trees.
+capture_state_object() { # <name> <object-key>
+  # Separate `local` statements on purpose: bash expands every right-hand side of a single
+  # `local` before assigning any of them, so `local name="$1" out="...$name..."` is an
+  # unbound-variable error under `set -u`.
+  local name="$1"
+  local key="$2"
+  local out="$LOG_DIR/state/$name.tfstate"
+  mkdir -p "$LOG_DIR/state"
+  if gcloud storage cat "gs://$STATE_BUCKET/$key" --project "$PROJECT" \
+      >"$out" 2>"$LOG_DIR/state/$name.stderr"; then
+    if [ "$(head -c2 "$out" | od -An -tx1 | tr -d ' \n')" = "1f8b" ]; then
+      gzip -dc "$out" >"$out.json" 2>/dev/null || true
+      say "  state $name: captured (gzip); readable copy $name.tfstate.json"
+    else
+      say "  state $name: captured"
+    fi
+  elif grep -qiE 'not.?found|404|No URLs matched|No such object' "$LOG_DIR/state/$name.stderr"; then
+    say "  state $name: no object (the root has never been applied) — recorded as absent"
+  else
+    say "  state $name: COULD NOT READ (UNKNOWN) — see $LOG_DIR/state/$name.stderr"
+  fi
+}
+
+capture_terraform_state() {
+  say "capturing Terraform state (read-only backend reads)"
+  capture_state_object cloud    "sol/$TARGET/cloud.tfstate/default.tfstate"
+  capture_state_object platform "sol/$TARGET/platform.tfstate/default.tfstate"
+  # The durable root's state, for attribution only: it is not part of the disposable target
+  # and this harness never destroys it.
+  capture_state_object durable  "bootstrap/gcp/default.tfstate"
+}
+
+artifact_status() { if [ -s "$1" ]; then printf 'present (%s bytes)\n' "$(wc -c <"$1" | tr -d ' ')"; else printf 'MISSING\n'; fi; }
+
+# The bundle's own index, so "does this bundle contain what the runbook promised?" is a
+# readable answer rather than a directory listing someone has to interpret.
+bundle_manifest() {
+  local m="$LOG_DIR/evidence-manifest.txt" f
+  {
+    printf 'evidence bundle: %s\n' "$LOG_DIR"
+    printf 'target: %s  project: %s  region: %s  revision: %s\n' \
+      "$TARGET" "$PROJECT" "$REGION" "$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    printf 'cluster: %s\n\n' "$CLUSTER"
+    printf 'sol run evidence .......... %s run director(ies)\n' "$(find "$LOG_DIR/sol-runs" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
+    printf 'terraform state (cloud) ... %s\n' "$(artifact_status "$LOG_DIR/state/cloud.tfstate")"
+    printf 'terraform state (platform)  %s\n' "$(artifact_status "$LOG_DIR/state/platform.tfstate")"
+    printf 'terraform state (durable) . %s\n' "$(artifact_status "$LOG_DIR/state/durable.tfstate")"
+    printf 'inventory (pre-teardown) .. %s\n' "$(artifact_status "$LOG_DIR/inventory-pre.tsv")"
+    printf 'inventory (post-teardown) . %s\n' "$(artifact_status "$LOG_DIR/inventory-post.tsv")"
+    printf 'discriminator class ....... %s\n' "$(artifact_status "$LOG_DIR/fnd0010-classification.txt")"
+    printf 'discriminator probes ...... %s file(s)\n' "$(find "$LOG_DIR" -maxdepth 1 -name 'fnd0010-*.log' 2>/dev/null | wc -l | tr -d ' ')"
+    printf '\nphase transcripts:\n'
+    for f in "$LOG_DIR"/*.log; do [ -e "$f" ] || continue; printf '  %s\n' "$(basename "$f")"; done
+  } >"$m"
+  say "evidence manifest: $m"
+}
+
+# The bundle is part of the run's product, so its completeness is checked rather than
+# assumed: a missing member is reported by name and turns the attempt's exit code non-zero.
+# Which members are required depends on what this invocation did -- the discriminator's
+# classification exists only where the install failed, the Ready-path evidence only where it
+# succeeded, and the post-teardown inventory only after a teardown.
+verify_bundle() {
+  local missing=0 member
+  local required=( "state/cloud.tfstate" "state/platform.tfstate" "inventory-pre.tsv"
+                   "evidence-manifest.txt" )
+  [ "$TEARDOWN_ATTEMPTED" = "1" ] && required+=( "inventory-post.tsv" )
+  # The two paths carry different evidence, and demanding both would report every run as
+  # incomplete: a failed install produces the discriminator and no Ready-path lines.
+  case "$INSTALL_STATE" in
+    failed)    required+=( "fnd0010-classification.txt" ) ;;
+    succeeded) required+=( "ready-phases.txt" ) ;;
+    none) : ;;
+  esac
+  for member in "${required[@]}"; do
+    if [ ! -s "$LOG_DIR/$member" ]; then
+      say "  ✗ bundle member missing or empty: $member"
+      missing=1
+    fi
+  done
+  if [ -z "$(find "$LOG_DIR/sol-runs" -mindepth 1 -maxdepth 1 2>/dev/null)" ]; then
+    # Sol's run evidence is the artifact its own 20-run retention would delete first.
+    say "  ✗ bundle member missing: sol-runs/ (no Sol run directory was copied)"
+    missing=1
+  fi
+  if [ "$missing" = "0" ]; then
+    BUNDLE_OK=1
+  else
+    BUNDLE_OK=0
+    say "  the evidence bundle is INCOMPLETE — this attempt is not a conformant run"
+  fi
+  return "$missing"
+}
+
+freeze_evidence() {
+  say "freezing the evidence bundle (before any teardown)"
+  BUNDLE_ATTEMPTED=1
+  capture_terraform_state
+  capture_sol_runs "$(sol_data_dir)"
+  bundle_manifest
+  verify_bundle || true
+}
+
+# H6: what the provider holds at the moment of the outcome, before anything is destroyed.
+# This is attribution evidence -- it answers "what existed when it broke", which Sol's own
+# transcript cannot -- and deliberately not an ownership model: nothing here feeds the
+# product and nothing is reconciled from it.
+capture_pre_teardown_inventory() {
+  say "capturing the pre-teardown provider inventory (attribution evidence)"
+  inventory pre
+  say "  pre-teardown inventory: $INVENTORY_TSV"
+}
+
 
 destroy() {
   # Destroy needs the same target file and the same variables that apply used, for the
@@ -522,9 +711,15 @@ destroy() {
     say "teardown verified: absent"
     TEARDOWN_OK=1
   else
-    say "teardown NOT verified: resources remain — see $LOG_DIR/verify-*.log"
+    say "teardown NOT verified: resources remain — see $LOG_DIR/inventory-*.tsv and inventory-*.log"
     TEARDOWN_OK=0
   fi
+  # The post-teardown inventory is part of the bundle, so the manifest is rewritten now that it
+  # exists -- otherwise it records "MISSING" for an artifact captured moments ago -- and the
+  # bundle is checked again with the teardown's members included. Both happen on either verdict:
+  # a bundle that is accurate about a failed teardown is what a later reader needs most.
+  bundle_manifest
+  verify_bundle || true
 }
 
 cleanup() {
@@ -559,7 +754,11 @@ cleanup() {
   else
     say "KEEPING $TARGET_FILE — teardown was not verified, and destroy requires this file."
   fi
-  [ "$TEARDOWN_OK" = "1" ] || rc=1
+  # Only an attempted-but-unverified teardown turns the exit code into a failure. A run that
+  # never created anything (a refused subcommand, a usage error) has no teardown verdict to
+  # demand, and forcing one there would report a harness error as a qualification failure.
+  if [ "$TEARDOWN_ATTEMPTED" = "1" ] && [ "$TEARDOWN_OK" != "1" ]; then rc=1; fi
+  if [ "$BUNDLE_ATTEMPTED" = "1" ] && [ "$BUNDLE_OK" != "1" ]; then rc=1; fi
   return "$rc"
 }
 TEARDOWN_OK=0
@@ -585,8 +784,25 @@ phase_cloud() {
   fi
 
   CLOUD_APPLIED=1
+  INSTALL_STATE=succeeded
   start_ns_watcher
-  run cloud-apply "$SOL" cloud apply "$TARGET" "${vars[@]}" || return 1
+  if ! run cloud-apply "$SOL" cloud apply "$TARGET" "${vars[@]}"; then
+    INSTALL_STATE=failed
+    # H2: `sol cloud apply` is the invocation that installs the cloud root *and* the
+    # platform (see the header). Its failure here is the boundary this run exists for, so
+    # the discriminator is captured NOW -- immediately, while the cluster still exists, and
+    # before the EXIT trap tears the target down. A later phase cannot do it: the failure
+    # ends this phase, and there is no `sol deploy` phase to fall back to (the application
+    # deploy is not a platform install, so a failure there would say nothing about
+    # FND-0010).
+    say "cloud apply failed -- capturing the discriminator before any teardown"
+    capture_fnd0010
+    capture_pre_teardown_inventory
+    freeze_evidence
+    return 1
+  fi
+
+  capture_ready_evidence
 
   # Capture the delegation hand-off the moment the zone exists. This is the one
   # value the run cannot produce for itself: the parent zone is managed at a
@@ -594,14 +810,22 @@ phase_cloud() {
   if [ ! -s "$LOG_DIR/nameservers.txt" ] && ! gcloud dns managed-zones describe "$ZONE_NAME" --project "$PROJECT" \
     --format='value(nameServers)' >"$LOG_DIR/nameservers.txt" 2>"$LOG_DIR/nameservers.err"; then
     say "could not read the zone's nameservers — the delegation half cannot proceed"
+    capture_pre_teardown_inventory
+    freeze_evidence
     return 1
   fi
   say "authoritative nameservers for $BASE_DOMAIN (paste these at Squarespace as NS records named 'qual-gcp'):"
   tr ';' '\n' <"$LOG_DIR/nameservers.txt" | sed 's/^/    /'
 
-  # Wait — bounded — for the delegation to become visible, so the platform stage can
-  # follow without a second cold start. This is the intentional pause: billable
-  # infrastructure exists, so it is capped and it always reports where it is.
+  # The delegation boundary keeps the substrate alive between two commands, so the bundle is
+  # frozen here rather than at teardown: an operator who stops at the hand-off still has the
+  # evidence, and `destroy` freezes it again (idempotently) before it tears anything down.
+  capture_pre_teardown_inventory
+  freeze_evidence
+
+  # Wait — bounded — for the delegation to become visible. The zone is already delegated
+  # (DEC-042), so this resolves on the first iteration in practice; it stays bounded because
+  # billable infrastructure exists for its duration, and it always reports where it is.
   local deadline=$(( $(date +%s) + DELEGATION_WAIT_MINUTES * 60 ))
   say "waiting up to ${DELEGATION_WAIT_MINUTES}m for the delegation to resolve (Ctrl-C to continue later)"
   while [ "$(date +%s)" -lt "$deadline" ]; do
@@ -617,72 +841,150 @@ phase_cloud() {
   done
   say "delegation not observed within ${DELEGATION_WAIT_MINUTES}m."
   say "This is 'waiting on an external prerequisite', not a Sol failure: finish the NS"
-  say "records at Squarespace, then run: CLUSTER=$CLUSTER ... live-qual.sh platform"
+  say "records at Squarespace, then run: CLUSTER=$CLUSTER ... live-qual.sh destroy"
   KEEP=1
   return 0
 }
 
-phase_platform() {
-  write_target
-  # The platform install is the phase EXPECTED to fail at cert-manager (FND-0010).
-  # Its failure is the evidence, so it is not run through `run` (which would abort
-  # before the probes are captured).
-  say "phase: platform-install (failure here is expected and is the evidence)"
-  ( cd "$WORKSPACE" && timeout "$PHASE_TIMEOUT" "$SOL" deploy "$TARGET" ) \
-    >"$LOG_DIR/platform-install.log" 2>&1 || say "platform install exited non-zero (expected)"
 
-  capture_fnd0010
+# ── FND-0010: the discriminator, captured before anything is remediated ───────
+# The check's own container output decides the cause; everything else corroborates it. Four
+# candidate causes were plausible from the desk analysis (webhook reachability, the webhook's
+# CA bundle, CRD/API discovery, scheduling) and only the captured evidence can choose, so this
+# captures all of them and then *classifies* -- it does not assume reachability, and it does
+# not remediate. Classification happens after capture, from the files, so a wrong
+# classification cannot cost the bundle.
+cluster_describable() {
+  local name
+  name="$(gcloud container clusters describe "$CLUSTER" --region "$REGION" --project "$PROJECT" \
+      --format='value(name)' 2>/dev/null)" && [ -n "$name" ]
 }
 
-# The three probes FND-0010 names, in the order it names them, captured BEFORE any
-# remediation is contemplated. The first is the discriminator: the check container's
-# own output, which no previous attempt captured, decides between a webhook
-# reachability cause (dial timeout / context deadline), a webhook CA cause
-# (x509 unknown authority), and a CRD-serving cause.
+kube_capture() { # kube_capture <name> <command...>
+  local name="$1"; shift
+  "$@" >"$LOG_DIR/$name.log" 2>&1 || true
+  say "  captured $name.log ($(wc -l <"$LOG_DIR/$name.log" | tr -d ' ') lines)"
+}
+
+kubeconfig_for_cluster() {
+  gcloud container clusters get-credentials "$CLUSTER" --region "$REGION" --project "$PROJECT" \
+    >"$LOG_DIR/kubeconfig.log" 2>&1 || true
+}
+
 capture_fnd0010() {
   say "capturing FND-0010 discriminator evidence (no remediation)"
-  local kube=(kubectl)
-  local ctx
-  if ! ctx="$(gcloud container clusters describe "$CLUSTER" --region "$REGION" \
-      --project "$PROJECT" --format='value(name)' 2>/dev/null)" || [ -z "$ctx" ]; then
-    say "  cluster is not describable — the platform phase cannot have run; nothing to probe"
+  if ! cluster_describable; then
+    say "  cluster is not describable — the platform stage cannot have run; nothing to probe"
     return 0
   fi
-  gcloud container clusters get-credentials "$CLUSTER" --region "$REGION" \
-    --project "$PROJECT" >"$LOG_DIR/kubeconfig.log" 2>&1 || true
-
-  local probe
-  probe() {
-    local name="$1"; shift
-    "$@" >"$LOG_DIR/fnd0010-$name.log" 2>&1 || true
-    say "  captured fnd0010-$name.log ($(wc -l <"$LOG_DIR/fnd0010-$name.log") lines)"
-  }
-
-  probe startupapicheck-logs "${kube[@]}" -n cert-manager logs \
+  kubeconfig_for_cluster
+  kube_capture fnd0010-startupapicheck-logs kubectl -n cert-manager logs \
     job/cert-manager-startupapicheck --all-containers --tail=-1
-  probe events "${kube[@]}" -n cert-manager get events --sort-by=.lastTimestamp
-  probe job "${kube[@]}" -n cert-manager describe job cert-manager-startupapicheck
-  probe webhook-target-port "${kube[@]}" -n cert-manager get svc cert-manager-webhook \
+  kube_capture fnd0010-events  kubectl -n cert-manager get events --sort-by=.lastTimestamp
+  kube_capture fnd0010-job     kubectl -n cert-manager describe job cert-manager-startupapicheck
+  kube_capture fnd0010-job-status kubectl -n cert-manager get job cert-manager-startupapicheck -o json
+  kube_capture fnd0010-pods    kubectl -n cert-manager get pods -o wide
+  kube_capture fnd0010-objects kubectl -n cert-manager get deploy,svc,sa,issuer,clusterissuer -o wide
+  kube_capture fnd0010-webhook-target-port kubectl -n cert-manager get svc cert-manager-webhook \
     -o jsonpath='{.spec.ports[*].targetPort}'
-  probe pods "${kube[@]}" -n cert-manager get pods -o wide
-  probe firewall-rules gcloud compute firewall-rules list --project "$PROJECT" \
-    --filter="name~$CLUSTER" --format='table(name,sourceRanges.list(),allowed[].map().firewall_rule().list(),targetTags.list())'
-  probe cluster-master-cidr gcloud container clusters describe "$CLUSTER" \
+  kube_capture fnd0010-webhook-endpoints kubectl -n cert-manager get endpoints cert-manager-webhook -o wide
+  kube_capture fnd0010-webhook-config kubectl get validatingwebhookconfiguration cert-manager-webhook -o yaml
+  kube_capture fnd0010-nodes   kubectl get nodes -o wide
+  kube_capture fnd0010-firewall-rules gcloud compute firewall-rules list --project "$PROJECT" \
+    --filter="name~$CLUSTER" \
+    --format='table(name,sourceRanges.list(),allowed[].map().firewall_rule().list(),targetTags.list())'
+  kube_capture fnd0010-master-cidr gcloud container clusters describe "$CLUSTER" \
     --region "$REGION" --project "$PROJECT" --format='value(privateClusterConfig.masterIpv4CidrBlock)'
+  classify_fnd0010
+}
 
-  say "evidence bundle: $LOG_DIR"
-  say "classify from fnd0010-startupapicheck-logs.log first; do not remediate before that"
+classify_fnd0010() {
+  local out="$LOG_DIR/fnd0010-classification.txt"
+  local job_log="$LOG_DIR/fnd0010-job.log" events="$LOG_DIR/fnd0010-events.log"
+  local check_log="$LOG_DIR/fnd0010-startupapicheck-logs.log"
+  {
+    printf 'classification: '
+    # Ordered with the *falsifying* signatures first: an x509 or API-discovery failure is not a
+    # reachability failure, and reading either as one is exactly the error this run exists to
+    # prevent. Each alternative is a literal string from the captured evidence. No match, or no
+    # evidence at all, is UNKNOWN -- never a default of "reachability".
+    if grep -qiE 'x509|unknown authority|certificate signed by unknown|tls: failed to verify' \
+        "$check_log" "$job_log" 2>/dev/null; then
+      printf 'TLS_CA_OR_CERTIFICATE\n'
+    elif grep -qiE 'no matches for kind|could not find the requested resource|failed to discover|unable to retrieve the complete list of server APIs' \
+        "$check_log" "$job_log" 2>/dev/null; then
+      printf 'CRD_OR_API_DISCOVERY\n'
+    elif grep -qiE 'FailedScheduling|Unschedulable|Insufficient (cpu|memory)|no nodes available' \
+        "$events" "$LOG_DIR/fnd0010-pods.log" 2>/dev/null; then
+      printf 'SCHEDULING\n'
+    elif grep -qiE 'forbidden|cannot create resource|is not allowed to' "$check_log" "$job_log" 2>/dev/null; then
+      printf 'RBAC\n'
+    elif grep -qiE 'context deadline exceeded|dial tcp|i/o timeout|connection refused|no route to host' \
+        "$check_log" "$job_log" 2>/dev/null; then
+      printf 'WEBHOOK_REACHABILITY\n'
+    else
+      printf 'UNKNOWN\n'
+    fi
+    printf '\n-- why (matching lines; empty means the signature was not in the captured evidence) --\n'
+    grep -hiE 'x509|unknown authority|certificate signed by unknown|tls: failed to verify|no matches for kind|could not find the requested resource|failed to discover|forbidden|cannot create resource|context deadline exceeded|dial tcp|i/o timeout|connection refused|no route to host|FailedScheduling|Unschedulable|Insufficient (cpu|memory)' \
+      "$check_log" "$job_log" "$events" "$LOG_DIR/fnd0010-pods.log" 2>/dev/null | head -20 || true
+    printf '\n-- corroboration --\n'
+    printf 'webhook targetPort: %s\n' "$(head -1 "$LOG_DIR/fnd0010-webhook-target-port.log" 2>/dev/null)"
+    printf 'webhook endpoints : %s\n' "$(head -1 "$LOG_DIR/fnd0010-webhook-endpoints.log" 2>/dev/null)"
+    printf 'master CIDR       : %s\n' "$(head -1 "$LOG_DIR/fnd0010-master-cidr.log" 2>/dev/null)"
+    printf 'firewall rules:\n'
+    sed 's/^/  /' "$LOG_DIR/fnd0010-firewall-rules.log" 2>/dev/null | head -10 || true
+    printf '\nThis is a classification of the captured evidence, not a conclusion. A run whose\n'
+    printf 'classification is UNKNOWN, or which contradicts the reachability hypothesis, stops\n'
+    printf 'here: remediation is a separate authorization.\n'
+  } >"$out" 2>&1
+  say "discriminator classification: $out"
+  sed -n '1p' "$out"
+}
+
+# The success path's evidence. Here the platform install returned success, so the check that
+# fails otherwise is expected to have SUCCEEDED -- capturing that is the positive control that
+# makes a failure classification meaningful.
+capture_ready_evidence() {
+  say "capturing Ready-path evidence (the platform install returned success)"
+  grep -E 'lifecycle phase|bootstrap-access-remove|Provisioned endpoints|^Done' \
+    "$LOG_DIR/cloud-apply.log" >"$LOG_DIR/ready-phases.txt" 2>/dev/null || true
+  say "  phase lines: $LOG_DIR/ready-phases.txt"
+  if ! cluster_describable; then
+    say "  cluster is not describable — no cluster-side evidence to capture"
+    return 0
+  fi
+  kubeconfig_for_cluster
+  kube_capture ready-pods kubectl get pods -A -o wide
+  kube_capture ready-startupapicheck-status kubectl -n cert-manager get job cert-manager-startupapicheck -o json
+  kube_capture ready-startupapicheck-logs kubectl -n cert-manager logs \
+    job/cert-manager-startupapicheck --all-containers --tail=-1
+  if grep -q '"succeeded": 1' "$LOG_DIR/ready-startupapicheck-status.log" 2>/dev/null; then
+    say "  startupapicheck: Succeeded (the check ran and passed)"
+  else
+    say "  startupapicheck: not observed as Succeeded — read $LOG_DIR/ready-startupapicheck-status.log"
+  fi
 }
 
 phase_destroy() {
   write_target   # destroy resolves everything from the target file
   CLOUD_APPLIED=1
+  # The bundle must be complete before the supported teardown starts. Both calls are
+  # idempotent: the cloud phase already captured them when it got this far, and capturing
+  # again keeps the pre-teardown inventory as close to the teardown as it can be.
+  capture_pre_teardown_inventory
+  freeze_evidence
   destroy
 }
 
+
 case "${1:-}" in
   cloud)    phase_cloud ;;
-  platform) phase_platform ;;
+  platform)
+    say "no platform phase: 'sol cloud apply' installs the platform, and this harness captures"
+    say "FND-0010's discriminator in the cloud phase (see the header). Run: live-qual.sh cloud"
+    exit 2
+    ;;
   stop)
     # Stop a recorded run by IDENTITY, then tear down: a TERM does not run the EXIT trap,
     # so stopping without destroying would leave the resources this run created.
@@ -713,7 +1015,7 @@ case "${1:-}" in
     KEEP_REASON="verify does not mutate; nothing to tear down"
     ;;
   *)
-    sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,78p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     exit 2
     ;;
 esac

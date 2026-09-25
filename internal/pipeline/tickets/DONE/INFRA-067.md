@@ -124,3 +124,42 @@ this fix.
 - The Cloud DNS solver itself (`FND-0007`), which is what makes the refusal correct
   today. This ticket is about *when* the refusal is evaluated.
 - Which stage owns durable prerequisites (`DEC-043`).
+
+## Completion notes (2026-09-25) — bookkeeping: the fix merged, the ticket did not move
+
+**Problem.** `sol cloud destroy --apply` refused a target `sol cloud apply` had accepted: the
+`cluster_issuer`/Cloud-DNS refusal was evaluated inside `PreparingDestroy`, where it has no
+remediation and blocks the only supported way to stop spending (FND-0029, GCP Attempt 5).
+
+**Root cause.** The guard is a *capability requirement for installing* the platform. The destruction
+path computes the platform's variables in order to remove the platform, and re-evaluated an
+install-time requirement there.
+
+**Change.** `Sol_cli_cloud_lifecycle.platform_terraform_vars` takes
+`?context:Install | Destruction`, defaulting to `Install` so installation is exactly as strict as it
+was; the destroy-path call sites pass `Destruction`
+(`cli/sol/bin/cmd_cloud_tf.ml:1278,1371`); the provider's own half is the guard in
+`Sol_cli_gcp_cluster.platform_vars`, which refuses `Some _, Install` and accepts
+`Some _, Destruction | None, _`. Merged as #445 (`4a9db5e5`), and the fix survived the
+provider-boundary refactor (REFAC-095/096), which is where the branch moved into the provider
+module.
+
+**Why this commit is bookkeeping only.** #445 landed the code and updated this ticket but never
+moved it out of `READY_FOR_ENGINEERING` (it predates the transition guard). What remained was read
+out of the current code and the record, not implemented here:
+
+- **AC1** (`destroy --apply` succeeds on a target `apply` accepted, with no edit in between) is a
+  *live* observation. It belongs to the GCP qualification run — HARDEN-006 / Attempt 8 performs
+  exactly that sequence (a target whose platform install stopped at cert-manager, then the
+  documented destroy) — and FND-0029 carries `FIXED_UNQUALIFIED` until it happens.
+- **AC2** landed as `cli/sol/test/test_cloud_lifecycle.ml`'s `test_platform_vars_destruction_context`
+  (line 417), which asserts both directions in one test and was mutation-checked.
+- **AC3** (the class is checked, not just the instance): the context has exactly one consumer —
+  `rg -n 'platform_vars_context' cli/sol` finds `Sol_cli_gcp_cluster.platform_vars` (this refusal)
+  and `Sol_cli_cloud_lifecycle`'s re-export; the AWS provider deliberately ignores it
+  (`sol_cli_aws_cluster.ml:833`, `platform_vars outputs _context ~cluster_issuer:_ ~region`). So no
+  other install-only validation is reachable from the destruction path today.
+- **AC4** (install-time validation unchanged): the same test asserts the install-side refusal.
+
+**Demo/example: not applicable** — an internal lifecycle asymmetry; nothing an application author
+writes changes. **Language parity (DEC-022): no application-facing impact.**

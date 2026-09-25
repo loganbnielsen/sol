@@ -2,7 +2,8 @@
 
 - **Classification:** `DESIGN_GAP` (the stated property and the implementation's design are not
   aligned, and closing the gap — or restating the property — is a decision, not a fix)
-- **State:** `OPEN`
+- **State:** `SUPERSEDED` (2026-09-25 — the property itself was withdrawn as a product requirement
+  by DEC-045; see the supersession note at the end of this file)
 - **First identified:** 2026-09-24, by pre-live inspection during the authorized Attempt 7
   (HARDEN-004), before any live resource was created or any provider was mutated;
   `origin/main @ 2775d5b1`
@@ -115,3 +116,20 @@ derived from Attempt 6's divergence, which was **operator-created** (corrected A
 pre-live falsification stands as a correct reading of the code. The property itself is **withdrawn
 as a product requirement** (DEC-045; A1 withdrawn). A successor GCP run (HARDEN-006) qualifies the
 lifecycle, not adoption.
+
+## Supersession (2026-09-25) — `OPEN` → `SUPERSEDED`
+
+This finding owns one claim: *the property Attempt 7 was to qualify cannot be established by current
+`main`*. That is still a correct reading of the code — and it no longer matters, because the property
+is not a product requirement:
+
+- Its 2026-09-24 correction records that *"the property itself is withdrawn as a product requirement
+  (DEC-045; A1 withdrawn). A successor GCP run (HARDEN-006) qualifies the lifecycle, not adoption."*
+  Keeping it `OPEN` would leave a finding that asks the product to do something the product has
+  decided not to do.
+- The successor run named there still exists and is unchanged in kind: GCP Attempt 8 (HARDEN-006),
+  now re-scoped to obtaining FND-0010's discriminator first. It qualifies the lifecycle — install,
+  readiness, the destroy of a partially-installed target — and not adoption.
+
+Nothing here is a live claim about a provider; the finding was a pre-live falsification, and its
+conclusion survives in the Attempt-7 record and in FND-0030's restated contract.

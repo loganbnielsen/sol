@@ -449,3 +449,57 @@ stays `OPEN`, and Attempt 7 stays closed.
   `DONE`, having been implemented under the epic's name (parts 3 and 5) without the ticket-move guard
   firing.
 
+
+## Attempt-8 harness preparation and four state corrections (2026-09-25)
+
+`main @ 146eb90c`. This section brings the states the qualification re-baseline found stale up to
+date and records what the GCP harness now does. It does not re-audit the tables above, and it is not
+a live observation.
+
+**Four transitions, each already determined by the existing record:**
+
+| Finding | Was | Now | Determined by |
+|---|---|---|---|
+| FND-0029 | `OPEN` | `FIXED_UNQUALIFIED` | the fix merged as #445 and survived the provider-boundary refactor (`Sol_cli_gcp_cluster.platform_vars`, `Install`/`Destruction`); `INFRA-067` moved to `DONE` the same day |
+| FND-0030 | `OPEN` | `FIXED_UNQUALIFIED` | its own closing condition — "*`OPEN` only until INFRA-076 removes the Sol-caused route*" — and INFRA-076 is `DONE`; the convergence half is withdrawn (DEC-045) |
+| FND-0055 | `FIXED_UNQUALIFIED` | `SUPERSEDED` | REFAC-094 deleted B2, the unit this finding was closed against; DEC-045 restates the requirement and the coverage it wanted is a qualification duty |
+| FND-0056 | `OPEN` | `SUPERSEDED` | the Attempt-7 property was withdrawn as a product requirement (DEC-045; A1 withdrawn) |
+
+`INFRA-067` was fixed-but-still-`READY_FOR_ENGINEERING` (its fix merged in #445 while the ticket
+stayed put — the state AGENTS.md names as the anti-pattern); it moved to `DONE` with its one
+remaining acceptance item named as a qualification observation rather than work.
+
+**Nothing above is `QUALIFIED`.** An implementation landing is not the same claim as reality
+confirming it, so each transition is `FIXED_UNQUALIFIED` or `SUPERSEDED`.
+
+**GCP Attempt 8, re-scoped — harness prepared, not launched.** The next live GCP run is no longer
+"install, then probe": its purpose is to establish the *cause* of the cert-manager `startupapicheck`
+failure (FND-0010) under the current implementation, with platform `Ready` as the alternate outcome.
+The harness (`internal/qualification/gcp/live-qual.sh`) now:
+
+- generates a target with **no** `cluster_issuer` — FND-0007 makes an issuer-declaring GCP target
+  uninstallable and the install-time refusal is deliberate (a target that asks for TLS Sol cannot
+  wire is refused, not half-built);
+- captures the discriminator **immediately after a failed `sol cloud apply` and before any teardown**.
+  `sol cloud apply` is the invocation that installs the platform; the old `platform` phase ran
+  `sol deploy`, an *application* deploy, so it could never observe a platform-install failure at all;
+- captures pre-teardown and post-teardown provider inventories with tri-state semantics
+  (PRESENT / ABSENT / UNKNOWN, a failed read never read as absence) covering the classes
+  INV-DESTROY-4 names — including Artifact Registry, the qualification-created service accounts, the
+  custom role and its bindings. The harness's own network probe had used a guessed name
+  (`<cluster>-vpc` where the root names it `<cluster>`), so it could only ever report a vacuous
+  "absent" — FND-0045's class, in the harness;
+- freezes both roots' Terraform state and copies Sol's run artifacts out of its 20-run pruning window
+  (INFRA-075's lesson), indexed by `evidence-manifest.txt`;
+- classifies the captured evidence (TLS_CA_OR_CERTIFICATE / CRD_OR_API_DISCOVERY / SCHEDULING /
+  RBAC / WEBHOOK_REACHABILITY / UNKNOWN) with the matched lines quoted and **no default of
+  "reachability"**.
+
+Offline evidence: `internal/qualification/gcp/test-live-qual.sh` grew from 24 to 67 assertions, and
+each new property was mutation-checked in both directions (moving the discriminator capture after the
+teardown, dropping the state snapshot, dropping Sol's run evidence, collapsing UNKNOWN into ABSENT,
+reading PRESENT as ABSENT, ignoring non-zero quota usage, and replacing the identity-based stop with a
+pattern kill each fail the suite). **No live resource was created and no provider was mutated while
+preparing it**; the read-only Phase-0 baseline of `sol-qualification` was re-taken — project ACTIVE,
+billing enabled, no disposable resource, quota usage 0, durable bucket and delegated zone PRESENT and
+resolving.

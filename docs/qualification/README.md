@@ -113,3 +113,11 @@ workstream; they apply to every provider's live runs.
 | AWS run procedure | `aws-run-procedure.md` |
 | Run record template | `run-record-template.md` |
 | Next runs | HARDEN-007 (AWS), HARDEN-006 (GCP) — both in `BACKLOG`, authorization-gated |
+
+**GCP Attempt 8 was re-scoped on 2026-09-25** (HARDEN-006): it exists to establish the cause of the
+cert-manager `startupapicheck` failure (FND-0010) — from the check's own output, classified, before any
+teardown — with platform `Ready` as the alternate outcome. The harness
+(`internal/qualification/gcp/live-qual.sh`) generates a target with no `cluster_issuer`, because a GCP
+target that asks for one is refused at install time and would stop the run before cert-manager; and it
+captures the discriminator in that same invocation. Read the harness header for the phase model and
+`evidence-manifest.txt` for what a bundle contains.
