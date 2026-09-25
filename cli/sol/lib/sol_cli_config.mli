@@ -16,7 +16,6 @@ type target =
      production default (retain the final snapshot); a disposable qualification
      target sets `destroy_retention: none`. *)
   ; destroy_retention : string option
-  ; provisioner_impersonator : string option
   ; alert_receiver_type : string option
   ; alert_receiver_url : string option
   ; alert_owner : string option
@@ -25,18 +24,6 @@ type target =
     (** AUDIT-072: the encrypted, versioned remote Terraform state bucket. Sol
         provisions a conformant one by default (cli/platform/infra/bootstrap);
         an operator may bring their own by declaring it here. *)
-  ; state_lock_table : string option
-    (** The state-locking table ([aws_dynamodb_table]) that serializes
-        concurrent infrastructure mutations. *)
-  ; provisioner_role_arn : string option
-    (** AUDIT-072: named identities distinct from the cluster-creator admin.
-        Sol generates the least-privilege policy contracts; the operator
-        supplies the role ARNs. *)
-  ; cluster_access_role_arn : string option
-    (** DEC-034: bounded steady-state AWS identity used for Kubernetes access,
-        separate from the cloud-provisioning identity above. *)
-  ; deploy_role_arn : string option
-  ; operator_role_arn : string option
   ; cluster_endpoint_cidr : string option
     (** The single CIDR allowed to reach the public Kubernetes API endpoint. A
         production profile requires an explicit, non-world-reachable value. *)
@@ -124,6 +111,11 @@ val format_use_ref : string -> string
     (domain, name) while the config keys a service by name alone, so the lookup is
     by name. *)
 val is_omitted_service : t -> name:string -> bool
+
+(** REFAC-098: a value from the target's own provider block ([aws:] / [gcp:]),
+    where provider-native configuration lives: the AWS state-locking table and the
+    AUDIT-072 / DEC-034 role ARNs, and the GCP provisioner impersonator. *)
+val provider_field : target -> string -> string option
 
 (** The workspace's ECR repositories as a Terraform list literal, derived from
     every service under [app/]; ["[]"] when the workspace has no [app/]. A

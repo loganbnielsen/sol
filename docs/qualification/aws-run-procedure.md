@@ -88,9 +88,9 @@ HARDEN runs exist to find those, not to have none.
    session to publish would silently re-introduce the identity conflation
    INFRA-024/INFRA-026 exist to prevent.
 4. Target file declaring: `profile: production-single-region`, region,
-   `provisioner_role_arn`, `deploy_role_arn`, `operator_role_arn`, a
+   `aws.provisioner_role_arn`, `aws.deploy_role_arn`, `aws.operator_role_arn`, a
    `cluster_endpoint_cidr` that is not `0.0.0.0/0`, `state_bucket` /
-   `state_lock_table`. Alert receiver fields only if pursuing `G1-G3`.
+   `aws.state_lock_table`. Alert receiver fields only if pursuing `G1-G3`.
 5. Confirm the qualification workload is still OCaml-only (Pluto minus its
    TypeScript services), matching run 2's negative-case strategy — check
    DEC-026 §2's named TypeScript-qualification triggers before assuming this

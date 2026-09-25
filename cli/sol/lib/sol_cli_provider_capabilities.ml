@@ -47,6 +47,9 @@ type t =
   ; guarded_addresses : string list
   ; cloud_ready_expectation : string
   ; production_qualified : bool
+  ; sol_keys : string list
+  ; state_locking : string option
+  ; scoped_identities : string list
   }
 
 let add_opt k = function
@@ -72,7 +75,7 @@ let aws =
       (fun (target : Sol_cli_config.target) ~bucket ~object_key ->
         (* S3 has no native locking, so the DynamoDB lock table is part of what
            makes the state durable, not an option. *)
-        match target.state_lock_table with
+        match Sol_cli_config.provider_field target "state_lock_table" with
         | Some table when String.trim table <> "" ->
           Ok
             [ "bucket=" ^ bucket
@@ -83,21 +86,27 @@ let aws =
             ]
         | _ ->
           Error
-            "an AWS target must declare state_lock_table: S3 has no native state \
+            "an AWS target must declare aws.state_lock_table: S3 has no native state \
              locking, so two applies could corrupt the same state")
   ; cluster_access_role_arn =
       (fun (target : Sol_cli_config.target) ->
         Result.map
           Option.some
-          (required "cluster_access_role_arn" target.cluster_access_role_arn))
+          (required
+             "aws.cluster_access_role_arn"
+             (Sol_cli_config.provider_field target "cluster_access_role_arn")))
   ; (* EKS ships no default StorageClass, so Sol creates one. *)
     platform_storage = { storage_class = "gp3"; csi_driver = "ebs.csi.aws.com" }
   ; own_vars =
       (fun (target : Sol_cli_config.target) ~workspace shared ->
         shared
         |> add_opt "cluster_endpoint_cidr" target.cluster_endpoint_cidr
-        |> add_opt "provisioner_role_arn" target.provisioner_role_arn
-        |> add_opt "cluster_access_role_arn" target.cluster_access_role_arn
+        |> add_opt
+             "provisioner_role_arn"
+             (Sol_cli_config.provider_field target "provisioner_role_arn")
+        |> add_opt
+             "cluster_access_role_arn"
+             (Sol_cli_config.provider_field target "cluster_access_role_arn")
         (* HARDEN-002 run 3, finding 11: deploy_role_arn is declared by the
            provider root (cli/platform/infra/aws) and drives the deploy EKS
            access entry INFRA-025 added, but was never routed here — so the entry
@@ -113,8 +122,12 @@ let aws =
            read-only EKS access entry), so it is routed here like the others. A
            declared identity that never reaches the root is the same bug class as
            the one this comment records. *)
-        |> add_opt "deploy_role_arn" target.deploy_role_arn
-        |> add_opt "operator_role_arn" target.operator_role_arn
+        |> add_opt
+             "deploy_role_arn"
+             (Sol_cli_config.provider_field target "deploy_role_arn")
+        |> add_opt
+             "operator_role_arn"
+             (Sol_cli_config.provider_field target "operator_role_arn")
         |> add_opt "workspace_name" (Some workspace))
   ; profile_vars =
       (fun ~production ~production_postgres ->
@@ -153,6 +166,24 @@ let aws =
   ; guarded_addresses = [ "aws_db_instance.postgres" ]
   ; cloud_ready_expectation = "the EKS cluster and its EBS CSI addon are ACTIVE"
   ; production_qualified = true
+  ; (* REFAC-098: the provider-block keys Sol consumes itself. They are routed above
+       (or are backend configuration), never passed through as `-var`s. *)
+    sol_keys =
+      [ "state_lock_table"
+      ; "provisioner_role_arn"
+      ; "cluster_access_role_arn"
+      ; "deploy_role_arn"
+      ; "operator_role_arn"
+      ]
+  ; (* S3 has no native locking, so the lock table is part of a conformant backend. *)
+    state_locking = Some "state_lock_table"
+  ; (* AUDIT-072: named identities distinct from the cluster-creator admin. *)
+    scoped_identities =
+      [ "provisioner_role_arn"
+      ; "cluster_access_role_arn"
+      ; "deploy_role_arn"
+      ; "operator_role_arn"
+      ]
   }
 ;;
 
@@ -186,7 +217,7 @@ let gcp =
              "provisioner_impersonators"
              (Option.map
                 (fun member -> Printf.sprintf "[%S]" member)
-                target.provisioner_impersonator)
+                (Sol_cli_config.provider_field target "provisioner_impersonator"))
         (* INFRA-077 / FND-0057: Cloud Storage soft-deletes and bills deleted objects
            for 7 days by default, so a `destroy_retention: none` destroy would leave
            the observability data billed. `none` creates the buckets with soft delete
@@ -215,6 +246,10 @@ let gcp =
   ; cloud_ready_expectation =
       "the GKE cluster is RUNNING and the Cloud SQL instance is RUNNABLE"
   ; production_qualified = false
+  ; sol_keys = [ "provisioner_impersonator" ]
+  ; (* GCS locks natively. *)
+    state_locking = None
+  ; scoped_identities = []
   }
 ;;
 

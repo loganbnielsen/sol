@@ -122,7 +122,8 @@ echo "$reconcile" | grep -Eq 'operator_role_binding_doc|operator_binding_docs' |
 # entry was missed once (HARDEN-002 run 3, finding 11). The root declares
 # operator_role_arn now, so the AWS capabilities' own_vars must route it, or the
 # access entry is never created and the identity stays unreachable.
-grep -q 'add_opt "operator_role_arn" target.operator_role_arn' "$root/cli/sol/lib/sol_cli_provider_capabilities.ml" ||
+# REFAC-098: the ARN is read from the target's aws block.
+grep -q 'provider_field target "operator_role_arn"' "$root/cli/sol/lib/sol_cli_provider_capabilities.ml" ||
   fail "operator_role_arn is declared by the AWS root but never routed to it, so no access entry is created"
 
 # ── the cross-check: what the diagnostic path reads, the operator must see ───

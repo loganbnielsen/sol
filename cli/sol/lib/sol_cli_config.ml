@@ -25,17 +25,11 @@ type target =
        Declared rather than inferred, deliberately: "no caller named" must mean "no
        impersonation grant", not "grant whoever is running Sol". Inferring it is the
        ambient-authority escape hatch this field exists to close. *)
-  ; provisioner_impersonator : string option
   ; alert_receiver_type : string option
   ; alert_receiver_url : string option
   ; alert_owner : string option
   ; alert_runbook_url : string option
   ; state_bucket : string option
-  ; state_lock_table : string option
-  ; provisioner_role_arn : string option
-  ; cluster_access_role_arn : string option
-  ; deploy_role_arn : string option
-  ; operator_role_arn : string option
   ; cluster_endpoint_cidr : string option
   ; node_failure_headroom_nodes : int option
   ; profile : Sol_cli_profile.t option
@@ -94,17 +88,11 @@ let target_empty =
   ; terraform_var_file = None
   ; observability_backend = None
   ; destroy_retention = None
-  ; provisioner_impersonator = None
   ; alert_receiver_type = None
   ; alert_receiver_url = None
   ; alert_owner = None
   ; alert_runbook_url = None
   ; state_bucket = None
-  ; state_lock_table = None
-  ; provisioner_role_arn = None
-  ; cluster_access_role_arn = None
-  ; deploy_role_arn = None
-  ; operator_role_arn = None
   ; cluster_endpoint_cidr = None
   ; node_failure_headroom_nodes = None
   ; profile = None
@@ -257,21 +245,17 @@ type target_key =
   | Target_terraform_var_file
   | Target_observability_backend
   | Target_destroy_retention
-  | Target_provisioner_impersonator
   | Target_alert_receiver_type
   | Target_alert_receiver_url
   | Target_alert_owner
   | Target_alert_runbook_url
   | Target_state_bucket
-  | Target_state_lock_table
-  | Target_provisioner_role_arn
-  | Target_cluster_access_role_arn
-  | Target_deploy_role_arn
-  | Target_operator_role_arn
   | Target_cluster_endpoint_cidr
   | Target_node_failure_headroom_nodes
   | Target_profile
   | Target_provider_box of Sol_cli_provider.t
+  | Target_provider_owned of string * string
+  (** A key a provider owns (REFAC-098): [(key, provider)]. *)
   | Target_unknown of string
 
 let target_key_of_string s =
@@ -286,20 +270,22 @@ let target_key_of_string s =
   | "terraform_var_file" -> Target_terraform_var_file
   | "observability_backend" -> Target_observability_backend
   | "destroy_retention" -> Target_destroy_retention
-  | "provisioner_impersonator" -> Target_provisioner_impersonator
   | "alert_receiver_type" -> Target_alert_receiver_type
   | "alert_receiver_url" -> Target_alert_receiver_url
   | "alert_owner" -> Target_alert_owner
   | "alert_runbook_url" -> Target_alert_runbook_url
   | "state_bucket" -> Target_state_bucket
-  | "state_lock_table" -> Target_state_lock_table
-  | "provisioner_role_arn" -> Target_provisioner_role_arn
-  | "cluster_access_role_arn" -> Target_cluster_access_role_arn
-  | "deploy_role_arn" -> Target_deploy_role_arn
-  | "operator_role_arn" -> Target_operator_role_arn
   | "cluster_endpoint_cidr" -> Target_cluster_endpoint_cidr
   | "node_failure_headroom_nodes" -> Target_node_failure_headroom_nodes
   | "profile" -> Target_profile
+  (* REFAC-098: provider-native identity lives in the provider's own block, so a
+     target on one provider can never carry another's. *)
+  | "state_lock_table"
+  | "provisioner_role_arn"
+  | "cluster_access_role_arn"
+  | "deploy_role_arn"
+  | "operator_role_arn" -> Target_provider_owned (s, "aws")
+  | "provisioner_impersonator" -> Target_provider_owned (s, "gcp")
   | _ ->
     (match Sol_cli_provider.of_string s with
      | Some provider -> Target_provider_box provider
@@ -317,21 +303,16 @@ let target_key_name = function
   | Target_terraform_var_file -> "terraform_var_file"
   | Target_observability_backend -> "observability_backend"
   | Target_destroy_retention -> "destroy_retention"
-  | Target_provisioner_impersonator -> "provisioner_impersonator"
   | Target_alert_receiver_type -> "alert_receiver_type"
   | Target_alert_receiver_url -> "alert_receiver_url"
   | Target_alert_owner -> "alert_owner"
   | Target_alert_runbook_url -> "alert_runbook_url"
   | Target_state_bucket -> "state_bucket"
-  | Target_state_lock_table -> "state_lock_table"
-  | Target_provisioner_role_arn -> "provisioner_role_arn"
-  | Target_cluster_access_role_arn -> "cluster_access_role_arn"
-  | Target_deploy_role_arn -> "deploy_role_arn"
-  | Target_operator_role_arn -> "operator_role_arn"
   | Target_cluster_endpoint_cidr -> "cluster_endpoint_cidr"
   | Target_node_failure_headroom_nodes -> "node_failure_headroom_nodes"
   | Target_profile -> "profile"
   | Target_provider_box provider -> Sol_cli_provider.to_string provider
+  | Target_provider_owned (s, _) -> s
   | Target_unknown s -> s
 ;;
 
@@ -529,6 +510,15 @@ let load path =
                         fail (Printf.sprintf "unsupported provider %S" k)
                       | Target_unknown k, _ ->
                         fail (Printf.sprintf "unknown target key %S" k)
+                      | Target_provider_owned (k, provider), _ ->
+                        fail
+                          (Printf.sprintf
+                             "target key %S belongs to the %s provider: declare it as \
+                              `%s.%s` inside the target block (REFAC-098)"
+                             k
+                             provider
+                             provider
+                             k)
                       | Target_provider_box _, _ ->
                         fail (Printf.sprintf "unknown target key %S" k)
                       | key, "" ->
@@ -567,9 +557,6 @@ let load path =
                           | Target_destroy_retention ->
                             let* v = scalar k v in
                             Ok { current with destroy_retention = Some v }
-                          | Target_provisioner_impersonator ->
-                            let* v = scalar k v in
-                            Ok { current with provisioner_impersonator = Some v }
                           | Target_alert_receiver_type ->
                             let* v = scalar k v in
                             Ok { current with alert_receiver_type = Some v }
@@ -585,21 +572,6 @@ let load path =
                           | Target_state_bucket ->
                             let* v = scalar k v in
                             Ok { current with state_bucket = Some v }
-                          | Target_state_lock_table ->
-                            let* v = scalar k v in
-                            Ok { current with state_lock_table = Some v }
-                          | Target_provisioner_role_arn ->
-                            let* v = scalar k v in
-                            Ok { current with provisioner_role_arn = Some v }
-                          | Target_cluster_access_role_arn ->
-                            let* v = scalar k v in
-                            Ok { current with cluster_access_role_arn = Some v }
-                          | Target_deploy_role_arn ->
-                            let* v = scalar k v in
-                            Ok { current with deploy_role_arn = Some v }
-                          | Target_operator_role_arn ->
-                            let* v = scalar k v in
-                            Ok { current with operator_role_arn = Some v }
                           | Target_cluster_endpoint_cidr ->
                             let* v = scalar k v in
                             Ok { current with cluster_endpoint_cidr = Some v }
@@ -615,7 +587,9 @@ let load path =
                             (match Sol_cli_profile.of_selection v with
                              | Ok profile -> Ok { current with profile = Some profile }
                              | Error msg -> fail msg)
-                          | Target_provider_box _ | Target_unknown _ -> assert false
+                          | Target_provider_box _
+                          | Target_provider_owned _
+                          | Target_unknown _ -> assert false
                         in
                         section := Target;
                         cfg := { !cfg with target = Some target };
@@ -799,6 +773,16 @@ let merge_provider_fields a b =
     b
 ;;
 
+(* REFAC-098: a value from the target's own provider block. Provider-native
+   configuration (role ARNs, the state lock table, the GCP impersonator) lives
+   there, read by that provider's code, so a target on one provider has no field
+   for another's. *)
+let provider_field (target : target) key =
+  List.assoc_opt (Sol_cli_provider.to_string target.provider) target.provider_fields
+  |> Option.value ~default:[]
+  |> List.assoc_opt key
+;;
+
 let merge_target a b =
   { a with
     registry = prefer a.registry b.registry
@@ -819,18 +803,11 @@ let merge_target a b =
      and so never crossed the merge, which is the shape of gap that a test has to
      cross on purpose rather than by accident. *)
   ; destroy_retention = prefer a.destroy_retention b.destroy_retention
-  ; provisioner_impersonator =
-      prefer a.provisioner_impersonator b.provisioner_impersonator
   ; alert_receiver_type = prefer a.alert_receiver_type b.alert_receiver_type
   ; alert_receiver_url = prefer a.alert_receiver_url b.alert_receiver_url
   ; alert_owner = prefer a.alert_owner b.alert_owner
   ; alert_runbook_url = prefer a.alert_runbook_url b.alert_runbook_url
   ; state_bucket = prefer a.state_bucket b.state_bucket
-  ; state_lock_table = prefer a.state_lock_table b.state_lock_table
-  ; provisioner_role_arn = prefer a.provisioner_role_arn b.provisioner_role_arn
-  ; cluster_access_role_arn = prefer a.cluster_access_role_arn b.cluster_access_role_arn
-  ; deploy_role_arn = prefer a.deploy_role_arn b.deploy_role_arn
-  ; operator_role_arn = prefer a.operator_role_arn b.operator_role_arn
   ; cluster_endpoint_cidr = prefer a.cluster_endpoint_cidr b.cluster_endpoint_cidr
   ; node_failure_headroom_nodes =
       prefer a.node_failure_headroom_nodes b.node_failure_headroom_nodes
@@ -939,17 +916,11 @@ let target_of_path s =
           ; terraform_var_file = None
           ; observability_backend = None
           ; destroy_retention = None
-          ; provisioner_impersonator = None
           ; alert_receiver_type = None
           ; alert_receiver_url = None
           ; alert_owner = None
           ; alert_runbook_url = None
           ; state_bucket = None
-          ; state_lock_table = None
-          ; provisioner_role_arn = None
-          ; cluster_access_role_arn = None
-          ; deploy_role_arn = None
-          ; operator_role_arn = None
           ; cluster_endpoint_cidr = None
           ; node_failure_headroom_nodes = None
           ; profile = None

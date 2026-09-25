@@ -17,21 +17,34 @@ let target : Sol_cli_config.target =
   ; terraform_var_file = None
   ; observability_backend = Some "self_hosted_durable"
   ; destroy_retention = None
-  ; provisioner_impersonator = None
   ; alert_receiver_type = None
   ; alert_receiver_url = None
   ; alert_owner = None
   ; alert_runbook_url = None
   ; state_bucket = Some "acme-state"
-  ; state_lock_table = Some "acme-lock"
-  ; provisioner_role_arn = Some "arn:aws:iam::1:role/provisioner"
-  ; cluster_access_role_arn = Some "arn:aws:iam::1:role/cluster-access"
-  ; deploy_role_arn = None
-  ; operator_role_arn = None
   ; cluster_endpoint_cidr = None
   ; node_failure_headroom_nodes = None
   ; profile = None
-  ; provider_fields = []
+  ; provider_fields =
+      [ ( "aws"
+        , [ "state_lock_table", "acme-lock"
+          ; "provisioner_role_arn", "arn:aws:iam::1:role/provisioner"
+          ; "cluster_access_role_arn", "arn:aws:iam::1:role/cluster-access"
+          ] )
+      ]
+  }
+;;
+
+(* REFAC-098: provider-native configuration lives in the provider's own block. *)
+let without_aws_field key (t : Sol_cli_config.target) =
+  { t with
+    provider_fields =
+      List.map
+        (fun (provider, fields) ->
+           if provider = "aws"
+           then provider, List.remove_assoc key fields
+           else provider, fields)
+        t.provider_fields
   }
 ;;
 
@@ -194,9 +207,6 @@ let gcp_target () =
     name = "prod/gcp/us-central1"
   ; provider = Sol_cli_provider.Gcp
   ; region = "us-central1"
-  ; state_lock_table = None
-  ; provisioner_role_arn = None
-  ; cluster_access_role_arn = None
   ; kube_context =
       Some "gke_sol-qualification_us-central1_sol"
       (* The base target names a ClusterIssuer; this one deliberately does not, so
@@ -678,7 +688,7 @@ let test_backends () =
     (List.mem "key=sol/prod/aws/us-east-1/platform.tfstate" platform);
   (* S3 has no native locking, so the lock resource is part of the AWS config and
      its absence is a refusal rather than a silent concurrent-apply hazard. *)
-  let aws_without_lock = { target with state_lock_table = None } in
+  let aws_without_lock = without_aws_field "state_lock_table" target in
   (match L.backend_config aws_without_lock ~root:`Cloud with
    | Error _ -> ()
    | Ok _ -> Alcotest.fail "an AWS target without a lock table must be refused");
@@ -690,9 +700,6 @@ let test_backends () =
       name = "prod/gcp/us-central1"
     ; provider = Sol_cli_provider.Gcp
     ; region = "us-central1"
-    ; state_lock_table = None
-    ; provisioner_role_arn = None
-    ; cluster_access_role_arn = None
     ; kube_context = Some "gke_sol-qualification_us-central1_sol"
     }
   in
@@ -707,7 +714,9 @@ let test_backends () =
     (get gcp `Platform
      = [ "bucket=acme-state"; "prefix=sol/prod/gcp/us-central1/platform.tfstate" ]);
   (match
-     L.backend_config { gcp with state_lock_table = Some "unnecessary" } ~root:`Cloud
+     L.backend_config
+       { gcp with provider_fields = [ "gcp", [ "state_lock_table", "unnecessary" ] ] }
+       ~root:`Cloud
    with
    | Ok config ->
      Alcotest.(check (list string))
@@ -735,9 +744,6 @@ let test_cloud_target () =
       name = "prod/gcp/us-central1"
     ; provider = Sol_cli_provider.Gcp
     ; region = "us-central1"
-    ; state_lock_table = None
-    ; provisioner_role_arn = None
-    ; cluster_access_role_arn = None
     ; kube_context = Some "gke_sol-qualification_us-central1_sol"
     }
   in
@@ -756,7 +762,7 @@ let test_cloud_target () =
     "the target's own backends are the ones selected"
     [ "bucket=acme-state"; "prefix=sol/prod/gcp/us-central1/platform.tfstate" ]
     gcp.platform_backend;
-  (match L.cloud_target { target with cluster_access_role_arn = None } with
+  (match L.cloud_target (without_aws_field "cluster_access_role_arn" target) with
    | Error _ -> ()
    | Ok _ -> Alcotest.fail "an AWS target without a cluster-access role must be refused");
   match L.cloud_target { target with base_domain = None } with

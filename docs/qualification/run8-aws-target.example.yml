@@ -42,17 +42,20 @@ target:
   # `state_bucket` must be globally unique across all of S3. `sol cloud` fails
   # closed before Terraform initialization when either field is missing.
   state_bucket: <globally-unique-bucket>
-  state_lock_table: <lock-table>
 
   # DEC-034 / #376 split these two. The steady-state cluster-access identity is what
   # the scoped platform and deploy paths assume; the cloud-provisioning identity is
   # the one that may mutate the cloud substrate and the bootstrap access entry. Run
   # 8 records a denied `eks associate-access-policy` for the former, so a target
   # that points both at one role cannot produce that evidence.
-  provisioner_role_arn: arn:aws:iam::<account>:role/<provisioner-role>
-  cluster_access_role_arn: arn:aws:iam::<account>:role/<cluster-access-role>
-  deploy_role_arn: arn:aws:iam::<account>:role/<deploy-role>
-  operator_role_arn: arn:aws:iam::<account>:role/<operator-role>
+  # REFAC-098: provider-native settings -- the lock table and these role ARNs --
+  # live in the target's aws block. A flat key is refused with its new location.
+  aws:
+    state_lock_table: <lock-table>
+    provisioner_role_arn: arn:aws:iam::<account>:role/<provisioner-role>
+    cluster_access_role_arn: arn:aws:iam::<account>:role/<cluster-access-role>
+    deploy_role_arn: arn:aws:iam::<account>:role/<deploy-role>
+    operator_role_arn: arn:aws:iam::<account>:role/<operator-role>
 
   # The CIDR the operators run `sol` from, allowed to reach the API server.
   cluster_endpoint_cidr: <your-egress-cidr>

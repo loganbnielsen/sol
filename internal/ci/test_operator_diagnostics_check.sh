@@ -122,7 +122,7 @@ expect_fail "a new read the operator cannot perform"
 
 # ── the declared ARN never reaches the provider root ────────────────────────
 seed
-sed -i 's/        |> add_opt "operator_role_arn" target.operator_role_arn/        |> ignore/' \
+sed -i 's/(Sol_cli_config.provider_field target "operator_role_arn")/None/' \
   "$work/root/cli/sol/lib/sol_cli_provider_capabilities.ml"
 expect_fail "an ARN that never reaches the provider root"
 
