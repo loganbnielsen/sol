@@ -256,3 +256,17 @@ What changed, in the terms this finding fixed:
   provider ABSENT → exit 0 with the obligation reported satisfied), with the ordinary GCP and
   AWS destroy scenarios unchanged. The assertions use `assert_contains`/`assert_not_contains`
   so a missing or empty log is a failure rather than a vacuous pass.
+
+### Before / after, reproduced
+
+The leaf-orphan regression is a genuine before/after, not just a green assertion. Running the
+same three scenarios against the pre-change `main` binary (`2775d5b1`) fails the first one with:
+
+```text
+a declared/state-absent provider-present resource must exit 1, not 0
+```
+
+— the diverged resource survived, `terraform destroy` reported success around it, and the run
+exited **0**; the old report has no declared-set line at all (the reproduction is in the session
+that landed this, and the mechanism is the one "Evidence" above describes). The same scenarios
+against the branch binary exit 1 / 1 / 0 respectively, naming the address.

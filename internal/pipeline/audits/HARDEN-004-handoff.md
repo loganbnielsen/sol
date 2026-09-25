@@ -840,7 +840,9 @@ provider query, never a planned value. The four destroy-path phase policies are 
   obligation reported satisfied). Their assertions use `assert_contains`/`assert_not_contains`,
   and the section was negative-controlled (flipping the stub's PRESENT answer to absent makes the
   scenario fail) so it cannot pass vacuously. The ordinary GCP and AWS destroy scenarios are
-  unchanged.
+  unchanged. **Before/after:** the same three scenarios run against the pre-change `main` binary
+  (`2775d5b1`) fail at the first with `must exit 1, not 0` — the orphan survived and the run
+  reported the postcondition established, which is the fail-open reproduced rather than asserted.
 - `dune build`, CI's unit-test command, `internal/ci/check_ocamlformat.sh --all`, the full
   offline harness, and the destroy/public-cloud-lifecycle guards all green.
 
