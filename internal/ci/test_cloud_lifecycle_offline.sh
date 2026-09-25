@@ -987,6 +987,10 @@ chmod +x "$tmp/bin/terraform" "$tmp/bin/aws" "$tmp/bin/kubectl" "$tmp/bin/gcloud
 
 export PATH="$tmp/bin:$PATH"
 export SOL_HOME="$root"
+# INFRA-075: Sol's run logs and state live under $XDG_DATA_HOME/sol (else ~/.local/share/sol),
+# not under SOL_HOME. Without this, every scenario below wrote a run into the operator's real
+# Sol home, and the shared keep-20 pruning deleted real qualification evidence to make room.
+export XDG_DATA_HOME="$tmp/xdg-data"
 export TF_VAR_db_password=offline-only
 export KUBECONFIG=/ambient/forbidden
 export FAIL_MARKER_DIR="$tmp/markers"
@@ -2366,5 +2370,17 @@ if ! grep -lF 'whoami shape: parsed' "$tmp"/*.out >/dev/null 2>&1; then
   echo "DEC-040 canary: the whoami shape gate never reported a parsed response, so either it" >&2
   echo "did not run or it rejected the emulated shape -- the fixtures would be going" >&2
   echo "unvalidated against anything." >&2
+  exit 1
+fi
+
+# INFRA-075 canary. The scenarios above ran the real `sol cloud` commands; their run logs must
+# have landed in the isolated data home. If none did, Sol is writing somewhere else -- most
+# likely the operator's real ~/.local/share/sol, where the keep-20 pruning deletes real runs.
+# (Any `cloud-*` run proves it: Sol keeps only the latest 20, so the earlier apply runs are
+# pruned by the later destroys inside the isolated home too.)
+if ! ls -d "$XDG_DATA_HOME"/sol/runs/cloud-* >/dev/null 2>&1; then
+  echo "INFRA-075 canary: no cloud-* run logs under the isolated" >&2
+  echo "XDG_DATA_HOME ($XDG_DATA_HOME), so this harness wrote its runs somewhere else --" >&2
+  echo "probably the operator's real Sol home, where they prune real evidence." >&2
   exit 1
 fi

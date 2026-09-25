@@ -1,3 +1,14 @@
+; INFRA-075: every action in this directory -- unit tests and the rules that run the real
+; `sol` binary -- gets a data home inside the build tree. Sol keeps run logs and state under
+; $XDG_DATA_HOME/sol (else ~/.local/share/sol), pruned to the latest 20 across all commands,
+; so a test that inherited the operator's environment deleted real qualification runs.
+; Relative on purpose: it resolves inside whichever build or temp directory the action runs in.
+
+(env
+ (_
+  (env-vars
+   (XDG_DATA_HOME .sol-test-data))))
+
 (tests
  (names
   test_kube_destination
@@ -150,6 +161,15 @@
 ; and runs as a CI step, not here: it checks what git tracks, and dune can only
 ; offer it `_build/default`, where `git ls-files` is empty and it would pass on
 ; any tree at all.
+
+; INFRA-075 guard: the isolation above must stay in force, and must not point at the
+; operator's real data home.
+
+(rule
+ (alias runtest)
+ (action
+  (bash
+   "set -eu\ncase \"${XDG_DATA_HOME:-}\" in\n  '') echo 'INFRA-075: XDG_DATA_HOME is unset for cli/sol/test actions; sol would write runs into the real ~/.local/share/sol' >&2; exit 1 ;;\nesac\nif [ -n \"${HOME:-}\" ] && [ \"$(cd \"$(dirname \"$XDG_DATA_HOME\")\" 2>/dev/null && pwd -P)/$(basename \"$XDG_DATA_HOME\")\" = \"$HOME/.local/share\" ]; then\n  echo 'INFRA-075: XDG_DATA_HOME points at the real data home' >&2; exit 1\nfi")))
 
 ; SEC-010: the sensitive-variable guard reads the real roots, so they are deps.
 
