@@ -284,6 +284,14 @@ jobs:
       - name: Workflow paths-filter guard mutation test
         run: bash internal/ci/test_workflow_paths.sh
 
+      - name: Examples are self-contained (REFAC-105)
+        # Unconditional: an example that reaches into internal/ cannot run from a
+        # copy, and the change that introduces it can be a docs-classified YAML edit.
+        run: bash internal/ci/check_examples_self_contained.sh
+
+      - name: Examples self-containment mutation test
+        run: bash internal/ci/test_examples_self_contained.sh
+
       - name: Framework spec signature guard (DOCS-017)
         # Unconditional, and deliberately so: a spec-only change is classified
         # docs-only, and a spec-only change is exactly what drifts.

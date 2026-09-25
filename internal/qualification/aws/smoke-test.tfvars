@@ -1,16 +1,17 @@
-# Minimal-footprint override for live smoke-testing platform/infra/aws/ —
+# Minimal-footprint override for live smoke-testing platform/infra/aws/ --
 # NOT for real workspaces. Two t3.medium nodes are the smallest shape we've
 # found that can run the full base platform stack in EKS; EKS control plane's
 # flat hourly charge still applies regardless of node sizing.
 #
-# Usage:
-#   sol cloud apply dev/aws/us-east-1 \
-#     --var cluster_name=sol-smoke-<you>
+# Usage: internal/qualification/aws/live-smoke.sh, which generates an untracked
+# smoke target (sol/qual2/aws/us-east-1.yml in the workspace, cluster and
+# platform only) pointing here by absolute path, and removes it on exit:
 #
-# cluster_name is deliberately not set here — pick a unique cluster_name per
-# run. When using `sol cloud plan dev/aws/us-east-1`, Sol derives
-# create_rds=false from the merged Sol config because that target omits the
-# Postgres resource.
+#   AWS_PROFILE=<profile> CLUSTER=sol-smoke-<you> \
+#     internal/qualification/aws/live-smoke.sh
+#
+# The smoke target omits the Postgres resource, so Sol derives create_rds=false
+# from the merged config.
 
 # Required by variables.tf but unused: create_route53_zone is false below, so
 # this value is never read. Placeholder only — no real domain needed.
