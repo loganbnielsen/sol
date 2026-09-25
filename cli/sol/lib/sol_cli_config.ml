@@ -1455,8 +1455,9 @@ let terraform_vars ~workspace cfg =
        own (`project_id` and the Cloud SQL shapes), which a target supplies through
        its provider block. A provider that declares a database and needs a
        credential is not silently skipped: `TF_VAR_db_password` is what carries it,
-       and [Sol_cli_db_credential] refuses a target that provisions one without a
-       credential source. *)
+       the root itself refuses a missing one (a required variable, or a
+       precondition on the database), and [Sol_cli_sensitive_vars] refuses it on
+       the command line (SEC-010). *)
     (match target.provider with
      | Sol_cli_provider.Aws ->
        Result.map

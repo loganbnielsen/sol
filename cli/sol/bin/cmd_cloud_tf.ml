@@ -2744,6 +2744,23 @@ let config_vars ~strict target =
              , Some resolved_target ))))
 ;;
 
+(* SEC-010: before terraform runs at all, refuse any variable the root declares
+   [sensitive] when it would reach the argv -- the run log records the terraform
+   command line. Which variables are secrets is read from the root itself, so no
+   provider is special-cased; whether a required secret was supplied at all is
+   Terraform's to enforce. Checked for destroy as well as apply: a root whose
+   secret is a required variable needs it on every command. *)
+let refuse_sensitive_vars ~infra_dir ~vars =
+  match
+    Result.bind (Sol_cli_sensitive_vars.declared ~root:infra_dir) (fun sensitive ->
+      Sol_cli_sensitive_vars.refuse_on_command_line ~sensitive ~vars)
+  with
+  | Ok () -> ()
+  | Error msg ->
+    Printf.eprintf "\nerror: %s\n%!" msg;
+    exit 1
+;;
+
 let cloud_init ?(confirm_ecr_removal = false) ~target ~var_file ~vars ~action () =
   check_terraform ();
   let provider = provider_of_target_path target in
@@ -2784,19 +2801,7 @@ let cloud_init ?(confirm_ecr_removal = false) ~target ~var_file ~vars ~action ()
     | None -> []
     | Some f -> [ normalize_var_file f ]
   in
-  (* HARDEN-002 (run 1): refuse an unusable database credential before terraform
-     runs at all -- not merely before it mutates AWS. An argv-supplied password is
-     refused too, because the run log records the terraform command line. *)
-  (match
-     Sol_cli_db_credential.check
-       ~provider
-       ~vars
-       ~tf_var_env:(Sys.getenv_opt "TF_VAR_db_password")
-   with
-   | Ok () -> ()
-   | Error msg ->
-     Printf.eprintf "\nerror: %s\n%!" msg;
-     exit 1);
+  refuse_sensitive_vars ~infra_dir ~vars;
   Printf.printf "\nInitializing cloud infrastructure (%s)...\n%!" pname;
   (* INFRA-039: credentials are resolved again here, per mutating stage,
        rather than assumed from process start -- a platform stage runs many
@@ -3334,6 +3339,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
     | None -> config_var_file
   in
   let vars = config_vars @ vars in
+  refuse_sensitive_vars ~infra_dir ~vars;
   let target_cfg = established_target target_cfg in
   (* DEC-033: what this destroy deliberately keeps, named by the target. Absent
      means the production default -- retain the final snapshot -- so a
