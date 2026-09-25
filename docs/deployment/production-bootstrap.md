@@ -163,8 +163,31 @@ aws s3api get-object --bucket <bucket> --key sol/prod/aws/us-east-1/cloud.tfstat
 # Inspect, then restore the chosen version explicitly — never in place blindly.
 ```
 
-**Two concurrent mutations** serialize through the lock table; if the lock is
-stale, `terraform force-unlock <lock-id>` is the operator's explicit override.
+**Two concurrent mutations** serialize through the lock table. A held lock is
+not stale merely because the `sol` that started it has exited (see below): only
+force-unlock after establishing that no Terraform process anywhere still holds
+it. Unlocking a live lock is how GCP qualification Attempt 6 ended up with a
+cluster the provider had and the state did not.
+
+**Interrupting `sol cloud` (INFRA-076).** Sol runs Terraform under a supervisor
+in a session of its own, with its output in a durable operation record under
+`$XDG_DATA_HOME/sol/operations/` (default `~/.local/share/sol/operations/`), so:
+
+- **Ctrl-C** (or SIGTERM/SIGHUP to `sol`) sends one SIGINT to Terraform only,
+  never to its provider plugins, and Sol waits while Terraform stops itself:
+  persisting state and releasing the lock. A second Ctrl-C asks Terraform to
+  cancel immediately, which Terraform warns may lose data.
+- **If `sol` itself dies** (killed, out of memory, terminal closed), Terraform
+  keeps running to completion and records its outcome. `sol` exiting does not
+  mean Terraform exited.
+- **The next `sol cloud` command reads the last operation against that state:**
+  - *still running* → refused. Wait for it; do not unlock.
+  - *resolved*, including a graceful Ctrl-C → proceeds normally.
+  - *unresolved* (Terraform was killed by a signal, its supervisor vanished, or it
+    left `errored.tfstate`) → `apply` is refused until you reconcile: inspect the
+    provider and the state, import or remove what diverged, and push any
+    `errored.tfstate` yourself. Then re-run with `--accept-unresolved`.
+    `plan` and `destroy` proceed with a warning.
 
 ## Evidence HARDEN-002 records
 

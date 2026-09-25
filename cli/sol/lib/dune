@@ -76,4 +76,5 @@
   Sol_cli_docker
   Sol_cli_helm
   Sol_cli_platform_component
+  Sol_cli_supervised
   Sol_cli_terraform))

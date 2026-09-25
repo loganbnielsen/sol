@@ -1,5 +1,21 @@
 val which_check : unit -> bool
 
+(** INFRA-076: the key of the operation record for one Terraform state -- the
+    root plus its backend configuration. Every lock-taking command ([plan*],
+    [apply*], [destroy], [state_rm]) runs under {!Sol_cli_supervised} and records
+    its operation under the key [init] last configured for its root. *)
+val operation_key : chdir:string -> backend_config:string list -> string
+
+(** The status of the latest operation against the state [chdir] +
+    [backend_config] names. *)
+val previous_operation
+  :  chdir:string
+  -> backend_config:string list
+  -> Sol_cli_supervised.status
+
+(** Record that the operator accepted the latest [Unresolved] operation. *)
+val acknowledge_previous_operation : chdir:string -> backend_config:string list -> unit
+
 type scope
 
 val whole_root : scope
