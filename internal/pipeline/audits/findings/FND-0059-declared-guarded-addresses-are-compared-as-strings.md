@@ -12,7 +12,7 @@
 
 ## What is established
 
-1. `cli/sol/lib/sol_cli_provider_capabilities.ml` declares AWS's guarded resource by a bare address:
+1. `cli/lib/sol_cli_provider_capabilities.ml` declares AWS's guarded resource by a bare address:
    `guarded_addresses = [ "aws_db_instance.postgres" ]`.
 2. `platform/infra/aws/main.tf:276-277` declares that resource as counted:
    `resource "aws_db_instance" "postgres" { count = var.create_rds ? 1 : 0 … }`, so Terraform's
@@ -28,7 +28,7 @@
    so `"aws_db_instance.postgres"` is never found in a state holding
    `"aws_db_instance.postgres[0]"`.
 4. `preparations_unrepresented` is the exact complement, and GCP's destruction module reports its
-   result (`cli/sol/lib/sol_cli_gcp_destruction.ml:193-194`).
+   result (`cli/lib/sol_cli_gcp_destruction.ml:193-194`).
 
 **Consequences (INFERENCE from 1–4, not a live observation):**
 
