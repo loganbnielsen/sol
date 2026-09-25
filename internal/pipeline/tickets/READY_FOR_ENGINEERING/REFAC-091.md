@@ -7,7 +7,9 @@ source: internal/pipeline/audits/2026-09-23_correctness_audit.md
 
 Port the cloud install/destroy lifecycle to a result-returning `execute ~deps`, exiting only at the command edge
 
-**Depends on:** None.
+**Depends on:** REFAC-095.
+
+**Scope update 2026-09-24:** the destroy half landed as HARDEN-004 part 2 (#462: `Sol_cli_cloud_destroy.execute ~deps`, typed inventory, bracketed cleanup). What remains is the **install half**, now stage S7 of `internal/pipeline/audits/2026-09-24_cloud_lifecycle_simplification_plan.md`: give `cloud_init` (the ~575-line apply in `cli/sol/bin/cmd_cloud_tf.ml`) the same shape, with generic sequencing and provider inputs supplied through the capabilities introduced by the stage before it, so provider selection does not happen inside the sequence. Behaviour-preserving; not a lifecycle redesign. The acceptance criteria below that concern destroy are already met; the install-side equivalents apply.
 
 **Finding:** FND-0047, FND-0048, FND-0044 (point 2) (`internal/pipeline/audits/findings/`).
 
