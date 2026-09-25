@@ -46,7 +46,9 @@ on_int() {
   exit 1
 }
 trap on_int INT
-trap 'echo TERM >> "$MARK/tf.signals"; kill -KILL "$PROV" 2>/dev/null; exit 1' TERM
+# A group SIGTERM reaches the provider too; wait for it to record that and exit
+# rather than killing it first (a KILL here raced the provider's own trap).
+trap 'echo TERM >> "$MARK/tf.signals"; wait "$PROV"; exit 1' TERM
 sh -c 'trap "echo TERM >> \"$1/provider.signals\"; exit 0" TERM
        echo $$ > "$1/provider.pid"
        while :; do sleep 0.1; done' provider "$MARK" &
@@ -260,6 +262,9 @@ let test_positive_control_group_kill_reaches_provider () =
   let c = make "control" in
   let sol = spawn_sol ~ticks:60 c in
   wait_until "terraform to start" (tf_started c);
+  (* The provider writes its pid after installing its TERM trap. *)
+  wait_until "the provider to start" (fun () ->
+    Sys.file_exists (Filename.concat c.mark "provider.pid"));
   Unix.sleepf 0.3;
   (* What Attempt 6 did: SIGTERM to Terraform's process group, provider included. *)
   Unix.kill (-terraform_group c) Sys.sigterm;
