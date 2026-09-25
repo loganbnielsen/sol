@@ -32,6 +32,11 @@ type t =
     (** Adds the target fields only this provider's root declares to [shared]. *)
   ; profile_vars : production:bool -> production_postgres:bool -> (string * string) list
     (** Profile-derived variables, placed ahead of every other variable. *)
+  ; guarded_removals : string list
+    (** Resource types whose removal discards something a re-apply cannot restore, so the
+        apply sequence refuses a plan that removes one unless it is confirmed
+        (AUDIT-POST-002). Empty is a real answer for a provider whose own API refuses
+        such a deletion, and it is not the same as inheriting another provider's list. *)
   ; root_declared_vars :
       has_postgres:bool
       -> production_postgres:bool

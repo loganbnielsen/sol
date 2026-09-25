@@ -22,11 +22,18 @@ let fresh () =
   }
 ;;
 
+(* AUDIT-POST-002: the guarded-removal policy is data the provider supplies, so this
+   fake declares its own type rather than an AWS one -- the sequence must not know which
+   Terraform resource type means "removing this discards something". *)
+let guarded_kind = "test_guarded_kind"
+
 (* A fake whose every step succeeds; a test overrides the step it is about. *)
 let deps calls : (unit, unit, unit) A.deps =
   { substrate_exists = (fun () -> Ok true)
   ; plan = (fun () -> Ok [])
-  ; confirm_ecr_removal = false
+  ; guarded_removals = [ guarded_kind ]
+  ; confirm_guarded_removal = false
+  ; confirmation_flag = "--confirm-test-removal"
   ; apply_plan =
       (fun () ->
         calls.applied_cloud <- true;
@@ -153,11 +160,11 @@ let test_cleanup_failure_is_reported () =
   cleanup_is `Failed cleanup
 ;;
 
-let test_ecr_removal_refused_before_apply () =
+let test_guarded_removal_refused_before_apply () =
   let calls = fresh () in
   let change =
-    { Sol_cli_terraform_plan.address = "aws_ecr_repository.repos[\"a\"]"
-    ; resource_type = "aws_ecr_repository"
+    { Sol_cli_terraform_plan.address = "test_guarded_kind.repos[\"a\"]"
+    ; resource_type = guarded_kind
     ; mode = "managed"
     ; action = Sol_cli_terraform_plan.Delete
     }
@@ -170,7 +177,7 @@ let test_ecr_removal_refused_before_apply () =
   Alcotest.(check bool) "the plan is still discarded" true calls.discarded;
   let confirmed =
     A.execute
-      ~deps:{ deps with confirm_ecr_removal = true; plan = (fun () -> Ok [ change ]) }
+      ~deps:{ deps with confirm_guarded_removal = true; plan = (fun () -> Ok [ change ]) }
   in
   Alcotest.(check bool)
     "confirmed, the apply proceeds"
@@ -178,6 +185,30 @@ let test_ecr_removal_refused_before_apply () =
     (match confirmed with
      | A.Applied -> true
      | A.Apply_failed _ -> false)
+;;
+
+(* A provider that declares no guarded removal inherits nothing: the same destructive
+   plan is applied, because Sol refuses only what the provider says is irreversible. This
+   is what keeps a new provider from silently acquiring AWS's list. *)
+let test_unguarded_provider_is_unaffected () =
+  let calls = fresh () in
+  let change =
+    { Sol_cli_terraform_plan.address = "other_kind.repos[\"a\"]"
+    ; resource_type = "other_kind"
+    ; mode = "managed"
+    ; action = Sol_cli_terraform_plan.Delete
+    }
+  in
+  let deps =
+    { (deps calls) with guarded_removals = []; plan = (fun () -> Ok [ change ]) }
+  in
+  Alcotest.(check bool)
+    "a plan removing an unguarded type applies"
+    true
+    (match A.execute ~deps with
+     | A.Applied -> true
+     | A.Apply_failed _ -> false);
+  Alcotest.(check bool) "the plan was applied" true calls.applied_cloud
 ;;
 
 let test_cloud_apply_failure_opens_no_window () =
@@ -236,9 +267,13 @@ let () =
             `Quick
             test_cleanup_failure_is_reported
         ; Alcotest.test_case
-            "ECR removal refused before apply"
+            "guarded removal refused before apply"
             `Quick
-            test_ecr_removal_refused_before_apply
+            test_guarded_removal_refused_before_apply
+        ; Alcotest.test_case
+            "a provider with no guarded removal is unaffected"
+            `Quick
+            test_unguarded_provider_is_unaffected
         ; Alcotest.test_case
             "cloud apply failure opens no window"
             `Quick
