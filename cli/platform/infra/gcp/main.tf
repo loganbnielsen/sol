@@ -232,6 +232,8 @@ resource "google_service_networking_connection" "sql" {
   service                 = "servicenetworking.googleapis.com"
   reserved_peering_ranges = [google_compute_global_address.sql_peering.name]
 
+  # residue: the peering outlives this resource; deleting the network releases it, and
+  # the destroy's residue check asks the provider for it (gcp_peering_probe). DEC-045.
   deletion_policy = "ABANDON"
 }
 
