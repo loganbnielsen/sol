@@ -1,6 +1,17 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: REFAC-091 — the cloud apply returns a typed outcome, like destroy (2026-09-25)
+## Latest: REFAC-096 — the lifecycle holds an opaque cluster, not provider outputs (2026-09-25)
+
+`Sol_cli_cluster.t` replaces the variant that had one constructor per provider. It carries
+the cluster's name, the provider's platform variables, the identity check, kube access,
+readiness and the bootstrap window. Each provider module (`Sol_cli_aws_cluster`,
+`Sol_cli_gcp_cluster`) parses its own outputs and builds the handle. The code moved verbatim
+out of `cmd_cloud_tf.ml`, which went from 3627 to 2791 lines.
+
+The dispatch ratchet went from 43 to 11. The offline harness and the full suite pass
+unchanged. Next: REFAC-097 (retention and residue behind provider capabilities).
+
+## Previous: REFAC-091 — the cloud apply returns a typed outcome, like destroy (2026-09-25)
 
 `Sol_cli_cloud_apply.execute ~deps` is the install sequence. It no longer exits from inside
 helpers. The bootstrap window is bracketed: any failure while it is open removes it before

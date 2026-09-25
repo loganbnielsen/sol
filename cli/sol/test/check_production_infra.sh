@@ -146,7 +146,7 @@ fi
 for gcp_required_output in cluster_name project_id region artifact_registry; do
   if ! grep -q "^output \"$gcp_required_output\" {" "$gcp_outputs"; then
     echo "FAIL: the GCP cloud root no longer publishes \"$gcp_required_output\"," >&2
-    echo "      which Sol_cli_cloud_lifecycle.gcp_outputs_of_json requires." >&2
+    echo "      which Sol_cli_gcp_cluster.gcp_outputs_of_json requires." >&2
     exit 1
   fi
 done
