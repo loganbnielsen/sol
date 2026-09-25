@@ -258,25 +258,6 @@ let reconciliation_scope provider guarded =
   (capabilities provider).reconciliation_scope guarded
 ;;
 
-(* [cleanup] is best-effort: the run is already failing, so a cleanup failure cannot
-   change the exit path -- but it must be reported, or the operator is left believing the
-   elevated access was removed when it may not have been. *)
-let report_cleanup_failure ~what cleanup =
-  match cleanup () with
-  | Ok r when r.Sol_cli_process.exit_code = 0 -> ()
-  | Ok r ->
-    Printf.eprintf
-      "warning: %s failed (terraform exited %d); the elevated access may still be applied\n\
-       %!"
-      what
-      r.Sol_cli_process.exit_code
-  | Error e ->
-    Printf.eprintf
-      "warning: %s failed (%s); the elevated access may still be applied\n%!"
-      what
-      (Sol_cli_process.error_to_string e)
-;;
-
 let normalize_var_file path =
   if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path else path
 ;;
@@ -1251,15 +1232,12 @@ let persist_whoami_capture ~run_id json =
          path)
 ;;
 
-let verify_whoami_shape ~on_error ~region ~outputs ~provisioner_role_arn =
-  (* This gate runs after the bootstrap window is open, so a failure here must remove
-     that access before the run stops -- otherwise the run exits with
-     [provisioner_bootstrap_admin=true] still applied on a cluster it has just decided
-     it cannot verify. [on_error] is the same cleanup every other failure path uses. *)
-  let fail message =
-    on_error ();
-    lifecycle_error message
-  in
+let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
+  (* This gate runs after the bootstrap window is open, so a failure here is returned
+     to [Sol_cli_cloud_apply.execute], which removes that access before the run
+     stops -- otherwise the run would end with [provisioner_bootstrap_admin=true]
+     still applied on a cluster it has just decided it cannot verify. *)
+  let fail message = Error message in
   let interval_s = whoami_retry_interval_s () in
   (* The expectation is the configured intent -- the target's provisioner role, normalised
      to the path-free form canonicalArn reports, so a role with a path does not produce a
@@ -1304,7 +1282,6 @@ let verify_whoami_shape ~on_error ~region ~outputs ~provisioner_role_arn =
            | None, None -> "(unnamed)"
          in
          (match matched with
-          | Some true -> ()
           | Some false ->
             fail
               (Printf.sprintf
@@ -1313,16 +1290,19 @@ let verify_whoami_shape ~on_error ~region ~outputs ~provisioner_role_arn =
                   the de-escalation comparison would be about somebody else."
                  named
                  source)
-          | None -> fail "the authorizer's answer named no principal at all");
-         if source <> "extra.canonicalArn" && source <> "userInfo.canonicalArn"
-         then
-           fail
-             (Printf.sprintf
-                "the principal came from %s rather than canonicalArn, which is the field \
-                 the de-escalation comparison depends on. The run stops rather than \
-                 validating a path the verification does not use. Raw response: %s"
-                source
-                json))
+          | None -> fail "the authorizer's answer named no principal at all"
+          | Some true ->
+            if source <> "extra.canonicalArn" && source <> "userInfo.canonicalArn"
+            then
+              fail
+                (Printf.sprintf
+                   "the principal came from %s rather than canonicalArn, which is the \
+                    field the de-escalation comparison depends on. The run stops rather \
+                    than validating a path the verification does not use. Raw response: \
+                    %s"
+                   source
+                   json)
+            else Ok ()))
     | unreachable ->
       let why =
         match unreachable with
@@ -1402,9 +1382,10 @@ let await_deescalation ~region ~outputs ~provisioner_role_arn ~before =
 let verify_deescalation ~region ~outputs ~provisioner_role_arn ~before =
   match await_deescalation ~region ~outputs ~provisioner_role_arn ~before with
   | Sol_cli_cloud_lifecycle.Deescalated ->
-    Printf.printf "  de-escalation verified as %s\n%!" provisioner_role_arn
+    Printf.printf "  de-escalation verified as %s\n%!" provisioner_role_arn;
+    Ok ()
   | verdict ->
-    lifecycle_error
+    Error
       ("de-escalation could not be established: "
        ^ Sol_cli_cloud_lifecycle.deescalation_verdict_to_string verdict)
 ;;
@@ -1491,17 +1472,6 @@ let observe_bootstrap_window_result ~region ~outputs ~provisioner_role_arn () =
         attempt (remaining - 1))
   in
   attempt cluster_propagation_attempts
-;;
-
-(* The install path's control: a failure removes the bootstrap window and stops the run,
-   because proceeding would spend a platform install on a verification that cannot
-   succeed. *)
-let observe_bootstrap_window ~on_error ~region ~outputs ~provisioner_role_arn () =
-  match observe_bootstrap_window_result ~region ~outputs ~provisioner_role_arn () with
-  | Ok control -> control
-  | Error message ->
-    on_error ();
-    lifecycle_error message
 ;;
 
 let process_ok ?(env = []) argv =
@@ -2546,6 +2516,273 @@ let refuse_sensitive_vars ~infra_dir ~vars =
     exit 1
 ;;
 
+(* Cleanup is independent evidence: a removal failure is reported alongside whatever
+   else the run did, never replaced by it and never replacing it (HARDEN-004 step 4,
+   preserving steps 2 and 3). *)
+let report_cleanup_evidence = function
+  | Sol_cli_cloud_destroy.Cleanup_failed message ->
+    Printf.eprintf
+      "warning: removing the bootstrap access failed (%s); the elevated access may still \
+       be applied\n\
+       %!"
+      message
+  | Sol_cli_cloud_destroy.Cleanup_not_needed | Sol_cli_cloud_destroy.Cleanup_succeeded ->
+    ()
+;;
+
+(* REFAC-091: the concrete dependencies of [Sol_cli_cloud_apply.execute] for one
+   target. Provider-specific steps -- the AWS whoami gate, window control and
+   de-escalation check, which have no GCP counterpart because GCP's window lives in
+   the platform root -- are chosen here, never inside the sequence. *)
+let terraform_failure r =
+  terraform_outcome r
+  |> Result.map_error (fun message -> Sol_cli_cloud_apply.Terraform_failed message)
+;;
+
+let with_cluster_access_apply ~region outputs f =
+  (* [with_cluster_access_result] carries a string; keep the callback's own typed
+     failure so a Terraform failure inside is still reported as one. *)
+  let inner = ref None in
+  match
+    with_cluster_access_result ~region outputs (fun ~env ->
+      match f env with
+      | Ok () -> Ok ()
+      | Error failure ->
+        inner := Some failure;
+        Error (Sol_cli_cloud_apply.failure_to_string failure))
+  with
+  | Ok () -> Ok ()
+  | Error message ->
+    Error
+      (match !inner with
+       | Some failure -> failure
+       | None -> Sol_cli_cloud_apply.Refused message)
+;;
+
+(* INFRA-034: the install must not be judged on one sample taken the instant the
+   apply returns. Helm reporting a release as deployed says the objects were
+   created, not that the controllers behind them are serving: on a fresh install
+   every native readiness endpoint is still starting, so a single sample reports a
+   healthy platform as Unmet. So wait, bounded, and say what is still unmet while
+   waiting -- the wait is evidence, and it must not hide a genuine failure. *)
+let await_platform_readiness ~provider ~env =
+  let sample () =
+    Sol_cli_cloud_lifecycle.readiness ~provider ~run:(fun args ->
+      process_output ~env ("kubectl" :: args))
+  in
+  let unmet_count checks =
+    List.length
+      (List.filter
+         (fun (_, state) ->
+            match state with
+            | Sol_cli_cloud_lifecycle.Established -> false
+            | Sol_cli_cloud_lifecycle.Unmet _ -> true)
+         checks)
+  in
+  let deadline_s =
+    (* Generous because a fresh install's controllers need minutes. Overridable so
+       a harness can bound the wait rather than wait it out. *)
+    match Sys.getenv_opt "SOL_PLATFORM_READINESS_TIMEOUT_S" with
+    | Some raw ->
+      (match float_of_string_opt raw with
+       | Some seconds when seconds >= 0. -> seconds
+       | _ -> 900.)
+    | None -> 900.
+  in
+  let poll_s = 15. in
+  let deadline = Unix.gettimeofday () +. deadline_s in
+  let waiting_since = Unix.gettimeofday () in
+  let rec await () =
+    let checks = sample () in
+    let unmet = unmet_count checks in
+    if unmet = 0 || Unix.gettimeofday () >= deadline
+    then checks
+    else (
+      Printf.printf
+        "  awaiting platform readiness: %d check(s) unmet, %.0fs elapsed\n%!"
+        unmet
+        (Unix.gettimeofday () -. waiting_since);
+      Unix.sleepf poll_s;
+      await ())
+  in
+  await ()
+;;
+
+let apply_deps
+      ~confirm_ecr_removal
+      ~provider
+      ~pname
+      ~run_log
+      ~infra_dir
+      ~platform_dir
+      ~platform_backend
+      ~var_files
+      ~vars
+      ~cloud_target
+      ~(target_cfg : Sol_cli_config.target)
+  =
+  let region = target_cfg.region in
+  (* INFRA-074 / FND-0043: the cloud apply runs from a saved plan that is read
+     first, and what is applied is the plan that was read. *)
+  let plan_file = Filename.temp_file "sol-cloud-apply-" ".tfplan" in
+  let discard_plan () =
+    List.iter
+      (fun f ->
+         try Sys.remove f with
+         | Sys_error _ -> ())
+      [ plan_file; plan_file ^ ".args" ]
+  in
+  (* An interrupt still ends the process through [exit]; the sequence's own
+     bracket covers every other path. *)
+  at_exit discard_plan;
+  let platform_apply ~name ~scope env platform_vars =
+    terraform_failure
+      (Sol_cli_run_log.run_phase run_log ~name (fun () ->
+         Sol_cli_terraform.apply
+           ~env
+           ~scope
+           ~chdir:platform_dir
+           ~var_files:[]
+           ~vars:platform_vars
+           ()))
+  in
+  { Sol_cli_cloud_apply.substrate_exists =
+      (fun () -> cloud_outputs_of provider infra_dir |> Result.map Option.is_some)
+  ; plan =
+      (fun () ->
+        let* () =
+          terraform_failure
+            (Sol_cli_run_log.run_phase run_log ~name:"terraform-plan" (fun () ->
+               Sol_cli_terraform.plan_saved
+                 ~scope:Sol_cli_terraform.whole_root
+                 ~chdir:infra_dir
+                 ~var_files
+                 ~vars:
+                   (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:true) @ vars)
+                 ~out:plan_file
+                 ()))
+        in
+        (* The plan JSON carries sensitive values in plain text (e.g. db_password),
+           so it never passes through [run_phase]; only the classified changes are
+           logged (SEC-008). *)
+        match
+          Sol_cli_terraform.show_saved_plan
+            ~run_log
+            ~phase:"terraform-plan-show"
+            ~chdir:infra_dir
+            ~plan_file
+            ()
+        with
+        | Ok (_, changes) -> Ok changes
+        | Error message ->
+          Error
+            (Sol_cli_cloud_apply.Refused ("could not read the cloud plan: " ^ message)))
+  ; confirm_ecr_removal
+  ; apply_plan =
+      (fun () ->
+        terraform_failure
+          (Sol_cli_run_log.run_phase run_log ~name:"terraform-apply" (fun () ->
+             Sol_cli_terraform.apply_saved ~chdir:infra_dir ~plan_file ())))
+  ; discard_plan
+  ; outputs = (fun () -> cloud_outputs_of provider infra_dir)
+  ; (* DEC-040. The gate first: it fires at the moment a fresh endpoint is least
+       likely to answer, so it must not be preceded by anything else that needs a
+       working cluster. Then the control, which must observe a bootstrap-only
+       capability *permitted*, because a later denial is not a transition unless
+       the capability was shown to work first. *)
+    open_window =
+      (fun outputs ->
+        match target_cfg.provisioner_role_arn, outputs with
+        | Some provisioner_role_arn, Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ->
+          let* () =
+            verify_whoami_shape ~region ~outputs:aws_outputs ~provisioner_role_arn
+          in
+          Result.map
+            Option.some
+            (observe_bootstrap_window_result
+               ~region
+               ~outputs:aws_outputs
+               ~provisioner_role_arn
+               ())
+        | _ -> Ok None)
+  ; platform_vars = (fun outputs -> platform_vars_of_result ~cloud_target ~outputs ())
+  ; cloud_ready =
+      (fun outputs ->
+        if cloud_ready ~region outputs
+        then Ok ()
+        else
+          Error
+            (Printf.sprintf
+               "%s cloud substrate is not Ready: %s"
+               pname
+               (cloud_ready_expectation provider)))
+  ; with_cluster_access = with_cluster_access_apply ~region
+  ; platform_init =
+      (fun () -> terraform_failure (terraform_init run_log platform_dir platform_backend))
+  ; platform_installed = (fun env -> crds_established env)
+  ; apply_prerequisites =
+      platform_apply
+        ~name:"platform-prerequisites-apply"
+        ~scope:(platform_prerequisite_targets provider)
+  ; await_crds =
+      (fun env ->
+        process_ok
+          ~env
+          [ "kubectl"
+          ; "wait"
+          ; "--for=condition=Established"
+          ; "crd/certificates.cert-manager.io"
+          ; "crd/clusterissuers.cert-manager.io"
+          ; "--timeout=180s"
+          ])
+  ; apply_platform =
+      platform_apply ~name:"platform-apply" ~scope:Sol_cli_terraform.whole_root
+  ; await_readiness = (fun env -> await_platform_readiness ~provider ~env)
+  ; remove_bootstrap_access =
+      (fun () ->
+        terraform_failure
+          (Sol_cli_run_log.run_phase
+             run_log
+             ~name:"provisioner-bootstrap-access-remove"
+             (fun () ->
+                Sol_cli_terraform.apply
+                  ~scope:Sol_cli_terraform.whole_root
+                  ~chdir:infra_dir
+                  ~var_files
+                  ~vars:
+                    (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:false)
+                     @ vars)
+                  ())))
+  ; (* DEC-040 applies to the AWS bootstrap access, which Sol revokes itself. GCP's
+       window lives in the platform root and is closed by applying that root, so
+       there is no Sol-side revocation to verify. *)
+    verify_deescalation =
+      (fun outputs control ->
+        match outputs with
+        | Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ->
+          (match target_cfg.provisioner_role_arn with
+           | Some provisioner_role_arn ->
+             verify_deescalation
+               ~region
+               ~outputs:aws_outputs
+               ~before:
+                 (match control with
+                  | Some (_, probes) -> probes
+                  | None -> [])
+               ~provisioner_role_arn
+           | None ->
+             (* A target that declares no provisioner role had nothing elevated. Said
+                out loud rather than skipped: a silently skipped verification is the
+                false-pass shape DEC-040 exists to remove. *)
+             Printf.printf
+               "  no provisioner role declared: no bootstrap elevation to verify\n%!";
+             Ok ())
+        | Sol_cli_cloud_lifecycle.Gcp_outputs _ -> Ok ())
+  ; provisioner_effective = provisioner_rbac_established
+  ; report = (fun line -> Printf.printf "%s\n%!" line)
+  }
+;;
+
 let cloud_init
       ?(confirm_ecr_removal = false)
       ?(accept_unresolved = false)
@@ -2708,407 +2945,37 @@ let cloud_init
          report_phase "Platform substrate" substrate));
     Printf.printf "\nDone. Re-run with 'sol cloud apply' to change cloud resources.\n%!"
   | Apply ->
-    (* ADR 0003 / INFRA-031: [CloudBootstrap] is the phase in which the cloud
-       substrate does not exist yet, so report it before the privileged apply
-       that creates it — a fresh target's first phase was previously visible only
-       as the *absence* of output until the platform stage ran. A re-apply onto
-       an existing substrate is not a bootstrap: there the platform stage below
-       reports the phase that run is actually in.
-
-       Only a positive "there is no substrate" observation justifies the claim:
-       a state read that fails means the substrate is *unknown*, not absent, and
-       is failed closed rather than reported as a phase (or applied over). *)
-    (match cloud_outputs_of provider infra_dir with
-     | Ok (Some _) -> ()
-     | Ok None ->
-       Printf.printf
-         "  lifecycle phase: %s\n%!"
-         (Sol_cli_cloud_lifecycle.phase_to_string Sol_cli_cloud_lifecycle.Cloud_bootstrap)
-     | Error message -> lifecycle_error message);
-    (* INFRA-074 / FND-0043: the cloud apply runs from a saved plan that is read
-       first. ECR repositories are derived from the workloads with a Dockerfile in
-       this checkout and carry [force_delete], so a plan that drops one would
-       delete its images. Such a plan is refused unless the operator confirms it,
-       and what is applied is the plan that was read. Nothing has changed when it
-       refuses: the plan creates no resources and the bootstrap window is not open. *)
-    let plan_file = Filename.temp_file "sol-cloud-apply-" ".tfplan" in
-    let remove_plan () =
-      List.iter
-        (fun f ->
-           try Sys.remove f with
-           | Sys_error _ -> ())
-        [ plan_file; plan_file ^ ".args" ]
-    in
-    at_exit remove_plan;
-    require_terraform_success
-      (Sol_cli_run_log.run_phase run_log ~name:"terraform-plan" (fun () ->
-         Sol_cli_terraform.plan_saved
-           ~scope:Sol_cli_terraform.whole_root
-           ~chdir:infra_dir
-           ~var_files
-           ~vars:(Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:true) @ vars)
-           ~out:plan_file
-           ()));
-    (* The plan JSON carries sensitive values in plain text (e.g. db_password), so
-       it never passes through [run_phase]; only the classified changes are
-       logged (SEC-008). *)
-    let changes =
-      match
-        Sol_cli_terraform.show_saved_plan
-          ~run_log
-          ~phase:"terraform-plan-show"
-          ~chdir:infra_dir
-          ~plan_file
-          ()
-      with
-      | Ok (_, changes) -> changes
-      | Error message -> lifecycle_error ("could not read the cloud plan: " ^ message)
-    in
-    (match
-       Sol_cli_terraform_plan.removed_of_type ~resource_type:"aws_ecr_repository" changes
-     with
-     | [] -> ()
-     | removed when confirm_ecr_removal ->
-       Printf.printf
-         "  ECR: removing %s and every image in them (confirmed with           \
-          --confirm-ecr-removal)\n\
-          %!"
-         (String.concat ", " removed)
-     | removed ->
-       lifecycle_error
-         (Printf.sprintf
-            "this apply would delete ECR repositories and every image in them: %s\n\
-            \  The repository list comes from the workloads with a Dockerfile in this \
-             checkout, so a branch that lacks one of them removes it. Run from the \
-             checkout that deploys this target, or pass --confirm-ecr-removal if \
-             removing them is intended. Nothing was changed."
-            (String.concat ", " removed)));
-    require_terraform_success
-      (Sol_cli_run_log.run_phase run_log ~name:"terraform-apply" (fun () ->
-         Sol_cli_terraform.apply_saved ~chdir:infra_dir ~plan_file ()));
-    remove_plan ();
-    let deescalate () =
-      Sol_cli_run_log.run_phase
-        run_log
-        ~name:"provisioner-bootstrap-access-remove"
-        (fun () ->
-           Sol_cli_terraform.apply
-             ~scope:Sol_cli_terraform.whole_root
-             ~chdir:infra_dir
+    let outcome =
+      Sol_cli_cloud_apply.execute
+        ~deps:
+          (apply_deps
+             ~confirm_ecr_removal
+             ~provider
+             ~pname
+             ~run_log
+             ~infra_dir
+             ~platform_dir
+             ~platform_backend
              ~var_files
-             ~vars:
-               (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:false) @ vars)
-             ())
+             ~vars
+             ~cloud_target
+             ~target_cfg)
     in
-    let cleanup_bootstrap_access () =
-      report_cleanup_failure ~what:"removing the bootstrap access" deescalate
-    in
-    let outputs =
-      match cloud_outputs_of provider infra_dir with
-      | Ok (Some v) -> v
-      | Ok None ->
-        cleanup_bootstrap_access ();
-        lifecycle_error "Terraform apply completed without lifecycle outputs"
-      | Error e ->
-        cleanup_bootstrap_access ();
-        lifecycle_error e
-    in
-    (* DEC-040's positive control. The bootstrap-only capabilities observed *permitted* as
-       the provisioner while the window this run opened is still open -- captured here
-       because the cloud apply has produced the outputs the probe needs and de-escalation
-       is much later. Without it, a later denial is indistinguishable from a credential
-       that never worked, a principal that was never the elevated one, or a capability
-       that was never granted: a final denial is not a transition. *)
-    (* The gate first. It fires at the moment a fresh endpoint is least likely to answer,
-       so it must not be preceded by anything that also needs a working cluster -- least of
-       all the control below, whose single probe would otherwise be the first thing to meet
-       the propagation window. *)
-    (match target_cfg.provisioner_role_arn, outputs with
-     | Some provisioner_role_arn, Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ->
-       verify_whoami_shape
-         ~on_error:cleanup_bootstrap_access
-         ~region:target_cfg.region
-         ~outputs:aws_outputs
-         ~provisioner_role_arn
-     | _ -> ());
-    (* The control must observe the bootstrap-only capability *permitted*, because a later
-       denial is not a transition unless the capability was shown to work first. One probe
-       at this moment is not enough: a fresh cluster can refuse or be unreachable while
-       propagation catches up. So it retries with backoff, and if it never observes
-       permitted the run stops before the platform install rather than proceeding to a
-       verification that can only come back Undetermined. *)
-    let bootstrap_window_control =
-      match target_cfg.provisioner_role_arn, outputs with
-      | Some provisioner_role_arn, Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ->
-        Some
-          (observe_bootstrap_window
-             ~on_error:cleanup_bootstrap_access
-             ~region:target_cfg.region
-             ~outputs:aws_outputs
-             ~provisioner_role_arn
-             ())
-      | _ -> None
-    in
-    (match bootstrap_window_control with
-     | Some _ -> ()
-     | None -> Printf.printf "  bootstrap window control: not captured\n%!");
-    let platform_vars =
-      platform_vars_of ~on_error:cleanup_bootstrap_access ~cloud_target ~outputs ()
-    in
-    if not (cloud_ready ~region:target_cfg.region outputs)
-    then (
-      cleanup_bootstrap_access ();
-      lifecycle_error
-        (Printf.sprintf
-           "%s cloud substrate is not Ready: %s"
-           pname
-           (cloud_ready_expectation provider)));
-    with_cluster_access
-      ~on_error:cleanup_bootstrap_access
-      ~region:target_cfg.region
-      outputs
-      (fun env ->
-         let platform_init = terraform_init run_log platform_dir platform_backend in
-         (match platform_init with
-          | Ok result when result.exit_code = 0 -> ()
-          | _ ->
-            cleanup_bootstrap_access ();
-            require_terraform_success platform_init);
-         (* ADR 0003: the phase is recomputed from observation at the top of the
-            operation, before this run creates anything. The cert-manager CRDs
-            are cluster objects, so they report what an *earlier* run installed
-            and are unaffected by the bootstrap-admin escalation this run has
-            just performed -- unlike a `kubectl auth can-i` probe, which that
-            escalation would mask. *)
-         let observed =
-           Sol_cli_cloud_lifecycle.observed_phase
-             ~cloud_exists:true
-             ~platform_installed:(crds_established env)
-         in
-         (* ADR 0003 invariant 3: a platform change on an already-installed
-            target is an explicit PlatformUpdating re-entry, never an implicit
-            return to PlatformInstalling -- which the transition relation
-            rejects, so modelling it the other way made the model and the
-            operation disagree. *)
-         let operation_phase =
-           match observed with
-           | Sol_cli_cloud_lifecycle.Ready ->
-             (match
-                Sol_cli_cloud_lifecycle.enter
-                  ~from:Sol_cli_cloud_lifecycle.Ready
-                  ~to_:Sol_cli_cloud_lifecycle.Platform_updating
-              with
-              | Ok phase -> phase
-              | Error message -> lifecycle_error message)
-           | Sol_cli_cloud_lifecycle.Absent | Sol_cli_cloud_lifecycle.Platform_installing
-             -> Sol_cli_cloud_lifecycle.Platform_installing
-           | ( Sol_cli_cloud_lifecycle.Cloud_bootstrap
-             | Sol_cli_cloud_lifecycle.Platform_updating
-             | Sol_cli_cloud_lifecycle.Preparing_destroy
-             | Sol_cli_cloud_lifecycle.Destroying ) as other ->
-             (* Unreachable from [observed_phase] today, and refused rather than
-                matched so that widening the observation cannot silently admit
-                an apply from a phase the relation does not allow one from. *)
-             lifecycle_error
-               (Printf.sprintf
-                  "refusing to apply from observed lifecycle phase %s"
-                  (Sol_cli_cloud_lifecycle.phase_to_string other))
-         in
-         (* ADR 0003: the phase is operational context, so it is reported rather
-            than only acted on -- it is what tells an operator which authority
-            and desired-state policy the run is applying. *)
-         Printf.printf
-           "  lifecycle phase: %s\n%!"
-           (Sol_cli_cloud_lifecycle.phase_to_string operation_phase);
-         let prerequisites =
-           Sol_cli_run_log.run_phase
-             run_log
-             ~name:"platform-prerequisites-apply"
-             (fun () ->
-                Sol_cli_terraform.apply
-                  ~env
-                  ~scope:(platform_prerequisite_targets provider)
-                  ~chdir:platform_dir
-                  ~var_files:[]
-                  ~vars:platform_vars
-                  ())
-         in
-         (match prerequisites with
-          | Ok result when result.exit_code = 0 -> ()
-          | _ ->
-            cleanup_bootstrap_access ();
-            require_terraform_success prerequisites);
-         if
-           not
-             (process_ok
-                ~env
-                [ "kubectl"
-                ; "wait"
-                ; "--for=condition=Established"
-                ; "crd/certificates.cert-manager.io"
-                ; "crd/clusterissuers.cert-manager.io"
-                ; "--timeout=180s"
-                ])
-         then (
-           cleanup_bootstrap_access ();
-           lifecycle_error "cert-manager CRDs did not become Established");
-         (* ADR 0003 / HARDEN-002 run 4 finding 14: installing the platform is
-            privileged platform establishment -- the charts mint ClusterRoles
-            granting verbs the bounded provisioner deliberately does not hold --
-            so the temporary bootstrap-admin authority stays open through the
-            full platform apply AND verified readiness, and is revoked only at
-            the PlatformInstalling -> Ready transition below. *)
-         let platform_apply =
-           Sol_cli_run_log.run_phase run_log ~name:"platform-apply" (fun () ->
-             Sol_cli_terraform.apply
-               ~env
-               ~scope:Sol_cli_terraform.whole_root
-               ~chdir:platform_dir
-               ~var_files:[]
-               ~vars:platform_vars
-               ())
-         in
-         (match platform_apply with
-          | Ok result when result.exit_code = 0 -> ()
-          | _ ->
-            cleanup_bootstrap_access ();
-            require_terraform_success platform_apply);
-         (* Readiness asserts the platform's convergence from authoritative
-            Kubernetes state; it is not parameterised by the observability backend
-            or the configured issuer (see Sol_cli_cloud_lifecycle.readiness). *)
-         let sample_readiness () =
-           Sol_cli_cloud_lifecycle.readiness ~provider ~run:(fun args ->
-             process_output ~env ("kubectl" :: args))
-         in
-         let unmet_count checks =
-           List.length
-             (List.filter
-                (fun (_, state) ->
-                   match state with
-                   | Sol_cli_cloud_lifecycle.Established -> false
-                   | Sol_cli_cloud_lifecycle.Unmet _ -> true)
-                checks)
-         in
-         (* INFRA-034: the install must not be judged on one sample taken the
-            instant the apply returns. Helm reporting a release as deployed says
-            the objects were created, not that the controllers behind them are
-            serving: on a fresh install every native readiness endpoint is still
-            starting, so a single sample reports a healthy platform as Unmet and
-            then fails the run *after* relinquishing privilege. On a real target
-            that produced "Unmet" naming nine components that were all Running
-            minutes later.
-
-            So wait, bounded, and say what is still unmet while waiting — the
-            wait is evidence, and it must not hide a genuine failure. A platform
-            that never converges still fails, with the same summary as before. *)
-         let readiness_deadline_s =
-           (* The default is generous because a fresh install's controllers need
-              minutes, not seconds. Overridable so a harness can bound the wait
-              rather than wait it out: a test that asserts the failing end of this
-              behaviour must not itself take fifteen minutes. *)
-           match Sys.getenv_opt "SOL_PLATFORM_READINESS_TIMEOUT_S" with
-           | Some raw ->
-             (match float_of_string_opt raw with
-              | Some seconds when seconds >= 0. -> seconds
-              | _ -> 900.)
-           | None -> 900.
-         in
-         let readiness_poll_s = 15. in
-         let deadline = Unix.gettimeofday () +. readiness_deadline_s in
-         let waiting_since = Unix.gettimeofday () in
-         let rec await_readiness () =
-           let checks = sample_readiness () in
-           let unmet = unmet_count checks in
-           if unmet = 0
-           then checks
-           else if Unix.gettimeofday () >= deadline
-           then checks
-           else (
-             Printf.printf
-               "  awaiting platform readiness: %d check(s) unmet, %.0fs elapsed\n%!"
-               unmet
-               (Unix.gettimeofday () -. waiting_since);
-             Unix.sleepf readiness_poll_s;
-             await_readiness ())
-         in
-         let readiness = await_readiness () in
-         let summary = Sol_cli_cloud_lifecycle.readiness_summary readiness in
-         if summary <> "Ready"
-         then (
-           cleanup_bootstrap_access ();
-           lifecycle_error ("platform readiness " ^ summary));
-         (* ADR 0003 invariant 5: the run may only leave its phase along an edge
-            the transition relation admits. PlatformInstalling -> Ready and
-            PlatformUpdating -> Ready are both legal, so the exit is checked
-            against the phase this run actually entered rather than assumed. *)
-         require_terraform_success (deescalate ());
-         (* DEC-040: [Ready] is a claim of least privilege, so it is not announced
-            until the effective authorization surface shows the bootstrap capability
-            is gone. The previous order announced [Ready] and then de-escalated, which
-            made the claim before its evidence existed. *)
-         (* DEC-040 applies to the AWS bootstrap access, which Sol revokes itself.
-            GCP's window lives in the platform root and is closed by applying that
-            root, so there is no Sol-side revocation here to verify. *)
-         (match outputs with
-          | Sol_cli_cloud_lifecycle.Aws_outputs aws_outputs ->
-            (match target_cfg.provisioner_role_arn with
-             | Some provisioner_role_arn ->
-               verify_deescalation
-                 ~region:target_cfg.region
-                 ~outputs:aws_outputs
-                 ~before:
-                   (match bootstrap_window_control with
-                    | Some (_, probes) -> probes
-                    | None -> [])
-                 ~provisioner_role_arn
-             | None ->
-               (* The bootstrap elevation is scoped to the provisioner role; a target
-                  that declares none had nothing elevated. Said out loud rather than
-                  skipped, because a silently skipped verification is exactly the
-                  false-pass shape DEC-040 exists to remove. *)
-               Printf.printf
-                 "  no provisioner role declared: no bootstrap elevation to verify\n%!")
-          | Sol_cli_cloud_lifecycle.Gcp_outputs _ -> ());
-         (match
-            Sol_cli_cloud_lifecycle.enter
-              ~from:operation_phase
-              ~to_:Sol_cli_cloud_lifecycle.Ready
-          with
-          | Ok _ -> ()
-          | Error message -> lifecycle_error message);
-         (* GCP's window lives in the platform root, so it is closed by applying the
-            root that owns the object rather than by a Sol-side revocation step:
-            the authority model stays in the layer that defines the authority. *)
-         if not (provisioner_rbac_established env)
-         then
-           lifecycle_error
-             "platform provisioner RBAC is not effective after bootstrap access removal";
-         (* ADR 0003 / INFRA-031: the run is in [Ready] only once readiness has
-            been verified *and* the temporary privileged association has been
-            revoked *and* the bounded provisioner has been verified effective —
-            all three above. Report it here rather than at the transition check,
-            so the phase an operator sees is the state the target is actually
-            left in. *)
-         Printf.printf
-           "  lifecycle phase: %s\n%!"
-           (Sol_cli_cloud_lifecycle.phase_to_string Sol_cli_cloud_lifecycle.Ready));
-    Printf.printf "\nProvisioned endpoints:\n%!";
-    print_outputs infra_dir;
-    Printf.printf "\nDone.\n%!"
-;;
-
-(* Cleanup is independent evidence: a removal failure is reported alongside whatever
-   else the run did, never replaced by it and never replacing it (HARDEN-004 step 4,
-   preserving steps 2 and 3). *)
-let report_cleanup_evidence = function
-  | Sol_cli_cloud_destroy.Cleanup_failed message ->
-    Printf.eprintf
-      "warning: removing the bootstrap access failed (%s); the elevated access may still \
-       be applied\n\
-       %!"
-      message
-  | Sol_cli_cloud_destroy.Cleanup_not_needed | Sol_cli_cloud_destroy.Cleanup_succeeded ->
-    ()
+    (* One place maps the typed outcome to a process exit (REFAC-091): 0 once the
+       target is Ready, 1 for any failure -- after the bootstrap-window cleanup, if
+       the run needed one, has been reported alongside it. *)
+    (match outcome with
+     | Sol_cli_cloud_apply.Applied ->
+       Printf.printf "\nProvisioned endpoints:\n%!";
+       print_outputs infra_dir;
+       Printf.printf "\nDone.\n%!"
+     | Sol_cli_cloud_apply.Apply_failed { failure; cleanup } ->
+       report_cleanup_evidence cleanup;
+       (match failure with
+        | Sol_cli_cloud_apply.Terraform_failed message ->
+          Printf.eprintf "\n%s\n%!" message
+        | Sol_cli_cloud_apply.Refused message -> Printf.eprintf "error: %s\n%!" message);
+       exit 1)
 ;;
 
 (* A preparation that failed but permitted destruction does not change the exit
