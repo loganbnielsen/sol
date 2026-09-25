@@ -52,3 +52,12 @@ let destruction provider context =
   | Sol_cli_provider.Aws -> Sol_cli_aws_destruction.destruction context
   | Sol_cli_provider.Gcp -> Sol_cli_gcp_destruction.destruction context
 ;;
+
+(* INFRA-039: resolve the provider's credentials for one mutating stage. *)
+let credentials provider ~operation ~leaves_target_standing =
+  match provider with
+  | Sol_cli_provider.Aws ->
+    Sol_cli_aws_cluster.credentials ~operation ~leaves_target_standing
+  | Sol_cli_provider.Gcp ->
+    Sol_cli_gcp_cluster.credentials ~operation ~leaves_target_standing
+;;

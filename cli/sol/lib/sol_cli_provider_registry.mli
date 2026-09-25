@@ -13,3 +13,12 @@ val destruction
   :  Sol_cli_provider.t
   -> Sol_cli_destruction.context
   -> Sol_cli_destruction.t
+
+(** INFRA-039: resolve the provider's credentials for one mutating stage, report
+    the principal they belong to, and fail closed; [leaves_target_standing] makes
+    the refusal say the target is still billing. *)
+val credentials
+  :  Sol_cli_provider.t
+  -> operation:string
+  -> leaves_target_standing:bool
+  -> (unit, string) result

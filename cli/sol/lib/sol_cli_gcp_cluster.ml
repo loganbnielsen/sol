@@ -269,3 +269,29 @@ let cluster ~region outputs : Sol_cli_cluster.t =
   ; bootstrap_window = Sol_cli_cluster.Closed_by_platform_root
   }
 ;;
+
+(* INFRA-039: resolve Google Application Default Credentials (moved from
+   `cmd_cloud_tf.ml`, HARDEN-005). The token itself is never printed. *)
+let credentials ~operation ~leaves_target_standing : (unit, string) result =
+  let standing_remark =
+    if leaves_target_standing
+    then
+      " The target is still standing and may still be billing; nothing has been changed."
+    else " Nothing has been changed."
+  in
+  match
+    Sol_cli_cluster.process_output
+      [ "gcloud"; "auth"; "application-default"; "print-access-token" ]
+  with
+  | Some _ ->
+    Printf.printf "  credentials: Google Application Default Credentials resolved\n%!";
+    Ok ()
+  | None ->
+    Error
+      (Printf.sprintf
+         "cannot resolve Google Application Default Credentials, so Sol cannot \
+          %s              this target.%s Run `gcloud auth application-default login` (or \
+          fix the              attached service account) and re-run."
+         operation
+         standing_remark)
+;;
