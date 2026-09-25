@@ -1221,6 +1221,18 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
     ~accept_unresolved:false
     ~chdir:infra_dir
     ~backend_config:cloud_backend;
+  (* AUDIT-POST-004: the platform root is a second Terraform state, and destroy works
+     in it (init, the destroy preview, the platform teardown). Apply guards both roots
+     (above, in [cloud_init]); destroy guarded only the cloud root, so a platform
+     operation still running produced Terraform's backend-lock error instead of Sol's
+     own report. Same non-constructive policy as the cloud root: [Running] refuses,
+     [Unresolved] is reported and destruction proceeds, because nothing here constructs
+     from the gap. *)
+  guard_previous_operation
+    ~constructive:false
+    ~accept_unresolved:false
+    ~chdir:(platform_dir provider)
+    ~backend_config:(Sol_cli_cloud_lifecycle.platform_backend cloud_target);
   let var_files =
     match var_file with
     | None -> []

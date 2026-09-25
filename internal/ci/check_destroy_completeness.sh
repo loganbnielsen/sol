@@ -108,22 +108,44 @@ for dir in "${target_roots[@]}"; do
     fi
   done
 
-  # 4. DEC-045: an attribute that tells Terraform NOT to delete the remote object
-  #    (`deletion_policy = "ABANDON"`, `skip_destroy`, `skip_delete`) means a
-  #    successful destroy with an empty state still leaves that object behind. That
-  #    is the one case where Terraform's destroy is deliberately not the authority
-  #    for absence, so it must say who is: a `# residue:` comment within the three
-  #    lines above the attribute, naming the residue handling. An unannotated one is
-  #    residue nobody owns.
+  # 4. DEC-045 + AUDIT-POST-005: `deletion_policy`, `skip_destroy` and `skip_delete`
+  #    carry two different semantics, and each needs its own answer.
+  #
+  #    * `deletion_policy = "ABANDON"` / `skip_destroy = true` / `skip_delete = true`
+  #      tell Terraform NOT to delete the remote object, so a successful destroy with
+  #      an empty state still leaves it behind. Terraform's destroy is deliberately
+  #      not the authority for absence there, so the declaration must say who is: a
+  #      `# residue:` comment within the three lines above, naming the residue
+  #      handling. An unannotated one is residue nobody owns.
+  #    * `deletion_policy = "PREVENT"` is the Google provider's `prevent_destroy`: the
+  #      target can never be torn down through the lifecycle, which is exactly what
+  #      ADR 0004 forbids. It is rejected the way rule 1 rejects `prevent_destroy`.
+  #    * Anything else — a variable-driven `skip_destroy`, an unrecognised
+  #      `deletion_policy` — is a deletion semantic this guard cannot classify, and a
+  #      guard that cannot classify a relevant attribute must not read as a pass.
   for tf in "$root/$dir"/*.tf; do
     [ -e "$tf" ] || continue
-    while IFS=: read -r line _; do
+    while IFS=: read -r line body; do
       [ -n "$line" ] || continue
-      start=$((line > 3 ? line - 3 : 1))
-      if ! sed -n "${start},$((line - 1))p" "$tf" | grep -qE '^[[:space:]]*#[[:space:]]*residue:'; then
-        report "$tf:$line relinquishes deletion (Terraform will not delete the remote object) without a '# residue:' comment naming who handles what it leaves behind (DEC-045)."
-      fi
-    done < <(grep -nE '^[[:space:]]*(deletion_policy[[:space:]]*=[[:space:]]*"ABANDON"|skip_destroy[[:space:]]*=[[:space:]]*true|skip_delete[[:space:]]*=[[:space:]]*true)' "$tf")
+      value="$(printf '%s' "$body" \
+        | sed 's/#.*//; s/.*=[[:space:]]*//; s/[[:space:]]*$//; s/\r$//')"
+      key="$(printf '%s' "$body" | sed 's/^[[:space:]]*//; s/[[:space:]]*=.*//')"
+      case "$key:$value" in
+        deletion_policy:\"ABANDON\"|skip_destroy:true|skip_delete:true)
+          start=$((line > 3 ? line - 3 : 1))
+          if ! sed -n "${start},$((line - 1))p" "$tf" | grep -qE '^[[:space:]]*#[[:space:]]*residue:'; then
+            report "$tf:$line relinquishes deletion (Terraform will not delete the remote object) without a '# residue:' comment naming who handles what it leaves behind (DEC-045)."
+          fi
+          ;;
+        deletion_policy:\"PREVENT\")
+          report "$tf:$line sets deletion_policy = \"PREVENT\", which no Destroy policy can lift: a target Sol provisioned could never be destroyed (ADR 0004)."
+          ;;
+        deletion_policy:\"DELETE\"|skip_destroy:false|skip_delete:false) ;;
+        *)
+          report "$tf:$line sets $key to '$value', a deletion semantic this guard cannot classify; declare the value explicitly (and, if it relinquishes the remote object, put it behind a '# residue:' owner) so the invariant does not rest on a value the check cannot read."
+          ;;
+      esac
+    done < <(grep -nE '^[[:space:]]*(deletion_policy|skip_destroy|skip_delete)[[:space:]]*=' "$tf")
   done
 
   # 5. INFRA-077 / FND-0057: Cloud Storage soft-deletes and bills deleted objects by
@@ -153,4 +175,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "check_destroy_completeness: $checked terraform file(s) in ${#target_roots[@]} target root(s); no prevent_destroy, no literal deletion guard, every lifecycle-populated resource removable, every routed guard liftable by the Destroy policy, every relinquished deletion annotated with its residue handling, and every GCS bucket's soft delete declared."
+echo "check_destroy_completeness: $checked terraform file(s) in ${#target_roots[@]} target root(s); no prevent_destroy or deletion_policy = \"PREVENT\", no literal deletion guard, every lifecycle-populated resource removable, every routed guard liftable by the Destroy policy, every relinquished deletion classified and annotated with its residue handling, and every GCS bucket's soft delete declared."

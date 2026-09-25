@@ -12,11 +12,19 @@
     it), so this module does not check for a missing value. *)
 
 (** [declared_in files] is the names of root-module variables declared with
-    [sensitive = true] across [files], given as [(filename, contents)]. It expects
-    [terraform fmt] layout, which the roots are checked against: a top-level
-    [variable "name" {] block closes with a [}] in column 0. Sorted, without
-    duplicates. *)
-val declared_in : (string * string) list -> string list
+    [sensitive = true] across [files], given as [(filename, contents)]. Sorted,
+    without duplicates.
+
+    The reader is tolerant of what a valid root may contain (a trailing comment, a
+    one-line block, any whitespace) rather than assuming one layout: answering "no
+    secrets" because a root is laid out differently is indistinguishable from a
+    root that declares none. When it meets a [sensitive] assignment whose value it
+    cannot evaluate, it is [Error] — the fail-closed direction, because skipping
+    such a declaration would let the secret reach the logged argument vector.
+
+    A top-level variable block closes with a brace in column 0, which is what
+    separates it from a nested validation block. *)
+val declared_in : (string * string) list -> (string list, string) result
 
 (** [declared ~root] reads every [*.tf] file directly in [root] and returns
     {!declared_in} of them. [Error] when the directory cannot be read, because a
@@ -24,7 +32,7 @@ val declared_in : (string * string) list -> string list
 val declared : root:string -> (string list, string) result
 
 (** [refuse_on_command_line ~sensitive ~vars] is [Ok ()] unless one of [vars]
-    (terraform ["key=value"] strings) sets a variable in [sensitive]; then [Error]
+    (terraform keys and values) sets a variable in [sensitive]; then [Error]
     naming the variable, why it is refused, and the [TF_VAR_<name>] that carries
     it instead. Never inspects or carries the value. *)
 val refuse_on_command_line

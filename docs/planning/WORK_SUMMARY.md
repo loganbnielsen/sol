@@ -1,6 +1,29 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: HARDEN-005 — the cloud lifecycle simplification programme is complete (2026-09-25)
+## Latest: AUDIT-POST-004/005/006 — the lifecycle guards close the follow-ups an independent audit left (2026-09-25)
+
+An independent post-implementation audit of the cloud lifecycle simplification
+(`internal/pipeline/audits/2026-09-25_cloud_lifecycle_post_audit.md`, verdict PASS WITH FOLLOW-UPS)
+filed seven bounded findings. These three are the safety/guard family:
+
+- **AUDIT-POST-004.** `cloud destroy` now applies the previous-operation guard to the *platform* root
+  as well as the cloud root, so a still-running platform operation is reported through Sol's
+  Running/Resolved/Unresolved contract instead of surfacing as a Terraform backend-lock error. Same
+  policy as the cloud root on a non-constructive command: `Running` refuses, `Unresolved` is named
+  and destruction proceeds. Mutation-controlled: removing the guard makes the harness fail.
+- **AUDIT-POST-005.** `check_destroy_completeness.sh` now classifies every `deletion_policy` /
+  `skip_destroy` / `skip_delete` assignment: `PREVENT` is rejected (the Google provider's
+  `prevent_destroy`), relinquishing values still need their `# residue:` owner, and an unclassifiable
+  value is reported rather than passed.
+- **AUDIT-POST-006.** `Sol_cli_sensitive_vars` no longer assumes `terraform fmt` layout: it
+  tolerates a trailing comment, tabs and a one-line block, and fails closed on a `sensitive`
+  assignment it cannot evaluate. Layout behaviour was checked against Terraform 1.9.8 (a brace on the
+  next line is invalid HCL, so it is not supported). No `terraform fmt` CI step was added, because
+  the reader no longer depends on that layout.
+
+Next: AUDIT-POST-001/002/003/007 (the provider-boundary findings).
+
+## Previous: HARDEN-005 — the cloud lifecycle simplification programme is complete (2026-09-25)
 
 Credential readiness moved behind the provider registry, so provider dispatch outside the
 registry is at 1, a justified placeholder, and there are 0 wildcards. The Azure-on-paper

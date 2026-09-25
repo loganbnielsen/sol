@@ -2347,6 +2347,90 @@ wait "$live_pid" 2>/dev/null || true
 assert_contains "INFRA-076: the running operation is reported" "$running_log.out" \
   'is still running and holds its lock' || exit 1
 
+# AUDIT-POST-004: destroy works in the platform root too (init, the destroy preview,
+# the platform teardown), so the platform root's own previous operation decides
+# whether it may proceed -- exactly as the cloud root's does on apply. The cloud
+# root's record is left Resolved first, so a refusal below can only have come from
+# the platform root, not from a leftover cloud-root record.
+printf 'exited 0\n' >"$latest/exit"
+# Which key is the AWS platform root's? Its own record says so: `root=` in the
+# operation meta is the Terraform working directory, and `base-gcp-*` records carry a
+# different root. Selecting by that (most recent first) is unambiguous, where a name
+# prefix is not -- `base-` also prefixes the GCP platform root.
+platform_key=""
+while IFS= read -r candidate; do
+  [ -n "$candidate" ] || continue
+  dir="$ops/$candidate/$(cat "$ops/$candidate/latest" 2>/dev/null || true)"
+  if [ -f "$dir/meta" ] && grep -qx "root=$root/cli/platform/infra/base" "$dir/meta"; then
+    platform_key="$candidate"
+    break
+  fi
+done < <(ls -t "$ops" 2>/dev/null)
+if [ -z "$platform_key" ] || [ ! -s "$ops/$platform_key/latest" ]; then
+  echo "AUDIT-POST-004: no operation record for the AWS platform root under $ops" >&2
+  ls -la "$ops" >&2 || true
+  exit 1
+fi
+
+# Running: never start conflicting platform work.
+sleep 60 &
+platform_live_pid=$!
+platform_running="$ops/$platform_key/99999999T000000Z-platform-running"
+mkdir -p "$platform_running"
+printf 'host=%s\nsupervisor_pid=%s\nsupervisor_start=\nstarted_at=%s\nroot=%s\n' \
+  "$(hostname)" "$platform_live_pid" "$(date +%s)" "$root/cli/platform/infra/base" \
+  >"$platform_running/meta"
+printf '%s\n' "$(basename "$platform_running")" >"$ops/$platform_key/latest"
+platform_running_log="$tmp/infra076-platform-running.log"
+rm -f "$RDS_PREPARED_FILE"
+if (export FAIL_ON=""; run_destroy "$platform_running_log"); then
+  kill "$platform_live_pid" 2>/dev/null || true
+  cat "$platform_running_log.out" >&2
+  echo "AUDIT-POST-004: a destroy raced a running platform operation" >&2
+  exit 1
+fi
+kill "$platform_live_pid" 2>/dev/null || true
+wait "$platform_live_pid" 2>/dev/null || true
+assert_contains "AUDIT-POST-004: the running platform operation is reported" \
+  "$platform_running_log.out" 'is still running and holds its lock' || exit 1
+if [ -e "$platform_running_log" ] && grep -q 'terraform' "$platform_running_log"; then
+  echo "AUDIT-POST-004: the refusal of a running platform operation still ran terraform" >&2
+  cat "$platform_running_log" >&2
+  exit 1
+fi
+
+# Unresolved: named, and destruction proceeds. A destroy constructs nothing from the
+# gap, so the established policy for a non-constructive command is to report it
+# rather than refuse it -- the answer the cloud root gets today.
+printf 'signaled 9\n' >"$platform_running/exit"
+printf '%s\n' "$(basename "$platform_running")" >"$ops/$platform_key/latest"
+platform_unresolved_log="$tmp/infra076-platform-unresolved.log"
+rm -f "$RDS_PREPARED_FILE"
+if ! (export FAIL_ON=""; run_destroy "$platform_unresolved_log"); then
+  cat "$platform_unresolved_log.out" >&2
+  echo "AUDIT-POST-004: an unresolved platform operation stopped a destroy" >&2
+  exit 1
+fi
+assert_contains "AUDIT-POST-004: the unresolved platform operation is reported" \
+  "$platform_unresolved_log.out" \
+  'the previous Terraform operation against this state is unresolved' || exit 1
+
+# Resolved: destruction proceeds with no such report.
+printf 'exited 0\n' >"$platform_running/exit"
+printf '%s\n' "$(basename "$platform_running")" >"$ops/$platform_key/latest"
+platform_resolved_log="$tmp/infra076-platform-resolved.log"
+rm -f "$RDS_PREPARED_FILE"
+if ! (export FAIL_ON=""; run_destroy "$platform_resolved_log"); then
+  cat "$platform_resolved_log.out" >&2
+  echo "AUDIT-POST-004: a resolved platform operation stopped a destroy" >&2
+  exit 1
+fi
+if grep -qF 'the previous Terraform operation against this state is unresolved' \
+     "$platform_resolved_log.out"; then
+  echo "AUDIT-POST-004: a resolved platform operation was reported as unresolved" >&2
+  exit 1
+fi
+
 # INFRA-075 canary. The scenarios above ran the real `sol cloud` commands; their run logs must
 # have landed in the isolated data home. If none did, Sol is writing somewhere else -- most
 # likely the operator's real ~/.local/share/sol, where the keep-20 pruning deletes real runs.
