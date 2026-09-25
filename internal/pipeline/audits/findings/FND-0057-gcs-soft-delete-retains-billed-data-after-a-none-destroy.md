@@ -3,7 +3,7 @@
 - **Classification:** `VERIFIED_DEFECT` (static: configuration read against the provider's
   documented default), against DEC-033 (`none` means zero residual billable artifacts) and
   ADR 0004's retention postcondition
-- **State:** `OPEN`
+- **State:** `FIXED_UNQUALIFIED` (INFRA-077, 2026-09-25; offline evidence only — see the transition at the end)
 - **First identified:** 2026-09-24, during DEC-045's destruction-authority due diligence
 - **Provider:** GCP (Cloud Storage)
 - **Derived ticket:** `INFRA-077`
@@ -43,3 +43,27 @@ and separate. Verify it from the provider, and name what is retained in the rete
 ## Related
 
 DEC-045 (exception classes), DEC-033, ADR 0004, FND-0006, FND-0046, INFRA-072.
+
+## Transition (2026-09-25) — fixed by INFRA-077; the Cloud SQL question settled
+
+- Both buckets now declare `soft_delete_policy { retention_duration_seconds =
+  var.gcs_soft_delete_retention_seconds }`. Sol routes `0` for a `destroy_retention: none` GCP target
+  and an explicit `604800` (7 days) otherwise (`Sol_cli_config.terraform_vars`, GCP arm). The variable
+  validates `0` or 7–90 days. Retention is fixed at creation, so there is no destroy-time ordering
+  problem; a target that changes its retention gets an in-place update.
+- `check_destroy_completeness.sh` rule 5: every target-root GCS bucket declares its soft-delete
+  policy, with the retention routed through a variable. Mutation-tested (missing policy and literal
+  retention both rejected). Positive control: run against `main`'s tree, it reports the two
+  undeclared buckets.
+- **Cloud SQL, settled from primary documentation:** *"When you delete an instance, Cloud SQL deletes
+  all resources for the instance, including on-demand backups and automated backups"*
+  (<https://docs.cloud.google.com/sql/docs/postgres/delete-instance>, read 2026-09-25). Only an
+  explicitly requested final backup survives. The locked `hashicorp/google` v5.45.2
+  `google_sql_database_instance` has no final-backup support at all
+  (`rg -i final_backup` over its source finds nothing), so a Terraform-driven delete retains nothing.
+  The GCP `none` retention report now says both.
+- Evidence: `cli/sol/test/test_config.ml` ("GCS soft delete follows destroy_retention": `none` → 0,
+  default and `final-snapshot` → 604800, not sent to the AWS root); the offline harness asserts the GCP
+  `none` report names the soft-delete setting; `terraform validate` of the GCP root passes.
+- `FIXED_UNQUALIFIED`: no live GCP run with durable observability has observed it (HARDEN-006).
+

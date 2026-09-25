@@ -1157,6 +1157,44 @@ let test_ecr_repositories_follow_dockerfiles () =
       (ecr_repositories_of_workspace ()))
 ;;
 
+(* INFRA-077 / FND-0057: a `destroy_retention: none` GCP target creates its
+   observability buckets with soft delete off, so its destroy leaves nothing billed;
+   any other target declares GCS's 7 days explicitly; the AWS root never sees it. *)
+let test_gcs_soft_delete_follows_destroy_retention () =
+  let soft_delete ~target ~retention =
+    with_temp_dir (fun () ->
+      write "sol.yml" "target:\n  base_domain: example.test\n";
+      (match retention with
+       | None -> ()
+       | Some r ->
+         let dir = Filename.dirname ("sol/" ^ target ^ ".yml") in
+         mkdir_p dir;
+         write ("sol/" ^ target ^ ".yml") ("target:\n  destroy_retention: " ^ r ^ "\n"));
+      match Sol_cli_config.load_for_target ~target with
+      | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+      | Ok cfg ->
+        (match Sol_cli_terraform_vars.of_config ~workspace:"pluto" cfg with
+         | Error msg -> Alcotest.fail msg
+         | Ok vars -> List.assoc_opt "gcs_soft_delete_retention_seconds" vars))
+  in
+  check_str_opt
+    "GCP none: soft delete off"
+    (Some "0")
+    (soft_delete ~target:"prod/gcp/us-central1" ~retention:(Some "none"));
+  check_str_opt
+    "GCP default: 7 days, explicit"
+    (Some "604800")
+    (soft_delete ~target:"prod/gcp/us-central1" ~retention:None);
+  check_str_opt
+    "GCP final-snapshot: 7 days, explicit"
+    (Some "604800")
+    (soft_delete ~target:"prod/gcp/us-central1" ~retention:(Some "final-snapshot"));
+  check_str_opt
+    "the AWS root does not declare it"
+    None
+    (soft_delete ~target:"prod/aws/us-east-1" ~retention:(Some "none"))
+;;
+
 let test_terraform_vars_are_provider_shaped () =
   with_temp_dir (fun () ->
     write
@@ -1694,6 +1732,10 @@ let () =
             "terraform vars: provider-shaped"
             `Quick
             test_terraform_vars_are_provider_shaped
+        ; Alcotest.test_case
+            "terraform vars: GCS soft delete follows destroy_retention"
+            `Quick
+            test_gcs_soft_delete_follows_destroy_retention
         ; Alcotest.test_case
             "terraform vars: workspace_name + ecr_repositories"
             `Quick

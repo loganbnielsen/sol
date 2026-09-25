@@ -110,6 +110,23 @@ for dir in "${target_roots[@]}"; do
     done < <(grep -nE '^[[:space:]]*(deletion_policy[[:space:]]*=[[:space:]]*"ABANDON"|skip_destroy[[:space:]]*=[[:space:]]*true|skip_delete[[:space:]]*=[[:space:]]*true)' "$tf")
   done
 
+  # 5. INFRA-077 / FND-0057: Cloud Storage soft-deletes and bills deleted objects by
+  #    default, so a destroy that reports "nothing retained" could leave billed data
+  #    behind. Every target-root GCS bucket declares its soft-delete policy, with the
+  #    retention routed through a variable (Sol sets it from destroy_retention).
+  for tf in "$root/$dir"/*.tf; do
+    [ -e "$tf" ] || continue
+    buckets="$(grep -cE '^[[:space:]]*resource[[:space:]]+"google_storage_bucket"[[:space:]]' "$tf" || true)"
+    [ "$buckets" -gt 0 ] || continue
+    policies="$(grep -cE '^[[:space:]]*soft_delete_policy[[:space:]]*\{' "$tf" || true)"
+    if [ "$policies" -lt "$buckets" ]; then
+      report "$tf declares $buckets GCS bucket(s) but $policies soft_delete_policy block(s); Cloud Storage would soft-delete and bill their contents after a destroy (INFRA-077)."
+    fi
+    if grep -qE '^[[:space:]]*retention_duration_seconds[[:space:]]*=[[:space:]]*[0-9]' "$tf"; then
+      report "$tf sets a GCS soft-delete retention to a literal; route it through a variable so destroy_retention decides it (INFRA-077)."
+    fi
+  done
+
   # ...and a literal is a guard no Destroy policy can override.
   if grep -qE '^[[:space:]]*deletion_protection[[:space:]]*=[[:space:]]*(true|false)' "$root/$dir"/*.tf 2>/dev/null; then
     report "$dir sets deletion_protection to a literal, which no Destroy policy can override; route it through a variable."
@@ -120,4 +137,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "check_destroy_completeness: $checked terraform file(s) in ${#target_roots[@]} target root(s); no prevent_destroy, no literal deletion guard, every lifecycle-populated resource removable, every routed guard liftable by the Destroy policy, and every relinquished deletion annotated with its residue handling."
+echo "check_destroy_completeness: $checked terraform file(s) in ${#target_roots[@]} target root(s); no prevent_destroy, no literal deletion guard, every lifecycle-populated resource removable, every routed guard liftable by the Destroy policy, every relinquished deletion annotated with its residue handling, and every GCS bucket's soft delete declared."

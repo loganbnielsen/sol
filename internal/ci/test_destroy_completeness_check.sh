@@ -81,6 +81,10 @@ resource "aws_s3_bucket" "loki" {
 mk fixed gcp 'resource "google_storage_bucket" "loki" {
   name          = "x"
   force_destroy = true
+
+  soft_delete_policy {
+    retention_duration_seconds = var.gcs_soft_delete_retention_seconds
+  }
 }' main.tf
 expect_accept fixed "both providers repaired"
 
@@ -110,7 +114,26 @@ mk abandonok gcp 'resource "google_service_networking_connection" "sql" {
 }' main.tf
 expect_accept abandonok "an annotated ABANDON"
 
-# 6. A missing target root is not silently a pass.
+# 6. INFRA-077: a GCS bucket without a declared soft-delete policy, or with a literal one.
+mk softnone aws '' empty.tf
+mk softnone gcp 'resource "google_storage_bucket" "loki" {
+  name          = "x"
+  force_destroy = true
+}' main.tf
+expect_reject softnone "a GCS bucket with no soft_delete_policy"
+
+mk softlit aws '' empty.tf
+mk softlit gcp 'resource "google_storage_bucket" "loki" {
+  name          = "x"
+  force_destroy = true
+
+  soft_delete_policy {
+    retention_duration_seconds = 604800
+  }
+}' main.tf
+expect_reject softlit "a GCS bucket with a literal soft-delete retention"
+
+# 7. A missing target root is not silently a pass.
 if "$guard" "$tmp/does-not-exist" >/dev/null 2>&1; then
   echo "test_destroy_completeness_check: guard ACCEPTED a nonexistent root." >&2
   fail=1
@@ -120,4 +143,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "test_destroy_completeness_check: guard rejects ECR-without-force-delete, prevent_destroy, GCP force_destroy = false and unannotated relinquished deletion; accepts the repaired shapes."
+echo "test_destroy_completeness_check: guard rejects ECR-without-force-delete, prevent_destroy, GCP force_destroy = false, unannotated relinquished deletion and undeclared or literal GCS soft delete; accepts the repaired shapes."
