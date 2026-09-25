@@ -80,7 +80,7 @@ GCP service-account impersonation
 
 | Tier | AWS | GCP |
 |---|---|---|
-| STATIC | `sol_cli_credentials.resolve` + `require_credentials` (`cmd_cloud_tf.ml:807`); `provisioner_kubeconfig` passes `--role-arn` and an explicit `--kubeconfig` | `gcp_provisioner_kubeconfig` passes `--impersonate-service-account` (`cmd_cloud_tf.ml:740-780`) |
+| STATIC | `sol_cli_aws_credentials.resolve` + `require_credentials` (`cmd_cloud_tf.ml:807`); `provisioner_kubeconfig` passes `--role-arn` and an explicit `--kubeconfig` | `gcp_provisioner_kubeconfig` passes `--impersonate-service-account` (`cmd_cloud_tf.ml:740-780`) |
 | MECHANISM | ephemeral kubeconfig created and deleted per invocation | same, via `$KUBECONFIG` |
 | BEHAVIORAL | Run 2/5/6 ran as a scoped identity; Run 5 Attempt 5 and Run 6 fell back to a static `Administrator` profile on SSO expiry — a **recorded deviation**, not a qualification | Attempt 3 obtained credentials as `sol-qual-provisioner@…` and reached the cluster |
 

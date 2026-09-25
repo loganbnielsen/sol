@@ -1,6 +1,24 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: AUDIT-POST-004/005/006 — the lifecycle guards close the follow-ups an independent audit left (2026-09-25)
+## Latest: AUDIT-POST-001/007 — AWS identity leaves the generic lifecycle, and the module is named for what it is (2026-09-25)
+
+Two more of the audit's seven findings, both ownership corrections rather than behaviour changes:
+
+- **AUDIT-POST-001.** The AWS-native identity model and its parsers — the
+  `status.userInfo.extra` array shape and `canonicalArn` handling, ARN role-name extraction and
+  path normalisation, the strict canonical-ARN comparison, the credential-assumption check — moved
+  from `Sol_cli_cloud_lifecycle` into `Sol_cli_aws_cluster`, where the mechanism is produced. The
+  generic module keeps the provider-neutral verdict types (`deescalation_principal`,
+  `deescalation_verdict`, `capability`) that the AWS mechanism feeds. `check_provider_dispatch.sh`
+  gained a declaration-level rule over the generic modules so the machinery cannot drift back;
+  it is zero-tolerance, with a mutation control proving it fails on a reintroduced declaration.
+- **AUDIT-POST-007.** `Sol_cli_credentials` → `Sol_cli_aws_credentials` (`.ml`/`.mli`), placed with
+  the other AWS modules: it is `aws configure export-credentials` and an `aws sts
+  get-caller-identity` principal, and nothing generic consumed it.
+
+Next: AUDIT-POST-002/003 (the provider-boundary findings).
+
+## Previous: AUDIT-POST-004/005/006 — the lifecycle guards close the follow-ups an independent audit left (2026-09-25)
 
 An independent post-implementation audit of the cloud lifecycle simplification
 (`internal/pipeline/audits/2026-09-25_cloud_lifecycle_post_audit.md`, verdict PASS WITH FOLLOW-UPS)

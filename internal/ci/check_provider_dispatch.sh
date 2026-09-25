@@ -48,6 +48,36 @@ count_dispatch() {
   { grep -oE 'Sol_cli_provider\.(Aws|Gcp)\b|\b(Aws|Gcp)_outputs\b' "$root/$1" || true; } | wc -l | tr -d ' '
 }
 
+# AUDIT-POST-001. The count above sees provider *constructors*, so the ARN parser and the
+# whoami identity record that used to live in Sol_cli_cloud_lifecycle were invisible to it:
+# they are provider-native identity, and they carry no constructor to count. This is the
+# same boundary one level down, so it gets a rule of its own.
+#
+# It is deliberately a list of declarations rather than a spelling heuristic, because a
+# heuristic cannot tell a declaration from prose -- "warn" contains "arn", and a comment
+# may legitimately explain the mechanism it points at -- whereas the regression this
+# prevents is exactly one family of names reappearing in a generic module. A provider
+# implementation (sol_cli_aws_*, sol_cli_gcp_*) may declare all of them; those files are
+# not in $generic_files.
+identity_declarations='^[[:space:]]*type[[:space:]]+(whoami_identity|credential_assumption)|^[[:space:]]*let[[:space:]]+(rec[[:space:]]+)?(whoami_identity_of_json|single_string_of_json|role_name_of_arn|normalize_role_arn|principal_role_name|principal_matches|refusal_is_deescalation)|^[[:space:]]*[{;]?[[:space:]]*canonical_arn[[:space:]]*:'
+
+# Which of those are *provider implementations* is read from the provider list, as
+# check_destroy_completeness.sh reads its target roots (HARDEN-005), rather than written out
+# here: a provider added later must be admitted without anyone remembering to edit this
+# guard, and a provider list that cannot be read is a refusal rather than an empty one.
+provider_module="$root/cli/sol/lib/sol_cli_provider.ml"
+providers="$(sed -n '/^let to_string/,/^;;/p' "$provider_module" 2>/dev/null | grep -oE '"[a-z0-9-]+"' | tr -d '"')"
+if [ -z "$providers" ]; then
+  echo "check_provider_dispatch: could not read the provider list from $provider_module -- refusing to decide the boundary from an empty list." >&2
+  exit 1
+fi
+provider_impl="$(printf '%s\n' $providers | sed 's/^/sol_cli_/; s/$/_/' | paste -sd'|' -)"
+generic_files="$(printf '%s\n' $files | grep -vE "/($provider_impl)" || true)"
+
+count_identity() {
+  { grep -cE "$identity_declarations" "$root/$1" || true; } | tr -d ' '
+}
+
 count_wildcards() {
   awk '
     function indent(s,    m) { match(s, /^[ \t]*/); return RLENGTH }
@@ -108,6 +138,17 @@ for f in $files; do
   fi
 done
 
+# AUDIT-POST-001: no generic module declares provider-native identity machinery. Zero
+# tolerance, because the count is zero today and a ratchet here would only record how much
+# of it came back.
+for f in $generic_files; do
+  i="$(count_identity "$f")"
+  if [ "${i:-0}" -gt 0 ]; then
+    echo "check_provider_dispatch: $f declares provider-native identity machinery ($i declaration(s)) -- ARNs, the whoami identity record and the principal comparison belong with the provider that produces them (sol_cli_aws_cluster), not in generic Sol code." >&2
+    fail=1
+  fi
+done
+
 # An allowlist entry for a file that no longer exists is a stale ratchet.
 while read -r kind path _; do
   case "$kind" in dispatch | wildcard) ;; *) continue ;; esac
@@ -120,4 +161,4 @@ done <"$allowlist"
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
-echo "check_provider_dispatch: $total provider-dispatch occurrence(s) and $wild_total wildcard provider arm(s) outside sol_cli_provider and its registry, each within its allowlist."
+echo "check_provider_dispatch: $total provider-dispatch occurrence(s) and $wild_total wildcard provider arm(s) outside sol_cli_provider and its registry, each within its allowlist, and no provider-native identity declaration in a generic module."

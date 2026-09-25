@@ -13,9 +13,14 @@ trap 'rm -rf "$tmp"' EXIT
 fail=0
 
 # mkcase <name> <allowlist> ; files are then written with put
+repo="$(cd "$(dirname "$0")/../.." && pwd)"
+
 mkcase() {
   mkdir -p "$tmp/$1/cli/sol/lib" "$tmp/$1/cli/sol/bin"
   printf '%s\n' "$2" >"$tmp/$1/allow.txt"
+  # Every fake repo carries the real provider list: the guard derives which modules are
+  # provider implementations from it rather than naming providers itself.
+  cp "$repo/cli/sol/lib/sol_cli_provider.ml" "$tmp/$1/cli/sol/lib/"
 }
 put() { printf '%s\n' "$3" >"$tmp/$1/cli/sol/$2"; }
 expect_reject() {
@@ -105,7 +110,44 @@ put provider lib/sol_cli_provider.ml 'type t = Aws | Gcp
 let to_string = function Aws -> "aws" | Gcp -> "gcp"'
 expect_accept provider "the provider module's own constructors"
 
+# 10. AUDIT-POST-001: provider-native identity declared in a generic module. The dispatch
+#     count cannot see it -- there is no constructor to count -- so this is the rule that
+#     would have caught the whoami/ARN machinery sitting in Sol_cli_cloud_lifecycle.
+mkcase identity ''
+put identity lib/a.ml 'let whoami_identity_of_json json = ignore json
+;;'
+expect_reject identity "a whoami identity parser declared in a generic module"
+
+mkcase identityfield ''
+put identityfield lib/a.ml 'type identity =
+  { canonical_arn : string option
+  ; username : string option
+  }
+;;'
+expect_reject identityfield "a canonical_arn record field declared in a generic module"
+
+# ...and the same declarations are where they belong: in the provider's implementation.
+mkcase identityok ''
+put identityok lib/sol_cli_aws_cluster.ml 'let whoami_identity_of_json json = ignore json
+;;
+type identity =
+  { canonical_arn : string option
+  }
+;;'
+expect_accept identityok "the same declarations inside the AWS implementation"
+
+# 12. Which modules are provider implementations comes from the provider list, so a
+#     provider that does not exist yet is admitted without editing this guard.
+mkcase third ''
+printf 'let to_string = function\n  | Aws -> "aws"\n  | Gcp -> "gcp"\n  | Azure -> "azure"\n;;\n' \
+  >"$tmp/third/cli/sol/lib/sol_cli_provider.ml"
+put third lib/sol_cli_azure_cluster.ml 'let argv = [ "azure"; "identity" ]
+;;
+let whoami_identity_of_json _ = Ok ()
+;;'
+expect_accept third "a third provider's own implementation"
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
-echo "test_provider_dispatch_check: guard rejects new dispatch, growth, unrecorded reductions, wildcard provider arms and stale entries; accepts the baseline, allowlisted wildcards, nested non-provider wildcards and the provider module."
+echo "test_provider_dispatch_check: guard rejects new dispatch, growth, unrecorded reductions, wildcard provider arms, stale entries and provider-native identity declared in a generic module; accepts the baseline, allowlisted wildcards, nested non-provider wildcards, the provider module, identity declared in a provider implementation, and a provider this tree does not have yet."
