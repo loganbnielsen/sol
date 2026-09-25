@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Offline state-machine test for live-qual.sh. Spends nothing: the external commands are
 # stubs, so this asserts the HARNESS's behaviour — the sequence it drives, the arguments it
-# renders, and what it does with the target file at each ending.
+# renders, the evidence it captures, and what it does with the target file at each ending.
 #
 # Why this exists (Attempt 6): three harness defects were found by running it in anger, and
 # one of them — `destroy_vars` deleted by a refactor — silently removed every variable from
@@ -12,6 +12,19 @@
 # configuration handed to Sol/Terraform. `create_dns_zone` was rendered `true` by an
 # explicit override while the var-file said `false`, and each source looked reasonable in
 # isolation. Asserting exit codes alone would have missed it entirely.
+#
+# It also pins the attempt-8 re-scope's properties, because each of them is the kind of thing
+# that silently regresses when someone edits the harness:
+#   H1  the generated target asks for no TLS issuer (or the run stops before cert-manager);
+#   H2  a failed `sol cloud apply` captures the discriminator BEFORE any teardown — asserted
+#       by argv ORDER, so "capture moved after the destroy" fails rather than passes;
+#   H3  both Terraform state snapshots are in the bundle;
+#   H4  Sol's own run artifacts are copied out of its pruning window;
+#   H5  the inventory is tri-state, covers the classes the contract names, and a failed read
+#       is UNKNOWN — never ABSENT;
+#   H6  a pre-teardown provider inventory is captured before anything is destroyed;
+#   and the process discipline: identity-based stopping only, no pattern kills, no
+#       force-unlock, durable resources never handed to the disposable destroy.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -41,6 +54,7 @@ no() { printf '  [FAIL] %s\n           expected: %s\n           actual:   %s\n' 
 is() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1" "$3" "$2"; fi; }
 has() { if grep -qF -- "$2" "$3"; then ok "$1"; else no "$1" "contains: $2" "$(tr '\n' '|' <"$3" | cut -c1-160)"; fi; }
 lacks() { if grep -qF -- "$2" "$3"; then no "$1" "absent: $2" "present"; else ok "$1"; fi; }
+present() { if [ -s "$1" ]; then ok "$2"; else no "$2" "present and non-empty" "missing: $1"; fi; }
 
 # ── stubs ────────────────────────────────────────────────────────────────────
 mkdir -p "$TMP/bin"
@@ -49,9 +63,14 @@ cat >"$TMP/bin/sol" <<'STUB'
 #!/usr/bin/env bash
 printf 'sol %s\n' "$*" >>"$ARGV_LOG"
 case "$1 $2" in
-  "cloud apply")   [ "${STUB_APPLY_RC:-0}" = "0" ] ;;
+  "cloud apply")
+    printf 'lifecycle phase: CloudBootstrap\n[terraform-apply] ok\n'
+    printf 'lifecycle phase: PlatformInstalling\nplatform-apply ok\n'
+    printf 'provisioner-bootstrap-access-remove ok\n'
+    printf 'lifecycle phase: Ready\nDone.\n'
+    [ "${STUB_APPLY_RC:-0}" = "0" ] ;;
   "cloud destroy") [ "${STUB_DESTROY_RC:-0}" = "0" ] ;;
-  "deploy")        printf 'deploy %s\n' "$*" >>"$ARGV_LOG"; [ "${STUB_DEPLOY_RC:-0}" = "0" ] ;;
+  "deploy")        [ "${STUB_DEPLOY_RC:-0}" = "0" ] ;;
   *) : ;;
 esac
 STUB
@@ -59,6 +78,14 @@ STUB
 cat >"$TMP/bin/terraform" <<'STUB'
 #!/usr/bin/env bash
 printf 'terraform %s\n' "$*" >>"$ARGV_LOG"
+# A destructive reconcile: -detailed-exitcode reports "changes", and `show` renders the plan
+# the harness must refuse rather than apply.
+if [ "${STUB_PLAN_DESTROYS:-0}" = "1" ]; then
+  for a in "$@"; do
+    [ "$a" = "plan" ] && exit 2
+    [ "$a" = "show" ] && { printf '# google_storage_bucket.state must be replaced\n'; exit 0; }
+  done
+fi
 # init/apply succeed; a -detailed-exitcode plan reports "no changes" so reconciliation is a
 # no-op and the run does not depend on plan diffing for these assertions.
 for a in "$@"; do [ "$a" = "plan" ] && exit "${STUB_PLAN_RC:-0}"; done
@@ -69,11 +96,34 @@ cat >"$TMP/bin/gcloud" <<'STUB'
 #!/usr/bin/env bash
 printf "gcloud %s" "$*" >>"$ARGV_LOG"; printf "\n" >>"$ARGV_LOG"
 case "$*" in
-  *"storage buckets describe"*) exit 0 ;;
+  *"storage buckets describe"*) printf "sol-qualification-tfstate\n"; exit 0 ;;
+  *"storage cat"*)
+    if [ "${STUB_STATE_UNREADABLE:-0}" = "1" ]; then
+      printf "ERROR: (gcloud) The caller does not have permission\n" >&2; exit 1
+    fi
+    printf '{"version":4,"serial":7,"resources":[]}\n'; exit 0 ;;
+  *"dns managed-zones describe"*) printf "qual-gcp-sol-fab-dev\n"; exit 0 ;;
   *"dns managed-zones"*)        printf "qual-gcp-sol-fab-dev\n"; exit 0 ;;
-  *"compute regions describe"*) printf "CPUS;IN_USE_ADDRESSES;SSD_TOTAL_GB;DISKS_TOTAL_GB;INSTANCES,0;0;0;0;0\n"; exit 0 ;;
+  # Real gcloud warns on stderr when a filtered list is empty; its stdout stays empty. The
+  # probe must read that as ABSENT, not as an answer.
+  *"compute addresses list"*)
+    if [ "${STUB_FILTER_WARNING:-0}" = "1" ]; then
+      printf "WARNING: The following filter keys were not present in any resource : name\n" >&2
+    fi
+    exit 0 ;;
+  *"compute regions describe"*)
+    if [ "${STUB_QUOTA_GARBAGE:-0}" = "1" ]; then printf "not a quota document\n"; exit 0; fi
+    if [ "${STUB_QUOTA_BUSY:-0}" = "1" ]; then printf "CPUS;IN_USE_ADDRESSES;SSD_TOTAL_GB;DISKS_TOTAL_GB;INSTANCES,4;0;0;0;1\n"; exit 0; fi
+    printf "CPUS;IN_USE_ADDRESSES;SSD_TOTAL_GB;DISKS_TOTAL_GB;INSTANCES,0;0;0;0;0\n"; exit 0 ;;
   *"compute networks list"*)    printf "default\n"; exit 0 ;;
 esac
+# STUB_CLUSTER_EXISTS=1 is the world where the cloud apply reached the cluster (so the
+# discriminator probes have something to read) without claiming the target still exists.
+if [ "${STUB_CLUSTER_EXISTS:-0}" = "1" ]; then
+  case "$*" in
+    *"container clusters describe"* | *"container clusters get-credentials"*) printf "test-cluster\n"; exit 0 ;;
+  esac
+fi
 # STUB_TARGET_PRESENT=1 is the world where teardown did not finish.
 if [ "${STUB_TARGET_PRESENT:-0}" = "1" ]; then
   case "$*" in *list* | *describe*) printf "test-cluster\n"; exit 0 ;; esac
@@ -88,6 +138,24 @@ case "${STUB_PROBE_MODE:-notfound}" in
 esac
 STUB
 
+cat >"$TMP/bin/kubectl" <<'STUB'
+#!/usr/bin/env bash
+printf 'kubectl %s\n' "$*" >>"$ARGV_LOG"
+case "$*" in
+  *"logs job/cert-manager-startupapicheck"*)
+    case "${STUB_KUBE_SIGNATURE:-none}" in
+      x509)      printf 'error: x509: certificate signed by unknown authority\n' ;;
+      discovery) printf 'error: no matches for kind "Certificate" in version "cert-manager.io/v1"\n' ;;
+      dial)      printf 'error: context deadline exceeded: dial tcp 10.0.0.1:10250: i/o timeout\n' ;;
+      *)         : ;;
+    esac
+    ;;
+  *"get job cert-manager-startupapicheck -o json"*)
+    printf '{"status":{"succeeded":%s}}\n' "${STUB_JOB_SUCCEEDED:-0}" ;;
+esac
+exit 0
+STUB
+
 cat >"$TMP/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 printf '{"Answer":[{"data":"ns-cloud-c1.googledomains.com."},{"data":"ns-cloud-c2.googledomains.com."},{"data":"ns-cloud-c3.googledomains.com."},{"data":"ns-cloud-c4.googledomains.com."}]}'
@@ -98,7 +166,21 @@ cat >"$TMP/bin/dig" <<'STUB'
 printf 'qual-gcp.sol-fab.dev.\t3600\tIN\tNS\tns-cloud-c1.googledomains.com.\n'
 STUB
 
+cat >"$TMP/bin/gzip" <<'STUB'
+#!/usr/bin/env bash
+cat
+STUB
+
 chmod +x "$TMP"/bin/*
+
+# A fake Sol data directory: copying this out is what proves the bundle does not depend on
+# Sol's own 20-run pruning window. It also makes the suite unable to touch the operator's real
+# ~/.local/share/sol (INFRA-075's isolation lesson).
+SOL_DATA="$TMP/data/sol"
+mkdir -p "$SOL_DATA/runs/cloud-apply-20260925T000000Z-1234"
+printf 'lifecycle phase: CloudBootstrap\n' >"$SOL_DATA/runs/cloud-apply-20260925T000000Z-1234/phase.log"
+printf 'root=cli/platform/infra/gcp\n' >"$SOL_DATA/runs/cloud-apply-20260925T000000Z-1234/meta"
+printf 'exited 0\n' >"$SOL_DATA/runs/cloud-apply-20260925T000000Z-1234/exit"
 
 # ── the runner ───────────────────────────────────────────────────────────────
 run_case() { # run_case <name> <subcommand> [VAR=VALUE ...]
@@ -109,6 +191,7 @@ run_case() { # run_case <name> <subcommand> [VAR=VALUE ...]
   # Scratch workspace: the harness writes the target file into it, so the repository is never
   # touched and "nothing was left behind" is an assertion about scratch, not a hope.
   export WORKSPACE="$SCRATCH_WS"
+  export XDG_DATA_HOME="$TMP/data"
   : >"$ARGV_LOG"
   rm -f "$TARGET_FILE"
   rm -rf "$LOG_DIR"
@@ -116,7 +199,8 @@ run_case() { # run_case <name> <subcommand> [VAR=VALUE ...]
     IMPERSONATOR=user:test@example.com LE_EMAIL=test@example.com \
     PATH="$TMP/bin:$PATH" "$@" \
     "$HARNESS" "$sub" >"$TMP/$name.out" 2>&1
-  echo "$?" >"$TMP/$name.rc"
+  echo "$? " >"$TMP/$name.rc"
+  sed -i 's/ //' "$TMP/$name.rc"
 }
 
 # ── 1. a successful cloud run keeps the target; teardown is a separate, deliberate act ──
@@ -124,19 +208,26 @@ printf '\nscenario: cloud succeeds\n'
 run_case cloud-ok cloud
 is "exit 0" "$(cat "$TMP/cloud-ok.rc")" "0"
 lacks "no destroy on the success path (the delegation boundary keeps the substrate)" "cloud destroy" "$TMP/cloud-ok.argv"
+lacks "the cloud phase never runs an application deploy" "sol deploy" "$TMP/cloud-ok.argv"
 has "the target is written for the run" "cluster_name" "$TARGET_FILE"
+# H1: the generated target must not ask for an issuer Sol refuses to install on GCP.
+lacks "the generated target declares no cluster_issuer (H1)" "cluster_issuer:" "$TARGET_FILE"
+present "$TMP/cloud-ok.logs/state/cloud.tfstate" "the cloud state snapshot is in the bundle (H3)"
+present "$TMP/cloud-ok.logs/state/platform.tfstate" "the platform state snapshot is in the bundle (H3)"
+if [ -s "$TMP/cloud-ok.logs/sol-runs/cloud-apply-20260925T000000Z-1234/phase.log" ]; then
+  ok "Sol's own run artifacts are copied into the bundle (H4)"
+else
+  no "Sol's own run artifacts are copied into the bundle (H4)" "copied" "missing"
+fi
+present "$TMP/cloud-ok.logs/inventory-pre.tsv" "a pre-teardown provider inventory is captured (H6)"
+present "$TMP/cloud-ok.logs/ready-phases.txt" "the Ready-path phase lines are captured"
+has "the bundle manifest names the state snapshot" "terraform state (cloud)" "$TMP/cloud-ok.logs/evidence-manifest.txt"
 
 # ── 2. teardown: exactly once, correct variables, target removed only after verification ──
 printf '\nscenario: destroy\n'
 run_case destroy-ok destroy
 is "exit 0" "$(cat "$TMP/destroy-ok.rc")" "0"
 is "teardown is invoked" "$([ "$(grep -c 'cloud destroy' "$TMP/destroy-ok.argv")" -ge 1 ] && echo yes)" "yes"
-# OPEN HARNESS DEFECT (found by this suite, not by reading code): the count is 2, and the two
-# invocations are BYTE-IDENTICAL -- same subcommand, same variables. The run ended verified
-# (exit 0, target removed, every postcondition checked), so a failure-retry cannot explain
-# the second one, and an unconditional teardown at EXIT is the shape that fits. Not yet
-# localized. Left red deliberately: a teardown invoked twice is the class of thing this
-# suite exists to catch, and relaxing the assertion would have hidden it.
 is "teardown is invoked exactly once" "$(grep -c 'cloud destroy' "$TMP/destroy-ok.argv")" "1"
 has "destroy carries the cluster" "--var=cluster_name=test-cluster" "$TMP/destroy-ok.argv"
 has "destroy carries the base domain" "--var=base_domain=" "$TMP/destroy-ok.argv"
@@ -144,6 +235,11 @@ has "destroy carries the impersonator" "provisioner_impersonators" "$TMP/destroy
 # The DEC-043 assertion: the durable zone is never handed to the disposable destroy.
 lacks "the durable zone is not passed as disposable intent" "--var=create_dns_zone=true" "$TMP/destroy-ok.argv"
 has "the durable zone is explicitly excluded" "--var=create_dns_zone=false" "$TMP/destroy-ok.argv"
+# The bundle must be complete before the teardown starts, and the post-teardown inventory must
+# land in it too.
+present "$TMP/destroy-ok.logs/inventory-pre.tsv" "the pre-teardown inventory precedes teardown"
+present "$TMP/destroy-ok.logs/inventory-post.tsv" "the post-teardown inventory is captured"
+present "$TMP/destroy-ok.logs/state/cloud.tfstate" "the state snapshot is frozen before teardown (H3)"
 if [ -f "$TARGET_FILE" ]; then no "the target is removed after verified teardown" "removed" "still present"; else ok "the target is removed after verified teardown"; fi
 
 # ── 3. verification failure retains the target and exits non-zero ────────────
@@ -151,16 +247,59 @@ printf '\nscenario: verification finds a leftover\n'
 run_case destroy-leftover destroy STUB_TARGET_PRESENT=1
 if [ "$(cat "$TMP/destroy-leftover.rc")" = "0" ]; then no "non-zero exit when resources remain" "non-zero" "0"; else ok "non-zero exit when resources remain"; fi
 if [ -f "$TARGET_FILE" ]; then ok "the target is retained when teardown is unverified"; else no "the target is retained when teardown is unverified" "present" "removed"; fi
+has "the leftover names a class the contract requires (artifact registry)" "artifact-registry still exists" "$TMP/destroy-leftover.out"
 
-# ── 4. a failed apply still tears down, and never reaches the platform ───────
-printf '\nscenario: apply fails\n'
-run_case cloud-fail cloud STUB_APPLY_RC=1
+# ── 4. H2: a failed apply captures the discriminator BEFORE the teardown ─────
+printf '\nscenario: apply fails at the platform boundary\n'
+run_case cloud-fail cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNATURE=dial
 has "a failed apply still tears down" "cloud destroy" "$TMP/cloud-fail.argv"
-lacks "a failed apply never reaches the platform" "deploy" "$TMP/cloud-fail.argv"
+lacks "the harness never runs an application deploy to diagnose the platform" "sol deploy" "$TMP/cloud-fail.argv"
 if [ "$(cat "$TMP/cloud-fail.rc")" = "0" ]; then no "a failed apply exits non-zero" "non-zero" "0"; else ok "a failed apply exits non-zero"; fi
+if grep -qF 'cloud apply failed -- capturing the discriminator before any teardown' "$TMP/cloud-fail.out"; then
+  ok "the failure path announces the discriminator capture"
+else
+  no "the failure path announces the discriminator capture" "announced" "silent"
+fi
+probe_line="$(grep -n -m1 'kubectl -n cert-manager logs' "$TMP/cloud-fail.argv" | cut -d: -f1)"
+teardown_line="$(grep -n -m1 'cloud destroy' "$TMP/cloud-fail.argv" | cut -d: -f1)"
+if [ -n "$probe_line" ] && [ -n "$teardown_line" ] && [ "$probe_line" -lt "$teardown_line" ]; then
+  ok "the discriminator probes run BEFORE the teardown (H2, by argv order)"
+else
+  no "the discriminator probes run BEFORE the teardown (H2, by argv order)" \
+    "probe line < teardown line" "probe=${probe_line:-none} teardown=${teardown_line:-none}"
+fi
+if [ -s "$TMP/cloud-fail.logs/fnd0010-classification.txt" ]; then
+  ok "the discriminator classification is in the bundle"
+else
+  no "the discriminator classification is in the bundle" "present" "missing"
+fi
+present "$TMP/cloud-fail.logs/inventory-pre.tsv" "the pre-teardown inventory is captured on the failure path (H6)"
+present "$TMP/cloud-fail.logs/state/cloud.tfstate" "the state snapshot is captured on the failure path (H3)"
+if [ -s "$TMP/cloud-fail.logs/sol-runs/cloud-apply-20260925T000000Z-1234/phase.log" ]; then
+  ok "Sol's run artifacts are captured on the failure path (H4)"
+else
+  no "Sol's run artifacts are captured on the failure path (H4)" "copied" "missing"
+fi
 
-# ── 5. UNKNOWN is not absence: both shapes pinned, separately ────────────────
-# Mandatory evidence for the probe_gone fix. Only explicit provider not-found evidence
+# ── 5. the classification is evidence-driven, not a default ──────────────────
+# Mutation direction: a classifier that always answers WEBHOOK_REACHABILITY (or always
+# UNKNOWN) fails at least one of these three.
+printf '\nscenario: classification follows the captured evidence\n'
+run_case class-x509 cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNATURE=x509
+has "an x509 signature classifies as TLS_CA_OR_CERTIFICATE (not reachability)" \
+  "classification: TLS_CA_OR_CERTIFICATE" "$TMP/class-x509.logs/fnd0010-classification.txt"
+run_case class-discovery cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNATURE=discovery
+has "a discovery signature classifies as CRD_OR_API_DISCOVERY" \
+  "classification: CRD_OR_API_DISCOVERY" "$TMP/class-discovery.logs/fnd0010-classification.txt"
+run_case class-dial cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNATURE=dial
+has "a dial-timeout signature classifies as WEBHOOK_REACHABILITY" \
+  "classification: WEBHOOK_REACHABILITY" "$TMP/class-dial.logs/fnd0010-classification.txt"
+run_case class-empty cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1
+has "no usable evidence classifies as UNKNOWN (never reachability by default)" \
+  "classification: UNKNOWN" "$TMP/class-empty.logs/fnd0010-classification.txt"
+
+# ── 6. UNKNOWN is not absence: both shapes pinned, separately ────────────────
+# Mandatory evidence for the tri-state fix. Only explicit provider not-found evidence
 # establishes absence; pinning one unreadable shape and not the other invites the
 # implementation to drift into an allowlist of errors that get called absence.
 for mode in permission unknown; do
@@ -176,6 +315,13 @@ for mode in permission unknown; do
   else
     no "it names the failure to determine absence ($mode)" "named" "unmentioned"
   fi
+  # The new classes must be tri-state too: a permission failure on the artifact registry is
+  # UNKNOWN, not "the registry is gone".
+  if grep -q 'artifact-registry: UNKNOWN' "$TMP/probe-$mode.out"; then
+    ok "a newly-covered class is UNKNOWN when it cannot be read ($mode)"
+  else
+    no "a newly-covered class is UNKNOWN when it cannot be read ($mode)" "artifact-registry: UNKNOWN" "$(grep -m1 'artifact-registry' "$TMP/probe-$mode.out" || echo absent)"
+  fi
   if [ -f "$TARGET_FILE" ]; then
     ok "the target is retained ($mode)"
   else
@@ -183,13 +329,103 @@ for mode in permission unknown; do
   fi
 done
 
-# ── 6. one authoritative input for create_dns_zone, across every invocation ──
+# ── 7. one authoritative input for create_dns_zone, across every invocation ──
 printf '\nscenario: no contradictory configuration is ever rendered\n'
 if cat "$TMP"/*.argv | grep -qE 'create_dns_zone=true'; then
   no "no invocation asks for the durable zone to be created" "no create_dns_zone=true" "rendered somewhere"
 else
   ok "no invocation asks for the durable zone to be created"
 fi
+
+# ── 8. a destructive durable reconcile stops the run before anything is created ──
+printf '\nscenario: the durable root would be replaced\n'
+run_case durable-refusal cloud STUB_PLAN_DESTROYS=1
+if [ "$(cat "$TMP/durable-refusal.rc")" = "0" ]; then
+  no "a plan that would replace a durable prerequisite refuses" "non-zero" "0"
+else
+  ok "a plan that would replace a durable prerequisite refuses"
+fi
+has "the refusal names the durable risk" "REFUSED" "$TMP/durable-refusal.out"
+lacks "no cloud apply runs after a refused durable reconcile" "cloud apply" "$TMP/durable-refusal.argv"
+
+# ── 9. the platform phase is refused, because `sol cloud apply` is the install ──
+printf '\nscenario: platform subcommand\n'
+run_case platform-refused platform
+is "exit 2" "$(cat "$TMP/platform-refused.rc")" "2"
+has "the refusal points at the invocation that installs the platform" "sol cloud apply" "$TMP/platform-refused.out"
+lacks "the refused phase runs nothing" "cloud apply" "$TMP/platform-refused.argv"
+
+# ── 10. process discipline, pinned as source properties ─────────────────────
+printf '\nscenario: process discipline\n'
+# Code only: the header is *supposed* to name these practices (it explains why they are
+# forbidden), so the check strips comments before looking for them.
+grep -vE '^[[:space:]]*#' "$HARNESS" >"$TMP/harness-code.sh"
+for forbidden in 'pkill' 'killall' 'force-unlock' 'kill -9' 'kill -KILL' 'kill -s KILL'; do
+  if grep -qF -- "$forbidden" "$TMP/harness-code.sh"; then
+    no "the harness contains no '$forbidden' in code" "absent" "present"
+  else
+    ok "the harness contains no '$forbidden' in code"
+  fi
+done
+if grep -qF 'kill -TERM -"$pgid"' "$HARNESS"; then
+  ok "stopping acts on the recorded process group (identity, not pattern)"
+else
+  no "stopping acts on the recorded process group (identity, not pattern)" 'kill -TERM -"$pgid"' "missing"
+fi
+if grep -qF 'run.pgid' "$HARNESS"; then
+  ok "the run records its own process-group identity"
+else
+  no "the run records its own process-group identity" "run.pgid" "missing"
+fi
+
+# ── 11. the quota verdict follows the numbers, in both directions ────────────
+# The old check had no positive control: an all-zero read and a busy account were never
+# distinguished by a test, so a pattern that always says "busy" (or never) passed.
+printf '\nscenario: quota verdict\n'
+has "an all-zero usage read is ABSENT, not a violation" "quota: ABSENT" "$TMP/destroy-ok.out"
+run_case quota-busy destroy STUB_QUOTA_BUSY=1
+has "non-zero usage reads as PRESENT" "quota: PRESENT" "$TMP/quota-busy.out"
+if [ "$(cat "$TMP/quota-busy.rc")" = "0" ]; then
+  no "non-zero usage fails the verification" "non-zero" "0"
+else
+  ok "non-zero usage fails the verification"
+fi
+run_case quota-garbage destroy STUB_QUOTA_GARBAGE=1
+has "an unparsable usage read is UNKNOWN" "quota: UNKNOWN" "$TMP/quota-garbage.out"
+if [ "$(cat "$TMP/quota-garbage.rc")" = "0" ]; then
+  no "an unparsable usage read fails the verification" "non-zero" "0"
+else
+  ok "an unparsable usage read fails the verification"
+fi
+
+# ── 12. the bundle check has teeth: a member that could not be read fails the run ──
+# The state read failing is the interesting shape: the file exists but is empty, which is
+# exactly how an unreadable state would look if nobody checked.
+printf '\nscenario: an unreadable bundle member\n'
+lacks "a complete bundle is not reported as incomplete" "evidence bundle is INCOMPLETE" "$TMP/cloud-fail.out"
+run_case bundle-unreadable cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_STATE_UNREADABLE=1
+has "an empty state snapshot is named as a missing bundle member" \
+  "bundle member missing or empty: state/cloud.tfstate" "$TMP/bundle-unreadable.out"
+has "an incomplete bundle is reported as non-conformant" \
+  "evidence bundle is INCOMPLETE" "$TMP/bundle-unreadable.out"
+if [ "$(cat "$TMP/bundle-unreadable.rc")" = "0" ]; then
+  no "an incomplete bundle fails the run" "non-zero" "0"
+else
+  ok "an incomplete bundle fails the run"
+fi
+
+# ── 13. a warning on stderr is not an answer ─────────────────────────────────
+# Found by running the probe against the live project: an empty filtered list writes a warning
+# to stderr, and a probe that merges the streams reads it as PRESENT. Absence stays absence.
+printf '\nscenario: a filtered list that warns\n'
+run_case filter-warning destroy STUB_FILTER_WARNING=1
+has "an empty filtered list is ABSENT even when gcloud warns on stderr" "quota: ABSENT" "$TMP/filter-warning.out"
+if grep -q 'address-regional: PRESENT' "$TMP/filter-warning.out"; then
+  no "the warning is not read as a resource" "address-regional: ABSENT" "PRESENT"
+else
+  ok "the warning is not read as a resource"
+fi
+is "the warned verification still passes" "$(cat "$TMP/filter-warning.rc")" "0"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = "0" ] || exit 1

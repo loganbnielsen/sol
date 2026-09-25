@@ -2,11 +2,13 @@
 
 - **Classification:** `VERIFIED_DEFECT` — the behaviour is observed; the *mechanism* is an
   open design question
-- **State:** `OPEN` — mechanisms 1 and 2 landed 2026-09-24 (HARDEN-004 steps 2–4); the
-  *convergence* half (design point 3, adoption) is unwritten and undecided, so the acceptance
-  criterion below is still not met. See the 2026-09-24 transition at the end of this file.
+- **State:** `FIXED_UNQUALIFIED` — mechanisms 1 and 2 landed 2026-09-24 (HARDEN-004 steps 2–4),
+  the convergence half was **withdrawn** by DEC-045, and this finding's own closing condition —
+  INFRA-076 removing the Sol-caused route — is met. See the 2026-09-25 transition at the end of
+  this file.
 - **First identified:** 2026-09-23 (GCP Attempt 6)
-- **Last verified:** 2026-09-24, `origin/main @ 2775d5b1` (pre-live, no provider call)
+- **Last verified:** 2026-09-25, `main @ 146eb90c` (the restated criterion against the code;
+  no provider call)
 - **Provider:** GCP observed (GKE); the shape is in shared lifecycle code — see "NOT established"
 - **Derived ticket:** the ownership half is `DEC-044` (undecided) → the implementation that
   decision authorizes; the verification half is FND-0055
@@ -189,3 +191,24 @@ converged by Sol. Reconciling it is the operator's job, using Terraform's own to
 restatement the acceptance criterion is met by mechanisms 1–2 plus the fail-closed report, and
 convergence is out of contract. State stays `OPEN` only until INFRA-076 removes the Sol-caused route;
 the plan (`internal/pipeline/audits/2026-09-24_cloud_lifecycle_simplification_plan.md`) tracks it.
+
+## Transition (2026-09-25) — `OPEN` → `FIXED_UNQUALIFIED`
+
+This finding's own 2026-09-24 correction ended with a condition rather than a state: *"State stays
+`OPEN` only until INFRA-076 removes the Sol-caused route"*. That condition is now met:
+
+- **INFRA-076 is `DONE`.** The supervisor runs in a session of its own (`Unix.setsid ()`,
+  `cli/sol/lib/sol_cli_supervised.ml:405`), writes Terraform's output to durable files, records an
+  `exit` completion record, and Sol forwards exactly one SIGINT to Terraform's pid — so Sol's death
+  no longer kills Terraform by SIGPIPE, which was the only Sol-caused route to a
+  provider-present/state-absent resource.
+- **The convergence half is withdrawn** (DEC-045; A1 withdrawn, plan § Decisions 6): reconciling a
+  divergence is the operator's job with Terraform's own tools, and the product's duty is
+  mechanisms 1–2 plus the fail-closed report. Under that restatement the acceptance criterion is met
+  by the landed mechanisms and the report, which is why this moves to `FIXED_UNQUALIFIED` rather than
+  staying `OPEN` for work that is out of contract.
+
+`FIXED_UNQUALIFIED`, not `QUALIFIED`: the fail-closed behaviour (a divergence is named, never
+converged, never silently passed) has offline evidence only. GCP Attempt 8 exercises the destroy path
+on a partially-installed target, but its target has no divergence by construction, so it cannot turn
+this into a live qualification of the divergence report.

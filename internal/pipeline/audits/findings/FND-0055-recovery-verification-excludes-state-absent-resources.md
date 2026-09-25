@@ -2,9 +2,9 @@
 
 - **Classification:** `VERIFIED_DEFECT` (fail-open verification; the coverage half of the
   recovery contract)
-- **State:** `FIXED_UNQUALIFIED` (2026-09-24 — the partial-divergence fail-open is closed by
-  offline evidence; see the transition at the end of this file. The live behavioural claim is
-  still open, and one residual is named there explicitly)
+- **State:** `SUPERSEDED` (2026-09-25 — the remedy this finding was closed against (B2, the
+  declared-universe unit) was **deleted** by REFAC-094 under DEC-045, and the coverage it wanted is
+  now a qualification duty. See the supersession note at the end of this file.)
 - **First identified:** 2026-09-24, while preparing GCP Attempt 7 (HARDEN-004) — before any
   live resource was created; verified against `origin/main @ 2775d5b1`
 - **Derived ticket:** `DEC-044` → the implementation that decision authorized (landed as the
@@ -283,3 +283,23 @@ therefore scheduled for deletion by REFAC-094, once INFRA-076 removes the Sol-ca
 "independent provider inventory" this finding wanted belongs to qualification
 (`docs/qualification/README.md`). DEC-040 is cited above as "absence must be observed". DEC-040
 decides **authorization** de-escalation, not resource absence; that citation over-reaches.
+
+## Supersession (2026-09-25) — `FIXED_UNQUALIFIED` → `SUPERSEDED`
+
+This finding's own 2026-09-24 correction said the declared-universe unit that closed it (B2) *"is
+therefore scheduled for deletion by REFAC-094"*, and that *"the independent provider inventory this
+finding wanted belongs to qualification"*. Both have happened:
+
+- **REFAC-094 is `DONE`**: the duplicated Terraform ownership/verification model was deleted, so the
+  remedy this finding was closed against no longer exists in the tree. A state of
+  `FIXED_UNQUALIFIED` would now point at code that is not there.
+- **DEC-045 restates the requirement** for what is configured to delete (a successful destroy plus an
+  empty state is Terraform's side of the postcondition, with four named exception classes), and the
+  *independent* provider observation this finding asked for is a qualification responsibility
+  (`docs/qualification/README.md` lesson 10; INV-DESTROY-4), performed by the qualification harness's
+  own inventory — never by product runtime.
+
+**Superseded, not falsified.** The observation itself was sound (a verification whose evidence set is
+the state inventory cannot see a resource state does not represent), and the historical transition
+above stands as the record of it. What is gone is the product-side response; the successor is DEC-045
+plus the qualification inventory.

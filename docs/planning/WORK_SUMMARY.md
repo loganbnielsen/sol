@@ -1,5 +1,49 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: HARDEN-006 preparation — the GCP Attempt-8 harness (2026-09-25)
+
+Qualification-harness preparation only; **no live run, no cloud resource created, no provider
+mutated**. The independent re-baseline accepted `2026-09-25_cloud_lifecycle_post_audit`'s
+follow-ups and selected GCP Attempt 8 as the smallest next live run, re-scoped around FND-0010.
+
+- **H1 — the fixture.** The generated qualification target no longer declares `cluster_issuer`.
+  Installing a GCP platform with one is refused at install time (FND-0007's honest refusal, which
+  stays); leaving it in the target stopped the run *before* cert-manager, which is the one thing the
+  run exists to reach. The historical change that did this (`0d712ac8`) was inspected and re-derived
+  on current `main` rather than cherry-picked.
+- **H2 — the phase model.** `sol cloud apply` is the invocation that installs the platform; the old
+  `platform` phase ran `sol deploy`, an *application* deploy, so the harness could never capture a
+  platform-install failure. There is no `platform` phase now (`platform` is refused with a pointer at
+  `sol cloud apply`), and a failed `cloud apply` captures FND-0010's discriminator **immediately, in
+  the same invocation, before the teardown**.
+- **H3–H6 — the evidence bundle.** Before teardown: both roots' Terraform state read straight from the
+  backend objects, Sol's run artifacts copied out of its 20-run pruning window (INFRA-075), and a
+  pre-teardown provider inventory. After: a post-teardown inventory. The inventory is tri-state
+  (PRESENT/ABSENT/UNKNOWN — a failed read is never absence) and now covers the classes INV-DESTROY-4
+  names: GKE, Cloud SQL, network/subnet/router/NAT, addresses (regional *and* global), disks,
+  forwarding rules, the peering, Artifact Registry, the service accounts, the custom role and its
+  bindings. Two latent harness defects went with it: the old network probe asked for a name the root
+  never creates (`<cluster>-vpc`), so it could only report a vacuous "absent" (FND-0045's class, in
+  the harness), and the quota verdict was decided by a `grep` pattern whose escape did not mean what
+  it looked like — it is decided by the parser now.
+- **The discriminator is classified, not assumed.** The captured evidence is classified as
+  `TLS_CA_OR_CERTIFICATE` / `CRD_OR_API_DISCOVERY` / `SCHEDULING` / `RBAC` / `WEBHOOK_REACHABILITY` /
+  `UNKNOWN`, with the matched lines quoted. No default of "reachability", and no remediation.
+- **Offline evidence.** `internal/qualification/gcp/test-live-qual.sh` grew from 24 to 67 assertions,
+  including the argv-order proof that the discriminator precedes the teardown. Each new property was
+  mutation-checked: moving the capture after the teardown, dropping the state snapshot, dropping Sol's
+  run evidence, collapsing UNKNOWN into ABSENT, reading PRESENT as ABSENT, ignoring non-zero quota
+  usage, and replacing the identity-based stop with a pattern kill each fail the suite.
+- **Bookkeeping, read out of the existing records.** `INFRA-067` moved to `DONE` (its fix merged in
+  #445 and survived the provider-boundary refactor); FND-0029 `OPEN` → `FIXED_UNQUALIFIED`;
+  FND-0030 `OPEN` → `FIXED_UNQUALIFIED` (its own closing condition, INFRA-076, is `DONE`);
+  FND-0055 `FIXED_UNQUALIFIED` → `SUPERSEDED` (REFAC-094 deleted the unit it was closed against);
+  FND-0056 `OPEN` → `SUPERSEDED` (DEC-045 withdrew the property). Nothing is marked `QUALIFIED`, and
+  `HARDEN-006` was re-scoped to match.
+
+**Demo/example: not applicable** — qualification harness and records only; nothing an application
+author writes changes. **Language parity (DEC-022): no application-facing impact.**
+
 ## Latest: AUDIT-POST-002/003 — the last provider facts leave generic code (2026-09-25)
 
 The final two of the audit's seven findings, and the closure of the pass:

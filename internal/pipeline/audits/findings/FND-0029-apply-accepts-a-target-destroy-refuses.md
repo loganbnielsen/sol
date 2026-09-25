@@ -1,9 +1,13 @@
 # FND-0029 — A target `apply` accepts is refused by `destroy --apply`
 
 - **Classification:** `VERIFIED_DEFECT`
-- **State:** `OPEN` — derived ticket `INFRA-067`
+- **State:** `FIXED_UNQUALIFIED` — fixed by `INFRA-067` (#445); the fix survives the
+  provider-boundary refactor, and the live observation (apply accepted an issuer-declaring
+  target, then destroy completed on that unedited target) has not been made. See the
+  2026-09-25 transition at the end of this file.
 - **First identified:** 2026-09-22 (GCP Attempt 5)
-- **Last verified:** 2026-09-22, `main @ 1ebb186f`
+- **Last verified:** 2026-09-25, `main @ 146eb90c` — the fix's presence and its install-only
+  scope, read from the code; the behaviour itself is unobserved live
 - **Provider:** GCP observed (GKE); the mechanism is provider-neutral — see "What is NOT established"
 - **Derived ticket:** `INFRA-067`
 - **Related:** `FND-0007` (the refusal's wording), `FND-0028` (durable prerequisites),
@@ -102,3 +106,26 @@ chronology, and deliberately **not** counted as a defect here.
 ## Supersession
 
 None.
+
+## Transition (2026-09-25) — `OPEN` → `FIXED_UNQUALIFIED`
+
+The fix merged in #445 (`4a9db5e5`) and this finding was never updated with it, so its `OPEN` state
+described work that had already landed. Verified on `main @ 146eb90c` that the mechanism is present
+and still *install-only*:
+
+- `Sol_cli_gcp_cluster.platform_vars` matches on `cluster_issuer, context` and refuses only
+  `Some _, Install`; `Some _, Destruction | None, _` is accepted.
+- `Sol_cli_cloud_lifecycle.platform_terraform_vars` takes `?context` (default `Install`, so
+  installation stays as strict as it was) and the destroy path passes `Destruction`
+  (`cli/sol/bin/cmd_cloud_tf.ml:1278,1371`).
+- The refactor kept the fix: the branch moved from the lifecycle module into the provider module
+  (REFAC-095/096) with the same `Install`/`Destruction` distinction, and `INFRA-067` moved to `DONE`
+  on this date with its remaining acceptance item named there.
+
+**Not `QUALIFIED`, and the qualifying observation is deliberately not Attempt 8's.** The shape this
+finding needs is: `sol cloud apply` accepts a target that *declares* `cluster_issuer` (the cloud root
+is applied; the platform stage is then refused, as in Attempt 5), and `sol cloud destroy --apply`
+completes on that same, unedited target. GCP Attempt 8 removes the field on purpose — with it
+declared, the run cannot reach cert-manager at all, which is the one thing the attempt exists for —
+so Attempt 8 does not produce this shape. A dedicated, cheap run (cloud root only, then destroy)
+would; until one happens this stays `FIXED_UNQUALIFIED`, exactly as the ticket's AC1 says.
