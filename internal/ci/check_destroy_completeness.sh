@@ -92,6 +92,24 @@ for dir in "${target_roots[@]}"; do
     fi
   done
 
+  # 4. DEC-045: an attribute that tells Terraform NOT to delete the remote object
+  #    (`deletion_policy = "ABANDON"`, `skip_destroy`, `skip_delete`) means a
+  #    successful destroy with an empty state still leaves that object behind. That
+  #    is the one case where Terraform's destroy is deliberately not the authority
+  #    for absence, so it must say who is: a `# residue:` comment within the three
+  #    lines above the attribute, naming the residue handling. An unannotated one is
+  #    residue nobody owns.
+  for tf in "$root/$dir"/*.tf; do
+    [ -e "$tf" ] || continue
+    while IFS=: read -r line _; do
+      [ -n "$line" ] || continue
+      start=$((line > 3 ? line - 3 : 1))
+      if ! sed -n "${start},$((line - 1))p" "$tf" | grep -qE '^[[:space:]]*#[[:space:]]*residue:'; then
+        report "$tf:$line relinquishes deletion (Terraform will not delete the remote object) without a '# residue:' comment naming who handles what it leaves behind (DEC-045)."
+      fi
+    done < <(grep -nE '^[[:space:]]*(deletion_policy[[:space:]]*=[[:space:]]*"ABANDON"|skip_destroy[[:space:]]*=[[:space:]]*true|skip_delete[[:space:]]*=[[:space:]]*true)' "$tf")
+  done
+
   # ...and a literal is a guard no Destroy policy can override.
   if grep -qE '^[[:space:]]*deletion_protection[[:space:]]*=[[:space:]]*(true|false)' "$root/$dir"/*.tf 2>/dev/null; then
     report "$dir sets deletion_protection to a literal, which no Destroy policy can override; route it through a variable."
@@ -102,4 +120,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "check_destroy_completeness: $checked terraform file(s) in ${#target_roots[@]} target root(s); no prevent_destroy, no literal deletion guard, every lifecycle-populated resource removable and every routed guard liftable by the Destroy policy."
+echo "check_destroy_completeness: $checked terraform file(s) in ${#target_roots[@]} target root(s); no prevent_destroy, no literal deletion guard, every lifecycle-populated resource removable, every routed guard liftable by the Destroy policy, and every relinquished deletion annotated with its residue handling."
