@@ -1855,25 +1855,30 @@ case "$snapshot_id" in
 esac
 grep -F 'verify preparation: RDS deletion protection disabled' "$log.out" >/dev/null
 grep -F "final snapshot $snapshot_id confirmed" "$log.out" >/dev/null
-# INFRA-047: the successful direction must execute all three independent
-# absence queries; a missing check cannot pass merely because the mock defaults
-# to empty output.
-grep -F 'aws ec2 describe-addresses' "$log" >/dev/null
-grep -F 'aws ec2 describe-nat-gateways' "$log" >/dev/null
+# INFRA-047 / REFAC-093: the sweep queries what Terraform does not own -- EBS
+# volumes created for PersistentVolumeClaims (and controller load balancers) --
+# and a missing check cannot pass merely because the mock defaults to empty output.
 grep -F 'aws ec2 describe-volumes' "$log" >/dev/null
+# DEC-045: elastic IPs, NAT gateways and ECR repositories are Terraform-managed, so
+# the destroy plus the empty-state check is their authority and the sweep must not
+# query them. The describe-volumes line above is the positive control that this log
+# records the sweep's queries at all.
+for gone in 'aws ec2 describe-addresses' 'aws ec2 describe-nat-gateways' 'aws ecr describe-repositories'; do
+  if grep -F "$gone" "$log" >/dev/null; then
+    echo "REFAC-093: the destroy sweep still queries a Terraform-managed kind: $gone" >&2
+    exit 1
+  fi
+done
 
-# Mutation direction: each positive result must independently fail the public
-# destroy command and identify the residual class.  These are separate runs so
-# short-circuiting or accidentally wiring one result to another is observable.
-for residual in eip nat ebs; do
+# Mutation direction: a positive result must fail the public destroy command and
+# identify the residual class.
+for residual in ebs; do
   residual_log="$tmp/destroy-residual-$residual.log"
   if (export AWS_RESIDUAL_KIND="$residual"; run_destroy "$residual_log"); then
     echo "AWS destroy verification accepted residual $residual infrastructure" >&2
     exit 1
   fi
   case "$residual" in
-    eip) expected='AWS elastic IPs still exist after destroy' ;;
-    nat) expected='AWS NAT gateways still exist after destroy' ;;
     ebs) expected='AWS EBS volumes still exist after destroy' ;;
   esac
   grep -F "$expected" "$residual_log.out" >/dev/null || {

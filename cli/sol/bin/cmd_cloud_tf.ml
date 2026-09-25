@@ -367,11 +367,13 @@ let workspace_name = Sol_cli_workspace.current_name
 (* ── the orphan sweep (HARDEN-004 step 5) ────────────────────────────────────
 
    These are the name/tag-derived checks that used to *be* the whole verification.
-   They still catch what Terraform's own state cannot speak for -- EIPs, NAT
-   gateways and EBS volumes created indirectly by the VPC/EKS modules, load
-   balancers created by the in-tree cloud controller, the service-networking
-   peering GCP refuses to delete while a producer is registered (INFRA-047) -- but
-   they are **secondary** now, and their type says so:
+   They still catch what Terraform's own state cannot speak for -- EBS volumes
+   created for PersistentVolumeClaims, load balancers created by the in-tree cloud
+   controller, the service-networking peering GCP refuses to delete while a
+   producer is registered (INFRA-047). Kinds Terraform manages itself (elastic IPs,
+   NAT gateways, ECR repositories) are not swept: its destroy plus the empty-state
+   check is their authority (DEC-045, REFAC-093). They are **secondary**, and their
+   type says so:
 
    - [Probe_gone] / [Probe_found] are answers about the resources;
    - [Probe_indeterminate] means the check established nothing (an API error, a
@@ -408,43 +410,6 @@ let orphan_sweep ?(gaps = []) probes : Sol_cli_destroy_verification.sweep =
         probes
   in
   Sol_cli_destroy_verification.Sweep_ran { residues; indeterminate }
-;;
-
-let aws_ecr_prefix_probe ~region ~workspace_name =
-  let prefix = workspace_name ^ "/" in
-  let query =
-    Printf.sprintf
-      "repositories[?starts_with(repositoryName, `%s`)].repositoryName"
-      prefix
-  in
-  match
-    Sol_cli_process.run
-      (Sol_cli_process.cmd
-         [ "aws"
-         ; "ecr"
-         ; "describe-repositories"
-         ; "--query"
-         ; query
-         ; "--output"
-         ; "text"
-         ; "--region"
-         ; region
-         ])
-  with
-  | Ok r when r.Sol_cli_process.exit_code = 0 && String.trim r.Sol_cli_process.stdout = ""
-    -> Probe_gone
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    Probe_found
-      (Printf.sprintf
-         "AWS ECR repositories still exist after destroy: %s"
-         (String.trim r.Sol_cli_process.stdout))
-  | Ok r ->
-    Probe_indeterminate
-      ("AWS ECR repositories could not be checked: "
-       ^ String.trim r.Sol_cli_process.stderr)
-  | Error _ ->
-    Probe_indeterminate
-      "AWS ECR repositories could not be checked: the aws CLI is unavailable"
 ;;
 
 (* Works for both Classic ELB and ALB/NLB uniformly: the in-cluster AWS
@@ -542,38 +507,6 @@ let aws_list_probe ~region ~kind ~argv =
       (Printf.sprintf "AWS %s could not be checked: the aws CLI is unavailable" kind)
 ;;
 
-let aws_no_elastic_ips ~region ~cluster_name =
-  aws_list_probe
-    ~region
-    ~kind:"elastic IPs"
-    ~argv:
-      [ "ec2"
-      ; "describe-addresses"
-      ; "--filters"
-      ; Printf.sprintf "Name=tag:Name,Values=%s-*" cluster_name
-      ; "--query"
-      ; "Addresses[].AllocationId"
-      ; "--output"
-      ; "text"
-      ]
-;;
-
-let aws_no_nat_gateways ~region ~cluster_name =
-  aws_list_probe
-    ~region
-    ~kind:"NAT gateways"
-    ~argv:
-      [ "ec2"
-      ; "describe-nat-gateways"
-      ; "--filter"
-      ; Printf.sprintf "Name=tag:Name,Values=%s-*" cluster_name
-      ; "--query"
-      ; "NatGateways[?State != `deleted`].NatGatewayId"
-      ; "--output"
-      ; "text"
-      ]
-;;
-
 let aws_no_ebs_volumes ~region ~cluster_name =
   aws_list_probe
     ~region
@@ -624,10 +557,13 @@ let aws_orphan_sweep ~pre_destroy ~region ~outputs =
     | None -> Option.map Sol_cli_cloud_lifecycle.cluster_name outputs
   in
   let region = if String.trim region = "" then None else Some region in
-  let workspace = workspace_name () in
+  (* REFAC-093 / DEC-045: only what Terraform does not own is swept -- load
+     balancers the in-cluster cloud controller creates, and volumes created for
+     PersistentVolumeClaims. Elastic IPs, NAT gateways and ECR repositories are
+     Terraform-managed (the VPC module and the root); a successful destroy plus the
+     empty-state check is the authority for them. *)
   match region with
   | None ->
-    (* The ECR prefix probe is region-scoped too, so nothing here can run. *)
     orphan_sweep
       ~gaps:
         [ "the AWS residue checks could not establish the target's region, so they were \
@@ -639,8 +575,6 @@ let aws_orphan_sweep ~pre_destroy ~region ~outputs =
       match cluster_name with
       | Some cluster_name ->
         ( [ aws_load_balancer_probe ~region ~cluster_name
-          ; aws_no_elastic_ips ~region ~cluster_name
-          ; aws_no_nat_gateways ~region ~cluster_name
           ; aws_no_ebs_volumes ~region ~cluster_name
           ]
         , [] )
@@ -651,9 +585,7 @@ let aws_orphan_sweep ~pre_destroy ~region ~outputs =
              run"
           ] )
     in
-    orphan_sweep
-      ~gaps:cluster_gap
-      (aws_ecr_prefix_probe ~region ~workspace_name:workspace :: cluster_probes)
+    orphan_sweep ~gaps:cluster_gap cluster_probes
 ;;
 
 let gcp_peering_probe ~project ~network =
