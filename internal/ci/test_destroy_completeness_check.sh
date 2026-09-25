@@ -133,6 +133,60 @@ mk abandonok gcp 'resource "google_service_networking_connection" "sql" {
 }' main.tf
 expect_accept abandonok "an annotated ABANDON"
 
+# 5b. AUDIT-POST-005. `deletion_policy = "PREVENT"` is the Google provider's
+#     `prevent_destroy` -- the target can never be torn down through the lifecycle,
+#     which is what ADR 0004 forbids. Rule 1 cannot see it, so it has its own case.
+mk prevent aws '' empty.tf
+mk prevent gcp 'resource "google_compute_address" "x" {
+  name            = "x"
+  deletion_policy = "PREVENT"
+}' main.tf
+expect_reject prevent "deletion_policy = \"PREVENT\""
+
+# A delegation the guard cannot evaluate must not pass as "not relinquishing": a
+# variable could resolve to true, and the object would survive a successful destroy
+# with nobody named for it.
+mk skipvar aws '' empty.tf
+mk skipvar gcp 'resource "google_compute_address" "x" {
+  name         = "x"
+  skip_destroy = var.skip_it
+}' main.tf
+expect_reject skipvar "a variable-driven skip_destroy"
+
+mk dpvar aws '' empty.tf
+mk dpvar gcp 'resource "google_compute_address" "x" {
+  name            = "x"
+  deletion_policy = var.policy
+}' main.tf
+expect_reject dpvar "a variable-driven deletion_policy"
+
+# skip_delete is the same semantic spelled differently; only `true` relinquishes.
+mk skipdel aws 'resource "aws_s3_bucket" "loki" {
+  bucket        = "x"
+  force_destroy = true
+  skip_delete   = true
+}' main.tf
+mk skipdel gcp '' empty.tf
+expect_reject skipdel "an unannotated skip_delete = true"
+
+# ...and the classifying values are accepted, so the guard is not merely rejecting
+# every mention: DELETE destroys normally, and an explicit `false` does not
+# relinquish anything.
+mk dpdelete aws '' empty.tf
+mk dpdelete gcp 'resource "google_compute_address" "x" {
+  name            = "x"
+  deletion_policy = "DELETE"
+}' main.tf
+expect_accept dpdelete "deletion_policy = \"DELETE\""
+
+mk skipfalse aws 'resource "aws_s3_bucket" "loki" {
+  bucket        = "x"
+  force_destroy = true
+  skip_delete   = false
+}' main.tf
+mk skipfalse gcp '' empty.tf
+expect_accept skipfalse "skip_delete = false"
+
 # 6. INFRA-077: a GCS bucket without a declared soft-delete policy, or with a literal one.
 mk softnone aws '' empty.tf
 mk softnone gcp 'resource "google_storage_bucket" "loki" {
@@ -162,4 +216,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "test_destroy_completeness_check: guard rejects ECR-without-force-delete, prevent_destroy, GCP force_destroy = false, unannotated relinquished deletion and undeclared or literal GCS soft delete; accepts the repaired shapes."
+echo "test_destroy_completeness_check: guard rejects ECR-without-force-delete, prevent_destroy, deletion_policy = \"PREVENT\", GCP force_destroy = false, unannotated or unclassifiable relinquished deletion (ABANDON, skip_destroy, skip_delete, variable-driven forms) and undeclared or literal GCS soft delete; accepts the repaired shapes."
