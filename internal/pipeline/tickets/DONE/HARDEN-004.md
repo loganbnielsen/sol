@@ -6,6 +6,24 @@ title: Realize and qualify the GCP production contract
 source: GCP qualification mission 2026-09-18
 ---
 
+**Closed as a ticket on 2026-09-24 — converted to the qualification ledger.** This was the
+standing GCP qualification epic, not a unit of work that can finish, and it read as actionable
+to `/work` while it sat in `READY_FOR_ENGINEERING/`. What replaced it:
+
+- **Operating rules** — the "Standing constraints" section moved verbatim to
+  `docs/qualification/README.md` § Operating rules, where they apply to every provider's runs.
+- **Where GCP stands** — `internal/pipeline/audits/QUALIFICATION_STATUS.md` and the per-attempt
+  records in `docs/qualification/` (Attempts 1–4 in `gcp-bootstrap-inventory.md`; 5, 6 and 7 as
+  their own records). The "Where the work stands", "Current frontier" and "Progress" sections
+  below are **as of 2026-09-19** and superseded by those records; they are kept as history.
+- **The destroy-path programme** (the handoff's steps 2–6) is superseded by
+  `internal/pipeline/audits/2026-09-24_cloud_lifecycle_simplification_plan.md` and its tickets.
+- **The next live GCP attempt** is its own ticket (HARDEN-006), gated on explicit authorization.
+
+The goal, the required-scenarios table and the acceptance criteria below remain the definition
+of "GCP qualified".
+
+
 **Related:** HARDEN-002 (the AWS conformance epic, whose scenario list this ticket
 mirrors), HARDEN-003 (evidence identity). Detail, per-attempt evidence and the
 decision record live in `docs/qualification/gcp-bootstrap-inventory.md`; this ticket
@@ -24,43 +42,9 @@ window, one evidence discipline. What must *not* be carried over is AWS shape �
 EBS/gp3, IRSA, Route 53, access entries — where GCP answers the same question
 differently. Where GCP exposes a flaw in the provider-neutral model, fix the model.
 
-## Standing constraints (these are the rules of the workstream)
+## Standing constraints
 
-1. **Cost rule, absolute.** Never wait for user input while billable qualification
-   resources exist. On any blocker — a defect, a semantic or security decision, a
-   missing prerequisite, an external dependency — the order is: preserve evidence →
-   tear down → independently verify `Absent`/cost-clean → only then ask. Tearing
-   down is part of qualification, and `terraform destroy` succeeding is *not*
-   evidence of cost-cleanliness; the project must be inventoried.
-2. **`Absent` is the postcondition for a disposable target.** No residual billable
-   storage, snapshots, retained buckets, addresses, disks or load balancers, unless
-   retention itself is the scenario. Production retention semantics are deliberately
-   undecided (DEC-033) and GCP cannot express retention at all, so a GCP target whose
-   `destroy_retention` is the `final-snapshot` default is **refused by name** rather
-   than destroyed.
-3. **Do not build cert-manager or Workload Identity speculatively.** Build them when
-   a live attempt has reached the boundary that needs them. TLS issuance is
-   **BLOCKED** — the qualification name is not delegated to the qualification
-   project — and a blocked row is recorded as blocked, never as qualified. The
-   owner controls `sol-fab.dev`, and `DEC-042` is now **decided**: `qual-gcp.sol-fab.dev`
-   as its own Cloud DNS zone in `sol-qualification`, created by Sol's cloud root and
-   delegated from the Squarespace-managed parent by hand (four `NS` records), with a
-   scoped cert-manager identity. So this row is no longer waiting on a decision — it is
-   waiting on implementation and the delegation itself. The rest of the workstream does
-   not depend on it. (`qual-aws.sol-fab.dev` is reserved for the AWS profile; the
-   delegation requirement follows from proving public TLS, not from GCP.)
-4. **Never create long-lived service-account JSON keys.** Impersonation and
-   short-lived tokens only.
-5. **Do not weaken or restructure AWS behaviour to accommodate GCP.** Shared-definition
-   changes keep the AWS contract and carry regression coverage.
-6. **Preserve Terraform's ownership and dependency graph.** Terraform owns resource
-   dependency and state mechanics; Sol owns semantic lifecycle transitions, authority
-   boundaries, readiness semantics, evidence and cross-tool orchestration. Do not
-   reproduce the resource DAG in OCaml.
-7. **Evidence classes.** Static/configuration, mechanism/renderability, and live
-   behavioural are different claims. Only the third satisfies a production
-   behavioural claim, and a stub written from the implementation is not evidence
-   about the tool it models.
+Moved on 2026-09-24 to `docs/qualification/README.md` § Operating rules (verbatim).
 
 ## Where the work stands (2026-09-19, `main` @ `8d85c7ce`)
 

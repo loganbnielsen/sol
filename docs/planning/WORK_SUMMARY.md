@@ -1,6 +1,18 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: the cloud lifecycle simplification programme is planned and ticketed (2026-09-24)
+## Latest: the HARDEN epics become a qualification ledger (2026-09-24)
+
+HARDEN-002 (AWS) and HARDEN-004 (GCP) were standing goals that could never finish, sat in
+`READY_FOR_ENGINEERING/` where `/work` treated them as actionable, and absorbed credit for work
+that implemented other tickets. Both are closed as tickets. HARDEN-002's run history (Runs 1–7 and
+the run procedure) moved verbatim into per-run records in `docs/qualification/`, and
+`docs/qualification/README.md` is now the ledger index: operating rules (HARDEN-004's standing
+constraints, verbatim), lessons learned with their evidence, and a record index. The next live runs
+are their own authorization-gated tickets in `BACKLOG/`: HARDEN-006 (GCP Attempt 8) and HARDEN-007
+(AWS Run 9). INFRA-068 and INFRA-069, implemented as HARDEN-004 parts 3 and 5, moved to `DONE/`;
+FND-0044 is `FIXED_UNQUALIFIED`. `AGENTS.md` records the rule: tickets are for work that can finish.
+
+## Previous: the cloud lifecycle simplification programme is planned and ticketed (2026-09-24)
 
 Two audits of the HARDEN-004 work converged: the observed provider/state divergences (Attempts 5
 and 6) were operator-created, not produced by Sol's lifecycle; per-kind provider verification of

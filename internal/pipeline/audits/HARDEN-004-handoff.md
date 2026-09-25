@@ -1,5 +1,12 @@
 # HARDEN-004 handoff — GCP qualification, destroy-path recovery (2026-09-24)
 
+> **Status 2026-09-24: historical.** The HARDEN-004 epic is closed as a ticket, and the
+> destroy-path programme this handoff describes is superseded by
+> `internal/pipeline/audits/2026-09-24_cloud_lifecycle_simplification_plan.md` and its tickets.
+> Two later investigations found that the provider/state divergences behind FND-0030 were
+> operator-created (see `docs/qualification/README.md` § Lessons learned). Kept as the record of
+> what was done and why.
+
 **Read this first.** It says what merged, what is open, what is next, and what was verified
 rather than assumed. `main` at the time of writing: `f3e9480b`.
 

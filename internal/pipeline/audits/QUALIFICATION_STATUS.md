@@ -6,6 +6,8 @@
 INFRA-042 fixed, GCP Attempt 4, HARDEN Run 7; #365/#366: entry-point docs and a
 GCP inventory restructure, against which the findings' citations were re-anchored
 to sections and rows).
+**Reconciled** 2026-09-24 (ledger restructure only — see the last section; the tables above
+that section were not re-audited).
 **Reconciled** 2026-09-20: #369 (FND-0010, item 5), then #370 and #376 landed plan
 items 1, 2, 3, 4, 6 and 7 — FND-0001 and FND-0002 move to `FIXED_UNQUALIFIED`, and
 the five tickets moved to `DONE` with their behavioural remainder named.
@@ -61,7 +63,7 @@ have failed" — it never means "false".
 
 ## Current blockers recorded by the HARDEN epic (on `origin/main`, not audit findings)
 
-These are owned by the AWS HARDEN agent (HARDEN-002) and are shown here only so
+These were owned by the AWS HARDEN epic (HARDEN-002, closed as a ticket on 2026-09-24) and are shown here only so
 the frontier is legible; the audit ledger does not duplicate their evidence.
 
 | Ticket | What | Effect on the frontier |
@@ -118,7 +120,8 @@ Full realization and sources: `invariants/PROVIDER-NEUTRAL-INVARIANTS.md`.
 
 ## AWS campaign status (from the matrix and HARDEN-002)
 
-Runs 1–7 are recorded in `internal/pipeline/tickets/READY_FOR_ENGINEERING/HARDEN-002.md`.
+Runs 1–7 are recorded in `docs/qualification/` (one record per run; index in
+`docs/qualification/README.md` — moved verbatim from the HARDEN-002 ticket on 2026-09-24).
 **Runs 3 and 4's bundles are not in the tree and may not be cited as
 qualification evidence** (they are defect-discovery history only).
 
@@ -423,3 +426,25 @@ enough to `terraform import` on, and what authorizes Sol to assume ownership of 
 not record. Until that is answered and implemented, a divergence fails loudly and names the
 resource — which is the honest behaviour, not a pass. Adoption is **not** implemented, FND-0030
 stays `OPEN`, and Attempt 7 stays closed.
+
+## Ledger restructure and the lifecycle simplification plan (2026-09-24)
+
+`main @ a9d7d827`. Bookkeeping, not a re-audit: nothing below was re-verified live.
+
+- **The HARDEN epics are closed as tickets.** HARDEN-002 (AWS) and HARDEN-004 (GCP) were standing
+  goals that could never finish, and read as actionable to `/work`. Their run history moved verbatim
+  into `docs/qualification/` (index and operating rules: `docs/qualification/README.md`); the goals
+  and acceptance criteria stay in the closed tickets and the matrices. The next live runs are their
+  own authorization-gated tickets in `BACKLOG`: **HARDEN-007** (AWS Run 9, §B3 onward) and
+  **HARDEN-006** (GCP Attempt 8, past cert-manager's `startupapicheck`, FND-0010).
+- **The "Recovery-contract frontier" above is superseded as a plan.** Two investigations on
+  2026-09-24 found that both observed provider/state divergences (Attempts 5 and 6) were
+  operator-created, so the A1 authority question is no longer the gate. The authoritative plan is
+  `2026-09-24_cloud_lifecycle_simplification_plan.md` (#491): **DEC-045** (Terraform destruction
+  authority) gates every deletion, and **DOCS-022** carries the dated corrections to FND-0030,
+  FND-0055, FND-0056 and DEC-044. Those records are **not yet corrected**; until DOCS-022 lands,
+  read them together with that plan.
+- **FND-0044** → `FIXED_UNQUALIFIED` (HARDEN-004 parts 2–3); **INFRA-068** and **INFRA-069** moved to
+  `DONE`, having been implemented under the epic's name (parts 3 and 5) without the ticket-move guard
+  firing.
+
