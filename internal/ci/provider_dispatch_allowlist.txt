@@ -1,0 +1,12 @@
+# REFAC-092 baseline (2026-09-24, main @ 73d13ff9). Entries may only go down; each PR that
+# moves provider knowledge behind a capability lowers its file's count here. Target: none.
+# Format: <kind> <path> <count> [reason]
+#   dispatch  occurrences of Sol_cli_provider.Aws|Gcp and Aws_outputs|Gcp_outputs
+#   wildcard  `| _` arms in a match whose other arms are provider constructors
+dispatch cli/sol/bin/cmd_cloud_tf.ml 44
+dispatch cli/sol/lib/sol_cli_cloud_lifecycle.ml 19
+dispatch cli/sol/lib/sol_cli_cloud_lifecycle.mli 2
+dispatch cli/sol/lib/sol_cli_config.ml 7
+dispatch cli/sol/lib/sol_cli_destroy_verification.ml 4
+dispatch cli/sol/lib/sol_cli_profile_preflight.ml 1
+wildcard cli/sol/lib/sol_cli_config.ml 2 (1) production DB deletion protection is set for AWS only, GCP relying on its root default (sql_deletion_protection = true); (2) the production profile's node shape is applied for AWS only (it names AWS instance types). A new provider would silently get neither
