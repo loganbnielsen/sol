@@ -71,19 +71,47 @@ let ingress_local_port = 8088
    indication of why (bad values, chart not found, timeout, etc). Centralized
    here instead of fixed at each site: every helm_install caller gets the
    real diagnostic for free. *)
+(* INFRA-086: what this does with a failure has changed twice now, so both
+   halves are worth stating. FRIC-006's diagnostic is preserved: the component's
+   own output travels with the failure instead of a bare exit code. What is new
+   is *when* it runs -- each call records its install and [run_local_infra_installs]
+   below installs them with bounded concurrency, because the eight releases have
+   no install-time dependency on each other and installing them one after another
+   was ~290s of every golden path (both languages) and of a developer's first
+   `sol local infra up`.
+
+   Deferring also means the failure is no longer immediate: the component is
+   reported once the in-flight installs have been waited for, together with the
+   components that never got to run, and none of it can leave a half-installed
+   sibling behind with no explanation. *)
+let pending_installs = ref []
+
 let helm_install ~label release chart ~namespace ?version ?(values = []) ?values_yaml () =
-  match upgrade_install ~release ~chart ~namespace ?version ~values ?values_yaml () with
-  | Ok r when r.Sol_cli_process.exit_code = 0 -> ()
-  | Ok r ->
-    Printf.eprintf "error: %s install failed\n" label;
-    if r.Sol_cli_process.stderr <> ""
-    then Printf.eprintf "%s\n" r.Sol_cli_process.stderr
-    else if r.Sol_cli_process.stdout <> ""
-    then Printf.eprintf "%s\n" r.Sol_cli_process.stdout;
-    exit 1
-  | Error e ->
-    Printf.eprintf "error: %s install failed\n" label;
-    Printf.eprintf "%s\n" (Sol_cli_process.error_to_string e);
+  pending_installs
+  := { Sol_cli_local_infra.label
+     ; run =
+         (fun () ->
+           match
+             upgrade_install ~release ~chart ~namespace ?version ~values ?values_yaml ()
+           with
+           | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
+           | Ok r ->
+             Error
+               (if r.Sol_cli_process.stderr <> ""
+                then r.Sol_cli_process.stderr
+                else r.Sol_cli_process.stdout)
+           | Error e -> Error (Sol_cli_process.error_to_string e))
+     }
+     :: !pending_installs
+;;
+
+let run_local_infra_installs () =
+  let installs = List.rev !pending_installs in
+  pending_installs := [];
+  match Sol_cli_local_infra.run_bounded installs with
+  | Ok () -> ()
+  | Error message ->
+    Printf.eprintf "error: %s\n%!" message;
     exit 1
 ;;
 
@@ -232,6 +260,13 @@ let dev_up () =
   if need_any
   then (
     ignore (Sol_cli_helm.repo_add ~name:"redpanda" ~url:"https://charts.redpanda.com");
+    (* FEAT-042's chart is added here too, rather than next to its install: the
+       repository is shared mutable state in helm's own config, and it must not be
+       written while other installs are running. *)
+    ignore
+      (Sol_cli_helm.repo_add
+         ~name:"ingress-nginx"
+         ~url:"https://kubernetes.github.io/ingress-nginx");
     (* Alloy stays on this repo -- only loki/grafana moved (see
        grafana-community below, OBS-039). *)
     ignore
@@ -248,8 +283,7 @@ let dev_up () =
          ~url:"https://prometheus-community.github.io/helm-charts");
     ignore (Sol_cli_helm.repo_update ()));
   if req.kafka
-  then (
-    Printf.printf "\n  Installing Redpanda...\n%!";
+  then
     (* CODE_LAYER-010: values come from
        platform/shared/components.json (redpanda.{common,local})
        (ADR 0001), shared with platform/cloud/modules/platform/main.tf --
@@ -319,10 +353,9 @@ let dev_up () =
         (Sol_cli_platform_component.merged_values_yaml
            ~component:"redpanda"
            ~profile:"local")
-      ());
+      ();
   if req.postgres
-  then (
-    Printf.printf "\n  Installing PostgreSQL...\n%!";
+  then
     helm_install
       ~label:"PostgreSQL"
       "postgresql"
@@ -350,7 +383,7 @@ let dev_up () =
         (Sol_cli_platform_component.merged_values_yaml
            ~component:"postgresql"
            ~profile:"local")
-      ());
+      ();
   let need_grafana = req.loki || req.prometheus || req.tempo in
   if need_grafana
   then (
@@ -360,7 +393,6 @@ let dev_up () =
        platform/cloud/modules/platform/main.tf uses in production ("Dev mirrors prod
        exactly") -- loki (community-maintained), grafana (standalone), and
        alloy (Promtail's official successor, log-shipping role only). *)
-    Printf.printf "\n  Installing Loki...\n%!";
     (* Values come from platform/shared/components.json (loki.{common,local})
        (ADR 0001 / CODE_LAYER-005) -- the same "local" profile
        platform/cloud/modules/platform/main.tf uses for its own non-durable
@@ -377,7 +409,6 @@ let dev_up () =
       ~values_yaml:
         (Sol_cli_platform_component.merged_values_yaml ~component:"loki" ~profile:"local")
       ();
-    Printf.printf "\n  Installing Grafana...\n%!";
     (* Values come from platform/shared/components.json (grafana.{common,local})
        (ADR 0001 / CODE_LAYER-005). sidecar.dashboards/datasources: moved
        from loki-stack's nested grafana.sidecar.* passthrough naming to this
@@ -402,7 +433,6 @@ let dev_up () =
            ~component:"grafana"
            ~profile:"local")
       ();
-    Printf.printf "\n  Installing Alloy...\n%!";
     (* Cluster-wide pod stdout/stderr scraping via DaemonSet -- same role
        promtail.enabled: true played, so 'sol logs' can fall back to real
        log content even for a pod that crashed before it could push its own
@@ -420,8 +450,7 @@ let dev_up () =
       ~values_yaml:(Sol_cli_dev_observability.alloy_values_yaml ())
       ());
   if req.tempo
-  then (
-    Printf.printf "\n  Installing Tempo...\n%!";
+  then
     (* OBS-042: grafana-community/tempo (not the deprecated grafana/tempo --
        same grafana.github.io -> grafana-community.github.io chart move
        OBS-039 already found for loki/grafana; confirmed via each repo's
@@ -448,10 +477,9 @@ let dev_up () =
         (Sol_cli_platform_component.merged_values_yaml
            ~component:"tempo"
            ~profile:"local")
-      ());
+      ();
   if req.prometheus
-  then (
-    Printf.printf "\n  Installing Prometheus...\n%!";
+  then
     (* prometheus-community/prometheus (not kube-prometheus-stack) — lighter weight for dev;
        includes server, alertmanager, pushgateway, kube-state-metrics, node-exporter.
        server.persistentVolume/pushgateway/alertmanager come from
@@ -476,9 +504,7 @@ let dev_up () =
         (Sol_cli_platform_component.merged_values_yaml
            ~component:"prometheus"
            ~profile:"local")
-      ());
-  if need_grafana
-  then install_local_grafana_config ~prometheus:req.prometheus ~tempo:req.tempo;
+      ();
   (* FEAT-042: install ingress-nginx unconditionally, mirroring
      platform/cloud/modules/platform's helm_release.ingress_nginx (same chart version,
      pinned together) so the Ingress objects `sol up`/`sol deploy` generate are
@@ -489,12 +515,6 @@ let dev_up () =
      platform/shared/components.json entry: the platform module's own install is a
      var-driven `set` (ingress_service_type), the same category ADR 0001
      leaves inline on both sides. *)
-  Printf.printf "\n  Installing ingress-nginx...\n%!";
-  ignore
-    (Sol_cli_helm.repo_add
-       ~name:"ingress-nginx"
-       ~url:"https://kubernetes.github.io/ingress-nginx");
-  ignore (Sol_cli_helm.repo_update ());
   helm_install
     ~label:"ingress-nginx"
     "ingress-nginx"
@@ -503,6 +523,11 @@ let dev_up () =
     ~version:"4.10.1"
     ~values:[ "controller.service.type", Str "NodePort" ]
     ();
+  run_local_infra_installs ();
+  (* Grafana's datasource ConfigMaps name the services above, so they are applied
+     once those releases exist -- after the installs, not interleaved with them. *)
+  if need_grafana
+  then install_local_grafana_config ~prometheus:req.prometheus ~tempo:req.tempo;
   (* 4. Port-forwards *)
   Printf.printf "\n[4/4] Starting port-forwards...\n%!";
   ignore (Sys.command "sleep 2");

@@ -305,13 +305,11 @@ let test_scaffolded_workspace_has_a_real_deploy_target () =
   | Error e ->
     Alcotest.fail ("load_for_target failed: " ^ Sol_cli_config.error_to_string e)
   | Ok cfg ->
-    (match Sol_cli_config.target cfg with
-     | None -> Alcotest.fail "expected a resolved target"
-     | Some target ->
-       check_bool
-         "prod/aws/us-east-1 is declared"
-         true
-         (Sol_cli_config.target_declared target))
+    let target = cfg.Sol_cli_config.target in
+    check_bool
+      "prod/aws/us-east-1 is declared"
+      true
+      (Sol_cli_config.target_declared target)
 ;;
 
 let test_workspace_has_dune_project () =

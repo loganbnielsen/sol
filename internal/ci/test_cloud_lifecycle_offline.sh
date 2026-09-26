@@ -1043,6 +1043,20 @@ for phase in cloud outputs cloud-verify access platform-init prerequisites crds 
     echo "cloud apply unexpectedly survived injected $phase failure" >&2
     exit 1
   fi
+  # FND-0010: cert-manager's readiness gate is a gate, not a warning. `prerequisites` is
+  # the targeted platform apply that installs cert-manager (and whose own post-install
+  # readiness check must pass); `crds` is the wait for cert-manager's API surface to be
+  # Established. If either fails, nothing after cert-manager can work -- the webhook's CA
+  # bundle is what every certificate-bearing component depends on -- so the install must
+  # stop. A regression that demoted that failure to a warning would show up here as an
+  # untargeted platform apply in the argv log.
+  if [ "$phase" = prerequisites ] || [ "$phase" = crds ]; then
+    if grep -F 'terraform ' "$log" | grep 'cloud/[a-z]*/platform.* apply ' | grep -v -- '-target=' >/dev/null; then
+      echo "FND-0010: a failed cert-manager gate ($phase) still ran the full platform apply:" >&2
+      cat "$log.out" >&2
+      exit 1
+    fi
+  fi
   assert_contains "the apply reported its credential principal" "$log.out" \
   "credentials: arn:aws:iam::111122223333:role/harness-qualification" || {
   echo "INFRA-039: the apply did not report the principal its credentials belong to" >&2

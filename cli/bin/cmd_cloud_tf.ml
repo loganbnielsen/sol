@@ -685,32 +685,28 @@ let config_vars ~strict target =
         Sol_cli_config.error_to_string
         (Sol_cli_config.load_for_target ~target:target_path)
     in
-    (match Sol_cli_config.target cfg with
-     | None ->
-       Printf.eprintf "error: target %S not found\n" target_path;
-       exit 1
-     | Some resolved_target ->
-       (* Only Apply/destroy mutate real infrastructure; Plan and
+    let resolved_target = cfg.Sol_cli_config.target in
+    (* Only Apply/destroy mutate real infrastructure; Plan and
            plan-destroy are previews, matching sol plan's own permissive
            contract. Same reasoning as cmd_deploy.ml's check: a typo'd or
            unintended target must not silently inherit sol.yml's shared
            defaults and terraform apply/destroy anyway. *)
-       if strict && not (Sol_cli_config.target_declared resolved_target)
-       then (
-         Printf.eprintf
-           "error: target %S is not declared in %s -- terraform apply/destroy require an \
-            explicit target, even an empty one, so a typo'd or unintended target can't \
-            silently inherit sol.yml's shared defaults and mutate infrastructure anyway.\n"
-           target_path
-           (Sol_cli_config.target_source resolved_target);
-         exit 1);
-       let vars =
-         Sol_cli_exit.or_exit
-           (Sol_cli_terraform_vars.of_config ~workspace:(workspace_name ()) cfg)
-       in
-       ( Sol_cli_terraform.kv_args vars
-       , resolved_target.Sol_cli_config.terraform_var_file
-       , Some resolved_target ))
+    if strict && not (Sol_cli_config.target_declared resolved_target)
+    then (
+      Printf.eprintf
+        "error: target %S is not declared in %s -- terraform apply/destroy require an \
+         explicit target, even an empty one, so a typo'd or unintended target can't \
+         silently inherit sol.yml's shared defaults and mutate infrastructure anyway.\n"
+        target_path
+        (Sol_cli_config.target_source resolved_target);
+      exit 1);
+    let vars =
+      Sol_cli_exit.or_exit
+        (Sol_cli_terraform_vars.of_config ~workspace:(workspace_name ()) cfg)
+    in
+    ( Sol_cli_terraform.kv_args vars
+    , resolved_target.Sol_cli_config.terraform_var_file
+    , Some resolved_target )
 ;;
 
 (* SEC-010: before terraform runs at all, refuse any variable the root declares
