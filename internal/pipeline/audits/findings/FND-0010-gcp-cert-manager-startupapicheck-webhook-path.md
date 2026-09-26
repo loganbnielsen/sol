@@ -219,3 +219,22 @@ only, never key material), the controller/webhook/cainjector logs, and the
 
 None. The reachability branch recorded above is refuted rather than superseded, and the
 classification it produced (`QUALIFICATION_GAP`) is replaced by `VERIFIED_DEFECT`.
+
+## Live evidence — GCP Attempt 10 (2026-09-26, `main @ bc9062b0`)
+
+The fix was exercised live, and **the failure it addresses did not reproduce**:
+
+- the release was still waiting at **9m20s**, where the pre-fix runs aborted at 414s, so the
+  release never cut the check short;
+- the check's own output is `error: timed out waiting for the condition`, and **no `x509` line
+  appears anywhere in the 286-file bundle** — the pre-fix signature is absent from this specimen;
+- the check's Job ended `BackoffLimitExceeded` after its own attempt window expired while its pod's
+  container was still not started (the check pod's container started ~9½ minutes after its image
+  was pulled), which is FND-0060's subject rather than this one's.
+
+**State stays `FIXED_UNQUALIFIED`.** What the confirming attempt asked for — the Job **Succeeded**,
+the platform apply continuing past cert-manager, `Ready` — did **not** happen: the platform still
+failed at this boundary, for a different reason. Nothing here shows TLS trust was ever usable
+(the CA Secret was populated, but the bundle has no injected `caBundle` and no successful check
+run), so the remedy remains unexercised to a successful conclusion. The blocker is now FND-0060 /
+INFRA-087.
