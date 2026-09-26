@@ -10,6 +10,11 @@
 #
 # A version is published once: the workflow refuses a tag whose runner image
 # already exists, so nothing a released CLI names can move afterwards.
+#
+# Replaces the pre-DEC-049 workflow (v0.1.0-alpha.1..6), which shipped bin/sol
+# with the framework/ source and no platform/ tree, plus a standalone binary.
+# Neither survives: sol new stopped reading framework source at DEC-025, and a
+# release binary without its bundle now refuses to run rather than guess.
 name: Release
 
 on:
@@ -118,5 +123,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "$VERSION" "${{ steps.bundle.outputs.archive }}" \
-            --title "Sol $VERSION" \
+            --title "Sol $VERSION" --generate-notes \
             --notes "Migration runner: \`${{ steps.runner.outputs.image }}\`"
