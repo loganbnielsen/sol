@@ -26,6 +26,16 @@ CPU/memory budget and never reads regional disk quota, so it cannot see the one 
 whether the platform's volumes can exist. That is a false negative in the gate whose purpose is to
 refuse a run that cannot succeed.
 
+## Status
+
+Promoted from `BACKLOG` on 2026-09-26, after the operator's refinement of the model:
+
+> Before installing platform components requiring persistent disks, observed available provider
+> disk quota must be sufficient for Sol's declared minimum persistent-disk requirement.
+
+with the explicit instruction not to predict Autopilot's node count or boot-disk consumption. The
+implementation is the next PR; this one only moves the ticket.
+
 ## Required change
 
 Teach the preflight to answer "can the volumes the platform will need actually be created here?":
