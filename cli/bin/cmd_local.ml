@@ -240,18 +240,18 @@ let dev_up () =
   then (
     Printf.printf "\n  Installing Redpanda...\n%!";
     (* CODE_LAYER-010: values come from
-       platform/components/redpanda/{values-common,values-local}.json
+       platform/shared/components.json (redpanda.{common,local})
        (ADR 0001), shared with platform/cloud/modules/platform/main.tf --
        tls.enabled/config.cluster.auto_create_topics_enabled
-       (values-common.json) and statefulset.replicas/resources.cpu.cores
-       (values-local.json, for cmd_local.ml's benefit only -- main.tf's own
+       (the common layer) and statefulset.replicas/resources.cpu.cores
+       (the local layer, for cmd_local.ml's benefit only -- main.tf's own
        var-driven override in its trailing values-list entry always wins
        there, same shadowing pattern as Loki's persistence knob).
 
        storage.persistentVolume.size and the external.*/listeners.kafka.*
        block stay inline OCaml literals, NOT in the shared JSON: adversarial
        review on this ticket caught that main.tf's own override block
-       doesn't touch either, so putting them in values-local.json would
+       doesn't touch either, so putting them in the local layer would
        have silently shipped a 20x-undersized PVC (chart default 20Gi ->
        1Gi) and a broken external Kafka listener (every real client would
        be told to reconnect to "localhost") to any real `terraform apply`
@@ -290,7 +290,7 @@ let dev_up () =
          all. That removed the option FRIC-010 preserved, so the pin moves to
          26.1.11 (image v26.1.17): FRIC-010's evaluated target, one minor behind
          newest, within support, and confirmed to render cleanly against
-         values-common.json/values-local.json (the console.* schema workaround
+         the common layer/the local layer (the console.* schema workaround
          is still required upstream). A cluster still on v24.2.7 must be
          recreated rather than upgraded in place -- see INFRA-013.
          CODE_LAYER-008: matches platform/cloud/modules/platform/main.tf's pin. *)
@@ -328,7 +328,7 @@ let dev_up () =
          (no persistent volume to be incompatible with -- see below). *)
       ~version:"18.8.17"
         (* CODE_LAYER-010: values come from
-         platform/components/postgresql/{values-common,values-local}.json
+         platform/shared/components.json (postgresql.{common,local})
          (ADR 0001) -- auth.database ("dev") is genuinely shared with
          platform/cloud/modules/platform/main.tf; auth.postgresPassword and
          primary.persistence.enabled are dev-only local-profile content
@@ -350,7 +350,7 @@ let dev_up () =
        exactly") -- loki (community-maintained), grafana (standalone), and
        alloy (Promtail's official successor, log-shipping role only). *)
     Printf.printf "\n  Installing Loki...\n%!";
-    (* Values come from platform/components/loki/{values-common,values-local}.json
+    (* Values come from platform/shared/components.json (loki.{common,local})
        (ADR 0001 / CODE_LAYER-005) -- the same "local" profile
        platform/cloud/modules/platform/main.tf uses for its own non-durable
        observability_backend branch, so a fix like BUG-013's
@@ -367,7 +367,7 @@ let dev_up () =
         (Sol_cli_platform_component.merged_values_yaml ~component:"loki" ~profile:"local")
       ();
     Printf.printf "\n  Installing Grafana...\n%!";
-    (* Values come from platform/components/grafana/{values-common,values-local}.json
+    (* Values come from platform/shared/components.json (grafana.{common,local})
        (ADR 0001 / CODE_LAYER-005). sidecar.dashboards/datasources: moved
        from loki-stack's nested grafana.sidecar.* passthrough naming to this
        standalone chart's own top-level sidecar.* -- both now need an
@@ -422,7 +422,7 @@ let dev_up () =
        (obs-tempo-eio's TEMPO_URL); Grafana's Tempo datasource queries port
        3200. Uses the `grafana-community` repo already added above for
        Loki/Grafana. *)
-    (* platform/components/tempo/ has nothing to say today (both paths
+    (* platform/shared/components.json (tempo) has nothing to say today (both paths
        already agree by relying on the chart's own defaults) -- wiring it up
        anyway locks in the source of truth so the CI guardrail can catch the
        next Tempo value that would otherwise drift, see ADR 0001. *)
@@ -444,7 +444,7 @@ let dev_up () =
     (* prometheus-community/prometheus (not kube-prometheus-stack) — lighter weight for dev;
        includes server, alertmanager, pushgateway, kube-state-metrics, node-exporter.
        server.persistentVolume/pushgateway/alertmanager come from
-       platform/components/prometheus/{values-common,values-local}.json
+       platform/shared/components.json (prometheus.{common,local})
        (ADR 0001 / CODE_LAYER-005), shared with platform/cloud/modules/platform/main.tf.
        node-exporter stays a dev-only literal here -- main.tf never disables
        it (real clusters keep host metrics), so it isn't shared state.
@@ -475,7 +475,7 @@ let dev_up () =
      matches base/variables.tf's documented k3d/local value of
      ingress_service_type; the controller is reached through the port-forward
      below, so no k3d host-port mapping is needed. Deliberately not a
-     platform/components/ entry: base/main.tf's own install is a
+     platform/shared/components.json entry: the platform module's own install is a
      var-driven `set` (ingress_service_type), the same category ADR 0001
      leaves inline on both sides. *)
   Printf.printf "\n  Installing ingress-nginx...\n%!";

@@ -1,5 +1,9 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: REFAC-102 — platform component values are one profile-keyed components.json (2026-09-25)
+
+- 18 `platform/components/*/values-*.json` files became `platform/shared/components.json`, keyed `<component>.{common,local,durable}`, still JSON. The CLI's merged values and Terraform's rendered helm values are proven identical before and after.
+- The drift guard now rejects any layer that isn't a profile.
 ## Latest: REFAC-101 — observability assets shared by local and cloud live in platform/shared (2026-09-25)
 
 - The Grafana dashboards and the Alloy config moved from the cloud module to `platform/shared/observability/`. The module and `sol local` read the same files, and nothing on the local path reads `platform/cloud/` any more.

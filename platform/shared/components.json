@@ -1,0 +1,164 @@
+{
+  "grafana": {
+    "common": {
+      "sidecar": {
+        "dashboards": {
+          "enabled": true
+        },
+        "datasources": {
+          "enabled": true
+        }
+      }
+    },
+    "local": {},
+    "durable": {}
+  },
+  "loki": {
+    "common": {
+      "gateway": {
+        "enabled": false
+      },
+      "loki": {
+        "auth_enabled": false
+      }
+    },
+    "local": {
+      "deploymentMode": "Monolithic",
+      "singleBinary": {
+        "replicas": 1,
+        "persistence": {
+          "enabled": false
+        }
+      },
+      "write": {
+        "replicas": 0
+      },
+      "read": {
+        "replicas": 0
+      },
+      "backend": {
+        "replicas": 0
+      },
+      "loki": {
+        "commonConfig": {
+          "replication_factor": 1
+        },
+        "storage": {
+          "type": "filesystem"
+        },
+        "useTestSchema": true
+      }
+    },
+    "durable": {
+      "deploymentMode": "Monolithic",
+      "singleBinary": {
+        "replicas": 1
+      },
+      "write": {
+        "replicas": 0
+      },
+      "read": {
+        "replicas": 0
+      },
+      "backend": {
+        "replicas": 0
+      },
+      "loki": {
+        "commonConfig": {
+          "replication_factor": 1
+        },
+        "storage": {
+          "type": "s3"
+        },
+        "useTestSchema": false,
+        "schemaConfig": {
+          "configs": [
+            {
+              "from": "2024-01-01",
+              "store": "tsdb",
+              "object_store": "s3",
+              "schema": "v13",
+              "index": {
+                "prefix": "index_",
+                "period": "24h"
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "postgresql": {
+    "common": {
+      "auth": {
+        "database": "dev"
+      }
+    },
+    "local": {
+      "auth": {
+        "postgresPassword": "dev"
+      },
+      "primary": {
+        "persistence": {
+          "enabled": false
+        }
+      }
+    },
+    "durable": {}
+  },
+  "prometheus": {
+    "common": {
+      "pushgateway": {
+        "enabled": true
+      },
+      "alertmanager": {
+        "enabled": true
+      }
+    },
+    "local": {
+      "server": {
+        "persistentVolume": {
+          "enabled": false
+        }
+      }
+    },
+    "durable": {}
+  },
+  "redpanda": {
+    "common": {
+      "tls": {
+        "enabled": false
+      },
+      "config": {
+        "cluster": {
+          "auto_create_topics_enabled": true
+        }
+      },
+      "console": {
+        "enabled": false,
+        "ingress": {
+          "className": ""
+        },
+        "service": {
+          "targetPort": 8080
+        }
+      }
+    },
+    "local": {
+      "statefulset": {
+        "replicas": 1
+      },
+      "resources": {
+        "cpu": {
+          "cores": "1.5"
+        }
+      }
+    },
+    "durable": {}
+  },
+  "tempo": {
+    "common": {},
+    "local": {},
+    "durable": {}
+  }
+}
