@@ -1,8 +1,8 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: INFRA-089 — one Kubernetes object, one Terraform owner (2026-09-26)
+## Latest: GCP Attempt 12 — the RBAC collision is gone, the SSD quota is the new frontier (2026-09-26)
 
-- FND-0061's fix: the two pairs of platform RoleBindings that shared one Kubernetes name are now one resource each, carrying both subjects (the AWS group and the GCP provisioner identity) — same `roleRef`, same namespaces, same lifetime, so they were never two authorizations. The duplicate `_gcp` resources are deleted, along with the two AWS `moved` blocks that named them (a dangling `moved` destination is a config error).
-- New guard `check_kubernetes_object_ownership.sh` enforces the invariant rather than the incident: no two Terraform resources in a platform root may resolve to one `(kind, namespace, name)`, with a `same-object-owner:` marker as the only declared exception. Nine mutation cases, including the collision that failed the live apply and its cluster-scoped twin.
-- Migration analysis: none needed for retained addresses; the removed addresses cannot exist in any supported state (all five qualification-bucket states read, AWS structurally empty via an empty instance set).
-- Qualification instrument corrected: the classifier now prefers the failed operation's own error (`TERRAFORM_ALREADY_EXISTS`) over ambient cluster symptoms, and calls the fallback `SCHEDULING_AMBIENT`. **FND-0061 is `FIXED_UNQUALIFIED`** — the next live run is the discriminator.
+- Ran a fresh target at `main @ cf43aaee` (cluster `sol-qual-gcp-12`, its own state key). **FND-0061 is `QUALIFIED` live**: `platform-prerequisites-apply` and the full `platform-apply` both passed the boundary that failed Attempt 11, with no `already exists` anywhere, and the install continued into its Helm releases for 22 minutes.
+- The new blocker is the environment, not the lifecycle: the observability PVCs (`storage-loki-0` 10Gi, `prometheus-server` 8Gi, `alertmanager` 2Gi) never bind — `CreateVolume failed … (QUOTA_EXCEEDED): Quota 'SSD…'` — because `SSD_TOTAL_GB` reads **limit 500 / usage 500** with five Autopilot nodes at 100 GiB boot disks each, and **usage 0** after teardown. Filed as **FND-0062 / INFRA-090** (BACKLOG).
+- The preflight said the quota was fine: its probe measures the cluster's Autopilot CPU/memory budget, not regional disk quota. INFRA-090 adds that probe so the next run refuses in five seconds instead of failing in 43 minutes.
+- Supported destruction from the failed install ran clean again: `platform-destroy ok (135.4s)`, substrate `346.6s`, both roots empty, provider inventory absent, durable prerequisites intact, no manual action.

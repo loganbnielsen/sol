@@ -2,13 +2,14 @@
 
 - **Classification:** `VERIFIED_DEFECT` (live: GCP Attempt 11's frozen bundle; the two conflicting
   declarations are in the repository and the collision is deterministic for a fresh GCP target)
-- **State:** `FIXED_UNQUALIFIED` — fixed 2026-09-26 in `INFRA-089`. Both pairs are now one
-  Terraform-owned object each, carrying both subjects (`kubernetes_role_binding.platform_provisioner`,
-  `kubernetes_cluster_role_binding.platform_provisioner_cluster`), the two duplicate resources are
-  gone, and `internal/ci/check_kubernetes_object_ownership.sh` enforces the invariant behind the
-  defect — one Kubernetes object, one Terraform owner — with the collision mutation-tested.
-  **Not qualified:** no live run has yet shown a fresh GCP target's `platform-apply` completing, and
-  a static fix is not evidence that a cluster behaves.
+- **State:** `QUALIFIED` (live, 2026-09-26, GCP Attempt 12 at `main @ cf43aaee`) — the platform
+  apply **passed the boundary this defect created**: `platform-prerequisites-apply` and the full
+  `platform-apply` both created the platform's Kubernetes objects (including both provisioner
+  bindings) with **no `already exists` error**, and the install continued into its Helm releases for
+  22 minutes, stopping only much later on an unrelated environment blocker (FND-0062). Because the
+  applied configuration declares both subjects on one object and that object was created without
+  conflict, the binding carries both subjects — an inference, labelled as one, since the run did not
+  capture the objects themselves (recorded as an instrument gap in the run record).
 - **First identified:** 2026-09-26, GCP Attempt 11 (`main @ 17afc4b2`) — exposed only because
   FND-0060's fix let the install get past cert-manager for the first time
 - **Provider:** GCP in practice (`platform_provisioner_gcp` is empty when `local.gcp_provisioner`
@@ -104,3 +105,20 @@ it, and the guard now brace-matches `metadata` and stops each value at its own e
 
 **Not remediated in the field:** nothing was imported, no state was edited, and the Attempt 11
 environment was torn down by the supported path before this change existed.
+
+## Live qualification — GCP Attempt 12 (2026-09-26)
+
+Attempt 11 failed at `[platform-apply] FAILED (201.6s)` with `rolebindings … already exists`.
+Attempt 12, at the revision carrying the fix (`main @ cf43aaee`):
+
+```
+[platform-prerequisites-apply] ok (124.2s)
+[platform-apply] FAILED (1342.1s)      ← but on Terraform `context deadline exceeded`,
+                                          i.e. Helm releases waiting on an environment blocker
+                                          (FND-0062), with no `already exists` anywhere
+```
+
+The collision boundary was crossed on the first attempt and never reappeared. The install went on
+to create the platform's objects and install alloy, tempo, grafana, ingress-nginx and argocd before
+loki's volumes could not be provisioned. **Qualified** as the defect that stopped Attempt 11; the
+next frontier is FND-0062, not this.

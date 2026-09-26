@@ -737,3 +737,26 @@ The next authorized live run is a fresh target whose discriminator is: prerequis
 `platform-apply` both complete; each platform namespace's RoleBinding and the ClusterRoleBinding
 carry both subjects with one owner; and the install continues past this point toward `Ready` and
 Ready-state destruction.
+
+## Attempt 12 — FND-0061 qualified live; the next blocker is an environment quota (2026-09-26, `main @ cf43aaee`)
+
+Full record: `internal/qualification/records/2026-09-26-gcp-attempt12-fnd0061-qualified-ssd-quota-blocker.md`
+(bundle `/tmp/sol-gcp-qual-12`). Fresh target `qual12/gcp/us-central1`, cluster `sol-qual-gcp-12`.
+
+| Boundary | Result |
+|---|---|
+| CloudBootstrap / CloudReady | created — `terraform-apply ok (510.9s)` |
+| Platform prerequisites | **ok (124.2s)** — cert-manager, provisioner RBAC; no collision |
+| Full `platform-apply` | **failed (1342.1s)** — Terraform `context deadline exceeded`, i.e. Helm releases waiting on unprovidable volumes |
+| `FND-0061` (one object, one owner) | **QUALIFIED live** — the former collision boundary was crossed, no `already exists` |
+| `FND-0060` / `FND-0010` | remain QUALIFIED (cert-manager installed again on this fresh target) |
+| `PlatformInstalling → Ready` | **not reached** — blocked by `FND-0062` |
+| Ready-state destruction (`INV-DESTROY-1`/`-4` Ready cases) | **not observed** |
+| Failed-install destruction + authority bracket | reproduced: `platform-destroy ok (135.4s)`, substrate `346.6s`; both roots empty (cloud 0/serial 16, platform 0/serial 12) |
+| Independent verification | `teardown verified: absent`; durable bucket + zone PRESENT; delegation resolving; no billable residue; `SSD_TOTAL_GB` usage back to 0 |
+| Manual/emergency action | none |
+
+**New frontier:** `FND-0062` / `INFRA-090` (BACKLOG) — the observability stack's PVCs cannot be
+provisioned because the project's `SSD_TOTAL_GB` quota (500 GiB) is fully consumed by the Autopilot
+nodes' own 100 GiB boot disks, while the platform asks for 20 GiB. Environment precondition, not a
+lifecycle defect; the harness preflight missed it because it reads no disk quota.
