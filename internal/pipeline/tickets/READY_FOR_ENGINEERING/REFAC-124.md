@@ -29,6 +29,7 @@ REFAC-116 made "the process succeeded" expressible, but left five entry points: 
   - Remove `check`, `run_success` and `run_ok`. Unit callers write `let* _ = …` or `Result.map ignore`.
   - Keep `output` only if it still pays for itself after the sweep.
 - **Tool adapters return results the same way.** `Sol_cli_kubectl` gets one local `kubectl ~ctx args = Sol_cli_process.run (invocation ~ctx args)`, and its functions are one-liners over it. Terraform, Helm, Docker, aws and gcloud follow the same pattern. No wrapper returns an unchecked `run` result.
+- Adapters keep the underlying error instead of replacing it with a fixed string. `Sol_cli_kubectl.probe_result` maps every process error to `"kubectl could not be run"`, losing the spawn/timeout detail (operator: "why remap the error instead of keeping the original? map instead?"). Use `Result.map` over the success and pass the `Sol_cli_process.error` through, rendered once where it's shown.
 - Update the REFAC-116 regression tests to the new shape. Keep the `exit 3` / `Non_zero` coverage.
 
 ## Acceptance criteria

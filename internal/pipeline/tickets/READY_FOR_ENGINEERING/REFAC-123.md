@@ -25,6 +25,7 @@ Normalise once, where a string enters Sol, so that inside Sol `string option` me
 - **Process output**: adapters that read a value from a command (`kubectl … -o jsonpath`, `aws … --output text`, `terraform output`) return `None` or an `Error` for empty or whitespace output. Consumers must not trim or test the output again.
 - **CLI arguments**: Cmdliner converters for names, targets and similar values reject an empty value at parse time (exit 124).
 - **A private `Non_empty.t`** only where a value crosses several modules and the type is doing real work, for example identities that end up in names or ARNs. Don't use it everywhere.
+- **Empty is not a sentinel, for strings or collections** (operator, 2026-09-26, on `sol_cli_port_forward.ml` and `sol_cli_rollout_diagnosis.ml`: "I don't like having empty string representable in the codebase"; "Non Empty List?"). A function that has nothing to return returns `None` (or an `Error` when something went wrong), not `""` or `[]`. For example, `read_last_lines`, `pid_owning_port`'s `digits = ""` and `stop_all`'s `[||]`. Where "at least one" is part of the meaning, use a non-empty type (`'a * 'a list`, or a small `Non_empty` module next to `Non_empty` strings). Otherwise a plain list that may be empty is fine: the rule is about sentinels, not about banning empty lists.
 - Then remove the use-site checks the boundaries now guarantee. `Sol_cli_string` keeps `env`, `contains`, and whatever the boundaries themselves use. Delete helpers that no longer have callers.
 
 ## Acceptance criteria
