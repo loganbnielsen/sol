@@ -10,7 +10,9 @@ let () =
     Cmdliner.Cmd.group
       (Cmdliner.Cmd.info
          "sol"
-         ~version:Version.v
+         ~version:
+           (* FEAT-101: a release names itself; a development build, its commit. *)
+           (Option.value Sol_cli_build_info.release_version ~default:Version.v)
          ~doc:"Sol platform CLI — scaffold, run, and deploy Sol services")
       [ Sol_cli_cmd_new.cmd
       ; Cmd_check.cmd
@@ -28,6 +30,7 @@ let () =
       ; Cmd_target.cmd
       ; Cmd_releases.cmd
       ; Cmd_deployments.cmd
+      ; Cmd_assets.cmd
       ; Cmd_alert.cmd
       ; Cmd_cloud.cmd
       ]
