@@ -11,6 +11,10 @@ type calls =
   ; mutable platform_applied : bool
   ; mutable discarded : bool
   ; mutable reports : string list
+  ; mutable events : string list
+    (** INFRA-090: what ran, in order, so the disk-quota check's *placement* can be asserted --
+        after the substrate is ready and before the platform asks for anything. *)
+  ; mutable prerequisites_applied : bool
   }
 
 let fresh () =
@@ -19,6 +23,8 @@ let fresh () =
   ; platform_applied = false
   ; discarded = false
   ; reports = []
+  ; events = []
+  ; prerequisites_applied = false
   }
 ;;
 
@@ -42,14 +48,32 @@ let deps calls : (unit, unit, unit) A.deps =
   ; outputs = (fun () -> Ok (Some ()))
   ; open_window = (fun () -> Ok (Some ()))
   ; platform_vars = (fun () -> Ok [ "x=1" ])
-  ; cloud_ready = (fun () -> Ok ())
+  ; cloud_ready =
+      (fun () ->
+        calls.events <- "cloud_ready" :: calls.events;
+        Ok ())
+  ; observe_disk_quota =
+      (fun () ->
+        calls.events <- "observe_disk_quota" :: calls.events;
+        (* Plenty of room unless the test says otherwise. *)
+        Ok
+          (Some
+             { Sol_cli_disk_quota.quota_name = "TEST_QUOTA"
+             ; limit_gb = 1000
+             ; used_gb = 0
+             }))
   ; with_cluster_access = (fun () f -> f ())
   ; platform_init = (fun () -> Ok ())
   ; platform_installed = (fun () -> false)
-  ; apply_prerequisites = (fun () _ -> Ok ())
+  ; apply_prerequisites =
+      (fun () _ ->
+        calls.events <- "apply_prerequisites" :: calls.events;
+        calls.prerequisites_applied <- true;
+        Ok ())
   ; await_crds = (fun () -> true)
   ; apply_platform =
       (fun () _ ->
+        calls.events <- "apply_platform" :: calls.events;
         calls.platform_applied <- true;
         Ok ())
   ; await_readiness = (fun () -> [ "platform", Sol_cli_cloud_lifecycle.Established ])
@@ -241,6 +265,83 @@ let test_fresh_target_reports_bootstrap () =
     (List.mem "  lifecycle phase: CloudBootstrap" calls.reports)
 ;;
 
+(* INFRA-090 / FND-0062. Before the platform installs anything that needs a persistent disk,
+   the *observed* available provider quota must cover Sol's *declared* minimum. Where the check
+   runs is as much the point as what it decides: Attempt 12 showed a pre-cloud read is useless
+   (the cluster's own footprint is not there yet) and a platform-time read is too late (the
+   volumes are already asked for). The numbers and the refusal's text are pinned in
+   test_disk_quota.ml; here it is placement and outcome. *)
+
+let test_disk_quota_insufficient_refuses_before_the_platform () =
+  let calls = fresh () in
+  let deps =
+    { (deps calls) with
+      observe_disk_quota =
+        (fun () ->
+          calls.events <- "observe_disk_quota" :: calls.events;
+          Ok
+            (Some
+               { Sol_cli_disk_quota.quota_name = "SSD_TOTAL_GB"
+               ; limit_gb = 500
+               ; used_gb = 500
+               }))
+    }
+  in
+  (match A.execute ~deps with
+   | A.Applied -> Alcotest.fail "expected a refusal: the whole quota is already spent"
+   | A.Apply_failed _ -> ());
+  Alcotest.(check bool) "the platform was never applied" false calls.platform_applied;
+  Alcotest.(check bool)
+    "the prerequisites were never applied"
+    false
+    calls.prerequisites_applied;
+  Alcotest.(check (list string))
+    "the observation is the last thing that ran"
+    [ "cloud_ready"; "observe_disk_quota" ]
+    (List.rev calls.events)
+;;
+
+let test_disk_quota_sufficient_proceeds_in_order () =
+  let calls = fresh () in
+  (match A.execute ~deps:(deps calls) with
+   | A.Applied -> ()
+   | A.Apply_failed _ -> Alcotest.fail "expected the apply to succeed with room to spare");
+  Alcotest.(check (list string))
+    "cloud ready, then the observation, then the platform"
+    [ "cloud_ready"; "observe_disk_quota"; "apply_prerequisites"; "apply_platform" ]
+    (List.rev calls.events)
+;;
+
+let test_disk_quota_unobserved_is_reported_not_passed () =
+  let calls = fresh () in
+  let deps = { (deps calls) with observe_disk_quota = (fun () -> Ok None) } in
+  (match A.execute ~deps with
+   | A.Applied -> ()
+   | A.Apply_failed _ -> Alcotest.fail "an unobserved quota is a report, not a refusal");
+  Alcotest.(check bool)
+    "the run says it could not say"
+    true
+    (List.exists
+       (fun line -> String.length line > 0)
+       (List.filter
+          (fun line ->
+             String.length line >= 27
+             && String.sub line (String.length line - 27) 27
+                = "cannot say whether they fit")
+          calls.reports))
+;;
+
+let test_disk_quota_unreadable_refuses () =
+  let calls = fresh () in
+  let deps =
+    { (deps calls) with observe_disk_quota = (fun () -> Error "gcloud is not installed") }
+  in
+  (match A.execute ~deps with
+   | A.Applied -> Alcotest.fail "an unreadable quota must fail closed"
+   | A.Apply_failed _ -> ());
+  Alcotest.(check bool) "the platform was never applied" false calls.platform_applied
+;;
+
 let () =
   Alcotest.run
     "cloud_apply"
@@ -286,6 +387,22 @@ let () =
             "fresh target reports CloudBootstrap"
             `Quick
             test_fresh_target_reports_bootstrap
+        ; Alcotest.test_case
+            "insufficient disk quota refuses before the platform"
+            `Quick
+            test_disk_quota_insufficient_refuses_before_the_platform
+        ; Alcotest.test_case
+            "sufficient disk quota proceeds, and the check sits between the two"
+            `Quick
+            test_disk_quota_sufficient_proceeds_in_order
+        ; Alcotest.test_case
+            "an unobserved quota is reported, not passed off as room"
+            `Quick
+            test_disk_quota_unobserved_is_reported_not_passed
+        ; Alcotest.test_case
+            "an unreadable quota refuses"
+            `Quick
+            test_disk_quota_unreadable_refuses
         ] )
     ]
 ;;

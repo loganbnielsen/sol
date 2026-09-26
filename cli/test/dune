@@ -70,6 +70,7 @@
   test_cloud_lifecycle
   test_cloud_destroy
   test_cloud_apply
+  test_disk_quota
   test_destroy_verification
   test_terraform_plan
   test_substrate

@@ -482,6 +482,39 @@ reconcile_durable_root() {
 # not-found vocabulary. One shape covers both kinds this inventory needs:
 #   describe <name>    -> exit 0 and prints the object   => PRESENT
 #   list --filter=...  -> exit 0 and prints nothing      => ABSENT
+# INFRA-090 / FND-0062: the provider's own disk-quota reading, taken independently of Sol so
+# the run can check Sol's classification rather than repeat it. The *requirement* is not
+# re-derived here: Sol's own log line carries the observation and its declared minimum, and the
+# run reads that from Sol rather than keeping a second copy of the number.
+disk_quota_record() {
+  local raw="$LOG_DIR/disk-quota.json"
+  if ! gcloud compute regions describe "$REGION" --project "$PROJECT" --format=json \
+      >"$raw" 2>"$LOG_DIR/disk-quota.stderr"; then
+    printf 'disk-quota\tUNKNOWN\tprovider read failed: %s\n' \
+      "$(head -1 "$LOG_DIR/disk-quota.stderr" 2>/dev/null | cut -c1-100)" >>"$INVENTORY_TSV"
+    say "    disk-quota: UNKNOWN (provider read failed)"
+    return 0
+  fi
+  python3 - "$raw" "$INVENTORY_TSV" <<'PYQUOTA'
+import json, pathlib, sys
+raw, tsv = sys.argv[1], sys.argv[2]
+def record(verdict, detail):
+    pathlib.Path(tsv).open('a').write(f'disk-quota\t{verdict}\t{detail}\n')
+    print(f'    disk-quota: {verdict} ({detail})')
+try:
+    payload = json.load(open(raw))
+except Exception as exc:
+    record('UNKNOWN', f'unparseable: {exc}')
+    sys.exit(0)
+quota = next((q for q in payload.get('quotas', []) if q.get('metric') == 'SSD_TOTAL_GB'), None)
+if quota is None:
+    record('UNKNOWN', 'SSD_TOTAL_GB not reported')
+    sys.exit(0)
+limit, used = int(quota.get('limit', 0)), int(quota.get('usage', 0))
+record('PRESENT', f'SSD_TOTAL_GB limit={limit} usage={used} free={limit - used}')
+PYQUOTA
+}
+
 provider_probe() { # provider_probe <class> <expect> <command...>
   local class="$1" expect="$2"; shift 2
   local out="$LOG_DIR/inventory-$class.log" err="$LOG_DIR/inventory-$class.stderr" verdict
@@ -694,6 +727,7 @@ inventory() { # inventory <pre|post>
   INVENTORY_TSV="$LOG_DIR/inventory-$mode.tsv"
   : >"$INVENTORY_TSV"
   say "inventory ($mode): provider reads only, no mutation"
+  disk_quota_record
   provider_probe gke-cluster    absent  gcloud container clusters describe "$CLUSTER" --region "$REGION" --project "$PROJECT" --format='value(name)'
   provider_probe sql-instance   absent  gcloud sql instances describe "$CLUSTER-postgres" --project "$PROJECT" --format='value(name)'
   provider_probe network        absent  gcloud compute networks describe "$CLUSTER" --project "$PROJECT" --format='value(name)'
@@ -1136,6 +1170,12 @@ classify_fnd0010() {
     if grep -qiE 'Error: .*already exists|already exists$' \
         "$LOG_DIR/cloud-apply.log" "$LOG_DIR/destroy.log" 2>/dev/null; then
       printf 'TERRAFORM_ALREADY_EXISTS\n'
+    elif grep -qiE 'QUOTA_EXCEEDED|CreateVolume failed|failed to insert .*disk' \
+        "$LOG_DIR/fnd0010-events.log" "$LOG_DIR/cloud-apply.log" 2>/dev/null; then
+      # The provider's own refusal, quoted by its CSI driver: authoritative about why the
+      # platform's volumes do not exist, and earlier in the chain than any pod symptom. Attempt
+      # 12's *cause* was here while every pod-level symptom was downstream of it.
+      printf 'PROVIDER_DISK_QUOTA_EXCEEDED\n'
     elif grep -qiE 'managed-namespaces-limitation|leader election record|cannot create resource "leases"' \
         "$LOG_DIR/fnd0010-controller-logs.log" "$LOG_DIR/fnd0010-cainjector-logs.log" 2>/dev/null; then
       # The specific, reversible cause found by Attempt 10's re-analysis: cert-manager's
@@ -1163,7 +1203,7 @@ classify_fnd0010() {
       printf 'UNKNOWN\n'
     fi
     printf '\n-- why (matching lines; empty means the signature was not in the captured evidence) --\n'
-    grep -hiE 'Error: .*already exists|already exists$|managed-namespaces-limitation|leader election record|cannot create resource "leases"|x509|unknown authority|certificate signed by unknown|tls: failed to verify|no matches for kind|could not find the requested resource|failed to discover|forbidden|cannot create resource|context deadline exceeded|dial tcp|i/o timeout|connection refused|no route to host|FailedScheduling|Unschedulable|Insufficient (cpu|memory)' \
+    grep -hiE 'Error: .*already exists|already exists$|QUOTA_EXCEEDED|CreateVolume failed|managed-namespaces-limitation|leader election record|cannot create resource "leases"|x509|unknown authority|certificate signed by unknown|tls: failed to verify|no matches for kind|could not find the requested resource|failed to discover|forbidden|cannot create resource|context deadline exceeded|dial tcp|i/o timeout|connection refused|no route to host|FailedScheduling|Unschedulable|Insufficient (cpu|memory)' \
       "$check_log" "$job_log" "$events" "$LOG_DIR/fnd0010-pods.log" \
       "$LOG_DIR/cloud-apply.log" "$LOG_DIR/destroy.log" \
       "$LOG_DIR/fnd0010-controller-logs.log" "$LOG_DIR/fnd0010-cainjector-logs.log" 2>/dev/null | head -20 || true
@@ -1184,8 +1224,22 @@ classify_fnd0010() {
 # The success path's evidence. Here the platform install returned success, so the check that
 # fails otherwise is expected to have SUCCEEDED -- capturing that is the positive control that
 # makes a failure classification meaningful.
+# INFRA-090, closing FND-0061's instrumentation gap: on the success path nothing captured the
+# provisioner bindings, so "both subjects on one object" had to be inferred from the
+# configuration plus the absence of a collision. These are read-only, and they make the next
+# successful install observe the object rather than reason about it.
+capture_provisioner_bindings() {
+  kube_capture bindings-provisioner-cluster kubectl get clusterrolebinding \
+    sol-platform-provisioner-cluster -o json
+  kube_capture bindings-provisioner-rolebindings kubectl get rolebinding -A \
+    --field-selector metadata.name=sol-platform-provisioner -o json
+  kube_capture bindings-provisioner-subjects kubectl get clusterrolebinding,rolebinding -A \
+    -o custom-columns=KIND:.kind,NS:.metadata.namespace,NAME:.metadata.name,SUBJECTS:.subjects[*].name
+}
+
 capture_ready_evidence() {
   say "capturing Ready-path evidence (the platform install returned success)"
+  capture_provisioner_bindings
   grep -E 'lifecycle phase|bootstrap-access-remove|Provisioned endpoints|^Done' \
     "$LOG_DIR/cloud-apply.log" >"$LOG_DIR/ready-phases.txt" 2>/dev/null || true
   say "  phase lines: $LOG_DIR/ready-phases.txt"

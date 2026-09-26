@@ -694,6 +694,15 @@ case "$1 $2" in
     ;;
 esac
 case "$1 $2" in
+  "compute regions")
+    # INFRA-090: the disk-quota observation the lifecycle reads once the substrate exists.
+    # Default: room to spare. STUB_SSD_USAGE exhausts it, which is Attempt 12's shape.
+    printf '{"name":"us-central1","quotas":[{"metric":"CPUS","limit":200.0,"usage":22.0},'
+    printf '{"metric":"DISKS_TOTAL_GB","limit":4096.0,"usage":0.0},'
+    printf '{"metric":"SSD_TOTAL_GB","limit":%s,"usage":%s}]}\n' \
+      "${STUB_SSD_LIMIT:-500}" "${STUB_SSD_USAGE:-100}"
+    exit 0
+    ;;
   "auth application-default")
     if [ "${FAIL_CREDENTIALS:-}" = 1 ]; then
       printf 'ERROR: (gcloud.auth.application-default.print-access-token) There was a problem refreshing your current auth tokens\n' >&2
@@ -1718,6 +1727,50 @@ fi
 if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null)" != "false" ]; then
   echo "the bootstrap window was not closed by an apply after the failed get-credentials:" >&2
   grep -nE 'get-credentials|provisioner_bootstrap_admin' "$gcp_access_log" >&2 || true
+  exit 1
+fi
+
+# INFRA-090 / FND-0062: an exhausted disk quota is a refusal, and it happens after the
+# substrate is ready and before anything is installed -- no cluster access is even attempted,
+# because nothing needs it to know that the platform's volumes cannot exist. Attempt 12
+# reached the volumes instead: five Autopilot nodes' boot disks had spent the whole quota.
+quota_log="$tmp/gcp-disk-quota.log"
+rm -f "$FAIL_MARKER_DIR/access" "$FAIL_MARKER_DIR/bootstrap-window"
+if (cd "$tmp/work" && STUB_SSD_USAGE=500 LIFECYCLE_LOG="$quota_log" \
+      "$sol" cloud apply prod/gcp/us-central1) >"$quota_log.out" 2>&1
+then
+  cat "$quota_log.out" >&2
+  echo "GCP apply succeeded although the region's disk quota was exhausted" >&2
+  exit 1
+fi
+grep -F 'SSD_TOTAL_GB 500/500' "$quota_log.out" >/dev/null || {
+  echo "the refusal did not name the observed quota and its usage:" >&2
+  cat "$quota_log.out" >&2
+  exit 1
+}
+grep -F "declared minimum persistent-disk requirement is 20 GiB" "$quota_log.out" >/dev/null || {
+  echo "the refusal did not name Sol's declared requirement:" >&2
+  cat "$quota_log.out" >&2
+  exit 1
+}
+if grep -qF 'get-credentials' "$quota_log"; then
+  echo "the disk-quota refusal happened after cluster access was already attempted:" >&2
+  grep -nF 'get-credentials' "$quota_log" >&2
+  exit 1
+fi
+# Anything may *read* the platform roots' state before the check (Sol reads backend and
+# provider facts first); what must not happen is an install. So the assertion is about apply,
+# not about the path appearing at all.
+if grep -qE -- 'chdir=[^ ]*/platform/cloud/[a-z]+/platform[^ ]* apply' "$quota_log"; then
+  echo "the disk-quota refusal happened after a platform apply had begun:" >&2
+  grep -nE -- 'chdir=[^ ]*' "$quota_log" >&2
+  exit 1
+fi
+# The window the cloud apply opened must be closed on the way out, exactly as it is for every
+# other failure in it: the refusal is not an excuse to leave elevated access standing.
+if ! grep -qF -- 'provisioner_bootstrap_admin=false' "$quota_log"; then
+  echo "the disk-quota refusal left the bootstrap window open:" >&2
+  grep -nE 'provisioner_bootstrap_admin|disk quota' "$quota_log" >&2 || true
   exit 1
 fi
 

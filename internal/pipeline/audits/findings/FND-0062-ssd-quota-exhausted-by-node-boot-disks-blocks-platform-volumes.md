@@ -2,7 +2,13 @@
 
 - **Classification:** `ENVIRONMENT_PRECONDITION` (live: GCP Attempt 12's frozen bundle and the
   provider's own quota reading; the lifecycle behaved correctly throughout)
-- **State:** `OPEN` (a qualification-precondition and instrument gap, not a product defect)
+- **State:** `FIXED_UNQUALIFIED` — fixed 2026-09-26 in `INFRA-090`: the lifecycle now observes the
+  provider's regional disk quota after the substrate exists and before the platform asks for a
+  volume, compares it against Sol's declared minimum, and refuses with the numbers (or fails closed
+  if the quota cannot be read). The harness records the same quota independently and classifies a
+  provider `QUOTA_EXCEEDED` refusal directly. The qualification project's `SSD_TOTAL_GB` was also
+  raised 500 → 1000 GiB and confirmed effective. **Not qualified:** no live run has yet installed
+  the platform with the volumes binding; the next one is the discriminator.
 - **First identified:** 2026-09-26, GCP Attempt 12 (`main @ cf43aaee`) — the first run to reach the
   platform's observability stack, because every earlier attempt failed before it
 - **Provider:** GCP / GKE Autopilot

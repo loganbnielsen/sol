@@ -40,6 +40,13 @@ type ('outputs, 'env, 'control) deps =
     (** The provider's gate on the opened window, and its positive control. *)
   ; platform_vars : 'outputs -> (string list, string) result
   ; cloud_ready : 'outputs -> (unit, string) result
+  ; observe_disk_quota :
+      'outputs -> (Sol_cli_disk_quota.observation option, string) result
+    (** The provider's own reading of the disk quota governing the platform's storage class,
+        taken after the cloud infrastructure exists and before the platform asks for a volume
+        (INFRA-090). [Ok None] is a declared answer: this provider observes no such quota, and
+        the sequence says so rather than treating silence as room. The comparison against
+        Sol's declared minimum is the sequence's, not the provider's. *)
   ; with_cluster_access :
       'outputs -> ('env -> (unit, failure) result) -> (unit, failure) result
   ; platform_init : unit -> (unit, failure) result
