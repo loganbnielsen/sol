@@ -278,6 +278,7 @@ let test_disk_quota_insufficient_refuses_before_the_platform () =
     { (deps calls) with
       observe_disk_quota =
         (fun () ->
+          calls.events <- "observe_disk_quota" :: calls.events;
           Ok
             (Some
                { Sol_cli_disk_quota.quota_name = "SSD_TOTAL_GB"
@@ -296,7 +297,7 @@ let test_disk_quota_insufficient_refuses_before_the_platform () =
     calls.prerequisites_applied;
   Alcotest.(check (list string))
     "the observation is the last thing that ran"
-    [ "observe_disk_quota"; "cloud_ready" ]
+    [ "cloud_ready"; "observe_disk_quota" ]
     (List.rev calls.events)
 ;;
 
@@ -307,7 +308,7 @@ let test_disk_quota_sufficient_proceeds_in_order () =
    | A.Apply_failed _ -> Alcotest.fail "expected the apply to succeed with room to spare");
   Alcotest.(check (list string))
     "cloud ready, then the observation, then the platform"
-    [ "apply_platform"; "apply_prerequisites"; "observe_disk_quota"; "cloud_ready" ]
+    [ "cloud_ready"; "observe_disk_quota"; "apply_prerequisites"; "apply_platform" ]
     (List.rev calls.events)
 ;;
 
