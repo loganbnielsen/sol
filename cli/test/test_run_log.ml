@@ -89,13 +89,7 @@ let test_format_phase_line_failed () =
 
 (* ── format_failure_report ───────────────────────────────────────────── *)
 
-let contains needle haystack =
-  try
-    ignore (Str.search_forward (Str.regexp_string needle) haystack 0);
-    true
-  with
-  | Not_found -> false
-;;
+let contains needle haystack = Sol_cli_string.contains ~needle haystack
 
 (* FEAT-055: a failing phase must name the run, not just the log path, so a
    deploy is recoverable after the terminal that ran it is gone. *)

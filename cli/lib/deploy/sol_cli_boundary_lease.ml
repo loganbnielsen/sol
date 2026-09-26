@@ -174,8 +174,8 @@ let to_configmap_json ?resource_version t =
           ] )
     ]
     @
-    match resource_version with
-    | None | Some "" -> []
+    match Sol_cli_string.non_empty resource_version with
+    | None -> []
     | Some rv -> [ "resourceVersion", `String rv ]
   in
   Yojson.Safe.pretty_to_string
@@ -255,7 +255,7 @@ let create_object ~ctx t =
     | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
     | Ok r ->
       let detail = detail_of_result r in
-      if Sol_cli_port_forward.string_contains ~needle:"AlreadyExists" detail
+      if Sol_cli_string.contains ~needle:"AlreadyExists" detail
       then Error Already_exists
       else Error (Other detail))
 ;;
@@ -268,11 +268,9 @@ let replace_object ~ctx t ~resource_version =
     | Ok r ->
       let detail = detail_of_result r in
       if
-        Sol_cli_port_forward.string_contains ~needle:"the object has been modified" detail
-        || Sol_cli_port_forward.string_contains
-             ~needle:"Operation cannot be fulfilled"
-             detail
-        || Sol_cli_port_forward.string_contains ~needle:"please apply your changes" detail
+        Sol_cli_string.contains ~needle:"the object has been modified" detail
+        || Sol_cli_string.contains ~needle:"Operation cannot be fulfilled" detail
+        || Sol_cli_string.contains ~needle:"please apply your changes" detail
       then Error Conflict
       else Error (Other detail))
 ;;
@@ -288,8 +286,8 @@ let fetch ~ctx ~workspace =
       ~output:"json"
   with
   | Error (Sol_cli_process.Non_zero { stderr; _ })
-    when Sol_cli_port_forward.string_contains ~needle:"NotFound" stderr
-         || Sol_cli_port_forward.string_contains ~needle:"not found" stderr -> Ok None
+    when Sol_cli_string.contains ~needle:"NotFound" stderr
+         || Sol_cli_string.contains ~needle:"not found" stderr -> Ok None
   | Error e -> Error (Sol_cli_process.error_to_string e)
   | Ok r ->
     (match Yojson.Safe.from_string r.Sol_cli_process.stdout with

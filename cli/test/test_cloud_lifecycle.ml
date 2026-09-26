@@ -1185,7 +1185,7 @@ let test_deescalation_requires_the_effective_surface () =
      Alcotest.(check bool)
        "the indeterminate capability is named"
        true
-       (Sol_cli_port_forward.string_contains ~needle:"connection refused" why)
+       (Sol_cli_string.contains ~needle:"connection refused" why)
    | Sol_cli_cloud_lifecycle.Deescalated ->
      Alcotest.fail "an indeterminate probe was read as de-escalated"
    | Sol_cli_cloud_lifecycle.Still_elevated _ ->
@@ -1204,7 +1204,7 @@ let test_deescalation_requires_the_effective_surface () =
      Alcotest.(check bool)
        "the unexpected principal is named"
        true
-       (Sol_cli_port_forward.string_contains ~needle:"sol-cluster-access" why)
+       (Sol_cli_string.contains ~needle:"sol-cluster-access" why)
    | Sol_cli_cloud_lifecycle.Deescalated ->
      Alcotest.fail "another principal's refusal was read as de-escalation"
    | Sol_cli_cloud_lifecycle.Still_elevated _ ->

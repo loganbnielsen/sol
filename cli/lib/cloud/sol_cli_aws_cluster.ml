@@ -162,7 +162,7 @@ let deescalation_attempts = 18
    as a reason to stop immediately: retrying cannot change an identity. *)
 let cluster_refused detail =
   List.exists
-    (fun needle -> Sol_cli_port_forward.string_contains ~needle detail)
+    (fun needle -> Sol_cli_string.contains ~needle detail)
     [ "Unauthorized"
     ; "You must be logged in"
     ; "the server has asked for the client to provide credentials"

@@ -8,13 +8,6 @@ let check_provider label expected provider =
   check_str label expected (Sol_cli_provider.to_string provider)
 ;;
 
-let contains ~needle s =
-  let nlen = String.length needle
-  and slen = String.length s in
-  let rec loop i = i + nlen <= slen && (String.sub s i nlen = needle || loop (i + 1)) in
-  nlen = 0 || loop 0
-;;
-
 let only_index indexes =
   match indexes with
   | [ index ] -> index
@@ -205,7 +198,7 @@ let test_unknown_service_language_fails () =
       check_bool
         "names the supported languages"
         true
-        (contains ~needle:"supported: ocaml, typescript" e.message))
+        (Sol_cli_string.contains ~needle:"supported: ocaml, typescript" e.message))
 ;;
 
 let test_duplicate_top_level_section_fails () =
@@ -747,7 +740,7 @@ let test_target_outside_a_workspace_fails_closed () =
       check_bool
         "message names the fix"
         true
-        (contains ~needle:"sol new workspace" e.message))
+        (Sol_cli_string.contains ~needle:"sol new workspace" e.message))
 ;;
 
 let test_target_with_only_sol_yml_succeeds () =
@@ -784,9 +777,9 @@ target:
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Ok _ -> Alcotest.fail "expected same-cluster envs to fail"
     | Error e ->
-      assert (contains ~needle:"dev" e.message);
-      assert (contains ~needle:"prod" e.message);
-      assert (contains ~needle:"shared" e.message))
+      assert (Sol_cli_string.contains ~needle:"dev" e.message);
+      assert (Sol_cli_string.contains ~needle:"prod" e.message);
+      assert (Sol_cli_string.contains ~needle:"shared" e.message))
 ;;
 
 (* The lint compares the destination Sol will use, not the descriptive
@@ -902,7 +895,7 @@ target:
          Alcotest.(check bool)
            "the error names the field to set"
            true
-           (contains ~needle:"kube_context" message)))
+           (Sol_cli_string.contains ~needle:"kube_context" message)))
 ;;
 
 let test_root_target_defaults_survive () =
@@ -1137,7 +1130,7 @@ target:
       check_bool
         "names where the key now lives"
         true
-        (contains ~needle:"aws.provisioner_role_arn" message))
+        (Sol_cli_string.contains ~needle:"aws.provisioner_role_arn" message))
 ;;
 
 (* A workspace declares both providers' identity in one shared file; each target
@@ -1374,15 +1367,18 @@ target:
          (match List.assoc_opt "ecr_repositories" vars with
           | None -> Alcotest.fail "expected ecr_repositories var"
           | Some ecr ->
-            check_bool "charge-svc present" true (contains ~needle:"\"charge-svc\"" ecr);
+            check_bool
+              "charge-svc present"
+              true
+              (Sol_cli_string.contains ~needle:"\"charge-svc\"" ecr);
             check_bool
               "notify-worker present"
               true
-              (contains ~needle:"\"notify-worker\"" ecr);
+              (Sol_cli_string.contains ~needle:"\"notify-worker\"" ecr);
             check_bool
               "spike-fn absent (no Dockerfile)"
               false
-              (contains ~needle:"spike-fn" ecr))))
+              (Sol_cli_string.contains ~needle:"spike-fn" ecr))))
 ;;
 
 let test_production_profile_enables_rds_multi_az () =
@@ -1615,8 +1611,8 @@ let test_local_env_is_reserved () =
     match Sol_cli_config.load_for_target ~target:"local/aws/us-east-1" with
     | Ok _ -> Alcotest.fail "expected `local` to be rejected as an env name"
     | Error e ->
-      assert (contains ~needle:"reserved" e.message);
-      assert (contains ~needle:"sol local infra up" e.message))
+      assert (Sol_cli_string.contains ~needle:"reserved" e.message);
+      assert (Sol_cli_string.contains ~needle:"sol local infra up" e.message))
 ;;
 
 (* REFAC-086: the name `local` is reserved, and so is the cluster behind it. A

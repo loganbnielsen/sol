@@ -88,9 +88,9 @@ let dashboard_url ~base_url ~workspace scope =
        (dashboards/managed-resource.json.tftpl's "sol-managed-resource-
        ${resource_type}" uid); "resource" is that dashboard's own
        CloudWatch dimension_values() template variable. *)
-    if String.trim resource_type = ""
+    if Sol_cli_string.is_blank resource_type
     then Error "resource type must not be empty (expected 'resource/<type>/<name>')"
-    else if String.trim resource_name = ""
+    else if Sol_cli_string.is_blank resource_name
     then Error "resource name must not be empty (expected 'resource/<type>/<name>')"
     else (
       let resource_type = Sol_cli_kubernetes_name.sanitize_label_value resource_type in

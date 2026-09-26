@@ -70,7 +70,7 @@ type scope =
 let whole_root = Whole_root
 
 let targets first rest =
-  if String.trim first = "" then invalid_arg "Terraform target must not be empty";
+  if Sol_cli_string.is_blank first then invalid_arg "Terraform target must not be empty";
   Targets (first, rest)
 ;;
 

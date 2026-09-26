@@ -173,18 +173,7 @@ let test_secret_references_count_and_values_do_not () =
     "the projection carries the reference, not the material"
     true
     (let s = Sol_cli_release_id.canonical_string (content [ with_reference ]) in
-     let contains needle =
-       let n = String.length needle
-       and h = String.length s in
-       let rec loop i =
-         if i + n > h
-         then false
-         else if String.sub s i n = needle
-         then true
-         else loop (i + 1)
-       in
-       loop 0
-     in
+     let contains needle = Sol_cli_string.contains ~needle s in
      contains "DATABASE_URL" && contains "db-prod")
 ;;
 

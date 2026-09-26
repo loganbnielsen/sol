@@ -60,9 +60,10 @@ let add_opt k = function
   | Some v -> fun xs -> (k, v) :: xs
 ;;
 
-let required name = function
-  | Some value when String.trim value <> "" -> Ok (String.trim value)
-  | _ -> Error ("the cloud lifecycle requires target." ^ name)
+let required name value =
+  Option.to_result
+    ~none:("the cloud lifecycle requires target." ^ name)
+    (Sol_cli_string.non_blank_opt value)
 ;;
 
 (* AWS. The bootstrap-access mechanism is an access-policy association owned by
@@ -76,13 +77,16 @@ let aws =
       (fun (target : Sol_cli_config.target) ~bucket ~object_key ->
         (* S3 has no native locking, so the DynamoDB lock table is part of what
            makes the state durable, not an option. *)
-        match Sol_cli_config.provider_field target "state_lock_table" with
-        | Some table when String.trim table <> "" ->
+        match
+          Sol_cli_string.non_blank_opt
+            (Sol_cli_config.provider_field target "state_lock_table")
+        with
+        | Some table ->
           Ok
             [ "bucket=" ^ bucket
             ; "key=" ^ object_key
             ; "region=" ^ target.region
-            ; "dynamodb_table=" ^ String.trim table
+            ; "dynamodb_table=" ^ table
             ; "encrypt=true"
             ]
         | _ ->

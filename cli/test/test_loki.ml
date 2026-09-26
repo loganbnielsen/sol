@@ -117,15 +117,7 @@ let test_query_range_argv_contains_logql_labels () =
   check_int
     "mentions service selector"
     1
-    (if
-       try
-         ignore
-           (Str.search_forward (Str.regexp_string {|service=~".*charge-svc.*"|}) joined 0);
-         true
-       with
-       | Not_found -> false
-     then 1
-     else 0)
+    (if Sol_cli_string.contains ~needle:{|service=~".*charge-svc.*"|} joined then 1 else 0)
 ;;
 
 let test_query_range_argv_no_config_omits_config_flag () =

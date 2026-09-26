@@ -41,7 +41,7 @@ let load_deployed_groups ~ctx workspace =
      groups. Any other failure used to read the same way, so the removal guard
      passed silently exactly when the cluster could not be asked. *)
   | Error (Sol_cli_process.Non_zero { stderr; _ })
-    when Sol_cli_port_forward.string_contains ~needle:"NotFound" stderr -> Ok []
+    when Sol_cli_string.contains ~needle:"NotFound" stderr -> Ok []
   | Error e ->
     Error
       (Printf.sprintf

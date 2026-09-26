@@ -445,7 +445,7 @@ let parse_volume path (name, value) =
       (Printf.sprintf
          "sol.toml: [infra.volumes.%s] mount_path must be an absolute path"
          name)
-  else if String.trim size = ""
+  else if Sol_cli_string.is_blank size
   then
     validation_error
       path

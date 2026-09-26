@@ -84,8 +84,8 @@ let resolve ~run ~profile =
            run
              [ "aws"; "sts"; "get-caller-identity"; "--query"; "Arn"; "--output"; "text" ]
          with
-         | Some output when String.trim output <> "" -> String.trim output
-         | _ -> "<unattributed>"
+         | output ->
+           Option.value (Sol_cli_string.non_blank_opt output) ~default:"<unattributed>"
        in
        Ok { access_key_id; secret_access_key; session_token; principal })
 ;;

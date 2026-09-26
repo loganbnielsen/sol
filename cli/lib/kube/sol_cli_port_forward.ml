@@ -10,25 +10,6 @@ type spec =
 (* Internal helpers                                                     *)
 (* ------------------------------------------------------------------ *)
 
-let string_contains ~needle haystack =
-  let nl = String.length needle
-  and hl = String.length haystack in
-  if nl = 0
-  then true
-  else if nl > hl
-  then false
-  else (
-    let stop = hl - nl in
-    let rec go i =
-      if i > stop
-      then false
-      else (
-        let rec cmp j = j = nl || (needle.[j] = haystack.[i + j] && cmp (j + 1)) in
-        cmp 0 || go (i + 1))
-    in
-    go 0)
-;;
-
 let read_last_lines path n =
   try
     let ic = open_in path in
@@ -138,7 +119,7 @@ let is_running name =
       in
       let args = if alive then String.concat " " (read_proc_cmdline pid) else "" in
       let ok =
-        alive && string_contains ~needle:(Printf.sprintf "sol-pf-%s.sh" name) args
+        alive && Sol_cli_string.contains ~needle:(Printf.sprintf "sol-pf-%s.sh" name) args
       in
       if not ok
       then (

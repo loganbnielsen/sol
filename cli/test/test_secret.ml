@@ -1,21 +1,7 @@
 let check_string = Alcotest.(check string)
 let check_bool = Alcotest.(check bool)
 let check_mode label expected actual = check_bool label true (actual = Ok expected)
-
-let contains haystack needle =
-  let hl = String.length haystack
-  and nl = String.length needle in
-  if nl = 0
-  then true
-  else if nl > hl
-  then false
-  else (
-    let found = ref false in
-    for i = 0 to hl - nl do
-      if (not !found) && String.sub haystack i nl = needle then found := true
-    done;
-    !found)
-;;
+let contains haystack needle = Sol_cli_string.contains ~needle haystack
 
 let test_key_validation_accepts_env_style_key () =
   check_bool "valid key" true (Sol_cli_secret.validate_key "DATABASE_URL" = Ok ())

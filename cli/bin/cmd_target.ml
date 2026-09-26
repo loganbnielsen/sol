@@ -49,7 +49,7 @@ let kubernetes_status ~check (target : Sol_cli_config.target) =
           ~args
       with
       | Ok (0, _) -> Sol_cli_target_report.Reachable context
-      | Ok (_, reason) when String.trim reason <> "" ->
+      | Ok (_, reason) when not (Sol_cli_string.is_blank reason) ->
         Sol_cli_target_report.Unreachable (context, first_line reason)
       | Ok (code, _) ->
         Sol_cli_target_report.Unreachable

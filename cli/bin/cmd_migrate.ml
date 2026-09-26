@@ -317,7 +317,7 @@ let container_waiting_status ~ctx ~namespace ~job_name () =
   with
   | Ok r when r.Sol_cli_process.exit_code = 0 ->
     (match String.split_on_char '|' (String.trim r.Sol_cli_process.stdout) with
-     | reason :: rest when String.trim reason <> "" ->
+     | reason :: rest when not (Sol_cli_string.is_blank reason) ->
        Some (String.trim reason, String.trim (String.concat "|" rest))
      | _ -> None)
   | _ -> None
@@ -948,7 +948,7 @@ let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table =
            | Ok _ -> cleanup ()
            | Error _ ->
              let evidence = status_job_evidence ~ctx ~namespace ~job_name () in
-             if String.trim evidence <> ""
+             if not (Sol_cli_string.is_blank evidence)
              then Printf.eprintf "\nmigration-status Job evidence:\n%s\n%!" evidence;
              Printf.eprintf
                "\n\

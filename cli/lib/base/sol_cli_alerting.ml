@@ -15,7 +15,7 @@ let url_is_routable url =
   && u.[scheme_len] <> '/'
 ;;
 
-let non_empty s = String.trim s <> ""
+let non_empty s = not (Sol_cli_string.is_blank s)
 
 let validate ~receiver_type ~receiver_url ~owner ~runbook_url =
   match receiver_type with

@@ -62,7 +62,7 @@ let gcp_absence_message ?project stderr =
   let text = String.lowercase_ascii stderr in
   let absent_wording =
     List.exists
-      (fun needle -> contains ~needle text)
+      (fun needle -> Sol_cli_string.contains ~needle text)
       [ "code=404"; "httperror 404"; "not_found"; "not found"; "does not exist" ]
   in
   let subject_matches =

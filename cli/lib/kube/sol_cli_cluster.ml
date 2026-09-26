@@ -91,7 +91,7 @@ let outputs_reader ~provider text =
   in
   let string name =
     match value name with
-    | `String s when String.trim s <> "" -> Ok s
+    | `String s when not (Sol_cli_string.is_blank s) -> Ok s
     | _ ->
       Error
         (Printf.sprintf "%s Terraform output %S is missing or not a string" provider name)
@@ -99,7 +99,7 @@ let outputs_reader ~provider text =
   let optional_string name =
     match value name with
     | `Null -> Ok None
-    | `String s -> Ok (if String.trim s = "" then None else Some s)
+    | `String s -> Ok (Sol_cli_string.non_blank s)
     | _ ->
       Error
         (Printf.sprintf "%s Terraform output %S is not a string or null" provider name)

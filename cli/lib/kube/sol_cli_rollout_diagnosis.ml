@@ -545,7 +545,7 @@ let fetch_cronjob_status ~ctx ~ns ~k8s_name : cronjob_fetch_result =
      | Some status -> Found status
      | None -> Unavailable "its status could not be parsed")
   | Ok r ->
-    if Sol_cli_port_forward.string_contains ~needle:"NotFound" r.Sol_cli_process.stderr
+    if Sol_cli_string.contains ~needle:"NotFound" r.Sol_cli_process.stderr
     then Missing
     else Unavailable (kubectl_read_failure ~what:"the CronJob" r)
 ;;

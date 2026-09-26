@@ -177,7 +177,7 @@ let get_named_secret_json ~ctx ~name namespace =
      | Yojson.Json_error message ->
        Error (Printf.sprintf "could not parse Secret %s/%s: %s" namespace name message))
   | Error (Sol_cli_process.Non_zero { stderr; _ })
-    when Sol_cli_port_forward.string_contains ~needle:"NotFound" stderr -> Ok None
+    when Sol_cli_string.contains ~needle:"NotFound" stderr -> Ok None
   | Error e ->
     Error
       (Printf.sprintf
@@ -285,10 +285,10 @@ let list_live_workloads ~ctx ~kind ~namespace =
   with
   | Ok r
     when r.Sol_cli_process.exit_code <> 0
-         && (Sol_cli_port_forward.string_contains
+         && (Sol_cli_string.contains
                ~needle:"doesn't have a resource type"
                r.Sol_cli_process.stderr
-             || Sol_cli_port_forward.string_contains
+             || Sol_cli_string.contains
                   ~needle:"could not find the requested resource"
                   r.Sol_cli_process.stderr) -> Ok []
   | result ->

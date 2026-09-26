@@ -168,9 +168,7 @@ let create_idempotent ~ctx ~file =
       let stderr = String.trim r.Sol_cli_process.stderr in
       if stderr <> "" then stderr else String.trim r.Sol_cli_process.stdout
     in
-    if Sol_cli_port_forward.string_contains ~needle:"AlreadyExists" detail
-    then Ok ()
-    else Error detail
+    if Sol_cli_string.contains ~needle:"AlreadyExists" detail then Ok () else Error detail
 ;;
 
 let create_idempotent_yaml ~ctx yaml =

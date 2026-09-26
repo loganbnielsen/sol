@@ -75,7 +75,6 @@ let with_fake_kubectl ~mode f =
 ;;
 
 let ctx = Sol_cli_kube_destination.local_context
-let contains ~needle s = Sol_cli_port_forward.string_contains ~needle s
 
 let applied =
   Sol_cli_deployment_state.Applied
@@ -109,7 +108,10 @@ let test_applied_writes_the_record () =
       "Ok"
       true
       (Result.is_ok (Sol_cli_deployment_state.record_outcome ~ctx "ws" applied));
-    Alcotest.(check bool) "applied" true (contains ~needle:"apply" (calls ())))
+    Alcotest.(check bool)
+      "applied"
+      true
+      (Sol_cli_string.contains ~needle:"apply" (calls ())))
 ;;
 
 let test_failed_write_is_an_error () =
@@ -120,7 +122,7 @@ let test_failed_write_is_an_error () =
       Alcotest.(check bool)
         "names the configmap"
         true
-        (contains ~needle:"sol-deploy-state" msg))
+        (Sol_cli_string.contains ~needle:"sol-deploy-state" msg))
 ;;
 
 (* ── load_deployed_groups ────────────────────────────────────────────────── *)
@@ -178,11 +180,14 @@ let test_guard_refuses_removal_and_names_the_real_hazard () =
   match check ~mode:"present" ~confirm:false [ "a" ] with
   | Ok () -> Alcotest.fail "removing group b must be refused"
   | Error msg ->
-    Alcotest.(check bool) "names the removed group" true (contains ~needle:"  - b" msg);
+    Alcotest.(check bool)
+      "names the removed group"
+      true
+      (Sol_cli_string.contains ~needle:"  - b" msg);
     Alcotest.(check bool)
       "describes reprocessing from the earliest offset, not skipping"
       true
-      (contains ~needle:"EARLIEST" msg)
+      (Sol_cli_string.contains ~needle:"EARLIEST" msg)
 ;;
 
 let test_guard_passes_when_stable_or_first () =

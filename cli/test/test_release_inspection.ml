@@ -6,24 +6,6 @@ let check_string = Alcotest.(check string)
 let check_int = Alcotest.(check int)
 let check_bool = Alcotest.(check bool)
 
-let contains_substring ~needle s =
-  let ln = String.length needle in
-  let ls = String.length s in
-  if ln = 0
-  then true
-  else if ln > ls
-  then false
-  else (
-    let rec go i =
-      if i > ls - ln
-      then false
-      else if String.sub s i ln = needle
-      then true
-      else go (i + 1)
-    in
-    go 0)
-;;
-
 let k8s_name value =
   match Sol_cli_deployment_plan.k8s_name_result value with
   | Ok name -> name
@@ -168,7 +150,7 @@ let test_release_summary_json () =
   check_bool
     "secret values absent"
     false
-    (contains_substring ~needle:"postgres://secret" (Yojson.Safe.to_string json))
+    (Sol_cli_string.contains ~needle:"postgres://secret" (Yojson.Safe.to_string json))
 ;;
 
 let test_rendered_manifest_diagnostics () =
@@ -194,7 +176,7 @@ let test_rendered_manifest_diagnostics () =
   check_bool
     "rollout carries env label"
     true
-    (contains_substring ~needle:{|env: "prod"|} rollout.yaml);
+    (Sol_cli_string.contains ~needle:{|env: "prod"|} rollout.yaml);
   let ingress =
     List.find
       (fun (m : Sol_cli_release_inspection.rendered_manifest) ->

@@ -521,10 +521,8 @@ let process_detail (r : Sol_cli_process.result) =
    treating an uncountable kind as empty could hide a stale workload. *)
 let resource_type_absent (r : Sol_cli_process.result) =
   let detail = process_detail r in
-  Sol_cli_port_forward.string_contains ~needle:"doesn't have a resource type" detail
-  || Sol_cli_port_forward.string_contains
-       ~needle:"could not find the requested resource"
-       detail
+  Sol_cli_string.contains ~needle:"doesn't have a resource type" detail
+  || Sol_cli_string.contains ~needle:"could not find the requested resource" detail
 ;;
 
 (* List the live (identity, release-label) pairs for every Sol-owned workload in
@@ -900,7 +898,7 @@ let resolve_matches ~commit ~target ~scope_string (events : Sol_cli_deployment.t
 let resolve_commit ~commit ?scope ~target (events : Sol_cli_deployment.t list)
   : commit_resolution
   =
-  if String.trim commit = ""
+  if Sol_cli_string.is_blank commit
   then Commit_invalid "--commit must not be empty"
   else (
     let parsed_scope =

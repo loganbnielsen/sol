@@ -3,13 +3,7 @@ let check_bool = Alcotest.(check bool)
 module S = Sol_cli_status
 module D = Sol_cli_rollout_diagnosis
 
-let contains needle haystack =
-  try
-    ignore (Str.search_forward (Str.regexp_string needle) haystack 0);
-    true
-  with
-  | Not_found -> false
-;;
+let contains needle haystack = Sol_cli_string.contains ~needle haystack
 
 let test_all_healthy () =
   check_bool

@@ -3,12 +3,6 @@
 
 module A = Sol_cli_platform_assets
 
-let contains ~sub s =
-  let n = String.length sub in
-  let rec go i = i + n <= String.length s && (String.sub s i n = sub || go (i + 1)) in
-  go 0
-;;
-
 let mkdir_p path =
   ignore (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote path)))
 ;;
@@ -68,7 +62,7 @@ let test_invalid_sol_home_is_an_error () =
         Alcotest.(check bool)
           ("says how to fix it: " ^ msg)
           true
-          (contains ~sub:"export SOL_HOME" msg)
+          (Sol_cli_string.contains ~needle:"export SOL_HOME" msg)
       | Error e -> Alcotest.fail ("expected Invalid_sol_home: " ^ A.error_to_string e)))
 ;;
 

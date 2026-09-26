@@ -188,7 +188,7 @@ let status_json ~table rows =
 let evidence_report ~waiting ~logs =
   let waiting_lines =
     match waiting with
-    | Some (reason, detail) when String.trim reason <> "" ->
+    | Some (reason, detail) when not (Sol_cli_string.is_blank reason) ->
       let detail = String.trim detail in
       [ Printf.sprintf
           "container waiting: %s%s"

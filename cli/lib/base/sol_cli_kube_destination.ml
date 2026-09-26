@@ -11,11 +11,7 @@ let to_string { context; kubeconfig } =
 
 let of_context ?kubeconfig context =
   let context = String.trim context in
-  let kubeconfig =
-    match kubeconfig with
-    | Some path when String.trim path <> "" -> Some (String.trim path)
-    | _ -> None
-  in
+  let kubeconfig = Sol_cli_string.non_blank_opt kubeconfig in
   if context = ""
   then
     Error

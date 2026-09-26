@@ -46,12 +46,7 @@ let test_fields_matches_taxonomy_label_set () =
 
 let test_message_mentions_domain_service_and_release () =
   let msg = E.message sample in
-  let contains substring s =
-    let sl = String.length s
-    and bl = String.length substring in
-    let rec go i = i + bl <= sl && (String.sub s i bl = substring || go (i + 1)) in
-    go 0
-  in
+  let contains needle s = Sol_cli_string.contains ~needle s in
   check_bool "mentions domain" true (contains "billing" msg);
   check_bool "mentions service" true (contains "invoicer" msg);
   check_bool "mentions release" true (contains "r-0123456789abcdef" msg)

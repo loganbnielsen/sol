@@ -8,13 +8,6 @@ let check_str = Alcotest.(check string)
 let check_bool = Alcotest.(check bool)
 let check_strs = Alcotest.(check (list string))
 
-let contains ~needle s =
-  let nlen = String.length needle
-  and slen = String.length s in
-  let rec loop i = i + nlen <= slen && (String.sub s i nlen = needle || loop (i + 1)) in
-  nlen = 0 || loop 0
-;;
-
 let write path content =
   let oc = open_out path in
   output_string oc content;
@@ -139,7 +132,9 @@ let test_unknown_profile_rejected () =
     check_bool
       "names the known profile"
       true
-      (contains ~needle:"production-single-region" (load_error "prod/aws/us-east-1")))
+      (Sol_cli_string.contains
+         ~needle:"production-single-region"
+         (load_error "prod/aws/us-east-1")))
 ;;
 
 let test_shared_sol_yml_profile_rejected () =
@@ -149,7 +144,9 @@ let test_shared_sol_yml_profile_rejected () =
     check_bool
       "sol.yml cannot opt every target in"
       true
-      (contains ~needle:"environment or target" (load_error "prod/aws/us-east-1")))
+      (Sol_cli_string.contains
+         ~needle:"environment or target"
+         (load_error "prod/aws/us-east-1")))
 ;;
 
 let test_unrelated_value_does_not_change_selection () =
@@ -288,11 +285,11 @@ let test_plan_carries_claim_and_requirements () =
       check_bool
         "plan JSON carries the identity"
         true
-        (contains ~needle:{|"id":"production-single-region/v1"|} json);
+        (Sol_cli_string.contains ~needle:{|"id":"production-single-region/v1"|} json);
       check_bool
         "plan JSON carries evidence requirements"
         true
-        (contains ~needle:{|"evidence_requirements":[|} json))
+        (Sol_cli_string.contains ~needle:{|"evidence_requirements":[|} json))
 ;;
 
 let test_declared_data_resources_make_durability_applicable () =
@@ -489,7 +486,7 @@ let test_plan_without_profile_is_unchanged () =
     check_bool
       "JSON profile is null"
       true
-      (contains
+      (Sol_cli_string.contains
          ~needle:{|"profile":null|}
          (Yojson.Safe.to_string (Sol_cli_deployment_plan.to_json plan))))
 ;;
@@ -571,7 +568,10 @@ let test_remote_state_requires_a_backend () =
     | None -> Alcotest.fail "expected a remote-state finding"
     | Some f ->
       check_bool "target side" true (f.side = Pre.Target);
-      check_bool "names the declarations" true (contains ~needle:"state_bucket" f.reason))
+      check_bool
+        "names the declarations"
+        true
+        (Sol_cli_string.contains ~needle:"state_bucket" f.reason))
 ;;
 
 let test_remote_state_established_by_declaration () =
@@ -609,7 +609,7 @@ let test_scoped_identities_require_roles_and_cidr () =
       check_bool
         "names the missing identity"
         true
-        (contains ~needle:"provisioner_role_arn" f.reason))
+        (Sol_cli_string.contains ~needle:"provisioner_role_arn" f.reason))
 ;;
 
 let test_world_reachable_endpoint_is_rejected () =
@@ -634,7 +634,10 @@ let test_world_reachable_endpoint_is_rejected () =
     with
     | None -> Alcotest.fail "expected a scoped-identity finding for 0.0.0.0/0"
     | Some f ->
-      check_bool "explains the restriction" true (contains ~needle:"0.0.0.0/0" f.reason))
+      check_bool
+        "explains the restriction"
+        true
+        (Sol_cli_string.contains ~needle:"0.0.0.0/0" f.reason))
 ;;
 
 let test_scoped_identities_established () =
@@ -675,7 +678,7 @@ let test_mutable_tag_is_an_application_finding () =
       check_bool
         "names the --image-ref fix"
         true
-        (contains ~needle:"--image-ref" f.reason))
+        (Sol_cli_string.contains ~needle:"--image-ref" f.reason))
 ;;
 
 let test_digest_plan_establishes_artifact_guarantee () =
@@ -716,7 +719,7 @@ let test_undeclared_language_is_an_application_finding () =
       check_bool
         "names the language declaration"
         true
-        (contains ~needle:"language" f.reason))
+        (Sol_cli_string.contains ~needle:"language" f.reason))
 ;;
 
 let test_declared_ocaml_establishes_versions () =
@@ -746,7 +749,7 @@ let test_typescript_is_not_qualified () =
       check_bool
         "names the language and the alternative"
         true
-        (contains ~needle:"typescript" f.reason))
+        (Sol_cli_string.contains ~needle:"typescript" f.reason))
 ;;
 
 let test_missing_alert_receiver_is_a_target_finding () =
@@ -762,7 +765,7 @@ let test_missing_alert_receiver_is_a_target_finding () =
       check_bool
         "names the receiver declaration"
         true
-        (contains ~needle:"alert_receiver_type" f.reason))
+        (Sol_cli_string.contains ~needle:"alert_receiver_type" f.reason))
 ;;
 
 let test_complete_alert_contract_establishes_delivery () =
@@ -801,7 +804,10 @@ let test_unroutable_alert_receiver_is_a_target_finding () =
     | None -> Alcotest.fail "expected an unroutable-receiver finding"
     | Some f ->
       check_bool "target side" true (f.side = Pre.Target);
-      check_bool "explains routability" true (contains ~needle:"routable" f.reason))
+      check_bool
+        "explains routability"
+        true
+        (Sol_cli_string.contains ~needle:"routable" f.reason))
 ;;
 
 let test_unqualified_provider_is_a_target_finding () =
@@ -816,7 +822,10 @@ let test_unqualified_provider_is_a_target_finding () =
     | None -> Alcotest.fail "expected a substrate finding"
     | Some f ->
       check_bool "target side" true (f.side = Pre.Target);
-      check_bool "names the provider" true (contains ~needle:"gcp" f.reason))
+      check_bool
+        "names the provider"
+        true
+        (Sol_cli_string.contains ~needle:"gcp" f.reason))
 ;;
 
 (* SEC-004: credential posture is a Sol-owned property of the renderer, so the
@@ -904,7 +913,7 @@ let test_kafka_durability_requires_the_rendered_requirement () =
       check_bool
         "names the missing durability requirement"
         true
-        (contains ~needle:"SOL_KAFKA_DURABILITY" reason)
+        (Sol_cli_string.contains ~needle:"SOL_KAFKA_DURABILITY" reason)
     | _ -> Alcotest.fail "expected an application finding for a consumer without it")
 ;;
 
@@ -941,7 +950,7 @@ let test_node_failure_tolerant_requires_headroom () =
       check_bool
         "names the headroom declaration"
         true
-        (contains ~needle:"node_failure_headroom_nodes" f.reason))
+        (Sol_cli_string.contains ~needle:"node_failure_headroom_nodes" f.reason))
 ;;
 
 let test_node_failure_tolerant_established_with_headroom () =
@@ -970,7 +979,7 @@ let test_availability_rejects_one_replica () =
     check_bool
       "names the supported alternative"
       true
-      (contains ~needle:"replicas = 2" message))
+      (Sol_cli_string.contains ~needle:"replicas = 2" message))
 ;;
 
 let test_availability_rejects_a_function () =
@@ -988,7 +997,7 @@ let test_availability_rejects_a_function () =
     check_bool
       "explains functions are scheduled jobs"
       true
-      (contains ~needle:"scheduled jobs" message))
+      (Sol_cli_string.contains ~needle:"scheduled jobs" message))
 ;;
 
 let test_emit_to_rejected_for_profile () =
@@ -1048,7 +1057,7 @@ let test_postgres_resource_declaration_required () =
       check_bool
         "names resource declaration"
         true
-        (contains ~needle:"resource" finding.reason))
+        (Sol_cli_string.contains ~needle:"resource" finding.reason))
 ;;
 
 let test_all_established_passes () =
@@ -1071,16 +1080,21 @@ let test_report_speaks_in_guarantees () =
       findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
     in
     let report = Pre.report P.Production_single_region fs in
-    check_bool "says nothing changed" true (contains ~needle:"Nothing was changed" report);
+    check_bool
+      "says nothing changed"
+      true
+      (Sol_cli_string.contains ~needle:"Nothing was changed" report);
     check_bool
       "names the unmet guarantee"
       true
-      (contains ~needle:"immutable artifact identity is not established" report);
+      (Sol_cli_string.contains
+         ~needle:"immutable artifact identity is not established"
+         report);
     check_bool
       "carries no ticket ids"
       false
       (List.exists
-         (fun needle -> contains ~needle report)
+         (fun needle -> Sol_cli_string.contains ~needle report)
          [ "FEAT-"; "AUDIT-"; "SEC-"; "OBS-"; "DEC-" ]))
 ;;
 
@@ -1181,11 +1195,11 @@ let test_attempt_1_shape_is_rejected () =
   check_bool
     "names the per-node floor"
     true
-    (contains ~needle:"each node must offer at least 4 vCPU" joined);
+    (Sol_cli_string.contains ~needle:"each node must offer at least 4 vCPU" joined);
   check_bool
     "names the post-headroom shortfall"
     true
-    (contains ~needle:"vCPU left after node-failure headroom" joined);
+    (Sol_cli_string.contains ~needle:"vCPU left after node-failure headroom" joined);
   check_bool
     "the error names the shape it refused"
     true
@@ -1196,7 +1210,7 @@ let test_attempt_1_shape_is_rejected () =
          ~headroom_nodes:1
      with
      | Ok () -> false
-     | Error reason -> contains ~needle:"m6i.large" reason)
+     | Error reason -> Sol_cli_string.contains ~needle:"m6i.large" reason)
 ;;
 
 let test_headroom_that_leaves_nothing_is_rejected () =
@@ -1210,7 +1224,7 @@ let test_headroom_that_leaves_nothing_is_rejected () =
   check_bool
     "reserving every node is refused rather than silently accepted"
     true
-    (contains
+    (Sol_cli_string.contains
        ~needle:"leaves no schedulable capacity at all"
        (String.concat " " shortfalls))
 ;;
