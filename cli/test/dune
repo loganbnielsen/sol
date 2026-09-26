@@ -61,6 +61,7 @@
   test_platform_component
   test_platform_assets
   test_terraform_workdir
+  test_time
   test_image_ref
   test_local_infra
   test_cloud_lifecycle

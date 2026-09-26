@@ -7,17 +7,7 @@ let base_dir = Filename.concat Sol_cli_state.dir "runs"
 
 (* Timestamp-prefixed so lexicographic sort of run ids is chronological. *)
 let generate_run_id ~prefix ~now ~pid =
-  let tm = Unix.gmtime now in
-  Printf.sprintf
-    "%s-%04d%02d%02dT%02d%02d%02dZ-%d"
-    prefix
-    (tm.Unix.tm_year + 1900)
-    (tm.Unix.tm_mon + 1)
-    tm.Unix.tm_mday
-    tm.Unix.tm_hour
-    tm.Unix.tm_min
-    tm.Unix.tm_sec
-    pid
+  Printf.sprintf "%s-%s-%d" prefix (Sol_cli_time.compact now) pid
 ;;
 
 let tail_lines ~n (s : string) : string =
