@@ -1528,9 +1528,9 @@ done
 # ran, and a pipeline under `set -o pipefail` would otherwise abort the suite
 # silently the moment a grep found nothing.
 authority_line="$(grep -n -- '-var=provisioner_bootstrap_admin=true' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
-platform_destroy_line="$(grep -nE -- '^terraform -chdir=[^ ]*infra/base-gcp destroy ' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
+platform_destroy_line="$(grep -nE -- '^terraform -chdir=[^ ]*cloud/gcp/platform destroy ' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
 release_line="$(grep -n -- '-var=provisioner_bootstrap_admin=false' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
-substrate_destroy_line="$(grep -nE -- '^terraform -chdir=[^ ]*infra/gcp destroy ' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
+substrate_destroy_line="$(grep -nE -- '^terraform -chdir=[^ ]*cloud/gcp/cluster destroy ' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
 for phase in "authority acquisition:authority_line" \
   "platform teardown:platform_destroy_line" \
   "authority release:release_line" \
