@@ -73,73 +73,69 @@ let run_test target_opt alertmanager_url dry_run () =
     Printf.eprintf "%s\n" (Sol_cli_config.error_to_string e);
     exit 1
   | Ok cfg ->
-    (match Sol_cli_config.target cfg with
-     | None ->
-       Printf.eprintf "target %s did not resolve to a target configuration\n" target;
-       exit 1
-     | Some target_cfg ->
-       (match
-          Sol_cli_alerting.validate
-            ~receiver_type:target_cfg.Sol_cli_config.alert_receiver_type
-            ~receiver_url:target_cfg.Sol_cli_config.alert_receiver_url
-            ~owner:target_cfg.Sol_cli_config.alert_owner
-            ~runbook_url:target_cfg.Sol_cli_config.alert_runbook_url
-        with
-        | Error reason ->
-          Printf.eprintf
-            "error: target %s does not satisfy the alert-delivery contract: %s\n"
-            target
-            reason;
-          exit 2
-        | Ok () ->
-          let owner = Option.value target_cfg.alert_owner ~default:"" in
-          let runbook_url = Option.value target_cfg.alert_runbook_url ~default:"" in
-          let body = Yojson.Safe.to_string (synthetic_alert ~owner ~runbook_url) in
-          let url = String.trim alertmanager_url ^ "/api/v2/alerts" in
-          if dry_run
-          then (
-            Printf.printf "Would POST to %s:\n%s\n" url body;
-            Printf.printf
-              "\n\
-               (dry run: nothing was sent; delivered-and-acknowledged evidence is \
-               HARDEN-002's)\n")
-          else (
-            Printf.printf "Sending a synthetic alert through %s ...\n%!" url;
-            match
-              Sol_cli_process.run
-                (Sol_cli_process.cmd
-                   [ "curl"
-                   ; "-sS"
-                   ; "-f"
-                   ; "-X"
-                   ; "POST"
-                   ; "-H"
-                   ; "Content-Type: application/json"
-                   ; "--data"
-                   ; body
-                   ; url
-                   ])
-            with
-            | Ok r when r.Sol_cli_process.exit_code = 0 ->
-              Printf.printf
-                "Alertmanager accepted the synthetic alert.\n\n\
-                 This proves the route is configured and reachable. Confirm the named \
-                 owner received and acknowledged it: that delivered-and-acknowledged \
-                 result is the HARDEN-002 evidence, not this command's exit status.\n"
-            | Ok r ->
-              Printf.eprintf
-                "error: Alertmanager rejected the synthetic alert (curl exit %d).\n%s\n"
-                r.Sol_cli_process.exit_code
-                (String.trim r.Sol_cli_process.stderr);
-              Printf.eprintf
-                "Is the port-forward up? e.g. `kubectl -n monitoring port-forward \
-                 svc/prometheus-alertmanager 9093:9093`.\n";
-              exit 1
-            | Error e ->
-              Printf.eprintf
-                "error: could not run curl: %s\n"
-                (Sol_cli_process.error_to_string e);
-              exit 1)))
+    let target_cfg = cfg.Sol_cli_config.target in
+    (match
+       Sol_cli_alerting.validate
+         ~receiver_type:target_cfg.Sol_cli_config.alert_receiver_type
+         ~receiver_url:target_cfg.Sol_cli_config.alert_receiver_url
+         ~owner:target_cfg.Sol_cli_config.alert_owner
+         ~runbook_url:target_cfg.Sol_cli_config.alert_runbook_url
+     with
+     | Error reason ->
+       Printf.eprintf
+         "error: target %s does not satisfy the alert-delivery contract: %s\n"
+         target
+         reason;
+       exit 2
+     | Ok () ->
+       let owner = Option.value target_cfg.alert_owner ~default:"" in
+       let runbook_url = Option.value target_cfg.alert_runbook_url ~default:"" in
+       let body = Yojson.Safe.to_string (synthetic_alert ~owner ~runbook_url) in
+       let url = String.trim alertmanager_url ^ "/api/v2/alerts" in
+       if dry_run
+       then (
+         Printf.printf "Would POST to %s:\n%s\n" url body;
+         Printf.printf
+           "\n\
+            (dry run: nothing was sent; delivered-and-acknowledged evidence is \
+            HARDEN-002's)\n")
+       else (
+         Printf.printf "Sending a synthetic alert through %s ...\n%!" url;
+         match
+           Sol_cli_process.run
+             (Sol_cli_process.cmd
+                [ "curl"
+                ; "-sS"
+                ; "-f"
+                ; "-X"
+                ; "POST"
+                ; "-H"
+                ; "Content-Type: application/json"
+                ; "--data"
+                ; body
+                ; url
+                ])
+         with
+         | Ok r when r.Sol_cli_process.exit_code = 0 ->
+           Printf.printf
+             "Alertmanager accepted the synthetic alert.\n\n\
+              This proves the route is configured and reachable. Confirm the named owner \
+              received and acknowledged it: that delivered-and-acknowledged result is \
+              the HARDEN-002 evidence, not this command's exit status.\n"
+         | Ok r ->
+           Printf.eprintf
+             "error: Alertmanager rejected the synthetic alert (curl exit %d).\n%s\n"
+             r.Sol_cli_process.exit_code
+             (String.trim r.Sol_cli_process.stderr);
+           Printf.eprintf
+             "Is the port-forward up? e.g. `kubectl -n monitoring port-forward \
+              svc/prometheus-alertmanager 9093:9093`.\n";
+           exit 1
+         | Error e ->
+           Printf.eprintf
+             "error: could not run curl: %s\n"
+             (Sol_cli_process.error_to_string e);
+           exit 1))
 ;;
 
 open Cmdliner

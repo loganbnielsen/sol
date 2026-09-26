@@ -68,9 +68,11 @@ type service =
   ; omit : bool
   }
 
+(** A resolved configuration: sol.yml, then the environment, then the target
+    (DEC-047). It always has its target (REFAC-109). *)
 type t =
   { project : string option
-  ; target : target option
+  ; target : target
   ; resources : resource list
   ; services : service list
   }
@@ -83,6 +85,10 @@ type error =
 
 val error_to_string : error -> string
 val load_for_target : target:string -> (t, error) result
+
+(** [parse_target address] is the bare target an [<env>/<provider>/<region>]
+    address names, with no settings, or the address error (REFAC-109). *)
+val parse_target : string -> (target, error) result
 
 (** [target_declared target] is [true] when [sol/environments.yml] (or the local
     file) declares this target under its environment's [targets:] (FEAT-100).
@@ -100,7 +106,6 @@ val target_source : target -> string
 (** Every declared target, as [<env>/<provider>/<region>], sorted. *)
 val discover_target_paths : unit -> (string list, error) result
 
-val target : t -> target option
 val resources : t -> resource list
 val services : t -> service list
 val format_use_ref : string -> string

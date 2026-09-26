@@ -29,6 +29,10 @@ type up_request =
           [cmd_up.ml] via [Sol_cli_workload_selection]. *)
   ; mode : execution_mode
   ; image_tag : string
+  ; image_tag_warning : string option
+    (** BUG-058: [Some msg] when no [--image-tag] was given and the git commit
+          could not be resolved, so [image_tag] is the local fallback. The
+          caller prints it; a local run continues, loudly. *)
   ; confirm_group_change : bool
   ; keep_releases : int
     (** FEAT-072 retention window: how many distinct release records to keep
@@ -75,16 +79,21 @@ type deploy_request =
           never pruned. Validated as [>= 1]. *)
   }
 
+(** BUG-058: the short SHA of [HEAD] in the current directory, or git's
+    reason for not having one. Pass it as the [git_sha] argument below. *)
+val git_sha : unit -> (string, string) result
+
 (** Validate raw Cmdliner values for [sol up] into an [up_request]. [git_sha] is
-    a thunk so callers can inject a real or stub implementation. Returns
-    [Error msg] if validation fails. *)
+    a thunk so callers can inject a real or stub implementation. Without
+    [--image-tag], an unresolvable SHA falls back to a fixed local tag and sets
+    [image_tag_warning]. Returns [Error msg] if validation fails. *)
 val make_up_request
   :  scope:string option
   -> dry_run:bool
   -> tag:string option
   -> confirm_group_change:bool
   -> keep_releases:int
-  -> git_sha:(unit -> string)
+  -> git_sha:(unit -> (string, string) result)
   -> (up_request, string) result
 
 (** Validate raw Cmdliner values for [sol deploy] into a [deploy_request].
@@ -92,7 +101,9 @@ val make_up_request
     Returns [Error msg] if validation fails — including [target] being empty
     (cmdliner's [required] should already prevent this, but this constructor
     doesn't assume its caller enforced that) and any [image_refs] entry not
-    being a digest reference (FEAT-050). *)
+    being a digest reference (FEAT-050). Without [image_tag], an unresolvable
+    SHA is an error naming [--image-tag]: a deploy never falls back to a
+    shared, mutable tag (BUG-058). *)
 val make_deploy_request
   :  target:string
   -> scope:string option
@@ -106,5 +117,5 @@ val make_deploy_request
   -> confirm_group_change:bool
   -> loki_push_url:string option
   -> keep_releases:int
-  -> git_sha:(unit -> string)
+  -> git_sha:(unit -> (string, string) result)
   -> (deploy_request, string) result

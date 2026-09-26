@@ -156,6 +156,53 @@ resource "helm_release" "cert_manager" {
     name  = "installCRDs"
     value = "true"
   }
+
+  # ── FND-0010: wait as long as cert-manager's own readiness check is designed to ──
+  #
+  # The chart's post-install `startupapicheck` Job is cert-manager's readiness contract:
+  # it dry-run creates a Certificate, so the API server has to call the validating
+  # webhook, and it polls every 5s until the webhook answers. It cannot pass until
+  # cainjector has injected the CA bundle (the webhook pod writes the CA Secret, and
+  # cainjector copies it into the webhook configuration) -- on a fresh cluster that is
+  # both components racing the cluster's own first-boot work.
+  #
+  # The provider's default `timeout` is 300s, and it bounds *that hook's wait* too. So
+  # Terraform gave up on a check that cert-manager designed to keep trying: every GCP
+  # attempt failed the platform apply with
+  #   `Error: failed post-install: 1 error occurred: * timed out waiting for the condition`
+  # while the startupapicheck log was still polling and reporting
+  #   `x509: certificate signed by unknown authority`  (Attempts 4, 5, 8, 9).
+  # Attempt 9 pins the arithmetic: the hook Job was created at 01:52:46 and the apply
+  # failed at ~01:57:41 -- 300s later, on the dot -- with the webhook configuration
+  # still at `generation: 1` and no caBundle.
+  #
+  # So: keep the check (it is the only signal that the webhook is usable, and every
+  # certificate-bearing component after cert-manager depends on it), give it one
+  # continuous poll window that outlasts a slow first install, and give Terraform a
+  # wait that outlasts the check. Worst case is (backoffLimit + 1) x timeout ~= 21
+  # minutes, inside the 30-minute release bound below; a check that still fails then
+  # fails the stage, which is correct -- the components after cert-manager cannot work
+  # without a usable webhook. Deliberately not `atomic`: a failed release stays in
+  # place for the operator to inspect, which is the failure shape FND-0058 qualified.
+  set {
+    name  = "startupapicheck.timeout"
+    value = "10m"
+  }
+
+  set {
+    name  = "startupapicheck.backoffLimit"
+    value = "1"
+  }
+
+  # 30 minutes: an explicit outer bound on a first install, strictly greater than the
+  # check's worst case above, so Terraform can never cut the check short again. It has
+  # to be set explicitly rather than left to the 300s default for the same reason.
+  timeout = 1800
+
+  # The chart's resources must be ready before its own post-install check runs, so the
+  # wait is load-bearing, not incidental. The provider defaults this to true; stating
+  # it keeps a future default change from silently turning the readiness gate off.
+  wait = true
 }
 
 # ── ingress-nginx ─────────────────────────────────────────────────────────── #
