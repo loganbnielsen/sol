@@ -271,7 +271,7 @@ let classify_instance_snapshots lookup =
 let load_balancers_gone ~region ~cluster_name =
   let tag_key = Printf.sprintf "kubernetes.io/cluster/%s" cluster_name in
   match
-    Sol_cli_process.run
+    Sol_cli_process.run_success
       (Sol_cli_process.cmd
          [ "aws"
          ; "resourcegroupstaggingapi"
@@ -288,8 +288,7 @@ let load_balancers_gone ~region ~cluster_name =
          ; region
          ])
   with
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    Some (String.trim r.Sol_cli_process.stdout = "")
+  | Ok r -> Some (String.trim r.Sol_cli_process.stdout = "")
   | _ -> None
 ;;
 
@@ -329,22 +328,16 @@ let rec wait_for_load_balancers_gone ~region ~cluster_name attempts =
    created indirectly by the VPC module or by Kubernetes. *)
 let aws_list_probe ~region ~kind ~argv =
   match
-    Sol_cli_process.run (Sol_cli_process.cmd (("aws" :: argv) @ [ "--region"; region ]))
+    Sol_cli_process.output
+      (Sol_cli_process.cmd (("aws" :: argv) @ [ "--region"; region ]))
   with
-  | Ok r when r.Sol_cli_process.exit_code = 0 && String.trim r.Sol_cli_process.stdout = ""
-    -> Probe_gone
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
+  | Ok listed when String.trim listed = "" -> Probe_gone
+  | Ok listed ->
     Probe_found
-      (Printf.sprintf
-         "AWS %s still exist after destroy: %s"
-         kind
-         (String.trim r.Sol_cli_process.stdout))
-  | Ok r ->
+      (Printf.sprintf "AWS %s still exist after destroy: %s" kind (String.trim listed))
+  | Error (Sol_cli_process.Non_zero r) ->
     Probe_indeterminate
-      (Printf.sprintf
-         "AWS %s could not be checked: %s"
-         kind
-         (String.trim r.Sol_cli_process.stderr))
+      (Printf.sprintf "AWS %s could not be checked: %s" kind (String.trim r.stderr))
   | Error _ ->
     Probe_indeterminate
       (Printf.sprintf "AWS %s could not be checked: the aws CLI is unavailable" kind)

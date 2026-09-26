@@ -16,6 +16,7 @@ type error =
   | Spawn_failed of string
   | Non_zero of
       { exit_code : int
+      ; stdout : string
       ; stderr : string
       }
   | Timeout of float
@@ -24,7 +25,7 @@ let cmd ?cwd ?env ?timeout_s ?(redact = []) argv = { argv; cwd; env; timeout_s; 
 
 let error_to_string = function
   | Spawn_failed msg -> Printf.sprintf "spawn failed: %s" msg
-  | Non_zero { exit_code; stderr } ->
+  | Non_zero { exit_code; stderr; stdout = _ } ->
     if stderr = ""
     then Printf.sprintf "exited with code %d" exit_code
     else Printf.sprintf "exited with code %d: %s" exit_code stderr
@@ -228,12 +229,24 @@ let run ?(echo = false) c =
             Ok { exit_code; stdout = String.trim stdout; stderr = String.trim stderr })))
 ;;
 
-let run_ok ?(echo = false) c =
-  match run ~echo c with
+(* REFAC-116: Ok means the command succeeded, not merely that it ran. *)
+let check = function
   | Error _ as e -> e
-  | Ok r when r.exit_code = 0 -> Ok ()
-  | Ok r -> Error (Non_zero { exit_code = r.exit_code; stderr = r.stderr })
+  | Ok r when r.exit_code = 0 -> Ok r
+  | Ok r ->
+    Error (Non_zero { exit_code = r.exit_code; stdout = r.stdout; stderr = r.stderr })
 ;;
+
+let run_success ?(echo = false) c = check (run ~echo c)
+
+let failure_output ~stdout ~stderr =
+  match String.trim stderr with
+  | "" -> String.trim stdout
+  | e -> e
+;;
+
+let output ?echo c = Result.map (fun r -> r.stdout) (run_success ?echo c)
+let run_ok ?echo c = Result.map ignore (run_success ?echo c)
 
 let run_shell ?(echo = false) cmd_str =
   if echo then Printf.printf "  $ %s\n%!" cmd_str;

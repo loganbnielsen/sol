@@ -117,10 +117,10 @@ let run_provider_query argv : Sol_cli_destroy_verification.lookup_result =
    have no outputs, partial outputs, or complete outputs, and none of those decide
    whether destruction is available (FND-0044 point 2). *)
 let read_cloud_state infra_dir : (Sol_cli_cloud_destroy.state_read, string) result =
-  match Sol_cli_terraform.show_json ~chdir:infra_dir () with
-  | Ok result when result.Sol_cli_process.exit_code = 0 ->
-    Ok (Sol_cli_cloud_destroy.inventory_of_show_json result.Sol_cli_process.stdout)
+  match Sol_cli_process.check (Sol_cli_terraform.show_json ~chdir:infra_dir ()) with
   | Ok result ->
+    Ok (Sol_cli_cloud_destroy.inventory_of_show_json result.Sol_cli_process.stdout)
+  | Error (Sol_cli_process.Non_zero result) ->
     Error (Printf.sprintf "terraform show failed with exit %d" result.exit_code)
   | Error error ->
     Error ("could not read terraform state: " ^ Sol_cli_process.error_to_string error)

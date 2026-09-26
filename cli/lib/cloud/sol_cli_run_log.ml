@@ -187,7 +187,7 @@ let run_phase
   let ok, contents =
     match result with
     | Ok r ->
-      ( r.Sol_cli_process.exit_code = 0
+      ( Result.is_ok (Sol_cli_process.check result)
       , phase_log_content
           ~stdout:r.Sol_cli_process.stdout
           ~stderr:r.Sol_cli_process.stderr )
