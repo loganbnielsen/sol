@@ -417,7 +417,10 @@ locals {
   # existing pattern below for helm_release.prometheus), which is exactly
   # the common -> profile -> bindings precedence the ADR specifies.
   platform_components_dir = "${path.module}/../../../components"
-  observability_profile   = var.observability_backend == "self_hosted_durable" ? "durable" : "local"
+  # REFAC-101: dashboards and the Alloy config are shared with local dev
+  # (Sol_cli_dev_observability reads the same files), so they live outside this module.
+  observability_dir     = "${path.module}/../../../shared/observability"
+  observability_profile = var.observability_backend == "self_hosted_durable" ? "durable" : "local"
   # CODE_LAYER-010: same value as observability_profile above -- there is
   # currently only one local/durable switch in this module
   # (observability_backend), so Redpanda/PostgreSQL's profile selection
@@ -697,7 +700,7 @@ resource "kubernetes_config_map" "grafana_managed_resource_dashboards" {
   }
 
   data = {
-    "managed-resource-${each.key}.json" = templatefile("${path.module}/dashboards/managed-resource.json.tftpl", {
+    "managed-resource-${each.key}.json" = templatefile("${local.observability_dir}/dashboards/managed-resource.json.tftpl", {
       resource_type        = each.key
       cloudwatch_namespace = each.value.cloudwatch_namespace
       dimension_name       = each.value.dimension_name
@@ -750,7 +753,7 @@ resource "helm_release" "alloy" {
   values = [yamlencode({
     alloy = {
       configMap = {
-        content = templatefile("${path.module}/alloy/logs.alloy.tftpl", {
+        content = templatefile("${local.observability_dir}/alloy/logs.alloy.tftpl", {
           loki_push_url                 = local.loki_push_url
           loki_push_basic_auth_username = local.loki_push_basic_auth_username
           loki_push_basic_auth_password = local.loki_push_basic_auth_password
@@ -934,10 +937,10 @@ resource "kubernetes_config_map" "grafana_dashboards" {
   }
 
   data = {
-    "workspace-overview.json" = file("${path.module}/dashboards/workspace-overview.json")
-    "service-template.json"   = file("${path.module}/dashboards/service-template.json")
-    "domain-overview.json"    = file("${path.module}/dashboards/domain-overview.json")
-    "release-timeline.json"   = file("${path.module}/dashboards/release-timeline.json")
+    "workspace-overview.json" = file("${local.observability_dir}/dashboards/workspace-overview.json")
+    "service-template.json"   = file("${local.observability_dir}/dashboards/service-template.json")
+    "domain-overview.json"    = file("${local.observability_dir}/dashboards/domain-overview.json")
+    "release-timeline.json"   = file("${local.observability_dir}/dashboards/release-timeline.json")
   }
 
   depends_on = [helm_release.grafana]

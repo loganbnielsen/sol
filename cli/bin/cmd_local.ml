@@ -396,7 +396,7 @@ let dev_up () =
        promtail.enabled: true played, so 'sol logs' can fall back to real
        log content even for a pod that crashed before it could push its own
        logs (OBS-004). CODE_LAYER-006: River config is rendered from
-       platform/cloud/modules/platform/alloy/logs.alloy.tftpl -- the single source,
+       platform/shared/observability/alloy/logs.alloy.tftpl -- the single source,
        shared with platform/cloud/modules/platform/main.tf's own templatefile() call
        for the same file -- instead of a second, hand-synced OCaml copy. *)
     helm_install

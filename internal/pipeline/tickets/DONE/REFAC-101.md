@@ -26,3 +26,15 @@ Move `dashboards/` and `alloy/` from the platform module to `platform/shared/obs
 - Demo/example: not applicable (repository layout; no change to what an app author writes) — state it.
 - Language parity (DEC-022): no application-facing impact — state it.
 - Update `docs/planning/WORK_SUMMARY.md`.
+
+## Completion notes
+
+- **Premise re-verified (2026-09-25, after REFAC-100):** `sol_cli_dev_observability.ml` read `platform/cloud/modules/platform/{dashboards,alloy}`, which are cloud-module paths.
+- **Moved** `dashboards/` and `alloy/` from the module to `platform/shared/observability/`. The module reads them through one local, `observability_dir = "${path.module}/../../../shared/observability"`, next to the existing `platform_components_dir`. `Sol_cli_dev_observability`, its test and the prose now name the shared path.
+- **Verified:**
+  - `terraform fmt -check` is clean, and `terraform validate` passes on both platform roots;
+  - an offline `terraform plan` of `aws/platform` (empty kubeconfig) renders all 39 creates, which requires every `file()`/`templatefile()` of the dashboards and the Alloy template to resolve through the new path;
+  - `dune test cli/test/` passes (0 `[FAIL]`);
+  - the platform/provider/destroy guards and `check_production_infra.sh` pass, and the format check is clean.
+- **Acceptance:** `rg -n '"platform/cloud' cli/lib cli/bin` matches only `cmd_cloud_tf.ml` (the cloud lifecycle), so no local-path code reads `platform/cloud/`. No `.tf` file references `platform/local`.
+- **Demo/example:** not applicable (repository layout). **Language parity (DEC-022):** no application-facing impact.

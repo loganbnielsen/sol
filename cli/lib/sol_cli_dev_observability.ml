@@ -50,7 +50,7 @@ datasources:
     namespace
 ;;
 
-(* CODE_LAYER-007: platform/cloud/modules/platform/dashboards/*.json is now the single
+(* CODE_LAYER-007: platform/shared/observability/dashboards/*.json is now the single
    source of Sol's four generic Grafana dashboards -- both `sol local infra up`
    (here) and platform/cloud/modules/platform/main.tf's `kubernetes_config_map.grafana_dashboards`
    (via Terraform's own `file(...)`) load from the same files, instead of
@@ -68,7 +68,7 @@ let read_dashboard_json ~sol_home name =
   let path =
     Filename.concat
       sol_home
-      (Filename.concat "platform/cloud/modules/platform/dashboards" name)
+      (Filename.concat "platform/shared/observability/dashboards" name)
   in
   let ic = open_in_bin path in
   Fun.protect
@@ -83,7 +83,7 @@ let dashboard_configmap_yaml ~namespace =
     | None ->
       Printf.eprintf
         "error: cannot locate the Sol monorepo root to read \
-         platform/cloud/modules/platform/dashboards/*.json.\n";
+         platform/shared/observability/dashboards/*.json.\n";
       Printf.eprintf "  Set SOL_HOME to your Sol checkout and re-run:\n";
       Printf.eprintf "    export SOL_HOME=/path/to/sol\n";
       exit 1
@@ -172,7 +172,7 @@ let loki_datasource_configmap_yaml ~namespace =
     ~data:[ "loki.yaml", loki_datasource_yaml ]
 ;;
 
-(* CODE_LAYER-006: platform/cloud/modules/platform/alloy/logs.alloy.tftpl is now the
+(* CODE_LAYER-006: platform/shared/observability/alloy/logs.alloy.tftpl is now the
    single source of Alloy's River log-shipping config -- both `sol local infra up`
    (here) and platform/cloud/modules/platform/main.tf's `helm_release.alloy` (via
    Terraform's own `templatefile()`) render from that one file. This is a
@@ -260,7 +260,7 @@ let render_alloy_config
       ~loki_push_basic_auth_password
   =
   let path =
-    Filename.concat sol_home "platform/cloud/modules/platform/alloy/logs.alloy.tftpl"
+    Filename.concat sol_home "platform/shared/observability/alloy/logs.alloy.tftpl"
   in
   let ic = open_in_bin path in
   let content =
@@ -312,7 +312,7 @@ let alloy_values_yaml () =
     | None ->
       Printf.eprintf
         "error: cannot locate the Sol monorepo root to read \
-         platform/cloud/modules/platform/alloy/logs.alloy.tftpl.\n";
+         platform/shared/observability/alloy/logs.alloy.tftpl.\n";
       Printf.eprintf "  Set SOL_HOME to your Sol checkout and re-run:\n";
       Printf.eprintf "    export SOL_HOME=/path/to/sol\n";
       exit 1

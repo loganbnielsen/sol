@@ -1,5 +1,9 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: REFAC-101 — observability assets shared by local and cloud live in platform/shared (2026-09-25)
+
+- The Grafana dashboards and the Alloy config moved from the cloud module to `platform/shared/observability/`. The module and `sol local` read the same files, and nothing on the local path reads `platform/cloud/` any more.
+
 ## Latest: REFAC-100 — provider-mirrored cloud roots over a backend-free shared module (2026-09-25)
 
 - **Layout.** `platform/infra/*` → `platform/cloud/`:
