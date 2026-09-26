@@ -55,7 +55,7 @@ Premise checked on `origin/main` (`17afc4b2`): `rg -c 'exit_code = 0' cli --glob
 
 **Tests.** `test_process.ml` covers `run_success`/`output` (exit 0, non-zero keeping both streams, spawn failure), `check` idempotence and `failure_output`. `test_release_store.ml` covers the read tests above. The full `dune test cli/ --force` passes (61 suites), including the offline lifecycle harness, which drives most converted Terraform, kubectl and aws paths through fake binaries.
 
-**Method, for the record.** A first pass by line-based rewriting mis-scoped two sites (a nested `match` rebinding `r`, and a multi-line regex that crossed function boundaries). Both were caught by the compiler and review, reverted, and redone with exact-text edits. The final diff was reviewed hunk by hand.
+**Method, for the record.** A first pass by line-based rewriting mis-scoped two sites (a nested `match` rebinding `r`, and a multi-line regex that crossed function boundaries). Both were caught by the compiler and review, reverted, and redone with exact-text edits. The final diff was screened for deleted lines outside the expected rewrite shapes, and every flagged hunk was checked (all were moves or reformatting). A full hunk-by-hand pass is still to be done before submitting.
 
 - Demo/example: not applicable (internal; user-facing messages unchanged, except that a missing release now reads as "not found").
 - Language parity (DEC-022): no impact.
