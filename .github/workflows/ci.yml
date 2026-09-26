@@ -362,7 +362,18 @@ jobs:
         run: internal/ci/test_destroy_completeness_check.sh
 
       - name: Destroy-completeness guard (INFRA-037)
+        # Reads the provider list from the built printer (REFAC-100), so it runs
+        # where Build ran; a docs-only change cannot touch a Terraform root.
+        if: needs.classify.outputs.kind != 'docs-only'
         run: internal/ci/check_destroy_completeness.sh .
+
+      - name: Provider roots mirror by role (DEC-046 rule 4, REFAC-100)
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: internal/ci/check_provider_roots.sh .
+
+      - name: Provider roots guard mutation test
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: internal/ci/test_provider_roots.sh
 
       # REFAC-092: provider dispatch outside approved modules may only shrink, and no
       # wildcard may stand in for a provider (SEC-010 was `Aws -> true | _ -> false`).

@@ -74,7 +74,7 @@ metadata:
 ;;
 
 (* INFRA-025: binds the deploy identity's Kubernetes group to the deploy
-   ClusterRole (platform/infra/base/platform_deploy_rbac.tf) inside one
+   ClusterRole (platform/cloud/modules/platform/platform_deploy_rbac.tf) inside one
    namespace. Applied per application namespace by Sol_cli_substrate.ensure,
    not by Terraform -- application namespaces are created dynamically, and a
    Terraform-time ClusterRoleBinding would grant deploy these verbs in

@@ -138,7 +138,7 @@ let establish
   | Remote_state ->
     (* AUDIT-072: control state must be encrypted, versioned and locked, and a
        local backend is never conformant. Sol provisions a conformant backend by
-       default (platform/infra/bootstrap); an operator may bring their own by
+       default (platform/cloud/aws/bootstrap); an operator may bring their own by
        declaring it. Preflight asserts the declaration; the destructive recovery
        and concurrency checks are HARDEN-002's. *)
     let capabilities = Sol_cli_provider_capabilities.capabilities_of target.provider in
@@ -161,7 +161,7 @@ let establish
         , Printf.sprintf
             "declare an encrypted, versioned remote Terraform state backend with \
              locking: set `state_bucket`%s (Sol provisions a conformant one via \
-             `platform/infra/bootstrap`)"
+             `platform/cloud/aws/bootstrap`)"
             (match capabilities.state_locking with
              | Some key ->
                Printf.sprintf

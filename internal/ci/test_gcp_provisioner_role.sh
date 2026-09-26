@@ -4,7 +4,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 guard="$root/internal/ci/check_gcp_provisioner_role.sh"
-source_file="$root/platform/infra/gcp/main.tf"
+source_file="$root/platform/cloud/gcp/cluster/main.tf"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 

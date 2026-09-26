@@ -73,6 +73,10 @@
  (name print_readiness_invocations)
  (libraries sol_cli))
 
+(executable
+ (name print_providers)
+ (libraries sol_cli))
+
 ; INFRA-035: the readiness checks' kubectl argv, validated against a real
 ; kubectl. The lifecycle harness below cannot cover this: its fake kubectl
 ; accepts any argv, which is how `rollout status … --all` — a flag kubectl does
@@ -150,11 +154,7 @@
  (alias runtest)
  (deps
   check_production_infra.sh
-  (source_tree ../../platform/infra/aws)
-  (source_tree ../../platform/infra/base)
-  (source_tree ../../platform/infra/base-gcp)
-  (source_tree ../../platform/infra/bootstrap)
-  (source_tree ../../platform/infra/gcp))
+  (source_tree ../../platform/cloud))
  (action
   (run bash %{dep:check_production_infra.sh} %{workspace_root})))
 
@@ -178,8 +178,7 @@
  (name test_sensitive_vars)
  (modules test_sensitive_vars)
  (deps
-  (source_tree ../../platform/infra/aws)
-  (source_tree ../../platform/infra/gcp))
+  (source_tree ../../platform/cloud))
  (libraries sol_cli alcotest str))
 
 ; INFRA-076: Terraform supervision, with a fake terraform and a fake provider

@@ -95,12 +95,12 @@ fail_once() {
 case "$*" in
   *" init "*|*" init")
     case "$*" in *-backend-config=*) : ;; *) exit 91 ;; esac
-    case "$*" in *infra/base*) if fail_once platform-init; then exit 20; fi ;; esac
+    case "$*" in *cloud/aws/platform* | *cloud/gcp/platform*) if fail_once platform-init; then exit 20; fi ;; esac
     ;;
   *" output -json"*)
     if [ "${OUTPUT_ABSENT:-}" = 1 ]; then printf '{}\n'; exit 0; fi
     case " $* " in
-      *infra/gcp*)
+      *cloud/gcp/cluster*)
         cat <<'JSON'
 {"cluster_name":{"value":"sol-qual"},"project_id":{"value":"sol-qualification"},"region":{"value":"us-central1"},"artifact_registry":{"value":"us-central1-docker.pkg.dev/sol-qualification/sol-qual"},"provisioner_service_account":{"value":"sol-qual-provisioner@sol-qualification.iam.gserviceaccount.com"}}
 JSON
@@ -221,7 +221,7 @@ JSON
         if [ "${ECR_REMOVAL:-}" = 1 ]; then
           case " $plan_args " in
             *" -target="*) : ;;
-            *infra/aws*)
+            *cloud/aws/cluster*)
               add_change 'aws_ecr_repository.services[\"old-svc\"]' "aws_ecr_repository" "delete"
               ;;
           esac
@@ -250,7 +250,7 @@ JSON
           declared="$declared$1"
         }
         case " $plan_args " in
-          *infra/gcp*)
+          *cloud/gcp/cluster*)
             add_declared '{"address":"google_compute_network.main","mode":"managed","type":"google_compute_network","values":{"name":"sol-qual","project":"sol-qualification"}}'
             add_declared '{"address":"google_artifact_registry_repository.images","mode":"managed","type":"google_artifact_registry_repository","values":{"repository_id":"sol-qual","location":"us-central1","project":"sol-qualification"}}'
             add_declared '{"address":"google_compute_global_address.sql_peering","mode":"managed","type":"google_compute_global_address","values":{"name":"sol-qual-sql-peering","project":"sol-qualification"}}'
@@ -261,7 +261,7 @@ JSON
               add_declared '{"address":"google_compute_network.orphan","mode":"managed","type":"google_compute_network","values":{"name":"sol-orphan","project":"sol-qualification"}}'
             fi
             ;;
-          *infra/aws*)
+          *cloud/aws/cluster*)
             add_declared '{"address":"module.eks.aws_eks_cluster.this[0]","mode":"managed","type":"aws_eks_cluster","values":{"name":"lifecycle-test"}}'
             add_declared '{"address":"aws_db_instance.postgres","mode":"managed","type":"aws_db_instance","values":{"identifier":"lifecycle-test-postgres"}}'
             ;;
@@ -282,7 +282,7 @@ JSON
       exit 0
     fi
     case " $* " in
-      *infra/base-gcp*|*infra/base*)
+      *cloud/gcp/platform*|*cloud/aws/platform*)
         # INFRA-042: the platform root's state. PARTIAL_INSTALL models Attempt 3 --
         # the two cert-manager ClusterIssuers are in state as `kubernetes_manifest`
         # even though the install never installed the CRDs they need. The cluster
@@ -301,7 +301,7 @@ JSON
         fi
         exit 0
         ;;
-      *infra/gcp*)
+      *cloud/gcp/cluster*)
         # HARDEN-004 step 5: the fixture carries the identities a real `terraform
         # show -json` carries -- self-link, project, location -- because
         # verification queries the identity captured *here* rather than one
@@ -326,7 +326,7 @@ JSON
         # The real `terraform show -json` always carries each resource's real
         # `address`; the guarded resources are found by address, not by type
         # (FND-0048), so the fixture has to model that or it is not modelling
-        # Terraform. The names are the ones platform/infra/gcp/main.tf declares.
+        # Terraform. The names are the ones platform/cloud/gcp/cluster/main.tf declares.
         printf '{"values":{"root_module":{"resources":[
           {"address":"google_compute_network.main","type":"google_compute_network","values":{"self_link":"https://www.googleapis.com/compute/v1/projects/sol-qualification/global/networks/sol-qual","project":"sol-qualification","name":"sol-qual"}},
           {"address":"google_artifact_registry_repository.images","type":"google_artifact_registry_repository","values":{"id":"projects/sol-qualification/locations/us-central1/repositories/sol-qual","project":"sol-qualification","location":"us-central1","name":"sol-qual"}},
@@ -424,7 +424,7 @@ JSON
         ;;
     esac
     ;;
-  *infra/aws*" apply "*"-target=aws_db_instance.postgres"*)
+  *cloud/aws/cluster*" apply "*"-target=aws_db_instance.postgres"*)
     if fail_once rds-prepare; then exit 20; fi
     for arg in "$@"; do
       case "$arg" in
@@ -446,7 +446,7 @@ JSON
     printf 'state-rm %s\n' "${!#}" >>"$LIFECYCLE_LOG"
     : >"$STATE_RM_FILE"
     ;;
-  *infra/base-gcp*" destroy "*|*infra/base*" destroy "*)
+  *cloud/gcp/platform*" destroy "*|*cloud/aws/platform*" destroy "*)
     # The platform destroy. With PARTIAL_INSTALL it fails exactly as Attempt 3 did,
     # until the missing-CRD resources have been forgotten -- and then it succeeds,
     # which is the behaviour the regression has to demonstrate rather than assume.
@@ -455,7 +455,7 @@ JSON
       exit 1
     fi
     ;;
-  *infra/gcp*" destroy "*|*infra/aws*" destroy "*)
+  *cloud/gcp/cluster*" destroy "*|*cloud/aws/cluster*" destroy "*)
     # HARDEN-004 step 5: the substrate destroy empties this root's state. That is
     # what step 5 reads as its independent postcondition -- rather than trusting
     # this command's exit status -- so the fixture has to model the consequence.
@@ -463,7 +463,7 @@ JSON
     # so the residue path is exercised rather than asserted.
     [ "${STATE_RESIDUE_AFTER_DESTROY:-}" = 1 ] || : >"${LIFECYCLE_LOG}.destroyed"
     ;;
-  *infra/gcp*" apply "*"-target=google_sql_database_instance.postgres"*)
+  *cloud/gcp/cluster*" apply "*"-target=google_sql_database_instance.postgres"*)
     if fail_once gcp-prepare; then exit 20; fi
     # Both of GCP's guards are lifted by one applied transition, and the target's
     # root defaults are protection-on, so an apply in the destroy window that omits
@@ -483,7 +483,7 @@ JSON
     : >"$GCP_SQL_PREPARED_FILE"
     : >"$GKE_PREPARED_FILE"
     ;;
-  *infra/aws*" apply "*"provisioner_bootstrap_admin=true"*)
+  *cloud/aws/cluster*" apply "*"provisioner_bootstrap_admin=true"*)
     # DEC-040: this variable *is* the bootstrap window, so the stub records it and the
     # kubectl stub answers the de-escalation probes from it -- permitted while open,
     # denied once closed. That makes the offline harness exercise the transition the
@@ -491,18 +491,18 @@ JSON
     printf 'true\n' >"$FAIL_MARKER_DIR/bootstrap-window"
     if fail_once cloud; then exit 20; fi
     ;;
-  *infra/aws*" apply "*"provisioner_bootstrap_admin=false"*)
+  *cloud/aws/cluster*" apply "*"provisioner_bootstrap_admin=false"*)
     printf 'false\n' >"$FAIL_MARKER_DIR/bootstrap-window"
     if fail_once deescalate; then exit 20; fi
     ;;
-  *infra/base*" apply "*"-target="*)
+  *cloud/aws/platform*" apply "*"-target="*|*cloud/gcp/platform*" apply "*"-target="*)
     if fail_once prerequisites; then exit 20; fi
     # FRESH_TARGET modelling: this apply is what installs cert-manager, and so
     # what brings the CRDs the pre-install freshness probe looks for into
     # existence.
     [ -n "${PLATFORM_INSTALLED_FILE:-}" ] && : >"$PLATFORM_INSTALLED_FILE"
     ;;
-  *infra/base*" apply "*)
+  *cloud/aws/platform*" apply "*|*cloud/gcp/platform*" apply "*)
     if fail_once platform; then exit 20; fi
     ;;
 esac
@@ -1219,8 +1219,8 @@ log="$tmp/success.log"
 (export FAIL_ON=""; run_apply "$log")
 grep -F 'key=sol/prod/aws/us-east-1/cloud.tfstate' "$log" >/dev/null
 grep -F 'key=sol/prod/aws/us-east-1/platform.tfstate' "$log" >/dev/null
-grep -F -- '-target=helm_release.cert_manager' "$log" >/dev/null
-grep -F 'terraform ' "$log" | grep 'infra/base.* apply ' | grep -v -- '-target=' >/dev/null
+grep -F -- '-target=module.platform.helm_release.cert_manager' "$log" >/dev/null
+grep -F 'terraform ' "$log" | grep 'cloud/[a-z]*/platform.* apply ' | grep -v -- '-target=' >/dev/null
 # HARDEN-002 run 3, finding 11: the target's deploy_role_arn must be routed to
 # the provider root (the AWS root declares it and uses it to create the deploy
 # EKS access entry INFRA-025 added).
@@ -1233,7 +1233,7 @@ grep -F 'env KUBE_CONFIG_PATHS=' "$log" >/dev/null
 # establishment, so the full platform apply (the non-targeted base apply) must
 # run while the temporary PlatformInstalling authority is still open -- i.e.
 # before provisioner-bootstrap-access-remove -- and only then is it revoked.
-full_apply_line="$(grep -nF 'terraform ' "$log" | grep 'infra/base.* apply ' | grep -v -- '-target=' | head -1 | cut -d: -f1 || true)"
+full_apply_line="$(grep -nF 'terraform ' "$log" | grep 'cloud/[a-z]*/platform.* apply ' | grep -v -- '-target=' | head -1 | cut -d: -f1 || true)"
 deescalate_line="$(grep -nF -- 'provisioner_bootstrap_admin=false' "$log" | head -1 | cut -d: -f1 || true)"
 if [ -z "$full_apply_line" ] || [ -z "$deescalate_line" ] || [ "$full_apply_line" -ge "$deescalate_line" ]; then
   echo "the platform install must complete before provisioner de-escalation" >&2
@@ -1340,7 +1340,7 @@ if ! plan "$log" RBAC_ABSENT=1; then
   exit 1
 fi
 grep -F 'requires provisioner platform RBAC established by an earlier apply' "$log.out" >/dev/null
-if grep -F 'terraform ' "$log" | grep 'infra/base.* plan ' >/dev/null; then
+if grep -F 'terraform ' "$log" | grep 'cloud/[a-z]*/platform.* plan ' >/dev/null; then
   echo "cloud plan planned the platform before its provisioner RBAC existed" >&2
   exit 1
 fi
@@ -1366,8 +1366,8 @@ if ! plan "$log" CRDS_ABSENT=1; then
   exit 1
 fi
 grep -F 'requires cert-manager CRDs to be Established' "$log.out" >/dev/null
-grep -F -- '-target=helm_release.cert_manager' "$log" >/dev/null
-if grep -F 'terraform ' "$log" | grep 'infra/base.* plan ' | grep -v -- '-target=' >/dev/null; then
+grep -F -- '-target=module.platform.helm_release.cert_manager' "$log" >/dev/null
+if grep -F 'terraform ' "$log" | grep 'cloud/[a-z]*/platform.* plan ' | grep -v -- '-target=' >/dev/null; then
   echo "cloud plan previewed CRD-dependent platform before its CRDs were Established" >&2
   exit 1
 fi
@@ -1380,8 +1380,8 @@ if ! plan "$log"; then
   echo "cloud plan on an established target must exit zero" >&2
   exit 1
 fi
-grep -F -- '-target=helm_release.cert_manager' "$log" >/dev/null
-grep -F 'terraform ' "$log" | grep 'infra/base.* plan ' | grep -v -- '-target=' >/dev/null
+grep -F -- '-target=module.platform.helm_release.cert_manager' "$log" >/dev/null
+grep -F 'terraform ' "$log" | grep 'cloud/[a-z]*/platform.* plan ' | grep -v -- '-target=' >/dev/null
 if grep -F 'DEFERRED' "$log.out" >/dev/null; then
   echo "cloud plan deferred a phase on a fully established target" >&2
   exit 1
@@ -1472,7 +1472,7 @@ if grep -F -- '-var=provisioner_impersonators=[' "$gcp_log" | grep -vF 'qualific
 fi
 grep -F -- '-var=cloud_provider=gcp' "$gcp_log" >/dev/null || {
   echo "the GCP platform root was not told cloud_provider=gcp:" >&2
-  grep -F 'infra/' "$gcp_log" >&2
+  grep -F 'platform/cloud/' "$gcp_log" >&2
   exit 1
 }
 for aws_only in aws_region= cert_manager_irsa_role_arn= loki_s3_bucket= \
@@ -1496,11 +1496,11 @@ then
   echo "cloud destroy on GCP failed" >&2
   exit 1
 fi
-grep -E -- '-chdir=[^ ]*infra/gcp ' "$gcp_destroy_log" \
+grep -E -- '-chdir=[^ ]*cloud/gcp/cluster ' "$gcp_destroy_log" \
   | grep -F -- '-target=google_sql_database_instance.postgres' \
   | grep -F -- '-var=sql_deletion_protection=false' >/dev/null || {
   echo "GCP destroy did not lift Cloud SQL's guard through a targeted apply:" >&2
-  grep -F 'infra/gcp' "$gcp_destroy_log" >&2
+  grep -F 'cloud/gcp/cluster' "$gcp_destroy_log" >&2
   exit 1
 }
 grep -F 'verify preparation: Cloud SQL and GKE deletion protection disabled' \
@@ -1510,7 +1510,7 @@ grep -F 'verify preparation: Cloud SQL and GKE deletion protection disabled' \
   exit 1
 }
 for override in sql_deletion_protection=false gke_deletion_protection=false; do
-  grep -E -- '-chdir=[^ ]*infra/gcp ' "$gcp_destroy_log" \
+  grep -E -- '-chdir=[^ ]*cloud/gcp/cluster ' "$gcp_destroy_log" \
     | grep -F ' destroy ' \
     | grep -F -- "-var=$override" >/dev/null || {
     echo "the GCP destroy did not carry the Destroy policy's $override override:" >&2
@@ -1528,9 +1528,9 @@ done
 # ran, and a pipeline under `set -o pipefail` would otherwise abort the suite
 # silently the moment a grep found nothing.
 authority_line="$(grep -n -- '-var=provisioner_bootstrap_admin=true' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
-platform_destroy_line="$(grep -nE -- '^terraform -chdir=[^ ]*infra/base-gcp destroy ' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
+platform_destroy_line="$(grep -nE -- '^terraform -chdir=[^ ]*cloud/gcp/platform destroy ' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
 release_line="$(grep -n -- '-var=provisioner_bootstrap_admin=false' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
-substrate_destroy_line="$(grep -nE -- '^terraform -chdir=[^ ]*infra/gcp destroy ' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
+substrate_destroy_line="$(grep -nE -- '^terraform -chdir=[^ ]*cloud/gcp/cluster destroy ' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
 for phase in "authority acquisition:authority_line" \
   "platform teardown:platform_destroy_line" \
   "authority release:release_line" \
@@ -1643,7 +1643,7 @@ grep -F 'a preparation degraded and destruction continued' "$refuse_log.out" >/d
 }
 # The refused apply never ran (the stub exits 99 if it did), and the substrate destroy
 # -- the step that removes billable infrastructure -- did.
-if ! grep -E -- '-chdir=[^ ]*infra/gcp ' "$refuse_log" | grep -F ' destroy ' >/dev/null; then
+if ! grep -E -- '-chdir=[^ ]*cloud/gcp/cluster ' "$refuse_log" | grep -F ' destroy ' >/dev/null; then
   echo "the substrate destroy did not run after a refused reconciliation:" >&2
   cat "$refuse_log" >&2
   exit 1
@@ -1680,7 +1680,7 @@ access_line="$(grep -nF 'get-credentials' "$gcp_access_log" | tail -1 | cut -d: 
 # variable is on the plan line and the apply is the saved plan. The stub writes
 # the window marker on the apply, so asserting it proves the closing apply ran --
 # not merely that it was planned.
-close_plan_line="$(grep -nE -- '-chdir=[^ ]*infra/gcp plan ' "$gcp_access_log" \
+close_plan_line="$(grep -nE -- '-chdir=[^ ]*cloud/gcp/cluster plan ' "$gcp_access_log" \
   | grep -F -- 'provisioner_bootstrap_admin=false' | tail -1 | cut -d: -f1 || true)"
 if [ -z "$access_line" ] || [ -z "$close_plan_line" ] || [ "$close_plan_line" -le "$access_line" ]; then
   echo "a GCP cluster-access failure exited without closing the bootstrap window:" >&2
@@ -1712,7 +1712,7 @@ grep -F 'could not establish ephemeral cluster access' "$gcp_apply_access_log.ou
   exit 1
 }
 access_line="$(grep -nF 'get-credentials' "$gcp_apply_access_log" | tail -1 | cut -d: -f1 || true)"
-close_line="$(grep -nE -- '-chdir=[^ ]*infra/gcp apply ' "$gcp_apply_access_log" \
+close_line="$(grep -nE -- '-chdir=[^ ]*cloud/gcp/cluster apply ' "$gcp_apply_access_log" \
   | grep -F -- 'provisioner_bootstrap_admin=false' | tail -1 | cut -d: -f1 || true)"
 if [ -z "$access_line" ] || [ -z "$close_line" ] || [ "$close_line" -le "$access_line" ]; then
   echo "a GCP cluster-access failure during apply exited without closing the bootstrap window:" >&2
@@ -1751,7 +1751,7 @@ grep -F 'old-svc' "$ecr_log.out" >/dev/null || {
   cat "$ecr_log.out" >&2
   exit 1
 }
-if grep -E -- '-chdir=[^ ]*infra/aws apply ' "$ecr_log" >/dev/null; then
+if grep -E -- '-chdir=[^ ]*cloud/aws/cluster apply ' "$ecr_log" >/dev/null; then
   echo "a refused cloud apply still ran terraform apply:" >&2
   grep -E ' apply ' "$ecr_log" >&2
   exit 1
@@ -1765,7 +1765,7 @@ then
   echo "a confirmed ECR removal was refused" >&2
   exit 1
 fi
-grep -E -- '-chdir=[^ ]*infra/aws apply .*\.tfplan' "$ecr_confirmed_log" >/dev/null || {
+grep -E -- '-chdir=[^ ]*cloud/aws/cluster apply .*\.tfplan' "$ecr_confirmed_log" >/dev/null || {
   echo "the confirmed cloud apply did not apply the saved plan it read:" >&2
   grep -E ' apply ' "$ecr_confirmed_log" >&2
   exit 1
@@ -1887,7 +1887,7 @@ grep -F 'still standing and may still be billing' "$gcp_nocred_log.out" >/dev/nu
   cat "$gcp_nocred_log.out" >&2
   exit 1
 }
-if grep -F 'infra/gcp' "$gcp_nocred_log" | grep -F ' destroy ' >/dev/null; then
+if grep -F 'cloud/gcp/cluster' "$gcp_nocred_log" | grep -F ' destroy ' >/dev/null; then
   echo "a GCP destroy with unresolvable credentials reached terraform anyway:" >&2
   exit 1
 fi
@@ -1951,7 +1951,7 @@ for residual in ebs; do
 done
 # Preparation happens before the actual destroy, not folded into it.
 prepare_line_no="$(grep -n -- '-target=aws_db_instance.postgres' "$log" | head -1 | cut -d: -f1)"
-destroy_line_no="$(grep -n 'infra/aws.* destroy ' "$log" | head -1 | cut -d: -f1)"
+destroy_line_no="$(grep -n 'cloud/aws/cluster.* destroy ' "$log" | head -1 | cut -d: -f1)"
 if [ -z "$destroy_line_no" ] || [ "$prepare_line_no" -ge "$destroy_line_no" ]; then
   echo "RDS destroy preparation did not run before the cloud destroy" >&2
   cat "$log" >&2
@@ -1967,7 +1967,7 @@ fi
 #
 # HARDEN-004 step 3: the variables are carried by the *plan* the reconciliation is
 # asserted from, and the apply is that saved plan.
-admin_plan_line="$(grep 'infra/aws.* plan ' "$log" | grep -F 'provisioner_bootstrap_admin=true' | head -1 || true)"
+admin_plan_line="$(grep 'cloud/aws/cluster.* plan ' "$log" | grep -F 'provisioner_bootstrap_admin=true' | head -1 || true)"
 case "$admin_plan_line" in
   *'rds_deletion_protection=false'*) : ;;
   *)
@@ -2112,7 +2112,7 @@ assert_contains "the retention guarantee is named as the blocker" "$mismatch_log
   'destruction is blocked' || exit 1
 assert_contains "the guarantee is identified" "$mismatch_log.out" \
   'destroy_retention is final-snapshot' || exit 1
-if grep -E -- '-chdir=[^ ]*infra/aws ' "$mismatch_log" | grep -F ' destroy ' >/dev/null; then
+if grep -E -- '-chdir=[^ ]*cloud/aws/cluster ' "$mismatch_log" | grep -F ' destroy ' >/dev/null; then
   echo "the substrate destroy ran although the retention guarantee could not be prepared:" >&2
   cat "$mismatch_log" >&2
   exit 1
@@ -2391,7 +2391,7 @@ live_pid=$!
 running="$ops/$aws_key/99999999T000000Z-running"
 mkdir -p "$running"
 printf 'host=%s\nsupervisor_pid=%s\nsupervisor_start=\nstarted_at=%s\nroot=%s\n' \
-  "$(hostname)" "$live_pid" "$(date +%s)" "$root/platform/infra/aws" >"$running/meta"
+  "$(hostname)" "$live_pid" "$(date +%s)" "$root/platform/cloud/aws/cluster" >"$running/meta"
 printf '%s\n' "$(basename "$running")" >"$ops/$aws_key/latest"
 running_log="$tmp/infra076-running.log"
 if (export FAIL_ON=""; run_apply "$running_log"); then
@@ -2412,14 +2412,14 @@ assert_contains "INFRA-076: the running operation is reported" "$running_log.out
 # the platform root, not from a leftover cloud-root record.
 printf 'exited 0\n' >"$latest/exit"
 # Which key is the AWS platform root's? Its own record says so: `root=` in the
-# operation meta is the Terraform working directory, and `base-gcp-*` records carry a
-# different root. Selecting by that (most recent first) is unambiguous, where a name
-# prefix is not -- `base-` also prefixes the GCP platform root.
+# operation meta is the Terraform working directory, and the GCP platform root's
+# records carry a different one. Selecting by that (most recent first) is
+# unambiguous, where a name prefix alone need not be.
 platform_key=""
 while IFS= read -r candidate; do
   [ -n "$candidate" ] || continue
   dir="$ops/$candidate/$(cat "$ops/$candidate/latest" 2>/dev/null || true)"
-  if [ -f "$dir/meta" ] && grep -qx "root=$root/platform/infra/base" "$dir/meta"; then
+  if [ -f "$dir/meta" ] && grep -qx "root=$root/platform/cloud/aws/platform" "$dir/meta"; then
     platform_key="$candidate"
     break
   fi
@@ -2436,7 +2436,7 @@ platform_live_pid=$!
 platform_running="$ops/$platform_key/99999999T000000Z-platform-running"
 mkdir -p "$platform_running"
 printf 'host=%s\nsupervisor_pid=%s\nsupervisor_start=\nstarted_at=%s\nroot=%s\n' \
-  "$(hostname)" "$platform_live_pid" "$(date +%s)" "$root/platform/infra/base" \
+  "$(hostname)" "$platform_live_pid" "$(date +%s)" "$root/platform/cloud/aws/platform" \
   >"$platform_running/meta"
 printf '%s\n' "$(basename "$platform_running")" >"$ops/$platform_key/latest"
 platform_running_log="$tmp/infra076-platform-running.log"

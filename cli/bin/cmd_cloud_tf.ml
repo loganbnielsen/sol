@@ -10,7 +10,7 @@ let ( let* ) = Result.bind
 
 (* ── Sol home resolution ─────────────────────────────────────────────────── *)
 
-(* Resolve the Sol monorepo root so we can locate platform/infra/<provider>/. *)
+(* Resolve the Sol monorepo root so we can locate platform/cloud/<provider>/cluster/. *)
 let resolve_sol_home () =
   match Sol_cli_cmd_new.infer_sol_home () with
   | Some dir -> dir
@@ -93,7 +93,7 @@ let check_terraform () =
 let infra_dir provider =
   let pname = Sol_cli_provider.to_string provider in
   let sol_home = resolve_sol_home () in
-  let dir = Filename.concat sol_home (Printf.sprintf "platform/infra/%s" pname) in
+  let dir = Filename.concat sol_home (Printf.sprintf "platform/cloud/%s/cluster" pname) in
   if not (Sys.file_exists dir)
   then (
     Printf.eprintf "error: Terraform module not found: %s\n" dir;
@@ -230,7 +230,7 @@ let workspace_name = Sol_cli_workspace.current_name
 
 (* The independent postcondition: a fresh read of *this root's* own state. The root
    is [infra_dir], the disposable cloud root -- DEC-043's durable GCP prerequisites
-   live in `platform/infra/bootstrap-gcp`, a different root, so they are not
+   live in `platform/cloud/gcp/bootstrap`, a different root, so they are not
    residue and are never asserted about here. *)
 let post_destroy_state ~infra_dir =
   Sol_cli_destroy_verification.state_evidence
@@ -454,11 +454,11 @@ let provisioner_rbac_established env =
     process_ok ~env ([ "kubectl"; "auth"; "can-i" ] @ args))
 ;;
 
-(* Staged through the shared platform definition. The provider's root addresses
-   its resources through whatever structure reaches that definition, so every
-   address is resolved per provider rather than written as a bare one. *)
-let platform_prerequisite_targets provider =
-  let address = Sol_cli_cloud_lifecycle.platform_address provider in
+(* Staged through the shared platform definition, which every provider's root
+   calls as `module.platform`, so every address goes through that prefix rather
+   than being written bare. *)
+let platform_prerequisite_targets =
+  let address = Sol_cli_cloud_lifecycle.platform_address in
   Sol_cli_terraform.targets
     (address "kubernetes_namespace.cert_manager")
     (List.map
@@ -922,7 +922,7 @@ let apply_deps
   ; apply_prerequisites =
       platform_apply
         ~name:"platform-prerequisites-apply"
-        ~scope:(platform_prerequisite_targets provider)
+        ~scope:platform_prerequisite_targets
   ; await_crds =
       (fun env ->
         process_ok
@@ -1117,7 +1117,7 @@ let cloud_init
                  (fun () ->
                     Sol_cli_terraform.plan
                       ~env
-                      ~scope:(platform_prerequisite_targets provider)
+                      ~scope:platform_prerequisite_targets
                       ~chdir:platform_dir
                       ~var_files:[]
                       ~vars:platform_vars

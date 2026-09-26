@@ -51,7 +51,7 @@ rows I2, I5, I7 and I10 are the ones that would have caught them live.
 | Target | `<env>/<provider>/<region>` + AWS account | `qual/aws/us-east-1` / `<acct>` |
 | Reconciliation authority | DEC-027 selection (direct apply) | `direct` |
 | Kubernetes version | `aws eks describe-cluster … .version` | must equal module pin (`1.36`) |
-| Platform component versions | helm chart versions from `platform/infra/base` state | recorded verbatim |
+| Platform component versions | helm chart versions from the platform root's state (`platform/cloud/<provider>/platform`) | recorded verbatim |
 | Framework versions | `sol-worker`/`sol-svc`/`kafka-eio`/`pg-eio` versions used by the workload image | recorded verbatim |
 | Substrate module versions | terraform provider + module versions | recorded verbatim |
 | Lifecycle phase per step | the `lifecycle phase:` line `sol cloud apply`/`destroy` prints, recorded verbatim per invocation | `CloudBootstrap` → `PlatformInstalling` → `Ready` → … → `Absent` |

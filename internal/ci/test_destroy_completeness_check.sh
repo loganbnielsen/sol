@@ -23,12 +23,14 @@ trap 'rm -rf "$tmp"' EXIT
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 
 mk() {
-  # mk <dir> <file> <contents>; each fake repo carries the real provider list,
-  # which is where the guard learns its target roots (HARDEN-005).
-  mkdir -p "$tmp/$1/platform/infra/$2" "$tmp/$1/cli/lib"
-  cp "$repo/cli/lib/sol_cli_provider.ml" "$tmp/$1/cli/lib/"
-  printf '%s\n' "$3" >"$tmp/$1/platform/infra/$2/$4"
+  # mk <dir> <provider> <contents> <file>; the provider list comes from
+  # SOL_PROVIDERS here, which is where the guard learns its target roots
+  # (HARDEN-005, REFAC-100).
+  mkdir -p "$tmp/$1/platform/cloud/$2/cluster"
+  printf '%s\n' "$3" >"$tmp/$1/platform/cloud/$2/cluster/$4"
 }
+
+export SOL_PROVIDERS="aws gcp"
 
 fail=0
 expect_reject() {
@@ -45,19 +47,20 @@ expect_accept() {
 }
 
 # 0. HARDEN-005: a provider added to the provider list has its root checked
-#    without the guard being edited. The fake provider module names `azure`, and
-#    the azure root carries the defect rule 1 rejects.
+#    without the guard being edited. The list names `azure`, and the azure root
+#    carries the defect rule 1 rejects.
 mk newprovider azure 'resource "aws_ecr_repository" "services" {
   name = "x"
 }' main.tf
-cat >"$tmp/newprovider/cli/lib/sol_cli_provider.ml" <<'OCAML'
-let to_string = function
-  | Aws -> "aws"
-  | Gcp -> "gcp"
-  | Azure -> "azure"
-;;
-OCAML
-expect_reject newprovider "a new provider's root that the hard-coded list never named"
+SOL_PROVIDERS="aws gcp azure" expect_reject newprovider "a new provider's root that the hard-coded list never named"
+
+# 0b. REFAC-100: an unreadable provider list fails closed rather than checking
+#     nothing. No SOL_PROVIDERS and no built printer in the fake repository.
+mk noprinter aws '' empty.tf
+if env -u SOL_PROVIDERS "$guard" "$tmp/noprinter" >/dev/null 2>&1; then
+  echo "test_destroy_completeness_check: guard PASSED with no provider list." >&2
+  fail=1
+fi
 
 # 1. The defect that actually stranded a live target: ECR without force_delete.
 mk ecr aws 'resource "aws_ecr_repository" "services" {

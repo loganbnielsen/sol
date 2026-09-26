@@ -128,7 +128,7 @@ let test_unclassifiable_names_the_location () =
    the guard is derived from the roots rather than from a provider list. The test
    runs in _build/default/cli/test; the roots are declared deps. *)
 let real_root provider =
-  match S.declared ~root:(Filename.concat "../../platform/infra" provider) with
+  match S.declared ~root:(Printf.sprintf "../../platform/cloud/%s/cluster" provider) with
   | Ok names -> names
   | Error message -> Alcotest.fail message
 ;;
@@ -150,14 +150,26 @@ let refuses ~sensitive vars =
   | Error _ -> true
 ;;
 
-let test_refused_on_both_providers () =
+(* Every provider with a cluster root, from the exhaustive provider list
+   (REFAC-100) rather than a hand-written one; a provider on paper has no root to
+   check (DEC-046 rule 4). *)
+let providers_with_roots () =
+  Sol_cli_provider.all
+  |> List.map Sol_cli_provider.to_string
+  |> List.filter (fun p ->
+    Sys.file_exists (Printf.sprintf "../../platform/cloud/%s/cluster" p))
+;;
+
+let test_refused_on_every_provider () =
+  let providers = providers_with_roots () in
+  check "at least one provider has a cluster root" true (providers <> []);
   List.iter
     (fun provider ->
        check
          (provider ^ ": --var db_password is refused")
          true
          (refuses ~sensitive:(real_root provider) [ "region=r"; "db_password=hunter22" ]))
-    [ "aws"; "gcp" ]
+    providers
 ;;
 
 let test_message_names_the_fix_not_the_value () =
@@ -210,7 +222,10 @@ let () =
         ; Alcotest.test_case "unreadable root" `Quick test_unreadable_root_is_an_error
         ] )
     ; ( "refusal"
-      , [ Alcotest.test_case "both providers" `Quick test_refused_on_both_providers
+      , [ Alcotest.test_case
+            "every provider with a root"
+            `Quick
+            test_refused_on_every_provider
         ; Alcotest.test_case "message" `Quick test_message_names_the_fix_not_the_value
         ; Alcotest.test_case "unaffected" `Quick test_unaffected_without_the_declaration
         ] )

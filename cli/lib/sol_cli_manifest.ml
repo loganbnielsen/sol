@@ -150,7 +150,7 @@ let kubectl_apply ~ctx tmp =
    never [apply].
 
    The deploy identity's bootstrap grant is create-only by design
-   (platform/infra/base/platform_deploy_rbac.tf, sol-deploy-bootstrap), and
+   (platform/cloud/modules/platform/platform_deploy_rbac.tf, sol-deploy-bootstrap), and
    both that file and Sol_cli_substrate state the assumption this function
    satisfies: idempotency comes from tolerating "AlreadyExists" on [create], not
    from [kubectl apply]'s patch, which the identity does not have for namespaces.

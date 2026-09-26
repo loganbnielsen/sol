@@ -1473,7 +1473,7 @@ let test_profile_precedence_defeats_a_conflicting_override () =
           ~config_vars))
 ;;
 
-(* HARDEN-002 (run 1): cluster_issuer is a platform/infra/base variable. It
+(* HARDEN-002 (run 1): cluster_issuer is a platform/cloud/modules/platform variable. It
    used to be sent to the provider root too, and terraform aborts the whole
    command when a variable is assigned that the root does not declare:
    "A variable named \"cluster_issuer\" was assigned on the command line, but the

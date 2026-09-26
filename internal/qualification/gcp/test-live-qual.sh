@@ -193,7 +193,7 @@ chmod +x "$TMP"/bin/*
 SOL_DATA="$TMP/data/sol"
 mkdir -p "$SOL_DATA/runs/cloud-apply-20260925T000000Z-1234"
 printf 'lifecycle phase: CloudBootstrap\n' >"$SOL_DATA/runs/cloud-apply-20260925T000000Z-1234/phase.log"
-printf 'root=platform/infra/gcp\n' >"$SOL_DATA/runs/cloud-apply-20260925T000000Z-1234/meta"
+printf 'root=platform/cloud/gcp/cluster\n' >"$SOL_DATA/runs/cloud-apply-20260925T000000Z-1234/meta"
 printf 'exited 0\n' >"$SOL_DATA/runs/cloud-apply-20260925T000000Z-1234/exit"
 
 # ── the runner ───────────────────────────────────────────────────────────────

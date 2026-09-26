@@ -51,7 +51,7 @@ if grep -Eq '"(update|patch|delete|deletecollection|\*)"' "$transport"; then
 fi
 
 # ── 2. it cannot leak into production ────────────────────────────────────────
-for dir in "$root"/platform/infra/*/; do
+for dir in "$root"/platform/cloud/*/*/; do
   if grep -rqE 'sol:qualifiers|sol-qualifier-transport' "$dir" 2>/dev/null; then
     fail "a production Terraform root references the qualification transport: $dir"
   fi

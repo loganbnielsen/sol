@@ -12,7 +12,14 @@ let operation_key ~chdir ~backend_config =
       (Digest.string
          (String.concat "\x00" (chdir :: List.sort String.compare backend_config)))
   in
-  Printf.sprintf "%s-%s" (Filename.basename chdir) (String.sub digest 0 16)
+  (* REFAC-100: roots are named by role under their provider
+     (platform/cloud/<provider>/<role>), so the readable prefix is both components --
+     aws-cluster, gcp-platform -- not a basename every provider shares. *)
+  Printf.sprintf
+    "%s-%s-%s"
+    (Filename.basename (Filename.dirname chdir))
+    (Filename.basename chdir)
+    (String.sub digest 0 16)
 ;;
 
 let configured : (string, string) Hashtbl.t = Hashtbl.create 4

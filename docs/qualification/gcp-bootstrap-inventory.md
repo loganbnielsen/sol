@@ -53,7 +53,7 @@ be read, and no qualification service accounts exist. The bootstrap user has
 project Owner, so project IAM and API enablement authority are available, but
 access to a billing account is a separate prerequisite.
 
-Do not implement the current `platform/infra/gcp` root as-is. It predates
+Do not implement the current `platform/cloud/gcp/cluster` root as-is. It predates
 Sol's qualified lifecycle and does not meet the current production contract:
 
 - `sol cloud` deliberately fails closed for GCP and its output contract is
@@ -196,7 +196,7 @@ billable was torn down and verified absent through the provider's API. Full chro
 and inventory: `docs/qualification/2026-09-22-gcp-attempt5.md`.
 
 **Residue resolved (2026-09-23).** The Cloud DNS zone `qual-gcp-sol-fab-dev` is now owned
-by the durable root, `platform/infra/bootstrap-gcp`, beside the state bucket -- both
+by the durable root, `platform/cloud/gcp/bootstrap`, beside the state bucket -- both
 adopted by `terraform import`, which preserves the nameservers, so the delegation pasted at
 the registrar keeps working. That is `DEC-043`'s narrow ownership decision, taken after
 Attempt 5 showed what the previous arrangement cost: the zone was created by the disposable
@@ -609,7 +609,7 @@ closed in `sol cloud`.
 - **Provider-selected remote state and platform roots.** `backend_config` is
   provider-aware (S3 + DynamoDB locking, GCS with native locking), the cloud
   target no longer requires an AWS role ARN of a GCP target, and
-  `platform/infra/base-gcp` is a GCP platform root declaring the GCS backend
+  `platform/cloud/gcp/platform` is a GCP platform root declaring the GCS backend
   and calling the shared platform definition as a module.
 - **A disposable target must be able to reach `Absent`** — landed independently as
   INFRA-037 / **ADR 0004**, and deliberately *not* duplicated here. `prevent_destroy`

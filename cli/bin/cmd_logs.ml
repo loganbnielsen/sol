@@ -486,10 +486,10 @@ let observability_backend_arg =
         [ "observability-backend" ]
         ~docv:"BACKEND"
         ~doc:
-          "Which observability_backend (see platform/infra/base) this target uses: \
-           local, self_hosted_durable, or external. Overrides whatever --target's config \
-           supplies; defaults to local when neither is given. Determines the Grafana URL \
-           Sol resolves when --grafana-base-url is not given.")
+          "Which observability_backend (see platform/cloud/modules/platform) this target \
+           uses: local, self_hosted_durable, or external. Overrides whatever --target's \
+           config supplies; defaults to local when neither is given. Determines the \
+           Grafana URL Sol resolves when --grafana-base-url is not given.")
 ;;
 
 let base_domain_arg =
@@ -544,8 +544,9 @@ let loki_username_arg =
         ~doc:
           "Basic-auth username for the Loki query request (e.g. a Grafana Cloud stack's \
            instance ID) -- the read-side counterpart of Alloy's external_loki_username \
-           (platform/infra/base). Falls back to SOL_LOKI_USERNAME; the flag wins when \
-           both are set. Must be paired with --loki-password (or SOL_LOKI_PASSWORD).")
+           (platform/cloud/modules/platform). Falls back to SOL_LOKI_USERNAME; the flag \
+           wins when both are set. Must be paired with --loki-password (or \
+           SOL_LOKI_PASSWORD).")
 ;;
 
 let loki_password_arg =
@@ -557,11 +558,11 @@ let loki_password_arg =
         ~docv:"PASSWORD"
         ~doc:
           "Basic-auth password/API key for the Loki query request -- the read-side \
-           counterpart of Alloy's external_loki_password (platform/infra/base). Falls \
-           back to SOL_LOKI_PASSWORD; the flag wins when both are set. Must be paired \
-           with --loki-username (or SOL_LOKI_USERNAME). Prefer SOL_LOKI_PASSWORD on \
-           shared hosts because command-line flags can be visible in shell history and \
-           process listings.")
+           counterpart of Alloy's external_loki_password \
+           (platform/cloud/modules/platform). Falls back to SOL_LOKI_PASSWORD; the flag \
+           wins when both are set. Must be paired with --loki-username (or \
+           SOL_LOKI_USERNAME). Prefer SOL_LOKI_PASSWORD on shared hosts because \
+           command-line flags can be visible in shell history and process listings.")
 ;;
 
 let follow_term =

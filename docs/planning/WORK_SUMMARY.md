@@ -1,5 +1,19 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: REFAC-100 — provider-mirrored cloud roots over a backend-free shared module (2026-09-25)
+
+- **Layout.** `platform/infra/*` → `platform/cloud/`:
+  - `modules/platform`, the shared definition, with no backend;
+  - `aws|gcp/{bootstrap,cluster,platform}`;
+  - `delivery/`.
+
+  The new `aws/platform` root carries the S3 backend and 45 `moved` blocks. Offline proof: 39/39 default instances move to `module.platform.*` with 0 creates and 0 deletes, and a control plan shows the remaining updates are fixture artifacts.
+- **Code.** `platform_root` and `platform_address` are one rule for every provider, and the two capability fields are gone. Operation-record keys are now `<provider>-<role>-<digest>`.
+- **One provider list.** `Sol_cli_provider.all` is exhaustive by construction (proven by an `Azure` mutation) and printed for shell guards. `check_destroy_completeness` no longer scrapes source.
+- **New guard:** `check_provider_roots.sh`, where the directory is the marker and on-paper providers stay legal.
+- **Correction:** the variable-mirroring check the proposal called missing was in `check_production_infra.sh` all along. It's now generalized to both platform roots, and also checks pass-through.
+- **Unblocked:** REFAC-101.
+
 ## Latest: REFAC-099 — code and assets are separate: `platform/` and a flat `cli/` (2026-09-25)
 
 - Part A (#520): `cli/platform` → `platform/`, plus a new CI guard that fails when a workflow `paths:` entry names something gone (it would otherwise silently stop the workflow triggering).
@@ -413,7 +427,7 @@ is HARDEN-002's.
 
 ## Latest: AUDIT-072 — recoverable production state and scoped identities (2026-09-17)
 
-A new `platform/infra/bootstrap` root provisions the conformant remote state
+A new `platform/cloud/aws/bootstrap` root provisions the conformant remote state
 backend (versioned, encrypted, public-access-blocked S3 + DynamoDB lock) and
 emits three least-privilege IAM policy contracts; the operator supplies the role
 ARNs. Target declarations (`state_bucket`/`state_lock_table`, the three role
@@ -441,7 +455,7 @@ evidence is HARDEN-002's; the contract is in
 Alert delivery is now a provider-neutral contract (`Sol_cli_alerting`): a
 target declares a receiver type (only `webhook` qualified), a routable
 endpoint, an owner and a runbook; preflight's `Alert_delivery` fails closed
-otherwise, and applying `platform/infra/base` wires the Alertmanager route.
+otherwise, and applying `platform/cloud/modules/platform` wires the Alertmanager route.
 The five maturity-A threshold indicators — failed rollout, node loss, Postgres
 dependency, Kafka lag/broker loss, telemetry loss — ship as rules with one-page
 runbooks (`docs/deployment/alert-runbooks.md`), and `sol alert test` injects a
@@ -803,7 +817,7 @@ PR #136. The GitHub repo was renamed first (`loganbnielsen/sun` ->
   renamed package.
 - Prometheus alert names `SunHighErrorRate`/`SunPodRestartLoop` ->
   `SolHighErrorRate`/`SolPodRestartLoop` in
-  `platform/infra/base/main.tf` and docs.
+  `platform/cloud/modules/platform/main.tf` and docs.
 - Every living doc (README, TUTORIAL, ROADMAP, PRODUCT_ARCHITECTURE,
   devops-pipeline, escape-hatches, this repo's own `.claude/` context and
   skills) updated throughout. Dated/historical records — past tickets,
@@ -1078,7 +1092,7 @@ bug found along the way. Filed, chained via `Depends on`:
   landed correctly and found one more real gap: that grep's
   `--include=*.md --include=*.ml` missed two shipped, executed CI
   templates with no positional target,
-  `platform/infra/ci/github-actions-{deploy,gitops}.yml` — added
+  `platform/cloud/delivery/ci/github-actions-{deploy,gitops}.yml` — added
   `--include=*.yml --include=*.yaml` and named both files explicitly.
   Also added a `FEAT-029` line for `LIVE_DEV_DEPLOY_ROADMAP.md` line 142
   (`sun plan` must print a resolved absolute ref as cross-region access,
@@ -1117,7 +1131,7 @@ observable," not "Sun hosts the logs."
 
 Separately, `tools/aws-live-smoke.sh` (new, this session) now wraps every
 phase in `timeout $PHASE_TIMEOUT` (default 900s) and tails the last 40 log
-lines to stdout on failure, and `platform/infra/aws/smoke-test.tfvars` bumped
+lines to stdout on failure, and `platform/cloud/aws/cluster/smoke-test.tfvars` bumped
 to EKS 1.36 / two `t3.medium` nodes / `redpanda_memory=2Gi` — the smallest
 shape that got past the scheduling and OOM failures found in this run.
 
@@ -1243,7 +1257,7 @@ during implementation, both verified against the real test data before being tru
 **`Aws_credentials`** resolves `(access_key_id, secret_access_key, session_token,
 expiration)` from one of: static keys, EKS IRSA (`AssumeRoleWithWebIdentity` using a
 Kubernetes-projected service-account JWT — the credential source a Sun service actually
-uses in its real EKS deploy target, since `platform/infra/aws/main.tf` already
+uses in its real EKS deploy target, since `platform/cloud/aws/cluster/main.tf` already
 provisions EKS with IRSA for cert-manager), ECS/Fargate container credentials, IMDSv2,
 or `Env_chain` (tries the above in that priority order). No implicit default source —
 every `Aws_credentials.t` states one explicitly, matching `Kafka_security.t`'s "Security
@@ -2313,7 +2327,7 @@ Verified end-to-end:
 
 ### Terraform modules
 
-**`platform/infra/base/`** — cluster-agnostic Helm bootstrap (any k8s):
+**`platform/cloud/modules/platform/`** — cluster-agnostic Helm bootstrap (any k8s):
 - cert-manager (CRDs, Let's Encrypt staging + prod `ClusterIssuer`)
 - ingress-nginx (LoadBalancer or NodePort)
 - Argo CD + Ingress at `argocd.<base_domain>`
@@ -2322,7 +2336,7 @@ Verified end-to-end:
 - Loki + Grafana stack + Ingress at `grafana.<base_domain>`
 - Prometheus + Pushgateway
 
-**`platform/infra/aws/`** — EKS cluster provisioning:
+**`platform/cloud/aws/cluster/`** — EKS cluster provisioning:
 - VPC module (public + private subnets, 3 AZs, single or HA NAT gateway)
 - EKS managed node group (configurable instance types, min/max/desired size)
 - ECR repositories (one per service, `for_each` over `var.ecr_repositories`)
@@ -2332,7 +2346,7 @@ Verified end-to-end:
 - cert-manager IRSA role (IAM policy for Route53 DNS01 challenge solving)
 - Outputs: `kubeconfig_command`, `ecr_registry`, `ecr_login_command`, `postgres_url`, `cert_manager_irsa_arn`
 
-**`platform/infra/gcp/`** — GKE Autopilot cluster provisioning:
+**`platform/cloud/gcp/cluster/`** — GKE Autopilot cluster provisioning:
 - Custom VPC with secondary ranges for GKE pods/services
 - Cloud Router + NAT
 - GKE Autopilot cluster (private nodes, REGULAR release channel)
@@ -2345,18 +2359,18 @@ Verified end-to-end:
 
 ### CI/CD reference workflows
 
-**`platform/infra/ci/github-actions-deploy.yml`** — direct deploy mode:
+**`platform/cloud/delivery/ci/github-actions-deploy.yml`** — direct deploy mode:
 1. Build OCaml binaries, build + push Docker images to ECR
 2. `sun deploy "$SUN_TARGET" --image-tag $SHA --registry $ECR_REGISTRY`
 3. `sun status`
 
-**`platform/infra/ci/github-actions-gitops.yml`** — GitOps mode:
+**`platform/cloud/delivery/ci/github-actions-gitops.yml`** — GitOps mode:
 1. Build + push images to ECR
 2. `sun deploy "$SUN_TARGET" --emit-to manifests/ --image-tag $SHA`
 3. Commit + push `manifests/*.yaml` to separate GitOps repo
 4. Argo CD reconciles cluster
 
-**`platform/infra/argocd/application.yaml`** — Argo CD `Application` manifest (one-time cluster setup):
+**`platform/cloud/delivery/argocd/application.yaml`** — Argo CD `Application` manifest (one-time cluster setup):
 - `syncPolicy.automated.prune = true` — removes resources deleted from GitOps repo
 - `syncPolicy.automated.selfHeal = true` — reverts manual kubectl changes
 - `ServerSideApply=true` — handles multi-owner field management
@@ -2366,7 +2380,7 @@ Verified end-to-end:
 `docs/guides/TUTORIAL.md` §CLI reference updated with `sun deploy` flags. New §Part 8 — Production deployment covers:
 - Direct deploy and GitOps deploy modes
 - AWS (EKS) and GCP (GKE) provisioning commands
-- `platform/infra/base/` platform bootstrap
+- `platform/cloud/modules/platform/` platform bootstrap
 - Argo CD one-time setup
 
 ## Current State — Phase 6 Complete
@@ -2381,11 +2395,11 @@ The production deployment pipeline is complete. All Phase 6 deliverables are don
 | `sun deploy --image-tag --registry --emit-to --dry-run` | ✓ |
 | `sun deploy --emit-plan-to FILE` — plan JSON serialization | ✓ |
 | `Sun_cli_toml` — `sun.toml` parser (scale, env, deploy, labels) | ✓ |
-| `platform/infra/aws/`, `platform/infra/gcp/`, `platform/infra/base/` Terraform modules | ✓ |
+| `platform/cloud/aws/cluster/`, `platform/cloud/gcp/cluster/`, `platform/cloud/modules/platform/` Terraform modules | ✓ |
 | Argo CD `Application` manifest + GitOps emit mode | ✓ |
 | `docs/deployment/escape-hatches.md` — four-level escape hatch hierarchy | ✓ |
 | `contract/substrate.md` | ✓ |
-| CI workflow references (`platform/infra/ci/`) | ✓ |
+| CI workflow references (`platform/cloud/delivery/ci/`) | ✓ |
 
 ## Phase 7 — Core deliverables complete
 
