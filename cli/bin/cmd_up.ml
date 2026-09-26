@@ -8,13 +8,7 @@ open Sol_cli_manifest
    discovery, sol.toml and the build context are all workspace-root relative.
    A missing (or nested) boundary fails closed instead of silently using the
    invocation cwd -- the bug BUG-034 exposed. *)
-let enter_workspace () =
-  match Sol_cli_workspace.enter ~dir:(Sys.getcwd ()) with
-  | Ok root -> root
-  | Error e ->
-    Printf.eprintf "sol: %s\n" (Sol_cli_workspace.workspace_error_to_string e);
-    exit 1
-;;
+let enter_workspace = Sol_cli_workspace.enter_or_exit
 
 let git_sha () =
   match

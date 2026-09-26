@@ -1,11 +1,7 @@
 open Cmdliner
 
-let workspace_name () =
-  (match Sol_cli_workspace.find_root ~dir:(Sys.getcwd ()) with
-   | Some root -> Sys.chdir root
-   | None -> ());
-  Filename.basename (Sys.getcwd ())
-;;
+(* REFAC-108: enter through the validated boundary, like every command. *)
+let workspace_name () = Filename.basename (Sol_cli_workspace.enter_or_exit ())
 
 (* [logs] streams exactly one workload's output, and both Loki's addressing
    (namespace + k8s name) and [kubectl logs] preserve unit granularity -- so
