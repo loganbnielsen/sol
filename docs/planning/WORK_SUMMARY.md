@@ -67,6 +67,33 @@
 - **Promoted to READY:** REFAC-099…105, DOCS-023/024, FEAT-100.
 - **Sequencing with qualification:** REFAC-099/100/101/103, DOCS-023 and REFAC-105 move paths the GCP qualification harness and its records use. They were held until HARDEN-006 attempt 8 landed (#518). Before starting one, check that no qualification attempt is in flight.
 - `AGENTS.md`'s ticket `type` list is now the 14 values in use (it listed 4).
+## Latest: INFRA-080 — the qualification instrument can verify a clean teardown truthfully (2026-09-26)
+
+Attempts 8 and 9 both ended "teardown NOT verified" for three reasons that were the harness's, not
+the product's, and one shell defect. All four are fixed in `internal/qualification/gcp/`:
+
+- the provisioner **service account** is provider-deleted after teardown, so its `describe` answers
+  `PERMISSION_DENIED … (or it may not exist)` — which establishes nothing. The class now asks the
+  project's **authoritative active-account list** (present → PRESENT, successfully absent → ABSENT,
+  unreadable → UNKNOWN) and keeps the ambiguous describe as raw evidence;
+- the **impersonator binding** is a policy on that identity, so it is unanswerable once the identity
+  is gone. The class now rests on the identity's own state (a deleted identity cannot be
+  impersonated) — the implication is named in the verdict's detail and pinned by tests — and reads
+  the impersonator's bindings on the identity whenever it *is* active;
+- the **custom role** is soft-deleted by GCP and reports `deleted: true`; that is the provider's
+  deleted, so it now reads ABSENT with the raw marker preserved, instead of PRESENT;
+- **`cloud_vars`** carried a comment *inside* its backslash-continued `printf`, which ended the
+  command and printed `command not found` while dropping the argument. The line is gone: the
+  generated target is the single source for `provisioner_impersonator` (Sol routes it from the
+  target).
+
+The epistemic rule is untouched — `PERMISSION_DENIED` is never absence, and a failed authoritative
+read is UNKNOWN — and the tests now protect it: **117 assertions (was 90)**, with five mutations
+(any failure → ABSENT; failed list → ABSENT; `deleted: true` → PRESENT; ambiguous policy → ABSENT;
+the dead argument restored) each failing the suite, plus positive directions (active identity,
+surviving binding, active role) each failing verification. An Attempt-9-shaped fixture now ends
+**VERIFIED**. Harness only: no product code, no live infrastructure, Attempt 8's state untouched.
+
 ## Latest: FND-0058 qualified live on GCP (2026-09-26)
 
 `main @ 67bdef8e`, fresh target `qual9/gcp/us-central1` (cluster `sol-qual-gcp-9`) — its own target key
