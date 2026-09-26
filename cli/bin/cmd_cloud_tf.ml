@@ -609,11 +609,10 @@ let bootstrap_access_vars ~enabled =
  * has actually failed. *)
 let served_api_kinds env =
   match
-    Sol_cli_process.check
-      (Sol_cli_process.run
-         (Sol_cli_process.cmd
-            ~env
-            [ "kubectl"; "api-resources"; "--verbs=delete"; "--no-headers" ]))
+    Sol_cli_process.run_success
+      (Sol_cli_process.cmd
+         ~env
+         [ "kubectl"; "api-resources"; "--verbs=delete"; "--no-headers" ])
   with
   | Ok result ->
     Ok

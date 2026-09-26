@@ -414,9 +414,8 @@ let refusal_is_deescalation assumption detail =
    comparison (account plus normalised role) as the follow-up that makes it exact. *)
 let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
   match
-    Sol_cli_process.check
-      (Sol_cli_process.run
-         (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ]))
+    Sol_cli_process.run_success
+      (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ])
   with
   | Ok r ->
     (match whoami_identity_of_json r.Sol_cli_process.stdout with
@@ -447,18 +446,17 @@ let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
          not the path-free form the comparison wants, because this is an IAM call. *)
       let assumption =
         match
-          Sol_cli_process.check
-            (Sol_cli_process.run
-               (Sol_cli_process.cmd
-                  ~env
-                  [ "aws"
-                  ; "sts"
-                  ; "assume-role"
-                  ; "--role-arn"
-                  ; provisioner_role_arn
-                  ; "--role-session-name"
-                  ; "sol-deescalation-check"
-                  ]))
+          Sol_cli_process.run_success
+            (Sol_cli_process.cmd
+               ~env
+               [ "aws"
+               ; "sts"
+               ; "assume-role"
+               ; "--role-arn"
+               ; provisioner_role_arn
+               ; "--role-session-name"
+               ; "sol-deescalation-check"
+               ])
         with
         | Ok _ -> Credential_assumable
         | Error (Sol_cli_process.Non_zero _) -> Credential_refused

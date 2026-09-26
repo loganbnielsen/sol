@@ -77,19 +77,18 @@ let gcp_absence_message ?project stderr =
 
 let gcp_peering_probe ~project ~network =
   match
-    Sol_cli_process.check
-      (Sol_cli_process.run
-         (Sol_cli_process.cmd
-            [ "gcloud"
-            ; "services"
-            ; "vpc-peerings"
-            ; "list"
-            ; "--network=" ^ network
-            ; "--service=servicenetworking.googleapis.com"
-            ; "--project"
-            ; project
-            ; "--format=value(peering)"
-            ]))
+    Sol_cli_process.run_success
+      (Sol_cli_process.cmd
+         [ "gcloud"
+         ; "services"
+         ; "vpc-peerings"
+         ; "list"
+         ; "--network=" ^ network
+         ; "--service=servicenetworking.googleapis.com"
+         ; "--project"
+         ; project
+         ; "--format=value(peering)"
+         ])
   with
   | Ok result ->
     let peerings =

@@ -271,23 +271,22 @@ let classify_instance_snapshots lookup =
 let load_balancers_gone ~region ~cluster_name =
   let tag_key = Printf.sprintf "kubernetes.io/cluster/%s" cluster_name in
   match
-    Sol_cli_process.check
-      (Sol_cli_process.run
-         (Sol_cli_process.cmd
-            [ "aws"
-            ; "resourcegroupstaggingapi"
-            ; "get-resources"
-            ; "--resource-type-filters"
-            ; "elasticloadbalancing"
-            ; "--tag-filters"
-            ; Printf.sprintf "Key=%s" tag_key
-            ; "--query"
-            ; "ResourceTagMappingList[].ResourceARN"
-            ; "--output"
-            ; "text"
-            ; "--region"
-            ; region
-            ]))
+    Sol_cli_process.run_success
+      (Sol_cli_process.cmd
+         [ "aws"
+         ; "resourcegroupstaggingapi"
+         ; "get-resources"
+         ; "--resource-type-filters"
+         ; "elasticloadbalancing"
+         ; "--tag-filters"
+         ; Printf.sprintf "Key=%s" tag_key
+         ; "--query"
+         ; "ResourceTagMappingList[].ResourceARN"
+         ; "--output"
+         ; "text"
+         ; "--region"
+         ; region
+         ])
   with
   | Ok r -> Some (String.trim r.Sol_cli_process.stdout = "")
   | _ -> None

@@ -95,9 +95,8 @@ let gcp_outputs_of_json text =
    here costs nothing; failing there costs an apply. *)
 let gcp_platform_toolchain_result () : (unit, string) result =
   match
-    Sol_cli_process.check
-      (Sol_cli_process.run
-         (Sol_cli_process.cmd [ "gke-gcloud-auth-plugin"; "--version" ]))
+    Sol_cli_process.run_success
+      (Sol_cli_process.cmd [ "gke-gcloud-auth-plugin"; "--version" ])
   with
   | Ok _ -> Ok ()
   | _ ->
@@ -125,25 +124,24 @@ let gcp_provisioner_kubeconfig_result
   Fun.protect ~finally:cleanup (fun () ->
     let env = Sol_cli_cluster.provisioner_kube_env path in
     match
-      Sol_cli_process.check
-        (Sol_cli_process.run
-           (Sol_cli_process.cmd
-              ~env
-              [ "gcloud"
-              ; "container"
-              ; "clusters"
-              ; "get-credentials"
-              ; outputs.cluster_name
-              ; "--region"
-              ; region
-              ; "--project"
-              ; outputs.project_id
-                (* Impersonation is the point: Sol acts as the target's named
+      Sol_cli_process.run_success
+        (Sol_cli_process.cmd
+           ~env
+           [ "gcloud"
+           ; "container"
+           ; "clusters"
+           ; "get-credentials"
+           ; outputs.cluster_name
+           ; "--region"
+           ; region
+           ; "--project"
+           ; outputs.project_id
+             (* Impersonation is the point: Sol acts as the target's named
               provisioner, through short-lived tokens, rather than as whoever
               happened to run the command. *)
-              ; "--impersonate-service-account"
-              ; outputs.provisioner_service_account
-                (* No `--kubeconfig`. Attempt 2's first live failure was
+           ; "--impersonate-service-account"
+           ; outputs.provisioner_service_account
+             (* No `--kubeconfig`. Attempt 2's first live failure was
                 "unrecognized arguments: --kubeconfig": the flag does not exist on
                 this subcommand. gcloud writes to the kubeconfig named by
                 `$KUBECONFIG`, which [provisioner_kube_env] has already exported for
@@ -154,8 +152,8 @@ let gcp_provisioner_kubeconfig_result
                 cannot falsify the interface it was modelled on.
                 `check_gcloud_interface.sh` now validates the argv against gcloud's
                 own help output instead. *)
-              ; "--quiet"
-              ]))
+           ; "--quiet"
+           ])
     with
     | Ok _ -> f ~env
     | Error (Sol_cli_process.Non_zero result) ->

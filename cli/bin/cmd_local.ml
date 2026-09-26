@@ -38,10 +38,9 @@ let version_gt a b =
 
 let k3d_env () =
   match
-    Sol_cli_process.check
-      (Sol_cli_process.run
-         (Sol_cli_process.cmd
-            [ "docker"; "version"; "--format"; "{{.Server.MinAPIVersion}}" ]))
+    Sol_cli_process.run_success
+      (Sol_cli_process.cmd
+         [ "docker"; "version"; "--format"; "{{.Server.MinAPIVersion}}" ])
   with
   | Ok r ->
     let daemon_min = String.trim r.Sol_cli_process.stdout in
