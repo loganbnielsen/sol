@@ -44,3 +44,9 @@ Landed with the FND-0058 live qualification preparation; the run that follows us
 `TARGET=qual9/gcp/us-central1` and `CLUSTER=sol-qual-gcp-9`, so the preserved Attempt 8 state is
 neither inherited nor overwritten. Demo/example: not applicable (qualification harness). Language
 parity (DEC-022): no application-facing impact. The harness's own suite is 90 assertions, green.
+
+## Live use (2026-09-26)
+
+The FND-0058 qualification run used `TARGET=qual9/gcp/us-central1` and produced its own specimen; the
+preserved Attempt 8 platform state (11 resources / serial 4) was neither inherited nor overwritten.
+Record: `docs/qualification/2026-09-26-gcp-fnd0058-live-qualification.md`.
