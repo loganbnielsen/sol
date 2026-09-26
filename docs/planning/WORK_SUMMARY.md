@@ -1,5 +1,11 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: REFAC-107 — local infrastructure comes from sol.yml, not a dune grep (2026-09-26)
+
+- `sol local infra up` starts Kafka and Postgres from `sol.yml`'s declared resources, and the observability stack always. It now works for TypeScript workspaces and from any subdirectory.
+- Found: the old grep never started Loki, Prometheus, Tempo or Grafana for pluto or scaffolded workspaces. It's fixed by "always on".
+- The scaffold and venus now declare the resources their services use.
+
 ## Latest: REFAC-106 — sol.yml is parsed by a YAML library (2026-09-26)
 
 - The hand-written, line-oriented parser is replaced by `yaml` (libyaml) plus a strict decoder over the same key table. Values keep their exact text, and semantic errors are unchanged.

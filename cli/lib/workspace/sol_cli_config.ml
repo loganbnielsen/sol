@@ -1208,3 +1208,21 @@ let ecr_repositories_var () =
 let vars_with_profile_precedence ~has_profile ~cli_vars ~config_vars =
   if has_profile then cli_vars @ config_vars else config_vars @ cli_vars
 ;;
+
+(* REFAC-107: which local infrastructure `sol local infra up` starts, decided from
+   what sol.yml declares rather than inferred from build files. Kafka and Postgres
+   follow the declared resources; the observability stack is always on, because
+   every platform install has it ("dev mirrors prod"). *)
+let local_infra ~root =
+  let* cfg = load (Filename.concat root "sol.yml") in
+  let declares typ =
+    List.exists (fun (r : resource) -> r.typ = Some typ) (active_resources cfg)
+  in
+  Ok
+    { Sol_cli_workspace.kafka = declares "kafka"
+    ; postgres = declares "postgres"
+    ; loki = true
+    ; prometheus = true
+    ; tempo = true
+    }
+;;
