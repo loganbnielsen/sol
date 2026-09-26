@@ -1,9 +1,14 @@
 # FND-0010 — GCP cert-manager: the `startupapicheck` failure is narrowed to the API-server → webhook path
 
-- **Classification:** `QUALIFICATION_GAP` — the *cause* is not yet established
-- **State:** `OPEN` — desk analysis complete; confirmation needs the Attempt 5 container log
+- **Classification:** `VERIFIED_DEFECT` — the platform apply failed because the Helm
+  provider's default `timeout` cut off cert-manager's own post-install readiness check
+  (established 2026-09-26 from Attempt 9's product log + the pinned chart upstream; see
+  *Cause established* below). The API-server → webhook *reachability* branch this finding
+  opened with is refuted: the x509 proves the API server reached the webhook.
+- **State:** `FIXED_UNQUALIFIED` — fixed 2026-09-26 in the shared platform module; the live
+  confirmation is the next GCP attempt
 - **First identified:** 2026-09-19 (GCP Attempt 4; analysed in this pass)
-- **Last verified:** 2026-09-19, `main @ 7e79df49`
+- **Last verified:** 2026-09-26, `main @ 3d3eb0aa`, from the Attempt 9 evidence bundle
 - **Provider:** GCP / GKE (Autopilot, private nodes)
 - **Derived ticket:** none yet — a ticket follows only if Attempt 5 confirms reachability
 - **Related invariant:** `INV-SUBSTRATE-1`, `INV-PREREQ-1`
@@ -117,3 +122,100 @@ and gets a ticket; until then it is a root-cause gap, not a defect claim.
 ## Supersession
 
 None.
+
+
+## Cause established (2026-09-26, from Attempt 9's own evidence)
+
+**FACT (product log).** Attempt 9's `platform-prerequisites-apply` ended:
+
+```
+module.platform.helm_release.cert_manager: Still creating... [6m40s elapsed]
+Warning: Helm release "" was created but has a failed status...
+Error: failed post-install: 1 error occurred:
+	* timed out waiting for the condition
+  with module.platform.helm_release.cert_manager,
+  on ../../modules/platform/main.tf line 148, in resource "helm_release" "cert_manager"
+```
+
+**FACT (the arithmetic lines up to the second).** The chart's post-install hook Job
+`cert-manager-startupapicheck` was created at `01:52:46Z`; the apply failed at ~`01:57:41Z`
+— 300 s later. The Helm provider's `timeout` defaults to **300 s** and bounds *that hook's
+wait* as well as the main install. So Terraform gave up on a check that cert-manager
+designed to keep polling (chart defaults: 4 attempts x 1 m, ~7m49s — the same shape Attempt
+4 recorded as `BackoffLimitExceeded` after 7m49s).
+
+**FACT (what the check was waiting for).** The captured `startupapicheck` log shows the
+check polling every 5 s for exactly its 1 m budget and reporting
+
+```
+Internal error occurred: failed calling webhook "webhook.cert-manager.io": ...
+tls: failed to verify certificate: x509: certificate signed by unknown authority
+```
+
+and the captured `ValidatingWebhookConfiguration` had **no `caBundle`** and
+**`generation: 1`** — i.e. it had never been updated — while all three cert-manager
+Deployments (`cert-manager`, `-webhook`, `-cainjector`) were `1/1 Running` for 6m39s.
+
+**FACT (upstream, chart `v1.14.4`).** The `webhook` pod runs with
+`--dynamic-serving-ca-secret-name=cert-manager-webhook-ca`, so the pod writes the CA Secret
+itself; the webhook configuration carries
+`cert-manager.io/inject-ca-from-secret: cert-manager/cert-manager-webhook-ca`, which
+**cainjector** copies into `caBundle`. No `certificate`/`issuer` CR participates, so the
+"CR needs the webhook that needs the CR" deadlock does not exist here.
+
+**Refuted branch.** The finding opened on a *GKE private-cluster firewall* hypothesis for
+the control plane → webhook path. An `x509: certificate signed by unknown authority` from
+the API server means the connection **succeeded** and the certificate could not be verified
+against the (empty) `caBundle`, so reachability is not the failure. No firewall rule is
+warranted, and the attempt that was planned for it would have found nothing.
+
+**INFERENCE (not established).** Whether the CA/`caBundle` convergence would have completed
+inside cert-manager's own budget (~7m49s) had Terraform let the check run: the check was cut
+off at 300 s while it was still polling, so no attempt has yet shown the webhook becoming
+usable within that window. The next attempt's widened discriminator (below) is what settles
+it — if it still fails, that is a *different* finding (injection never converging) with its
+own evidence, not this one.
+
+## The fix (2026-09-26)
+
+`platform/cloud/modules/platform/main.tf`, the single cert-manager `helm_release` shared by
+both providers:
+
+| setting | before | after | why |
+|---|---|---|---|
+| `timeout` | unset (provider default 300 s) | `1800` | the wait must outlast the check, not cut it short |
+| `startupapicheck.timeout` | unset (chart default `1m`) | `10m` | one continuous poll window instead of a 1-minute attempt; the check still polls every 5 s and returns the moment the webhook answers |
+| `startupapicheck.backoffLimit` | unset (chart default `4`) | `1` | keeps the worst case (2 x 10 m) inside the release bound |
+| `wait` | unset (provider default `true`) | `true` stated | the chart's resources must be ready before its check runs; stating it keeps a future default change from silently disabling the gate |
+
+The check stays **enabled**: it is cert-manager's own readiness contract and the only signal
+that the webhook is usable, and every certificate-bearing component after cert-manager
+depends on it. `atomic` is deliberately not set, so a failure leaves the release in place —
+the shape FND-0058's qualification covers.
+
+**Executable evidence (`internal/ci/check_cert_manager_readiness.sh`, wired into CI):** the
+guard pins enabled check, a per-attempt budget >= 300 s, an explicit retry bound, and
+`release timeout > (backoffLimit + 1) x per-attempt`, plus `wait = true` and CRDs from the
+chart. Its mutation self-test
+(`internal/ci/test_cert_manager_readiness_check.sh`) rejects eight mutations — including
+**the pre-fix configuration itself** — and accepts the unmutated tree.
+
+**Behavioural evidence (`internal/ci/test_cloud_lifecycle_offline.sh`):** the per-phase
+failure loop already fails the install on a `prerequisites` (the cert-manager install) or
+`crds` (cert-manager's API surface) failure; it now also asserts that the full platform
+apply did **not** run after such a failure. Bypassing the CRD gate (a mutant whose
+`await_crds` always reports success) fails the suite.
+
+## What the next attempt must show
+
+`internal/qualification/gcp/live-qual.sh`'s discriminator was widened (2026-09-26) to
+capture what the first version could not: the CA and TLS Secrets (metadata and key names
+only, never key material), the controller/webhook/cainjector logs, and the
+`certificate`/`issuer` objects. A confirming attempt must show the `startupapicheck` Job
+**Succeeded**, the platform apply continuing past cert-manager, and — if it reaches that far
+— `Ready`, with the release's own wait no longer the limiting factor.
+
+## Supersession
+
+None. The reachability branch recorded above is refuted rather than superseded, and the
+classification it produced (`QUALIFICATION_GAP`) is replaced by `VERIFIED_DEFECT`.

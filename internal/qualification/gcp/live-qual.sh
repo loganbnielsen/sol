@@ -1062,6 +1062,20 @@ capture_fnd0010() {
     -o jsonpath='{.spec.ports[*].targetPort}'
   kube_capture fnd0010-webhook-endpoints kubectl -n cert-manager get endpoints cert-manager-webhook -o wide
   kube_capture fnd0010-webhook-config kubectl get validatingwebhookconfiguration cert-manager-webhook -o yaml
+  # FND-0010 follow-up: the first discriminator could say "the caBundle was never injected"
+  # but not *why* -- it captured neither the CA the webhook pod writes nor the injector's
+  # own view. Both are read-only, and both are needed to tell "the CA secret never appeared"
+  # apart from "it appeared and cainjector did not inject it", which are different fixes.
+  # The Secret is captured by metadata and key names only: enough to answer existence, type
+  # and age, without copying key material into the evidence bundle.
+  kube_capture fnd0010-cainjector-logs kubectl -n cert-manager logs deploy/cert-manager-cainjector --tail=200
+  kube_capture fnd0010-controller-logs kubectl -n cert-manager logs deploy/cert-manager --tail=200
+  kube_capture fnd0010-webhook-logs kubectl -n cert-manager logs deploy/cert-manager-webhook --tail=200
+  kube_capture fnd0010-ca-secret kubectl -n cert-manager get secret cert-manager-webhook-ca \
+    -o jsonpath='{.metadata.name} type={.type} created={.metadata.creationTimestamp} keys={.data}'
+  kube_capture fnd0010-tls-secret kubectl -n cert-manager get secret cert-manager-webhook-tls \
+    -o jsonpath='{.metadata.name} type={.type} created={.metadata.creationTimestamp} keys={.data}'
+  kube_capture fnd0010-certificates kubectl -n cert-manager get certificates,issuers,clusterissuers -o wide
   kube_capture fnd0010-nodes   kubectl get nodes -o wide
   kube_capture fnd0010-firewall-rules gcloud compute firewall-rules list --project "$PROJECT" \
     --filter="name~$CLUSTER" \

@@ -605,3 +605,28 @@ Nothing was relabelled: `PERMISSION_DENIED` is still never absence, and a failed
 is still UNKNOWN. The offline suite is **117 assertions (was 90)**, with five mutations proving the
 tests protect the epistemic rule rather than the desired word. No product code, no live
 infrastructure, and the preserved Attempt 8 state is untouched.
+
+## FND-0010 fixed -- the platform apply stopped cutting cert-manager's readiness check short (2026-09-26)
+
+`VERIFIED_DEFECT` -> `FIXED_UNQUALIFIED`. Attempt 9's product log ended the platform
+prerequisites apply with `failed post-install: ... timed out waiting for the condition`; the
+chart's post-install hook Job was created at 01:52:46Z and the apply failed at ~01:57:41Z --
+300 s later, the Helm provider's default `timeout`, which bounds that hook's wait as well as
+the main install. The check itself was still polling (`x509: certificate signed by unknown
+authority`, no injected `caBundle`, webhook configuration at `generation: 1`) while all three
+cert-manager Deployments had been `1/1 Running` for 6m39s. The API-server -> webhook
+*reachability* branch the finding opened with is **refuted** (an x509 from the API server
+proves the connection succeeded); no firewall rule is warranted.
+
+The shared platform module now gives the check its designed budget (10m per attempt, 1 retry),
+states `wait = true`, and sets an explicit 30-minute release `timeout` so Terraform cannot cut
+it short again; the check stays **enabled**, because it is the only signal that the webhook is
+usable. Pinned by `internal/ci/check_cert_manager_readiness.sh` plus a mutation self-test whose
+first case is the pre-fix configuration, and by the offline lifecycle suite's assertion that a
+failed cert-manager gate never runs the full platform apply. The qualifier's discriminator now
+also captures the CA/TLS Secrets and the cert-manager component logs, so a further failure can
+be attributed rather than re-run.
+
+**`HARDEN-008`** (new, `BACKLOG`, authorization-gated) is the confirmation run: one fresh GCP
+attempt whose purpose is to see cert-manager's check pass and the install continue -- to
+`Ready` if the rest of the platform installs.

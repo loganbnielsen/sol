@@ -67,6 +67,29 @@
 - **Promoted to READY:** REFAC-099…105, DOCS-023/024, FEAT-100.
 - **Sequencing with qualification:** REFAC-099/100/101/103, DOCS-023 and REFAC-105 move paths the GCP qualification harness and its records use. They were held until HARDEN-006 attempt 8 landed (#518). Before starting one, check that no qualification attempt is in flight.
 - `AGENTS.md`'s ticket `type` list is now the 14 values in use (it listed 4).
+## Latest: FND-0010 fixed -- Sol now waits as long as cert-manager's readiness check is designed to (2026-09-26)
+
+Attempt 9's product log gave the cause: the platform prerequisites apply ended with
+`failed post-install: ... timed out waiting for the condition` because the Helm provider's
+default **300 s `timeout`** bounds the post-install hook's wait too. The chart's
+`startupapicheck` Job was created at 01:52:46Z and the apply failed at ~01:57:41Z -- 300 s, on
+the dot -- while the check was still polling (`x509: certificate signed by unknown authority`,
+`caBundle` never injected, webhook configuration at `generation: 1`) and all three cert-manager
+Deployments had been `1/1 Running` for 6m39s.
+
+`platform/cloud/modules/platform/main.tf` (one release, shared by both providers) now sets
+`startupapicheck.timeout = 10m`, `startupapicheck.backoffLimit = 1`, `timeout = 1800` and
+`wait = true`, and keeps the check **enabled** -- it is cert-manager's own readiness contract
+and the only signal that the webhook is usable. `internal/ci/check_cert_manager_readiness.sh`
+pins enabled check / real per-attempt budget / `release timeout > (backoffLimit + 1) x
+per-attempt` / `wait = true` / CRDs from the chart, and its 8-mutation self-test includes the
+pre-fix configuration (which must be rejected). The offline lifecycle suite additionally
+asserts a failed cert-manager gate never runs the full platform apply, proven by a mutant whose
+CRD gate always reports success. `FND-0010` -> `FIXED_UNQUALIFIED`; the confirmation run is
+filed as **`HARDEN-008`** (`BACKLOG`, authorization-gated, `PHASE_TIMEOUT` >= the release
+bound), and the qualifier's discriminator captures the CA/TLS Secrets and component logs so a
+further failure is attributable without another run.
+
 ## Latest: INFRA-080 — the qualification instrument can verify a clean teardown truthfully (2026-09-26)
 
 Attempts 8 and 9 both ended "teardown NOT verified" for three reasons that were the harness's, not
