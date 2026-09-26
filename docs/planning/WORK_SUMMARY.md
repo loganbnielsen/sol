@@ -1,5 +1,13 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: INFRA-086 — `sol local infra up` installs with bounded concurrency (2026-09-26)
+
+- The releases (Redpanda, PostgreSQL, Loki, Grafana, Alloy, Tempo, Prometheus, ingress-nginx) have no install-time dependency on each other, and were installed one after another: ~252s of Helm, ~290s of the phase, in **both** golden paths. Now at most three run at once, in forked children with their own output files.
+- The first failure stops new installs, the running ones are waited for rather than abandoned, and components that never ran are named — no half-installed sibling without an explanation. Helm repositories are mutated before the group starts, not during it.
+- Measured locally end-to-end (`sol local infra up` in `examples/pluto`): all components up, three in flight, queue draining.
+- INFRA-085 (same measurement thread): an application-image **build cache was implemented, measured, and reverted** — a warm cache moved the OCaml golden path by 28s against a baseline it was 81s slower than, because the scaffold pins the framework to the PR's commit so the dependency layer is supposed to re-run. The ticket keeps the numbers and the driver-configuration lesson (the runner's docker driver cannot export cache; this machine's can).
+
+
 ## Latest: REFAC-108 — one validated way into the workspace (2026-09-26)
 
 - `check`, `up`, `logs`, `fn` and `status` all enter through `Sol_cli_workspace.enter_or_exit`.
