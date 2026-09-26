@@ -37,6 +37,29 @@
 - **Promoted to READY:** REFAC-099…105, DOCS-023/024, FEAT-100.
 - **Sequencing with qualification:** REFAC-099/100/101/103, DOCS-023 and REFAC-105 move paths the GCP qualification harness and its records use. They were held until HARDEN-006 attempt 8 landed (#518). Before starting one, check that no qualification attempt is in flight.
 - `AGENTS.md`'s ticket `type` list is now the 14 values in use (it listed 4).
+## Latest: FND-0058 fixed — destruction may construct authority, and only authority (2026-09-25)
+
+The INFRA-079 decision unit established that Attempt 8's degraded teardown was a **matcher defect, not
+a missing capability**: REFAC-094 already recorded the exception, `reconciliation_policy` implements
+it, and the GCP declaration used `Exact` (string equality) for a `count`-indexed mechanism whose
+Terraform plan address is always `...[0]` — so the rule that permits the authority create could never
+match the plan that acquires it. AWS never showed it because its matcher is `Type`.
+
+Landed: `Sol_cli_terraform_plan.Resource` (*this resource, any instance*, matched and tested in both
+directions), the GCP declaration using it, `DEC-048` recording the invariant, and the repaired
+evidence — the unit fixture and the offline authority fixture both used the declaration's own
+index-less string, which is why neither could detect the production failure.
+
+- Offline: 25 `test_terraform_plan` cases (5 new), the offline lifecycle suite asserting the destroy's
+  phase order (acquire → platform teardown → release → substrate destroy) with the authority fixture
+  carrying `[0]`, and the missing-cluster refusal unchanged.
+- Mutations: an instance-blind matcher fails the unit suite **and** the offline scenario; broadening
+  the matcher to the sibling type fails the precision test; permitting a generic create in the
+  reconciliation fails the negative controls.
+- `FND-0058` → `FIXED_UNQUALIFIED` (live qualification still required). Two follow-ups filed:
+  `FND-0059`/`INFRA-081` (the same address-form class in eligibility/reporting) and `INFRA-082`
+  (already-stale state when the substrate is absent). The preserved Attempt 8 state was untouched.
+
 ## Latest: GCP Attempt 8 ran — FND-0010's cause established (2026-09-25)
 
 Authorized, Phase-0-gated and executed. **`main @ dae9540d`**, live 22:01:03Z → 22:26:22Z, no

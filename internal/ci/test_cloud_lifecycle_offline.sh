@@ -191,7 +191,13 @@ JSON
           *" -var=provisioner_bootstrap_admin=true "*)
             case " $plan_args " in
               *" -target=kubernetes_cluster_role_binding.provisioner_bootstrap_admin "*)
-                add_change "kubernetes_cluster_role_binding.provisioner_bootstrap_admin" "kubernetes_cluster_role_binding" "create"
+                # FND-0058: the binding is `count = var.provisioner_bootstrap_admin
+                # ? 1 : 0`, so the plan address carries an instance key. A fixture
+                # written with the bare declaration, as this one was, cannot
+                # detect a declaration that the plan can never match -- which is
+                # exactly how the GCP authority create was refused while the
+                # policy permitted it.
+                add_change "kubernetes_cluster_role_binding.provisioner_bootstrap_admin[0]" "kubernetes_cluster_role_binding" "create"
                 ;;
               *" -target=module.eks "*)
                 add_change "module.eks.aws_eks_access_policy_association.this" "aws_eks_access_policy_association" "create"
@@ -1512,6 +1518,48 @@ for override in sql_deletion_protection=false gke_deletion_protection=false; do
     exit 1
   }
 done
+# FND-0058 / INFRA-079: the authority mechanism's plan change is instance-qualified
+# (above), the acquisition is plan-asserted and permitted, and the order is the one
+# the destroy policy describes -- acquire, protect, release, then the substrate. The
+# fixture carrying `[0]` is what makes this a regression test: with an
+# instance-blind declaration the reconciliation is refused and the protected step
+# never runs, so the line-order assertions below cannot all hold.
+# `|| true` on each: the point of the checks below is to say *which* phase never
+# ran, and a pipeline under `set -o pipefail` would otherwise abort the suite
+# silently the moment a grep found nothing.
+authority_line="$(grep -n -- '-var=provisioner_bootstrap_admin=true' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
+platform_destroy_line="$(grep -nE -- '^terraform -chdir=[^ ]*infra/base-gcp destroy ' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
+release_line="$(grep -n -- '-var=provisioner_bootstrap_admin=false' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
+substrate_destroy_line="$(grep -nE -- '^terraform -chdir=[^ ]*infra/gcp destroy ' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
+for phase in "authority acquisition:authority_line" \
+  "platform teardown:platform_destroy_line" \
+  "authority release:release_line" \
+  "substrate destroy:substrate_destroy_line"; do
+  label="${phase%%:*}"
+  variable="${phase##*:}"
+  if [ -z "$(eval printf '%s' "\$$variable")" ]; then
+    echo "the destroy never reached the $label (no such command in the lifecycle log):" >&2
+    grep -nE -- 'terraform|refused|degrad' "$gcp_destroy_log" >&2 || true
+    exit 1
+  fi
+done
+if [ "$authority_line" -ge "$platform_destroy_line" ] ||
+   [ "$platform_destroy_line" -ge "$release_line" ] ||
+   [ "$release_line" -ge "$substrate_destroy_line" ]; then
+  echo "the destroy ran its phases out of order: acquire=$authority_line platform=$platform_destroy_line release=$release_line substrate=$substrate_destroy_line" >&2
+  exit 1
+fi
+if grep -F 'refused before apply' "$gcp_destroy_log.out" >/dev/null; then
+  echo "the destroy refused its own permitted authority create:" >&2
+  cat "$gcp_destroy_log.out" >&2
+  exit 1
+fi
+if grep -F 'a preparation degraded and destruction continued' "$gcp_destroy_log.out" >/dev/null; then
+  echo "the destroy degraded although its authority acquisition was permitted:" >&2
+  cat "$gcp_destroy_log.out" >&2
+  exit 1
+fi
+
 # HARDEN-004 step 5, narrowed by DEC-045 / REFAC-094: Terraform's destroy plus an
 # empty state is the authority for what Terraform manages, so the report states the
 # state postcondition and the residue Terraform does not own -- and the provider is
