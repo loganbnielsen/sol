@@ -236,6 +236,40 @@ let test_omitted_resource_starts_nothing () =
   check_bool "omitted postgres is not started" false req.Sol_cli_workspace.postgres
 ;;
 
+(* REFAC-108: the one entry point, from a subdirectory. *)
+let test_enter_from_a_subdirectory () =
+  with_tmpdir (fun tmpdir ->
+    let root = Unix.realpath tmpdir in
+    write_file (Filename.concat root "sol.yml") "project: p\n";
+    let deep = Filename.concat root "app/payments/charge_svc" in
+    mkdir_p deep;
+    let before = Sys.getcwd () in
+    Fun.protect
+      ~finally:(fun () -> Sys.chdir before)
+      (fun () ->
+         Sys.chdir deep;
+         let entered = Sol_cli_workspace.enter_or_exit () in
+         Alcotest.(check string) "returns the root" root entered;
+         Alcotest.(check string) "cwd is the root" root (Unix.realpath (Sys.getcwd ()))))
+;;
+
+(* The scenario behind the symlink rule: a symlinked checkout that contains its
+   own sol.yml is not a nested workspace. *)
+let test_symlinked_checkout_is_not_nested () =
+  with_tmpdir (fun tmpdir ->
+    let outer = Filename.concat tmpdir "ws" in
+    let other = Filename.concat tmpdir "elsewhere" in
+    mkdir_p outer;
+    mkdir_p (Filename.concat other "examples/pluto");
+    write_file (Filename.concat outer "sol.yml") "project: p\n";
+    write_file (Filename.concat other "examples/pluto/sol.yml") "project: pluto\n";
+    mkdir_p (Filename.concat outer "vendor");
+    Unix.symlink other (Filename.concat outer "vendor/sol");
+    match Sol_cli_workspace.validate ~root:outer with
+    | Ok () -> ()
+    | Error e -> Alcotest.fail (Sol_cli_workspace.workspace_error_to_string e))
+;;
+
 let () =
   Alcotest.run
     "workspace"
@@ -281,6 +315,16 @@ let () =
             "an omitted resource starts nothing"
             `Quick
             test_omitted_resource_starts_nothing
+        ] )
+    ; ( "entry point"
+      , [ Alcotest.test_case
+            "enter from a subdirectory"
+            `Quick
+            test_enter_from_a_subdirectory
+        ; Alcotest.test_case
+            "a symlinked checkout is not nested"
+            `Quick
+            test_symlinked_checkout_is_not_nested
         ] )
     ]
 ;;
