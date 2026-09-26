@@ -1,5 +1,10 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: BUG-057 — a target's terraform_var_file resolves from the workspace root (2026-09-25)
+
+- A relative `terraform_var_file` used to resolve against wherever `sol` ran. It now resolves from the workspace root, while `--var-file` stays shell-relative and wins.
+- Proven end to end: the offline harness runs `sol cloud plan` from a subdirectory, and fails against the old code.
+
 ## Latest: REFAC-104 — cli/lib is six domain libraries along its dependency graph (2026-09-25)
 
 - The 86 modules are now in `base`, `kube`, `workspace`, `cloud`, `deploy` and `local`, each a `(wrapped false)` dune library. The domain graph is acyclic, so every domain is enforced at build time; a mutation from `base` into `workspace` fails the build.
