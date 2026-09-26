@@ -171,6 +171,12 @@ type t =
   ; name : string
   }
 
+let enter_cwd () =
+  match enter ~dir:(Sys.getcwd ()) with
+  | Ok root -> Ok { root; name = workspace_name ~root }
+  | Error e -> Error (Sol_cli_exit.failure ("sol: " ^ workspace_error_to_string e))
+;;
+
 let enter_or_exit () =
   match enter ~dir:(Sys.getcwd ()) with
   | Ok root -> { root; name = workspace_name ~root }

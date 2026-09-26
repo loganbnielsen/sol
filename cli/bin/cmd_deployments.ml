@@ -6,18 +6,18 @@ open Cmdliner
 (* DEC-024: the workspace name comes from the resolved root, so it is the same
    from any descendant directory. *)
 let workspace_name = Sol_cli_workspace.current_name
+let ( let* ) = Result.bind
 
 let run ~ctx () =
   let workspace = workspace_name () in
-  match Sol_cli_deployment_store.list ~ctx ~workspace with
-  | Error msg ->
-    Printf.eprintf "error: %s\n" msg;
-    exit 1
-  | Ok [] ->
-    Printf.printf
-      "No deployments recorded for workspace %s in the target's cluster.\n"
-      workspace
-  | Ok records -> print_endline (Sol_cli_deployment.format_table records)
+  let* records = Sol_cli_deployment_store.list ~ctx ~workspace |> Sol_cli_exit.of_msg in
+  (match records with
+   | [] ->
+     Printf.printf
+       "No deployments recorded for workspace %s in the target's cluster.\n"
+       workspace
+   | records -> print_endline (Sol_cli_deployment.format_table records));
+  Ok ()
 ;;
 
 let cmd =
@@ -32,11 +32,9 @@ let cmd =
           events pointing at the same release.")
     Term.(
       const (fun target ->
-        run
-          ~ctx:
-            (Cmd_destination.or_exit
-               (Cmd_destination.resolve ~command:"deployments" ~local:false ~target))
-          ())
+        Sol_cli_exit.exit_on
+          (let* ctx = Cmd_destination.remote ~command:"deployments" target in
+           run ~ctx ()))
       $ Cmd_destination.target_arg)
 ;;
 
@@ -46,5 +44,7 @@ let local_cmd =
     (Cmd.info
        "deployments"
        ~doc:"List the deployment events Sol's local cluster holds for this workspace")
-    Term.(const (fun () -> run ~ctx:Cmd_destination.local ()) $ const ())
+    Term.(
+      const (fun () -> Sol_cli_exit.exit_on (run ~ctx:Cmd_destination.local ()))
+      $ const ())
 ;;

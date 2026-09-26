@@ -56,6 +56,13 @@ type t =
   ; name : string (** {!workspace_name} of [root]. *)
   }
 
+(** [enter_cwd ()] enters the workspace containing the current directory, or
+    says why there is none. The one way a command establishes its workspace
+    (REFAC-108): the boundary is validated, absence fails closed, and the entered
+    workspace is returned. A command's [run] starts its [let*] chain here
+    (REFAC-115). *)
+val enter_cwd : unit -> (t, Sol_cli_exit.failure) result
+
 (** [enter_or_exit ()] enters the workspace containing the current directory, or
     prints the workspace error and exits 1. The one way a command establishes its
     workspace (REFAC-108): the boundary is validated, absence fails closed, and the

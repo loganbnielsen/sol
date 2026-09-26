@@ -17,10 +17,10 @@ let print_index (index : Sol_cli_config.index) =
 ;;
 
 let run target_name =
-  let cfg =
-    Sol_cli_exit.or_exit_with
-      Sol_cli_config.error_to_string
-      (Sol_cli_config.load_for_target ~target:target_name)
+  let ( let* ) = Result.bind in
+  let* cfg =
+    Sol_cli_config.load_for_target ~target:target_name
+    |> Sol_cli_exit.of_error Sol_cli_config.error_to_string
   in
   let project = Option.value cfg.project ~default:(Filename.basename (Sys.getcwd ())) in
   let target = cfg.Sol_cli_config.target in
@@ -71,7 +71,8 @@ let run target_name =
            "    scale: %s..%s\n"
            (Option.fold ~none:"?" ~some:string_of_int min)
            (Option.fold ~none:"?" ~some:string_of_int max))
-    services
+    services;
+  Ok ()
 ;;
 
 let target_arg =
@@ -84,5 +85,5 @@ let target_arg =
 let cmd =
   Cmd.v
     (Cmd.info "plan" ~doc:"Print the merged Sol app/resource/service plan for a target.")
-    Term.(const run $ target_arg)
+    Term.(const Sol_cli_exit.exit_on $ (const run $ target_arg))
 ;;

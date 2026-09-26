@@ -95,7 +95,7 @@ let exec_kubectl_logs ~ctx ~ns ~target ~follow ~tail =
    read telemetry, and with what credentials -- and were six labelled arguments
    on every command that touches telemetry. One value, built at the CLI edge. *)
 type observability_options =
-  { backend : string option
+  { backend : Sol_cli_observability_url.backend option
   ; base_domain : string option
   ; grafana_base_url : string option
   ; loki_base_url : string option
@@ -114,24 +114,11 @@ type log_options =
   ; observability : observability_options
   }
 
-let backend_of_arg = function
-  | None -> None
-  | Some s ->
-    (match Sol_cli_observability_url.backend_of_string s with
-     | Some b -> Some b
-     | None ->
-       Printf.eprintf
-         "error: unknown --observability-backend %S (expected: local, \
-          self_hosted_durable, external)\n"
-         s;
-       exit 1)
-;;
-
 let run_unit ~ctx ~target (options : log_options) scope : unit =
   let follow = options.follow in
   let tail = options.tail in
   let observability = options.observability in
-  let explicit_backend = backend_of_arg observability.backend in
+  let explicit_backend = observability.backend in
   let explicit_base_domain = observability.base_domain in
   let explicit_loki_url = observability.loki_base_url in
   let explicit_loki_username = observability.loki_username in
@@ -250,7 +237,7 @@ let run_unit ~ctx ~target (options : log_options) scope : unit =
 let run_release ~ctx ~target (options : log_options) release : unit =
   let tail = options.tail in
   let observability = options.observability in
-  let explicit_backend = backend_of_arg observability.backend in
+  let explicit_backend = observability.backend in
   let explicit_loki_url = observability.loki_base_url in
   let explicit_loki_username = observability.loki_username in
   let explicit_loki_password = observability.loki_password in
@@ -448,10 +435,16 @@ let grafana_base_url_arg =
            LogQL query before streaming kubectl logs.")
 ;;
 
+(* An enum, so an unknown backend is refused by the parser, with the choices
+   listed, before anything runs (REFAC-115). *)
 let observability_backend_arg =
+  let backends =
+    Sol_cli_observability_url.[ Local; Self_hosted_durable; External ]
+    |> List.map (fun b -> Sol_cli_observability_url.backend_to_string b, b)
+  in
   Arg.(
     value
-    & opt (some string) None
+    & opt (some (enum backends)) None
     & info
         [ "observability-backend" ]
         ~docv:"BACKEND"

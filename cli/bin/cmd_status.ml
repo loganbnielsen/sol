@@ -500,22 +500,9 @@ type status_options =
   ; prometheus_base_url : string option
   }
 
-let backend_of_arg = function
-  | None -> None
-  | Some s ->
-    (match Sol_cli_observability_url.backend_of_string s with
-     | Some b -> Some b
-     | None ->
-       Printf.eprintf
-         "error: unknown --observability-backend %S (expected: local, \
-          self_hosted_durable, external)\n"
-         s;
-       exit 1)
-;;
-
 let run ~ctx (options : status_options) =
   let scope_str = options.scope in
-  let explicit_backend = backend_of_arg options.observability.backend in
+  let explicit_backend = options.observability.backend in
   let explicit_base_domain = options.observability.base_domain in
   let target = options.target in
   let explicit_loki_url = options.observability.loki_base_url in

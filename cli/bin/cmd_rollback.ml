@@ -98,13 +98,11 @@ let run_locked ~ctx ~local ~workspace release_id : (unit, string) result =
     ; verify_pointer = (fun () -> Sol_cli_rollback.verify_pointer ~ctx ~release)
     }
   in
-  match Sol_cli_rollback.execute ~release ~migrations_dir ~current_migrations ~deps with
-  | Ok () ->
-    Printf.printf
-      "Verified: workloads and pointer both name release %s.\n%!"
-      release.Sol_cli_release.release_id;
-    Ok ()
-  | Error msg -> Error msg
+  let* () = Sol_cli_rollback.execute ~release ~migrations_dir ~current_migrations ~deps in
+  Printf.printf
+    "Verified: workloads and pointer both name release %s.\n%!"
+    release.Sol_cli_release.release_id;
+  Ok ()
 ;;
 
 (* FEAT-073: resolves RELEASE_ID/--commit/--scope down to one release id.
@@ -153,24 +151,17 @@ let resolve_release_id ~ctx ~workspace ~target_string release_id commit scope
 
 let run ~ctx ?(local = false) ~target_string release_id commit scope =
   let workspace = workspace_name () in
-  match resolve_release_id ~ctx ~workspace ~target_string release_id commit scope with
-  | Error msg ->
-    Printf.eprintf "error: %s\n%!" msg;
-    exit 1
-  | Ok release_id ->
-    (match
-       Sol_cli_boundary_lease.with_boundary_lease
-         ~ctx
-         ~workspace
-         ~holder:Sol_cli_boundary_lease.Rollback
-         ~ttl:ttl_s
-         ~wait_s
-         (fun _lease -> run_locked ~ctx ~local ~workspace release_id)
-     with
-     | Ok () -> ()
-     | Error msg ->
-       Printf.eprintf "error: %s\n%!" msg;
-       exit 1)
+  Sol_cli_exit.of_msg
+    (let* release_id =
+       resolve_release_id ~ctx ~workspace ~target_string release_id commit scope
+     in
+     Sol_cli_boundary_lease.with_boundary_lease
+       ~ctx
+       ~workspace
+       ~holder:Sol_cli_boundary_lease.Rollback
+       ~ttl:ttl_s
+       ~wait_s
+       (fun _lease -> run_locked ~ctx ~local ~workspace release_id))
 ;;
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
@@ -222,14 +213,14 @@ let cmd =
           current-release pointer, then verifies both independently.")
     Term.(
       const (fun release_id commit scope target ->
-        run
-          ~ctx:
-            (Cmd_destination.or_exit
-               (Cmd_destination.resolve ~command:"rollback" ~local:false ~target))
-          ~target_string:(Option.value target ~default:"local")
-          release_id
-          commit
-          scope)
+        Sol_cli_exit.exit_on
+          (let* ctx = Cmd_destination.remote ~command:"rollback" target in
+           run
+             ~ctx
+             ~target_string:(Option.value target ~default:"local")
+             release_id
+             commit
+             scope))
       $ release_id_arg
       $ commit_arg
       $ scope_arg
@@ -243,13 +234,14 @@ let local_cmd =
     (Cmd.info "rollback" ~doc:"Restore a recorded release boundary on the local cluster.")
     Term.(
       const (fun release_id commit scope ->
-        run
-          ~ctx:Cmd_destination.local
-          ~local:true
-          ~target_string:"local"
-          release_id
-          commit
-          scope)
+        Sol_cli_exit.exit_on
+          (run
+             ~ctx:Cmd_destination.local
+             ~local:true
+             ~target_string:"local"
+             release_id
+             commit
+             scope))
       $ release_id_arg
       $ commit_arg
       $ scope_arg)

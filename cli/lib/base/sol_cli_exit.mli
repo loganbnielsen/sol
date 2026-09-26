@@ -30,6 +30,17 @@ val error : ?code:int -> string -> failure
 (** [failure text] prints [text] exactly as given (exit 1 unless [code]). *)
 val failure : ?code:int -> string -> failure
 
+(** [reported ()] is a failure the command has already explained (its findings
+    are on stderr): nothing more is printed, and it exits 1 unless [code]. *)
+val reported : ?code:int -> unit -> failure
+
+(** [of_msg r] is [r] with a message error carried as {!error}: the step of a
+    [let*] chain that calls a library function returning [(_, string) result]. *)
+val of_msg : ('a, string) result -> ('a, failure) result
+
+(** [of_error to_string r] is {!of_msg} for a typed error. *)
+val of_error : ('e -> string) -> ('a, 'e) result -> ('a, failure) result
+
 (** [exit_on r]: nothing for [Ok ()]; otherwise print the failure's text and
     exit with its code. The one place a command's [result] becomes an exit. *)
 val exit_on : (unit, failure) result -> unit

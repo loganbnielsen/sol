@@ -218,3 +218,14 @@
  (action
   (bash
    "set -u\nsol=$(pwd)/../bin/main.exe\nplatform=$(pwd)/../../platform\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nmkdir -p \"$tmp/home/framework/ocaml/sol-svc/lib\" \"$tmp/home/framework/ocaml/kafka-eio-service/lib\"\ntouch \"$tmp/home/framework/ocaml/sol-svc/lib/dune\" \"$tmp/home/framework/ocaml/kafka-eio-service/lib/dune\"\ncp -r \"$platform\" \"$tmp/home/platform\"\nchmod -R u+w \"$tmp/home\"\nrm -rf \"$tmp/home/platform/shared/observability/dashboards\" \"$tmp/home/platform/cloud/aws/cluster\"\nif SOL_HOME=\"$tmp/home\" \"$sol\" assets >\"$tmp/out\" 2>&1; then\n  echo 'sol assets passed with two assets broken' >&2; cat \"$tmp/out\" >&2; exit 1\nfi\nfailed=$(grep -c '^  FAIL ' \"$tmp/out\" || true)\nif [ \"$failed\" -lt 2 ]; then\n  echo \"sol assets reported $failed failure(s), expected both\" >&2; cat \"$tmp/out\" >&2; exit 1\nfi\ngrep -F 'FAIL  terraform' \"$tmp/out\" >/dev/null\ngrep -F 'FAIL  dashboards' \"$tmp/out\" >/dev/null\ngrep -F 'ok  terraform  platform/cloud/gcp/cluster' \"$tmp/out\" >/dev/null\ngrep -F 'asset checks failed' \"$tmp/out\" >/dev/null")))
+
+; REFAC-115 (part B): commands return their failure and exit once, at the term,
+; with the same text and exit code as before; the observability backend is an
+; enum the parser refuses (124) rather than a string the command rejects.
+
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe)
+ (action
+  (bash
+   "set -u\nsol=$(pwd)/../bin/main.exe\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nexpect() {\n  want=$1; shift\n  if \"$@\" >\"$tmp/out\" 2>\"$tmp/err\"; then got=0; else got=$?; fi\n  if [ \"$got\" != \"$want\" ]; then\n    echo \"expected exit $want, got $got: $*\" >&2; cat \"$tmp/err\" >&2; exit 1\n  fi\n}\nmkdir -p \"$tmp/outside\" \"$tmp/ws/app/payments/charge_svc\"\ncd \"$tmp/outside\"\nexpect 1 \"$sol\" check\ngrep -F 'sol: not inside a Sol workspace' \"$tmp/err\" >/dev/null\ncd \"$tmp/ws\"\ntouch sol.yml\nexpect 1 \"$sol\" check\ngrep -F 'Dockerfile is missing' \"$tmp/err\" >/dev/null\nif [ -n \"$(tail -n 1 \"$tmp/err\")\" ]; then :; else echo 'sol check printed a blank line after its findings' >&2; exit 1; fi\nexpect 124 \"$sol\" open logs --links --observability-backend bogus\ngrep -F 'bogus' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" local rollback\ngrep -Fx 'error: pass a release id, or --commit <sha>.' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" plan nope\ngrep -Fx 'error: nope: target must look like <env>/<provider>/<region>' \"$tmp/err\" >/dev/null\n")))
