@@ -2,7 +2,13 @@
 
 - **Classification:** `VERIFIED_DEFECT` (live: GCP Attempt 11's frozen bundle; the two conflicting
   declarations are in the repository and the collision is deterministic for a fresh GCP target)
-- **State:** `OPEN`
+- **State:** `FIXED_UNQUALIFIED` — fixed 2026-09-26 in `INFRA-089`. Both pairs are now one
+  Terraform-owned object each, carrying both subjects (`kubernetes_role_binding.platform_provisioner`,
+  `kubernetes_cluster_role_binding.platform_provisioner_cluster`), the two duplicate resources are
+  gone, and `internal/ci/check_kubernetes_object_ownership.sh` enforces the invariant behind the
+  defect — one Kubernetes object, one Terraform owner — with the collision mutation-tested.
+  **Not qualified:** no live run has yet shown a fresh GCP target's `platform-apply` completing, and
+  a static fix is not evidence that a cluster behaves.
 - **First identified:** 2026-09-26, GCP Attempt 11 (`main @ 17afc4b2`) — exposed only because
   FND-0060's fix let the install get past cert-manager for the first time
 - **Provider:** GCP in practice (`platform_provisioner_gcp` is empty when `local.gcp_provisioner`
@@ -73,3 +79,28 @@ design decision, deliberately left out of the run that found it.
 No remediation during Attempt 11 (no state surgery, no `terraform import`, no Helm/RBAC edit, no
 re-run of the failed step). The failed-install destruction path worked: the window closed, the
 authority bracket ran, both roots ended empty, and the provider inventory reports absent.
+
+## The fix (INFRA-089, 2026-09-26)
+
+One Kubernetes object, one Terraform owner. Both pairs became single resources with both subjects —
+the group's and the GCP provider's — because the two subjects hold the same `roleRef` in the same
+namespaces for the same lifetime, differing only in how a cloud identity reaches the API server
+(the AWS provisioner is placed in the Kubernetes group by its EKS access entry; a GKE identity
+authenticates as itself). The duplicate `..._gcp` resources are deleted, so nothing declares the
+same `(kind, namespace, name)` twice.
+
+**Second pair, found while fixing the first:** `platform_provisioner_cluster_gcp` was the same
+defect against `platform_provisioner_cluster`, cluster-scoped and with the same
+`sol-platform-provisioner-cluster` name. It never errored in Attempt 11 only because Terraform
+reported the RoleBinding failures first. Both pairs are merged.
+
+**Guard.** `internal/ci/check_kubernetes_object_ownership.sh` rejects any two resources in a
+platform root whose kind, name and namespace expressions resolve to one object, with a
+`same-object-owner:` marker as the only declared exception (required on both sides). Its mutation
+self-test includes this exact collision, the cluster-scoped one, and the one-sided marker.
+Building it surfaced why the shape matters: an over-eager name extractor silently compared mangled
+names, which would have *missed* collisions rather than reporting them — the mutation test caught
+it, and the guard now brace-matches `metadata` and stops each value at its own end.
+
+**Not remediated in the field:** nothing was imported, no state was edited, and the Attempt 11
+environment was torn down by the supported path before this change existed.
