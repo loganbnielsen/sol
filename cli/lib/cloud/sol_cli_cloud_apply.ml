@@ -40,6 +40,8 @@ type ('outputs, 'env, 'control) deps =
   ; open_window : 'outputs -> ('control option, string) result
   ; platform_vars : 'outputs -> (string list, string) result
   ; cloud_ready : 'outputs -> (unit, string) result
+  ; observe_disk_quota :
+      'outputs -> (Sol_cli_disk_quota.observation option, string) result
   ; with_cluster_access :
       'outputs -> ('env -> (unit, failure) result) -> (unit, failure) result
   ; platform_init : unit -> (unit, failure) result
@@ -136,6 +138,36 @@ let install_platform deps ~closing =
    | None -> deps.report "  bootstrap window control: not captured");
   let* platform_vars = deps.platform_vars outputs |> refused in
   let* () = deps.cloud_ready outputs |> refused in
+  (* INFRA-090 / FND-0062: the substrate exists now, so the provider's own footprint -- the
+     cluster it has already created -- is inside the observed usage, while Sol's volumes are
+     not, because none exists yet. That is the earliest point at which an observation means
+     anything and the latest at which refusing still costs nothing.
+
+     Observation is the provider's (it may declare none); the requirement is Sol's; the
+     comparison is this sequence's policy. How much quota the provider's own nodes will consume
+     is deliberately not modelled -- Attempt 12's cluster had spent the whole allowance on
+     itself before the platform asked for a byte, and predicting that would mean reproducing
+     Autopilot's scheduling behaviour. *)
+  let* () =
+    match deps.observe_disk_quota outputs with
+    | Error message -> Error (Refused message)
+    | Ok None ->
+      Ok
+        (deps.report
+           "  platform volumes: the provider declares no disk-quota observation, so this \
+            run cannot say whether they fit")
+    | Ok (Some observation) ->
+      deps.report
+        (Printf.sprintf
+           "  platform volumes: %s, and the platform's declared minimum is %d GiB (%s)"
+           (Sol_cli_disk_quota.describe observation)
+           Sol_cli_platform_storage.minimum_gb
+           (Sol_cli_platform_storage.describe ()));
+      Sol_cli_disk_quota.sufficient
+        ~observation
+        ~required_gb:Sol_cli_platform_storage.minimum_gb
+      |> refused
+  in
   deps.with_cluster_access outputs (fun env ->
     let* () = deps.platform_init () in
     (* ADR 0003: the phase is recomputed from observation before this run creates

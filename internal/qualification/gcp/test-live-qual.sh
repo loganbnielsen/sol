@@ -109,6 +109,13 @@ case "$*" in
       printf "ERROR: (gcloud) The caller does not have permission\n" >&2; exit 1
     fi
     printf '{"version":4,"serial":7,"resources":[]}\n'; exit 0 ;;
+  # INFRA-090: the region's disk quota, as the provider reports it. STUB_SSD_USAGE exhausts it.
+  *"compute regions describe"*"--format=json"*|*"--format=json"*"compute regions describe"*)
+    printf '{"name":"us-central1","quotas":[{"metric":"CPUS","limit":200.0,"usage":22.0},'
+    printf '{"metric":"DISKS_TOTAL_GB","limit":4096.0,"usage":0.0},'
+    printf '{"metric":"SSD_TOTAL_GB","limit":%s,"usage":%s}]}\n' \
+      "${STUB_SSD_LIMIT:-500}" "${STUB_SSD_USAGE:-100}"
+    exit 0 ;;
   *"dns managed-zones describe"*) printf "qual-gcp-sol-fab-dev\n"; exit 0 ;;
   *"dns managed-zones"*)        printf "qual-gcp-sol-fab-dev\n"; exit 0 ;;
   # Real gcloud warns on stderr when a filtered list is empty; its stdout stays empty. The
@@ -214,6 +221,7 @@ case "$*" in
       x509)      printf 'error: x509: certificate signed by unknown authority\n' ;;
       discovery) printf 'error: no matches for kind "Certificate" in version "cert-manager.io/v1"\n' ;;
       dial)      printf 'error: context deadline exceeded: dial tcp 10.0.0.1:10250: i/o timeout\n' ;;
+      quota)     : ;;  # delivered through the events capture below, as the provider delivers it
       *)         : ;;
     esac
     ;;
@@ -226,6 +234,10 @@ case "$*" in
     esac
     ;;
   *"get events"*)
+    if [ "${STUB_KUBE_SIGNATURE:-none}" = "quota" ]; then
+      printf 'LAST SEEN   TYPE      REASON               OBJECT               MESSAGE\n'
+      printf '5m          Warning   ProvisioningFailed   persistentvolumeclaim/storage-loki-0   rpc error: code = Unavailable desc = CreateVolume failed: failed to insert zonal disk: (QUOTA_EXCEEDED): Quota '"'"'SSD_TOTAL_GB'"'"' exceeded\n'
+    fi
     if [ "${STUB_KUBE_SIGNATURE:-none}" = "stale-scheduling" ]; then
       printf 'LAST SEEN   TYPE      REASON             OBJECT                                     MESSAGE\n'
       printf '11m         Warning   FailedScheduling   pod/cert-manager-startupapicheck-xd44b     0/3 nodes are available: 3 Insufficient cpu.\n'
@@ -309,6 +321,30 @@ else
 fi
 present "$TMP/cloud-ok.logs/inventory-pre.tsv" "a pre-teardown provider inventory is captured (H6)"
 present "$TMP/cloud-ok.logs/ready-phases.txt" "the Ready-path phase lines are captured"
+# INFRA-090 closing FND-0061's gap: a successful install captures the provisioner bindings, so
+# "both subjects on one object" is observed rather than inferred. The cluster has to exist for
+# there to be any binding to read, so this is its own case.
+run_case ready-bindings cloud STUB_CLUSTER_EXISTS=1
+# The capture is asserted through the arguments it ran with: the kubectl stub records argv and
+# answers nothing, so an empty file would prove only that a file was touched.
+if grep -qF 'get clusterrolebinding sol-platform-provisioner-cluster -o json' \
+    "$TMP/ready-bindings.argv" 2>/dev/null; then
+  ok "a successful install reads the cluster-scoped provisioner binding"
+else
+  no "a successful install reads the cluster-scoped provisioner binding" "the kubectl call" "none"
+fi
+if grep -qF 'get rolebinding -A --field-selector metadata.name=sol-platform-provisioner -o json' \
+    "$TMP/ready-bindings.argv" 2>/dev/null; then
+  ok "and reads the namespaced bindings"
+else
+  no "and reads the namespaced bindings" "the kubectl call" "none"
+fi
+# And the run records the provider's own disk-quota reading, independently of Sol.
+if grep -q 'disk-quota' "$TMP/ready-bindings.logs/inventory-pre.tsv" 2>/dev/null; then
+  ok "the inventory records the provider's disk quota"
+else
+  no "the inventory records the provider's disk quota" "a row" "none"
+fi
 has "the bundle manifest names the state snapshot" "terraform state (cloud)" "$TMP/cloud-ok.logs/evidence-manifest.txt"
 
 # ── 2. teardown: exactly once, correct variables, target removed only after verification ──
@@ -415,6 +451,15 @@ run_case class-exists cloud STUB_APPLY_RC=1 STUB_APPLY_ERROR=already-exists STUB
   STUB_KUBE_SIGNATURE=stale-scheduling
 has "a Terraform already-exists failure classifies as TERRAFORM_ALREADY_EXISTS, not scheduling" \
   "classification: TERRAFORM_ALREADY_EXISTS" "$TMP/class-exists.logs/fnd0010-classification.txt"
+# The provider's own refusal names the cause; pod symptoms are downstream of it.
+run_case class-quota cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNATURE=quota
+has "a provider CreateVolume quota refusal classifies as PROVIDER_DISK_QUOTA_EXCEEDED" \
+  "classification: PROVIDER_DISK_QUOTA_EXCEEDED" "$TMP/class-quota.logs/fnd0010-classification.txt"
+run_case class-quota-and-scheduling cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 \
+  STUB_KUBE_SIGNATURE=stale-scheduling
+has "with only ambient symptoms the classification still says it is ambient" \
+  "classification: SCHEDULING_AMBIENT" "$TMP/class-quota-and-scheduling.logs/fnd0010-classification.txt"
+
 run_case class-ambient cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNATURE=stale-scheduling
 has "with no direct signature, ambient scheduling evidence is labelled as ambient" \
   "classification: SCHEDULING_AMBIENT" "$TMP/class-ambient.logs/fnd0010-classification.txt"

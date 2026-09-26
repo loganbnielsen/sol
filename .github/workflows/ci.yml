@@ -223,6 +223,16 @@ jobs:
           internal/ci/check_kubernetes_object_ownership.sh .
           internal/ci/test_kubernetes_object_ownership_check.sh
 
+      - name: Platform storage requirement (INFRA-090)
+        # The lifecycle compares a provider's *observed* disk quota against Sol's *declared*
+        # minimum before the platform asks for a volume (FND-0062). A declaration that has
+        # drifted from the platform it describes would read as a guarantee while being a false
+        # floor, so this pins the parts to the module's own declarations.
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: |
+          internal/ci/check_platform_storage_requirement.sh .
+          internal/ci/test_platform_storage_requirement_check.sh
+
       - name: gcloud interface and install-authority guard
         # Attempt 2 lost a live run to `gcloud container clusters get-credentials
         # --kubeconfig`, a flag that does not exist: the offline harness could not

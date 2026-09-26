@@ -296,3 +296,52 @@ let credentials ~operation ~leaves_target_standing : (unit, string) result =
          operation
          standing_remark)
 ;;
+
+(* INFRA-090: the project the cloud root published, so the quota is read from the project Sol
+   actually deployed into rather than from whatever gcloud happens to have active. A missing
+   field is an error: an unknown project is not a project with room. *)
+let project_id_of_outputs_json text : (string, string) result =
+  let open Yojson.Safe.Util in
+  match Yojson.Safe.from_string text with
+  | exception Yojson.Json_error message ->
+    Error (Printf.sprintf "invalid outputs JSON: %s" message)
+  | json ->
+    (match json |> member "project_id" with
+     | `String value when String.trim value <> "" -> Ok (String.trim value)
+     | `Assoc [ ("value", `String value) ] when String.trim value <> "" ->
+       Ok (String.trim value)
+     | _ -> Error "the cloud root published no project_id")
+;;
+
+(* INFRA-090: the region's own disk-quota reading, for the lifecycle check that runs after the
+   cluster exists and before the platform asks for a volume. Read-only, one regional call: the
+   quota that governs the platform's storage class is regional, so a zonal reading would be the
+   wrong number.
+
+   The observation is deliberately thin -- the provider's limit and usage -- and the comparison
+   against Sol's declared minimum happens in the lifecycle, not here. *)
+let disk_quota ~outputs_json ~region : (Sol_cli_disk_quota.observation, string) result =
+  let ( let* ) = Result.bind in
+  let* project = project_id_of_outputs_json outputs_json in
+  match
+    Sol_cli_process.run_success
+      (Sol_cli_process.cmd
+         [ "gcloud"
+         ; "compute"
+         ; "regions"
+         ; "describe"
+         ; region
+         ; "--project"
+         ; project
+         ; "--format=json"
+         ])
+  with
+  | Ok result -> Sol_cli_disk_quota.observation_of_json result.Sol_cli_process.stdout
+  | Error error ->
+    Error
+      (Printf.sprintf
+         "could not read the disk quota of region %s in project %s: %s"
+         region
+         project
+         (Sol_cli_process.error_to_string error))
+;;
