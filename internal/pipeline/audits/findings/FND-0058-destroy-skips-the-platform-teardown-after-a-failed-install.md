@@ -3,7 +3,7 @@
 - **Classification:** `VERIFIED_DEFECT` (live: GCP Attempt 8, 2026-09-25 — the destroy
   reported the degradation itself, and the platform state snapshot agrees), against
   DEC-045's destroy-authority contract and `INV-DESTROY-1`'s failed-`PlatformInstalling` case
-- **State:** `FIXED_UNQUALIFIED` (fixed 2026-09-25; offline evidence only — see the correction at the end)
+- **State:** `QUALIFIED` (live, 2026-09-26 — see the live qualification at the end)
 - **First identified:** 2026-09-25, GCP Attempt 8 (`docs/qualification/2026-09-25-gcp-attempt8.md`)
 - **Provider:** GCP (mechanism is provider-neutral; observed on GCP)
 - **Derived ticket:** `INFRA-079`
@@ -121,3 +121,31 @@ and **not** live. Qualification requires a target actually left in failed `Platf
 destroyed by `sol cloud destroy` alone with both root states empty afterwards. The preserved Attempt 8
 state cannot demonstrate it (its substrate is already gone) and is `INFRA-082`'s subject; it was left
 untouched.
+
+## Live qualification (2026-09-26)
+
+The fix is qualified live, in the exact state that exposed it. A fresh target
+(`qual9/gcp/us-central1`, cluster `sol-qual-gcp-9`, `main @ 67bdef8e`) was taken to failed
+`PlatformInstalling` by the normal lifecycle (`platform-prerequisites-apply` FAILED, 414.1 s;
+FND-0010's known `TLS_CA_OR_CERTIFICATE`), its install-time window closed on the failure path
+(`provisioner-bootstrap-access-remove` ok, 10.6 s), and then `sol cloud destroy` alone:
+
+| Claim | Live evidence |
+|---|---|
+| the destroy reacquired **only** its declared authority | acquisition plan record: `kubernetes_cluster_role_binding.provisioner_bootstrap_admin[0] will be created`; apply record: `Creating...`, `Creation complete after 0s`, **`Apply complete! Resources: 1 added, 0 changed, 0 destroyed`** |
+| the acquisition was *permitted* (where Attempt 8 refused it) | `[destroy-reconciliation-apply-plan] ok (9.9 s)` → apply ok (4.5 s); no `refused before apply` anywhere |
+| the platform teardown actually ran | `[platform-destroy] ok (77.2 s)` — Attempt 8 skipped it |
+| the authority was removed | removal plan record: `…[0] will be destroyed (because index [0] is out of range for count)`; apply ok (3.3 s) |
+| the substrate was destroyed | `[terraform-destroy] ok (324.5 s)` |
+| **both roots ended empty** | cloud `sol/qual9/gcp/us-central1/cloud.tfstate`: **0 resources**, serial 16; platform `…/platform.tfstate`: **0 resources**, serial 5 |
+| no target construction occurred | the acquisition apply's only action was the authority (1 added, 0 changed, 0 destroyed) |
+| no billable residue; durable survived | independent inventory: every billable class absent, quota 0; state bucket and DNS zone present, delegation resolving |
+
+The destroy ended `Done.` — no degraded preparation. Three inventory classes read non-ABSENT and are
+the pre-recorded `INFRA-080` verdict refinements, reproduced exactly (deleted-SA `PERMISSION_DENIED`
+for the provisioner account and its binding; `deleted: true` for the soft-deleted custom role); none
+is billable and no new interpretation was improvised for them.
+
+Record: `docs/qualification/2026-09-26-gcp-fnd0058-live-qualification.md`; bundle
+`/tmp/sol-gcp-qual-9-attempt`. This qualifies the failed-`PlatformInstalling` case of
+`INV-DESTROY-1`. It does **not** qualify destruction from `Ready` or from any other state.
