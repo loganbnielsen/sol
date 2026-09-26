@@ -305,18 +305,21 @@ auditable attempts.
 
 ### Production Profile
 
-A target claims a production contract only by selecting one in its own target
-file. An environment named `prod` claims nothing.
+A target claims a production contract only by selecting one, on its environment
+or on the target itself in `sol/environments.yml`. An environment named `prod`
+claims nothing.
 
 ```yaml
-# sol/<env>/<provider>/<region>.yml
-target:
+# sol/environments.yml
+pilot:
   profile: production-single-region
+  targets:
+    aws/us-east-1:
 ```
 
-`profile` is accepted only in a target file. `sol.yml`'s `target:` section is
-inherited by every target, so a profile there is rejected rather than opting
-every environment in.
+`profile` is accepted on an environment or a target, never in `sol.yml`: `sol.yml`'s
+`target:` section is inherited by every target, so a profile there is rejected
+rather than opting every environment in.
 
 A target that selects `production-single-region` goes through a preflight on
 every `sol deploy` (including `--dry-run`) before any cluster call, lease or

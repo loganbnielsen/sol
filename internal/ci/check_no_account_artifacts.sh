@@ -60,8 +60,10 @@ fi
 # Qualification scratch must not be committable under the repository.
 # .terraform.lock.hcl is deliberately tracked for the provider roots (provider
 # pinning), so it is not scratch. What must never be tracked is a provisioned
-# target or an operator's backend override.
-scratch="$(git ls-files | grep -E '(^|/)(sol/(qual|qual2)/|backend\.tf$)' || true)"
+# target or an operator's backend override. FEAT-100: a provisioned target now
+# lives in sol/environments.local.yml (account identity, never committed); the
+# old sol/qual*/ target directories stay refused too.
+scratch="$(git ls-files | grep -E '(^|/)(sol/(qual[0-9]*)/|sol/environments\.local\.yml$|backend\.tf$)' || true)"
 if [ -n "$scratch" ]; then
   echo "FAIL: qualification scratch files are tracked by git:" >&2
   echo "$scratch" >&2

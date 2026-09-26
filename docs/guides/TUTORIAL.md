@@ -151,7 +151,8 @@ pluto/
   .dockerignore                   ← excludes _build/ and .git/ from Docker build context
   README.md                       ← workspace-level docs
 
-  sol/prod/aws/us-east-1.yml      ← placeholder deploy target — rename to your real target
+  sol/environments.yml            ← deploy environments and their targets (a placeholder prod/aws/us-east-1)
+  .gitignore                      ← ignores _build/ and sol/environments.local.yml
 
   .github/workflows/
     deploy.yml                    ← CI deploy workflow
@@ -615,9 +616,36 @@ sol cloud destroy TARGET [--plan|--apply]         destroy cloud infrastructure v
 
 The `sol deploy` command is `sol up` without the build step. It is designed to run in CI after images have already been built and pushed to a production registry.
 
-`sol deploy` takes a required `<env>/<provider>/<region>` target — same convention as `sol plan` — and the target file it resolves must exist first, even if empty. `sol new workspace` scaffolds a placeholder at `sol/prod/aws/us-east-1.yml`; rename it to match your real target if it isn't `prod/aws/us-east-1`.
+`sol deploy` takes a required `<env>/<provider>/<region>` target — same convention as `sol plan` — and that target must be declared in `sol/environments.yml` first, even with an empty body. `sol new workspace` scaffolds a placeholder `prod` environment with an `aws/us-east-1` target; rename them to match your real environment and target.
 
-Set `target.cluster_issuer` in that file to override the cert-manager ClusterIssuer used for service Ingress TLS; it defaults to `letsencrypt-prod`, matching `platform/cloud/modules/platform`.
+### Environments and targets
+
+`sol/environments.yml` holds each environment's policy once, and the targets it runs on:
+
+```yaml
+prod:
+  base_domain: example.com            # environment policy, shared by its targets
+  letsencrypt_email: ops@example.com
+  services:
+    charge_svc:
+      scale: { min: 2 }
+  targets:
+    aws/us-east-1:
+      cluster_name: acme-prod         # where it runs: identity is per target
+      services:
+        charge_svc:
+          scale: { max: 6 }
+```
+
+`sol deploy prod/aws/us-east-1` resolves `sol.yml` → `prod` → `aws/us-east-1`, a lower layer overriding a higher one. `scale` and provider blocks (`aws:`, `gcp:`) merge key by key, so the example deploys `charge_svc` with `min: 2` and `max: 6`. `omit: true` at any layer sticks. A few rules keep environments from drifting:
+
+- `cluster_name`, `kube_context`, `kubeconfig`, `cluster_endpoint_cidr` and `registry` identify one cluster, so they are set on a target, never on an environment.
+- What your application *is* (a service's `type`, `path`, `language`, `uses`; a resource's `type` and keys) belongs in `sol.yml`. An environment or target only adjusts `size`, `scale` and `omit`, and only for services and resources `sol.yml` declares.
+- `profile` is chosen per environment or target, never in `sol.yml`.
+
+Values you would rather not commit — an account's registry, role ARNs — go in `sol/environments.local.yml`, which the scaffolded `.gitignore` excludes. It has the same shape and may add keys the tracked file leaves unset, or whole environments and targets; setting a key the tracked file already sets is an error, so a value you see in `sol/environments.yml` is always the one in use.
+
+Set `cluster_issuer` on the environment or target to override the cert-manager ClusterIssuer used for service Ingress TLS; it defaults to `letsencrypt-prod`, matching `platform/cloud/modules/platform`.
 
 ### Inspecting a target
 

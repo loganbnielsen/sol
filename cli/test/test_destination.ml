@@ -47,8 +47,8 @@ let write_base () = write "sol.yml" "project: pluto\n"
    makes it reachable (FEAT-063). *)
 let write_target kube_context =
   mkdir_p "sol/prod/aws";
-  write
-    "sol/prod/aws/us-east-1.yml"
+  Targets_fixture.write
+    ~target:"prod/aws/us-east-1"
     (Printf.sprintf
        "target:\n  cluster_name: prod-cluster\n%s"
        (match kube_context with

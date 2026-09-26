@@ -244,8 +244,8 @@ for the first time, and then stopped one grant short of a workload. Three things
 have changed since, and Run 8 is the first attempt that can spend them:
 
 **The target:** start from `docs/qualification/run8-aws-target.example.yml` and copy
-it to `examples/pluto/sol/qual/aws/us-east-1.yml` with real values. That path is
-deliberately **untracked** — the repository forbids tracking `sol/qual/`
+it to `examples/pluto/sol/environments.local.yml` with real values (FEAT-100). That
+file is deliberately **untracked** — gitignored, and the repository forbids tracking it
 (`internal/ci/check_no_account_artifacts.sh`), so the run record
 (`docs/qualification/2026-09-20-run8-aws.md`) carries the target's contents rather than
 relying on the revision to pin it.

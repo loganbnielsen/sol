@@ -154,8 +154,9 @@ let new_workspace name =
          (v @ [ "repo_dir", "app/comms/notify_worker"; "binary", name ^ "-notify-worker" ])
          tpl_dockerfile);
   write ~path:(name ^ "/.dockerignore") ~content:tpl_dockerignore;
-  (* deploy target placeholder — sol deploy refuses to run without one *)
-  write ~path:(name ^ "/sol/prod/aws/us-east-1.yml") ~content:tpl_deploy_target;
+  (* deploy environments -- sol deploy refuses an undeclared target (FEAT-100) *)
+  write ~path:(name ^ "/sol/environments.yml") ~content:tpl_environments;
+  write ~path:(name ^ "/.gitignore") ~content:tpl_gitignore;
   (* db *)
   write
     ~path:(name ^ "/db/migrations/0001_notifications.sql")
@@ -170,7 +171,7 @@ let new_workspace name =
   write ~path:(name ^ "/" ^ Filename.basename name ^ ".opam") ~content:(subst v ws_opam);
   Printf.printf
     {|
-Done. 30 files generated.
+Done. 31 files generated.
 
   cd %s
   eval $(opam env) && dune build   # verify the scaffold compiles
@@ -189,9 +190,9 @@ Done. 30 files generated.
 
   CI/CD: set REGISTRY + REGISTRY_USER + REGISTRY_PASSWORD secrets in GitHub, then
          push to main — .github/workflows/sol-ci.yml handles build/test/deploy.
-         sol/prod/aws/us-east-1.yml is a placeholder deploy target — rename
-         it to your real <env>/<provider>/<region> and set the SOL_TARGET
-         repository variable to match before your first 'sol deploy'.
+         sol/environments.yml declares a placeholder prod/aws/us-east-1 target —
+         rename it to your real <env> and <provider>/<region>, and set the
+         SOL_TARGET repository variable to match, before your first 'sol deploy'.
 |}
     name
     name

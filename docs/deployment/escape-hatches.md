@@ -30,7 +30,7 @@ per-service — they apply to the entire workspace for a given environment.
 
 Use `sol deploy <env>/<provider>/<region> --registry <url> --image-tag <tag>`
 or the equivalent environment target configuration
-(`sol/<env>/<provider>/<region>.yml`'s own `registry`, used as the default
+(the target's own `registry` in `sol/environments.yml`, used as the default
 when `--registry` is omitted).
 
 ### Level 3 — GitOps emit (`sol deploy --emit-to`)

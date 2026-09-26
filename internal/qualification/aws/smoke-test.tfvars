@@ -4,8 +4,9 @@
 # flat hourly charge still applies regardless of node sizing.
 #
 # Usage: internal/qualification/aws/live-smoke.sh, which generates an untracked
-# smoke target (sol/qual2/aws/us-east-1.yml in the workspace, cluster and
-# platform only) pointing here by absolute path, and removes it on exit:
+# smoke environment (qual2, target aws/us-east-1, cluster and platform only) in
+# the workspace's gitignored sol/environments.local.yml, pointing here by absolute
+# path, and removes it on exit:
 #
 #   AWS_PROFILE=<profile> CLUSTER=sol-smoke-<you> \
 #     internal/qualification/aws/live-smoke.sh

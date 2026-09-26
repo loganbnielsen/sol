@@ -63,4 +63,27 @@ if "$guard" "$tmp" >/dev/null 2>&1; then
   exit 1
 fi
 
+
+git -C "$tmp" rm -q --cached "$tmp/account.md"
+rm -f "$tmp/account.md"
+
+# FEAT-100: a tracked sol/environments.local.yml, the file that holds a provisioned
+# target's real identity, must fail; so must a per-attempt sol/qualN/ directory
+# (INFRA-084 keys each attempt), which the old qual|qual2 pattern missed.
+for scratch in "examples/app/sol/environments.local.yml" "examples/app/sol/qual9/gcp/us-central1.yml"; do
+  mkdir -p "$tmp/$(dirname "$scratch")"
+  printf 'x: 1\n' >"$tmp/$scratch"
+  git -C "$tmp" add -A
+  if "$guard" "$tmp" >/dev/null 2>&1; then
+    echo "guard accepted a tracked $scratch" >&2
+    exit 1
+  fi
+  git -C "$tmp" rm -q --cached "$tmp/$scratch"
+  rm -f "$tmp/$scratch"
+done
+# A tracked sol/environments.yml (the committed, account-free file) must pass.
+mkdir -p "$tmp/examples/app/sol"
+printf 'prod:\n  targets:\n    aws/us-east-1:\n' >"$tmp/examples/app/sol/environments.yml"
+git -C "$tmp" add -A
+"$guard" "$tmp" >/dev/null
 echo "account-artifact guard mutation test: ok"

@@ -695,15 +695,15 @@ let config_vars ~strict target =
            contract. Same reasoning as cmd_deploy.ml's check: a typo'd or
            unintended target must not silently inherit sol.yml's shared
            defaults and terraform apply/destroy anyway. *)
-          if strict && not (Sys.file_exists (Sol_cli_config.target_file resolved_target))
+          if strict && not (Sol_cli_config.target_declared resolved_target)
           then (
             Printf.eprintf
-              "error: no %s for target %S -- terraform apply/destroy require an explicit \
-               target file, even an empty one, so a typo'd or unintended target can't \
-               silently inherit sol.yml's shared defaults and mutate infrastructure \
-               anyway.\n"
-              (Sol_cli_config.target_file resolved_target)
-              target_path;
+              "error: target %S is not declared in %s -- terraform apply/destroy require \
+               an explicit target, even an empty one, so a typo'd or unintended target \
+               can't silently inherit sol.yml's shared defaults and mutate \
+               infrastructure anyway.\n"
+              target_path
+              (Sol_cli_config.target_source resolved_target);
             exit 1);
           (match Sol_cli_terraform_vars.of_config ~workspace:(workspace_name ()) cfg with
            | Error msg ->
