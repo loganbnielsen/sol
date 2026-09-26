@@ -222,7 +222,7 @@ let test_up_request_falls_back_to_git_sha () =
       ~tag:None
       ~confirm_group_change:false
       ~keep_releases:20
-      ~git_sha:(fun () -> "sha-deadbeef")
+      ~git_sha:(fun () -> Ok "sha-deadbeef")
   in
   match r with
   | Ok req ->
@@ -233,6 +233,95 @@ let test_up_request_falls_back_to_git_sha () =
   | Error msg -> Alcotest.fail msg
 ;;
 
+(* BUG-058: an unresolvable SHA. A local run falls back loudly; a deploy refuses. *)
+let git_unavailable () = Error "fatal: not a git repository"
+
+let contains ~needle haystack =
+  let n = String.length needle in
+  let rec go i =
+    i + n <= String.length haystack && (String.sub haystack i n = needle || go (i + 1))
+  in
+  go 0
+;;
+
+let test_up_request_warns_on_fallback_tag () =
+  match
+    Sol_cli_command_request.make_up_request
+      ~scope:None
+      ~dry_run:false
+      ~tag:None
+      ~confirm_group_change:false
+      ~keep_releases:20
+      ~git_sha:git_unavailable
+  with
+  | Error msg -> Alcotest.fail msg
+  | Ok req ->
+    Alcotest.(check string) "fallback tag" "dev" req.image_tag;
+    (match req.image_tag_warning with
+     | None -> Alcotest.fail "expected a warning for the fallback tag"
+     | Some w ->
+       Alcotest.(check bool)
+         ("names git's reason: " ^ w)
+         true
+         (contains ~needle:"not a git repository" w);
+       Alcotest.(check bool)
+         ("names --image-tag: " ^ w)
+         true
+         (contains ~needle:"--image-tag" w))
+;;
+
+let test_up_request_resolved_sha_has_no_warning () =
+  match
+    Sol_cli_command_request.make_up_request
+      ~scope:None
+      ~dry_run:false
+      ~tag:None
+      ~confirm_group_change:false
+      ~keep_releases:20
+      ~git_sha:(fun () -> Ok "abc1234")
+  with
+  | Error msg -> Alcotest.fail msg
+  | Ok req -> Alcotest.(check (option string)) "no warning" None req.image_tag_warning
+;;
+
+let deploy_without_tag ~git_sha =
+  Sol_cli_command_request.make_deploy_request
+    ~target:"prod/aws/us-east-1"
+    ~scope:None
+    ~dry_run:false
+    ~emit_to:None
+    ~emit_plan_to:None
+    ~image_tag:None
+    ~image_refs:[]
+    ~registry:None
+    ~secret_backend:None
+    ~confirm_group_change:false
+    ~loki_push_url:None
+    ~keep_releases:20
+    ~git_sha
+;;
+
+let test_deploy_request_refuses_unresolvable_sha () =
+  match deploy_without_tag ~git_sha:git_unavailable with
+  | Ok req -> Alcotest.fail ("deploy tagged images " ^ req.image_tag)
+  | Error msg ->
+    Alcotest.(check bool)
+      ("names --image-tag: " ^ msg)
+      true
+      (contains ~needle:"--image-tag" msg);
+    Alcotest.(check bool)
+      ("names git's reason: " ^ msg)
+      true
+      (contains ~needle:"not a git repository" msg)
+;;
+
+(* Positive control: the same request with a resolvable SHA is accepted. *)
+let test_deploy_request_tags_with_resolved_sha () =
+  match deploy_without_tag ~git_sha:(fun () -> Ok "abc1234") with
+  | Error msg -> Alcotest.fail msg
+  | Ok req -> Alcotest.(check string) "sha tag" "abc1234" req.image_tag
+;;
+
 let test_up_request_preserves_mode () =
   let r =
     Sol_cli_command_request.make_up_request
@@ -241,7 +330,7 @@ let test_up_request_preserves_mode () =
       ~tag:(Some "t")
       ~confirm_group_change:false
       ~keep_releases:20
-      ~git_sha:(fun () -> "")
+      ~git_sha:(fun () -> Ok "")
   in
   match r with
   | Ok req ->
@@ -292,7 +381,7 @@ let test_deploy_request_local_mode_builds_request () =
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
-      ~git_sha:(fun () -> "")
+      ~git_sha:(fun () -> Ok "")
   in
   match r with
   | Ok req ->
@@ -320,7 +409,7 @@ let test_deploy_request_gitops_action () =
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
-      ~git_sha:(fun () -> "")
+      ~git_sha:(fun () -> Ok "")
   in
   match r with
   | Ok req ->
@@ -348,7 +437,7 @@ let test_deploy_request_dry_run_action_preserves_emit_to () =
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
-      ~git_sha:(fun () -> "")
+      ~git_sha:(fun () -> Ok "")
   in
   match r with
   | Ok req ->
@@ -379,7 +468,7 @@ let test_deploy_request_rejects_empty_target () =
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
-      ~git_sha:(fun () -> "")
+      ~git_sha:(fun () -> Ok "")
   in
   Alcotest.(check bool) "empty target rejected" true (Result.is_error r)
 ;;
@@ -402,7 +491,7 @@ let test_deploy_request_registry_omitted_stays_none () =
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
-      ~git_sha:(fun () -> "")
+      ~git_sha:(fun () -> Ok "")
   in
   match r with
   | Ok req ->
@@ -431,7 +520,7 @@ let test_deploy_request_accepts_image_refs () =
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
-      ~git_sha:(fun () -> "")
+      ~git_sha:(fun () -> Ok "")
   in
   match r with
   | Ok req ->
@@ -457,7 +546,7 @@ let test_deploy_request_rejects_mutable_image_ref () =
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:20
-      ~git_sha:(fun () -> "")
+      ~git_sha:(fun () -> Ok "")
   in
   Alcotest.(check bool) "mutable reference rejected" true (Result.is_error r)
 ;;
@@ -1068,7 +1157,7 @@ let test_up_request_rejects_nonpositive_keep () =
       ~tag:(Some "t")
       ~confirm_group_change:false
       ~keep_releases:0
-      ~git_sha:(fun () -> "")
+      ~git_sha:(fun () -> Ok "")
   in
   Alcotest.(check bool) "zero keep rejected" true (Result.is_error r)
 ;;
@@ -1088,7 +1177,7 @@ let test_deploy_request_rejects_nonpositive_keep () =
       ~confirm_group_change:false
       ~loki_push_url:None
       ~keep_releases:0
-      ~git_sha:(fun () -> "")
+      ~git_sha:(fun () -> Ok "")
   in
   Alcotest.(check bool) "zero keep rejected" true (Result.is_error r)
 ;;
@@ -1106,6 +1195,22 @@ let () =
             `Quick
             test_up_request_falls_back_to_git_sha
         ; Alcotest.test_case "up: mode preserved" `Quick test_up_request_preserves_mode
+        ; Alcotest.test_case
+            "up: unresolvable sha warns (BUG-058)"
+            `Quick
+            test_up_request_warns_on_fallback_tag
+        ; Alcotest.test_case
+            "up: resolved sha, no warning"
+            `Quick
+            test_up_request_resolved_sha_has_no_warning
+        ; Alcotest.test_case
+            "deploy: unresolvable sha refused (BUG-058)"
+            `Quick
+            test_deploy_request_refuses_unresolvable_sha
+        ; Alcotest.test_case
+            "deploy: resolved sha tags images"
+            `Quick
+            test_deploy_request_tags_with_resolved_sha
         ; Alcotest.test_case
             "deploy: explicit tag used"
             `Quick

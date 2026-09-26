@@ -16,15 +16,6 @@ let enter_workspace () =
     exit 1
 ;;
 
-let git_sha () =
-  match
-    Sol_cli_process.run (Sol_cli_process.cmd [ "git"; "rev-parse"; "--short"; "HEAD" ])
-  with
-  | Ok r when r.Sol_cli_process.exit_code = 0 && r.Sol_cli_process.stdout <> "" ->
-    r.Sol_cli_process.stdout
-  | _ -> "dev"
-;;
-
 (* ── Pipeline ────────────────────────────────────────────────────────────── *)
 
 let print_header ~workspace ~sha ~dry_run =
@@ -526,9 +517,11 @@ let cmd =
             ~tag
             ~confirm_group_change
             ~keep_releases
-            ~git_sha
+            ~git_sha:Sol_cli_command_request.git_sha
         with
-        | Ok req -> run req
+        | Ok req ->
+          Option.iter (Printf.eprintf "warning: %s\n") req.image_tag_warning;
+          run req
         | Error msg ->
           Printf.eprintf "error: %s\n" msg;
           exit 1)
