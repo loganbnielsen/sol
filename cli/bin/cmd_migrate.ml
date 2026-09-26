@@ -223,21 +223,20 @@ let fatal_p fmt = Printf.ksprintf fatal fmt
    sync by hand, same as every other place this block is duplicated. *)
 let sol_cli_dockerfile =
   {docker|FROM ocaml/opam:ubuntu-24.04-ocaml-5.4 AS build
-RUN sudo apt-get update && sudo apt-get install -y librdkafka-dev libpq-dev libssl-dev
-RUN opam repository set-url default https://opam.ocaml.org && \
-    opam update && \
-    opam pin add obs-eio https://github.com/loganbnielsen/obs-eio.git#main -y && \
-    opam pin add obs-loki-eio https://github.com/loganbnielsen/obs-loki-eio.git#main -y && \
-    opam pin add pg-eio https://github.com/loganbnielsen/pg-eio.git#main -y
-RUN opam install -y --no-self-upgrade \
-    eio eio_main cmdliner yojson otoml ptime \
-    caqti-eio caqti-driver-postgresql
+RUN sudo apt-get update && sudo apt-get install -y librdkafka-dev libpq-dev libssl-dev libgmp-dev pkg-config
+RUN opam repository set-url default https://opam.ocaml.org && opam update
+# BUG-059: the support libraries at exactly the revisions this checkout declares,
+# pinned by the same script CI and release builds use -- never a branch.
+COPY --chown=opam:opam support-refs.txt internal/ci/pin-support-packages.sh /home/opam/pins/
+RUN bash /home/opam/pins/pin-support-packages.sh /home/opam/pins/support-refs.txt
+COPY --chown=opam:opam sol.opam /home/opam/pins/
+RUN cd /home/opam/pins && opam install -y --no-self-upgrade --deps-only ./sol.opam
 COPY --chown=opam:opam . /workspace
 WORKDIR /workspace
 RUN opam exec -- dune build cli/bin/main.exe
 
 FROM ubuntu:24.04
-RUN apt-get update && apt-get install -y libpq5 ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y libpq5 libgmp10 ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build /workspace/_build/default/cli/bin/main.exe /usr/local/bin/sol
 ENTRYPOINT ["/usr/local/bin/sol"]
 |docker}

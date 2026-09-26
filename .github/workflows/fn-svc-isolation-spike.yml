@@ -27,24 +27,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.opam/download-cache
-          key: opam-download-${{ runner.os }}-${{ hashFiles('.github/actions/pin-opam-packages/action.yml', '.github/actions/pin-opam-packages/packages.txt', 'dune-project', 'sol.opam') }}
+          key: opam-download-${{ runner.os }}-${{ hashFiles('.github/actions/pin-opam-packages/action.yml', 'support-refs.txt', 'dune-project', 'sol.opam') }}
           restore-keys: |
             opam-download-${{ runner.os }}-
-
-      - name: Resolve support-package commits
-        id: support
-        run: |
-          {
-            echo "refs<<SUPPORT_REFS"
-            internal/ci/resolve-support-packages.sh
-            echo "SUPPORT_REFS"
-          } >> "$GITHUB_OUTPUT"
 
       - name: Pin extracted opam packages
         timeout-minutes: 10
         uses: ./.github/actions/pin-opam-packages
-        with:
-          refs: ${{ steps.support.outputs.refs }}
 
       - name: Install OCaml dependencies
         timeout-minutes: 20

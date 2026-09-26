@@ -1,0 +1,6 @@
+# BUG-059: the repository root is the build context of the source-built migration
+# runner (cmd_migrate.ml's sol_cli_dockerfile). The build compiles from sources;
+# a local _build tree (gigabytes) and git metadata are never inputs to it.
+_build/
+**/_build/
+.git
