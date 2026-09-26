@@ -104,6 +104,14 @@ A fresh GCP attempt (new target key, its own state) in which:
 `kube-system` after the change would mean the value did not reach the components (chart path or
 value name wrong), which the run's captured manifests would then say directly.
 
+## Status
+
+Promoted from `BACKLOG` on 2026-09-26: the operator approved this fix on the FND-0060 analysis
+review ("Approved. The existing Attempt 10 evidence establishes FND-0060 strongly enough to
+implement the proposed fix without another evidence-only live run"), with two conditions recorded
+there: the value is platform configuration rather than provider-conditional lifecycle behaviour,
+and FND-0060 must land fixed-but-unqualified until live evidence exists.
+
 ## Explicitly out of scope
 
 No live mutation without separate authorization. No change to FND-0010's timeouts, to the authority
