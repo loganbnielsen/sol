@@ -42,8 +42,13 @@ that acquires it.
 
 The same investigation found an adjacent defect of the same class (declared addresses compared as
 strings where eligibility and reporting are decided): `FND-0059` / `INFRA-081`. The
-no-authority-mechanism declaration gap is filed as `INFRA-080`'s sibling item below rather than
-speculatively implemented.
+no-authority-mechanism declaration gap — a provider cannot say "no mechanism" — is `INFRA-083`; it
+was deliberately left unimplemented, because the only two registered providers have a mechanism and
+the change would add an untested branch to the bracket FND-0047 hardened.
+
+This ticket was later corrected by `INFRA-083`: an earlier revision of it referred to that gap as
+"`INFRA-080`'s sibling item", which was not a real reference. `INFRA-080` is the harness verdict
+refinements ticket and does not cover it.
 
 ## What landed
 
