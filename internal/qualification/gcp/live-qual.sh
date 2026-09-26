@@ -297,15 +297,22 @@ YAML
   say "wrote target $TARGET_FILE"
 }
 
+# No create_dns_zone here: the durable root owns the zone (DEC-043) and the var-file says so.
+# An explicit override is how the tfvars and the CLI came to disagree -- two sources for one
+# setting, each individually reasonable, and the override silently won.
+#
+# No provisioner_impersonators either, and the reason is the same one: a target that names
+# `provisioner_impersonator` in its `gcp` block is authoritative -- Sol routes it from the
+# target (`sol_keys`) -- so passing it here as well would be a second source for one setting.
+# This argument list used to carry it *behind a comment*, which ended the printf: the shell
+# then ran the line as a command, printed `--var=provisioner_impersonators=[...]: command not
+# found`, and dropped the argument (INFRA-080 item C; harmless live, because the target's
+# value arrived anyway, and exactly the kind of dead line a reader would trust).
 cloud_vars() {
   printf '%s\n' \
     "--var-file=$TFVARS" \
     "--var=cluster_name=$CLUSTER" \
-    "--var=base_domain=$BASE_DOMAIN" \
-    # No create_dns_zone here: the durable root owns the zone (DEC-043) and the var-file
-    # says so. An explicit override is how the tfvars and the CLI came to disagree -- two
-    # sources for one setting, each individually reasonable, and the override silently won.
-    "--var=provisioner_impersonators=[\"$IMPERSONATOR\"]"
+    "--var=base_domain=$BASE_DOMAIN"
 }
 
 # ── absence verification: the provider's own answer, not Terraform's ──────────
@@ -431,6 +438,21 @@ reconcile_durable_root() {
 
 # ── provider inventory: the provider's own answer, not Terraform's ────────────
 #
+# Every row is a POSTCONDITION with an observable that establishes it, and the vocabulary is
+# PRESENT / ABSENT / UNKNOWN with UNKNOWN always failing:
+#
+#   PRESENT   the provider still has the thing the postcondition says is gone
+#   ABSENT    provider evidence establishes the postcondition (see each probe for which
+#             evidence, named in the row's detail)
+#   UNKNOWN   the read did not establish anything either way -- never read as ABSENT
+#
+# Most classes are answered by [provider_probe] below: a describe that returns the object, or
+# a list plus the provider's own not-found vocabulary. Three of them cannot be, because after
+# a successful teardown their objects are provider-deleted and a describe of a deleted object
+# answers ambiguously (Attempts 8 and 9 both captured `PERMISSION_DENIED ... (or it may not
+# exist)`); those have their own probes, each naming the observable it uses and preserving the
+# raw response beside the verdict.
+#
 # One tri-state probe. "The read failed" is not "the resource is gone": a permission
 # failure, an expired credential or a transport error all exit non-zero without saying
 # anything about the resource, and reading those as ABSENT is how a postcondition that is
@@ -467,6 +489,131 @@ provider_probe() { # provider_probe <class> <expect> <command...>
   printf '%s\t%s\t%s\t%s\n' \
     "$class" "$verdict" "$expect" "$(head -1 "$err" "$out" 2>/dev/null | cut -c1-100)" >>"$INVENTORY_TSV"
   say "    $class: $verdict"
+}
+
+# ── Postconditions that a `describe` cannot answer ───────────────────────────
+#
+# A verdict is about a POSTCONDITION, never about a command's exit status. Three classes
+# need more than "is this object there?" once a teardown has succeeded: the objects are
+# provider-deleted, and GCP's answer to a describe of a deleted object is ambiguous --
+# `PERMISSION_DENIED: Permission 'iam.serviceAccounts.get' denied on resource (or it may
+# not exist)`, which establishes nothing either way. Attempt 8 and Attempt 9 both observed
+# that, and both observed the harness refusing to call it absence (correctly). Reading it as
+# absence would be the one thing this inventory exists to prevent; the fix is to ask a
+# question the provider answers authoritatively.
+#
+#   class                    postcondition                        observable
+#   service-account-*        the identity is not ACTIVE           the project's authoritative
+#                                                                 list of active accounts
+#   impersonator-binding     the operator holds no USABLE          the identity's active state
+#                            impersonation authority on the        (a deleted identity cannot
+#                            target's provisioner identity         be impersonated) plus the
+#                                                                  identity's policy when it
+#                                                                  still exists
+#   custom-role              no ACTIVE role of that name           `describe` with the
+#                                                                 provider's own `deleted`
+#                                                                 marker
+#
+# The raw response of every read below is preserved in the bundle, so a reviewer sees what
+# GCP returned, which rule interpreted it, and why the verdict followed.
+
+verdict_row() { # verdict_row <class> <verdict> <expect> <detail>
+  printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >>"$INVENTORY_TSV"
+  say "    $1: $2${4:+ ($4)}"
+}
+
+# Postcondition: the target's provisioner identity is no longer active.
+# The list is authoritative and answers unambiguously; it fails closed (an unreadable list
+# is UNKNOWN, never "no accounts"). The per-account `describe` is kept as raw evidence -- it
+# is what Attempt 9's bundle shows, and it is unreadable once the account is deleted.
+PROVISIONER_SA_VERDICT=""
+probe_service_account() { # probe_service_account <class> <email>
+  local class="$1" email="$2"
+  local out="$LOG_DIR/inventory-$class.log" err="$LOG_DIR/inventory-$class.stderr" verdict detail=""
+  gcloud iam service-accounts describe "$email" --project "$PROJECT" --format='value(email)' \
+    >"$LOG_DIR/inventory-$class.describe.log" 2>&1 || true
+  if gcloud iam service-accounts list --project "$PROJECT" --format='value(email)' \
+       >"$out" 2>"$err"; then
+    if grep -qxF "$email" "$out"; then
+      verdict=PRESENT; detail="active in the project's service-account list"
+    else
+      verdict=ABSENT
+      # Portable on purpose: this runs on bare CI runners too, where ripgrep is not
+      # guaranteed -- and a missing tool would silently take the other branch, which is how
+      # the first revision of this line failed there.
+      if grep -qE 'PERMISSION_DENIED|NOT_FOUND|Unknown service account' \
+           "$LOG_DIR/inventory-$class.describe.log" 2>/dev/null; then
+        detail="not in the active list, and its describe is unreadable (deleted identity) — see the raw logs"
+      else
+        detail="absent from the active list"
+      fi
+    fi
+  else
+    verdict=UNKNOWN; detail="the authoritative service-account list could not be read"
+  fi
+  PROVISIONER_SA_VERDICT="$verdict"
+  verdict_row "$class" "$verdict" absent "$detail"
+}
+
+# Postcondition: the operator holds no usable impersonation authority over the provisioner
+# identity.
+#   identity not active -> the grant cannot be exercised: GCP cannot mint a token for a
+#     deleted service account, and the SA-level policy is deleted with the identity it was
+#     attached to. The rule is named in the detail, and the policy read is attempted anyway
+#     so the bundle carries what the provider actually answered. This is the implication the
+#     qualification contract establishes for this class; it is pinned by
+#     test-live-qual.sh, including the case where the identity is still active.
+#   identity active     -> the identity's own policy is the narrowest read: the impersonator's
+#     bindings on it, or nothing, or unreadable.
+probe_impersonator_binding() { # probe_impersonator_binding <class> <identity-verdict> <email>
+  local class="$1" identity_verdict="$2" email="$3"
+  local out="$LOG_DIR/inventory-$class.log" err="$LOG_DIR/inventory-$class.stderr" verdict detail=""
+  if [ "$identity_verdict" = "ABSENT" ]; then
+    gcloud iam service-accounts get-iam-policy "$email" --project "$PROJECT" \
+      --flatten='bindings[].members' --filter="bindings.members=$IMPERSONATOR" \
+      --format='value(bindings.role)' >"$LOG_DIR/inventory-$class.policy.log" 2>&1 || true
+    verdict=ABSENT
+    detail="the identity the grant is on is not active, so it cannot be impersonated (raw policy read kept)"
+  elif [ "$identity_verdict" = "PRESENT" ]; then
+    if gcloud iam service-accounts get-iam-policy "$email" --project "$PROJECT" \
+         --flatten='bindings[].members' --filter="bindings.members=$IMPERSONATOR" \
+         --format='value(bindings.role)' >"$out" 2>"$err"; then
+      if [ -n "$(tr -d '[:space:]' <"$out")" ]; then
+        verdict=PRESENT; detail="the impersonator still holds a role on the identity"
+      else
+        verdict=ABSENT; detail="the identity is active and no impersonator binding remains on it"
+      fi
+    else
+      verdict=UNKNOWN; detail="the identity is active and its policy could not be read"
+    fi
+  else
+    verdict=UNKNOWN; detail="the identity's own state could not be determined"
+  fi
+  verdict_row "$class" "$verdict" absent "$detail"
+}
+
+# Postcondition: no ACTIVE custom role of this name.
+# GCP soft-deletes custom roles into an undelete window: `describe` then reports
+# `deleted: true`. That is the provider's "deleted" — distinct from an active role and from
+# an unreadable one — and it satisfies a teardown postcondition. The raw marker is kept in
+# the log rather than hidden, so nothing pretends the object literally vanished.
+probe_custom_role() { # probe_custom_role <class> <role-id>
+  local class="$1" role_id="$2"
+  local out="$LOG_DIR/inventory-$class.log" err="$LOG_DIR/inventory-$class.stderr" verdict detail="" line marker
+  if gcloud iam roles describe "$role_id" --project "$PROJECT" --format='value(name,deleted)' \
+       >"$out" 2>"$err"; then
+    line="$(head -1 "$out")"
+    marker="$(printf '%s' "$line" | cut -s -f2 | tr -d '[:space:]' | tr 'A-Z' 'a-z')"
+    case "$marker" in
+      true)  verdict=ABSENT; detail="provider-deleted (kept in GCP's undelete window): $line" ;;
+      *)     verdict=PRESENT; detail="an active custom role of this name exists: $line" ;;
+    esac
+  elif grep -qiE '(not[_. -]?found|does not exist|was not found|404|No URLs matched)' "$err" "$out"; then
+    verdict=ABSENT; detail="not found"
+  else
+    verdict=UNKNOWN; detail="the role read failed without saying not-found"
+  fi
+  verdict_row "$class" "$verdict" absent "$detail"
 }
 
 # The names below are the GCP root's own (`platform/cloud/gcp/cluster/main.tf`) and the state
@@ -539,12 +686,20 @@ inventory() { # inventory <pre|post>
   provider_probe disks          absent  gcloud compute disks list --project "$PROJECT" --filter="name~$CLUSTER" --format='value(name)'
   provider_probe forwarding-rules absent gcloud compute forwarding-rules list --project "$PROJECT" --filter="name~$CLUSTER" --format='value(name)'
   provider_probe artifact-registry absent gcloud artifacts repositories describe "$CLUSTER" --location "$REGION" --project "$PROJECT" --format='value(name)'
-  provider_probe service-account-provisioner absent gcloud iam service-accounts describe "$GCP_PROVISIONER_SA" --project "$PROJECT" --format='value(email)'
+  # FND/INFRA-080: after teardown this account is provider-deleted, and its `describe` answers
+  # `PERMISSION_DENIED ... (or it may not exist)` — unreadable, not absent. The authoritative
+  # active-account list is the observable that answers the postcondition.
+  probe_service_account service-account-provisioner "$GCP_PROVISIONER_SA"
   provider_probe service-account-loki        absent gcloud iam service-accounts describe "$CLUSTER-loki@$PROJECT.iam.gserviceaccount.com" --project "$PROJECT" --format='value(email)'
   provider_probe service-account-thanos      absent gcloud iam service-accounts describe "$CLUSTER-thanos@$PROJECT.iam.gserviceaccount.com" --project "$PROJECT" --format='value(email)'
-  provider_probe custom-role    absent  gcloud iam roles describe "$GCP_ROLE_ID" --project "$PROJECT" --format='value(name)'
+  # INFRA-080 B: the provider keeps a deleted custom role in its undelete window and says so
+  # with `deleted: true`; that is deleted, not present-and-active.
+  probe_custom_role custom-role "$GCP_ROLE_ID"
   provider_probe role-binding   absent  gcloud projects get-iam-policy "$PROJECT" --flatten='bindings[].members' --filter="bindings.members=serviceAccount:$GCP_PROVISIONER_SA" --format='value(bindings.role)'
-  provider_probe impersonator-binding absent gcloud iam service-accounts get-iam-policy "$GCP_PROVISIONER_SA" --project "$PROJECT" --format='value(bindings.role)'
+  # INFRA-080 A: the binding is a policy on an identity. Once that identity is deleted the
+  # policy read is unanswerable, so the class asks about the identity's own state (and reads
+  # the policy when it still exists), naming the implication in the verdict's detail.
+  probe_impersonator_binding impersonator-binding "$PROVISIONER_SA_VERDICT" "$GCP_PROVISIONER_SA"
   provider_probe peering        absent  gcloud compute networks peerings list --project "$PROJECT" --filter="name~servicenetworking" --format='value(name)'
   provider_probe state-bucket   present gcloud storage buckets describe "gs://$STATE_BUCKET" --project "$PROJECT" --format='value(name)'
   provider_probe dns-zone       present gcloud dns managed-zones describe "$ZONE_NAME" --project "$PROJECT" --format='value(name,dnsName)'
