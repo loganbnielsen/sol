@@ -5,11 +5,13 @@
   (established 2026-09-26 from Attempt 9's product log + the pinned chart upstream; see
   *Cause established* below). The API-server → webhook *reachability* branch this finding
   opened with is refuted: the x509 proves the API server reached the webhook.
-- **State:** `OPEN` — the 2026-09-26 remedy (give the release the check's own designed budget)
-  is implemented and was **validated live in Attempt 10**, but it is not sufficient: the check
-  ran its full 600s window and still failed, because the CA bundle was never injected. Root cause
-  established 2026-09-26 by forensic re-analysis of Attempt 10 (below); the fix is proposed in
-  `INFRA-088`.
+- **State:** `FIXED_UNQUALIFIED` — the remedy (give the release the check's own designed budget) is
+  implemented, and Attempt 10 **validates it live in the only sense it claims**: the release no
+  longer cuts the check short and `startupapicheck` received its full 10-minute polling window
+  (601s of polls, 15:17:28 → 15:27:29). It does **not** demonstrate successful cert-manager
+  readiness or TLS trust — the check still failed, because the CA bundle was never injected. That
+  remaining chain is FND-0060, and its fix is `INFRA-088`; no qualification is claimed here until a
+  run shows the check **Succeed** and the install continuing.
 - **First identified:** 2026-09-19 (GCP Attempt 4; analysed in this pass)
 - **Last verified:** 2026-09-26, `main @ 3d3eb0aa`, from the Attempt 9 evidence bundle
 - **Provider:** GCP / GKE (Autopilot, private nodes)
@@ -272,9 +274,14 @@ the reason it was never injected is the leader-election namespace. The budget re
 necessary (Attempt 9's 300s provider timeout cut the check at 414s, before it could even exhaust
 its own window), and Attempt 10 proves it landed: the check got its full 600s.
 
-**Fix proposed in `INFRA-088`**: set `global.leaderElection.namespace` to the release namespace in
-`helm_release.cert_manager` (one declared value), with a guard over the module and a discriminating
-live run (leases acquired in `cert-manager`, `caBundle` populated, check Job Succeeds). No live
-mutation without separate authorization.
+**Fix proposed in `INFRA-088`** (now the finding FND-0060): set `global.leaderElection.namespace`
+to the release namespace in `helm_release.cert_manager` (one declared value), with a guard over the
+module and a discriminating live run (leases acquired in `cert-manager`, `caBundle` populated, check
+Job Succeeds). No live mutation without separate authorization.
+
+**This finding's own claim, kept narrow:** the budget remedy works as designed and Attempt 10 shows
+the check getting that budget. Whether cert-manager becomes *ready* — the thing the check exists to
+establish — is not yet demonstrated by any run, and this finding is not qualified until one shows
+it.
 
 **Falsified in this pass:** `FND-0060` (the ~9½-minute "scheduling delay" reading of the same run).
