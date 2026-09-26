@@ -112,7 +112,7 @@ let logs_url ~base_url ~workspace scope =
      reader nothing about whether that meant "no logs" or "wrong query".
 
      The labels are on real streams: Alloy promotes the taxonomy pod labels
-     (platform/cloud/modules/platform/alloy/logs.alloy.tftpl). Verified against a running
+     (platform/shared/observability/alloy/logs.alloy.tftpl). Verified against a running
      local substrate, where the deployed units' series carry
      workspace/domain/service/primitive/release alongside namespace, so
      `{workspace="pluto"}` and `{workspace="pluto", domain="demo-ts"}` select

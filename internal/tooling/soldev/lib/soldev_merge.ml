@@ -487,7 +487,7 @@ let post_merge_action_of_rc = function
 ;;
 
 let run_merge_finish ~ticket_id ~merge_sha =
-  let perf_rc = Soldev_shell.run_cmd "./platform/local/scripts/run_tests.sh" in
+  let perf_rc = Soldev_shell.run_cmd "./internal/tooling/scripts/run_tests.sh" in
   match post_merge_action_of_rc perf_rc with
   | Report_local_failure rc ->
     Printf.eprintf
@@ -516,7 +516,7 @@ let run_merge_finish ~ticket_id ~merge_sha =
     ignore
       (Soldev_shell.run_cmd
          ~echo:false
-         "./platform/local/scripts/run_tests.sh --update-baseline");
+         "./internal/tooling/scripts/run_tests.sh --update-baseline");
     let message =
       if perf_rc = 2
       then

@@ -779,7 +779,7 @@ cluster observable instead, with the right data source per layer:
 **Follow-up work — status corrected 2026-09-11.** This paragraph previously described the work above as "not yet ticketed". Three of the four items had in fact already landed, and the fourth is now ticketed:
 
 - **Kubernetes-derived diagnosis** in `sol status` — done (OBS-001; `Sol_cli_status.service_diagnoses_named` → `Sol_cli_rollout_diagnosis.diagnose_service_live`).
-- **Pod-stdout collection** — done, and with **Alloy** rather than promtail: `platform/cloud/modules/platform/alloy/logs.alloy.tftpl` uses `discovery.kubernetes "pods"` + `loki.source.kubernetes`, so it tails pod logs through the Kubernetes API instead of depending on app-pushed lines.
+- **Pod-stdout collection** — done, and with **Alloy** rather than promtail: `platform/shared/observability/alloy/logs.alloy.tftpl` uses `discovery.kubernetes "pods"` + `loki.source.kubernetes`, so it tails pod logs through the Kubernetes API instead of depending on app-pushed lines.
 - **`sol logs` runtime fallback** — done: triggered from `Sol_cli_loki.classify_process_error` (timeout, connection, other) at five call sites.
 - **Run IDs and local `.sol/runs/` logging for `sol deploy`** — done (FEAT-055, landed 2026-09-12): `sol up`/`sol deploy` create a run before doing any work, print the run id and `.sol/runs/<run-id>/` directory, and a failing phase prints the run id, log path, and tail — recoverable after the terminal that ran it is gone.
 

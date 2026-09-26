@@ -3,11 +3,11 @@
 # and fails on performance regressions against a committed baseline.
 #
 # Usage:
-#   ./platform/local/scripts/run_tests.sh                    # full run
-#   ./platform/local/scripts/run_tests.sh --update-baseline  # run and record timings as new baseline
-#   ./platform/local/scripts/run_tests.sh --no-infra         # skip infra setup (already running)
-#   ./platform/local/scripts/run_tests.sh --reset-infra      # recreate Sol-owned local infra first
-#   ./platform/local/scripts/run_tests.sh unit kafka         # run specific suites only
+#   ./internal/tooling/scripts/run_tests.sh                    # full run
+#   ./internal/tooling/scripts/run_tests.sh --update-baseline  # run and record timings as new baseline
+#   ./internal/tooling/scripts/run_tests.sh --no-infra         # skip infra setup (already running)
+#   ./internal/tooling/scripts/run_tests.sh --reset-infra      # recreate Sol-owned local infra first
+#   ./internal/tooling/scripts/run_tests.sh unit kafka         # run specific suites only
 #
 # Exit codes:
 #   0  all suites passed, no regression
@@ -157,9 +157,9 @@ ensure_infra() {
     esac
   done
 
-  if [ $needs_kafka    -eq 1 ]; then info "Kafka (Redpanda)";  bash "$SCRIPT_DIR/ensure-broker.sh";  fi
-  if [ $needs_loki     -eq 1 ]; then info "Loki";              bash "$SCRIPT_DIR/ensure-loki.sh";    fi
-  if [ $needs_postgres -eq 1 ]; then info "PostgreSQL";        bash "$SCRIPT_DIR/ensure-postgres.sh"; fi
+  if [ $needs_kafka    -eq 1 ]; then info "Kafka (Redpanda)";  bash "$REPO_ROOT/platform/local/scripts/ensure-broker.sh";  fi
+  if [ $needs_loki     -eq 1 ]; then info "Loki";              bash "$REPO_ROOT/platform/local/scripts/ensure-loki.sh";    fi
+  if [ $needs_postgres -eq 1 ]; then info "PostgreSQL";        bash "$REPO_ROOT/platform/local/scripts/ensure-postgres.sh"; fi
 }
 
 reset_infra() {

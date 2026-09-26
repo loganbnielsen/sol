@@ -1,4 +1,0 @@
-{
-  "pushgateway": { "enabled": true },
-  "alertmanager": { "enabled": true }
-}

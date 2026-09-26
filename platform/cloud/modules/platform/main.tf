@@ -253,7 +253,7 @@ resource "helm_release" "redpanda" {
   # (image v26.1.17) -- FRIC-010's evaluated target, one minor behind newest
   # and within support. A cluster still on v24.2.7 must be recreated rather
   # than upgraded in place. NOTE: this bump also flips console.enabled to false
-  # (values-common.json, a chart values.schema.json workaround) -- on an
+  # (the common layer, a chart values.schema.json workaround) -- on an
   # already-deployed environment, `terraform apply` tears Redpanda Console's
   # Deployment/Service/ConfigMap/ServiceAccount down, not just skips installing
   # them. Verified safe (ClusterIP-only, no ingress, nothing in Sol references
@@ -264,9 +264,9 @@ resource "helm_release" "redpanda" {
   timeout   = 600
 
   # CODE_LAYER-010: tls.enabled/config.cluster.auto_create_topics_enabled
-  # now live in platform/components/redpanda/values-common.json (ADR 0001),
+  # now live in platform/shared/components.json (redpanda.common) (ADR 0001),
   # shared with cmd_local.ml's own Redpanda install. statefulset.replicas/
-  # resources.cpu.cores also appear in values-local.json (for cmd_local.ml's
+  # resources.cpu.cores also appear in the local layer (for cmd_local.ml's
   # benefit only) but are safely overridden here regardless, since this
   # block is the LAST entry in the values list. What's left here
   # (replicas/cpu/memory/persistence) is genuinely Terraform-only --
@@ -275,8 +275,8 @@ resource "helm_release" "redpanda" {
   #
   # storage.persistentVolume.size and cmd_local.ml's external.*/
   # listeners.kafka.* block are deliberately NOT in
-  # platform/components/redpanda/ at all (neither values-common.json nor
-  # values-local.json) -- this resource never overrides them, so putting
+  # platform/shared/components.json (redpanda) at all (neither the common layer nor
+  # the local layer) -- this resource never overrides them, so putting
   # them in a file this resource reads would have silently shipped
   # cmd_local.ml's dev-only values (a 1Gi PVC size vs. the chart's 20Gi
   # default, and an external listener advertising "localhost") to every
@@ -350,7 +350,7 @@ resource "helm_release" "postgresql" {
   }
 
   # CODE_LAYER-010: auth.database now lives in
-  # platform/components/postgresql/values-common.json (ADR 0001), shared
+  # platform/shared/components.json (postgresql.common) (ADR 0001), shared
   # with cmd_local.ml's own PostgreSQL install -- was a hardcoded "dev" `set`
   # in both files independently before. postgresPassword/persistence.enabled
   # stay Terraform-only `set`s: the former is a real secret
@@ -402,11 +402,11 @@ locals {
     t => [for r in values(var.managed_resource_dashboards) : r if r.resource_type == t][0]
   }
 
-  # ADR 0001 / CODE_LAYER-005: platform/components/<name>/ is now the shared
+  # ADR 0001 / CODE_LAYER-005: platform/shared/components.json is now the shared
   # source of truth for Helm values that used to be independently
   # hand-duplicated here and in cmd_local.ml (sol local infra up). "local" is the same
   # profile cmd_local.ml uses for its k3d cluster; "durable" is the
-  # self_hosted_durable, S3-backed profile. Each component's values-common
+  # self_hosted_durable, S3-backed profile. Each component's common layer
   # + values-<profile>.json are read via jsondecode(file(...)) -- per the
   # ADR -- and re-encoded with jsonencode so a malformed JSON file fails
   # `terraform plan`/`validate` instead of surfacing only at `helm upgrade`
@@ -416,8 +416,13 @@ locals {
   # own values list already deep-merges multiple entries in order (see the
   # existing pattern below for helm_release.prometheus), which is exactly
   # the common -> profile -> bindings precedence the ADR specifies.
-  platform_components_dir = "${path.module}/../../../components"
-  observability_profile   = var.observability_backend == "self_hosted_durable" ? "durable" : "local"
+  # REFAC-102: every component's Helm values in one file, keyed
+  # <component>.{common,local,durable} -- by profile, never by env or provider.
+  platform_components = jsondecode(file("${path.module}/../../../shared/components.json"))
+  # REFAC-101: dashboards and the Alloy config are shared with local dev
+  # (Sol_cli_dev_observability reads the same files), so they live outside this module.
+  observability_dir     = "${path.module}/../../../shared/observability"
+  observability_profile = var.observability_backend == "self_hosted_durable" ? "durable" : "local"
   # CODE_LAYER-010: same value as observability_profile above -- there is
   # currently only one local/durable switch in this module
   # (observability_backend), so Redpanda/PostgreSQL's profile selection
@@ -431,35 +436,35 @@ locals {
   platform_profile = local.observability_profile
 
   loki_component_values = [
-    jsonencode(jsondecode(file("${local.platform_components_dir}/loki/values-common.json"))),
-    jsonencode(jsondecode(file("${local.platform_components_dir}/loki/values-${local.observability_profile}.json"))),
+    jsonencode(local.platform_components.loki.common),
+    jsonencode(local.platform_components.loki[local.observability_profile]),
   ]
   grafana_component_values = [
-    jsonencode(jsondecode(file("${local.platform_components_dir}/grafana/values-common.json"))),
-    jsonencode(jsondecode(file("${local.platform_components_dir}/grafana/values-${local.observability_profile}.json"))),
+    jsonencode(local.platform_components.grafana.common),
+    jsonencode(local.platform_components.grafana[local.observability_profile]),
   ]
   tempo_component_values = [
-    jsonencode(jsondecode(file("${local.platform_components_dir}/tempo/values-common.json"))),
-    jsonencode(jsondecode(file("${local.platform_components_dir}/tempo/values-${local.observability_profile}.json"))),
+    jsonencode(local.platform_components.tempo.common),
+    jsonencode(local.platform_components.tempo[local.observability_profile]),
   ]
   prometheus_component_values = [
-    jsonencode(jsondecode(file("${local.platform_components_dir}/prometheus/values-common.json"))),
-    jsonencode(jsondecode(file("${local.platform_components_dir}/prometheus/values-${local.observability_profile}.json"))),
+    jsonencode(local.platform_components.prometheus.common),
+    jsonencode(local.platform_components.prometheus[local.observability_profile]),
   ]
   # CODE_LAYER-010: Redpanda/PostgreSQL have no distinct local/durable
   # branch of their own today (their persistence lives behind separate
   # var.redpanda_persistent_storage/var.postgres_persistent_storage
   # booleans) -- see local.platform_profile above for why this reads that
   # alias rather than observability_profile directly. Both
-  # values-durable.json files are empty today; revisit if that ever
+  # durable layers are empty today; revisit if that ever
   # needs to diverge.
   redpanda_component_values = [
-    jsonencode(jsondecode(file("${local.platform_components_dir}/redpanda/values-common.json"))),
-    jsonencode(jsondecode(file("${local.platform_components_dir}/redpanda/values-${local.platform_profile}.json"))),
+    jsonencode(local.platform_components.redpanda.common),
+    jsonencode(local.platform_components.redpanda[local.platform_profile]),
   ]
   postgresql_component_values = [
-    jsonencode(jsondecode(file("${local.platform_components_dir}/postgresql/values-common.json"))),
-    jsonencode(jsondecode(file("${local.platform_components_dir}/postgresql/values-${local.platform_profile}.json"))),
+    jsonencode(local.platform_components.postgresql.common),
+    jsonencode(local.platform_components.postgresql[local.platform_profile]),
   ]
 
   # Alloy's loki.write target -- installed unconditionally (unlike Loki and
@@ -475,7 +480,7 @@ locals {
   observability_taxonomy_labels = ["workspace", "domain", "service", "primitive", "release"]
 
   # Infrastructure bindings (ADR 0001): the generic "use S3, tsdb schema v13"
-  # shape now lives in platform/components/loki/values-durable.json --
+  # shape now lives in platform/shared/components.json (loki.durable) --
   # everything left here is Kubernetes-level-only wiring supplied from Layer
   # 1 outputs (an actual bucket name, an actual IAM role ARN), which the ADR
   # says must never be baked into a component's own files. bucketNames/s3
@@ -570,7 +575,7 @@ resource "helm_release" "loki" {
   # Chart shape (Monolithic/1-replica, gateway off, single-tenant,
   # BUG-006/BUG-008/BUG-013's replication_factor: 1 fix, filesystem vs S3
   # storage/schema) now lives in
-  # platform/components/loki/{values-common,values-local,values-durable}.json
+  # platform/shared/components.json (loki.{common,local,durable})
   # (ADR 0001 / CODE_LAYER-005) -- the same "local" profile file cmd_local.ml's
   # `sol local infra up` reads for its own Loki install, so this no longer needs a
   # parallel, independently-maintained copy (that's the exact gap BUG-016
@@ -580,9 +585,9 @@ resource "helm_release" "loki" {
   # Persistence stays a `set` override here: var.loki_persistent_storage is
   # a Terraform-only operator knob with no cmd_local.ml equivalent, and `set`
   # always wins over `values` regardless of which profile file is selected
-  # below. values-local.json (only) also carries singleBinary.persistence.
+  # below. the local layer (only) also carries singleBinary.persistence.
   # enabled: false, purely for cmd_local.ml's benefit (it has no var to
-  # override with) -- values-durable.json deliberately omits this key so
+  # override with) -- the durable layer deliberately omits this key so
   # there's exactly one place that actually controls persistence for this
   # resource, not two.
   set {
@@ -621,7 +626,7 @@ resource "helm_release" "grafana" {
 
   # sidecar.dashboards/datasources.enabled (OBS-011: loki-stack's bundled
   # subchart did this implicitly; this standalone chart needs it explicit)
-  # now lives in platform/components/grafana/values-common.json (ADR 0001 /
+  # now lives in platform/shared/components.json (grafana.common) (ADR 0001 /
   # CODE_LAYER-005), shared with cmd_local.ml's own Grafana install.
   #
   # OBS-044: serviceAccount.annotations is the chart's own documented IRSA
@@ -697,7 +702,7 @@ resource "kubernetes_config_map" "grafana_managed_resource_dashboards" {
   }
 
   data = {
-    "managed-resource-${each.key}.json" = templatefile("${path.module}/dashboards/managed-resource.json.tftpl", {
+    "managed-resource-${each.key}.json" = templatefile("${local.observability_dir}/dashboards/managed-resource.json.tftpl", {
       resource_type        = each.key
       cloudwatch_namespace = each.value.cloudwatch_namespace
       dimension_name       = each.value.dimension_name
@@ -750,7 +755,7 @@ resource "helm_release" "alloy" {
   values = [yamlencode({
     alloy = {
       configMap = {
-        content = templatefile("${path.module}/alloy/logs.alloy.tftpl", {
+        content = templatefile("${local.observability_dir}/alloy/logs.alloy.tftpl", {
           loki_push_url                 = local.loki_push_url
           loki_push_basic_auth_username = local.loki_push_basic_auth_username
           loki_push_basic_auth_password = local.loki_push_basic_auth_password
@@ -790,7 +795,7 @@ resource "helm_release" "tempo" {
   version    = "2.3.0"
   namespace  = kubernetes_namespace.monitoring.metadata[0].name
 
-  # platform/components/tempo/ has nothing to say today -- both this
+  # platform/shared/components.json (tempo) has nothing to say today -- both this
   # resource and cmd_local.ml's Tempo install already agreed by relying on the
   # chart's own defaults. Wired up anyway (ADR 0001 / CODE_LAYER-005) so the
   # CI guardrail covers Tempo's next value the same way it now covers
@@ -934,10 +939,10 @@ resource "kubernetes_config_map" "grafana_dashboards" {
   }
 
   data = {
-    "workspace-overview.json" = file("${path.module}/dashboards/workspace-overview.json")
-    "service-template.json"   = file("${path.module}/dashboards/service-template.json")
-    "domain-overview.json"    = file("${path.module}/dashboards/domain-overview.json")
-    "release-timeline.json"   = file("${path.module}/dashboards/release-timeline.json")
+    "workspace-overview.json" = file("${local.observability_dir}/dashboards/workspace-overview.json")
+    "service-template.json"   = file("${local.observability_dir}/dashboards/service-template.json")
+    "domain-overview.json"    = file("${local.observability_dir}/dashboards/domain-overview.json")
+    "release-timeline.json"   = file("${local.observability_dir}/dashboards/release-timeline.json")
   }
 
   depends_on = [helm_release.grafana]
@@ -1385,9 +1390,9 @@ resource "helm_release" "prometheus" {
   # singleBinary.persistence.enabled above: var.prometheus_persistent_storage
   # is a Terraform-only operator knob with no cmd_local.ml equivalent, and
   # `set` always wins over `values` regardless of which profile file is
-  # selected. values-local.json (only) also carries
+  # selected. the local layer (only) also carries
   # server.persistentVolume.enabled: false, purely for cmd_local.ml's benefit
-  # (it has no var to override with) -- values-durable.json deliberately
+  # (it has no var to override with) -- the durable layer deliberately
   # omits this key so there's exactly one place that actually controls
   # persistence for this resource, not two.
   set {
@@ -1402,7 +1407,7 @@ resource "helm_release" "prometheus" {
   }
 
   # pushgateway.enabled/alertmanager.enabled now live in
-  # platform/components/prometheus/values-common.json (ADR 0001 /
+  # platform/shared/components.json (prometheus.common) (ADR 0001 /
   # CODE_LAYER-005), shared with cmd_local.ml's own Prometheus install --
   # previously `true` here unconditionally and relied on as the chart's own
   # default over in cmd_local.ml, so making both paths state it explicitly

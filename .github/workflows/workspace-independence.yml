@@ -23,7 +23,7 @@ on:
     branches: [main]
     paths:
       - 'examples/**'
-      - 'platform/local/scripts/prove-workspace-independence.sh'
+      - 'internal/tooling/scripts/prove-workspace-independence.sh'
       - '.github/workflows/workspace-independence.yml'
 
 permissions:
@@ -66,10 +66,10 @@ jobs:
             librdkafka-dev libpq-dev libssl-dev libgmp-dev pkg-config
 
       - name: Prove examples/pluto builds without this repository
-        run: bash platform/local/scripts/prove-workspace-independence.sh examples/pluto
+        run: bash internal/tooling/scripts/prove-workspace-independence.sh examples/pluto
 
       - name: Prove internal/fixtures/venus builds without this repository
-        run: PROOF_SWITCH=sol-workspace-proof bash platform/local/scripts/prove-workspace-independence.sh internal/fixtures/venus
+        run: PROOF_SWITCH=sol-workspace-proof bash internal/tooling/scripts/prove-workspace-independence.sh internal/fixtures/venus
 
   # Proves the TypeScript half. Cheap: the workspace resolves @sol-fab/* from npm
   # as ordinary semver dependencies, so there is no compiler toolchain and no git

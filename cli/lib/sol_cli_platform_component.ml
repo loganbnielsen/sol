@@ -1,15 +1,29 @@
-let component_dir sol_home component =
-  Filename.concat sol_home (Filename.concat "platform/components" component)
-;;
+(* REFAC-102: every component's values live in one file, keyed
+   <component>.{common,local,durable}. *)
+let components_file sol_home = Filename.concat sol_home "platform/shared/components.json"
 
-let read_json path =
+let read_components path =
   if not (Sys.file_exists path)
-  then `Assoc []
+  then (
+    Printf.eprintf "error: %s is missing.\n" path;
+    exit 1)
   else (
     try Yojson.Safe.from_file path with
     | Yojson.Json_error msg ->
       Printf.eprintf "error: %s is not valid JSON: %s\n" path msg;
       exit 1)
+;;
+
+(* A component with nothing to say for a layer (tempo's empty profiles, or a
+   component the file does not name) contributes an empty object, not an error. *)
+let layer components ~component ~name =
+  match components with
+  | `Assoc fields ->
+    (match List.assoc_opt component fields with
+     | Some (`Assoc layers) ->
+       Option.value (List.assoc_opt name layers) ~default:(`Assoc [])
+     | _ -> `Assoc [])
+  | _ -> `Assoc []
 ;;
 
 (* Deep merge: [override]'s object keys win over [base]'s on conflict, with
@@ -42,16 +56,14 @@ let merged_values_yaml ~component ~profile =
     | Some dir -> dir
     | None ->
       Printf.eprintf
-        "error: cannot locate the Sol monorepo root to read platform/components/%s.\n"
-        component;
+        "error: cannot locate the Sol monorepo root to read \
+         platform/shared/components.json.\n";
       Printf.eprintf "  Set SOL_HOME to your Sol checkout and re-run:\n";
       Printf.eprintf "    export SOL_HOME=/path/to/sol\n";
       exit 1
   in
-  let dir = component_dir sol_home component in
-  let common = read_json (Filename.concat dir "values-common.json") in
-  let profile_json =
-    read_json (Filename.concat dir (Printf.sprintf "values-%s.json" profile))
-  in
+  let components = read_components (components_file sol_home) in
+  let common = layer components ~component ~name:"common" in
+  let profile_json = layer components ~component ~name:profile in
   Yojson.Safe.pretty_to_string (deep_merge common profile_json)
 ;;

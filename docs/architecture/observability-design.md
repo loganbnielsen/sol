@@ -242,7 +242,7 @@ Links
 Grafana is the default self-hosted dashboard shell today. Sol provisions one
 workspace dashboard entrypoint plus scoped dashboards, as JSON in the tree:
 
-- workspace overview — `platform/cloud/modules/platform/dashboards/workspace-overview.json`
+- workspace overview — `platform/shared/observability/dashboards/workspace-overview.json`
 - domain overview — `dashboards/domain-overview.json`
 - service dashboard for service-specific metrics — `dashboards/service-template.json`
 - service logs view — Loki-backed log panels inside the dashboards above, plus the

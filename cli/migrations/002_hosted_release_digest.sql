@@ -1,1 +1,0 @@
-ALTER TABLE hosted_releases ADD COLUMN IF NOT EXISTS digest TEXT;

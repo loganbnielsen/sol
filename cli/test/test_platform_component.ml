@@ -1,6 +1,6 @@
-(* Tests for Sol_cli_platform_component (ADR 0001 / CODE_LAYER-005): reads
-   platform/components/<name>/values-{common,<profile>}.json and deep-merges
-   them, profile winning over common. Fully hermetic -- builds a throwaway
+(* Tests for Sol_cli_platform_component (ADR 0001 / CODE_LAYER-005, REFAC-102):
+   reads <name>.common and <name>.<profile> from platform/shared/components.json
+   and deep-merges them, profile winning over common. Fully hermetic -- builds a throwaway
    "Sol home" directory with fake marker files rather than depending on this
    repo's own layout, since a dune test's cwd is a build sandbox. *)
 
@@ -28,9 +28,10 @@ let write_file path content =
   close_out oc
 ;;
 
-(* Runs [f] with SOL_HOME pointed at a fresh throwaway directory containing
-   the given [component]'s values files, restoring the previous SOL_HOME
-   (or unsetting it) afterward regardless of outcome. *)
+(* Runs [f] with SOL_HOME pointed at a fresh throwaway directory whose
+   components.json gives [component] the listed layers ("common", "local", ...),
+   restoring the previous SOL_HOME (or unsetting it) afterward regardless of
+   outcome. *)
 let with_fake_sol_home ~component ~files f =
   let root = Filename.temp_file "sol-home-test-" "" in
   Sys.remove root;
@@ -43,14 +44,12 @@ let with_fake_sol_home ~component ~files f =
        List.iter
          (fun marker -> write_file (Filename.concat root marker) "")
          sol_home_markers;
-       List.iter
-         (fun (name, content) ->
-            write_file
-              (Filename.concat
-                 root
-                 (Printf.sprintf "platform/components/%s/%s" component name))
-              content)
-         files;
+       let layers =
+         List.map (fun (layer, content) -> layer, Yojson.Safe.from_string content) files
+       in
+       write_file
+         (Filename.concat root "platform/shared/components.json")
+         (Yojson.Safe.to_string (`Assoc [ component, `Assoc layers ]));
        let prev = Sys.getenv_opt "SOL_HOME" in
        Unix.putenv "SOL_HOME" root;
        Fun.protect
@@ -67,8 +66,8 @@ let test_profile_overrides_common () =
   with_fake_sol_home
     ~component:"widget"
     ~files:
-      [ "values-common.json", {|{"a": 1, "nested": {"x": 1, "y": 2}}|}
-      ; "values-local.json", {|{"a": 2, "nested": {"y": 20, "z": 30}}|}
+      [ "common", {|{"a": 1, "nested": {"x": 1, "y": 2}}|}
+      ; "local", {|{"a": 2, "nested": {"y": 20, "z": 30}}|}
       ]
     (fun () ->
        let merged =
@@ -96,10 +95,10 @@ let test_profile_overrides_common () =
          (Yojson.Safe.to_string (Yojson.Safe.Util.member "z" nested)))
 ;;
 
-let test_missing_profile_file_is_empty_object () =
+let test_missing_profile_layer_is_empty_object () =
   with_fake_sol_home
     ~component:"widget"
-    ~files:[ "values-common.json", {|{"a": 1}|} ]
+    ~files:[ "common", {|{"a": 1}|} ]
     (fun () ->
        let merged =
          Sol_cli_platform_component.merged_values_yaml
@@ -110,10 +109,10 @@ let test_missing_profile_file_is_empty_object () =
        check_str "a" "1" (Yojson.Safe.to_string (Yojson.Safe.Util.member "a" json)))
 ;;
 
-let test_missing_common_file_is_empty_object () =
+let test_missing_common_layer_is_empty_object () =
   with_fake_sol_home
     ~component:"widget"
-    ~files:[ "values-local.json", {|{"a": 1}|} ]
+    ~files:[ "local", {|{"a": 1}|} ]
     (fun () ->
        let merged =
          Sol_cli_platform_component.merged_values_yaml
@@ -124,6 +123,21 @@ let test_missing_common_file_is_empty_object () =
        check_str "a" "1" (Yojson.Safe.to_string (Yojson.Safe.Util.member "a" json)))
 ;;
 
+let test_unnamed_component_is_empty_object () =
+  with_fake_sol_home
+    ~component:"widget"
+    ~files:[ "common", {|{"a": 1}|} ]
+    (fun () ->
+       check_str
+         "empty"
+         "{}"
+         (Yojson.Safe.to_string
+            (Yojson.Safe.from_string
+               (Sol_cli_platform_component.merged_values_yaml
+                  ~component:"gadget"
+                  ~profile:"local"))))
+;;
+
 let suite =
   [ ( "platform_component"
     , [ Alcotest.test_case
@@ -131,13 +145,17 @@ let suite =
           `Quick
           test_profile_overrides_common
       ; Alcotest.test_case
-          "missing profile file treated as empty"
+          "missing profile layer treated as empty"
           `Quick
-          test_missing_profile_file_is_empty_object
+          test_missing_profile_layer_is_empty_object
       ; Alcotest.test_case
-          "missing common file treated as empty"
+          "missing common layer treated as empty"
           `Quick
-          test_missing_common_file_is_empty_object
+          test_missing_common_layer_is_empty_object
+      ; Alcotest.test_case
+          "a component the file does not name is empty"
+          `Quick
+          test_unnamed_component_is_empty_object
       ] )
   ]
 ;;
