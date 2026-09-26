@@ -113,6 +113,37 @@ else
   exit 1
 fi
 
+# A CI-invoked script must not reach for a tool the runners do not have. ripgrep is installed on
+# some developer machines and not on the runner image, and the failure it produces there looks
+# like the check's own findings rather than a missing dependency.
+tool_case() { # tool_case <name> <body> <expected: pass|fail>
+  local name="$1" body="$2" expect="$3"
+  mkrepo
+  cat >"$tmp/repo/.github/workflows/w.yml" <<'EOF'
+on: pull_request
+jobs:
+  x:
+    steps:
+      - run: internal/ci/guard.sh .
+EOF
+  mkdir -p "$tmp/repo/internal/ci"
+  printf '%s\n' "$body" >"$tmp/repo/internal/ci/guard.sh"
+  chmod 755 "$tmp/repo/internal/ci/guard.sh"
+  git -C "$tmp/repo" add -A
+  git -C "$tmp/repo" -c user.email=t@t -c user.name=t commit -qm tool
+  local rc=0
+  "$CHECK" "$tmp/repo" >/dev/null 2>&1 || rc=$?
+  case "$expect" in
+    fail) [ "$rc" -ne 0 ] || { echo "  [FAIL] $name"; exit 1; } ;;
+    pass) [ "$rc" -eq 0 ] || { echo "  [FAIL] $name"; exit 1; } ;;
+  esac
+  echo "  [OK]   $name"
+}
+
+tool_case "a CI-invoked script that calls rg" 'rg -n pattern file' fail
+tool_case "a CI-invoked script that calls grep" 'grep -n pattern file' pass
+tool_case "a CI-invoked script that merely mentions rg in a word" 'echo argos' pass
+
 # The real repository must pass as it stands.
 "$CHECK" "$ROOT" >/dev/null
 echo "  [OK]   the repository's own workflows"

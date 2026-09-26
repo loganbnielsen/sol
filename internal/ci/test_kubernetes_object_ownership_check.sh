@@ -35,7 +35,7 @@ reject() { # reject <name>  (a python mutation script on stdin; argv[1] is the c
     cat "$scratch/$name.out" >&2
     exit 1
   fi
-  echo "  rejected: $name -- $(rg -m1 '^FAIL' "$scratch/$name.out" || head -1 "$scratch/$name.out")"
+  echo "  rejected: $name -- $(grep -m1 '^FAIL' "$scratch/$name.out" || head -1 "$scratch/$name.out")"
 }
 
 accept() { # accept <name> [<expected substring>]
@@ -47,7 +47,7 @@ accept() { # accept <name> [<expected substring>]
     cat "$out" >&2
     exit 1
   fi
-  if [ -n "$expect" ] && ! rg -qF "$expect" "$out"; then
+  if [ -n "$expect" ] && ! grep -qF -- "$expect" "$out"; then
     echo "FAIL: the '$name' case did not report '$expect':" >&2
     cat "$out" >&2
     exit 1
@@ -68,7 +68,7 @@ mutate() { # mutate <name> [<expected substring>]  -- the mutation must be accep
     cat "$out" >&2
     exit 1
   fi
-  if [ -n "$expect" ] && ! rg -qF "$expect" "$out"; then
+  if [ -n "$expect" ] && ! grep -qF -- "$expect" "$out"; then
     echo "FAIL: the '$name' case did not report '$expect':" >&2
     cat "$out" >&2
     exit 1

@@ -59,6 +59,7 @@ invoked_scripts() {
     {
       line = $0
       sub(/^[[:space:]]*/, "", line)
+      sub(/^-[[:space:]]*/, "", line)   # both `- run: cmd` and a `run: |` body line
       sub(/^run:[[:space:]]*/, "", line)
       split(line, parts, /[[:space:]]+/)
       if (parts[1] ~ /^(internal|cli\/platform\/local\/scripts)\/[A-Za-z0-9_\/.-]*\.sh$/) print parts[1]
@@ -75,6 +76,14 @@ while IFS= read -r script; do
   if [ ! -x "$root/$script" ]; then
     echo "check_workflow_paths: the workflow runs '$script', which is not executable" >&2
     echo "  a direct invocation exits 126; make it executable, or invoke it as 'bash $script'" >&2
+    fail=1
+  fi
+  # The same class of invisible difference, one layer down: `ripgrep` is installed on some
+  # developer machines and not on the runners, so a script that calls `rg` fails there for a
+  # reason that has nothing to do with what it checks. `grep` is everywhere.
+  if grep -qE '(^|[^[:alnum:]_])rg[[:space:]]' "$root/$script" 2>/dev/null; then
+    echo "check_workflow_paths: '$script' calls rg, which CI runners do not have" >&2
+    echo "  use grep (rg is not part of the runner image)" >&2
     fail=1
   fi
 done < <(invoked_scripts)
@@ -110,4 +119,4 @@ if [ "$fail" -ne 0 ]; then
   echo "check_workflow_paths: a paths: filter names something that is gone, so its workflow would silently stop triggering" >&2
   exit 1
 fi
-echo "check_workflow_paths: $checked paths: filter entr(y/ies) checked, all naming something in the repository; $invoked directly invoked script(s) checked, all executable"
+echo "check_workflow_paths: $checked paths: filter entr(y/ies) checked, all naming something in the repository; $invoked directly invoked script(s) checked, all executable and none reaching for rg"
