@@ -32,11 +32,33 @@ let data_read address kind = change ~mode:"data" address kind [ "read" ]
 
 (* ── Policy fixtures ─────────────────────────────────────────────────────── *)
 
-let binding =
-  Sol_cli_terraform_plan.Exact
-    "kubernetes_cluster_role_binding.provisioner_bootstrap_admin"
+(* The authority mechanism exactly as the GCP capability declares it. It is a
+   `count`-indexed root-level resource, so Terraform's plan address for it is
+   always `...[0]` -- never the bare declaration. Every authority fixture below
+   therefore exercises the *index-qualified* addresses a real plan carries; the
+   un-indexed form is included only for completeness. A fixture built from the
+   declaration's own string, as this file used to do, cannot detect the defect
+   that made Attempt 8's destroy refuse its own authority create (FND-0058). *)
+let authority = "kubernetes_cluster_role_binding.provisioner_bootstrap_admin"
+
+(* Every address shape a real plan can carry for the declared resource, plus the
+   shapes it must *not* match. *)
+let authority_instances =
+  [ authority; authority ^ "[0]"; authority ^ "[37]"; authority ^ "[\"key\"]" ]
 ;;
 
+let not_the_authority =
+  [ authority ^ "_suffix"
+  ; authority ^ ".extra"
+  ; "module.other." ^ authority
+  ; "module.platform." ^ authority ^ "[0]"
+  ; "kubernetes_cluster_role_binding.other_binding"
+  ; "kubernetes_cluster_role_binding.other_binding[0]"
+  ; "google_container_cluster.main[0]"
+  ]
+;;
+
+let binding = Sol_cli_terraform_plan.Resource authority
 let cluster = "google_container_cluster.main"
 let sql = "google_sql_database_instance.postgres"
 let network = "google_compute_network.main"
@@ -161,6 +183,101 @@ let test_bootstrap_create_is_allowed () =
               "kubernetes_cluster_role_binding.provisioner_bootstrap_admin"
               "kubernetes_cluster_role_binding"
           ]))
+;;
+
+(* FND-0058. The declaration names a resource; the plan names an instance. Both
+   halves are tested separately -- the matcher decides identity, the policy
+   decides permission -- and the first test is the regression Attempt 8 needs:
+   the index-qualified create must be *accepted* by the reconciliation that
+   exists to acquire the authority. *)
+let test_declared_authority_matches_every_instance () =
+  let policy = Sol_cli_cloud_destroy.bootstrap_enable_policy ~bootstrap:[ binding ] in
+  List.iter
+    (fun address ->
+       Alcotest.(check bool)
+         (Printf.sprintf "%s is the declared authority resource" address)
+         true
+         (allowlist policy (plan_of [ create address "kubernetes_cluster_role_binding" ])))
+    authority_instances
+;;
+
+let test_declared_authority_matches_nothing_else () =
+  let policy = Sol_cli_cloud_destroy.bootstrap_enable_policy ~bootstrap:[ binding ] in
+  List.iter
+    (fun address ->
+       Alcotest.(check bool)
+         (Printf.sprintf "%s is not the declared authority resource" address)
+         false
+         (allowlist policy (plan_of [ create address "kubernetes_cluster_role_binding" ])))
+    not_the_authority
+;;
+
+let test_attempt8_authority_create_is_accepted () =
+  (* The exact Attempt-8 plan: one CREATE, on the index-qualified authority
+     resource, asserted by the reconciliation policy. This is the assertion the
+     old `Exact` declaration could never satisfy. *)
+  let policy =
+    Sol_cli_cloud_destroy.reconciliation_policy
+      ~bootstrap:[ binding ]
+      ~guarded:[ cluster ]
+  in
+  Alcotest.(check bool)
+    "index-qualified authority create is accepted"
+    true
+    (allowlist
+       policy
+       (plan_of [ create (authority ^ "[0]") "kubernetes_cluster_role_binding" ]));
+  Alcotest.(check bool)
+    "index-qualified authority update is accepted"
+    true
+    (allowlist
+       policy
+       (plan_of [ update (authority ^ "[0]") "kubernetes_cluster_role_binding" ]));
+  Alcotest.(check bool)
+    "a for_each-keyed authority create is accepted"
+    true
+    (allowlist
+       policy
+       (plan_of [ create (authority ^ "[\"key\"]") "kubernetes_cluster_role_binding" ]))
+;;
+
+let test_attempt8_authority_create_is_refused_where_the_action_is_forbidden () =
+  (* Identity is not permission: the same instance-qualified change is refused by
+     the *removal* policy, whose rule for the same resource allows Update/Delete
+     only. *)
+  let policy = Sol_cli_cloud_destroy.bootstrap_removal_policy ~bootstrap:[ binding ] in
+  Alcotest.(check bool)
+    "removal may not create the authority it just removed"
+    false
+    (allowlist
+       policy
+       (plan_of [ create (authority ^ "[0]") "kubernetes_cluster_role_binding" ]));
+  Alcotest.(check bool)
+    "removal may delete it"
+    true
+    (allowlist
+       policy
+       (plan_of [ delete (authority ^ "[0]") "kubernetes_cluster_role_binding" ]))
+;;
+
+let test_indexed_sibling_create_is_still_refused () =
+  (* The precision that makes the fix safe: another ClusterRoleBinding, indexed
+     or not, is not the declared authority and stays refused. This is the
+     negative control a `Type` matcher would fail. *)
+  let policy =
+    Sol_cli_cloud_destroy.reconciliation_policy
+      ~bootstrap:[ binding ]
+      ~guarded:[ cluster ]
+  in
+  List.iter
+    (fun address ->
+       Alcotest.(check bool)
+         (Printf.sprintf "an unrelated %s create is refused" address)
+         false
+         (allowlist policy (plan_of [ create address "kubernetes_cluster_role_binding" ])))
+    [ "kubernetes_cluster_role_binding.other_binding[0]"
+    ; "module.platform." ^ authority ^ "[0]"
+    ]
 ;;
 
 let test_guarded_update_is_allowed () =
@@ -494,6 +611,26 @@ let () =
             "bootstrap create is allowed"
             `Quick
             test_bootstrap_create_is_allowed
+        ; Alcotest.test_case
+            "declared authority matches every instance"
+            `Quick
+            test_declared_authority_matches_every_instance
+        ; Alcotest.test_case
+            "declared authority matches nothing else"
+            `Quick
+            test_declared_authority_matches_nothing_else
+        ; Alcotest.test_case
+            "Attempt-8 authority create is accepted"
+            `Quick
+            test_attempt8_authority_create_is_accepted
+        ; Alcotest.test_case
+            "Attempt-8 authority create is refused where the action is forbidden"
+            `Quick
+            test_attempt8_authority_create_is_refused_where_the_action_is_forbidden
+        ; Alcotest.test_case
+            "indexed sibling create is still refused"
+            `Quick
+            test_indexed_sibling_create_is_still_refused
         ; Alcotest.test_case
             "guarded update is allowed"
             `Quick

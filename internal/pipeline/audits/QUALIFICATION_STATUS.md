@@ -545,3 +545,23 @@ still resolving; `main`'s canonical checkout untouched throughout.
 Nothing is `QUALIFIED` by this run: the discriminator is evidence about a cause, not a conformant
 profile. Three harness defects found by the two executions (the Phase-0 stop and the run) were fixed
 in #514/#516 before the attempt; the follow-ups above are recorded, not fixed.
+
+## FND-0058 fixed offline — the authority matcher (2026-09-25)
+
+The INFRA-079 decision unit found that the destroy defect Attempt 8 exposed was **not** a missing
+lifecycle capability: REFAC-094 already recorded *"no CREATE/REPLACE except the bootstrap-authority
+operation"* and `reconciliation_policy` implements it. The GCP authority declaration used `Exact`
+(string equality) for a `count`-indexed resource whose plan address Terraform always writes as
+`...[0]`, so the rule that permits the create could never match the plan that acquires it. AWS was
+unaffected (its matcher is `Type`, instance-insensitive).
+
+| Item | State after the fix |
+|---|---|
+| `FND-0058` | **`FIXED_UNQUALIFIED`** — fixed by `Sol_cli_terraform_plan.Resource` (this resource, any instance), declared for GCP. Offline evidence: 25 unit tests (5 new, mutation-controlled), the offline lifecycle suite asserting the destroy's phase order (acquire → platform teardown → release → substrate destroy) with the authority fixture now carrying `[0]`, and three mutations that each fail the suite — including the instance-blind matcher, which fails both the unit suite and the offline scenario. Live qualification is still required: a real target in failed `PlatformInstalling` destroyed by `sol cloud destroy` alone, both root states empty. |
+| `DEC-048` | recorded — *destruction may construct authority, and only authority* |
+| `FND-0059` / `INFRA-081` (**new**) | the same address-form class where eligibility and reporting are decided: AWS's guarded `aws_db_instance.postgres` is `count`-ed, so `preparations_eligible`'s string comparison never sees it (`STATIC`, `OPEN`) |
+| `INFRA-082` (**new**) | the separate decision for state that is *already* stale when the substrate is absent (the preserved Attempt 8 platform state) |
+| `INV-DESTROY-1` | still not satisfied; the offline half now passes, the live half is the qualification step |
+
+Nothing here is `QUALIFIED`. The preserved Attempt 8 Terraform state, worktree and target were not
+modified, and no cloud resource was touched.

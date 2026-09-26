@@ -253,7 +253,15 @@ let gcp =
   ; destroy_guard_vars =
       (fun ~final_snapshot:_ ->
         [ "sql_deletion_protection", "false"; "gke_deletion_protection", "false" ])
-  ; bootstrap_matchers = [ Sol_cli_terraform_plan.Exact gcp_bootstrap_binding ]
+  ; (* FND-0058: the binding is `count = var.provisioner_bootstrap_admin ? 1 : 0`,
+       so Terraform's plan address for it is
+       `kubernetes_cluster_role_binding.provisioner_bootstrap_admin[0]`.
+       [Resource] names the resource and every instance of it; [Exact] would name
+       an address Terraform never emits, so the authority create the destroy
+       policy permits would be refused by that policy's own guard. [Type] is
+       wrong here for the opposite reason: the platform declares other
+       `kubernetes_cluster_role_binding`s. *)
+    bootstrap_matchers = [ Sol_cli_terraform_plan.Resource gcp_bootstrap_binding ]
   ; bootstrap_scope = Sol_cli_terraform.targets gcp_bootstrap_binding []
   ; reconciliation_scope = Sol_cli_terraform.targets gcp_bootstrap_binding
   ; guarded_addresses =
