@@ -26,8 +26,8 @@ Read the most recent `internal/pipeline/audits/*_scaffold_audit.md` report if on
 ### 3. Inspect scaffold implementation
 
 - Read `cli/bin/cmd_new.ml`
-- Read `cli/lib/sol_cli_scaffold.ml`
-- Read `cli/lib/sol_cli_workspace.ml`
+- Read `cli/lib/base/sol_cli_scaffold.ml`
+- Read `cli/lib/workspace/sol_cli_workspace.ml`
 - Identify every template and generated file path for workspace, svc, worker, fn, and event scaffolds
 
 ### 4. Generate fresh scaffolds

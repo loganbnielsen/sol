@@ -16,9 +16,9 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-substrate="$root/cli/lib/sol_cli_substrate.ml"
+substrate="$root/cli/lib/deploy/sol_cli_substrate.ml"
 migrate="$root/cli/bin/cmd_migrate.ml"
-manifest="$root/cli/lib/sol_cli_manifest_yaml.ml"
+manifest="$root/cli/lib/workspace/sol_cli_manifest_yaml.ml"
 
 fail=0
 require() {

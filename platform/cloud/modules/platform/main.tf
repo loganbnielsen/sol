@@ -770,7 +770,7 @@ resource "helm_release" "alloy" {
 
 # Tempo -- distributed tracing (OBS-042). Wired in for -svc only today
 # (obs-tempo-eio composed into the scaffold's `-svc` backend, see
-# cli/lib/sol_cli_scaffold_templates.ml); -worker/-fn are a deliberate
+# cli/lib/base/sol_cli_scaffold_templates.ml); -worker/-fn are a deliberate
 # non-goal, matching OBS-035's own precedent of landing observability
 # primitives service-by-service. Gated the same as Loki/Grafana -- no local
 # Tempo to receive spans from when there's no local Grafana to browse them

@@ -878,7 +878,7 @@ jobs:
   # FRIC-014: nothing else catches the checked-in example workspaces
   # (examples/pluto, internal/fixtures/venus) drifting out of sync with what `sol
   # new`'s scaffold template (tpl_dockerfile in
-  # cli/lib/sol_cli_scaffold_templates.ml) actually generates.
+  # cli/lib/base/sol_cli_scaffold_templates.ml) actually generates.
   # DOGFOOD-011 found a real, live instance: a stale base image tag and a
   # missing `opam install` step, invisible locally only because a stale
   # Docker layer cache papered over it. --no-cache is deliberate for the

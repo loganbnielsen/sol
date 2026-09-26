@@ -1,5 +1,10 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: REFAC-104 — cli/lib is six domain libraries along its dependency graph (2026-09-25)
+
+- The 86 modules are now in `base`, `kube`, `workspace`, `cloud`, `deploy` and `local`, each a `(wrapped false)` dune library. The domain graph is acyclic, so every domain is enforced at build time; a mutation from `base` into `workspace` fails the build.
+- `sol_cli` is the umbrella, so consumers are unchanged. All module moves are pure renames, and the unused `sol_process` dependency is dropped.
+- Follow-up seams are noted in the ticket: `workspace → kube`, and `infer_sol_home` living with `sol new`.
 ## Latest: REFAC-103 — maintainer scripts out of platform/local; unused files deleted (2026-09-25)
 
 - `run_tests.sh`, `perf.sh`, `install-hooks.sh` and `prove-workspace-independence.sh` moved to `internal/tooling/scripts/`. `platform/local` keeps the user-run `ensure-*.sh` native-infra scripts and `prepare-framework-deps.sh`, since `sol local` itself reads nothing there.

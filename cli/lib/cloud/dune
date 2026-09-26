@@ -1,0 +1,8 @@
+; REFAC-104: the cloud target lifecycle: Terraform, provider capabilities, apply/destroy.
+; Domains form a DAG (base <- kube <- workspace <- cloud <- deploy; local -> workspace),
+; so a module can only use another domain listed in (libraries) below.
+
+(library
+ (name sol_cli_cloud)
+ (wrapped false)
+ (libraries sol_cli_base sol_cli_kube sol_cli_workspace unix yojson))
