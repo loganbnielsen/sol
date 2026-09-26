@@ -30,7 +30,7 @@ let chdir ~provider ~role ~backend_config =
   Filename.concat (dir ~provider ~role ~backend_config) (A.cloud_root_rel provider role)
 ;;
 
-let source_trees = [ "platform/cloud"; "platform/shared" ]
+let source_trees = A.terraform_trees
 let manifest_name = ".sol-materialized"
 
 let is_runtime_artifact name =

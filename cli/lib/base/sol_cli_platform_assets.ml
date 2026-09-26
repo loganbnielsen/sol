@@ -193,6 +193,7 @@ let cloud_root_rel provider role =
 
 let under t rel = Filename.concat t.dir rel
 let cloud_root t provider role = under t (cloud_root_rel provider role)
+let terraform_trees = [ "platform/cloud"; "platform/shared" ]
 let components_json t = under t "platform/shared/components.json"
 
 let dashboard t name =
