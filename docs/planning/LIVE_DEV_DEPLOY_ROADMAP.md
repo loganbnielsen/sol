@@ -74,6 +74,13 @@ target files whose paths carry env/provider/region.
 
 Target model:
 
+> **Superseded layout (FEAT-100, DEC-047).** Targets no longer live in
+> `sol/<env>/<provider>/<region>.yml`. They are declared in `sol/environments.yml`
+> (`<env>: targets: <provider>/<region>:`), resolved `sol.yml` → environment →
+> target, with an optional gitignored `sol/environments.local.yml` for
+> account-specific values. The addresses below are unchanged; read the file paths
+> in this section as history.
+
 - `sol.yml` is the source of truth for project, services, resources,
   resource-specific shape, and service/resource bindings.
 - `sol/<env>/<provider>/<region>.yml` is the deploy target file.

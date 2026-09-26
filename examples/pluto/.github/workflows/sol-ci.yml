@@ -11,11 +11,9 @@
 # Required GitHub repo variable (Settings -> Secrets and variables -> Actions ->
 # Variables -- not a secret, this is just a path):
 #   SOL_TARGET         deployment target, <env>/<provider>/<region>, e.g.
-#                      prod/aws/us-east-1. Requires a matching
-#                      sol/<env>/<provider>/<region>.yml file committed in
-#                      this repo -- this workspace ships a placeholder at
-#                      sol/prod/aws/us-east-1.yml; rename it to match your
-#                      real target if it isn't prod/aws/us-east-1.
+#                      prod/aws/us-east-1. Must be declared in
+#                      sol/environments.yml (pluto declares prod, pilot, dev
+#                      and customer_cloud, each with aws/us-east-1).
 #
 # Optional (GitOps push step):
 #   GITOPS_TOKEN       GitHub token with repo-write access to commit manifests/.

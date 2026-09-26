@@ -117,8 +117,8 @@ let test_target_path_supplies_placement () =
   with_temp_dir (fun () ->
     write_base ();
     mkdir_p "sol/prod/aws";
-    write
-      "sol/prod/aws/us-east-1.yml"
+    Targets_fixture.write
+      ~target:"prod/aws/us-east-1"
       {|
 target:
   cluster_name: pluto-prod
@@ -385,8 +385,8 @@ services:
     uses: [app_db]
 |};
     mkdir_p "sol/prod/aws";
-    write
-      "sol/prod/aws/us-east-1.yml"
+    Targets_fixture.write
+      ~target:"prod/aws/us-east-1"
       {|
 resources:
   app_db:
@@ -562,8 +562,8 @@ let test_target_overlay_can_omit_resources_and_services () =
   with_temp_dir (fun () ->
     write_base ();
     mkdir_p "sol/dev/aws";
-    write
-      "sol/dev/aws/us-east-1.yml"
+    Targets_fixture.write
+      ~target:"dev/aws/us-east-1"
       {|
 target:
   cluster_name: sol-dev
@@ -595,8 +595,8 @@ let test_target_observability_backend_parsed () =
   with_temp_dir (fun () ->
     write_base ();
     mkdir_p "sol/prod/aws";
-    write
-      "sol/prod/aws/us-east-1.yml"
+    Targets_fixture.write
+      ~target:"prod/aws/us-east-1"
       {|
 target:
   base_domain: pluto.example.com
@@ -617,8 +617,8 @@ let test_target_alert_delivery_parsed () =
   with_temp_dir (fun () ->
     write_base ();
     mkdir_p "sol/prod/aws";
-    write
-      "sol/prod/aws/us-east-1.yml"
+    Targets_fixture.write
+      ~target:"prod/aws/us-east-1"
       {|
 target:
   base_domain: pluto.example.com
@@ -648,8 +648,8 @@ let test_target_recoverable_state_and_identities_parsed () =
   with_temp_dir (fun () ->
     write_base ();
     mkdir_p "sol/prod/aws";
-    write
-      "sol/prod/aws/us-east-1.yml"
+    Targets_fixture.write
+      ~target:"prod/aws/us-east-1"
       {|
 target:
   base_domain: pluto.example.com
@@ -697,8 +697,8 @@ let test_target_observability_backend_absent_when_unset () =
   with_temp_dir (fun () ->
     write_base ();
     mkdir_p "sol/dev/aws";
-    write
-      "sol/dev/aws/us-east-1.yml"
+    Targets_fixture.write
+      ~target:"dev/aws/us-east-1"
       {|
 target:
   cluster_name: sol-dev
@@ -769,15 +769,15 @@ let test_same_cluster_across_envs_fails () =
     write_base ();
     mkdir_p "sol/dev/aws";
     mkdir_p "sol/prod/aws";
-    write
-      "sol/dev/aws/us-east-1.yml"
+    Targets_fixture.write
+      ~target:"dev/aws/us-east-1"
       {|
 target:
   cluster_name: shared
   kube_context: shared
 |};
-    write
-      "sol/prod/aws/us-east-1.yml"
+    Targets_fixture.write
+      ~target:"prod/aws/us-east-1"
       {|
 target:
   cluster_name: shared
@@ -800,15 +800,15 @@ let test_different_destinations_succeed () =
     write_base ();
     mkdir_p "sol/dev/aws";
     mkdir_p "sol/prod/aws";
-    write
-      "sol/dev/aws/us-west-2.yml"
+    Targets_fixture.write
+      ~target:"dev/aws/us-west-2"
       {|
 target:
   cluster_name: shared
   kube_context: shared-eu
 |};
-    write
-      "sol/prod/aws/us-east-1.yml"
+    Targets_fixture.write
+      ~target:"prod/aws/us-east-1"
       {|
 target:
   cluster_name: shared
@@ -826,8 +826,8 @@ let test_destination_comes_from_the_target () =
   with_temp_dir (fun () ->
     write_base ();
     mkdir_p "sol/prod/aws";
-    write
-      "sol/prod/aws/us-east-1.yml"
+    Targets_fixture.write
+      ~target:"prod/aws/us-east-1"
       {|
 target:
   kube_context: sol-prod-us-east-1
@@ -853,8 +853,8 @@ let test_destination_includes_scoped_kubeconfig () =
   with_temp_dir (fun () ->
     write_base ();
     mkdir_p "sol/prod/aws";
-    write
-      "sol/prod/aws/us-east-1.yml"
+    Targets_fixture.write
+      ~target:"prod/aws/us-east-1"
       {|
 target:
   kube_context: sol-prod-us-east-1
@@ -884,8 +884,8 @@ let test_destination_missing_fails_closed () =
   with_temp_dir (fun () ->
     write_base ();
     mkdir_p "sol/prod/aws";
-    write
-      "sol/prod/aws/us-east-1.yml"
+    Targets_fixture.write
+      ~target:"prod/aws/us-east-1"
       {|
 target:
   cluster_name: sol-prod
@@ -920,8 +920,8 @@ services:
     type: http
 |};
     mkdir_p "sol/prod/aws";
-    write
-      "sol/prod/aws/us-east-1.yml"
+    Targets_fixture.write
+      ~target:"prod/aws/us-east-1"
       {|
 target:
   cluster_name: pluto-prod
@@ -1050,8 +1050,8 @@ target:
   base_domain: example.test
 |};
     mkdir_p "sol/prod/gcp";
-    write
-      "sol/prod/gcp/us-central1.yml"
+    Targets_fixture.write
+      ~target:"prod/gcp/us-central1"
       {|
 target:
   destroy_retention: none
@@ -1227,8 +1227,8 @@ target:
   base_domain: example.test
 |};
     mkdir_p "sol/prod/gcp";
-    write
-      "sol/prod/gcp/us-central1.yml"
+    Targets_fixture.write
+      ~target:"prod/gcp/us-central1"
       {|
 target:
   gcp:
@@ -1289,9 +1289,7 @@ let test_gcs_soft_delete_follows_destroy_retention () =
       (match retention with
        | None -> ()
        | Some r ->
-         let dir = Filename.dirname ("sol/" ^ target ^ ".yml") in
-         mkdir_p dir;
-         write ("sol/" ^ target ^ ".yml") ("target:\n  destroy_retention: " ^ r ^ "\n"));
+         Targets_fixture.write ~target ("target:\n  destroy_retention: " ^ r ^ "\n"));
       match Sol_cli_config.load_for_target ~target with
       | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
       | Ok cfg ->
@@ -1397,7 +1395,9 @@ let test_production_profile_enables_rds_multi_az () =
   with_temp_dir (fun () ->
     write_base ();
     mkdir_p "sol/prod/aws";
-    write "sol/prod/aws/us-east-1.yml" "target:\n  profile: production-single-region\n";
+    Targets_fixture.write
+      ~target:"prod/aws/us-east-1"
+      "target:\n  profile: production-single-region\n";
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
@@ -1419,7 +1419,9 @@ let test_production_profile_enables_rds_deletion_protection () =
   with_temp_dir (fun () ->
     write_base ();
     mkdir_p "sol/prod/aws";
-    write "sol/prod/aws/us-east-1.yml" "target:\n  profile: production-single-region\n";
+    Targets_fixture.write
+      ~target:"prod/aws/us-east-1"
+      "target:\n  profile: production-single-region\n";
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
@@ -1436,7 +1438,9 @@ let test_non_production_target_leaves_rds_deletion_protection_unset () =
   with_temp_dir (fun () ->
     write_base ();
     mkdir_p "sol/dev/aws";
-    write "sol/dev/aws/us-east-1.yml" "target:\n  cluster_name: dev-cluster\n";
+    Targets_fixture.write
+      ~target:"dev/aws/us-east-1"
+      "target:\n  cluster_name: dev-cluster\n";
     match Sol_cli_config.load_for_target ~target:"dev/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
     | Ok cfg ->
@@ -1629,8 +1633,8 @@ let test_target_cannot_resolve_to_the_local_destination () =
   with_temp_dir (fun () ->
     write_base ();
     mkdir_p "sol/prod/aws";
-    write
-      "sol/prod/aws/us-east-1.yml"
+    Targets_fixture.write
+      ~target:"prod/aws/us-east-1"
       {|
 target:
   kube_context: k3d-sol-local
@@ -1650,14 +1654,11 @@ target:
 let test_yaml_flow_map_and_exact_text () =
   with_temp_dir (fun () ->
     write_base ();
-    Sys.mkdir "sol" 0o755;
-    Sys.mkdir "sol/prod" 0o755;
-    Sys.mkdir "sol/prod/aws" 0o755;
+    mkdir_p "sol";
     write
-      "sol/prod/aws/us-east-1.yml"
-      {|target: { registry: r.example.com, cluster_name: 012, base_domain: "1.10" }
-services:
-  api: { scale: { min: 1, max: 3 } }
+      "sol/environments.yml"
+      {|prod: { targets: { aws/us-east-1: { registry: r.example.com, cluster_name: 012,
+  base_domain: "1.10", services: { api: { scale: { min: 1, max: 3 } } } } } }
 |};
     match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
     | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
@@ -1717,6 +1718,235 @@ let test_var_file_resolution () =
     (Some "/abs/x.tfvars")
     (resolve ~flag:None ~target:(Some "/abs/x.tfvars"));
   check "no var file" None (resolve ~flag:None ~target:None)
+;;
+
+(* FEAT-100 / DEC-047: sol.yml -> environment -> target, and the local file. *)
+let write_envs ?local text =
+  mkdir_p "sol";
+  write "sol/environments.yml" text;
+  Option.iter (write "sol/environments.local.yml") local
+;;
+
+let resolve_ok target =
+  match Sol_cli_config.load_for_target ~target with
+  | Ok cfg -> cfg
+  | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+;;
+
+let resolve_error target =
+  match Sol_cli_config.load_for_target ~target with
+  | Ok _ -> Alcotest.fail ("expected " ^ target ^ " to be refused")
+  | Error e -> e.message
+;;
+
+let target_of cfg =
+  match Sol_cli_config.target cfg with
+  | Some t -> t
+  | None -> Alcotest.fail "no target"
+;;
+
+let service cfg name =
+  List.find
+    (fun (s : Sol_cli_config.service) -> s.name = name)
+    (Sol_cli_config.services cfg)
+;;
+
+let check_contains name ~needle haystack =
+  let n = String.length needle in
+  let rec go i =
+    i + n <= String.length haystack && (String.sub haystack i n = needle || go (i + 1))
+  in
+  Alcotest.(check bool) (name ^ ": " ^ haystack) true (go 0)
+;;
+
+let test_env_layer_precedence () =
+  with_temp_dir (fun () ->
+    write "sol.yml" "project: p\ntarget:\n  base_domain: from-sol-yml.test\n";
+    write_envs
+      {|prod:
+  base_domain: from-env.test
+  letsencrypt_email: ops@env.test
+  targets:
+    aws/us-east-1:
+      letsencrypt_email: ops@target.test
+      cluster_name: east
+    aws/us-west-2:
+      cluster_name: west
+|};
+    let east = target_of (resolve_ok "prod/aws/us-east-1") in
+    let west = target_of (resolve_ok "prod/aws/us-west-2") in
+    check_str "env overrides sol.yml" "from-env.test" (Option.get east.base_domain);
+    check_str "target overrides env" "ops@target.test" (Option.get east.letsencrypt_email);
+    check_str "env inherited" "ops@env.test" (Option.get west.letsencrypt_email);
+    check_str "target-only key" "west" (Option.get west.cluster_name))
+;;
+
+let test_scale_and_provider_blocks_deep_merge () =
+  with_temp_dir (fun () ->
+    write_base ();
+    write_envs
+      {|prod:
+  aws:
+    state_lock_table: lock
+  services:
+    api:
+      scale:
+        min: 2
+  targets:
+    aws/us-east-1:
+      aws:
+        provisioner_role_arn: arn:aws:iam::1:role/p
+      services:
+        api:
+          scale:
+            max: 5
+|};
+    let cfg = resolve_ok "prod/aws/us-east-1" in
+    let api = service cfg "api" in
+    Alcotest.(check (option int)) "env min survives" (Some 2) api.scale_min;
+    Alcotest.(check (option int)) "target max" (Some 5) api.scale_max;
+    let t = target_of cfg in
+    Alcotest.(check (option string))
+      "env provider field survives"
+      (Some "lock")
+      (Sol_cli_config.provider_field t "state_lock_table");
+    Alcotest.(check (option string))
+      "target provider field"
+      (Some "arn:aws:iam::1:role/p")
+      (Sol_cli_config.provider_field t "provisioner_role_arn"))
+;;
+
+let test_omit_is_sticky () =
+  with_temp_dir (fun () ->
+    write_base ();
+    write_envs
+      {|dev:
+  services:
+    api:
+      omit: true
+  targets:
+    aws/us-east-1:
+      services:
+        api:
+          omit: false
+|};
+    let cfg = resolve_ok "dev/aws/us-east-1" in
+    Alcotest.(check bool)
+      "a target cannot bring back what its environment omitted"
+      false
+      (List.exists
+         (fun (s : Sol_cli_config.service) -> s.name = "api")
+         (Sol_cli_config.services cfg)))
+;;
+
+let test_target_only_key_rejected_at_env_level () =
+  with_temp_dir (fun () ->
+    write_base ();
+    write_envs "prod:\n  cluster_name: shared\n  targets:\n    aws/us-east-1:\n";
+    check_contains
+      "message"
+      ~needle:"cluster_name is target-only"
+      (resolve_error "prod/aws/us-east-1"))
+;;
+
+let test_app_shape_rejected_outside_sol_yml () =
+  with_temp_dir (fun () ->
+    write_base ();
+    write_envs
+      "prod:\n\
+      \  targets:\n\
+      \    aws/us-east-1:\n\
+      \      services:\n\
+      \        api:\n\
+      \          path: elsewhere\n";
+    check_contains
+      "message"
+      ~needle:"services.api.path belongs in sol.yml"
+      (resolve_error "prod/aws/us-east-1"))
+;;
+
+let test_undeclared_service_rejected () =
+  with_temp_dir (fun () ->
+    write_base ();
+    write_envs
+      "prod:\n  services:\n    ghost:\n      omit: true\n  targets:\n    aws/us-east-1:\n";
+    check_contains
+      "message"
+      ~needle:"service \"ghost\" is not declared in sol.yml"
+      (resolve_error "prod/aws/us-east-1"))
+;;
+
+let test_local_file_adds_keys_and_environments () =
+  with_temp_dir (fun () ->
+    write_base ();
+    write_envs
+      ~local:
+        {|prod:
+  targets:
+    aws/us-east-1:
+      registry: 123456789012.dkr.ecr.us-east-1.amazonaws.com
+qual:
+  targets:
+    gcp/us-central1:
+      cluster_name: sol-qual
+|}
+      "prod:\n  targets:\n    aws/us-east-1:\n      cluster_name: prod\n";
+    let prod = target_of (resolve_ok "prod/aws/us-east-1") in
+    check_str "tracked key" "prod" (Option.get prod.cluster_name);
+    check_str
+      "local key"
+      "123456789012.dkr.ecr.us-east-1.amazonaws.com"
+      (Option.get prod.registry);
+    let qual = target_of (resolve_ok "qual/gcp/us-central1") in
+    check_str "local-only environment" "sol-qual" (Option.get qual.cluster_name))
+;;
+
+let test_local_file_may_not_change_tracked_keys () =
+  with_temp_dir (fun () ->
+    write_base ();
+    write_envs
+      ~local:"prod:\n  targets:\n    aws/us-east-1:\n      cluster_name: other\n"
+      "prod:\n  targets:\n    aws/us-east-1:\n      cluster_name: prod\n";
+    check_contains
+      "message"
+      ~needle:"cluster_name is already set in sol/environments.yml"
+      (resolve_error "prod/aws/us-east-1"))
+;;
+
+let test_per_target_files_refused () =
+  with_temp_dir (fun () ->
+    write_base ();
+    mkdir_p "sol/prod/aws";
+    write "sol/prod/aws/us-east-1.yml" "target:\n  cluster_name: old\n";
+    check_contains
+      "message"
+      ~needle:"per-target files are no longer read"
+      (resolve_error "prod/aws/us-east-1"))
+;;
+
+let test_project_rejected_in_environment () =
+  with_temp_dir (fun () ->
+    write_base ();
+    write_envs "prod:\n  project: nope\n  targets:\n    aws/us-east-1:\n";
+    check_contains
+      "message"
+      ~needle:"project belongs in sol.yml"
+      (resolve_error "prod/aws/us-east-1"))
+;;
+
+let test_declared_targets_are_discovered () =
+  with_temp_dir (fun () ->
+    write_base ();
+    write_envs
+      ~local:"qual:\n  targets:\n    gcp/us-central1:\n"
+      "prod:\n  targets:\n    aws/us-east-1:\n    aws/us-west-2:\n";
+    match Sol_cli_config.discover_target_paths () with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok paths ->
+      Alcotest.(check (list string))
+        "targets"
+        [ "prod/aws/us-east-1"; "prod/aws/us-west-2"; "qual/gcp/us-central1" ]
+        paths)
 ;;
 
 let () =
@@ -1980,6 +2210,47 @@ let () =
             "example pluto prod target parses"
             `Quick
             test_example_pluto_prod_target_parses
+        ; Alcotest.test_case
+            "environments: layer precedence"
+            `Quick
+            test_env_layer_precedence
+        ; Alcotest.test_case
+            "environments: scale and provider blocks deep-merge"
+            `Quick
+            test_scale_and_provider_blocks_deep_merge
+        ; Alcotest.test_case "environments: omit is sticky" `Quick test_omit_is_sticky
+        ; Alcotest.test_case
+            "environments: target-only key rejected at env level"
+            `Quick
+            test_target_only_key_rejected_at_env_level
+        ; Alcotest.test_case
+            "environments: app shape rejected outside sol.yml"
+            `Quick
+            test_app_shape_rejected_outside_sol_yml
+        ; Alcotest.test_case
+            "environments: undeclared service rejected"
+            `Quick
+            test_undeclared_service_rejected
+        ; Alcotest.test_case
+            "environments: local file adds keys and environments"
+            `Quick
+            test_local_file_adds_keys_and_environments
+        ; Alcotest.test_case
+            "environments: local file may not change tracked keys"
+            `Quick
+            test_local_file_may_not_change_tracked_keys
+        ; Alcotest.test_case
+            "environments: per-target files refused"
+            `Quick
+            test_per_target_files_refused
+        ; Alcotest.test_case
+            "environments: project rejected in an environment"
+            `Quick
+            test_project_rejected_in_environment
+        ; Alcotest.test_case
+            "environments: declared targets are discovered"
+            `Quick
+            test_declared_targets_are_discovered
         ; Alcotest.test_case
             "yaml: flow maps and exact scalar text (REFAC-106)"
             `Quick

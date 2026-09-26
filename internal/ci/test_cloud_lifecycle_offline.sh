@@ -23,57 +23,63 @@ if [ "$heredocs_open" != "$heredocs_close" ]; then
   exit 1
 fi
 trap 'rm -rf "$tmp"' EXIT
-mkdir -p "$tmp/bin" "$tmp/work/sol/prod/aws" "$tmp/markers"
-
-cat >"$tmp/work/sol.yml" <<'EOF'
-project: lifecycle-test
-EOF
-cat >"$tmp/work/sol/prod/aws/us-east-1.yml" <<'EOF'
-target:
-  # ADR 0003: a production-profile target makes terraform_vars inject the
-  # Ready/Production invariant rds_deletion_protection=true, which is exactly
-  # the policy the Destroy policy must override after PrepareDestroy (finding 15).
-  profile: production-single-region
-  base_domain: example.test
-  cluster_name: lifecycle-test
-  letsencrypt_email: ops@example.test
-  cluster_endpoint_cidr: 203.0.113.0/24
-  state_bucket: lifecycle-state
-  # REFAC-098: provider-native identity lives in the provider's own block.
-  aws:
-    state_lock_table: lifecycle-lock
-    provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
-    cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
-    # HARDEN-002 run 3, finding 11: must reach the provider root's terraform argv
-    # so the module creates the deploy EKS access entry (INFRA-025).
-    deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
-    operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
+mkdir -p "$tmp/bin" "$tmp/work/sol" "$tmp/markers"
 
 # ADR 0003: a postgres resource plus the production profile is what makes
 # terraform_vars force the Ready/Production invariant rds_deletion_protection=true.
+# Its type is app shape, so sol.yml declares it (DEC-047); a target only sizes it.
+cat >"$tmp/work/sol.yml" <<'EOF'
+project: lifecycle-test
 resources:
   app_db:
     type: postgres
-    size: small
 EOF
-
-# The GCP target. It carries no `profile` (the production profile asserts the AWS
+# FEAT-100: both targets live in sol/environments.yml under the prod environment.
+#
+# The GCP target carries no `profile` (the production profile asserts the AWS
 # substrate, matrix A5) and it states its retention, which DEC-033 requires of a
 # target that destroys. `none` is not decoration here: Sol cannot retain anything on
 # GCP yet -- Cloud SQL deletes its backups with the instance -- so the default
 # `final-snapshot` is refused rather than quietly discarded, and a disposable
-# qualification target says out loud that it keeps nothing.
-mkdir -p "$tmp/work/sol/prod/gcp"
-cat >"$tmp/work/sol/prod/gcp/us-central1.yml" <<'EOF'
-target:
-  base_domain: qual.example.test
-  cluster_name: sol-qual
-  letsencrypt_email: ops@example.test
-  state_bucket: sol-qualification-tfstate
-  destroy_retention: none
-  gcp:
-    project_id: sol-qualification
-    provisioner_impersonator: user:qualification-operator@example.test
+# qualification target says out loud that it keeps nothing. It omits app_db, as its
+# own target file used to by not declaring one.
+cat >"$tmp/work/sol/environments.yml" <<'EOF'
+prod:
+  targets:
+    aws/us-east-1:
+      # ADR 0003: a production-profile target makes terraform_vars inject the
+      # Ready/Production invariant rds_deletion_protection=true, which is exactly
+      # the policy the Destroy policy must override after PrepareDestroy (finding 15).
+      profile: production-single-region
+      base_domain: example.test
+      cluster_name: lifecycle-test
+      letsencrypt_email: ops@example.test
+      cluster_endpoint_cidr: 203.0.113.0/24
+      state_bucket: lifecycle-state
+      # REFAC-098: provider-native identity lives in the provider's own block.
+      aws:
+        state_lock_table: lifecycle-lock
+        provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+        cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
+        # HARDEN-002 run 3, finding 11: must reach the provider root's terraform argv
+        # so the module creates the deploy EKS access entry (INFRA-025).
+        deploy_role_arn: arn:aws:iam::111122223333:role/sol-deploy
+        operator_role_arn: arn:aws:iam::111122223333:role/sol-operator
+      resources:
+        app_db:
+          size: small
+    gcp/us-central1:
+      base_domain: qual.example.test
+      cluster_name: sol-qual
+      letsencrypt_email: ops@example.test
+      state_bucket: sol-qualification-tfstate
+      destroy_retention: none
+      gcp:
+        project_id: sol-qualification
+        provisioner_impersonator: user:qualification-operator@example.test
+      resources:
+        app_db:
+          omit: true
 EOF
 
 cat >"$tmp/bin/terraform" <<'EOF'
@@ -2132,25 +2138,16 @@ if grep -E -- '-chdir=[^ ]*cloud/aws/cluster ' "$mismatch_log" | grep -F ' destr
   exit 1
 fi
 
-# The disposable case, named by the target file. The field is inserted inside the
-# target block using that block's own indentation, taken from the line following
-# `target:` rather than assumed -- the parser is strict about which keys belong to
-# `target:` and which to a resource and rejects a misplaced one, which is how this
-# line was wrong the first time.
-awk '
-  /^[[:space:]]*target:[[:space:]]*$/ { in_target = 1; print; next }
-  in_target && !inserted {
-    match($0, /^[[:space:]]*/)
-    if (RLENGTH > 0) { printf "%sdestroy_retention: none\n", substr($0, 1, RLENGTH); inserted = 1 }
-    in_target = 0
-  }
-  { print }
-' "$tmp/work/sol/prod/aws/us-east-1.yml" >"$tmp/work/target.with-retention.yml"
-mv "$tmp/work/target.with-retention.yml" "$tmp/work/sol/prod/aws/us-east-1.yml"
-if ! grep -qE '^[[:space:]]*destroy_retention:[[:space:]]*none[[:space:]]*$' \
-  "$tmp/work/sol/prod/aws/us-east-1.yml"; then
-  echo "the retention scenario did not get destroy_retention into the target file:" >&2
-  sed -n '/^target:/,/^[a-z]/p' "$tmp/work/sol/prod/aws/us-east-1.yml" >&2
+# The disposable case, named by the target. The field is inserted directly under
+# the AWS target's key, at that body's indentation (FEAT-100: the target lives in
+# sol/environments.yml as prod.targets.aws/us-east-1).
+envs_file="$tmp/work/sol/environments.yml"
+awk '{ print } /^    aws\/us-east-1:[[:space:]]*$/ { print "      destroy_retention: none" }' \
+  "$envs_file" >"$tmp/work/envs.with-retention.yml"
+mv "$tmp/work/envs.with-retention.yml" "$envs_file"
+if ! grep -qE '^      destroy_retention:[[:space:]]*none[[:space:]]*$' "$envs_file"; then
+  echo "the retention scenario did not get destroy_retention into the AWS target:" >&2
+  cat "$envs_file" >&2
   exit 1
 fi
 
@@ -2507,12 +2504,12 @@ fi
 # the same target names the same file from any directory; a relative --var-file flag
 # resolves from the shell's directory. Both run from a subdirectory of the workspace,
 # which is where the old cwd-relative rule went wrong.
-target_file="$tmp/work/sol/prod/aws/us-east-1.yml"
+target_file="$tmp/work/sol/environments.yml"
 cp "$target_file" "$tmp/work/target.before-bug057.yml"
 mkdir -p "$tmp/work/vars" "$tmp/work/app/deep"
 : >"$tmp/work/vars/bug057.tfvars"
 : >"$tmp/work/app/deep/flag.tfvars"
-awk '{ print } /^target:/ { print "  terraform_var_file: vars/bug057.tfvars" }' \
+awk '{ print } /^    aws\/us-east-1:[[:space:]]*$/ { print "      terraform_var_file: vars/bug057.tfvars" }' \
   "$tmp/work/target.before-bug057.yml" >"$target_file"
 vlog="$tmp/bug057-target.log"
 (cd "$tmp/work/app/deep" && LIFECYCLE_LOG="$vlog" "$sol" cloud plan prod/aws/us-east-1) \

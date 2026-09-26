@@ -1,7 +1,0 @@
-# The customer-cloud target the tutorial deploys to (docs/guides/TUTORIAL.md,
-# "Ingress"). Replace the domain and contact address with your own; pass
-# `--registry` to `sol deploy`, or add `registry:` here.
-target:
-  cluster_name: pluto-customer
-  base_domain: customer.pluto.example.com
-  letsencrypt_email: ops@pluto.example.com

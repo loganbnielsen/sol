@@ -1,5 +1,17 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: REFAC-107 — local infrastructure comes from sol.yml, not a dune grep (2026-09-26)
+
+- `sol local infra up` starts Kafka and Postgres from `sol.yml`'s declared resources, and the observability stack always. It now works for TypeScript workspaces and from any subdirectory.
+- Found: the old grep never started Loki, Prometheus, Tempo or Grafana for pluto or scaffolded workspaces. It's fixed by "always on".
+- The scaffold and venus now declare the resources their services use.
+## Latest: FEAT-100 — deployment config is sol.yml → environment → target (2026-09-26)
+
+- Targets are declared in `sol/environments.yml`, with each environment's policy set once. An optional gitignored `sol/environments.local.yml` adds account-specific values (disjoint keys) or whole environments; qualification uses it.
+- DEC-047's placement and merge table is enforced. The old per-target layout is refused.
+- Pluto's `sol plan` output is byte-identical before and after.
+- Found and fixed: the GCP qualification harness's relative var file broke after BUG-057; `sol/qualN/` escaped the account-artifact guard; and `sol target show` printed a literal `\n\n`.
+
 ## Latest: REFAC-106 — sol.yml is parsed by a YAML library (2026-09-26)
 
 - The hand-written, line-oriented parser is replaced by `yaml` (libyaml) plus a strict decoder over the same key table. Values keep their exact text, and semantic errors are unchanged.

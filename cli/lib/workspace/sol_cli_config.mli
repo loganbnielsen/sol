@@ -84,17 +84,21 @@ type error =
 val error_to_string : error -> string
 val load_for_target : target:string -> (t, error) result
 
-(** [target_file target] is the target file path a resolved [target] was (or
-    would be) overlaid from, resolved against the workspace root (DEC-024):
-    [<root>/sol/<env>/<provider>/<region>.yml].
-    [load_for_target] itself tolerates this file being absent (a target can
-    legitimately rely on [sol.yml] alone) -- callers that mutate real
+(** [target_declared target] is [true] when [sol/environments.yml] (or the local
+    file) declares this target under its environment's [targets:] (FEAT-100).
+    [load_for_target] itself tolerates an undeclared target (one can rely on
+    [sol.yml] and its environment alone) -- callers that mutate real
     infrastructure and need the stronger guarantee that this exact target was
-    deliberately declared, not just shaped like one, should check
-    [Sys.file_exists] on this path themselves. [sol deploy] always does;
-    [sol cloud apply]/[destroy] do for their mutating action only (not their
-    [--plan]/[Plan] preview mode); [sol plan] (genuinely read-only) doesn't. *)
-val target_file : target -> string
+    deliberately declared check this. [sol deploy] always does; [sol cloud
+    apply]/[destroy] do for their mutating action only; [sol plan] doesn't. *)
+val target_declared : target -> bool
+
+(** Where a target is (or would be) declared, for messages:
+    [<root>/sol/environments.yml (<env>.targets.<provider>/<region>)]. *)
+val target_source : target -> string
+
+(** Every declared target, as [<env>/<provider>/<region>], sorted. *)
+val discover_target_paths : unit -> (string list, error) result
 
 val target : t -> target option
 val resources : t -> resource list
@@ -137,3 +141,9 @@ val vars_with_profile_precedence
   -> cli_vars:string list
   -> config_vars:string list
   -> string list
+
+(** [local_infra ~root] is the local infrastructure a workspace needs (REFAC-107):
+    Kafka and Postgres when [sol.yml] declares a [kafka] / [postgres] resource, and
+    the observability stack always. Decided from the declaration, never inferred
+    from build files, so it is the same for OCaml and TypeScript units. *)
+val local_infra : root:string -> (Sol_cli_workspace.infra_requirements, error) result

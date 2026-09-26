@@ -122,8 +122,8 @@ let with_temp_dir f =
 
 let write_target ~observability_backend_line () =
   mkdir_p "sol/prod/aws";
-  write
-    "sol/prod/aws/us-east-1.yml"
+  Targets_fixture.write
+    ~target:"prod/aws/us-east-1"
     (Printf.sprintf
        {|
 target:
@@ -176,8 +176,8 @@ let test_effective_target_supplies_backend_and_base_domain () =
 let test_effective_target_without_observability_backend_falls_back_to_local () =
   with_temp_dir (fun () ->
     mkdir_p "sol/dev/aws";
-    write
-      "sol/dev/aws/us-east-1.yml"
+    Targets_fixture.write
+      ~target:"dev/aws/us-east-1"
       {|
 target:
   cluster_name: sol-dev

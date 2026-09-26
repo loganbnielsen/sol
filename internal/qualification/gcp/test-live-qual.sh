@@ -33,8 +33,8 @@ REPO="$(cd "$HERE/../../.." && pwd)"
 TMP="$(mktemp -d)"
 
 SCRATCH_WS="$TMP/workspace"
-TARGET_FILE="$SCRATCH_WS/sol/qual/gcp/us-central1.yml"
-mkdir -p "$SCRATCH_WS/sol/qual/gcp"
+TARGET_FILE="$SCRATCH_WS/sol/environments.local.yml"
+mkdir -p "$SCRATCH_WS/sol"
 printf 'project: scratch\n' >"$SCRATCH_WS/sol.yml"
 cleanup() {
   rm -f "$TARGET_FILE"
@@ -259,7 +259,7 @@ run_case() { # run_case <name> <subcommand> [VAR=VALUE ...]
   # The `verify` invariant needs a target file to exist: with one present, the old code
   # would actually have reached `sol cloud destroy`.
   if [ "${PRESEED_TARGET:-0}" = "1" ]; then
-    printf 'target:\n  cluster_name: test-cluster\n  base_domain: qual-gcp.sol-fab.dev\n' >"$TARGET_FILE"
+    printf '# Written by internal/qualification/gcp/live-qual.sh (test preseed)\nqual:\n  targets:\n    gcp/us-central1:\n      cluster_name: test-cluster\n      base_domain: qual-gcp.sol-fab.dev\n' >"$TARGET_FILE"
   fi
   rm -rf "$LOG_DIR"
   env ALLOW_CANONICAL=1 SOL="$TMP/bin/sol" CLUSTER=test-cluster \

@@ -37,12 +37,12 @@
 | Finished (UTC) | | |
 | Evidence bundle directory | | path, and whether it is outside the repository |
 
-**The qualification target is untracked, on purpose.** It lives at
-`<workspace>/sol/qual/aws/us-east-1.yml` (start from
-`docs/qualification/run8-aws-target.example.yml`), and the repository forbids
-tracking that path — `internal/ci/check_no_account_artifacts.sh` fails on any
-tracked file under `sol/qual/` or `sol/qual2/`, because a real target carries a
-real account, registry and role ARNs. HARDEN-002 run 2 is the incident where one
+**The qualification target is untracked, on purpose.** It is a `qual` environment in
+`<workspace>/sol/environments.local.yml` (start from
+`docs/qualification/run8-aws-target.example.yml`; FEAT-100), and the repository
+forbids tracking that file — `internal/ci/check_no_account_artifacts.sh` fails on a
+tracked `sol/environments.local.yml` or any tracked `sol/qual*/` path, because a real
+target carries a real account, registry and role ARNs. HARDEN-002 run 2 is the incident where one
 was committed and had to be removed.
 
 Two things follow, and both are why the two rows above exist: the revision does

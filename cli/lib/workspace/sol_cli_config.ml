@@ -356,9 +356,14 @@ let members
   | _ -> fail_at ~path (Printf.sprintf "expected a mapping%s" where)
 ;;
 
-let load_string ~path text =
-  let* doc = parse_yaml ~path text in
-  let fail message = fail_at ~path message in
+(* One layer's keys. [~top_level:true] is sol.yml's shape (project, target,
+   resources, services). Otherwise it is an environment or a target body in
+   sol/environments.yml (FEAT-100): target keys sit directly in the body, next to
+   resources and services, and errors name the [context] they came from. *)
+let decode_layer ~path ~context ~top_level (fields : (string * Yaml.yaml) list) =
+  let fail message =
+    fail_at ~path (if context = "" then message else context ^ ": " ^ message)
+  in
   let value name v =
     match v with
     | `Scalar _ ->
@@ -397,17 +402,7 @@ let load_string ~path text =
     (* A nested value under a provider field is ignored, as it always was. *)
     Ok (List.filter_map (fun (k, v) -> Option.map (fun t -> k, t) (scalar_text v)) fields)
   in
-  let decode_target v =
-    let* fields =
-      members
-        ~path
-        ~where:" in target"
-        ~duplicate:(fun k ->
-          match Sol_cli_provider.of_string k with
-          | Some _ -> Printf.sprintf "duplicate target provider box %S" k
-          | None -> Printf.sprintf "duplicate target key %S" k)
-        v
-    in
+  let decode_target_fields fields =
     fold
       (fun (current : target) (k, v) ->
          match target_key_of_string k with
@@ -468,6 +463,19 @@ let load_string ~path text =
               assert false))
       target_empty
       fields
+  in
+  let decode_target v =
+    let* fields =
+      members
+        ~path
+        ~where:" in target"
+        ~duplicate:(fun k ->
+          match Sol_cli_provider.of_string k with
+          | Some _ -> Printf.sprintf "duplicate target provider box %S" k
+          | None -> Printf.sprintf "duplicate target key %S" k)
+        v
+    in
+    decode_target_fields fields
   in
   let decode_index (name, v) =
     let where = Printf.sprintf " in index %S" name in
@@ -582,6 +590,69 @@ let load_string ~path text =
       (service_empty name)
       fields
   in
+  let section cfg (k, v) =
+    match k with
+    | "project" when not top_level ->
+      fail "project belongs in sol.yml, not in an environment or target"
+    | "target" when not top_level ->
+      fail "put target keys directly here, not in a target: block"
+    | "project" ->
+      let* p = value "project" v in
+      Ok { cfg with project = Some p }
+    | "target" ->
+      let* t = decode_target v in
+      Ok { cfg with target = Some t }
+    | "resources" ->
+      let* named =
+        members
+          ~path
+          ~where:" in resources"
+          ~duplicate:(Printf.sprintf "duplicate resource %S")
+          v
+      in
+      let* resources =
+        fold
+          (fun acc r ->
+             let* r = decode_resource r in
+             Ok (acc @ [ r ]))
+          []
+          named
+      in
+      Ok { cfg with resources }
+    | "services" ->
+      let* named =
+        members
+          ~path
+          ~where:" in services"
+          ~duplicate:(Printf.sprintf "duplicate service %S")
+          v
+      in
+      let* services =
+        fold
+          (fun acc x ->
+             let* x = decode_service x in
+             Ok (acc @ [ x ]))
+          []
+          named
+      in
+      Ok { cfg with services }
+    | _ -> fail (Printf.sprintf "unknown top-level key %S" k)
+  in
+  if top_level
+  then fold section empty fields
+  else (
+    let is_section (k, _) = List.mem k [ "project"; "target"; "resources"; "services" ] in
+    let sections, target_keys = List.partition is_section fields in
+    let* cfg = fold section empty sections in
+    if target_keys = []
+    then Ok cfg
+    else
+      let* t = decode_target_fields target_keys in
+      Ok { cfg with target = Some t })
+;;
+
+let load_string ~path text =
+  let* doc = parse_yaml ~path text in
   let* top =
     members
       ~path
@@ -589,52 +660,7 @@ let load_string ~path text =
       ~duplicate:(Printf.sprintf "duplicate top-level section %S")
       doc
   in
-  fold
-    (fun cfg (k, v) ->
-       match k with
-       | "project" ->
-         let* p = value "project" v in
-         Ok { cfg with project = Some p }
-       | "target" ->
-         let* t = decode_target v in
-         Ok { cfg with target = Some t }
-       | "resources" ->
-         let* named =
-           members
-             ~path
-             ~where:" in resources"
-             ~duplicate:(Printf.sprintf "duplicate resource %S")
-             v
-         in
-         let* resources =
-           fold
-             (fun acc r ->
-                let* r = decode_resource r in
-                Ok (acc @ [ r ]))
-             []
-             named
-         in
-         Ok { cfg with resources }
-       | "services" ->
-         let* named =
-           members
-             ~path
-             ~where:" in services"
-             ~duplicate:(Printf.sprintf "duplicate service %S")
-             v
-         in
-         let* services =
-           fold
-             (fun acc x ->
-                let* x = decode_service x in
-                Ok (acc @ [ x ]))
-             []
-             named
-         in
-         Ok { cfg with services }
-       | _ -> fail (Printf.sprintf "unknown top-level key %S" k))
-    empty
-    top
+  decode_layer ~path ~context:"" ~top_level:true top
 ;;
 
 let load path =
@@ -859,54 +885,337 @@ let workspace_root () =
 
 let rooted path = Filename.concat (workspace_root ()) path
 
-(* [sol/<env>/<provider>/<region>.yml], relative to the workspace root. *)
-let relative_target_file target =
-  Filename.concat
-    "sol"
-    (Filename.concat
-       target.env
-       (Filename.concat
-          (Sol_cli_provider.to_string target.provider)
-          (target.region ^ ".yml")))
+(* FEAT-100 / DEC-047: deployment config is sol.yml -> environment -> target.
+   Environments and their targets live in sol/environments.yml; an optional,
+   gitignored sol/environments.local.yml supplies account-specific values the
+   tracked file leaves unset, and may add whole environments or targets (the
+   2026-09-26 amendment). A key comes from exactly one of the two files. *)
+let environments_file = "sol/environments.yml"
+let environments_local_file = "sol/environments.local.yml"
+
+type environment =
+  { env_name : string
+  ; layer : t
+  ; targets : (string * t) list (** keyed ["<provider>/<region>"] *)
+  }
+
+let rec fold_result f acc = function
+  | [] -> Ok acc
+  | x :: rest ->
+    let* acc = f acc x in
+    fold_result f acc rest
 ;;
 
-let target_file target = rooted (relative_target_file target)
+let target_key_ok key =
+  match String.split_on_char '/' key with
+  | [ provider; region ] when provider <> "" && region <> "" && region <> ".." ->
+    (match Sol_cli_provider.of_string provider with
+     | Some _ -> Ok ()
+     | None -> Error (Printf.sprintf "unsupported provider %S" provider))
+  | _ -> Error "a target must look like <provider>/<region>"
+;;
+
+(* DEC-047's placement table: keys that identify one cluster or region. *)
+let target_only_keys (t : target) =
+  List.filter_map
+    (fun (name, set) -> if set then Some name else None)
+    [ "cluster_name", t.cluster_name <> None
+    ; "kube_context", t.kube_context <> None
+    ; "kubeconfig", t.kubeconfig <> None
+    ; "cluster_endpoint_cidr", t.cluster_endpoint_cidr <> None
+    ; "registry", t.registry <> None
+    ]
+;;
+
+(* ... and keys that describe the application's shape, which only sol.yml may set:
+   an environment or target adjusts size, scale and omit, nothing else. *)
+let app_shape_keys (l : t) =
+  List.concat_map
+    (fun (r : resource) ->
+       List.filter_map
+         (fun (name, set) ->
+            if set then Some (Printf.sprintf "resources.%s.%s" r.name name) else None)
+         [ "type", r.typ <> None
+         ; "partition_key", r.partition_key <> None
+         ; "sort_key", r.sort_key <> None
+         ; "indexes", r.indexes <> []
+         ])
+    l.resources
+  @ List.concat_map
+      (fun (sv : service) ->
+         List.filter_map
+           (fun (name, set) ->
+              if set then Some (Printf.sprintf "services.%s.%s" sv.name name) else None)
+           [ "type", sv.typ <> None
+           ; "path", sv.path <> None
+           ; "language", sv.language <> None
+           ; "uses", sv.uses <> []
+           ])
+      l.services
+;;
+
+let check_placement ~path (e : environment) =
+  let fail context message =
+    Error { path; line = 0; message = context ^ ": " ^ message }
+  in
+  let app_shape context layer =
+    match app_shape_keys layer with
+    | [] -> Ok ()
+    | key :: _ ->
+      fail
+        context
+        (Printf.sprintf
+           "%s belongs in sol.yml: an environment or target may only adjust size, scale \
+            and omit (DEC-047)"
+           key)
+  in
+  let* () =
+    match Option.map target_only_keys e.layer.target with
+    | Some (key :: _) ->
+      fail
+        e.env_name
+        (Printf.sprintf
+           "%s is target-only: set it under %s.targets.<provider>/<region> (DEC-047)"
+           key
+           e.env_name)
+    | _ -> Ok ()
+  in
+  let* () = app_shape e.env_name e.layer in
+  fold_result
+    (fun () (key, layer) -> app_shape (e.env_name ^ ".targets." ^ key) layer)
+    ()
+    e.targets
+;;
+
+let decode_environments ~path doc =
+  let* envs =
+    members ~path ~where:"" ~duplicate:(Printf.sprintf "duplicate environment %S") doc
+  in
+  fold_result
+    (fun acc (env_name, v) ->
+       let* fields =
+         members ~path ~where:(Printf.sprintf " in environment %S" env_name) v
+       in
+       let targets_field, body = List.partition (fun (k, _) -> k = "targets") fields in
+       let* layer = decode_layer ~path ~context:env_name ~top_level:false body in
+       let* targets =
+         match targets_field with
+         | [] -> Ok []
+         | (_, tv) :: _ ->
+           let* named =
+             members
+               ~path
+               ~where:(Printf.sprintf " in %s.targets" env_name)
+               ~duplicate:(Printf.sprintf "duplicate target %S")
+               tv
+           in
+           fold_result
+             (fun acc (key, bv) ->
+                let context = env_name ^ ".targets." ^ key in
+                let* () =
+                  match target_key_ok key with
+                  | Ok () -> Ok ()
+                  | Error m -> Error { path; line = 0; message = context ^ ": " ^ m }
+                in
+                let* fields = members ~path ~where:(" in " ^ context) bv in
+                let* body = decode_layer ~path ~context ~top_level:false fields in
+                Ok (acc @ [ key, body ]))
+             []
+             named
+       in
+       let e = { env_name; layer; targets } in
+       let* () = check_placement ~path e in
+       Ok (acc @ [ e ]))
+    []
+    envs
+;;
+
+let load_environments_file path =
+  if not (Sys.file_exists path)
+  then Ok []
+  else (
+    let text = In_channel.with_open_bin path In_channel.input_all in
+    let* doc = parse_yaml ~path text in
+    decode_environments ~path doc)
+;;
+
+(* Every key a layer sets, as a path, for the disjoint rule. *)
+let layer_keys (l : t) =
+  let opt name o = if o = None then [] else [ name ] in
+  let target_keys =
+    match l.target with
+    | None -> []
+    | Some t ->
+      List.concat
+        [ opt "registry" t.registry
+        ; opt "base_domain" t.base_domain
+        ; opt "cluster_issuer" t.cluster_issuer
+        ; opt "letsencrypt_email" t.letsencrypt_email
+        ; opt "cluster_name" t.cluster_name
+        ; opt "kube_context" t.kube_context
+        ; opt "kubeconfig" t.kubeconfig
+        ; opt "terraform_var_file" t.terraform_var_file
+        ; opt "observability_backend" t.observability_backend
+        ; opt "destroy_retention" t.destroy_retention
+        ; opt "alert_receiver_type" t.alert_receiver_type
+        ; opt "alert_receiver_url" t.alert_receiver_url
+        ; opt "alert_owner" t.alert_owner
+        ; opt "alert_runbook_url" t.alert_runbook_url
+        ; opt "state_bucket" t.state_bucket
+        ; opt "cluster_endpoint_cidr" t.cluster_endpoint_cidr
+        ; opt "node_failure_headroom_nodes" t.node_failure_headroom_nodes
+        ; opt "profile" t.profile
+        ]
+      @ List.concat_map
+          (fun (provider, fields) -> List.map (fun (k, _) -> provider ^ "." ^ k) fields)
+          t.provider_fields
+  in
+  target_keys
+  @ List.concat_map
+      (fun (r : resource) ->
+         let p = "resources." ^ r.name ^ "." in
+         opt (p ^ "size") r.size @ if r.omit then [ p ^ "omit" ] else [])
+      l.resources
+  @ List.concat_map
+      (fun (sv : service) ->
+         let p = "services." ^ sv.name ^ "." in
+         opt (p ^ "scale.min") sv.scale_min
+         @ opt (p ^ "scale.max") sv.scale_max
+         @ if sv.omit then [ p ^ "omit" ] else [])
+      l.services
+;;
+
+let disjoint ~path ~context tracked local =
+  match List.filter (fun k -> List.mem k (layer_keys tracked)) (layer_keys local) with
+  | [] -> Ok ()
+  | key :: _ ->
+    Error
+      { path
+      ; line = 0
+      ; message =
+          Printf.sprintf
+            "%s: %s is already set in %s; the local file may only add keys the tracked \
+             file leaves unset (DEC-047)"
+            context
+            key
+            environments_file
+      }
+;;
+
+(* The union of the tracked and local files: whole environments and targets the
+   local file adds are appended; keys it adds to a tracked one must be disjoint. *)
+let union_environments ~local_path ~tracked ~local =
+  fold_result
+    (fun acc (l : environment) ->
+       match List.find_opt (fun e -> e.env_name = l.env_name) acc with
+       | None -> Ok (acc @ [ l ])
+       | Some e ->
+         let* () = disjoint ~path:local_path ~context:l.env_name e.layer l.layer in
+         let* targets =
+           fold_result
+             (fun targets (key, lt) ->
+                match List.assoc_opt key targets with
+                | None -> Ok (targets @ [ key, lt ])
+                | Some tt ->
+                  let context = l.env_name ^ ".targets." ^ key in
+                  let* () = disjoint ~path:local_path ~context tt lt in
+                  Ok
+                    (List.map
+                       (fun (k, v) -> if k = key then k, merge tt lt else k, v)
+                       targets))
+             e.targets
+             l.targets
+         in
+         let merged = { e with layer = merge e.layer l.layer; targets } in
+         Ok (List.map (fun x -> if x.env_name = l.env_name then merged else x) acc))
+    tracked
+    local
+;;
+
+(* FEAT-100 is a clean break (pre-alpha, no compat shim): the old per-target
+   layout is refused rather than silently ignored, naming where each file goes. *)
+let refuse_per_target_files ~root =
+  let sol_dir = Filename.concat root "sol" in
+  let names select path =
+    match select path with
+    | Ok names -> names
+    | Error _ -> []
+  in
+  let old =
+    names Sol_cli_fs_walk.dirs sol_dir
+    |> List.concat_map (fun env ->
+      names Sol_cli_fs_walk.dirs (Filename.concat sol_dir env)
+      |> List.concat_map (fun provider ->
+        names
+          Sol_cli_fs_walk.files
+          (Filename.concat (Filename.concat sol_dir env) provider)
+        |> List.filter_map (fun file ->
+          if Filename.check_suffix file ".yml"
+          then Some (env, provider, Filename.chop_suffix file ".yml")
+          else None)))
+  in
+  match old with
+  | [] -> Ok ()
+  | (env, provider, region) :: _ ->
+    Error
+      { path = Printf.sprintf "sol/%s/%s/%s.yml" env provider region
+      ; line = 0
+      ; message =
+          Printf.sprintf
+            "per-target files are no longer read (FEAT-100): move this file into %s as \
+             %s.targets.%s/%s, with its target: keys directly under it"
+            environments_file
+            env
+            provider
+            region
+      }
+;;
+
+let load_environments ~root =
+  let* () = refuse_per_target_files ~root in
+  let local_path = Filename.concat root environments_local_file in
+  let* tracked = load_environments_file (Filename.concat root environments_file) in
+  let* local = load_environments_file local_path in
+  union_environments ~local_path ~tracked ~local
+;;
+
 let active_resources cfg = List.filter (fun (r : resource) -> not r.omit) cfg.resources
 let active_services cfg = List.filter (fun (s : service) -> not s.omit) cfg.services
 
-(* The target layout — [sol/<env>/<provider>/<region>.yml] — is known here and
-   nowhere else. Every level is traversed through [Sol_cli_fs_walk], so a path
-   that exists but cannot be read is reported instead of contributing nothing:
-   the same-cluster check must never read "unverified" as "fine". An absent
-   [sol/] directory stays a real fact — a workspace with no targets. *)
+let target_address (target : target) =
+  Sol_cli_provider.to_string target.provider ^ "/" ^ target.region
+;;
+
+let find_target envs (target : target) =
+  match List.find_opt (fun e -> e.env_name = target.env) envs with
+  | None -> None, None
+  | Some e -> Some e.layer, List.assoc_opt (target_address target) e.targets
+;;
+
+let target_declared (target : target) =
+  match load_environments ~root:(workspace_root ()) with
+  | Error _ -> false
+  | Ok envs -> snd (find_target envs target) <> None
+;;
+
+let target_source (target : target) =
+  Printf.sprintf
+    "%s (%s.targets.%s)"
+    (rooted environments_file)
+    target.env
+    (target_address target)
+;;
+
+let discover_targets envs =
+  List.concat_map
+    (fun e -> List.map (fun (key, _) -> e.env_name ^ "/" ^ key) e.targets)
+    envs
+  |> List.sort String.compare
+;;
+
 let discover_target_paths () =
-  let failure = ref None in
-  let read path select =
-    match select path with
-    | Ok names -> names
-    | Error (Sol_cli_fs_walk.Absent _) -> []
-    | Error e ->
-      if !failure = None then failure := Some e;
-      []
-  in
-  let sol_dir = rooted "sol" in
-  let paths =
-    read sol_dir Sol_cli_fs_walk.dirs
-    |> List.concat_map (fun env ->
-      let env_dir = Filename.concat sol_dir env in
-      read env_dir Sol_cli_fs_walk.dirs
-      |> List.concat_map (fun provider ->
-        let provider_dir = Filename.concat env_dir provider in
-        read provider_dir Sol_cli_fs_walk.files
-        |> List.filter_map (fun file ->
-          if Filename.check_suffix file ".yml"
-          then
-            Some (String.concat "/" [ env; provider; Filename.chop_suffix file ".yml" ])
-          else None)))
-  in
-  match !failure with
-  | Some e -> Error { path = "sol"; line = 0; message = Sol_cli_fs_walk.to_string e }
-  | None -> Ok (List.sort String.compare paths)
+  let* envs = load_environments ~root:(workspace_root ()) in
+  Ok (discover_targets envs)
 ;;
 
 (* Matches the only providers sol.yml's target-provider boxes recognize — no
@@ -1007,16 +1316,17 @@ let reject_shared_profile ~path (base : t) =
       { path
       ; line = 0
       ; message =
-          "profile must be selected in a target file \
-           (sol/<env>/<provider>/<region>.yml), not in sol.yml, whose target section \
-           every target inherits"
+          "profile must be selected in an environment or target (sol/environments.yml), \
+           not in sol.yml, whose target section every target inherits"
       }
   | _ -> Ok ()
 ;;
 
-let resolved_target base target_path =
-  let* target = target_of_path target_path in
-  let* overlay = load (target_file target) in
+(* sol.yml -> environment -> target, through [merge], which implements DEC-047's
+   key table (lowest layer wins; scale and provider blocks deep-merge; lists
+   replace; omit is sticky). An environment or target may only adjust services
+   and resources sol.yml declares. *)
+let resolve ~base ~envs (target : target) =
   let base_target =
     match base.target with
     | None -> target
@@ -1028,7 +1338,53 @@ let resolved_target base target_path =
       ; region = target.region
       }
   in
-  match (merge { base with target = Some base_target } overlay).target with
+  let env_layer, target_layer = find_target envs target in
+  let undeclared context (layer : t) =
+    let unknown_resource =
+      List.find_opt
+        (fun (r : resource) ->
+           not (List.exists (fun (b : resource) -> b.name = r.name) base.resources))
+        layer.resources
+    in
+    let unknown_service =
+      List.find_opt
+        (fun (sv : service) ->
+           not (List.exists (fun (b : service) -> b.name = sv.name) base.services))
+        layer.services
+    in
+    let fail kind name =
+      Error
+        { path = environments_file
+        ; line = 0
+        ; message =
+            Printf.sprintf
+              "%s: %s %S is not declared in sol.yml; an environment or target may only \
+               adjust what sol.yml declares (DEC-047)"
+              context
+              kind
+              name
+        }
+    in
+    match unknown_resource, unknown_service with
+    | Some r, _ -> fail "resource" r.name
+    | None, Some sv -> fail "service" sv.name
+    | None, None -> Ok ()
+  in
+  let apply context cfg = function
+    | None -> Ok cfg
+    | Some layer ->
+      let* () = undeclared context layer in
+      Ok (merge cfg layer)
+  in
+  let* cfg = apply target.env { base with target = Some base_target } env_layer in
+  let* cfg = apply (target.env ^ ".targets." ^ target_address target) cfg target_layer in
+  Ok cfg
+;;
+
+let resolved_target ~base ~envs target_path =
+  let* target = target_of_path target_path in
+  let* cfg = resolve ~base ~envs target in
+  match cfg.target with
   | Some target -> Ok target
   | None -> assert false
 ;;
@@ -1083,8 +1439,8 @@ let destination_identity target =
   | Ok destination -> Some (destination.kubeconfig, destination.context)
 ;;
 
-let validate_no_same_cluster base (selected : target) =
-  let* paths = discover_target_paths () in
+let validate_no_same_cluster ~base ~envs (selected : target) =
+  let paths = discover_targets envs in
   let rec loop = function
     | [] -> Ok ()
     | path :: rest ->
@@ -1094,7 +1450,7 @@ let validate_no_same_cluster base (selected : target) =
         (* A target that cannot be read or resolved is an environment whose
            cluster we cannot check. Failing here is the point: an unverified
            environment must not pass as a verified one. *)
-        match resolved_target base path with
+        match resolved_target ~base ~envs path with
         | Error error -> Error error
         | Ok (other : target) ->
           (match destination_identity selected, destination_identity other with
@@ -1121,9 +1477,9 @@ let validate_no_same_cluster base (selected : target) =
 
 let load_for_target ~target =
   let* target = target_of_path target in
-  (* DEC-024: the workspace is the nearest ancestor with a sol.yml, and both
-     sol.yml and the target overlay resolve relative to that root -- not the
-     invocation cwd. Absence fails closed and names the fix. *)
+  (* DEC-024: the workspace is the nearest ancestor with a sol.yml, and sol.yml and
+     the environments files resolve relative to that root -- not the invocation
+     cwd. Absence fails closed and names the fix. *)
   let* root =
     match Sol_cli_workspace.resolve_validated ~dir:(Sys.getcwd ()) with
     | Ok root -> Ok root
@@ -1134,28 +1490,16 @@ let load_for_target ~target =
         ; message = Sol_cli_workspace.workspace_error_to_string e
         }
   in
-  let file = Filename.concat root (relative_target_file target) in
   let sol_yml = Filename.concat root "sol.yml" in
   let* base = load sol_yml in
   let* () = reject_shared_profile ~path:sol_yml base in
-  let* overlay = load file in
-  let base_target =
-    match base.target with
-    | None -> target
-    | Some t ->
-      { t with
-        name = target.name
-      ; env = target.env
-      ; provider = target.provider
-      ; region = target.region
-      }
-  in
-  let cfg = merge { base with target = Some base_target } overlay in
+  let* envs = load_environments ~root in
+  let* cfg = resolve ~base ~envs target in
   let* cfg = validate_uses cfg in
   match cfg.target with
   | None -> Ok cfg
   | Some target ->
-    let* () = validate_no_same_cluster base target in
+    let* () = validate_no_same_cluster ~base ~envs target in
     Ok cfg
 ;;
 
@@ -1207,4 +1551,22 @@ let ecr_repositories_var () =
 
 let vars_with_profile_precedence ~has_profile ~cli_vars ~config_vars =
   if has_profile then cli_vars @ config_vars else config_vars @ cli_vars
+;;
+
+(* REFAC-107: which local infrastructure `sol local infra up` starts, decided from
+   what sol.yml declares rather than inferred from build files. Kafka and Postgres
+   follow the declared resources; the observability stack is always on, because
+   every platform install has it ("dev mirrors prod"). *)
+let local_infra ~root =
+  let* cfg = load (Filename.concat root "sol.yml") in
+  let declares typ =
+    List.exists (fun (r : resource) -> r.typ = Some typ) (active_resources cfg)
+  in
+  Ok
+    { Sol_cli_workspace.kafka = declares "kafka"
+    ; postgres = declares "postgres"
+    ; loki = true
+    ; prometheus = true
+    ; tempo = true
+    }
 ;;
