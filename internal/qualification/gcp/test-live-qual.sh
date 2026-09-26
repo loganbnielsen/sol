@@ -117,6 +117,52 @@ case "$*" in
     printf "CPUS;IN_USE_ADDRESSES;SSD_TOTAL_GB;DISKS_TOTAL_GB;INSTANCES,0;0;0;0;0\n"; exit 0 ;;
   *"compute networks list"*)    printf "default\n"; exit 0 ;;
 esac
+# ── the IAM observables (INFRA-080) ─────────────────────────────────────────────
+# These are the questions the harness asks now, and the wording below is what GCP actually
+# answered in Attempts 8 and 9: an authoritative active-account list, the identity's own
+# policy, and the custom role's own deletion marker.
+#
+# `STUB_PROVISIONER_SA` is run_case's CLUSTER ("test-cluster") at the project the harness
+# defaults to; the scenarios assert the harness asked about exactly this identity, so the
+# fixture cannot drift away from it silently.
+case "$*" in
+  # The provisioner's own describe, in both worlds, with the wording Attempt 9 captured: an
+  # active account answers with itself, and a provider-deleted one answers PERMISSION_DENIED
+  # -- which establishes nothing, and is exactly why this class asks an authoritative list
+  # instead. Other identities keep the generic not-found fallthrough below.
+  *"iam service-accounts describe"*)
+    case "$*" in
+      *"$STUB_PROVISIONER_SA"*)
+        if [ "${STUB_SA_ACTIVE_PROVISIONER:-0}" = "1" ]; then
+          printf "%s\n" "$STUB_PROVISIONER_SA"; exit 0
+        fi
+        printf "ERROR: (gcloud.iam.service-accounts.describe) PERMISSION_DENIED: Permission 'iam.serviceAccounts.get' denied on resource (or it may not exist). This command is authenticated as test@example.com which is the active account specified by the [core/account] property.\n" >&2
+        exit 1 ;;
+    esac ;;
+  *"iam service-accounts list"*)
+    if [ "${STUB_SA_LIST_FAIL:-0}" = "1" ]; then
+      printf "ERROR: (gcloud.iam.service-accounts.list) PERMISSION_DENIED: Permission 'iam.serviceAccounts.list' denied on resource.\n" >&2
+      exit 1
+    fi
+    printf "819835583654-compute@developer.gserviceaccount.com\n"
+    [ "${STUB_SA_ACTIVE_PROVISIONER:-0}" = "1" ] && printf "%s\n" "$STUB_PROVISIONER_SA"
+    exit 0 ;;
+  *"iam service-accounts get-iam-policy"*)
+    case "${STUB_SA_POLICY:-denied}" in
+      binding) printf "roles/iam.serviceAccountTokenCreator\n"; exit 0 ;;
+      empty)   exit 0 ;;
+      *)
+        printf "ERROR: (gcloud.iam.service-accounts.get-iam-policy) PERMISSION_DENIED: Permission 'iam.serviceAccounts.getIamPolicy' denied on resource (or it may not exist). This command is authenticated as test@example.com which is the active account specified by the [core/account] property.\n" >&2
+        exit 1 ;;
+    esac ;;
+  *"iam roles describe"*)
+    case "${STUB_ROLE_STATE:-deleted}" in
+      deleted)  printf "projects/sol-qualification/roles/sol_test_cluster_access\tTrue\n"; exit 0 ;;
+      active)   printf "projects/sol-qualification/roles/sol_test_cluster_access\tFalse\n"; exit 0 ;;
+      notfound) printf "ERROR: (gcloud.iam.roles.describe) NOT_FOUND: The role named projects/sol-qualification/roles/sol_test_cluster_access was not found.\n" >&2; exit 1 ;;
+      *)        printf "ERROR: (gcloud.iam.roles.describe) PERMISSION_DENIED: The caller does not have permission\n" >&2; exit 1 ;;
+    esac ;;
+esac
 # STUB_CLUSTER_EXISTS=1 is the world where the cloud apply reached the cluster (so the
 # discriminator probes have something to read) without claiming the target still exists.
 if [ "${STUB_CLUSTER_EXISTS:-0}" = "1" ]; then
@@ -206,6 +252,8 @@ run_case() { # run_case <name> <subcommand> [VAR=VALUE ...]
   # touched and "nothing was left behind" is an assertion about scratch, not a hope.
   export WORKSPACE="$SCRATCH_WS"
   export XDG_DATA_HOME="$TMP/data"
+  # The identity the harness will ask about: CLUSTER at the harness's default project.
+  export STUB_PROVISIONER_SA="test-cluster-provisioner@sol-qualification.iam.gserviceaccount.com"
   : >"$ARGV_LOG"
   rm -f "$TARGET_FILE"
   # The `verify` invariant needs a target file to exist: with one present, the old code
@@ -492,6 +540,96 @@ if grep -q 'sol/qual/gcp/us-central1/' "$TMP/target-override.argv"; then
 else
   ok "the default key is not silently used as well"
 fi
+
+# ── 16. postconditions a describe cannot answer (INFRA-080) ───────────────────
+# The shape Attempt 9's bundle recorded, replayed offline: the disposable infrastructure is
+# gone, the provisioner identity is provider-deleted (so its describe answers
+# PERMISSION_DENIED, which establishes nothing), the impersonation grant is unusable because
+# the identity it was attached to is not active, the custom role is provider-deleted into
+# GCP's undelete window, and the durable prerequisites are present. Teardown must VERIFY —
+# and it must say, per class, which evidence established what.
+printf '\nscenario: Attempt-9-shaped teardown verifies\n'
+run_case attempt9-verified destroy
+is "a clean teardown with a provider-deleted identity and role verifies" "$(cat "$TMP/attempt9-verified.rc")" "0"
+has "the fixture asked about the harness's own provisioner identity" "$STUB_PROVISIONER_SA" "$TMP/attempt9-verified.argv"
+has "the identity class is ABSENT for the right reason" "service-account-provisioner: ABSENT" "$TMP/attempt9-verified.out"
+has "and names the authoritative observable" "not in the active list" "$TMP/attempt9-verified.out"
+has "the binding class is ABSENT for the right reason" "impersonator-binding: ABSENT" "$TMP/attempt9-verified.out"
+has "and names the implication, not a relabelled denial" "cannot be impersonated" "$TMP/attempt9-verified.out"
+has "the role class is ABSENT for the right reason" "custom-role: ABSENT" "$TMP/attempt9-verified.out"
+has "and reports the provider's own deletion marker" "provider-deleted" "$TMP/attempt9-verified.out"
+has "the raw deletion marker is preserved in the bundle" "True" "$TMP/attempt9-verified.logs/inventory-custom-role.log"
+has "the raw describe answer for the deleted identity is preserved" "PERMISSION_DENIED" "$TMP/attempt9-verified.logs/inventory-service-account-provisioner.describe.log"
+if grep -q 'could NOT determine absence' "$TMP/attempt9-verified.out"; then
+  no "nothing is left UNKNOWN in this shape" "no UNKNOWN" "$(grep -m1 'could NOT determine' "$TMP/attempt9-verified.out")"
+else
+  ok "nothing is left UNKNOWN in this shape"
+fi
+
+# The mutations: each one makes a security-sensitive fact true, and verification must not pass.
+printf '\nscenario: the identity is still active\n'
+run_case mutation-sa-active destroy STUB_SA_ACTIVE_PROVISIONER=1 STUB_SA_POLICY=empty
+if [ "$(cat "$TMP/mutation-sa-active.rc")" = "0" ]; then
+  no "an active provisioner identity fails the verification" "non-zero" "0"
+else
+  ok "an active provisioner identity fails the verification"
+fi
+has "and is reported PRESENT" "service-account-provisioner: PRESENT" "$TMP/mutation-sa-active.out"
+
+printf '\nscenario: the impersonation grant is still there\n'
+run_case mutation-binding-present destroy STUB_SA_ACTIVE_PROVISIONER=1 STUB_SA_POLICY=binding
+if [ "$(cat "$TMP/mutation-binding-present.rc")" = "0" ]; then
+  no "a surviving impersonator binding fails the verification" "non-zero" "0"
+else
+  ok "a surviving impersonator binding fails the verification"
+fi
+has "and is reported PRESENT" "impersonator-binding: PRESENT" "$TMP/mutation-binding-present.out"
+
+printf '\nscenario: the role is still active\n'
+run_case mutation-role-active destroy STUB_ROLE_STATE=active
+if [ "$(cat "$TMP/mutation-role-active.rc")" = "0" ]; then
+  no "an active custom role fails the verification" "non-zero" "0"
+else
+  ok "an active custom role fails the verification"
+fi
+has "and is reported PRESENT" "custom-role: PRESENT" "$TMP/mutation-role-active.out"
+
+# Ambiguous evidence stays ambiguous, per class: an active identity whose policy read is
+# denied must not become "the binding is gone".
+printf '\nscenario: the policy read is denied while the identity is active\n'
+run_case mutation-policy-denied destroy STUB_SA_ACTIVE_PROVISIONER=1
+has "the binding class is UNKNOWN when its read is ambiguous" "impersonator-binding: UNKNOWN" "$TMP/mutation-policy-denied.out"
+if [ "$(cat "$TMP/mutation-policy-denied.rc")" = "0" ]; then
+  no "ambiguous policy evidence does not verify" "non-zero" "0"
+else
+  ok "ambiguous policy evidence does not verify"
+fi
+
+printf '\nscenario: the authoritative collection itself fails\n'
+run_case mutation-list-fails destroy STUB_SA_LIST_FAIL=1
+has "a failed authoritative list is UNKNOWN, never absent" "service-account-provisioner: UNKNOWN" "$TMP/mutation-list-fails.out"
+has "and the binding does not guess either" "impersonator-binding: UNKNOWN" "$TMP/mutation-list-fails.out"
+if [ "$(cat "$TMP/mutation-list-fails.rc")" = "0" ]; then
+  no "an unreadable authority collection does not verify" "non-zero" "0"
+else
+  ok "an unreadable authority collection does not verify"
+fi
+
+printf '\nscenario: the role is genuinely not found / unreadable\n'
+run_case role-notfound destroy STUB_ROLE_STATE=notfound
+is "a not-found role verifies" "$(cat "$TMP/role-notfound.rc")" "0"
+run_case role-unreadable destroy STUB_ROLE_STATE=error
+has "an unreadable role is UNKNOWN" "custom-role: UNKNOWN" "$TMP/role-unreadable.out"
+
+# ── 17. the harness's own argument list (INFRA-080 C) ─────────────────────────
+# The generated target is the single source for the impersonator: Sol routes it from the
+# target's `gcp` block. The harness must not pass a second copy behind a comment that ends
+# its own printf -- which is what printed `command not found` while dropping the argument.
+printf '\nscenario: the harness passes no dead argument\n'
+run_case cloud-vars cloud
+lacks "no command-not-found diagnostic" "command not found" "$TMP/cloud-vars.out"
+has "the generated target carries the impersonator" "provisioner_impersonator: user:test@example.com" "$TARGET_FILE"
+lacks "and the cloud path passes no second copy of it" "-var=provisioner_impersonators" "$TMP/cloud-vars.argv"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = "0" ] || exit 1
