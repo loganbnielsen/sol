@@ -283,7 +283,7 @@ let test_svc_has_ingress () =
   (* FEAT-042: pin the class explicitly. k3s/k3d ships Traefik as its own
      IngressClass, so a classless Ingress is claimed by Traefik locally and by
      nothing once ingress-nginx's class is not the cluster default. `nginx`
-     matches platform/infra/base's own `ingress_class_name`. *)
+     matches platform/cloud/modules/platform's own `ingress_class_name`. *)
   assert_contains
     "ingress pins the nginx IngressClass"
     ingress_block

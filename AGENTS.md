@@ -23,7 +23,7 @@ and update call sites in the same pass. Full policy: `~/Code/CLAUDE.md`.
 
 ## Current development focus
 
-**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform modules live at `platform/infra/base/`, `platform/infra/aws/`, and `platform/infra/gcp/`. Remaining hosted-product work is tracked in `internal/pipeline/tickets/`. See `docs/planning/WORK_SUMMARY.md` for full details.
+**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform lives under `platform/cloud/`: the shared platform module `modules/platform/`, and per-provider `bootstrap/`, `cluster/` and `platform/` roots that mirror each other (DEC-046 rule 4). Remaining hosted-product work is tracked in `internal/pipeline/tickets/`. See `docs/planning/WORK_SUMMARY.md` for full details.
 
 Package: `cli/` — binary at `_build/default/cli/bin/main.exe`.
 
@@ -150,7 +150,10 @@ sol/
     bin/ lib/ test/             ← command parsing, shared implementation, tests
     migrations/                 ← hosted control-plane SQL (currently unreferenced)
   platform/                     ← what the CLI drives — no OCaml
-    components/ infra/ local/   ← Helm values, Terraform roots, local k3s tooling
+    components/                 ← Helm values shared by local and cloud
+    cloud/                      ← Terraform: modules/platform (shared definition),
+                                  <provider>/{bootstrap,cluster,platform} roots, delivery/
+    local/                      ← local k3s tooling
   contract/                     ← language-neutral application contract (runtime, substrate)
   framework/ocaml/              ← first-party OCaml framework packages
     sol-svc/lib/                ← REST API service (routes, auth, metrics)

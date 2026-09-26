@@ -1,6 +1,6 @@
 # Observability Backends
 
-`platform/infra/base`'s `observability_backend` variable selects where Loki
+`platform/cloud/modules/platform`'s `observability_backend` variable selects where Loki
 (logs) and Prometheus (metrics) data lives. Sol ships a self-hosted durable
 path so production users are not forced into Sol-hosted observability.
 The product design is documented in
@@ -70,7 +70,7 @@ historical blocks from storegateway, with compactor managing object-store
 block growth. GCP is a deliberate gap, not an oversight: it uses AWS IRSA to
 grant Loki/Thanos access to S3, which has no meaning on a non-EKS cluster.
 
-`platform/infra/base`'s `cloud_provider` variable (default `"aws"`) makes
+`platform/cloud/modules/platform`'s `cloud_provider` variable (default `"aws"`) makes
 this explicit and enforced. Applying `self_hosted_durable` with
 `cloud_provider = "gcp"` fails fast at `terraform apply` with a clear
 `self_hosted_durable`-is-AWS-only error instead of silently installing a
@@ -85,12 +85,12 @@ always pass `cloud_provider = "gcp"` explicitly, regardless of which
 provider-specific one) actually applies to their cluster.
 
 This is two Terraform states with no automatic link between them (same as
-`cert_manager_irsa_role_arn` already works): apply `platform/infra/aws` with
+`cert_manager_irsa_role_arn` already works): apply `platform/cloud/aws/cluster` with
 durable observability enabled, read its outputs, then pass them into
-`platform/infra/base`.
+`platform/cloud/modules/platform`.
 
 ```bash
-# platform/infra/aws
+# platform/cloud/aws/cluster
 terraform apply \
   -var=enable_durable_observability=true \
   -var=loki_retention_days=90 \
@@ -103,7 +103,7 @@ terraform output thanos_irsa_arn     # -> thanos_irsa_role_arn
 ```
 
 ```hcl
-# platform/infra/base
+# platform/cloud/modules/platform
 observability_backend = "self_hosted_durable"
 cloud_provider        = "aws" # required to stay "aws" for this profile
 aws_region            = "us-east-1"
@@ -120,10 +120,10 @@ thanos_retention_1h_days      = 90
 **What it costs:** S3 storage plus the in-cluster Loki, Prometheus, Thanos
 Query, storegateway, and compactor pods. The Loki bucket has a 90-day
 expiration lifecycle rule by default; set `loki_retention_days` in
-`platform/infra/aws` to change log retention. Thanos metric retention is owned
+`platform/cloud/aws/cluster` to change log retention. Thanos metric retention is owned
 by the compactor, not an S3 lifecycle rule. Set
 `prometheus_raw_retention_days`, `thanos_retention_5m_days`, and
-`thanos_retention_1h_days` in `platform/infra/base` to change metric
+`thanos_retention_1h_days` in `platform/cloud/modules/platform` to change metric
 retention.
 
 **Teardown:** the Loki and Thanos S3 buckets use Terraform `prevent_destroy`
@@ -146,7 +146,7 @@ All three profiles ship the same starter Alertmanager + rule set — Sol uses
 the plain `prometheus-community/prometheus` chart (`server` +
 `alertmanager` subcharts), not the Prometheus Operator, so there is no
 `PrometheusRule` CRD here. Rules and Alertmanager routing are both plumbed
-in as chart `values` in `platform/infra/base/main.tf`'s
+in as chart `values` in `platform/cloud/modules/platform/main.tf`'s
 `helm_release.prometheus`, the same way `remoteWrite`/Thanos fields are
 today:
 
@@ -233,7 +233,7 @@ target:
   declaration is complete and the URL is a routable http(s) endpoint — missing
   or unroutable receiver, missing owner or runbook, and an unqualified receiver
   type each name the target-side fix.
-- Applying `platform/infra/base` with the same values makes
+- Applying `platform/cloud/modules/platform` with the same values makes
   `local.prometheus_alertmanager_config` route to a
   `webhook_configs` receiver instead of the dev `null` one. Empty values keep
   the deliberate OBS-040 null receiver, so local/dev is unchanged.
@@ -270,7 +270,7 @@ escalated as if it shared Postgres/Kafka's RPO/RTO.
 
 Add more alerting rules the same way: extend
 `local.prometheus_alerting_rules.groups[0].rules` (or add another group)
-in `platform/infra/base/main.tf`. Multi-window burn-rate alerting and
+in `platform/cloud/modules/platform/main.tf`. Multi-window burn-rate alerting and
 SLO-based rules remain a deliberate non-goal — the maturity-A indicators are
 threshold rules on purpose (OBS-043), and Sol has no per-service SLO target
 concept: revisit only if the simple threshold rules prove insufficient.

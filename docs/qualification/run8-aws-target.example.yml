@@ -34,7 +34,7 @@ target:
   # this pair is provisioned once by the separate bootstrap root and then recorded
   # here for the preflight to verify:
   #
-  #   cd platform/infra/bootstrap
+  #   cd platform/cloud/aws/bootstrap
   #   terraform init
   #   terraform apply -var="region=us-east-1" \
   #     -var="state_bucket=<globally-unique>" -var="state_lock_table=<name>"

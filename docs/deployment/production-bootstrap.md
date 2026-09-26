@@ -14,7 +14,7 @@ A Terraform configuration cannot create its own backend, so the backend is a
 small separate root:
 
 ```bash
-cd platform/infra/bootstrap
+cd platform/cloud/aws/bootstrap
 terraform init
 terraform apply \
   -var="region=us-east-1" \
@@ -234,7 +234,7 @@ workloads read as `POSTGRES_URL`.
 **`cluster_issuer` belongs to the base platform layer.** `sol cloud plan/apply/
 destroy` pass each Terraform root only the variables it declares.
 `cluster_issuer` names a cert-manager `ClusterIssuer`, so Sol routes it to
-`platform/infra/base` after the cloud output contract has been validated.
+`platform/cloud/modules/platform` after the cloud output contract has been validated.
 
 It remains a target field (`sol deploy` uses it for ingress annotations). Passing
 it to the provider root, as it used to be, made terraform abort with "a variable
@@ -247,12 +247,12 @@ provision at all.
 The qualified substrate must be able to host the platform's own durable
 components. Two layers provide that, and neither is an application workload volume:
 
-- **Cloud substrate**: on AWS (`platform/infra/aws`) this installs the **EBS
+- **Cloud substrate**: on AWS (`platform/cloud/aws/cluster`) this installs the **EBS
   CSI driver** as an EKS addon, with an IRSA role scoped to
   `kube-system:ebs-csi-controller-sa`. Without it an EKS cluster has no CSI
   driver and therefore no StorageClass, so every PVC stays `Pending`. On GCP the
   `pd.csi.storage.gke.io` driver is part of GKE itself and needs no addon.
-- **Platform substrate** (`platform/infra/base`) creates the default **gp3
+- **Platform substrate** (`platform/cloud/modules/platform`) creates the default **gp3
   StorageClass** on AWS (`WaitForFirstConsumer`, so the volume is created in the
   zone the pod lands in). Set `create_storage_class = false` if the platform is
   expected to adopt a class that already exists, or `storage_class_name` to rename
@@ -285,30 +285,31 @@ live smoke harness ever installed the platform was that it disabled persistence
 
 ## Platform roots are selected per provider
 
-The platform *definition* is `platform/infra/base`. A Terraform root's state
-backend *type* is part of its own configuration — `-backend-config` sets
-attributes, never the type — so one root cannot serve both the S3 backend AWS
-needs and the GCS backend GCP needs. `sol cloud` therefore selects a root per
-provider (`Sol_cli_cloud_lifecycle.platform_root`):
+The platform *definition* is the shared module `platform/cloud/modules/platform`,
+which declares no backend. A Terraform root's state backend *type* is part of its
+own configuration — `-backend-config` sets attributes, never the type — so each
+provider reaches the module through a thin root of its own, named by role under the
+provider (`platform/cloud/<provider>/platform`, DEC-046 rule 4). `sol cloud` selects
+it with `Sol_cli_cloud_lifecycle.platform_root`:
 
 | Provider | Root | Backend | Platform state object |
 |---|---|---|---|
-| AWS | `platform/infra/base` | S3 + DynamoDB locking | `sol/<target>/platform.tfstate` (`key=`) |
-| GCP | `platform/infra/base-gcp` | GCS, native locking | `sol/<target>/platform.tfstate` (`prefix=`) |
+| AWS | `platform/cloud/aws/platform` | S3 + DynamoDB locking | `sol/<target>/platform.tfstate` (`key=`) |
+| GCP | `platform/cloud/gcp/platform` | GCS, native locking | `sol/<target>/platform.tfstate` (`prefix=`) |
 
-`base-gcp` declares only the GCS backend and a module call into `base`, so the
-definition itself is not duplicated. Two consequences are worth knowing before
-editing either:
+Each root declares only its backend, the variables, and one `module "platform"` call,
+so the definition itself is not duplicated. Things worth knowing before editing
+either:
 
-- A module's own `terraform` block is ignored, so `terraform init` on `base-gcp`
-  warns about `base`'s S3 backend and provider requirements. That is expected —
-  the root's backend is the one used, and supplying it is the whole reason the
-  root exists.
-- The GCP root mirrors every variable in the definition except the AWS-shaped
-  ones — `aws_region`, the S3 buckets and their IRSA roles, and
-  `cert_manager_irsa_role_arn`, none of which a GCP install can use. Adding a
-  variable to the definition without adding it to `base-gcp` fails
-  `cli/test/check_production_infra.sh` rather than silently defaulting on GCP.
+- Every root mirrors, and passes to the module, every variable the definition
+  declares. The GCP root's only exceptions are the AWS-shaped ones — `aws_region`,
+  the S3 buckets and their IRSA roles, and `cert_manager_irsa_role_arn` — which a
+  GCP install cannot use. Adding a variable to the definition without adding it to
+  a root fails `cli/test/check_production_infra.sh` rather than silently defaulting.
+- Until REFAC-100 the AWS root *was* the definition, so an AWS platform state from
+  before it holds every resource at the top level. The AWS root's `moved` blocks
+  relocate each one under `module.platform`, so such a state plans with no destroy
+  and no create.
 
 Everything a target addresses inside the platform root goes through
 `Sol_cli_cloud_lifecycle.platform_address`, because a root that reaches the

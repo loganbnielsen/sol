@@ -261,7 +261,7 @@ let classify_instance_snapshots lookup =
    covers that in-tree tagging convention -- a load balancer created by the
    standalone AWS Load Balancer Controller instead tags primarily with
    elbv2.k8s.aws/cluster, which this does not check. Not a gap today
-   (platform/infra/base/main.tf only installs ingress-nginx, which uses
+   (platform/cloud/modules/platform/main.tf only installs ingress-nginx, which uses
    the in-tree cloud-controller path), but would need extending if Sol
    ever supports the standalone LBC.
 

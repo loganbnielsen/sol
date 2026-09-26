@@ -20,9 +20,7 @@ type platform_storage =
   }
 
 type t =
-  { platform_root : string
-  ; platform_address : string -> string
-  ; backend_config :
+  { backend_config :
       Sol_cli_config.target
       -> bucket:string
       -> object_key:string
@@ -74,9 +72,7 @@ let required name = function
    *stable* scope that contains it, the matcher names the resource type, and the
    plan assertion is what keeps it narrow. *)
 let aws =
-  { platform_root = "platform/infra/base"
-  ; platform_address = Fun.id
-  ; backend_config =
+  { backend_config =
       (fun (target : Sol_cli_config.target) ~bucket ~object_key ->
         (* S3 has no native locking, so the DynamoDB lock table is part of what
            makes the state durable, not an option. *)
@@ -113,7 +109,7 @@ let aws =
              "cluster_access_role_arn"
              (Sol_cli_config.provider_field target "cluster_access_role_arn")
         (* HARDEN-002 run 3, finding 11: deploy_role_arn is declared by the
-           provider root (platform/infra/aws) and drives the deploy EKS
+           provider root (platform/cloud/aws/cluster) and drives the deploy EKS
            access entry INFRA-025 added, but was never routed here — so the entry
            was never created and the module's deploy_kubeconfig_command/
            deploy_kube_context outputs stayed null. provider_fields still follow,
@@ -204,9 +200,7 @@ let aws =
 let gcp_bootstrap_binding = "kubernetes_cluster_role_binding.provisioner_bootstrap_admin"
 
 let gcp =
-  { platform_root = "platform/infra/base-gcp"
-  ; platform_address = (fun address -> "module.platform." ^ address)
-  ; backend_config =
+  { backend_config =
       (fun _target ~bucket ~object_key ->
         Ok [ "bucket=" ^ bucket; "prefix=" ^ object_key ])
   ; (* A GCP caller impersonates a service account through short-lived

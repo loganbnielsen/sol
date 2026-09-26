@@ -12,10 +12,7 @@ type platform_storage =
   }
 
 type t =
-  { platform_root : string (** The platform Terraform root, relative to the Sol home. *)
-  ; platform_address : string -> string
-    (** A platform resource's address inside that root. *)
-  ; backend_config :
+  { backend_config :
       Sol_cli_config.target
       -> bucket:string
       -> object_key:string

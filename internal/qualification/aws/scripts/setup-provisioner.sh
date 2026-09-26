@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Provisions the IAM identity used to run `terraform apply`/`destroy` against
-# platform/infra/aws/main.tf (typically with internal/qualification/aws/smoke-test.tfvars). Creates a
+# platform/cloud/aws/cluster/main.tf (typically with internal/qualification/aws/smoke-test.tfvars). Creates a
 # scoped IAM policy from smoke-test-iam-policy.json, a new IAM user, attaches
 # the policy, and writes a new profile to your local ~/.aws/credentials —
 # never prints the secret access key to stdout.

@@ -6,8 +6,8 @@
 
 ## Context
 
-`sol cloud apply <target>` currently applies only `platform/infra/aws` and
-stops. A ready target also needs `platform/infra/base`, including a staged
+`sol cloud apply <target>` currently applies only `platform/cloud/aws/cluster` and
+stops. A ready target also needs `platform/cloud/modules/platform`, including a staged
 cert-manager apply because Terraform resolves `ClusterIssuer` kinds at plan time
 before a same-apply CRD can exist. The only working orchestration is in
 `internal/qualification/aws/live-smoke.sh`; the tutorial instead tells operators to run one

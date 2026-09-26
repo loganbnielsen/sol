@@ -19,7 +19,27 @@ let is_known s = Option.is_some (of_string s)
    rather than the one a command was addressed to -- validating each provider's
    readiness invocations against kubectl, for instance -- so a provider added
    later cannot be silently left unvalidated. *)
-let all = [ Aws; Gcp ]
+(* REFAC-100: [all] is exhaustive by construction. [next] must match every
+   constructor, so adding one to [t] fails the build (warning 8 is an error) until
+   it has an arm here; [all] is the chain [next] walks from [Aws], so the new
+   provider is enumerated once it is placed in that chain. A hand-written list had
+   nothing forcing a new constructor into it, and the CI guards read their provider
+   list from here. *)
+let next = function
+  | Aws -> Some Gcp
+  | Gcp -> None
+;;
+
+let all =
+  let rec from p =
+    p
+    ::
+    (match next p with
+     | Some q -> from q
+     | None -> [])
+  in
+  from Aws
+;;
 
 (* AUDIT-POST-003: which target-file keys are a *provider's own*, so the config parser
    can reject a flat one with a message naming the block it belongs in.

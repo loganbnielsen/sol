@@ -5,7 +5,7 @@
 # Once a Helm value moves into platform/components/<name>/values-*.json, it
 # must not creep back as an independently hand-maintained literal in either
 # execution layer -- that's exactly how BUG-013 (fixed in
-# platform/infra/base/main.tf only) turned into BUG-016 (cmd_local.ml still
+# platform/cloud/modules/platform/main.tf only) turned into BUG-016 (cmd_local.ml still
 # missing the fix). Deliberately a grep over a fixed key list, not an
 # OCaml/HCL AST linter -- see the ADR's "No elaborate lint tooling" rule.
 #
@@ -25,7 +25,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cmd_local="$repo_root/cli/bin/cmd_local.ml"
-main_tf="$repo_root/platform/infra/base/main.tf"
+main_tf="$repo_root/platform/cloud/modules/platform/main.tf"
 
 # Keys CODE_LAYER-005 moved into platform/components/<name>/values-*.json,
 # checked against both files. Keys intentionally still set inline in main.tf

@@ -102,19 +102,19 @@ The following substrate inputs must exist before running `sol deploy`.
 - When `ingress_host` is set, Sol generates an Ingress object for the `-svc`
   with a host rule, a per-service TLS secret, and cert-manager annotations.
   Override the ClusterIssuer with `target.cluster_issuer`; it defaults to
-  `letsencrypt-prod`, matching `platform/infra/base`.
+  `letsencrypt-prod`, matching `platform/cloud/modules/platform`.
 - If a service has no `ingress_host`, Sol still generates an Ingress, but gives
   it a per-service dev host, `<k8s-name>.<namespace>.localhost`, and leaves TLS
   and HTTPS redirect off. The namespace is part of the host so several services
   — and several workspaces sharing one cluster — never collide.
-- **No DNS record is created for you.** `platform/infra/base` installs
-  ingress-nginx, and `platform/infra/aws` can create the Route53 zone, but
+- **No DNS record is created for you.** `platform/cloud/modules/platform` installs
+  ingress-nginx, and `platform/cloud/aws/cluster` can create the Route53 zone, but
   Sol does not run external-dns: an `ingress_host` only resolves once its
   record exists. Find the controller's address with
   `kubectl get svc -n ingress-nginx ingress-nginx-controller` (the
   `EXTERNAL-IP`) and create an `A`/alias or `CNAME` record for each
   `ingress_host` in that zone (`route53_zone_id` / `route53_nameservers` are
-  `platform/infra/aws` outputs; on GCP use the Cloud DNS zone). A wildcard
+  `platform/cloud/aws/cluster` outputs; on GCP use the Cloud DNS zone). A wildcard
   record such as `*.acme.com` covers every service in one entry.
 - Locally, `sol local infra up` installs the same ingress-nginx chart (NodePort) and
   forwards the controller to `http://localhost:8088`. Reach a service there
@@ -176,10 +176,10 @@ Sol deliberately does not provision:
 - **VPCs, subnets, security groups, firewall rules** — use Terraform, Pulumi,
   or your cloud console.
 - **IAM roles, service accounts (cloud), OIDC providers** — use your cloud
-  provider's IAM tooling or the Terraform modules in `platform/infra/aws/` and
-  `platform/infra/gcp/` as a starting point.
+  provider's IAM tooling or the Terraform modules in `platform/cloud/aws/cluster/` and
+  `platform/cloud/gcp/cluster/` as a starting point.
 - **Managed databases (RDS, Cloud SQL)** — use cloud-native managed services or
-  the Terraform modules in `platform/infra/base/`.
+  the Terraform modules in `platform/cloud/modules/platform/`.
 - **Managed Kafka clusters (MSK, Confluent Cloud, Redpanda Cloud)** — use the
   managed service directly. Point `KAFKA_BROKERS` at the bootstrap endpoint.
 - **DNS zones, A/CNAME records** — use Route 53, Cloud DNS, or your DNS
@@ -209,16 +209,16 @@ local development.
 
 ### Terraform Modules (Provided as a Starting Point)
 
-The `platform/infra/` directory contains Terraform modules that provision typical
+The `platform/cloud/` directory contains Terraform modules that provision typical
 production substrate:
 
 | Path | What it creates |
 |---|---|
-| `platform/infra/base/` | Generic Kubernetes substrate: namespaces, RBAC, cert-manager, ingress-nginx |
-| `platform/infra/aws/` | AWS: VPC, EKS cluster, ECR registry, RDS PostgreSQL, IAM OIDC |
-| `platform/infra/gcp/` | GCP: GKE Autopilot, Artifact Registry, Cloud SQL, Workload Identity |
-| `platform/infra/argocd/` | Argo CD `Application` manifest for GitOps mode |
-| `platform/infra/ci/` | GitHub Actions workflows for direct and GitOps CI modes |
+| `platform/cloud/modules/platform/` | Generic Kubernetes substrate: namespaces, RBAC, cert-manager, ingress-nginx |
+| `platform/cloud/aws/cluster/` | AWS: VPC, EKS cluster, ECR registry, RDS PostgreSQL, IAM OIDC |
+| `platform/cloud/gcp/cluster/` | GCP: GKE Autopilot, Artifact Registry, Cloud SQL, Workload Identity |
+| `platform/cloud/delivery/argocd/` | Argo CD `Application` manifest for GitOps mode |
+| `platform/cloud/delivery/ci/` | GitHub Actions workflows for direct and GitOps CI modes |
 
 These modules are **starting points**. They express Sol's opinion about a
 minimal, secure substrate. Modify them freely to match your organization's
@@ -358,7 +358,7 @@ gets no mounted service-account token, and runtime credentials rotate by
 
 Recoverable state and scoped identities are target declarations: a locked,
 versioned, encrypted remote state backend (`state_bucket`/`state_lock_table`,
-which Sol provisions by default via `platform/infra/bootstrap`) and the named
+which Sol provisions by default via `platform/cloud/aws/bootstrap`) and the named
 provisioning/deploy/operator role ARNs plus a restricted public-endpoint CIDR.
 See [`production-bootstrap.md`](production-bootstrap.md) for the exact commands
 and recovery procedure.

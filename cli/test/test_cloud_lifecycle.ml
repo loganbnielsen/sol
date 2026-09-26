@@ -770,27 +770,21 @@ let test_cloud_target () =
   | Ok _ -> Alcotest.fail "a target without a base domain must be refused"
 ;;
 
-(* The platform root differs per provider because a Terraform root's backend type
-   is part of its own configuration, and the address prefix follows the structure
-   that reaches the shared definition. The two have to agree: a provider whose root
-   is `base` cannot be addressed through `module.platform`. *)
+(* REFAC-100 / DEC-046 rule 4: every provider reaches the shared platform module
+   through its own thin root, so the root and the address prefix are one rule. *)
 let test_platform_root_selection () =
   Alcotest.(check string)
-    "AWS keeps the shared definition as its own root"
-    "platform/infra/base"
+    "AWS has a root that declares the S3 backend"
+    "platform/cloud/aws/platform"
     (L.platform_root Sol_cli_provider.Aws);
   Alcotest.(check string)
     "GCP has a root that declares the GCS backend"
-    "platform/infra/base-gcp"
+    "platform/cloud/gcp/platform"
     (L.platform_root Sol_cli_provider.Gcp);
   Alcotest.(check string)
-    "an AWS address is bare"
-    "kubernetes_namespace.cert_manager"
-    (L.platform_address Sol_cli_provider.Aws "kubernetes_namespace.cert_manager");
-  Alcotest.(check string)
-    "a GCP address goes through the module that reaches the definition"
+    "an address goes through the module that reaches the definition"
     "module.platform.kubernetes_namespace.cert_manager"
-    (L.platform_address Sol_cli_provider.Gcp "kubernetes_namespace.cert_manager");
+    (L.platform_address "kubernetes_namespace.cert_manager");
   Alcotest.(check bool)
     "the two providers do not select the same platform root"
     true

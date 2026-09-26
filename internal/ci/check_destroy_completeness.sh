@@ -25,23 +25,28 @@
 set -u
 
 root="${1:-.}"
-# HARDEN-005: the target roots are the providers' own roots, derived from the
-# provider list rather than written out, so a provider added later is checked by
-# this guard without anyone remembering to add it here. A provider list that
-# cannot be read fails closed: a guard that checked nothing must not read as a pass.
-provider_module="$root/cli/lib/sol_cli_provider.ml"
-providers="$(sed -n '/^let to_string/,/^;;/p' "$provider_module" 2>/dev/null | grep -oE '"[a-z0-9-]+"' | tr -d '"')"
-if [ -z "$providers" ]; then
-  echo "check_destroy_completeness: could not read the provider list from $provider_module" >&2
+# HARDEN-005: the target roots are the providers' own cluster roots, derived from
+# the provider list rather than written out, so a provider added later is checked by
+# this guard without anyone remembering to add it here. REFAC-100: the list is the
+# exhaustive Sol_cli_provider.all (see providers.sh), and it fails closed.
+# shellcheck source=providers.sh
+. "$(dirname "$0")/providers.sh"
+providers="$(sol_providers "$root")" || {
+  echo "check_destroy_completeness: could not read the provider list" >&2
   exit 1
-fi
+}
 target_roots=()
 for provider in $providers; do
-  # A provider with no root yet has nothing of its own to deploy, so nothing to check.
-  if [ -d "$root/platform/infra/$provider" ]; then
-    target_roots+=("platform/infra/$provider")
+  # A provider with no root yet is on paper (DEC-046 rule 4): nothing to deploy,
+  # so nothing to check.
+  if [ -d "$root/platform/cloud/$provider/cluster" ]; then
+    target_roots+=("platform/cloud/$provider/cluster")
   fi
 done
+if [ "${#target_roots[@]}" -eq 0 ]; then
+  echo "check_destroy_completeness: no provider has a cluster root under '$root/platform/cloud'; a check of nothing is not a pass." >&2
+  exit 1
+fi
 
 fail=0
 checked=0

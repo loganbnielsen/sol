@@ -53,7 +53,7 @@ Check all `internal/pipeline/tickets/` subdirectories for existing EXP-* ticket 
 **Stage 4 — Cloud Setup:**
 - Check `README.md` or a linked guide for `sol cloud init` instructions
 - Check whether `sol cloud init` exists as a command
-- Check `platform/infra/` — verify Terraform modules exist for at least one cloud provider
+- Check `platform/cloud/` — verify Terraform modules exist for at least one cloud provider
 
 **Stage 5 — First Deploy:**
 - Check `README.md` or a linked guide for `sol deploy` instructions with the required target positional (`<env>/<provider>/<region>`) and all required flags

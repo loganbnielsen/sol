@@ -18,9 +18,9 @@ set -euo pipefail
 
 root="${1:-$(git rev-parse --show-toplevel)}"
 
-role="$root/platform/infra/base/platform_operator_rbac.tf"
-aws_main="$root/platform/infra/aws/main.tf"
-aws_vars="$root/platform/infra/aws/variables.tf"
+role="$root/platform/cloud/modules/platform/platform_operator_rbac.tf"
+aws_main="$root/platform/cloud/aws/cluster/main.tf"
+aws_vars="$root/platform/cloud/aws/cluster/variables.tf"
 rbac_doc="$root/cli/lib/sol_cli_manifest_yaml.ml"
 substrate="$root/cli/lib/sol_cli_substrate.ml"
 
@@ -84,7 +84,7 @@ grep -q 'Sol_cli_manifest.operator_role_binding_doc ~ns' "$substrate" ||
 # in the bootstrap role's enumerated bind allowlist. A live run failed here:
 # sol-operator-diagnostics was bound by the substrate and not bindable, so the
 # operator's binding could not be created at all.
-deploy_rbac="$root/platform/infra/base/platform_deploy_rbac.tf"
+deploy_rbac="$root/platform/cloud/modules/platform/platform_deploy_rbac.tf"
 [ -f "$deploy_rbac" ] || fail "missing $deploy_rbac"
 
 # Read to the closing bracket of the *list*, not the first line containing one:

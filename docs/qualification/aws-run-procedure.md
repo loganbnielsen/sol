@@ -78,7 +78,7 @@ HARDEN runs exist to find those, not to have none.
 
 1. A fresh, disposable, isolated AWS account/profile — never reuse any previous
    run's.
-2. `platform/infra/bootstrap` applied: state bucket + lock table.
+2. `platform/cloud/aws/bootstrap` applied: state bucket + lock table.
 3. **Four** IAM roles created by the operator (not Sol — AUDIT-072/INFRA-026:
    Sol owns the policy contracts, never role lifecycle) from the bootstrap
    root's four generated documents: `provisioner_policy_json`,

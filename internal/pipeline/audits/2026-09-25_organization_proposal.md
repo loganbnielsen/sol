@@ -449,6 +449,8 @@ Withdrawn after checking: the reviewer's line numbers for the parser rejections.
 Both sets were correct for their own base commit (`0b3441a8` vs `50449a1a`), so
 the evidence now states its base.
 
+**Correction found during implementation (REFAC-100, 2026-09-25).** The *Evidence* entry above saying the check `base-gcp`'s comment cites "doesn't exist, so nothing currently keeps the GCP root's variables in step with `base`" is **wrong**. Only the script *name* in the comment was stale: the check lives in `cli/test/check_production_infra.sh`, as `docs/qualification/gcp-bootstrap-inventory.md:670` records. The search looked for the file name without a positive control, the failure mode `AGENTS.md` § *Verifying claims* warns about, and both review rounds repeated it. REFAC-100 generalizes that existing check to every provider's platform root instead of adding a new one.
+
 Withdrawn after checking (round 1): a separate "path guard" ticket before the move. The
 reviewer suspected `classify-changes.sh` and `perf_baseline.json` would stop
 matching after the move. Neither depends on `cli/` paths: the classifier matches

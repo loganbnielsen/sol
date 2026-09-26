@@ -11,8 +11,8 @@ type scope =
           resource dashboard (OBS-044), e.g. an RDS instance. Deliberately
           generic over [resource_type] rather than a hardcoded "Rds" case: the
           CLI never validates [resource_type] against a known list, matching
-          platform/infra's own generic-by-resource-type Terraform shape
-          (local.managed_resources in platform/infra/aws/main.tf) -- adding
+          platform/cloud's own generic-by-resource-type Terraform shape
+          (local.managed_resources in platform/cloud/aws/cluster/main.tf) -- adding
           a future managed datastore needs no CLI change here. *)
 
 type kind =
@@ -84,7 +84,7 @@ let dashboard_url ~base_url ~workspace scope =
     (* No $workspace var here -- a managed resource dashboard (OBS-044) is
        account/cluster-scoped in CloudWatch, not partitioned by Sol
        workspace the way app-level Loki/Prometheus labels are. Dashboard
-       uid matches platform/infra/base's per-resource_type ConfigMap
+       uid matches platform/cloud/modules/platform's per-resource_type ConfigMap
        (dashboards/managed-resource.json.tftpl's "sol-managed-resource-
        ${resource_type}" uid); "resource" is that dashboard's own
        CloudWatch dimension_values() template variable. *)
@@ -112,7 +112,7 @@ let logs_url ~base_url ~workspace scope =
      reader nothing about whether that meant "no logs" or "wrong query".
 
      The labels are on real streams: Alloy promotes the taxonomy pod labels
-     (platform/infra/base/alloy/logs.alloy.tftpl). Verified against a running
+     (platform/cloud/modules/platform/alloy/logs.alloy.tftpl). Verified against a running
      local substrate, where the deployed units' series carry
      workspace/domain/service/primitive/release alongside namespace, so
      `{workspace="pluto"}` and `{workspace="pluto", domain="demo-ts"}` select

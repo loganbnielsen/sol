@@ -69,22 +69,18 @@ let cloud_target target =
     }
 ;;
 
-(* The platform root, relative to the Sol home. The platform *definition* is
-   shared (`platform/infra/base`); the root differs per provider because a
-   Terraform root's backend type is part of its own configuration -- so `base`
-   declares the S3 backend and is AWS's root, while `base-gcp` declares the GCS
-   backend and uses `base` as the shared definition. *)
+(* REFAC-100 / DEC-046 rule 4: every provider reaches the shared platform module
+   (`platform/cloud/modules/platform`) through a thin root of its own,
+   `platform/cloud/<provider>/platform`, which exists because a Terraform root's
+   backend type is part of its own configuration. The root and the address prefix
+   are therefore one rule for every provider, not per-provider capabilities. *)
 let platform_root provider =
-  (Sol_cli_provider_capabilities.capabilities_of provider).platform_root
+  Printf.sprintf "platform/cloud/%s/platform" (Sol_cli_provider.to_string provider)
 ;;
 
-(* A resource address inside the platform root. A provider whose root reaches the
-   shared definition through a module addresses its resources through it, so the
-   provider prefix lives next to [platform_root] rather than at each `-target`. *)
-let platform_address provider address =
-  (Sol_cli_provider_capabilities.capabilities_of provider).platform_address address
-;;
-
+(* A resource address inside a platform root: every root calls the shared
+   definition as `module.platform`. *)
+let platform_address address = "module.platform." ^ address
 let target config = config.target
 let cloud_backend config = config.cloud_backend
 let platform_backend config = config.platform_backend

@@ -59,7 +59,7 @@ type t =
   }
 
 (* HARDEN-002 run 4, finding 12. The base-platform providers are hashicorp/
-   kubernetes and hashicorp/helm, configured implicitly (platform/infra/base
+   kubernetes and hashicorp/helm, configured implicitly (platform/cloud/modules/platform
    declares no `provider` block). hashicorp/kubernetes 2.38.0 resolves the
    kubeconfig from `KUBE_CONFIG_PATH`/`KUBE_CONFIG_PATHS` and falls back to
    `~/.kube/config` -- it does NOT consult `KUBECONFIG`, which is the only name

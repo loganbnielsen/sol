@@ -22,15 +22,15 @@ val target : cloud_target -> Sol_cli_config.target
 val cloud_backend : cloud_target -> string list
 val platform_backend : cloud_target -> string list
 
-(** The platform root for a provider, relative to the Sol home. The platform
-    definition is shared; the root differs because a Terraform root's backend type
-    is part of its own configuration. *)
+(** The platform root for a provider, relative to the Sol home:
+    [platform/cloud/<provider>/platform], a thin root over the shared module
+    (REFAC-100). *)
 val platform_root : Sol_cli_provider.t -> string
 
-(** A resource address inside the platform root. A root that reaches the shared
-    definition through a module addresses its resources through it, so the prefix
-    is applied here rather than at each `-target`. *)
-val platform_address : Sol_cli_provider.t -> string -> string
+(** A resource address inside a platform root. Every root calls the shared
+    definition as [module.platform], so the prefix is applied here rather than at
+    each `-target`. *)
+val platform_address : string -> string
 
 type platform_inputs
 

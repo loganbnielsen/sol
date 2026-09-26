@@ -23,7 +23,7 @@ type resolution =
       flag) -- the resolver is a default, not a lock.
     - [Local] defaults to ["http://localhost:3000"].
     - [Self_hosted_durable] resolves to ["https://grafana.<base_domain>"],
-      matching platform/infra/base's Grafana Ingress -- requires
+      matching platform/cloud/modules/platform's Grafana Ingress -- requires
       [base_domain].
     - [External] never guesses: returns [No_url _]. *)
 val resolve
