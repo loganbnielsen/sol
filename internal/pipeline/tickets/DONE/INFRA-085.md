@@ -72,3 +72,41 @@ deliberately pins the framework to the PR's commit, so that layer is *expected* 
 building the PR's framework is what the smoke test proves. This is why the measured
 improvement is bounded by the stable prefix, and the number from CI (not a theory) is
 recorded below.
+
+## Measured on CI (what the numbers actually say)
+
+The first attempt at this **failed** the smoke test in 0.6s, which is why the
+implementation is not what the first draft described:
+
+```
+ERROR: failed to build: Cache export is not supported for the docker driver.
+Switch to a different driver, or turn on the containerd image store, and try again.
+```
+
+The verification that had said "works on the docker driver" was run on this
+machine, whose docker has the containerd image store enabled; the runner's plain
+docker driver cannot export cache. Two changes followed: a container-driver
+builder in CI (`docker/setup-buildx-action`, which can export — re-verified
+locally on a `docker-container` builder), and a fallback in Sol so a cache can
+never be the reason a deploy cannot happen (an export-unsupported failure retries
+once without a cache; any other failure is reported unchanged).
+
+Cold run of the branch (cache saved at the end, nothing restored):
+
+| Job | Duration |
+|---|---|
+| `golden-path-smoke` | 18m15s (baseline 16m26s) |
+| `golden-path-smoke-ts` | 12m0s |
+| `test` | 7m44s |
+
+Cache entry written: `sol-build-cache-Linux-…`, **1215 MB**, save step 7s. The
+cold run therefore cost ~+109s against the baseline (builder setup, a container
+BuildKit store, and the cache export), which is the number the warm run has to
+beat. The warm measurement follows below.
+
+## Stop rule applied to this unit
+
+The PR wall clock is the *slowest* job, and `golden-path-smoke-ts` sits at ~12m.
+Once the OCaml job is at or below that, it is no longer the bottleneck and the
+cache has done its job — the remaining cost in both jobs is `sol local infra up`
+(~290s of Helm), which is a different change.
