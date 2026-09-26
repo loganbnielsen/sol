@@ -672,3 +672,25 @@ cause from long-resolved events.
 FND-0010 stays `FIXED_UNQUALIFIED`: its remedy was exercised (the release waited instead of
 aborting) but the confirming observations — check Succeeded, install continuing, `Ready` — did
 not occur.
+
+## FND-0060 fix landed — offline only (2026-09-26)
+
+`INFRA-088` landed the fix for the cause Attempt 10's re-analysis established:
+`global.leaderElection.namespace` in `helm_release.cert_manager` now references the cert-manager
+namespace resource instead of inheriting the chart's `kube-system` default, and
+`check_cert_manager_readiness.sh` refuses omission, `kube-system`, another namespace, a literal, a
+wrong reference, and a renamed namespace (six new mutations; fourteen in total, all rejected).
+
+**Nothing here is QUALIFIED.** `FND-0060` is `FIXED_UNQUALIFIED`: the change is platform
+configuration verified statically and offline, which says nothing about what a cluster does.
+`FND-0010` stays `FIXED_UNQUALIFIED` on its own narrower claim (its budget remedy is live-validated
+— the check received its full 600s window in Attempt 10 — but successful readiness and TLS trust
+are not demonstrated).
+
+The next authorized live run is a **fresh qualification target** and should discriminate the whole
+chain in one specimen: cert-manager installs → leader election in `cert-manager` (no `kube-system`
+Warden denial) → controller and cainjector acquire leadership → `caBundle` populated → check Job
+Succeeds → Helm release succeeds → the platform install continues. On success the run continues
+toward `Ready` and Ready-state destruction rather than stopping at cert-manager; if another
+component becomes the first blocker, its evidence is preserved and it is classified rather than
+repaired in-run.
