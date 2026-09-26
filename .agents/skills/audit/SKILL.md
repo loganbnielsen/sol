@@ -1,11 +1,11 @@
 ---
 name: audit
-description: Run a technical production-readiness audit of the Sol codebase. Checks security, runtime correctness, data integrity, and infrastructure synthesis against the principles in docs/audits/AUDIT.md. Produces a dated report in internal/pipeline/audits/ and materialises open findings as ticket files in internal/pipeline/tickets/READY_FOR_ENGINEERING/.
+description: Run a technical production-readiness audit of the Sol codebase. Checks security, runtime correctness, data integrity, and infrastructure synthesis against the principles in internal/pipeline/audits/AUDIT.md. Produces a dated report in internal/pipeline/audits/ and materialises open findings as ticket files in internal/pipeline/tickets/READY_FOR_ENGINEERING/.
 ---
 
 # /audit — Production Readiness Audit
 
-Works through every section of `docs/audits/AUDIT.md` by reading the actual source files and verifying each invariant holds. Writes a completed report to `internal/pipeline/audits/<YYYY-MM-DD>_audit.md` and materialises each open finding as a ticket in `internal/pipeline/tickets/READY_FOR_ENGINEERING/`.
+Works through every section of `internal/pipeline/audits/AUDIT.md` by reading the actual source files and verifying each invariant holds. Writes a completed report to `internal/pipeline/audits/<YYYY-MM-DD>_audit.md` and materialises each open finding as a ticket in `internal/pipeline/tickets/READY_FOR_ENGINEERING/`.
 
 The audit must evaluate both operational readiness and mission alignment: autonomous domain teams, typed event contracts, generated infrastructure, explicit security, framework-owned lifecycles, and AI-agent-friendly conventions.
 
@@ -24,7 +24,7 @@ internal/pipeline/tickets/
 ## Steps
 
 ### 1. Read the template
-Read `docs/audits/AUDIT.md` in full before starting. This is the checklist you will work through.
+Read `internal/pipeline/audits/AUDIT.md` in full before starting. This is the checklist you will work through.
 
 ### 2. Determine today's date
 Use the current date for the output filename in `YYYY-MM-DD` format.
@@ -36,7 +36,7 @@ Check all `internal/pipeline/tickets/` subdirectories for existing AUDIT-* ticke
 
 ### 4. Work through each section
 
-For each checklist item in `docs/audits/AUDIT.md`, read the relevant source files and determine whether the invariant passes or fails. Do not rely on memory or assumptions — read the code.
+For each checklist item in `internal/pipeline/audits/AUDIT.md`, read the relevant source files and determine whether the invariant passes or fails. Do not rely on memory or assumptions — read the code.
 
 **Section 1 — Local Developer Loop (`cli/bin/`, `cli/lib/base/sol_cli_scaffold.ml`):**
 - Read `cmd_new.ml` to verify generated workspaces compile cleanly and library names are workspace-namespaced
@@ -62,7 +62,7 @@ For each checklist item in `docs/audits/AUDIT.md`, read the relevant source file
 - Read `default_on_decode_error` — check for structured log line, Prometheus counter, dead-letter option
 
 **Sections 8–9 — Mission alignment and framework boundary:**
-- Read `README.md`, `docs/planning/ROADMAP.md`, and `docs/guides/TUTORIAL.md` for the stated architecture and user promise
+- Read `README.md`, `docs/ROADMAP.md`, and `docs/guides/TUTORIAL.md` for the stated architecture and user promise
 - Read `cmd_new.ml` scaffold templates and the reference workspaces under `internal/fixtures/venus/` / `examples/pluto/`
 - Verify event contracts are owned under `events/<team>/` and consumers import contracts, not producer service internals
 - Verify generated names and labels preserve workspace/domain/service ownership

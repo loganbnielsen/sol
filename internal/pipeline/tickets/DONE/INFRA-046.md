@@ -14,7 +14,7 @@ ADR 0002 (to be revised), ADR 0003 (invariant 2),
 `cli/platform/infra/bootstrap/main.tf` (provisioner policy),
 `cli/platform/infra/aws/main.tf` (the access entry),
 `cli/sol/bin/cmd_cloud_tf.ml` (`require_credentials`,
-`provisioner_kubeconfig`), `docs/qualification/production-single-region-v1-matrix.md`
+`provisioner_kubeconfig`), `internal/qualification/aws/production-single-region-v1-matrix.md`
 (row I3), INFRA-045 (the GCP counterpart).
 
 ## The finding

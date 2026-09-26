@@ -9,7 +9,7 @@ source: pipeline/dogfood/RUN_2026-09-13.md
 
 Runbook and dogfood skill tell users to run `sol status` for the local cluster, but it errors
 
-**Description:** `docs/dogfood/DOGFOOD.md` step 6 and `.claude/skills/dogfood/SKILL.md` step 6 both say `sol status`. Running it on the local cluster errors:
+**Description:** `internal/pipeline/dogfood/DOGFOOD.md` step 6 and `.claude/skills/dogfood/SKILL.md` step 6 both say `sol status`. Running it on the local cluster errors:
 
 ```
 error: `sol status` needs --target <env>/<provider>/<region> to know which cluster to reach;

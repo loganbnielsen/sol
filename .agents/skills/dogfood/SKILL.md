@@ -6,7 +6,7 @@ description: Run a developer dogfood pass of Sol. Executes the golden path from 
 # /dogfood — Golden Path Dogfood Run
 
 Executes the full Sol developer golden path as a first-time user would, following
-the runbook at `docs/dogfood/DOGFOOD.md`. Times every step, records friction, and
+the runbook at `internal/pipeline/dogfood/DOGFOOD.md`. Times every step, records friction, and
 determines whether the two-minute deploy claim holds on a live local substrate.
 
 Writes a completed report to `internal/pipeline/dogfood/RUN_<YYYY-MM-DD>.md` and materialises
@@ -29,7 +29,7 @@ internal/pipeline/tickets/
 
 ### 1. Read the runbook
 
-Read `docs/dogfood/DOGFOOD.md` in full before starting.
+Read `internal/pipeline/dogfood/DOGFOOD.md` in full before starting.
 
 ### 2. Check previous runs
 
@@ -107,7 +107,7 @@ Two costs do not count against the claim, and both must be stated when measuring
 ### 6. Write the report
 
 Create `internal/pipeline/dogfood/RUN_<YYYY-MM-DD>.md` using the template from
-`docs/dogfood/DOGFOOD.md`. Fill in:
+`internal/pipeline/dogfood/DOGFOOD.md`. Fill in:
 
 - Tool versions actually observed
 - Timing for every step

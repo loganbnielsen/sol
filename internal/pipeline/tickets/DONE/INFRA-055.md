@@ -91,4 +91,4 @@ the deploy is what makes this defect visible rather than silent.
 DEC-037 implemented: `get`+`replace` (`create` when absent, no write when identical), needing no generic `patch`; rollback uses the same writer. Live-retested: the pointer advanced off the stale value.
 
 Merged in #395; live-retested against the preserved Run 8 target. See
-`docs/qualification/2026-09-20-run8-aws.md`.
+`internal/qualification/records/2026-09-20-run8-aws.md`.

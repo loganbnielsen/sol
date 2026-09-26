@@ -65,4 +65,4 @@ concern. And the whole-workspace preflight problem, which is FND-0012/`INFRA-049
 DEC-036 implemented: call targets resolve from the workspace inventory; specs still come from the selection, so nothing widens. Live-retested: `--scope payments/charge_svc` succeeded with `checkout_svc` deployed and unchanged.
 
 Merged in #393; live-retested against the preserved Run 8 target. See
-`docs/qualification/2026-09-20-run8-aws.md`.
+`internal/qualification/records/2026-09-20-run8-aws.md`.

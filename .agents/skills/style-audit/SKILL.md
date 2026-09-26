@@ -9,7 +9,7 @@ Find refactoring opportunities where Sol code relies on caller memory, raw
 strings, defensive runtime checks, or deeply nested control flow instead of
 OCaml types and readable pipelines.
 
-Read `docs/audits/STYLE_AUDIT.md` in full before starting. Treat it as the
+Read `internal/pipeline/audits/STYLE_AUDIT.md` in full before starting. Treat it as the
 source-of-truth checklist.
 
 ## Output
@@ -158,7 +158,7 @@ over many line-level tickets.
 id: CODEX_STYLE_AUDIT-NNN
 type: refactor
 severity: <high|medium|low>
-source: docs/audits/STYLE_AUDIT.md
+source: internal/pipeline/audits/STYLE_AUDIT.md
 ---
 
 <one-line title>

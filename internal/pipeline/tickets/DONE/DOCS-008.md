@@ -10,7 +10,7 @@ WORK_SUMMARY.md top-section ticket table and deployment-lane description are sta
 
 **Depends on:** None.
 
-**Description:** The current-status table at the top of `docs/planning/WORK_SUMMARY.md` shows FEAT-020 as IN_PROGRESS and FEAT-021/022/023 as REVIEW; all are in `project/tickets/DONE/`. ALPHA-001, ALPHA-002, FEAT-024, HARDEN-001 are listed as READY_FOR_ENGINEERING but also in DONE. The deployment-lane description (lines 68-74) still names "Sun Hosted" as an active lane with `sun cloud deploy` as the interface, contradicting the 2026-06-22 refocus.
+**Description:** The current-status table at the top of `internal/planning/WORK_SUMMARY.md` shows FEAT-020 as IN_PROGRESS and FEAT-021/022/023 as REVIEW; all are in `project/tickets/DONE/`. ALPHA-001, ALPHA-002, FEAT-024, HARDEN-001 are listed as READY_FOR_ENGINEERING but also in DONE. The deployment-lane description (lines 68-74) still names "Sun Hosted" as an active lane with `sun cloud deploy` as the interface, contradicting the 2026-06-22 refocus.
 
 **Impact:** Engineers reading WORK_SUMMARY.md to orient to current project state see wrong ticket statuses and a product direction that has been reversed.
 

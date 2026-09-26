@@ -3,7 +3,7 @@ id: CODEX_STYLE_AUDIT-067
 branch: CODEX_STYLE_AUDIT-067/devops-pipeline-doc
 type: refactor
 severity: medium
-source: docs/audits/STYLE_AUDIT.md
+source: internal/pipeline/audits/STYLE_AUDIT.md
 ---
 
 Document the deployment pipeline architecture for CI/CD contributors.

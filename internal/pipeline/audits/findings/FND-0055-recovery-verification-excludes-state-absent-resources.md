@@ -14,7 +14,7 @@
 - **Related:** FND-0030 (the same divergence, seen from the ownership side), FND-0045 (the
   finding whose remedy narrowed this coverage), FND-0044, `DEC-040` (absence must be observed),
   ADR 0003 invariant 6, ADR 0004, `INV-DESTROY-1`/`INV-DESTROY-2` in
-  `docs/qualification/gcp-production-single-region-v1-matrix.tsv`
+  `internal/qualification/gcp/gcp-production-single-region-v1-matrix.tsv`
 
 ## The invariant at stake
 
@@ -161,7 +161,7 @@ what is defective:
 
 FND-0030 (ownership: the divergent resource is not destroyable either), FND-0044 (the
 inventory that decides what may be targeted), FND-0045 (the remedy that narrowed this
-coverage), FND-0046, `DEC-040`, `DEC-033`, ADR 0003 invariant 6, ADR 0004, `docs/qualification/
+coverage), FND-0046, `DEC-040`, `DEC-033`, ADR 0003 invariant 6, ADR 0004, `internal/qualification/
 2026-09-24-gcp-attempt7-prelive-falsification.md`.
 
 ---
@@ -281,7 +281,7 @@ resources: a successful destroy plus empty state is the authority, and provider 
 for four named exception classes. The declared-universe unit that closed this finding (B2) is
 therefore scheduled for deletion by REFAC-094, once INFRA-076 removes the Sol-caused route. The
 "independent provider inventory" this finding wanted belongs to qualification
-(`docs/qualification/README.md`). DEC-040 is cited above as "absence must be observed". DEC-040
+(`internal/qualification/README.md`). DEC-040 is cited above as "absence must be observed". DEC-040
 decides **authorization** de-escalation, not resource absence; that citation over-reaches.
 
 ## Supersession (2026-09-25) — `FIXED_UNQUALIFIED` → `SUPERSEDED`
@@ -296,7 +296,7 @@ finding wanted belongs to qualification"*. Both have happened:
 - **DEC-045 restates the requirement** for what is configured to delete (a successful destroy plus an
   empty state is Terraform's side of the postcondition, with four named exception classes), and the
   *independent* provider observation this finding asked for is a qualification responsibility
-  (`docs/qualification/README.md` lesson 10; INV-DESTROY-4), performed by the qualification harness's
+  (`internal/qualification/README.md` lesson 10; INV-DESTROY-4), performed by the qualification harness's
   own inventory — never by product runtime.
 
 **Superseded, not falsified.** The observation itself was sound (a verification whose evidence set is

@@ -11,7 +11,7 @@ source: GCP Attempt 8 (2026-09-25) — the destroy reported the degradation itse
 **Finding:** `internal/pipeline/audits/findings/FND-0058-destroy-skips-the-platform-teardown-after-a-failed-install.md`.
 
 **Related:** DEC-045 (destroy never constructs), INV-DESTROY-1 (the failed-`PlatformInstalling`
-case), `docs/qualification/2026-09-25-gcp-attempt8.md`.
+case), `internal/qualification/records/2026-09-25-gcp-attempt8.md`.
 
 ## Problem
 
@@ -96,4 +96,4 @@ actioned (`Apply complete! Resources: 1 added, 0 changed, 0 destroyed`), the pla
 (`platform-destroy ok, 77.2 s`), the authority was removed, the substrate was destroyed, and both
 roots ended empty (cloud 0, platform 0). `FND-0058` is now `QUALIFIED`; `INV-DESTROY-1`'s
 failed-`PlatformInstalling` case is satisfied. Record:
-`docs/qualification/2026-09-26-gcp-fnd0058-live-qualification.md`.
+`internal/qualification/records/2026-09-26-gcp-fnd0058-live-qualification.md`.

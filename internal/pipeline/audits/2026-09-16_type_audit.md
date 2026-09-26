@@ -1,6 +1,6 @@
 # Sol abstract-identity type audit — 2026-09-16
 
-Followed `docs/audits/TYPE_AUDIT.md` for `Sol_cli_release_id.t`,
+Followed `internal/pipeline/audits/TYPE_AUDIT.md` for `Sol_cli_release_id.t`,
 `Sol_cli_deployment_id.t`, and resolved `Sol_cli_kubernetes_name` values.
 
 No new premature conversion was found. Domain plans/deployment events retain

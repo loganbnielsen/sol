@@ -11,9 +11,9 @@ standing GCP qualification epic, not a unit of work that can finish, and it read
 to `/work` while it sat in `READY_FOR_ENGINEERING/`. What replaced it:
 
 - **Operating rules** — the "Standing constraints" section moved verbatim to
-  `docs/qualification/README.md` § Operating rules, where they apply to every provider's runs.
+  `internal/qualification/README.md` § Operating rules, where they apply to every provider's runs.
 - **Where GCP stands** — `internal/pipeline/audits/QUALIFICATION_STATUS.md` and the per-attempt
-  records in `docs/qualification/` (Attempts 1–4 in `gcp-bootstrap-inventory.md`; 5, 6 and 7 as
+  records in `internal/qualification/` (Attempts 1–4 in `gcp-bootstrap-inventory.md`; 5, 6 and 7 as
   their own records). The "Where the work stands", "Current frontier" and "Progress" sections
   below are **as of 2026-09-19** and superseded by those records; they are kept as history.
 - **The destroy-path programme** (the handoff's steps 2–6) is superseded by
@@ -26,7 +26,7 @@ of "GCP qualified".
 
 **Related:** HARDEN-002 (the AWS conformance epic, whose scenario list this ticket
 mirrors), HARDEN-003 (evidence identity). Detail, per-attempt evidence and the
-decision record live in `docs/qualification/gcp-bootstrap-inventory.md`; this ticket
+decision record live in `internal/qualification/gcp/gcp-bootstrap-inventory.md`; this ticket
 is the workstream's entry point and its current frontier.
 
 ## Goal
@@ -44,7 +44,7 @@ differently. Where GCP exposes a flaw in the provider-neutral model, fix the mod
 
 ## Standing constraints
 
-Moved on 2026-09-24 to `docs/qualification/README.md` § Operating rules (verbatim).
+Moved on 2026-09-24 to `internal/qualification/README.md` § Operating rules (verbatim).
 
 ## Where the work stands (2026-09-19, `main` @ `8d85c7ce`)
 
@@ -68,7 +68,7 @@ production capacity/headroom on the selected GKE mode, and GCS durable-observabi
 wiring.
 
 Attempts 1–4, their first meaningful failures and their evidence:
-`docs/qualification/gcp-bootstrap-inventory.md`. Attempts are numbered and recorded
+`internal/qualification/gcp/gcp-bootstrap-inventory.md`. Attempts are numbered and recorded
 distinctly; a failed attempt is not a wasted one, and nothing is repaired into
 conformance mid-attempt.
 
@@ -156,6 +156,6 @@ rather than being dropped.
   frontier" above.
 - **GCP invariant matrix (offline)** — the provider-neutral invariant inventory is
   expressed as GCP scenarios in
-  `docs/qualification/gcp-production-single-region-v1-matrix.tsv`; the checked-in
+  `internal/qualification/gcp/gcp-production-single-region-v1-matrix.tsv`; the checked-in
   verifier makes missing, failing, or insufficiently evidenced rows non-conformant.
   This is an executable contract only and does not promote any row to qualified.

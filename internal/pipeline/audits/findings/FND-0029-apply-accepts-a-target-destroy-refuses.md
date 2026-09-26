@@ -11,7 +11,7 @@
 - **Provider:** GCP observed (GKE); the mechanism is provider-neutral — see "What is NOT established"
 - **Derived ticket:** `INFRA-067`
 - **Related:** `FND-0007` (the refusal's wording), `FND-0028` (durable prerequisites),
-  `HARDEN-004`, `docs/qualification/2026-09-22-gcp-attempt5.md` (the run chronology)
+  `HARDEN-004`, `internal/qualification/records/2026-09-22-gcp-attempt5.md` (the run chronology)
 
 ## Invariant
 

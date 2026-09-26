@@ -223,7 +223,7 @@ tracked files** only two set `omit`, in six places:
 | File | Units |
 |---|---|
 | `examples/pluto/sol/dev/aws/us-east-1.yml` | 4 |
-| `docs/qualification/run8-aws-target.example.yml` | 2 |
+| `internal/qualification/aws/run8-aws-target.example.yml` | 2 |
 
 That is a statement about **tracked** files, not a guarantee about real targets. Real
 targets are created outside the repository — `internal/ci/check_no_account_artifacts.sh`

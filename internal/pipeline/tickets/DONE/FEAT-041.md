@@ -19,7 +19,7 @@ Sol already renders almost everything needed for service-to-service calls, but t
 - The internal-auth half already exists: a route can declare the `Api_key` auth level (`framework/sol-svc/lib/auth.ml:32`) validated against `SOL_API_KEY`/`SOL_API_KEY_FILE` (`framework/sol-svc/lib/service.ml:228`).
 - There is no outbound HTTP client helper in the framework; callers must hand-roll `cohttp-eio` and remember the API-key header and trace propagation.
 
-ROADMAP lists "service discovery and env wiring" as Sol's responsibility (`docs/planning/ROADMAP.md:139`), so this is a hole in an already-committed product boundary rather than a new direction.
+ROADMAP lists "service discovery and env wiring" as Sol's responsibility (`docs/ROADMAP.md:139`), so this is a hole in an already-committed product boundary rather than a new direction.
 
 ## Goal
 

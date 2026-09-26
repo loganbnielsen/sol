@@ -2,7 +2,7 @@
 id: HARDEN-001
 type: verification
 severity: high
-source: docs/audits/AUDIT.md
+source: internal/pipeline/audits/AUDIT.md
 branch: HARDEN-001/post-alpha-security-reliability-audit
 ---
 
@@ -20,7 +20,7 @@ shape and convert findings into actionable tickets.
 
 **Runbook:**
 
-1. Copy `docs/audits/AUDIT.md` to
+1. Copy `internal/pipeline/audits/AUDIT.md` to
    `project/audits/<YYYY-MM-DD>_post_alpha_audit.md`.
 2. Use a fresh generated workspace from the release bundle.
 3. Run the executable audit sections for:

@@ -12,7 +12,7 @@
 - **Provider:** GCP / GKE (Autopilot, private nodes)
 - **Derived ticket:** none yet — a ticket follows only if Attempt 5 confirms reachability
 - **Related invariant:** `INV-SUBSTRATE-1`, `INV-PREREQ-1`
-- **Related:** `HARDEN-004`, `docs/qualification/gcp-bootstrap-inventory.md` (Attempt 4 + remaining gap 1), FND-0007
+- **Related:** `HARDEN-004`, `internal/qualification/gcp/gcp-bootstrap-inventory.md` (Attempt 4 + remaining gap 1), FND-0007
 
 ## The observed failure
 

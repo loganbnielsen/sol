@@ -2,7 +2,7 @@
 id: ALPHA-002
 type: verification
 severity: high
-source: docs/audits/DOCS_AUDIT.md
+source: internal/pipeline/audits/DOCS_AUDIT.md
 branch: ALPHA-002/public-alpha-docs-readiness
 ---
 
@@ -27,7 +27,7 @@ artifact and generated workspace.
    - generated workspace `README.md`
    - `docs/deployment/self-hosted-substrate-contract.md`
    - `docs/deployment/escape-hatches.md`
-   - `docs/planning/ROADMAP.md`
+   - `docs/ROADMAP.md`
 3. Verify every documented command exists:
 
    ```bash
@@ -45,7 +45,7 @@ artifact and generated workspace.
 4. Follow the README quickstart exactly as written in a clean directory.
 5. Follow the tutorial's local path exactly as written.
 6. Record each mismatch as a finding using the format from
-   `docs/audits/DOCS_AUDIT.md`.
+   `internal/pipeline/audits/DOCS_AUDIT.md`.
 7. Patch docs or generated README templates for every high/medium finding found
    during the audit.
 

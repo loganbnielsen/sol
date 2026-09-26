@@ -141,7 +141,7 @@ survives reconstruction.
 Cmdliner terms gained `keep_releases`.
 
 **Docs:** `docs/architecture/devops-pipeline.md` (mutation boundary + release
-retention) and `docs/planning/WORK_SUMMARY.md`.
+retention) and `internal/planning/WORK_SUMMARY.md`.
 
 **Demo/example coverage:** none applies. This changes cross-process coordination
 and internal release-history retention, not generated manifests, `sol.toml`, a

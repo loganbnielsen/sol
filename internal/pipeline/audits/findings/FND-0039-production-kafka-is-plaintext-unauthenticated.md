@@ -18,7 +18,7 @@
   type forces the field."*
 - AGENTS.md, *Security on Day 1*: *"Dev defaults to `Plaintext`; the type forces all
   other environments to state their security posture explicitly."*
-- `docs/planning/WORK_SUMMARY.md:2031`: *"production deployments set
+- `internal/planning/WORK_SUMMARY.md:2031`: *"production deployments set
   `KAFKA_SECURITY_PROTOCOL=ssl` and the code picks it up automatically."*
 
 ## What the code does

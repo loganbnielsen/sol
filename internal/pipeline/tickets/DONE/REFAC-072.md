@@ -23,7 +23,7 @@ Rename `project/` to `pipeline/`
 - Update every reference in `tools/soldev/` (this is the biggest surface — the pipeline CLI reads/writes `project/tickets/**` paths directly; grep `soldev_*.ml` and update all literal path constants).
 - Update `.claude/CLAUDE.md`'s ticket-system section (the directory-per-status diagram, the "only ever modified in the main checkout" rule, all path examples).
 - Update every skill doc that references `project/tickets/` or `project/audits/` or `project/dogfood/` (`audit`, `ux-audit`, `scaffold-audit`, `docs-audit`, `dogfood`, `work`, `review-worktree` skill files — this is a wide but mechanical find-and-replace).
-- Update `docs/planning/ROADMAP.md`/`WORK_SUMMARY.md` and any other doc referencing the old path.
+- Update `docs/ROADMAP.md`/`WORK_SUMMARY.md` and any other doc referencing the old path.
 - Update CI workflows or hooks (`tools/hooks/pre-commit`, `tools/hooks/post-commit`, `tools/ci/*`) if they reference `project/` paths.
 - Grep the whole repo for `project/tickets`, `project/audits`, `project/dogfood`, and bare `project/` to catch anything missed.
 - Run the full local test suite before submitting, and specifically exercise `soldev pipeline submit/review/merge` end-to-end against a scratch ticket to confirm the rename didn't break the pipeline CLI's own path handling.

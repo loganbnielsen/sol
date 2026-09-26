@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/../../.." && pwd)
-matrix="$repo_root/docs/qualification/gcp-production-single-region-v1-matrix.tsv"
+matrix="$repo_root/internal/qualification/gcp/gcp-production-single-region-v1-matrix.tsv"
 verifier="$script_dir/verify-matrix.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT

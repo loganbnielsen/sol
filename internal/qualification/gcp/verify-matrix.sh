@@ -6,7 +6,7 @@ usage() { echo "usage: $0 RESULTS.tsv [MATRIX.tsv]" >&2; exit 2; }
 results=$1
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/../../.." && pwd)
-matrix=${2:-"$repo_root/docs/qualification/gcp-production-single-region-v1-matrix.tsv"}
+matrix=${2:-"$repo_root/internal/qualification/gcp/gcp-production-single-region-v1-matrix.tsv"}
 [[ -r "$matrix" ]] || { echo "matrix is not readable: $matrix" >&2; exit 2; }
 [[ -r "$results" ]] || { echo "results are not readable: $results" >&2; exit 2; }
 

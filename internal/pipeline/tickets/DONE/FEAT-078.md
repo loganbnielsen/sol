@@ -188,7 +188,7 @@ is a concern, downward-only jitter applied after the cap is an acceptable altern
 either is fine; tests assert the invariant either way.
 
 The RNG must be injected/seedable so tests are deterministic; this repo has been bitten
-twice by jitter on the global unseeded `Random` module (`docs/planning/WORK_SUMMARY.md`,
+twice by jitter on the global unseeded `Random` module (`internal/planning/WORK_SUMMARY.md`,
 and `Obs_trace`'s ID generator before its fix).
 
 `max_delay_s` must be chosen deliberately: for `Retry_topics` it is the steady-state bound

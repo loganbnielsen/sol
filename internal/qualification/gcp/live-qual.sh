@@ -41,7 +41,7 @@
 #      once out of band and recorded in the untracked target, or a GCP bootstrap root
 #      is authored. GCS needs no lock table.
 #   2. **The target's fields, derived from the contract rather than copied from AWS.**
-#      `docs/qualification/run8-aws-target.example.yml` is an *AWS* target: it carries
+#      `internal/qualification/aws/run8-aws-target.example.yml` is an *AWS* target: it carries
 #      `kube_context`, `registry`, four role ARNs and `cluster_endpoint_cidr`, none of
 #      which are GCP-shaped. The symmetry here is capability, not configuration: GCP
 #      declares one `provisioner_impersonator` where AWS carries a provisioner role
@@ -1219,7 +1219,7 @@ case "${1:-}" in
     # The no-cleanup state is set BEFORE the check, because `exit` cannot run code after it:
     # with KEEP set later, a *failing* verify fell through to cleanup's "a failed run is
     # presumed to have created something" rule and called destroy -- recorded live, before
-    # Attempt 8's Phase 0 was allowed to run (`docs/qualification/
+    # Attempt 8's Phase 0 was allowed to run (`internal/qualification/
     # 2026-09-25-gcp-attempt8-phase0-stop.md`). `verify` is read-only whether it passes or
     # fails; that is an invariant, not a property of one branch.
     KEEP=1

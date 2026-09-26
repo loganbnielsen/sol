@@ -27,4 +27,4 @@ Publish first release binary so the documented `curl` install path works.
 
 - `curl -sSL .../sun-linux-x86_64` downloads a functional binary.
 - Running the downloaded binary with `sun --version` prints `dev` or a version string.
-- The workflow is documented as the release process in `docs/planning/WORK_SUMMARY.md`.
+- The workflow is documented as the release process in `internal/planning/WORK_SUMMARY.md`.

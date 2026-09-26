@@ -125,7 +125,7 @@ explain it — with a run record showing the command, the identity, and the outp
 ## Sources
 
 - Live: Run 8, revision `d8d8c876`, target `qual/aws/us-east-1`; the four identity
-  probes are verbatim in `docs/qualification/2026-09-20-run8-aws.md` §7.2.
+  probes are verbatim in `internal/qualification/records/2026-09-20-run8-aws.md` §7.2.
 - `cli/sol/lib/sol_cli_rollout_diagnosis.ml:1,243,397-404`
 - `cli/sol/lib/sol_cli_workspace_scan.ml:34,84`
 - `cli/sol/bin/cmd_status.ml:215-240`

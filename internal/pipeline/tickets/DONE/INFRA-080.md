@@ -9,7 +9,7 @@ source: GCP Attempt 8 (2026-09-25) — observed in the live run and its bundle
 **Depends on:** None.
 
 **Related:** `internal/qualification/gcp/live-qual.sh`,
-`internal/qualification/gcp/test-live-qual.sh`, `docs/qualification/2026-09-25-gcp-attempt8.md`.
+`internal/qualification/gcp/test-live-qual.sh`, `internal/qualification/records/2026-09-25-gcp-attempt8.md`.
 
 ## A. `impersonator-binding` can never verify absence after a successful teardown
 
@@ -74,7 +74,7 @@ and the probe refuses to call that absence — fail-closed by design), `custom-r
 with `deleted: true` (GCP's undelete window; non-billable), and `cloud_vars` still printed
 `--var=provisioner_impersonators=[…]: command not found` while Sol passed the variable from the target.
 So every successful teardown ends "teardown NOT verified" until these are fixed. Record:
-`docs/qualification/2026-09-26-gcp-fnd0058-live-qualification.md`.
+`internal/qualification/records/2026-09-26-gcp-fnd0058-live-qualification.md`.
 
 ## What landed (2026-09-26)
 

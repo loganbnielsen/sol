@@ -27,7 +27,7 @@ alpha path stable.
    - generated workspace README templates
    - `docs/deployment/self-hosted-substrate-contract.md`
    - `docs/deployment/escape-hatches.md`
-   - `docs/planning/ROADMAP.md`
+   - `docs/ROADMAP.md`
 3. Verify every documented command and flag against CLI help:
 
    ```bash

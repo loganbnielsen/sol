@@ -2,7 +2,7 @@
 id: CODEX_STYLE_AUDIT-074
 type: refactor
 severity: medium
-source: docs/audits/STYLE_AUDIT.md
+source: internal/pipeline/audits/STYLE_AUDIT.md
 branch: CODEX_STYLE_AUDIT-074/contributing-map
 ---
 
@@ -21,7 +21,7 @@ where to extend each concern.
 
 **Acceptance criteria:**
 
-- Add or update `CONTRIBUTING.md` or `docs/architecture/contributing-map.md`.
+- Add or update `CONTRIBUTING.md` or `internal/contributing-map.md`.
 - Include sections for command changes, deployment behavior, manifest rendering,
   scaffold templates, integrations, tests, and docs.
 - Link to `/style-audit`, `/audit`, `/scaffold-audit`, and `/e2e` workflows.
@@ -29,4 +29,4 @@ where to extend each concern.
   commands, bypassing deployment plans, or editing generated YAML paths directly.
 
 ## Review — automated checks passed
-The revised contributor map satisfies the acceptance criteria: it lives in docs/architecture/contributing-map.md, includes all requested ownership sections, links audit/e2e entry points to tracked files, documents the /style-audit caveat against stable tracked project/tickets/, and includes required do-not guidance for raw shell commands, bypassing deployment plans, and direct generated YAML edits. Docs verification and dune build passed.
+The revised contributor map satisfies the acceptance criteria: it lives in internal/contributing-map.md, includes all requested ownership sections, links audit/e2e entry points to tracked files, documents the /style-audit caveat against stable tracked project/tickets/, and includes required do-not guidance for raw shell commands, bypassing deployment plans, and direct generated YAML edits. Docs verification and dune build passed.

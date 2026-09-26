@@ -19,7 +19,7 @@ All four are Apache-2.0 and published with build provenance.
 - **Runnable example:** [`examples/pluto/app/demo_ts`](../../examples/pluto/app/demo_ts/README.md),
   a TypeScript `-svc` and `-worker` pair deployed alongside pluto's OCaml units.
 - **What every Sol app must do, in any language:** the
-  [application contract](../../contract/README.md).
+  [application contract](../../docs/reference/README.md).
 - **What TypeScript can and can't do today:** the
   [compatibility matrix](../../docs/deployment/compatibility.md). TypeScript is
   staged behind the production profile until its parity triggers are met

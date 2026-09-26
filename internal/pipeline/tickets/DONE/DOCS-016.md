@@ -48,7 +48,7 @@ are OCaml/dune only, so FEAT-084 is the gap the docs now flag.
 - `docs/guides/TUTORIAL.md` — "a production platform for **OCaml** services" →
   both languages, with a note that this walkthrough is OCaml because that is the
   scaffolded path.
-- `docs/planning/ROADMAP.md` — the same reframing. TypeScript did not appear in
+- `docs/ROADMAP.md` — the same reframing. TypeScript did not appear in
   this file at all before, so the asymmetry (OCaml deepest, TS broadest on-ramp, TS
   staged behind the profile triggers) is now stated rather than implied by omission.
 - `docs/architecture/PRODUCT_ARCHITECTURE.md` — the same opening claim. Not named

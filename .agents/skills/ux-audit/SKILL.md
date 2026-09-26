@@ -5,7 +5,7 @@ description: Run a developer experience audit of Sol. Verifies that a startup en
 
 # /ux-audit — Developer Experience Audit
 
-Works through every stage of `docs/audits/UX_AUDIT.md` as if you are a startup engineer encountering Sol for the first time. Each stage has two gates: a **docs gate** (does the guide exist and is it accurate?) and a **reproduction gate** (do the commands actually work?). Writes a completed report to `internal/pipeline/audits/<YYYY-MM-DD>_ux_audit.md` and materialises each open finding as a ticket in `internal/pipeline/tickets/READY_FOR_ENGINEERING/`.
+Works through every stage of `internal/pipeline/audits/UX_AUDIT.md` as if you are a startup engineer encountering Sol for the first time. Each stage has two gates: a **docs gate** (does the guide exist and is it accurate?) and a **reproduction gate** (do the commands actually work?). Writes a completed report to `internal/pipeline/audits/<YYYY-MM-DD>_ux_audit.md` and materialises each open finding as a ticket in `internal/pipeline/tickets/READY_FOR_ENGINEERING/`.
 
 The core question for every check: *would a startup engineer need knowledge outside this repo to get past this step?* If yes, that is a finding.
 
@@ -26,7 +26,7 @@ internal/pipeline/tickets/
 ## Steps
 
 ### 1. Read the template
-Read `docs/audits/UX_AUDIT.md` in full before starting.
+Read `internal/pipeline/audits/UX_AUDIT.md` in full before starting.
 
 ### 2. Check previous findings
 Read the most recent `internal/pipeline/audits/*_ux_audit.md` report. Note which findings were already open — verify whether they are now resolved before logging them again.
@@ -87,7 +87,7 @@ Check all `internal/pipeline/tickets/` subdirectories for existing EXP-* ticket 
 Create `internal/pipeline/audits/<YYYY-MM-DD>_ux_audit.md` with:
 - A header showing the date
 - Each stage with `[x]` / `[ ]` for the docs gate and reproduction gate separately
-- A Findings section with one entry per gap using the format from `docs/audits/UX_AUDIT.md`
+- A Findings section with one entry per gap using the format from `internal/pipeline/audits/UX_AUDIT.md`
 - A summary table
 
 Use finding IDs prefixed `EXP-` continuing from the highest ID across all existing `internal/pipeline/tickets/` files and previous reports.

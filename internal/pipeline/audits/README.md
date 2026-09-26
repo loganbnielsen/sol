@@ -27,7 +27,7 @@ internal/pipeline/audits/
 ```
 
 Dated reports stay directly in `internal/pipeline/audits/` because that is the
-repository's established convention (`docs/audits/AUDIT.md`, the `/audit` skill,
+repository's established convention (`internal/pipeline/audits/AUDIT.md`, the `/audit` skill,
 and ADR 0001 all reference them by that path). Historical reports are **not**
 moved into a `reports/` subdirectory, because moving 35+ files would be churn
 with no semantic gain and would break the existing references. New durable

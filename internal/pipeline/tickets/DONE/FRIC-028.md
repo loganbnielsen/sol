@@ -19,5 +19,5 @@ Related: FRIC-019 (tool install/PATH hygiene).
 
 ## Completion notes
 
-- Added an explicit `/usr/games/sol` warning to `docs/dogfood/DOGFOOD.md`'s "Required on PATH" section, naming the observed symptom (`Unknown option --version`) and the helper-shell (`sg`, `sh -c`) PATH gotcha.
+- Added an explicit `/usr/games/sol` warning to `internal/pipeline/dogfood/DOGFOOD.md`'s "Required on PATH" section, naming the observed symptom (`Unknown option --version`) and the helper-shell (`sg`, `sh -c`) PATH gotcha.
 - Doc-only; no example/demo update applies.

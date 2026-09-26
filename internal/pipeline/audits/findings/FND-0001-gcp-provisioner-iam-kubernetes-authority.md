@@ -24,7 +24,7 @@ in-cluster authority established solely by Kubernetes RBAC:
 The qualification inventory repeats the claim:
 
 > "IAM establishes cluster discovery/credential access; Kubernetes RBAC
-> establishes Sol authority." — `docs/qualification/gcp-bootstrap-inventory.md`,
+> establishes Sol authority." — `internal/qualification/gcp/gcp-bootstrap-inventory.md`,
 > §"Proposed GCP capability mapping", row "Kubernetes access"
 
 ADR 0003 invariant 2 states the steady-state provisioner "cannot manufacture a

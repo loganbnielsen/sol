@@ -5,7 +5,7 @@ description: Run a documentation truth audit of Sol. Verifies README, tutorial, 
 
 # /docs-audit — Documentation Truth Audit
 
-Works through every section of `docs/audits/DOCS_AUDIT.md`. Writes a completed report to `internal/pipeline/audits/<YYYY-MM-DD>_docs_audit.md` and materialises each open finding as a ticket in `internal/pipeline/tickets/READY_FOR_ENGINEERING/`.
+Works through every section of `internal/pipeline/audits/DOCS_AUDIT.md`. Writes a completed report to `internal/pipeline/audits/<YYYY-MM-DD>_docs_audit.md` and materialises each open finding as a ticket in `internal/pipeline/tickets/READY_FOR_ENGINEERING/`.
 
 The core question: *can a startup engineer trust this documentation as the truth without reading source code or old work summaries?*
 
@@ -17,7 +17,7 @@ Use `DOCS-NNN`, continuing from the highest existing `DOCS-*` ID across `interna
 
 ### 1. Read the template
 
-Read `docs/audits/DOCS_AUDIT.md` in full before starting.
+Read `internal/pipeline/audits/DOCS_AUDIT.md` in full before starting.
 
 ### 2. Check previous findings
 
@@ -25,7 +25,7 @@ Read the most recent `internal/pipeline/audits/*_docs_audit.md` report if one ex
 
 ### 3. Verify source-of-truth docs
 
-- Read `README.md`, `docs/planning/ROADMAP.md`, `docs/guides/TUTORIAL.md`, and `docs/planning/WORK_SUMMARY.md`
+- Read `README.md`, `docs/ROADMAP.md`, `docs/guides/TUTORIAL.md`, and `internal/planning/WORK_SUMMARY.md`
 - Check whether status claims match implementation and tests
 - Identify historical sections that could be mistaken for current product state
 - Compare product framing and terminology across docs

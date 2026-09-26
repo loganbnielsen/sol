@@ -14,7 +14,7 @@
 - **Derived ticket:** none for the delegation (decision is `DEC-042`); the solver swap
   is tracked as `gcp-bootstrap-inventory.md` remaining gap 1
 - **Related invariant:** `INV-SUBSTRATE-1`, `INV-SUBSTRATE-2`
-- **Related:** matrix row I14; `DEC-042`; `docs/qualification/gcp-bootstrap-inventory.md` §"Remaining gaps" (gap 1) and §"Proposed GCP capability mapping" (DNS/TLS row)
+- **Related:** matrix row I14; `DEC-042`; `internal/qualification/gcp/gcp-bootstrap-inventory.md` §"Remaining gaps" (gap 1) and §"Proposed GCP capability mapping" (DNS/TLS row)
 
 ## Sol claim at stake
 

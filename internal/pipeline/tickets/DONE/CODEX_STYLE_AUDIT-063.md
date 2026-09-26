@@ -2,7 +2,7 @@
 id: CODEX_STYLE_AUDIT-063
 type: refactor
 severity: high
-source: docs/audits/STYLE_AUDIT.md
+source: internal/pipeline/audits/STYLE_AUDIT.md
 branch: CODEX_STYLE_AUDIT-063/typed-process-api
 ---
 

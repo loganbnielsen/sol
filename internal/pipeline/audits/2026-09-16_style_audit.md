@@ -1,7 +1,7 @@
 # Sol config/type-safety audit — 2026-09-16
 
 Checked external integer/boolean/TOML/env parsing sites against
-`docs/audits/STYLE_AUDIT.md`'s fail-closed rule. Current config parsers return
+`internal/pipeline/audits/STYLE_AUDIT.md`'s fail-closed rule. Current config parsers return
 `Error` for malformed integers, booleans, lists, rollout steps, retry metadata,
 and security settings. Remaining `Option.value` uses are documented optional
 defaults or parsing of diagnostic Kubernetes output, not silent acceptance at a

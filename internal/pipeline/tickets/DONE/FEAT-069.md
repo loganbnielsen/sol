@@ -502,7 +502,7 @@ plus Loki), so per the coverage rule this ticket's user-facing surface is covere
 by docs and tests instead: the observability identity table, `docs/guides/TUTORIAL.md`
 (`sol releases` shape, `sol logs --release`), the `sol logs` / `--emit-to`
 sections of `docs/architecture/devops-pipeline.md`, the substrate contract's
-GitOps section, and `docs/planning/WORK_SUMMARY.md`. New tests: `test_release`
+GitOps section, and `internal/planning/WORK_SUMMARY.md`. New tests: `test_release`
 (record shape, both-direction validation, same-content determinism),
 `test_logs` (`release_query` outcomes and selectors), `test_loki`
 (`query_range_argv_logql`), plus the updated `test_manifest_render` /

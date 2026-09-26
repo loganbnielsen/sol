@@ -1,6 +1,6 @@
 # Sol Scaffold Quality Audit — 2026-09-08
 
-**Template:** `docs/audits/SCAFFOLD_AUDIT.md`
+**Template:** `internal/pipeline/audits/SCAFFOLD_AUDIT.md`
 **Workspace:** `/tmp/sol-scaffold-audit-2026-09-08/scaffold_audit`
 **Previous report:** `project/audits/2026-06-12_scaffold_audit.md` (no open findings)
 

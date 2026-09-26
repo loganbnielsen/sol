@@ -27,7 +27,7 @@ source: internal/pipeline/audits/2026-09-25_organization_proposal.md, rules 1 an
 
 - Demo/example: not applicable (repository layout; no change to what an app author writes) — state it.
 - Language parity (DEC-022): no application-facing impact — state it.
-- Update `docs/planning/WORK_SUMMARY.md`.
+- Update `internal/planning/WORK_SUMMARY.md`.
 
 ## Completion notes
 

@@ -164,7 +164,7 @@ checked property rather than prose.
 cluster, never your shell) and its local commands were corrected;
 `self-hosted-substrate-contract`, `DOGFOOD`, the architecture docs, the pluto
 example and the golden-path CI step follow the `sol local infra` spelling.
-Historical records under `docs/audits/` and `pipeline/` are left as written.
+Historical records under `internal/pipeline/audits/` and `pipeline/` are left as written.
 
 **Verification.** `dune build`, `dune fmt`, `cli/sol/test` and the whole `dune test`
 are green. The golden-path CI job is the live check.
