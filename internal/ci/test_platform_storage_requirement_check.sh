@@ -71,16 +71,21 @@ s = s.replace('"chart default for the prometheus server', '"var.prometheus_persi
 p.write_text(s)
 PY
 
-# 3. A number changed in the declaration while the platform still asks for the old one: the
-#    guard cannot see chart defaults, but it must still refuse to call a chart-attributed part
-#    stale-free when the sizes disagree. Here the prometheus part claims a chart default that
-#    the live observation never showed.
+# 3. A part whose size is stated without attribution at all. The anchor must be text the
+#    formatter cannot rewrap, and the mutation must fail loudly if it did not apply: a silently
+#    no-op mutation is an accepted tree wearing the name of a rejected one, which is how this
+#    case first went green in CI while failing locally.
 reject provenance-without-attribution <<'PY'
-import pathlib, sys
+import pathlib, re, sys
 p = pathlib.Path(sys.argv[1]) / 'cli/lib/cloud/sol_cli_platform_storage.ml'
 s = p.read_text()
-s = s.replace('"chart default for the prometheus server\'s persistence size (observed live as 8Gi in \\\n         GCP Attempt 12)', '"{|plain number, no attribution|}', 1)
-p.write_text(s)
+# The formatter wraps long string literals with continuations, so the anchor has to tolerate
+# whitespace and line breaks -- and must fail loudly when it does not match, because a silently
+# no-op mutation is an accepted tree wearing a rejected case's name.
+mutated, count = re.subn(r'"chart default for the prometheus server[^"]*"',
+                         '"a number with no stated source"', s, count=1)
+assert count == 1, 'the mutation anchor did not match the declaration'
+p.write_text(mutated)
 PY
 
 # 4. loki's persistence disabled in the module: the declaration assumes a volume that no
