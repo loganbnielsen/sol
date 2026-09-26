@@ -54,9 +54,8 @@ datasources:
    source of Sol's four generic Grafana dashboards -- both `sol local infra up`
    (here) and platform/cloud/modules/platform/main.tf's `kubernetes_config_map.grafana_dashboards`
    (via Terraform's own `file(...)`) load from the same files, instead of
-   a second, hand-synced OCaml copy per dashboard. Resolves Sol's assets
-   itself (same pattern as Sol_cli_platform_component.merged_values_yaml
-   and render_alloy_config), reading each real file, not a fixture.
+   a second, hand-synced OCaml copy per dashboard. The caller passes the
+   resolved assets (REFAC-115), and each real file is read, not a fixture.
 
    The real files each carry a trailing newline the old OCaml string
    literals didn't -- not byte-identical to what those literals held, but
@@ -294,9 +293,8 @@ let render_alloy_config
 (* `sol local infra up`'s local profile: push straight to the in-cluster Loki, no
    basic auth (`sol local infra up` has no "external backend" concept), the same
    fixed taxonomy label set platform/cloud/modules/platform/main.tf's
-   local.observability_taxonomy_labels passes for every profile.
-   Resolves Sol's platform assets itself (Sol_cli_platform_assets, DEC-049)
-   rather than pushing that onto the caller. *)
+   local.observability_taxonomy_labels passes for every profile. The caller
+   resolves the platform assets once and passes them (REFAC-115). *)
 let alloy_values_yaml ~assets =
   (* CODE_LAYER-006: found along the way -- `content: |-`'s own indent here
      is 4 spaces (nested under alloy/configMap), so indent_block's flat
