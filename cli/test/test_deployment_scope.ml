@@ -192,6 +192,10 @@ let test_bridge_carries_requested_scope_and_resolved_set () =
       "requested scope"
       "payments"
       (request_to_string selected.Sol_cli_workload_selection.request);
+    Alcotest.(check string)
+      "requested_scope field matches the request (REFAC-111)"
+      "payments"
+      selected.Sol_cli_workload_selection.requested_scope;
     Alcotest.(check (list string))
       "resolved set"
       [ "payments/charge_svc"; "payments/settle_worker" ]
@@ -218,6 +222,39 @@ let test_bridge_empty_workspace () =
   | Error message -> Alcotest.fail message
   | Ok selected ->
     Alcotest.(check bool) "empty" true (Sol_cli_workload_selection.is_empty selected)
+;;
+
+(* REFAC-111: a deploying command refuses an empty selection while resolving it. *)
+let test_nonempty_refuses_empty_workspace () =
+  match Sol_cli_workload_selection.resolve_nonempty ~none:"nothing here" None [] with
+  | Ok _ -> Alcotest.fail "an empty selection was accepted"
+  | Error message -> Alcotest.(check string) "the caller's message" "nothing here" message
+;;
+
+(* Positive control: the same call over real services resolves. *)
+let test_nonempty_accepts_a_selection () =
+  match
+    Sol_cli_workload_selection.resolve_nonempty ~none:"nothing here" None (services ())
+  with
+  | Error message -> Alcotest.fail message
+  | Ok selected ->
+    Alcotest.(check string)
+      "whole workspace"
+      "workspace"
+      selected.Sol_cli_workload_selection.requested_scope
+;;
+
+(* A bad selector still reports the selector error, not the empty message. *)
+let test_nonempty_keeps_selector_errors () =
+  match
+    Sol_cli_workload_selection.resolve_nonempty
+      ~none:"nothing here"
+      (Some "nope")
+      (services ())
+  with
+  | Ok _ -> Alcotest.fail "unknown domain accepted"
+  | Error message ->
+    Alcotest.(check bool) ("selector error: " ^ message) true (message <> "nothing here")
 ;;
 
 let () =
@@ -280,6 +317,18 @@ let () =
             `Quick
             test_bridge_unit_is_canonical
         ; Alcotest.test_case "empty workspace is empty" `Quick test_bridge_empty_workspace
+        ; Alcotest.test_case
+            "nonempty refuses an empty selection"
+            `Quick
+            test_nonempty_refuses_empty_workspace
+        ; Alcotest.test_case
+            "nonempty accepts a selection"
+            `Quick
+            test_nonempty_accepts_a_selection
+        ; Alcotest.test_case
+            "nonempty keeps selector errors"
+            `Quick
+            test_nonempty_keeps_selector_errors
         ] )
     ]
 ;;

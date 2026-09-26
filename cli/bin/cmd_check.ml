@@ -19,7 +19,7 @@ let run scope =
      check` acts on the workspace from any descendant directory (discovery and
      the per-unit file checks are all workspace-root relative). *)
   (* The root is the cwd from here on; nothing below needs it by name. *)
-  ignore (Sol_cli_workspace.enter_or_exit () : string);
+  ignore (Sol_cli_workspace.enter_or_exit () : Sol_cli_workspace.t);
   let findings =
     match scope with
     | None -> Sol_cli_check.run ()

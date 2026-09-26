@@ -1,7 +1,6 @@
 open Cmdliner
 
 (* REFAC-108: enter through the validated boundary, like every command. *)
-let workspace_name () = Filename.basename (Sol_cli_workspace.enter_or_exit ())
 
 (* [logs] streams exactly one workload's output, and both Loki's addressing
    (namespace + k8s name) and [kubectl logs] preserve unit granularity -- so
@@ -11,16 +10,11 @@ let workspace_name () = Filename.basename (Sol_cli_workspace.enter_or_exit ())
    whose addressing model does support those scopes (FEAT-065's invariant). *)
 let resolve_unit ~scope =
   let selected =
-    match
-      Sol_cli_workload_selection.resolve
-        ~what:"--scope"
-        (Some scope)
-        (Sol_cli_manifest.discover_services ())
-    with
-    | Ok selected -> selected
-    | Error message ->
-      Printf.eprintf "error: %s\n" message;
-      exit 1
+    Sol_cli_exit.or_exit
+      (Sol_cli_workload_selection.resolve
+         ~what:"--scope"
+         (Some scope)
+         (Sol_cli_manifest.discover_services ()))
   in
   match selected.request, selected.services with
   | Sol_cli_deployment_scope.Unit_named _, [ svc ] -> svc
@@ -50,19 +44,17 @@ let workload_presence ~ctx ~ns ~primitive ~k8s_name =
 ;;
 
 let namespace_or_exit ~workspace ~domain =
-  match Sol_cli_deployment_plan.namespace_result ~workspace ~domain with
-  | Ok namespace -> Sol_cli_deployment_plan.namespace_to_string namespace
-  | Error err ->
-    Printf.eprintf "error: %s\n" (Sol_cli_deployment_plan.plan_error_to_string err);
-    exit 1
+  Sol_cli_deployment_plan.namespace_to_string
+    (Sol_cli_exit.or_exit_with
+       Sol_cli_deployment_plan.plan_error_to_string
+       (Sol_cli_deployment_plan.namespace_result ~workspace ~domain))
 ;;
 
 let k8s_name_or_exit name =
-  match Sol_cli_deployment_plan.k8s_name_result name with
-  | Ok k8s_name -> Sol_cli_deployment_plan.k8s_name_to_string k8s_name
-  | Error err ->
-    Printf.eprintf "error: %s\n" (Sol_cli_deployment_plan.plan_error_to_string err);
-    exit 1
+  Sol_cli_deployment_plan.k8s_name_to_string
+    (Sol_cli_exit.or_exit_with
+       Sol_cli_deployment_plan.plan_error_to_string
+       (Sol_cli_deployment_plan.k8s_name_result name))
 ;;
 
 let kubectl_log_target ~primitive ~k8s_name : Sol_cli_logs.kubectl_log_target =
@@ -143,7 +135,7 @@ let run_unit ~ctx ~target (options : log_options) scope : unit =
   let explicit_loki_username = observability.loki_username in
   let explicit_loki_password = observability.loki_password in
   let grafana_base_url = observability.grafana_base_url in
-  let workspace = workspace_name () in
+  let workspace = (Sol_cli_workspace.enter_or_exit ()).name in
   let svc = resolve_unit ~scope in
   let domain = svc.Sol_cli_manifest.domain in
   let name = svc.Sol_cli_manifest.name in
@@ -151,17 +143,12 @@ let run_unit ~ctx ~target (options : log_options) scope : unit =
   let k8s_name = k8s_name_or_exit name in
   let primitive = svc.Sol_cli_manifest.primitive in
   let backend, base_domain =
-    match
-      Sol_cli_observability_url.effective_backend_and_base_domain
-        ~explicit_backend
-        ~explicit_base_domain
-        ~target
-        ()
-    with
-    | Error msg ->
-      Printf.eprintf "error: %s\n" msg;
-      exit 1
-    | Ok pair -> pair
+    Sol_cli_exit.or_exit
+      (Sol_cli_observability_url.effective_backend_and_base_domain
+         ~explicit_backend
+         ~explicit_base_domain
+         ~target
+         ())
   in
   (match
      Sol_cli_observability_url.resolve ~backend ?base_domain ?override:grafana_base_url ()
@@ -222,17 +209,12 @@ let run_unit ~ctx ~target (options : log_options) scope : unit =
       fallback_to_kubectl ()
     | Some loki_base_url ->
       let credentials =
-        match
-          Sol_cli_loki.resolve_credentials
-            ~flag_username:explicit_loki_username
-            ~flag_password:explicit_loki_password
-            ~env_username:(Sys.getenv_opt "SOL_LOKI_USERNAME")
-            ~env_password:(Sys.getenv_opt "SOL_LOKI_PASSWORD")
-        with
-        | Ok credentials -> credentials
-        | Error msg ->
-          Printf.eprintf "error: %s\n" msg;
-          exit 1
+        Sol_cli_exit.or_exit
+          (Sol_cli_loki.resolve_credentials
+             ~flag_username:explicit_loki_username
+             ~flag_password:explicit_loki_password
+             ~env_username:(Sys.getenv_opt "SOL_LOKI_USERNAME")
+             ~env_password:(Sys.getenv_opt "SOL_LOKI_PASSWORD"))
       in
       (match
          Sol_cli_loki.query ~base_url:loki_base_url ~k8s_name ?credentials ~limit:tail ()
@@ -271,7 +253,7 @@ let run_release ~ctx ~target (options : log_options) release : unit =
   let explicit_loki_username = observability.loki_username in
   let explicit_loki_password = observability.loki_password in
   let grafana_base_url = observability.grafana_base_url in
-  let workspace = workspace_name () in
+  let workspace = (Sol_cli_workspace.enter_or_exit ()).name in
   let target_name = Option.value target ~default:"local" in
   let scope =
     match options.scope with
@@ -320,17 +302,12 @@ let run_release ~ctx ~target (options : log_options) release : unit =
     exit 1
   | Sol_cli_logs.Release_logs { release_id; logql } ->
     let backend, base_domain =
-      match
-        Sol_cli_observability_url.effective_backend_and_base_domain
-          ~explicit_backend
-          ~explicit_base_domain:observability.base_domain
-          ~target
-          ()
-      with
-      | Error msg ->
-        Printf.eprintf "error: %s\n" msg;
-        exit 1
-      | Ok pair -> pair
+      Sol_cli_exit.or_exit
+        (Sol_cli_observability_url.effective_backend_and_base_domain
+           ~explicit_backend
+           ~explicit_base_domain:observability.base_domain
+           ~target
+           ())
     in
     (match
        Sol_cli_observability_url.resolve
@@ -356,17 +333,12 @@ let run_release ~ctx ~target (options : log_options) release : unit =
          (Sol_cli_status.not_configured_message ~signal:Sol_cli_status.Loki ~backend)
      | Some loki_base_url ->
        let credentials =
-         match
-           Sol_cli_loki.resolve_credentials
-             ~flag_username:explicit_loki_username
-             ~flag_password:explicit_loki_password
-             ~env_username:(Sys.getenv_opt "SOL_LOKI_USERNAME")
-             ~env_password:(Sys.getenv_opt "SOL_LOKI_PASSWORD")
-         with
-         | Ok credentials -> credentials
-         | Error msg ->
-           Printf.eprintf "error: %s\n" msg;
-           exit 1
+         Sol_cli_exit.or_exit
+           (Sol_cli_loki.resolve_credentials
+              ~flag_username:explicit_loki_username
+              ~flag_password:explicit_loki_password
+              ~env_username:(Sys.getenv_opt "SOL_LOKI_USERNAME")
+              ~env_password:(Sys.getenv_opt "SOL_LOKI_PASSWORD"))
        in
        (match
           Sol_cli_loki.query_logql

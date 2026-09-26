@@ -13,6 +13,9 @@
     selector's. *)
 type resolved =
   { request : Sol_cli_deployment_scope.request
+  ; requested_scope : string
+    (** [request] as the plan and release record name it, computed once here
+        (REFAC-111). *)
   ; scope : Sol_cli_deployment_scope.t
   ; services : Sol_cli_manifest.service list
   }
@@ -31,6 +34,16 @@ val named_of_services
     [what] names the flag in the error text (default ["--scope"]). *)
 val resolve
   :  ?what:string
+  -> string option
+  -> Sol_cli_manifest.service list
+  -> (resolved, string) result
+
+(** [resolve_nonempty ~none] is [resolve], except that a selection matching no
+    workload is [Error none]. For commands that deploy, where an empty
+    selection is an error and never a silent success (REFAC-111). *)
+val resolve_nonempty
+  :  ?what:string
+  -> none:string
   -> string option
   -> Sol_cli_manifest.service list
   -> (resolved, string) result

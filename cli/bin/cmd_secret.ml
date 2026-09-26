@@ -5,11 +5,10 @@ open Cmdliner
 let workspace_name = Sol_cli_workspace.current_name
 
 let namespace_or_exit ~workspace ~domain =
-  match Sol_cli_deployment_plan.namespace_result ~workspace ~domain with
-  | Ok namespace -> Sol_cli_deployment_plan.namespace_to_string namespace
-  | Error err ->
-    Printf.eprintf "error: %s\n" (Sol_cli_deployment_plan.plan_error_to_string err);
-    exit 1
+  Sol_cli_deployment_plan.namespace_to_string
+    (Sol_cli_exit.or_exit_with
+       Sol_cli_deployment_plan.plan_error_to_string
+       (Sol_cli_deployment_plan.namespace_result ~workspace ~domain))
 ;;
 
 (* Secrets are addressed by Kubernetes namespace, not by workload, so this
