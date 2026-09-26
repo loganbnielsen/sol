@@ -572,7 +572,7 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
          in
          Printf.printf "Building migration runner image %s...\n%!" image;
          let dockerfile = write_temp_file ~suffix:".Dockerfile" sol_cli_dockerfile in
-         (match Sol_cli_docker.build ~tag:image ~dockerfile ~context:sol_home with
+         (match Sol_cli_docker.build ~tag:image ~dockerfile ~context:sol_home () with
           | Error e -> fatal_p "docker build: %s" (Sol_cli_process.error_to_string e)
           | Ok () -> ());
          (try Sys.remove dockerfile with
@@ -747,7 +747,7 @@ let push_runner_image ~workspace ~k8s_name ~registry =
     in
     let dockerfile = write_temp_file ~suffix:".Dockerfile" sol_cli_dockerfile in
     let result =
-      match Sol_cli_docker.build ~tag:image ~dockerfile ~context:sol_home with
+      match Sol_cli_docker.build ~tag:image ~dockerfile ~context:sol_home () with
       | Error e ->
         Error (Printf.sprintf "docker build: %s" (Sol_cli_process.error_to_string e))
       | Ok () ->

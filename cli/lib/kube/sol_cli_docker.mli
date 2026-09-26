@@ -1,7 +1,46 @@
-val build
-  :  tag:string
+(** Where an application image build may import and export BuildKit cache.
+
+    [Local_dir d] is a directory that survives between builds: its contents are
+    imported as cache input when it exists, and exported in full ([mode=max], so
+    the Dockerfile's build-stage layers are included) after every build. *)
+type cache = Local_dir of string
+
+(** The cache directory named by [SOL_BUILD_CACHE_DIR], if it is set and
+    non-empty. Unset means no cache, and the build then behaves exactly as it did
+    before this existed. The variable names a cache *location* only -- whether
+    anything persists it between runs is the caller's business, which is how CI
+    persists it without Sol knowing anything about CI. *)
+val cache_of_env : ?lookup:(string -> string option) -> unit -> cache option
+
+(** The docker argv for a build, without running it.
+
+    - no cache (or no buildx): the argv this module has always produced;
+    - cache and buildx: [docker buildx build --load] with
+      [--cache-from type=local,src=DIR] when the directory exists, and
+      [--cache-to type=local,dest=DIR,mode=max]. [--load] is load-bearing: the
+      image must land in the local image store because callers push it with
+      [docker push].
+
+    Pure, so the shapes can be pinned by tests. *)
+val build_argv
+  :  buildx:bool
+  -> cache:cache option
+  -> cache_present:bool
+  -> tag:string
   -> dockerfile:string
   -> context:string
+  -> string list
+
+(** [build ?cache ~tag ~dockerfile ~context ()] builds the image; [cache]
+    defaults to [cache_of_env ()]. The trailing unit is required by OCaml's
+    optional-argument erasure rules, as it is for this repo's other optional
+    arguments. *)
+val build
+  :  ?cache:cache
+  -> tag:string
+  -> dockerfile:string
+  -> context:string
+  -> unit
   -> (unit, Sol_cli_process.error) result
 
 val push : image_ref:string -> (unit, Sol_cli_process.error) result

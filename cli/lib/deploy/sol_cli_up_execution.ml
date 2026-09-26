@@ -83,6 +83,7 @@ let build_image exec =
       ~tag:exec.push_image
       ~dockerfile:exec.dockerfile
       ~context:exec.context
+      ()
   with
   | Error e ->
     Error

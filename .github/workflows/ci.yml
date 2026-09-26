@@ -519,9 +519,28 @@ jobs:
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/kubectl
 
+      - name: Application image build cache
+        # Sol's build-cache capability (SOL_BUILD_CACHE_DIR) plus CI's job of
+        # persisting it between runners -- the boundary is deliberate: Sol knows a
+        # cache location, CI knows how a cache survives a run.
+        #
+        # BuildKit keys every layer on its inputs, so a stale or incompatible
+        # entry can only cost a miss, never a wrong build: the measured behaviour
+        # (buildx 0.30.1, docker driver) is that a changed dependency file
+        # re-runs the dependency layer while everything before it is reused.
+        # Keyed per run so the entry refreshes, with a prefix restore so the
+        # previous run's cache is what gets imported.
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/sol-build-cache
+          key: sol-build-cache-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            sol-build-cache-${{ runner.os }}-
+
       - name: Golden-path smoke test
         env:
           SOL_FRAMEWORK_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+          SOL_BUILD_CACHE_DIR: ${{ runner.temp }}/sol-build-cache
         # Measured across the first 3 real runs on this branch: 11m43s,
         # 8m20s, 10m59s -- a ~40% swing with no code change touching this
         # step's actual work (cluster boot, chart install, health-wait,

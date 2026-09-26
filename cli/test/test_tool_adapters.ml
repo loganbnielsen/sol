@@ -191,7 +191,8 @@ let test_docker_build_failure () =
     (Sol_cli_docker.build
        ~tag:"test:v0"
        ~dockerfile:"/nonexistent/Dockerfile"
-       ~context:"/nonexistent")
+       ~context:"/nonexistent"
+       ())
 ;;
 
 let test_docker_push_failure () =
