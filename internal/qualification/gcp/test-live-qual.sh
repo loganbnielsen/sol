@@ -327,6 +327,19 @@ if grep -qF 'cloud apply failed -- capturing the discriminator before any teardo
 else
   no "the failure path announces the discriminator capture" "announced" "silent"
 fi
+# FND-0010 follow-up: the discriminator must be able to answer "why was the CA bundle never
+# injected?" -- the CA the webhook pod writes, the injector's view, and the cert-manager API
+# objects. Asserted here so a future edit cannot quietly drop them again.
+# Existence, not content: the stub emits nothing for these, and `kube_capture` writes the
+# file either way (`|| true`) -- what matters is that the capture happens at all.
+for member in fnd0010-ca-secret fnd0010-tls-secret fnd0010-cainjector-logs fnd0010-controller-logs fnd0010-webhook-logs fnd0010-certificates; do
+  if [ -f "$TMP/cloud-fail.logs/$member.log" ]; then
+    ok "the discriminator captures $member (FND-0010 follow-up)"
+  else
+    no "the discriminator captures $member (FND-0010 follow-up)" "a file" "missing"
+  fi
+done
+has "the CA secret capture asks for existence, not key material" "keys=" "$TMP/cloud-fail.argv"
 probe_line="$(grep -n -m1 'kubectl -n cert-manager logs' "$TMP/cloud-fail.argv" | cut -d: -f1)"
 teardown_line="$(grep -n -m1 'cloud destroy' "$TMP/cloud-fail.argv" | cut -d: -f1)"
 if [ -n "$probe_line" ] && [ -n "$teardown_line" ] && [ "$probe_line" -lt "$teardown_line" ]; then
