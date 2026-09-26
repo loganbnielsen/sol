@@ -157,6 +157,33 @@ resource "helm_release" "cert_manager" {
     value = "true"
   }
 
+  # ── FND-0060: leader election belongs in cert-manager's own namespace ──────
+  #
+  # The chart's default is `global.leaderElection.namespace: kube-system`; it creates its
+  # leader-election Role and RoleBinding there and passes the same namespace to both the
+  # controller and the cainjector as `--leader-election-namespace`. GKE Autopilot manages
+  # `kube-system` and denies workloads the create verb in it, so on Autopilot the components
+  # can never create their Lease. Attempt 10's frozen evidence (2026-09-26) shows the whole
+  # consequence: 30 denials each across the entire install window
+  #
+  #   cannot create resource "leases" in API group "coordination.k8s.io" in the namespace
+  #   "kube-system": GKE Warden authz [denied by managed-namespaces-limitation]
+  #
+  # no leadership, so cainjector never injected the webhook's caBundle (the
+  # ValidatingWebhookConfiguration had no caBundle field at all), so every client's TLS
+  # handshake to the webhook failed and cert-manager's own post-install `check api
+  # --wait=10m` polled for its full 601s and timed out -- which is what fails the platform
+  # apply, and what FND-0010's budget remedy (below) was never able to fix on its own.
+  #
+  # Deliberately unconditional. A cluster that would permit `kube-system` is not a reason to
+  # depend on it: the namespace Sol installs cert-manager into is the namespace its
+  # leader-election resources belong in, so the reference below has one meaning everywhere
+  # and no provider-specific branch decides it.
+  set {
+    name  = "global.leaderElection.namespace"
+    value = kubernetes_namespace.cert_manager.metadata[0].name
+  }
+
   # ── FND-0010: wait as long as cert-manager's own readiness check is designed to ──
   #
   # The chart's post-install `startupapicheck` Job is cert-manager's readiness contract:

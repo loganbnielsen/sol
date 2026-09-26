@@ -140,6 +140,81 @@ s = s.replace('    value = "true"', '    value = "false"', 1)
 p.write_text(s)
 PY
 
+# ── FND-0060: leader election must be cert-manager's own namespace, by reference ──────
+# The four shapes the ticket names (declared at all, kube-system, another namespace, omitted)
+# plus the one that only a reference-checking guard catches: the right *name* written as a
+# literal, which is a second source of truth for the namespace Sol installs into.
+
+# 9. Omitted entirely: the chart default (kube-system) is what Attempt 10 ran.
+mutation no-leader-election-namespace <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+block = '''  set {
+    name  = "global.leaderElection.namespace"
+    value = kubernetes_namespace.cert_manager.metadata[0].name
+  }
+
+'''
+assert block in s, "leader-election set block not found"
+s = s.replace(block, '', 1)
+p.write_text(s)
+PY
+
+# 10. The chart's default, written out: Autopilot denies it, so this is the defect itself.
+mutation leader-election-kube-system <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+s = s.replace('    value = kubernetes_namespace.cert_manager.metadata[0].name',
+              '    value = "kube-system"', 1)
+p.write_text(s)
+PY
+
+# 11. Some other namespace: same class of mistake, different string.
+mutation leader-election-other-namespace <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+s = s.replace('    value = kubernetes_namespace.cert_manager.metadata[0].name',
+              '    value = "default"', 1)
+p.write_text(s)
+PY
+
+# 12. The right namespace as a literal: correct today, a second source of truth tomorrow.
+mutation leader-election-literal-name <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+s = s.replace('    value = kubernetes_namespace.cert_manager.metadata[0].name',
+              '    value = "cert-manager"', 1)
+p.write_text(s)
+PY
+
+# 13. A reference, but to the wrong namespace resource.
+mutation leader-election-wrong-reference <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+s = s.replace('    value = kubernetes_namespace.cert_manager.metadata[0].name',
+              '    value = kubernetes_namespace.ingress_nginx.metadata[0].name', 1)
+p.write_text(s)
+PY
+
+# 14. The reference kept, but the namespace it resolves to renamed: the guard must follow the
+#     link rather than trusting the reference's spelling.
+mutation cert-manager-namespace-renamed <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+old = '''resource "kubernetes_namespace" "cert_manager" {
+  metadata { name = "cert-manager" }
+}'''
+assert old in s, "cert-manager namespace resource not found"
+s = s.replace(old, old.replace('name = "cert-manager"', 'name = "cert-manager-2"'), 1)
+p.write_text(s)
+PY
+
 accept real-tree
 
 echo "check_cert_manager_readiness.sh: all mutations rejected, unmutated tree accepted"

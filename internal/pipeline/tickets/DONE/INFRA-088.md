@@ -104,8 +104,80 @@ A fresh GCP attempt (new target key, its own state) in which:
 `kube-system` after the change would mean the value did not reach the components (chart path or
 value name wrong), which the run's captured manifests would then say directly.
 
+## Status
+
+Implemented 2026-09-26. The value below is in `helm_release.cert_manager`; the guard and its
+mutation self-test cover it. **Offline acceptance met; live qualification is the next run** (the
+discriminator in section 5), and FND-0060 stays `FIXED_UNQUALIFIED` until it happens.
+
+Originally promoted from `BACKLOG` on 2026-09-26: the operator approved this fix on the FND-0060
+analysis review ("Approved. The existing Attempt 10 evidence establishes FND-0060 strongly enough to
+implement the proposed fix without another evidence-only live run"), with two conditions recorded
+there: the value is platform configuration rather than provider-conditional lifecycle behaviour,
+and FND-0060 must land fixed-but-unqualified until live evidence exists.
+
 ## Explicitly out of scope
 
 No live mutation without separate authorization. No change to FND-0010's timeouts, to the authority
 matcher, or to any destruction semantics. No GKE node-pool, firewall, or DNS changes. The stale
 `kube-system` leases that may exist from other clusters are not this ticket's subject.
+
+## Completion notes (2026-09-26)
+
+**Problem.** The platform install could not pass cert-manager's own readiness contract on a fresh
+GKE Autopilot cluster: the chart's default leader-election namespace is `kube-system`, Autopilot
+denies workloads the create verb there (GKE Warden `managed-namespaces-limitation`), so the
+controller and cainjector never acquired leadership, cainjector never injected the webhook's
+`caBundle`, and the post-install check polled its full 601s and timed out (Attempt 10's frozen
+bundle; FND-0060).
+
+**Root cause.** Chart default, inherited by Sol because Sol declared nothing. The chart creates its
+leader-election `Role`/`RoleBinding` in `global.leaderElection.namespace` and passes that namespace
+to both components as `--leader-election-namespace`, so the namespace is an install decision.
+
+**Change.** One declared value in `helm_release.cert_manager`:
+
+```hcl
+  set {
+    name  = "global.leaderElection.namespace"
+    value = kubernetes_namespace.cert_manager.metadata[0].name
+  }
+```
+
+By reference to the namespace resource this module already creates, so the namespace has one source
+of truth, and deliberately unconditional: no provider branch asks whether a cluster would have
+permitted `kube-system`. Sol places cert-manager's leader-election resources in cert-manager's
+namespace everywhere.
+
+**Executable evidence.**
+
+- `internal/ci/check_cert_manager_readiness.sh` now also requires the leader-election namespace to be
+  declared, to be the namespace resource reference (so `kube-system`, any other namespace, and any
+  literal — including the right name written as a string — are refused), and to resolve *in this
+  file* to `kubernetes_namespace.cert_manager` named `cert-manager`. It prints the resolved
+  namespace in its summary line.
+- `internal/ci/test_cert_manager_readiness_check.sh` adds six mutations, each rejected by the
+  intended rule: value omitted; `kube-system`; another namespace; the right name as a literal; a
+  reference to the wrong namespace resource; and the namespace resource renamed while the reference
+  stays (the resolution check, not the spelling, catches that one). All fourteen mutations are
+  rejected and the unmutated tree is accepted.
+- The offline lifecycle suite (`internal/ci/test_cloud_lifecycle_offline.sh`) is unchanged and
+  green: this value is consumed by Terraform at apply time, and the suite's cert-manager gate
+  assertion is about the install sequence, which this does not touch.
+- `terraform fmt -check` clean; the module validates (`terraform init -backend=false && terraform
+  validate`).
+
+**Demo/example coverage:** not applicable — this is a platform-install value for a Helm release, with
+no `sol.toml` field, CLI surface, framework primitive or generated manifest for an app author to
+read or run. The observable behaviour is the platform install reaching `Ready`, which is what the
+qualification run establishes.
+
+**Language parity (DEC-022):** no application-facing impact. The change is provider-platform
+configuration; it introduces no primitive, contract, metric or retry semantic, and neither
+application language observes it.
+
+**Canonical merge SHA:** `git log --oneline -1 -- internal/pipeline/tickets/DONE/INFRA-088.md`.
+
+**Acceptance criteria:** offline — met (guard + mutations + suites above). Live — pending: a fresh
+qualification run whose discriminator shows leases acquired in `cert-manager`, none attempted in
+`kube-system`, a populated `caBundle`, and the check Job succeeding.
