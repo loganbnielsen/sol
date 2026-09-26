@@ -62,6 +62,8 @@
   test_platform_assets
   test_terraform_workdir
   test_time
+  test_alert_test
+  test_terraform_outputs
   test_string
   test_image_ref
   test_local_infra
@@ -193,3 +195,14 @@
  (name test_supervised)
  (modules test_supervised)
  (libraries sol_cli alcotest unix str))
+
+; REFAC-117: `sol alert test` -- --target is required at the command line (a
+; usage error, exit 124), a target failing the alert contract exits 2, and a dry
+; run prints the synthetic alert without sending it.
+
+(rule
+ (alias runtest)
+ (deps ../bin/main.exe)
+ (action
+  (bash
+   "set -u\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\ncd \"$tmp\"\ntouch sol.yml\nmkdir sol\nexpect() { want=$1; shift; if \"$sol\" \"$@\" >out 2>&1; then got=0; else got=$?; fi; if [ \"$got\" != \"$want\" ]; then echo \"sol $*: expected exit $want, got $got\" >&2; cat out >&2; exit 1; fi; }\nexpect 124 alert test\ngrep -F -- '--target' out >/dev/null\nprintf 'prod:\\n  targets:\\n    aws/us-east-1:\\n' > sol/environments.yml\nexpect 2 alert test --target prod/aws/us-east-1\ngrep -F 'does not satisfy the alert-delivery contract' out >/dev/null\nprintf 'prod:\\n  targets:\\n    aws/us-east-1:\\n      alert_receiver_type: webhook\\n      alert_receiver_url: https://hooks.example.test/x\\n      alert_owner: ops@example.test\\n      alert_runbook_url: https://runbooks.example.test/x\\n' > sol/environments.yml\nexpect 0 alert test --target prod/aws/us-east-1 --dry-run\ngrep -F '\"alertname\":\"SolSyntheticAlert\"' out >/dev/null\ngrep -F '/api/v2/alerts' out >/dev/null")))

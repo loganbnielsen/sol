@@ -10,45 +10,22 @@ let ( let* ) = Result.bind
 
 (* ── Terraform output parsing ───────────────────────────────────────────── *)
 
-(* Read terraform output -json from a temp file and print key endpoints.
-   We only print non-sensitive string/list values. *)
+(* REFAC-118: the root's non-sensitive outputs, or why they could not be shown. *)
 let print_outputs infra_dir =
-  match Sol_cli_process.check (Sol_cli_terraform.output_json ~chdir:infra_dir ()) with
-  | Error _ -> Printf.printf "  (could not retrieve terraform outputs)\n%!"
-  | Ok r ->
-    (try
-       let print_output_field key obj =
-         match obj with
-         | `Assoc fields ->
-           let sensitive =
-             match List.assoc_opt "sensitive" fields with
-             | Some (`Bool b) -> b
-             | _ -> true
-           in
-           if not sensitive
-           then (
-             match List.assoc_opt "value" fields with
-             | Some (`String v) -> Printf.printf "  %-28s  %s\n%!" key v
-             | Some (`List vs) ->
-               let strs =
-                 List.filter_map
-                   (function
-                     | `String s -> Some s
-                     | _ -> None)
-                   vs
-               in
-               if strs <> []
-               then Printf.printf "  %-28s  [%s]\n%!" key (String.concat ", " strs)
-             | Some `Null -> Printf.printf "  %-28s  (none)\n%!" key
-             | _ -> ())
-         | _ -> ()
-       in
-       let json = Yojson.Safe.from_string r.Sol_cli_process.stdout in
-       match json with
-       | `Assoc pairs -> List.iter (fun (key, obj) -> print_output_field key obj) pairs
-       | _ -> ()
-     with
-     | _ -> Printf.printf "  (error parsing terraform outputs)\n%!")
+  match
+    Sol_cli_process.check (Sol_cli_terraform.output_json ~chdir:infra_dir ())
+    |> Result.map (fun r -> r.Sol_cli_process.stdout)
+  with
+  | Error e ->
+    Printf.printf
+      "  (could not retrieve terraform outputs: %s)\n%!"
+      (Sol_cli_process.error_to_string e)
+  | Ok json ->
+    (match Sol_cli_terraform_outputs.displayable json with
+     | Ok outputs ->
+       outputs
+       |> List.iter (fun output -> print_endline (Sol_cli_terraform_outputs.line output))
+     | Error reason -> Printf.printf "  (could not read terraform outputs: %s)\n%!" reason)
 ;;
 
 (* ── cloud apply/plan ───────────────────────────────────────────────────── *)
