@@ -5,7 +5,7 @@ description: Run a scaffold quality audit of Sol. Verifies every sol new templat
 
 # /scaffold-audit — Scaffold Quality Audit
 
-Works through every section of `docs/audits/SCAFFOLD_AUDIT.md`. Writes a completed report to `internal/pipeline/audits/<YYYY-MM-DD>_scaffold_audit.md` and materialises each open finding as a ticket in `internal/pipeline/tickets/READY_FOR_ENGINEERING/`.
+Works through every section of `internal/pipeline/audits/SCAFFOLD_AUDIT.md`. Writes a completed report to `internal/pipeline/audits/<YYYY-MM-DD>_scaffold_audit.md` and materialises each open finding as a ticket in `internal/pipeline/tickets/READY_FOR_ENGINEERING/`.
 
 The core question: *does `sol new ...` generate code we would be comfortable making the default pattern for every startup using Sol?*
 
@@ -17,7 +17,7 @@ Use `SCAFFOLD-NNN`, continuing from the highest existing `SCAFFOLD-*` ID across 
 
 ### 1. Read the template
 
-Read `docs/audits/SCAFFOLD_AUDIT.md` in full before starting.
+Read `internal/pipeline/audits/SCAFFOLD_AUDIT.md` in full before starting.
 
 ### 2. Check previous findings
 
@@ -32,7 +32,7 @@ Read the most recent `internal/pipeline/audits/*_scaffold_audit.md` report if on
 
 ### 4. Generate fresh scaffolds
 
-Use a clean temporary directory and run the executable runbook from `docs/audits/SCAFFOLD_AUDIT.md` where practical:
+Use a clean temporary directory and run the executable runbook from `internal/pipeline/audits/SCAFFOLD_AUDIT.md` where practical:
 
 ```bash
 sol new workspace scaffold_audit

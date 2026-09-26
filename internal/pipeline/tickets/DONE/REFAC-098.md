@@ -25,7 +25,7 @@ Move `provisioner_role_arn`, `cluster_access_role_arn`, `deploy_role_arn`, `oper
 
 - Demo/example: not applicable (cloud lifecycle internals) — state it.
 - Language parity (DEC-022): no application-facing impact — state it.
-- Update `docs/planning/WORK_SUMMARY.md`, and any finding/decision whose status this changes.
+- Update `internal/planning/WORK_SUMMARY.md`, and any finding/decision whose status this changes.
 
 ## Completion notes
 
@@ -79,9 +79,9 @@ provider's identity.
     read.
 
 **Examples and docs updated.**
-- `docs/qualification/run8-aws-target.example.yml`, the runnable example target.
+- `internal/qualification/aws/run8-aws-target.example.yml`, the runnable example target.
 - `docs/deployment/production-bootstrap.md`, which gains a note on the refusal.
-- `docs/guides/TUTORIAL.md` and `docs/qualification/aws-run-procedure.md`.
+- `docs/guides/TUTORIAL.md` and `internal/qualification/aws/aws-run-procedure.md`.
 - The GCP qualification harness's generated target (`internal/qualification/gcp/live-qual.sh`).
 - `rg` finds no example workspace or scaffold template declaring these keys.
 

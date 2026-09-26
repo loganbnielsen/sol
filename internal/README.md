@@ -18,5 +18,5 @@ Sol; `internal/` is for people building Sol.** Maintainer-only material belongs
 here even when it's prose.
 
 Product code lives in [`../cli/`](../cli/), [`../framework/`](../framework/),
-and [`../contract/`](../contract/); user-facing examples live in
+and [`../contract/`](../docs/reference/); user-facing examples live in
 [`../examples/`](../examples/).

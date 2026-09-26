@@ -16,7 +16,7 @@ level=info msg="charge event received" span=log charge_id=ch_770445 customer_id=
   amount_cents=123 trace_id=... span_id=...
 ```
 
-so logs are being pushed directly to Loki and not written to stdout. `docs/dogfood/DOGFOOD.md`'s "Useful Diagnostics" section recommends exactly `kubectl logs ... deploy/notify-worker`.
+so logs are being pushed directly to Loki and not written to stdout. `internal/pipeline/dogfood/DOGFOOD.md`'s "Useful Diagnostics" section recommends exactly `kubectl logs ... deploy/notify-worker`.
 
 **Impact:** The primary documented debugging path for a Kafka worker yields nothing. A user debugging the event path concludes logging is broken (or that the worker never ran) and has to discover the Loki path on their own — even though the log line is present and well-labelled.
 

@@ -2,7 +2,7 @@
 id: CODEX_STYLE_AUDIT-062
 type: refactor
 severity: high
-source: docs/audits/STYLE_AUDIT.md
+source: internal/pipeline/audits/STYLE_AUDIT.md
 branch: CODEX_STYLE_AUDIT-062/typed-command-requests
 ---
 

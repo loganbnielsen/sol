@@ -9,7 +9,7 @@ OCaml interfaces. Dogfood procedures were not run.
 
 * **Severity:** Medium
 * **Locations:** `README.md`, `docs/guides/TUTORIAL.md`,
-  `docs/planning/ROADMAP.md`, `examples/pluto/app/demo_ts/README.md`
+  `docs/ROADMAP.md`, `examples/pluto/app/demo_ts/README.md`
 * **Description:** README leads with OCaml and TypeScript as first-class, but the
   tutorial still defines Sol as a platform for OCaml services and its local-run
   comparison assumes native OCaml binaries. The roadmap likewise defines the
@@ -39,7 +39,7 @@ OCaml interfaces. Dogfood procedures were not run.
 ### DOCS-018 — Three reusable audit procedures still target the pre-rename product
 
 * **Severity:** Medium
-* **Locations:** `docs/audits/UX_AUDIT.md`, `STYLE_AUDIT.md`,
+* **Locations:** `internal/pipeline/audits/UX_AUDIT.md`, `STYLE_AUDIT.md`,
   `SCAFFOLD_AUDIT.md`, plus path inventory in `STYLE_AUDIT_FINDINGS.md`
 * **Description:** these procedures still prescribe `sun` commands,
   `cli/sun`, `Sun.*` modules, removed hosted/control-plane code, and in the UX

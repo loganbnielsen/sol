@@ -13,7 +13,7 @@ Rename the project from `sun` to `sol` across code, CLI, config conventions, and
 
 ## Goal
 
-Nothing user-facing or internal should still say "sun" when this ticket is done, except: historical/dated records (past tickets in `project/tickets/DONE/`, `project/audits/`, `project/dogfood/`, `docs/audits/`, root-level `*-audit.md` investigation docs, and `docs/planning/WORK_SUMMARY.md`'s existing dated entries) — those describe what was true at the time and should not be rewritten. Add one new `WORK_SUMMARY.md` entry documenting this rename instead of rewriting history.
+Nothing user-facing or internal should still say "sun" when this ticket is done, except: historical/dated records (past tickets in `project/tickets/DONE/`, `project/audits/`, `project/dogfood/`, `internal/pipeline/audits/`, root-level `*-audit.md` investigation docs, and `internal/planning/WORK_SUMMARY.md`'s existing dated entries) — those describe what was true at the time and should not be rewritten. Add one new `WORK_SUMMARY.md` entry documenting this rename instead of rewriting history.
 
 ## Scope (surveyed 2026-09-06)
 
@@ -57,7 +57,7 @@ Nothing user-facing or internal should still say "sun" when this ticket is done,
 **Docs to update in full** (living/reference docs — rename thoroughly, including every `sun <command>` example):
 - `README.md` (already Sol-branded in prose from PR #136; now update every command example, the install URL — repo is `loganbnielsen/sol` now — and remove the "rebrand in progress" callout since this ticket finishes it)
 - `docs/guides/TUTORIAL.md`
-- `docs/planning/ROADMAP.md`, `docs/planning/LIVE_DEV_DEPLOY_ROADMAP.md`, `docs/planning/OPAM_FOUNDATION_TRACKER.md`
+- `docs/ROADMAP.md`, `internal/planning/LIVE_DEV_DEPLOY_ROADMAP.md`, `internal/planning/OPAM_FOUNDATION_TRACKER.md`
 - `docs/architecture/*.md` (`PRODUCT_ARCHITECTURE.md`, `devops-pipeline.md`, `observability-design.md`, `contributing-map.md`, `adr/*`)
 - `docs/deployment/*.md` (`escape-hatches.md`, `observability-backends.md`, `self-hosted-substrate-contract.md`)
 - `docs/hosted/*` (check if living or historical)
@@ -66,9 +66,9 @@ Nothing user-facing or internal should still say "sun" when this ticket is done,
 
 **Explicitly out of scope / leave as historical record:**
 - `project/tickets/DONE/*`, `project/tickets/*` generally (ticket bodies are a point-in-time record; do not rewrite past ticket prose — only the ticket *system* itself, e.g. `sundev` binary name references in **current** skill docs under `.claude/skills/` and `.claude/CLAUDE.md`, needs updating)
-- `project/audits/*`, `project/dogfood/*`, `docs/audits/*` (dated reports)
+- `project/audits/*`, `project/dogfood/*`, `internal/pipeline/audits/*` (dated reports)
 - Root-level `aws-audit.md`, `obs-audit.md`, `storage-audit.md`, `obs-extraction-plan.md` (point-in-time investigation docs)
-- `docs/planning/WORK_SUMMARY.md`'s existing entries — add one new dated entry for this rename instead of editing history
+- `internal/planning/WORK_SUMMARY.md`'s existing entries — add one new dated entry for this rename instead of editing history
 - Sibling `*-eio` repos (`aws-eio`, `kafka-eio`, `obs-eio`, `pg-eio`, etc.) — separate repos, not touched by this ticket
 - `~/Code/CLAUDE.md` (one level above this repo, shared across all `~/Code/*` repos, not itself part of this git repo)
 - The local clone's own directory name (`~/Code/sun` on disk) — a local filesystem detail, not a git-tracked change

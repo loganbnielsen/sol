@@ -12,7 +12,7 @@
   reproduction of the Terraform semantics; **no live provider run** — deliberately
 - **Related:** FND-0030 (ownership), FND-0055 (verification coverage), `DEC-040`, ADR 0003
   invariant 6, `INV-DESTROY-1`/`INV-DESTROY-2`,
-  `docs/qualification/2026-09-24-gcp-attempt7-prelive-falsification.md`,
+  `internal/qualification/records/2026-09-24-gcp-attempt7-prelive-falsification.md`,
   `internal/pipeline/audits/HARDEN-004-handoff.md`
 
 ## The property Attempt 7 was to establish

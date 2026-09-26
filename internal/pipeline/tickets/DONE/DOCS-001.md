@@ -27,7 +27,7 @@ still defaults to `sun_schema_migrations`, but the user-facing CLI does not.
 3. Keep `sun_schema_migrations` references only where they describe the
    low-level `Sun.Storage.Migration` library default, or explicitly distinguish
    that library default from the CLI default.
-4. Optionally update `docs/audits/AUDIT.md` so future auditors query the
+4. Optionally update `internal/pipeline/audits/AUDIT.md` so future auditors query the
    workspace-prefixed table instead of `sun_schema_migrations`.
 
 **Acceptance criteria:**

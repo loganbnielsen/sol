@@ -15,9 +15,9 @@ Scaffold output, generated workspace README, and several docs still instruct use
 - `.claude/skills/dogfood/SKILL.md:77,95`
 - `.claude/skills/ux-audit/SKILL.md:48-49`
 - `.claude/CLAUDE.md:81`
-- `docs/planning/ROADMAP.md:88,109,159`
+- `docs/ROADMAP.md:88,109,159`
 - `docs/architecture/devops-pipeline.md:95`
-- `docs/audits/AUDIT.md:94,107-108,141`
+- `internal/pipeline/audits/AUDIT.md:94,107-108,141`
 
 **Impact:** A first-time user's very first post-scaffold instruction fails with `unknown command dev`. The generated README is the artifact a user trusts most about "how do I run this?", and it documents two commands that do not exist. This is the same drift class as FRIC-014 (checked-in artifacts not re-synced after a rename).
 

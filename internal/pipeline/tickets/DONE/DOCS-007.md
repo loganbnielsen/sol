@@ -20,4 +20,4 @@ ROADMAP.md Deployment Ownership Lanes table and Phase 7 notes reference the remo
 3. Add a Phase 7 footnote: the hosted executor and model modules were deleted as part of the self-hosted refocus on 2026-06-22.
 
 ## Review — automated checks passed
-All three remediation items addressed correctly; diff confined to docs/planning/ROADMAP.md; build passes; no new stale references.
+All three remediation items addressed correctly; diff confined to docs/ROADMAP.md; build passes; no new stale references.

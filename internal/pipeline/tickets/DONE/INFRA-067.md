@@ -9,7 +9,7 @@ source: FND-0029 — GCP Attempt 5 (2026-09-22)
 **Depends on:** None.
 **Related:** `FND-0029` (the evidence), `FND-0007` (the refusal's wording and the
 missing Cloud DNS solver), `FND-0028` / `DEC-043` (durable prerequisites and which
-stage owns them), `docs/qualification/2026-09-22-gcp-attempt5.md`.
+stage owns them), `internal/qualification/records/2026-09-22-gcp-attempt5.md`.
 
 ## The invariant to establish
 

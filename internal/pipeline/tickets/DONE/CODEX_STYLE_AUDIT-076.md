@@ -2,7 +2,7 @@
 id: CODEX_STYLE_AUDIT-076
 type: refactor
 severity: low
-source: docs/audits/STYLE_AUDIT.md
+source: internal/pipeline/audits/STYLE_AUDIT.md
 ---
 
 `Soldev_merge.run_merge`/`run_merge_finish` take unlabeled positional bool/string args

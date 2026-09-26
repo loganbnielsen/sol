@@ -520,7 +520,7 @@ is "the warned verification still passes" "$(cat "$TMP/filter-warning.rc")" "0"
 # The invariant is about behaviour, not about where a flag is set: with a target file present,
 # a failing verification must still invoke no destroy. (Before the fix this case reached
 # `sol cloud destroy` -- the stop recorded in
-# docs/qualification/2026-09-25-gcp-attempt8-phase0-stop.md.)
+# internal/qualification/records/2026-09-25-gcp-attempt8-phase0-stop.md.)
 printf '\nscenario: verify is read-only even when it fails\n'
 PRESEED_TARGET=1 run_case verify-fail verify STUB_TARGET_PRESENT=1
 if [ "$(cat "$TMP/verify-fail.rc")" = "0" ]; then

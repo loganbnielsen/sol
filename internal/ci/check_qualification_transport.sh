@@ -17,8 +17,8 @@ set -euo pipefail
 
 root="${1:-$(git rev-parse --show-toplevel)}"
 
-transport="$root/internal/pipeline/qualification/transport/transport.yaml"
-step="$root/internal/pipeline/qualification/transport/establish.sh"
+transport="$root/internal/qualification/transport/transport.yaml"
+step="$root/internal/qualification/transport/establish.sh"
 config="$root/cli/lib/workspace/sol_cli_config.ml"
 
 fail() {

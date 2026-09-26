@@ -3,7 +3,7 @@ id: HARDEN-006
 type: verification
 severity: high
 title: GCP qualification attempt 8 — the cert-manager startupapicheck discriminator (Ready if it does not reproduce)
-source: docs/qualification/README.md (the run that replaces the HARDEN-004 epic's frontier)
+source: internal/qualification/README.md (the run that replaces the HARDEN-004 epic's frontier)
 ---
 
 **Depends on:** INFRA-076.
@@ -14,8 +14,8 @@ source: docs/qualification/README.md (the run that replaces the HARDEN-004 epic'
 ## Result (2026-09-25) — the run happened
 
 Authorized, Phase-0-gated and executed at `main @ dae9540d` (after the corrective harness PRs
-#514 and #516). Run record: `docs/qualification/2026-09-25-gcp-attempt8.md`. The pre-live stop that
-preceded it, with its own evidence, is `docs/qualification/2026-09-25-gcp-attempt8-phase0-stop.md`.
+#514 and #516). Run record: `internal/qualification/records/2026-09-25-gcp-attempt8.md`. The pre-live stop that
+preceded it, with its own evidence, is `internal/qualification/records/2026-09-25-gcp-attempt8-phase0-stop.md`.
 
 - **The discriminator was obtained, before any teardown**: classification `TLS_CA_OR_CERTIFICATE`.
   The check's own output is `x509: certificate signed by unknown authority`; the webhook Service had
@@ -66,7 +66,7 @@ reproduce the only known Sol-caused provider/state divergence. That fix has land
 
 ## Acceptance criteria
 
-- Run under the operating rules in `docs/qualification/README.md` (cost rule; `Absent`; process
+- Run under the operating rules in `internal/qualification/README.md` (cost rule; `Absent`; process
   identity, not patterns; no force-unlock of a live lock; no signals to provider plugins) and the
   phase model in the harness header (`cloud` → discriminator or Ready evidence → freeze → `destroy`).
 - The generated target declares **no** `cluster_issuer`: a GCP target that asks for one is refused at
@@ -86,7 +86,7 @@ reproduce the only known Sol-caused provider/state divergence. That fix has land
   the delegated zone excluded by name (`create_dns_zone=false`), followed by an independent provider
   inventory: every disposable class ABSENT or a named approved retained item; the durable
   prerequisites PRESENT.
-- A run record `docs/qualification/<date>-gcp-attempt8.md` from `run-record-template.md`, with each
+- A run record `internal/qualification/<date>-gcp-attempt8.md` from `run-record-template.md`, with each
   targeted matrix row qualified, blocked or not reached — each stated, and the classification quoted.
 - `internal/pipeline/audits/QUALIFICATION_STATUS.md` updated.
 

@@ -15,7 +15,7 @@
 - **Related invariant:** **ADR 0003 invariant 6** — destruction is an abort edge available
   from every phase, including a half-built one
 - **Related:** `INFRA-067` (the same family, a different manifestation), `FND-0028`,
-  `docs/qualification/2026-09-23-gcp-attempt6.md`
+  `internal/qualification/records/2026-09-23-gcp-attempt6.md`
 
 ## The invariant this violates
 

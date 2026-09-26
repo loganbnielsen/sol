@@ -2,7 +2,7 @@
 id: CODEX_STYLE_AUDIT-075
 type: refactor
 severity: medium
-source: docs/audits/STYLE_AUDIT.md
+source: internal/pipeline/audits/STYLE_AUDIT.md
 ---
 
 `Sol_cli_config`'s `target.provider`/`resource.typ`/`service.typ` are stringly-typed finite domains, and `provider` duplicates a properly-typed variant that already exists elsewhere

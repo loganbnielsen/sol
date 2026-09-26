@@ -23,7 +23,7 @@ and update call sites in the same pass. Full policy: `~/Code/CLAUDE.md`.
 
 ## Current development focus
 
-**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform lives under `platform/cloud/`: the shared platform module `modules/platform/`, and per-provider `bootstrap/`, `cluster/` and `platform/` roots that mirror each other (DEC-046 rule 4). Remaining hosted-product work is tracked in `internal/pipeline/tickets/`. See `docs/planning/WORK_SUMMARY.md` for full details.
+**Phase 7 core deliverables complete.** `sol deploy <env>/<provider>/<region>` takes a required target positional (same convention as `sol plan`) plus `--image-tag`, `--registry`, `--emit-to` (GitOps), and `--dry-run` flags; the target resolves `sol.yml`/target-file defaults and the `env` manifest label (FEAT-026). YAML rendering is shared by `sol up` and `sol deploy`. Terraform lives under `platform/cloud/`: the shared platform module `modules/platform/`, and per-provider `bootstrap/`, `cluster/` and `platform/` roots that mirror each other (DEC-046 rule 4). Remaining hosted-product work is tracked in `internal/pipeline/tickets/`. See `internal/planning/WORK_SUMMARY.md` for full details.
 
 Package: `cli/` — binary at `_build/default/cli/bin/main.exe`.
 
@@ -61,7 +61,7 @@ Do not add a `status:` field — the directory encodes status.
 
 **Human-judgment gates:** Tickets in `BACKLOG/` may contain `## Open Questions`, `## Decision Required`, or `## Blocked On` sections. Tickets in `READY_FOR_ENGINEERING/` are treated as actionable, so `/work` must stop before creating a worktree if any unresolved decision section or marker remains. Resolve the decision in the ticket body or keep the ticket in `BACKLOG/` until the Remediation is unambiguous.
 
-**Tickets are for work that can finish.** A standing goal that never closes — "qualify the production profile on a provider", as HARDEN-002 and HARDEN-004 were — does not belong in `READY_FOR_ENGINEERING/`, where `/work` treats it as actionable and later work gets credited to it instead of to the ticket it implements. Standing qualification goals live in the qualification ledger (`docs/qualification/README.md`, the matrices, `internal/pipeline/audits/QUALIFICATION_STATUS.md`); each live run is its own ticket, gated in `BACKLOG/` on explicit authorization. When work implements a ticket, name *that* ticket on the branch or in the commit subject, so the Ticket-move guard moves it.
+**Tickets are for work that can finish.** A standing goal that never closes — "qualify the production profile on a provider", as HARDEN-002 and HARDEN-004 were — does not belong in `READY_FOR_ENGINEERING/`, where `/work` treats it as actionable and later work gets credited to it instead of to the ticket it implements. Standing qualification goals live in the qualification ledger (`internal/qualification/README.md`, the matrices, `internal/pipeline/audits/QUALIFICATION_STATUS.md`); each live run is its own ticket, gated in `BACKLOG/` on explicit authorization. When work implements a ticket, name *that* ticket on the branch or in the commit subject, so the Ticket-move guard moves it.
 
 **Ticket dependencies:** Use a body line near the top of each ticket: `**Depends on:** None.` or `**Depends on:** FEAT-003, EXP-008.` **Every ticket id on that line becomes a dependency**, whatever prose surrounds it — so a mention like `Implemented by FEAT-059` or `Related: DEC-016` creates a dependency you did not intend, and two tickets referring to each other that way deadlock. Put other mentions on their own line. `/work` must verify dependencies before creating a worktree. A `READY_FOR_ENGINEERING` ticket with dependencies not yet in `internal/pipeline/tickets/DONE/` stays blocked; if a cycle does form, `soldev pipeline check` and `pipeline ls` report it as a cycle rather than as ordinary waiting.
 
@@ -155,7 +155,6 @@ sol/
     cloud/                      ← Terraform: modules/platform (shared definition),
                                   <provider>/{bootstrap,cluster,platform} roots, delivery/
     local/                      ← local k3s tooling
-  contract/                     ← language-neutral application contract (runtime, substrate)
   framework/ocaml/              ← first-party OCaml framework packages
     sol-svc/lib/                ← REST API service (routes, auth, metrics)
     sol-worker/lib/             ← Kafka consumer (schema registration, per-message metrics)
@@ -164,17 +163,20 @@ sol/
     sol-*/sol-*.md              ← per-package spec docs
     kafka-eio-service/lib/      ← schema registry + service orchestration, depends on `kafka-eio.*`
   examples/pluto/               ← canonical reference application (OCaml + TypeScript, local + cloud)
-  docs/                         ← architecture, deployment, guides, hosted, legal, planning
+  docs/                         ← for people using Sol: guides, reference/ (the application contract),
+                                  deployment, architecture, hosted, legal; ROADMAP.md
   internal/                     ← maintainer machinery (not product)
     ci/                         ← CI guardrails, classifier, mutation tests
-    qualification/aws/          ← live AWS smoke harness + smoke toolkit
+    qualification/              ← live qualification: aws/, gcp/ (harnesses, matrices), records/ (dated runs), transport/
     pipeline/                   ← tickets/, audits/, dogfood/
+    planning/                   ← WORK_SUMMARY and maintainer trackers
+    specs/                      ← cross-language framework conventions (DEC-022)
     tooling/                    ← soldev, sol_process, hooks/, perf/, scripts/ (test runner, perf, hook install)
     fixtures/                   ← test fixtures (OCaml-only worker workspace, e2e demo)
   # ── package contracts ────────────────────────────────────────────────────
   *.opam                        ← 9 hand-written package contracts (DEC-025); pin root for `internal/tooling/soldev`
   dune-project / dune-workspace ← unified root build
-  README.md / docs/planning/ROADMAP.md / docs/planning/WORK_SUMMARY.md  ← project-wide docs
+  README.md / docs/ROADMAP.md / internal/planning/WORK_SUMMARY.md  ← project-wide docs
 
   # Extracted support packages (own repos, opam-pinned into this switch):
   #   kafka-eio (~/Code/kafka-eio); obs-eio/obs-loki-eio/obs-prometheus-eio
@@ -260,16 +262,16 @@ Default broker address: `localhost:9092`
 You must maintain and consult the project's source-of-truth markdown files:
 
 1. **At Startup / Task Initialization**:
-   - Explicitly read `docs/planning/ROADMAP.md` and `docs/planning/WORK_SUMMARY.md` using your file-reading tool before writing any code.
-   - Align your execution path with the active milestone in `docs/planning/ROADMAP.md` and the current active tasks in `docs/planning/WORK_SUMMARY.md`.
+   - Explicitly read `docs/ROADMAP.md` and `internal/planning/WORK_SUMMARY.md` using your file-reading tool before writing any code.
+   - Align your execution path with the active milestone in `docs/ROADMAP.md` and the current active tasks in `internal/planning/WORK_SUMMARY.md`.
 
 2. **When Writing Code**:
    - Refer to `README.md` for foundational architecture rules.
    - Refer to the `*.md` spec file co-located with the package you are working in (e.g. `framework/ocaml/kafka-eio-service/kafka-eio-service.md`) for feature implementation guidelines. For `kafka-eio-core`/`producer`/`consumer`, the spec docs live in the external `~/Code/kafka-eio` repo. For `obs-eio`/`obs-loki-eio`/`obs-prometheus-eio`, the spec docs live in their respective external `~/Code/obs-*` repos. For `pg-eio`, the spec doc (`README.md`) lives in the external `~/Code/pg-eio` repo.
 
 3. **At Task Completion / Session End**:
-   - Update `docs/planning/WORK_SUMMARY.md` to accurately reflect what was accomplished, what is currently "In Progress", and any new implementation hurdles or blockers discovered.
-   - If a major milestone is hit, update the status checklist in `docs/planning/ROADMAP.md`.
+   - Update `internal/planning/WORK_SUMMARY.md` to accurately reflect what was accomplished, what is currently "In Progress", and any new implementation hurdles or blockers discovered.
+   - If a major milestone is hit, update the status checklist in `docs/ROADMAP.md`.
 
 ## Verifying claims before you report them
 

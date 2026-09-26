@@ -1,6 +1,6 @@
 # Framework
 
-First-party implementations of Sol's [application contract](../contract/).
+First-party implementations of Sol's [application contract](../docs/reference/).
 
 - [`ocaml/`](ocaml/) — the OCaml framework packages (`sol-svc`, `sol-worker`,
   `sol-fn`, `sol-jobs`, `sol-obs`, plus the internal `sol-runtime`/`sol-env`

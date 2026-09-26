@@ -46,9 +46,9 @@ Landed 2026-09-12.
 - Comments and current-state docs updated: `sol_cli_status.ml`,
   `test_tool_adapters.ml`, `cli/platform/infra/base/main.tf`, ADR 0001,
   `docs/architecture/devops-pipeline.md`,
-  `docs/deployment/observability-backends.md`, `docs/planning/ROADMAP.md`.
+  `docs/deployment/observability-backends.md`, `docs/ROADMAP.md`.
 - **Left as historical record:** `pipeline/audits/*`, `pipeline/dogfood/*` and
-  `docs/planning/WORK_SUMMARY.md`, which state what was true when written;
+  `internal/planning/WORK_SUMMARY.md`, which state what was true when written;
   rewriting them would falsify the record rather than fix a reference. Verified
   the only remaining `cmd_dev` mentions are those plus ticket prose.
 

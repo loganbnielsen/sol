@@ -74,7 +74,7 @@ a little more, and none of it is covered by `dune build` alone:
 - **Build:** `dune build cli/bin/main.exe`; the binary lands at
   `_build/default/cli/bin/main.exe`.
 
-**[`docs/dogfood/DOGFOOD.md`](docs/dogfood/DOGFOOD.md)** has the full
+**[`internal/pipeline/dogfood/DOGFOOD.md`](internal/pipeline/dogfood/DOGFOOD.md)** has the full
 local-substrate walkthrough, including the exact dependency commands.
 
 ---
@@ -171,7 +171,7 @@ See the [Tutorial](docs/guides/TUTORIAL.md), [Factory Pipeline](docs/architectur
 
 Sol is under active development and not yet production-stable. HTTP services, Kafka workers, scheduled functions, PostgreSQL, observability, local development, and Kubernetes deployment are implemented and dogfooded end-to-end. Cloud infrastructure provisioning and the AWS integration layer are further along than most other pieces but still experimental.
 
-See [ROADMAP.md](docs/planning/ROADMAP.md) for the current implementation status, layer by layer, and what's planned next.
+See [ROADMAP.md](docs/ROADMAP.md) for the current implementation status, layer by layer, and what's planned next.
 
 ---
 
@@ -179,32 +179,32 @@ See [ROADMAP.md](docs/planning/ROADMAP.md) for the current implementation status
 
 Sol is a platform, a language-neutral application contract, and first-party
 framework implementations of that contract. The first level of the repository
-mirrors those concepts:
+is split by audience: `docs/` for people using Sol, `internal/` for people
+building it:
 
 ```text
 sol/
 ├── cli/         # the `sol` CLI and the platform implementation it drives
-├── contract/    # the language-neutral application contract (runtime + substrate)
 ├── framework/   # first-party implementations: OCaml here, TypeScript in sibling repos
 ├── examples/    # runnable applications that teach the product (start with pluto)
-├── docs/        # architecture, deployment, guides, hosting, legal, planning
+├── docs/        # for people using Sol: guides, reference (the application contract), deployment, architecture
 └── internal/    # maintainer machinery: ci, qualification, pipeline, tooling, fixtures
 ```
 
-- **Use or manage Sol** → [`cli/`](cli/) and [`contract/`](contract/).
+- **Use or manage Sol** → [`cli/`](cli/) and [`docs/reference/`](docs/reference/).
 - **Build an application** → [`framework/`](framework/) and [`examples/pluto/`](examples/pluto/).
-- **Work on Sol itself** → [`internal/`](internal/) and [`docs/architecture/contributing-map.md`](docs/architecture/contributing-map.md).
+- **Work on Sol itself** → [`internal/`](internal/) and [`internal/contributing-map.md`](internal/contributing-map.md).
 
 ## Docs
 
 - [Tutorial](docs/guides/TUTORIAL.md) — full walkthrough, start to finish
-- [Contract](contract/README.md) — the language-neutral application contract
+- [Contract](docs/reference/README.md) — the language-neutral application contract
 - [TypeScript packages](https://github.com/loganbnielsen/sol-typescript) — the four published `@sol-fab/*` packages ([`kafka`](https://github.com/loganbnielsen/sol-kafka), [`obs`](https://github.com/loganbnielsen/sol-obs), `svc`, `worker`), plus the [`demo_ts`](examples/pluto/app/demo_ts/README.md) showcase
 - [Product Architecture](docs/architecture/PRODUCT_ARCHITECTURE.md) — factory model, design principles, ownership lanes
 - [Factory Pipeline](docs/architecture/devops-pipeline.md) — what each `sol` command does
 - [Deployment escape hatches](docs/deployment/escape-hatches.md) — `sol.toml` reference
-- [Roadmap](docs/planning/ROADMAP.md) — current status and what's next
-- [Contributor map](docs/architecture/contributing-map.md) — where to make common changes
+- [Roadmap](docs/ROADMAP.md) — current status and what's next
+- [Contributor map](internal/contributing-map.md) — where to make common changes
 - Build-from-source, running tests, and the full repo layout: [`AGENTS.md`](AGENTS.md)
 
 ## License

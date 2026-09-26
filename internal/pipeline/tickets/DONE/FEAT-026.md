@@ -2,7 +2,7 @@
 id: FEAT-026
 type: feature
 severity: high
-source: docs/planning/LIVE_DEV_DEPLOY_ROADMAP.md
+source: internal/planning/LIVE_DEV_DEPLOY_ROADMAP.md
 branch: FEAT-026/target-deploy-wiring
 pr: https://github.com/loganbnielsen/sun/pull/98
 ---
@@ -62,12 +62,12 @@ it touches more than the CLI parser:
     include a target argument breaks these substring assertions too.
 - **Documented example invocations with no positional target exist beyond
   what a first pass found** — spot-checked in `README.md` (lines ~393,
-  394, 402, 409, 421), `docs/planning/ROADMAP.md` (lines ~138, 599, 600,
+  394, 402, 409, 421), `docs/ROADMAP.md` (lines ~138, 599, 600,
   606), `docs/architecture/PRODUCT_ARCHITECTURE.md` (lines ~101, 111 — the
   latter already shows a `--env prod` flag that **does not exist on `sun
   deploy` today**, a pre-existing doc bug independent of this ticket, now
   worth reconciling with whatever shape actually ships), and
-  `docs/audits/UX_AUDIT.md` (lines ~17, 146, 173, 200, 226). Also missed by
+  `internal/pipeline/audits/UX_AUDIT.md` (lines ~17, 146, 173, 200, 226). Also missed by
   this pass, found by later review rounds: `docs/guides/TUTORIAL.md`
   (~478–519), `docs/deployment/self-hosted-substrate-contract.md` (~215,
   237), `docs/architecture/devops-pipeline.md` (~363–364, 394) — and two

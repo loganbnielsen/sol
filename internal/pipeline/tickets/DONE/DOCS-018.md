@@ -38,7 +38,7 @@ The check that actually finds this class is *does every path these procedures ci
 exist*, which is what produced the six leftovers below. Any future pass should use
 that, not the string search.
 
-**Stale references, fixed (all in `docs/audits/`):**
+**Stale references, fixed (all in `internal/pipeline/audits/`):**
 
 | Where | Was | Now |
 |---|---|---|
@@ -66,7 +66,7 @@ Both sections are written to *expire*: each says what makes it stale if FEAT-084
 lands, so the procedure cannot quietly become wrong.
 
 **Verification:** every repository path and bare `*.ml` filename cited in
-`docs/audits/*.md` now resolves; the criterion's search returns 0; and a
+`internal/pipeline/audits/*.md` now resolves; the criterion's search returns 0; and a
 case-insensitive search for `sun` returns exactly one hit — the deliberate historical
 note in `STYLE_AUDIT.md` explaining why the improvement section is empty, which is
 the "deliberate historical findings" the criterion allows.

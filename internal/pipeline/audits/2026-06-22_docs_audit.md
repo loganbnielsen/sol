@@ -1,6 +1,6 @@
 # Sun Documentation Truth Audit — 2026-06-22
 
-**Template:** `docs/audits/DOCS_AUDIT.md`
+**Template:** `internal/pipeline/audits/DOCS_AUDIT.md`
 **Previous audit:** `project/audits/2026-06-12_docs_audit.md`
 **Previous findings:** DOCS-001 through DOCS-006 → all DONE
 
@@ -105,7 +105,7 @@
 
 * **Category:** Status Claim / Mission Fit
 * **Severity:** Medium
-* **Location:** `docs/planning/ROADMAP.md` line 68; also Phase 6 note line 587, Phase 7 section lines 647-663
+* **Location:** `docs/ROADMAP.md` line 68; also Phase 6 note line 587, Phase 7 section lines 647-663
 * **Description:** The Deployment Ownership Lanes table lists "Sun Hosted | Sun | `sun cloud deploy`" as an active lane. Today's session deleted `sun cloud deploy` and the entire managed-hosting layer. Phase 7 historical notes reference `Sun_cli_hosted_executor` and `Sun_cli_hosted_model` which no longer exist in the codebase.
 * **Impact:** A developer reading ROADMAP.md gets a false picture of Sun's product direction and may look for modules that don't exist.
 * **Remediation:** Remove the "Sun Hosted" row from the deployment lanes table (or mark it as explicitly deferred/removed). Add a note to Phase 7 that the hosted executor spike was subsequently removed as part of the self-hosted refocus. Update the Phase 6 "Sun-hosted executor" note.
@@ -114,7 +114,7 @@
 
 * **Category:** Status Claim
 * **Severity:** Low
-* **Location:** `docs/planning/WORK_SUMMARY.md` lines 14-25
+* **Location:** `internal/planning/WORK_SUMMARY.md` lines 14-25
 * **Description:** The latest status table shows FEAT-020 as IN_PROGRESS and FEAT-021/022/023 as REVIEW, plus ALPHA-001, ALPHA-002, FEAT-024, HARDEN-001 as READY_FOR_ENGINEERING. All of these are in `project/tickets/DONE/`. Additionally, the previous section (lines 68-74) still describes the four deployment lanes including "Sun Hosted" which has been deprioritized.
 * **Impact:** Engineers reading WORK_SUMMARY.md to understand current state will see wrong ticket status and a product direction that has changed.
 * **Remediation:** Update the top section to reflect that all the post-dogfood tickets are DONE. Add a brief note about the managed-hosting removal and self-hosted refocus as the current direction.

@@ -3,7 +3,7 @@ id: CODEX_STYLE_AUDIT-072
 branch: CODEX_STYLE_AUDIT-072/k8s-artifact-invariants
 type: refactor
 severity: medium
-source: docs/audits/STYLE_AUDIT.md
+source: internal/pipeline/audits/STYLE_AUDIT.md
 ---
 
 Add contributor-facing invariants for generated Kubernetes artifacts.

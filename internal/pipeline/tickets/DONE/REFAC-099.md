@@ -40,7 +40,7 @@ Line numbers are as of `origin/main` `50449a1a`; re-run `rg -n 'cli/(platform|so
 
 - Demo/example: not applicable (repository layout; no change to what an app author writes) — state it.
 - Language parity (DEC-022): no application-facing impact — state it.
-- Update `docs/planning/WORK_SUMMARY.md`.
+- Update `internal/planning/WORK_SUMMARY.md`.
 
 ## Progress
 

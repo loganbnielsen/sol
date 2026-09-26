@@ -24,7 +24,7 @@ The repo's top-level directories should be organized by *who consumes the code*,
 - `git mv integrations/kafka/kafka-eio-service framework/kafka-eio-service` (keep the findlib/library names as-is — this is a directory move, not a rename of the OCaml package).
 - Remove the now-empty `integrations/` tree.
 - Update every `dune`/`dune-project` reference to the old path.
-- Update `.claude/CLAUDE.md`'s repo layout section, `README.md`, `docs/planning/ROADMAP.md`/`WORK_SUMMARY.md`, and any package spec doc (`kafka-eio-service.md`) that states the old path.
+- Update `.claude/CLAUDE.md`'s repo layout section, `README.md`, `docs/ROADMAP.md`/`WORK_SUMMARY.md`, and any package spec doc (`kafka-eio-service.md`) that states the old path.
 - Grep the whole repo for `integrations/kafka` and `integrations/` to catch anything missed (CI workflows, scripts, other `.md` docs).
 - Run the full local test suite (`platform/local/scripts/run_tests.sh`) before submitting — this touches build-relevant paths for every worker-generating code path.
 

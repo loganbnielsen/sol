@@ -49,7 +49,7 @@ premise: "test -d platform/cloud/aws/bootstrap"
 
 - Demo/example: not applicable (repository layout; no change to what an app author writes) — state it.
 - Language parity (DEC-022): no application-facing impact — state it.
-- Update `docs/planning/WORK_SUMMARY.md`.
+- Update `internal/planning/WORK_SUMMARY.md`.
 
 ## Completion notes
 
@@ -87,7 +87,7 @@ The two `kubernetes_manifest` ClusterIssuers need a live API server even at plan
 - no provider with roots, and an unreadable list → **fail**;
 - a registered provider with no directory (S11) → **passes**.
 
-**Correction to the proposal and this ticket.** Both said the variable-mirroring check `base-gcp`'s comment cites doesn't exist. That's wrong. The comment named a script that doesn't exist (`check_platform_root_wrapper.sh`), but the check itself was in `cli/test/check_production_infra.sh`, as `docs/qualification/gcp-bootstrap-inventory.md:670` says. The original search looked for the script name without a positive control. Here the existing check is generalized rather than duplicated: one loop checks every provider's platform root for its backend type, the declared-variable mirror, and **pass-through** in `main.tf` (new), and it asserts the module declares no backend. Controls on a full copy of the tree: removing a variable, removing a pass-through line, or restoring the module's backend each fail with their own message; the unmodified copy passes. The stale comment now names the real check.
+**Correction to the proposal and this ticket.** Both said the variable-mirroring check `base-gcp`'s comment cites doesn't exist. That's wrong. The comment named a script that doesn't exist (`check_platform_root_wrapper.sh`), but the check itself was in `cli/test/check_production_infra.sh`, as `internal/qualification/gcp/gcp-bootstrap-inventory.md:670` says. The original search looked for the script name without a positive control. Here the existing check is generalized rather than duplicated: one loop checks every provider's platform root for its backend type, the declared-variable mirror, and **pass-through** in `main.tf` (new), and it asserts the module declares no backend. Controls on a full copy of the tree: removing a variable, removing a pass-through line, or restoring the module's backend each fail with their own message; the unmodified copy passes. The stale comment now names the real check.
 
 **Other fixes the move required:**
 - `check_qualification_transport.sh` scans `platform/cloud/*/*/`;

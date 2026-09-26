@@ -22,7 +22,7 @@ infrastructure.
    **only**: `pods`/`services` `get`/`list` (addressing) and `pods/portforward`
    `create` (transport). No mutating verb, no `pods/exec`, no `pods/log`, no
    `events`, no `secrets`.
-2. It is established by `internal/pipeline/qualification/transport/`, which no
+2. It is established by `internal/qualification/transport/`, which no
    production Terraform root references and `sol cloud apply` never applies. No
    target field names the qualifier principal.
 3. `internal/ci/check_qualification_transport.sh` asserts both directions — the

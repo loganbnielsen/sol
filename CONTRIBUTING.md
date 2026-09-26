@@ -26,7 +26,7 @@ The distinction is worth stating plainly because it is easy to conflate: a sign-
 ## Before you start
 
 - Build, tests and repository layout: [`AGENTS.md`](AGENTS.md).
-- Where to make common changes: [`docs/architecture/contributing-map.md`](docs/architecture/contributing-map.md).
+- Where to make common changes: [`internal/contributing-map.md`](internal/contributing-map.md).
 - The conventions code and docs are held to — including the demo/example coverage
   rule, which requires a runnable example (not only unit tests) for anything that
   changes what an application author writes.

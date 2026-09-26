@@ -11,9 +11,9 @@ standing verification epic ("qualify the production-single-region profile"), not
 work that can finish, so it sat in `READY_FOR_ENGINEERING/` indefinitely and read as
 actionable to `/work`. Its goal and acceptance criteria are kept below as written. Its run
 history (Runs 1–7, previously appended to this file) moved verbatim into per-run records in
-`docs/qualification/` (index below); where the profile stands lives in
+`internal/qualification/` (index below); where the profile stands lives in
 `internal/pipeline/audits/QUALIFICATION_STATUS.md` and the matrix
-`docs/qualification/production-single-region-v1-matrix.md`. The next live AWS run is its own
+`internal/qualification/aws/production-single-region-v1-matrix.md`. The next live AWS run is its own
 ticket (HARDEN-007). References elsewhere of the form "HARDEN-002 run N, finding M" resolve
 through the index.
 
@@ -21,7 +21,7 @@ through the index.
 
 **See also:** HARDEN-004 — the same contract realized and qualified on GCP. It is a
 separate workstream (different mechanisms, same guarantees), and its per-attempt
-evidence lives in `docs/qualification/gcp-bootstrap-inventory.md`. Changes to the
+evidence lives in `internal/qualification/gcp/gcp-bootstrap-inventory.md`. Changes to the
 shared platform definition or to provider-neutral lifecycle semantics have to keep
 both tickets' contracts, so a change here that looks AWS-local is worth checking
 against that ticket.
@@ -106,14 +106,14 @@ failure scenarios need not be duplicated without value.
 
 | Section (original heading) | Record |
 |---|---|
-| Progress — run 1 (BLOCKED), Remediation, run-1 evidence review, run-2 delta | `docs/qualification/2026-09-17-aws-run1.md` |
-| Run 2 — five production-path defects (findings 4–8) | `docs/qualification/2026-09-17-aws-run2.md` |
-| Run 3 and Run 4 | `docs/qualification/2026-09-18-aws-run3-run4.md` |
-| Run 5 attempt 1 (finding 16) | `docs/qualification/2026-09-18-aws-run5-attempt1.md` |
-| Run 5 attempt 2 (finding 19) | `docs/qualification/2026-09-19-aws-run5-attempt2.md` |
-| Run 5 attempt 3 (finding 20) | `docs/qualification/2026-09-19-aws-run5-attempt3.md` |
-| Run 5 attempt 5 — conformant through Ready | `docs/qualification/2026-09-19-aws-run5-attempt5.md` |
-| Run 7 attempt 7 — first migration through a cloud target | `docs/qualification/2026-09-19-aws-run7-attempt7.md` |
-| Run 6 attempt 6 — application-centric | `docs/qualification/2026-09-19-aws-run6-attempt6.md` |
-| Run 5 procedure (preconditions, command sequence, evidence identity, harness discipline) | `docs/qualification/aws-run-procedure.md` |
-| Run 8 (already its own record) | `docs/qualification/2026-09-20-run8-aws.md` |
+| Progress — run 1 (BLOCKED), Remediation, run-1 evidence review, run-2 delta | `internal/qualification/records/2026-09-17-aws-run1.md` |
+| Run 2 — five production-path defects (findings 4–8) | `internal/qualification/records/2026-09-17-aws-run2.md` |
+| Run 3 and Run 4 | `internal/qualification/records/2026-09-18-aws-run3-run4.md` |
+| Run 5 attempt 1 (finding 16) | `internal/qualification/records/2026-09-18-aws-run5-attempt1.md` |
+| Run 5 attempt 2 (finding 19) | `internal/qualification/records/2026-09-19-aws-run5-attempt2.md` |
+| Run 5 attempt 3 (finding 20) | `internal/qualification/records/2026-09-19-aws-run5-attempt3.md` |
+| Run 5 attempt 5 — conformant through Ready | `internal/qualification/records/2026-09-19-aws-run5-attempt5.md` |
+| Run 7 attempt 7 — first migration through a cloud target | `internal/qualification/records/2026-09-19-aws-run7-attempt7.md` |
+| Run 6 attempt 6 — application-centric | `internal/qualification/records/2026-09-19-aws-run6-attempt6.md` |
+| Run 5 procedure (preconditions, command sequence, evidence identity, harness discipline) | `internal/qualification/aws/aws-run-procedure.md` |
+| Run 8 (already its own record) | `internal/qualification/records/2026-09-20-run8-aws.md` |

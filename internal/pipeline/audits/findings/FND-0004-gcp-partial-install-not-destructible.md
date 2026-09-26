@@ -11,7 +11,7 @@
 - **Derived ticket:** **INFRA-042** (`internal/pipeline/tickets/DONE/INFRA-042.md`)
 - **Related invariant:** `INV-DESTROY-1`
 - **Related decisions:** ADR 0003 invariant 6, ADR 0004
-- **Evidence:** `docs/qualification/gcp-bootstrap-inventory.md` §"Attempt 3" and
+- **Evidence:** `internal/qualification/gcp/gcp-bootstrap-inventory.md` §"Attempt 3" and
   §"Attempt 4"; `DONE/INFRA-042.md`
 
 ## Sol claim at stake

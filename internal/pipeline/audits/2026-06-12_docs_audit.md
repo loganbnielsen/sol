@@ -1,6 +1,6 @@
 # Sun Documentation Truth Audit — 2026-06-12
 
-**Template:** `docs/audits/DOCS_AUDIT.md`  
+**Template:** `internal/pipeline/audits/DOCS_AUDIT.md`  
 **Method:** Compared user-facing docs, package specs, and CLI behavior for commands exercised during the audit and dogfood pass.
 
 ## Checks

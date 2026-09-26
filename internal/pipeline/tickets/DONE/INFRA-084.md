@@ -49,4 +49,4 @@ parity (DEC-022): no application-facing impact. The harness's own suite is 90 as
 
 The FND-0058 qualification run used `TARGET=qual9/gcp/us-central1` and produced its own specimen; the
 preserved Attempt 8 platform state (11 resources / serial 4) was neither inherited nor overwritten.
-Record: `docs/qualification/2026-09-26-gcp-fnd0058-live-qualification.md`.
+Record: `internal/qualification/records/2026-09-26-gcp-fnd0058-live-qualification.md`.

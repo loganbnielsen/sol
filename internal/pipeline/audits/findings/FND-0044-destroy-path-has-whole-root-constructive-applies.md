@@ -77,6 +77,6 @@ FND-0030, INFRA-067, ADR 0003 invariant 6, DEC-040; FND-0045 (single state inven
 - **"Not established" above** — the offline replay of the frozen Attempt-6 state was **ruled out**
   (#461, `HARDEN-004-handoff.md` "Step 1"): the frozen evidence is logs only, and a `plan` against
   the real backend is a network operation on the qualification project. It stays not established.
-  The lesson — pull state before any teardown — is recorded in `docs/qualification/README.md`.
+  The lesson — pull state before any teardown — is recorded in `internal/qualification/README.md`.
 - `FIXED_UNQUALIFIED`, not `QUALIFIED`: the evidence is offline. INFRA-068 moves to `DONE`.
 

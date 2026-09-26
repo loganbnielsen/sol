@@ -2,7 +2,7 @@
 id: FEAT-029
 type: feature
 severity: medium
-source: docs/planning/LIVE_DEV_DEPLOY_ROADMAP.md
+source: internal/planning/LIVE_DEV_DEPLOY_ROADMAP.md
 branch: feat-029-uses-reference-validation
 pr: https://github.com/loganbnielsen/sun/pull/131
 ---

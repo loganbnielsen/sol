@@ -12,7 +12,7 @@ source: provider-contract verification 2026-09-19 — internal/pipeline/audits/2
 (the durable evidence body; this ticket is its derived engineering work).
 
 **Related:** ADR 0003 (lifecycle phases, authority and policy), HARDEN-003
-(evidence identity), `docs/qualification/gcp-bootstrap-inventory.md`
+(evidence identity), `internal/qualification/gcp/gcp-bootstrap-inventory.md`
 (the GCP authority model and its lifecycle acceptance row),
 `cli/platform/infra/gcp/main.tf`, `cli/platform/infra/base/platform_provisioner_rbac.tf`.
 
@@ -32,7 +32,7 @@ That description is false, and it is false in a load-bearing place. Sol:
   itself" (`cli/platform/infra/gcp/main.tf:254-255`);
 - repeats the claim in the qualification inventory — "IAM establishes cluster
   discovery/credential access; Kubernetes RBAC establishes Sol authority"
-  (`docs/qualification/gcp-bootstrap-inventory.md:302`);
+  (`internal/qualification/gcp/gcp-bootstrap-inventory.md:302`);
 - and treats the RBAC bindings in `platform_provisioner_rbac.tf` as the
   steady-state boundary.
 
@@ -92,7 +92,7 @@ the incorrect claim.
    account).
 2. Correct the authority claim in `cli/platform/infra/gcp/main.tf:254-255` and
    in the lifecycle inventory's "Kubernetes access" row
-   (`docs/qualification/gcp-bootstrap-inventory.md:302`) to state the actual
+   (`internal/qualification/gcp/gcp-bootstrap-inventory.md:302`) to state the actual
    GKE behaviour: RBAC is checked first and IAM is the fallback, so an IAM role
    *does* confer in-cluster authority.
 

@@ -40,7 +40,7 @@ the way `/pr` already runs it for correctness.
      work, any explicit constraints it established (an invariant, a red
      line, a decision record) that the diff must uphold.
    - This repo's own quality-relevant docs to hold the diff to (e.g.
-     `docs/audits/TYPE_AUDIT.md` for OCaml type discipline; the project's
+     `internal/pipeline/audits/TYPE_AUDIT.md` for OCaml type discipline; the project's
      pre-alpha/no-backwards-compat policy so a reviewer doesn't waste a
      finding on "this changes a public signature").
    - The criteria list below, in priority order.
