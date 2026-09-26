@@ -73,8 +73,8 @@ need the same intent, put it in the plan instead of only in one executor.
 
 ## Manifest Rendering
 
-Kubernetes manifest rendering is owned by `cli/lib/sol_cli_manifest.ml`,
-`cli/lib/sol_cli_manifest_yaml.ml`, and deployment rendering modules that
+Kubernetes manifest rendering is owned by `cli/lib/workspace/sol_cli_manifest.ml`,
+`cli/lib/workspace/sol_cli_manifest_yaml.ml`, and deployment rendering modules that
 consume the deployment plan. Manifests are generated artifacts derived from the
 workspace structure, environment target, images, secrets policy, and `sol.toml`
 overrides.
@@ -90,9 +90,9 @@ escape hatch.
 
 ## Scaffold Templates
 
-Scaffold commands are owned by `cli/lib/sol_cli_cmd_new.ml`,
-`cli/lib/sol_cli_scaffold.ml`, and
-`cli/lib/sol_cli_scaffold_templates.ml`. The generated workspace contract is
+Scaffold commands are owned by `cli/lib/workspace/sol_cli_cmd_new.ml`,
+`cli/lib/base/sol_cli_scaffold.ml`, and
+`cli/lib/base/sol_cli_scaffold_templates.ml`. The generated workspace contract is
 validated by `docs/audits/SCAFFOLD_AUDIT.md` and tests in
 `cli/test/test_scaffold.ml`.
 

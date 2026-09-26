@@ -107,7 +107,7 @@ jobs:
           #
           # IMPORTANT: the scaffold's own lib module is app/ops/burst_fn/lib/
           # burst_fn.ml (component_module Function "burst" = "Burst_fn",
-          # cli/lib/sol_cli_cmd_new.ml) with lib/dune's (modules Burst_fn)
+          # cli/lib/workspace/sol_cli_cmd_new.ml) with lib/dune's (modules Burst_fn)
           # naming it explicitly -- overwrite that exact file. A sibling
           # burst_fn_fn.ml would be an orphan dune silently never compiles
           # into the library (verified: an unlisted .ml file in a library

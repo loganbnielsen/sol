@@ -16,11 +16,11 @@ fail=0
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 
 mkcase() {
-  mkdir -p "$tmp/$1/cli/lib" "$tmp/$1/cli/bin"
+  mkdir -p "$tmp/$1/cli/lib/base" "$tmp/$1/cli/bin"
   printf '%s\n' "$2" >"$tmp/$1/allow.txt"
   # Every fake repo carries the real provider list: the guard derives which modules are
   # provider implementations from it rather than naming providers itself.
-  cp "$repo/cli/lib/sol_cli_provider.ml" "$tmp/$1/cli/lib/"
+  cp "$repo/cli/lib/base/sol_cli_provider.ml" "$tmp/$1/cli/lib/base/"
 }
 put() { printf '%s\n' "$3" >"$tmp/$1/cli/$2"; }
 expect_reject() {
@@ -126,7 +126,7 @@ expect_reject namemulti "a provider name in a second generic module"
 
 mkcase namethird ''
 printf 'let to_string = function\n  | Aws -> "aws"\n  | Gcp -> "gcp"\n  | Azure -> "azure"\n;;\n' \
-  >"$tmp/namethird/cli/lib/sol_cli_provider.ml"
+  >"$tmp/namethird/cli/lib/base/sol_cli_provider.ml"
 put namethird lib/sol_cli_azure_cluster.ml 'let argv = [ "azure"; "identity" ]'
 expect_accept namethird "a third provider's name inside its own implementation"
 
@@ -173,7 +173,7 @@ expect_accept identityok "the same declarations inside the AWS implementation"
 #     provider that does not exist yet is admitted without editing this guard.
 mkcase third ''
 printf 'let to_string = function\n  | Aws -> "aws"\n  | Gcp -> "gcp"\n  | Azure -> "azure"\n;;\n' \
-  >"$tmp/third/cli/lib/sol_cli_provider.ml"
+  >"$tmp/third/cli/lib/base/sol_cli_provider.ml"
 put third lib/sol_cli_azure_cluster.ml 'let argv = [ "azure"; "identity" ]
 ;;
 let whoami_identity_of_json _ = Ok ()
