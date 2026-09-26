@@ -630,3 +630,33 @@ be attributed rather than re-run.
 **`HARDEN-008`** (new, `BACKLOG`, authorization-gated) is the confirmation run: one fresh GCP
 attempt whose purpose is to see cert-manager's check pass and the install continue -- to
 `Ready` if the rest of the platform installs.
+
+## Attempt 10 — post-FND-0010 GCP run (2026-09-26, `main @ bc9062b0`)
+
+Full record: `internal/qualification/records/2026-09-26-gcp-attempt10-fnd0010-live.md`
+(bundle `/tmp/sol-gcp-qual-10`, 286 files). Fresh target `qual10/gcp/us-central1`, cluster
+`sol-qual-gcp-10`, its own state key; Attempt 8's preserved state and the `qual9/…` key untouched.
+
+**Outcome: the platform did not reach `Ready`; the supported destruction path ran clean.**
+
+| Boundary | Result |
+|---|---|
+| Cloud infrastructure (CloudBootstrap) | created — GKE `RUNNING`, Cloud SQL `RUNNABLE` |
+| Platform install | **failed** at cert-manager's post-install check, `BackoffLimitExceeded` |
+| FND-0010's pre-fix signature (`x509` / unknown authority) | **absent** — not reproduced |
+| `PlatformInstalling → Ready` | **not reached** |
+| Temporary authority (acquire → teardown → release) | observed exactly; `platform-destroy ok (77.3s)`, no degraded preparation |
+| Failed-`PlatformInstalling` destruction (INV-DESTROY-1) | reproduced on a second revision; both roots empty (cloud 0, platform 0) |
+| Independent provider verification | `teardown verified: absent` — 19 disposable classes ABSENT, quota 0, 2 durable PRESENT, delegation resolving |
+| `Ready`-state destruction (INV-DESTROY-1's `Ready` case) | **not observed** |
+
+**Nothing here is QUALIFIED.** The new first blocker is `FND-0060` (OPEN) with its ticket
+`INFRA-087` in `BACKLOG`; its cause is not established by this bundle, and the harness's
+`SCHEDULING` label is a classification from warnings whose age equals the pods' age, recorded as
+such rather than as a diagnosis. Two instrument observations are recorded in the run record and
+are not fixed here: `verify` aborts on an unset `IMPERSONATOR`, and the classifier can attribute a
+cause from long-resolved events.
+
+FND-0010 stays `FIXED_UNQUALIFIED`: its remedy was exercised (the release waited instead of
+aborting) but the confirming observations — check Succeeded, install continuing, `Ready` — did
+not occur.
