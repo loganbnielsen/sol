@@ -25,8 +25,8 @@ let customer_cloud_defaults ~registry ~image_tag ~emit_to () =
   then
     Error
       "registry must be set for customer cluster deployments (pass --registry <prefix>, \
-       or set registry on the target in sol/environments.yml). See docs/reference/substrate.md \
-       for the full substrate contract."
+       or set registry on the target in sol/environments.yml). See \
+       docs/reference/substrate.md for the full substrate contract."
   else (
     match emit_to with
     | Some _ -> Ok (Customer_gitops { image_tag; registry })
