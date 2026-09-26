@@ -194,6 +194,15 @@ in a session of its own, with its output in a durable operation record under
     provider and the state, import or remove what diverged, and push any
     `errored.tfstate` yourself. Then re-run with `--accept-unresolved`.
     `plan` and `destroy` proceed with a warning.
+- **Where Terraform works (DEC-050).** Each state has its own working directory,
+  `~/.local/share/sol/terraform/<provider>-<cluster|platform>-<id>/platform/cloud/<provider>/<role>/`
+  (`$XDG_DATA_HOME/sol/…` when set). `sol` names it in the refusal above, and
+  `errored.tfstate` is written there. Sol rewrites the Terraform source files in it
+  from its assets on every run, but never deletes or overwrites anything it did not
+  write, so `errored.tfstate`, `crash.log` and `.terraform/` stay until you remove
+  them. The directory keeps `.terraform/` from Sol's own `init`, so it is already
+  initialized with the target's backend: push a recovered state with
+  `terraform -chdir=<that directory> state push errored.tfstate`.
 
 ## Evidence HARDEN-002 records
 

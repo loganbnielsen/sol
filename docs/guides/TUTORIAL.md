@@ -43,7 +43,7 @@ export PATH="$PWD/sol-vX.Y.Z/bin:$PATH"   # add to ~/.bashrc or ~/.zshrc
 sol assets                                # where this sol's assets come from, and that each is there
 ```
 
-The archive's top directory is an installation prefix: `bin/sol`, and `share/sol/vX.Y.Z/` with the platform assets that version uses (Terraform roots, Helm values, Grafana dashboards) and the digest of its migration-runner image. The binary uses those and nothing else, so no `SOL_HOME` or clone is needed to run it. It needs glibc 2.35+ (Ubuntu 22.04 or newer) and `libpq5`/`libgmp10`. `sol cloud` runs Terraform in the bundled roots, so keep the directory writable by the user who runs it.
+The archive's top directory is an installation prefix: `bin/sol`, and `share/sol/vX.Y.Z/` with the platform assets that version uses (Terraform roots, Helm values, Grafana dashboards) and the digest of its migration-runner image. The binary uses those and nothing else, so no `SOL_HOME` or clone is needed to run it. It needs glibc 2.35+ (Ubuntu 22.04 or newer) and `libpq5`/`libgmp10`. The install can be read-only: `sol cloud` copies the Terraform roots into a working directory per target under `~/.local/share/sol/terraform/` and runs there. The one remaining checkout dependency: generated OCaml workspaces still require source framework packages until RELEASE-005 publishes them (see the note under Part 2).
 
 > **Build from source:** Contributors who need `soldev` or want to modify the framework should clone the repo and build:
 > ```bash

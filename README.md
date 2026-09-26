@@ -61,9 +61,14 @@ A release is self-contained: `sol-vX.Y.Z/bin/sol` uses only the assets in
 `sol-vX.Y.Z/share/sol/vX.Y.Z/` (Terraform roots, Helm values, dashboards) and the
 migration-runner image published with that version, pinned by digest
 ([DEC-049](internal/pipeline/tickets/DONE/DEC-049.md)). It needs glibc 2.35 or newer
-(Ubuntu 22.04+) and the `libpq5` and `libgmp10` libraries. `sol cloud` runs
-Terraform in those bundled roots, so keep the extracted directory writable by
-the user who runs it.
+(Ubuntu 22.04+) and the `libpq5` and `libgmp10` libraries. The install can be
+read-only: `sol cloud` runs Terraform in a working directory of its own per target,
+under `~/.local/share/sol/terraform/` ([DEC-050](internal/pipeline/tickets/DONE/DEC-050.md)).
+
+The CLI and its platform assets need no Sol checkout. One thing still does:
+generated OCaml workspaces still require source framework packages until
+RELEASE-005 publishes them (`bash platform/local/scripts/prepare-framework-deps.sh`
+from a checkout).
 
 ### Building from source (contributors)
 

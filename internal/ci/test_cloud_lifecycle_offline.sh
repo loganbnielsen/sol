@@ -86,6 +86,14 @@ cat >"$tmp/bin/terraform" <<'EOF'
 #!/usr/bin/env bash
 set -eu
 printf 'terraform %s\n' "$*" >>"$LIFECYCLE_LOG"
+# DEC-050: like the real init, write Terraform's own directory into the working
+# directory it was given, so a write into Sol's assets would be observable.
+for arg in "$@"; do
+  case "$arg" in -chdir=*) tf_chdir="${arg#-chdir=}" ;; esac
+done
+case " $* " in
+  *" init "*) mkdir -p "${tf_chdir:-.}/.terraform" && : >"${tf_chdir:-.}/.terraform/fake-init" ;;
+esac
 # HARDEN-002 run 4, finding 12: record the kubeconfig env the platform Terraform
 # actually receives. The base providers read KUBE_CONFIG_PATH/KUBE_CONFIG_PATHS
 # (not KUBECONFIG), so the assertion below fails if that stops being exported.
@@ -2402,7 +2410,7 @@ live_pid=$!
 running="$ops/$aws_key/99999999T000000Z-running"
 mkdir -p "$running"
 printf 'host=%s\nsupervisor_pid=%s\nsupervisor_start=\nstarted_at=%s\nroot=%s\n' \
-  "$(hostname)" "$live_pid" "$(date +%s)" "$root/platform/cloud/aws/cluster" >"$running/meta"
+  "$(hostname)" "$live_pid" "$(date +%s)" "$(sed -n 's/^root=//p' "$latest/meta")" >"$running/meta"
 printf '%s\n' "$(basename "$running")" >"$ops/$aws_key/latest"
 running_log="$tmp/infra076-running.log"
 if (export FAIL_ON=""; run_apply "$running_log"); then
@@ -2430,7 +2438,9 @@ platform_key=""
 while IFS= read -r candidate; do
   [ -n "$candidate" ] || continue
   dir="$ops/$candidate/$(cat "$ops/$candidate/latest" 2>/dev/null || true)"
-  if [ -f "$dir/meta" ] && grep -qx "root=$root/platform/cloud/aws/platform" "$dir/meta"; then
+  # DEC-050: that working directory is the state's own, under Sol's state directory.
+  if [ -f "$dir/meta" ] &&
+     grep -qxE "root=$XDG_DATA_HOME/sol/terraform/aws-platform-[0-9a-f]{16}/platform/cloud/aws/platform" "$dir/meta"; then
     platform_key="$candidate"
     break
   fi
@@ -2447,7 +2457,8 @@ platform_live_pid=$!
 platform_running="$ops/$platform_key/99999999T000000Z-platform-running"
 mkdir -p "$platform_running"
 printf 'host=%s\nsupervisor_pid=%s\nsupervisor_start=\nstarted_at=%s\nroot=%s\n' \
-  "$(hostname)" "$platform_live_pid" "$(date +%s)" "$root/platform/cloud/aws/platform" \
+  "$(hostname)" "$platform_live_pid" "$(date +%s)" \
+  "$(sed -n 's/^root=//p' "$ops/$platform_key/$(cat "$ops/$platform_key/latest")/meta")" \
   >"$platform_running/meta"
 printf '%s\n' "$(basename "$platform_running")" >"$ops/$platform_key/latest"
 platform_running_log="$tmp/infra076-platform-running.log"
@@ -2532,6 +2543,116 @@ if grep -F -- "bug057.tfvars" "$flog" >/dev/null; then
   exit 1
 fi
 mv "$tmp/work/target.before-bug057.yml" "$target_file"
+
+# ── DEC-050: Terraform runs in a per-state working directory ───────────────────
+# The roots in Sol's assets are immutable; every Terraform invocation above ran in a
+# working directory under Sol's state, materialized from them.
+workdirs="$XDG_DATA_HOME/sol/terraform"
+for role in aws-cluster aws-platform gcp-cluster gcp-platform; do
+  if ! ls -d "$workdirs/$role"-* >/dev/null 2>&1; then
+    echo "DEC-050: no working directory for $role under $workdirs" >&2
+    ls -la "$workdirs" >&2 || true
+    exit 1
+  fi
+done
+chdirs="$(cat "$tmp"/*.log 2>/dev/null | grep -oE -- '-chdir=[^ ]+' | sort -u | sed 's/^-chdir=//')"
+[ -n "$chdirs" ] || { echo "DEC-050: no terraform -chdir recorded" >&2; exit 1; }
+while IFS= read -r d; do
+  case "$d" in
+    "$workdirs"/*/platform/cloud/*/*) ;;
+    *) echo "DEC-050: terraform ran outside a working directory: $d" >&2; exit 1 ;;
+  esac
+done <<<"$chdirs"
+echo "DEC-050: every terraform -chdir was a working directory ($(wc -l <<<"$chdirs") distinct)"
+
+# Nothing was written into the assets: no Terraform directory, no state, no errored state.
+if find "$root/platform" -newer "$tmp/bin/terraform" \( -name .terraform -o -name '*.tfstate' -o -name errored.tfstate \) | grep -q .; then
+  echo "DEC-050: a Terraform run wrote into Sol's assets:" >&2
+  find "$root/platform" -newer "$tmp/bin/terraform" \( -name .terraform -o -name '*.tfstate' \) >&2
+  exit 1
+fi
+
+aws_wd="$(sed -n 's/^root=//p' "$ops/$aws_key/$(cat "$ops/$aws_key/latest")/meta")"
+case "$aws_wd" in "$workdirs"/aws-cluster-*/platform/cloud/aws/cluster) ;; *)
+  echo "DEC-050: the AWS cloud root's operation record names $aws_wd" >&2; exit 1 ;;
+esac
+wd_base="${aws_wd%/platform/cloud/aws/cluster}"
+[ -e "$aws_wd/.terraform/fake-init" ] || { echo "DEC-050: init did not run in $aws_wd" >&2; exit 1; }
+
+# Each provider's cluster root has its own working directory (per-target isolation is
+# the unit test's: cli/test/test_terraform_workdir.ml, `identity isolates states`).
+if [ "$(ls -d "$workdirs"/*-cluster-* | wc -l)" -lt 2 ]; then
+  echo "DEC-050: expected a cluster working directory per provider" >&2; ls "$workdirs" >&2; exit 1
+fi
+
+run_plan_aws() {
+  (cd "$tmp/work" && FAIL_ON="" LIFECYCLE_LOG="$1" "$sol" cloud plan prod/aws/us-east-1) >"$1.out" 2>&1
+}
+
+# Every invocation starts from the authoritative assets: a tampered source file is
+# restored, a source file Sol wrote that the assets no longer have is removed, and
+# anything Sol did not write stays.
+printf 'tampered\n' >"$aws_wd/main.tf"
+: >"$aws_wd/stale-from-an-older-release.tf"
+printf 'platform/cloud/aws/cluster/stale-from-an-older-release.tf\n' >>"$wd_base/.sol-materialized"
+printf 'operator notes\n' >"$aws_wd/operator-notes.txt"
+refresh_log="$tmp/dec050-refresh.log"
+run_plan_aws "$refresh_log" || { cat "$refresh_log.out" >&2; echo "DEC-050: plan failed" >&2; exit 1; }
+cmp -s "$aws_wd/main.tf" "$root/platform/cloud/aws/cluster/main.tf" ||
+  { echo "DEC-050: a tampered source file survived re-materialization" >&2; exit 1; }
+[ ! -e "$aws_wd/stale-from-an-older-release.tf" ] ||
+  { echo "DEC-050: a source file the assets no longer have was left in place" >&2; exit 1; }
+[ -e "$aws_wd/operator-notes.txt" ] ||
+  { echo "DEC-050: a file Sol did not write was removed" >&2; exit 1; }
+[ -e "$aws_wd/.terraform/fake-init" ] ||
+  { echo "DEC-050: Terraform's own directory was removed" >&2; exit 1; }
+echo "DEC-050: re-materialization restores sources, drops stale ones, keeps what Sol did not write"
+
+# errored.tfstate: the only record of a run whose state push failed. It must be
+# reported, refuse a constructive command, and survive every later invocation --
+# including the ones that re-materialize the working directory around it.
+printf '{"version":4,"serial":7,"lineage":"dec050"}\n' >"$aws_wd/errored.tfstate"
+cp "$aws_wd/errored.tfstate" "$tmp/errored.expected"
+errored_log="$tmp/dec050-errored.log"
+if (export FAIL_ON=""; run_apply "$errored_log"); then
+  cat "$errored_log.out" >&2
+  echo "DEC-050: an apply proceeded past an errored.tfstate in its working directory" >&2
+  exit 1
+fi
+assert_contains "DEC-050: the errored state is named at its working-directory path" \
+  "$errored_log.out" "$aws_wd/errored.tfstate" || exit 1
+cmp -s "$aws_wd/errored.tfstate" "$tmp/errored.expected" ||
+  { echo "DEC-050: a refused apply touched errored.tfstate" >&2; exit 1; }
+errored_plan_log="$tmp/dec050-errored-plan.log"
+run_plan_aws "$errored_plan_log" || { cat "$errored_plan_log.out" >&2; echo "DEC-050: plan failed" >&2; exit 1; }
+errored_accept_log="$tmp/dec050-errored-accept.log"
+(cd "$tmp/work" && FAIL_ON="" LIFECYCLE_LOG="$errored_accept_log" \
+   "$sol" cloud apply prod/aws/us-east-1 --accept-unresolved) >"$errored_accept_log.out" 2>&1 || {
+  cat "$errored_accept_log.out" >&2; echo "DEC-050: --accept-unresolved apply failed" >&2; exit 1; }
+cmp -s "$aws_wd/errored.tfstate" "$tmp/errored.expected" ||
+  { echo "DEC-050: errored.tfstate did not survive a plan and an accepted apply" >&2; exit 1; }
+rm -f "$aws_wd/errored.tfstate"
+echo "DEC-050: errored.tfstate is reported, refuses apply, and survives re-materialization"
+
+# Read-only assets: Sol never needs to write them.
+ro_home="$tmp/ro-sol-home"
+mkdir -p "$ro_home/framework/ocaml/sol-svc/lib" "$ro_home/framework/ocaml/kafka-eio-service/lib"
+: >"$ro_home/framework/ocaml/sol-svc/lib/dune"
+: >"$ro_home/framework/ocaml/kafka-eio-service/lib/dune"
+cp -r "$root/platform" "$ro_home/platform"
+find "$ro_home/platform" \( -name .terraform -o -name '*.tfstate' \) -prune -exec rm -rf {} +
+chmod -R a-w "$ro_home"
+ro_log="$tmp/dec050-readonly.log"
+if ! (cd "$tmp/work" && FAIL_ON="" SOL_HOME="$ro_home" LIFECYCLE_LOG="$ro_log" \
+        "$sol" cloud plan prod/aws/us-east-1) >"$ro_log.out" 2>&1; then
+  chmod -R u+w "$ro_home"
+  cat "$ro_log.out" >&2
+  echo "DEC-050: sol cloud plan failed against read-only assets" >&2
+  exit 1
+fi
+chmod -R u+w "$ro_home"
+grep -q -- "-chdir=$workdirs/" "$ro_log" || { echo "DEC-050: read-only run did not use a working directory" >&2; exit 1; }
+echo "DEC-050: sol cloud plan runs against read-only assets"
 
 # INFRA-075 canary. The scenarios above ran the real `sol cloud` commands; their run logs must
 # have landed in the isolated data home. If none did, Sol is writing somewhere else -- most
