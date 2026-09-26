@@ -76,6 +76,43 @@ let build_argv ~buildx ~cache ~cache_present ~tag ~dockerfile ~context =
     @ [ "-t"; tag; "-f"; dockerfile; context ]
 ;;
 
+let contains ~needle haystack =
+  let n = String.length needle
+  and h = String.length haystack in
+  let rec go i =
+    i + n <= h && (String.equal (String.sub haystack i n) needle || go (i + 1))
+  in
+  n > 0 && go 0
+;;
+
+(* Not every docker driver can export cache. Captured from CI (docker's default
+   driver without the containerd image store):
+
+     ERROR: failed to build: Cache export is not supported for the docker driver.
+
+   A cache is an optimization, so that message must never be the reason a deploy
+   cannot happen: the build is retried once with no cache flags at all, and the
+   warning names the cause and the two ways to get the cache back. Only that
+   failure is retried -- a build that failed for its own reasons (a compile
+   error, a missing file) must be reported, not silently rebuilt. *)
+let cache_export_unsupported = function
+  | Sol_cli_process.Non_zero { stderr; _ } ->
+    contains ~needle:"Cache export is not supported" stderr
+  | Sol_cli_process.Spawn_failed _ | Sol_cli_process.Timeout _ -> false
+;;
+
+(* The decision, kept pure so the captured message can be a fixture: with a cache
+   configured and that specific failure, retry without one; otherwise report. *)
+type cache_failure =
+  | Retry_without_cache
+  | Report
+
+let cache_failure_disposition cache error =
+  match cache with
+  | Some _ when cache_export_unsupported error -> Retry_without_cache
+  | Some _ | None -> Report
+;;
+
 let build ?cache ~tag ~dockerfile ~context () =
   (* --provenance=false --sbom=false: BuildKit attaches a provenance/SBOM
      attestation sub-manifest to the image index by default since Docker 23+.
@@ -118,7 +155,21 @@ let build ?cache ~tag ~dockerfile ~context () =
     | Some (Local_dir dir) -> Sys.file_exists dir
     | None -> false
   in
-  run_ok (cmd (build_argv ~buildx ~cache ~cache_present ~tag ~dockerfile ~context))
+  let run argv = run_ok (cmd argv) in
+  match run (build_argv ~buildx ~cache ~cache_present ~tag ~dockerfile ~context) with
+  | Ok () -> Ok ()
+  | Error e ->
+    (match cache_failure_disposition cache e with
+     | Report -> Error e
+     | Retry_without_cache ->
+       Printf.eprintf
+         "warning: this docker driver cannot export the configured build cache (%s); \
+          rebuilding without a cache. Use a container-driver builder (`docker buildx \
+          create --driver docker-container`) or enable docker's containerd image store \
+          to keep it.\n\
+          %!"
+         (Sol_cli_process.error_to_string e);
+       run (build_argv ~buildx ~cache:None ~cache_present:false ~tag ~dockerfile ~context))
 ;;
 
 let push ~image_ref = run_ok (cmd [ "docker"; "push"; image_ref ])

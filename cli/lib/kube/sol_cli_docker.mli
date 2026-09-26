@@ -31,8 +31,21 @@ val build_argv
   -> context:string
   -> string list
 
+(** What to do when a build with a configured cache fails: [Retry_without_cache]
+    when the driver cannot export cache (BuildKit says so itself), [Report]
+    otherwise -- an ordinary build failure must not be silently rebuilt. *)
+type cache_failure =
+  | Retry_without_cache
+  | Report
+
+(** The decision behind the fallback, pure so the captured driver message can be
+    a test fixture. [Report] whenever no cache was configured. *)
+val cache_failure_disposition : cache option -> Sol_cli_process.error -> cache_failure
+
 (** [build ?cache ~tag ~dockerfile ~context ()] builds the image; [cache]
-    defaults to [cache_of_env ()]. The trailing unit is required by OCaml's
+    defaults to [cache_of_env ()] and, if the driver cannot export cache, the
+    build is retried once without one (a cache is an optimization, never the
+    reason a deploy cannot happen). The trailing unit is required by OCaml's
     optional-argument erasure rules, as it is for this repo's other optional
     arguments. *)
 val build

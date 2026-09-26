@@ -141,6 +141,57 @@ let test_env_names_the_cache_location () =
     (set () = Some (Sol_cli_docker.Local_dir "/var/cache/sol-build"))
 ;;
 
+(* The fallback policy: a cache must never be the reason a deploy cannot happen,
+   and an ordinary build failure must never be silently rebuilt. Both messages
+   below are real: the first is captured from CI, the second is what a normal
+   build failure looks like. *)
+let captured_driver_error =
+  Sol_cli_process.Non_zero
+    { exit_code = 1
+    ; stderr =
+        "ERROR: failed to build: Cache export is not supported for the docker driver.\n\
+         Switch to a different driver, or turn on the containerd image store, and try \
+         again."
+    }
+;;
+
+let compile_error =
+  Sol_cli_process.Non_zero
+    { exit_code = 1; stderr = "Error: dune build failed: Unbound module Sol_cli_missing" }
+;;
+
+let test_cache_export_unsupported_is_retried_without_one () =
+  let cache = Some (Sol_cli_docker.Local_dir "/var/cache/sol-build") in
+  Alcotest.(check bool)
+    "a driver that cannot export cache -> rebuild without one"
+    true
+    (Sol_cli_docker.cache_failure_disposition cache captured_driver_error
+     = Sol_cli_docker.Retry_without_cache)
+;;
+
+let test_other_failures_are_reported () =
+  let cache = Some (Sol_cli_docker.Local_dir "/var/cache/sol-build") in
+  Alcotest.(check bool)
+    "an ordinary build failure is reported, not retried"
+    true
+    (Sol_cli_docker.cache_failure_disposition cache compile_error = Sol_cli_docker.Report);
+  Alcotest.(check bool)
+    "a spawn failure is reported"
+    true
+    (Sol_cli_docker.cache_failure_disposition
+       cache
+       (Sol_cli_process.Spawn_failed "no docker")
+     = Sol_cli_docker.Report)
+;;
+
+let test_no_cache_means_nothing_to_retry () =
+  Alcotest.(check bool)
+    "with no cache configured there is no fallback"
+    true
+    (Sol_cli_docker.cache_failure_disposition None captured_driver_error
+     = Sol_cli_docker.Report)
+;;
+
 let () =
   Alcotest.run
     "docker_build"
@@ -168,6 +219,14 @@ let () =
             "SOL_BUILD_CACHE_DIR"
             `Quick
             test_env_names_the_cache_location
+        ] )
+    ; ( "fallback"
+      , [ Alcotest.test_case
+            "driver cannot export"
+            `Quick
+            test_cache_export_unsupported_is_retried_without_one
+        ; Alcotest.test_case "other failures" `Quick test_other_failures_are_reported
+        ; Alcotest.test_case "no cache" `Quick test_no_cache_means_nothing_to_retry
         ] )
     ]
 ;;
