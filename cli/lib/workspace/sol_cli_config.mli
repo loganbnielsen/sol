@@ -141,3 +141,9 @@ val vars_with_profile_precedence
   -> cli_vars:string list
   -> config_vars:string list
   -> string list
+
+(** [local_infra ~root] is the local infrastructure a workspace needs (REFAC-107):
+    Kafka and Postgres when [sol.yml] declares a [kafka] / [postgres] resource, and
+    the observability stack always. Decided from the declaration, never inferred
+    from build files, so it is the same for OCaml and TypeScript units. *)
+val local_infra : root:string -> (Sol_cli_workspace.infra_requirements, error) result

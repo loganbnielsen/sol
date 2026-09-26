@@ -7,6 +7,11 @@
 - `validate` now uses `Array.find_map`, with comments that say which walk goes which way.
 - Removing the last `chdir` (119 path sites) is filed as REFAC-110 in the backlog for a decision.
 
+## Latest: REFAC-107 — local infrastructure comes from sol.yml, not a dune grep (2026-09-26)
+
+- `sol local infra up` starts Kafka and Postgres from `sol.yml`'s declared resources, and the observability stack always. It now works for TypeScript workspaces and from any subdirectory.
+- Found: the old grep never started Loki, Prometheus, Tempo or Grafana for pluto or scaffolded workspaces. It's fixed by "always on".
+- The scaffold and venus now declare the resources their services use.
 ## Latest: FEAT-100 — deployment config is sol.yml → environment → target (2026-09-26)
 
 - Targets are declared in `sol/environments.yml`, with each environment's policy set once. An optional gitignored `sol/environments.local.yml` adds account-specific values (disjoint keys) or whole environments; qualification uses it.

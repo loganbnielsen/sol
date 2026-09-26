@@ -205,9 +205,24 @@ let dev_up () =
        | Ok _ -> ()
        | Error e -> Printf.eprintf "%s\n" (Sol_cli_process.error_to_string e));
       exit 1));
-  (* 2. Scan *)
-  Printf.printf "\n[2/4] Scanning workspace...\n%!";
-  let req = Sol_cli_workspace.scan ~dir:"." in
+  (* 2. What the workspace declares (REFAC-107): read from sol.yml at the workspace
+     root, not inferred from build files, so it is the same from any subdirectory
+     and for OCaml and TypeScript units alike. *)
+  Printf.printf "\n[2/4] Reading the workspace's declared resources...\n%!";
+  let req =
+    let root =
+      match Sol_cli_workspace.resolve_validated ~dir:(Sys.getcwd ()) with
+      | Ok root -> root
+      | Error e ->
+        Printf.eprintf "error: %s\n" (Sol_cli_workspace.workspace_error_to_string e);
+        exit 1
+    in
+    match Sol_cli_config.local_infra ~root with
+    | Ok req -> req
+    | Error e ->
+      Printf.eprintf "error: %s\n" (Sol_cli_config.error_to_string e);
+      exit 1
+  in
   Printf.printf
     "  kafka=%-5b  postgres=%-5b  loki=%-5b  prometheus=%-5b  tempo=%b\n%!"
     req.kafka
