@@ -102,6 +102,14 @@ let tpl_sol_yml =
 # Workspace-level configuration (project, resources, services) belongs here.
 # The file is valid with no settings at all -- its presence is what
 # establishes the boundary.
+
+# The resources this workspace's services use. `sol local infra up` starts what is
+# declared here (Postgres, Kafka), and a cloud target provisions it.
+resources:
+  app_db:
+    type: postgres
+  events:
+    type: kafka
 |tpl}
 ;;
 

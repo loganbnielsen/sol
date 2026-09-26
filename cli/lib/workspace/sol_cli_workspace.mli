@@ -1,3 +1,5 @@
+(** The local infrastructure a workspace needs; decided by
+    [Sol_cli_config.local_infra] (REFAC-107). *)
 type infra_requirements =
   { kafka : bool
   ; postgres : bool
@@ -66,8 +68,3 @@ val current_name : unit -> string
 (** Count [.sql] files in [dir/db/migrations]. Returns 0 if the directory does
     not exist. Used by [sol up] to warn users about unapplied migrations. *)
 val pending_migration_count : dir:string -> int
-
-(** Walk all [dune] files under [dir] and detect which Sol infrastructure
-    libraries the workspace depends on. Used by [sol local infra up] to start exactly
-    the infra the workspace needs. *)
-val scan : dir:string -> infra_requirements
