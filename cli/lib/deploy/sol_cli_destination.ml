@@ -21,18 +21,11 @@ let resolve ~command ~local ~target =
       (match Sol_cli_config.load_for_target ~target:path with
        | Error e -> Error (Sol_cli_config.error_to_string e)
        | Ok cfg ->
-         (match cfg.Sol_cli_config.target with
-          | None ->
-            Error
-              (Printf.sprintf
-                 "target %s declares no kube_context, so Sol cannot tell which cluster \
-                  to reach; add `kube_context:` to its target file"
-                 path)
-          | Some t ->
-            (match Sol_cli_config.destination_of_target t with
-             | Error msg -> Error msg
-             | Ok destination ->
-               Ok (Sol_cli_kube_destination.context_of_destination destination))))
+         let t = cfg.Sol_cli_config.target in
+         (match Sol_cli_config.destination_of_target t with
+          | Error msg -> Error msg
+          | Ok destination ->
+            Ok (Sol_cli_kube_destination.context_of_destination destination)))
     | None ->
       Error
         (Printf.sprintf

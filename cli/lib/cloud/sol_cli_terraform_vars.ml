@@ -33,49 +33,47 @@ let add_opt k = function
 ;;
 
 let of_config ~workspace cfg =
-  match Sol_cli_config.target cfg with
-  | None -> Error "target missing"
-  | Some (target : Sol_cli_config.target) ->
-    let capabilities = Sol_cli_provider_capabilities.capabilities_of target.provider in
-    let shared =
-      []
-      |> add_opt "region" (Some target.region)
-      |> add_opt "cluster_name" target.cluster_name
-      |> add_opt "base_domain" target.base_domain
-      |> add_opt "alert_receiver_type" target.alert_receiver_type
-      |> add_opt "alert_receiver_url" target.alert_receiver_url
-      |> add_opt "alert_owner" target.alert_owner
-      |> add_opt "alert_runbook_url" target.alert_runbook_url
-    in
-    let provider_own = capabilities.own_vars target ~workspace shared in
-    let vars =
-      List.assoc_opt (Sol_cli_provider.to_string target.provider) target.provider_fields
-      |> Option.value ~default:[]
-      |> List.filter (fun (key, _) -> not (List.mem key capabilities.sol_keys))
-      |> List.rev_append provider_own
-    in
-    let has_postgres =
-      Sol_cli_config.resources cfg
-      |> List.exists (fun (r : Sol_cli_config.resource) -> r.typ = Some "postgres")
-    in
-    let production = target.profile = Some Sol_cli_profile.Production_single_region in
-    let production_postgres = has_postgres && production in
-    (* Profile-derived, so they are placed where [vars_with_profile_precedence]
+  let (target : Sol_cli_config.target) = cfg.Sol_cli_config.target in
+  let capabilities = Sol_cli_provider_capabilities.capabilities_of target.provider in
+  let shared =
+    []
+    |> add_opt "region" (Some target.region)
+    |> add_opt "cluster_name" target.cluster_name
+    |> add_opt "base_domain" target.base_domain
+    |> add_opt "alert_receiver_type" target.alert_receiver_type
+    |> add_opt "alert_receiver_url" target.alert_receiver_url
+    |> add_opt "alert_owner" target.alert_owner
+    |> add_opt "alert_runbook_url" target.alert_runbook_url
+  in
+  let provider_own = capabilities.own_vars target ~workspace shared in
+  let vars =
+    List.assoc_opt (Sol_cli_provider.to_string target.provider) target.provider_fields
+    |> Option.value ~default:[]
+    |> List.filter (fun (key, _) -> not (List.mem key capabilities.sol_keys))
+    |> List.rev_append provider_own
+  in
+  let has_postgres =
+    Sol_cli_config.resources cfg
+    |> List.exists (fun (r : Sol_cli_config.resource) -> r.typ = Some "postgres")
+  in
+  let production = target.profile = Some Sol_cli_profile.Production_single_region in
+  let production_postgres = has_postgres && production in
+  (* Profile-derived, so they are placed where [vars_with_profile_precedence]
        makes them win over any provider-field or --var value: the profile's claims
        (the cluster shape INFRA-030 sized, a production database that stays
        protected) must not be weakened by a caller. sol cloud destroy lowers the
        deletion guard deliberately, later in the argument list. *)
-    let vars = capabilities.profile_vars ~production ~production_postgres @ vars in
-    (* A provider that declares a database and needs a credential is not silently
+  let vars = capabilities.profile_vars ~production ~production_postgres @ vars in
+  (* A provider that declares a database and needs a credential is not silently
        skipped: `TF_VAR_db_password` is what carries it, the root itself refuses a
        missing one, and [Sol_cli_sensitive_vars] refuses it on the command line
        (SEC-010). *)
-    Result.map
-      (fun declared -> declared @ vars)
-      (capabilities.root_declared_vars
-         ~has_postgres
-         ~production_postgres
-         ~ecr_repositories:Sol_cli_config.ecr_repositories_var)
+  Result.map
+    (fun declared -> declared @ vars)
+    (capabilities.root_declared_vars
+       ~has_postgres
+       ~production_postgres
+       ~ecr_repositories:Sol_cli_config.ecr_repositories_var)
 ;;
 
 (* BUG-057: which var file a cloud command passes to Terraform, and relative to

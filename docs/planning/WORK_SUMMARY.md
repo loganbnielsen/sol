@@ -1,5 +1,21 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: INFRA-086 — `sol local infra up` installs with bounded concurrency (2026-09-26)
+
+- The releases (Redpanda, PostgreSQL, Loki, Grafana, Alloy, Tempo, Prometheus, ingress-nginx) have no install-time dependency on each other, and were installed one after another: ~252s of Helm, ~290s of the phase, in **both** golden paths. Now at most three run at once, in forked children with their own output files.
+- The first failure stops new installs, the running ones are waited for rather than abandoned, and components that never ran are named — no half-installed sibling without an explanation. Helm repositories are mutated before the group starts, not during it.
+- Measured locally end-to-end (`sol local infra up` in `examples/pluto`): all components up, three in flight, queue draining.
+- **Measured on CI**: infra installs **259s → 113s**; `golden-path-smoke` 16m26s → **14m14s**, and `golden-path-smoke-ts` 11m10s → **8m43s** on the same change (the phase is shared by both languages' paths).
+- INFRA-085 (same measurement thread): an application-image **build cache was implemented, measured, and reverted** — a warm cache moved the OCaml golden path by 28s against a baseline it was 81s slower than, because the scaffold pins the framework to the PR's commit so the dependency layer is supposed to re-run. The ticket keeps the numbers and the driver-configuration lesson (the runner's docker driver cannot export cache; this machine's can).
+
+
+## Latest: REFAC-108 — one validated way into the workspace (2026-09-26)
+
+- `check`, `up`, `logs`, `fn` and `status` all enter through `Sol_cli_workspace.enter_or_exit`.
+- Fixed: `logs`, `fn` and `status` had skipped nested-workspace validation and ran outside a workspace using the cwd's name.
+- `validate` now uses `Array.find_map`, with comments that say which walk goes which way.
+- Removing the last `chdir` (119 path sites) is filed as REFAC-110 in the backlog for a decision.
+
 ## Latest: REFAC-107 — local infrastructure comes from sol.yml, not a dune grep (2026-09-26)
 
 - `sol local infra up` starts Kafka and Postgres from `sol.yml`'s declared resources, and the observability stack always. It now works for TypeScript workspaces and from any subdirectory.
@@ -79,6 +95,29 @@
 - **Promoted to READY:** REFAC-099…105, DOCS-023/024, FEAT-100.
 - **Sequencing with qualification:** REFAC-099/100/101/103, DOCS-023 and REFAC-105 move paths the GCP qualification harness and its records use. They were held until HARDEN-006 attempt 8 landed (#518). Before starting one, check that no qualification attempt is in flight.
 - `AGENTS.md`'s ticket `type` list is now the 14 values in use (it listed 4).
+## Latest: FND-0010 fixed -- Sol now waits as long as cert-manager's readiness check is designed to (2026-09-26)
+
+Attempt 9's product log gave the cause: the platform prerequisites apply ended with
+`failed post-install: ... timed out waiting for the condition` because the Helm provider's
+default **300 s `timeout`** bounds the post-install hook's wait too. The chart's
+`startupapicheck` Job was created at 01:52:46Z and the apply failed at ~01:57:41Z -- 300 s, on
+the dot -- while the check was still polling (`x509: certificate signed by unknown authority`,
+`caBundle` never injected, webhook configuration at `generation: 1`) and all three cert-manager
+Deployments had been `1/1 Running` for 6m39s.
+
+`platform/cloud/modules/platform/main.tf` (one release, shared by both providers) now sets
+`startupapicheck.timeout = 10m`, `startupapicheck.backoffLimit = 1`, `timeout = 1800` and
+`wait = true`, and keeps the check **enabled** -- it is cert-manager's own readiness contract
+and the only signal that the webhook is usable. `internal/ci/check_cert_manager_readiness.sh`
+pins enabled check / real per-attempt budget / `release timeout > (backoffLimit + 1) x
+per-attempt` / `wait = true` / CRDs from the chart, and its 8-mutation self-test includes the
+pre-fix configuration (which must be rejected). The offline lifecycle suite additionally
+asserts a failed cert-manager gate never runs the full platform apply, proven by a mutant whose
+CRD gate always reports success. `FND-0010` -> `FIXED_UNQUALIFIED`; the confirmation run is
+filed as **`HARDEN-008`** (`BACKLOG`, authorization-gated, `PHASE_TIMEOUT` >= the release
+bound), and the qualifier's discriminator captures the CA/TLS Secrets and component logs so a
+further failure is attributable without another run.
+
 ## Latest: INFRA-080 — the qualification instrument can verify a clean teardown truthfully (2026-09-26)
 
 Attempts 8 and 9 both ended "teardown NOT verified" for three reasons that were the harness's, not

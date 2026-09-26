@@ -750,7 +750,7 @@ let make_svc_spec name domain =
 
 let kafka_config service_names : Sol_cli_config.t =
   { project = Some "ws"
-  ; target = None
+  ; target = Result.get_ok (Sol_cli_config.parse_target "prod/aws/us-east-1")
   ; resources =
       [ { name = "events"
         ; typ = Some "kafka"
@@ -1095,7 +1095,7 @@ let charge_svc_service : Sol_cli_manifest.service =
 
 let resolved_config_with_scale ~name ~scale_min ~scale_max : Sol_cli_config.t =
   { project = None
-  ; target = None
+  ; target = Result.get_ok (Sol_cli_config.parse_target "prod/aws/us-east-1")
   ; resources = []
   ; services =
       [ { name

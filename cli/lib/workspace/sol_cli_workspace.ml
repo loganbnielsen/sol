@@ -101,10 +101,17 @@ let is_symlink path =
   | exception Unix.Unix_error _ -> false
 ;;
 
-(* Nested-boundary validation (DEC-024 clause 2). Deliberately separate from
-   [find_root]: resolution stays a cheap upward walk, while discovery and the
-   command boundary pay for the recursive scan only where the invariant must
-   be enforced. Never follows symlinks, so a vendored checkout is not scanned.
+(* Nested-boundary validation (DEC-024 clause 2): walk *down* from the root and
+   refuse a second sol.yml below it, because a command run inside the inner
+   workspace would otherwise bind to it silently. Deliberately separate from
+   [find_root], which walks *up* from the current directory to the nearest sol.yml
+   (cheap, like git finding .git): only discovery and the command boundary pay for
+   this recursive scan, where the invariant must hold.
+
+   Symlinks are never followed. A symlinked checkout inside the workspace -- say
+   `vendor/sol -> ~/Code/sol` -- contains sol.yml files of its own (Sol's
+   examples/pluto/sol.yml) that would read as nested workspaces, and a symlink
+   that points back up the tree would make this walk recurse forever.
    Reports both boundaries rather than silently shadowing. *)
 let validate ~root =
   let rec go dir =
@@ -112,23 +119,19 @@ let validate ~root =
       try Sys.readdir dir with
       | Sys_error _ -> [||]
     in
-    Array.fold_left
-      (fun found entry ->
-         match found with
-         | Some _ -> found
-         | None ->
-           if entry = "" || entry.[0] = '.' || ignored_dir entry
+    Array.find_map
+      (fun entry ->
+         if entry = "" || entry.[0] = '.' || ignored_dir entry
+         then None
+         else (
+           let path = Filename.concat dir entry in
+           if is_symlink path
            then None
-           else (
-             let path = Filename.concat dir entry in
-             if is_symlink path
-             then None
-             else if has_workspace_file path
-             then Some path
-             else if Sys.is_directory path
-             then go path
-             else None))
-      None
+           else if has_workspace_file path
+           then Some path
+           else if Sys.is_directory path
+           then go path
+           else None))
       entries
   in
   match go root with
@@ -156,6 +159,19 @@ let enter ~dir =
   | Ok root ->
     Sys.chdir root;
     Ok root
+;;
+
+(* REFAC-108: the one way a command establishes its workspace. Every command that
+   acts on the workspace calls this at its edge, so the boundary is always
+   validated (DEC-024 clause 2), absence always fails closed, and the cwd is the
+   root for the rest of the command. The root is returned for callers that need
+   it by name; a caller that only needs the cwd to be the root may ignore it. *)
+let enter_or_exit () =
+  match enter ~dir:(Sys.getcwd ()) with
+  | Ok root -> root
+  | Error e ->
+    Printf.eprintf "sol: %s\n" (workspace_error_to_string e);
+    exit 1
 ;;
 
 (** Count .sql files in [dir]/db/migrations. Returns 0 if the directory does not
