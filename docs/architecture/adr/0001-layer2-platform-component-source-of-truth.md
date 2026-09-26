@@ -65,7 +65,7 @@ keyed by component and then by layer:
 puts every local-vs-durable difference on one screen; the layering and every
 rule below are unchanged.)*
 
-**Format: JSON, not YAML.** The OCaml side has no YAML dependency today
+**Format: JSON, not YAML.** *(REFAC-106 later added the `yaml` library for `sol.yml`; component values stay JSON because Terraform and the CLI must read them identically, see REFAC-102.)* At the time, the OCaml side had no YAML dependency
 (`cli/lib/dune` pulls `yojson`+`otoml`, no `yaml`); Terraform's
 built-in `jsondecode()` needs no provider. JSON is valid input everywhere
 YAML is accepted (Helm's `-f`, Terraform's `helm_release.values`), so this

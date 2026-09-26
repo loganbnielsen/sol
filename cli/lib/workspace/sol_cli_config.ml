@@ -108,84 +108,14 @@ type error =
   ; message : string
   }
 
-let error_to_string e = Printf.sprintf "%s:%d: %s" e.path e.line e.message
+let error_to_string e =
+  if e.line > 0
+  then Printf.sprintf "%s:%d: %s" e.path e.line e.message
+  else Printf.sprintf "%s: %s" e.path e.message
+;;
+
 let ( let* ) = Result.bind
 let trim = String.trim
-
-let strip_comment s =
-  let rec loop quote i =
-    if i >= String.length s
-    then s
-    else (
-      match s.[i] with
-      | '"' when quote = None -> loop (Some '"') (i + 1)
-      | '\'' when quote = None -> loop (Some '\'') (i + 1)
-      | c when quote = Some c -> loop None (i + 1)
-      | '#' when quote = None -> String.sub s 0 i
-      | _ -> loop quote (i + 1))
-  in
-  loop None 0
-;;
-
-let indent s =
-  let rec loop i = if i < String.length s && s.[i] = ' ' then loop (i + 1) else i in
-  loop 0
-;;
-
-let ends_with ~suffix s =
-  let slen = String.length suffix in
-  let len = String.length s in
-  len >= slen && String.sub s (len - slen) slen = suffix
-;;
-
-let drop_suffix ~suffix s = String.sub s 0 (String.length s - String.length suffix)
-
-let parse_scalar s =
-  let s = trim s in
-  let len = String.length s in
-  if len = 0
-  then Ok s
-  else if s.[0] = '"' || s.[0] = '\''
-  then
-    if len >= 2 && s.[len - 1] = s.[0]
-    then Ok (String.sub s 1 (len - 2))
-    else Error "malformed quoted value"
-  else if s.[len - 1] = '"' || s.[len - 1] = '\''
-  then Error "malformed quoted value"
-  else Ok s
-;;
-
-let split_key_value s =
-  match String.index_opt s ':' with
-  | None -> None
-  | Some i ->
-    Some (trim (String.sub s 0 i), trim (String.sub s (i + 1) (String.length s - i - 1)))
-;;
-
-let parse_list s =
-  let parse_items s =
-    String.split_on_char ',' s
-    |> List.map trim
-    |> List.filter (( <> ) "")
-    |> List.fold_left
-         (fun acc v ->
-            let* xs = acc in
-            let* v = parse_scalar v in
-            Ok (xs @ [ v ]))
-         (Ok [])
-  in
-  let s = trim s in
-  let len = String.length s in
-  if len >= 2 && s.[0] = '[' && s.[len - 1] = ']'
-  then parse_items (String.sub s 1 (len - 2))
-  else if len > 0 && (s.[0] = '[' || s.[len - 1] = ']')
-  then Error "malformed list"
-  else if s = ""
-  then Ok []
-  else
-    let* v = parse_scalar s in
-    Ok [ v ]
-;;
 
 let parse_int s =
   match int_of_string_opt (trim s) with
@@ -317,427 +247,400 @@ let target_key_name = function
   | Target_unknown s -> s
 ;;
 
-type section =
-  | None_section
-  | Target
-  | Resources
-  | Resource of string
-  | Resource_indexes of string
-  | Resource_index of string * string
-  | Target_provider of string
-  | Services
-  | Service of string
-  | Service_scale of string
+(* REFAC-106: sol.yml and target files are YAML, parsed by libyaml (the `yaml`
+   package) and decoded here against the key table above. The decoder walks
+   [Yaml.yaml] rather than [Yaml.value] because a scalar there keeps the exact text
+   the user wrote: `1.10`, `012` and an account id stay strings, where the value API
+   would have made numbers of them. Errors name the key path, and a YAML syntax
+   error names its line. *)
 
-type root_section =
-  | No_root
-  | Resources_root
-  | Services_root
+let fail_at ~path message = Error { path; line = 0; message }
+
+(* libyaml's own error message carries no usable position, so the line comes from
+   the event stream: the last event parsed before the failure. *)
+let syntax_error_line text =
+  match Yaml.Stream.parser text with
+  | Error _ -> 0
+  | Ok parser ->
+    let rec go last =
+      match Yaml.Stream.do_parse parser with
+      | Error _ -> last
+      | Ok (Yaml.Stream.Event.Stream_end, _) -> last
+      | Ok (_, (pos : Yaml.Stream.Event.pos)) -> go (pos.end_mark.line + 1)
+    in
+    go 1
+;;
+
+let yaml_problem message =
+  (* "error calling parser: <problem> character 0 position 0 returned: 0" *)
+  let prefix = "error calling parser: " in
+  let m =
+    if
+      String.length message >= String.length prefix
+      && String.sub message 0 (String.length prefix) = prefix
+    then
+      String.sub
+        message
+        (String.length prefix)
+        (String.length message - String.length prefix)
+    else message
+  in
+  match String.index_opt m '\n' with
+  | Some i -> String.sub m 0 i
+  | None ->
+    let marker = " character " in
+    let rec find i =
+      if i + String.length marker > String.length m
+      then m
+      else if String.sub m i (String.length marker) = marker
+      then String.sub m 0 i
+      else find (i + 1)
+    in
+    find 0
+;;
+
+let parse_yaml ~path text =
+  match Yaml.yaml_of_string text with
+  | Ok doc -> Ok doc
+  | Error (`Msg message) ->
+    Error
+      { path
+      ; line = syntax_error_line text
+      ; message = "invalid YAML: " ^ yaml_problem message
+      }
+;;
+
+(* The text of a scalar; [None] for an empty/null one, which every key treats as a
+   missing value. *)
+let scalar_text : Yaml.yaml -> string option = function
+  | `Scalar { Yaml.value; style; _ } ->
+    let quoted =
+      match style with
+      | `Single_quoted | `Double_quoted -> true
+      | _ -> false
+    in
+    if (not quoted) && (value = "" || value = "~" || value = "null")
+    then None
+    else Some value
+  | _ -> None
+;;
+
+let is_null : Yaml.yaml -> bool = function
+  | `Scalar _ as y -> scalar_text y = None
+  | _ -> false
+;;
+
+(* A mapping's members as (key, value), rejecting a non-scalar key, an alias and a
+   duplicate key: YAML leaves duplicates to the application, and a second value
+   silently winning is exactly the ambiguity a config file must not have. *)
+let members
+      ~path
+      ~where
+      ?(duplicate = fun k -> Printf.sprintf "duplicate key %S%s" k where)
+  = function
+  | `O { Yaml.m_members; _ } ->
+    let rec go seen acc = function
+      | [] -> Ok (List.rev acc)
+      | (`Scalar { Yaml.value = k; _ }, v) :: rest ->
+        if List.mem k seen
+        then fail_at ~path (duplicate k)
+        else (
+          match v with
+          | `Alias _ ->
+            fail_at ~path (Printf.sprintf "YAML aliases are not supported (%S%s)" k where)
+          | _ -> go (k :: seen) ((k, v) :: acc) rest)
+      | _ :: _ -> fail_at ~path (Printf.sprintf "expected text keys%s" where)
+    in
+    go [] [] m_members
+  | y when is_null y -> Ok []
+  | _ -> fail_at ~path (Printf.sprintf "expected a mapping%s" where)
+;;
+
+let load_string ~path text =
+  let* doc = parse_yaml ~path text in
+  let fail message = fail_at ~path message in
+  let value name v =
+    match v with
+    | `Scalar _ ->
+      (match scalar_text v with
+       | Some s -> Ok s
+       | None -> fail (Printf.sprintf "missing value for %s" name))
+    | _ -> fail (Printf.sprintf "expected a single value for %s" name)
+  in
+  let int_value name v =
+    let* s = value name v in
+    match parse_int s with
+    | Ok n -> Ok n
+    | Error msg -> fail (msg ^ " for " ^ name)
+  in
+  let bool_value name v =
+    let* s = value name v in
+    match parse_bool s with
+    | Ok b -> Ok b
+    | Error msg -> fail (msg ^ " for " ^ name)
+  in
+  let rec fold f acc = function
+    | [] -> Ok acc
+    | x :: rest ->
+      let* acc = f acc x in
+      fold f acc rest
+  in
+  let decode_provider provider v =
+    let where = Printf.sprintf " in the %s target block" provider in
+    let* fields =
+      members
+        ~path
+        ~where
+        ~duplicate:(Printf.sprintf "duplicate %s target field %S" provider)
+        v
+    in
+    (* A nested value under a provider field is ignored, as it always was. *)
+    Ok (List.filter_map (fun (k, v) -> Option.map (fun t -> k, t) (scalar_text v)) fields)
+  in
+  let decode_target v =
+    let* fields =
+      members
+        ~path
+        ~where:" in target"
+        ~duplicate:(fun k ->
+          match Sol_cli_provider.of_string k with
+          | Some _ -> Printf.sprintf "duplicate target provider box %S" k
+          | None -> Printf.sprintf "duplicate target key %S" k)
+        v
+    in
+    fold
+      (fun (current : target) (k, v) ->
+         match target_key_of_string k with
+         | Target_provider_box provider ->
+           let provider = Sol_cli_provider.to_string provider in
+           let* fields = decode_provider provider v in
+           Ok
+             { current with
+               provider_fields = current.provider_fields @ [ provider, fields ]
+             }
+         | Target_unknown k ->
+           (match v with
+            | `O _ -> fail (Printf.sprintf "unsupported provider %S" k)
+            | _ when is_null v -> fail (Printf.sprintf "unsupported provider %S" k)
+            | _ -> fail (Printf.sprintf "unknown target key %S" k))
+         | Target_provider_owned (k, provider) ->
+           let provider = Sol_cli_provider.to_string provider in
+           fail
+             (Printf.sprintf
+                "target key %S belongs to the %s provider: declare it as `%s.%s` inside \
+                 the target block (REFAC-098)"
+                k
+                provider
+                provider
+                k)
+         | key ->
+           let name = target_key_name key in
+           let* s = value name v in
+           (match key with
+            | Target_registry -> Ok { current with registry = Some s }
+            | Target_base_domain -> Ok { current with base_domain = Some s }
+            | Target_cluster_issuer -> Ok { current with cluster_issuer = Some s }
+            | Target_letsencrypt_email -> Ok { current with letsencrypt_email = Some s }
+            | Target_cluster_name -> Ok { current with cluster_name = Some s }
+            | Target_kube_context -> Ok { current with kube_context = Some s }
+            | Target_kubeconfig -> Ok { current with kubeconfig = Some s }
+            | Target_terraform_var_file -> Ok { current with terraform_var_file = Some s }
+            | Target_observability_backend ->
+              Ok { current with observability_backend = Some s }
+            | Target_destroy_retention -> Ok { current with destroy_retention = Some s }
+            | Target_alert_receiver_type ->
+              Ok { current with alert_receiver_type = Some s }
+            | Target_alert_receiver_url -> Ok { current with alert_receiver_url = Some s }
+            | Target_alert_owner -> Ok { current with alert_owner = Some s }
+            | Target_alert_runbook_url -> Ok { current with alert_runbook_url = Some s }
+            | Target_state_bucket -> Ok { current with state_bucket = Some s }
+            | Target_cluster_endpoint_cidr ->
+              Ok { current with cluster_endpoint_cidr = Some s }
+            | Target_node_failure_headroom_nodes ->
+              (match parse_int s with
+               | Ok n -> Ok { current with node_failure_headroom_nodes = n }
+               | Error _ -> fail "expected integer for node_failure_headroom_nodes")
+            | Target_profile ->
+              (match Sol_cli_profile.of_selection s with
+               | Ok profile -> Ok { current with profile = Some profile }
+               | Error msg -> fail msg)
+            | Target_provider_box _ | Target_provider_owned _ | Target_unknown _ ->
+              assert false))
+      target_empty
+      fields
+  in
+  let decode_index (name, v) =
+    let where = Printf.sprintf " in index %S" name in
+    let* fields = members ~path ~where v in
+    fold
+      (fun (i : index) (k, v) ->
+         match k with
+         | "partition_key" ->
+           let* s = value k v in
+           Ok { i with partition_key = Some s }
+         | "sort_key" ->
+           let* s = value k v in
+           Ok { i with sort_key = Some s }
+         | _ -> fail (Printf.sprintf "unknown key %S" k))
+      (index_empty name)
+      fields
+  in
+  let decode_resource (name, v) =
+    let* fields = members ~path ~where:(Printf.sprintf " in resource %S" name) v in
+    fold
+      (fun (r : resource) (k, v) ->
+         match k with
+         | "type" ->
+           let* s = value k v in
+           Ok { r with typ = Some s }
+         | "partition_key" ->
+           let* s = value k v in
+           Ok { r with partition_key = Some s }
+         | "sort_key" ->
+           let* s = value k v in
+           Ok { r with sort_key = Some s }
+         | "size" ->
+           let* s = value k v in
+           Ok { r with size = Some s }
+         | "omit" ->
+           let* omit = bool_value k v in
+           Ok { r with omit }
+         | "indexes" ->
+           let* indexes =
+             members
+               ~path
+               ~where:(Printf.sprintf " in resource %S" name)
+               ~duplicate:(Printf.sprintf "duplicate index %S")
+               v
+           in
+           let* indexes =
+             fold
+               (fun acc i ->
+                  let* i = decode_index i in
+                  Ok (acc @ [ i ]))
+               []
+               indexes
+           in
+           Ok { r with indexes }
+         | _ -> fail (Printf.sprintf "unknown resource key %S" k))
+      (resource_empty name)
+      fields
+  in
+  let decode_uses v =
+    match v with
+    | `A { Yaml.s_members; _ } ->
+      fold
+        (fun acc item ->
+           match scalar_text item with
+           | Some s -> Ok (acc @ [ s ])
+           | None -> fail "expected a list of names for uses")
+        []
+        s_members
+    | _ when is_null v -> Ok []
+    | `Scalar _ -> Ok (Option.to_list (scalar_text v))
+    | _ -> fail "expected a list of names for uses"
+  in
+  let decode_service (name, v) =
+    let* fields = members ~path ~where:(Printf.sprintf " in service %S" name) v in
+    fold
+      (fun (sv : service) (k, v) ->
+         match k with
+         | "type" ->
+           let* s = value k v in
+           Ok { sv with typ = Some s }
+         | "path" ->
+           let* s = value k v in
+           Ok { sv with path = Some s }
+         | "uses" ->
+           let* uses = decode_uses v in
+           Ok { sv with uses }
+         | "language" ->
+           let* s = value k v in
+           (match Sol_cli_compat.of_string s with
+            | Ok language -> Ok { sv with language = Some language }
+            | Error msg -> fail (msg ^ " for language"))
+         | "omit" ->
+           let* omit = bool_value k v in
+           Ok { sv with omit }
+         | "scale" ->
+           let* scale =
+             members ~path ~where:(Printf.sprintf " in service %S scale" name) v
+           in
+           fold
+             (fun (sv : service) (k, v) ->
+                match k with
+                | "min" ->
+                  let* n = int_value k v in
+                  Ok { sv with scale_min = n }
+                | "max" ->
+                  let* n = int_value k v in
+                  Ok { sv with scale_max = n }
+                | _ -> fail (Printf.sprintf "unknown scale key %S" k))
+             sv
+             scale
+         | _ -> fail (Printf.sprintf "unknown service key %S" k))
+      (service_empty name)
+      fields
+  in
+  let* top =
+    members
+      ~path
+      ~where:""
+      ~duplicate:(Printf.sprintf "duplicate top-level section %S")
+      doc
+  in
+  fold
+    (fun cfg (k, v) ->
+       match k with
+       | "project" ->
+         let* p = value "project" v in
+         Ok { cfg with project = Some p }
+       | "target" ->
+         let* t = decode_target v in
+         Ok { cfg with target = Some t }
+       | "resources" ->
+         let* named =
+           members
+             ~path
+             ~where:" in resources"
+             ~duplicate:(Printf.sprintf "duplicate resource %S")
+             v
+         in
+         let* resources =
+           fold
+             (fun acc r ->
+                let* r = decode_resource r in
+                Ok (acc @ [ r ]))
+             []
+             named
+         in
+         Ok { cfg with resources }
+       | "services" ->
+         let* named =
+           members
+             ~path
+             ~where:" in services"
+             ~duplicate:(Printf.sprintf "duplicate service %S")
+             v
+         in
+         let* services =
+           fold
+             (fun acc x ->
+                let* x = decode_service x in
+                Ok (acc @ [ x ]))
+             []
+             named
+         in
+         Ok { cfg with services }
+       | _ -> fail (Printf.sprintf "unknown top-level key %S" k))
+    empty
+    top
+;;
 
 let load path =
   if not (Sys.file_exists path)
   then Ok empty
-  else (
-    let ic = open_in path in
-    Fun.protect
-      ~finally:(fun () -> close_in_noerr ic)
-      (fun () ->
-         let cfg = ref empty in
-         let section = ref None_section in
-         let root = ref No_root in
-         let seen_target = ref false in
-         let seen_resources = ref false in
-         let seen_services = ref false in
-         let seen_provider_boxes = ref [] in
-         let line_no = ref 0 in
-         let fail message = Error { path; line = !line_no; message } in
-         let require_value k v =
-           if v = "" then fail (Printf.sprintf "missing value for %s" k) else Ok ()
-         in
-         let scalar k v =
-           match parse_scalar v with
-           | Ok v -> Ok v
-           | Error msg -> fail (msg ^ " for " ^ k)
-         in
-         let update_resource name f =
-           let rec loop acc = function
-             | [] -> fail (Printf.sprintf "resource %S is missing" name)
-             | (r : resource) :: rest when r.name = name ->
-               let* r = f r in
-               Ok (List.rev_append acc (r :: rest))
-             | r :: rest -> loop (r :: acc) rest
-           in
-           let* resources = loop [] !cfg.resources in
-           cfg := { !cfg with resources };
-           Ok ()
-         in
-         let update_service name f =
-           let rec loop acc = function
-             | [] -> fail (Printf.sprintf "service %S is missing" name)
-             | (s : service) :: rest when s.name = name ->
-               let* s = f s in
-               Ok (List.rev_append acc (s :: rest))
-             | s :: rest -> loop (s :: acc) rest
-           in
-           let* services = loop [] !cfg.services in
-           cfg := { !cfg with services };
-           Ok ()
-         in
-         let update_provider provider f =
-           let target = Option.value !cfg.target ~default:target_empty in
-           let fields =
-             List.assoc_opt provider target.provider_fields |> Option.value ~default:[]
-           in
-           let* fields = f fields in
-           let provider_fields =
-             (provider, fields)
-             :: List.filter (fun (p, _) -> p <> provider) target.provider_fields
-           in
-           cfg := { !cfg with target = Some { target with provider_fields } };
-           Ok ()
-         in
-         let add_resource name =
-           if List.exists (fun (r : resource) -> r.name = name) !cfg.resources
-           then fail (Printf.sprintf "duplicate resource %S" name)
-           else (
-             cfg := { !cfg with resources = !cfg.resources @ [ resource_empty name ] };
-             Ok ())
-         in
-         let add_service name =
-           if List.exists (fun (s : service) -> s.name = name) !cfg.services
-           then fail (Printf.sprintf "duplicate service %S" name)
-           else (
-             cfg := { !cfg with services = !cfg.services @ [ service_empty name ] };
-             Ok ())
-         in
-         let rec loop () =
-           match input_line ic with
-           | exception End_of_file -> Ok !cfg
-           | raw ->
-             incr line_no;
-             let text = strip_comment raw in
-             if trim text = ""
-             then loop ()
-             else (
-               let ind = indent text in
-               let body = trim text in
-               match ind, body, split_key_value body with
-               | _, _, _
-                 when ind >= 6
-                      &&
-                      match !section with
-                      | Target_provider _ -> true
-                      | _ -> false -> loop ()
-               | 0, "target:", _ ->
-                 if !seen_target
-                 then fail "duplicate top-level section \"target\""
-                 else if !root <> No_root
-                 then fail "target must appear before resources or services"
-                 else (
-                   seen_target := true;
-                   root := No_root;
-                   section := Target;
-                   loop ())
-               | 0, "resources:", _ ->
-                 if !seen_resources
-                 then fail "duplicate top-level section \"resources\""
-                 else (
-                   seen_resources := true;
-                   root := Resources_root;
-                   section := Resources;
-                   loop ())
-               | 0, "services:", _ ->
-                 if !seen_services
-                 then fail "duplicate top-level section \"services\""
-                 else (
-                   seen_services := true;
-                   root := Services_root;
-                   section := Services;
-                   loop ())
-               | 0, _, Some ("project", v) ->
-                 let* () = require_value "project" v in
-                 let* project = scalar "project" v in
-                 cfg := { !cfg with project = Some project };
-                 loop ()
-               | 0, _, Some (k, _) -> fail (Printf.sprintf "unknown top-level key %S" k)
-               | 2, _, _ when ends_with ~suffix:":" body ->
-                 let name = drop_suffix ~suffix:":" body |> trim in
-                 (match !root with
-                  | Resources_root ->
-                    section := Resource name;
-                    let* () = add_resource name in
-                    loop ()
-                  | Services_root ->
-                    section := Service name;
-                    let* () = add_service name in
-                    loop ()
-                  | No_root ->
-                    (match !section, split_key_value body with
-                     | (Target | Target_provider _), Some (k, "") ->
-                       (match target_key_of_string k with
-                        | Target_provider_box provider ->
-                          let provider = Sol_cli_provider.to_string provider in
-                          if List.mem provider !seen_provider_boxes
-                          then
-                            fail
-                              (Printf.sprintf "duplicate target provider box %S" provider)
-                          else (
-                            seen_provider_boxes := provider :: !seen_provider_boxes;
-                            section := Target_provider provider;
-                            loop ())
-                        | Target_unknown k ->
-                          fail (Printf.sprintf "unsupported provider %S" k)
-                        | key ->
-                          fail
-                            (Printf.sprintf "missing value for %s" (target_key_name key)))
-                     | _ -> fail "unsupported sol.yml syntax"))
-               | 2, _, Some (k, v) ->
-                 let* () =
-                   match !section with
-                   | Target | Target_provider _ ->
-                     let key = target_key_of_string k in
-                     (match key, v with
-                      | Target_provider_box provider, "" ->
-                        let provider = Sol_cli_provider.to_string provider in
-                        if List.mem provider !seen_provider_boxes
-                        then
-                          fail
-                            (Printf.sprintf "duplicate target provider box %S" provider)
-                        else (
-                          seen_provider_boxes := provider :: !seen_provider_boxes;
-                          section := Target_provider provider;
-                          Ok ())
-                      | Target_unknown k, "" ->
-                        fail (Printf.sprintf "unsupported provider %S" k)
-                      | Target_unknown k, _ ->
-                        fail (Printf.sprintf "unknown target key %S" k)
-                      | Target_provider_owned (k, provider), _ ->
-                        let provider = Sol_cli_provider.to_string provider in
-                        fail
-                          (Printf.sprintf
-                             "target key %S belongs to the %s provider: declare it \
-                              as                               `%s.%s` inside the target \
-                              block (REFAC-098)"
-                             k
-                             provider
-                             provider
-                             k)
-                      | Target_provider_box _, _ ->
-                        fail (Printf.sprintf "unknown target key %S" k)
-                      | key, "" ->
-                        fail (Printf.sprintf "missing value for %s" (target_key_name key))
-                      | _ ->
-                        let current = Option.value !cfg.target ~default:target_empty in
-                        let* target =
-                          match key with
-                          | Target_registry ->
-                            let* v = scalar k v in
-                            Ok { current with registry = Some v }
-                          | Target_base_domain ->
-                            let* v = scalar k v in
-                            Ok { current with base_domain = Some v }
-                          | Target_cluster_issuer ->
-                            let* v = scalar k v in
-                            Ok { current with cluster_issuer = Some v }
-                          | Target_letsencrypt_email ->
-                            let* v = scalar k v in
-                            Ok { current with letsencrypt_email = Some v }
-                          | Target_cluster_name ->
-                            let* v = scalar k v in
-                            Ok { current with cluster_name = Some v }
-                          | Target_kube_context ->
-                            let* v = scalar k v in
-                            Ok { current with kube_context = Some v }
-                          | Target_kubeconfig ->
-                            let* v = scalar k v in
-                            Ok { current with kubeconfig = Some v }
-                          | Target_terraform_var_file ->
-                            let* v = scalar k v in
-                            Ok { current with terraform_var_file = Some v }
-                          | Target_observability_backend ->
-                            let* v = scalar k v in
-                            Ok { current with observability_backend = Some v }
-                          | Target_destroy_retention ->
-                            let* v = scalar k v in
-                            Ok { current with destroy_retention = Some v }
-                          | Target_alert_receiver_type ->
-                            let* v = scalar k v in
-                            Ok { current with alert_receiver_type = Some v }
-                          | Target_alert_receiver_url ->
-                            let* v = scalar k v in
-                            Ok { current with alert_receiver_url = Some v }
-                          | Target_alert_owner ->
-                            let* v = scalar k v in
-                            Ok { current with alert_owner = Some v }
-                          | Target_alert_runbook_url ->
-                            let* v = scalar k v in
-                            Ok { current with alert_runbook_url = Some v }
-                          | Target_state_bucket ->
-                            let* v = scalar k v in
-                            Ok { current with state_bucket = Some v }
-                          | Target_cluster_endpoint_cidr ->
-                            let* v = scalar k v in
-                            Ok { current with cluster_endpoint_cidr = Some v }
-                          | Target_node_failure_headroom_nodes ->
-                            let* v = scalar k v in
-                            (match parse_int v with
-                             | Ok (Some n) ->
-                               Ok { current with node_failure_headroom_nodes = Some n }
-                             | _ ->
-                               fail "expected integer for node_failure_headroom_nodes")
-                          | Target_profile ->
-                            let* v = scalar k v in
-                            (match Sol_cli_profile.of_selection v with
-                             | Ok profile -> Ok { current with profile = Some profile }
-                             | Error msg -> fail msg)
-                          | Target_provider_box _
-                          | Target_provider_owned _
-                          | Target_unknown _ -> assert false
-                        in
-                        section := Target;
-                        cfg := { !cfg with target = Some target };
-                        Ok ())
-                   | _ -> fail "unsupported sol.yml syntax"
-                 in
-                 loop ()
-               | 4, _, Some (k, v) ->
-                 let* () =
-                   match !section with
-                   | Resource name | Resource_indexes name | Resource_index (name, _) ->
-                     if k = "indexes" && v = ""
-                     then (
-                       section := Resource_indexes name;
-                       Ok ())
-                     else
-                       let* () = require_value k v in
-                       let* () =
-                         update_resource name (fun r ->
-                           match k with
-                           | "type" ->
-                             let* v = scalar k v in
-                             Ok { r with typ = Some v }
-                           | "partition_key" ->
-                             let* v = scalar k v in
-                             Ok { r with partition_key = Some v }
-                           | "sort_key" ->
-                             let* v = scalar k v in
-                             Ok { r with sort_key = Some v }
-                           | "size" ->
-                             let* v = scalar k v in
-                             Ok { r with size = Some v }
-                           | "omit" ->
-                             (match parse_bool v with
-                              | Ok omit -> Ok { r with omit }
-                              | Error msg -> fail (msg ^ " for omit"))
-                           | _ -> fail (Printf.sprintf "unknown resource key %S" k))
-                       in
-                       Ok ()
-                   | Service name | Service_scale name ->
-                     if k = "scale" && v = ""
-                     then (
-                       section := Service_scale name;
-                       Ok ())
-                     else
-                       let* () = require_value k v in
-                       let* () =
-                         update_service name (fun s ->
-                           match k with
-                           | "type" ->
-                             let* v = scalar k v in
-                             Ok { s with typ = Some v }
-                           | "path" ->
-                             let* v = scalar k v in
-                             Ok { s with path = Some v }
-                           | "uses" ->
-                             (match parse_list v with
-                              | Ok uses -> Ok { s with uses }
-                              | Error msg -> fail (msg ^ " for uses"))
-                           | "language" ->
-                             (match Sol_cli_compat.of_string v with
-                              | Ok language -> Ok { s with language = Some language }
-                              | Error msg -> fail (msg ^ " for language"))
-                           | "omit" ->
-                             (match parse_bool v with
-                              | Ok omit -> Ok { s with omit }
-                              | Error msg -> fail (msg ^ " for omit"))
-                           | _ -> fail (Printf.sprintf "unknown service key %S" k))
-                       in
-                       Ok ()
-                   | Target_provider provider ->
-                     if v = ""
-                     then Ok ()
-                     else
-                       let* v = scalar k v in
-                       update_provider provider (fun fields ->
-                         if List.mem_assoc k fields
-                         then
-                           fail (Printf.sprintf "duplicate %s target field %S" provider k)
-                         else Ok (fields @ [ k, v ]))
-                   | _ -> fail "unsupported sol.yml syntax"
-                 in
-                 loop ()
-               | 6, _, _ when ends_with ~suffix:":" body ->
-                 let* () =
-                   match !section with
-                   | Resource_indexes resource_name | Resource_index (resource_name, _) ->
-                     let index_name = drop_suffix ~suffix:":" body |> trim in
-                     update_resource resource_name (fun r ->
-                       if List.exists (fun i -> i.index_name = index_name) r.indexes
-                       then fail (Printf.sprintf "duplicate index %S" index_name)
-                       else (
-                         section := Resource_index (resource_name, index_name);
-                         Ok { r with indexes = r.indexes @ [ index_empty index_name ] }))
-                   | _ -> fail "unsupported sol.yml syntax"
-                 in
-                 loop ()
-               | 6, _, Some (k, v) ->
-                 let* () =
-                   match !section with
-                   | Service_scale name ->
-                     let* () = require_value k v in
-                     let* () =
-                       update_service name (fun s ->
-                         match k with
-                         | "min" ->
-                           (match parse_int v with
-                            | Ok scale_min -> Ok { s with scale_min }
-                            | Error msg -> fail (msg ^ " for min"))
-                         | "max" ->
-                           (match parse_int v with
-                            | Ok scale_max -> Ok { s with scale_max }
-                            | Error msg -> fail (msg ^ " for max"))
-                         | _ -> fail (Printf.sprintf "unknown scale key %S" k))
-                     in
-                     Ok ()
-                   | _ -> fail "unsupported sol.yml syntax"
-                 in
-                 loop ()
-               | 8, _, Some (k, v) ->
-                 (match !section with
-                  | Resource_index (resource_name, index_name)
-                    when k = "partition_key" || k = "sort_key" ->
-                    let* () = require_value k v in
-                    let* v = scalar k v in
-                    let update_index i =
-                      if i.index_name <> index_name
-                      then i
-                      else (
-                        match k with
-                        | "partition_key" -> { i with partition_key = Some v }
-                        | "sort_key" -> { i with sort_key = Some v }
-                        | _ -> i)
-                    in
-                    let* () =
-                      update_resource resource_name (fun r ->
-                        Ok { r with indexes = List.map update_index r.indexes })
-                    in
-                    loop ()
-                  | Resource_indexes _ when k = "partition_key" || k = "sort_key" ->
-                    fail "index key must appear under an index name"
-                  | _ -> fail (Printf.sprintf "unknown key %S" k))
-               | _ -> fail "unsupported sol.yml syntax")
-         in
-         loop ()))
+  else load_string ~path (In_channel.with_open_bin path In_channel.input_all)
 ;;
 
 let prefer a b =

@@ -29,6 +29,7 @@ depends: [
   "dynamodb-eio"
   "lambda-eio"
   "otoml"
+  "yaml"
   "jose"
   "ptime"
   "alcotest" {with-test}

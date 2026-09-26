@@ -67,6 +67,19 @@ let expect_load_error expected =
   | Error e -> check_str "message" expected e.message
 ;;
 
+(* REFAC-106: a YAML syntax error is libyaml's, prefixed, and names its line. *)
+let expect_yaml_error () =
+  match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+  | Ok _ -> Alcotest.fail "expected a YAML syntax error"
+  | Error e ->
+    let prefix = "invalid YAML: " in
+    check_str
+      "prefix"
+      prefix
+      (String.sub e.message 0 (min (String.length e.message) (String.length prefix)));
+    Alcotest.(check bool) "names a line" true (e.line > 0)
+;;
+
 let example_pluto_dir () =
   if Sys.file_exists "examples/pluto/sol.yml"
   then "examples/pluto"
@@ -239,7 +252,7 @@ services:
   api:
     uses: [app_db
 |};
-    expect_load_error "malformed list for uses")
+    expect_yaml_error ())
 ;;
 
 let test_malformed_quoted_scalar_fails () =
@@ -251,7 +264,7 @@ services:
   api:
     path: "app/core/api
 |};
-    expect_load_error "malformed quoted value for path")
+    expect_yaml_error ())
 ;;
 
 let test_malformed_quoted_list_item_fails () =
@@ -263,7 +276,7 @@ services:
   api:
     uses: ["app_db]
 |};
-    expect_load_error "malformed quoted value for uses")
+    expect_yaml_error ())
 ;;
 
 let test_undeclared_uses_ref_fails () =
@@ -448,7 +461,7 @@ target:
   registry: registry.example.com
     typo: nope
 |};
-    expect_load_error "unsupported sol.yml syntax")
+    expect_yaml_error ())
 ;;
 
 let test_empty_target_value_fails () =
@@ -462,7 +475,7 @@ target:
     expect_load_error "missing value for registry")
 ;;
 
-let test_target_after_resources_fails () =
+let test_target_after_resources_parses () =
   with_temp_dir (fun () ->
     write
       "sol.yml"
@@ -474,7 +487,16 @@ resources:
 target:
   registry: registry.example.com
 |};
-    expect_load_error "target must appear before resources or services")
+    (* REFAC-106: key order is not meaningful in YAML. *)
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      check_str
+        "registry"
+        "registry.example.com"
+        (match Sol_cli_config.target cfg with
+         | Some { registry = Some r; _ } -> r
+         | _ -> "<none>"))
 ;;
 
 let test_quoted_hash_survives () =
@@ -1624,6 +1646,53 @@ target:
          assert (String.length message > 0 && message <> "")))
 ;;
 
+(* REFAC-106: what a real YAML parser adds. *)
+let test_yaml_flow_map_and_exact_text () =
+  with_temp_dir (fun () ->
+    write_base ();
+    Sys.mkdir "sol" 0o755;
+    Sys.mkdir "sol/prod" 0o755;
+    Sys.mkdir "sol/prod/aws" 0o755;
+    write
+      "sol/prod/aws/us-east-1.yml"
+      {|target: { registry: r.example.com, cluster_name: 012, base_domain: "1.10" }
+services:
+  api: { scale: { min: 1, max: 3 } }
+|};
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+    | Ok cfg ->
+      (match Sol_cli_config.target cfg with
+       | Some t ->
+         check_str "registry" "r.example.com" (Option.value t.registry ~default:"");
+         (* numeric-looking text stays the text the user wrote *)
+         check_str "cluster_name" "012" (Option.value t.cluster_name ~default:"");
+         check_str "base_domain" "1.10" (Option.value t.base_domain ~default:"")
+       | None -> Alcotest.fail "no target"))
+;;
+
+let test_yaml_duplicate_key_fails () =
+  with_temp_dir (fun () ->
+    write
+      "sol.yml"
+      {|
+services:
+  api:
+    type: http
+  api:
+    type: worker
+|};
+    expect_load_error "duplicate service \"api\"")
+;;
+
+let test_yaml_syntax_error_names_its_line () =
+  with_temp_dir (fun () ->
+    write "sol.yml" "project: p\nservices:\n  api:\n    uses: [app_db\n";
+    match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
+    | Ok _ -> Alcotest.fail "expected a YAML syntax error"
+    | Error e -> Alcotest.(check int) "line" 4 e.line)
+;;
+
 let () =
   Alcotest.run
     "config"
@@ -1771,9 +1840,9 @@ let () =
             `Quick
             test_empty_target_value_fails
         ; Alcotest.test_case
-            "target after resources fails"
+            "target after resources parses"
             `Quick
-            test_target_after_resources_fails
+            test_target_after_resources_parses
         ; Alcotest.test_case "quoted hash survives" `Quick test_quoted_hash_survives
         ; Alcotest.test_case
             "single quoted hash survives"
@@ -1885,6 +1954,18 @@ let () =
             "example pluto prod target parses"
             `Quick
             test_example_pluto_prod_target_parses
+        ; Alcotest.test_case
+            "yaml: flow maps and exact scalar text (REFAC-106)"
+            `Quick
+            test_yaml_flow_map_and_exact_text
+        ; Alcotest.test_case
+            "yaml: duplicate key fails"
+            `Quick
+            test_yaml_duplicate_key_fails
+        ; Alcotest.test_case
+            "yaml: syntax error names its line"
+            `Quick
+            test_yaml_syntax_error_names_its_line
         ] )
     ]
 ;;
