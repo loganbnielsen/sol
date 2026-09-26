@@ -93,3 +93,24 @@ Not assumed — traced, and the trace is what makes the change safe:
   failure; a thread would take the parent and its siblings with it.
 - **Dropping the monitoring charts** to save time: that narrows what the golden
   path proves. Higher-value work first, and this change costs no coverage.
+
+## Measured on CI
+
+Same workflow, same runner class, the branch's own run against the pristine
+baseline measured at the top of this ticket:
+
+| Phase | Baseline (sequential) | Bounded concurrency |
+|---|---|---|
+| cluster provisioning | 28s | 21s |
+| **infra installs** | **259s** | **113s** |
+| job total, `golden-path-smoke` | 16m26s | **14m14s** |
+| job total, `golden-path-smoke-ts` | 11m10s | **8m43s** |
+
+`golden-path-smoke-ts` improved by 2m27s on the same change: the two jobs share the
+phase, which is the point of fixing it there rather than in one language's path.
+The OCaml job's remaining 14m14s is dominated by the per-PR framework build
+(INFRA-085's subject), so the TS path is now the shorter of the two.
+
+The installs all completed (8 × `installing...`, 8 × `ok`) and the phase duration is
+what the arithmetic predicts for three in flight against a ~252s serial total with
+a ~53s longest member.

@@ -36,6 +36,12 @@ let remove_quietly path =
 let spawn ~index install =
   let log = Filename.temp_file (Printf.sprintf "sol-local-%d-" index) ".log" in
   let fd = Unix.openfile log [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ] 0o600 in
+  (* Fork duplicates buffered output. The parent's progress lines are written
+     with [%!], so in practice there is nothing pending -- flushing first makes
+     that a property of this function rather than of every caller's format
+     strings, and keeps the parent's earlier output out of a child's log. *)
+  flush stdout;
+  flush stderr;
   match Unix.fork () with
   | 0 ->
     Unix.dup2 fd Unix.stdout;
