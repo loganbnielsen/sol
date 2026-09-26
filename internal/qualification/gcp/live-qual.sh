@@ -91,7 +91,16 @@ TFVARS="$ROOT/internal/qualification/gcp/qual-gcp.tfvars"
 # The qualification target is generated, not committed: check_no_account_artifacts.sh
 # refuses a tracked `sol/qual/` path, which is the repository's way of saying a
 # provisioned-target definition is scratch. It is removed on exit.
-TARGET="qual/gcp/us-central1"
+#
+# Overridable like CLUSTER, and for the same reason: the target names the Terraform
+# state objects (`sol/<target>/<layer>.tfstate`), so two attempts that share a key
+# share state. `CLUSTER` being unique is not enough when the key is fixed --
+# Attempt 8's failed install left the platform root of `qual/gcp/us-central1` with
+# 11 resources whose objects no longer exist, and a later attempt reusing that key
+# would inherit them as its own starting state instead of producing its own
+# specimen (INFRA-082 owns that stale state; it must not be overwritten).
+# Give each attempt its own key: TARGET=qual9/gcp/us-central1 ...
+TARGET="${TARGET:-qual/gcp/us-central1}"
 TARGET_FILE="$WORKSPACE/sol/$TARGET.yml"
 
 PROJECT="${PROJECT:-sol-qualification}"

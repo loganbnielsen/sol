@@ -479,6 +479,20 @@ else
     "NOT_FOUND: Unknown service account" "absent"
 fi
 
+# ── 15. the attempt's target key is its own ──────────────────────────────────
+# The key names the Terraform state objects, so a shared key means a shared state:
+# Attempt 8's failed install left platform state behind at its key, and an attempt
+# that reuses the key inherits it instead of producing its own specimen.
+printf '\nscenario: the target key is overridable\n'
+TARGET=qual9/gcp/us-central1 run_case target-override destroy
+has "the override reaches sol" "cloud destroy qual9/gcp/us-central1" "$TMP/target-override.argv"
+has "and names the state objects it will read" "sol/qual9/gcp/us-central1/cloud.tfstate" "$TMP/target-override.argv"
+if grep -q 'sol/qual/gcp/us-central1/' "$TMP/target-override.argv"; then
+  no "the default key is not silently used as well" "no sol/qual/ path" "found one"
+else
+  ok "the default key is not silently used as well"
+fi
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = "0" ] || exit 1
 # Only leftovers matter: the harness writes the target file and its directory, and the
