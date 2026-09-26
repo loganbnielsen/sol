@@ -2,11 +2,14 @@
 
 - **Classification:** `VERIFIED_DEFECT` (live: GCP Attempt 10's frozen bundle, cross-checked against
   the chart's own values and templates)
-- **State:** `FIXED_UNQUALIFIED` — the fix landed 2026-09-26 in `helm_release.cert_manager`
-  (`INFRA-088`, `global.leaderElection.namespace` by reference to the cert-manager namespace), with
-  a guard and six mutations over it. **Not qualified:** no live run has yet shown leadership
-  acquired, a populated `caBundle` or a succeeding check, and a static/offline fix is not evidence
-  that a cluster behaves.
+- **State:** `QUALIFIED` (live, 2026-09-26, GCP Attempt 11 at `main @ 17afc4b2`) — every step of
+  the chain was observed in the positive direction on a fresh target: leader-election
+  Role/RoleBinding created in the `cert-manager` namespace, `successfully acquired lease
+  cert-manager/cert-manager-controller`, cainjector's lease held, **no** `managed-namespaces-limitation`
+  denial anywhere, cainjector `"Updated object"` with the webhook `caBundle` populated (896 bytes),
+  and cert-manager's release `Creation complete after 2m13s` with its `startupapicheck` Job removed
+  by `hook-succeeded`. Evidence frozen in `/tmp/sol-gcp-qual-11`; record
+  `internal/qualification/records/2026-09-26-gcp-attempt11-cert-manager-qualified-new-blocker.md`
 - **First identified:** 2026-09-26, GCP Attempt 10 (`main @ bc9062b0`)
 - **Provider:** GCP / GKE Autopilot. The defect is *not* provider-conditional in its fix: Sol should
   place cert-manager's leader-election resources in cert-manager's namespace everywhere, because
@@ -64,3 +67,21 @@ A live GCP run in which the controller and cainjector acquire their Lease in `ce
 webhook configuration carries an injected `caBundle`, the `startupapicheck` Job **Succeeds**, and
 the platform install continues past cert-manager — ideally on to `Ready`. Until that happens this
 finding stays fixed-but-unqualified, and no state above `FIXED_UNQUALIFIED` is claimed.
+
+## Live qualification — GCP Attempt 11 (2026-09-26)
+
+Fresh target `qual11/gcp/us-central1`, cluster `sol-qual-gcp-11`, at `main @ 17afc4b2`. The fix was
+in place (the `global.leaderElection.namespace` reference to the cert-manager namespace resource,
+with its guard and mutations) and the chain ran to completion:
+
+| Transition | Evidence |
+|---|---|
+| placement | `role.rbac.authorization.k8s.io/cert-manager:leaderelection`, `cert-manager-cainjector:leaderelection`, `cert-manager-webhook:dynamic-serving` — all in `cert-manager`, created 18:24:42Z |
+| no `kube-system` objects | no `cert-manager` Role/RoleBinding/Lease in `kube-system` |
+| leadership | `successfully acquired lease cert-manager/cert-manager-controller`; cainjector Lease `cert-manager-cainjector-leader-election` held |
+| no denial | zero `managed-namespaces-limitation` lines in either component's logs |
+| CA injection | cainjector `"Updated object"` (after transient optimistic-concurrency retries); `caBundle` **896 bytes** populated |
+| check | release **`Creation complete after 2m13s`**; `startupapicheck` Job absent (`hook-succeeded`) |
+
+**Qualified** — and it immediately exposed the next blocker (FND-0061 / INFRA-089), which is how
+the next frontier was supposed to appear.
