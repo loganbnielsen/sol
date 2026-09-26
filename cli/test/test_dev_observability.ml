@@ -11,7 +11,7 @@ let contains needle haystack =
 let assert_contains msg s needle = check_bool msg true (contains needle s)
 
 (* CODE_LAYER-007: dashboard_configmap_yaml reads the real
-   platform/cloud/modules/platform/dashboards/*.json files (via the same SOL_HOME
+   platform/shared/observability/dashboards/*.json files (via the same SOL_HOME
    ancestor-walk resolution proven out for render_alloy_config), the same
    files platform/cloud/modules/platform/main.tf's kubernetes_config_map.grafana_dashboards
    loads via file(...) -- not a fixture, so this exercises production
@@ -87,7 +87,7 @@ let test_tempo_datasource_configmap () =
 ;;
 
 (* CODE_LAYER-006: render_alloy_config is a hermetic templater over
-   platform/cloud/modules/platform/alloy/logs.alloy.tftpl (${var}/for/if substitution)
+   platform/shared/observability/alloy/logs.alloy.tftpl (${var}/for/if substitution)
    -- exercised here against a synthetic fixture, not the real file, so
    this test doesn't depend on the .tftpl being reachable inside dune's
    build sandbox (it isn't -- only directories a dune stanza references
@@ -158,7 +158,7 @@ let with_fake_sol_home f =
          (fun marker -> write_file (Filename.concat root marker) "")
          sol_home_markers;
        write_file
-         (Filename.concat root "platform/cloud/modules/platform/alloy/logs.alloy.tftpl")
+         (Filename.concat root "platform/shared/observability/alloy/logs.alloy.tftpl")
          fake_template;
        let prev = Sys.getenv_opt "SOL_HOME" in
        Unix.putenv "SOL_HOME" root;
@@ -223,7 +223,7 @@ let test_alloy_render_includes_basic_auth_when_set () =
 ;;
 
 (* OBS-039: `sol local infra up`'s own local-profile call -- reads the real
-   platform/cloud/modules/platform/alloy/logs.alloy.tftpl (CODE_LAYER-006: the same
+   platform/shared/observability/alloy/logs.alloy.tftpl (CODE_LAYER-006: the same
    file platform/cloud/modules/platform/main.tf's helm_release.alloy renders from).
    Sol_cli_cmd_new.infer_sol_home's ancestor walk from the test
    executable's own path escapes dune's _build sandbox and lands on the

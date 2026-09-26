@@ -396,7 +396,7 @@ resource "google_dns_managed_zone" "main" {
 # gate on observability_backend = "self_hosted_durable" (see
 # platform/cloud/modules/platform/main.tf's observability_backend_validation). That
 # gate also controls provider-specific Helm values baked into
-# platform/components/loki/values-durable.json (storage.type = "s3",
+# platform/shared/components.json (loki.durable) (storage.type = "s3",
 # object_store = "s3") -- wiring GCS through there needs a live GCP cluster
 # to validate against and is real, separate follow-up scope, not bundled
 # into this ticket's Layer 1 module per its own "no abstraction ahead of a

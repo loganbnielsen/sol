@@ -133,7 +133,7 @@ Sol is an opinionated production platform for backend systems. Its platform/CLI 
 When a new file has no obvious home, apply these rules rather than copying the tree. The full reasoning and the target layout are in `internal/pipeline/audits/2026-09-25_organization_proposal.md`.
 
 1. **The top level is split by audience.** `docs/` is for people *using* Sol; `internal/` is for people *building* Sol.
-2. **Code and assets are separate.** `cli/` holds the binary and what it needs (OCaml, its SQL migrations, test scripts). `platform/` holds what the CLI drives (Helm values, Terraform, templates, scripts) and no OCaml.
+2. **Code and assets are separate.** `cli/` holds the binary and what it needs (OCaml and its test scripts). `platform/` holds what the CLI drives (Helm values, Terraform, templates, scripts) and no OCaml.
 3. **Platform assets are split shared / local / cloud.** Platform config varies by *profile*; project config varies by *environment and target*.
 4. **Cloud providers mirror each other by role.** The directory is the marker: a registered provider with no `platform/cloud/<provider>/` is on paper, and one with a directory has every role.
 5. **Each kind of artifact has one home.** Implementer specs stay next to their code.
@@ -150,7 +150,6 @@ sol/
     bin/ test/                  ← command parsing, tests
     lib/{base,kube,workspace,cloud,deploy,local}/  ← one dune library per domain (REFAC-104);
                                   a DAG, base ← kube ← workspace ← cloud ← deploy; `sol_cli` is the umbrella
-    migrations/                 ← hosted control-plane SQL (currently unreferenced)
   platform/                     ← what the CLI drives — no OCaml
     components/                 ← Helm values shared by local and cloud
     cloud/                      ← Terraform: modules/platform (shared definition),
@@ -170,7 +169,7 @@ sol/
     ci/                         ← CI guardrails, classifier, mutation tests
     qualification/aws/          ← live AWS smoke harness + smoke toolkit
     pipeline/                   ← tickets/, audits/, dogfood/
-    tooling/                    ← soldev, sol_process, hooks/, perf/
+    tooling/                    ← soldev, sol_process, hooks/, perf/, scripts/ (test runner, perf, hook install)
     fixtures/                   ← test fixtures (OCaml-only worker workspace, e2e demo)
   # ── package contracts ────────────────────────────────────────────────────
   *.opam                        ← 9 hand-written package contracts (DEC-025); pin root for `internal/tooling/soldev`
@@ -332,7 +331,7 @@ own author here). The mechanics that are easy to get wrong:
   branch that names no ticket is exempt. This exists because four tickets once sat in
   READY with their fix already merged (`INFRA-048`, `INFRA-050`, `INFRA-057`), each
   costing the next worker a cycle.
-- **`merge-finish` runs `./platform/local/scripts/run_tests.sh` locally, but a
+- **`merge-finish` runs `./internal/tooling/scripts/run_tests.sh` locally, but a
   local failure is only *reported* — nothing is reverted** (BUG-033). That suite
   needs local kafka/e2e infra (`localhost:9092`); without it, kafka/e2e fail and the
   pipeline prints that the merge stands and `origin/main` is untouched. That is
@@ -349,7 +348,7 @@ own author here). The mechanics that are easy to get wrong:
   `internal/ci/check_ocamlformat.sh --staged` (staged files only, so unrelated
   work-in-progress cannot block you) or `dune fmt` before pushing. The pre-commit
   hook runs the `--staged` check too, once installed
-  (`platform/local/scripts/install-hooks.sh`) — it is not installed by
+  (`internal/tooling/scripts/install-hooks.sh`) — it is not installed by
   default.
 - **`gh` gaps in this environment:** `gh pr update-branch` does not exist (update
   locally instead), and `gh pr edit` fails with a Projects-classic GraphQL

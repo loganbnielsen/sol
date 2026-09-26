@@ -5,6 +5,20 @@
 - The 86 modules are now in `base`, `kube`, `workspace`, `cloud`, `deploy` and `local`, each a `(wrapped false)` dune library. The domain graph is acyclic, so every domain is enforced at build time; a mutation from `base` into `workspace` fails the build.
 - `sol_cli` is the umbrella, so consumers are unchanged. All module moves are pure renames, and the unused `sol_process` dependency is dropped.
 - Follow-up seams are noted in the ticket: `workspace → kube`, and `infer_sol_home` living with `sol new`.
+## Latest: REFAC-103 — maintainer scripts out of platform/local; unused files deleted (2026-09-25)
+
+- `run_tests.sh`, `perf.sh`, `install-hooks.sh` and `prove-workspace-independence.sh` moved to `internal/tooling/scripts/`. `platform/local` keeps the user-run `ensure-*.sh` native-infra scripts and `prepare-framework-deps.sh`, since `sol local` itself reads nothing there.
+- **Deleted as unused:**
+  - `platform/local/k8s/`, `schemas/`, `check-schemas.sh` and `setup-local.sh`;
+  - the two unreferenced `cli/migrations` SQL files;
+  - the module's leftover Terraform lock file.
+## Latest: REFAC-102 — platform component values are one profile-keyed components.json (2026-09-25)
+
+- 18 `platform/components/*/values-*.json` files became `platform/shared/components.json`, keyed `<component>.{common,local,durable}`, still JSON. The CLI's merged values and Terraform's rendered helm values are proven identical before and after.
+- The drift guard now rejects any layer that isn't a profile.
+## Latest: REFAC-101 — observability assets shared by local and cloud live in platform/shared (2026-09-25)
+
+- The Grafana dashboards and the Alloy config moved from the cloud module to `platform/shared/observability/`. The module and `sol local` read the same files, and nothing on the local path reads `platform/cloud/` any more.
 
 ## Latest: REFAC-100 — provider-mirrored cloud roots over a backend-free shared module (2026-09-25)
 
@@ -836,7 +850,7 @@ PR #136. The GitHub repo was renamed first (`loganbnielsen/sun` ->
 ## Latest: CODE_LAYER-011 — perf gate stops crying wolf; automatic revert unblocked (2026-09-06)
 
 Picked up from `project/tickets/IN_PROGRESS/CODE_LAYER-011.md`. The
-post-merge perf gate (`platform/local/scripts/run_tests.sh`, invoked by
+post-merge perf gate (`internal/tooling/scripts/run_tests.sh`, invoked by
 `sundev pipeline merge`) flagged an e2e-suite "regression" 4 times in one
 session (CODE_LAYER-005/006/007/009); every time, an immediate manual
 re-run at no other change came back within baseline noise, and none of
@@ -1369,7 +1383,7 @@ nothing has actually collided. Verified by scaffolding a real workspace with `su
 workspace` and running `dune build` against it (not just the tautological golden
 tests) — compiles clean.
 
-`platform/local/scripts/run_tests.sh`'s `storage` suite was removed entirely (same
+`internal/tooling/scripts/run_tests.sh`'s `storage` suite was removed entirely (same
 treatment as the `observability` suite in the obs-eio cutover below) — there's no
 storage-specific test surface left in this repo; Postgres-touching example code is
 still covered by the `e2e` suite. `tools/perf/perf_baseline.json`'s `storage` entry

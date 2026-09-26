@@ -49,25 +49,30 @@ twice, forever.
 
 ## Decision
 
-Establish `platform/components/<name>/` as the single authoritative home
-for platform-component desired state. Each component owns up to three
-files:
+Establish `platform/shared/components.json` as the single authoritative home
+for platform-component desired state. Each component owns three layers,
+keyed by component and then by layer:
 
+```json
+{
+  "loki": { "common": { ... }, "local": { ... }, "durable": { ... } },
+  "redpanda": { ... }
+}
 ```
-platform/components/loki/
-  values-common.json
-  values-local.json
-  values-durable.json
-```
+
+*(Amended by REFAC-102: this was one directory per component holding
+`values-common.json`, `values-local.json` and `values-durable.json`. One file
+puts every local-vs-durable difference on one screen; the layering and every
+rule below are unchanged.)*
 
 **Format: JSON, not YAML.** The OCaml side has no YAML dependency today
 (`cli/lib/dune` pulls `yojson`+`otoml`, no `yaml`); Terraform's
 built-in `jsondecode()` needs no provider. JSON is valid input everywhere
 YAML is accepted (Helm's `-f`, Terraform's `helm_release.values`), so this
-gets both execution paths reading the same files with zero new
+gets both execution paths reading the same file with zero new
 dependencies on either side.
 
-**`values-common.json` must stay deliberately sparse.** It holds only
+**The `common` layer must stay deliberately sparse.** It holds only
 configuration that is genuinely profile-independent — schema versions,
 feature flags, log-parsing config, common labels, component behavioral
 defaults. It must NOT hold replica counts, persistence topology, storage
@@ -86,9 +91,9 @@ integration environment could run `durable` without being production.
 **Precedence is fixed and layered by ownership, not just by file order**:
 
 ```
-values-common.json
+<component>.common
       ↓ overridden by
-values-<profile>.json   (local | durable)
+<component>.<profile>   (local | durable)
       ↓ overridden by
 infrastructure-bindings  (narrow, mechanically produced from Layer 1 outputs)
 ```
@@ -106,16 +111,16 @@ through the binding, the component only declares it needs
 `serviceAccount.annotations`).
 
 **Execution layers select and merge; they do not define.** `cmd_local.ml`
-becomes: "install Loki using `values-common.json` + `values-local.json`."
+becomes: "install Loki using `loki.common` + `loki.local`."
 `platform/cloud/modules/platform/main.tf`'s `helm_release` becomes: "install Loki
-using `jsondecode(file(...common...))` + `jsondecode(file(...durable...))`
+using `local.platform_components.loki.common` + `...loki.durable`
 + this run's infrastructure bindings." Neither owns Loki's configuration
 anymore; both own only orchestration.
 
 **Guardrail, applied symmetrically to both execution paths**: CI should
 flag new inline Helm configuration growing back in either `cmd_local.ml`
 (new `helm_install ~values:[...]` literals for a component that has a
-`platform/components/` entry) or `platform/cloud/modules/platform/main.tf` (new
+`platform/shared/components.json` entry) or `platform/cloud/modules/platform/main.tf` (new
 `set {}` blocks or growing `yamlencode(...)`/`jsonencode(...)` literals
 for the same). Removing duplication from one side while letting the other
 become the new dumping ground defeats the point.

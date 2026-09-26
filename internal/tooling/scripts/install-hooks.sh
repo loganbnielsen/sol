@@ -3,7 +3,7 @@
 # Re-running is safe — existing symlinks are updated, existing non-symlink hooks
 # are backed up first.
 #
-# Usage: bash platform/local/scripts/install-hooks.sh
+# Usage: bash internal/tooling/scripts/install-hooks.sh
 
 set -euo pipefail
 

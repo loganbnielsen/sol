@@ -17,7 +17,7 @@
 # the developer's default switch.
 #
 # Usage:
-#   bash platform/local/scripts/prove-workspace-independence.sh [workspace-dir]
+#   bash internal/tooling/scripts/prove-workspace-independence.sh [workspace-dir]
 #     workspace-dir  defaults to examples/pluto
 #
 # Exits non-zero on the first violated invariant, naming it.
