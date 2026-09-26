@@ -143,15 +143,12 @@ let run_unit ~ctx ~target (options : log_options) scope : unit =
   let k8s_name = k8s_name_or_exit name in
   let primitive = svc.Sol_cli_manifest.primitive in
   let backend, base_domain =
-    let pair =
-      Sol_cli_exit.or_exit
-        (Sol_cli_observability_url.effective_backend_and_base_domain
-           ~explicit_backend
-           ~explicit_base_domain
-           ~target
-           ())
-    in
-    pair
+    Sol_cli_exit.or_exit
+      (Sol_cli_observability_url.effective_backend_and_base_domain
+         ~explicit_backend
+         ~explicit_base_domain
+         ~target
+         ())
   in
   (match
      Sol_cli_observability_url.resolve ~backend ?base_domain ?override:grafana_base_url ()
@@ -305,15 +302,12 @@ let run_release ~ctx ~target (options : log_options) release : unit =
     exit 1
   | Sol_cli_logs.Release_logs { release_id; logql } ->
     let backend, base_domain =
-      let pair =
-        Sol_cli_exit.or_exit
-          (Sol_cli_observability_url.effective_backend_and_base_domain
-             ~explicit_backend
-             ~explicit_base_domain:observability.base_domain
-             ~target
-             ())
-      in
-      pair
+      Sol_cli_exit.or_exit
+        (Sol_cli_observability_url.effective_backend_and_base_domain
+           ~explicit_backend
+           ~explicit_base_domain:observability.base_domain
+           ~target
+           ())
     in
     (match
        Sol_cli_observability_url.resolve

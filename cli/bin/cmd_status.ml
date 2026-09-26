@@ -532,15 +532,12 @@ let run ~ctx (options : status_options) =
       (Sol_cli_workload_selection.resolve ~what:"status scope" request services)
   in
   let backend_and_base_domain () =
-    let pair =
-      Sol_cli_exit.or_exit
-        (Sol_cli_observability_url.effective_backend_and_base_domain
-           ~explicit_backend
-           ~explicit_base_domain
-           ~target
-           ())
-    in
-    pair
+    Sol_cli_exit.or_exit
+      (Sol_cli_observability_url.effective_backend_and_base_domain
+         ~explicit_backend
+         ~explicit_base_domain
+         ~target
+         ())
   in
   match scope with
   | Sol_cli_open.Workspace ->
