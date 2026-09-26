@@ -1,5 +1,12 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: REFAC-108 — one validated way into the workspace (2026-09-26)
+
+- `check`, `up`, `logs`, `fn` and `status` all enter through `Sol_cli_workspace.enter_or_exit`.
+- Fixed: `logs`, `fn` and `status` had skipped nested-workspace validation and ran outside a workspace using the cwd's name.
+- `validate` now uses `Array.find_map`, with comments that say which walk goes which way.
+- Removing the last `chdir` (119 path sites) is filed as REFAC-110 in the backlog for a decision.
+
 ## Latest: FEAT-100 — deployment config is sol.yml → environment → target (2026-09-26)
 
 - Targets are declared in `sol/environments.yml`, with each environment's policy set once. An optional gitignored `sol/environments.local.yml` adds account-specific values (disjoint keys) or whole environments; qualification uses it.

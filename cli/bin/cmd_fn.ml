@@ -17,12 +17,8 @@
 
 open Cmdliner
 
-let workspace_name () =
-  (match Sol_cli_workspace.find_root ~dir:(Sys.getcwd ()) with
-   | Some root -> Sys.chdir root
-   | None -> ());
-  Filename.basename (Sys.getcwd ())
-;;
+(* REFAC-108: enter through the validated boundary, like every command. *)
+let workspace_name () = Filename.basename (Sol_cli_workspace.enter_or_exit ())
 
 (* Same resolution shape as `sol logs`'s resolve_unit: a selector must name
    exactly one workload. Here the selector is a required positional
