@@ -44,14 +44,15 @@ type deploy_request =
    error carries git's own reason; there is no sentinel tag. *)
 let git_sha () =
   match
-    Sol_cli_process.run (Sol_cli_process.cmd [ "git"; "rev-parse"; "--short"; "HEAD" ])
+    Sol_cli_process.output (Sol_cli_process.cmd [ "git"; "rev-parse"; "--short"; "HEAD" ])
   with
-  | Ok { exit_code = 0; stdout; _ } when String.trim stdout <> "" ->
-    Ok (String.trim stdout)
-  | Ok { exit_code; stderr; _ } ->
-    let reason = String.trim stderr in
+  | Ok sha when String.trim sha <> "" -> Ok (String.trim sha)
+  | Ok _ -> Error "git rev-parse printed no commit"
+  | Error (Sol_cli_process.Non_zero r) ->
     Error
-      (if reason = "" then Printf.sprintf "git rev-parse exited %d" exit_code else reason)
+      (match String.trim r.stderr with
+       | "" -> Printf.sprintf "git rev-parse exited %d" r.exit_code
+       | reason -> reason)
   | Error e -> Error (Sol_cli_process.error_to_string e)
 ;;
 

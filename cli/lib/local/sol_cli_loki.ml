@@ -117,7 +117,7 @@ let classify_process_error (e : Sol_cli_process.error) : fetch_error =
   | Sol_cli_process.Spawn_failed msg -> Other msg
   | Sol_cli_process.Non_zero { exit_code = 28; _ } -> Timeout
   | Sol_cli_process.Non_zero { exit_code = 6 | 7 | 56; _ } -> Connection_failed
-  | Sol_cli_process.Non_zero { exit_code; stderr } ->
+  | Sol_cli_process.Non_zero { exit_code; stderr; stdout = _ } ->
     Other (Printf.sprintf "curl exit %d: %s" exit_code stderr)
 ;;
 
@@ -212,24 +212,14 @@ let query_logql ~base_url ~logql ?credentials ?(limit = 100) ?(timeout_s = 5.0) 
       | None -> []
       | Some { password; _ } -> [ password ]
     in
+    (* OBS-031: a non-zero curl exit goes through the same classifier as a spawn
+       failure, so connection failures and timeouts read as such rather than as
+       raw curl stderr. *)
     (match
-       Sol_cli_process.run
+       Sol_cli_process.run_success
          (Sol_cli_process.cmd ~timeout_s:(timeout_s +. 2.0) ~redact argv)
      with
      | Error e -> Error (classify_process_error e)
-     | Ok r when r.Sol_cli_process.exit_code <> 0 ->
-       (* OBS-031: route a nonzero curl exit through the same classifier used
-       for [Sol_cli_process.run]'s own [Non_zero] error, so connection
-       failures/timeouts get "connection failed"/"query timed out" instead
-       of a raw curl stderr dump -- [Sol_cli_process.run] (unlike [run_ok])
-       never itself produces [Non_zero], so without this the classifier's
-       6/7/56/28 handling was unreachable dead code from this call site. *)
-       Error
-         (classify_process_error
-            (Sol_cli_process.Non_zero
-               { exit_code = r.Sol_cli_process.exit_code
-               ; stderr = r.Sol_cli_process.stderr
-               }))
      | Ok r ->
        let body, code = split_body_and_status r.Sol_cli_process.stdout in
        (match code with

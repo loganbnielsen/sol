@@ -93,13 +93,18 @@ let run ~ctx selector =
      typing a command") was the assumption that turned out to be false. *)
   let job_name = Sol_cli_manual_job_name.mint ~k8s_name in
   match
-    Sol_cli_kubectl.create_job_from_cronjob ~ctx ~cronjob:k8s_name ~job_name ~namespace:ns
+    Sol_cli_process.check
+      (Sol_cli_kubectl.create_job_from_cronjob
+         ~ctx
+         ~cronjob:k8s_name
+         ~job_name
+         ~namespace:ns)
   with
+  | Error (Sol_cli_process.Non_zero r) ->
+    Printf.eprintf "error: kubectl create job failed:\n%s\n" (String.trim r.stderr);
+    exit 1
   | Error e ->
     Printf.eprintf "error: %s\n" (Sol_cli_process.error_to_string e);
-    exit 1
-  | Ok r when r.Sol_cli_process.exit_code <> 0 ->
-    Printf.eprintf "error: kubectl create job failed:\n%s\n" (String.trim r.stderr);
     exit 1
   | Ok _ ->
     Printf.printf

@@ -102,31 +102,32 @@ let run_test target_opt alertmanager_url dry_run () =
        else (
          Printf.printf "Sending a synthetic alert through %s ...\n%!" url;
          match
-           Sol_cli_process.run
-             (Sol_cli_process.cmd
-                [ "curl"
-                ; "-sS"
-                ; "-f"
-                ; "-X"
-                ; "POST"
-                ; "-H"
-                ; "Content-Type: application/json"
-                ; "--data"
-                ; body
-                ; url
-                ])
+           Sol_cli_process.check
+             (Sol_cli_process.run
+                (Sol_cli_process.cmd
+                   [ "curl"
+                   ; "-sS"
+                   ; "-f"
+                   ; "-X"
+                   ; "POST"
+                   ; "-H"
+                   ; "Content-Type: application/json"
+                   ; "--data"
+                   ; body
+                   ; url
+                   ]))
          with
-         | Ok r when r.Sol_cli_process.exit_code = 0 ->
+         | Ok _ ->
            Printf.printf
              "Alertmanager accepted the synthetic alert.\n\n\
               This proves the route is configured and reachable. Confirm the named owner \
               received and acknowledged it: that delivered-and-acknowledged result is \
               the HARDEN-002 evidence, not this command's exit status.\n"
-         | Ok r ->
+         | Error (Sol_cli_process.Non_zero r) ->
            Printf.eprintf
              "error: Alertmanager rejected the synthetic alert (curl exit %d).\n%s\n"
-             r.Sol_cli_process.exit_code
-             (String.trim r.Sol_cli_process.stderr);
+             r.exit_code
+             (String.trim r.stderr);
            Printf.eprintf
              "Is the port-forward up? e.g. `kubectl -n monitoring port-forward \
               svc/prometheus-alertmanager 9093:9093`.\n";

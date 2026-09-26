@@ -142,12 +142,47 @@ let test_error_to_string_spawn () =
 let test_error_to_string_nonzero () =
   let s =
     Sol_cli_process.error_to_string
-      (Sol_cli_process.Non_zero { exit_code = 5; stderr = "bad" })
+      (Sol_cli_process.Non_zero { exit_code = 5; stdout = ""; stderr = "bad" })
   in
   check_bool "contains 5" true (contains s ~needle:"5")
 ;;
 
 (* ── suite ───────────────────────────────────────────────────────────────── *)
+
+(* REFAC-116: Ok means the command succeeded. *)
+let test_run_success_and_output () =
+  let open Sol_cli_process in
+  (match output (cmd [ "sh"; "-c"; "echo hi" ]) with
+   | Ok s -> Alcotest.(check string) "stdout (trimmed, as run does)" "hi" s
+   | Error e -> Alcotest.fail (error_to_string e));
+  (match run_success (cmd [ "sh"; "-c"; "echo out; echo err >&2; exit 3" ]) with
+   | Error (Non_zero r) ->
+     Alcotest.(check int) "exit code" 3 r.exit_code;
+     Alcotest.(check string) "stdout kept" "out" r.stdout;
+     Alcotest.(check string) "stderr kept" "err" r.stderr
+   | Ok _ -> Alcotest.fail "a failing command was Ok"
+   | Error e -> Alcotest.fail (error_to_string e));
+  match output (cmd [ "/nonexistent-zxqw" ]) with
+  | Error (Spawn_failed _) -> ()
+  | _ -> Alcotest.fail "a missing binary is Spawn_failed"
+;;
+
+let test_check_is_idempotent () =
+  let open Sol_cli_process in
+  let r = run (cmd [ "sh"; "-c"; "exit 2" ]) in
+  Alcotest.(check bool) "check (check r) = check r" true (check (check r) = check r);
+  Alcotest.(check bool) "run itself is Ok for a non-zero exit" true (Result.is_ok r)
+;;
+
+let test_failure_output () =
+  let f = Sol_cli_process.failure_output in
+  Alcotest.(check string) "stderr first" "boom" (f ~stdout:"out" ~stderr:" boom\n");
+  Alcotest.(check string)
+    "stdout when stderr is empty"
+    "out"
+    (f ~stdout:"out\n" ~stderr:"  ");
+  Alcotest.(check string) "empty" "" (f ~stdout:"" ~stderr:"")
+;;
 
 let () =
   Alcotest.run
@@ -156,6 +191,12 @@ let () =
       , [ Alcotest.test_case "successful run" `Quick test_successful_run
         ; Alcotest.test_case "non-zero exit" `Quick test_non_zero_exit
         ; Alcotest.test_case "run_ok non-zero" `Quick test_non_zero_via_run_ok
+        ; Alcotest.test_case
+            "run_success and output (REFAC-116)"
+            `Quick
+            test_run_success_and_output
+        ; Alcotest.test_case "check is idempotent" `Quick test_check_is_idempotent
+        ; Alcotest.test_case "failure_output" `Quick test_failure_output
         ; Alcotest.test_case "captured stderr" `Quick test_captured_stderr
         ; Alcotest.test_case
             "stdout stderr separate"

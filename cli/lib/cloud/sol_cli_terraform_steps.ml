@@ -8,14 +8,14 @@
 let terraform_outcome (r : (Sol_cli_process.result, Sol_cli_process.error) result)
   : (unit, string) result
   =
-  match r with
-  | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
-  | Ok r ->
-    let detail = String.trim r.Sol_cli_process.stderr in
+  match Sol_cli_process.check r with
+  | Ok _ -> Ok ()
+  | Error (Sol_cli_process.Non_zero r) ->
+    let detail = String.trim r.stderr in
     Error
       (Printf.sprintf
          "terraform exited %d%s"
-         r.Sol_cli_process.exit_code
+         r.exit_code
          (if detail = "" then "." else ":\n" ^ detail))
   | Error error ->
     Error
@@ -29,14 +29,14 @@ let terraform_outcome (r : (Sol_cli_process.result, Sol_cli_process.error) resul
 let terraform_stdout (r : (Sol_cli_process.result, Sol_cli_process.error) result)
   : (string, string) result
   =
-  match r with
-  | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok r.Sol_cli_process.stdout
-  | Ok r ->
-    let detail = String.trim r.Sol_cli_process.stderr in
+  match Sol_cli_process.check r with
+  | Ok r -> Ok r.Sol_cli_process.stdout
+  | Error (Sol_cli_process.Non_zero r) ->
+    let detail = String.trim r.stderr in
     Error
       (Printf.sprintf
          "terraform exited %d%s"
-         r.Sol_cli_process.exit_code
+         r.exit_code
          (if detail = "" then "." else ":\n" ^ detail))
   | Error error ->
     Error

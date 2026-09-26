@@ -77,20 +77,21 @@ let gcp_absence_message ?project stderr =
 
 let gcp_peering_probe ~project ~network =
   match
-    Sol_cli_process.run
-      (Sol_cli_process.cmd
-         [ "gcloud"
-         ; "services"
-         ; "vpc-peerings"
-         ; "list"
-         ; "--network=" ^ network
-         ; "--service=servicenetworking.googleapis.com"
-         ; "--project"
-         ; project
-         ; "--format=value(peering)"
-         ])
+    Sol_cli_process.check
+      (Sol_cli_process.run
+         (Sol_cli_process.cmd
+            [ "gcloud"
+            ; "services"
+            ; "vpc-peerings"
+            ; "list"
+            ; "--network=" ^ network
+            ; "--service=servicenetworking.googleapis.com"
+            ; "--project"
+            ; project
+            ; "--format=value(peering)"
+            ]))
   with
-  | Ok result when result.Sol_cli_process.exit_code = 0 ->
+  | Ok result ->
     let peerings =
       String.split_on_char '\n' result.Sol_cli_process.stdout
       |> List.map String.trim
@@ -103,13 +104,13 @@ let gcp_peering_probe ~project ~network =
         (Printf.sprintf
            "the service-networking peering survived the destroy: %s"
            (String.concat ", " peerings))
-  | Ok result when gcp_absence_message ~project result.Sol_cli_process.stderr ->
-    Probe_gone
-  | Ok result ->
+  | Error (Sol_cli_process.Non_zero result)
+    when gcp_absence_message ~project result.stderr -> Probe_gone
+  | Error (Sol_cli_process.Non_zero result) ->
     Probe_indeterminate
       (Printf.sprintf
          "the service-networking peering could not be checked: %s"
-         (String.trim result.Sol_cli_process.stderr))
+         (String.trim result.stderr))
   | Error _ ->
     Probe_indeterminate
       "the service-networking peering could not be checked: gcloud is unavailable"

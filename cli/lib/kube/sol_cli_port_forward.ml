@@ -87,11 +87,11 @@ let read_proc_cmdline pid =
   with
   | _ ->
     (match
-       Sol_cli_process.run
-         (Sol_cli_process.cmd [ "ps"; "-p"; string_of_int pid; "-o"; "args=" ])
+       Sol_cli_process.check
+         (Sol_cli_process.run
+            (Sol_cli_process.cmd [ "ps"; "-p"; string_of_int pid; "-o"; "args=" ]))
      with
-     | Ok r when r.Sol_cli_process.exit_code = 0 ->
-       String.split_on_char ' ' r.Sol_cli_process.stdout
+     | Ok r -> String.split_on_char ' ' r.Sol_cli_process.stdout
      | _ -> [])
 ;;
 

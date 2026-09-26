@@ -75,7 +75,7 @@ let provisioner_kubeconfig ?role_arn ~region outputs f =
        KUBE_CONFIG_PATH/KUBE_CONFIG_PATHS, not KUBECONFIG. *)
     let env = Sol_cli_cluster.provisioner_kube_env path in
     match
-      Sol_cli_process.run
+      Sol_cli_process.run_ok
         (Sol_cli_process.cmd
            ~env
            [ "aws"
@@ -95,7 +95,7 @@ let provisioner_kubeconfig ?role_arn ~region outputs f =
            ; path
            ])
     with
-    | Ok result when result.exit_code = 0 -> Ok (f env)
+    | Ok () -> Ok (f env)
     | _ -> Error "could not establish ephemeral provisioner cluster access")
 ;;
 
@@ -414,10 +414,11 @@ let refusal_is_deescalation assumption detail =
    comparison (account plus normalised role) as the follow-up that makes it exact. *)
 let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
   match
-    Sol_cli_process.run
-      (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ])
+    Sol_cli_process.check
+      (Sol_cli_process.run
+         (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ]))
   with
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
+  | Ok r ->
     (match whoami_identity_of_json r.Sol_cli_process.stdout with
      | Ok identity ->
        let shown =
@@ -431,10 +432,8 @@ let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
         | None ->
           Sol_cli_cloud_lifecycle.Principal_probe_failed "the response named no principal")
      | Error why -> Sol_cli_cloud_lifecycle.Principal_probe_failed why)
-  | Ok r ->
-    let detail =
-      String.trim (r.Sol_cli_process.stderr ^ " " ^ r.Sol_cli_process.stdout)
-    in
+  | Error (Sol_cli_process.Non_zero r) ->
+    let detail = String.trim (r.stderr ^ " " ^ r.stdout) in
     (* A refusal from the cluster is the expected post-de-escalation state. Anything
        else -- a credential that could not be assumed, a token that could not be
        generated, no reachable API -- is a measurement failure, and absence of evidence
@@ -448,20 +447,21 @@ let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
          not the path-free form the comparison wants, because this is an IAM call. *)
       let assumption =
         match
-          Sol_cli_process.run
-            (Sol_cli_process.cmd
-               ~env
-               [ "aws"
-               ; "sts"
-               ; "assume-role"
-               ; "--role-arn"
-               ; provisioner_role_arn
-               ; "--role-session-name"
-               ; "sol-deescalation-check"
-               ])
+          Sol_cli_process.check
+            (Sol_cli_process.run
+               (Sol_cli_process.cmd
+                  ~env
+                  [ "aws"
+                  ; "sts"
+                  ; "assume-role"
+                  ; "--role-arn"
+                  ; provisioner_role_arn
+                  ; "--role-session-name"
+                  ; "sol-deescalation-check"
+                  ]))
         with
-        | Ok r when r.Sol_cli_process.exit_code = 0 -> Credential_assumable
-        | Ok _ -> Credential_refused
+        | Ok _ -> Credential_assumable
+        | Error (Sol_cli_process.Non_zero _) -> Credential_refused
         | Error _ -> Credential_unchecked
       in
       refusal_is_deescalation assumption detail)
@@ -582,11 +582,11 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
   let rec attempt remaining =
     let outcome =
       provisioner_kubeconfig ~role_arn:provisioner_role_arn ~region outputs (fun env ->
-        Sol_cli_process.run
+        Sol_cli_process.run_success
           (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ]))
     in
     match outcome with
-    | Ok (Ok r) when r.Sol_cli_process.exit_code = 0 ->
+    | Ok (Ok r) ->
       let json = String.trim r.Sol_cli_process.stdout in
       (* Persisted before anything is asserted, on every attempt: the run that fails on a
          shape mismatch is the one whose capture matters most, and writing afterwards would

@@ -95,9 +95,11 @@ let gcp_outputs_of_json text =
    here costs nothing; failing there costs an apply. *)
 let gcp_platform_toolchain_result () : (unit, string) result =
   match
-    Sol_cli_process.run (Sol_cli_process.cmd [ "gke-gcloud-auth-plugin"; "--version" ])
+    Sol_cli_process.check
+      (Sol_cli_process.run
+         (Sol_cli_process.cmd [ "gke-gcloud-auth-plugin"; "--version" ]))
   with
-  | Ok result when result.Sol_cli_process.exit_code = 0 -> Ok ()
+  | Ok _ -> Ok ()
   | _ ->
     Error
       "the platform cannot reach a GKE cluster without `gke-gcloud-auth-plugin`, which \
@@ -123,24 +125,25 @@ let gcp_provisioner_kubeconfig_result
   Fun.protect ~finally:cleanup (fun () ->
     let env = Sol_cli_cluster.provisioner_kube_env path in
     match
-      Sol_cli_process.run
-        (Sol_cli_process.cmd
-           ~env
-           [ "gcloud"
-           ; "container"
-           ; "clusters"
-           ; "get-credentials"
-           ; outputs.cluster_name
-           ; "--region"
-           ; region
-           ; "--project"
-           ; outputs.project_id
-             (* Impersonation is the point: Sol acts as the target's named
+      Sol_cli_process.check
+        (Sol_cli_process.run
+           (Sol_cli_process.cmd
+              ~env
+              [ "gcloud"
+              ; "container"
+              ; "clusters"
+              ; "get-credentials"
+              ; outputs.cluster_name
+              ; "--region"
+              ; region
+              ; "--project"
+              ; outputs.project_id
+                (* Impersonation is the point: Sol acts as the target's named
               provisioner, through short-lived tokens, rather than as whoever
               happened to run the command. *)
-           ; "--impersonate-service-account"
-           ; outputs.provisioner_service_account
-             (* No `--kubeconfig`. Attempt 2's first live failure was
+              ; "--impersonate-service-account"
+              ; outputs.provisioner_service_account
+                (* No `--kubeconfig`. Attempt 2's first live failure was
                 "unrecognized arguments: --kubeconfig": the flag does not exist on
                 this subcommand. gcloud writes to the kubeconfig named by
                 `$KUBECONFIG`, which [provisioner_kube_env] has already exported for
@@ -151,11 +154,11 @@ let gcp_provisioner_kubeconfig_result
                 cannot falsify the interface it was modelled on.
                 `check_gcloud_interface.sh` now validates the argv against gcloud's
                 own help output instead. *)
-           ; "--quiet"
-           ])
+              ; "--quiet"
+              ]))
     with
-    | Ok result when result.exit_code = 0 -> f ~env
-    | Ok result ->
+    | Ok _ -> f ~env
+    | Error (Sol_cli_process.Non_zero result) ->
       (* Attempt 2 also showed why this failed without saying so. The message named
          the step and nothing else, so the reason -- a missing impersonation grant
          versus a wrong flag -- had to be reconstructed by hand. *)
@@ -163,8 +166,8 @@ let gcp_provisioner_kubeconfig_result
         (Printf.sprintf
            "could not establish ephemeral cluster access as %s: gcloud exited %d%s"
            outputs.provisioner_service_account
-           result.Sol_cli_process.exit_code
-           (let detail = String.trim result.Sol_cli_process.stderr in
+           result.exit_code
+           (let detail = String.trim result.stderr in
             if detail = "" then "" else ":\n" ^ detail))
     | Error error ->
       Error

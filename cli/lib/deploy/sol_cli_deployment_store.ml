@@ -30,18 +30,15 @@ let list ~ctx ~(workspace : string) : (Sol_cli_deployment.t list, string) result
       (Sol_cli_release.sanitize_label workspace)
   in
   match
-    Sol_cli_kubectl.get_raw
-      ~ctx
-      ~args:[ "get"; "configmap"; "-n"; "default"; "-l"; selector; "-o"; "json" ]
+    Sol_cli_process.check
+      (Sol_cli_kubectl.get_raw
+         ~ctx
+         ~args:[ "get"; "configmap"; "-n"; "default"; "-l"; selector; "-o"; "json" ])
   with
-  | Error e -> Error (Sol_cli_process.error_to_string e)
-  | Ok r when r.Sol_cli_process.exit_code <> 0 ->
-    let detail =
-      if r.Sol_cli_process.stderr <> ""
-      then r.Sol_cli_process.stderr
-      else r.Sol_cli_process.stdout
-    in
+  | Error (Sol_cli_process.Non_zero r) ->
+    let detail = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in
     Error (Printf.sprintf "kubectl get configmap failed: %s" (String.trim detail))
+  | Error e -> Error (Sol_cli_process.error_to_string e)
   | Ok r ->
     (try
        Sol_cli_deployment.parse_kubectl_list
