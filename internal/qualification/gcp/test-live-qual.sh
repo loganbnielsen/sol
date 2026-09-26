@@ -210,6 +210,14 @@ case "$*" in
       *)         : ;;
     esac
     ;;
+  *"logs deploy/cert-manager-cainjector"*|*"logs deploy/cert-manager "*|*"logs deploy/cert-manager")
+    case "${STUB_COMPONENT_SIGNATURE:-none}" in
+      leader)
+        printf 'E0926 15:16:38.035149       1 leaderelection.go:336] error initially creating leader election record: leases.coordination.k8s.io is forbidden: User \"system:serviceaccount:cert-manager:cert-manager-cainjector\" cannot create resource \"leases\" in API group \"coordination.k8s.io\" in the namespace \"kube-system\": GKE Warden authz [denied by managed-namespaces-limitation]: the namespace \"kube-system\" is managed and the request verb \"create\" is denied\n'
+        ;;
+      *) : ;;
+    esac
+    ;;
   *"get job cert-manager-startupapicheck -o json"*)
     printf '{"status":{"succeeded":%s}}\n' "${STUB_JOB_SUCCEEDED:-0}" ;;
 esac
@@ -377,6 +385,25 @@ has "a dial-timeout signature classifies as WEBHOOK_REACHABILITY" \
 run_case class-empty cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1
 has "no usable evidence classifies as UNKNOWN (never reachability by default)" \
   "classification: UNKNOWN" "$TMP/class-empty.logs/fnd0010-classification.txt"
+# Attempt 10's actual cause, and the reason it needs priority: the components' own leader-election
+# denial is upstream of an un-injected caBundle, so when both appear the denial is the cause.
+run_case class-leader cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_COMPONENT_SIGNATURE=leader
+has "a leader-election denial classifies as LEADER_ELECTION_DENIED" \
+  "classification: LEADER_ELECTION_DENIED" "$TMP/class-leader.logs/fnd0010-classification.txt"
+run_case class-leader-x509 cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 \
+  STUB_COMPONENT_SIGNATURE=leader STUB_KUBE_SIGNATURE=x509
+has "and it wins over the x509 symptom it causes" \
+  "classification: LEADER_ELECTION_DENIED" "$TMP/class-leader-x509.logs/fnd0010-classification.txt"
+
+# ── 5b. what the Attempt 10 re-analysis had to reconstruct is now captured ────
+for probe in fnd0010-startupapicheck-pod fnd0010-rbac-cert-manager fnd0010-rbac-kube-system \
+             fnd0010-leases-cert-manager fnd0010-leases-kube-system; do
+  if [ -f "$TMP/cloud-fail.logs/$probe.log" ]; then
+    ok "the discriminator captures $probe"
+  else
+    no "the discriminator captures $probe" "present" "missing"
+  fi
+done
 
 # ── 6. UNKNOWN is not absence: both shapes pinned, separately ────────────────
 # Mandatory evidence for the tri-state fix. Only explicit provider not-found evidence

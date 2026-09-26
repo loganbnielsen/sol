@@ -5,8 +5,11 @@
   (established 2026-09-26 from Attempt 9's product log + the pinned chart upstream; see
   *Cause established* below). The API-server → webhook *reachability* branch this finding
   opened with is refuted: the x509 proves the API server reached the webhook.
-- **State:** `FIXED_UNQUALIFIED` — fixed 2026-09-26 in the shared platform module; the live
-  confirmation is the next GCP attempt
+- **State:** `OPEN` — the 2026-09-26 remedy (give the release the check's own designed budget)
+  is implemented and was **validated live in Attempt 10**, but it is not sufficient: the check
+  ran its full 600s window and still failed, because the CA bundle was never injected. Root cause
+  established 2026-09-26 by forensic re-analysis of Attempt 10 (below); the fix is proposed in
+  `INFRA-088`.
 - **First identified:** 2026-09-19 (GCP Attempt 4; analysed in this pass)
 - **Last verified:** 2026-09-26, `main @ 3d3eb0aa`, from the Attempt 9 evidence bundle
 - **Provider:** GCP / GKE (Autopilot, private nodes)
@@ -238,3 +241,40 @@ failed at this boundary, for a different reason. Nothing here shows TLS trust wa
 (the CA Secret was populated, but the bundle has no injected `caBundle` and no successful check
 run), so the remedy remains unexercised to a successful conclusion. The blocker is now FND-0060 /
 INFRA-087.
+
+## Root cause established — Attempt 10 forensic re-analysis (2026-09-26)
+
+Attempt 10 (`main @ bc9062b0`) exercised the remedy live and produced the evidence that names the
+real cause. The remedy worked as designed and was not the limiter: the release waited, and
+cert-manager's own check ran its full window.
+
+**The chain (all facts from the frozen bundle, `/tmp/sol-gcp-qual-10`):**
+
+1. The chart is installed with its default `global.leaderElection.namespace` = **`kube-system`**
+   (the chart's own `values.yaml`; `templates/rbac.yaml` and the two deployment templates create the
+   leader-election `Role`/`RoleBinding` there and pass `--leader-election-namespace` to both
+   components).
+2. GKE Autopilot **denies** that write: `GKE Warden authz [denied by managed-namespaces-limitation]:
+   the namespace "kube-system" is managed and the request's verb "create" is denied` — 30 attempts
+   each, controller 15:16:46 → 15:27:59, cainjector 15:16:38 → 15:27:43. Neither ever led.
+3. With cainjector unable to lead, the `ValidatingWebhookConfiguration` (created 15:15:47Z) has
+   **no `caBundle` field at all**.
+4. The webhook therefore failed its clients' TLS — `http: TLS handshake error … remote error: tls:
+   bad certificate` — as the check polled: **122 lines, every ~5s, 15:17:28 → 15:27:29 (601s)**.
+5. The check printed `error: timed out waiting for the condition`; the Job (`backoffLimit: 1`, pod
+   `restartPolicy: OnFailure`, `activeDeadlineSeconds` unset, startTime 15:16:59Z) recorded one
+   failure, the kubelet restarted the container, and the Job deleted the pod and moved to
+   `BackoffLimitExceeded` (15:27:29Z/15:27:31Z).
+
+**So the earlier reading of this finding was a symptom, not the cause.** The "TLS trust not ready"
+that Attempts 4/5/8/9 showed is what a never-injected `caBundle` looks like from the client side;
+the reason it was never injected is the leader-election namespace. The budget remedy was still
+necessary (Attempt 9's 300s provider timeout cut the check at 414s, before it could even exhaust
+its own window), and Attempt 10 proves it landed: the check got its full 600s.
+
+**Fix proposed in `INFRA-088`**: set `global.leaderElection.namespace` to the release namespace in
+`helm_release.cert_manager` (one declared value), with a guard over the module and a discriminating
+live run (leases acquired in `cert-manager`, `caBundle` populated, check Job Succeeds). No live
+mutation without separate authorization.
+
+**Falsified in this pass:** `FND-0060` (the ~9½-minute "scheduling delay" reading of the same run).

@@ -1,5 +1,11 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: FND-0060 / INFRA-088 — the cert-manager failure is leader election, not scheduling (2026-09-26)
+
+- Forensic re-analysis of the frozen Attempt 10 bundle (no new live run) refuted the run's own first reading: the ~9½-minute interval was cert-manager's `check api --wait=10m` window (122 webhook TLS handshake failures, every ~5s, 15:17:28 → 15:27:29), not a container-start delay. **FND-0060 is `FALSIFIED`** and `INFRA-087` is withdrawn.
+- Established cause (facts): the chart's default `global.leaderElection.namespace` is `kube-system`; GKE Autopilot denies the controller and cainjector the create verb there (GKE Warden managed-namespaces-limitation, 30 denials each across the whole window); neither ever led, so cainjector never injected the webhook's `caBundle` (field absent), so the check's TLS polls could never succeed. `FND-0010` is `OPEN` — its budget remedy was validated live (the check did get its full window) but is not sufficient.
+- Fix proposed in **INFRA-088**: point `global.leaderElection.namespace` at the release namespace in `helm_release.cert_manager`, with a guard over the module and a discriminating live run. No live mutation without authorization.
+
 ## Latest: GCP Attempt 10 — post-FND-0010 install, and the first blocker after it (2026-09-26)
 
 - Ran the supported lifecycle on a **fresh** target (`qual10/gcp/us-central1`, cluster `sol-qual-gcp-10`) at `main @ bc9062b0`: cloud infrastructure created, platform install failed at cert-manager's post-install check.
