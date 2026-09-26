@@ -29,6 +29,11 @@ val get_raw
   -> args:string list
   -> (Sol_cli_process.result, Sol_cli_process.error) result
 
+(** [resource_type_absent output]: kubectl's failure [output] says the cluster does
+    not serve the resource type at all (e.g. no Argo Rollouts CRD) -- an empty set,
+    not an error, for a caller that lists that type. *)
+val resource_type_absent : string -> bool
+
 val logs
   :  ctx:Sol_cli_kube_destination.context
   -> pod:string

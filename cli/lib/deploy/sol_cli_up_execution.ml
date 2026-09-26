@@ -116,12 +116,13 @@ let wait_for_service_rollout ~ctx spec exec =
   | Sol_cli_deployment_plan.Fn -> Ok ()
   | Sol_cli_deployment_plan.Svc | Sol_cli_deployment_plan.Worker ->
     (match
-       Sol_cli_kubectl.rollout_status
-         ~ctx
-         ~kind_name:("deployment/" ^ exec.k8s_name)
-         ~namespace:exec.namespace
+       Sol_cli_process.check
+         (Sol_cli_kubectl.rollout_status
+            ~ctx
+            ~kind_name:("deployment/" ^ exec.k8s_name)
+            ~namespace:exec.namespace)
      with
-     | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
+     | Ok _ -> Ok ()
      | _ ->
        let pod_expectation =
          Sol_cli_status.pod_expectation_of_primitive (manifest_primitive spec.primitive)

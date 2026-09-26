@@ -202,6 +202,41 @@ let test_permission_failure_is_not_absence () =
       (contains_needle ~needle:"create" (String.concat "\n" calls)))
 ;;
 
+(* REFAC-116: [Sol_cli_kubectl.get] reports a failed kubectl as [Error Non_zero],
+   so the NotFound branch has to match there. It used to match
+   [Ok r when exit_code <> 0], which that function never returns, so a missing
+   release read as a generic kubectl failure. *)
+let test_missing_release_is_not_found () =
+  with_fake_kubectl ~mode:"missing" ~live_json:"" (fun _log ->
+    match
+      Sol_cli_release_store.get ~ctx ~workspace:"pluto" ~release_id:"r-aaaabbbbccccdddd"
+    with
+    | Ok _ -> Alcotest.fail "a missing release was found"
+    | Error e ->
+      Alcotest.(check bool)
+        ("names it not found: " ^ e)
+        true
+        (contains_needle ~needle:"release r-aaaabbbbccccdddd not found" e))
+;;
+
+(* ...while a failure that is not absence stays a failure. *)
+let test_forbidden_release_read_is_not_absence () =
+  with_fake_kubectl ~mode:"forbidden" ~live_json:"" (fun _log ->
+    match
+      Sol_cli_release_store.get ~ctx ~workspace:"pluto" ~release_id:"r-aaaabbbbccccdddd"
+    with
+    | Ok _ -> Alcotest.fail "a forbidden read succeeded"
+    | Error e ->
+      Alcotest.(check bool)
+        ("not reported as absence: " ^ e)
+        false
+        (contains_needle ~needle:"not found" e);
+      Alcotest.(check bool)
+        ("carries kubectl's reason: " ^ e)
+        true
+        (contains_needle ~needle:"forbidden" e))
+;;
+
 let () =
   Alcotest.run
     "release_store"
@@ -222,6 +257,16 @@ let () =
             "a permission failure is not absence"
             `Quick
             test_permission_failure_is_not_absence
+        ] )
+    ; ( "release record read (REFAC-116)"
+      , [ Alcotest.test_case
+            "a missing release is not found"
+            `Quick
+            test_missing_release_is_not_found
+        ; Alcotest.test_case
+            "a forbidden read is not absence"
+            `Quick
+            test_forbidden_release_read_is_not_absence
         ] )
     ]
 ;;

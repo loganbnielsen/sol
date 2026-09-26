@@ -70,12 +70,12 @@ let service_diagnoses ~ctx ~ns services =
    return [false] on [Error _], so a namespace that exists but could not be read
    -- permissions, an API error -- rendered as NOT DEPLOYED. *)
 let namespace_presence ~ctx ns : Sol_cli_status.namespace_presence =
-  match Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; "ns"; ns ] with
-  | Ok r when r.Sol_cli_process.exit_code = 0 -> Ns_present
-  | Ok r ->
-    let detail =
-      String.trim (r.Sol_cli_process.stderr ^ " " ^ r.Sol_cli_process.stdout)
-    in
+  match
+    Sol_cli_process.check (Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; "ns"; ns ])
+  with
+  | Ok _ -> Ns_present
+  | Error (Sol_cli_process.Non_zero r) ->
+    let detail = String.trim (r.stderr ^ " " ^ r.stdout) in
     if Sol_cli_port_forward.string_contains ~needle:"NotFound" detail
     then Ns_absent
     else
@@ -260,10 +260,11 @@ let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
       "-o=jsonpath={range \
        .items[*]}{.metadata.name}{\"\\t\"}{.spec.template.spec.containers[0].image}{\"\\n\"}{end}"
     in
-    (match Sol_cli_kubectl.get_raw ~ctx ~args:(deploy_args @ [ image_jsonpath ]) with
-     | Ok r
-       when r.Sol_cli_process.exit_code = 0 && String.trim r.Sol_cli_process.stdout <> ""
-       ->
+    (match
+       Sol_cli_process.check
+         (Sol_cli_kubectl.get_raw ~ctx ~args:(deploy_args @ [ image_jsonpath ]))
+     with
+     | Ok r when String.trim r.Sol_cli_process.stdout <> "" ->
        Printf.printf "Images\n";
        String.split_on_char '\n' (String.trim r.Sol_cli_process.stdout)
        |> List.iter (fun line ->
@@ -292,11 +293,12 @@ let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
     let jsonpath = "{.items[?(@.spec.type==\"ClusterIP\")].metadata.name}" in
     let svc_names_raw =
       match
-        Sol_cli_kubectl.get_raw
-          ~ctx
-          ~args:[ "get"; "svc"; "-n"; ns; "-o"; "jsonpath=" ^ jsonpath ]
+        Sol_cli_process.check
+          (Sol_cli_kubectl.get_raw
+             ~ctx
+             ~args:[ "get"; "svc"; "-n"; ns; "-o"; "jsonpath=" ^ jsonpath ])
       with
-      | Ok r when r.Sol_cli_process.exit_code = 0 -> r.Sol_cli_process.stdout
+      | Ok r -> r.Sol_cli_process.stdout
       | _ -> ""
     in
     if svc_names_raw <> ""
@@ -318,14 +320,15 @@ let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
                  | None -> true)
              &&
              match
-               Sol_cli_kubectl.get
-                 ~ctx
-                 ~resource:"svc"
-                 ~name
-                 ~namespace:ns
-                 ~output:("jsonpath=" ^ port80_jsonpath)
+               Sol_cli_process.check
+                 (Sol_cli_kubectl.get
+                    ~ctx
+                    ~resource:"svc"
+                    ~name
+                    ~namespace:ns
+                    ~output:("jsonpath=" ^ port80_jsonpath))
              with
-             | Ok r when r.Sol_cli_process.exit_code = 0 -> r.Sol_cli_process.stdout <> ""
+             | Ok r -> r.Sol_cli_process.stdout <> ""
              | _ -> false)
           names
       in

@@ -1,8 +1,8 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: GCP Attempt 11 — cert-manager qualified live, next blocker exposed (2026-09-26)
+## Latest: INFRA-089 — one Kubernetes object, one Terraform owner (2026-09-26)
 
-- Ran a fresh qualification target at `main @ 17afc4b2` (cluster `sol-qual-gcp-11`, its own state key). **cert-manager now works**: leader-election Role/RoleBinding in the `cert-manager` namespace, `successfully acquired lease cert-manager/cert-manager-controller`, no `kube-system` Warden denial, cainjector `"Updated object"` with an 896-byte `caBundle`, and the release completing in **2m13s** with its `startupapicheck` Job succeeded.
-- **FND-0060 and FND-0010 are `QUALIFIED` live** (the latter on its own narrow claim: the check completed inside the budget it introduced). Nothing else is claimed — `Ready` was not reached.
-- The next blocker is new: **FND-0061 / INFRA-089** — two `kubernetes_role_binding` resources in `platform_provisioner_rbac.tf` write the same Kubernetes name, so the targeted prerequisites step creates the object and the full `platform-apply` fails with `already exists` (201.6s). Deterministic, previously masked by the cert-manager failure, and left unfixed during the run.
-- Supported destruction ran clean from the failed install: authority acquired → `platform-destroy ok (129.1s)` → released → substrate destroyed; both roots empty, provider inventory absent, durable prerequisites intact, no manual action.
+- FND-0061's fix: the two pairs of platform RoleBindings that shared one Kubernetes name are now one resource each, carrying both subjects (the AWS group and the GCP provisioner identity) — same `roleRef`, same namespaces, same lifetime, so they were never two authorizations. The duplicate `_gcp` resources are deleted, along with the two AWS `moved` blocks that named them (a dangling `moved` destination is a config error).
+- New guard `check_kubernetes_object_ownership.sh` enforces the invariant rather than the incident: no two Terraform resources in a platform root may resolve to one `(kind, namespace, name)`, with a `same-object-owner:` marker as the only declared exception. Nine mutation cases, including the collision that failed the live apply and its cluster-scoped twin.
+- Migration analysis: none needed for retained addresses; the removed addresses cannot exist in any supported state (all five qualification-bucket states read, AWS structurally empty via an empty instance set).
+- Qualification instrument corrected: the classifier now prefers the failed operation's own error (`TERRAFORM_ALREADY_EXISTS`) over ambient cluster symptoms, and calls the fallback `SCHEDULING_AMBIENT`. **FND-0061 is `FIXED_UNQUALIFIED`** — the next live run is the discriminator.

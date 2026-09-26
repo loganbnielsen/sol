@@ -57,7 +57,10 @@ that "the provisioner cannot manufacture an identity more powerful than itself".
 - The same identity is the steady-state platform provisioner bound by RBAC in
   `cli/platform/infra/base/platform_provisioner_rbac.tf`
   (`kubernetes_cluster_role_binding.platform_provisioner_cluster_gcp`,
-  `kubernetes_role_binding.platform_provisioner_gcp`).
+  `kubernetes_role_binding.platform_provisioner_gcp`). *(Those two addresses are gone as of
+  FND-0061 / INFRA-089: the same authority is now carried as a second subject on
+  `platform_provisioner_cluster` and `platform_provisioner` respectively, because two resources
+  cannot own one Kubernetes object. The authority model this finding describes is unchanged.)*
 - The temporary install window is a separate object
   (`kubernetes_cluster_role_binding.provisioner_bootstrap_admin`,
   `gcp/main.tf:284-300`), opened and closed by `provisioner_bootstrap_admin`.

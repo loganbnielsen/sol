@@ -3,8 +3,8 @@ open Sol_cli_manifest
 open Sol_cli_helm
 
 let check_tool name install_url =
-  match Sol_cli_process.run (Sol_cli_process.cmd [ "which"; name ]) with
-  | Ok r when r.Sol_cli_process.exit_code = 0 -> ()
+  match Sol_cli_process.run_success (Sol_cli_process.cmd [ "which"; name ]) with
+  | Ok _ -> ()
   | _ ->
     Printf.eprintf "error: %S not found in PATH.\n" name;
     Printf.eprintf "  Install: %s\n" install_url;
@@ -38,11 +38,11 @@ let version_gt a b =
 
 let k3d_env () =
   match
-    Sol_cli_process.run
+    Sol_cli_process.run_success
       (Sol_cli_process.cmd
          [ "docker"; "version"; "--format"; "{{.Server.MinAPIVersion}}" ])
   with
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
+  | Ok r ->
     let daemon_min = String.trim r.Sol_cli_process.stdout in
     if daemon_min <> "" && version_gt daemon_min k3d_client_api_floor
     then [ "DOCKER_API_VERSION", daemon_min ]
@@ -92,14 +92,19 @@ let helm_install ~label release chart ~namespace ?version ?(values = []) ?values
      ; run =
          (fun () ->
            match
-             upgrade_install ~release ~chart ~namespace ?version ~values ?values_yaml ()
+             Sol_cli_process.check
+               (upgrade_install
+                  ~release
+                  ~chart
+                  ~namespace
+                  ?version
+                  ~values
+                  ?values_yaml
+                  ())
            with
-           | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
-           | Ok r ->
-             Error
-               (if r.Sol_cli_process.stderr <> ""
-                then r.Sol_cli_process.stderr
-                else r.Sol_cli_process.stdout)
+           | Ok _ -> Ok ()
+           | Error (Sol_cli_process.Non_zero r) ->
+             Error (Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr)
            | Error e -> Error (Sol_cli_process.error_to_string e))
      }
      :: !pending_installs
@@ -164,9 +169,7 @@ let dev_up () =
   (* 1. Cluster *)
   Printf.printf "\n[1/4] Provisioning cluster...\n%!";
   let cluster_exists =
-    match Sol_cli_process.run (k3d [ "cluster"; "get"; cluster_name ]) with
-    | Ok r -> r.Sol_cli_process.exit_code = 0
-    | Error _ -> false
+    Result.is_ok (Sol_cli_process.run_ok (k3d [ "cluster"; "get"; cluster_name ]))
   in
   if cluster_exists
   then Printf.printf "  cluster %s already exists, skipping\n%!" cluster_name
@@ -182,9 +185,8 @@ let dev_up () =
        port-probe logic to narrow. *)
     let pre_rename_cluster_name = "sun-local" in
     let pre_rename_cluster_exists =
-      match Sol_cli_process.run (k3d [ "cluster"; "get"; pre_rename_cluster_name ]) with
-      | Ok r -> r.Sol_cli_process.exit_code = 0
-      | Error _ -> false
+      Result.is_ok
+        (Sol_cli_process.run_ok (k3d [ "cluster"; "get"; pre_rename_cluster_name ]))
     in
     if pre_rename_cluster_exists
     then (
@@ -214,25 +216,20 @@ let dev_up () =
            ; Printf.sprintf "sol-registry:%d" registry_port
            ])
     in
-    let rc =
-      match create_result with
-      | Ok r -> r.Sol_cli_process.exit_code
-      | Error _ -> 1
-    in
-    if rc <> 0
-    then (
+    (* FRIC-006: k3d's own output is the actual diagnosis (e.g. "port is already
+       allocated") -- surface it instead of leaving the user to re-run k3d by hand
+       to find out why. *)
+    match Sol_cli_process.check create_result with
+    | Ok _ -> ()
+    | Error failure ->
       Printf.eprintf "error: cluster creation failed\n";
-      (* FRIC-006: k3d's own stderr is the actual diagnosis (e.g. "port is
-         already allocated") -- surface it instead of leaving the user to
-         re-run k3d by hand to find out why. *)
-      (match create_result with
-       | Ok r when r.Sol_cli_process.stderr <> "" ->
-         Printf.eprintf "%s\n" r.Sol_cli_process.stderr
-       | Ok r when r.Sol_cli_process.stdout <> "" ->
-         Printf.eprintf "%s\n" r.Sol_cli_process.stdout
-       | Ok _ -> ()
-       | Error e -> Printf.eprintf "%s\n" (Sol_cli_process.error_to_string e));
-      exit 1));
+      (match failure with
+       | Sol_cli_process.Non_zero r ->
+         (match Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr with
+          | "" -> ()
+          | output -> Printf.eprintf "%s\n" output)
+       | e -> Printf.eprintf "%s\n" (Sol_cli_process.error_to_string e));
+      exit 1);
   (* 2. What the workspace declares (REFAC-107): read from sol.yml at the workspace
      root, not inferred from build files, so it is the same from any subdirectory
      and for OCaml and TypeScript units alike. *)
@@ -683,9 +680,7 @@ let dev_down delete_cluster =
 let dev_status () =
   check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/";
   let cluster_running =
-    match Sol_cli_process.run (k3d [ "cluster"; "get"; cluster_name ]) with
-    | Ok r -> r.Sol_cli_process.exit_code = 0
-    | Error _ -> false
+    Result.is_ok (Sol_cli_process.run_ok (k3d [ "cluster"; "get"; cluster_name ]))
   in
   Printf.printf
     "\nCluster:  %s  %s\n"
