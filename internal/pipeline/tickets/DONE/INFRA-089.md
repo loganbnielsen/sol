@@ -75,6 +75,11 @@ Two **stale** `moved` blocks in the AWS root did name the removed addresses, and
 whose destination no longer exists is a configuration error — so they are deleted with the
 resources. That is the only migration work this change does.
 
+## Status
+
+Implemented 2026-09-26. Offline acceptance met; **live acceptance is the next qualification run**
+(the discriminator below), and FND-0061 stays `FIXED_UNQUALIFIED` until it happens.
+
 ## Acceptance criteria
 
 - A fresh GCP qualification target's `platform-apply` completes and the install continues past this
@@ -91,3 +96,66 @@ No timeout changes, no cert-manager changes (that work is qualified), no authori
 semantics, no AWS work, and no live mutation without separate authorization. Nothing was repaired
 during Attempt 11: no `terraform import`, no state surgery, no manual RBAC edit, no re-run of the
 failed step.
+
+## Completion notes (2026-09-26)
+
+**Problem.** A fresh GCP target's platform install could not get past the full platform apply: two
+Terraform resources wrote the same Kubernetes RoleBinding name (`sol-platform-provisioner`), so the
+targeted prerequisites step created the object and the full apply failed with `already exists`
+(FND-0061). The cluster-scoped pair had the same defect waiting behind it.
+
+**Root cause.** Two resources, one Kubernetes object — and the pair existed only because the AWS and
+GCP provisioner identities reach the API server differently (group membership vs. direct User), not
+because they need different authority. Terraform enforces one owner per object; the configuration
+declared two.
+
+**Change.**
+
+- `kubernetes_role_binding.platform_provisioner` and
+  `kubernetes_cluster_role_binding.platform_provisioner_cluster` now carry both subjects, the GCP
+  one via a `dynamic "subject"` block gated on `local.gcp_provisioner`, so an AWS tree renders
+  exactly what it did before.
+- `kubernetes_role_binding.platform_provisioner_gcp` and
+  `kubernetes_cluster_role_binding.platform_provisioner_cluster_gcp` are deleted.
+- The two AWS-root `moved` blocks that named the deleted addresses are deleted with them (a `moved`
+  destination that no longer exists is a configuration error). No migration machinery is added: the
+  retained addresses keep their addresses, and the removed ones cannot exist in any supported state
+  (measured across all five qualification-bucket states; structurally empty on AWS).
+- The stale comment that called the group+identity model "the cosmetic version" is replaced with the
+  reasoning that decided it — same authority, same lifetime, one owner — so the next reader sees the
+  argument rather than an unexplained reversal.
+
+**Executable evidence.**
+
+- `internal/ci/check_kubernetes_object_ownership.sh` — the invariant, not the incident: within a
+  platform root, two Terraform-managed Kubernetes objects must not resolve to one
+  `(kind, namespace, name)` unless both say `# same-object-owner: <why>`. Public run on the fixed
+  tree: 28 resolvable objects across 13 files, no collisions, 2 dynamic names recorded.
+- `internal/ci/test_kubernetes_object_ownership_check.sh` — nine cases: the RoleBinding collision
+  (the live failure), the cluster-scoped collision, a one-sided marker (rejected), the declared
+  exception (accepted), same name in different namespaces (accepted), same name different kinds
+  (accepted), an undecidable namespace expression (accepted, *reported*), an unresolvable dynamic
+  name (accepted, recorded), and the real tree.
+- `terraform fmt -check` clean; the platform module and both provider roots validate.
+- The qualification harness's classification ordering is corrected separately (see below).
+
+**Instrument correction (same unit, per the operator).** `classify_fnd0010` now reads the failed
+operation's own log first and classifies a Terraform `already exists` resource conflict as
+`TERRAFORM_ALREADY_EXISTS`; the ambient `FailedScheduling` evidence moved last and is now labelled
+`SCHEDULING_AMBIENT`, because a half-installed cluster always has a pod waiting to be scheduled.
+Two new harness assertions pin both directions (133 total).
+
+**Demo/example coverage:** not applicable — platform installation RBAC, with no `sol.toml` field,
+CLI surface, framework primitive or generated manifest for an app author to read or run; the
+observable behaviour is a fresh target's platform apply completing, which the next live run shows.
+
+**Language parity (DEC-022):** no application-facing impact; no primitive, contract, metric or
+retry semantic is involved, and neither application language observes platform RBAC.
+
+**Canonical merge SHA:** `git log --oneline -1 -- internal/pipeline/tickets/DONE/INFRA-089.md`.
+
+**Live acceptance (discriminator for the next authorized run):** on a fresh GCP target, the
+targeted prerequisites step and then the full `platform-apply` both complete; the ClusterRoleBinding
+and the RoleBindings in each platform namespace each carry both subjects (group + provisioner
+identity) with a single owner; and the install continues past this point — toward the next
+component, and ideally `Ready`.

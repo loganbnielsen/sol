@@ -1127,11 +1127,16 @@ classify_fnd0010() {
   local check_log="$LOG_DIR/fnd0010-startupapicheck-logs.log"
   {
     printf 'classification: '
-    # Ordered with the *falsifying* signatures first: an x509 or API-discovery failure is not a
-    # reachability failure, and reading either as one is exactly the error this run exists to
-    # prevent. Each alternative is a literal string from the captured evidence. No match, or no
-    # evidence at all, is UNKNOWN -- never a default of "reachability".
-    if grep -qiE 'managed-namespaces-limitation|leader election record|cannot create resource "leases"' \
+    # Ordered by *directness*: what the step that failed actually said comes first, then causes
+    # the components name themselves, then the symptoms, and only last the ambient state of a
+    # half-installed cluster. FND-0061 is why: the platform apply failed with a Terraform
+    # `already exists` resource conflict, and the previous ordering called it SCHEDULING because
+    # unrelated pods in the partially installed platform had FailedScheduling events. A run's
+    # own failed operation is never a worse witness than the weather around it.
+    if grep -qiE 'Error: .*already exists|already exists$' \
+        "$LOG_DIR/cloud-apply.log" "$LOG_DIR/destroy.log" 2>/dev/null; then
+      printf 'TERRAFORM_ALREADY_EXISTS\n'
+    elif grep -qiE 'managed-namespaces-limitation|leader election record|cannot create resource "leases"' \
         "$LOG_DIR/fnd0010-controller-logs.log" "$LOG_DIR/fnd0010-cainjector-logs.log" 2>/dev/null; then
       # The specific, reversible cause found by Attempt 10's re-analysis: cert-manager's
       # components cannot write the leader-election Lease where they look for it (the chart
@@ -1144,20 +1149,23 @@ classify_fnd0010() {
     elif grep -qiE 'no matches for kind|could not find the requested resource|failed to discover|unable to retrieve the complete list of server APIs' \
         "$check_log" "$job_log" 2>/dev/null; then
       printf 'CRD_OR_API_DISCOVERY\n'
-    elif grep -qiE 'FailedScheduling|Unschedulable|Insufficient (cpu|memory)|no nodes available' \
-        "$events" "$LOG_DIR/fnd0010-pods.log" 2>/dev/null; then
-      printf 'SCHEDULING\n'
     elif grep -qiE 'forbidden|cannot create resource|is not allowed to' "$check_log" "$job_log" 2>/dev/null; then
       printf 'RBAC\n'
     elif grep -qiE 'context deadline exceeded|dial tcp|i/o timeout|connection refused|no route to host' \
         "$check_log" "$job_log" 2>/dev/null; then
       printf 'WEBHOOK_REACHABILITY\n'
+    elif grep -qiE 'FailedScheduling|Unschedulable|Insufficient (cpu|memory)|no nodes available' \
+        "$events" "$LOG_DIR/fnd0010-pods.log" 2>/dev/null; then
+      # Ambient, not direct: a partially installed cluster always has some pod waiting to be
+      # scheduled, so this only means anything when nothing above matched. Recorded as such.
+      printf 'SCHEDULING_AMBIENT\n'
     else
       printf 'UNKNOWN\n'
     fi
     printf '\n-- why (matching lines; empty means the signature was not in the captured evidence) --\n'
-    grep -hiE 'managed-namespaces-limitation|leader election record|cannot create resource "leases"|x509|unknown authority|certificate signed by unknown|tls: failed to verify|no matches for kind|could not find the requested resource|failed to discover|forbidden|cannot create resource|context deadline exceeded|dial tcp|i/o timeout|connection refused|no route to host|FailedScheduling|Unschedulable|Insufficient (cpu|memory)' \
+    grep -hiE 'Error: .*already exists|already exists$|managed-namespaces-limitation|leader election record|cannot create resource "leases"|x509|unknown authority|certificate signed by unknown|tls: failed to verify|no matches for kind|could not find the requested resource|failed to discover|forbidden|cannot create resource|context deadline exceeded|dial tcp|i/o timeout|connection refused|no route to host|FailedScheduling|Unschedulable|Insufficient (cpu|memory)' \
       "$check_log" "$job_log" "$events" "$LOG_DIR/fnd0010-pods.log" \
+      "$LOG_DIR/cloud-apply.log" "$LOG_DIR/destroy.log" \
       "$LOG_DIR/fnd0010-controller-logs.log" "$LOG_DIR/fnd0010-cainjector-logs.log" 2>/dev/null | head -20 || true
     printf '\n-- corroboration --\n'
     printf 'webhook targetPort: %s\n' "$(head -1 "$LOG_DIR/fnd0010-webhook-target-port.log" 2>/dev/null)"
