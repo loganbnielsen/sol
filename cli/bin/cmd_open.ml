@@ -14,7 +14,7 @@ let kind_label = function
   | Sol_cli_open.Dashboard -> "Grafana dashboard"
 ;;
 
-let ( let* ) = Result.bind
+open Result.Syntax
 
 let run kind scope_str links explicit_backend explicit_base_domain target grafana_base_url
   =

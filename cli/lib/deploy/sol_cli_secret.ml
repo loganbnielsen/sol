@@ -9,7 +9,7 @@ type action_result =
   | Listed of string list
   | Hosted_unavailable of string
 
-let ( let* ) = Result.bind
+open Result.Syntax
 
 let mode_of_env env =
   let normalized = String.lowercase_ascii (String.trim env) in

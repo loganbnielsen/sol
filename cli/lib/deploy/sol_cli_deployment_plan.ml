@@ -119,7 +119,7 @@ type plan_error =
       ; message : string
       }
 
-let ( let* ) = Result.bind
+open Result.Syntax
 
 let mode_to_string = function
   | Local -> "local"

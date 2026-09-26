@@ -66,7 +66,7 @@ type substrate_presence =
   | Substrate_absent
   | Substrate_unknown
 
-let ( let* ) = Result.bind
+open Result.Syntax
 
 let string_attr name values =
   match Yojson.Safe.Util.member name values with

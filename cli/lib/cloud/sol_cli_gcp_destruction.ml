@@ -11,8 +11,7 @@
 open Sol_cli_destroy_verification
 open Sol_cli_destruction
 open Sol_cli_terraform_steps
-
-let ( let* ) = Result.bind
+open Result.Syntax
 
 (* The name that follows a literal marker, lowercased text assumed. Used to read
    the *subject* out of a gcloud message. *)

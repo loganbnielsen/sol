@@ -6,7 +6,8 @@ open Cmdliner
 (* DEC-024: the workspace name comes from the resolved root, so it is the same
    from any descendant directory. *)
 let workspace_name = Sol_cli_workspace.current_name
-let ( let* ) = Result.bind
+
+open Result.Syntax
 
 let run ~ctx () =
   let workspace = workspace_name () in

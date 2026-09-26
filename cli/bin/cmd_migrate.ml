@@ -1,6 +1,5 @@
 open Cmdliner
-
-let ( let* ) = Result.bind
+open Result.Syntax
 
 (* Per-workspace table name avoids version-number collisions when multiple
    workspaces share one local Postgres instance; --table always overrides it. *)

@@ -1,8 +1,7 @@
 open Cmdliner
 open Sol_cli_manifest
 open Sol_cli_helm
-
-let ( let* ) = Result.bind
+open Result.Syntax
 
 let check_tool name install_url =
   match Sol_cli_process.run_success (Sol_cli_process.cmd [ "which"; name ]) with

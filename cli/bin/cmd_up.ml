@@ -1,7 +1,6 @@
 open Cmdliner
 open Sol_cli_manifest
-
-let ( let* ) = Result.bind
+open Result.Syntax
 
 (* ── Pipeline ────────────────────────────────────────────────────────────── *)
 

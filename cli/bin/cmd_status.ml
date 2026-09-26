@@ -1,6 +1,5 @@
 open Cmdliner
-
-let ( let* ) = Result.bind
+open Result.Syntax
 
 let discover_domains () =
   let app_dir = "app" in

@@ -16,8 +16,7 @@
    scheduled_concurrency actually promises -- see FEAT-079's ticket. *)
 
 open Cmdliner
-
-let ( let* ) = Result.bind
+open Result.Syntax
 
 (* Same resolution shape as `sol logs`'s resolve_unit: a selector must name
    exactly one workload. Here the selector is a required positional

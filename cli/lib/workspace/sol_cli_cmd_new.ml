@@ -5,7 +5,8 @@ let subst = Sol_cli_scaffold.subst
 let write = Sol_cli_scaffold.write_file
 let norm = Sol_cli_scaffold.normalize
 let cap = Sol_cli_scaffold.capitalize_name
-let ( let* ) = Result.bind
+
+open Result.Syntax
 
 (* DEC-025: `sol new` used to symlink the framework source into the generated
    workspace (vendor/framework). That made the framework's Dune files part of the

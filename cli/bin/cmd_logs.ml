@@ -1,6 +1,5 @@
 open Cmdliner
-
-let ( let* ) = Result.bind
+open Result.Syntax
 
 (* [logs] streams exactly one workload's output, and both Loki's addressing
    (namespace + k8s name) and [kubectl logs] preserve unit granularity -- so

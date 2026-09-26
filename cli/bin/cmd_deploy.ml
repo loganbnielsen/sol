@@ -8,7 +8,8 @@ open Sol_cli_manifest
 (* DEC-024: the workspace name comes from the resolved root, so it is the same
    from any descendant directory. *)
 let workspace_name = Sol_cli_workspace.current_name
-let ( let* ) = Result.bind
+
+open Result.Syntax
 
 (* EXP-029: after a real apply, print a port-forward hint for each HTTP
    service so the engineer doesn't need a separate 'sol status' call to

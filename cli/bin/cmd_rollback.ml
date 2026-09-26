@@ -19,7 +19,8 @@ open Cmdliner
    from any descendant directory. *)
 let workspace_name = Sol_cli_workspace.current_name
 let migrations_dir = "db/migrations"
-let ( let* ) = Result.bind
+
+open Result.Syntax
 
 (* FEAT-072: the mutation lease. Rollback first establishes quiescence: it
    acquires the workspace's boundary lease, aborting and waiting out an in-flight

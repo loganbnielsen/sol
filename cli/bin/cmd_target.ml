@@ -89,7 +89,7 @@ let platform_status ~check (target : Sol_cli_config.target) =
          |> Sol_cli_cloud_lifecycle.readiness_summary))
 ;;
 
-let ( let* ) = Result.bind
+open Result.Syntax
 
 (* DEC-024: sol.yml is always present now, so its existence alone can no longer
    be what makes a target real. `sol target show` is an inspection of a

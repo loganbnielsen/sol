@@ -6,7 +6,7 @@ open Cmdliner
 (* The destroy execution core (Sol_cli_cloud_destroy) and the result-returning
    helpers below carry failures as values rather than exiting: only the command
    edge turns an outcome into a process exit (REFAC-091). *)
-let ( let* ) = Result.bind
+open Result.Syntax
 
 (* ── Terraform output parsing ───────────────────────────────────────────── *)
 
@@ -1782,9 +1782,9 @@ let destroy_cmd =
          prepared) blocks destruction and leaves the target standing."
     ; `S "EXIT STATUS"
     ; `P
-        "0 -- destruction reached absence and it was verified. A best-effort \
-         preparation that failed or was refused does not change this (REFAC-094): each \
-         one is reported on stderr as a warning."
+        "0 -- destruction reached absence and it was verified. A best-effort preparation \
+         that failed or was refused does not change this (REFAC-094): each one is \
+         reported on stderr as a warning."
     ; `P
         "1 -- destruction did not reach its postcondition: it failed, it was blocked by \
          a declared guarantee, absence could not be verified, or the elevated bootstrap \

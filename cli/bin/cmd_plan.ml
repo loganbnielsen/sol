@@ -17,7 +17,7 @@ let print_index (index : Sol_cli_config.index) =
 ;;
 
 let run target_name =
-  let ( let* ) = Result.bind in
+  let open Result.Syntax in
   let* cfg =
     Sol_cli_config.load_for_target ~target:target_name
     |> Sol_cli_exit.of_error Sol_cli_config.error_to_string

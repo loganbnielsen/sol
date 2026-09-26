@@ -3,7 +3,8 @@ open Cmdliner
 (* A requested scope must resolve, or the command fails. That rule is the point
    of the vocabulary (FEAT-061): a name that matches nothing is an error naming
    what exists, never a quiet empty selection that reports success. *)
-let ( let* ) = Result.bind
+open Result.Syntax
+
 let fail message = Sol_cli_exit.failure ~code:2 ("sol check: " ^ message)
 
 (* [scope] names what to check. There is no positional selector (FEAT-064):

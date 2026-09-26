@@ -47,7 +47,7 @@ type cloud_target =
 let required = Sol_cli_provider_capabilities.required
 
 let cloud_target target =
-  let ( let* ) = Result.bind in
+  let open Result.Syntax in
   let* cloud_backend = backend_config target ~root:`Cloud in
   let* platform_backend = backend_config target ~root:`Platform in
   let* base_domain = required "base_domain" target.Sol_cli_config.base_domain in
