@@ -169,7 +169,7 @@ let apply_doc ~ctx doc =
     that collides with a platform namespace ({!reserved_platform_namespaces}) --
     see that value's comment for why this check exists at all. *)
 let ensure ~ctx ~namespaces : (unit, string) result =
-  let ( let* ) = Result.bind in
+  let open Result.Syntax in
   match List.find_opt (fun ns -> List.mem ns reserved_platform_namespaces) namespaces with
   | Some ns ->
     Error
@@ -243,7 +243,7 @@ let operator_binding_docs ~workspace (services : Sol_cli_manifest.service list)
 ;;
 
 let reconcile_operator_bindings ~ctx ~workspace : (unit, string) result =
-  let ( let* ) = Result.bind in
+  let open Result.Syntax in
   let* services =
     Sol_cli_manifest.discover_services ()
     |> Result.map_error Sol_cli_manifest.discover_error_to_string

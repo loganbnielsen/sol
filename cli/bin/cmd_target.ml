@@ -14,11 +14,14 @@ let available_target_paths () =
   | Error _ -> []
 ;;
 
-let print_available () =
+let available_targets () =
   match available_target_paths () with
-  | [] -> Printf.eprintf "no targets found: declare them in sol/environments.yml\n"
-  | paths -> Printf.eprintf "available targets:\n  %s\n" (String.concat "\n  " paths)
+  | [] -> "no targets found: declare them in sol/environments.yml"
+  | paths -> "available targets:\n  " ^ String.concat "\n  " paths
 ;;
+
+(* A target that cannot be shown fails closed and lists what exists. *)
+let not_shown message = Sol_cli_exit.failure (message ^ "\n\n" ^ available_targets ())
 
 (* The only part that touches a cluster, and only when asked to.
 
@@ -86,46 +89,48 @@ let platform_status ~check (target : Sol_cli_config.target) =
          |> Sol_cli_cloud_lifecycle.readiness_summary))
 ;;
 
+open Result.Syntax
+
+(* DEC-024: sol.yml is always present now, so its existence alone can no longer
+   be what makes a target real. `sol target show` is an inspection of a
+   *declared* target, so a well-shaped path with no sol/environments.yml
+   declaration fails closed and lists what does exist. ([load_for_target] stays
+   permissive by design; cmd_deploy enforces the same declaration for its
+   mutating guarantee.) *)
+let declared_target target =
+  match Sol_cli_config.load_for_target ~target with
+  | Error e -> Error (not_shown (Sol_cli_config.error_to_string e))
+  | Ok { target = target_config; _ }
+    when not (Sol_cli_config.target_declared target_config) ->
+    Error
+      (not_shown
+         (Printf.sprintf
+            "target %s is not declared (expected in %s)"
+            target
+            (Sol_cli_config.target_source target_config)))
+  | Ok config -> Ok config.target
+;;
+
 (* Positional, not labelled: cmdliner's [Term.const] applies its arguments in
    order, so a labelled function cannot be used directly. *)
 let show target verbose json check =
-  match target with
-  | None ->
-    Printf.eprintf "sol target show needs a target — which one?\n\n";
-    print_available ();
-    exit 1
-  | Some target ->
-    (match Sol_cli_config.load_for_target ~target with
-     | Error e ->
-       Printf.eprintf "%s\n\n" (Sol_cli_config.error_to_string e);
-       print_available ();
-       exit 1
-     | Ok config ->
-       let target_config = config.Sol_cli_config.target in
-       (* DEC-024: sol.yml is always present now, so its existence alone can
-             no longer be what makes a target real. `sol target show` is an
-             inspection of a *declared* target, so a well-shaped path with no
-             sol/environments.yml declaration fails closed and lists
-             what does exist. ([load_for_target] stays permissive by design;
-             cmd_deploy enforces the same declaration for its mutating guarantee.) *)
-       if not (Sol_cli_config.target_declared target_config)
-       then (
-         Printf.eprintf
-           "target %s is not declared (expected in %s)\n\n"
-           target
-           (Sol_cli_config.target_source target_config);
-         print_available ();
-         exit 1);
-       let status = kubernetes_status ~check target_config in
-       let platform = platform_status ~check target_config in
-       if json
-       then
-         print_endline
-           (Yojson.Safe.to_string
-              (Sol_cli_target_report.to_json ?platform ~verbose target_config status))
-       else
-         Sol_cli_target_report.rows ?platform ~verbose target_config status
-         |> List.iter (fun (label, value) -> Printf.printf "%-13s %s\n" label value))
+  let* target =
+    match target with
+    | Some target -> Ok target
+    | None -> Error (not_shown "sol target show needs a target — which one?")
+  in
+  let* target_config = declared_target target in
+  let status = kubernetes_status ~check target_config in
+  let platform = platform_status ~check target_config in
+  if json
+  then
+    print_endline
+      (Yojson.Safe.to_string
+         (Sol_cli_target_report.to_json ?platform ~verbose target_config status))
+  else
+    Sol_cli_target_report.rows ?platform ~verbose target_config status
+    |> List.iter (fun (label, value) -> Printf.printf "%-13s %s\n" label value);
+  Ok ()
 ;;
 
 open Cmdliner
@@ -180,7 +185,9 @@ let show_cmd =
   in
   Cmd.v
     (Cmd.info "show" ~doc ~man)
-    Term.(const show $ target_arg $ verbose_arg $ json_arg $ check_arg)
+    Term.(
+      const Sol_cli_exit.exit_on
+      $ (const show $ target_arg $ verbose_arg $ json_arg $ check_arg))
 ;;
 
 let cmd = Cmd.group (Cmd.info "target" ~doc:"Inspect deployment targets") [ show_cmd ]

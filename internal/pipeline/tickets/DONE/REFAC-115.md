@@ -45,9 +45,52 @@ Code below the command edge ends the process instead of returning an error. `rg 
 - `sol assets` collects every check into a `(string, string) result` and prints all failures, then "N of M asset checks failed" (exit 1). A dune rule runs it against a SOL_HOME that has lost two assets and expects at least two FAIL lines. Its body no longer `ignore`s any consumer output.
 - The call sites that still convert with a temporary `Sol_cli_exit.or_exit`/`or_exit_with` in command bodies are the part B work list.
 
-### Part B — remaining
+### Part B — every command returns its failure (landed)
 
-- Make each command's `run` a `let*` chain returning `(unit, Sol_cli_exit.failure) result`, with `exit_on` called once in the term. This removes the part A temporaries.
-- `cmd_cloud_tf`: resolve the assets once and pass them down (`asset_root`/`workdir` still call `resolve_or_exit`).
-- `Sol_cli_cmd_new` and `Sol_cli_workspace` (line 179) still exit from `cli/lib`.
-- Expected to remain: the `Sol_cli_supervised` exits (the supervisor process's own exit codes) and `Sol_cli_exit` itself. The `exit` in `sol_cli_port_forward.ml` and `sol_cli_docker.ml` is in shell text and comments, not OCaml.
+Each command's `run` is a `let*` chain returning `(unit, Sol_cli_exit.failure) result`. The Cmdliner term converts it once with `Sol_cli_exit.exit_on`. The groups:
+
+- **B1:** check, plan, target, open, rollback, releases, deployments.
+- **B2:** secret, fn, status, logs.
+- **B3:** deploy, up.
+- **B4:** local, migrate.
+- **B5:** cloud plan/apply/destroy, new.
+
+Messages and exit codes are unchanged. A real-binary dune rule asserts them for about twenty failure paths. For the cloud and `sol new` paths I also compared the pre-change binary byte for byte, and they matched.
+
+What changed along the way:
+
+- **Helpers added:**
+  - `Sol_cli_exit.of_msg` / `of_error`: a library error as a failure.
+  - `reported ?code ()`: the command already printed why.
+  - `exit_on` prints a failure as a complete line.
+  - `Sol_cli_workspace.enter_cwd`, `Cmd_destination.remote`, `Sol_cli_deployment_plan.namespace_name` / `k8s_name` (these replace four copies of `namespace_or_exit`), and `Sol_cli_result.map_list`.
+- **Helpers deleted:**
+  - `Sol_cli_exit.or_exit` / `or_exit_with`, `Sol_cli_workspace.enter_or_exit`, `Sol_cli_platform_assets.resolve_or_exit`.
+  - `Cmd_destination.or_exit` / `top`, and `Cmd_migrate.fatal` / `fatal_p`.
+  - `cmd_cloud_tf`'s exiting twins: `platform_vars_of`, `with_cluster_access`, `require_credentials`, `lifecycle_error`.
+- **Assets resolved once** (the Remediation's second point): `cmd_cloud_tf` resolves Sol's platform assets once per command and passes them to `asset_root`, `materialize_workdir` and both init forms.
+- **Parser refusals (124)** for usage errors: `--observability-backend` is an `Arg.enum`, which removes three copies of `backend_of_arg`, and `--follow` with `--no-follow` is refused through `Term.ret`.
+- **A latent exit on the deploy path, fixed:** `Cmd_migrate.read_applied_in_cluster` could exit through `pick_namespace_and_service`, `Sol_cli_substrate.ensure` or `read_migration_files`. That bypassed deploy's fail-closed "cannot verify the required migration state" guidance. These now arrive as `Unavailable`.
+- **Resolve, then print:**
+  - `sol status` resolves every namespace before it prints its domain table.
+  - `sol logs --release` reads the store lazily, as before, and reports the store's own error instead of exiting inside the known-id callback.
+- **Splitting and de-duplication:**
+  - `sol local infra up` is split into four named phases.
+  - One `reconcile_operator_bindings_warn` (via `Result.iter_error`) replaces the copies in deploy and migrate.
+- **Docs:** `sol cloud destroy --help` no longer documents the exit 3 that REFAC-094 removed.
+
+## Completion notes
+
+- **`exit` calls left in `cli/lib`** (`rg -n '\bexit [0-9]' cli/lib --glob '*.ml'`, 2026-09-26):
+  - `sol_cli_supervised.ml` (2, 127, 125): the supervisor process's own exit codes, which are its interface.
+  - `sol_cli_exit.ml`: `exit_on`, the one conversion.
+  - `sol_cli_scaffold_templates.ml`, `sol_cli_port_forward.ml:198`: shell text inside generated files, not OCaml.
+  - `sol_cli_docker.ml:21`, `sol_cli_aws_destruction.ml:414`: comments.
+- **`exit` calls left in `cli/bin`:**
+  - Every term's single `exit_on`.
+  - `cmd_local.ml`'s SIGINT handler (`exit 130`): a signal handler cannot return a result.
+- **`rg -n 'or_exit' cli`** matches nothing; the helpers are gone. That is stronger than the criterion's "one call per entry point".
+- **`sol assets`** reports every failure (part A's dune rule). `cmd_assets.ml` has no `ignore`.
+- **Verification:** 65 CLI suites pass; format is clean; the offline lifecycle harness passes, including the REFAC-115 snapshot-interval scenario.
+- **Demo/example:** not applicable. Internal: the command surface, messages and exit codes are unchanged, apart from the two usage errors that now come from the parser.
+- **Language parity:** no impact (CLI-internal).

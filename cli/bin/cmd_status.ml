@@ -1,6 +1,5 @@
 open Cmdliner
-
-(* REFAC-108: enter through the validated boundary, like every command. *)
+open Result.Syntax
 
 let discover_domains () =
   let app_dir = "app" in
@@ -19,11 +18,8 @@ let discover_domains () =
     List.rev !domains)
 ;;
 
-let namespace_or_exit ~workspace ~domain =
-  Sol_cli_deployment_plan.namespace_to_string
-    (Sol_cli_exit.or_exit_with
-       Sol_cli_deployment_plan.plan_error_to_string
-       (Sol_cli_deployment_plan.namespace_result ~workspace ~domain))
+let namespace ~workspace ~domain =
+  Sol_cli_deployment_plan.namespace_name ~workspace ~domain |> Sol_cli_exit.of_msg
 ;;
 
 (* Status projects a resolved selection into its own addressing model: the
@@ -350,26 +346,32 @@ let print_workspace_index
       ~explicit_loki_url
       ~explicit_prometheus_url
   =
+  (* Every namespace is resolved before the table is printed, so a bad name
+     fails the command rather than half of its output. *)
+  let* namespaces =
+    domains
+    |> Sol_cli_result.map_list (fun domain ->
+      namespace ~workspace ~domain |> Result.map (fun ns -> domain, ns))
+  in
   Printf.printf "\nDomains\n";
-  List.iter
-    (fun domain ->
-       let ns = namespace_or_exit ~workspace ~domain in
-       let presence = namespace_presence ~ctx ns in
-       let diagnoses =
-         match presence with
-         | Ns_present -> service_diagnoses ~ctx ~ns (services_of_domain services domain)
-         (* Not readable or confirmed absent: nothing was read, so there are no
+  namespaces
+  |> List.iter (fun (domain, ns) ->
+    let presence = namespace_presence ~ctx ns in
+    let diagnoses =
+      match presence with
+      | Ns_present -> service_diagnoses ~ctx ~ns (services_of_domain services domain)
+      (* Not readable or confirmed absent: nothing was read, so there are no
             per-service verdicts to roll up. The rollup decides the verdict from
             the presence itself rather than from an empty list. *)
-         | Ns_absent | Ns_unreadable _ -> []
-       in
-       let status = Sol_cli_status.rollup_domain_status ~ns_presence:presence diagnoses in
-       Printf.printf "  %-12s %s\n" domain (Sol_cli_status.domain_status_to_string status))
-    domains;
+      | Ns_absent | Ns_unreadable _ -> []
+    in
+    let status = Sol_cli_status.rollup_domain_status ~ns_presence:presence diagnoses in
+    Printf.printf "  %-12s %s\n" domain (Sol_cli_status.domain_status_to_string status));
   Printf.printf "\nObservability\n";
   Printf.printf "  backend  %s\n" (Sol_cli_observability_url.backend_to_string backend);
   print_observability_lines ~backend ~explicit_loki_url ~explicit_prometheus_url;
-  print_open_block ~scope:""
+  print_open_block ~scope:"";
+  Ok ()
 ;;
 
 (* ── Domain Scope ───────────────────────────────────────────────────────── *)
@@ -384,7 +386,7 @@ let print_domain_status
       ~explicit_loki_url
       ~explicit_prometheus_url
   =
-  let ns = namespace_or_exit ~workspace ~domain in
+  let* ns = namespace ~workspace ~domain in
   let presence = namespace_presence ~ctx ns in
   let named =
     match presence with
@@ -419,7 +421,8 @@ let print_domain_status
     ~explicit_loki_url
     ~explicit_prometheus_url;
   print_open_block ~scope:domain;
-  print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name:None
+  print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name:None;
+  Ok ()
 ;;
 
 (* ── Service Scope ──────────────────────────────────────────────────────── *)
@@ -435,27 +438,22 @@ let print_service_status
       ~explicit_loki_url
       ~explicit_prometheus_url
   =
-  let ns = namespace_or_exit ~workspace ~domain in
+  let* ns = namespace ~workspace ~domain in
   (* [services] is the resolver's selection for this scope: exactly the services
      whose canonical name matched [service_name]. *)
-  let svc =
-    match
-      List.find_opt
-        (fun (s : Sol_cli_manifest.service) ->
-           s.domain = domain && Sol_cli_deployment_scope.equal_name s.name service_name)
-        services
-    with
-    | Some svc -> svc
-    | None ->
-      Printf.eprintf "Service '%s' not found in domain '%s'.\n" service_name domain;
-      exit 1
+  let* svc =
+    services
+    |> List.find_opt (fun (s : Sol_cli_manifest.service) ->
+      s.domain = domain && Sol_cli_deployment_scope.equal_name s.name service_name)
+    |> Option.to_result
+         ~none:
+           (Sol_cli_exit.failure
+              (Printf.sprintf
+                 "Service '%s' not found in domain '%s'."
+                 service_name
+                 domain))
   in
-  let k8s_name =
-    Sol_cli_deployment_plan.k8s_name_to_string
-      (Sol_cli_exit.or_exit_with
-         Sol_cli_deployment_plan.plan_error_to_string
-         (Sol_cli_deployment_plan.k8s_name_result svc.Sol_cli_manifest.name))
-  in
+  let* k8s_name = Sol_cli_deployment_plan.k8s_name svc.name |> Sol_cli_exit.of_msg in
   let pod_expectation =
     Sol_cli_status.pod_expectation_of_primitive svc.Sol_cli_manifest.primitive
   in
@@ -488,7 +486,8 @@ let print_service_status
     ~explicit_loki_url
     ~explicit_prometheus_url;
   print_open_block ~scope:(domain ^ "/" ^ k8s_name);
-  print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name:(Some k8s_name)
+  print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name:(Some k8s_name);
+  Ok ()
 ;;
 
 (* REFAC-089: status's inputs travel together too -- the selection, the target
@@ -500,55 +499,43 @@ type status_options =
   ; prometheus_base_url : string option
   }
 
-let backend_of_arg = function
-  | None -> None
-  | Some s ->
-    (match Sol_cli_observability_url.backend_of_string s with
-     | Some b -> Some b
-     | None ->
-       Printf.eprintf
-         "error: unknown --observability-backend %S (expected: local, \
-          self_hosted_durable, external)\n"
-         s;
-       exit 1)
-;;
-
 let run ~ctx (options : status_options) =
   let scope_str = options.scope in
-  let explicit_backend = backend_of_arg options.observability.backend in
+  let explicit_backend = options.observability.backend in
   let explicit_base_domain = options.observability.base_domain in
   let target = options.target in
   let explicit_loki_url = options.observability.loki_base_url in
   let explicit_prometheus_url = options.prometheus_base_url in
-  let workspace = (Sol_cli_workspace.enter_or_exit ()).name in
-  let all_domains = discover_domains () in
-  if all_domains = []
-  then (
-    Printf.eprintf "No domains found in app/. Run from the workspace root.\n";
-    exit 1);
+  let* { name = workspace; _ } = Sol_cli_workspace.enter_cwd () in
+  let* all_domains =
+    match discover_domains () with
+    | [] ->
+      Error
+        (Sol_cli_exit.failure "No domains found in app/. Run from the workspace root.")
+    | domains -> Ok domains
+  in
   (* Discovery happens once; scope resolution then projects it into status's own
      addressing model (workspace / domain / unit / managed resource). *)
-  let services =
-    Sol_cli_exit.or_exit_with
-      Sol_cli_manifest.discover_error_to_string
-      (Sol_cli_manifest.discover_services ())
+  let* services =
+    Sol_cli_manifest.discover_services ()
+    |> Sol_cli_exit.of_error Sol_cli_manifest.discover_error_to_string
   in
-  let scope = Sol_cli_exit.or_exit (Sol_cli_open.parse_scope scope_str) in
+  let* scope = Sol_cli_open.parse_scope scope_str |> Sol_cli_exit.of_msg in
   let resolve_status_scope request =
-    Sol_cli_exit.or_exit
-      (Sol_cli_workload_selection.resolve ~what:"status scope" request services)
+    Sol_cli_workload_selection.resolve ~what:"status scope" request services
+    |> Sol_cli_exit.of_msg
   in
   let backend_and_base_domain () =
-    Sol_cli_exit.or_exit
-      (Sol_cli_observability_url.effective_backend_and_base_domain
-         ~explicit_backend
-         ~explicit_base_domain
-         ~target
-         ())
+    Sol_cli_observability_url.effective_backend_and_base_domain
+      ~explicit_backend
+      ~explicit_base_domain
+      ~target
+      ()
+    |> Sol_cli_exit.of_msg
   in
   match scope with
   | Sol_cli_open.Workspace ->
-    let backend, _base_domain = backend_and_base_domain () in
+    let* backend, _base_domain = backend_and_base_domain () in
     print_workspace_index
       ~ctx
       ~workspace
@@ -569,10 +556,11 @@ let run ~ctx (options : status_options) =
     Printf.printf
       "  dashboard  sol open dashboard resource/%s/%s\n%!"
       resource_type
-      resource_name
+      resource_name;
+    Ok ()
   | Sol_cli_open.Domain domain ->
-    let selected = resolve_status_scope (Some domain) in
-    let backend, base_domain = backend_and_base_domain () in
+    let* selected = resolve_status_scope (Some domain) in
+    let* backend, base_domain = backend_and_base_domain () in
     print_domain_status
       ~ctx
       ~workspace
@@ -583,8 +571,8 @@ let run ~ctx (options : status_options) =
       ~explicit_loki_url
       ~explicit_prometheus_url
   | Sol_cli_open.Service (domain, service_name) ->
-    let selected = resolve_status_scope (Some (domain ^ "/" ^ service_name)) in
-    let backend, base_domain = backend_and_base_domain () in
+    let* selected = resolve_status_scope (Some (domain ^ "/" ^ service_name)) in
+    let* backend, base_domain = backend_and_base_domain () in
     print_service_status
       ~ctx
       ~workspace
@@ -659,14 +647,13 @@ let status_observability_term =
 let status_term ~local ~target_term =
   Term.(
     const (fun scope observability prometheus_base_url target ->
-      let ctx =
-        if local
-        then Cmd_destination.local
-        else
-          Cmd_destination.or_exit
-            (Cmd_destination.resolve ~command:"status" ~local:false ~target)
-      in
-      run ~ctx { scope; target; observability; prometheus_base_url })
+      Sol_cli_exit.exit_on
+        (let* ctx =
+           if local
+           then Ok Cmd_destination.local
+           else Cmd_destination.remote ~command:"status" target
+         in
+         run ~ctx { scope; target; observability; prometheus_base_url }))
     $ domain_arg
     $ status_observability_term
     $ prometheus_base_url_arg

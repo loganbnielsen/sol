@@ -174,7 +174,8 @@ let parse_error_to_string = function
 ;;
 
 let validation_error path message = Error (Validation { path; message })
-let ( let* ) = Result.bind
+
+open Result.Syntax
 
 (* ── Validation ──────────────────────────────────────────────────────────── *)
 

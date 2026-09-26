@@ -61,7 +61,8 @@ let failure_to_string = function
 ;;
 
 let refused result = Result.map_error (fun message -> Refused message) result
-let ( let* ) = Result.bind
+
+open Result.Syntax
 
 let report_phase deps phase =
   deps.report

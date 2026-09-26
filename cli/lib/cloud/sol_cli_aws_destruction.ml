@@ -12,8 +12,7 @@
 open Sol_cli_destroy_verification
 open Sol_cli_destruction
 open Sol_cli_terraform_steps
-
-let ( let* ) = Result.bind
+open Result.Syntax
 
 (* `An error occurred (Code) when calling the Operation operation: ...`. The code
    is what a caller is allowed to branch on; the prose around it is not. *)

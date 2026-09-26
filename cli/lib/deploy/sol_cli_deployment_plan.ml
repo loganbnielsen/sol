@@ -119,7 +119,7 @@ type plan_error =
       ; message : string
       }
 
-let ( let* ) = Result.bind
+open Result.Syntax
 
 let mode_to_string = function
   | Local -> "local"
@@ -568,6 +568,18 @@ let plan_error_to_string = function
     Printf.sprintf "service %S calls %S: %s" service ref message
   | Invalid_kubernetes_name { field; value; message } ->
     Printf.sprintf "invalid Kubernetes %s %S: %s" field value message
+;;
+
+let namespace_name ~workspace ~domain =
+  namespace_result ~workspace ~domain
+  |> Result.map namespace_to_string
+  |> Result.map_error plan_error_to_string
+;;
+
+let k8s_name name =
+  k8s_name_result name
+  |> Result.map k8s_name_to_string
+  |> Result.map_error plan_error_to_string
 ;;
 
 let validate_persistence (spec : service_spec) =

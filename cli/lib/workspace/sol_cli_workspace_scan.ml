@@ -77,7 +77,7 @@ let topics_of_toml path =
     [events/] subdirectories and [events/sol.toml]; sorted, deduplicated. Never
     scans [*.ml] source, to avoid false positives from string literals. *)
 let discover_topics () =
-  let ( let* ) = Result.bind in
+  let open Result.Syntax in
   let* top_level = topics_of_toml "events/sol.toml" in
   let* sub_topics =
     fold_dir "events" ~init:(Ok []) ~f:(fun acc entry path ->

@@ -63,7 +63,7 @@ datasources:
    scalar discards trailing newlines on parse either way, confirmed live
    (`kubectl apply` on the new render came back "unchanged" against the
    cluster's existing ConfigMap). *)
-let ( let* ) = Result.bind
+open Result.Syntax
 
 (* REFAC-115: a Sol asset that cannot be read is an error for the caller to
    report, not an exception or an exit. *)
