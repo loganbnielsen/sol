@@ -138,8 +138,8 @@ let apply_yaml yaml =
          exit 1)
 ;;
 
-let install_local_grafana_config ~prometheus ~tempo =
-  apply_yaml (Sol_cli_dev_observability.dashboard_configmap_yaml ~namespace:"monitoring");
+let install_local_grafana_config ~dashboards ~prometheus ~tempo =
+  apply_yaml dashboards;
   (* OBS-039: no longer auto-provisioned by a bundled loki-stack Grafana
      subchart -- see Sol_cli_dev_observability.loki_datasource_configmap_yaml.
      OBS-042: this datasource also carries the derivedFields link to Tempo,
@@ -159,6 +159,48 @@ let install_local_grafana_config ~prometheus ~tempo =
 ;;
 
 (* ── dev up ──────────────────────────────────────────────────────────────── *)
+
+(* REFAC-115: everything `sol local infra up` reads from Sol's own assets, read
+   and checked before anything is installed -- a missing or malformed asset fails
+   here, not halfway through the installs. *)
+type local_assets =
+  { component_values : (string * string) list (** component -> merged local values *)
+  ; alloy_values : string
+  ; dashboards : string
+  }
+
+let local_components =
+  [ "redpanda"; "postgresql"; "loki"; "grafana"; "tempo"; "prometheus" ]
+;;
+
+let read_local_assets () =
+  let ( let* ) = Result.bind in
+  let* assets =
+    Sol_cli_platform_assets.resolve ()
+    |> Result.map_error Sol_cli_platform_assets.error_to_string
+  in
+  let* component_values =
+    List.fold_right
+      (fun component acc ->
+         let* rest = acc in
+         let* values =
+           Sol_cli_platform_component.merged_values_yaml
+             ~assets
+             ~component
+             ~profile:"local"
+         in
+         Ok ((component, values) :: rest))
+      local_components
+      (Ok [])
+  in
+  let* alloy_values = Sol_cli_dev_observability.alloy_values_yaml ~assets in
+  let* dashboards =
+    Sol_cli_dev_observability.dashboard_configmap_yaml ~assets ~namespace:"monitoring"
+  in
+  Ok { component_values; alloy_values; dashboards }
+;;
+
+let values_of local component = List.assoc component local.component_values
 
 let dev_up () =
   require_tools ();
@@ -251,6 +293,7 @@ let dev_up () =
     req.loki
     req.prometheus
     req.tempo;
+  let local = Sol_cli_exit.or_exit (read_local_assets ()) in
   (* 3. Infra *)
   Printf.printf "\n[3/4] Deploying infra...\n%!";
   let need_any = req.kafka || req.postgres || req.loki || req.prometheus || req.tempo in
@@ -346,10 +389,7 @@ let dev_up () =
         ; "external.addresses[0]", Str "localhost"
         ; "listeners.kafka.external.default.advertisedPorts[0]", Float 9092.
         ]
-      ~values_yaml:
-        (Sol_cli_platform_component.merged_values_yaml
-           ~component:"redpanda"
-           ~profile:"local")
+      ~values_yaml:(values_of local "redpanda")
       ();
   if req.postgres
   then
@@ -376,10 +416,7 @@ let dev_up () =
          (main.tf keeps its own var-driven `set` for both -- a real secret
          and an "ephemeral by default" choice matching Loki/Prometheus's
          local profile, neither with a value cmd_local.ml should share). *)
-      ~values_yaml:
-        (Sol_cli_platform_component.merged_values_yaml
-           ~component:"postgresql"
-           ~profile:"local")
+      ~values_yaml:(values_of local "postgresql")
       ();
   let need_grafana = req.loki || req.prometheus || req.tempo in
   if need_grafana
@@ -403,8 +440,7 @@ let dev_up () =
       ~namespace:"monitoring"
       ~version:"18.12.1"
         (* CODE_LAYER-008: matches platform/cloud/modules/platform/main.tf's pin *)
-      ~values_yaml:
-        (Sol_cli_platform_component.merged_values_yaml ~component:"loki" ~profile:"local")
+      ~values_yaml:(values_of local "loki")
       ();
     (* Values come from platform/shared/components.json (grafana.{common,local})
        (ADR 0001 / CODE_LAYER-005). sidecar.dashboards/datasources: moved
@@ -425,10 +461,7 @@ let dev_up () =
          chart-version-dependent. Fixed dev-only value, matching
          PostgreSQL's hardcoded "dev" password convention above. *)
       ~values:[ "adminPassword", Str "dev" ]
-      ~values_yaml:
-        (Sol_cli_platform_component.merged_values_yaml
-           ~component:"grafana"
-           ~profile:"local")
+      ~values_yaml:(values_of local "grafana")
       ();
     (* Cluster-wide pod stdout/stderr scraping via DaemonSet -- same role
        promtail.enabled: true played, so 'sol logs' can fall back to real
@@ -444,7 +477,7 @@ let dev_up () =
       ~namespace:"monitoring"
       ~version:"1.12.1"
         (* CODE_LAYER-008: matches platform/cloud/modules/platform/main.tf's pin *)
-      ~values_yaml:(Sol_cli_dev_observability.alloy_values_yaml ())
+      ~values_yaml:local.alloy_values
       ());
   if req.tempo
   then
@@ -470,10 +503,7 @@ let dev_up () =
       ~namespace:"monitoring"
       ~version:"2.3.0"
         (* CODE_LAYER-008: matches platform/cloud/modules/platform/main.tf's pin *)
-      ~values_yaml:
-        (Sol_cli_platform_component.merged_values_yaml
-           ~component:"tempo"
-           ~profile:"local")
+      ~values_yaml:(values_of local "tempo")
       ();
   if req.prometheus
   then
@@ -497,10 +527,7 @@ let dev_up () =
       ~version:"25.20.1"
         (* CODE_LAYER-008: matches platform/cloud/modules/platform/main.tf's pin *)
       ~values:[ "prometheus-node-exporter.enabled", Bool false ]
-      ~values_yaml:
-        (Sol_cli_platform_component.merged_values_yaml
-           ~component:"prometheus"
-           ~profile:"local")
+      ~values_yaml:(values_of local "prometheus")
       ();
   (* FEAT-042: install ingress-nginx unconditionally, mirroring
      platform/cloud/modules/platform's helm_release.ingress_nginx (same chart version,
@@ -524,7 +551,11 @@ let dev_up () =
   (* Grafana's datasource ConfigMaps name the services above, so they are applied
      once those releases exist -- after the installs, not interleaved with them. *)
   if need_grafana
-  then install_local_grafana_config ~prometheus:req.prometheus ~tempo:req.tempo;
+  then
+    install_local_grafana_config
+      ~dashboards:local.dashboards
+      ~prometheus:req.prometheus
+      ~tempo:req.tempo;
   (* 4. Port-forwards *)
   Printf.printf "\n[4/4] Starting port-forwards...\n%!";
   ignore (Sys.command "sleep 2");
@@ -800,7 +831,9 @@ let dev_run workspace_dir scope =
            "no Sol services found. Expected app/<domain>/<name>_{svc,worker,fn}/ \
             directories with a Dockerfile."
          scope
-         (discover_services ()))
+         (Sol_cli_exit.or_exit_with
+            Sol_cli_manifest.discover_error_to_string
+            (Sol_cli_manifest.discover_services ())))
   in
   Printf.printf "\n  Starting %d service(s) from %s\n" (List.length services) dir;
   List.iter

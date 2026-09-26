@@ -50,7 +50,7 @@ let test_run_without_cmdliner () =
     write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
     write "app/payments/charge_svc/sol.toml" "[infra.env]\nsecrets = [\"DATABASE_URL\"]\n";
     let emit_dir = Filename.concat root "out" in
-    let services = Sol_cli_manifest.discover_services () in
+    let services = Result.get_ok (Sol_cli_manifest.discover_services ()) in
     match
       Sol_cli_factory.run
         (Sol_cli_execution.context
@@ -82,7 +82,7 @@ let test_run_without_cmdliner () =
 
 let test_discover_missing_app () =
   with_tmp (fun _ ->
-    match Sol_cli_manifest.discover_services_result () with
+    match Sol_cli_manifest.discover_services () with
     | Error Sol_cli_manifest.Missing_app_dir -> ()
     | Error (Sol_cli_manifest.Workspace_error _) ->
       Alcotest.fail "expected Missing_app_dir, got a workspace error"

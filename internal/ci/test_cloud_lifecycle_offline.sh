@@ -2654,6 +2654,42 @@ chmod -R u+w "$ro_home"
 grep -q -- "-chdir=$workdirs/" "$ro_log" || { echo "DEC-050: read-only run did not use a working directory" >&2; exit 1; }
 echo "DEC-050: sol cloud plan runs against read-only assets"
 
+# REFAC-115: SOL_DESTROY_SNAPSHOT_INTERVAL_S is read when a destroy needs it. A
+# malformed value used to be evaluated at program start, so every command exited 2.
+# Now an unrelated command is unaffected, and a destroy that retains a final
+# snapshot (the default) refuses in preparation -- before anything is destroyed.
+if ! SOL_DESTROY_SNAPSHOT_INTERVAL_S=abc "$sol" --version >/dev/null 2>&1; then
+  echo "REFAC-115: a malformed SOL_DESTROY_SNAPSHOT_INTERVAL_S broke an unrelated command" >&2
+  exit 1
+fi
+interval_log="$tmp/refac115-interval.log"
+# The AWS target retains its final snapshot (the default) for this scenario: drop
+# the destroy_retention: none an earlier scenario inserted under it, and restore it.
+cp "$tmp/work/sol/environments.yml" "$tmp/work/envs.before-refac115.yml"
+awk '/^    aws\/us-east-1:[[:space:]]*$/ { in_aws = 1; print; next }
+     /^    [^ ]/ { in_aws = 0 }
+     !(in_aws && /^      destroy_retention:[[:space:]]*none[[:space:]]*$/) { print }' \
+  "$tmp/work/envs.before-refac115.yml" >"$tmp/work/sol/environments.yml"
+if grep -A3 '^    aws/us-east-1:' "$tmp/work/sol/environments.yml" | grep -q 'destroy_retention: none'; then
+  echo "REFAC-115: could not put the AWS target back on final-snapshot retention" >&2; exit 1
+fi
+if (cd "$tmp/work" && FAIL_ON="" DESTROYING=1 SOL_DESTROY_SNAPSHOT_INTERVAL_S=abc \
+      LIFECYCLE_LOG="$interval_log" "$sol" cloud destroy prod/aws/us-east-1 --apply) \
+    >"$interval_log.out" 2>&1; then
+  cat "$interval_log.out" >&2
+  echo "REFAC-115: a destroy proceeded with a malformed snapshot interval" >&2
+  exit 1
+fi
+assert_contains "REFAC-115: the refusal names the setting" "$interval_log.out" \
+  'SOL_DESTROY_SNAPSHOT_INTERVAL_S="abc" is not a non-negative number of seconds' || exit 1
+if grep -E '^terraform .* destroy( |$)' "$interval_log" >/dev/null 2>&1; then
+  echo "REFAC-115: terraform destroy ran despite the refused preparation:" >&2
+  grep -E '^terraform .* destroy' "$interval_log" >&2
+  exit 1
+fi
+mv "$tmp/work/envs.before-refac115.yml" "$tmp/work/sol/environments.yml"
+echo "REFAC-115: a malformed snapshot interval refuses the destroy, and only the destroy"
+
 # INFRA-075 canary. The scenarios above ran the real `sol cloud` commands; their run logs must
 # have landed in the isolated data home. If none did, Sol is writing somewhere else -- most
 # likely the operator's real ~/.local/share/sol, where the keep-20 pruning deletes real runs.

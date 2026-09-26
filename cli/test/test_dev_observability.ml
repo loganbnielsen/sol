@@ -1,3 +1,15 @@
+(* REFAC-115: the readers return results; a test fails with the reason. *)
+let ok = function
+  | Ok x -> x
+  | Error e -> Alcotest.fail e
+;;
+
+let assets () =
+  match Sol_cli_platform_assets.resolve () with
+  | Ok a -> a
+  | Error e -> Alcotest.fail (Sol_cli_platform_assets.error_to_string e)
+;;
+
 let check_bool = Alcotest.(check bool)
 let contains needle haystack = Sol_cli_string.contains ~needle haystack
 let assert_contains msg s needle = check_bool msg true (contains needle s)
@@ -9,7 +21,12 @@ let assert_contains msg s needle = check_bool msg true (contains needle s)
    loads via file(...) -- not a fixture, so this exercises production
    content end to end. *)
 let test_dashboard_configmap () =
-  let yaml = Sol_cli_dev_observability.dashboard_configmap_yaml ~namespace:"monitoring" in
+  let yaml =
+    ok
+      (Sol_cli_dev_observability.dashboard_configmap_yaml
+         ~assets:(assets ())
+         ~namespace:"monitoring")
+  in
   assert_contains "kind" yaml "kind: ConfigMap";
   assert_contains "name" yaml "name: sol-grafana-dashboards";
   assert_contains "namespace" yaml "namespace: monitoring";
@@ -167,12 +184,13 @@ let with_fake_sol_home f =
 let test_alloy_render_expands_taxonomy_loop () =
   with_fake_sol_home (fun _sol_home ->
     let river =
-      Sol_cli_dev_observability.render_alloy_config
-        ~assets:(Sol_cli_platform_assets.resolve_or_exit ())
-        ~taxonomy_labels:[ "workspace"; "domain"; "service" ]
-        ~loki_push_url:"http://loki:3100/loki/api/v1/push"
-        ~loki_push_basic_auth_username:""
-        ~loki_push_basic_auth_password:""
+      ok
+      @@ Sol_cli_dev_observability.render_alloy_config
+           ~assets:(assets ())
+           ~taxonomy_labels:[ "workspace"; "domain"; "service" ]
+           ~loki_push_url:"http://loki:3100/loki/api/v1/push"
+           ~loki_push_basic_auth_username:""
+           ~loki_push_basic_auth_password:""
     in
     assert_contains "workspace rule" river "__meta_kubernetes_pod_label_workspace";
     assert_contains "domain rule" river "__meta_kubernetes_pod_label_domain";
@@ -188,12 +206,13 @@ let test_alloy_render_expands_taxonomy_loop () =
 let test_alloy_render_omits_basic_auth_when_empty () =
   with_fake_sol_home (fun _sol_home ->
     let river =
-      Sol_cli_dev_observability.render_alloy_config
-        ~assets:(Sol_cli_platform_assets.resolve_or_exit ())
-        ~taxonomy_labels:[ "workspace" ]
-        ~loki_push_url:"http://loki:3100/loki/api/v1/push"
-        ~loki_push_basic_auth_username:""
-        ~loki_push_basic_auth_password:""
+      ok
+      @@ Sol_cli_dev_observability.render_alloy_config
+           ~assets:(assets ())
+           ~taxonomy_labels:[ "workspace" ]
+           ~loki_push_url:"http://loki:3100/loki/api/v1/push"
+           ~loki_push_basic_auth_username:""
+           ~loki_push_basic_auth_password:""
     in
     check_bool "no basic_auth block" false (contains "basic_auth" river);
     assert_contains "push url present" river "http://loki:3100/loki/api/v1/push")
@@ -202,12 +221,13 @@ let test_alloy_render_omits_basic_auth_when_empty () =
 let test_alloy_render_includes_basic_auth_when_set () =
   with_fake_sol_home (fun _sol_home ->
     let river =
-      Sol_cli_dev_observability.render_alloy_config
-        ~assets:(Sol_cli_platform_assets.resolve_or_exit ())
-        ~taxonomy_labels:[ "workspace" ]
-        ~loki_push_url:"https://loki.example.com/loki/api/v1/push"
-        ~loki_push_basic_auth_username:"promtail"
-        ~loki_push_basic_auth_password:"secret"
+      ok
+      @@ Sol_cli_dev_observability.render_alloy_config
+           ~assets:(assets ())
+           ~taxonomy_labels:[ "workspace" ]
+           ~loki_push_url:"https://loki.example.com/loki/api/v1/push"
+           ~loki_push_basic_auth_username:"promtail"
+           ~loki_push_basic_auth_password:"secret"
     in
     assert_contains "basic_auth block" river "basic_auth {";
     assert_contains "username" river "username = \"promtail\"";
@@ -225,7 +245,7 @@ let test_alloy_values_yaml_against_real_file () =
   match Sol_cli_platform_assets.resolve () with
   | Error e -> Alcotest.fail (Sol_cli_platform_assets.error_to_string e)
   | Ok _ ->
-    let yaml = Sol_cli_dev_observability.alloy_values_yaml () in
+    let yaml = ok (Sol_cli_dev_observability.alloy_values_yaml ~assets:(assets ())) in
     assert_contains "helm values shape" yaml "configMap:";
     assert_contains "content block" yaml "content: |-";
     assert_contains "pod discovery" yaml "discovery.kubernetes \"pods\"";
@@ -259,7 +279,7 @@ let leading_spaces line =
 ;;
 
 let test_alloy_values_yaml_is_valid_block_scalar_shape () =
-  let yaml = Sol_cli_dev_observability.alloy_values_yaml () in
+  let yaml = ok (Sol_cli_dev_observability.alloy_values_yaml ~assets:(assets ())) in
   let lines = String.split_on_char '\n' yaml in
   let key_line = List.find (fun l -> contains "content: |-" l) lines in
   let key_indent = leading_spaces key_line in

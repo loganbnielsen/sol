@@ -54,9 +54,8 @@ datasources:
    source of Sol's four generic Grafana dashboards -- both `sol local infra up`
    (here) and platform/cloud/modules/platform/main.tf's `kubernetes_config_map.grafana_dashboards`
    (via Terraform's own `file(...)`) load from the same files, instead of
-   a second, hand-synced OCaml copy per dashboard. Resolves Sol's assets
-   itself (same pattern as Sol_cli_platform_component.merged_values_yaml
-   and render_alloy_config), reading each real file, not a fixture.
+   a second, hand-synced OCaml copy per dashboard. The caller passes the
+   resolved assets (REFAC-115), and each real file is read, not a fixture.
 
    The real files each carry a trailing newline the old OCaml string
    literals didn't -- not byte-identical to what those literals held, but
@@ -64,27 +63,42 @@ datasources:
    scalar discards trailing newlines on parse either way, confirmed live
    (`kubectl apply` on the new render came back "unchanged" against the
    cluster's existing ConfigMap). *)
-let read_dashboard_json ~assets name =
-  let path = Sol_cli_platform_assets.dashboard assets name in
-  let ic = open_in_bin path in
-  Fun.protect
-    ~finally:(fun () -> close_in_noerr ic)
-    (fun () -> really_input_string ic (in_channel_length ic))
+let ( let* ) = Result.bind
+
+(* REFAC-115: a Sol asset that cannot be read is an error for the caller to
+   report, not an exception or an exit. *)
+let read_asset path =
+  match In_channel.with_open_bin path In_channel.input_all with
+  | contents -> Ok contents
+  | exception Sys_error msg -> Error (Printf.sprintf "cannot read %s" msg)
 ;;
 
-let dashboard_configmap_yaml ~namespace =
-  let assets = Sol_cli_platform_assets.resolve_or_exit () in
-  let dashboard name = read_dashboard_json ~assets name in
-  configmap_yaml
-    ~name:"sol-grafana-dashboards"
-    ~namespace
-    ~labels:[ "grafana_dashboard", "1" ]
-    ~data:
-      [ "workspace-overview.json", dashboard "workspace-overview.json"
-      ; "domain-overview.json", dashboard "domain-overview.json"
-      ; "service-template.json", dashboard "service-template.json"
-      ; "release-timeline.json", dashboard "release-timeline.json"
-      ]
+let dashboard_names =
+  [ "workspace-overview.json"
+  ; "domain-overview.json"
+  ; "service-template.json"
+  ; "release-timeline.json"
+  ]
+;;
+
+let dashboard_configmap_yaml ~assets ~namespace =
+  (* In order, so the first unreadable dashboard is the one reported. *)
+  let* data =
+    List.fold_left
+      (fun acc name ->
+         let* read = acc in
+         let* json = read_asset (Sol_cli_platform_assets.dashboard assets name) in
+         Ok ((name, json) :: read))
+      (Ok [])
+      dashboard_names
+    |> Result.map List.rev
+  in
+  Ok
+    (configmap_yaml
+       ~name:"sol-grafana-dashboards"
+       ~namespace
+       ~labels:[ "grafana_dashboard", "1" ]
+       ~data)
 ;;
 
 let prometheus_datasource_configmap_yaml ~namespace =
@@ -245,13 +259,7 @@ let render_alloy_config
       ~loki_push_basic_auth_username
       ~loki_push_basic_auth_password
   =
-  let path = Sol_cli_platform_assets.alloy_template assets in
-  let ic = open_in_bin path in
-  let content =
-    Fun.protect
-      ~finally:(fun () -> close_in_noerr ic)
-      (fun () -> really_input_string ic (in_channel_length ic))
-  in
+  let* content = read_asset (Sol_cli_platform_assets.alloy_template assets) in
   let before, loop_body, after =
     slice_between
       ~marker_start:"%{ for label in taxonomy_labels ~}\n"
@@ -271,24 +279,23 @@ let render_alloy_config
   let content =
     before ^ (if loki_push_basic_auth_username = "" then "" else inner) ^ after
   in
-  content
-  |> replace_all ~pattern:"${loki_push_url}" ~replacement:loki_push_url
-  |> replace_all
-       ~pattern:"${loki_push_basic_auth_username}"
-       ~replacement:loki_push_basic_auth_username
-  |> replace_all
-       ~pattern:"${loki_push_basic_auth_password}"
-       ~replacement:loki_push_basic_auth_password
+  Ok
+    (content
+     |> replace_all ~pattern:"${loki_push_url}" ~replacement:loki_push_url
+     |> replace_all
+          ~pattern:"${loki_push_basic_auth_username}"
+          ~replacement:loki_push_basic_auth_username
+     |> replace_all
+          ~pattern:"${loki_push_basic_auth_password}"
+          ~replacement:loki_push_basic_auth_password)
 ;;
 
 (* `sol local infra up`'s local profile: push straight to the in-cluster Loki, no
    basic auth (`sol local infra up` has no "external backend" concept), the same
    fixed taxonomy label set platform/cloud/modules/platform/main.tf's
-   local.observability_taxonomy_labels passes for every profile.
-   Resolves Sol's platform assets itself (Sol_cli_platform_assets, DEC-049)
-   rather than pushing that onto the caller. *)
-let alloy_values_yaml () =
-  let assets = Sol_cli_platform_assets.resolve_or_exit () in
+   local.observability_taxonomy_labels passes for every profile. The caller
+   resolves the platform assets once and passes them (REFAC-115). *)
+let alloy_values_yaml ~assets =
   (* CODE_LAYER-006: found along the way -- `content: |-`'s own indent here
      is 4 spaces (nested under alloy/configMap), so indent_block's flat
      4-space content indent left the block scalar body at the SAME column
@@ -299,19 +306,23 @@ let alloy_values_yaml () =
      shape. Indenting 6 spaces here (2 more than the key) instead of
      reusing indent_block, which other configmap_yaml callers rely on at
      their own, already-correct nesting depth. *)
-  Printf.sprintf
-    {|alloy:
+  let* config =
+    render_alloy_config
+      ~assets
+      ~taxonomy_labels:[ "workspace"; "domain"; "service"; "primitive"; "release" ]
+      ~loki_push_url:"http://loki:3100/loki/api/v1/push"
+      ~loki_push_basic_auth_username:""
+      ~loki_push_basic_auth_password:""
+  in
+  Ok
+    (Printf.sprintf
+       {|alloy:
   configMap:
     content: |-
 %s
 |}
-    (render_alloy_config
-       ~assets
-       ~taxonomy_labels:[ "workspace"; "domain"; "service"; "primitive"; "release" ]
-       ~loki_push_url:"http://loki:3100/loki/api/v1/push"
-       ~loki_push_basic_auth_username:""
-       ~loki_push_basic_auth_password:""
-     |> String.split_on_char '\n'
-     |> List.map (fun line -> "      " ^ line)
-     |> String.concat "\n")
+       (config
+        |> String.split_on_char '\n'
+        |> List.map (fun line -> "      " ^ line)
+        |> String.concat "\n"))
 ;;

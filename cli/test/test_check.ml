@@ -39,7 +39,7 @@ let has_msg needle findings =
 
 let test_missing_app_result () =
   with_tmp (fun _ ->
-    match Sol_cli_manifest.discover_services_result () with
+    match Sol_cli_manifest.discover_services () with
     | Error Sol_cli_manifest.Missing_app_dir -> ()
     | Error (Sol_cli_manifest.Workspace_error _) ->
       Alcotest.fail "expected Missing_app_dir, got a workspace error"
@@ -51,7 +51,7 @@ let test_missing_app_result () =
 let test_not_in_workspace_result () =
   with_tmp (fun _ ->
     Sys.remove "sol.yml";
-    match Sol_cli_manifest.discover_services_result () with
+    match Sol_cli_manifest.discover_services () with
     | Error (Sol_cli_manifest.Workspace_error Sol_cli_workspace.Not_in_workspace) -> ()
     | Error e ->
       Alcotest.fail
@@ -63,7 +63,7 @@ let test_discover_valid_service () =
   with_tmp (fun _ ->
     mkdir_p "app/payments/charge_svc";
     write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
-    match Sol_cli_manifest.discover_services_result () with
+    match Sol_cli_manifest.discover_services () with
     | Error e -> Alcotest.fail (Sol_cli_manifest.discover_error_to_string e)
     | Ok [ svc ] ->
       Alcotest.(check string) "domain" "payments" svc.domain;
@@ -132,7 +132,7 @@ let test_run_services_scopes_the_check () =
     mkdir_p "app/comms/notify_worker";
     write "app/comms/notify_worker/Dockerfile" "FROM scratch\n";
     write "app/comms/notify_worker/sol.toml" "[infra.env]\nsecrets = [\"bad-key\"]\n";
-    let services = Sol_cli_manifest.discover_services () in
+    let services = Result.get_ok (Sol_cli_manifest.discover_services ()) in
     let charge =
       List.filter (fun (s : Sol_cli_manifest.service) -> s.name = "charge_svc") services
     in
