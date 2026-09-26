@@ -147,7 +147,9 @@ The tree below is today's. It moves toward the target layout as REFAC-099…105 
 sol/
   # ── product ───────────────────────────────────────────────────────────────
   cli/                          ← the `sol` CLI — the binary and what it needs (DEC-046 rule 2)
-    bin/ lib/ test/             ← command parsing, shared implementation, tests
+    bin/ test/                  ← command parsing, tests
+    lib/{base,kube,workspace,cloud,deploy,local}/  ← one dune library per domain (REFAC-104);
+                                  a DAG, base ← kube ← workspace ← cloud ← deploy; `sol_cli` is the umbrella
     migrations/                 ← hosted control-plane SQL (currently unreferenced)
   platform/                     ← what the CLI drives — no OCaml
     components/                 ← Helm values shared by local and cloud
