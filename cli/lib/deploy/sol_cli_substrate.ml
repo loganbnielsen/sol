@@ -243,8 +243,13 @@ let operator_binding_docs ~workspace (services : Sol_cli_manifest.service list)
 ;;
 
 let reconcile_operator_bindings ~ctx ~workspace : (unit, string) result =
-  let namespaces =
+  let ( let* ) = Result.bind in
+  let* services =
     Sol_cli_manifest.discover_services ()
+    |> Result.map_error Sol_cli_manifest.discover_error_to_string
+  in
+  let namespaces =
+    services
     |> List.filter_map (fun (s : Sol_cli_manifest.service) ->
       match
         Sol_cli_deployment_plan.namespace_result

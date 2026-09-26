@@ -12,6 +12,18 @@ let sol_home_markers =
   [ "framework/ocaml/sol-svc/lib/dune"; "framework/ocaml/kafka-eio-service/lib/dune" ]
 ;;
 
+(* REFAC-115: the readers return results; a test fails with the reason. *)
+let ok = function
+  | Ok x -> x
+  | Error e -> Alcotest.fail e
+;;
+
+let assets () =
+  match Sol_cli_platform_assets.resolve () with
+  | Ok a -> a
+  | Error e -> Alcotest.fail (Sol_cli_platform_assets.error_to_string e)
+;;
+
 let write_file path content =
   let dir = Filename.dirname path in
   let rec mkdir_p d =
@@ -71,9 +83,11 @@ let test_profile_overrides_common () =
       ]
     (fun () ->
        let merged =
-         Sol_cli_platform_component.merged_values_yaml
-           ~component:"widget"
-           ~profile:"local"
+         ok
+         @@ Sol_cli_platform_component.merged_values_yaml
+              ~assets:(assets ())
+              ~component:"widget"
+              ~profile:"local"
        in
        let json = Yojson.Safe.from_string merged in
        (* profile's scalar wins outright *)
@@ -101,9 +115,11 @@ let test_missing_profile_layer_is_empty_object () =
     ~files:[ "common", {|{"a": 1}|} ]
     (fun () ->
        let merged =
-         Sol_cli_platform_component.merged_values_yaml
-           ~component:"widget"
-           ~profile:"durable"
+         ok
+         @@ Sol_cli_platform_component.merged_values_yaml
+              ~assets:(assets ())
+              ~component:"widget"
+              ~profile:"durable"
        in
        let json = Yojson.Safe.from_string merged in
        check_str "a" "1" (Yojson.Safe.to_string (Yojson.Safe.Util.member "a" json)))
@@ -115,9 +131,11 @@ let test_missing_common_layer_is_empty_object () =
     ~files:[ "local", {|{"a": 1}|} ]
     (fun () ->
        let merged =
-         Sol_cli_platform_component.merged_values_yaml
-           ~component:"widget"
-           ~profile:"local"
+         ok
+         @@ Sol_cli_platform_component.merged_values_yaml
+              ~assets:(assets ())
+              ~component:"widget"
+              ~profile:"local"
        in
        let json = Yojson.Safe.from_string merged in
        check_str "a" "1" (Yojson.Safe.to_string (Yojson.Safe.Util.member "a" json)))
@@ -133,9 +151,11 @@ let test_unnamed_component_is_empty_object () =
          "{}"
          (Yojson.Safe.to_string
             (Yojson.Safe.from_string
-               (Sol_cli_platform_component.merged_values_yaml
-                  ~component:"gadget"
-                  ~profile:"local"))))
+               (ok
+                @@ Sol_cli_platform_component.merged_values_yaml
+                     ~assets:(assets ())
+                     ~component:"gadget"
+                     ~profile:"local"))))
 ;;
 
 let suite =

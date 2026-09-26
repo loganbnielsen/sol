@@ -491,7 +491,11 @@ let reconcile_operator_bindings_warn ~ctx ~workspace =
 ;;
 
 let pick_namespace_and_service ~workspace =
-  match Sol_cli_manifest.discover_services () with
+  match
+    Sol_cli_exit.or_exit_with
+      Sol_cli_manifest.discover_error_to_string
+      (Sol_cli_manifest.discover_services ())
+  with
   | [] ->
     fatal
       "no deployed service found in this workspace -- nothing to run the migration Job \

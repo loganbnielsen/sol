@@ -701,7 +701,11 @@ let run (req : Sol_cli_command_request.deploy_request) =
      everything that exists -- what a call reference may name. [services] is the
      selection -- what this invocation deploys. They are deliberately not the same
      list, and the selection is never widened to close a call graph. *)
-  let inventory = discover_services () in
+  let inventory =
+    Sol_cli_exit.or_exit_with
+      Sol_cli_manifest.discover_error_to_string
+      (Sol_cli_manifest.discover_services ())
+  in
   let selected =
     Sol_cli_exit.or_exit
       (Sol_cli_workload_selection.resolve_nonempty

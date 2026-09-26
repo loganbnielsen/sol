@@ -528,7 +528,11 @@ let run ~ctx (options : status_options) =
     exit 1);
   (* Discovery happens once; scope resolution then projects it into status's own
      addressing model (workspace / domain / unit / managed resource). *)
-  let services = Sol_cli_manifest.discover_services () in
+  let services =
+    Sol_cli_exit.or_exit_with
+      Sol_cli_manifest.discover_error_to_string
+      (Sol_cli_manifest.discover_services ())
+  in
   let scope = Sol_cli_exit.or_exit (Sol_cli_open.parse_scope scope_str) in
   let resolve_status_scope request =
     Sol_cli_exit.or_exit

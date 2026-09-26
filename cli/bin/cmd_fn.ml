@@ -30,7 +30,9 @@ let resolve_fn selector =
       (Sol_cli_workload_selection.resolve
          ~what:"DOMAIN/NAME"
          (Some selector)
-         (Sol_cli_manifest.discover_services ()))
+         (Sol_cli_exit.or_exit_with
+            Sol_cli_manifest.discover_error_to_string
+            (Sol_cli_manifest.discover_services ())))
   in
   match selected.request, selected.services with
   | Sol_cli_deployment_scope.Unit_named _, [ svc ] ->

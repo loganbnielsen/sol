@@ -2066,7 +2066,7 @@ let test_selection_hyphenated_unit_resolves_to_discovered_name () =
       Sol_cli_workload_selection.resolve
         ~what:"--scope"
         (Some "payments/charge-svc")
-        (Sol_cli_manifest.discover_services ())
+        (Result.get_ok (Sol_cli_manifest.discover_services ()))
     with
     | Ok selected -> selected
     | Error message -> Alcotest.fail message
@@ -2084,7 +2084,7 @@ let test_selection_unknown_unit_fails_closed () =
     Sol_cli_workload_selection.resolve
       ~what:"--scope"
       (Some "payments/nope")
-      (Sol_cli_manifest.discover_services ())
+      (Result.get_ok (Sol_cli_manifest.discover_services ()))
   with
   | Ok _ -> Alcotest.fail "expected a fail-closed resolution"
   | Error message ->

@@ -2,14 +2,12 @@
    <component>.{common,local,durable}. *)
 let read_components path =
   if not (Sys.file_exists path)
-  then (
-    Printf.eprintf "error: %s is missing.\n" path;
-    exit 1)
+  then Error (Printf.sprintf "%s is missing" path)
   else (
-    try Yojson.Safe.from_file path with
-    | Yojson.Json_error msg ->
-      Printf.eprintf "error: %s is not valid JSON: %s\n" path msg;
-      exit 1)
+    match Yojson.Safe.from_file path with
+    | json -> Ok json
+    | exception Yojson.Json_error msg ->
+      Error (Printf.sprintf "%s is not valid JSON: %s" path msg))
 ;;
 
 (* A component with nothing to say for a layer (tempo's empty profiles, or a
@@ -48,13 +46,10 @@ let rec deep_merge (base : Yojson.Safe.t) (over : Yojson.Safe.t) : Yojson.Safe.t
   | _, over -> over
 ;;
 
-let merged_values_yaml ~component ~profile =
-  let components =
-    read_components
-      (Sol_cli_platform_assets.components_json
-         (Sol_cli_platform_assets.resolve_or_exit ()))
-  in
-  let common = layer components ~component ~name:"common" in
-  let profile_json = layer components ~component ~name:profile in
-  Yojson.Safe.pretty_to_string (deep_merge common profile_json)
+let merged_values_yaml ~assets ~component ~profile =
+  read_components (Sol_cli_platform_assets.components_json assets)
+  |> Result.map (fun components ->
+    let common = layer components ~component ~name:"common" in
+    let profile_json = layer components ~component ~name:profile in
+    Yojson.Safe.pretty_to_string (deep_merge common profile_json))
 ;;

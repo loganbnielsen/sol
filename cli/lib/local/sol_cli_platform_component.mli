@@ -12,6 +12,9 @@
 
     A layer the file does not name (a component with nothing to say for that
     profile, or a component it does not list) is an empty object, not an error.
-    Exits with an error message if Sol's platform assets can't be located
-    ({!Sol_cli_platform_assets.resolve}), or if [components.json] is missing or isn't valid JSON. *)
-val merged_values_yaml : component:string -> profile:string -> string
+    An [Error] says why [components.json] is missing or unreadable (REFAC-115). *)
+val merged_values_yaml
+  :  assets:Sol_cli_platform_assets.t
+  -> component:string
+  -> profile:string
+  -> (string, string) result

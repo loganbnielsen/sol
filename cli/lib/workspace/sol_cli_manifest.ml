@@ -109,7 +109,7 @@ let scan_workspace () =
       Ok { workloads = List.rev !workloads; unexpected = List.rev !unexpected })
 ;;
 
-let discover_services_result () =
+let discover_services () =
   match scan_workspace () with
   | Error _ as err -> err
   | Ok scan ->
@@ -117,14 +117,6 @@ let discover_services_result () =
       (scan.workloads
        |> List.filter_map (fun (svc, has_dockerfile) ->
          if has_dockerfile then Some svc else None))
-;;
-
-let discover_services () =
-  match discover_services_result () with
-  | Ok services -> services
-  | Error err ->
-    Printf.eprintf "error: %s\n" (discover_error_to_string err);
-    exit 1
 ;;
 
 (* ── Apply / emit helpers ────────────────────────────────────────────────── *)

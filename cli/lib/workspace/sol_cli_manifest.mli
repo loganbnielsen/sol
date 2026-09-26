@@ -57,8 +57,11 @@ val scan_workspace : unit -> (workspace_scan, discover_error) result
 val primitive_of_suffix : string -> primitive option
 val primitive_label : primitive -> string
 val discover_error_to_string : discover_error -> string
-val discover_services_result : unit -> (service list, discover_error) result
-val discover_services : unit -> service list
+
+(** The workspace's services, or why they could not be discovered (REFAC-115:
+    the caller reports it; discovery never exits). *)
+val discover_services : unit -> (service list, discover_error) result
+
 val default_cluster_env : (string * string) list
 val default_secrets : (string * string) list
 val runtime_secret_name : string

@@ -24,7 +24,11 @@ let namespace_or_exit ~workspace ~domain =
    exist, rather than silently touching no namespace. *)
 let discover_namespaces ~domain =
   let workspace = workspace_name () in
-  let services = Sol_cli_manifest.discover_services () in
+  let services =
+    Sol_cli_exit.or_exit_with
+      Sol_cli_manifest.discover_error_to_string
+      (Sol_cli_manifest.discover_services ())
+  in
   let domains =
     services
     |> List.map (fun (s : Sol_cli_manifest.service) -> s.Sol_cli_manifest.domain)
