@@ -1,5 +1,10 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: BUG-057 — a target's terraform_var_file resolves from the workspace root (2026-09-25)
+
+- A relative `terraform_var_file` used to resolve against wherever `sol` ran. It now resolves from the workspace root, while `--var-file` stays shell-relative and wins.
+- Proven end to end: the offline harness runs `sol cloud plan` from a subdirectory, and fails against the old code.
+
 ## Latest: REFAC-103 — maintainer scripts out of platform/local; unused files deleted (2026-09-25)
 
 - `run_tests.sh`, `perf.sh`, `install-hooks.sh` and `prove-workspace-independence.sh` moved to `internal/tooling/scripts/`. `platform/local` keeps the user-run `ensure-*.sh` native-infra scripts and `prepare-framework-deps.sh`, since `sol local` itself reads nothing there.

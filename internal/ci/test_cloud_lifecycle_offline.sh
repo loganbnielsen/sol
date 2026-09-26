@@ -2489,6 +2489,39 @@ if grep -qF 'the previous Terraform operation against this state is unresolved' 
   exit 1
 fi
 
+# BUG-057: a target's relative terraform_var_file resolves from the workspace root, so
+# the same target names the same file from any directory; a relative --var-file flag
+# resolves from the shell's directory. Both run from a subdirectory of the workspace,
+# which is where the old cwd-relative rule went wrong.
+target_file="$tmp/work/sol/prod/aws/us-east-1.yml"
+cp "$target_file" "$tmp/work/target.before-bug057.yml"
+mkdir -p "$tmp/work/vars" "$tmp/work/app/deep"
+: >"$tmp/work/vars/bug057.tfvars"
+: >"$tmp/work/app/deep/flag.tfvars"
+awk '{ print } /^target:/ { print "  terraform_var_file: vars/bug057.tfvars" }' \
+  "$tmp/work/target.before-bug057.yml" >"$target_file"
+vlog="$tmp/bug057-target.log"
+(cd "$tmp/work/app/deep" && LIFECYCLE_LOG="$vlog" "$sol" cloud plan prod/aws/us-east-1) \
+  >"$vlog.out" 2>&1 || true
+if ! grep -F -- "-var-file=$tmp/work/vars/bug057.tfvars" "$vlog" >/dev/null; then
+  echo "BUG-057: a target's relative terraform_var_file did not resolve from the workspace root:" >&2
+  grep -o -- '-var-file=[^ ]*' "$vlog" "$vlog.out" >&2 || cat "$vlog.out" >&2
+  exit 1
+fi
+flog="$tmp/bug057-flag.log"
+(cd "$tmp/work/app/deep" && LIFECYCLE_LOG="$flog" "$sol" cloud plan prod/aws/us-east-1 --var-file flag.tfvars) \
+  >"$flog.out" 2>&1 || true
+if ! grep -F -- "-var-file=$tmp/work/app/deep/flag.tfvars" "$flog" >/dev/null; then
+  echo "BUG-057: a relative --var-file did not resolve from the shell's directory:" >&2
+  grep -o -- '-var-file=[^ ]*' "$flog" "$flog.out" >&2 || cat "$flog.out" >&2
+  exit 1
+fi
+if grep -F -- "bug057.tfvars" "$flog" >/dev/null; then
+  echo "BUG-057: --var-file did not win over the target's terraform_var_file" >&2
+  exit 1
+fi
+mv "$tmp/work/target.before-bug057.yml" "$target_file"
+
 # INFRA-075 canary. The scenarios above ran the real `sol cloud` commands; their run logs must
 # have landed in the isolated data home. If none did, Sol is writing somewhere else -- most
 # likely the operator's real ~/.local/share/sol, where the keep-20 pruning deletes real runs.
