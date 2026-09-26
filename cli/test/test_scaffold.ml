@@ -92,7 +92,7 @@ let test_mkdir_p_tolerates_symlink_to_real_directory () =
 let test_ci_workflow_created () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let path = "testapp/.github/workflows/sol-ci.yml" in
   check_bool "sol-ci.yml created" true (Sys.file_exists path)
 ;;
@@ -101,7 +101,7 @@ let test_ci_workflow_created () =
 let test_deploy_workflow_created () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let path = "testapp/.github/workflows/deploy.yml" in
   check_bool "deploy.yml created" true (Sys.file_exists path)
 ;;
@@ -111,7 +111,7 @@ let test_deploy_workflow_created () =
 let test_deploy_workflow_passes_target () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/deploy.yml" in
   assert_contains "deploy.yml" content "SOL_TARGET";
   assert_contains "deploy.yml" content "sol deploy \"$SOL_TARGET\""
@@ -121,7 +121,7 @@ let test_deploy_workflow_passes_target () =
 let test_ci_contains_sol_deploy () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
   assert_contains "sol-ci.yml" content "sol deploy"
 ;;
@@ -136,7 +136,7 @@ let test_ci_contains_sol_deploy () =
 let test_ci_deploy_steps_pass_target () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
   assert_contains "sol-ci.yml" content "SOL_TARGET";
   assert_contains "sol-ci.yml" content {|main.exe deploy "$SOL_TARGET"|}
@@ -146,7 +146,7 @@ let test_ci_deploy_steps_pass_target () =
 let test_ci_contains_emit_plan_to () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
   assert_contains "sol-ci.yml" content "--emit-plan-to"
 ;;
@@ -155,7 +155,7 @@ let test_ci_contains_emit_plan_to () =
 let test_ci_contains_emit_to () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
   assert_contains "sol-ci.yml" content "--emit-to"
 ;;
@@ -164,7 +164,7 @@ let test_ci_contains_emit_to () =
 let test_ci_contains_dune_commands () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
   assert_contains "sol-ci.yml" content "dune build";
   assert_contains "sol-ci.yml" content "dune runtest"
@@ -174,7 +174,7 @@ let test_ci_contains_dune_commands () =
 let test_ci_no_kubeconfig_in_build_job () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
   (* KUBECONFIG must not appear as a required secret or env var *)
   check_bool "no KUBECONFIG in sol-ci.yml" false (contains content "KUBECONFIG_B64")
@@ -184,7 +184,7 @@ let test_ci_no_kubeconfig_in_build_job () =
 let test_ci_registry_secrets () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
   assert_contains "sol-ci.yml" content "secrets.REGISTRY";
   assert_contains "sol-ci.yml" content "secrets.REGISTRY_USER";
@@ -195,7 +195,7 @@ let test_ci_registry_secrets () =
 let test_ci_contract_comment_present () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
   assert_contains "sol-ci.yml" content "Sol CI contract";
   assert_contains "sol-ci.yml" content "PHASE 1";
@@ -206,7 +206,7 @@ let test_ci_contract_comment_present () =
 let test_ci_contract_deploy_phase_uses_sol_deploy () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
   (* The contract comment block must reference the sol deploy command,
      including the required <env>/<provider>/<region> target (FEAT-026) *)
@@ -219,7 +219,7 @@ let test_ci_contract_deploy_phase_uses_sol_deploy () =
 let test_ci_no_raw_kubectl_apply () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
   check_bool "no raw kubectl apply in sol-ci.yml" false (contains content "kubectl apply")
 ;;
@@ -229,7 +229,7 @@ let test_ci_no_raw_kubectl_apply () =
 let test_ci_build_images_has_todo_sol_build () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/.github/workflows/sol-ci.yml" in
   assert_contains "sol-ci.yml" content "TODO(sol-build)"
 ;;
@@ -238,7 +238,7 @@ let test_ci_build_images_has_todo_sol_build () =
 let test_existing_files_still_generated () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let expected =
     [ "testapp/.ocamlformat"
     ; "testapp/.dockerignore"
@@ -285,7 +285,7 @@ let test_existing_files_still_generated () =
 let test_scaffolded_workspace_has_a_real_deploy_target () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   Sys.chdir "testapp";
   match Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1" with
   | Error e ->
@@ -301,7 +301,7 @@ let test_scaffolded_workspace_has_a_real_deploy_target () =
 let test_workspace_has_dune_project () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/dune-project" in
   assert_contains "dune-project" content "(lang dune 3.0)"
 ;;
@@ -309,7 +309,7 @@ let test_workspace_has_dune_project () =
 let test_dockerfile_paths_are_workspace_relative () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/app/payments/charge_svc/Dockerfile" in
   assert_contains
     "Dockerfile"
@@ -325,7 +325,7 @@ let test_dockerfile_paths_are_workspace_relative () =
 let test_readme_migrate_hint_substituted () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let content = read_file "testapp/README.md" in
   assert_contains "README" content "sol migrate";
   check_bool "README has no template placeholder" false (contains content "{{name}}")
@@ -339,7 +339,7 @@ let test_readme_migrate_hint_substituted () =
 let test_framework_dependency_declared_not_vendored () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   check_bool "no vendor/ directory is created" false (Sys.file_exists "testapp/vendor");
   let opam = read_file "testapp/testapp.opam" in
   List.iter
@@ -358,7 +358,7 @@ let test_framework_dependency_declared_not_vendored () =
 let test_scaffold_compiles () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let rc = Sys.command "cd testapp && dune build 2>&1" in
   check_bool "freshly scaffolded workspace builds with `dune build`" true (rc = 0)
 ;;
@@ -374,9 +374,9 @@ let test_scaffold_compiles () =
 let test_bare_fn_library_compiles () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   Sys.chdir "testapp";
-  Sol_cli_cmd_new.new_fn "billing/invoice";
+  Sol_cli_cmd_new.new_fn "billing/invoice" |> Result.get_ok;
   let rc = Sys.command "dune build app/billing/invoice_fn/lib/ 2>&1" in
   Sys.chdir "..";
   check_bool "generic fn's own library target builds in isolation" true (rc = 0)
@@ -385,7 +385,7 @@ let test_bare_fn_library_compiles () =
 let test_charge_svc_publishes_kafka_event () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let handler = read_file "testapp/app/payments/charge_svc/lib/handler.ml" in
   let main_ml = read_file "testapp/app/payments/charge_svc/bin/main.ml" in
   assert_contains "handler" handler "publish_charged event";
@@ -400,7 +400,7 @@ let test_charge_svc_publishes_kafka_event () =
 let test_workspace_generated_json_decoders_are_result_based () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let event = read_file "testapp/events/payments/charged.ml" in
   let handler = read_file "testapp/app/payments/charge_svc/lib/handler.ml" in
   assert_contains "event" event "let required_string fields name";
@@ -428,7 +428,7 @@ let test_workspace_generated_json_decoders_are_result_based () =
 let test_workspace_startup_helpers_are_flattened () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let svc_main = read_file "testapp/app/payments/charge_svc/bin/main.ml" in
   let worker_main = read_file "testapp/app/comms/notify_worker/bin/main.ml" in
   List.iter
@@ -635,7 +635,7 @@ let test_ancestor_walk_skips_build_context () =
 let test_worker_has_no_ack_param () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_worker "comms/notify";
+  Sol_cli_cmd_new.new_worker "comms/notify" |> Result.get_ok;
   let lib = read_file "app/comms/notify_worker/lib/notify_worker.ml" in
   check_bool "generated worker does not reference ~ack" false (contains lib "~ack");
   assert_contains "worker lib" lib "~trace_ctx";
@@ -709,7 +709,7 @@ let test_pending_migrations_counts_sql_files () =
 let test_pending_migrations_workspace_scaffold () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   check_bool
     "scaffold workspace → 1 migration file"
     true
@@ -723,7 +723,7 @@ let test_pending_migrations_workspace_scaffold () =
 let test_golden_ci_workflow () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let actual = read_file "testapp/.github/workflows/sol-ci.yml" in
   let expected =
     Sol_cli_scaffold.subst
@@ -737,7 +737,7 @@ let test_golden_ci_workflow () =
 let test_golden_dockerfile () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let actual = read_file "testapp/app/payments/charge_svc/Dockerfile" in
   let expected =
     Sol_cli_scaffold.subst
@@ -756,7 +756,7 @@ let test_golden_dockerfile () =
 let test_golden_svc_bin_ml () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let actual = read_file "testapp/app/payments/charge_svc/bin/main.ml" in
   let expected =
     Sol_cli_scaffold.subst
@@ -770,7 +770,7 @@ let test_golden_svc_bin_ml () =
 let test_golden_worker_bin_ml () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let actual = read_file "testapp/app/comms/notify_worker/bin/main.ml" in
   let expected =
     Sol_cli_scaffold.subst
@@ -785,7 +785,7 @@ let test_golden_worker_bin_ml () =
 let test_golden_test_dune () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_workspace "testapp";
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let actual = read_file "testapp/test/dune" in
   let expected =
     Sol_cli_scaffold.subst
@@ -818,7 +818,7 @@ let check_generated_file label path expected =
 let test_golden_new_svc_files () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_svc "comms/notify";
+  Sol_cli_cmd_new.new_svc "comms/notify" |> Result.get_ok;
   let v = component_vars ~suffix:"svc" ~mod_:"Handler" in
   check_generated_file
     "svc handler"
@@ -849,7 +849,7 @@ let test_golden_new_svc_files () =
 let test_golden_new_worker_files () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_worker "comms/notify";
+  Sol_cli_cmd_new.new_worker "comms/notify" |> Result.get_ok;
   let v = component_vars ~suffix:"worker" ~mod_:"Notify_worker" in
   check_generated_file
     "worker lib"
@@ -880,7 +880,7 @@ let test_golden_new_worker_files () =
 let test_golden_new_fn_files () =
   in_temp_dir
   @@ fun () ->
-  Sol_cli_cmd_new.new_fn "comms/notify";
+  Sol_cli_cmd_new.new_fn "comms/notify" |> Result.get_ok;
   let v = component_vars ~suffix:"fn" ~mod_:"Notify_fn" in
   check_generated_file
     "fn lib"

@@ -63,12 +63,6 @@ type t =
     (REFAC-115). *)
 val enter_cwd : unit -> (t, Sol_cli_exit.failure) result
 
-(** [enter_or_exit ()] enters the workspace containing the current directory, or
-    prints the workspace error and exits 1. The one way a command establishes its
-    workspace (REFAC-108): the boundary is validated, absence fails closed, and the
-    entered workspace is returned. *)
-val enter_or_exit : unit -> t
-
 (** Join a workspace-root-relative path to the resolved root, without changing
     the process cwd. For commands that must keep the invocation cwd (e.g.
     [sol deploy]'s relative [--emit-to]); falls back to the path as given when

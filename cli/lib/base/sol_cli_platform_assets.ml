@@ -167,14 +167,6 @@ let resolve () =
     ~release_version:Sol_cli_build_info.release_version
 ;;
 
-let resolve_or_exit () =
-  match resolve () with
-  | Ok t -> t
-  | Error e ->
-    Printf.eprintf "error: %s\n%!" (error_to_string e);
-    exit 1
-;;
-
 let dir t = t.dir
 let form t = t.form
 

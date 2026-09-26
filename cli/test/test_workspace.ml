@@ -241,7 +241,7 @@ let test_enter_from_a_subdirectory () =
       ~finally:(fun () -> Sys.chdir before)
       (fun () ->
          Sys.chdir deep;
-         let entered = Sol_cli_workspace.enter_or_exit () in
+         let entered = Sol_cli_workspace.enter_cwd () |> Result.get_ok in
          Alcotest.(check string) "returns the root" root entered.root;
          Alcotest.(check string)
            "names the workspace"

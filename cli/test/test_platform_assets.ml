@@ -91,7 +91,7 @@ let test_asset_paths () =
   with_tmpdir (fun dir ->
     fake_checkout dir;
     with_sol_home dir (fun () ->
-      let t = A.resolve_or_exit () in
+      let t = A.resolve () |> Result.get_ok in
       Alcotest.(check string)
         "cluster root"
         (dir ^ "/platform/cloud/gcp/cluster")
