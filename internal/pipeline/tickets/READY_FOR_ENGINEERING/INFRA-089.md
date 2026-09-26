@@ -34,22 +34,46 @@ This was invisible until now because cert-manager failed inside that same prereq
 the full apply never ran (Attempts 4/5/8/9/10). It is deterministic, not a run artifact: both
 resources are always declared for a GCP target.
 
-## Decision required: which shape the fix takes
+## Decision taken (2026-09-26): one RoleBinding, both subjects
 
-The two subjects look like they are *both* wanted — the human group and the provisioner service
-account both need the namespaced role — so the defect is the **shared Kubernetes name**, not either
-subject. Candidate directions, none approved here:
+The operator chose the one-object model, conditional on the authorization-lifetime analysis
+holding: both subjects must hold the same role, in the same namespaces, over the same lifecycle.
+It holds, and the evidence is in the code:
 
-1. **One resource, both subjects** — merge the two into a single `kubernetes_role_binding` with two
-   `subject` blocks (which is what a RoleBinding supports natively), keeping the
-   `gcp_provisioner == ""` gate as a conditional subject list.
-2. **Distinct Kubernetes names** — two bindings, named apart, so both can exist.
-3. **A rename with state handling** — if the intent was to replace one with the other, a `moved`
-   block (or documented migration) is needed for existing targets, which this ticket must state.
+- **Same role.** Both bindings reference the same ClusterRole — `sol-platform-provisioner-namespaced`
+  for the namespaced pair, `sol-platform-provisioner-cluster` for the cluster pair.
+- **Same namespaces.** Both use `local.platform_namespaces`.
+- **Same lifetime.** Both are declared in this module, created by the platform install and removed
+  by platform destruction. Nothing in the lifecycle adds or removes one independently: the
+  de-escalation path closes the *bootstrap-authority* window
+  (`kubernetes_cluster_role_binding.provisioner_bootstrap_admin`, the capability's
+  `bootstrap_matchers`), not these bindings.
+- **Why two subjects exist at all.** They differ only in how a cloud identity reaches the API
+  server: AWS's provisioner is placed in the Kubernetes group `sol:platform-provisioners` by its EKS
+  access entry (`platform/cloud/aws/cluster/main.tf`), while a GKE identity authenticates as itself
+  and belongs to no group Sol can name. Same authority, two doors.
 
-Direction is a product/design decision, deliberately not taken during the run that found it, and
-whichever direction is chosen needs an offline guard rather than a live run to prove the collision
-is gone (the two declarations no longer produce one Kubernetes name).
+So the invariant is **one Kubernetes API object, one Terraform owner**, and the fix is one
+RoleBinding carrying both subjects — not two objects with different names, which would exist only
+to satisfy Terraform.
+
+## Terraform state / migration analysis
+
+**No migration machinery is added, and none is needed for the retained addresses.** Two facts:
+
+- The retained resources keep their addresses (`kubernetes_role_binding.platform_provisioner`,
+  `kubernetes_cluster_role_binding.platform_provisioner_cluster`), so their existing instances and
+  the AWS root's `moved` blocks that already point at them stay valid. The GCP subject appears on
+  those objects as an in-place update.
+- The removed resources (`..._gcp`) cannot appear in any supported state: they could never be
+  created, because their Kubernetes names were already owned by the retained resources. Measured,
+  not assumed: all five platform states in the qualification bucket (`prod`, `qual`, `qual9`,
+  `qual10`, `qual11`) hold zero resources, and on AWS `local.gcp_provisioner` is empty, so the
+  resource has no instances there at all.
+
+Two **stale** `moved` blocks in the AWS root did name the removed addresses, and a `moved` block
+whose destination no longer exists is a configuration error — so they are deleted with the
+resources. That is the only migration work this change does.
 
 ## Acceptance criteria
 
