@@ -1,6 +1,6 @@
 open Cmdliner
 
-(* REFAC-108: enter through the validated boundary, like every command. *)
+let ( let* ) = Result.bind
 
 (* [logs] streams exactly one workload's output, and both Loki's addressing
    (namespace + k8s name) and [kubectl logs] preserve unit granularity -- so
@@ -9,26 +9,26 @@ open Cmdliner
    silently narrowing it, this command refuses and points at [sol open logs],
    whose addressing model does support those scopes (FEAT-065's invariant). *)
 let resolve_unit ~scope =
-  let selected =
-    Sol_cli_exit.or_exit
-      (Sol_cli_workload_selection.resolve
-         ~what:"--scope"
-         (Some scope)
-         (Sol_cli_exit.or_exit_with
-            Sol_cli_manifest.discover_error_to_string
-            (Sol_cli_manifest.discover_services ())))
+  let* services =
+    Sol_cli_manifest.discover_services ()
+    |> Sol_cli_exit.of_error Sol_cli_manifest.discover_error_to_string
+  in
+  let* selected =
+    Sol_cli_workload_selection.resolve ~what:"--scope" (Some scope) services
+    |> Sol_cli_exit.of_msg
   in
   match selected.request, selected.services with
-  | Sol_cli_deployment_scope.Unit_named _, [ svc ] -> svc
+  | Sol_cli_deployment_scope.Unit_named _, [ svc ] -> Ok svc
   | Sol_cli_deployment_scope.Unit_named _, _ ->
     (* A unit request always resolves to exactly one discovered service. *)
-    Printf.eprintf "error: --scope %S did not resolve to exactly one workload.\n" scope;
-    exit 1
+    Error
+      (Sol_cli_exit.error
+         (Printf.sprintf "--scope %S did not resolve to exactly one workload." scope))
   | _ ->
-    Printf.eprintf
-      "error: sol logs addresses exactly one unit ('domain/name'); for a domain or \
-       workspace view, use 'sol open logs <scope>'.\n";
-    exit 1
+    Error
+      (Sol_cli_exit.error
+         "sol logs addresses exactly one unit ('domain/name'); for a domain or workspace \
+          view, use 'sol open logs <scope>'.")
 ;;
 
 (* FEAT-063: even this existence check goes through the adapter, so it cannot
@@ -45,18 +45,33 @@ let workload_presence ~ctx ~ns ~primitive ~k8s_name =
   Sol_cli_kubectl.presence ~ctx ~args:[ "get"; kind; k8s_name; "-n"; ns ]
 ;;
 
-let namespace_or_exit ~workspace ~domain =
-  Sol_cli_deployment_plan.namespace_to_string
-    (Sol_cli_exit.or_exit_with
-       Sol_cli_deployment_plan.plan_error_to_string
-       (Sol_cli_deployment_plan.namespace_result ~workspace ~domain))
+(* The unit's namespace and Kubernetes name, validated. *)
+let unit_names ~workspace (svc : Sol_cli_manifest.service) =
+  Sol_cli_exit.of_msg
+    (let* ns = Sol_cli_deployment_plan.namespace_name ~workspace ~domain:svc.domain in
+     let* k8s_name = Sol_cli_deployment_plan.k8s_name svc.name in
+     Ok (ns, k8s_name))
 ;;
 
-let k8s_name_or_exit name =
-  Sol_cli_deployment_plan.k8s_name_to_string
-    (Sol_cli_exit.or_exit_with
-       Sol_cli_deployment_plan.plan_error_to_string
-       (Sol_cli_deployment_plan.k8s_name_result name))
+let require_workload ~ctx ~ns ~primitive ~k8s_name ~name =
+  match workload_presence ~ctx ~ns ~primitive ~k8s_name with
+  | Sol_cli_kubectl.Present -> Ok ()
+  | Sol_cli_kubectl.Absent _ ->
+    Error
+      (Sol_cli_exit.failure
+         (Printf.sprintf
+            "Service %s not found in namespace %s.\n\
+             Run 'sol status' to see deployed services."
+            name
+            ns))
+  | Sol_cli_kubectl.Uncheckable why ->
+    Error
+      (Sol_cli_exit.error
+         (Printf.sprintf
+            "could not check whether service %s exists in namespace %s: %s"
+            name
+            ns
+            why))
 ;;
 
 let kubectl_log_target ~primitive ~k8s_name : Sol_cli_logs.kubectl_log_target =
@@ -114,54 +129,46 @@ type log_options =
   ; observability : observability_options
   }
 
-let run_unit ~ctx ~target (options : log_options) scope : unit =
-  let follow = options.follow in
-  let tail = options.tail in
-  let observability = options.observability in
-  let explicit_backend = observability.backend in
-  let explicit_base_domain = observability.base_domain in
-  let explicit_loki_url = observability.loki_base_url in
-  let explicit_loki_username = observability.loki_username in
-  let explicit_loki_password = observability.loki_password in
-  let grafana_base_url = observability.grafana_base_url in
-  let workspace = (Sol_cli_workspace.enter_or_exit ()).name in
-  let svc = resolve_unit ~scope in
-  let domain = svc.Sol_cli_manifest.domain in
-  let name = svc.Sol_cli_manifest.name in
-  let ns = namespace_or_exit ~workspace ~domain in
-  let k8s_name = k8s_name_or_exit name in
-  let primitive = svc.Sol_cli_manifest.primitive in
-  let backend, base_domain =
-    Sol_cli_exit.or_exit
-      (Sol_cli_observability_url.effective_backend_and_base_domain
-         ~explicit_backend
-         ~explicit_base_domain
-         ~target
-         ())
-  in
+let loki_credentials (observability : observability_options) =
+  Sol_cli_loki.resolve_credentials
+    ~flag_username:observability.loki_username
+    ~flag_password:observability.loki_password
+    ~env_username:(Sys.getenv_opt "SOL_LOKI_USERNAME")
+    ~env_password:(Sys.getenv_opt "SOL_LOKI_PASSWORD")
+  |> Sol_cli_exit.of_msg
+;;
+
+let backend_and_base_domain ~target (observability : observability_options) =
+  Sol_cli_observability_url.effective_backend_and_base_domain
+    ~explicit_backend:observability.backend
+    ~explicit_base_domain:observability.base_domain
+    ~target
+    ()
+  |> Sol_cli_exit.of_msg
+;;
+
+let run_unit ~ctx ~target (options : log_options) scope =
+  let { follow; tail; observability; _ } = options in
+  let* { name = workspace; _ } = Sol_cli_workspace.enter_cwd () in
+  let* svc = resolve_unit ~scope in
+  let name = svc.name in
+  let primitive = svc.primitive in
+  let* ns, k8s_name = unit_names ~workspace svc in
+  let* backend, base_domain = backend_and_base_domain ~target observability in
   (match
-     Sol_cli_observability_url.resolve ~backend ?base_domain ?override:grafana_base_url ()
+     Sol_cli_observability_url.resolve
+       ~backend
+       ?base_domain
+       ?override:observability.grafana_base_url
+       ()
    with
    | Sol_cli_observability_url.Url base_url ->
      let url = Sol_cli_logs.grafana_explore_url ~base_url ~k8s_name in
      Printf.printf "Grafana logs: %s\n%!" url
    | Sol_cli_observability_url.No_url reason ->
      Printf.printf "Grafana logs: (%s)\n%!" reason);
-  let kubectl_target = kubectl_log_target ~primitive ~k8s_name in
   let fallback_to_kubectl () =
-    (match workload_presence ~ctx ~ns ~primitive ~k8s_name with
-     | Sol_cli_kubectl.Present -> ()
-     | Sol_cli_kubectl.Absent _ ->
-       Printf.eprintf "Service %s not found in namespace %s.\n" name ns;
-       Printf.eprintf "Run 'sol status' to see deployed services.\n";
-       exit 1
-     | Sol_cli_kubectl.Uncheckable why ->
-       Printf.eprintf
-         "error: could not check whether service %s exists in namespace %s: %s\n"
-         name
-         ns
-         why;
-       exit 1);
+    let* () = require_workload ~ctx ~ns ~primitive ~k8s_name ~name in
     (match
        Sol_cli_rollout_diagnosis.diagnose_service_live
          ~ctx
@@ -177,7 +184,12 @@ let run_unit ~ctx ~target (options : log_options) scope : unit =
      | Sol_cli_rollout_diagnosis.Undetermined why ->
        Printf.printf "diagnosis unavailable: %s\n%!" why
      | Sol_cli_rollout_diagnosis.Healthy -> ());
-    exec_kubectl_logs ~ctx ~ns ~target:kubectl_target ~follow ~tail
+    exec_kubectl_logs
+      ~ctx
+      ~ns
+      ~target:(kubectl_log_target ~primitive ~k8s_name)
+      ~follow
+      ~tail
   in
   if follow
   then fallback_to_kubectl ()
@@ -185,7 +197,7 @@ let run_unit ~ctx ~target (options : log_options) scope : unit =
     match
       Sol_cli_status.probe_url
         ~backend
-        ~explicit_url:explicit_loki_url
+        ~explicit_url:observability.loki_base_url
         ~default_local_url:"http://localhost:3100"
         ~probe_path:""
     with
@@ -197,14 +209,7 @@ let run_unit ~ctx ~target (options : log_options) scope : unit =
         (Sol_cli_status.not_configured_message ~signal:Sol_cli_status.Loki ~backend);
       fallback_to_kubectl ()
     | Some loki_base_url ->
-      let credentials =
-        Sol_cli_exit.or_exit
-          (Sol_cli_loki.resolve_credentials
-             ~flag_username:explicit_loki_username
-             ~flag_password:explicit_loki_password
-             ~env_username:(Sys.getenv_opt "SOL_LOKI_USERNAME")
-             ~env_password:(Sys.getenv_opt "SOL_LOKI_PASSWORD"))
-      in
+      let* credentials = loki_credentials observability in
       (match
          Sol_cli_loki.query ~base_url:loki_base_url ~k8s_name ?credentials ~limit:tail ()
        with
@@ -213,7 +218,9 @@ let run_unit ~ctx ~target (options : log_options) scope : unit =
            "(no log lines found in Loki for %s; showing Kubernetes logs)\n%!"
            name;
          fallback_to_kubectl ()
-       | Ok lines -> List.iter (fun (l : Sol_cli_loki.line) -> print_endline l.text) lines
+       | Ok lines ->
+         lines |> List.iter (fun (l : Sol_cli_loki.line) -> print_endline l.text);
+         Ok ()
        | Error e ->
          (* OBS-031: a URL was configured and the request itself failed
            (connection refused, timeout, non-2xx) -- a real outage or a
@@ -234,75 +241,53 @@ let run_unit ~ctx ~target (options : log_options) scope : unit =
    participate. A known release with no matching lines is an empty success, not
    "unknown release" -- a rollback or a short-lived workload can legitimately
    have no logs left. *)
-let run_release ~ctx ~target (options : log_options) release : unit =
-  let tail = options.tail in
-  let observability = options.observability in
-  let explicit_backend = observability.backend in
-  let explicit_loki_url = observability.loki_base_url in
-  let explicit_loki_username = observability.loki_username in
-  let explicit_loki_password = observability.loki_password in
-  let grafana_base_url = observability.grafana_base_url in
-  let workspace = (Sol_cli_workspace.enter_or_exit ()).name in
+let release_unknown ~release_id ~target records =
+  let recent =
+    match records with
+    | [] -> ""
+    | recent ->
+      "\nRecent releases: "
+      ^ String.concat ", " (List.map (fun (r : Sol_cli_release.t) -> r.release_id) recent)
+  in
+  Sol_cli_exit.error
+    (Printf.sprintf "release %s is not known in target %s%s" release_id target recent)
+;;
+
+let run_release ~ctx ~target (options : log_options) release =
+  let { tail; observability; _ } = options in
+  let* { name = workspace; _ } = Sol_cli_workspace.enter_cwd () in
   let target_name = Option.value target ~default:"local" in
-  let scope =
+  let* scope =
     match options.scope with
-    | None -> None
+    | None -> Ok None
     | Some scope ->
-      let svc = resolve_unit ~scope in
-      let ns = namespace_or_exit ~workspace ~domain:svc.Sol_cli_manifest.domain in
-      let k8s_name = k8s_name_or_exit svc.Sol_cli_manifest.name in
-      Some (ns, k8s_name)
+      let* svc = resolve_unit ~scope in
+      let* names = unit_names ~workspace svc in
+      Ok (Some names)
   in
-  let loaded = ref None in
-  let records () =
-    match !loaded with
-    | Some records -> records
-    | None ->
-      (match Sol_cli_release_store.list ~ctx ~workspace with
-       | Ok records ->
-         loaded := Some records;
-         records
-       | Error msg ->
-         Printf.eprintf "error: %s\n" msg;
-         exit 1)
-  in
+  (* Read only once the id is valid, and at most once. A failed read answers
+     "not known" to the query, and is then reported as itself. *)
+  let records = lazy (Sol_cli_release_store.list ~ctx ~workspace) in
   let known id =
-    List.exists
-      (fun (r : Sol_cli_release.t) ->
-         String.equal r.Sol_cli_release.release_id (Sol_cli_release_id.to_string id))
-      (records ())
+    match Lazy.force records with
+    | Ok records ->
+      records
+      |> List.exists (fun (r : Sol_cli_release.t) ->
+        String.equal r.release_id (Sol_cli_release_id.to_string id))
+    | Error _ -> false
   in
   match Sol_cli_logs.release_query ~release ~target:target_name ~known ?scope () with
-  | Sol_cli_logs.Release_invalid msg ->
-    Printf.eprintf "error: %s\n" msg;
-    exit 1
+  | Sol_cli_logs.Release_invalid msg -> Error (Sol_cli_exit.error msg)
   | Sol_cli_logs.Release_unknown { release_id; target } ->
-    Printf.eprintf "error: release %s is not known in target %s\n" release_id target;
-    (match records () with
-     | [] -> ()
-     | recent ->
-       Printf.eprintf
-         "Recent releases: %s\n"
-         (String.concat
-            ", "
-            (List.map
-               (fun (r : Sol_cli_release.t) -> r.Sol_cli_release.release_id)
-               recent)));
-    exit 1
+    let* records = Lazy.force records |> Sol_cli_exit.of_msg in
+    Error (release_unknown ~release_id ~target records)
   | Sol_cli_logs.Release_logs { release_id; logql } ->
-    let backend, base_domain =
-      Sol_cli_exit.or_exit
-        (Sol_cli_observability_url.effective_backend_and_base_domain
-           ~explicit_backend
-           ~explicit_base_domain:observability.base_domain
-           ~target
-           ())
-    in
+    let* backend, base_domain = backend_and_base_domain ~target observability in
     (match
        Sol_cli_observability_url.resolve
          ~backend
          ?base_domain
-         ?override:grafana_base_url
+         ?override:observability.grafana_base_url
          ()
      with
      | Sol_cli_observability_url.Url base_url ->
@@ -312,23 +297,17 @@ let run_release ~ctx ~target (options : log_options) release : unit =
     (match
        Sol_cli_status.probe_url
          ~backend
-         ~explicit_url:explicit_loki_url
+         ~explicit_url:observability.loki_base_url
          ~default_local_url:"http://localhost:3100"
          ~probe_path:""
      with
      | None ->
        Printf.printf
          "(%s)\n%!"
-         (Sol_cli_status.not_configured_message ~signal:Sol_cli_status.Loki ~backend)
+         (Sol_cli_status.not_configured_message ~signal:Sol_cli_status.Loki ~backend);
+       Ok ()
      | Some loki_base_url ->
-       let credentials =
-         Sol_cli_exit.or_exit
-           (Sol_cli_loki.resolve_credentials
-              ~flag_username:explicit_loki_username
-              ~flag_password:explicit_loki_password
-              ~env_username:(Sys.getenv_opt "SOL_LOKI_USERNAME")
-              ~env_password:(Sys.getenv_opt "SOL_LOKI_PASSWORD"))
-       in
+       let* credentials = loki_credentials observability in
        (match
           Sol_cli_loki.query_logql
             ~base_url:loki_base_url
@@ -337,27 +316,26 @@ let run_release ~ctx ~target (options : log_options) release : unit =
             ~limit:tail
             ()
         with
-        | Ok [] -> Printf.printf "No log lines found for release %s.\n%!" release_id
+        | Ok [] ->
+          Printf.printf "No log lines found for release %s.\n%!" release_id;
+          Ok ()
         | Ok lines ->
-          List.iter (fun (l : Sol_cli_loki.line) -> print_endline l.text) lines
+          lines |> List.iter (fun (l : Sol_cli_loki.line) -> print_endline l.text);
+          Ok ()
         | Error e ->
-          Printf.eprintf
-            "error: %s\n"
-            (Sol_cli_status.unreachable_message
-               ~url:loki_base_url
-               ~error:(Sol_cli_loki.fetch_error_to_string e));
-          exit 1))
+          Error
+            (Sol_cli_exit.error
+               (Sol_cli_status.unreachable_message
+                  ~url:loki_base_url
+                  ~error:(Sol_cli_loki.fetch_error_to_string e)))))
 ;;
 
-let run ~ctx ~target (options : log_options) () : unit =
-  match options.release with
-  | Some release -> run_release ~ctx ~target options release
-  | None ->
-    (match options.scope with
-     | Some scope -> run_unit ~ctx ~target options scope
-     | None ->
-       Printf.eprintf "error: pass --scope DOMAIN/UNIT (or --release <id>)\n%!";
-       exit 1)
+let run ~ctx ~target (options : log_options) =
+  match options.release, options.scope with
+  | Some release, _ -> run_release ~ctx ~target options release
+  | None, Some scope -> run_unit ~ctx ~target options scope
+  | None, None ->
+    Error (Sol_cli_exit.error "pass --scope DOMAIN/UNIT (or --release <id>)")
 ;;
 
 (* ── Cmdliner Terms ─────────────────────────────────────────────────────── *)
@@ -529,15 +507,13 @@ let loki_password_arg =
 ;;
 
 let follow_term =
+  (* A usage error, so the parser reports it (124) with the usage line. *)
   let combine follow no_follow =
     match follow, no_follow with
-    | true, true ->
-      Printf.eprintf "error: --follow and --no-follow are mutually exclusive\n%!";
-      exit 1
-    | _, true -> false
-    | _, false -> true
+    | true, true -> `Error (false, "--follow and --no-follow are mutually exclusive")
+    | _, no_follow -> `Ok (not no_follow)
   in
-  Term.(const combine $ follow_flag $ no_follow_flag)
+  Term.(ret (const combine $ follow_flag $ no_follow_flag))
 ;;
 
 let observability_options_term =
@@ -571,14 +547,13 @@ let observability_options_term =
 let run_term ~local ~target_term =
   Term.(
     const (fun scope release follow tail observability target ->
-      let ctx =
-        if local
-        then Cmd_destination.local
-        else
-          Cmd_destination.or_exit
-            (Cmd_destination.resolve ~command:"logs" ~local:false ~target)
-      in
-      run ~ctx ~target { scope; release; follow; tail; observability } ())
+      Sol_cli_exit.exit_on
+        (let* ctx =
+           if local
+           then Ok Cmd_destination.local
+           else Cmd_destination.remote ~command:"logs" target
+         in
+         run ~ctx ~target { scope; release; follow; tail; observability }))
     $ scope_arg
     $ release_arg
     $ follow_term

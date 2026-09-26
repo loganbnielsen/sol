@@ -570,6 +570,18 @@ let plan_error_to_string = function
     Printf.sprintf "invalid Kubernetes %s %S: %s" field value message
 ;;
 
+let namespace_name ~workspace ~domain =
+  namespace_result ~workspace ~domain
+  |> Result.map namespace_to_string
+  |> Result.map_error plan_error_to_string
+;;
+
+let k8s_name name =
+  k8s_name_result name
+  |> Result.map k8s_name_to_string
+  |> Result.map_error plan_error_to_string
+;;
+
 let validate_persistence (spec : service_spec) =
   match spec.primitive, spec.volumes with
   | _, [] -> Ok ()

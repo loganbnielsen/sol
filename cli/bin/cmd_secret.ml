@@ -3,13 +3,7 @@ open Cmdliner
 (* DEC-024: the workspace name comes from the resolved root, so it is the same
    from any descendant directory. *)
 let workspace_name = Sol_cli_workspace.current_name
-
-let namespace_or_exit ~workspace ~domain =
-  Sol_cli_deployment_plan.namespace_to_string
-    (Sol_cli_exit.or_exit_with
-       Sol_cli_deployment_plan.plan_error_to_string
-       (Sol_cli_deployment_plan.namespace_result ~workspace ~domain))
-;;
+let ( let* ) = Result.bind
 
 (* Secrets are addressed by Kubernetes namespace, not by workload, so this
    command deliberately does not accept [--scope]: a secret operation does not
@@ -24,47 +18,44 @@ let namespace_or_exit ~workspace ~domain =
    exist, rather than silently touching no namespace. *)
 let discover_namespaces ~domain =
   let workspace = workspace_name () in
-  let services =
-    Sol_cli_exit.or_exit_with
-      Sol_cli_manifest.discover_error_to_string
-      (Sol_cli_manifest.discover_services ())
+  let* services =
+    Sol_cli_manifest.discover_services ()
+    |> Sol_cli_exit.of_error Sol_cli_manifest.discover_error_to_string
   in
   let domains =
     services
-    |> List.map (fun (s : Sol_cli_manifest.service) -> s.Sol_cli_manifest.domain)
+    |> List.map (fun (s : Sol_cli_manifest.service) -> s.domain)
     |> List.sort_uniq compare
   in
-  (match domain with
-   | None -> ()
-   | Some requested ->
-     if not (List.exists (Sol_cli_deployment_scope.equal_name requested) domains)
-     then (
-       Printf.eprintf
-         "error: --domain %S matches no workload; domains with units: %s\n"
-         requested
-         (match domains with
-          | [] -> "(none)"
-          | _ -> String.concat ", " domains);
-       exit 1));
-  services
-  |> List.filter (fun (s : Sol_cli_manifest.service) ->
+  let* selected =
     match domain with
-    | None -> true
-    | Some requested -> Sol_cli_deployment_scope.equal_name requested s.domain)
-  |> List.map (fun (s : Sol_cli_manifest.service) -> s.Sol_cli_manifest.domain)
-  |> List.sort_uniq compare
-  |> List.map (fun domain -> namespace_or_exit ~workspace ~domain)
+    | None -> Ok domains
+    | Some requested ->
+      (match List.filter (Sol_cli_deployment_scope.equal_name requested) domains with
+       | [] ->
+         Error
+           (Sol_cli_exit.error
+              (Printf.sprintf
+                 "--domain %S matches no workload; domains with units: %s"
+                 requested
+                 (match domains with
+                  | [] -> "(none)"
+                  | _ -> String.concat ", " domains)))
+       | matched -> Ok matched)
+  in
+  selected
+  |> Sol_cli_result.map_list (fun domain ->
+    Sol_cli_deployment_plan.namespace_name ~workspace ~domain)
+  |> Sol_cli_exit.of_msg
 ;;
 
 let read_stdin () = String.trim (In_channel.input_all stdin)
 
-let print_result = function
-  | Ok result ->
-    let out = Sol_cli_secret.redacted_result result in
-    if out <> "" then Printf.printf "%s\n%!" out
-  | Error msg ->
-    Printf.eprintf "error: %s\n%!" msg;
-    exit 1
+let print_result result =
+  let* result = Sol_cli_exit.of_msg result in
+  let out = Sol_cli_secret.redacted_result result in
+  if out <> "" then Printf.printf "%s\n%!" out;
+  Ok ()
 ;;
 
 let run_set ~ctx env value key domain =
@@ -73,33 +64,20 @@ let run_set ~ctx env value key domain =
     | Some v -> v
     | None -> read_stdin ()
   in
-  print_result
-    (Sol_cli_secret.set
-       ~ctx
-       ~env
-       ~workspace:(workspace_name ())
-       ~namespaces:(discover_namespaces ~domain)
-       ~key
-       ~value)
+  let* namespaces = discover_namespaces ~domain in
+  Sol_cli_secret.set ~ctx ~env ~workspace:(workspace_name ()) ~namespaces ~key ~value
+  |> print_result
 ;;
 
 let run_list ~ctx env domain =
-  print_result
-    (Sol_cli_secret.list
-       ~ctx
-       ~env
-       ~workspace:(workspace_name ())
-       ~namespaces:(discover_namespaces ~domain))
+  let* namespaces = discover_namespaces ~domain in
+  Sol_cli_secret.list ~ctx ~env ~workspace:(workspace_name ()) ~namespaces |> print_result
 ;;
 
 let run_delete ~ctx env key domain =
-  print_result
-    (Sol_cli_secret.delete
-       ~ctx
-       ~env
-       ~workspace:(workspace_name ())
-       ~namespaces:(discover_namespaces ~domain)
-       ~key)
+  let* namespaces = discover_namespaces ~domain in
+  Sol_cli_secret.delete ~ctx ~env ~workspace:(workspace_name ()) ~namespaces ~key
+  |> print_result
 ;;
 
 let env_arg =
@@ -150,14 +128,9 @@ let set_cmd =
     (Cmd.info "set" ~doc:"Create or update a secret key")
     Term.(
       const (fun env value key domain target ->
-        run_set
-          ~ctx:
-            (Cmd_destination.or_exit
-               (Cmd_destination.resolve ~command:"secret set" ~local:false ~target))
-          env
-          value
-          key
-          domain)
+        Sol_cli_exit.exit_on
+          (let* ctx = Cmd_destination.remote ~command:"secret set" target in
+           run_set ~ctx env value key domain))
       $ env_arg
       $ value_arg
       $ key_arg
@@ -170,12 +143,9 @@ let list_cmd =
     (Cmd.info "list" ~doc:"List secret keys without values")
     Term.(
       const (fun env domain target ->
-        run_list
-          ~ctx:
-            (Cmd_destination.or_exit
-               (Cmd_destination.resolve ~command:"secret list" ~local:false ~target))
-          env
-          domain)
+        Sol_cli_exit.exit_on
+          (let* ctx = Cmd_destination.remote ~command:"secret list" target in
+           run_list ~ctx env domain))
       $ env_arg
       $ domain_arg
       $ Cmd_destination.target_arg)
@@ -186,13 +156,9 @@ let delete_cmd =
     (Cmd.info "delete" ~doc:"Delete a secret key")
     Term.(
       const (fun env key domain target ->
-        run_delete
-          ~ctx:
-            (Cmd_destination.or_exit
-               (Cmd_destination.resolve ~command:"secret delete" ~local:false ~target))
-          env
-          key
-          domain)
+        Sol_cli_exit.exit_on
+          (let* ctx = Cmd_destination.remote ~command:"secret delete" target in
+           run_delete ~ctx env key domain))
       $ env_arg
       $ key_arg
       $ domain_arg

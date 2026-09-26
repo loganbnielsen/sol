@@ -17,7 +17,7 @@
 
 open Cmdliner
 
-(* REFAC-108: enter through the validated boundary, like every command. *)
+let ( let* ) = Result.bind
 
 (* Same resolution shape as `sol logs`'s resolve_unit: a selector must name
    exactly one workload. Here the selector is a required positional
@@ -25,96 +25,87 @@ open Cmdliner
    be a -fn -- `sol fn run` on a -svc/-worker name is a usage error, not a
    silent no-op. *)
 let resolve_fn selector =
-  let selected =
-    Sol_cli_exit.or_exit
-      (Sol_cli_workload_selection.resolve
-         ~what:"DOMAIN/NAME"
-         (Some selector)
-         (Sol_cli_exit.or_exit_with
-            Sol_cli_manifest.discover_error_to_string
-            (Sol_cli_manifest.discover_services ())))
+  let* services =
+    Sol_cli_manifest.discover_services ()
+    |> Sol_cli_exit.of_error Sol_cli_manifest.discover_error_to_string
+  in
+  let* selected =
+    Sol_cli_workload_selection.resolve ~what:"DOMAIN/NAME" (Some selector) services
+    |> Sol_cli_exit.of_msg
   in
   match selected.request, selected.services with
+  | Sol_cli_deployment_scope.Unit_named _, [ ({ primitive = Fn; _ } as svc) ] -> Ok svc
   | Sol_cli_deployment_scope.Unit_named _, [ svc ] ->
-    (match svc.Sol_cli_manifest.primitive with
-     | Fn -> svc
-     | (Svc | Worker) as primitive ->
-       Printf.eprintf
-         "error: %s/%s is a %s, not a -fn; 'sol fn run' only invokes -fn workloads.\n"
-         svc.Sol_cli_manifest.domain
-         svc.Sol_cli_manifest.name
-         (Sol_cli_manifest.primitive_label primitive);
-       exit 1)
+    Error
+      (Sol_cli_exit.error
+         (Printf.sprintf
+            "%s/%s is a %s, not a -fn; 'sol fn run' only invokes -fn workloads."
+            svc.domain
+            svc.name
+            (Sol_cli_manifest.primitive_label svc.primitive)))
   | Sol_cli_deployment_scope.Unit_named _, _ ->
-    Printf.eprintf "error: %S did not resolve to exactly one workload.\n" selector;
-    exit 1
+    Error
+      (Sol_cli_exit.error
+         (Printf.sprintf "%S did not resolve to exactly one workload." selector))
   | _ ->
-    Printf.eprintf "error: 'sol fn run' addresses exactly one unit ('domain/name').\n";
-    exit 1
+    Error (Sol_cli_exit.error "'sol fn run' addresses exactly one unit ('domain/name').")
 ;;
 
-let namespace_or_exit ~workspace ~domain =
-  Sol_cli_deployment_plan.namespace_to_string
-    (Sol_cli_exit.or_exit_with
-       Sol_cli_deployment_plan.plan_error_to_string
-       (Sol_cli_deployment_plan.namespace_result ~workspace ~domain))
-;;
-
-let k8s_name_or_exit name =
-  Sol_cli_deployment_plan.k8s_name_to_string
-    (Sol_cli_exit.or_exit_with
-       Sol_cli_deployment_plan.plan_error_to_string
-       (Sol_cli_deployment_plan.k8s_name_result name))
+(* The cronjob must be there before a Job is made from it. *)
+let require_deployed ~ctx ~domain ~name ~ns ~k8s_name =
+  match Sol_cli_kubectl.presence ~ctx ~args:[ "get"; "cronjob"; k8s_name; "-n"; ns ] with
+  | Sol_cli_kubectl.Present -> Ok ()
+  | Sol_cli_kubectl.Absent _ ->
+    Error
+      (Sol_cli_exit.failure
+         (Printf.sprintf
+            "-fn %s/%s is not deployed in namespace %s.\n\
+             Run 'sol status' to see deployed services."
+            domain
+            name
+            ns))
+  | Sol_cli_kubectl.Uncheckable why ->
+    Error
+      (Sol_cli_exit.error
+         (Printf.sprintf
+            "could not check whether -fn %s/%s is deployed in namespace %s: %s"
+            domain
+            name
+            ns
+            why))
 ;;
 
 let run ~ctx selector =
-  let workspace = (Sol_cli_workspace.enter_or_exit ()).name in
-  let svc = resolve_fn selector in
-  let domain = svc.Sol_cli_manifest.domain in
-  let name = svc.Sol_cli_manifest.name in
-  let ns = namespace_or_exit ~workspace ~domain in
-  let k8s_name = k8s_name_or_exit name in
-  (match Sol_cli_kubectl.presence ~ctx ~args:[ "get"; "cronjob"; k8s_name; "-n"; ns ] with
-   | Sol_cli_kubectl.Present -> ()
-   | Sol_cli_kubectl.Absent _ ->
-     Printf.eprintf "-fn %s/%s is not deployed in namespace %s.\n" domain name ns;
-     Printf.eprintf "Run 'sol status' to see deployed services.\n";
-     exit 1
-   | Sol_cli_kubectl.Uncheckable why ->
-     Printf.eprintf
-       "error: could not check whether -fn %s/%s is deployed in namespace %s: %s\n"
-       domain
-       name
-       ns
-       why;
-     exit 1);
+  let* { name = workspace; _ } = Sol_cli_workspace.enter_cwd () in
+  let* svc = resolve_fn selector in
+  let domain = svc.domain in
+  let name = svc.name in
+  let* ns =
+    Sol_cli_deployment_plan.namespace_name ~workspace ~domain |> Sol_cli_exit.of_msg
+  in
+  let* k8s_name = Sol_cli_deployment_plan.k8s_name name |> Sol_cli_exit.of_msg in
+  let* () = require_deployed ~ctx ~domain ~name ~ns ~k8s_name in
   (* BUG-032: the name is minted in the lib rather than here, so the uniqueness
      rule is testable without a cluster — see Sol_cli_manual_job_name. The
      seconds-resolution form this replaced collided whenever two runs were fired in
      the same second, and the comment that justified it ("a manual run is a human
      typing a command") was the assumption that turned out to be false. *)
   let job_name = Sol_cli_manual_job_name.mint ~k8s_name in
-  match
+  let* _ =
     Sol_cli_process.check
       (Sol_cli_kubectl.create_job_from_cronjob
          ~ctx
          ~cronjob:k8s_name
          ~job_name
          ~namespace:ns)
-  with
-  | Error (Sol_cli_process.Non_zero r) ->
-    Printf.eprintf "error: kubectl create job failed:\n%s\n" (String.trim r.stderr);
-    exit 1
-  | Error e ->
-    Printf.eprintf "error: %s\n" (Sol_cli_process.error_to_string e);
-    exit 1
-  | Ok _ ->
-    Printf.printf
-      "Created job %s from cronjob %s in namespace %s.\n%!"
-      job_name
-      k8s_name
-      ns;
-    Printf.printf "Track it with: sol logs %s/%s --target ...\n%!" domain name
+    |> Result.map_error (function
+      | Sol_cli_process.Non_zero r ->
+        Sol_cli_exit.error ("kubectl create job failed:\n" ^ String.trim r.stderr)
+      | e -> Sol_cli_exit.error (Sol_cli_process.error_to_string e))
+  in
+  Printf.printf "Created job %s from cronjob %s in namespace %s.\n%!" job_name k8s_name ns;
+  Printf.printf "Track it with: sol logs %s/%s --target ...\n%!" domain name;
+  Ok ()
 ;;
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
@@ -141,11 +132,9 @@ let run_cmd =
           CronJob controller's own scheduled runs, never a manual one.")
     Term.(
       const (fun selector target ->
-        run
-          ~ctx:
-            (Cmd_destination.or_exit
-               (Cmd_destination.resolve ~command:"fn run" ~local:false ~target))
-          selector)
+        Sol_cli_exit.exit_on
+          (let* ctx = Cmd_destination.remote ~command:"fn run" target in
+           run ~ctx selector))
       $ selector_arg
       $ Cmd_destination.target_arg)
 ;;
@@ -153,7 +142,10 @@ let run_cmd =
 let local_run_cmd =
   Cmd.v
     (Cmd.info "run" ~doc:"Manually invoke a deployed -fn on the local cluster.")
-    Term.(const (fun selector -> run ~ctx:Cmd_destination.local selector) $ selector_arg)
+    Term.(
+      const (fun selector ->
+        Sol_cli_exit.exit_on (run ~ctx:Cmd_destination.local selector))
+      $ selector_arg)
 ;;
 
 let cmd = Cmd.group (Cmd.info "fn" ~doc:"Operate on deployed -fn workloads.") [ run_cmd ]
