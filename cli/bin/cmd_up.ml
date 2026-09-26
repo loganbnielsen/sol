@@ -3,15 +3,6 @@ open Sol_cli_manifest
 
 (* ── Workspace / git helpers ─────────────────────────────────────────────── *)
 
-let git_sha () =
-  match
-    Sol_cli_process.run (Sol_cli_process.cmd [ "git"; "rev-parse"; "--short"; "HEAD" ])
-  with
-  | Ok r when r.Sol_cli_process.exit_code = 0 && r.Sol_cli_process.stdout <> "" ->
-    r.Sol_cli_process.stdout
-  | _ -> "dev"
-;;
-
 (* ── Pipeline ────────────────────────────────────────────────────────────── *)
 
 let print_header ~workspace ~sha ~dry_run =
@@ -499,15 +490,18 @@ let cmd =
           Local-only — no target concept, unlike 'sol deploy'.")
     Term.(
       const (fun scope dry_run tag confirm_group_change keep_releases ->
-        run
-          (Sol_cli_exit.or_exit
-             (Sol_cli_command_request.make_up_request
-                ~scope
-                ~dry_run
-                ~tag
-                ~confirm_group_change
-                ~keep_releases
-                ~git_sha)))
+        let req =
+          Sol_cli_exit.or_exit
+            (Sol_cli_command_request.make_up_request
+               ~scope
+               ~dry_run
+               ~tag
+               ~confirm_group_change
+               ~keep_releases
+               ~git_sha:Sol_cli_command_request.git_sha)
+        in
+        Option.iter (Printf.eprintf "warning: %s\n") req.image_tag_warning;
+        run req)
       $ scope_arg
       $ dry_run_flag
       $ tag_arg

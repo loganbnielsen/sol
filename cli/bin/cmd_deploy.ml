@@ -28,15 +28,6 @@ let reconcile_operator_bindings_warn ~ctx ~workspace =
       msg
 ;;
 
-let git_sha () =
-  match
-    Sol_cli_process.run (Sol_cli_process.cmd [ "git"; "rev-parse"; "--short"; "HEAD" ])
-  with
-  | Ok r when r.Sol_cli_process.exit_code = 0 && r.Sol_cli_process.stdout <> "" ->
-    r.Sol_cli_process.stdout
-  | _ -> "dev"
-;;
-
 (* EXP-029: after a real apply, print a port-forward hint for each HTTP
    service so the engineer doesn't need a separate 'sol status' call to
    discover the endpoint. Same ClusterIP+port-80 detection cmd_status.ml's
@@ -1194,7 +1185,7 @@ let cmd =
                    ~confirm_group_change
                    ~loki_push_url
                    ~keep_releases
-                   ~git_sha)))
+                   ~git_sha:Sol_cli_command_request.git_sha)))
       $ target_arg
       $ scope_arg
       $ dry_run_flag
