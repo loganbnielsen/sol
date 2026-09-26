@@ -5,7 +5,7 @@
 (library
  (name sol_cli_base)
  (wrapped false)
- (libraries unix yojson))
+ (libraries unix yojson ptime))
 
 ; FEAT-101 / DEC-049: the release version, set only by a release build.
 

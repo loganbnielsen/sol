@@ -12,17 +12,7 @@
    a delivered-and-acknowledged test is the only thing that satisfies the
    guarantee, and a CLI invocation alone cannot assert someone was paged. *)
 
-let timestamp_now () =
-  let tm = Unix.gmtime (Unix.gettimeofday ()) in
-  Printf.sprintf
-    "%04d-%02d-%02dT%02d:%02d:%02dZ"
-    (tm.Unix.tm_year + 1900)
-    (tm.Unix.tm_mon + 1)
-    tm.Unix.tm_mday
-    tm.Unix.tm_hour
-    tm.Unix.tm_min
-    tm.Unix.tm_sec
-;;
+let timestamp_now () = Sol_cli_time.rfc3339 (Unix.gettimeofday ())
 
 (* The synthetic alert deliberately carries no workspace/domain/service labels:
    the goal is to prove the route regardless of which workload would have fired,

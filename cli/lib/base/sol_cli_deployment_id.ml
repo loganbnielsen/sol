@@ -12,17 +12,7 @@
 type t = string
 
 (* The UTC prefix. Lowercase separators, see the header. *)
-let time_part (now : float) : string =
-  let tm = Unix.gmtime now in
-  Printf.sprintf
-    "%04d%02d%02dt%02d%02d%02dz"
-    (tm.Unix.tm_year + 1900)
-    (tm.Unix.tm_mon + 1)
-    tm.Unix.tm_mday
-    tm.Unix.tm_hour
-    tm.Unix.tm_min
-    tm.Unix.tm_sec
-;;
+let time_part (now : float) : string = Sol_cli_time.compact_lower now
 
 let entropy_hex (entropy : string) : string =
   String.sub (Digest.to_hex (Digest.string entropy)) 0 16
