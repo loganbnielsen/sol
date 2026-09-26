@@ -52,6 +52,28 @@
 - **Promoted to READY:** REFAC-099…105, DOCS-023/024, FEAT-100.
 - **Sequencing with qualification:** REFAC-099/100/101/103, DOCS-023 and REFAC-105 move paths the GCP qualification harness and its records use. They were held until HARDEN-006 attempt 8 landed (#518). Before starting one, check that no qualification attempt is in flight.
 - `AGENTS.md`'s ticket `type` list is now the 14 values in use (it listed 4).
+## Latest: FND-0058 qualified live on GCP (2026-09-26)
+
+`main @ 67bdef8e`, fresh target `qual9/gcp/us-central1` (cluster `sol-qual-gcp-9`) — its own target key
+(`INFRA-084`), so the specimen was produced fresh and Attempt 8's preserved state was neither inherited
+nor overwritten. Live 01:39:58Z → 02:06:44Z; zero billable residue; durable prerequisites intact.
+
+The run produced Attempt 8's exact state naturally (failed `PlatformInstalling` at cert-manager, window
+closed on the failure path) and then destroyed it with `sol cloud destroy` alone:
+
+- the acquisition plan record shows `kubernetes_cluster_role_binding.provisioner_bootstrap_admin[0] will
+  be created`, the plan was **permitted** (Attempt 8 was refused here), and the apply reports
+  **`Resources: 1 added, 0 changed, 0 destroyed`** — authority, and only authority;
+- the platform teardown **ran** (`platform-destroy ok, 77.2 s`) where Attempt 8 skipped it;
+- the authority was removed (plan: `will be destroyed (because index [0] is out of range for count)`;
+  apply: `Destruction complete`), the substrate was destroyed, and **both roots ended empty**
+  (cloud 0 resources / serial 16, platform 0 / serial 5);
+- the destroy ended `Done.` — no degraded preparation.
+
+`FND-0058` → **`QUALIFIED`**; `INV-DESTROY-1`'s failed-`PlatformInstalling` case satisfied. Three
+inventory classes read non-ABSENT and are the pre-recorded `INFRA-080` refinements, reproduced exactly.
+Record: `docs/qualification/2026-09-26-gcp-fnd0058-live-qualification.md`.
+
 ## Latest: FND-0058 fixed — destruction may construct authority, and only authority (2026-09-25)
 
 The INFRA-079 decision unit established that Attempt 8's degraded teardown was a **matcher defect, not
