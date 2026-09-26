@@ -585,3 +585,23 @@ prerequisites intact; delegation resolving.
 
 Nothing about `Ready`-state destruction is claimed: the destroy began from a failed install, not from a
 healthy platform.
+
+## INFRA-080 fixed — a clean teardown can now verify truthfully (2026-09-26)
+
+Attempts 8 and 9 both ended with "teardown NOT verified" for reasons that were the *instrument's*,
+not the product's: a provider-deleted service account whose `describe` answers
+`PERMISSION_DENIED … (or it may not exist)`, the impersonator binding on that identity, and GCP's
+soft-deleted custom role (`deleted: true`). All three — plus the `cloud_vars` comment that ended its
+own `printf` — are fixed in `internal/qualification/gcp/`.
+
+| class | postcondition | observable now |
+|---|---|---|
+| `service-account-provisioner` | the identity is not active | the project's authoritative active-account **list** (the ambiguous `describe` is kept as raw evidence) |
+| `impersonator-binding` | no **usable** impersonation authority | the identity's active state (a deleted identity cannot be impersonated), plus the impersonator's bindings on the policy when the identity is active |
+| `custom-role` | no **active** role of that name | `describe` with GCP's own `deleted` marker: `deleted: true` → ABSENT, the raw marker preserved |
+| `cloud_vars` | the harness passes no unparseable argument | the target is the single source for `provisioner_impersonator` |
+
+Nothing was relabelled: `PERMISSION_DENIED` is still never absence, and a failed authoritative read
+is still UNKNOWN. The offline suite is **117 assertions (was 90)**, with five mutations proving the
+tests protect the epistemic rule rather than the desired word. No product code, no live
+infrastructure, and the preserved Attempt 8 state is untouched.
