@@ -1,7 +1,7 @@
 open Cmdliner
 open Sol_cli_manifest
 
-(* ── Workspace / git helpers ─────────────────────────────────────────────── *)
+let ( let* ) = Result.bind
 
 (* ── Pipeline ────────────────────────────────────────────────────────────── *)
 
@@ -12,15 +12,15 @@ let print_header ~workspace ~sha ~dry_run =
 ;;
 
 let build_plan ~requested_scope ~workspace ~sha ~services =
-  Sol_cli_exit.or_exit_with
-    Sol_cli_deployment_plan.plan_error_to_string
-    (Sol_cli_up_execution.local_plan ~requested_scope ~workspace ~sha services)
+  Sol_cli_up_execution.local_plan ~requested_scope ~workspace ~sha services
+  |> Sol_cli_exit.of_error Sol_cli_deployment_plan.plan_error_to_string
 ;;
 
 let check_contract ~services =
   let findings = Sol_cli_check.run_services services in
-  List.iter (fun f -> Printf.eprintf "%s\n" (Sol_cli_check.finding_to_string f)) findings;
-  if Sol_cli_check.has_errors findings then exit 1
+  findings
+  |> List.iter (fun f -> Printf.eprintf "%s\n" (Sol_cli_check.finding_to_string f));
+  if Sol_cli_check.has_errors findings then Error (Sol_cli_exit.reported ()) else Ok ()
 ;;
 
 (* FEAT-063: `sol up` is the local deploy path — its destination is the literal
@@ -48,17 +48,13 @@ let check_consumer_group_changes ~workspace ~confirm_group_change plan =
            Sol_cli_plan_ids.Consumer_group.to_string
            plan.Sol_cli_deployment_plan.consumer_groups)
   with
-  | Ok () -> ()
-  | Error msg ->
-    Printf.eprintf "%s\n%!" msg;
-    exit 1
+  | Ok () -> Ok ()
+  | Error msg -> Error (Sol_cli_exit.failure msg)
 ;;
 
 let prepare_context ~repo_root =
   Printf.printf "Preparing build context...\n%!";
-  match Sol_cli_up_execution.prepare_build_context ~repo_root with
-  | Ok ctx_dir -> Ok ctx_dir
-  | Error msg -> Error msg
+  Sol_cli_up_execution.prepare_build_context ~repo_root
 ;;
 
 let to_manifest_primitive = Sol_cli_up_execution.manifest_primitive
@@ -179,32 +175,30 @@ let record_plan run_log plan =
 (* REFAC-112: the preamble both modes share, so neither can drift from the other. *)
 let prepare_plan ~run_log ~dry_run ~requested_scope ~workspace ~sha ~services =
   print_header ~workspace ~sha ~dry_run;
-  let plan = build_plan ~requested_scope ~workspace ~sha ~services in
+  let* plan = build_plan ~requested_scope ~workspace ~sha ~services in
   record_plan run_log plan;
-  plan
+  Ok plan
 ;;
 
+(* A failed run's message stands apart from the progress output above it. *)
+let run_failed msg = Sol_cli_exit.failure ("\nerror: " ^ msg)
+
 let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~services =
-  let plan =
+  let* plan =
     prepare_plan ~run_log ~dry_run:true ~requested_scope ~workspace ~sha ~services
   in
-  match
-    Sol_cli_run_log.run_task run_log ~name:"dry-run" (fun () ->
-      try
-        List.iter
-          (dry_run_service
-             ~workspace
-             ~sha
-             ~release_id:plan.Sol_cli_deployment_plan.release_id)
-          plan.Sol_cli_deployment_plan.services;
-        Ok ()
-      with
-      | Deploy_failed msg -> Error msg)
-  with
-  | Ok () -> ()
-  | Error msg ->
-    Printf.eprintf "\nerror: %s\n" msg;
-    exit 1
+  Result.map_error run_failed
+  @@ Sol_cli_run_log.run_task run_log ~name:"dry-run" (fun () ->
+    try
+      List.iter
+        (dry_run_service
+           ~workspace
+           ~sha
+           ~release_id:plan.Sol_cli_deployment_plan.release_id)
+        plan.Sol_cli_deployment_plan.services;
+      Ok ()
+    with
+    | Deploy_failed msg -> Error msg)
 ;;
 
 (* `sol up` is a deploy of the local cluster, so these mirror cmd_deploy's
@@ -346,12 +340,12 @@ let run_apply
       ~confirm_group_change
       ~keep_releases
   =
-  check_contract ~services;
+  let* () = check_contract ~services in
   ensure_postgres_url ();
-  let plan =
+  let* plan =
     prepare_plan ~run_log ~dry_run:false ~requested_scope ~workspace ~sha ~services
   in
-  check_consumer_group_changes ~workspace ~confirm_group_change plan;
+  let* () = check_consumer_group_changes ~workspace ~confirm_group_change plan in
   let pf_failed = ref false in
   let result =
     Sol_cli_boundary_lease.with_boundary_lease
@@ -379,7 +373,6 @@ let run_apply
            (* DEC-037: record before reporting success. *)
            Sol_cli_release.finish_deployment
              ~record_release:(fun () ->
-               let ( let* ) = Result.bind in
                let* () =
                  record_release_and_prune ~workspace ~keep:keep_releases ~previous plan
                in
@@ -388,6 +381,8 @@ let run_apply
                Sol_cli_up_execution.record_applied ~ctx:cluster ~workspace ~sha plan)
              ~report_success:(fun () -> report_apply_success ~workspace plan))
   in
+  Result.map_error run_failed
+  @@
   match result with
   | Error msg -> Error msg
   | Ok () -> if !pf_failed then Error "one or more port-forwards failed" else Ok ()
@@ -396,19 +391,19 @@ let run_apply
 let run (req : Sol_cli_command_request.up_request) =
   (* DEC-024: enter the workspace (the nearest ancestor with a sol.yml) from any
      descendant directory; a missing or nested boundary fails closed (BUG-034). *)
-  let { Sol_cli_workspace.root = repo_root; name = workspace } =
-    Sol_cli_workspace.enter_or_exit ()
-  in
+  let* { root = repo_root; name = workspace } = Sol_cli_workspace.enter_cwd () in
   let sha = req.image_tag in
+  let* inventory =
+    Sol_cli_manifest.discover_services ()
+    |> Sol_cli_exit.of_error Sol_cli_manifest.discover_error_to_string
+  in
   (* Mutating command: an empty selection is an error, never a silent success. *)
-  let { Sol_cli_workload_selection.requested_scope; services; _ } =
-    Sol_cli_exit.or_exit
-      (Sol_cli_workload_selection.resolve_nonempty
-         ~none:"no services found in app/ with a Dockerfile"
-         req.scope
-         (Sol_cli_exit.or_exit_with
-            Sol_cli_manifest.discover_error_to_string
-            (Sol_cli_manifest.discover_services ())))
+  let* { requested_scope; services; _ } =
+    Sol_cli_workload_selection.resolve_nonempty
+      ~none:"no services found in app/ with a Dockerfile"
+      req.scope
+      inventory
+    |> Sol_cli_exit.of_msg
   in
   let run_log = Sol_cli_run_log.create ~prefix:"up" () in
   Printf.printf
@@ -419,21 +414,15 @@ let run (req : Sol_cli_command_request.up_request) =
   | Sol_cli_command_request.Dry_run ->
     run_dry_run ~run_log ~requested_scope ~workspace ~sha ~services
   | Apply ->
-    (match
-       run_apply
-         ~run_log
-         ~requested_scope
-         ~workspace
-         ~sha
-         ~services
-         ~repo_root
-         ~confirm_group_change:req.confirm_group_change
-         ~keep_releases:req.keep_releases
-     with
-     | Ok () -> ()
-     | Error msg ->
-       Printf.eprintf "\nerror: %s\n" msg;
-       exit 1)
+    run_apply
+      ~run_log
+      ~requested_scope
+      ~workspace
+      ~sha
+      ~services
+      ~repo_root
+      ~confirm_group_change:req.confirm_group_change
+      ~keep_releases:req.keep_releases
 ;;
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
@@ -500,18 +489,19 @@ let cmd =
           Local-only — no target concept, unlike 'sol deploy'.")
     Term.(
       const (fun scope dry_run tag confirm_group_change keep_releases ->
-        let req =
-          Sol_cli_exit.or_exit
-            (Sol_cli_command_request.make_up_request
+        Sol_cli_exit.exit_on
+          (let* req =
+             Sol_cli_command_request.make_up_request
                ~scope
                ~dry_run
                ~tag
                ~confirm_group_change
                ~keep_releases
-               ~git_sha:Sol_cli_command_request.git_sha)
-        in
-        Option.iter (Printf.eprintf "warning: %s\n") req.image_tag_warning;
-        run req)
+               ~git_sha:Sol_cli_command_request.git_sha
+             |> Sol_cli_exit.of_msg
+           in
+           Option.iter (Printf.eprintf "warning: %s\n") req.image_tag_warning;
+           run req))
       $ scope_arg
       $ dry_run_flag
       $ tag_arg

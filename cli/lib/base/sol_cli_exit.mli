@@ -41,6 +41,7 @@ val of_msg : ('a, string) result -> ('a, failure) result
 (** [of_error to_string r] is {!of_msg} for a typed error. *)
 val of_error : ('e -> string) -> ('a, 'e) result -> ('a, failure) result
 
-(** [exit_on r]: nothing for [Ok ()]; otherwise print the failure's text and
-    exit with its code. The one place a command's [result] becomes an exit. *)
+(** [exit_on r]: nothing for [Ok ()]; otherwise print the failure's text, as a
+    complete line (a newline is added only if it lacks one), and exit with its
+    code. The one place a command's [result] becomes an exit. *)
 val exit_on : (unit, failure) result -> unit

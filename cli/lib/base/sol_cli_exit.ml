@@ -23,6 +23,11 @@ let exit_on = function
   | Error { text; code } ->
     (* What the command printed comes before why it failed. *)
     flush stdout;
-    if text <> "" then Printf.eprintf "%s\n%!" text;
+    if text <> ""
+    then
+      Printf.eprintf
+        "%s%s%!"
+        text
+        (if String.ends_with ~suffix:"\n" text then "" else "\n");
     exit code
 ;;
