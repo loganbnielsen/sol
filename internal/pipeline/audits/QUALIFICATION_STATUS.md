@@ -650,10 +650,22 @@ Full record: `internal/qualification/records/2026-09-26-gcp-attempt10-fnd0010-li
 | Independent provider verification | `teardown verified: absent` — 19 disposable classes ABSENT, quota 0, 2 durable PRESENT, delegation resolving |
 | `Ready`-state destruction (INV-DESTROY-1's `Ready` case) | **not observed** |
 
-**Nothing here is QUALIFIED.** The new first blocker is `FND-0060` (OPEN) with its ticket
-`INFRA-087` in `BACKLOG`; its cause is not established by this bundle, and the harness's
-`SCHEDULING` label is a classification from warnings whose age equals the pods' age, recorded as
-such rather than as a diagnosis. Two instrument observations are recorded in the run record and
+**CORRECTION (2026-09-26, forensic re-analysis of the same bundle).** The first version of this
+section attributed the failure to a container-start delay (`FND-0060`, `INFRA-087`). That reading is
+refuted by the bundle's authoritative fields: the check ran its full `check api --wait=10m` window
+(122 webhook TLS handshake failures every ~5s, 15:17:28 to 15:27:29 = 601s; Job `startTime`
+15:16:59Z, `failed: 1`, `backoffLimit: 1`, pod `restartPolicy: OnFailure`, `activeDeadlineSeconds`
+unset; exactly one pod created). The established cause is that cert-manager's controller and
+cainjector **never acquired leader election**: the chart's default
+`global.leaderElection.namespace` is `kube-system`, which GKE Autopilot denies (GKE Warden
+managed-namespaces-limitation, 30 denials each across the whole window), so cainjector never
+injected the webhook's `caBundle` (the field is absent) and the check's TLS polls could never
+succeed. `FND-0060` is `FALSIFIED`, `INFRA-087` is withdrawn, the defect is `FND-0010` (state
+`OPEN` — its budget remedy validated live here but insufficient), and the fix is proposed in
+`INFRA-088`. No live mutation without separate authorization.
+
+**Nothing here is QUALIFIED.** `Ready` was not reached; the failed-`PlatformInstalling` destruction
+case and the authority bracket were reproduced, neither of which is new. Two instrument observations are recorded in the run record and
 are not fixed here: `verify` aborts on an unset `IMPERSONATOR`, and the classifier can attribute a
 cause from long-resolved events.
 

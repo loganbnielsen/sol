@@ -1087,13 +1087,30 @@ capture_fnd0010() {
   # apart from "it appeared and cainjector did not inject it", which are different fixes.
   # The Secret is captured by metadata and key names only: enough to answer existence, type
   # and age, without copying key material into the evidence bundle.
-  kube_capture fnd0010-cainjector-logs kubectl -n cert-manager logs deploy/cert-manager-cainjector --tail=200
-  kube_capture fnd0010-controller-logs kubectl -n cert-manager logs deploy/cert-manager --tail=200
-  kube_capture fnd0010-webhook-logs kubectl -n cert-manager logs deploy/cert-manager-webhook --tail=200
+  kube_capture fnd0010-cainjector-logs kubectl -n cert-manager logs deploy/cert-manager-cainjector --tail=-1
+  kube_capture fnd0010-controller-logs kubectl -n cert-manager logs deploy/cert-manager --tail=-1
+  kube_capture fnd0010-webhook-logs kubectl -n cert-manager logs deploy/cert-manager-webhook --tail=-1
   kube_capture fnd0010-ca-secret kubectl -n cert-manager get secret cert-manager-webhook-ca \
     -o jsonpath='{.metadata.name} type={.type} created={.metadata.creationTimestamp} keys={.data}'
   kube_capture fnd0010-tls-secret kubectl -n cert-manager get secret cert-manager-webhook-tls \
     -o jsonpath='{.metadata.name} type={.type} created={.metadata.creationTimestamp} keys={.data}'
+  # What the Attempt 10 re-analysis had to reconstruct by hand, and could not: the Job's *pod*
+  # as an object. Kubernetes events carry ages, and a single Created/Started pair cannot tell a
+  # first start from a restart -- pod YAML carries metadata.creationTimestamp, spec.nodeName and
+  # containerStatuses (state, lastState, startedAt, finishedAt, restartCount), which is the
+  # difference between "the container started late" and "the container ran its full window and
+  # was restarted". Attempt 10's first reading got this wrong; the capture removes the excuse.
+  kube_capture fnd0010-startupapicheck-pod kubectl -n cert-manager get pods \
+    -l job-name=cert-manager-startupapicheck -o yaml
+  # Leader election is the layer *under* the CA injection, and the actual Attempt 10 failure was
+  # here: the chart creates its leaderelection Role/RoleBinding in
+  # `global.leaderElection.namespace` (kube-system by default) and points both components at it,
+  # and GKE Autopilot denies writing there. Capture the objects and the resulting leases in both
+  # namespaces -- read-only, and it turns "no caBundle" into a named cause.
+  kube_capture fnd0010-rbac-cert-manager kubectl -n cert-manager get role,rolebinding -o name
+  kube_capture fnd0010-rbac-kube-system kubectl -n kube-system get role,rolebinding -o name
+  kube_capture fnd0010-leases-cert-manager kubectl -n cert-manager get leases -o wide
+  kube_capture fnd0010-leases-kube-system kubectl -n kube-system get leases -o name
   kube_capture fnd0010-certificates kubectl -n cert-manager get certificates,issuers,clusterissuers -o wide
   kube_capture fnd0010-nodes   kubectl get nodes -o wide
   kube_capture fnd0010-firewall-rules gcloud compute firewall-rules list --project "$PROJECT" \
@@ -1114,7 +1131,14 @@ classify_fnd0010() {
     # reachability failure, and reading either as one is exactly the error this run exists to
     # prevent. Each alternative is a literal string from the captured evidence. No match, or no
     # evidence at all, is UNKNOWN -- never a default of "reachability".
-    if grep -qiE 'x509|unknown authority|certificate signed by unknown|tls: failed to verify' \
+    if grep -qiE 'managed-namespaces-limitation|leader election record|cannot create resource "leases"' \
+        "$LOG_DIR/fnd0010-controller-logs.log" "$LOG_DIR/fnd0010-cainjector-logs.log" 2>/dev/null; then
+      # The specific, reversible cause found by Attempt 10's re-analysis: cert-manager's
+      # components cannot write the leader-election Lease where they look for it (the chart
+      # default is kube-system, which Autopilot manages). First, because when it is present it
+      # *is* the cause -- an un-injected caBundle is its consequence, not a rival explanation.
+      printf 'LEADER_ELECTION_DENIED\n'
+    elif grep -qiE 'x509|unknown authority|certificate signed by unknown|tls: failed to verify' \
         "$check_log" "$job_log" 2>/dev/null; then
       printf 'TLS_CA_OR_CERTIFICATE\n'
     elif grep -qiE 'no matches for kind|could not find the requested resource|failed to discover|unable to retrieve the complete list of server APIs' \
@@ -1132,8 +1156,9 @@ classify_fnd0010() {
       printf 'UNKNOWN\n'
     fi
     printf '\n-- why (matching lines; empty means the signature was not in the captured evidence) --\n'
-    grep -hiE 'x509|unknown authority|certificate signed by unknown|tls: failed to verify|no matches for kind|could not find the requested resource|failed to discover|forbidden|cannot create resource|context deadline exceeded|dial tcp|i/o timeout|connection refused|no route to host|FailedScheduling|Unschedulable|Insufficient (cpu|memory)' \
-      "$check_log" "$job_log" "$events" "$LOG_DIR/fnd0010-pods.log" 2>/dev/null | head -20 || true
+    grep -hiE 'managed-namespaces-limitation|leader election record|cannot create resource "leases"|x509|unknown authority|certificate signed by unknown|tls: failed to verify|no matches for kind|could not find the requested resource|failed to discover|forbidden|cannot create resource|context deadline exceeded|dial tcp|i/o timeout|connection refused|no route to host|FailedScheduling|Unschedulable|Insufficient (cpu|memory)' \
+      "$check_log" "$job_log" "$events" "$LOG_DIR/fnd0010-pods.log" \
+      "$LOG_DIR/fnd0010-controller-logs.log" "$LOG_DIR/fnd0010-cainjector-logs.log" 2>/dev/null | head -20 || true
     printf '\n-- corroboration --\n'
     printf 'webhook targetPort: %s\n' "$(head -1 "$LOG_DIR/fnd0010-webhook-target-port.log" 2>/dev/null)"
     printf 'webhook endpoints : %s\n' "$(head -1 "$LOG_DIR/fnd0010-webhook-endpoints.log" 2>/dev/null)"
