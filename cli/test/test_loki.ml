@@ -75,7 +75,8 @@ let test_classify_timeout () =
 
 let test_classify_curl_timeout_exit_code () =
   match
-    L.classify_process_error (Sol_cli_process.Non_zero { exit_code = 28; stderr = "" })
+    L.classify_process_error
+      (Sol_cli_process.Non_zero { exit_code = 28; stdout = ""; stderr = "" })
   with
   | L.Timeout -> ()
   | _ -> Alcotest.fail "expected Timeout for curl exit 28"
@@ -83,7 +84,8 @@ let test_classify_curl_timeout_exit_code () =
 
 let test_classify_connection_failed () =
   match
-    L.classify_process_error (Sol_cli_process.Non_zero { exit_code = 7; stderr = "" })
+    L.classify_process_error
+      (Sol_cli_process.Non_zero { exit_code = 7; stdout = ""; stderr = "" })
   with
   | L.Connection_failed -> ()
   | _ -> Alcotest.fail "expected Connection_failed for curl exit 7"
@@ -92,7 +94,7 @@ let test_classify_connection_failed () =
 let test_classify_other () =
   match
     L.classify_process_error
-      (Sol_cli_process.Non_zero { exit_code = 22; stderr = "boom" })
+      (Sol_cli_process.Non_zero { exit_code = 22; stdout = ""; stderr = "boom" })
   with
   | L.Other msg ->
     check_int "message mentions exit code" 1 (if String.length msg > 0 then 1 else 0)

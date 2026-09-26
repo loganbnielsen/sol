@@ -13,11 +13,8 @@ let ( let* ) = Result.bind
 (* Read terraform output -json from a temp file and print key endpoints.
    We only print non-sensitive string/list values. *)
 let print_outputs infra_dir =
-  match Sol_cli_terraform.output_json ~chdir:infra_dir () with
-  | Error _ | Ok { Sol_cli_process.exit_code = 1 | 2 | 127 | 128; _ } ->
-    Printf.printf "  (could not retrieve terraform outputs)\n%!"
-  | Ok r when r.Sol_cli_process.exit_code <> 0 ->
-    Printf.printf "  (could not retrieve terraform outputs)\n%!"
+  match Sol_cli_process.check (Sol_cli_terraform.output_json ~chdir:infra_dir ()) with
+  | Error _ -> Printf.printf "  (could not retrieve terraform outputs)\n%!"
   | Ok r ->
     (try
        let print_output_field key obj =
@@ -121,12 +118,6 @@ let action_of_flags plan apply =
   | true, true -> `Error (false, "--plan and --apply are mutually exclusive")
 ;;
 
-let exit_code_of r =
-  match r with
-  | Ok r -> r.Sol_cli_process.exit_code
-  | Error _ -> 1
-;;
-
 (* Full stdout/stderr already went to this run's phase log via
    Sol_cli_run_log.run_phase, which also printed the compact status line and,
    on failure, the log path and its tail. Nothing left to print here. *)
@@ -136,13 +127,13 @@ let exit_code_of r =
    operation that fails must say why -- the run log is the record, but the reason
    is not something an operator should have to go looking for. *)
 let require_terraform_success r =
-  match r with
-  | Ok r when r.Sol_cli_process.exit_code = 0 -> ()
-  | Ok r ->
-    let detail = String.trim r.Sol_cli_process.stderr in
+  match Sol_cli_process.check r with
+  | Ok _ -> ()
+  | Error (Sol_cli_process.Non_zero r) ->
+    let detail = String.trim r.stderr in
     Printf.eprintf
       "\nterraform exited %d%s\n%!"
-      r.Sol_cli_process.exit_code
+      r.exit_code
       (if detail = "" then "." else ":\n" ^ detail);
     exit 1
   | Error error ->
@@ -242,14 +233,15 @@ let workspace_name = Sol_cli_workspace.current_name
    residue and are never asserted about here. *)
 let post_destroy_state ~infra_dir =
   Sol_cli_destroy_verification.state_evidence
-    (match Sol_cli_terraform.show_json ~chdir:infra_dir () with
-     | Ok result when result.Sol_cli_process.exit_code = 0 ->
+    (match Sol_cli_process.check (Sol_cli_terraform.show_json ~chdir:infra_dir ()) with
+     | Ok result ->
        (match Sol_cli_cloud_destroy.inventory_of_show_json result.stdout with
         | Sol_cli_cloud_destroy.State_empty -> Ok []
         | Sol_cli_cloud_destroy.State_represented _ as state ->
           Ok (Sol_cli_cloud_destroy.addresses state)
         | Sol_cli_cloud_destroy.State_unreadable reason -> Error reason)
-     | Ok result -> Error (Printf.sprintf "terraform show exited %d" result.exit_code)
+     | Error (Sol_cli_process.Non_zero result) ->
+       Error (Printf.sprintf "terraform show exited %d" result.exit_code)
      | Error error ->
        Error ("terraform show could not be run: " ^ Sol_cli_process.error_to_string error))
 ;;
@@ -617,12 +609,12 @@ let bootstrap_access_vars ~enabled =
  * has actually failed. *)
 let served_api_kinds env =
   match
-    Sol_cli_process.run
+    Sol_cli_process.run_success
       (Sol_cli_process.cmd
          ~env
          [ "kubectl"; "api-resources"; "--verbs=delete"; "--no-headers" ])
   with
-  | Ok result when result.Sol_cli_process.exit_code = 0 ->
+  | Ok result ->
     Ok
       (String.split_on_char '\n' result.Sol_cli_process.stdout
        |> List.filter_map (fun line ->
@@ -636,20 +628,20 @@ let served_api_kinds env =
          | kind :: _ :: _ -> Some kind
          | _ -> None)
        |> List.sort_uniq compare)
-  | Ok result ->
+  | Error (Sol_cli_process.Non_zero result) ->
     Error
       (Printf.sprintf
          "kubectl api-resources exited %d: %s"
-         result.Sol_cli_process.exit_code
-         (String.trim result.Sol_cli_process.stderr))
+         result.exit_code
+         (String.trim result.stderr))
   | Error error -> Error (Sol_cli_process.error_to_string error)
 ;;
 
 (* The resources whose kind the cluster does not serve, each with the kind that
    proves it -- the proof travels with the decision. *)
 let unserved_manifest_resources ~served ~chdir =
-  match Sol_cli_terraform.show_json ~chdir () with
-  | Ok result when result.Sol_cli_process.exit_code = 0 ->
+  match Sol_cli_process.check (Sol_cli_terraform.show_json ~chdir ()) with
+  | Ok result ->
     (try
        let open Yojson.Safe.Util in
        Yojson.Safe.from_string result.stdout
@@ -679,8 +671,8 @@ let unserved_manifest_resources ~served ~chdir =
      | Yojson.Json_error message -> Error ("invalid `terraform show -json`: " ^ message)
      | Yojson.Safe.Util.Type_error (message, _) ->
        Error ("unexpected `terraform show -json` shape: " ^ message))
-  | Ok result ->
-    Error (Printf.sprintf "terraform show exited %d" result.Sol_cli_process.exit_code)
+  | Error (Sol_cli_process.Non_zero result) ->
+    Error (Printf.sprintf "terraform show exited %d" result.exit_code)
   | Error error -> Error (Sol_cli_process.error_to_string error)
 ;;
 
@@ -1433,8 +1425,8 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
           then Error "platform absence verification failed after destroy"
           else Ok ()
         in
-        match destroy with
-        | Ok result when result.Sol_cli_process.exit_code = 0 -> verify_absent ()
+        match Sol_cli_process.check destroy with
+        | Ok _ -> verify_absent ()
         | _ ->
           (* INFRA-042. Terraform's destroy has been attempted first, in full, with
              its own ordering and ownership -- this is recovery, not a different
@@ -1498,8 +1490,8 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
                     ~name:"platform-destroy-retry"
                     destroy_once
                 in
-                (match retry with
-                 | Ok result when result.Sol_cli_process.exit_code = 0 -> verify_absent ()
+                (match Sol_cli_process.check retry with
+                 | Ok _ -> verify_absent ()
                  | _ -> terraform_outcome retry))))
     in
     let deps : Sol_cli_cloud_destroy.deps =
@@ -1521,11 +1513,13 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
               cloud_backend)
       ; observe_state =
           (fun () ->
-            match Sol_cli_terraform.show_json ~chdir:infra_dir () with
-            | Ok result when result.Sol_cli_process.exit_code = 0 ->
+            match
+              Sol_cli_process.check (Sol_cli_terraform.show_json ~chdir:infra_dir ())
+            with
+            | Ok result ->
               state_ref := Sol_cli_cloud_destroy.inventory_of_show_json result.stdout;
               Ok result.stdout
-            | Ok result ->
+            | Error (Sol_cli_process.Non_zero result) ->
               Error (Printf.sprintf "terraform show failed with exit %d" result.exit_code)
             | Error error ->
               Error

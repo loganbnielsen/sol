@@ -190,18 +190,18 @@ let get_named_secret_json ~ctx ~name namespace =
 (* The names a listing printed, or why it could not be read. A listing that
    failed is never an empty one (BUG-040). *)
 let listed_names ~what (result : (Sol_cli_process.result, Sol_cli_process.error) result) =
-  match result with
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
+  match Sol_cli_process.check result with
+  | Ok r ->
     Ok
       (String.split_on_char '\n' r.Sol_cli_process.stdout
        |> List.map String.trim
        |> List.filter (fun name -> name <> ""))
-  | Ok r ->
+  | Error (Sol_cli_process.Non_zero r) ->
     Error
       (Printf.sprintf
          "could not list %s: %s"
          what
-         (let detail = String.trim r.Sol_cli_process.stderr in
+         (let detail = String.trim r.stderr in
           if detail = "" then Printf.sprintf "kubectl exited %d" r.exit_code else detail))
   | Error e ->
     Error
@@ -281,16 +281,11 @@ let fold_namespaces namespaces ~init ~f =
    healthy is an error, not a silent success. *)
 let list_live_workloads ~ctx ~kind ~namespace =
   match
-    Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; kind; "-n"; namespace; "-o"; "name" ]
+    Sol_cli_process.check
+      (Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; kind; "-n"; namespace; "-o"; "name" ])
   with
-  | Ok r
-    when r.Sol_cli_process.exit_code <> 0
-         && (Sol_cli_string.contains
-               ~needle:"doesn't have a resource type"
-               r.Sol_cli_process.stderr
-             || Sol_cli_string.contains
-                  ~needle:"could not find the requested resource"
-                  r.Sol_cli_process.stderr) -> Ok []
+  | Error (Sol_cli_process.Non_zero r) when Sol_cli_kubectl.resource_type_absent r.stderr
+    -> Ok []
   | result ->
     listed_names ~what:(Printf.sprintf "%ss in namespace %s" kind namespace) result
 ;;
@@ -339,31 +334,35 @@ let restart_workloads ~ctx ~namespace names =
   let* () =
     iter_namespaces names ~f:(fun name ->
       let* () =
-        match Sol_cli_kubectl.rollout_restart ~ctx ~kind:name ~namespace with
-        | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
-        | Ok r ->
+        match
+          Sol_cli_process.check
+            (Sol_cli_kubectl.rollout_restart ~ctx ~kind:name ~namespace)
+        with
+        | Ok _ -> Ok ()
+        | Error (Sol_cli_process.Non_zero r) ->
           Error
             (Printf.sprintf
                "could not restart %s in %s: %s"
                name
                namespace
-               (String.trim r.Sol_cli_process.stderr))
+               (String.trim r.stderr))
         | Error e -> Error (Sol_cli_process.error_to_string e)
       in
       match
-        Sol_cli_kubectl.rollout_status_with_timeout
-          ~ctx
-          ~kind_name:name
-          ~namespace
-          ~timeout_s:120
+        Sol_cli_process.check
+          (Sol_cli_kubectl.rollout_status_with_timeout
+             ~ctx
+             ~kind_name:name
+             ~namespace
+             ~timeout_s:120)
       with
-      | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
-      | Ok r ->
+      | Ok _ -> Ok ()
+      | Error (Sol_cli_process.Non_zero r) ->
         Error
           (Printf.sprintf
              "%s did not become healthy after the rotation restart: %s"
              name
-             (String.trim r.Sol_cli_process.stderr))
+             (String.trim r.stderr))
       | Error e -> Error (Sol_cli_process.error_to_string e))
   in
   Ok names
@@ -420,22 +419,23 @@ let delete ~ctx ~env ~workspace:_ ~namespaces ~key =
   let patch = Printf.sprintf "[{\"op\":\"remove\",\"path\":\"/data/%s\"}]" key in
   let remove_from namespace name =
     match
-      Sol_cli_kubectl.patch
-        ~ctx
-        ~resource:"secret"
-        ~name
-        ~namespace
-        ~patch_type:"json"
-        ~patch
+      Sol_cli_process.check
+        (Sol_cli_kubectl.patch
+           ~ctx
+           ~resource:"secret"
+           ~name
+           ~namespace
+           ~patch_type:"json"
+           ~patch)
     with
-    | Ok result when result.Sol_cli_process.exit_code = 0 -> Ok ()
-    | Ok result ->
+    | Ok _ -> Ok ()
+    | Error (Sol_cli_process.Non_zero result) ->
       Error
         (Printf.sprintf
            "kubectl patch secret/%s in namespace %s failed: %s"
            name
            namespace
-           result.Sol_cli_process.stderr)
+           result.stderr)
     | Error e -> Error (Sol_cli_process.error_to_string e)
   in
   let* () =

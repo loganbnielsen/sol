@@ -289,16 +289,6 @@ moved {
 }
 
 moved {
-  from = kubernetes_cluster_role_binding.platform_provisioner_cluster_gcp
-  to   = module.platform.kubernetes_cluster_role_binding.platform_provisioner_cluster_gcp
-}
-
-moved {
-  from = kubernetes_role_binding.platform_provisioner_gcp
-  to   = module.platform.kubernetes_role_binding.platform_provisioner_gcp
-}
-
-moved {
   from = kubernetes_cluster_role_binding.platform_provisioner_cluster
   to   = module.platform.kubernetes_cluster_role_binding.platform_provisioner_cluster
 }

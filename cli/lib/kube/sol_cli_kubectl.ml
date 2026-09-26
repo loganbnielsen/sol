@@ -24,16 +24,16 @@ let apply_dry_run ~ctx ~file =
 ;;
 
 let get ~ctx ~resource ~name ~namespace ~output =
-  match
-    Sol_cli_process.run
-      (invocation ~ctx [ "get"; resource; name; "-n"; namespace; "-o"; output ])
-  with
-  | Ok r when r.Sol_cli_process.exit_code <> 0 ->
-    Error (Sol_cli_process.Non_zero { exit_code = r.exit_code; stderr = r.stderr })
-  | other -> other
+  Sol_cli_process.run_success
+    (invocation ~ctx [ "get"; resource; name; "-n"; namespace; "-o"; output ])
 ;;
 
 let get_raw ~ctx ~args = Sol_cli_process.run (invocation ~ctx args)
+
+let resource_type_absent output =
+  Sol_cli_string.contains ~needle:"doesn't have a resource type" output
+  || Sol_cli_string.contains ~needle:"could not find the requested resource" output
+;;
 
 let logs ~ctx ~pod ~namespace ~container =
   let container_args =
@@ -117,8 +117,7 @@ let probe_result ~ctx ~args =
   | Error _ -> Error "kubectl could not be run"
   | Ok r ->
     let reason =
-      let stderr = String.trim r.Sol_cli_process.stderr in
-      if stderr <> "" then stderr else String.trim r.Sol_cli_process.stdout
+      Sol_cli_process.failure_output ~stdout:r.Sol_cli_process.stdout ~stderr:r.stderr
     in
     Ok (r.Sol_cli_process.exit_code, reason)
 ;;

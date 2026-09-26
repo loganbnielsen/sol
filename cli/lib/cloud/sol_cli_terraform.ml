@@ -40,8 +40,8 @@ let acknowledge_previous_operation ~chdir ~backend_config =
 
 let supervised ~chdir c =
   let result = Sol_cli_supervised.run ~echo:true ~key:(key_for chdir) ~root:chdir c in
-  (match result with
-   | Ok r when r.Sol_cli_process.exit_code <> 0 ->
+  (match Sol_cli_process.check result with
+   | Error (Sol_cli_process.Non_zero _) ->
      let errored = Filename.concat chdir "errored.tfstate" in
      if Sys.file_exists errored
      then
@@ -57,11 +57,7 @@ let supervised ~chdir c =
   result
 ;;
 
-let which_check () =
-  match run (cmd [ "which"; "terraform" ]) with
-  | Ok r -> r.Sol_cli_process.exit_code = 0
-  | Error _ -> false
-;;
+let which_check () = Result.is_ok (Sol_cli_process.run_ok (cmd [ "which"; "terraform" ]))
 
 type scope =
   | Whole_root
@@ -174,14 +170,14 @@ let show_json_plan ?(env = []) ~chdir ~plan_file () =
    observation (FND-0055 / B2). Neither caller receives the JSON directly -- both
    go through a [Sol_cli_terraform_plan] recorder, which enforces SEC-008. *)
 let saved_plan_json ?env ~chdir ~plan_file () =
-  match show_json_plan ?env ~chdir ~plan_file () with
-  | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok r.Sol_cli_process.stdout
-  | Ok r ->
-    let detail = String.trim r.Sol_cli_process.stderr in
+  match Sol_cli_process.check (show_json_plan ?env ~chdir ~plan_file ()) with
+  | Ok r -> Ok r.Sol_cli_process.stdout
+  | Error (Sol_cli_process.Non_zero r) ->
+    let detail = String.trim r.stderr in
     Error
       (Printf.sprintf
          "terraform show exited %d%s"
-         r.Sol_cli_process.exit_code
+         r.exit_code
          (if detail = "" then "." else ":\n" ^ detail))
   | Error e -> Error ("could not run terraform show: " ^ Sol_cli_process.error_to_string e)
 ;;

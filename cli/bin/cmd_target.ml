@@ -72,9 +72,10 @@ let platform_status ~check (target : Sol_cli_config.target) =
       let env = Sol_cli_kube_destination.environment destination in
       let run args =
         match
-          Sol_cli_process.run (Sol_cli_process.cmd ~env (("kubectl" :: prefix) @ args))
+          Sol_cli_process.run_success
+            (Sol_cli_process.cmd ~env (("kubectl" :: prefix) @ args))
         with
-        | Ok result when result.exit_code = 0 -> Some result.stdout
+        | Ok result -> Some result.stdout
         | _ -> None
       in
       (* The same convergence checks `sol cloud apply` gates [Ready] on, so this

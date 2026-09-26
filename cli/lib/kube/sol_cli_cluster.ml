@@ -108,13 +108,11 @@ let outputs_reader ~provider text =
 ;;
 
 let process_ok ?(env = []) argv =
-  match Sol_cli_process.run (Sol_cli_process.cmd ~env argv) with
-  | Ok result -> result.exit_code = 0
-  | Error _ -> false
+  Result.is_ok (Sol_cli_process.run_ok (Sol_cli_process.cmd ~env argv))
 ;;
 
 let process_output ?(env = []) argv =
-  match Sol_cli_process.run (Sol_cli_process.cmd ~env argv) with
-  | Ok result when result.exit_code = 0 -> Some result.stdout
+  match Sol_cli_process.run_success (Sol_cli_process.cmd ~env argv) with
+  | Ok result -> Some result.stdout
   | _ -> None
 ;;

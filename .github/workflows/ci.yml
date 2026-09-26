@@ -212,6 +212,17 @@ jobs:
           internal/ci/check_cert_manager_readiness.sh .
           internal/ci/test_cert_manager_readiness_check.sh
 
+      - name: Kubernetes object ownership (FND-0061)
+        # Two Terraform resources in the platform module wrote the same Kubernetes RoleBinding
+        # name, so whichever applied second failed with `already exists` and the GCP
+        # provisioner's authority could never be created on a fresh target. The guard enforces
+        # the invariant behind that -- one Kubernetes object, one Terraform owner -- and its
+        # mutation self-test includes the collision that failed the live apply.
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: |
+          internal/ci/check_kubernetes_object_ownership.sh .
+          internal/ci/test_kubernetes_object_ownership_check.sh
+
       - name: gcloud interface and install-authority guard
         # Attempt 2 lost a live run to `gcloud container clusters get-credentials
         # --kubeconfig`, a flag that does not exist: the offline harness could not

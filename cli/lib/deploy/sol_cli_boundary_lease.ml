@@ -238,11 +238,6 @@ let with_temp_json json (f : string -> 'a) : 'a =
     (fun () -> f path)
 ;;
 
-let detail_of_result (r : Sol_cli_process.result) =
-  let stderr = String.trim r.Sol_cli_process.stderr in
-  if stderr <> "" then stderr else String.trim r.Sol_cli_process.stdout
-;;
-
 type write_error =
   | Already_exists
   | Conflict
@@ -250,29 +245,29 @@ type write_error =
 
 let create_object ~ctx t =
   with_temp_json (to_configmap_json t) (fun path ->
-    match Sol_cli_kubectl.create ~ctx ~file:path with
-    | Error e -> Error (Other (Sol_cli_process.error_to_string e))
-    | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
-    | Ok r ->
-      let detail = detail_of_result r in
+    match Sol_cli_process.check (Sol_cli_kubectl.create ~ctx ~file:path) with
+    | Ok _ -> Ok ()
+    | Error (Sol_cli_process.Non_zero r) ->
+      let detail = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in
       if Sol_cli_string.contains ~needle:"AlreadyExists" detail
       then Error Already_exists
-      else Error (Other detail))
+      else Error (Other detail)
+    | Error e -> Error (Other (Sol_cli_process.error_to_string e)))
 ;;
 
 let replace_object ~ctx t ~resource_version =
   with_temp_json (to_configmap_json ~resource_version t) (fun path ->
-    match Sol_cli_kubectl.replace ~ctx ~file:path with
-    | Error e -> Error (Other (Sol_cli_process.error_to_string e))
-    | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
-    | Ok r ->
-      let detail = detail_of_result r in
+    match Sol_cli_process.check (Sol_cli_kubectl.replace ~ctx ~file:path) with
+    | Ok _ -> Ok ()
+    | Error (Sol_cli_process.Non_zero r) ->
+      let detail = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in
       if
         Sol_cli_string.contains ~needle:"the object has been modified" detail
         || Sol_cli_string.contains ~needle:"Operation cannot be fulfilled" detail
         || Sol_cli_string.contains ~needle:"please apply your changes" detail
       then Error Conflict
-      else Error (Other detail))
+      else Error (Other detail)
+    | Error e -> Error (Other (Sol_cli_process.error_to_string e)))
 ;;
 
 let fetch ~ctx ~workspace =

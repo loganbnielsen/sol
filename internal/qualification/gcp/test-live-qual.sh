@@ -65,7 +65,14 @@ printf 'sol %s\n' "$*" >>"$ARGV_LOG"
 case "$1 $2" in
   "cloud apply")
     printf 'lifecycle phase: CloudBootstrap\n[terraform-apply] ok\n'
-    printf 'lifecycle phase: PlatformInstalling\nplatform-apply ok\n'
+    printf 'lifecycle phase: PlatformInstalling\n'
+    if [ "${STUB_APPLY_ERROR:-none}" = "already-exists" ]; then
+      printf '[platform-prerequisites-apply] ok (12.0s)\n'
+      printf '[platform-apply] FAILED (31.0s)\n'
+      printf 'Error: rolebindings.rbac.authorization.k8s.io "sol-platform-provisioner" already exists\n'
+    else
+      printf 'platform-apply ok\n'
+    fi
     printf 'provisioner-bootstrap-access-remove ok\n'
     printf 'lifecycle phase: Ready\nDone.\n'
     [ "${STUB_APPLY_RC:-0}" = "0" ] ;;
@@ -217,6 +224,12 @@ case "$*" in
         ;;
       *) : ;;
     esac
+    ;;
+  *"get events"*)
+    if [ "${STUB_KUBE_SIGNATURE:-none}" = "stale-scheduling" ]; then
+      printf 'LAST SEEN   TYPE      REASON             OBJECT                                     MESSAGE\n'
+      printf '11m         Warning   FailedScheduling   pod/cert-manager-startupapicheck-xd44b     0/3 nodes are available: 3 Insufficient cpu.\n'
+    fi
     ;;
   *"get job cert-manager-startupapicheck -o json"*)
     printf '{"status":{"succeeded":%s}}\n' "${STUB_JOB_SUCCEEDED:-0}" ;;
@@ -394,6 +407,17 @@ run_case class-leader-x509 cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 \
   STUB_COMPONENT_SIGNATURE=leader STUB_KUBE_SIGNATURE=x509
 has "and it wins over the x509 symptom it causes" \
   "classification: LEADER_ELECTION_DENIED" "$TMP/class-leader-x509.logs/fnd0010-classification.txt"
+
+# The direct failed-operation signature must beat ambient cluster symptoms. A half-installed
+# platform always has pods waiting to be scheduled, so before this ordering existed the FND-0061
+# failure was labelled SCHEDULING by evidence about something else entirely.
+run_case class-exists cloud STUB_APPLY_RC=1 STUB_APPLY_ERROR=already-exists STUB_CLUSTER_EXISTS=1 \
+  STUB_KUBE_SIGNATURE=stale-scheduling
+has "a Terraform already-exists failure classifies as TERRAFORM_ALREADY_EXISTS, not scheduling" \
+  "classification: TERRAFORM_ALREADY_EXISTS" "$TMP/class-exists.logs/fnd0010-classification.txt"
+run_case class-ambient cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNATURE=stale-scheduling
+has "with no direct signature, ambient scheduling evidence is labelled as ambient" \
+  "classification: SCHEDULING_AMBIENT" "$TMP/class-ambient.logs/fnd0010-classification.txt"
 
 # ── 5b. what the Attempt 10 re-analysis had to reconstruct is now captured ────
 for probe in fnd0010-startupapicheck-pod fnd0010-rbac-cert-manager fnd0010-rbac-kube-system \

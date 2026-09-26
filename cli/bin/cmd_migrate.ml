@@ -17,16 +17,14 @@ let default_table_name =
 ;;
 
 let cluster_pg_exists ~ctx () =
-  match
-    Sol_cli_kubectl.get
-      ~ctx
-      ~resource:"svc"
-      ~name:"postgresql"
-      ~namespace:"postgresql"
-      ~output:"name"
-  with
-  | Ok r -> r.Sol_cli_process.exit_code = 0
-  | Error _ -> false
+  Result.is_ok
+    (Sol_cli_process.check
+       (Sol_cli_kubectl.get
+          ~ctx
+          ~resource:"svc"
+          ~name:"postgresql"
+          ~namespace:"postgresql"
+          ~output:"name"))
 ;;
 
 (* Start a background port-forward to cluster postgres and return the local URL.
@@ -278,11 +276,11 @@ let run_kubectl ~ctx ?(timeout_s = 30.) argv =
    already applied successfully if the following Job apply then fails, so a
    half-created migration attempt doesn't leave stray cluster objects. *)
 let kubectl_apply_or_fatal ~ctx ~what ?(on_fail = fun () -> ()) argv =
-  match run_kubectl ~ctx argv with
-  | Ok r when r.Sol_cli_process.exit_code = 0 -> ()
-  | Ok r ->
+  match Sol_cli_process.check (run_kubectl ~ctx argv) with
+  | Ok _ -> ()
+  | Error (Sol_cli_process.Non_zero r) ->
     on_fail ();
-    fatal_p "%s: %s" what r.Sol_cli_process.stderr
+    fatal_p "%s: %s" what r.stderr
   | Error e ->
     on_fail ();
     fatal_p "%s: %s" what (Sol_cli_process.error_to_string e)
@@ -310,12 +308,13 @@ let container_waiting_status ~ctx ~namespace ~job_name () =
      .items[*]}{.status.containerStatuses[*].state.waiting.reason}\"|\"{.status.containerStatuses[*].state.waiting.message}{\"\\n\"}{end}"
   in
   match
-    run_kubectl
-      ~ctx
-      ~timeout_s:15.
-      [ "get"; "pods"; "-n"; namespace; "-l"; "job-name=" ^ job_name; "-o"; jsonpath ]
+    Sol_cli_process.check
+      (run_kubectl
+         ~ctx
+         ~timeout_s:15.
+         [ "get"; "pods"; "-n"; namespace; "-l"; "job-name=" ^ job_name; "-o"; jsonpath ])
   with
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
+  | Ok r ->
     (match String.split_on_char '|' (String.trim r.Sol_cli_process.stdout) with
      | reason :: rest when not (Sol_cli_string.is_blank reason) ->
        Some (String.trim reason, String.trim (String.concat "|" rest))
@@ -345,14 +344,15 @@ let terminal_waiting_reasons =
 let status_job_evidence ~ctx ~namespace ~job_name () =
   let logs =
     match
-      run_kubectl
-        ~ctx
-        ~timeout_s:20.
-        [ "logs"; Printf.sprintf "job/%s" job_name; "-n"; namespace; "--tail=200" ]
+      Sol_cli_process.check
+        (run_kubectl
+           ~ctx
+           ~timeout_s:20.
+           [ "logs"; Printf.sprintf "job/%s" job_name; "-n"; namespace; "--tail=200" ])
     with
-    | Ok r when r.Sol_cli_process.exit_code = 0 -> String.trim r.Sol_cli_process.stdout
-    | Ok r ->
-      (match String.trim r.Sol_cli_process.stderr with
+    | Ok r -> String.trim r.Sol_cli_process.stdout
+    | Error (Sol_cli_process.Non_zero r) ->
+      (match String.trim r.stderr with
        | "" -> ""
        | e -> "(kubectl logs failed: " ^ e ^ ")")
     | Error _ -> ""
@@ -833,25 +833,29 @@ let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table =
               (render_status_job ~name:job_name ~namespace ~image ~table ~configmap_name)
           in
           let applied =
-            match run_kubectl ~ctx [ "apply"; "-f"; configmap_yaml ] with
-            | Ok r when r.Sol_cli_process.exit_code = 0 ->
-              (match run_kubectl ~ctx [ "apply"; "-f"; job_yaml ] with
-               | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
-               | Ok r ->
+            match
+              Sol_cli_process.check (run_kubectl ~ctx [ "apply"; "-f"; configmap_yaml ])
+            with
+            | Ok _ ->
+              (match
+                 Sol_cli_process.check (run_kubectl ~ctx [ "apply"; "-f"; job_yaml ])
+               with
+               | Ok _ -> Ok ()
+               | Error (Sol_cli_process.Non_zero r) ->
                  Error
                    (Printf.sprintf
                       "kubectl apply (status job) failed: %s"
-                      (String.trim r.Sol_cli_process.stderr))
+                      (String.trim r.stderr))
                | Error e ->
                  Error
                    (Printf.sprintf
                       "kubectl apply (status job): %s"
                       (Sol_cli_process.error_to_string e)))
-            | Ok r ->
+            | Error (Sol_cli_process.Non_zero r) ->
               Error
                 (Printf.sprintf
                    "kubectl apply (status configmap) failed: %s"
-                   (String.trim r.Sol_cli_process.stderr))
+                   (String.trim r.stderr))
             | Error e ->
               Error
                 (Printf.sprintf

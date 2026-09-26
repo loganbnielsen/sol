@@ -35,14 +35,14 @@ let builder provider ~(target : Sol_cli_config.target) =
    root has no outputs yet: no substrate. *)
 let of_root provider ~target ~chdir =
   let { label; build } = builder provider ~target in
-  match Sol_cli_terraform.output_json ~chdir () with
-  | Ok result when result.Sol_cli_process.exit_code = 0 ->
+  match Sol_cli_process.check (Sol_cli_terraform.output_json ~chdir ()) with
+  | Ok result ->
     (match Yojson.Safe.from_string result.stdout with
      | `Assoc [] -> Ok None
      | _ -> Result.map Option.some (build result.stdout)
      | exception Yojson.Json_error message ->
        Error (Printf.sprintf "invalid %s Terraform output JSON: %s" label message))
-  | Ok result ->
+  | Error (Sol_cli_process.Non_zero result) ->
     Error (Printf.sprintf "terraform output failed with exit %d" result.exit_code)
   | Error _ -> Error (Printf.sprintf "could not read %s Terraform outputs" label)
 ;;

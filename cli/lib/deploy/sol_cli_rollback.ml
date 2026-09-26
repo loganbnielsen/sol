@@ -410,9 +410,15 @@ let live_kind_of_service (s : Sol_cli_deployment_plan.service_spec) =
 
 let read_jsonpath ~ctx ~resource ~name ~namespace ~jsonpath =
   match
-    Sol_cli_kubectl.get ~ctx ~resource ~name ~namespace ~output:("jsonpath=" ^ jsonpath)
+    Sol_cli_process.check
+      (Sol_cli_kubectl.get
+         ~ctx
+         ~resource
+         ~name
+         ~namespace
+         ~output:("jsonpath=" ^ jsonpath))
   with
-  | Ok r when r.Sol_cli_process.exit_code = 0 -> String.trim r.Sol_cli_process.stdout
+  | Ok r -> String.trim r.Sol_cli_process.stdout
   | _ -> ""
 ;;
 
@@ -510,21 +516,6 @@ let workload_rows_of_payload ~kind ~workspace (payload : Yojson.Safe.t) =
     items
 ;;
 
-let process_detail (r : Sol_cli_process.result) =
-  if not (String.equal r.Sol_cli_process.stderr "")
-  then r.Sol_cli_process.stderr
-  else r.stdout
-;;
-
-(* A cluster without the Rollouts CRD has no Rollout objects -- an empty set, not
-   a failure. Any other non-zero exit is a real error and fails closed: quietly
-   treating an uncountable kind as empty could hide a stale workload. *)
-let resource_type_absent (r : Sol_cli_process.result) =
-  let detail = process_detail r in
-  Sol_cli_string.contains ~needle:"doesn't have a resource type" detail
-  || Sol_cli_string.contains ~needle:"could not find the requested resource" detail
-;;
-
 (* List the live (identity, release-label) pairs for every Sol-owned workload in
    [workspace], across the three kinds Sol renders. Fails closed: a kind that
    cannot be enumerated (other than an absent Rollouts CRD) is an [Error], never
@@ -537,10 +528,10 @@ let live_workloads ~(ctx : Sol_cli_kube_destination.context) ~(workspace : strin
     | kind :: rest ->
       let resource, _ = live_kind_path kind in
       (match
-         Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; resource; "-A"; "-o"; "json" ]
+         Sol_cli_process.check
+           (Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; resource; "-A"; "-o"; "json" ])
        with
-       | Error e -> Error (Sol_cli_process.error_to_string e)
-       | Ok r when r.Sol_cli_process.exit_code = 0 ->
+       | Ok r ->
          (match Yojson.Safe.from_string r.Sol_cli_process.stdout with
           | exception Yojson.Json_error msg ->
             Error
@@ -548,15 +539,15 @@ let live_workloads ~(ctx : Sol_cli_kube_destination.context) ~(workspace : strin
           | payload ->
             let rows = workload_rows_of_payload ~kind ~workspace payload in
             go (List.rev_append rows acc) rest)
-       | Ok r ->
-         if kind = Live_rollout && resource_type_absent r
+       (* A cluster without the Rollouts CRD has no Rollout objects -- an empty set,
+          not a failure. Any other failure fails closed: quietly treating an
+          uncountable kind as empty could hide a stale workload. *)
+       | Error (Sol_cli_process.Non_zero r) ->
+         let output = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in
+         if kind = Live_rollout && Sol_cli_kubectl.resource_type_absent output
          then go acc rest
-         else
-           Error
-             (Printf.sprintf
-                "kubectl get %s failed: %s"
-                resource
-                (String.trim (process_detail r))))
+         else Error (Printf.sprintf "kubectl get %s failed: %s" resource output)
+       | Error e -> Error (Sol_cli_process.error_to_string e))
   in
   go [] [ Live_deployment; Live_rollout; Live_cronjob ]
 ;;

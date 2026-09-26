@@ -21,9 +21,14 @@ Code below the command edge ends the process instead of returning an error. `rg 
 - Resolve `Sol_cli_platform_assets` once per command and pass it down. Where a command needs the Terraform trees, validate their presence when resolving, so accessors cannot fail later.
 - `sol assets` collects every check's result and reports all failures.
 
+## Scope, sharpened by later review comments (2026-09-26)
+
+"Exit too deep? Why not `let*`?" applies to `Sol_cli_exit.or_exit` as well. REFAC-111 placed `or_exit` calls inside command bodies, and each of those is an exit below the edge. The target shape: a command's `run` is a `let*` chain over `result`s, converted to a process exit **once**, at its top (the Cmdliner term), not a sequence of `or_exit` calls. This applies codebase-wide, not only at the sites the review named (`cmd_deploy.ml`, `cmd_assets.ml`, `cmd_cloud_tf.ml`).
+
 ## Acceptance criteria
 
 - The remaining `exit` calls in `cli/lib` are listed in the completion notes, each with its reason.
 - `sol assets` reports more than one failure in one run (test).
+- Each command's body composes with `let*`; `rg -n 'or_exit' cli/bin` lists only one call per command entry point, with any exception named in the notes.
 - No `ignore` of a consumer's output in `cmd_assets.ml`.
 - Demo/example: not applicable (internal); state it.

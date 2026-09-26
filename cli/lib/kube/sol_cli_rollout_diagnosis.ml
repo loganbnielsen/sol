@@ -451,58 +451,64 @@ let format_cronjob_diagnosis ~service_name (result : cronjob_fetch_result) : dia
 
 let fetch_namespace_events ~ctx ~ns : events_fetch_result =
   match
-    Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; "events"; "-n"; ns; "-o"; "json" ]
+    Sol_cli_process.check
+      (Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; "events"; "-n"; ns; "-o"; "json" ])
   with
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    Events (parse_events_json r.Sol_cli_process.stdout)
-  | Ok r ->
-    let detail =
-      String.trim (r.Sol_cli_process.stderr ^ " " ^ r.Sol_cli_process.stdout)
-    in
+  | Ok r -> Events (parse_events_json r.Sol_cli_process.stdout)
+  | Error (Sol_cli_process.Non_zero r) ->
+    let detail = String.trim (r.stderr ^ " " ^ r.stdout) in
     Events_unavailable
       (if String.equal detail ""
-       then
-         Printf.sprintf
-           "kubectl get events exited with code %d"
-           r.Sol_cli_process.exit_code
+       then Printf.sprintf "kubectl get events exited with code %d" r.exit_code
        else detail)
   | Error e -> Events_unavailable (Sol_cli_process.error_to_string e)
 ;;
 
 (* DEC-038 §7: the reason travels with the failure, so a verdict can say it could
    not look rather than implying it looked and found nothing. *)
-let kubectl_read_failure ~what r =
-  let open Sol_cli_process in
-  let detail = String.trim (r.stderr ^ " " ^ r.stdout) in
+let kubectl_read_failure ~what ~exit_code ~stdout ~stderr =
+  let detail = String.trim (stderr ^ " " ^ stdout) in
   Printf.sprintf
     "%s could not be read%s"
     what
     (if String.equal detail ""
-     then Printf.sprintf " (exit %d)" r.exit_code
+     then Printf.sprintf " (exit %d)" exit_code
      else ": " ^ detail)
 ;;
 
 let fetch_pod_statuses ~ctx ~ns ~k8s_name : (pod_status list, string) result =
   match
-    Sol_cli_kubectl.get_raw
-      ~ctx
-      ~args:[ "get"; "pods"; "-n"; ns; "-l"; "app=" ^ k8s_name; "-o"; "json" ]
+    Sol_cli_process.check
+      (Sol_cli_kubectl.get_raw
+         ~ctx
+         ~args:[ "get"; "pods"; "-n"; ns; "-l"; "app=" ^ k8s_name; "-o"; "json" ])
   with
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    Ok (parse_pods_json r.Sol_cli_process.stdout)
-  | Ok r -> Error (kubectl_read_failure ~what:"pods" r)
+  | Ok r -> Ok (parse_pods_json r.Sol_cli_process.stdout)
+  | Error (Sol_cli_process.Non_zero r) ->
+    Error
+      (kubectl_read_failure
+         ~what:"pods"
+         ~exit_code:r.exit_code
+         ~stdout:r.stdout
+         ~stderr:r.stderr)
   | Error e -> Error (Sol_cli_process.error_to_string e)
 ;;
 
 let fetch_job_pod_statuses ~ctx ~ns ~job_name : (pod_status list, string) result =
   match
-    Sol_cli_kubectl.get_raw
-      ~ctx
-      ~args:[ "get"; "pods"; "-n"; ns; "-l"; "job-name=" ^ job_name; "-o"; "json" ]
+    Sol_cli_process.check
+      (Sol_cli_kubectl.get_raw
+         ~ctx
+         ~args:[ "get"; "pods"; "-n"; ns; "-l"; "job-name=" ^ job_name; "-o"; "json" ])
   with
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
-    Ok (parse_pods_json r.Sol_cli_process.stdout)
-  | Ok r -> Error (kubectl_read_failure ~what:"the run's pods" r)
+  | Ok r -> Ok (parse_pods_json r.Sol_cli_process.stdout)
+  | Error (Sol_cli_process.Non_zero r) ->
+    Error
+      (kubectl_read_failure
+         ~what:"the run's pods"
+         ~exit_code:r.exit_code
+         ~stdout:r.stdout
+         ~stderr:r.stderr)
   | Error e -> Error (Sol_cli_process.error_to_string e)
 ;;
 
@@ -535,19 +541,26 @@ let fetch_active_cronjob_pods ~ctx ~ns job_names : (pod_status list, string) res
 
 let fetch_cronjob_status ~ctx ~ns ~k8s_name : cronjob_fetch_result =
   match
-    Sol_cli_kubectl.get_raw
-      ~ctx
-      ~args:[ "get"; "cronjob"; k8s_name; "-n"; ns; "-o"; "json" ]
+    Sol_cli_process.check
+      (Sol_cli_kubectl.get_raw
+         ~ctx
+         ~args:[ "get"; "cronjob"; k8s_name; "-n"; ns; "-o"; "json" ])
   with
-  | Error e -> Unavailable (Sol_cli_process.error_to_string e)
-  | Ok r when r.Sol_cli_process.exit_code = 0 ->
+  | Ok r ->
     (match parse_cronjob_status r.Sol_cli_process.stdout with
      | Some status -> Found status
      | None -> Unavailable "its status could not be parsed")
-  | Ok r ->
-    if Sol_cli_string.contains ~needle:"NotFound" r.Sol_cli_process.stderr
+  | Error (Sol_cli_process.Non_zero r) ->
+    if Sol_cli_string.contains ~needle:"NotFound" r.stderr
     then Missing
-    else Unavailable (kubectl_read_failure ~what:"the CronJob" r)
+    else
+      Unavailable
+        (kubectl_read_failure
+           ~what:"the CronJob"
+           ~exit_code:r.exit_code
+           ~stdout:r.stdout
+           ~stderr:r.stderr)
+  | Error e -> Unavailable (Sol_cli_process.error_to_string e)
 ;;
 
 (* FEAT-063: diagnosis is cluster IO, so the destination-side context reaches

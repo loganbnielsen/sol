@@ -1,11 +1,8 @@
 let run_ok = Sol_cli_process.run_ok
-let run = Sol_cli_process.run
 let cmd = Sol_cli_process.cmd
 
 let buildx_available () =
-  match run (cmd [ "docker"; "buildx"; "version" ]) with
-  | Ok r -> r.Sol_cli_process.exit_code = 0
-  | Error _ -> false
+  Result.is_ok (Sol_cli_process.run_ok (cmd [ "docker"; "buildx"; "version" ]))
 ;;
 
 let build ~tag ~dockerfile ~context =
@@ -51,18 +48,15 @@ let push ~image_ref = run_ok (cmd [ "docker"; "push"; image_ref ])
    exist is a caller error, not a transient one, so the caller treats a false
    result as fail-closed. *)
 let manifest_exists ~image_ref =
-  match run (cmd [ "docker"; "manifest"; "inspect"; image_ref ]) with
-  | Ok r -> r.Sol_cli_process.exit_code = 0
-  | Error _ -> false
+  Result.is_ok
+    (Sol_cli_process.run_ok (cmd [ "docker"; "manifest"; "inspect"; image_ref ]))
 ;;
 
 let inspect_digest ~image_ref =
   match
-    run (cmd [ "docker"; "inspect"; "--format"; "{{index .RepoDigests 0}}"; image_ref ])
+    Sol_cli_process.output
+      (cmd [ "docker"; "inspect"; "--format"; "{{index .RepoDigests 0}}"; image_ref ])
   with
-  | Ok r
-    when r.Sol_cli_process.exit_code = 0
-         && r.Sol_cli_process.stdout <> ""
-         && r.Sol_cli_process.stdout <> "<no value>" -> r.Sol_cli_process.stdout
+  | Ok digest when digest <> "" && digest <> "<no value>" -> digest
   | _ -> image_ref
 ;;

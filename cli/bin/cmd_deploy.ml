@@ -50,11 +50,12 @@ let print_service_urls ~ctx (results : Sol_cli_executor.result list) =
     (fun ns ->
        let jsonpath = "{.items[?(@.spec.type==\"ClusterIP\")].metadata.name}" in
        match
-         Sol_cli_kubectl.get_raw
-           ~ctx
-           ~args:[ "get"; "svc"; "-n"; ns; "-o"; "jsonpath=" ^ jsonpath ]
+         Sol_cli_process.check
+           (Sol_cli_kubectl.get_raw
+              ~ctx
+              ~args:[ "get"; "svc"; "-n"; ns; "-o"; "jsonpath=" ^ jsonpath ])
        with
-       | Ok r when r.Sol_cli_process.exit_code = 0 && r.Sol_cli_process.stdout <> "" ->
+       | Ok r when r.Sol_cli_process.stdout <> "" ->
          let port80_jsonpath = "{.spec.ports[?(@.port==80)].port}" in
          String.split_on_char ' ' r.Sol_cli_process.stdout
          |> List.filter (fun name -> List.mem name deployed_names)
@@ -67,8 +68,7 @@ let print_service_urls ~ctx (results : Sol_cli_executor.result list) =
                ~namespace:ns
                ~output:("jsonpath=" ^ port80_jsonpath)
            with
-           | Ok gr
-             when gr.Sol_cli_process.exit_code = 0 && gr.Sol_cli_process.stdout <> "" ->
+           | Ok gr when gr.Sol_cli_process.stdout <> "" ->
              Printf.printf "  →  http://localhost:8080  (%s)\n%!" name
            | _ -> ())
        | _ -> ())

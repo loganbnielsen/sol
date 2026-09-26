@@ -160,15 +160,12 @@ let kubectl_apply ~ctx tmp =
    could only ever fail. That is how both the first deploy and the migration-gate
    recovery path failed on a live target. *)
 let create_idempotent ~ctx ~file =
-  match Sol_cli_kubectl.create ~ctx ~file with
-  | Error err -> Error (Sol_cli_process.error_to_string err)
-  | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
-  | Ok r ->
-    let detail =
-      let stderr = String.trim r.Sol_cli_process.stderr in
-      if stderr <> "" then stderr else String.trim r.Sol_cli_process.stdout
-    in
+  match Sol_cli_process.check (Sol_cli_kubectl.create ~ctx ~file) with
+  | Ok _ -> Ok ()
+  | Error (Sol_cli_process.Non_zero r) ->
+    let detail = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in
     if Sol_cli_string.contains ~needle:"AlreadyExists" detail then Ok () else Error detail
+  | Error err -> Error (Sol_cli_process.error_to_string err)
 ;;
 
 let create_idempotent_yaml ~ctx yaml =

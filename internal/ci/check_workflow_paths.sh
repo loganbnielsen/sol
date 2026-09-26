@@ -14,6 +14,12 @@
 #     tracked file must match it (`git ls-files -- ':(glob)<entry>'`).
 # A negated entry (`!pattern`) is exempt: excluding nothing is harmless.
 #
+# The same silence has a second shape, learned the hard way: a `run:` step that invokes a
+# repository script *directly* (`internal/ci/foo.sh`, not `bash internal/ci/foo.sh`) gets exit
+# code 126 if the file is not executable, and a local sweep that calls everything as
+# `bash <script>` cannot see it. So a script the workflow invokes as a command must carry the
+# executable bit.
+#
 # Usage: check_workflow_paths.sh [repo-root]
 set -euo pipefail
 
@@ -44,8 +50,44 @@ entries() {
   ' "$workflows"/*.yml "$workflows"/*.yaml 2>/dev/null
 }
 
+# Print the repository shell scripts a workflow invokes as a command: the first token of a
+# `run:` line (or of a line inside a multi-line `run:` body) that is a path under internal/ or
+# cli/platform/local/scripts/. `bash <script>` is deliberately not matched -- the bit is
+# irrelevant there -- and neither is a `paths:` entry.
+invoked_scripts() {
+  awk '
+    {
+      line = $0
+      sub(/^[[:space:]]*/, "", line)
+      sub(/^-[[:space:]]*/, "", line)   # both `- run: cmd` and a `run: |` body line
+      sub(/^run:[[:space:]]*/, "", line)
+      split(line, parts, /[[:space:]]+/)
+      if (parts[1] ~ /^(internal|cli\/platform\/local\/scripts)\/[A-Za-z0-9_\/.-]*\.sh$/) print parts[1]
+    }
+  ' "$workflows"/*.yml "$workflows"/*.yaml 2>/dev/null | sort -u
+}
+
 checked=0
+invoked=0
 fail=0
+while IFS= read -r script; do
+  [ -n "$script" ] || continue
+  invoked=$((invoked + 1))
+  if [ ! -x "$root/$script" ]; then
+    echo "check_workflow_paths: the workflow runs '$script', which is not executable" >&2
+    echo "  a direct invocation exits 126; make it executable, or invoke it as 'bash $script'" >&2
+    fail=1
+  fi
+  # The same class of invisible difference, one layer down: `ripgrep` is installed on some
+  # developer machines and not on the runners, so a script that calls `rg` fails there for a
+  # reason that has nothing to do with what it checks. `grep` is everywhere.
+  if grep -qE '(^|[^[:alnum:]_])rg[[:space:]]' "$root/$script" 2>/dev/null; then
+    echo "check_workflow_paths: '$script' calls rg, which CI runners do not have" >&2
+    echo "  use grep (rg is not part of the runner image)" >&2
+    fail=1
+  fi
+done < <(invoked_scripts)
+
 while IFS=$'\t' read -r file line entry; do
   [ -n "$entry" ] || continue
   case "$entry" in '!'*) continue ;; esac
@@ -77,4 +119,4 @@ if [ "$fail" -ne 0 ]; then
   echo "check_workflow_paths: a paths: filter names something that is gone, so its workflow would silently stop triggering" >&2
   exit 1
 fi
-echo "check_workflow_paths: $checked paths: filter entr(y/ies) checked; all name something in the repository"
+echo "check_workflow_paths: $checked paths: filter entr(y/ies) checked, all naming something in the repository; $invoked directly invoked script(s) checked, all executable and none reaching for rg"
