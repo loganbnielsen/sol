@@ -116,7 +116,8 @@ let error_to_string e =
   else Printf.sprintf "%s: %s" e.path e.message
 ;;
 
-let ( let* ) = Result.bind
+open Result.Syntax
+
 let trim = String.trim
 
 let parse_int s =

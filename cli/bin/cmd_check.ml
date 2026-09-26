@@ -3,10 +3,9 @@ open Cmdliner
 (* A requested scope must resolve, or the command fails. That rule is the point
    of the vocabulary (FEAT-061): a name that matches nothing is an error naming
    what exists, never a quiet empty selection that reports success. *)
-let fail message =
-  Printf.eprintf "sol check: %s\n" message;
-  exit 2
-;;
+open Result.Syntax
+
+let fail message = Sol_cli_exit.failure ~code:2 ("sol check: " ^ message)
 
 (* [scope] names what to check. There is no positional selector (FEAT-064):
    a name and a directory are different concepts, and one argument meaning
@@ -14,35 +13,37 @@ let fail message =
    Resolving a scope needs discovery, because the kind of a unit comes from what
    is on disk rather than from what the user typed -- and it goes through the
    same [Sol_cli_workload_selection] every other command uses (FEAT-065). *)
+let findings_for = function
+  | None -> Ok (Sol_cli_check.run ())
+  | Some requested ->
+    let* services =
+      Sol_cli_manifest.discover_services ()
+      |> Result.map_error (fun e -> fail (Sol_cli_manifest.discover_error_to_string e))
+    in
+    let* selected =
+      Sol_cli_workload_selection.resolve ~what:"--scope" (Some requested) services
+      |> Result.map_error fail
+    in
+    (* Reading is allowed to find nothing: an empty workspace is an answer, not
+       a failure. The mutating commands decide the opposite, which is why
+       emptiness is reported by the resolver rather than judged by it. *)
+    Ok (Sol_cli_check.run_services selected.services)
+;;
+
 let run scope =
   (* DEC-024: resolve the workspace boundary and make it the cwd, so `sol
      check` acts on the workspace from any descendant directory (discovery and
-     the per-unit file checks are all workspace-root relative). *)
-  (* The root is the cwd from here on; nothing below needs it by name. *)
-  ignore (Sol_cli_workspace.enter_or_exit () : Sol_cli_workspace.t);
-  let findings =
-    match scope with
-    | None -> Sol_cli_check.run ()
-    | Some requested ->
-      let services =
-        match Sol_cli_manifest.discover_services () with
-        | Ok services -> services
-        | Error e -> fail (Sol_cli_manifest.discover_error_to_string e)
-      in
-      let selected =
-        match
-          Sol_cli_workload_selection.resolve ~what:"--scope" (Some requested) services
-        with
-        | Ok selected -> selected
-        | Error message -> fail message
-      in
-      (* Reading is allowed to find nothing: an empty workspace is an answer, not
-         a failure. The mutating commands decide the opposite, which is why
-         emptiness is reported by the resolver rather than judged by it. *)
-      Sol_cli_check.run_services selected.Sol_cli_workload_selection.services
-  in
-  List.iter (fun f -> Printf.eprintf "%s\n" (Sol_cli_check.finding_to_string f)) findings;
-  if Sol_cli_check.has_errors findings then exit 1 else Printf.printf "sol check: ok\n"
+     the per-unit file checks are all workspace-root relative). The root is the
+     cwd from here on; nothing below needs it by name. *)
+  let* _ = Sol_cli_workspace.enter_cwd () in
+  let* findings = findings_for scope in
+  findings
+  |> List.iter (fun f -> Printf.eprintf "%s\n" (Sol_cli_check.finding_to_string f));
+  if Sol_cli_check.has_errors findings
+  then Error (Sol_cli_exit.reported ())
+  else (
+    Printf.printf "sol check: ok\n";
+    Ok ())
 ;;
 
 (** Workload selection. The command has exactly one grammar: the positional PATH
@@ -69,5 +70,5 @@ let cmd =
     (Cmd.info
        "check"
        ~doc:"Validate Sol workload declarations without Docker or Kubernetes.")
-    Term.(const run $ scope_arg)
+    Term.(const Sol_cli_exit.exit_on $ (const run $ scope_arg))
 ;;

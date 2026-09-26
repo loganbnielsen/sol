@@ -12,7 +12,7 @@
    a delivered-and-acknowledged test is the only thing that satisfies the
    guarantee, and a CLI invocation alone cannot assert someone was paged. *)
 
-let ( let* ) = Result.bind
+open Result.Syntax
 
 (* What the send said, for the operator. Kept apart from sending it. *)
 let report_outcome : Sol_cli_alert_test.outcome -> (unit, Sol_cli_exit.failure) result =

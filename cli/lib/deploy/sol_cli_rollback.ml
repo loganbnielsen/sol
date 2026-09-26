@@ -1,4 +1,4 @@
-let ( let* ) = Result.bind
+open Result.Syntax
 
 (* FEAT-066: reconstruction is a historical decode, not a planner (the red
    line). [service_specs_of_release] must depend exclusively on data reachable

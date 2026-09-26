@@ -3,17 +3,9 @@ open Cmdliner
 (* REFAC-088: the resolution policy itself lives in the library
    ([Sol_cli_destination.resolve]) so the seam between the two entry points is
    testable without a cluster. This module is the Cmdliner-facing shell around
-   it: the flag, the exit-on-error, and the local/named helpers the command
-   modules use. *)
+   it: the flag, and the local/named helpers the command modules use. *)
 
 let resolve = Sol_cli_destination.resolve
-
-let or_exit = function
-  | Ok ctx -> ctx
-  | Error msg ->
-    Printf.eprintf "error: %s\n%!" msg;
-    exit 1
-;;
 
 (** The optional [--target] the top-level commands declare. It is deliberately
     *optional* in Cmdliner terms so the resolver -- not the parser -- produces
@@ -31,8 +23,9 @@ let target_arg =
            Sol never falls back to the ambient kubectl context.")
 ;;
 
-(** Resolve the destination for a top-level command's term. *)
-let top ~command target = or_exit (resolve ~command ~local:false ~target:(Some target))
+(** The destination a top-level command's [--target] names, for the first step
+    of its [let*] chain (REFAC-115). *)
+let remote ~command target = resolve ~command ~local:false ~target |> Sol_cli_exit.of_msg
 
 (** The local form's destination: Sol's own cluster, named literally. *)
 let local = Sol_cli_kube_destination.local_context

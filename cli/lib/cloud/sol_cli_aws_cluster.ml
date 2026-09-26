@@ -26,7 +26,7 @@ let aws_outputs_of_json text =
     let value, string, optional_string =
       Sol_cli_cluster.outputs_reader ~provider:"AWS" text
     in
-    let ( let* ) = Result.bind in
+    let open Result.Syntax in
     let* cluster_name = string "cluster_name" in
     let* cluster_access_role_arn = string "cluster_access_role_arn" in
     let* cert_manager_irsa_role_arn = string "cert_manager_irsa_arn" in

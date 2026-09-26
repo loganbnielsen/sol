@@ -57,9 +57,6 @@ val resolve_from
     {!Sol_cli_build_info.release_version}. *)
 val resolve : unit -> (t, error) result
 
-(** [resolve], or print the error with the fix and exit 1. *)
-val resolve_or_exit : unit -> t
-
 (** The root directory. For messages and for handing a whole tree to a tool. *)
 val dir : t -> string
 

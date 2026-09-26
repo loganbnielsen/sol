@@ -98,7 +98,7 @@ let action_to_string = function
   | Unknown raw -> "unrecognised action [" ^ String.concat "," raw ^ "]"
 ;;
 
-let ( let* ) = Result.bind
+open Result.Syntax
 
 (* Parse `terraform show -json <saved plan>` into the resource changes it holds.
    A plan that does not carry a `resource_changes` array is not a plan we can

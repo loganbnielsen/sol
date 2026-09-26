@@ -171,12 +171,10 @@ type t =
   ; name : string
   }
 
-let enter_or_exit () =
+let enter_cwd () =
   match enter ~dir:(Sys.getcwd ()) with
-  | Ok root -> { root; name = workspace_name ~root }
-  | Error e ->
-    Printf.eprintf "sol: %s\n" (workspace_error_to_string e);
-    exit 1
+  | Ok root -> Ok { root; name = workspace_name ~root }
+  | Error e -> Error (Sol_cli_exit.failure ("sol: " ^ workspace_error_to_string e))
 ;;
 
 (** Count .sql files in [dir]/db/migrations. Returns 0 if the directory does not

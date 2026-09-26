@@ -9,24 +9,7 @@ open Sol_cli_manifest
    from any descendant directory. *)
 let workspace_name = Sol_cli_workspace.current_name
 
-(* DEC-038 §6 / INFRA-058: the operator's diagnostic grant follows the workload,
-   not this command's scope, so reconcile it across every namespace that holds a
-   Sol-managed workload. RBAC only -- it writes RoleBindings and nothing else.
-
-   A failure here is a warning, not fatal: a deployment must not be blocked by a
-   read-only grant. But it is never silent -- the warning names what could not be
-   established and what it costs, because a diagnostic capability that quietly
-   did not appear is the failure mode this whole line of work exists to remove. *)
-let reconcile_operator_bindings_warn ~ctx ~workspace =
-  match Sol_cli_substrate.reconcile_operator_bindings ~ctx ~workspace with
-  | Ok () -> ()
-  | Error msg ->
-    Printf.eprintf
-      "warning: could not establish the operator's diagnostic RoleBindings: %s\n\
-       The operator identity will not be able to read this workspace's workloads.\n\
-       %!"
-      msg
-;;
+open Result.Syntax
 
 (* EXP-029: after a real apply, print a port-forward hint for each HTTP
    service so the engineer doesn't need a separate 'sol status' call to
@@ -77,19 +60,20 @@ let print_service_urls ~ctx (results : Sol_cli_executor.result list) =
 
 let check_contract ~services =
   let findings = Sol_cli_check.run_services services in
-  List.iter (fun f -> Printf.eprintf "%s\n" (Sol_cli_check.finding_to_string f)) findings;
-  if Sol_cli_check.has_errors findings then exit 1
+  findings
+  |> List.iter (fun f -> Printf.eprintf "%s\n" (Sol_cli_check.finding_to_string f));
+  if Sol_cli_check.has_errors findings then Error (Sol_cli_exit.reported ()) else Ok ()
 ;;
 
 let ensure_postgres_url () =
   match Sol_cli_string.env "POSTGRES_URL" with
   | None ->
-    Printf.eprintf
-      "error: POSTGRES_URL is not set.\n\
-       Set it in your environment before running 'sol deploy':\n\
-      \  export POSTGRES_URL=postgresql://user:pass@host:5432/dbname\n";
-    exit 1
-  | Some _ -> ()
+    Error
+      (Sol_cli_exit.error
+         "POSTGRES_URL is not set.\n\
+          Set it in your environment before running 'sol deploy':\n\
+         \  export POSTGRES_URL=postgresql://user:pass@host:5432/dbname")
+  | Some _ -> Ok ()
 ;;
 
 let check_consumer_group_changes ~ctx ~workspace ~confirm_group_change plan =
@@ -103,14 +87,12 @@ let check_consumer_group_changes ~ctx ~workspace ~confirm_group_change plan =
            Sol_cli_plan_ids.Consumer_group.to_string
            plan.Sol_cli_deployment_plan.consumer_groups)
   with
-  | Ok () -> ()
-  | Error msg ->
-    Printf.eprintf "%s\n%!" msg;
-    exit 1
+  | Ok () -> Ok ()
+  | Error msg -> Error (Sol_cli_exit.failure msg)
 ;;
 
 let check_apply_environment ~services =
-  check_contract ~services;
+  let* () = check_contract ~services in
   ensure_postgres_url ()
 ;;
 
@@ -119,19 +101,22 @@ let check_apply_environment ~services =
    later as an opaque image-pull failure. Apply-only by design: --dry-run and
    --emit-to are offline paths that touch no registry. *)
 let verify_image_refs_exist ~image_refs =
-  List.iter
-    (fun (service, ref) ->
-       if not (Sol_cli_docker.manifest_exists ~image_ref:ref)
-       then (
-         Printf.eprintf
-           "error: --image-ref for service %s was not found in its registry: %s\n\
-           \  (docker manifest inspect failed; check the repository, digest and registry \
-            credentials)\n\
-           \  Nothing was applied.\n"
-           service
-           ref;
-         exit 1))
-    image_refs
+  match
+    List.find_opt
+      (fun (_, ref) -> not (Sol_cli_docker.manifest_exists ~image_ref:ref))
+      image_refs
+  with
+  | None -> Ok ()
+  | Some (service, ref) ->
+    Error
+      (Sol_cli_exit.error
+         (Printf.sprintf
+            "--image-ref for service %s was not found in its registry: %s\n\
+            \  (docker manifest inspect failed; check the repository, digest and \
+             registry credentials)\n\
+            \  Nothing was applied."
+            service
+            ref))
 ;;
 
 type deploy_context =
@@ -169,13 +154,13 @@ let print_header ~workspace ~sha ?mode_line () =
 ;;
 
 let build_plan ctx ~emit_to =
-  let env_target =
-    Sol_cli_exit.or_exit
-      (Sol_cli_env_target.customer_cloud_defaults
-         ~registry:ctx.registry
-         ~image_tag:ctx.sha
-         ~emit_to
-         ())
+  let* env_target =
+    Sol_cli_env_target.customer_cloud_defaults
+      ~registry:ctx.registry
+      ~image_tag:ctx.sha
+      ~emit_to
+      ()
+    |> Sol_cli_exit.of_msg
   in
   (* Guard: Kubernetes_live is never allowed with a GitOps target. Combining the
      two would write plaintext secret values into the GitOps repository, leaking
@@ -183,16 +168,18 @@ let build_plan ctx ~emit_to =
      already resolved (INFRA-050), so this fires only on an explicit
      --secret-backend kubernetes-live: an absent flag resolves to the GitOps
      destination's own placeholder. *)
-  (match env_target, ctx.secret_backend with
-   | Sol_cli_env_target.Customer_gitops _, Sol_cli_manifest.Kubernetes_live ->
-     Printf.eprintf
-       "error: cannot use --secret-backend kubernetes-live with --emit-to (GitOps mode).\n\
-       \  This combination would write plaintext secrets into the GitOps repository,\n\
-       \  leaking them to every reader of the repo.\n\
-       \  Use --secret-backend kubernetes-placeholder (the default) or --secret-backend \
-        external-secrets instead.\n";
-     exit 1
-   | _ -> ());
+  let* () =
+    match env_target, ctx.secret_backend with
+    | Sol_cli_env_target.Customer_gitops _, Sol_cli_manifest.Kubernetes_live ->
+      Error
+        (Sol_cli_exit.error
+           "cannot use --secret-backend kubernetes-live with --emit-to (GitOps mode).\n\
+           \  This combination would write plaintext secrets into the GitOps repository,\n\
+           \  leaking them to every reader of the repo.\n\
+           \  Use --secret-backend kubernetes-placeholder (the default) or \
+            --secret-backend external-secrets instead.")
+    | _ -> Ok ()
+  in
   let env =
     { (Sol_cli_env_target.to_env_config ~name:ctx.execution.workspace env_target) with
       Sol_cli_deployment_plan.secret_backend = ctx.secret_backend
@@ -203,16 +190,16 @@ let build_plan ctx ~emit_to =
           ~default:"letsencrypt-prod"
     }
   in
-  let plan =
-    Sol_cli_exit.or_exit
-      (Sol_cli_factory.plan_of_services
-         ~workspace:ctx.execution.workspace
-         ~env
-         ~requested_scope:ctx.requested_scope
-         ~resolved_config:ctx.resolved_config
-         ~image_refs:ctx.image_refs
-         ~inventory:ctx.inventory
-         ctx.services)
+  let* plan =
+    Sol_cli_factory.plan_of_services
+      ~workspace:ctx.execution.workspace
+      ~env
+      ~requested_scope:ctx.requested_scope
+      ~resolved_config:ctx.resolved_config
+      ~image_refs:ctx.image_refs
+      ~inventory:ctx.inventory
+      ctx.services
+    |> Sol_cli_exit.of_msg
   in
   (* FEAT-089: the profile preflight runs once, here, because every deploy
        path (dry-run, --emit-to, apply) builds its plan through this function
@@ -222,18 +209,17 @@ let build_plan ctx ~emit_to =
     | Some _ -> Sol_cli_release.Gitops
     | None -> Sol_cli_release.Direct
   in
-  match Sol_cli_profile_preflight.check ~target:ctx.target_cfg ~apply_mode plan with
-  | Error (profile, findings) ->
-    prerr_string (Sol_cli_profile_preflight.report profile findings);
-    exit 1
-  | Ok () ->
-    Option.iter
-      (fun (claim : Sol_cli_deployment_plan.profile_claim) ->
-         Printf.printf
-           "Profile: %s (preflight passed)\n%!"
-           (Sol_cli_profile.to_string claim.profile))
-      plan.Sol_cli_deployment_plan.profile;
-    plan
+  let* () =
+    Sol_cli_profile_preflight.check ~target:ctx.target_cfg ~apply_mode plan
+    |> Result.map_error (fun (profile, findings) ->
+      Sol_cli_exit.failure (Sol_cli_profile_preflight.report profile findings))
+  in
+  plan.Sol_cli_deployment_plan.profile
+  |> Option.iter (fun (claim : Sol_cli_deployment_plan.profile_claim) ->
+    Printf.printf
+      "Profile: %s (preflight passed)\n%!"
+      (Sol_cli_profile.to_string claim.profile));
+  Ok plan
 ;;
 
 let write_plan_if_requested ~emit_plan_to plan =
@@ -295,15 +281,12 @@ let run_plan_result ctx ~phase ~mode ?before_apply plan =
     | Deploy_failed msg -> Error msg)
 ;;
 
-(* The dry-run/emit paths mutate no cluster, so they may fail at the edge; the
-   apply path below uses [run_plan_result] directly and never exits inside the
-   lease. *)
+(* A failed plan run's message stands apart from the progress output above it. *)
+let run_failed msg = Sol_cli_exit.failure ("\nerror: " ^ msg)
+
+(* The dry-run/emit paths, which mutate no cluster. *)
 let run_plan ctx ~phase ~mode plan =
-  match run_plan_result ctx ~phase ~mode plan with
-  | Ok rs -> rs
-  | Error msg ->
-    Printf.eprintf "\nerror: %s\n" msg;
-    exit 1
+  run_plan_result ctx ~phase ~mode plan |> Result.map_error run_failed
 ;;
 
 (* ── AUDIT-069: the migration prerequisite ───────────────────────────────────
@@ -322,83 +305,87 @@ let run_plan ctx ~phase ~mode plan =
    (no selected profile) makes no such claim and is not checked. *)
 let check_migration_prerequisite ~ctx ~plan ~live =
   match plan.Sol_cli_deployment_plan.profile with
-  | None -> ()
+  | None -> Ok ()
   | Some _ ->
     let dir = Sol_cli_migration.default_dir in
     if not live
     then (
       (* Side-effect free: report honestly instead of creating anything. *)
       match Sol_cli_migration.required ~dir with
-      | Ok [] | Error _ -> ()
+      | Ok [] | Error _ -> Ok ()
       | Ok _ ->
         Printf.printf
           "Migrations: NOT verified -- a side-effect-free run creates no status Job. The \
            applied migration set is only checked against the live cluster by a real \
            deploy (before any workload moves).\n\
-           %!")
-    else (
+           %!";
+        Ok ())
+    else
       (* HARDEN-002 run 2, finding 8: this gate needs the workspace substrate --
          the application namespace and the runtime Secret -- and workload
          mutation, which used to create both, happens *after* this gate. Establish
          it here, so the gate never depends on something behind itself. Not
          workload mutation: a namespace and a Secret are not a Deployment, and
          AUDIT-069's invariant is untouched. *)
-      (match
-         Sol_cli_substrate.ensure
-           ~ctx:ctx.execution.cluster
-           ~namespaces:(Sol_cli_substrate.namespaces plan)
-       with
-       | Ok () -> ()
-       | Error msg -> Cmd_migrate.fatal msg);
-      reconcile_operator_bindings_warn
+      let* () =
+        Sol_cli_substrate.ensure
+          ~ctx:ctx.execution.cluster
+          ~namespaces:(Sol_cli_substrate.namespaces plan)
+        |> Sol_cli_exit.of_msg
+      in
+      Cmd_migrate.reconcile_operator_bindings_warn
         ~ctx:ctx.execution.cluster
         ~workspace:ctx.execution.workspace;
-      match
-        Cmd_migrate.verify_migration_prerequisite
-          ~ctx:ctx.execution.cluster
-          ~target:ctx.target_name
-          ~workspace:ctx.execution.workspace
-          ~dir
-      with
-      | Cmd_migrate.No_migrations -> ()
-      | Cmd_migrate.Satisfied applied ->
-        Printf.printf
-          "Migrations: OK -- %d declared migration(s) present in schema_migrations\n%!"
-          (List.length applied)
-      | Cmd_migrate.Unsatisfied missing ->
-        Printf.eprintf
-          "\n\
-           error: the required migration set is not applied. Missing: %s\n\
-          \  Migrations are workspace-wide, so this is the same set whatever scope the \
-           deploy selected. Run `sol migrate apply %s`, then deploy again.\n\
-           %!"
-          (String.concat ", " (List.map Sol_cli_migration.to_string missing))
-          ctx.target_name;
-        exit 1
-      | Cmd_migrate.Unavailable reason ->
-        Printf.eprintf
-          "\n\
-           error: cannot verify the required migration state: %s\n\
-          \  A deploy against the production profile fails closed rather than assume the \
-           schema is compatible. Migrations are workspace-wide -- the deploy's scope \
-           does not select them -- so `sol migrate apply %s` checks the same required \
-           set this deploy did (it reports the applied set). Run it, then deploy again.\n\
-           %!"
-          reason
-          ctx.target_name;
-        exit 1)
+      (match
+         Cmd_migrate.verify_migration_prerequisite
+           ~ctx:ctx.execution.cluster
+           ~target:ctx.target_name
+           ~workspace:ctx.execution.workspace
+           ~dir
+       with
+       | Cmd_migrate.No_migrations -> Ok ()
+       | Cmd_migrate.Satisfied applied ->
+         Printf.printf
+           "Migrations: OK -- %d declared migration(s) present in schema_migrations\n%!"
+           (List.length applied);
+         Ok ()
+       | Cmd_migrate.Unsatisfied missing ->
+         Error
+           (Sol_cli_exit.failure
+              (Printf.sprintf
+                 "\n\
+                  error: the required migration set is not applied. Missing: %s\n\
+                 \  Migrations are workspace-wide, so this is the same set whatever \
+                  scope the deploy selected. Run `sol migrate apply %s`, then deploy \
+                  again."
+                 (String.concat ", " (List.map Sol_cli_migration.to_string missing))
+                 ctx.target_name))
+       | Cmd_migrate.Unavailable reason ->
+         Error
+           (Sol_cli_exit.failure
+              (Printf.sprintf
+                 "\n\
+                  error: cannot verify the required migration state: %s\n\
+                 \  A deploy against the production profile fails closed rather than \
+                  assume the schema is compatible. Migrations are workspace-wide -- the \
+                  deploy's scope does not select them -- so `sol migrate apply %s` \
+                  checks the same required set this deploy did (it reports the applied \
+                  set). Run it, then deploy again."
+                 reason
+                 ctx.target_name)))
 ;;
 
 let run_dry_run ctx ~emit_to =
   print_header ~workspace:ctx.execution.workspace ~sha:ctx.sha ~mode_line:"(dry-run)" ();
-  let plan = build_plan ctx ~emit_to in
+  let* plan = build_plan ctx ~emit_to in
   write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
   print_planned_services plan;
   (* AUDIT-069: side-effect free, so the prerequisite is reported as not
      verified rather than checked against the cluster. *)
-  check_migration_prerequisite ~ctx ~plan ~live:false;
+  let* () = check_migration_prerequisite ~ctx ~plan ~live:false in
   record_plan ctx.run_log plan;
-  ignore (run_plan ctx ~phase:"dry-run" ~mode:Sol_cli_executor.Dry_run plan)
+  let* _ = run_plan ctx ~phase:"dry-run" ~mode:Sol_cli_executor.Dry_run plan in
+  Ok ()
 ;;
 
 let run_emit ctx ~dir =
@@ -407,28 +394,21 @@ let run_emit ctx ~dir =
     ~sha:ctx.sha
     ~mode_line:(Printf.sprintf "emit-to: %s" dir)
     ();
-  let plan = build_plan ctx ~emit_to:(Some dir) in
+  let* plan = build_plan ctx ~emit_to:(Some dir) in
   write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
   print_planned_services plan;
   (* AUDIT-069: emitting manifests is side-effect free for this cluster, so the
      live prerequisite is not established here. *)
-  check_migration_prerequisite ~ctx ~plan ~live:false;
+  let* () = check_migration_prerequisite ~ctx ~plan ~live:false in
   record_plan ctx.run_log plan;
-  let results = run_plan ctx ~phase:"emit" ~mode:(Sol_cli_executor.Emit_to dir) plan in
-  List.iter
-    (fun (r : Sol_cli_executor.result) ->
-       let path =
-         Filename.concat
-           dir
-           (Printf.sprintf
-              "%s-%s.yaml"
-              r.Sol_cli_executor.namespace
-              r.Sol_cli_executor.name)
-       in
-       Printf.printf "  ✓  %s\n%!" path)
-    results;
+  let* results = run_plan ctx ~phase:"emit" ~mode:(Sol_cli_executor.Emit_to dir) plan in
+  results
+  |> List.iter (fun (r : Sol_cli_executor.result) ->
+    let path = Filename.concat dir (Printf.sprintf "%s-%s.yaml" r.namespace r.name) in
+    Printf.printf "  ✓  %s\n%!" path);
   Printf.printf "\nManifests written to %s/\n" dir;
-  Printf.printf "Commit and push to your GitOps repo, then Argo CD will apply them.\n"
+  Printf.printf "Commit and push to your GitOps repo, then Argo CD will apply them.\n";
+  Ok ()
 ;;
 
 let push_deploy_events
@@ -634,61 +614,63 @@ let execute_deployment_attempt ctx ~before_apply ~loki_push_url plan =
    command edge turns an [Error] into the exit, so nothing here needs [exit] (or
    the [at_exit] that used to compensate for it). *)
 let run_apply ctx ~confirm_group_change ~loki_push_url =
-  check_apply_environment ~services:ctx.services;
-  verify_image_refs_exist ~image_refs:ctx.image_refs;
+  let* () = check_apply_environment ~services:ctx.services in
+  let* () = verify_image_refs_exist ~image_refs:ctx.image_refs in
   print_header ~workspace:ctx.execution.workspace ~sha:ctx.sha ();
-  let plan = build_plan ctx ~emit_to:None in
-  check_consumer_group_changes
-    ~ctx:ctx.execution.cluster
-    ~workspace:ctx.execution.workspace
-    ~confirm_group_change
-    plan;
+  let* plan = build_plan ctx ~emit_to:None in
+  let* () =
+    check_consumer_group_changes
+      ~ctx:ctx.execution.cluster
+      ~workspace:ctx.execution.workspace
+      ~confirm_group_change
+      plan
+  in
   write_plan_if_requested ~emit_plan_to:ctx.emit_plan_to plan;
   print_planned_services plan;
   (* AUDIT-069: static preflight -> live migration-status verification ->
      workload mutation. This is the last gate before the lease and any apply. *)
-  check_migration_prerequisite ~ctx ~plan ~live:true;
+  let* () = check_migration_prerequisite ~ctx ~plan ~live:true in
   record_plan ctx.run_log plan;
-  Sol_cli_boundary_lease.with_boundary_lease
-    ~ctx:ctx.execution.cluster
-    ~workspace:ctx.execution.workspace
-    ~holder:Sol_cli_boundary_lease.Deploy
-    ~ttl:Sol_cli_boundary_lease.default_ttl_s
-    ~wait_s:0.
-    (fun lease ->
-       let previous = read_previous_release ctx in
-       match
-         execute_deployment_attempt
-           ctx
-           ~before_apply:(fun (_ : Sol_cli_deployment_plan.service_spec) ->
-             Sol_cli_boundary_lease.ensure_held lease)
-           ~loki_push_url
-           plan
-       with
-       | Error msg -> Error msg
-       | Ok (_attempt, results) ->
-         (* DEC-037: record first, report second. If the authoritative release
+  Result.map_error run_failed
+  @@ Sol_cli_boundary_lease.with_boundary_lease
+       ~ctx:ctx.execution.cluster
+       ~workspace:ctx.execution.workspace
+       ~holder:Sol_cli_boundary_lease.Deploy
+       ~ttl:Sol_cli_boundary_lease.default_ttl_s
+       ~wait_s:0.
+       (fun lease ->
+          let previous = read_previous_release ctx in
+          match
+            execute_deployment_attempt
+              ctx
+              ~before_apply:(fun (_ : Sol_cli_deployment_plan.service_spec) ->
+                Sol_cli_boundary_lease.ensure_held lease)
+              ~loki_push_url
+              plan
+          with
+          | Error msg -> Error msg
+          | Ok (_attempt, results) ->
+            (* DEC-037: record first, report second. If the authoritative release
             state cannot be written, this deploy has not succeeded, so it must
             neither print a success line nor exit zero -- and the message names
             that the workloads may already be running. *)
-         Sol_cli_release.finish_deployment
-           ~record_release:(fun () ->
-             let ( let* ) = Result.bind in
-             let* () = record_release_and_prune ctx ~previous plan in
-             (* BUG-045: see Sol_cli_deployment_state.save_deployed_groups. *)
-             Sol_cli_deployment_state.record_outcome
-               ~ctx:ctx.execution.cluster
-               ctx.execution.workspace
-               (Sol_cli_deployment_state.Applied
-                  { namespace = "default"
-                  ; name = ctx.execution.workspace
-                  ; image = ctx.sha
-                  ; consumer_groups =
-                      List.map
-                        Sol_cli_plan_ids.Consumer_group.to_string
-                        plan.Sol_cli_deployment_plan.consumer_groups
-                  }))
-           ~report_success:(fun () -> report_apply_success ctx plan results))
+            Sol_cli_release.finish_deployment
+              ~record_release:(fun () ->
+                let* () = record_release_and_prune ctx ~previous plan in
+                (* BUG-045: see Sol_cli_deployment_state.save_deployed_groups. *)
+                Sol_cli_deployment_state.record_outcome
+                  ~ctx:ctx.execution.cluster
+                  ctx.execution.workspace
+                  (Sol_cli_deployment_state.Applied
+                     { namespace = "default"
+                     ; name = ctx.execution.workspace
+                     ; image = ctx.sha
+                     ; consumer_groups =
+                         List.map
+                           Sol_cli_plan_ids.Consumer_group.to_string
+                           plan.Sol_cli_deployment_plan.consumer_groups
+                     }))
+              ~report_success:(fun () -> report_apply_success ctx plan results))
 ;;
 
 let run (req : Sol_cli_command_request.deploy_request) =
@@ -701,36 +683,32 @@ let run (req : Sol_cli_command_request.deploy_request) =
      everything that exists -- what a call reference may name. [services] is the
      selection -- what this invocation deploys. They are deliberately not the same
      list, and the selection is never widened to close a call graph. *)
-  let inventory =
-    Sol_cli_exit.or_exit_with
-      Sol_cli_manifest.discover_error_to_string
-      (Sol_cli_manifest.discover_services ())
+  let* inventory =
+    Sol_cli_manifest.discover_services ()
+    |> Sol_cli_exit.of_error Sol_cli_manifest.discover_error_to_string
   in
-  let selected =
-    Sol_cli_exit.or_exit
-      (Sol_cli_workload_selection.resolve_nonempty
-         ~none:"no services found in app/ with a Dockerfile"
-         req.scope
-         inventory)
+  let* selected =
+    Sol_cli_workload_selection.resolve_nonempty
+      ~none:"no services found in app/ with a Dockerfile"
+      req.scope
+      inventory
+    |> Sol_cli_exit.of_msg
   in
   let { Sol_cli_workload_selection.requested_scope; services; _ } = selected in
   (* FEAT-050: resolve supplied artifact references against the services this
      invocation actually selected, so a name typo or an ambiguous bare
      reference fails before the target or registry is even resolved. *)
-  let image_refs =
-    Sol_cli_exit.or_exit
-      (Sol_cli_image_ref.resolve
-         ~service_names:(List.map (fun (s : Sol_cli_manifest.service) -> s.name) services)
-         req.image_refs)
+  let* image_refs =
+    Sol_cli_image_ref.resolve
+      ~service_names:(List.map (fun (s : Sol_cli_manifest.service) -> s.name) services)
+      req.image_refs
+    |> Sol_cli_exit.of_msg
   in
-  let resolved_config, target_cfg =
-    let cfg =
-      Sol_cli_exit.or_exit_with
-        Sol_cli_config.error_to_string
-        (Sol_cli_config.load_for_target ~target:req.target)
-    in
-    cfg, cfg.Sol_cli_config.target
+  let* resolved_config =
+    Sol_cli_config.load_for_target ~target:req.target
+    |> Sol_cli_exit.of_error Sol_cli_config.error_to_string
   in
+  let target_cfg = resolved_config.target in
   (* sol deploy always mutates a real cluster, so unlike sol plan
      (genuinely read-only, Sol_cli_config.load_for_target's own
      permissive-overlay contract is fine for it) it needs the stronger
@@ -740,15 +718,19 @@ let run (req : Sol_cli_command_request.deploy_request) =
      otherwise silently inherit sol.yml's shared defaults and apply
      anyway. sol cloud apply/destroy carry the same check for their own
      mutating action, in cmd_cloud_tf.ml's config_vars ~strict. *)
-  if not (Sol_cli_config.target_declared target_cfg)
-  then (
-    Printf.eprintf
-      "error: target %S is not declared in %s -- sol deploy requires an explicit target, \
-       even an empty one, so a typo'd or unintended target can't silently inherit \
-       sol.yml's shared defaults and deploy anyway.\n"
-      req.target
-      (Sol_cli_config.target_source target_cfg);
-    exit 1);
+  let* () =
+    if Sol_cli_config.target_declared target_cfg
+    then Ok ()
+    else
+      Error
+        (Sol_cli_exit.error
+           (Printf.sprintf
+              "target %S is not declared in %s -- sol deploy requires an explicit \
+               target, even an empty one, so a typo'd or unintended target can't \
+               silently inherit sol.yml's shared defaults and deploy anyway."
+              req.target
+              (Sol_cli_config.target_source target_cfg)))
+  in
   (* No hardcoded local-registry fallback here, deliberately: sol deploy is
      always a customer-cluster path (it never constructs
      Sol_cli_env_target.Local, unlike sol up) -- an unresolvable registry
@@ -792,35 +774,40 @@ let run (req : Sol_cli_command_request.deploy_request) =
   (* An --image-ref naming a unit the target omits would otherwise be resolved
      against the pre-omission selection and then silently dropped: the operator
      pinned bytes for a workload and got a run without it. *)
-  List.iter
-    (fun (name, _) ->
-       match
-         List.find_opt
-           (fun (s : Sol_cli_manifest.service) -> String.equal s.name name)
-           omission.excluded
-       with
-       | None -> ()
-       | Some s ->
-         Printf.eprintf
-           "error: --image-ref names %s, which target %s omits and this deploy excludes. \
-            Name it with --scope %s to deploy it, or drop the reference.\n"
-           name
-           req.target
-           (unit_id s);
-         exit 1)
-    image_refs;
-  let services = omission.selected in
+  let omitted_ref =
+    image_refs
+    |> List.find_map (fun (name, _) ->
+      omission.excluded
+      |> List.find_opt (fun (s : Sol_cli_manifest.service) -> String.equal s.name name))
+  in
+  let* () =
+    match omitted_ref with
+    | None -> Ok ()
+    | Some s ->
+      Error
+        (Sol_cli_exit.error
+           (Printf.sprintf
+              "--image-ref names %s, which target %s omits and this deploy excludes. \
+               Name it with --scope %s to deploy it, or drop the reference."
+              s.name
+              req.target
+              (unit_id s)))
+  in
   (* The selection was non-empty, so an empty one here was emptied by omission --
      a different situation from a workspace with no services at all, and the
      operator's next action is different too. *)
-  if services = []
-  then (
-    Printf.eprintf
-      "error: every unit in scope is omitted by target %s: %s.\n\
-      \  Name one with --scope <domain>/<name> to deploy it anyway.\n"
-      req.target
-      (String.concat ", " (List.map unit_id omission.excluded));
-    exit 1);
+  let* services =
+    match omission.selected with
+    | [] ->
+      Error
+        (Sol_cli_exit.error
+           (Printf.sprintf
+              "every unit in scope is omitted by target %s: %s.\n\
+              \  Name one with --scope <domain>/<name> to deploy it anyway."
+              req.target
+              (String.concat ", " (List.map unit_id omission.excluded))))
+    | services -> Ok services
+  in
   let run_log = Sol_cli_run_log.create ~prefix:"deploy" () in
   Printf.printf
     "\nRun: %s\n  log: %s/\n"
@@ -838,30 +825,24 @@ let run (req : Sol_cli_command_request.deploy_request) =
     | Sol_cli_command_request.Deploy_emit_to dir -> Some dir
     | Sol_cli_command_request.Deploy_apply -> None
   in
+  let* env_target =
+    Sol_cli_env_target.customer_cloud_defaults
+      ~registry
+      ~image_tag:sha
+      ~emit_to:emit_intent
+      ()
+    |> Sol_cli_exit.of_msg
+  in
   let secret_backend =
-    match
-      Sol_cli_env_target.customer_cloud_defaults
-        ~registry
-        ~image_tag:sha
-        ~emit_to:emit_intent
-        ()
-    with
-    | Error msg ->
-      Printf.eprintf "error: %s\n%!" msg;
-      exit 1
-    | Ok env_target ->
-      Sol_cli_env_target.resolve_secret_backend ?explicit:req.secret_backend env_target
+    Sol_cli_env_target.resolve_secret_backend ?explicit:req.secret_backend env_target
+  in
+  let* destination =
+    Sol_cli_config.destination_of_target target_cfg |> Sol_cli_exit.of_msg
   in
   let ctx =
     { execution =
         Sol_cli_execution.context
-          ~cluster:
-            (match Sol_cli_config.destination_of_target target_cfg with
-             | Ok destination ->
-               Sol_cli_kube_destination.context_of_destination destination
-             | Error msg ->
-               Printf.eprintf "error: %s\n%!" msg;
-               exit 1)
+          ~cluster:(Sol_cli_kube_destination.context_of_destination destination)
           ~workspace
           ~env:target_cfg.Sol_cli_config.env
           ()
@@ -884,16 +865,10 @@ let run (req : Sol_cli_command_request.deploy_request) =
   | Sol_cli_command_request.Deploy_dry_run { emit_to } -> run_dry_run ctx ~emit_to
   | Deploy_emit_to dir -> run_emit ctx ~dir
   | Deploy_apply ->
-    (match
-       run_apply
-         ctx
-         ~confirm_group_change:req.confirm_group_change
-         ~loki_push_url:req.loki_push_url
-     with
-     | Ok () -> ()
-     | Error msg ->
-       Printf.eprintf "\nerror: %s\n" msg;
-       exit 1)
+    run_apply
+      ctx
+      ~confirm_group_change:req.confirm_group_change
+      ~loki_push_url:req.loki_push_url
 ;;
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
@@ -1173,23 +1148,25 @@ let cmd =
              loki_push_url
              keep_releases
            ->
-           run
-             (Sol_cli_exit.or_exit
-                (Sol_cli_command_request.make_deploy_request
-                   ~target
-                   ~scope
-                   ~dry_run
-                   ~emit_to
-                   ~emit_plan_to
-                   ~image_tag
-                   ~image_refs:
-                     (List.map Sol_cli_image_ref.split_flag_value raw_image_refs)
-                   ~registry
-                   ~secret_backend
-                   ~confirm_group_change
-                   ~loki_push_url
-                   ~keep_releases
-                   ~git_sha:Sol_cli_command_request.git_sha)))
+           Sol_cli_exit.exit_on
+             (let* req =
+                Sol_cli_command_request.make_deploy_request
+                  ~target
+                  ~scope
+                  ~dry_run
+                  ~emit_to
+                  ~emit_plan_to
+                  ~image_tag
+                  ~image_refs:(List.map Sol_cli_image_ref.split_flag_value raw_image_refs)
+                  ~registry
+                  ~secret_backend
+                  ~confirm_group_change
+                  ~loki_push_url
+                  ~keep_releases
+                  ~git_sha:Sol_cli_command_request.git_sha
+                |> Sol_cli_exit.of_msg
+              in
+              run req))
       $ target_arg
       $ scope_arg
       $ dry_run_flag

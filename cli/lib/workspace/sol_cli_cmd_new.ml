@@ -6,6 +6,8 @@ let write = Sol_cli_scaffold.write_file
 let norm = Sol_cli_scaffold.normalize
 let cap = Sol_cli_scaffold.capitalize_name
 
+open Result.Syntax
+
 (* DEC-025: `sol new` used to symlink the framework source into the generated
    workspace (vendor/framework). That made the framework's Dune files part of the
    *consumer's* Dune project, which is precisely the coupling DEC-024 forbids --
@@ -20,10 +22,11 @@ let cap = Sol_cli_scaffold.capitalize_name
 let new_workspace name =
   let raw_name = name in
   let name = norm name in
-  if Sys.file_exists name
-  then (
-    Printf.eprintf "error: %S already exists\n" name;
-    exit 1);
+  let* () =
+    if Sys.file_exists name
+    then Error (Printf.sprintf "%S already exists" name)
+    else Ok ()
+  in
   Printf.printf "\nScaffolding workspace %S ...\n\n" name;
   if name <> raw_name
   then (
@@ -142,21 +145,14 @@ Done. 31 files generated.
 |}
     name
     name
-    name
+    name;
+  Ok ()
 ;;
 
 let parse_domain_name arg =
   match String.split_on_char '/' arg with
   | [ domain; name ] when domain <> "" && name <> "" -> Ok (norm domain, norm name)
   | _ -> Error (Printf.sprintf "expected domain/name (e.g. payments/charge), got %S" arg)
-;;
-
-let domain_name_or_exit arg =
-  match parse_domain_name arg with
-  | Ok parsed -> parsed
-  | Error msg ->
-    Printf.eprintf "error: %s\n" msg;
-    exit 1
 ;;
 
 let ws_of_cwd () = norm (Filename.basename (Sys.getcwd ()))
@@ -247,30 +243,33 @@ let write_component scaffold =
 
 let new_svc arg =
   let ws = ws_of_cwd () in
-  let domain, name = domain_name_or_exit arg in
+  let* domain, name = parse_domain_name arg in
   let scaffold = component_scaffold Service ~ws ~domain ~name in
   Printf.printf "\nScaffolding svc %s/%s_svc ...\n\n" domain name;
   write_component scaffold;
-  Printf.printf "\nDone.  Build: dune build %s/bin/main.exe\n" scaffold.dir
+  Printf.printf "\nDone.  Build: dune build %s/bin/main.exe\n" scaffold.dir;
+  Ok ()
 ;;
 
 let new_worker arg =
   let ws = ws_of_cwd () in
-  let domain, name = domain_name_or_exit arg in
+  let* domain, name = parse_domain_name arg in
   let scaffold = component_scaffold Worker ~ws ~domain ~name in
   Printf.printf "\nScaffolding worker %s/%s_worker ...\n\n" domain name;
   write_component scaffold;
   Printf.printf "\nDone.  Replace the stub Message module with your event module, then:\n";
-  Printf.printf "  dune build %s/bin/main.exe\n" scaffold.dir
+  Printf.printf "  dune build %s/bin/main.exe\n" scaffold.dir;
+  Ok ()
 ;;
 
 let new_fn arg =
   let ws = ws_of_cwd () in
-  let domain, name = domain_name_or_exit arg in
+  let* domain, name = parse_domain_name arg in
   let scaffold = component_scaffold Function ~ws ~domain ~name in
   Printf.printf "\nScaffolding fn %s/%s_fn ...\n\n" domain name;
   write_component scaffold;
-  Printf.printf "\nDone.  Build: dune build %s/bin/main.exe\n" scaffold.dir
+  Printf.printf "\nDone.  Build: dune build %s/bin/main.exe\n" scaffold.dir;
+  Ok ()
 ;;
 
 (* Append [new_mod] to the "(modules ...)" stanza in [path].
@@ -317,7 +316,7 @@ let patch_modules_stanza path new_mod =
 
 let new_event arg =
   let ws = ws_of_cwd () in
-  let team, name = domain_name_or_exit arg in
+  let* team, name = parse_domain_name arg in
   let file = Printf.sprintf "events/%s/%s.ml" team name in
   let dune_f = Printf.sprintf "events/%s/dune" team in
   let toml_f = Printf.sprintf "events/%s/sol.toml" team in
@@ -325,10 +324,11 @@ let new_event arg =
   let lib = ws ^ "_" ^ team ^ "_events" in
   let v = [ "team", team; "name", name; "Mod", mod_; "lib", lib ] in
   Printf.printf "\nScaffolding event %s/%s ...\n\n" team name;
-  if Sys.file_exists file
-  then (
-    Printf.eprintf "error: %S already exists\n" file;
-    exit 1);
+  let* () =
+    if Sys.file_exists file
+    then Error (Printf.sprintf "%S already exists" file)
+    else Ok ()
+  in
   write ~path:file ~content:(subst v event_ml);
   if Sys.file_exists dune_f
   then patch_modules_stanza dune_f mod_
@@ -348,8 +348,12 @@ let new_event arg =
      a new one lists just this event's default topic. *)
   if not (Sys.file_exists toml_f)
   then write ~path:toml_f ~content:(subst v tpl_event_sol_toml);
-  Printf.printf "\nDone.  Consumers add (libraries %s) to their dune files.\n" lib
+  Printf.printf "\nDone.  Consumers add (libraries %s) to their dune files.\n" lib;
+  Ok ()
 ;;
+
+(* The command edge: a scaffold's error becomes [error: <message>], exit 1. *)
+let run scaffold arg = Sol_cli_exit.exit_on (scaffold arg |> Sol_cli_exit.of_msg)
 
 (* ── Cmdliner terms ───────────────────────────────────────────────────────── *)
 
@@ -360,31 +364,31 @@ let workspace_cmd =
     (Cmd.info
        "workspace"
        ~doc:"Scaffold a new Sol workspace with a working two-service example")
-    Term.(const new_workspace $ name_arg "NAME" "Workspace name, e.g. acme")
+    Term.(const (run new_workspace) $ name_arg "NAME" "Workspace name, e.g. acme")
 ;;
 
 let svc_cmd =
   Cmd.v
     (Cmd.info "svc" ~doc:"Add an HTTP service to the current workspace")
-    Term.(const new_svc $ name_arg "DOMAIN/NAME" "e.g. payments/charge")
+    Term.(const (run new_svc) $ name_arg "DOMAIN/NAME" "e.g. payments/charge")
 ;;
 
 let worker_cmd =
   Cmd.v
     (Cmd.info "worker" ~doc:"Add a Kafka consumer worker to the current workspace")
-    Term.(const new_worker $ name_arg "DOMAIN/NAME" "e.g. comms/notify")
+    Term.(const (run new_worker) $ name_arg "DOMAIN/NAME" "e.g. comms/notify")
 ;;
 
 let fn_cmd =
   Cmd.v
     (Cmd.info "fn" ~doc:"Add a scheduled function to the current workspace")
-    Term.(const new_fn $ name_arg "DOMAIN/NAME" "e.g. billing/monthly_report")
+    Term.(const (run new_fn) $ name_arg "DOMAIN/NAME" "e.g. billing/monthly_report")
 ;;
 
 let event_cmd =
   Cmd.v
     (Cmd.info "event" ~doc:"Add a typed Kafka event contract to the current workspace")
-    Term.(const new_event $ name_arg "TEAM/NAME" "e.g. payments/charged")
+    Term.(const (run new_event) $ name_arg "TEAM/NAME" "e.g. payments/charged")
 ;;
 
 let cmd =

@@ -8,7 +8,7 @@
    Sol-side window to observe. Moved verbatim from `cmd_cloud_tf.ml` and
    `Sol_cli_cloud_lifecycle`. *)
 
-let ( let* ) = Result.bind
+open Result.Syntax
 
 (* GCP's cloud-root contract: its own type, deliberately, rather than a relabelled
    [aws_outputs]. The two providers publish different facts, not the same facts
@@ -35,7 +35,7 @@ let gcp_outputs_of_json text =
     let _, string, optional_string =
       Sol_cli_cluster.outputs_reader ~provider:"GCP" text
     in
-    let ( let* ) = Result.bind in
+    let open Result.Syntax in
     let* cluster_name = string "cluster_name" in
     let* project_id = string "project_id" in
     let* region = string "region" in

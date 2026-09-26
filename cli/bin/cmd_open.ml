@@ -14,49 +14,31 @@ let kind_label = function
   | Sol_cli_open.Dashboard -> "Grafana dashboard"
 ;;
 
-let backend_of_arg = function
-  | None -> None
-  | Some s ->
-    (match Sol_cli_observability_url.backend_of_string s with
-     | Some b -> Some b
-     | None ->
-       Printf.eprintf
-         "error: unknown --observability-backend %S (expected: local, \
-          self_hosted_durable, external)\n"
-         s;
-       exit 1)
-;;
+open Result.Syntax
 
 let run kind scope_str links explicit_backend explicit_base_domain target grafana_base_url
   =
-  let workspace = (Sol_cli_workspace.enter_or_exit ()).name in
-  let scope = Sol_cli_exit.or_exit (Sol_cli_open.parse_scope scope_str) in
-  match
+  let* { name = workspace; _ } = Sol_cli_workspace.enter_cwd () in
+  let* scope = Sol_cli_open.parse_scope scope_str |> Sol_cli_exit.of_msg in
+  let* backend, base_domain =
     Sol_cli_observability_url.effective_backend_and_base_domain
       ~explicit_backend
       ~explicit_base_domain
       ~target
       ()
+    |> Sol_cli_exit.of_msg
+  in
+  match
+    Sol_cli_observability_url.resolve ~backend ?base_domain ?override:grafana_base_url ()
   with
-  | Error msg ->
-    Printf.eprintf "error: %s\n" msg;
-    exit 1
-  | Ok (backend, base_domain) ->
-    (match
-       Sol_cli_observability_url.resolve
-         ~backend
-         ?base_domain
-         ?override:grafana_base_url
-         ()
-     with
-     | Sol_cli_observability_url.No_url reason ->
-       Printf.printf "%s: (%s)\n%!" (kind_label kind) reason
-     | Sol_cli_observability_url.Url base_url ->
-       let url =
-         Sol_cli_exit.or_exit (Sol_cli_open.url ~base_url ~workspace ~kind scope)
-       in
-       Printf.printf "%s\n%!" url;
-       if not links then try_open_browser url)
+  | Sol_cli_observability_url.No_url reason ->
+    Printf.printf "%s: (%s)\n%!" (kind_label kind) reason;
+    Ok ()
+  | Sol_cli_observability_url.Url base_url ->
+    let* url = Sol_cli_open.url ~base_url ~workspace ~kind scope |> Sol_cli_exit.of_msg in
+    Printf.printf "%s\n%!" url;
+    if not links then try_open_browser url;
+    Ok ()
 ;;
 
 let scope_arg =
@@ -84,21 +66,14 @@ let make_subcmd name kind doc =
   Cmd.v
     (Cmd.info name ~doc)
     Term.(
-      const (fun scope_str links backend base_domain target grafana_base_url ->
-        run
-          kind
-          scope_str
-          links
-          (backend_of_arg backend)
-          base_domain
-          target
-          grafana_base_url)
-      $ scope_arg
-      $ links_flag
-      $ Cmd_logs.observability_backend_arg
-      $ Cmd_logs.base_domain_arg
-      $ Cmd_logs.target_arg
-      $ Cmd_logs.grafana_base_url_arg)
+      const Sol_cli_exit.exit_on
+      $ (const (run kind)
+         $ scope_arg
+         $ links_flag
+         $ Cmd_logs.observability_backend_arg
+         $ Cmd_logs.base_domain_arg
+         $ Cmd_logs.target_arg
+         $ Cmd_logs.grafana_base_url_arg))
 ;;
 
 let cmd =

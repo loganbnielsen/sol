@@ -217,6 +217,13 @@ val namespace_result : workspace:string -> domain:string -> (namespace, plan_err
 
 val namespace_to_string : namespace -> string
 
+(** [namespace_name ~workspace ~domain] is {!namespace_result} as the string a
+    command passes to kubectl, or the rendered error: a command's [let*] step. *)
+val namespace_name : workspace:string -> domain:string -> (string, string) result
+
+(** [k8s_name name] is {!k8s_name_result} the same way. *)
+val k8s_name : string -> (string, string) result
+
 (** [image_ref ~registry ~workspace ~k8s_name ~tag] returns
     ["<registry>/<workspace>/<k8s_name>:<tag>"]. *)
 val image_ref

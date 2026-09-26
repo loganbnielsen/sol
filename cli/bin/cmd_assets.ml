@@ -13,7 +13,7 @@ let form_to_string assets =
   | A.Installed { version } -> "installed release " ^ version
 ;;
 
-let ( let* ) = Result.bind
+open Result.Syntax
 
 (* One check: what it covers, and either what it found or why it failed. *)
 type check =
