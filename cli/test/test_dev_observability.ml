@@ -1,13 +1,5 @@
 let check_bool = Alcotest.(check bool)
-
-let contains needle haystack =
-  try
-    ignore (Str.search_forward (Str.regexp_string needle) haystack 0);
-    true
-  with
-  | Not_found -> false
-;;
-
+let contains needle haystack = Sol_cli_string.contains ~needle haystack
 let assert_contains msg s needle = check_bool msg true (contains needle s)
 
 (* CODE_LAYER-007: dashboard_configmap_yaml reads the real

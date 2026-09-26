@@ -29,8 +29,8 @@ let check_contract ~services =
    set the local default, and let the explicit `--context` fail if the cluster
    is gone. *)
 let ensure_postgres_url () =
-  match Sys.getenv_opt "POSTGRES_URL" with
-  | None | Some "" ->
+  match Sol_cli_string.env "POSTGRES_URL" with
+  | None ->
     Unix.putenv
       "POSTGRES_URL"
       "postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev"

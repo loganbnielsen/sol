@@ -7,13 +7,7 @@ module D = Sol_cli_rollout_diagnosis
 (* DEC-038 §7: the diagnosis functions now return a three-valued verdict. These
    helpers keep the existing assertions about *this* question -- "did it report a
    problem?" -- readable, and make the mapping explicit rather than incidental. *)
-let contains needle haystack =
-  try
-    ignore (Str.search_forward (Str.regexp_string needle) haystack 0);
-    true
-  with
-  | Not_found -> false
-;;
+let contains needle haystack = Sol_cli_string.contains ~needle haystack
 
 let reports_healthy = function
   | D.Healthy -> true
@@ -237,31 +231,15 @@ let test_format_service_diagnosis_includes_events_and_reason () =
     check_bool
       "mentions rollout failed"
       true
-      (try
-         ignore
-           (Str.search_forward
-              (Str.regexp_string "charge-svc rollout failed")
-              diagnosis
-              0);
-         true
-       with
-       | Not_found -> false);
+      (Sol_cli_string.contains ~needle:"charge-svc rollout failed" diagnosis);
     check_bool
       "mentions ImagePullBackOff"
       true
-      (try
-         ignore (Str.search_forward (Str.regexp_string "ImagePullBackOff") diagnosis 0);
-         true
-       with
-       | Not_found -> false);
+      (Sol_cli_string.contains ~needle:"ImagePullBackOff" diagnosis);
     check_bool
       "mentions FailedPull event"
       true
-      (try
-         ignore (Str.search_forward (Str.regexp_string "FailedPull") diagnosis 0);
-         true
-       with
-       | Not_found -> false)
+      (Sol_cli_string.contains ~needle:"FailedPull" diagnosis)
 ;;
 
 let test_format_service_diagnosis_reports_empty_pod_list () =
@@ -274,23 +252,11 @@ let test_format_service_diagnosis_reports_empty_pod_list () =
     check_bool
       "mentions rollout failed"
       true
-      (try
-         ignore
-           (Str.search_forward
-              (Str.regexp_string "charge-svc rollout failed")
-              diagnosis
-              0);
-         true
-       with
-       | Not_found -> false);
+      (Sol_cli_string.contains ~needle:"charge-svc rollout failed" diagnosis);
     check_bool
       "mentions no pods found"
       true
-      (try
-         ignore (Str.search_forward (Str.regexp_string "No pods found") diagnosis 0);
-         true
-       with
-       | Not_found -> false)
+      (Sol_cli_string.contains ~needle:"No pods found" diagnosis)
 ;;
 
 let test_format_service_diagnosis_succeeded_pod_still_flagged_when_continuous () =
@@ -391,24 +357,11 @@ let test_format_cronjob_diagnosis_last_run_failed_is_flagged () =
     check_bool
       "mentions rollout failed"
       true
-      (try
-         ignore
-           (Str.search_forward
-              (Str.regexp_string "invoice-fn rollout failed")
-              diagnosis
-              0);
-         true
-       with
-       | Not_found -> false);
+      (Sol_cli_string.contains ~needle:"invoice-fn rollout failed" diagnosis);
     check_bool
       "mentions the schedule time"
       true
-      (try
-         ignore
-           (Str.search_forward (Str.regexp_string "2026-09-02T10:00:00Z") diagnosis 0);
-         true
-       with
-       | Not_found -> false)
+      (Sol_cli_string.contains ~needle:"2026-09-02T10:00:00Z" diagnosis)
 ;;
 
 let test_format_cronjob_diagnosis_never_succeeded_is_flagged () =
@@ -440,23 +393,11 @@ let test_format_cronjob_diagnosis_missing_is_flagged () =
     check_bool
       "mentions rollout failed"
       true
-      (try
-         ignore
-           (Str.search_forward
-              (Str.regexp_string "invoice-fn rollout failed")
-              diagnosis
-              0);
-         true
-       with
-       | Not_found -> false);
+      (Sol_cli_string.contains ~needle:"invoice-fn rollout failed" diagnosis);
     check_bool
       "mentions not found"
       true
-      (try
-         ignore (Str.search_forward (Str.regexp_string "not found") diagnosis 0);
-         true
-       with
-       | Not_found -> false)
+      (Sol_cli_string.contains ~needle:"not found" diagnosis)
 ;;
 
 (* DEC-038 §7 / FND-0019. This test used to assert *silence* -- the expectation
@@ -597,13 +538,7 @@ let test_parse_cronjob_status_status_key_absent () =
 
 (* ── INFRA-057 / DEC-038 §5: a failed read is not an absent result ─────────── *)
 
-let contains needle haystack =
-  try
-    ignore (Str.search_forward (Str.regexp_string needle) haystack 0);
-    true
-  with
-  | Not_found -> false
-;;
+let contains needle haystack = Sol_cli_string.contains ~needle haystack
 
 (* A denied events read must be named, and must never render as "none". This is
    the state the live Run 8 diagnosis was in: the deploy identity may not read

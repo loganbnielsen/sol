@@ -271,7 +271,7 @@ let reconcile_operator_bindings ~ctx ~workspace : (unit, string) result =
       (fun ns ->
          match create_doc ~ctx (Sol_cli_manifest.operator_role_binding_doc ~ns) with
          | Ok () -> None
-         | Error e when Sol_cli_port_forward.string_contains ~needle:"NotFound" e -> None
+         | Error e when Sol_cli_string.contains ~needle:"NotFound" e -> None
          | Error e -> Some (Printf.sprintf "%s: %s" ns e))
       namespaces
   in

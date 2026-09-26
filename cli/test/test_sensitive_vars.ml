@@ -8,14 +8,7 @@
 
 module S = Sol_cli_sensitive_vars
 
-let contains haystack needle =
-  try
-    ignore (Str.search_forward (Str.regexp_string needle) haystack 0);
-    true
-  with
-  | Not_found -> false
-;;
-
+let contains haystack needle = Sol_cli_string.contains ~needle haystack
 let strings = Alcotest.(list string)
 let check = Alcotest.(check bool)
 let declared names = Result.get_ok (S.declared_in names)

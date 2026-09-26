@@ -8,14 +8,7 @@
 
 module S = Sol_cli_supervised
 
-let contains haystack needle =
-  try
-    ignore (Str.search_forward (Str.regexp_string needle) haystack 0);
-    true
-  with
-  | Not_found -> false
-;;
-
+let contains haystack needle = Sol_cli_string.contains ~needle haystack
 let check = Alcotest.(check bool)
 let tmp_root = Filename.concat (Filename.get_temp_dir_name ()) "sol-supervised-test"
 

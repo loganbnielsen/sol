@@ -513,13 +513,6 @@ let rec files_under dir =
 
 let read path = In_channel.with_open_bin path In_channel.input_all
 
-let contains ~needle s =
-  let n = String.length needle
-  and m = String.length s in
-  let rec go i = i + n <= m && (String.sub s i n = needle || go (i + 1)) in
-  go 0
-;;
-
 let test_show_and_record_never_logs_plan_json () =
   let base = temp_dir () in
   let run_log = Sol_cli_run_log.create ~base ~prefix:"sec008" () in
@@ -540,7 +533,7 @@ let test_show_and_record_never_logs_plan_json () =
        Alcotest.(check bool)
          (Printf.sprintf "%s holds no secret" f)
          false
-         (contains ~needle:secret (read f));
+         (Sol_cli_string.contains ~needle:secret (read f));
        Alcotest.(check int)
          (Printf.sprintf "%s is 0600" f)
          0o600
@@ -549,7 +542,7 @@ let test_show_and_record_never_logs_plan_json () =
   Alcotest.(check bool)
     "the classified change is recorded"
     true
-    (contains
+    (Sol_cli_string.contains
        ~needle:"delete aws_db_instance.main"
        (read (Sol_cli_run_log.phase_log_path run_log ~phase:"destroy-show")))
 ;;

@@ -65,7 +65,12 @@ type t =
   }
 
 (** Each provider's own record, for that provider's modules. *)
-val aws : t
 
+(** [required name value] is [value], trimmed, or an error naming [target.<name>]
+    when it is absent or blank. Shared by every lifecycle check that needs a
+    declared field. *)
+val required : string -> string option -> (string, string) result
+
+val aws : t
 val gcp : t
 val capabilities_of : Sol_cli_provider.t -> t

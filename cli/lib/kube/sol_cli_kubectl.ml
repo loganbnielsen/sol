@@ -31,10 +31,8 @@ let get ~ctx ~resource ~name ~namespace ~output =
 let get_raw ~ctx ~args = Sol_cli_process.run (invocation ~ctx args)
 
 let resource_type_absent output =
-  Sol_cli_port_forward.string_contains ~needle:"doesn't have a resource type" output
-  || Sol_cli_port_forward.string_contains
-       ~needle:"could not find the requested resource"
-       output
+  Sol_cli_string.contains ~needle:"doesn't have a resource type" output
+  || Sol_cli_string.contains ~needle:"could not find the requested resource" output
 ;;
 
 let logs ~ctx ~pod ~namespace ~container =

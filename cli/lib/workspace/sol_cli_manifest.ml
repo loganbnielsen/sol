@@ -164,9 +164,7 @@ let create_idempotent ~ctx ~file =
   | Ok _ -> Ok ()
   | Error (Sol_cli_process.Non_zero r) ->
     let detail = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in
-    if Sol_cli_port_forward.string_contains ~needle:"AlreadyExists" detail
-    then Ok ()
-    else Error detail
+    if Sol_cli_string.contains ~needle:"AlreadyExists" detail then Ok () else Error detail
   | Error err -> Error (Sol_cli_process.error_to_string err)
 ;;
 

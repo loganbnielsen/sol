@@ -456,7 +456,7 @@ topic = ["payments.charged"]
       Alcotest.(check bool)
         "names the unknown key"
         true
-        (Sol_cli_port_forward.string_contains
+        (Sol_cli_string.contains
            ~needle:"\"topic\""
            (Sol_cli_toml.parse_error_to_string e)))
 ;;

@@ -1,11 +1,4 @@
-let contains needle haystack =
-  try
-    ignore (Str.search_forward (Str.regexp_string needle) haystack 0);
-    true
-  with
-  | Not_found -> false
-;;
-
+let contains needle haystack = Sol_cli_string.contains ~needle haystack
 let check_bool = Alcotest.(check bool)
 
 let test_qualified_receiver_types () =

@@ -142,10 +142,7 @@ let establish
        declaring it. Preflight asserts the declaration; the destructive recovery
        and concurrency checks are HARDEN-002's. *)
     let capabilities = Sol_cli_provider_capabilities.capabilities_of target.provider in
-    let declared = function
-      | Some value -> String.trim value <> ""
-      | None -> false
-    in
+    let declared value = Option.is_some (Sol_cli_string.non_blank_opt value) in
     (* REFAC-098: the lock is declared in the provider's own block, where the
        provider's backend does not lock natively. *)
     let locked =
@@ -174,10 +171,7 @@ let establish
        the cluster-creator admin, plus an explicitly restricted public endpoint.
        Sol generates the least-privilege policy contracts; the operator supplies
        the role ARNs. *)
-    let present = function
-      | Some s -> String.trim s <> ""
-      | None -> false
-    in
+    let present value = Option.is_some (Sol_cli_string.non_blank_opt value) in
     let missing_roles =
       List.filter_map
         (fun (name, value) -> if present value then None else Some name)
@@ -194,7 +188,7 @@ let establish
         Error
           "`cluster_endpoint_cidr` is 0.0.0.0/0; a production target must restrict the \
            public Kubernetes API endpoint to a specific CIDR"
-      | Some c when String.trim c <> "" -> Ok (String.trim c)
+      | Some c when not (Sol_cli_string.is_blank c) -> Ok (String.trim c)
       | _ ->
         Error
           "`cluster_endpoint_cidr` is missing; declare the one CIDR allowed to reach the \

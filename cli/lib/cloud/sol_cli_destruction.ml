@@ -9,21 +9,6 @@
    receives no ARN, self-link, resource ID or query recipe, only verdicts. *)
 
 (* Text helpers the providers' evidence classifiers share. *)
-let contains ~needle haystack =
-  let needle_length = String.length needle in
-  let haystack_length = String.length haystack in
-  let rec at i =
-    if needle_length = 0
-    then true
-    else if i + needle_length > haystack_length
-    then false
-    else if String.sub haystack i needle_length = needle
-    then true
-    else at (i + 1)
-  in
-  at 0
-;;
-
 let abbreviate ?(limit = 400) text =
   let text = String.trim text in
   if String.length text <= limit then text else String.sub text 0 limit ^ "..."

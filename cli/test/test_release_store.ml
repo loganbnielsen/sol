@@ -117,14 +117,6 @@ let verbs log =
   List.filter (fun l -> not (String.equal (String.trim l) "")) lines
 ;;
 
-let contains_needle ~needle haystack =
-  try
-    ignore (Str.search_forward (Str.regexp_string needle) haystack 0);
-    true
-  with
-  | Not_found -> false
-;;
-
 (* Absent object -> create, with no resourceVersion, and never apply/patch. *)
 let test_absent_object_is_created () =
   with_fake_kubectl ~mode:"missing" ~live_json:"" (fun log ->
@@ -139,8 +131,14 @@ let test_absent_object_is_created () =
       [ "get rv=no"; "create rv=no" ]
       calls;
     let all = String.concat "\n" calls in
-    Alcotest.(check bool) "never applied" false (contains_needle ~needle:"apply" all);
-    Alcotest.(check bool) "never patched" false (contains_needle ~needle:"patch" all))
+    Alcotest.(check bool)
+      "never applied"
+      false
+      (Sol_cli_string.contains ~needle:"apply" all);
+    Alcotest.(check bool)
+      "never patched"
+      false
+      (Sol_cli_string.contains ~needle:"patch" all))
 ;;
 
 (* Identical content -> no write at all. This is the common case for the
@@ -177,8 +175,14 @@ let test_changed_object_is_replaced_with_a_precondition () =
       [ "get rv=no"; "replace rv=yes" ]
       calls;
     let all = String.concat "\n" calls in
-    Alcotest.(check bool) "never applied" false (contains_needle ~needle:"apply" all);
-    Alcotest.(check bool) "never patched" false (contains_needle ~needle:"patch" all))
+    Alcotest.(check bool)
+      "never applied"
+      false
+      (Sol_cli_string.contains ~needle:"apply" all);
+    Alcotest.(check bool)
+      "never patched"
+      false
+      (Sol_cli_string.contains ~needle:"patch" all))
 ;;
 
 (* A permission failure is not absence: it must fail, and must not be answered
@@ -193,13 +197,13 @@ let test_permission_failure_is_not_absence () =
        Alcotest.(check bool)
          "the error names the read"
          true
-         (contains_needle ~needle:"kubectl get configmap" msg));
+         (Sol_cli_string.contains ~needle:"kubectl get configmap" msg));
     let calls = verbs log in
     Alcotest.(check (list string)) "a get and nothing else" [ "get rv=no" ] calls;
     Alcotest.(check bool)
       "no create was attempted"
       false
-      (contains_needle ~needle:"create" (String.concat "\n" calls)))
+      (Sol_cli_string.contains ~needle:"create" (String.concat "\n" calls)))
 ;;
 
 (* REFAC-116: [Sol_cli_kubectl.get] reports a failed kubectl as [Error Non_zero],
@@ -216,7 +220,7 @@ let test_missing_release_is_not_found () =
       Alcotest.(check bool)
         ("names it not found: " ^ e)
         true
-        (contains_needle ~needle:"release r-aaaabbbbccccdddd not found" e))
+        (Sol_cli_string.contains ~needle:"release r-aaaabbbbccccdddd not found" e))
 ;;
 
 (* ...while a failure that is not absence stays a failure. *)
@@ -230,11 +234,11 @@ let test_forbidden_release_read_is_not_absence () =
       Alcotest.(check bool)
         ("not reported as absence: " ^ e)
         false
-        (contains_needle ~needle:"not found" e);
+        (Sol_cli_string.contains ~needle:"not found" e);
       Alcotest.(check bool)
         ("carries kubectl's reason: " ^ e)
         true
-        (contains_needle ~needle:"forbidden" e))
+        (Sol_cli_string.contains ~needle:"forbidden" e))
 ;;
 
 let () =

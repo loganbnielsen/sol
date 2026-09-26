@@ -66,19 +66,6 @@ let error_or_fail = function
   | Ok _ -> Alcotest.fail "expected the resolution to fail closed"
 ;;
 
-let contains ~needle haystack =
-  let n = String.length needle
-  and h = String.length haystack in
-  let rec loop i =
-    if i + n > h
-    then false
-    else if String.sub haystack i n = needle
-    then true
-    else loop (i + 1)
-  in
-  loop 0
-;;
-
 (* The local entry point names Sol's own cluster literally -- it does not load a
    target, and it does not consult anything ambient. *)
 let test_local_entry_point_is_the_literal_local_cluster () =
@@ -108,8 +95,11 @@ let test_top_level_without_target_fails_closed_naming_local_form () =
     error_or_fail
       (Sol_cli_destination.resolve ~command:"status" ~local:false ~target:None)
   in
-  check_bool "names --target" true (contains ~needle:"--target" message);
-  check_bool "names the local spelling" true (contains ~needle:"sol local status" message)
+  check_bool "names --target" true (Sol_cli_string.contains ~needle:"--target" message);
+  check_bool
+    "names the local spelling"
+    true
+    (Sol_cli_string.contains ~needle:"sol local status" message)
 ;;
 
 let test_local_form_message_is_command_specific () =
@@ -120,7 +110,7 @@ let test_local_form_message_is_command_specific () =
   check_bool
     "names rollback's local spelling, not status's"
     true
-    (contains ~needle:"sol local rollback" message)
+    (Sol_cli_string.contains ~needle:"sol local rollback" message)
 ;;
 
 (* The named entry point takes its destination from the target's configuration. *)
@@ -152,7 +142,7 @@ let test_target_without_context_fails_closed () =
     check_bool
       "the message says what to add"
       true
-      (contains ~needle:"kube_context" message))
+      (Sol_cli_string.contains ~needle:"kube_context" message))
 ;;
 
 (* The reserved execution mode is not reachable through the named entry point:
@@ -171,7 +161,7 @@ let test_reserved_local_target_points_at_local_form () =
     check_bool
       "redirects to the local spelling"
       true
-      (contains ~needle:"sol local <command>" message))
+      (Sol_cli_string.contains ~needle:"sol local <command>" message))
 ;;
 
 (* Same inputs, same destination: resolution is a function of how the command

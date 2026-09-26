@@ -20,12 +20,7 @@
    structurally by internal/ci/check_runtime_secret_identity.sh, because the
    migration Job's renderer lives in the CLI binary rather than the library. *)
 
-let contains haystack needle =
-  let n = String.length needle
-  and h = String.length haystack in
-  let rec go i = i + n <= h && (String.sub haystack i n = needle || go (i + 1)) in
-  go 0
-;;
+let contains haystack needle = Sol_cli_string.contains ~needle haystack
 
 let assert_contains label haystack needle =
   if not (contains haystack needle)
