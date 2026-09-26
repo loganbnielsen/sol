@@ -25,7 +25,7 @@ let run scope =
     | None -> Sol_cli_check.run ()
     | Some requested ->
       let services =
-        match Sol_cli_manifest.discover_services_result () with
+        match Sol_cli_manifest.discover_services () with
         | Ok services -> services
         | Error e -> fail (Sol_cli_manifest.discover_error_to_string e)
       in

@@ -406,7 +406,9 @@ let run (req : Sol_cli_command_request.up_request) =
       (Sol_cli_workload_selection.resolve_nonempty
          ~none:"no services found in app/ with a Dockerfile"
          req.scope
-         (discover_services ()))
+         (Sol_cli_exit.or_exit_with
+            Sol_cli_manifest.discover_error_to_string
+            (Sol_cli_manifest.discover_services ())))
   in
   let run_log = Sol_cli_run_log.create ~prefix:"up" () in
   Printf.printf

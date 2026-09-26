@@ -32,3 +32,22 @@ Code below the command edge ends the process instead of returning an error. `rg 
 - Each command's body composes with `let*`; `rg -n 'or_exit' cli/bin` lists only one call per command entry point, with any exception named in the notes.
 - No `ignore` of a consumer's output in `cmd_assets.ml`.
 - Demo/example: not applicable (internal); state it.
+
+## Progress
+
+**Premise verified (2026-09-26):** `rg -c '\bexit [0-9]' cli/lib --glob '*.ml'` still counted exits in component values, observability, manifest discovery and AWS destruction before part A.
+
+### Part A — library results and `sol assets` (landed)
+
+- `Sol_cli_platform_component.merged_values_yaml`, `Sol_cli_dev_observability.{dashboard_configmap_yaml, render_alloy_config, alloy_values_yaml}` and `Sol_cli_manifest.discover_services` return `result`; the exiting variants are gone.
+- `Sol_cli_aws_destruction.final_snapshot_interval_s` was a top-level value that exited while the module was being initialised, so a malformed `SOL_DESTROY_SNAPSHOT_INTERVAL_S` made **every** `sol` command exit 2, `sol --version` included. It is now a function returning `result`; a final-snapshot destroy with a bad interval is refused as `Preparation_failed … Block_destroy`. The offline lifecycle harness covers both halves.
+- `sol local up` reads its component values, alloy values and dashboards once (`read_local_assets`) before deploying.
+- `sol assets` collects every check into a `(string, string) result` and prints all failures, then "N of M asset checks failed" (exit 1). A dune rule runs it against a SOL_HOME that has lost two assets and expects at least two FAIL lines. Its body no longer `ignore`s any consumer output.
+- The call sites that still convert with a temporary `Sol_cli_exit.or_exit`/`or_exit_with` in command bodies are the part B work list.
+
+### Part B — remaining
+
+- Make each command's `run` a `let*` chain returning `(unit, Sol_cli_exit.failure) result`, with `exit_on` called once in the term. This removes the part A temporaries.
+- `cmd_cloud_tf`: resolve the assets once and pass them down (`asset_root`/`workdir` still call `resolve_or_exit`).
+- `Sol_cli_cmd_new` and `Sol_cli_workspace` (line 179) still exit from `cli/lib`.
+- Expected to remain: the `Sol_cli_supervised` exits (the supervisor process's own exit codes) and `Sol_cli_exit` itself. The `exit` in `sol_cli_port_forward.ml` and `sol_cli_docker.ml` is in shell text and comments, not OCaml.
