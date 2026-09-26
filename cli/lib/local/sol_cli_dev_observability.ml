@@ -54,7 +54,7 @@ datasources:
    source of Sol's four generic Grafana dashboards -- both `sol local infra up`
    (here) and platform/cloud/modules/platform/main.tf's `kubernetes_config_map.grafana_dashboards`
    (via Terraform's own `file(...)`) load from the same files, instead of
-   a second, hand-synced OCaml copy per dashboard. Resolves SOL_HOME
+   a second, hand-synced OCaml copy per dashboard. Resolves Sol's assets
    itself (same pattern as Sol_cli_platform_component.merged_values_yaml
    and render_alloy_config), reading each real file, not a fixture.
 
@@ -64,12 +64,8 @@ datasources:
    scalar discards trailing newlines on parse either way, confirmed live
    (`kubectl apply` on the new render came back "unchanged" against the
    cluster's existing ConfigMap). *)
-let read_dashboard_json ~sol_home name =
-  let path =
-    Filename.concat
-      sol_home
-      (Filename.concat "platform/shared/observability/dashboards" name)
-  in
+let read_dashboard_json ~assets name =
+  let path = Sol_cli_platform_assets.dashboard assets name in
   let ic = open_in_bin path in
   Fun.protect
     ~finally:(fun () -> close_in_noerr ic)
@@ -77,18 +73,8 @@ let read_dashboard_json ~sol_home name =
 ;;
 
 let dashboard_configmap_yaml ~namespace =
-  let sol_home =
-    match Sol_cli_cmd_new.infer_sol_home () with
-    | Some dir -> dir
-    | None ->
-      Printf.eprintf
-        "error: cannot locate the Sol monorepo root to read \
-         platform/shared/observability/dashboards/*.json.\n";
-      Printf.eprintf "  Set SOL_HOME to your Sol checkout and re-run:\n";
-      Printf.eprintf "    export SOL_HOME=/path/to/sol\n";
-      exit 1
-  in
-  let dashboard name = read_dashboard_json ~sol_home name in
+  let assets = Sol_cli_platform_assets.resolve_or_exit () in
+  let dashboard name = read_dashboard_json ~assets name in
   configmap_yaml
     ~name:"sol-grafana-dashboards"
     ~namespace
@@ -253,15 +239,13 @@ let basic_auth_if_start =
 let basic_auth_if_end = "%{ endif ~}\n"
 
 let render_alloy_config
-      ~sol_home
+      ~assets
       ~taxonomy_labels
       ~loki_push_url
       ~loki_push_basic_auth_username
       ~loki_push_basic_auth_password
   =
-  let path =
-    Filename.concat sol_home "platform/shared/observability/alloy/logs.alloy.tftpl"
-  in
+  let path = Sol_cli_platform_assets.alloy_template assets in
   let ic = open_in_bin path in
   let content =
     Fun.protect
@@ -301,22 +285,10 @@ let render_alloy_config
    basic auth (`sol local infra up` has no "external backend" concept), the same
    fixed taxonomy label set platform/cloud/modules/platform/main.tf's
    local.observability_taxonomy_labels passes for every profile.
-   Resolves the Sol monorepo root itself (same resolution
-   Sol_cli_platform_component.merged_values_yaml and `sol cloud`'s
-   resolve_sol_home already use) rather than pushing that onto the
-   caller. *)
+   Resolves Sol's platform assets itself (Sol_cli_platform_assets, DEC-049)
+   rather than pushing that onto the caller. *)
 let alloy_values_yaml () =
-  let sol_home =
-    match Sol_cli_cmd_new.infer_sol_home () with
-    | Some dir -> dir
-    | None ->
-      Printf.eprintf
-        "error: cannot locate the Sol monorepo root to read \
-         platform/shared/observability/alloy/logs.alloy.tftpl.\n";
-      Printf.eprintf "  Set SOL_HOME to your Sol checkout and re-run:\n";
-      Printf.eprintf "    export SOL_HOME=/path/to/sol\n";
-      exit 1
-  in
+  let assets = Sol_cli_platform_assets.resolve_or_exit () in
   (* CODE_LAYER-006: found along the way -- `content: |-`'s own indent here
      is 4 spaces (nested under alloy/configMap), so indent_block's flat
      4-space content indent left the block scalar body at the SAME column
@@ -334,7 +306,7 @@ let alloy_values_yaml () =
 %s
 |}
     (render_alloy_config
-       ~sol_home
+       ~assets
        ~taxonomy_labels:[ "workspace"; "domain"; "service"; "primitive"; "release" ]
        ~loki_push_url:"http://loki:3100/loki/api/v1/push"
        ~loki_push_basic_auth_username:""

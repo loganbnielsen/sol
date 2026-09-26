@@ -776,11 +776,15 @@ let test_platform_root_selection () =
   Alcotest.(check string)
     "AWS has a root that declares the S3 backend"
     "platform/cloud/aws/platform"
-    (L.platform_root Sol_cli_provider.Aws);
+    (Sol_cli_platform_assets.cloud_root_rel
+       Sol_cli_provider.Aws
+       Sol_cli_platform_assets.Platform);
   Alcotest.(check string)
     "GCP has a root that declares the GCS backend"
     "platform/cloud/gcp/platform"
-    (L.platform_root Sol_cli_provider.Gcp);
+    (Sol_cli_platform_assets.cloud_root_rel
+       Sol_cli_provider.Gcp
+       Sol_cli_platform_assets.Platform);
   Alcotest.(check string)
     "an address goes through the module that reaches the definition"
     "module.platform.kubernetes_namespace.cert_manager"
@@ -788,7 +792,12 @@ let test_platform_root_selection () =
   Alcotest.(check bool)
     "the two providers do not select the same platform root"
     true
-    (L.platform_root Sol_cli_provider.Aws <> L.platform_root Sol_cli_provider.Gcp)
+    (Sol_cli_platform_assets.cloud_root_rel
+       Sol_cli_provider.Aws
+       Sol_cli_platform_assets.Platform
+     <> Sol_cli_platform_assets.cloud_root_rel
+          Sol_cli_provider.Gcp
+          Sol_cli_platform_assets.Platform)
 ;;
 
 let test_deferred () =

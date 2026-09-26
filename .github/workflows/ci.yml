@@ -304,6 +304,14 @@ jobs:
       - name: Examples self-containment mutation test
         run: bash internal/ci/test_examples_self_contained.sh
 
+      - name: Sol's assets are located only by Sol_cli_platform_assets (REFAC-114)
+        # Unconditional: a command that finds Sol's source tree itself works only
+        # from a checkout, which DEC-049 rules out for an installed release.
+        run: bash internal/ci/check_platform_assets_owner.sh
+
+      - name: Platform-assets ownership mutation test
+        run: bash internal/ci/test_platform_assets_owner.sh
+
       - name: Framework spec signature guard (DOCS-017)
         # Unconditional, and deliberately so: a spec-only change is classified
         # docs-only, and a spec-only change is exactly what drifts.

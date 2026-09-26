@@ -6,7 +6,7 @@
 
 let check_str = Alcotest.(check string)
 
-(* Sol_cli_cmd_new.is_sol_home requires these two files to exist under a
+(* Sol_cli_platform_assets.is_checkout requires these two files to exist under a
    candidate SOL_HOME directory. *)
 let sol_home_markers =
   [ "framework/ocaml/sol-svc/lib/dune"; "framework/ocaml/kafka-eio-service/lib/dune" ]

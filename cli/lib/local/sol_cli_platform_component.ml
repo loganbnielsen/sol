@@ -1,7 +1,5 @@
 (* REFAC-102: every component's values live in one file, keyed
    <component>.{common,local,durable}. *)
-let components_file sol_home = Filename.concat sol_home "platform/shared/components.json"
-
 let read_components path =
   if not (Sys.file_exists path)
   then (
@@ -51,18 +49,11 @@ let rec deep_merge (base : Yojson.Safe.t) (over : Yojson.Safe.t) : Yojson.Safe.t
 ;;
 
 let merged_values_yaml ~component ~profile =
-  let sol_home =
-    match Sol_cli_cmd_new.infer_sol_home () with
-    | Some dir -> dir
-    | None ->
-      Printf.eprintf
-        "error: cannot locate the Sol monorepo root to read \
-         platform/shared/components.json.\n";
-      Printf.eprintf "  Set SOL_HOME to your Sol checkout and re-run:\n";
-      Printf.eprintf "    export SOL_HOME=/path/to/sol\n";
-      exit 1
+  let components =
+    read_components
+      (Sol_cli_platform_assets.components_json
+         (Sol_cli_platform_assets.resolve_or_exit ()))
   in
-  let components = read_components (components_file sol_home) in
   let common = layer components ~component ~name:"common" in
   let profile_json = layer components ~component ~name:profile in
   Yojson.Safe.pretty_to_string (deep_merge common profile_json)

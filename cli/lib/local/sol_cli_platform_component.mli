@@ -12,7 +12,6 @@
 
     A layer the file does not name (a component with nothing to say for that
     profile, or a component it does not list) is an empty object, not an error.
-    Exits with an error message if the Sol monorepo root can't be located (same
-    resolution as [sol cloud plan/apply], see {!Sol_cli_cmd_new.infer_sol_home}),
-    or if [components.json] is missing or isn't valid JSON. *)
+    Exits with an error message if Sol's platform assets can't be located
+    ({!Sol_cli_platform_assets.resolve}), or if [components.json] is missing or isn't valid JSON. *)
 val merged_values_yaml : component:string -> profile:string -> string

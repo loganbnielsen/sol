@@ -22,11 +22,6 @@ val target : cloud_target -> Sol_cli_config.target
 val cloud_backend : cloud_target -> string list
 val platform_backend : cloud_target -> string list
 
-(** The platform root for a provider, relative to the Sol home:
-    [platform/cloud/<provider>/platform], a thin root over the shared module
-    (REFAC-100). *)
-val platform_root : Sol_cli_provider.t -> string
-
 (** A resource address inside a platform root. Every root calls the shared
     definition as [module.platform], so the prefix is applied here rather than at
     each `-target`. *)

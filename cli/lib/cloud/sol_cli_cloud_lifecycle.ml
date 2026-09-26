@@ -73,11 +73,8 @@ let cloud_target target =
    (`platform/cloud/modules/platform`) through a thin root of its own,
    `platform/cloud/<provider>/platform`, which exists because a Terraform root's
    backend type is part of its own configuration. The root and the address prefix
-   are therefore one rule for every provider, not per-provider capabilities. *)
-let platform_root provider =
-  Printf.sprintf "platform/cloud/%s/platform" (Sol_cli_provider.to_string provider)
-;;
-
+   are therefore one rule for every provider, not per-provider capabilities. Where
+   that root lives is Sol_cli_platform_assets.cloud_root's (REFAC-114). *)
 (* A resource address inside a platform root: every root calls the shared
    definition as `module.platform`. *)
 let platform_address address = "module.platform." ^ address

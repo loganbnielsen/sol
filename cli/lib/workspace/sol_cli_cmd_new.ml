@@ -6,60 +6,6 @@ let write = Sol_cli_scaffold.write_file
 let norm = Sol_cli_scaffold.normalize
 let cap = Sol_cli_scaffold.capitalize_name
 
-(* A dune build context mirrors source directories under `_build/...`, including
-   the two framework sentinels `is_sol_home` looks for. Never accept a build
-   context as Sol home — otherwise CLI tests run from
-   `_build/default/cli/test` resolve SOL_HOME to the build tree instead of
-   the source checkout/release bundle. *)
-let contains_build_context dir = String.split_on_char '/' dir |> List.mem "_build"
-
-let is_sol_home dir =
-  (not (contains_build_context dir))
-  && Sys.file_exists (Filename.concat dir "framework/ocaml/sol-svc/lib/dune")
-  && Sys.file_exists (Filename.concat dir "framework/ocaml/kafka-eio-service/lib/dune")
-;;
-
-let rec realpath path =
-  let path =
-    if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path else path
-  in
-  try
-    let target = Unix.readlink path in
-    let target =
-      if Filename.is_relative target
-      then Filename.concat (Filename.dirname path) target
-      else target
-    in
-    realpath target
-  with
-  | Unix.Unix_error ((Unix.EINVAL | Unix.ENOENT), _, _) -> path
-;;
-
-let rec find_ancestor pred dir =
-  if pred dir
-  then Some dir
-  else (
-    let parent = Filename.dirname dir in
-    if parent = dir then None else find_ancestor pred parent)
-;;
-
-let infer_sol_home () =
-  match Sys.getenv_opt "SOL_HOME" with
-  | Some dir when is_sol_home dir -> Some dir
-  | Some "" | None ->
-    (* An empty string is the closest thing OCaml's Unix.putenv has to
-       "unset" (there's no portable unsetenv) -- CODE_LAYER-006 found this
-       the hard way when a test's own cleanup left SOL_HOME="" behind for
-       a later test in the same process. Treat it the same as truly unset
-       rather than as an explicit (and here, always-invalid) override. *)
-    let exe =
-      try Unix.readlink "/proc/self/exe" with
-      | Unix.Unix_error _ -> Sys.executable_name
-    in
-    find_ancestor is_sol_home (Filename.dirname (realpath exe))
-  | Some _ -> None (* invalid SOL_HOME — NOTE in new_workspace covers this *)
-;;
-
 (* DEC-025: `sol new` used to symlink the framework source into the generated
    workspace (vendor/framework). That made the framework's Dune files part of the
    *consumer's* Dune project, which is precisely the coupling DEC-024 forbids --

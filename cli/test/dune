@@ -59,6 +59,7 @@
   test_alerting
   test_workspace
   test_platform_component
+  test_platform_assets
   test_image_ref
   test_local_infra
   test_cloud_lifecycle
