@@ -717,3 +717,23 @@ resources in `platform_provisioner_rbac.tf` write the same Kubernetes name
 (`sol-platform-provisioner`), so the targeted prerequisites step creates the object and the full
 apply cannot. Deterministic for a fresh GCP target and previously masked by the cert-manager
 failure. No fix attempted during the run.
+
+## FND-0061 fix landed — offline only (2026-09-26, `INFRA-089`)
+
+The RoleBinding duplication that failed Attempt 11's full platform apply is fixed by giving the one
+Kubernetes object one Terraform owner: both pairs (`platform_provisioner` and
+`platform_provisioner_cluster`) now carry the group subject and the GCP provisioner subject, the
+duplicate `_gcp` resources and the two AWS `moved` blocks naming them are deleted, and
+`check_kubernetes_object_ownership.sh` enforces the invariant with nine mutation-tested cases.
+
+**Nothing here is QUALIFIED.** `FND-0061` is `FIXED_UNQUALIFIED`: static and offline only.
+
+Also corrected in the same unit, because it misled Attempt 11's own record: the qualification
+classifier now prefers the failed operation's own error (a Terraform `already exists` → 
+`TERRAFORM_ALREADY_EXISTS`) over ambient cluster evidence, and labels the ambient scheduling
+fallback `SCHEDULING_AMBIENT` rather than `SCHEDULING`.
+
+The next authorized live run is a fresh target whose discriminator is: prerequisites apply and full
+`platform-apply` both complete; each platform namespace's RoleBinding and the ClusterRoleBinding
+carry both subjects with one owner; and the install continues past this point toward `Ready` and
+Ready-state destruction.
