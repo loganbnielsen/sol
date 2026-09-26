@@ -694,3 +694,26 @@ Succeeds → Helm release succeeds → the platform install continues. On succes
 toward `Ready` and Ready-state destruction rather than stopping at cert-manager; if another
 component becomes the first blocker, its evidence is preserved and it is classified rather than
 repaired in-run.
+
+## Attempt 11 — cert-manager qualified live; next blocker exposed (2026-09-26, `main @ 17afc4b2`)
+
+Full record: `internal/qualification/records/2026-09-26-gcp-attempt11-cert-manager-qualified-new-blocker.md`
+(bundle `/tmp/sol-gcp-qual-11`). Fresh target `qual11/gcp/us-central1`, cluster `sol-qual-gcp-11`.
+
+| Boundary | Result |
+|---|---|
+| CloudBootstrap / CloudReady | created — GKE `RUNNING`, Cloud SQL `RUNNABLE` (`terraform-apply ok 549.6s`) |
+| Platform install | **failed at `platform-apply`** (201.6s) after `platform-prerequisites-apply ok` (143.7s) |
+| `FND-0060` (leader election / caBundle / check) | **QUALIFIED live** — all six transitions observed in the positive direction |
+| `FND-0010` (readiness budget) | **QUALIFIED live** on its narrow claim — the check completed inside the budget (release complete in 2m13s) |
+| `PlatformInstalling → Ready` | **not reached** |
+| Ready-state destruction (`INV-DESTROY-1`/`-4` Ready cases) | **not observed** |
+| Failed-install destruction + authority bracket | reproduced: acquisition → `platform-destroy ok (129.1s)` → release → substrate `terraform-destroy ok (345.2s)`; both roots empty (cloud 0/serial 16, platform 0/serial 12) |
+| Independent verification | `teardown verified: absent`; durable bucket + zone PRESENT; delegation resolving; no billable residue |
+| Manual/emergency action | none |
+
+**New frontier:** `FND-0061` / `INFRA-089` (BACKLOG, decision required) — two `kubernetes_role_binding`
+resources in `platform_provisioner_rbac.tf` write the same Kubernetes name
+(`sol-platform-provisioner`), so the targeted prerequisites step creates the object and the full
+apply cannot. Deterministic for a fresh GCP target and previously masked by the cert-manager
+failure. No fix attempted during the run.

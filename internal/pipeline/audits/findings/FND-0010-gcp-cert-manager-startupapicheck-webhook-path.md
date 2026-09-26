@@ -5,13 +5,12 @@
   (established 2026-09-26 from Attempt 9's product log + the pinned chart upstream; see
   *Cause established* below). The API-server → webhook *reachability* branch this finding
   opened with is refuted: the x509 proves the API server reached the webhook.
-- **State:** `FIXED_UNQUALIFIED` — the remedy (give the release the check's own designed budget) is
-  implemented, and Attempt 10 **validates it live in the only sense it claims**: the release no
-  longer cuts the check short and `startupapicheck` received its full 10-minute polling window
-  (601s of polls, 15:17:28 → 15:27:29). It does **not** demonstrate successful cert-manager
-  readiness or TLS trust — the check still failed, because the CA bundle was never injected. That
-  remaining chain is FND-0060, and its fix is `INFRA-088`; no qualification is claimed here until a
-  run shows the check **Succeed** and the install continuing.
+- **State:** `QUALIFIED` (live, 2026-09-26, GCP Attempt 11 at `main @ 17afc4b2`) — on its own
+  narrow claim: cert-manager's trust/readiness process **completed inside the budget this finding
+  introduced**. The check's preconditions were met (leadership acquired, CA injected, `caBundle`
+  populated) and the release completed in 2m13s within a 600s-per-attempt / 1800s-release budget,
+  the post-install Job succeeding (`hook-succeeded` removed it). Not qualified by the absence of the
+  old x509 signature, which Attempt 10 had already shown to be insufficient on its own.
 - **First identified:** 2026-09-19 (GCP Attempt 4; analysed in this pass)
 - **Last verified:** 2026-09-26, `main @ 3d3eb0aa`, from the Attempt 9 evidence bundle
 - **Provider:** GCP / GKE (Autopilot, private nodes)
@@ -285,3 +284,18 @@ establish — is not yet demonstrated by any run, and this finding is not qualif
 it.
 
 **Falsified in this pass:** `FND-0060` (the ~9½-minute "scheduling delay" reading of the same run).
+
+## Live qualification — GCP Attempt 11 (2026-09-26)
+
+The remedy this finding introduced is a budget: the release must wait as long as cert-manager's own
+readiness check is designed to. Attempt 11 shows the check **completing** inside that budget, with
+the failure conditions of Attempt 10 absent and the readiness mechanism actually working:
+
+- leadership acquired (`successfully acquired lease cert-manager/cert-manager-controller`),
+- the webhook's `caBundle` injected and populated (896 bytes),
+- the post-install Job succeeding — cert-manager's release reports `Creation complete after 2m13s`,
+  and the Job is gone because the chart's `hook-succeeded` policy removes it,
+- all of it inside the 600s-per-attempt, 1800s-release budget this finding set.
+
+**Qualified** on that narrow claim. This does **not** claim anything about the rest of the platform
+install: the run stopped later, at the full platform apply (FND-0061).
