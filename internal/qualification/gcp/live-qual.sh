@@ -538,7 +538,10 @@ probe_service_account() { # probe_service_account <class> <email>
       verdict=PRESENT; detail="active in the project's service-account list"
     else
       verdict=ABSENT
-      if rg -q 'PERMISSION_DENIED|NOT_FOUND|Unknown service account' \
+      # Portable on purpose: this runs on bare CI runners too, where ripgrep is not
+      # guaranteed -- and a missing tool would silently take the other branch, which is how
+      # the first revision of this line failed there.
+      if grep -qE 'PERMISSION_DENIED|NOT_FOUND|Unknown service account' \
            "$LOG_DIR/inventory-$class.describe.log" 2>/dev/null; then
         detail="not in the active list, and its describe is unreadable (deleted identity) — see the raw logs"
       else
