@@ -422,6 +422,19 @@ jobs:
       - name: whoami capture scrubber (DEC-040)
         run: internal/ci/test_scrub_whoami_capture.sh
 
+      # FEAT-101 / DEC-049: build the real release archive and prove it works
+      # installed, where it cannot see this checkout. The runner digest is a
+      # fixture: the smoke checks that the binary selects exactly what its bundle
+      # names; publishing is the release workflow's.
+      - name: Installed-release smoke (FEAT-101)
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: |
+          cp _build/default/cli/bin/main.exe "$RUNNER_TEMP/sol-dev"
+          runner="ghcr.io/example/sol-migration-runner@sha256:$(printf '0%.0s' $(seq 64))"
+          archive="$(opam exec -- internal/tooling/scripts/build-release-bundle.sh \
+            --version v0.0.0-ci --runner-image "$runner" --out "$RUNNER_TEMP/release" | tail -1)"
+          internal/ci/smoke_installed_release.sh "$archive" v0.0.0-ci "$runner" "$RUNNER_TEMP/sol-dev"
+
   # FRIC-009: smallest check that would have caught a regression like
   # FRIC-007 (every generated service permanently broken on a fresh
   # substrate) — nothing above exercises the golden path against live

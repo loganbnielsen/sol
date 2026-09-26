@@ -41,8 +41,9 @@ Sol owns the server lifecycle, graceful shutdown, structured logging, metrics, t
 ```bash
 # Install (Linux x86_64) — replace vX.Y.Z with the latest release:
 # https://github.com/loganbnielsen/sol/releases
-curl -L https://github.com/loganbnielsen/sol/releases/latest/download/sol-vX.Y.Z-linux-x86_64.tar.gz | tar xz
-export PATH="$PWD/sol-vX.Y.Z-linux-x86_64/bin:$PATH"
+curl -L https://github.com/loganbnielsen/sol/releases/download/vX.Y.Z/sol-vX.Y.Z-linux-x86_64.tar.gz | tar xz
+export PATH="$PWD/sol-vX.Y.Z/bin:$PATH"
+sol assets                # check the install: where its assets come from, and that each is there
 
 sol local infra up        # local cluster: Redpanda, PostgreSQL, Loki, Prometheus, Grafana
 sol new workspace pluto
@@ -55,6 +56,14 @@ curl localhost:8080/health
 ```
 
 That's a real HTTP service, backed by a Kafka worker and PostgreSQL, with logs and metrics already flowing. Continue with the **[Tutorial](docs/guides/TUTORIAL.md)** for the full walkthrough — publishing events, database migrations, Grafana dashboards, production deploys, and rollbacks.
+
+A release is self-contained: `sol-vX.Y.Z/bin/sol` uses only the assets in
+`sol-vX.Y.Z/share/sol/vX.Y.Z/` (Terraform roots, Helm values, dashboards) and the
+migration-runner image published with that version, pinned by digest
+([DEC-049](internal/pipeline/tickets/DONE/DEC-049.md)). It needs glibc 2.35 or newer
+(Ubuntu 22.04+) and the `libpq5` and `libgmp10` libraries. `sol cloud` runs
+Terraform in those bundled roots, so keep the extracted directory writable by
+the user who runs it.
 
 ### Building from source (contributors)
 

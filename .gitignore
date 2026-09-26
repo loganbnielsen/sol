@@ -25,3 +25,6 @@ override.tf.json
 
 # sol up materialises a build context next to the workspace
 *.docker-ctx/
+
+# FEAT-101: installed-release smoke scratch (removed on exit)
+.smoke-reachback/
