@@ -540,13 +540,10 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
              "no registry configured for this target -- pass --registry or set \
               target.registry in sol.yml.")
     in
-    let sol_home =
-      match Sol_cli_cmd_new.infer_sol_home () with
-      | Some dir -> dir
-      | None ->
-        fatal
-          "cannot locate the Sol checkout to build the migration runner image -- set \
-           SOL_HOME."
+    let (Sol_cli_platform_assets.Build_from_source { context = runner_context }) =
+      match Sol_cli_platform_assets.resolve () with
+      | Ok assets -> Sol_cli_platform_assets.migration_runner assets
+      | Error e -> fatal (Sol_cli_platform_assets.error_to_string e)
     in
     let workspace = Filename.basename (Sys.getcwd ()) in
     let namespace, k8s_name = pick_namespace_and_service ~workspace in
@@ -570,7 +567,7 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
       in
       Printf.printf "Building migration runner image %s...\n%!" image;
       let dockerfile = write_temp_file ~suffix:".Dockerfile" sol_cli_dockerfile in
-      (match Sol_cli_docker.build ~tag:image ~dockerfile ~context:sol_home with
+      (match Sol_cli_docker.build ~tag:image ~dockerfile ~context:runner_context with
        | Error e -> fatal_p "docker build: %s" (Sol_cli_process.error_to_string e)
        | Ok () -> ());
       (try Sys.remove dockerfile with
@@ -729,12 +726,12 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
    migrations. The deploy path fails closed on [Error] rather than accidentally
    skipping the check. *)
 let push_runner_image ~workspace ~k8s_name ~registry =
-  match Sol_cli_cmd_new.infer_sol_home () with
-  | None ->
-    Error
-      "cannot locate the Sol checkout to build the migration runner image -- set \
-       SOL_HOME."
-  | Some sol_home ->
+  match Sol_cli_platform_assets.resolve () with
+  | Error e -> Error (Sol_cli_platform_assets.error_to_string e)
+  | Ok assets ->
+    let (Sol_cli_platform_assets.Build_from_source { context = runner_context }) =
+      Sol_cli_platform_assets.migration_runner assets
+    in
     let image =
       Sol_cli_deployment_plan.image_ref
         ~registry
@@ -744,7 +741,7 @@ let push_runner_image ~workspace ~k8s_name ~registry =
     in
     let dockerfile = write_temp_file ~suffix:".Dockerfile" sol_cli_dockerfile in
     let result =
-      match Sol_cli_docker.build ~tag:image ~dockerfile ~context:sol_home with
+      match Sol_cli_docker.build ~tag:image ~dockerfile ~context:runner_context with
       | Error e ->
         Error (Printf.sprintf "docker build: %s" (Sol_cli_process.error_to_string e))
       | Ok () ->

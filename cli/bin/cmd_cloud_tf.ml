@@ -8,19 +8,6 @@ open Cmdliner
    edge turns an outcome into a process exit (REFAC-091). *)
 let ( let* ) = Result.bind
 
-(* ── Sol home resolution ─────────────────────────────────────────────────── *)
-
-(* Resolve the Sol monorepo root so we can locate platform/cloud/<provider>/cluster/. *)
-let resolve_sol_home () =
-  match Sol_cli_cmd_new.infer_sol_home () with
-  | Some dir -> dir
-  | None ->
-    Printf.eprintf "error: cannot locate the Sol monorepo root.\n";
-    Printf.eprintf "  Set SOL_HOME to your Sol checkout and re-run:\n";
-    Printf.eprintf "    export SOL_HOME=/path/to/sol\n";
-    exit 1
-;;
-
 (* ── Terraform output parsing ───────────────────────────────────────────── *)
 
 (* Read terraform output -json from a temp file and print key endpoints.
@@ -92,8 +79,12 @@ let check_terraform () =
 
 let infra_dir provider =
   let pname = Sol_cli_provider.to_string provider in
-  let sol_home = resolve_sol_home () in
-  let dir = Filename.concat sol_home (Printf.sprintf "platform/cloud/%s/cluster" pname) in
+  let dir =
+    Sol_cli_platform_assets.cloud_root
+      (Sol_cli_platform_assets.resolve_or_exit ())
+      provider
+      Sol_cli_platform_assets.Cluster
+  in
   if not (Sys.file_exists dir)
   then (
     Printf.eprintf "error: Terraform module not found: %s\n" dir;
@@ -102,7 +93,10 @@ let infra_dir provider =
 ;;
 
 let platform_dir provider =
-  Filename.concat (resolve_sol_home ()) (Sol_cli_cloud_lifecycle.platform_root provider)
+  Sol_cli_platform_assets.cloud_root
+    (Sol_cli_platform_assets.resolve_or_exit ())
+    provider
+    Sol_cli_platform_assets.Platform
 ;;
 
 type action =

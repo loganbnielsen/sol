@@ -511,7 +511,10 @@ let test_bundle_layout_resolves_sol_home () =
        let result =
          let saved = Sys.getenv_opt "SOL_HOME" in
          Unix.putenv "SOL_HOME" tmpdir;
-         let r = Sol_cli_cmd_new.infer_sol_home () in
+         let r =
+           Result.to_option
+             (Result.map Sol_cli_platform_assets.dir (Sol_cli_platform_assets.resolve ()))
+         in
          (match saved with
           | None -> Unix.putenv "SOL_HOME" "" (* can't unset, but empty won't match *)
           | Some v -> Unix.putenv "SOL_HOME" v);
@@ -545,7 +548,10 @@ let test_incomplete_bundle_rejected () =
        let result =
          let saved = Sys.getenv_opt "SOL_HOME" in
          Unix.putenv "SOL_HOME" tmpdir;
-         let r = Sol_cli_cmd_new.infer_sol_home () in
+         let r =
+           Result.to_option
+             (Result.map Sol_cli_platform_assets.dir (Sol_cli_platform_assets.resolve ()))
+         in
          (match saved with
           | None -> Unix.putenv "SOL_HOME" ""
           | Some v -> Unix.putenv "SOL_HOME" v);
@@ -583,10 +589,12 @@ let test_ancestor_walk_finds_bundle_root () =
        check_bool
          "is_sol_home returns true for valid bundle root"
          true
-         (Sol_cli_cmd_new.is_sol_home tmpdir);
+         (Sol_cli_platform_assets.is_checkout tmpdir);
        (* find_ancestor starting from the bin/ subdirectory should walk up to tmpdir *)
        let bin_dir = Filename.concat tmpdir "bin" in
-       let result = Sol_cli_cmd_new.find_ancestor Sol_cli_cmd_new.is_sol_home bin_dir in
+       let result =
+         Sol_cli_platform_assets.find_ancestor Sol_cli_platform_assets.is_checkout bin_dir
+       in
        check_bool "find_ancestor: returns Some" true (result <> None);
        check_bool
          "find_ancestor: resolved path matches bundle root"
@@ -627,10 +635,12 @@ let test_ancestor_walk_skips_build_context () =
        check_bool
          "is_sol_home rejects _build/default"
          false
-         (Sol_cli_cmd_new.is_sol_home build_default);
+         (Sol_cli_platform_assets.is_checkout build_default);
        (* Walk from a simulated test executable under the build context. *)
        let start = Filename.concat build_default "cli/test" in
-       let result = Sol_cli_cmd_new.find_ancestor Sol_cli_cmd_new.is_sol_home start in
+       let result =
+         Sol_cli_platform_assets.find_ancestor Sol_cli_platform_assets.is_checkout start
+       in
        check_bool "ancestor walk skips _build/default" true (result = Some tmpdir))
 ;;
 
