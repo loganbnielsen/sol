@@ -93,7 +93,7 @@ let test_tempo_datasource_configmap () =
    build sandbox (it isn't -- only directories a dune stanza references
    get copied into _build/default, and platform/ has none). Builds a
    throwaway "Sol home" containing just the two marker files
-   Sol_cli_cmd_new.is_sol_home checks for plus the synthetic template,
+   Sol_cli_platform_assets.is_checkout checks for plus the synthetic template,
    same pattern as test_platform_component.ml's with_fake_sol_home. *)
 let sol_home_markers =
   [ "framework/ocaml/sol-svc/lib/dune"; "framework/ocaml/kafka-eio-service/lib/dune" ]
@@ -173,10 +173,10 @@ let with_fake_sol_home f =
 ;;
 
 let test_alloy_render_expands_taxonomy_loop () =
-  with_fake_sol_home (fun sol_home ->
+  with_fake_sol_home (fun _sol_home ->
     let river =
       Sol_cli_dev_observability.render_alloy_config
-        ~sol_home
+        ~assets:(Sol_cli_platform_assets.resolve_or_exit ())
         ~taxonomy_labels:[ "workspace"; "domain"; "service" ]
         ~loki_push_url:"http://loki:3100/loki/api/v1/push"
         ~loki_push_basic_auth_username:""
@@ -194,10 +194,10 @@ let test_alloy_render_expands_taxonomy_loop () =
 ;;
 
 let test_alloy_render_omits_basic_auth_when_empty () =
-  with_fake_sol_home (fun sol_home ->
+  with_fake_sol_home (fun _sol_home ->
     let river =
       Sol_cli_dev_observability.render_alloy_config
-        ~sol_home
+        ~assets:(Sol_cli_platform_assets.resolve_or_exit ())
         ~taxonomy_labels:[ "workspace" ]
         ~loki_push_url:"http://loki:3100/loki/api/v1/push"
         ~loki_push_basic_auth_username:""
@@ -208,10 +208,10 @@ let test_alloy_render_omits_basic_auth_when_empty () =
 ;;
 
 let test_alloy_render_includes_basic_auth_when_set () =
-  with_fake_sol_home (fun sol_home ->
+  with_fake_sol_home (fun _sol_home ->
     let river =
       Sol_cli_dev_observability.render_alloy_config
-        ~sol_home
+        ~assets:(Sol_cli_platform_assets.resolve_or_exit ())
         ~taxonomy_labels:[ "workspace" ]
         ~loki_push_url:"https://loki.example.com/loki/api/v1/push"
         ~loki_push_basic_auth_username:"promtail"
@@ -225,14 +225,14 @@ let test_alloy_render_includes_basic_auth_when_set () =
 (* OBS-039: `sol local infra up`'s own local-profile call -- reads the real
    platform/shared/observability/alloy/logs.alloy.tftpl (CODE_LAYER-006: the same
    file platform/cloud/modules/platform/main.tf's helm_release.alloy renders from).
-   Sol_cli_cmd_new.infer_sol_home's ancestor walk from the test
+   Sol_cli_platform_assets.resolve's ancestor walk from the test
    executable's own path escapes dune's _build sandbox and lands on the
    real checkout root (confirmed: this test passes under plain `dune
    test`), so this exercises the actual production file, not a fixture. *)
 let test_alloy_values_yaml_against_real_file () =
-  match Sol_cli_cmd_new.infer_sol_home () with
-  | None -> Alcotest.fail "could not resolve SOL_HOME against the real checkout"
-  | Some _ ->
+  match Sol_cli_platform_assets.resolve () with
+  | Error e -> Alcotest.fail (Sol_cli_platform_assets.error_to_string e)
+  | Ok _ ->
     let yaml = Sol_cli_dev_observability.alloy_values_yaml () in
     assert_contains "helm values shape" yaml "configMap:";
     assert_contains "content block" yaml "content: |-";
