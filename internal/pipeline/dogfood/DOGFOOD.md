@@ -172,11 +172,9 @@ opam switch create 5.4.1
 eval $(opam env)
 opam install -y dune
 
-# 3. Pin the external packages from source, then install sol's dependency closure.
-for p in kafka-eio obs-eio obs-loki-eio obs-prometheus-eio obs-tempo-eio \
-         pg-eio aws-eio s3-eio dynamodb-eio lambda-eio https-eio; do
-  opam pin add -y "$p" "https://github.com/loganbnielsen/$p.git"
-done
+# 3. Pin the external packages at the commits support-refs.txt declares (BUG-059),
+#    then install sol's dependency closure.
+bash internal/ci/pin-support-packages.sh
 opam install -y --deps-only --with-test .
 
 # 4. Build the CLI.

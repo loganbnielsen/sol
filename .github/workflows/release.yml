@@ -5,8 +5,10 @@
 #   sol <version>
 #   ├── bin/sol                       built with SOL_RELEASE_VERSION=<version>
 #   ├── share/sol/<version>/platform  this commit's platform/ tree
-#   └── migration-runner-image        ghcr.io/<owner>/sol-migration-runner@sha256:...
-#                                     the same binary, published once
+#   ├── migration-runner-image        ghcr.io/<owner>/sol-migration-runner@sha256:...
+#   │                                 the same binary, published once
+#   └── SUPPORT_REFS                  this commit's support-refs.txt (BUG-059): the
+#                                     exact support-library revisions it was built from
 #
 # A version is published once: the workflow refuses a tag whose runner image
 # already exists, so nothing a released CLI names can move afterwards.
@@ -39,19 +41,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # The support-library snapshot this release builds against, recorded in the
-      # bundle (SUPPORT_REFS) so the release's dependency revisions are on record.
-      - name: Resolve support-package commits
-        id: support
-        run: |
-          refs="$(internal/ci/resolve-support-packages.sh)"
-          printf '%s\n' "$refs" | tee "$RUNNER_TEMP/SUPPORT_REFS"
-          {
-            echo "refs<<SUPPORT_REFS"
-            printf '%s\n' "$refs"
-            echo "SUPPORT_REFS"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Install system dependencies
         run: sudo apt-get install -y librdkafka-dev libpq-dev libpq5
 
@@ -62,8 +51,6 @@ jobs:
 
       - name: Pin extracted opam packages
         uses: ./.github/actions/pin-opam-packages
-        with:
-          refs: ${{ steps.support.outputs.refs }}
 
       - name: Install OCaml dependencies
         run: opam install . --deps-only -y
@@ -108,7 +95,7 @@ jobs:
             --version "$VERSION" \
             --runner-image "${{ steps.runner.outputs.image }}" \
             --binary "$RUNNER_TEMP/runner/sol" \
-            --support-refs "$RUNNER_TEMP/SUPPORT_REFS" \
+            --support-refs support-refs.txt \
             --out "$RUNNER_TEMP/dist" | tail -1)"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
 
