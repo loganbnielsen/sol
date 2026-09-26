@@ -47,16 +47,6 @@ let strip_comment line =
   scan 0 false
 ;;
 
-let contains ~needle haystack =
-  let needle_length = String.length needle in
-  let haystack_length = String.length haystack in
-  let rec at i =
-    i + needle_length <= haystack_length
-    && (String.equal (String.sub haystack i needle_length) needle || at (i + 1))
-  in
-  at 0
-;;
-
 let drop_trailing_cr line =
   let n = String.length line in
   if n > 0 && line.[n - 1] = '\r' then String.sub line 0 (n - 1) else line
@@ -130,9 +120,9 @@ let declared_in_one ~file contents =
      `sensitive = true` is reported rather than assumed harmless. *)
   let classify_inline name line_no body =
     let squeezed = squeeze body in
-    if contains ~needle:sensitive_true squeezed
+    if Sol_cli_string.contains ~needle:sensitive_true squeezed
     then sensitive := name :: !sensitive
-    else if contains ~needle:sensitive_prefix squeezed
+    else if Sol_cli_string.contains ~needle:sensitive_prefix squeezed
     then unreadable name line_no
   in
   List.iteri

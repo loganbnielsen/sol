@@ -3,14 +3,7 @@ let check_bool = Alcotest.(check bool)
 
 module O = Sol_cli_open
 
-let contains url sub =
-  let re = Str.regexp_string sub in
-  try
-    ignore (Str.search_forward re url 0);
-    true
-  with
-  | Not_found -> false
-;;
+let contains url sub = Sol_cli_string.contains ~needle:sub url
 
 let ok_url = function
   | Ok s -> s

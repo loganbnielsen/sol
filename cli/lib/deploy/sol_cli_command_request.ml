@@ -46,8 +46,10 @@ let git_sha () =
   match
     Sol_cli_process.output (Sol_cli_process.cmd [ "git"; "rev-parse"; "--short"; "HEAD" ])
   with
-  | Ok sha when String.trim sha <> "" -> Ok (String.trim sha)
-  | Ok _ -> Error "git rev-parse printed no commit"
+  | Ok sha ->
+    Option.to_result
+      ~none:"git rev-parse printed no commit"
+      (Sol_cli_string.non_blank sha)
   | Error (Sol_cli_process.Non_zero r) ->
     Error
       (match String.trim r.stderr with

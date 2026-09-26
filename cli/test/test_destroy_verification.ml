@@ -15,18 +15,7 @@ open Sol_cli_destroy_verification
 let gcp_absence_message = Sol_cli_gcp_destruction.gcp_absence_message
 let classify_final_snapshot = Sol_cli_aws_destruction.classify_final_snapshot
 let classify_instance_snapshots = Sol_cli_aws_destruction.classify_instance_snapshots
-
-let contains needle haystack =
-  let needle_length = String.length needle in
-  let haystack_length = String.length haystack in
-  let rec at i =
-    needle_length = 0
-    || (i + needle_length <= haystack_length
-        && (String.sub haystack i needle_length = needle || at (i + 1)))
-  in
-  at 0
-;;
-
+let contains needle haystack = Sol_cli_string.contains ~needle haystack
 let answered ?(stdout = "") status stderr = Answered { status; stdout; stderr }
 
 let observation

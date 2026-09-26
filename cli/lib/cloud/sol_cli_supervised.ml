@@ -202,11 +202,7 @@ let facts_of_dir dir =
   let supervisor_pid = int_field "supervisor_pid" in
   (* An empty start time means it could not be read (no /proc), not a value to
      compare against: liveness then rests on the pid. *)
-  let supervisor_start =
-    match meta_field meta "supervisor_start" with
-    | Some "" | None -> None
-    | Some s -> Some s
-  in
+  let supervisor_start = Sol_cli_string.non_empty (meta_field meta "supervisor_start") in
   let tf_pid, tf_start =
     match read_file (file dir "terraform.pid") with
     | None -> 0, None

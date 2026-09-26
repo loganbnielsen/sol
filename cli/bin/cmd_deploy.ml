@@ -82,8 +82,8 @@ let check_contract ~services =
 ;;
 
 let ensure_postgres_url () =
-  match Sys.getenv_opt "POSTGRES_URL" with
-  | None | Some "" ->
+  match Sol_cli_string.env "POSTGRES_URL" with
+  | None ->
     Printf.eprintf
       "error: POSTGRES_URL is not set.\n\
        Set it in your environment before running 'sol deploy':\n\

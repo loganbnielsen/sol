@@ -331,7 +331,7 @@ let aws_list_probe ~region ~kind ~argv =
     Sol_cli_process.output
       (Sol_cli_process.cmd (("aws" :: argv) @ [ "--region"; region ]))
   with
-  | Ok listed when String.trim listed = "" -> Probe_gone
+  | Ok listed when Sol_cli_string.is_blank listed -> Probe_gone
   | Ok listed ->
     Probe_found
       (Printf.sprintf "AWS %s still exist after destroy: %s" kind (String.trim listed))
@@ -367,7 +367,7 @@ let aws_orphan_sweep ~pre_destroy ~region ~cluster =
     | Some _ as name -> name
     | None -> Option.map (fun (cluster : Sol_cli_cluster.t) -> cluster.name) cluster
   in
-  let region = if String.trim region = "" then None else Some region in
+  let region = Sol_cli_string.non_blank region in
   (* REFAC-093 / DEC-045: only what Terraform does not own is swept -- load
      balancers the in-cluster cloud controller creates, and volumes created for
      PersistentVolumeClaims. Elastic IPs, NAT gateways and ECR repositories are
@@ -661,7 +661,7 @@ let observe_retention ~region ~retention ~pre_destroy ~preparation =
          String.equal resource.kind "aws_db_instance")
       (Sol_cli_cloud_destroy.resources pre_destroy)
   in
-  let region = if String.trim region = "" then None else Some region in
+  let region = Sol_cli_string.non_blank region in
   match preparation with
   | Sol_cli_cloud_destroy.Nothing_prepared ->
     Retention_not_required

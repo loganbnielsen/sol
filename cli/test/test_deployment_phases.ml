@@ -31,20 +31,7 @@ let memory s =
   | Error message -> Alcotest.fail message
 ;;
 
-let contains haystack needle =
-  let hl = String.length haystack
-  and nl = String.length needle in
-  if nl = 0
-  then true
-  else if nl > hl
-  then false
-  else (
-    let found = ref false in
-    for i = 0 to hl - nl do
-      if (not !found) && String.sub haystack i nl = needle then found := true
-    done;
-    !found)
-;;
+let contains haystack needle = Sol_cli_string.contains ~needle haystack
 
 let assert_contains label haystack needle =
   Alcotest.(check bool)
@@ -236,14 +223,6 @@ let test_up_request_falls_back_to_git_sha () =
 (* BUG-058: an unresolvable SHA. A local run falls back loudly; a deploy refuses. *)
 let git_unavailable () = Error "fatal: not a git repository"
 
-let contains ~needle haystack =
-  let n = String.length needle in
-  let rec go i =
-    i + n <= String.length haystack && (String.sub haystack i n = needle || go (i + 1))
-  in
-  go 0
-;;
-
 let test_up_request_warns_on_fallback_tag () =
   match
     Sol_cli_command_request.make_up_request
@@ -263,11 +242,11 @@ let test_up_request_warns_on_fallback_tag () =
        Alcotest.(check bool)
          ("names git's reason: " ^ w)
          true
-         (contains ~needle:"not a git repository" w);
+         (Sol_cli_string.contains ~needle:"not a git repository" w);
        Alcotest.(check bool)
          ("names --image-tag: " ^ w)
          true
-         (contains ~needle:"--image-tag" w))
+         (Sol_cli_string.contains ~needle:"--image-tag" w))
 ;;
 
 let test_up_request_resolved_sha_has_no_warning () =
@@ -308,11 +287,11 @@ let test_deploy_request_refuses_unresolvable_sha () =
     Alcotest.(check bool)
       ("names --image-tag: " ^ msg)
       true
-      (contains ~needle:"--image-tag" msg);
+      (Sol_cli_string.contains ~needle:"--image-tag" msg);
     Alcotest.(check bool)
       ("names git's reason: " ^ msg)
       true
-      (contains ~needle:"not a git repository" msg)
+      (Sol_cli_string.contains ~needle:"not a git repository" msg)
 ;;
 
 (* Positive control: the same request with a resolvable SHA is accepted. *)

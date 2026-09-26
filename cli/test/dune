@@ -64,6 +64,7 @@
   test_time
   test_alert_test
   test_terraform_outputs
+  test_string
   test_image_ref
   test_local_infra
   test_cloud_lifecycle

@@ -79,7 +79,7 @@ let fetch_live ~ctx ~name ~namespace =
        Error (Printf.sprintf "could not parse the live ConfigMap %s/%s" namespace name))
   | Error (Sol_cli_process.Non_zero r) ->
     let detail = String.trim (r.stderr ^ " " ^ r.stdout) in
-    if Sol_cli_port_forward.string_contains ~needle:"NotFound" detail
+    if Sol_cli_string.contains ~needle:"NotFound" detail
     then Ok None
     else
       Error
@@ -230,7 +230,7 @@ let get ~ctx ~(workspace : string) ~(release_id : string)
      with
      | Error (Sol_cli_process.Non_zero r) ->
        let detail = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in
-       if Sol_cli_port_forward.string_contains ~needle:"NotFound" detail
+       if Sol_cli_string.contains ~needle:"NotFound" detail
        then
          Error (Printf.sprintf "release %s not found" (Sol_cli_release_id.to_string id))
        else Error (Printf.sprintf "kubectl get configmap failed: %s" (String.trim detail))
@@ -274,7 +274,7 @@ let current ~ctx ~(workspace : string) : (string option, string) result =
       ~output:"jsonpath={.data.release_id}"
   with
   | Error (Sol_cli_process.Non_zero { stderr; _ })
-    when Sol_cli_port_forward.string_contains ~needle:"NotFound" stderr -> Ok None
+    when Sol_cli_string.contains ~needle:"NotFound" stderr -> Ok None
   | Error e -> Error (Sol_cli_process.error_to_string e)
   | Ok r ->
     let value = String.trim r.Sol_cli_process.stdout in

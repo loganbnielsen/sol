@@ -129,7 +129,6 @@ let with_fake_kubectl ~mode f =
 
 let ctx = Sol_cli_kube_destination.local_context
 let namespaces = [ "payments" ]
-let contains ~needle s = Sol_cli_port_forward.string_contains ~needle s
 
 let set () =
   Sol_cli_secret.set
@@ -152,7 +151,7 @@ let test_set_refuses_an_unreadable_secret () =
     Alcotest.(check bool)
       "nothing is applied over a Secret that could not be read"
       false
-      (contains ~needle:"apply" (calls ())))
+      (Sol_cli_string.contains ~needle:"apply" (calls ())))
 ;;
 
 let test_delete_refuses_an_unreadable_secret () =
@@ -166,7 +165,10 @@ let test_delete_refuses_an_unreadable_secret () =
         ~key:"LEAKED_KEY"
     in
     Alcotest.(check bool) "delete returns Error, not \"deleted\"" true (is_error result);
-    Alcotest.(check bool) "no patch was sent" false (contains ~needle:"patch" (calls ())))
+    Alcotest.(check bool)
+      "no patch was sent"
+      false
+      (Sol_cli_string.contains ~needle:"patch" (calls ())))
 ;;
 
 let test_list_refuses_an_unreadable_secret () =
@@ -180,9 +182,9 @@ let test_list_refuses_an_unreadable_secret () =
 
 let nothing_written calls =
   not
-    (contains ~needle:"apply" calls
-     || contains ~needle:"patch" calls
-     || contains ~needle:"rollout " calls)
+    (Sol_cli_string.contains ~needle:"apply" calls
+     || Sol_cli_string.contains ~needle:"patch" calls
+     || Sol_cli_string.contains ~needle:"rollout " calls)
 ;;
 
 let test_later_read_failure_writes_nothing mode () =
@@ -213,7 +215,7 @@ let test_set_creates_a_secret_that_is_absent () =
     Alcotest.(check bool)
       "the new key is applied"
       true
-      (contains ~needle:"NEW_KEY" (manifests ())))
+      (Sol_cli_string.contains ~needle:"NEW_KEY" (manifests ())))
 ;;
 
 let test_set_keeps_the_existing_keys () =
@@ -222,7 +224,7 @@ let test_set_keeps_the_existing_keys () =
     Alcotest.(check bool)
       "the applied manifest still carries the key it read"
       true
-      (contains ~needle:"EXISTING" (manifests ())))
+      (Sol_cli_string.contains ~needle:"EXISTING" (manifests ())))
 ;;
 
 let test_absent_rollout_kind_is_an_empty_listing () =

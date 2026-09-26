@@ -13,13 +13,6 @@ module S = Sol_cli_substrate
 let check_bool = Alcotest.(check bool)
 let check_int = Alcotest.(check int)
 
-let contains ~needle s =
-  let nlen = String.length needle
-  and slen = String.length s in
-  let rec loop i = i + nlen <= slen && (String.sub s i nlen = needle || loop (i + 1)) in
-  nlen = 0 || loop 0
-;;
-
 let docs_or_fail ?secrets namespaces =
   match S.docs_for_namespaces ?secrets namespaces with
   | Ok docs -> docs
@@ -42,27 +35,27 @@ let test_substrate_is_namespace_role_binding_and_runtime_secret_only () =
   check_bool
     "the namespace comes first"
     true
-    (contains ~needle:"kind: Namespace" (List.nth docs 0)
-     && contains ~needle:"pluto-payments" (List.nth docs 0));
+    (Sol_cli_string.contains ~needle:"kind: Namespace" (List.nth docs 0)
+     && Sol_cli_string.contains ~needle:"pluto-payments" (List.nth docs 0));
   check_bool
     "then the deploy RoleBinding, scoped to this namespace"
     true
-    (contains ~needle:"kind: RoleBinding" (List.nth docs 1)
-     && contains ~needle:"namespace: pluto-payments" (List.nth docs 1)
-     && contains ~needle:"name: sol-deploy" (List.nth docs 1)
-     && contains ~needle:"name: sol:deployers" (List.nth docs 1));
+    (Sol_cli_string.contains ~needle:"kind: RoleBinding" (List.nth docs 1)
+     && Sol_cli_string.contains ~needle:"namespace: pluto-payments" (List.nth docs 1)
+     && Sol_cli_string.contains ~needle:"name: sol-deploy" (List.nth docs 1)
+     && Sol_cli_string.contains ~needle:"name: sol:deployers" (List.nth docs 1));
   check_bool
     "then the operator's read-only RoleBinding (DEC-038)"
     true
-    (contains ~needle:"kind: RoleBinding" (List.nth docs 2)
-     && contains ~needle:"namespace: pluto-payments" (List.nth docs 2)
-     && contains ~needle:"name: sol-operator-diagnostics" (List.nth docs 2)
-     && contains ~needle:"name: sol:operators" (List.nth docs 2));
+    (Sol_cli_string.contains ~needle:"kind: RoleBinding" (List.nth docs 2)
+     && Sol_cli_string.contains ~needle:"namespace: pluto-payments" (List.nth docs 2)
+     && Sol_cli_string.contains ~needle:"name: sol-operator-diagnostics" (List.nth docs 2)
+     && Sol_cli_string.contains ~needle:"name: sol:operators" (List.nth docs 2));
   check_bool
     "then the runtime Secret"
     true
-    (contains ~needle:"kind: Secret" (List.nth docs 3)
-     && contains ~needle:"sol-secrets" (List.nth docs 3));
+    (Sol_cli_string.contains ~needle:"kind: Secret" (List.nth docs 3)
+     && Sol_cli_string.contains ~needle:"sol-secrets" (List.nth docs 3));
   List.iter
     (fun doc ->
        List.iter
@@ -70,7 +63,7 @@ let test_substrate_is_namespace_role_binding_and_runtime_secret_only () =
             check_bool
               (Printf.sprintf "substrate carries no %s" kind)
               false
-              (contains ~needle:kind doc))
+              (Sol_cli_string.contains ~needle:kind doc))
          [ "kind: Deployment"
          ; "kind: Service"
          ; "kind: PodDisruptionBudget"
@@ -96,7 +89,9 @@ let test_every_namespace_and_binding_precedes_every_secret () =
     let rec find i = function
       | [] -> Alcotest.fail "expected a Secret document"
       | doc :: rest ->
-        if contains ~needle:"kind: Secret" doc then i else find (i + 1) rest
+        if Sol_cli_string.contains ~needle:"kind: Secret" doc
+        then i
+        else find (i + 1) rest
     in
     find 0 docs
   in
@@ -109,7 +104,7 @@ let test_every_namespace_and_binding_precedes_every_secret () =
        check_bool
          (Printf.sprintf "namespace %s is established" ns)
          true
-         (List.exists (fun doc -> contains ~needle:ns doc) docs))
+         (List.exists (fun doc -> Sol_cli_string.contains ~needle:ns doc) docs))
     [ "pluto-checkout"; "pluto-payments" ]
 ;;
 
@@ -127,11 +122,11 @@ let test_missing_credential_fails_closed_before_applying_anything () =
     check_bool
       "names the missing key"
       true
-      (contains ~needle:"SOL_QUALIFICATION_ABSENT_KEY" msg);
+      (Sol_cli_string.contains ~needle:"SOL_QUALIFICATION_ABSENT_KEY" msg);
     check_bool
       "says the substrate cannot be established"
       true
-      (contains ~needle:"substrate" msg)
+      (Sol_cli_string.contains ~needle:"substrate" msg)
 ;;
 
 (* INFRA-025: RBAC cannot itself stop the deploy identity's bootstrap grant
@@ -146,8 +141,11 @@ let test_ensure_refuses_a_reserved_platform_namespace () =
   with
   | Ok () -> Alcotest.fail "expected ensure to refuse a reserved platform namespace"
   | Error msg ->
-    check_bool "names the reserved namespace" true (contains ~needle:"cert-manager" msg);
-    check_bool "says it is reserved" true (contains ~needle:"reserved" msg)
+    check_bool
+      "names the reserved namespace"
+      true
+      (Sol_cli_string.contains ~needle:"cert-manager" msg);
+    check_bool "says it is reserved" true (Sol_cli_string.contains ~needle:"reserved" msg)
 ;;
 
 let test_present_credential_is_accepted () =
@@ -310,7 +308,7 @@ let test_operator_bindings_cover_every_workload_namespace () =
     "one binding per distinct namespace, whoever the caller is"
     2
     (List.length docs);
-  let has needle = List.exists (fun doc -> contains ~needle doc) docs in
+  let has needle = List.exists (fun doc -> Sol_cli_string.contains ~needle doc) docs in
   check_bool
     "the namespace the caller was not operating on is covered"
     true
@@ -321,20 +319,23 @@ let test_operator_bindings_cover_every_workload_namespace () =
        check_bool
          "every document is a RoleBinding"
          true
-         (contains ~needle:"kind: RoleBinding" doc);
+         (Sol_cli_string.contains ~needle:"kind: RoleBinding" doc);
        check_bool
          "bound to the operator group"
          true
-         (contains ~needle:"name: sol:operators" doc);
+         (Sol_cli_string.contains ~needle:"name: sol:operators" doc);
        check_bool
          "referencing the read-only role"
          true
-         (contains ~needle:"name: sol-operator-diagnostics" doc);
-       check_bool "no Secret is written" false (contains ~needle:"kind: Secret" doc);
+         (Sol_cli_string.contains ~needle:"name: sol-operator-diagnostics" doc);
+       check_bool
+         "no Secret is written"
+         false
+         (Sol_cli_string.contains ~needle:"kind: Secret" doc);
        check_bool
          "no workload document is written"
          false
-         (contains ~needle:"kind: Deployment" doc))
+         (Sol_cli_string.contains ~needle:"kind: Deployment" doc))
     docs
 ;;
 

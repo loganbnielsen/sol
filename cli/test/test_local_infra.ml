@@ -112,14 +112,7 @@ let test_a_failure_stops_new_installs () =
     match Sol_cli_local_infra.run_bounded ~max_in_flight:1 installs with
     | Ok () -> Alcotest.fail "a failing install must fail the run"
     | Error message ->
-      let contains needle =
-        let n = String.length message
-        and m = String.length needle in
-        let rec go i =
-          i + m <= n && (String.equal (String.sub message i m) needle || go (i + 1))
-        in
-        m > 0 && go 0
-      in
+      let contains needle = Sol_cli_string.contains ~needle message in
       Alcotest.(check bool)
         "the failure names the component that failed"
         true

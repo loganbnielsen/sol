@@ -889,7 +889,7 @@ let resolve_matches ~commit ~target ~scope_string (events : Sol_cli_deployment.t
 let resolve_commit ~commit ?scope ~target (events : Sol_cli_deployment.t list)
   : commit_resolution
   =
-  if String.trim commit = ""
+  if Sol_cli_string.is_blank commit
   then Commit_invalid "--commit must not be empty"
   else (
     let parsed_scope =

@@ -21,13 +21,6 @@ let with_tmpdir f =
     (fun () -> f tmpdir)
 ;;
 
-let contains ~needle s =
-  let n = String.length needle
-  and l = String.length s in
-  let rec loop i = i + n <= l && (String.sub s i n = needle || loop (i + 1)) in
-  n = 0 || loop 0
-;;
-
 (* ── DEC-024 regression suite — pin the abstraction, not BUG-034 ───────────── *)
 
 (* Row 1: a workspace with no dune marker at all. This is the layout that made
@@ -108,7 +101,7 @@ let test_descendant_cwd_resolves_root () =
 ;;
 
 (* Row 6: sibling workspaces resolve independently — one is not shadowed by the
-   other, and neither consults the directory that contains them both. *)
+   other, and neither consults the directory that Sol_cli_string.contains them both. *)
 let test_sibling_workspaces_resolve_independently () =
   with_tmpdir (fun tmpdir ->
     let a = Filename.concat tmpdir "product-a"
@@ -170,7 +163,7 @@ let test_absence_fails_closed_with_guidance () =
       check_bool
         "the error names `sol new workspace`"
         true
-        (contains ~needle:"sol new workspace" message)
+        (Sol_cli_string.contains ~needle:"sol new workspace" message)
     | Error (Sol_cli_workspace.Nested_workspace _) ->
       Alcotest.fail "expected Not_in_workspace")
 ;;
@@ -257,7 +250,7 @@ let test_enter_from_a_subdirectory () =
          Alcotest.(check string) "cwd is the root" root (Unix.realpath (Sys.getcwd ()))))
 ;;
 
-(* The scenario behind the symlink rule: a symlinked checkout that contains its
+(* The scenario behind the symlink rule: a symlinked checkout that Sol_cli_string.contains its
    own sol.yml is not a nested workspace. *)
 let test_symlinked_checkout_is_not_nested () =
   with_tmpdir (fun tmpdir ->

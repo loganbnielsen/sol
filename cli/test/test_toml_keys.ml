@@ -12,8 +12,6 @@ let load contents =
   result
 ;;
 
-let contains ~needle s = Sol_cli_port_forward.string_contains ~needle s
-
 let rejects name contents ~names =
   Alcotest.test_case name `Quick (fun () ->
     match load contents with
@@ -21,7 +19,10 @@ let rejects name contents ~names =
     | Error (Sol_cli_toml.Validation { message; _ }) ->
       List.iter
         (fun needle ->
-           Alcotest.(check bool) ("error names " ^ needle) true (contains ~needle message))
+           Alcotest.(check bool)
+             ("error names " ^ needle)
+             true
+             (Sol_cli_string.contains ~needle message))
         names
     | Error (Sol_cli_toml.Toml_syntax _) -> Alcotest.fail "expected a validation error")
 ;;

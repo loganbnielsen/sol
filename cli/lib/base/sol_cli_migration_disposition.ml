@@ -14,7 +14,7 @@ let header_prefix = "-- sol:disposition"
 let first_nonblank_line content =
   content
   |> String.split_on_char '\n'
-  |> List.find_opt (fun line -> String.trim line <> "")
+  |> List.find_opt (fun line -> not (Sol_cli_string.is_blank line))
 ;;
 
 let of_header_line line =

@@ -33,14 +33,7 @@ let with_tmp f =
 
 let has_msg needle findings =
   List.exists
-    (fun (f : Sol_cli_check.finding) ->
-       String.contains f.message needle.[0]
-       &&
-       try
-         ignore (Str.search_forward (Str.regexp_string needle) f.message 0);
-         true
-       with
-       | Not_found -> false)
+    (fun (f : Sol_cli_check.finding) -> Sol_cli_string.contains ~needle f.message)
     findings
 ;;
 

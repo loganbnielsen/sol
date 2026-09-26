@@ -18,13 +18,14 @@ let backend_config (target : Sol_cli_config.target) ~root =
     | `Platform -> "platform"
   in
   let object_key = Printf.sprintf "sol/%s/%s.tfstate" target.name layer in
-  match target.state_bucket with
-  | Some bucket when String.trim bucket <> "" ->
+  match Sol_cli_string.non_blank_opt target.state_bucket with
+  | Some bucket ->
     (Sol_cli_provider_capabilities.capabilities_of target.provider).backend_config
       target
-      ~bucket:(String.trim bucket)
+      ~bucket
       ~object_key
-  | _ -> Error "target must declare state_bucket before `sol cloud` can use durable state"
+  | None ->
+    Error "target must declare state_bucket before `sol cloud` can use durable state"
 ;;
 
 (* The provider-neutral facts a cloud lifecycle operation needs from a target,
@@ -43,10 +44,7 @@ type cloud_target =
   ; cluster_access_role_arn : string option
   }
 
-let required name = function
-  | Some value when String.trim value <> "" -> Ok (String.trim value)
-  | _ -> Error ("the cloud lifecycle requires target." ^ name)
-;;
+let required = Sol_cli_provider_capabilities.required
 
 let cloud_target target =
   let ( let* ) = Result.bind in

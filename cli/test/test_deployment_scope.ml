@@ -15,13 +15,6 @@ let units () =
   ]
 ;;
 
-let contains ~needle haystack =
-  let n = String.length needle
-  and h = String.length haystack in
-  let rec go i = i + n <= h && (String.sub haystack i n = needle || go (i + 1)) in
-  n = 0 || go 0
-;;
-
 (* Requests are compared through their user-facing spelling: it is what a person
    types and what an error quotes, so a test that reads in those terms is
    checking the thing that matters rather than the constructor names. *)
@@ -63,8 +56,8 @@ let test_rejects_what_it_cannot_understand () =
   match parse_request (Some "app/payments/charge_svc") with
   | Ok _ -> Alcotest.fail "a path must not parse as a scope"
   | Error message ->
-    assert (contains ~needle:"payments/charge_svc" message);
-    assert (contains ~needle:"got" message)
+    assert (Sol_cli_string.contains ~needle:"payments/charge_svc" message);
+    assert (Sol_cli_string.contains ~needle:"got" message)
 ;;
 
 let test_workspace_selects_everything () =
@@ -105,27 +98,27 @@ let test_unknown_domain_fails_closed () =
   match resolve (Whole_domain "logistics") (units ()) with
   | Ok _ -> Alcotest.fail "an unknown domain must not resolve"
   | Error message ->
-    assert (contains ~needle:"logistics" message);
-    assert (contains ~needle:"comms" message);
-    assert (contains ~needle:"payments" message)
+    assert (Sol_cli_string.contains ~needle:"logistics" message);
+    assert (Sol_cli_string.contains ~needle:"comms" message);
+    assert (Sol_cli_string.contains ~needle:"payments" message)
 ;;
 
 let test_unknown_unit_names_what_exists () =
   match resolve (Unit_named ("payments", "refund_svc")) (units ()) with
   | Ok _ -> Alcotest.fail "an unknown unit must not resolve"
   | Error message ->
-    assert (contains ~needle:"payments/refund_svc" message);
+    assert (Sol_cli_string.contains ~needle:"payments/refund_svc" message);
     (* What it asked for, and what is there: the whole point of failing closed. *)
-    assert (contains ~needle:"payments/charge_svc" message);
-    assert (contains ~needle:"payments/settle_worker" message)
+    assert (Sol_cli_string.contains ~needle:"payments/charge_svc" message);
+    assert (Sol_cli_string.contains ~needle:"payments/settle_worker" message)
 ;;
 
 let test_unit_in_unknown_domain_lists_domains () =
   match resolve (Unit_named ("logistics", "ship_worker")) (units ()) with
   | Ok _ -> Alcotest.fail "must not resolve"
   | Error message ->
-    assert (contains ~needle:"logistics/ship_worker" message);
-    assert (contains ~needle:"comms" message)
+    assert (Sol_cli_string.contains ~needle:"logistics/ship_worker" message);
+    assert (Sol_cli_string.contains ~needle:"comms" message)
 ;;
 
 let test_kind_mapping () =

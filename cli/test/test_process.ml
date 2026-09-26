@@ -85,23 +85,13 @@ let test_spawn_failed () =
   | e -> Alcotest.fail ("expected Spawn_failed, got: " ^ Sol_cli_process.error_to_string e)
 ;;
 
-let contains s ~needle =
-  let nl = String.length needle
-  and sl = String.length s in
-  nl = 0
-  || (nl <= sl
-      &&
-      let rec go i = i <= sl - nl && (String.sub s i nl = needle || go (i + 1)) in
-      go 0)
-;;
-
 let test_chdir_failed () =
   match
     err_result
       (Sol_cli_process.run (Sol_cli_process.cmd ~cwd:"/nonexistent-dir-xyz" [ "pwd" ]))
   with
   | Sol_cli_process.Spawn_failed msg ->
-    check_bool "mentions chdir" true (contains msg ~needle:"chdir")
+    check_bool "mentions chdir" true (Sol_cli_string.contains msg ~needle:"chdir")
   | e -> Alcotest.fail ("expected Spawn_failed, got: " ^ Sol_cli_process.error_to_string e)
 ;;
 
@@ -114,8 +104,11 @@ let test_redaction_in_echo () =
            ~echo:true
            (Sol_cli_process.cmd ~redact:[ secret ] [ "echo"; secret ])))
   in
-  check_bool "secret not in echo" false (contains output ~needle:secret);
-  check_bool "redaction marker present" true (contains output ~needle:"***")
+  check_bool "secret not in echo" false (Sol_cli_string.contains output ~needle:secret);
+  check_bool
+    "redaction marker present"
+    true
+    (Sol_cli_string.contains output ~needle:"***")
 ;;
 
 let test_no_shell_expansion () =
@@ -136,7 +129,10 @@ let test_run_shell_nonzero () =
 
 let test_error_to_string_spawn () =
   let s = Sol_cli_process.error_to_string (Sol_cli_process.Spawn_failed "oops") in
-  check_bool "contains spawn" true (contains s ~needle:"spawn")
+  check_bool
+    "Sol_cli_string.contains spawn"
+    true
+    (Sol_cli_string.contains s ~needle:"spawn")
 ;;
 
 let test_error_to_string_nonzero () =
@@ -144,7 +140,7 @@ let test_error_to_string_nonzero () =
     Sol_cli_process.error_to_string
       (Sol_cli_process.Non_zero { exit_code = 5; stdout = ""; stderr = "bad" })
   in
-  check_bool "contains 5" true (contains s ~needle:"5")
+  check_bool "Sol_cli_string.contains 5" true (Sol_cli_string.contains s ~needle:"5")
 ;;
 
 (* ── suite ───────────────────────────────────────────────────────────────── *)

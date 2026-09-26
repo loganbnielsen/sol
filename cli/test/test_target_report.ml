@@ -40,13 +40,6 @@ let target ?(kube_context = Some "prod-us-east-1") ?kubeconfig () : Sol_cli_conf
   }
 ;;
 
-let contains ~needle haystack =
-  let n = String.length needle
-  and h = String.length haystack in
-  let rec go i = i + n <= h && (String.sub haystack i n = needle || go (i + 1)) in
-  n = 0 || go 0
-;;
-
 let value_of rows label = List.assoc_opt label rows
 
 let all_text rows =
@@ -55,18 +48,18 @@ let all_text rows =
 
 let test_not_configured_points_at_the_field () =
   let message = Sol_cli_target_report.describe ~verbose:false Not_configured in
-  assert (contains ~needle:"kube_context" message);
-  assert (contains ~needle:"deploy_kubeconfig_command" message)
+  assert (Sol_cli_string.contains ~needle:"kube_context" message);
+  assert (Sol_cli_string.contains ~needle:"deploy_kubeconfig_command" message)
 ;;
 
 let test_configured_is_not_checked_and_hides_the_context () =
   let message =
     Sol_cli_target_report.describe ~verbose:false (Configured "prod-us-east-1")
   in
-  assert (contains ~needle:"not checked" message);
-  assert (contains ~needle:"--check" message);
+  assert (Sol_cli_string.contains ~needle:"not checked" message);
+  assert (Sol_cli_string.contains ~needle:"--check" message);
   (* Not checked must also mean not revealed: this is the masking rule. *)
-  assert (not (contains ~needle:"prod-us-east-1" message))
+  assert (not (Sol_cli_string.contains ~needle:"prod-us-east-1" message))
 ;;
 
 let test_verbose_shows_the_context () =
@@ -99,7 +92,7 @@ let test_default_summary_never_names_the_context () =
        let text =
          all_text (Sol_cli_target_report.rows ~verbose:false (target ()) status)
        in
-       assert (not (contains ~needle:"prod-us-east-1" text)))
+       assert (not (Sol_cli_string.contains ~needle:"prod-us-east-1" text)))
     statuses
 ;;
 
@@ -125,14 +118,14 @@ let test_unreachable_carries_the_reason () =
       ~verbose:true
       (Unreachable ("prod-us-east-1", "connection refused"))
   in
-  assert (contains ~needle:"connection refused" message);
+  assert (Sol_cli_string.contains ~needle:"connection refused" message);
   let quiet =
     Sol_cli_target_report.describe
       ~verbose:false
       (Unreachable ("prod-us-east-1", "connection refused"))
   in
-  assert (contains ~needle:"connection refused" quiet);
-  assert (not (contains ~needle:"prod-us-east-1" quiet))
+  assert (Sol_cli_string.contains ~needle:"connection refused" quiet);
+  assert (not (Sol_cli_string.contains ~needle:"prod-us-east-1" quiet))
 ;;
 
 (* The JSON and text renderings share [rows], so this guards the claim rather
@@ -176,15 +169,15 @@ let () =
                 ~verbose:false
                 (Unreachable ("prod-us-east-1", reason))
             in
-            assert (contains ~needle:"does not exist" quiet);
-            assert (not (contains ~needle:"prod-us-east-1" quiet));
-            assert (contains ~needle:"<context>" quiet);
+            assert (Sol_cli_string.contains ~needle:"does not exist" quiet);
+            assert (not (Sol_cli_string.contains ~needle:"prod-us-east-1" quiet));
+            assert (Sol_cli_string.contains ~needle:"<context>" quiet);
             let loud =
               Sol_cli_target_report.describe
                 ~verbose:true
                 (Unreachable ("prod-us-east-1", reason))
             in
-            assert (contains ~needle:"prod-us-east-1" loud))
+            assert (Sol_cli_string.contains ~needle:"prod-us-east-1" loud))
         ; Alcotest.test_case
             "verbose shows the context"
             `Quick

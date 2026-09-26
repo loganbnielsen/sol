@@ -4,14 +4,7 @@
 
 module M = Sol_cli_migration
 
-let contains haystack needle =
-  let re = Str.regexp_string needle in
-  try
-    ignore (Str.search_forward re haystack 0);
-    true
-  with
-  | Not_found -> false
-;;
+let contains haystack needle = Sol_cli_string.contains ~needle haystack
 
 let write_file path content =
   let oc = open_out path in
