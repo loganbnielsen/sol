@@ -39,12 +39,9 @@ let with_workspace f =
        f ())
 ;;
 
-let write_target path body =
-  mkdir_p (Filename.dirname path);
-  write path body
-;;
-
-let prod_aws = "sol/prod/aws/us-east-1.yml"
+(* FEAT-100: [path] is a target address, <env>/<provider>/<region>. *)
+let write_target path body = Targets_fixture.write ~target:path body
+let prod_aws = "prod/aws/us-east-1"
 let selecting = "target:\n  profile: production-single-region\n"
 
 let load target =
@@ -129,7 +126,7 @@ let test_target_file_selects_profile () =
 
 let test_profile_is_independent_of_env_name () =
   with_workspace (fun () ->
-    write_target "sol/staging/aws/us-east-1.yml" selecting;
+    write_target "staging/aws/us-east-1" selecting;
     check_bool
       "a non-prod env may select it explicitly"
       true
@@ -152,7 +149,7 @@ let test_shared_sol_yml_profile_rejected () =
     check_bool
       "sol.yml cannot opt every target in"
       true
-      (contains ~needle:"target file" (load_error "prod/aws/us-east-1")))
+      (contains ~needle:"environment or target" (load_error "prod/aws/us-east-1")))
 ;;
 
 let test_unrelated_value_does_not_change_selection () =
@@ -160,9 +157,7 @@ let test_unrelated_value_does_not_change_selection () =
     write_target
       prod_aws
       "target:\n  profile: production-single-region\n  observability_backend: external\n";
-    write_target
-      "sol/dev/aws/us-east-1.yml"
-      "target:\n  observability_backend: external\n";
+    write_target "dev/aws/us-east-1" "target:\n  observability_backend: external\n";
     check_bool
       "selected stays selected"
       true
@@ -502,7 +497,7 @@ let test_plan_without_profile_is_unchanged () =
 let test_profile_does_not_change_release_identity () =
   with_workspace (fun () ->
     write_target prod_aws selecting;
-    write_target "sol/prod/aws/us-west-2.yml" "target:\n  cluster_name: pluto-west\n";
+    write_target "prod/aws/us-west-2" "target:\n  cluster_name: pluto-west\n";
     let claimed = plan_for "prod/aws/us-east-1" in
     let unclaimed = plan_for "prod/aws/us-west-2" in
     check_str
@@ -529,7 +524,7 @@ let capabilities fs =
 
 let test_no_profile_skips_preflight () =
   with_workspace (fun () ->
-    write_target "sol/prod/gcp/us-central1.yml" "target:\n  cluster_name: pluto\n";
+    write_target "prod/gcp/us-central1" "target:\n  cluster_name: pluto\n";
     check_bool
       "an unqualified provider and GitOps are fine without a profile"
       true
@@ -811,7 +806,7 @@ let test_unroutable_alert_receiver_is_a_target_finding () =
 
 let test_unqualified_provider_is_a_target_finding () =
   with_workspace (fun () ->
-    write_target "sol/prod/gcp/us-central1.yml" selecting;
+    write_target "prod/gcp/us-central1" selecting;
     let fs =
       findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/gcp/us-central1")
     in

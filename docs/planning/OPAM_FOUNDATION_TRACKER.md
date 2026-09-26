@@ -205,7 +205,7 @@ sol local infra up
 sol up
 sol status
 sol migrate
-sol deploy dev/aws/us-east-1 --dry-run  # requires sol/dev/aws/us-east-1.yml with a registry set
+sol deploy dev/aws/us-east-1 --dry-run  # requires dev: targets: aws/us-east-1 in sol/environments.yml, with a registry
 sol rollback
 ```
 

@@ -2,14 +2,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-# The smoke target is generated, not committed (REFAC-105): pluto's own targets are
-# user examples and must not reach into internal/. `sol/qual2/` is a path
-# check_no_account_artifacts.sh refuses to see tracked, so the file stays scratch;
-# it is written below and removed on exit. Overridable so a run can point at a
-# scratch workspace or an existing target instead.
+# The smoke target is generated, not committed (REFAC-105, FEAT-100): pluto's own
+# environments are user examples and must not reach into internal/. The smoke
+# environment is written into the workspace's gitignored sol/environments.local.yml,
+# which check_no_account_artifacts.sh refuses tracked, and removed on exit. The
+# harness only ever writes or removes a local file it owns (its first line says so).
+# Overridable so a run can point at a scratch workspace or another target.
 WORKSPACE="${WORKSPACE:-$ROOT/examples/pluto}"
 TARGET="${TARGET:-qual2/aws/us-east-1}"
-TARGET_FILE="$WORKSPACE/sol/$TARGET.yml"
+TARGET_FILE="$WORKSPACE/sol/environments.local.yml"
 TFVARS="$ROOT/internal/qualification/aws/smoke-test.tfvars"
 # No personal defaults: the qualification run must name the account profile and
 # the target's actual cluster explicitly, so a clean clone cannot accidentally
@@ -43,7 +44,7 @@ cleanup() {
   if AWS_PROFILE="$PROFILE" AWS_REGION="$REGION" aws ec2 describe-vpcs --filters Name=tag:Name,Values="$CLUSTER" --query 'length(Vpcs)' --output text >"$LOG_DIR/verify-vpcs.log" 2>&1; then
     [ "$(cat "$LOG_DIR/verify-vpcs.log")" = "0" ] || rc=1
   fi
-  if [ -n "${WROTE_TARGET:-}" ]; then
+  if [ -n "${WROTE_TARGET:-}" ] && head -1 "$TARGET_FILE" 2>/dev/null | grep -qF "live-smoke.sh"; then
     rm -f "$TARGET_FILE"
   fi
   say "logs: $LOG_DIR"
@@ -54,29 +55,30 @@ cleanup() {
 # file path is absolute, so it does not depend on where `sol` is invoked from.
 write_target() {
   if [ -e "$TARGET_FILE" ]; then
-    say "using existing target file $TARGET_FILE"
+    say "using existing $TARGET_FILE (not written by this run; left in place)"
     return
   fi
   mkdir -p "$(dirname "$TARGET_FILE")"
   cat >"$TARGET_FILE" <<YAML
-target:
-  cluster_name: $CLUSTER
-  base_domain: smoke-test.invalid
-  cluster_issuer: letsencrypt-staging
-  letsencrypt_email: smoke-test@example.invalid
-  terraform_var_file: $TFVARS
-
-resources:
-  app_db:
-    omit: true
-  events:
-    omit: true
-
-services:
-  charge_svc:
-    omit: true
-  notify_worker:
-    omit: true
+# Written by internal/qualification/aws/live-smoke.sh for $TARGET; removed on exit.
+${TARGET%%/*}:
+  targets:
+    ${TARGET#*/}:
+      cluster_name: $CLUSTER
+      base_domain: smoke-test.invalid
+      cluster_issuer: letsencrypt-staging
+      letsencrypt_email: smoke-test@example.invalid
+      terraform_var_file: $TFVARS
+      resources:
+        app_db:
+          omit: true
+        events:
+          omit: true
+      services:
+        charge_svc:
+          omit: true
+        notify_worker:
+          omit: true
 YAML
   WROTE_TARGET=1
 }

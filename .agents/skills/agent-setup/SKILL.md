@@ -80,7 +80,7 @@ name is the authority (convert underscores to hyphens).
 ## Safety
 
 - **Never `git add -A`** in this repo while a qualification target may be
-  untracked at `sol/qual/…` — stage explicit paths (see `AGENTS.md`).
+  untracked in `sol/environments.local.yml` — stage explicit paths (see `AGENTS.md`).
 - **Never delete a user-level root without the backup** in step 2, and never
   delete another actor's worktree.
 - Do not rewrite skill bodies while migrating; migrate content faithfully and fix

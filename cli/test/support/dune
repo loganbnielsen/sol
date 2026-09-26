@@ -1,0 +1,6 @@
+; FEAT-100: helpers shared by the cli tests.
+
+(library
+ (name sol_cli_test_support)
+ (wrapped false)
+ (libraries unix))

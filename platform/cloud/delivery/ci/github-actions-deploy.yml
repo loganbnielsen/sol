@@ -16,10 +16,12 @@
 # Required repo variable (Settings → Secrets and variables → Actions → Variables —
 # not a secret, this is just a path):
 #   SOL_TARGET                — deployment target, <env>/<provider>/<region>, e.g.
-#                                prod/aws/us-east-1. Requires a matching
-#                                sol/<env>/<provider>/<region>.yml file committed in
-#                                this repo -- create one before the first deploy, even
-#                                empty: mkdir -p sol/prod/aws && touch sol/prod/aws/us-east-1.yml
+#                                prod/aws/us-east-1. Must be declared in
+#                                sol/environments.yml before the first deploy, even
+#                                with an empty body:
+#                                  prod:
+#                                    targets:
+#                                      aws/us-east-1:
 #
 # For GitOps mode (Argo CD), see github-actions-gitops.yml instead.
 

@@ -1,5 +1,12 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: FEAT-100 — deployment config is sol.yml → environment → target (2026-09-26)
+
+- Targets are declared in `sol/environments.yml`, with each environment's policy set once. An optional gitignored `sol/environments.local.yml` adds account-specific values (disjoint keys) or whole environments; qualification uses it.
+- DEC-047's placement and merge table is enforced. The old per-target layout is refused.
+- Pluto's `sol plan` output is byte-identical before and after.
+- Found and fixed: the GCP qualification harness's relative var file broke after BUG-057; `sol/qualN/` escaped the account-artifact guard; and `sol target show` printed a literal `\n\n`.
+
 ## Latest: REFAC-106 — sol.yml is parsed by a YAML library (2026-09-26)
 
 - The hand-written, line-oriented parser is replaced by `yaml` (libyaml) plus a strict decoder over the same key table. Values keep their exact text, and semantic errors are unchanged.
