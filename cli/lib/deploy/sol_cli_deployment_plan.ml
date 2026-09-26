@@ -711,7 +711,7 @@ let workload_capabilities ~resolved_config ~services ~topics ~migrations =
 ;;
 
 let profile_claim ~resolved_config ~services ~topics ~migrations ~whole_workspace =
-  match Option.bind resolved_config Sol_cli_config.target with
+  match Option.map (fun (cfg : Sol_cli_config.t) -> cfg.target) resolved_config with
   | None -> None
   | Some target ->
     Option.map
@@ -958,7 +958,7 @@ let of_services_result
     let kafka_durability_config =
       match resolved_config with
       | Some cfg
-        when Option.bind (Sol_cli_config.target cfg) (fun target -> target.profile)
+        when cfg.Sol_cli_config.target.profile
              = Some Sol_cli_profile.Production_single_region
              && service_uses_resource_type
                   resolved_config

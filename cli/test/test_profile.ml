@@ -56,7 +56,7 @@ let load_error target =
   | Error e -> e.message
 ;;
 
-let target_of cfg = Option.get (Sol_cli_config.target cfg)
+let target_of cfg = cfg.Sol_cli_config.target
 let profile_name (target : Sol_cli_config.target) = Option.map P.to_string target.profile
 
 (* ── Identity and vocabulary ─────────────────────────────────────────────── *)

@@ -100,35 +100,31 @@ let show target verbose json check =
        print_available ();
        exit 1
      | Ok config ->
-       (match Sol_cli_config.target config with
-        | None ->
-          Printf.eprintf "target %s did not resolve to a target configuration\n" target;
-          exit 1
-        | Some target_config ->
-          (* DEC-024: sol.yml is always present now, so its existence alone can
+       let target_config = config.Sol_cli_config.target in
+       (* DEC-024: sol.yml is always present now, so its existence alone can
              no longer be what makes a target real. `sol target show` is an
              inspection of a *declared* target, so a well-shaped path with no
              sol/environments.yml declaration fails closed and lists
              what does exist. ([load_for_target] stays permissive by design;
              cmd_deploy enforces the same declaration for its mutating guarantee.) *)
-          if not (Sol_cli_config.target_declared target_config)
-          then (
-            Printf.eprintf
-              "target %s is not declared (expected in %s)\n\n"
-              target
-              (Sol_cli_config.target_source target_config);
-            print_available ();
-            exit 1);
-          let status = kubernetes_status ~check target_config in
-          let platform = platform_status ~check target_config in
-          if json
-          then
-            print_endline
-              (Yojson.Safe.to_string
-                 (Sol_cli_target_report.to_json ?platform ~verbose target_config status))
-          else
-            Sol_cli_target_report.rows ?platform ~verbose target_config status
-            |> List.iter (fun (label, value) -> Printf.printf "%-13s %s\n" label value)))
+       if not (Sol_cli_config.target_declared target_config)
+       then (
+         Printf.eprintf
+           "target %s is not declared (expected in %s)\n\n"
+           target
+           (Sol_cli_config.target_source target_config);
+         print_available ();
+         exit 1);
+       let status = kubernetes_status ~check target_config in
+       let platform = platform_status ~check target_config in
+       if json
+       then
+         print_endline
+           (Yojson.Safe.to_string
+              (Sol_cli_target_report.to_json ?platform ~verbose target_config status))
+       else
+         Sol_cli_target_report.rows ?platform ~verbose target_config status
+         |> List.iter (fun (label, value) -> Printf.printf "%-13s %s\n" label value))
 ;;
 
 open Cmdliner

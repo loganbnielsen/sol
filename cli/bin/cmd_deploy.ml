@@ -748,11 +748,8 @@ let run (req : Sol_cli_command_request.deploy_request) =
       Printf.eprintf "error: %s\n" (Sol_cli_config.error_to_string e);
       exit 1
     | Ok cfg ->
-      (match Sol_cli_config.target cfg with
-       | None ->
-         Printf.eprintf "error: target %S not found\n" req.target;
-         exit 1
-       | Some target -> cfg, target)
+      let target = cfg.Sol_cli_config.target in
+      cfg, target
   in
   (* sol deploy always mutates a real cluster, so unlike sol plan
      (genuinely read-only, Sol_cli_config.load_for_target's own
