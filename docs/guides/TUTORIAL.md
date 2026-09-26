@@ -37,12 +37,13 @@ Install `sol` (Linux x86_64) — download the self-contained release bundle:
 
 ```bash
 # Replace vX.Y.Z with the latest version from https://github.com/loganbnielsen/sol/releases
-curl -L https://github.com/loganbnielsen/sol/releases/latest/download/sol-vX.Y.Z-linux-x86_64.tar.gz \
+curl -L https://github.com/loganbnielsen/sol/releases/download/vX.Y.Z/sol-vX.Y.Z-linux-x86_64.tar.gz \
   | tar xz
-export PATH="$PWD/sol-vX.Y.Z-linux-x86_64/bin:$PATH"   # add to ~/.bashrc or ~/.zshrc
+export PATH="$PWD/sol-vX.Y.Z/bin:$PATH"   # add to ~/.bashrc or ~/.zshrc
+sol assets                                # where this sol's assets come from, and that each is there
 ```
 
-The tarball includes the `sol` binary and the framework source tree (`framework/`). No `SOL_HOME` or separate clone required — `sol new workspace` resolves the framework source automatically from the bundle layout.
+The archive's top directory is an installation prefix: `bin/sol`, and `share/sol/vX.Y.Z/` with the platform assets that version uses (Terraform roots, Helm values, Grafana dashboards) and the digest of its migration-runner image. The binary uses those and nothing else, so no `SOL_HOME` or clone is needed to run it. It needs glibc 2.35+ (Ubuntu 22.04 or newer) and `libpq5`/`libgmp10`. `sol cloud` runs Terraform in the bundled roots, so keep the directory writable by the user who runs it.
 
 > **Build from source:** Contributors who need `soldev` or want to modify the framework should clone the repo and build:
 > ```bash
@@ -129,17 +130,7 @@ sol new workspace pluto
 cd pluto
 ```
 
-> **Vendor link:** `sol new workspace` creates `vendor/framework` as a symlink into the Sol source tree. This link is how the generated workspace finds Sol's library source at build time — `dune build` will fail with "Library not found: sol_svc" if it is missing.
->
-> When using the **release tarball** (the install path above), the framework source is bundled inside the extracted directory. `sol new workspace` finds it automatically — no `SOL_HOME` needed.
->
-> When using a **source checkout**, set `SOL_HOME` before running `sol new workspace`:
->
-> ```bash
-> export SOL_HOME=~/sol   # set once in ~/.bashrc or ~/.zshrc
-> ```
->
-> The CLI uses `SOL_HOME` to locate the framework and create the vendor symlinks automatically.
+> **Framework packages:** the generated workspace declares its framework dependency (`sol-svc`, `sol-worker`, …) in its own `.opam` file, and your opam switch provides it (DEC-025). Until those packages are published to opam (RELEASE-005), install them from a Sol checkout with `bash platform/local/scripts/prepare-framework-deps.sh`; otherwise `dune build` fails with "Library not found: sol_svc".
 
 This generates 29 files. Here is what was created and why:
 
@@ -583,6 +574,8 @@ sol deployments                                  list this workspace's recorded 
 sol migrate [apply]                               apply pending migrations
 sol migrate status                                show per-file applied/pending table
 sol migrate rollback                              roll back the last applied migration
+
+sol assets                                        where this sol's own assets come from (a checkout or an installed release), and check each one
 
 sol rollback RELEASE_ID                           restore a recorded release boundary (see `sol releases` for ids)
 sol logs --scope DOMAIN/UNIT [--release RELEASE_ID] [--no-follow] [--tail=N]  stream logs from a deployed service

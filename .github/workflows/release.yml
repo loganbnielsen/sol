@@ -1,18 +1,56 @@
+# FEAT-101 / DEC-049: publish a Sol release -- binary, platform bundle and
+# migration-runner image -- from one build, so every Sol-owned asset the release
+# uses is version-aligned with it.
+#
+#   sol <version>
+#   ├── bin/sol                       built with SOL_RELEASE_VERSION=<version>
+#   ├── share/sol/<version>/platform  this commit's platform/ tree
+#   └── migration-runner-image        ghcr.io/<owner>/sol-migration-runner@sha256:...
+#                                     the same binary, published once
+#
+# A version is published once: the workflow refuses a tag whose runner image
+# already exists, so nothing a released CLI names can move afterwards.
+#
+# Replaces the pre-DEC-049 workflow (v0.1.0-alpha.1..6), which shipped bin/sol
+# with the framework/ source and no platform/ tree, plus a standalone binary.
+# Neither survives: sol new stopped reading framework source at DEC-025, and a
+# release binary without its bundle now refuses to run rather than guess.
 name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
 
 permissions:
   contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  build-linux-x86_64:
+  release:
     runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ github.ref_name }}
+      RUNNER_REPO: ghcr.io/${{ github.repository_owner }}/sol-migration-runner
     steps:
       - uses: actions/checkout@v5
+
+      # The support-library snapshot this release builds against, recorded in the
+      # bundle (SUPPORT_REFS) so the release's dependency revisions are on record.
+      - name: Resolve support-package commits
+        id: support
+        run: |
+          refs="$(internal/ci/resolve-support-packages.sh)"
+          printf '%s\n' "$refs" | tee "$RUNNER_TEMP/SUPPORT_REFS"
+          {
+            echo "refs<<SUPPORT_REFS"
+            printf '%s\n' "$refs"
+            echo "SUPPORT_REFS"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install system dependencies
         run: sudo apt-get install -y librdkafka-dev libpq-dev libpq5
@@ -23,64 +61,67 @@ jobs:
           ocaml-compiler: 5.4.1
 
       - name: Pin extracted opam packages
-        run: |
-          # Tracking #main on every support package during active parallel
-          # development across all of them — sol should build against their
-          # latest code, not a tag that's fallen behind. Revert to tagged
-          # pins once these settle and cut real releases (re-running a past
-          # sol release build later can then pull in different dependency
-          # code than what originally shipped — accepted tradeoff for now).
-          # https-eio first: obs-loki-eio/obs-prometheus-eio/aws-eio all
-          # depend on it, and each -y pin below installs immediately --
-          # pinning it after them let their own install step pull in the
-          # published opam-repository https-eio before this pin ever ran.
-          opam pin add https-eio https://github.com/loganbnielsen/https-eio.git#main -y
-          opam pin add kafka-eio https://github.com/loganbnielsen/kafka-eio.git#main -y
-          opam pin add obs-eio https://github.com/loganbnielsen/obs-eio.git#main -y
-          opam pin add obs-loki-eio https://github.com/loganbnielsen/obs-loki-eio.git#main -y
-          opam pin add obs-prometheus-eio https://github.com/loganbnielsen/obs-prometheus-eio.git#main -y
-          opam pin add obs-tempo-eio https://github.com/loganbnielsen/obs-tempo-eio.git#main -y
-          opam pin add pg-eio https://github.com/loganbnielsen/pg-eio.git#main -y
-          opam pin add aws-eio https://github.com/loganbnielsen/aws-eio.git#main -y
-          opam pin add s3-eio https://github.com/loganbnielsen/s3-eio.git#main -y
-          opam pin add dynamodb-eio https://github.com/loganbnielsen/dynamodb-eio.git#main -y
-          opam pin add lambda-eio https://github.com/loganbnielsen/lambda-eio.git#main -y
+        uses: ./.github/actions/pin-opam-packages
+        with:
+          refs: ${{ steps.support.outputs.refs }}
 
       - name: Install OCaml dependencies
         run: opam install . --deps-only -y
 
-      - name: Build sol binary
-        run: opam exec -- dune build cli/bin/main.exe
+      - name: Prepare Sol framework packages (DEC-025)
+        run: bash platform/local/scripts/prepare-framework-deps.sh
 
-      - name: Stage artifact
+      - name: Development build (the smoke's control binary)
         run: |
-          VERSION="${{ github.ref_name }}"
-          BUNDLE="sol-${VERSION}-linux-x86_64"
-          mkdir -p dist/${BUNDLE}/bin
-          cp _build/default/cli/bin/main.exe dist/${BUNDLE}/bin/sol
-          chmod +x dist/${BUNDLE}/bin/sol
-          cp -r framework dist/${BUNDLE}/framework
-          cd dist
-          tar czf ${BUNDLE}.tar.gz ${BUNDLE}
-          # Also keep the standalone binary for scripted installs
-          cp ${BUNDLE}/bin/sol sol-linux-x86_64
+          opam exec -- dune build cli/bin/main.exe
+          cp _build/default/cli/bin/main.exe "$RUNNER_TEMP/sol-dev"
 
-      - name: Smoke test release bundle
+      - name: Release build
         run: |
-          set -e
-          VERSION="${{ github.ref_name }}"
-          BUNDLE="dist/sol-${VERSION}-linux-x86_64"
-          # Binary should start and show help without framework resolution errors
-          ${BUNDLE}/bin/sol --help > /dev/null
-          # Verify framework source exists at expected location in bundle
-          test -f ${BUNDLE}/framework/ocaml/sol-svc/lib/dune
-          test -f ${BUNDLE}/framework/ocaml/kafka-eio-service/lib/dune
-          echo "Bundle structure verified"
+          SOL_RELEASE_VERSION="$VERSION" opam exec -- dune build cli/bin/main.exe
+          mkdir -p "$RUNNER_TEMP/runner"
+          cp _build/default/cli/bin/main.exe "$RUNNER_TEMP/runner/sol"
+          got="$("$RUNNER_TEMP/runner/sol" --version)"
+          [ "$got" = "$VERSION" ] || { echo "::error::built binary reports $got, not $VERSION"; exit 1; }
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          files: |
-            dist/sol-linux-x86_64
-            dist/sol-*-linux-x86_64.tar.gz
-          generate_release_notes: true
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Publish the migration runner, once
+        id: runner
+        run: |
+          if docker manifest inspect "$RUNNER_REPO:$VERSION" >/dev/null 2>&1; then
+            echo "::error::$RUNNER_REPO:$VERSION already exists; a release version is published once"
+            exit 1
+          fi
+          docker build -f internal/tooling/release/migration-runner.Dockerfile \
+            -t "$RUNNER_REPO:$VERSION" "$RUNNER_TEMP/runner"
+          docker push "$RUNNER_REPO:$VERSION"
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$RUNNER_REPO:$VERSION")"
+          [[ "$digest" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "::error::no digest for the pushed runner ($digest)"; exit 1; }
+          echo "image=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Build the release archive
+        id: bundle
+        run: |
+          archive="$(internal/tooling/scripts/build-release-bundle.sh \
+            --version "$VERSION" \
+            --runner-image "${{ steps.runner.outputs.image }}" \
+            --binary "$RUNNER_TEMP/runner/sol" \
+            --support-refs "$RUNNER_TEMP/SUPPORT_REFS" \
+            --out "$RUNNER_TEMP/dist" | tail -1)"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Installed-release smoke
+        run: |
+          internal/ci/smoke_installed_release.sh \
+            "${{ steps.bundle.outputs.archive }}" "$VERSION" \
+            "${{ steps.runner.outputs.image }}" "$RUNNER_TEMP/sol-dev"
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$VERSION" "${{ steps.bundle.outputs.archive }}" \
+            --title "Sol $VERSION" --generate-notes \
+            --notes "Migration runner: \`${{ steps.runner.outputs.image }}\`"

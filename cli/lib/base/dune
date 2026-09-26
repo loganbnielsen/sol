@@ -6,3 +6,15 @@
  (name sol_cli_base)
  (wrapped false)
  (libraries unix yojson))
+
+; FEAT-101 / DEC-049: the release version, set only by a release build.
+
+(rule
+ (targets sol_cli_build_info.ml)
+ (deps
+  gen_release_version.sh
+  (env_var SOL_RELEASE_VERSION))
+ (action
+  (with-stdout-to
+   sol_cli_build_info.ml
+   (run sh %{dep:gen_release_version.sh}))))

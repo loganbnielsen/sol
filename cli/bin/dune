@@ -42,4 +42,5 @@
   cmd_deployments
   cmd_alert
   cmd_cloud
-  cmd_cloud_tf))
+  cmd_cloud_tf
+  cmd_assets))
