@@ -179,17 +179,12 @@ let print_header ~workspace ~sha ?mode_line () =
 
 let build_plan ctx ~emit_to =
   let env_target =
-    match
-      Sol_cli_env_target.customer_cloud_defaults
-        ~registry:ctx.registry
-        ~image_tag:ctx.sha
-        ~emit_to
-        ()
-    with
-    | Ok t -> t
-    | Error msg ->
-      Printf.eprintf "error: %s\n" msg;
-      exit 1
+    Sol_cli_exit.or_exit
+      (Sol_cli_env_target.customer_cloud_defaults
+         ~registry:ctx.registry
+         ~image_tag:ctx.sha
+         ~emit_to
+         ())
   in
   (* Guard: Kubernetes_live is never allowed with a GitOps target. Combining the
      two would write plaintext secret values into the GitOps repository, leaking
@@ -217,40 +212,37 @@ let build_plan ctx ~emit_to =
           ~default:"letsencrypt-prod"
     }
   in
-  match
-    Sol_cli_factory.plan_of_services
-      ~workspace:ctx.execution.workspace
-      ~env
-      ~requested_scope:ctx.requested_scope
-      ~resolved_config:ctx.resolved_config
-      ~image_refs:ctx.image_refs
-      ~inventory:ctx.inventory
-      ctx.services
-  with
-  | Error msg ->
-    Printf.eprintf "error: %s\n" msg;
-    exit 1
-  | Ok plan ->
-    (* FEAT-089: the profile preflight runs once, here, because every deploy
+  let plan =
+    Sol_cli_exit.or_exit
+      (Sol_cli_factory.plan_of_services
+         ~workspace:ctx.execution.workspace
+         ~env
+         ~requested_scope:ctx.requested_scope
+         ~resolved_config:ctx.resolved_config
+         ~image_refs:ctx.image_refs
+         ~inventory:ctx.inventory
+         ctx.services)
+  in
+  (* FEAT-089: the profile preflight runs once, here, because every deploy
        path (dry-run, --emit-to, apply) builds its plan through this function
        before any lease, cluster mutation or emitted file. *)
-    let apply_mode =
-      match emit_to with
-      | Some _ -> Sol_cli_release.Gitops
-      | None -> Sol_cli_release.Direct
-    in
-    (match Sol_cli_profile_preflight.check ~target:ctx.target_cfg ~apply_mode plan with
-     | Error (profile, findings) ->
-       prerr_string (Sol_cli_profile_preflight.report profile findings);
-       exit 1
-     | Ok () ->
-       Option.iter
-         (fun (claim : Sol_cli_deployment_plan.profile_claim) ->
-            Printf.printf
-              "Profile: %s (preflight passed)\n%!"
-              (Sol_cli_profile.to_string claim.profile))
-         plan.Sol_cli_deployment_plan.profile;
-       plan)
+  let apply_mode =
+    match emit_to with
+    | Some _ -> Sol_cli_release.Gitops
+    | None -> Sol_cli_release.Direct
+  in
+  match Sol_cli_profile_preflight.check ~target:ctx.target_cfg ~apply_mode plan with
+  | Error (profile, findings) ->
+    prerr_string (Sol_cli_profile_preflight.report profile findings);
+    exit 1
+  | Ok () ->
+    Option.iter
+      (fun (claim : Sol_cli_deployment_plan.profile_claim) ->
+         Printf.printf
+           "Profile: %s (preflight passed)\n%!"
+           (Sol_cli_profile.to_string claim.profile))
+      plan.Sol_cli_deployment_plan.profile;
+    plan
 ;;
 
 let write_plan_if_requested ~emit_plan_to plan =
@@ -720,39 +712,33 @@ let run (req : Sol_cli_command_request.deploy_request) =
      list, and the selection is never widened to close a call graph. *)
   let inventory = discover_services () in
   let selected =
-    match Sol_cli_workload_selection.resolve req.scope inventory with
-    | Ok selected -> selected
-    | Error message ->
-      Printf.eprintf "error: %s\n" message;
-      exit 1
+    Sol_cli_exit.or_exit
+      (Sol_cli_workload_selection.resolve_nonempty
+         ~none:"no services found in app/ with a Dockerfile"
+         req.scope
+         inventory)
   in
-  let requested_scope = Sol_cli_deployment_scope.request_to_string selected.request in
-  let services = selected.Sol_cli_workload_selection.services in
+  let { Sol_cli_workload_selection.requested_scope; services; _ } = selected in
   (* FEAT-050: resolve supplied artifact references against the services this
      invocation actually selected, so a name typo or an ambiguous bare
      reference fails before the target or registry is even resolved. *)
   let image_refs =
-    match
-      Sol_cli_image_ref.resolve
-        ~service_names:(List.map (fun (s : Sol_cli_manifest.service) -> s.name) services)
-        req.image_refs
-    with
-    | Ok refs -> refs
-    | Error msg ->
-      Printf.eprintf "error: %s\n" msg;
-      exit 1
+    Sol_cli_exit.or_exit
+      (Sol_cli_image_ref.resolve
+         ~service_names:(List.map (fun (s : Sol_cli_manifest.service) -> s.name) services)
+         req.image_refs)
   in
   let resolved_config, target_cfg =
-    match Sol_cli_config.load_for_target ~target:req.target with
-    | Error e ->
-      Printf.eprintf "error: %s\n" (Sol_cli_config.error_to_string e);
+    let cfg =
+      Sol_cli_exit.or_exit_with
+        Sol_cli_config.error_to_string
+        (Sol_cli_config.load_for_target ~target:req.target)
+    in
+    match Sol_cli_config.target cfg with
+    | None ->
+      Printf.eprintf "error: target %S not found\n" req.target;
       exit 1
-    | Ok cfg ->
-      (match Sol_cli_config.target cfg with
-       | None ->
-         Printf.eprintf "error: target %S not found\n" req.target;
-         exit 1
-       | Some target -> cfg, target)
+    | Some target -> cfg, target
   in
   (* sol deploy always mutates a real cluster, so unlike sol plan
      (genuinely read-only, Sol_cli_config.load_for_target's own
@@ -833,19 +819,16 @@ let run (req : Sol_cli_command_request.deploy_request) =
          exit 1)
     image_refs;
   let services = omission.selected in
-  (* A selection emptied by omission is a different situation from a workspace with
-     no services at all, and the operator's next action is different too. *)
-  if services = [] && omission.excluded <> []
+  (* The selection was non-empty, so an empty one here was emptied by omission --
+     a different situation from a workspace with no services at all, and the
+     operator's next action is different too. *)
+  if services = []
   then (
     Printf.eprintf
       "error: every unit in scope is omitted by target %s: %s.\n\
       \  Name one with --scope <domain>/<name> to deploy it anyway.\n"
       req.target
       (String.concat ", " (List.map unit_id omission.excluded));
-    exit 1);
-  if services = []
-  then (
-    Printf.eprintf "No services found in app/ with a Dockerfile.\n";
     exit 1);
   let run_log = Sol_cli_run_log.create ~prefix:"deploy" () in
   Printf.printf
@@ -1199,26 +1182,23 @@ let cmd =
              loki_push_url
              keep_releases
            ->
-           match
-             Sol_cli_command_request.make_deploy_request
-               ~target
-               ~scope
-               ~dry_run
-               ~emit_to
-               ~emit_plan_to
-               ~image_tag
-               ~image_refs:(List.map Sol_cli_image_ref.split_flag_value raw_image_refs)
-               ~registry
-               ~secret_backend
-               ~confirm_group_change
-               ~loki_push_url
-               ~keep_releases
-               ~git_sha
-           with
-           | Ok req -> run req
-           | Error msg ->
-             Printf.eprintf "error: %s\n" msg;
-             exit 1)
+           run
+             (Sol_cli_exit.or_exit
+                (Sol_cli_command_request.make_deploy_request
+                   ~target
+                   ~scope
+                   ~dry_run
+                   ~emit_to
+                   ~emit_plan_to
+                   ~image_tag
+                   ~image_refs:
+                     (List.map Sol_cli_image_ref.split_flag_value raw_image_refs)
+                   ~registry
+                   ~secret_backend
+                   ~confirm_group_change
+                   ~loki_push_url
+                   ~keep_releases
+                   ~git_sha)))
       $ target_arg
       $ scope_arg
       $ dry_run_flag

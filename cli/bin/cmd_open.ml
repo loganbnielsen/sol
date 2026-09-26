@@ -29,14 +29,8 @@ let backend_of_arg = function
 
 let run kind scope_str links explicit_backend explicit_base_domain target grafana_base_url
   =
-  let workspace = Cmd_logs.workspace_name () in
-  let scope =
-    match Sol_cli_open.parse_scope scope_str with
-    | Ok s -> s
-    | Error msg ->
-      Printf.eprintf "error: %s\n" msg;
-      exit 1
-  in
+  let workspace = (Sol_cli_workspace.enter_or_exit ()).name in
+  let scope = Sol_cli_exit.or_exit (Sol_cli_open.parse_scope scope_str) in
   match
     Sol_cli_observability_url.effective_backend_and_base_domain
       ~explicit_backend
@@ -58,13 +52,11 @@ let run kind scope_str links explicit_backend explicit_base_domain target grafan
      | Sol_cli_observability_url.No_url reason ->
        Printf.printf "%s: (%s)\n%!" (kind_label kind) reason
      | Sol_cli_observability_url.Url base_url ->
-       (match Sol_cli_open.url ~base_url ~workspace ~kind scope with
-        | Error msg ->
-          Printf.eprintf "error: %s\n" msg;
-          exit 1
-        | Ok url ->
-          Printf.printf "%s\n%!" url;
-          if not links then try_open_browser url))
+       let url =
+         Sol_cli_exit.or_exit (Sol_cli_open.url ~base_url ~workspace ~kind scope)
+       in
+       Printf.printf "%s\n%!" url;
+       if not links then try_open_browser url)
 ;;
 
 let scope_arg =

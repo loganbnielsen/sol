@@ -211,17 +211,13 @@ let dev_up () =
   Printf.printf "\n[2/4] Reading the workspace's declared resources...\n%!";
   let req =
     let root =
-      match Sol_cli_workspace.resolve_validated ~dir:(Sys.getcwd ()) with
-      | Ok root -> root
-      | Error e ->
-        Printf.eprintf "error: %s\n" (Sol_cli_workspace.workspace_error_to_string e);
-        exit 1
+      Sol_cli_exit.or_exit_with
+        Sol_cli_workspace.workspace_error_to_string
+        (Sol_cli_workspace.resolve_validated ~dir:(Sys.getcwd ()))
     in
-    match Sol_cli_config.local_infra ~root with
-    | Ok req -> req
-    | Error e ->
-      Printf.eprintf "error: %s\n" (Sol_cli_config.error_to_string e);
-      exit 1
+    Sol_cli_exit.or_exit_with
+      Sol_cli_config.error_to_string
+      (Sol_cli_config.local_infra ~root)
   in
   Printf.printf
     "  kafka=%-5b  postgres=%-5b  loki=%-5b  prometheus=%-5b  tempo=%b\n%!"
@@ -777,19 +773,15 @@ let dev_run workspace_dir scope =
   (match workspace_dir with
    | Some d -> Unix.chdir d
    | None -> ());
-  let services =
-    match Sol_cli_workload_selection.resolve scope (discover_services ()) with
-    | Ok selected -> selected.Sol_cli_workload_selection.services
-    | Error message ->
-      Printf.eprintf "error: %s\n" message;
-      exit 1
+  let { Sol_cli_workload_selection.services; _ } =
+    Sol_cli_exit.or_exit
+      (Sol_cli_workload_selection.resolve_nonempty
+         ~none:
+           "no Sol services found. Expected app/<domain>/<name>_{svc,worker,fn}/ \
+            directories with a Dockerfile."
+         scope
+         (discover_services ()))
   in
-  if services = []
-  then (
-    Printf.eprintf "error: no Sol services found. ";
-    Printf.eprintf
-      "Expected app/<domain>/<name>_{svc,worker,fn}/ directories with a Dockerfile.\n";
-    exit 1);
   Printf.printf "\n  Starting %d service(s) from %s\n" (List.length services) dir;
   List.iter
     (fun svc ->

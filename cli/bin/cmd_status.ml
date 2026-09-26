@@ -1,7 +1,6 @@
 open Cmdliner
 
 (* REFAC-108: enter through the validated boundary, like every command. *)
-let workspace_name () = Filename.basename (Sol_cli_workspace.enter_or_exit ())
 
 let discover_domains () =
   let app_dir = "app" in
@@ -21,11 +20,10 @@ let discover_domains () =
 ;;
 
 let namespace_or_exit ~workspace ~domain =
-  match Sol_cli_deployment_plan.namespace_result ~workspace ~domain with
-  | Ok namespace -> Sol_cli_deployment_plan.namespace_to_string namespace
-  | Error err ->
-    Printf.eprintf "error: %s\n" (Sol_cli_deployment_plan.plan_error_to_string err);
-    exit 1
+  Sol_cli_deployment_plan.namespace_to_string
+    (Sol_cli_exit.or_exit_with
+       Sol_cli_deployment_plan.plan_error_to_string
+       (Sol_cli_deployment_plan.namespace_result ~workspace ~domain))
 ;;
 
 (* Status projects a resolved selection into its own addressing model: the
@@ -450,11 +448,10 @@ let print_service_status
       exit 1
   in
   let k8s_name =
-    match Sol_cli_deployment_plan.k8s_name_result svc.Sol_cli_manifest.name with
-    | Ok k -> Sol_cli_deployment_plan.k8s_name_to_string k
-    | Error err ->
-      Printf.eprintf "error: %s\n" (Sol_cli_deployment_plan.plan_error_to_string err);
-      exit 1
+    Sol_cli_deployment_plan.k8s_name_to_string
+      (Sol_cli_exit.or_exit_with
+         Sol_cli_deployment_plan.plan_error_to_string
+         (Sol_cli_deployment_plan.k8s_name_result svc.Sol_cli_manifest.name))
   in
   let pod_expectation =
     Sol_cli_status.pod_expectation_of_primitive svc.Sol_cli_manifest.primitive
@@ -520,7 +517,7 @@ let run ~ctx (options : status_options) =
   let target = options.target in
   let explicit_loki_url = options.observability.loki_base_url in
   let explicit_prometheus_url = options.prometheus_base_url in
-  let workspace = workspace_name () in
+  let workspace = (Sol_cli_workspace.enter_or_exit ()).name in
   let all_domains = discover_domains () in
   if all_domains = []
   then (
@@ -529,32 +526,21 @@ let run ~ctx (options : status_options) =
   (* Discovery happens once; scope resolution then projects it into status's own
      addressing model (workspace / domain / unit / managed resource). *)
   let services = Sol_cli_manifest.discover_services () in
-  let scope =
-    match Sol_cli_open.parse_scope scope_str with
-    | Ok s -> s
-    | Error msg ->
-      Printf.eprintf "error: %s\n" msg;
-      exit 1
-  in
+  let scope = Sol_cli_exit.or_exit (Sol_cli_open.parse_scope scope_str) in
   let resolve_status_scope request =
-    match Sol_cli_workload_selection.resolve ~what:"status scope" request services with
-    | Ok selected -> selected
-    | Error message ->
-      Printf.eprintf "error: %s\n" message;
-      exit 1
+    Sol_cli_exit.or_exit
+      (Sol_cli_workload_selection.resolve ~what:"status scope" request services)
   in
   let backend_and_base_domain () =
-    match
-      Sol_cli_observability_url.effective_backend_and_base_domain
-        ~explicit_backend
-        ~explicit_base_domain
-        ~target
-        ()
-    with
-    | Error msg ->
-      Printf.eprintf "error: %s\n" msg;
-      exit 1
-    | Ok pair -> pair
+    let pair =
+      Sol_cli_exit.or_exit
+        (Sol_cli_observability_url.effective_backend_and_base_domain
+           ~explicit_backend
+           ~explicit_base_domain
+           ~target
+           ())
+    in
+    pair
   in
   match scope with
   | Sol_cli_open.Workspace ->

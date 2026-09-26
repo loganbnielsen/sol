@@ -166,9 +166,14 @@ let enter ~dir =
    validated (DEC-024 clause 2), absence always fails closed, and the cwd is the
    root for the rest of the command. The root is returned for callers that need
    it by name; a caller that only needs the cwd to be the root may ignore it. *)
+type t =
+  { root : string
+  ; name : string
+  }
+
 let enter_or_exit () =
   match enter ~dir:(Sys.getcwd ()) with
-  | Ok root -> root
+  | Ok root -> { root; name = workspace_name ~root }
   | Error e ->
     Printf.eprintf "sol: %s\n" (workspace_error_to_string e);
     exit 1

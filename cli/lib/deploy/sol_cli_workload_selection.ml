@@ -14,6 +14,7 @@
 
 type resolved =
   { request : Sol_cli_deployment_scope.request
+  ; requested_scope : string
   ; scope : Sol_cli_deployment_scope.t
   ; services : Sol_cli_manifest.service list
   }
@@ -54,13 +55,29 @@ let resolve ?(what = "--scope") scope_value services =
   match Sol_cli_deployment_scope.parse_request ~what scope_value with
   | Error _ as err -> err
   | Ok request ->
+    let requested_scope = Sol_cli_deployment_scope.request_to_string request in
     (match
        Sol_cli_deployment_scope.resolve ~what request (named_of_services services)
      with
      | Error _ as err -> err
      | Ok (scope, Sol_cli_deployment_scope.Selected selected) ->
-       Ok { request; scope; services = services_of_selection services selected }
-     | Ok (scope, Sol_cli_deployment_scope.Empty) -> Ok { request; scope; services = [] })
+       Ok
+         { request
+         ; requested_scope
+         ; scope
+         ; services = services_of_selection services selected
+         }
+     | Ok (scope, Sol_cli_deployment_scope.Empty) ->
+       Ok { request; requested_scope; scope; services = [] })
+;;
+
+(* REFAC-111: a command that deploys refuses an empty selection as part of
+   resolving it, so its body never has to check. [resolve] yields empty only for a
+   whole-workspace request over nothing, which is what [none] describes. *)
+let resolve_nonempty ?what ~none scope_value services =
+  match resolve ?what scope_value services with
+  | Ok { services = []; _ } -> Error none
+  | result -> result
 ;;
 
 let is_empty (resolved : resolved) = resolved.services = []

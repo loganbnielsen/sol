@@ -3,13 +3,6 @@ open Sol_cli_manifest
 
 (* ── Workspace / git helpers ─────────────────────────────────────────────── *)
 
-(* DEC-024: the workspace is the nearest ancestor containing a sol.yml. Resolve
-   it once, from any descendant directory, and make it the process cwd so
-   discovery, sol.toml and the build context are all workspace-root relative.
-   A missing (or nested) boundary fails closed instead of silently using the
-   invocation cwd -- the bug BUG-034 exposed. *)
-let enter_workspace = Sol_cli_workspace.enter_or_exit
-
 let git_sha () =
   match
     Sol_cli_process.run (Sol_cli_process.cmd [ "git"; "rev-parse"; "--short"; "HEAD" ])
@@ -28,11 +21,9 @@ let print_header ~workspace ~sha ~dry_run =
 ;;
 
 let build_plan ~requested_scope ~workspace ~sha ~services =
-  match Sol_cli_up_execution.local_plan ~requested_scope ~workspace ~sha services with
-  | Ok plan -> plan
-  | Error err ->
-    Printf.eprintf "error: %s\n" (Sol_cli_deployment_plan.plan_error_to_string err);
-    exit 1
+  Sol_cli_exit.or_exit_with
+    Sol_cli_deployment_plan.plan_error_to_string
+    (Sol_cli_up_execution.local_plan ~requested_scope ~workspace ~sha services)
 ;;
 
 let check_contract ~services =
@@ -404,25 +395,20 @@ let run_apply
 ;;
 
 let run (req : Sol_cli_command_request.up_request) =
-  let repo_root = enter_workspace () in
-  let workspace = Sol_cli_workspace.workspace_name ~root:repo_root in
-  let sha = req.image_tag in
-  let selected =
-    match Sol_cli_workload_selection.resolve req.scope (discover_services ()) with
-    | Ok selected -> selected
-    | Error message ->
-      Printf.eprintf "error: %s\n" message;
-      exit 1
+  (* DEC-024: enter the workspace (the nearest ancestor with a sol.yml) from any
+     descendant directory; a missing or nested boundary fails closed (BUG-034). *)
+  let { Sol_cli_workspace.root = repo_root; name = workspace } =
+    Sol_cli_workspace.enter_or_exit ()
   in
-  let requested_scope = Sol_cli_deployment_scope.request_to_string selected.request in
-  let services = selected.Sol_cli_workload_selection.services in
-  (* Mutating command: an empty selection is an error, never a silent success.
-     [resolve] only yields empty for a whole-workspace request over nothing, so
-     the message names that case rather than the scope. *)
-  if services = []
-  then (
-    Printf.eprintf "No services found in app/ with a Dockerfile.\n";
-    exit 1);
+  let sha = req.image_tag in
+  (* Mutating command: an empty selection is an error, never a silent success. *)
+  let { Sol_cli_workload_selection.requested_scope; services; _ } =
+    Sol_cli_exit.or_exit
+      (Sol_cli_workload_selection.resolve_nonempty
+         ~none:"no services found in app/ with a Dockerfile"
+         req.scope
+         (discover_services ()))
+  in
   let run_log = Sol_cli_run_log.create ~prefix:"up" () in
   Printf.printf
     "\nRun: %s\n  log: %s/\n"
@@ -513,19 +499,15 @@ let cmd =
           Local-only — no target concept, unlike 'sol deploy'.")
     Term.(
       const (fun scope dry_run tag confirm_group_change keep_releases ->
-        match
-          Sol_cli_command_request.make_up_request
-            ~scope
-            ~dry_run
-            ~tag
-            ~confirm_group_change
-            ~keep_releases
-            ~git_sha
-        with
-        | Ok req -> run req
-        | Error msg ->
-          Printf.eprintf "error: %s\n" msg;
-          exit 1)
+        run
+          (Sol_cli_exit.or_exit
+             (Sol_cli_command_request.make_up_request
+                ~scope
+                ~dry_run
+                ~tag
+                ~confirm_group_change
+                ~keep_releases
+                ~git_sha)))
       $ scope_arg
       $ dry_run_flag
       $ tag_arg

@@ -49,11 +49,18 @@ val resolve_validated : dir:string -> (string, workspace_error) result
     context) are correct from any descendant directory. *)
 val enter : dir:string -> (string, workspace_error) result
 
+(** An entered workspace: its root and its name, so a command learns "where am
+    I" from one value (REFAC-111). *)
+type t =
+  { root : string
+  ; name : string (** {!workspace_name} of [root]. *)
+  }
+
 (** [enter_or_exit ()] enters the workspace containing the current directory, or
     prints the workspace error and exits 1. The one way a command establishes its
     workspace (REFAC-108): the boundary is validated, absence fails closed, and the
-    resolved root is returned. *)
-val enter_or_exit : unit -> string
+    entered workspace is returned. *)
+val enter_or_exit : unit -> t
 
 (** Join a workspace-root-relative path to the resolved root, without changing
     the process cwd. For commands that must keep the invocation cwd (e.g.

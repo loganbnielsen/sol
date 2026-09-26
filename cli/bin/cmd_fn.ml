@@ -18,7 +18,6 @@
 open Cmdliner
 
 (* REFAC-108: enter through the validated boundary, like every command. *)
-let workspace_name () = Filename.basename (Sol_cli_workspace.enter_or_exit ())
 
 (* Same resolution shape as `sol logs`'s resolve_unit: a selector must name
    exactly one workload. Here the selector is a required positional
@@ -27,16 +26,11 @@ let workspace_name () = Filename.basename (Sol_cli_workspace.enter_or_exit ())
    silent no-op. *)
 let resolve_fn selector =
   let selected =
-    match
-      Sol_cli_workload_selection.resolve
-        ~what:"DOMAIN/NAME"
-        (Some selector)
-        (Sol_cli_manifest.discover_services ())
-    with
-    | Ok selected -> selected
-    | Error message ->
-      Printf.eprintf "error: %s\n" message;
-      exit 1
+    Sol_cli_exit.or_exit
+      (Sol_cli_workload_selection.resolve
+         ~what:"DOMAIN/NAME"
+         (Some selector)
+         (Sol_cli_manifest.discover_services ()))
   in
   match selected.request, selected.services with
   | Sol_cli_deployment_scope.Unit_named _, [ svc ] ->
@@ -58,23 +52,21 @@ let resolve_fn selector =
 ;;
 
 let namespace_or_exit ~workspace ~domain =
-  match Sol_cli_deployment_plan.namespace_result ~workspace ~domain with
-  | Ok namespace -> Sol_cli_deployment_plan.namespace_to_string namespace
-  | Error err ->
-    Printf.eprintf "error: %s\n" (Sol_cli_deployment_plan.plan_error_to_string err);
-    exit 1
+  Sol_cli_deployment_plan.namespace_to_string
+    (Sol_cli_exit.or_exit_with
+       Sol_cli_deployment_plan.plan_error_to_string
+       (Sol_cli_deployment_plan.namespace_result ~workspace ~domain))
 ;;
 
 let k8s_name_or_exit name =
-  match Sol_cli_deployment_plan.k8s_name_result name with
-  | Ok k8s_name -> Sol_cli_deployment_plan.k8s_name_to_string k8s_name
-  | Error err ->
-    Printf.eprintf "error: %s\n" (Sol_cli_deployment_plan.plan_error_to_string err);
-    exit 1
+  Sol_cli_deployment_plan.k8s_name_to_string
+    (Sol_cli_exit.or_exit_with
+       Sol_cli_deployment_plan.plan_error_to_string
+       (Sol_cli_deployment_plan.k8s_name_result name))
 ;;
 
 let run ~ctx selector =
-  let workspace = workspace_name () in
+  let workspace = (Sol_cli_workspace.enter_or_exit ()).name in
   let svc = resolve_fn selector in
   let domain = svc.Sol_cli_manifest.domain in
   let name = svc.Sol_cli_manifest.name in
