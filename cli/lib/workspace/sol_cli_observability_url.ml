@@ -83,35 +83,33 @@ let effective_backend_and_base_domain ~explicit_backend ~explicit_base_domain ~t
     (match Sol_cli_config.load_for_target ~target:target_path with
      | Error e -> Error (Sol_cli_config.error_to_string e)
      | Ok cfg ->
-       (match Sol_cli_config.target cfg with
-        | None -> Error (Printf.sprintf "target %S not found" target_path)
-        | Some t ->
-          let target_backend =
-            match t.Sol_cli_config.observability_backend with
-            | None -> Ok None
-            | Some s ->
-              (match backend_of_string s with
-               | Some b -> Ok (Some b)
-               | None ->
-                 Error
-                   (Printf.sprintf
-                      "target %s has invalid observability_backend %S (expected: local, \
-                       self_hosted_durable, external)"
-                      target_path
-                      s))
+       let t = cfg.Sol_cli_config.target in
+       let target_backend =
+         match t.Sol_cli_config.observability_backend with
+         | None -> Ok None
+         | Some s ->
+           (match backend_of_string s with
+            | Some b -> Ok (Some b)
+            | None ->
+              Error
+                (Printf.sprintf
+                   "target %s has invalid observability_backend %S (expected: local, \
+                    self_hosted_durable, external)"
+                   target_path
+                   s))
+       in
+       (match target_backend with
+        | Error e -> Error e
+        | Ok target_backend ->
+          let backend =
+            match explicit_backend with
+            | Some b -> b
+            | None -> Option.value target_backend ~default:Local
           in
-          (match target_backend with
-           | Error e -> Error e
-           | Ok target_backend ->
-             let backend =
-               match explicit_backend with
-               | Some b -> b
-               | None -> Option.value target_backend ~default:Local
-             in
-             let base_domain =
-               match explicit_base_domain with
-               | Some _ -> explicit_base_domain
-               | None -> t.Sol_cli_config.base_domain
-             in
-             Ok (backend, base_domain))))
+          let base_domain =
+            match explicit_base_domain with
+            | Some _ -> explicit_base_domain
+            | None -> t.Sol_cli_config.base_domain
+          in
+          Ok (backend, base_domain)))
 ;;

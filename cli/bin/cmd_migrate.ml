@@ -528,118 +528,116 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
   match Sol_cli_config.load_for_target ~target with
   | Error e -> fatal (Sol_cli_config.error_to_string e)
   | Ok cfg ->
-    (match Sol_cli_config.target cfg with
-     | None -> fatal_p "target %S not found" target
-     | Some target_cfg ->
-       let registry =
-         match registry_override with
+    let target_cfg = cfg.Sol_cli_config.target in
+    let registry =
+      match registry_override with
+      | Some r -> r
+      | None ->
+        (match target_cfg.Sol_cli_config.registry with
          | Some r -> r
          | None ->
-           (match target_cfg.Sol_cli_config.registry with
-            | Some r -> r
-            | None ->
-              fatal
-                "no registry configured for this target -- pass --registry or set \
-                 target.registry in sol.yml.")
-       in
-       let sol_home =
-         match Sol_cli_cmd_new.infer_sol_home () with
-         | Some dir -> dir
-         | None ->
            fatal
-             "cannot locate the Sol checkout to build the migration runner image -- set \
-              SOL_HOME."
-       in
-       let workspace = Filename.basename (Sys.getcwd ()) in
-       let namespace, k8s_name = pick_namespace_and_service ~workspace in
-       (* HARDEN-002 run 2, finding 8: the Job below runs in this namespace and reads
+             "no registry configured for this target -- pass --registry or set \
+              target.registry in sol.yml.")
+    in
+    let sol_home =
+      match Sol_cli_cmd_new.infer_sol_home () with
+      | Some dir -> dir
+      | None ->
+        fatal
+          "cannot locate the Sol checkout to build the migration runner image -- set \
+           SOL_HOME."
+    in
+    let workspace = Filename.basename (Sys.getcwd ()) in
+    let namespace, k8s_name = pick_namespace_and_service ~workspace in
+    (* HARDEN-002 run 2, finding 8: the Job below runs in this namespace and reads
           the runtime Secret, so establish both before submitting it. Doing it here
           is what makes a fresh target's first `sol migrate apply` possible. *)
-       (match Sol_cli_substrate.ensure ~ctx ~namespaces:[ namespace ] with
-        | Ok () -> ()
-        | Error msg -> fatal msg);
-       reconcile_operator_bindings_warn ~ctx ~workspace;
-       let files = read_migration_files dir in
-       if files = []
-       then Printf.printf "(no migration files found in %s -- nothing to do)\n" dir
-       else (
-         let image =
-           Sol_cli_deployment_plan.image_ref
-             ~registry
-             ~workspace
-             ~k8s_name
-             ~tag:"sol-cli-migrate"
-         in
-         Printf.printf "Building migration runner image %s...\n%!" image;
-         let dockerfile = write_temp_file ~suffix:".Dockerfile" sol_cli_dockerfile in
-         (match Sol_cli_docker.build ~tag:image ~dockerfile ~context:sol_home with
-          | Error e -> fatal_p "docker build: %s" (Sol_cli_process.error_to_string e)
-          | Ok () -> ());
-         (try Sys.remove dockerfile with
-          | _ -> ());
-         Printf.printf "Pushing %s...\n%!" image;
-         (match Sol_cli_docker.push ~image_ref:image with
-          | Error e -> fatal_p "docker push: %s" (Sol_cli_process.error_to_string e)
-          | Ok () -> ());
-         let run_id = Printf.sprintf "%.0f" (Unix.gettimeofday () *. 1000.) in
-         let job_name = Printf.sprintf "sol-migrate-%s" run_id in
-         let configmap_name = Printf.sprintf "sol-migrate-files-%s" run_id in
-         let cleanup () =
-           ignore
-             (run_kubectl
-                ~ctx
-                [ "delete"
-                ; "job"
-                ; job_name
-                ; "-n"
-                ; namespace
-                ; "--ignore-not-found"
-                ; "--wait=false"
-                ]);
-           ignore
-             (run_kubectl
-                ~ctx
-                [ "delete"
-                ; "configmap"
-                ; configmap_name
-                ; "-n"
-                ; namespace
-                ; "--ignore-not-found"
-                ])
-         in
-         let configmap_yaml =
-           write_temp_file
-             ~suffix:".yaml"
-             (render_configmap ~name:configmap_name ~namespace files)
-         in
-         let job_yaml =
-           write_temp_file
-             ~suffix:".yaml"
-             (render_job
-                ~name:job_name
-                ~namespace
-                ~image
-                ~args:[ "migrate"; "apply"; "--dir"; "/migrations"; "--table"; table ]
-                ~configmap_name)
-         in
-         Printf.printf
-           "Submitting migration Job %s in namespace %s...\n%!"
-           job_name
-           namespace;
-         kubectl_apply_or_fatal
-           ~ctx
-           ~what:"kubectl apply (configmap)"
-           [ "apply"; "-f"; configmap_yaml ];
-         kubectl_apply_or_fatal
-           ~ctx
-           ~what:"kubectl apply (job)"
-           ~on_fail:cleanup
-           [ "apply"; "-f"; job_yaml ];
-         (try Sys.remove configmap_yaml with
-          | _ -> ());
-         (try Sys.remove job_yaml with
-          | _ -> ());
-         (* kubectl wait's own --for=condition=complete never returns on a
+    (match Sol_cli_substrate.ensure ~ctx ~namespaces:[ namespace ] with
+     | Ok () -> ()
+     | Error msg -> fatal msg);
+    reconcile_operator_bindings_warn ~ctx ~workspace;
+    let files = read_migration_files dir in
+    if files = []
+    then Printf.printf "(no migration files found in %s -- nothing to do)\n" dir
+    else (
+      let image =
+        Sol_cli_deployment_plan.image_ref
+          ~registry
+          ~workspace
+          ~k8s_name
+          ~tag:"sol-cli-migrate"
+      in
+      Printf.printf "Building migration runner image %s...\n%!" image;
+      let dockerfile = write_temp_file ~suffix:".Dockerfile" sol_cli_dockerfile in
+      (match Sol_cli_docker.build ~tag:image ~dockerfile ~context:sol_home with
+       | Error e -> fatal_p "docker build: %s" (Sol_cli_process.error_to_string e)
+       | Ok () -> ());
+      (try Sys.remove dockerfile with
+       | _ -> ());
+      Printf.printf "Pushing %s...\n%!" image;
+      (match Sol_cli_docker.push ~image_ref:image with
+       | Error e -> fatal_p "docker push: %s" (Sol_cli_process.error_to_string e)
+       | Ok () -> ());
+      let run_id = Printf.sprintf "%.0f" (Unix.gettimeofday () *. 1000.) in
+      let job_name = Printf.sprintf "sol-migrate-%s" run_id in
+      let configmap_name = Printf.sprintf "sol-migrate-files-%s" run_id in
+      let cleanup () =
+        ignore
+          (run_kubectl
+             ~ctx
+             [ "delete"
+             ; "job"
+             ; job_name
+             ; "-n"
+             ; namespace
+             ; "--ignore-not-found"
+             ; "--wait=false"
+             ]);
+        ignore
+          (run_kubectl
+             ~ctx
+             [ "delete"
+             ; "configmap"
+             ; configmap_name
+             ; "-n"
+             ; namespace
+             ; "--ignore-not-found"
+             ])
+      in
+      let configmap_yaml =
+        write_temp_file
+          ~suffix:".yaml"
+          (render_configmap ~name:configmap_name ~namespace files)
+      in
+      let job_yaml =
+        write_temp_file
+          ~suffix:".yaml"
+          (render_job
+             ~name:job_name
+             ~namespace
+             ~image
+             ~args:[ "migrate"; "apply"; "--dir"; "/migrations"; "--table"; table ]
+             ~configmap_name)
+      in
+      Printf.printf
+        "Submitting migration Job %s in namespace %s...\n%!"
+        job_name
+        namespace;
+      kubectl_apply_or_fatal
+        ~ctx
+        ~what:"kubectl apply (configmap)"
+        [ "apply"; "-f"; configmap_yaml ];
+      kubectl_apply_or_fatal
+        ~ctx
+        ~what:"kubectl apply (job)"
+        ~on_fail:cleanup
+        [ "apply"; "-f"; job_yaml ];
+      (try Sys.remove configmap_yaml with
+       | _ -> ());
+      (try Sys.remove job_yaml with
+       | _ -> ());
+      (* kubectl wait's own --for=condition=complete never returns on a
            failed (not completed) Job -- it would sit out the full timeout
            on every failure. Poll the status fields directly instead, same
            bounded-retry shape .github/workflows/ci.yml's own health check
@@ -653,75 +651,74 @@ let run_apply_in_cluster ~ctx ~target ~dir ~table ~registry_override =
            single token that can't match a 2-element split. Query each
            field with its own jsonpath instead, so an absent field just
            trims to "" rather than corrupting the other field's parse. *)
-         let job_field field =
-           match
-             run_kubectl
-               ~ctx
-               ~timeout_s:15.
-               [ "get"
-               ; "job"
-               ; job_name
-               ; "-n"
-               ; namespace
-               ; "-o"
-               ; Printf.sprintf "jsonpath={.status.%s}" field
-               ]
-           with
-           | Ok r -> String.trim r.Sol_cli_process.stdout
-           | Error _ -> ""
+      let job_field field =
+        match
+          run_kubectl
+            ~ctx
+            ~timeout_s:15.
+            [ "get"
+            ; "job"
+            ; job_name
+            ; "-n"
+            ; namespace
+            ; "-o"
+            ; Printf.sprintf "jsonpath={.status.%s}" field
+            ]
+        with
+        | Ok r -> String.trim r.Sol_cli_process.stdout
+        | Error _ -> ""
+      in
+      let job_status () =
+        ( job_field "succeeded" = "1"
+        , match job_field "failed" with
+          | "" | "0" -> false
+          | _ -> true )
+      in
+      let rec wait_for_completion n =
+        if n = 0
+        then `Timed_out
+        else (
+          match job_status () with
+          | true, _ -> `Succeeded
+          | _, true -> `Failed
+          | false, false ->
+            Unix.sleepf 2.;
+            wait_for_completion (n - 1))
+      in
+      let outcome =
+        wait_for_completion 150
+        (* ~300s at 2s/poll *)
+      in
+      Printf.printf "\n--- migration Job logs (%s) ---\n%!" job_name;
+      (match
+         run_kubectl
+           ~ctx
+           ~timeout_s:30.
+           [ "logs"; Printf.sprintf "job/%s" job_name; "-n"; namespace ]
+       with
+       | Ok r ->
+         let logs =
+           match Sys.getenv_opt "POSTGRES_URL" with
+           | Some url -> Sol_cli_redaction.connection_error ~url r.Sol_cli_process.stdout
+           | None -> r.Sol_cli_process.stdout
          in
-         let job_status () =
-           ( job_field "succeeded" = "1"
-           , match job_field "failed" with
-             | "" | "0" -> false
-             | _ -> true )
-         in
-         let rec wait_for_completion n =
-           if n = 0
-           then `Timed_out
-           else (
-             match job_status () with
-             | true, _ -> `Succeeded
-             | _, true -> `Failed
-             | false, false ->
-               Unix.sleepf 2.;
-               wait_for_completion (n - 1))
-         in
-         let outcome =
-           wait_for_completion 150
-           (* ~300s at 2s/poll *)
-         in
-         Printf.printf "\n--- migration Job logs (%s) ---\n%!" job_name;
-         (match
-            run_kubectl
-              ~ctx
-              ~timeout_s:30.
-              [ "logs"; Printf.sprintf "job/%s" job_name; "-n"; namespace ]
-          with
-          | Ok r ->
-            let logs =
-              match Sys.getenv_opt "POSTGRES_URL" with
-              | Some url ->
-                Sol_cli_redaction.connection_error ~url r.Sol_cli_process.stdout
-              | None -> r.Sol_cli_process.stdout
-            in
-            print_string logs
-          | Error e ->
-            Printf.eprintf
-              "warning: could not fetch job logs: %s\n"
-              (Sol_cli_process.error_to_string e));
-         Printf.printf "--- end logs ---\n\n%!";
-         (match outcome with
-          | `Timed_out ->
-            Printf.eprintf "error: migration Job did not complete within 300s\n"
-          | `Succeeded | `Failed -> ());
-         let succeeded = outcome = `Succeeded in
-         cleanup ();
-         if succeeded
-         then Printf.printf "Done.\n"
-         else (
-           Printf.eprintf "error: migration Job failed -- see logs above.\n";
-           exit 1)))
+         print_string logs
+       | Error e ->
+         Printf.eprintf
+           "warning: could not fetch job logs: %s\n"
+           (Sol_cli_process.error_to_string e));
+      Printf.printf "--- end logs ---\n\n%!";
+      (match outcome with
+       | `Timed_out ->
+         Printf.eprintf "error: migration Job did not complete within 300s\n"
+       | `Succeeded | `Failed -> ());
+      let succeeded = outcome = `Succeeded in
+      cleanup ();
+      if succeeded
+      then Printf.printf "Done.\n"
+      else (
+        Printf.eprintf "error: migration Job failed -- see logs above.\n";
+        exit 1))
 ;;
 
 (* ── AUDIT-069: the deploy's read-only migration prerequisite ─────────────── *)
@@ -780,206 +777,197 @@ let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table =
   match Sol_cli_config.load_for_target ~target with
   | Error e -> Error (Sol_cli_config.error_to_string e)
   | Ok cfg ->
-    (match Sol_cli_config.target cfg with
-     | None -> Error (Printf.sprintf "target %S not found" target)
-     | Some target_cfg ->
-       let registry =
-         match target_cfg.Sol_cli_config.registry with
-         | Some r -> Ok r
-         | None ->
-           (Error
-              "no registry configured for this target -- set target.registry in sol.yml."
-            : (string, string) result)
-       in
-       (match registry with
-        | Error _ as e -> e
-        | Ok registry ->
-          let namespace, k8s_name = pick_namespace_and_service ~workspace in
-          (* HARDEN-002 run 2, finding 8: the Job below runs in this namespace and reads
+    let target_cfg = cfg.Sol_cli_config.target in
+    let registry =
+      match target_cfg.Sol_cli_config.registry with
+      | Some r -> Ok r
+      | None ->
+        (Error "no registry configured for this target -- set target.registry in sol.yml."
+         : (string, string) result)
+    in
+    (match registry with
+     | Error _ as e -> e
+     | Ok registry ->
+       let namespace, k8s_name = pick_namespace_and_service ~workspace in
+       (* HARDEN-002 run 2, finding 8: the Job below runs in this namespace and reads
           the runtime Secret, so establish both before submitting it. Doing it here
           is what makes a fresh target's first `sol migrate apply` possible. *)
-          (match Sol_cli_substrate.ensure ~ctx ~namespaces:[ namespace ] with
-           | Ok () -> ()
-           | Error msg -> fatal msg);
-          (match push_runner_image ~workspace ~k8s_name ~registry with
-           | Error _ as e -> e
-           | Ok image ->
-             let files = read_migration_files dir in
-             let run_id = Printf.sprintf "%.0f" (Unix.gettimeofday () *. 1000.) in
-             let job_name = Printf.sprintf "sol-migrate-status-%s" run_id in
-             let configmap_name = Printf.sprintf "sol-migrate-status-files-%s" run_id in
-             (* Read-only and short-lived: the Job and its ConfigMap are removed
+       (match Sol_cli_substrate.ensure ~ctx ~namespaces:[ namespace ] with
+        | Ok () -> ()
+        | Error msg -> fatal msg);
+       (match push_runner_image ~workspace ~k8s_name ~registry with
+        | Error _ as e -> e
+        | Ok image ->
+          let files = read_migration_files dir in
+          let run_id = Printf.sprintf "%.0f" (Unix.gettimeofday () *. 1000.) in
+          let job_name = Printf.sprintf "sol-migrate-status-%s" run_id in
+          let configmap_name = Printf.sprintf "sol-migrate-status-files-%s" run_id in
+          (* Read-only and short-lived: the Job and its ConfigMap are removed
                 whether the check succeeds or fails, so a deploy never leaves
                 cluster objects behind for a check that only reads. *)
-             let cleanup () =
-               ignore
-                 (run_kubectl
-                    ~ctx
-                    [ "delete"
-                    ; "job"
-                    ; job_name
-                    ; "-n"
-                    ; namespace
-                    ; "--ignore-not-found"
-                    ; "--wait=false"
-                    ]);
-               ignore
-                 (run_kubectl
-                    ~ctx
-                    [ "delete"
-                    ; "configmap"
-                    ; configmap_name
-                    ; "-n"
-                    ; namespace
-                    ; "--ignore-not-found"
-                    ])
-             in
-             let configmap_yaml =
-               write_temp_file
-                 ~suffix:".yaml"
-                 (render_configmap ~name:configmap_name ~namespace files)
-             in
-             let job_yaml =
-               write_temp_file
-                 ~suffix:".yaml"
-                 (render_status_job
-                    ~name:job_name
-                    ~namespace
-                    ~image
-                    ~table
-                    ~configmap_name)
-             in
-             let applied =
-               match run_kubectl ~ctx [ "apply"; "-f"; configmap_yaml ] with
-               | Ok r when r.Sol_cli_process.exit_code = 0 ->
-                 (match run_kubectl ~ctx [ "apply"; "-f"; job_yaml ] with
-                  | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
-                  | Ok r ->
-                    Error
-                      (Printf.sprintf
-                         "kubectl apply (status job) failed: %s"
-                         (String.trim r.Sol_cli_process.stderr))
-                  | Error e ->
-                    Error
-                      (Printf.sprintf
-                         "kubectl apply (status job): %s"
-                         (Sol_cli_process.error_to_string e)))
+          let cleanup () =
+            ignore
+              (run_kubectl
+                 ~ctx
+                 [ "delete"
+                 ; "job"
+                 ; job_name
+                 ; "-n"
+                 ; namespace
+                 ; "--ignore-not-found"
+                 ; "--wait=false"
+                 ]);
+            ignore
+              (run_kubectl
+                 ~ctx
+                 [ "delete"
+                 ; "configmap"
+                 ; configmap_name
+                 ; "-n"
+                 ; namespace
+                 ; "--ignore-not-found"
+                 ])
+          in
+          let configmap_yaml =
+            write_temp_file
+              ~suffix:".yaml"
+              (render_configmap ~name:configmap_name ~namespace files)
+          in
+          let job_yaml =
+            write_temp_file
+              ~suffix:".yaml"
+              (render_status_job ~name:job_name ~namespace ~image ~table ~configmap_name)
+          in
+          let applied =
+            match run_kubectl ~ctx [ "apply"; "-f"; configmap_yaml ] with
+            | Ok r when r.Sol_cli_process.exit_code = 0 ->
+              (match run_kubectl ~ctx [ "apply"; "-f"; job_yaml ] with
+               | Ok r when r.Sol_cli_process.exit_code = 0 -> Ok ()
                | Ok r ->
                  Error
                    (Printf.sprintf
-                      "kubectl apply (status configmap) failed: %s"
+                      "kubectl apply (status job) failed: %s"
                       (String.trim r.Sol_cli_process.stderr))
                | Error e ->
                  Error
                    (Printf.sprintf
-                      "kubectl apply (status configmap): %s"
-                      (Sol_cli_process.error_to_string e))
-             in
-             (try Sys.remove configmap_yaml with
-              | _ -> ());
-             (try Sys.remove job_yaml with
-              | _ -> ());
-             let result =
-               match applied with
-               | Error _ as e -> e
-               | Ok () ->
-                 (* Same bounded poll as the apply path: `kubectl wait` does not
+                      "kubectl apply (status job): %s"
+                      (Sol_cli_process.error_to_string e)))
+            | Ok r ->
+              Error
+                (Printf.sprintf
+                   "kubectl apply (status configmap) failed: %s"
+                   (String.trim r.Sol_cli_process.stderr))
+            | Error e ->
+              Error
+                (Printf.sprintf
+                   "kubectl apply (status configmap): %s"
+                   (Sol_cli_process.error_to_string e))
+          in
+          (try Sys.remove configmap_yaml with
+           | _ -> ());
+          (try Sys.remove job_yaml with
+           | _ -> ());
+          let result =
+            match applied with
+            | Error _ as e -> e
+            | Ok () ->
+              (* Same bounded poll as the apply path: `kubectl wait` does not
                     return on a failed Job, so the status fields are polled
                     directly. *)
-                 let job_field field =
-                   match
-                     run_kubectl
-                       ~ctx
-                       ~timeout_s:15.
-                       [ "get"
-                       ; "job"
-                       ; job_name
-                       ; "-n"
-                       ; namespace
-                       ; "-o"
-                       ; Printf.sprintf "jsonpath={.status.%s}" field
-                       ]
-                   with
-                   | Ok r -> String.trim r.Sol_cli_process.stdout
-                   | Error _ -> ""
-                 in
-                 let rec wait n =
-                   if n = 0
-                   then `Timed_out
-                   else if job_field "succeeded" = "1"
-                   then `Succeeded
-                   else if
-                     match job_field "failed" with
-                     | "" | "0" -> false
-                     | _ -> true
-                   then `Failed
-                   else (
-                     (* INFRA-040: fail on a container that cannot start rather than waiting
+              let job_field field =
+                match
+                  run_kubectl
+                    ~ctx
+                    ~timeout_s:15.
+                    [ "get"
+                    ; "job"
+                    ; job_name
+                    ; "-n"
+                    ; namespace
+                    ; "-o"
+                    ; Printf.sprintf "jsonpath={.status.%s}" field
+                    ]
+                with
+                | Ok r -> String.trim r.Sol_cli_process.stdout
+                | Error _ -> ""
+              in
+              let rec wait n =
+                if n = 0
+                then `Timed_out
+                else if job_field "succeeded" = "1"
+                then `Succeeded
+                else if
+                  match job_field "failed" with
+                  | "" | "0" -> false
+                  | _ -> true
+                then `Failed
+                else (
+                  (* INFRA-040: fail on a container that cannot start rather than waiting
                         out a timeout that cannot resolve. This is what turned a one-line
                         Secret-name mismatch into an hour of diagnosis. *)
-                     match container_waiting_status ~ctx ~namespace ~job_name () with
-                     | Some (reason, detail) when List.mem reason terminal_waiting_reasons
-                       -> `Unstartable (reason, detail)
-                     | _ ->
-                       Unix.sleepf 2.;
-                       wait (n - 1))
-                 in
-                 (match wait 60 with
-                  | `Unstartable (reason, detail) ->
+                  match container_waiting_status ~ctx ~namespace ~job_name () with
+                  | Some (reason, detail) when List.mem reason terminal_waiting_reasons ->
+                    `Unstartable (reason, detail)
+                  | _ ->
+                    Unix.sleepf 2.;
+                    wait (n - 1))
+              in
+              (match wait 60 with
+               | `Unstartable (reason, detail) ->
+                 Error
+                   (Printf.sprintf
+                      "migration-status Job cannot start: %s%s"
+                      reason
+                      (if detail = "" then "" else Printf.sprintf " (%s)" detail))
+               | `Timed_out -> Error "migration-status Job did not complete within 120s"
+               | `Failed -> Error "migration-status Job failed -- see the Job logs"
+               | `Succeeded ->
+                 (match
+                    run_kubectl
+                      ~ctx
+                      ~timeout_s:30.
+                      [ "logs"; Printf.sprintf "job/%s" job_name; "-n"; namespace ]
+                  with
+                  | Error e ->
                     Error
                       (Printf.sprintf
-                         "migration-status Job cannot start: %s%s"
-                         reason
-                         (if detail = "" then "" else Printf.sprintf " (%s)" detail))
-                  | `Timed_out ->
-                    Error "migration-status Job did not complete within 120s"
-                  | `Failed -> Error "migration-status Job failed -- see the Job logs"
-                  | `Succeeded ->
-                    (match
-                       run_kubectl
-                         ~ctx
-                         ~timeout_s:30.
-                         [ "logs"; Printf.sprintf "job/%s" job_name; "-n"; namespace ]
-                     with
-                     | Error e ->
-                       Error
-                         (Printf.sprintf
-                            "could not read migration-status Job logs: %s"
-                            (Sol_cli_process.error_to_string e))
-                     | Ok r ->
-                       (* The Job prints only the JSON body, but take the first
+                         "could not read migration-status Job logs: %s"
+                         (Sol_cli_process.error_to_string e))
+                  | Ok r ->
+                    (* The Job prints only the JSON body, but take the first
                           `{`..last `}` so a stray log line cannot break the
                           parse of an otherwise valid report. *)
-                       let text = String.trim r.Sol_cli_process.stdout in
-                       let text =
-                         match String.index_opt text '{', String.rindex_opt text '}' with
-                         | Some i, Some j when j > i -> String.sub text i (j - i + 1)
-                         | _ -> text
-                       in
-                       Sol_cli_migration.parse_status_json text))
-             in
-             (* INFRA-040: this check is read-only, so a success still tidies up
+                    let text = String.trim r.Sol_cli_process.stdout in
+                    let text =
+                      match String.index_opt text '{', String.rindex_opt text '}' with
+                      | Some i, Some j when j > i -> String.sub text i (j - i + 1)
+                      | _ -> text
+                    in
+                    Sol_cli_migration.parse_status_json text))
+          in
+          (* INFRA-040: this check is read-only, so a success still tidies up
                 after itself. A failure must not delete the only record of why it
                 failed: the evidence goes into the deploy's own output, and the
                 Job is kept so it can still be read afterwards. *)
-             (match result with
-              | Ok _ -> cleanup ()
-              | Error _ ->
-                let evidence = status_job_evidence ~ctx ~namespace ~job_name () in
-                if String.trim evidence <> ""
-                then Printf.eprintf "\nmigration-status Job evidence:\n%s\n%!" evidence;
-                Printf.eprintf
-                  "\n\
-                   The failing Job is kept for inspection:\n\
-                  \  kubectl logs job/%s -n %s\n\
-                  \  kubectl delete job/%s configmap/%s -n %s\n\
-                   %!"
-                  job_name
-                  namespace
-                  job_name
-                  configmap_name
-                  namespace);
-             result)))
+          (match result with
+           | Ok _ -> cleanup ()
+           | Error _ ->
+             let evidence = status_job_evidence ~ctx ~namespace ~job_name () in
+             if String.trim evidence <> ""
+             then Printf.eprintf "\nmigration-status Job evidence:\n%s\n%!" evidence;
+             Printf.eprintf
+               "\n\
+                The failing Job is kept for inspection:\n\
+               \  kubectl logs job/%s -n %s\n\
+               \  kubectl delete job/%s configmap/%s -n %s\n\
+                %!"
+               job_name
+               namespace
+               job_name
+               configmap_name
+               namespace);
+          result))
 ;;
 
 (* The prerequisite check the deploy path runs after the static preflight and

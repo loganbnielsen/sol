@@ -10,15 +10,6 @@ open Sol_cli_manifest
    invocation cwd -- the bug BUG-034 exposed. *)
 let enter_workspace = Sol_cli_workspace.enter_or_exit
 
-let git_sha () =
-  match
-    Sol_cli_process.run (Sol_cli_process.cmd [ "git"; "rev-parse"; "--short"; "HEAD" ])
-  with
-  | Ok r when r.Sol_cli_process.exit_code = 0 && r.Sol_cli_process.stdout <> "" ->
-    r.Sol_cli_process.stdout
-  | _ -> "dev"
-;;
-
 (* ── Pipeline ────────────────────────────────────────────────────────────── *)
 
 let print_header ~workspace ~sha ~dry_run =
@@ -194,10 +185,18 @@ let record_plan run_log plan =
     (Format.asprintf "%a" Sol_cli_deployment_plan.pp_summary plan)
 ;;
 
-let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~services =
-  print_header ~workspace ~sha ~dry_run:true;
+(* REFAC-112: the preamble both modes share, so neither can drift from the other. *)
+let prepare_plan ~run_log ~dry_run ~requested_scope ~workspace ~sha ~services =
+  print_header ~workspace ~sha ~dry_run;
   let plan = build_plan ~requested_scope ~workspace ~sha ~services in
   record_plan run_log plan;
+  plan
+;;
+
+let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~services =
+  let plan =
+    prepare_plan ~run_log ~dry_run:true ~requested_scope ~workspace ~sha ~services
+  in
   match
     Sol_cli_run_log.run_task run_log ~name:"dry-run" (fun () ->
       try
@@ -358,10 +357,10 @@ let run_apply
   =
   check_contract ~services;
   ensure_postgres_url ();
-  print_header ~workspace ~sha ~dry_run:false;
-  let plan = build_plan ~requested_scope ~workspace ~sha ~services in
+  let plan =
+    prepare_plan ~run_log ~dry_run:false ~requested_scope ~workspace ~sha ~services
+  in
   check_consumer_group_changes ~workspace ~confirm_group_change plan;
-  record_plan run_log plan;
   let pf_failed = ref false in
   let result =
     Sol_cli_boundary_lease.with_boundary_lease
@@ -520,9 +519,11 @@ let cmd =
             ~tag
             ~confirm_group_change
             ~keep_releases
-            ~git_sha
+            ~git_sha:Sol_cli_command_request.git_sha
         with
-        | Ok req -> run req
+        | Ok req ->
+          Option.iter (Printf.eprintf "warning: %s\n") req.image_tag_warning;
+          run req
         | Error msg ->
           Printf.eprintf "error: %s\n" msg;
           exit 1)

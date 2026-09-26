@@ -11,6 +11,7 @@ type up_request =
   { scope : string option
   ; mode : execution_mode
   ; image_tag : string
+  ; image_tag_warning : string option
   ; confirm_group_change : bool
   ; keep_releases : int
   }
@@ -39,6 +40,23 @@ type deploy_request =
   ; keep_releases : int
   }
 
+(* BUG-058: the commit an image built from this checkout is tagged with. An
+   error carries git's own reason; there is no sentinel tag. *)
+let git_sha () =
+  match
+    Sol_cli_process.run (Sol_cli_process.cmd [ "git"; "rev-parse"; "--short"; "HEAD" ])
+  with
+  | Ok { exit_code = 0; stdout; _ } when String.trim stdout <> "" ->
+    Ok (String.trim stdout)
+  | Ok { exit_code; stderr; _ } ->
+    let reason = String.trim stderr in
+    Error
+      (if reason = "" then Printf.sprintf "git rev-parse exited %d" exit_code else reason)
+  | Error e -> Error (Sol_cli_process.error_to_string e)
+;;
+
+let local_fallback_tag = "dev"
+
 let make_up_request ~scope ~dry_run ~tag ~confirm_group_change ~keep_releases ~git_sha =
   if keep_releases < 1
   then
@@ -46,13 +64,24 @@ let make_up_request ~scope ~dry_run ~tag ~confirm_group_change ~keep_releases ~g
       "keep-releases must be at least 1 (the current and previous release are always \
        kept)"
   else (
-    let image_tag =
+    (* A local cluster may fall back to a fixed tag, but says so. *)
+    let image_tag, image_tag_warning =
       match tag with
-      | Some t -> t
-      | None -> git_sha ()
+      | Some t -> t, None
+      | None ->
+        (match git_sha () with
+         | Ok sha -> sha, None
+         | Error reason ->
+           ( local_fallback_tag
+           , Some
+               (Printf.sprintf
+                  "could not resolve the git commit for the image tag (%s); tagging \
+                   images %S. Pass --image-tag to choose a tag."
+                  reason
+                  local_fallback_tag) ))
     in
     let mode = if dry_run then Dry_run else Apply in
-    Ok { scope; mode; image_tag; confirm_group_change; keep_releases })
+    Ok { scope; mode; image_tag; image_tag_warning; confirm_group_change; keep_releases })
 ;;
 
 let invalid_image_ref refs =
@@ -90,30 +119,41 @@ let make_deploy_request
         "keep-releases must be at least 1 (the current and previous release are always \
          kept)"
     else (
+      (* BUG-058: a deploy never falls back to a shared, mutable tag. *)
       let image_tag =
         match image_tag with
-        | Some t -> t
-        | None -> git_sha ()
+        | Some t -> Ok t
+        | None ->
+          Result.map_error
+            (fun reason ->
+               Printf.sprintf
+                 "could not resolve the git commit to tag images with (%s); pass \
+                  --image-tag <tag> to deploy"
+                 reason)
+            (git_sha ())
       in
-      let action =
-        if dry_run
-        then Deploy_dry_run { emit_to }
-        else (
-          match emit_to with
-          | Some dir -> Deploy_emit_to dir
-          | None -> Deploy_apply)
-      in
-      Ok
-        { target
-        ; scope
-        ; action
-        ; emit_plan_to
-        ; image_tag
-        ; image_refs
-        ; registry
-        ; secret_backend
-        ; confirm_group_change
-        ; loki_push_url
-        ; keep_releases
-        })
+      match image_tag with
+      | Error _ as e -> e
+      | Ok image_tag ->
+        let action =
+          if dry_run
+          then Deploy_dry_run { emit_to }
+          else (
+            match emit_to with
+            | Some dir -> Deploy_emit_to dir
+            | None -> Deploy_apply)
+        in
+        Ok
+          { target
+          ; scope
+          ; action
+          ; emit_plan_to
+          ; image_tag
+          ; image_refs
+          ; registry
+          ; secret_backend
+          ; confirm_group_change
+          ; loki_push_url
+          ; keep_releases
+          })
 ;;

@@ -66,7 +66,9 @@ type service =
   ; omit : bool
   }
 
-type t =
+(* What one file contributes: sol.yml, an environment, or a target (REFAC-109).
+   Its target is optional because a layer need not say anything about one. *)
+type layer =
   { project : string option
   ; target : target option
   ; resources : resource list
@@ -895,8 +897,8 @@ let environments_local_file = "sol/environments.local.yml"
 
 type environment =
   { env_name : string
-  ; layer : t
-  ; targets : (string * t) list (** keyed ["<provider>/<region>"] *)
+  ; layer : layer
+  ; targets : (string * layer) list (** keyed ["<provider>/<region>"] *)
   }
 
 let rec fold_result f acc = function
@@ -929,7 +931,7 @@ let target_only_keys (t : target) =
 
 (* ... and keys that describe the application's shape, which only sol.yml may set:
    an environment or target adjusts size, scale and omit, nothing else. *)
-let app_shape_keys (l : t) =
+let app_shape_keys (l : layer) =
   List.concat_map
     (fun (r : resource) ->
        List.filter_map
@@ -1040,7 +1042,7 @@ let load_environments_file path =
 ;;
 
 (* Every key a layer sets, as a path, for the disjoint rule. *)
-let layer_keys (l : t) =
+let layer_keys (l : layer) =
   let opt name o = if o = None then [] else [ name ] in
   let target_keys =
     match l.target with
@@ -1309,7 +1311,7 @@ let validate_uses cfg =
 (* A profile is a claim one target makes about itself (DEC-026). sol.yml's
    target section is inherited by every target, so a profile there would opt
    every environment in without any target file saying so. *)
-let reject_shared_profile ~path (base : t) =
+let reject_shared_profile ~path (base : layer) =
   match base.target with
   | Some { profile = Some _; _ } ->
     Error
@@ -1339,7 +1341,7 @@ let resolve ~base ~envs (target : target) =
       }
   in
   let env_layer, target_layer = find_target envs target in
-  let undeclared context (layer : t) =
+  let undeclared context (layer : layer) =
     let unknown_resource =
       List.find_opt
         (fun (r : resource) ->
@@ -1475,6 +1477,17 @@ let validate_no_same_cluster ~base ~envs (selected : target) =
   loop paths
 ;;
 
+(* REFAC-109: a resolved configuration always has its target -- [load_for_target]
+   builds one from sol.yml, the environment and the target -- so its type says so,
+   and callers read [cfg.target] instead of unwrapping an option that is never
+   [None]. *)
+type t =
+  { project : string option
+  ; target : target
+  ; resources : resource list
+  ; services : service list
+  }
+
 let load_for_target ~target =
   let* target = target_of_path target in
   (* DEC-024: the workspace is the nearest ancestor with a sol.yml, and sol.yml and
@@ -1496,20 +1509,19 @@ let load_for_target ~target =
   let* envs = load_environments ~root in
   let* cfg = resolve ~base ~envs target in
   let* cfg = validate_uses cfg in
-  match cfg.target with
-  | None -> Ok cfg
-  | Some target ->
-    let* () = validate_no_same_cluster ~base ~envs target in
-    Ok cfg
+  (* [resolve] starts from a Some target and [merge] keeps it, so the default is
+     never taken; it keeps this total without an assertion. *)
+  let target = Option.value cfg.target ~default:target in
+  let* () = validate_no_same_cluster ~base ~envs target in
+  Ok { project = cfg.project; target; resources = cfg.resources; services = cfg.services }
 ;;
 
-let target cfg = cfg.target
-let resources cfg = active_resources cfg
-let services cfg = active_services cfg
+let resources (cfg : t) = List.filter (fun (r : resource) -> not r.omit) cfg.resources
+let services (cfg : t) = List.filter (fun (s : service) -> not s.omit) cfg.services
 
 (* Reads the raw declarations, not [active_services]: the caller is asking about a
    unit it reached by another route, to decide whether this target omits it. *)
-let is_omitted_service cfg ~name =
+let is_omitted_service (cfg : t) ~name =
   List.exists (fun (s : service) -> s.omit && String.equal s.name name) cfg.services
 ;;
 
@@ -1570,3 +1582,7 @@ let local_infra ~root =
     ; tempo = true
     }
 ;;
+
+(* REFAC-109: the bare target a <env>/<provider>/<region> address names, with no
+   settings; for callers that build a resolved configuration directly. *)
+let parse_target = target_of_path
