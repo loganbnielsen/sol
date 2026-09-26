@@ -2,18 +2,20 @@ open Cmdliner
 open Sol_cli_manifest
 open Sol_cli_helm
 
+let ( let* ) = Result.bind
+
 let check_tool name install_url =
   match Sol_cli_process.run_success (Sol_cli_process.cmd [ "which"; name ]) with
-  | Ok _ -> ()
-  | _ ->
-    Printf.eprintf "error: %S not found in PATH.\n" name;
-    Printf.eprintf "  Install: %s\n" install_url;
-    exit 1
+  | Ok _ -> Ok ()
+  | Error _ ->
+    Error
+      (Sol_cli_exit.error
+         (Printf.sprintf "%S not found in PATH.\n  Install: %s" name install_url))
 ;;
 
 let require_tools () =
-  check_tool "k3d" "https://k3d.io/";
-  check_tool "helm" "https://helm.sh/";
+  let* () = check_tool "k3d" "https://k3d.io/" in
+  let* () = check_tool "helm" "https://helm.sh/" in
   check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/"
 ;;
 
@@ -113,11 +115,7 @@ let helm_install ~label release chart ~namespace ?version ?(values = []) ?values
 let run_local_infra_installs () =
   let installs = List.rev !pending_installs in
   pending_installs := [];
-  match Sol_cli_local_infra.run_bounded installs with
-  | Ok () -> ()
-  | Error message ->
-    Printf.eprintf "error: %s\n%!" message;
-    exit 1
+  Sol_cli_local_infra.run_bounded installs |> Sol_cli_exit.of_msg
 ;;
 
 let apply_yaml yaml =
@@ -127,35 +125,35 @@ let apply_yaml yaml =
       try Sys.remove tmp with
       | _ -> ())
     (fun () ->
-       match
-         Sol_cli_kubectl.apply ~ctx:Sol_cli_kube_destination.local_context ~file:tmp
-       with
-       | Ok () -> ()
-       | Error e ->
-         Printf.eprintf
-           "error: kubectl apply failed: %s\n"
-           (Sol_cli_process.error_to_string e);
-         exit 1)
+       Sol_cli_kubectl.apply ~ctx:Sol_cli_kube_destination.local_context ~file:tmp
+       |> Result.map_error (fun e ->
+         Sol_cli_exit.error ("kubectl apply failed: " ^ Sol_cli_process.error_to_string e)))
 ;;
 
 let install_local_grafana_config ~dashboards ~prometheus ~tempo =
-  apply_yaml dashboards;
+  let* () = apply_yaml dashboards in
   (* OBS-039: no longer auto-provisioned by a bundled loki-stack Grafana
      subchart -- see Sol_cli_dev_observability.loki_datasource_configmap_yaml.
      OBS-042: this datasource also carries the derivedFields link to Tempo,
      applied regardless of `tempo` -- harmless if Tempo isn't installed, and
      avoids two near-identical Loki datasource YAMLs. *)
-  apply_yaml
-    (Sol_cli_dev_observability.loki_datasource_configmap_yaml ~namespace:"monitoring");
-  if prometheus
-  then
+  let* () =
     apply_yaml
-      (Sol_cli_dev_observability.prometheus_datasource_configmap_yaml
-         ~namespace:"monitoring");
+      (Sol_cli_dev_observability.loki_datasource_configmap_yaml ~namespace:"monitoring")
+  in
+  let* () =
+    if prometheus
+    then
+      apply_yaml
+        (Sol_cli_dev_observability.prometheus_datasource_configmap_yaml
+           ~namespace:"monitoring")
+    else Ok ()
+  in
   if tempo
   then
     apply_yaml
       (Sol_cli_dev_observability.tempo_datasource_configmap_yaml ~namespace:"monitoring")
+  else Ok ()
 ;;
 
 (* ── dev up ──────────────────────────────────────────────────────────────── *)
@@ -174,24 +172,15 @@ let local_components =
 ;;
 
 let read_local_assets () =
-  let ( let* ) = Result.bind in
   let* assets =
     Sol_cli_platform_assets.resolve ()
     |> Result.map_error Sol_cli_platform_assets.error_to_string
   in
   let* component_values =
-    List.fold_right
-      (fun component acc ->
-         let* rest = acc in
-         let* values =
-           Sol_cli_platform_component.merged_values_yaml
-             ~assets
-             ~component
-             ~profile:"local"
-         in
-         Ok ((component, values) :: rest))
-      local_components
-      (Ok [])
+    local_components
+    |> Sol_cli_result.map_list (fun component ->
+      Sol_cli_platform_component.merged_values_yaml ~assets ~component ~profile:"local"
+      |> Result.map (fun values -> component, values))
   in
   let* alloy_values = Sol_cli_dev_observability.alloy_values_yaml ~assets in
   let* dashboards =
@@ -202,19 +191,15 @@ let read_local_assets () =
 
 let values_of local component = List.assoc component local.component_values
 
-let dev_up () =
-  require_tools ();
-  Sol_cli_state.ensure ();
-  (* Kill stale port-forwards from previous sessions, else re-running after a
-     crash silently fails to bind ports while reporting success. *)
-  Sol_cli_port_forward.stop_all ();
-  (* 1. Cluster *)
-  Printf.printf "\n[1/4] Provisioning cluster...\n%!";
+(* Sol's local cluster, created unless it already exists. *)
+let provision_cluster () =
   let cluster_exists =
     Result.is_ok (Sol_cli_process.run_ok (k3d [ "cluster"; "get"; cluster_name ]))
   in
   if cluster_exists
-  then Printf.printf "  cluster %s already exists, skipping\n%!" cluster_name
+  then (
+    Printf.printf "  cluster %s already exists, skipping\n%!" cluster_name;
+    Ok ())
   else (
     (* ponytail: FRIC-008, one-time Sun->Sol migration check -- delete this
        block once nobody plausibly still has a 'sun-local' cluster around.
@@ -230,23 +215,27 @@ let dev_up () =
       Result.is_ok
         (Sol_cli_process.run_ok (k3d [ "cluster"; "get"; pre_rename_cluster_name ]))
     in
-    if pre_rename_cluster_exists
-    then (
-      Printf.eprintf
-        "error: found a pre-rename '%s' k3d cluster.\n"
-        pre_rename_cluster_name;
-      Printf.eprintf
-        "  Sol's local cluster is now named '%s', and its registry would try\n"
-        cluster_name;
-      Printf.eprintf
-        "  to bind the same host port (%d) that '%s'/'sun-registry' would also use.\n"
-        registry_port
-        pre_rename_cluster_name;
-      Printf.eprintf "  Remove the old cluster first:\n";
-      Printf.eprintf "    k3d cluster delete %s\n" pre_rename_cluster_name;
-      Printf.eprintf
-        "  (rename or keep it yourself first if you still need it for something else)\n";
-      exit 1);
+    let* () =
+      if pre_rename_cluster_exists
+      then
+        Error
+          (Sol_cli_exit.error
+             (Printf.sprintf
+                "found a pre-rename '%s' k3d cluster.\n\
+                \  Sol's local cluster is now named '%s', and its registry would try\n\
+                \  to bind the same host port (%d) that '%s'/'sun-registry' would also \
+                 use.\n\
+                \  Remove the old cluster first:\n\
+                \    k3d cluster delete %s\n\
+                \  (rename or keep it yourself first if you still need it for something \
+                 else)"
+                pre_rename_cluster_name
+                cluster_name
+                registry_port
+                pre_rename_cluster_name
+                pre_rename_cluster_name))
+      else Ok ()
+    in
     let create_result =
       Sol_cli_process.run
         ~echo:true
@@ -261,41 +250,36 @@ let dev_up () =
     (* FRIC-006: k3d's own output is the actual diagnosis (e.g. "port is already
        allocated") -- surface it instead of leaving the user to re-run k3d by hand
        to find out why. *)
-    match Sol_cli_process.check create_result with
-    | Ok _ -> ()
-    | Error failure ->
-      Printf.eprintf "error: cluster creation failed\n";
-      (match failure with
-       | Sol_cli_process.Non_zero r ->
-         (match Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr with
-          | "" -> ()
-          | output -> Printf.eprintf "%s\n" output)
-       | e -> Printf.eprintf "%s\n" (Sol_cli_process.error_to_string e));
-      exit 1);
-  (* 2. What the workspace declares (REFAC-107): read from sol.yml at the workspace
-     root, not inferred from build files, so it is the same from any subdirectory
-     and for OCaml and TypeScript units alike. *)
-  Printf.printf "\n[2/4] Reading the workspace's declared resources...\n%!";
-  let req =
-    let root =
-      Sol_cli_exit.or_exit_with
-        Sol_cli_workspace.workspace_error_to_string
-        (Sol_cli_workspace.resolve_validated ~dir:(Sys.getcwd ()))
-    in
-    Sol_cli_exit.or_exit_with
-      Sol_cli_config.error_to_string
-      (Sol_cli_config.local_infra ~root)
+    Sol_cli_process.check create_result
+    |> Result.map (fun _ -> ())
+    |> Result.map_error (fun failure ->
+      let detail =
+        match failure with
+        | Sol_cli_process.Non_zero r ->
+          (match Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr with
+           | "" -> ""
+           | output -> "\n" ^ output)
+        | e -> "\n" ^ Sol_cli_process.error_to_string e
+      in
+      Sol_cli_exit.error ("cluster creation failed" ^ detail)))
+;;
+
+(* REFAC-107: what the workspace declares, read from sol.yml at the workspace
+   root, not inferred from build files, so it is the same from any subdirectory
+   and for OCaml and TypeScript units alike. *)
+let declared_resources () =
+  let* root =
+    Sol_cli_workspace.resolve_validated ~dir:(Sys.getcwd ())
+    |> Sol_cli_exit.of_error Sol_cli_workspace.workspace_error_to_string
   in
-  Printf.printf
-    "  kafka=%-5b  postgres=%-5b  loki=%-5b  prometheus=%-5b  tempo=%b\n%!"
-    req.kafka
-    req.postgres
-    req.loki
-    req.prometheus
-    req.tempo;
-  let local = Sol_cli_exit.or_exit (read_local_assets ()) in
-  (* 3. Infra *)
-  Printf.printf "\n[3/4] Deploying infra...\n%!";
+  Sol_cli_config.local_infra ~root |> Sol_cli_exit.of_error Sol_cli_config.error_to_string
+;;
+
+let need_grafana (req : Sol_cli_workspace.infra_requirements) =
+  req.loki || req.prometheus || req.tempo
+;;
+
+let deploy_infra ~(req : Sol_cli_workspace.infra_requirements) ~local =
   let need_any = req.kafka || req.postgres || req.loki || req.prometheus || req.tempo in
   if need_any
   then (
@@ -418,8 +402,7 @@ let dev_up () =
          local profile, neither with a value cmd_local.ml should share). *)
       ~values_yaml:(values_of local "postgresql")
       ();
-  let need_grafana = req.loki || req.prometheus || req.tempo in
-  if need_grafana
+  if need_grafana req
   then (
     (* OBS-039: loki-stack is deprecated (no longer updated/supported per
        Grafana Labs' own chart README) and its bundled Promtail reached
@@ -547,17 +530,19 @@ let dev_up () =
     ~version:"4.10.1"
     ~values:[ "controller.service.type", Str "NodePort" ]
     ();
-  run_local_infra_installs ();
+  let* () = run_local_infra_installs () in
   (* Grafana's datasource ConfigMaps name the services above, so they are applied
      once those releases exist -- after the installs, not interleaved with them. *)
-  if need_grafana
+  if need_grafana req
   then
     install_local_grafana_config
       ~dashboards:local.dashboards
       ~prometheus:req.prometheus
-      ~tempo:req.tempo;
-  (* 4. Port-forwards *)
-  Printf.printf "\n[4/4] Starting port-forwards...\n%!";
+      ~tempo:req.tempo
+  else Ok ()
+;;
+
+let start_port_forwards ~(req : Sol_cli_workspace.infra_requirements) =
   ignore (Sys.command "sleep 2");
   (* brief pause for service endpoints to settle *)
   let pf pf_spec =
@@ -597,7 +582,7 @@ let dev_up () =
       ; local_port = 5432
       ; remote_port = 5432
       };
-  if need_grafana
+  if need_grafana req
   then
     pf
       { name = "loki"
@@ -606,7 +591,7 @@ let dev_up () =
       ; local_port = 3100
       ; remote_port = 3100
       };
-  if need_grafana
+  if need_grafana req
   then
     pf
       { name = "grafana"
@@ -663,8 +648,10 @@ let dev_up () =
     ; target = "svc/ingress-nginx-controller"
     ; local_port = ingress_local_port
     ; remote_port = 80
-    };
-  (* Summary *)
+    }
+;;
+
+let print_summary ~(req : Sol_cli_workspace.infra_requirements) =
   Printf.printf "\n";
   Printf.printf "  cluster      ✓  %s\n" cluster_name;
   Printf.printf "  registry     ✓  localhost:%d\n" registry_port;
@@ -674,9 +661,9 @@ let dev_up () =
   then
     Printf.printf
       "  postgres     ✓  postgresql://postgres:dev@localhost:5432/dev  (port-forwarded)\n";
-  if need_grafana
+  if need_grafana req
   then Printf.printf "  loki         ✓  http://localhost:3100  (port-forwarded)\n";
-  if need_grafana
+  if need_grafana req
   then Printf.printf "  grafana      ✓  http://localhost:3000  (port-forwarded)\n";
   if req.prometheus
   then Printf.printf "  prometheus   ✓  http://localhost:9090  (port-forwarded)\n";
@@ -692,24 +679,53 @@ let dev_up () =
   Printf.printf "\n"
 ;;
 
+let dev_up () =
+  let* () = require_tools () in
+  Sol_cli_state.ensure ();
+  (* Kill stale port-forwards from previous sessions, else re-running after a
+     crash silently fails to bind ports while reporting success. *)
+  Sol_cli_port_forward.stop_all ();
+  Printf.printf "\n[1/4] Provisioning cluster...\n%!";
+  let* () = provision_cluster () in
+  Printf.printf "\n[2/4] Reading the workspace's declared resources...\n%!";
+  let* req = declared_resources () in
+  Printf.printf
+    "  kafka=%-5b  postgres=%-5b  loki=%-5b  prometheus=%-5b  tempo=%b\n%!"
+    req.kafka
+    req.postgres
+    req.loki
+    req.prometheus
+    req.tempo;
+  let* local = read_local_assets () |> Sol_cli_exit.of_msg in
+  Printf.printf "\n[3/4] Deploying infra...\n%!";
+  let* () = deploy_infra ~req ~local in
+  Printf.printf "\n[4/4] Starting port-forwards...\n%!";
+  start_port_forwards ~req;
+  print_summary ~req;
+  Ok ()
+;;
+
 (* ── dev down ────────────────────────────────────────────────────────────── *)
 
 let dev_down delete_cluster =
-  check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/";
+  let* () = check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/" in
   Printf.printf "Stopping port-forwards...\n%!";
   Sol_cli_port_forward.stop_all ();
   if delete_cluster
   then (
-    check_tool "k3d" "https://k3d.io/";
+    let* () = check_tool "k3d" "https://k3d.io/" in
     Printf.printf "Deleting cluster %s...\n%!" cluster_name;
-    ignore (Sol_cli_process.run (k3d [ "cluster"; "delete"; cluster_name ])))
-  else Printf.printf "Port-forwards stopped. Cluster %s is still running.\n" cluster_name
+    ignore (Sol_cli_process.run (k3d [ "cluster"; "delete"; cluster_name ]));
+    Ok ())
+  else (
+    Printf.printf "Port-forwards stopped. Cluster %s is still running.\n" cluster_name;
+    Ok ())
 ;;
 
 (* ── dev status ──────────────────────────────────────────────────────────── *)
 
 let dev_status () =
-  check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/";
+  let* () = check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/" in
   let cluster_running =
     Result.is_ok (Sol_cli_process.run_ok (k3d [ "cluster"; "get"; cluster_name ]))
   in
@@ -755,7 +771,8 @@ let dev_status () =
              in
              Printf.printf "  %-12s  pid %s\n" name pid_s)
           pids));
-  Printf.printf "\n"
+  Printf.printf "\n";
+  Ok ()
 ;;
 
 (* ── dev run ─────────────────────────────────────────────────────────────── *)
@@ -824,16 +841,18 @@ let dev_run workspace_dir scope =
   (match workspace_dir with
    | Some d -> Unix.chdir d
    | None -> ());
-  let { Sol_cli_workload_selection.services; _ } =
-    Sol_cli_exit.or_exit
-      (Sol_cli_workload_selection.resolve_nonempty
-         ~none:
-           "no Sol services found. Expected app/<domain>/<name>_{svc,worker,fn}/ \
-            directories with a Dockerfile."
-         scope
-         (Sol_cli_exit.or_exit_with
-            Sol_cli_manifest.discover_error_to_string
-            (Sol_cli_manifest.discover_services ())))
+  let* inventory =
+    Sol_cli_manifest.discover_services ()
+    |> Sol_cli_exit.of_error Sol_cli_manifest.discover_error_to_string
+  in
+  let* { services; _ } =
+    Sol_cli_workload_selection.resolve_nonempty
+      ~none:
+        "no Sol services found. Expected app/<domain>/<name>_{svc,worker,fn}/ \
+         directories with a Dockerfile."
+      scope
+      inventory
+    |> Sol_cli_exit.of_msg
   in
   Printf.printf "\n  Starting %d service(s) from %s\n" (List.length services) dir;
   List.iter
@@ -859,11 +878,11 @@ let dev_run workspace_dir scope =
       opam_eval
       (String.concat " " (List.map Filename.quote build_targets))
   in
-  let build_rc = Sys.command build_cmd in
-  if build_rc <> 0
-  then (
-    Printf.eprintf "error: dune build failed (exit %d)\n" build_rc;
-    exit 1);
+  let* () =
+    match Sys.command build_cmd with
+    | 0 -> Ok ()
+    | rc -> Error (Sol_cli_exit.error (Printf.sprintf "dune build failed (exit %d)" rc))
+  in
   Printf.printf "  Build done.\n\n%!";
   let env = build_env () in
   (* Run the pre-built executable directly, avoiding dune exec lock contention. *)
@@ -899,10 +918,11 @@ let dev_run workspace_dir scope =
            None)
       services
   in
-  if children = []
-  then (
-    Printf.eprintf "error: no services could be started\n";
-    exit 1);
+  let* children =
+    match children with
+    | [] -> Error (Sol_cli_exit.error "no services could be started")
+    | children -> Ok children
+  in
   Printf.printf "  Services running — press Ctrl-C to stop all.\n\n%!";
   (* On SIGINT (Ctrl-C), kill every child before exiting *)
   let kill_all () =
@@ -944,7 +964,8 @@ let dev_run workspace_dir scope =
          | Unix.WSTOPPED _ -> ())
     with
     | Unix.Unix_error _ -> remaining := 0
-  done
+  done;
+  Ok ()
 ;;
 
 (* ── Cmdliner terms ──────────────────────────────────────────────────────── *)
@@ -954,7 +975,7 @@ let up_cmd =
     (Cmd.info
        "up"
        ~doc:"Provision local k3d cluster and deploy all required infra via Helm")
-    Term.(const dev_up $ const ())
+    Term.(const Sol_cli_exit.exit_on $ (const dev_up $ const ()))
 ;;
 
 let down_cmd =
@@ -963,13 +984,13 @@ let down_cmd =
   in
   Cmd.v
     (Cmd.info "down" ~doc:"Stop port-forwards (and optionally delete the cluster)")
-    Term.(const dev_down $ cluster_flag)
+    Term.(const Sol_cli_exit.exit_on $ (const dev_down $ cluster_flag))
 ;;
 
 let status_cmd =
   Cmd.v
     (Cmd.info "status" ~doc:"Show infra pod health and registered port-forwards")
-    Term.(const dev_status $ const ())
+    Term.(const Sol_cli_exit.exit_on $ (const dev_status $ const ()))
 ;;
 
 let run_workspace_arg =
@@ -999,7 +1020,8 @@ let run_subcmd =
     (Cmd.info
        "run"
        ~doc:"Start all workspace services locally using dune exec with dev env vars")
-    Term.(const dev_run $ run_workspace_arg $ run_scope_arg)
+    Term.(
+      const Sol_cli_exit.exit_on $ (const dev_run $ run_workspace_arg $ run_scope_arg))
 ;;
 
 (* FEAT-063: `sol local` reads as "the local destination". The substrate

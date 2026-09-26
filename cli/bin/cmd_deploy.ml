@@ -10,24 +10,6 @@ open Sol_cli_manifest
 let workspace_name = Sol_cli_workspace.current_name
 let ( let* ) = Result.bind
 
-(* DEC-038 §6 / INFRA-058: the operator's diagnostic grant follows the workload,
-   not this command's scope, so reconcile it across every namespace that holds a
-   Sol-managed workload. RBAC only -- it writes RoleBindings and nothing else.
-
-   A failure here is a warning, not fatal: a deployment must not be blocked by a
-   read-only grant. But it is never silent -- the warning names what could not be
-   established and what it costs, because a diagnostic capability that quietly
-   did not appear is the failure mode this whole line of work exists to remove. *)
-let reconcile_operator_bindings_warn ~ctx ~workspace =
-  Sol_cli_substrate.reconcile_operator_bindings ~ctx ~workspace
-  |> Result.iter_error (fun msg ->
-    Printf.eprintf
-      "warning: could not establish the operator's diagnostic RoleBindings: %s\n\
-       The operator identity will not be able to read this workspace's workloads.\n\
-       %!"
-      msg)
-;;
-
 (* EXP-029: after a real apply, print a port-forward hint for each HTTP
    service so the engineer doesn't need a separate 'sol status' call to
    discover the endpoint. Same ClusterIP+port-80 detection cmd_status.ml's
@@ -350,7 +332,7 @@ let check_migration_prerequisite ~ctx ~plan ~live =
           ~namespaces:(Sol_cli_substrate.namespaces plan)
         |> Sol_cli_exit.of_msg
       in
-      reconcile_operator_bindings_warn
+      Cmd_migrate.reconcile_operator_bindings_warn
         ~ctx:ctx.execution.cluster
         ~workspace:ctx.execution.workspace;
       (match

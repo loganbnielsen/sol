@@ -27,11 +27,6 @@ let target_arg =
     of its [let*] chain (REFAC-115). *)
 let remote ~command target = resolve ~command ~local:false ~target |> Sol_cli_exit.of_msg
 
-(** Resolve the destination for a top-level command's term. *)
-let top ~command target =
-  Sol_cli_exit.or_exit (resolve ~command ~local:false ~target:(Some target))
-;;
-
 (** The local form's destination: Sol's own cluster, named literally. *)
 let local = Sol_cli_kube_destination.local_context
 
