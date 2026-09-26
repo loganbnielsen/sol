@@ -2,10 +2,10 @@
 # Sol performance baseline tool.
 #
 # Usage:
-#   platform/local/scripts/perf.sh status                  # all suites at a glance
-#   platform/local/scripts/perf.sh history [suite]         # run history per suite
-#   platform/local/scripts/perf.sh set-baseline [suite|all] # mark latest run as new baseline
-#   platform/local/scripts/perf.sh clear [suite|all]        # wipe history
+#   internal/tooling/scripts/perf.sh status                  # all suites at a glance
+#   internal/tooling/scripts/perf.sh history [suite]         # run history per suite
+#   internal/tooling/scripts/perf.sh set-baseline [suite|all] # mark latest run as new baseline
+#   internal/tooling/scripts/perf.sh clear [suite|all]        # wipe history
 
 set -euo pipefail
 
@@ -126,7 +126,7 @@ cmd_history() {
     echo -e "\n  ${BOLD}${suite}${NC} — ${count} run(s), baseline: ${base_s}, threshold: ${threshold}"
 
     if [ "$count" -eq 0 ]; then
-      echo -e "  ${DIM}no data yet — run: platform/local/scripts/run_tests.sh ${suite}${NC}"
+      echo -e "  ${DIM}no data yet — run: internal/tooling/scripts/run_tests.sh ${suite}${NC}"
       continue
     fi
 

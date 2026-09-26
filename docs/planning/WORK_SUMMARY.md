@@ -1,5 +1,12 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: REFAC-103 — maintainer scripts out of platform/local; unused files deleted (2026-09-25)
+
+- `run_tests.sh`, `perf.sh`, `install-hooks.sh` and `prove-workspace-independence.sh` moved to `internal/tooling/scripts/`. `platform/local` keeps the user-run `ensure-*.sh` native-infra scripts and `prepare-framework-deps.sh`, since `sol local` itself reads nothing there.
+- **Deleted as unused:**
+  - `platform/local/k8s/`, `schemas/`, `check-schemas.sh` and `setup-local.sh`;
+  - the two unreferenced `cli/migrations` SQL files;
+  - the module's leftover Terraform lock file.
 ## Latest: REFAC-102 — platform component values are one profile-keyed components.json (2026-09-25)
 
 - 18 `platform/components/*/values-*.json` files became `platform/shared/components.json`, keyed `<component>.{common,local,durable}`, still JSON. The CLI's merged values and Terraform's rendered helm values are proven identical before and after.
@@ -838,7 +845,7 @@ PR #136. The GitHub repo was renamed first (`loganbnielsen/sun` ->
 ## Latest: CODE_LAYER-011 — perf gate stops crying wolf; automatic revert unblocked (2026-09-06)
 
 Picked up from `project/tickets/IN_PROGRESS/CODE_LAYER-011.md`. The
-post-merge perf gate (`platform/local/scripts/run_tests.sh`, invoked by
+post-merge perf gate (`internal/tooling/scripts/run_tests.sh`, invoked by
 `sundev pipeline merge`) flagged an e2e-suite "regression" 4 times in one
 session (CODE_LAYER-005/006/007/009); every time, an immediate manual
 re-run at no other change came back within baseline noise, and none of
@@ -1371,7 +1378,7 @@ nothing has actually collided. Verified by scaffolding a real workspace with `su
 workspace` and running `dune build` against it (not just the tautological golden
 tests) — compiles clean.
 
-`platform/local/scripts/run_tests.sh`'s `storage` suite was removed entirely (same
+`internal/tooling/scripts/run_tests.sh`'s `storage` suite was removed entirely (same
 treatment as the `observability` suite in the obs-eio cutover below) — there's no
 storage-specific test surface left in this repo; Postgres-touching example code is
 still covered by the `e2e` suite. `tools/perf/perf_baseline.json`'s `storage` entry

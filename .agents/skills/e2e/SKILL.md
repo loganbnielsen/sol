@@ -9,35 +9,35 @@ Ensures the local environment is consistent, spins up infrastructure, and runs t
 
 ## Preferred: use the test runner
 
-`platform/local/scripts/run_tests.sh` is the canonical way to run tests. It handles infrastructure setup, per-suite timeouts, and performance regression checks against `internal/tooling/perf/perf_baseline.json`.
+`internal/tooling/scripts/run_tests.sh` is the canonical way to run tests. It handles infrastructure setup, per-suite timeouts, and performance regression checks against `internal/tooling/perf/perf_baseline.json`.
 
 ```bash
 # Full matrix (all suites, infra auto-provisioned)
-bash platform/local/scripts/run_tests.sh
+bash internal/tooling/scripts/run_tests.sh
 
 # Specific suites only
-bash platform/local/scripts/run_tests.sh unit kafka
+bash internal/tooling/scripts/run_tests.sh unit kafka
 
 # Skip infra setup if broker/loki/postgres are already running
-bash platform/local/scripts/run_tests.sh --no-infra
+bash internal/tooling/scripts/run_tests.sh --no-infra
 
 # After an intentional performance change, update the baseline
-bash platform/local/scripts/run_tests.sh --update-baseline
+bash internal/tooling/scripts/run_tests.sh --update-baseline
 ```
 
-### Performance baseline management (`platform/local/scripts/perf.sh`)
+### Performance baseline management (`internal/tooling/scripts/perf.sh`)
 
 ```bash
-bash platform/local/scripts/perf.sh status              # all suites: baseline, latest, drift
-bash platform/local/scripts/perf.sh history [suite]     # full run history with regression markers
-bash platform/local/scripts/perf.sh set-baseline [suite|all]  # mark latest run as new baseline
-bash platform/local/scripts/perf.sh clear [suite|all]   # wipe history for a suite
+bash internal/tooling/scripts/perf.sh status              # all suites: baseline, latest, drift
+bash internal/tooling/scripts/perf.sh history [suite]     # full run history with regression markers
+bash internal/tooling/scripts/perf.sh set-baseline [suite|all]  # mark latest run as new baseline
+bash internal/tooling/scripts/perf.sh clear [suite|all]   # wipe history for a suite
 ```
 
 ### Git hook (runs unit tests automatically on every commit)
 
 ```bash
-bash platform/local/scripts/install-hooks.sh   # one-time setup
+bash internal/tooling/scripts/install-hooks.sh   # one-time setup
 # Skip once: SOL_SKIP_PERF_HOOK=1 git commit ...
 ```
 
