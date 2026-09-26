@@ -6,7 +6,7 @@ title: Implement the environment layer for deployment config
 source: DEC-047, internal/pipeline/audits/2026-09-25_organization_proposal.md § Deployment config
 ---
 
-**Depends on:** DEC-047, REFAC-105.
+**Depends on:** DEC-047, REFAC-105, REFAC-106.
 
 ## Remediation
 
