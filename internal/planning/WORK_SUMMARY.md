@@ -1,5 +1,12 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: GCP Attempt 10 — post-FND-0010 install, and the first blocker after it (2026-09-26)
+
+- Ran the supported lifecycle on a **fresh** target (`qual10/gcp/us-central1`, cluster `sol-qual-gcp-10`) at `main @ bc9062b0`: cloud infrastructure created, platform install failed at cert-manager's post-install check.
+- **FND-0010's pre-fix signature did not reproduce**: no `x509` anywhere in the 286-file bundle; the release waited 9m20s where it used to abort at 414s. FND-0010 stays `FIXED_UNQUALIFIED` — the check never succeeded and the platform never reached `Ready`.
+- New first blocker filed as **FND-0060 / INFRA-087**: the check pod's container started ~9½ minutes after its image was pulled, so the check's own 600s attempt window expired before it could run; the cause is not established by the bundle (recorded as an inference, with the harness's `SCHEDULING` label flagged as coming from long-resolved events).
+- The supported destruction path ran clean from the failed install: authority acquired → `platform-destroy ok (77.3s)` → authority released → substrate destroyed → **both roots empty** (cloud 0, platform 0), independent inventory `absent`, durable prerequisites intact, no manual action.
+
 ## Latest: DOCS-023 — docs/ is user-facing only (2026-09-26)
 
 - `contract/` → `docs/reference/`; audits and the dogfood checklist → `internal/pipeline/`; planning → `internal/planning/` (ROADMAP stays public at `docs/ROADMAP.md`); `contributing-map.md` → `internal/`.
