@@ -767,6 +767,12 @@ Later phases may be reported as `DEFERRED` when an earlier lifecycle prerequisit
 sol cloud apply prod/aws/us-east-1 --var-file prod.tfvars
 ```
 
+A path given to `--var-file` is relative to the directory you run `sol` from. To
+keep the file with the target instead, set `terraform_var_file` in the target's
+`target:` block. That path is relative to the workspace root, so the target uses
+the same file from any directory in the workspace. When both are given, the flag
+wins.
+
 **Pass one-off Terraform variables:**
 
 ```bash

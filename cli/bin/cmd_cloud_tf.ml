@@ -165,8 +165,12 @@ let reconciliation_scope provider guarded =
   (capabilities provider).reconciliation_scope guarded
 ;;
 
-let normalize_var_file path =
-  if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path else path
+(* BUG-057: the flag is relative to the shell, a target's var file to the
+   workspace root. *)
+let resolve_var_file ~flag ~target =
+  let cwd = Sys.getcwd () in
+  let workspace_root = Option.value (Sol_cli_workspace.find_root ~dir:cwd) ~default:cwd in
+  Sol_cli_terraform_vars.var_file ~cwd ~workspace_root ~flag ~target
 ;;
 
 let trim_quotes s =
@@ -997,11 +1001,7 @@ let cloud_init
   let config_vars, config_var_file, target_cfg =
     config_vars ~strict:(action = Apply) (Some target)
   in
-  let var_file =
-    match var_file with
-    | Some _ -> var_file
-    | None -> config_var_file
-  in
+  let var_file = resolve_var_file ~flag:var_file ~target:config_var_file in
   let vars =
     Sol_cli_config.vars_with_profile_precedence
       ~has_profile:
@@ -1020,11 +1020,7 @@ let cloud_init
   let target_cfg = Sol_cli_cloud_lifecycle.target cloud_target in
   let cloud_backend = Sol_cli_cloud_lifecycle.cloud_backend cloud_target in
   let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
-  let var_files =
-    match var_file with
-    | None -> []
-    | Some f -> [ normalize_var_file f ]
-  in
+  let var_files = Option.to_list var_file in
   refuse_sensitive_vars ~infra_dir ~vars;
   Printf.printf "\nInitializing cloud infrastructure (%s)...\n%!" pname;
   (* INFRA-039: credentials are resolved again here, per mutating stage,
@@ -1196,11 +1192,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
   let config_vars, config_var_file, target_cfg =
     config_vars ~strict:(action = Apply) (Some target)
   in
-  let var_file =
-    match var_file with
-    | Some _ -> var_file
-    | None -> config_var_file
-  in
+  let var_file = resolve_var_file ~flag:var_file ~target:config_var_file in
   let vars = config_vars @ vars in
   refuse_sensitive_vars ~infra_dir ~vars;
   let target_cfg = established_target target_cfg in
@@ -1240,11 +1232,7 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
     ~accept_unresolved:false
     ~chdir:(platform_dir provider)
     ~backend_config:(Sol_cli_cloud_lifecycle.platform_backend cloud_target);
-  let var_files =
-    match var_file with
-    | None -> []
-    | Some f -> [ normalize_var_file f ]
-  in
+  let var_files = Option.to_list var_file in
   (* REFAC-097: the provider's retention and residue steps for this destroy. *)
   let destruction =
     Sol_cli_provider_registry.destruction
