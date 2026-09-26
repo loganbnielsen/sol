@@ -1,5 +1,10 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: REFAC-106 — sol.yml is parsed by a YAML library (2026-09-26)
+
+- The hand-written, line-oriented parser is replaced by `yaml` (libyaml) plus a strict decoder over the same key table. Values keep their exact text, and semantic errors are unchanged.
+- All valid YAML is now accepted (flow maps, any key order), and YAML syntax errors name their line.
+- This unblocks FEAT-100's nested environments file.
 ## Latest: BUG-057 — a target's terraform_var_file resolves from the workspace root (2026-09-25)
 
 - A relative `terraform_var_file` used to resolve against wherever `sol` ran. It now resolves from the workspace root, while `--var-file` stays shell-relative and wins.
