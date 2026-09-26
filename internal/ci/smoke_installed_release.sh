@@ -8,6 +8,9 @@
 # dashboards, Alloy, every Terraform root, the migration runner) against
 # whatever root the binary resolves.
 #
+# It also runs `sol cloud plan` there with a stand-in Terraform (DEC-050): Terraform
+# must work in a directory under Sol's state, never in the read-only bundle.
+#
 # Positive controls, so a pass means something:
 #   1. a development build in the same container finds no assets -- there is no
 #      checkout in there to find;
@@ -65,6 +68,61 @@ if in_container "$install" env SOL_HOME=/nonexistent /opt/sol/bin/sol assets >/d
   die "an invalid SOL_HOME fell through"
 fi
 pass "an invalid SOL_HOME is an error, not a fall-through"
+
+# DEC-050: `sol cloud` from the read-only install. Terraform (a stand-in that records
+# its arguments, creates .terraform where it is told to run, and reports no outputs)
+# must run in a working directory under Sol's state, never in the bundle; the bundle
+# mount is read-only, so any write there fails the command.
+cloud="$work/cloud"
+mkdir -p "$cloud/ws/sol" "$cloud/tools"
+printf 'project: installed-smoke\n' >"$cloud/ws/sol.yml"
+cat >"$cloud/ws/sol/environments.yml" <<'YAML'
+prod:
+  targets:
+    aws/us-east-1:
+      base_domain: example.test
+      cluster_name: installed-smoke
+      letsencrypt_email: ops@example.test
+      cluster_endpoint_cidr: 203.0.113.0/24
+      state_bucket: installed-smoke-state
+      aws:
+        state_lock_table: installed-smoke-lock
+        provisioner_role_arn: arn:aws:iam::111122223333:role/sol-provisioner
+        cluster_access_role_arn: arn:aws:iam::111122223333:role/sol-cluster-access
+YAML
+cat >"$cloud/tools/terraform" <<'TF'
+#!/bin/sh
+echo "terraform $*" >>"$FAKE_TERRAFORM_LOG"
+for a in "$@"; do case "$a" in -chdir=*) d="${a#-chdir=}" ;; esac; done
+case " $* " in
+  *" init "*) mkdir -p "$d/.terraform" && : >"$d/.terraform/fake-init" ;;
+  *" output "*) echo '{}' ;;
+esac
+exit 0
+TF
+chmod +x "$cloud/tools/terraform"
+if ! out="$(docker run --rm --network none --read-only --tmpfs /tmp -e HOME=/tmp \
+      -v "$install:/opt/sol:ro" -v "$cloud/tools:/opt/tools:ro" -v "$cloud/ws:/work" -w /work \
+      -e PATH=/opt/tools:/usr/local/bin:/usr/bin:/bin -e XDG_DATA_HOME=/tmp/xdg \
+      -e FAKE_TERRAFORM_LOG=/tmp/terraform.log "$image" sh -c '
+        /opt/sol/bin/sol cloud plan prod/aws/us-east-1 >/tmp/plan.out 2>&1 || { cat /tmp/plan.out; exit 1; }
+        echo "--- terraform"; cat /tmp/terraform.log
+        echo "--- workdir"; ls -d /tmp/xdg/sol/terraform/*/platform/cloud/aws/cluster/main.tf \
+          /tmp/xdg/sol/terraform/*/platform/cloud/aws/cluster/.terraform/fake-init')" ; then
+  echo "$out"; die "sol cloud plan failed from the read-only install"
+fi
+echo "$out" | sed -n '/--- terraform/,$p' | cut -c1-150 | sed 's/^/         /'
+grep -q -- "-chdir=/tmp/xdg/sol/terraform/aws-cluster-[0-9a-f]\{16\}/platform/cloud/aws/cluster init" <<<"$out" ||
+  die "terraform init did not run in a working directory under Sol's state"
+grep -q -- "-chdir=/opt/sol" <<<"$out" && die "terraform ran inside the read-only bundle"
+grep -q -- "-backend-config=key=sol/prod/aws/us-east-1/cloud.tfstate" <<<"$out" ||
+  die "the target's remote-state identity changed"
+grep -q "/.terraform/fake-init$" <<<"$out" || die "Terraform's own directory is not in the working directory"
+pass "sol cloud plan runs from the read-only install; Terraform works in its own directory"
+if in_container "$install" sh -c "touch /opt/sol/share/sol/$version/platform/probe" >/dev/null 2>&1; then
+  die "control: the install is writable in the container, so the check above proves nothing"
+fi
+pass "control: the install really is read-only there"
 
 # Control 1: nothing in the container is a checkout.
 if out="$(in_container "$work/dev" /opt/sol/sol assets 2>&1)"; then

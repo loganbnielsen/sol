@@ -78,6 +78,12 @@ val cloud_root_rel : Sol_cli_provider.t -> cloud_role -> string
 (** The Terraform root for [provider]'s [role]. *)
 val cloud_root : t -> Sol_cli_provider.t -> cloud_role -> string
 
+(** The trees, relative to any asset root, that a Terraform root reads: the
+    [platform/cloud/] roots and their shared module, and the [platform/shared/]
+    files that module loads by relative path. What DEC-050's working directory
+    materializes. *)
+val terraform_trees : string list
+
 (** [platform/shared/components.json]: the platform components' Helm values. *)
 val components_json : t -> string
 

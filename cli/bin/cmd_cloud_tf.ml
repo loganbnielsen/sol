@@ -77,26 +77,36 @@ let check_terraform () =
     exit 1)
 ;;
 
-let infra_dir provider =
-  let pname = Sol_cli_provider.to_string provider in
+(* DEC-050: the Terraform roots in Sol's assets are immutable and only read here,
+   for the variables a root declares. Terraform itself runs in a per-state working
+   directory (Sol_cli_terraform_workdir) keyed by the backend it works on, which
+   every init first materializes from those assets. *)
+let asset_root provider role =
   let dir =
     Sol_cli_platform_assets.cloud_root
       (Sol_cli_platform_assets.resolve_or_exit ())
       provider
-      Sol_cli_platform_assets.Cluster
+      role
   in
   if not (Sys.file_exists dir)
   then (
     Printf.eprintf "error: Terraform module not found: %s\n" dir;
     exit 1);
-  pname, dir
+  dir
 ;;
 
-let platform_dir provider =
-  Sol_cli_platform_assets.cloud_root
-    (Sol_cli_platform_assets.resolve_or_exit ())
-    provider
-    Sol_cli_platform_assets.Platform
+let workdir provider role ~backend_config =
+  Sol_cli_terraform_workdir.chdir ~provider ~role ~backend_config
+;;
+
+let materialize_workdir provider role ~backend_config =
+  Result.map
+    ignore
+    (Sol_cli_terraform_workdir.materialize
+       ~assets:(Sol_cli_platform_assets.resolve_or_exit ())
+       ~provider
+       ~role
+       ~backend_config)
 ;;
 
 type action =
@@ -273,14 +283,24 @@ let terraform_init run_log infra_dir backend_config =
     Sol_cli_terraform.init ~chdir:infra_dir ~backend_config ())
 ;;
 
-let run_terraform_init run_log infra_dir backend_config =
-  require_terraform_success (terraform_init run_log infra_dir backend_config)
+(* DEC-050: every Terraform use of a state begins with init, so init is where its
+   working directory is materialized from the authoritative assets. *)
+let run_terraform_init run_log ~provider ~role backend_config =
+  (match materialize_workdir provider role ~backend_config with
+   | Ok () -> ()
+   | Error message ->
+     Printf.eprintf "error: %s\n%!" message;
+     exit 1);
+  require_terraform_success
+    (terraform_init run_log (workdir provider role ~backend_config) backend_config)
 ;;
 
 (* REFAC-091: the result-returning form for the destroy sequence, which carries
    an init failure in its typed outcome rather than exiting mid-sequence. *)
-let run_terraform_init_result run_log infra_dir backend_config =
-  terraform_outcome (terraform_init run_log infra_dir backend_config)
+let run_terraform_init_result run_log ~provider ~role backend_config =
+  let* () = materialize_workdir provider role ~backend_config in
+  terraform_outcome
+    (terraform_init run_log (workdir provider role ~backend_config) backend_config)
 ;;
 
 let lifecycle_error message =
@@ -909,7 +929,16 @@ let apply_deps
                (cloud_ready_expectation provider)))
   ; with_cluster_access = with_cluster_access_apply
   ; platform_init =
-      (fun () -> terraform_failure (terraform_init run_log platform_dir platform_backend))
+      (fun () ->
+        match
+          materialize_workdir
+            provider
+            Sol_cli_platform_assets.Platform
+            ~backend_config:platform_backend
+        with
+        | Error message -> Error (Sol_cli_cloud_apply.Refused message)
+        | Ok () ->
+          terraform_failure (terraform_init run_log platform_dir platform_backend))
   ; platform_installed = (fun env -> crds_established env)
   ; apply_prerequisites =
       platform_apply
@@ -980,8 +1009,8 @@ let cloud_init
   =
   check_terraform ();
   let provider = provider_of_target_path target in
-  let pname, infra_dir = infra_dir provider in
-  let platform_dir = platform_dir provider in
+  let pname = Sol_cli_provider.to_string provider in
+  let cluster_assets = asset_root provider Sol_cli_platform_assets.Cluster in
   let run_log = Sol_cli_run_log.create ~prefix:"cloud-apply" () in
   (* Check the target before terraform-init, same order cloud_destroy
      already uses -- a typo'd target should fail fast, not after a
@@ -1008,8 +1037,14 @@ let cloud_init
   let target_cfg = Sol_cli_cloud_lifecycle.target cloud_target in
   let cloud_backend = Sol_cli_cloud_lifecycle.cloud_backend cloud_target in
   let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
+  let infra_dir =
+    workdir provider Sol_cli_platform_assets.Cluster ~backend_config:cloud_backend
+  in
+  let platform_dir =
+    workdir provider Sol_cli_platform_assets.Platform ~backend_config:platform_backend
+  in
   let var_files = Option.to_list var_file in
-  refuse_sensitive_vars ~infra_dir ~vars;
+  refuse_sensitive_vars ~infra_dir:cluster_assets ~vars;
   Printf.printf "\nInitializing cloud infrastructure (%s)...\n%!" pname;
   (* INFRA-039: credentials are resolved again here, per mutating stage,
        rather than assumed from process start -- a platform stage runs many
@@ -1030,7 +1065,7 @@ let cloud_init
       ~accept_unresolved
       ~chdir:platform_dir
       ~backend_config:platform_backend;
-  run_terraform_init run_log infra_dir cloud_backend;
+  run_terraform_init run_log ~provider ~role:Sol_cli_platform_assets.Cluster cloud_backend;
   match action with
   | Plan ->
     require_terraform_success
@@ -1093,7 +1128,11 @@ let cloud_init
                  ~provider
                  ~operation:"applying"
                  ~leaves_target_standing:false);
-            run_terraform_init run_log platform_dir platform_backend;
+            run_terraform_init
+              run_log
+              ~provider
+              ~role:Sol_cli_platform_assets.Platform
+              platform_backend;
             require_terraform_success
               (Sol_cli_run_log.run_phase
                  run_log
@@ -1175,14 +1214,15 @@ let report_degradations = function
 let cloud_destroy ~target ~var_file ~vars ~action () =
   check_terraform ();
   let provider = provider_of_target_path target in
-  let pname, infra_dir = infra_dir provider in
+  let pname = Sol_cli_provider.to_string provider in
+  let cluster_assets = asset_root provider Sol_cli_platform_assets.Cluster in
   let run_log = Sol_cli_run_log.create ~prefix:"cloud-destroy" () in
   let config_vars, config_var_file, target_cfg =
     config_vars ~strict:(action = Apply) (Some target)
   in
   let var_file = resolve_var_file ~flag:var_file ~target:config_var_file in
   let vars = config_vars @ vars in
-  refuse_sensitive_vars ~infra_dir ~vars;
+  refuse_sensitive_vars ~infra_dir:cluster_assets ~vars;
   let target_cfg = established_target target_cfg in
   (* DEC-033: what this destroy deliberately keeps, named by the target. Absent
      means the production default -- retain the final snapshot -- so a
@@ -1203,6 +1243,9 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
   in
   let target_cfg = Sol_cli_cloud_lifecycle.target cloud_target in
   let cloud_backend = Sol_cli_cloud_lifecycle.cloud_backend cloud_target in
+  let infra_dir =
+    workdir provider Sol_cli_platform_assets.Cluster ~backend_config:cloud_backend
+  in
   guard_previous_operation
     ~constructive:false
     ~accept_unresolved:false
@@ -1218,7 +1261,11 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
   guard_previous_operation
     ~constructive:false
     ~accept_unresolved:false
-    ~chdir:(platform_dir provider)
+    ~chdir:
+      (workdir
+         provider
+         Sol_cli_platform_assets.Platform
+         ~backend_config:(Sol_cli_cloud_lifecycle.platform_backend cloud_target))
     ~backend_config:(Sol_cli_cloud_lifecycle.platform_backend cloud_target);
   let var_files = Option.to_list var_file in
   (* REFAC-097: the provider's retention and residue steps for this destroy. *)
@@ -1247,8 +1294,13 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
       let* () =
         match cluster_of ~target_cfg provider infra_dir with
         | Ok (Some cluster) ->
-          let platform_dir = platform_dir provider in
           let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
+          let platform_dir =
+            workdir
+              provider
+              Sol_cli_platform_assets.Platform
+              ~backend_config:platform_backend
+          in
           let* platform_vars =
             platform_vars_of_result
               ~context:Sol_cli_cloud_lifecycle.Destruction
@@ -1257,7 +1309,13 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
               ()
           in
           with_cluster_access_result cluster (fun ~env ->
-            let* () = run_terraform_init_result run_log platform_dir platform_backend in
+            let* () =
+              run_terraform_init_result
+                run_log
+                ~provider
+                ~role:Sol_cli_platform_assets.Platform
+                platform_backend
+            in
             terraform_outcome
               (Sol_cli_run_log.run_phase run_log ~name:"platform-plan-destroy" (fun () ->
                  Sol_cli_terraform.plan_destroy
@@ -1340,8 +1398,10 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
        so this never threads an [on_error]: a failure returns, and the removal
        happens structurally (FND-0047). *)
     let destroy_platform_result ~cluster () : (unit, string) result =
-      let platform_dir = platform_dir provider in
       let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
+      let platform_dir =
+        workdir provider Sol_cli_platform_assets.Platform ~backend_config:platform_backend
+      in
       let* platform_vars =
         platform_vars_of_result
           ~context:Sol_cli_cloud_lifecycle.Destruction
@@ -1350,7 +1410,13 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
           ()
       in
       with_cluster_access_result cluster (fun ~env ->
-        let* () = run_terraform_init_result run_log platform_dir platform_backend in
+        let* () =
+          run_terraform_init_result
+            run_log
+            ~provider
+            ~role:Sol_cli_platform_assets.Platform
+            platform_backend
+        in
         let destroy_once () =
           Sol_cli_terraform.destroy
             ~env
@@ -1447,7 +1513,12 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
               ~operation:"destroying"
               ~leaves_target_standing:true)
       ; terraform_init =
-          (fun () -> run_terraform_init_result run_log infra_dir cloud_backend)
+          (fun () ->
+            run_terraform_init_result
+              run_log
+              ~provider
+              ~role:Sol_cli_platform_assets.Cluster
+              cloud_backend)
       ; observe_state =
           (fun () ->
             match Sol_cli_terraform.show_json ~chdir:infra_dir () with
