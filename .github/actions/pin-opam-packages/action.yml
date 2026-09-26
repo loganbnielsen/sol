@@ -1,67 +1,11 @@
 name: Pin opam packages
 description: >
-  Pin every extracted -eio/https-eio support package listed in packages.txt at
-  the commit given in `refs`, retrying each pin a bounded number of times so a
-  brief upstream tarball-host outage (INFRA-008) does not fail a pull request
-  that changes no dependencies. Shared by every job that needs a full build, so
-  the pin list and its ordering constraint never drift apart.
-inputs:
-  refs:
-    description: >
-      Newline-separated "<package> <commit>" lines from
-      internal/ci/resolve-support-packages.sh, resolved once per workflow run so
-      every job builds against one dependency snapshot. Every package in
-      packages.txt must have a line; there is no per-job fallback to #main.
-    required: true
+  Pin every extracted -eio/https-eio support package at the commit the
+  repository's support-refs.txt declares (BUG-059). The checkout is the source
+  of truth: there is no resolved snapshot to pass in and no fallback to a branch.
+  Shared by every job that needs a full build.
 runs:
   using: composite
   steps:
     - shell: bash
-      env:
-        REFS: ${{ inputs.refs }}
-      run: |
-        # Explicit even though Actions sets it: the retry below depends on the
-        # pipeline's status coming from opam, not from the trailing `tee`.
-        set -o pipefail
-
-        # Support packages track main during active parallel development,
-        # snapshotted once per workflow run (refs). Replace with released
-        # versions once they exist (RELEASE-005). packages.txt holds the list
-        # and its required order.
-        #
-        # INFRA-008: a pin installs immediately, so it can fetch a transitive
-        # source from a non-GitHub host (observed: mtime from erratique.ch).
-        # Opam's own --retry did not ride out a brief outage there, so retry
-        # the pin ourselves; on final failure, quote the unreachable host so
-        # the diagnosis does not require reading the whole job log.
-        retry_pin() {
-          local pkg="$1" url="$2" attempt=1 delay=5 log host
-          log="$(mktemp)"
-          while true; do
-            if opam pin add "$pkg" "$url" -y 2>&1 | tee "$log"; then
-              rm -f "$log"
-              return 0
-            fi
-            if [ "$attempt" -ge 3 ]; then
-              host="$(grep -oE 'Fetch_fail\("[^"]+' "$log" | tail -1 | sed -E 's/.*"//; s|^https?://||; s|/.*||' || true)"
-              echo "::error::opam pin ${pkg} failed after 3 attempts${host:+ — unreachable host: ${host}}"
-              rm -f "$log"
-              return 1
-            fi
-            echo "::warning::opam pin ${pkg} failed (attempt ${attempt}/3); retrying in ${delay}s"
-            attempt=$((attempt + 1))
-            sleep "$delay"
-            delay=$((delay * 2))
-          done
-        }
-
-        # fd 3, so nothing inside the loop can consume the list from stdin.
-        while read -r -u 3 pkg url; do
-          case "$pkg" in ''|'#'*) continue ;; esac
-          ref="$(printf '%s\n' "$REFS" | awk -v p="$pkg" '$1 == p { print $2; exit }')"
-          if ! [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::no resolved commit for support package ${pkg}. The workflow's support-refs job must resolve every package in packages.txt; see its log."
-            exit 1
-          fi
-          retry_pin "$pkg" "${url}#${ref}"
-        done 3< "${{ github.action_path }}/packages.txt"
+      run: bash internal/ci/pin-support-packages.sh support-refs.txt

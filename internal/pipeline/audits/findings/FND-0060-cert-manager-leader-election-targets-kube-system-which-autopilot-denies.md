@@ -2,8 +2,11 @@
 
 - **Classification:** `VERIFIED_DEFECT` (live: GCP Attempt 10's frozen bundle, cross-checked against
   the chart's own values and templates)
-- **State:** `OPEN` — the fix is proposed in `INFRA-088` (READY_FOR_ENGINEERING) and not yet
-  implemented; nothing here is qualified
+- **State:** `FIXED_UNQUALIFIED` — the fix landed 2026-09-26 in `helm_release.cert_manager`
+  (`INFRA-088`, `global.leaderElection.namespace` by reference to the cert-manager namespace), with
+  a guard and six mutations over it. **Not qualified:** no live run has yet shown leadership
+  acquired, a populated `caBundle` or a succeeding check, and a static/offline fix is not evidence
+  that a cluster behaves.
 - **First identified:** 2026-09-26, GCP Attempt 10 (`main @ bc9062b0`)
 - **Provider:** GCP / GKE Autopilot. The defect is *not* provider-conditional in its fix: Sol should
   place cert-manager's leader-election resources in cert-manager's namespace everywhere, because
@@ -47,12 +50,13 @@ Job `startTime` 15:16:59Z, container args `check api --wait=10m -v`, `backoffLim
 its whole window; it was never waiting to be scheduled. `INFRA-087` is withdrawn as originally
 framed — this finding's subject is the defect above.
 
-## Fix (proposed, INFRA-088)
+## Fix (landed, INFRA-088)
 
-Set `global.leaderElection.namespace` to `kubernetes_namespace.cert_manager.metadata[0].name` in
-`helm_release.cert_manager` — one declared value, no provider conditional, guarded by
-`check_cert_manager_readiness.sh` and a discriminating live run (leases acquired in `cert-manager`,
-no `kube-system` attempt, `caBundle` populated, check Job Succeeds).
+`global.leaderElection.namespace = kubernetes_namespace.cert_manager.metadata[0].name` in
+`helm_release.cert_manager` — one declared value, unconditional, guarded by
+`check_cert_manager_readiness.sh` (declared, by reference, resolving to cert-manager's namespace;
+`kube-system`, other namespaces and literals all refused) plus six mutations, including a renamed
+namespace resource so the guard follows the reference rather than its spelling.
 
 ## What would qualify it (not merely fix it)
 

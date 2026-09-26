@@ -82,9 +82,10 @@ a little more, and none of it is covered by `dune build` alone:
 - **Eleven external `*-eio` packages.** `sol.opam` depends on `kafka-eio`,
   `obs-eio`, `obs-loki-eio`, `obs-prometheus-eio`, `obs-tempo-eio`, `pg-eio`,
   `aws-eio`, `s3-eio`, `dynamodb-eio`, `lambda-eio`, and `https-eio`. Several are
-  not on opam yet, so pin them from source first, e.g.
-  `opam pin add kafka-eio https://github.com/loganbnielsen/kafka-eio.git`
-  (repeat per package), then `opam install --deps-only --with-test .`.
+  not on opam yet. `support-refs.txt` declares the exact commit of each that this
+  revision builds against; pin them all with
+  `bash internal/ci/pin-support-packages.sh`, then
+  `opam install --deps-only --with-test .`.
 - **Build:** `dune build cli/bin/main.exe`; the binary lands at
   `_build/default/cli/bin/main.exe`.
 

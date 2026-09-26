@@ -1,5 +1,12 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: INFRA-088 — cert-manager's leader election moves into its own namespace (2026-09-26)
+
+- `helm_release.cert_manager` now sets `global.leaderElection.namespace` to the module's own cert-manager namespace **by reference**, instead of inheriting the chart's `kube-system` default — the cause Attempt 10's frozen evidence established (Autopilot denies the write; no leadership, so no `caBundle` injection, so the check timed out).
+- Deliberately unconditional: no provider branch asks whether a cluster would have permitted `kube-system`.
+- `check_cert_manager_readiness.sh` now refuses omission, `kube-system`, another namespace, a literal (even the right name), a wrong reference, and a renamed namespace resource; six new mutations, fourteen total, all rejected, unmutated tree accepted.
+- **FND-0060 is `FIXED_UNQUALIFIED`** (offline fix only) and FND-0010 keeps its narrower claim (budget remedy live-validated; successful readiness/TLS trust not yet demonstrated). Next step is a fresh live qualification target that discriminates the whole chain through cert-manager to `Ready`.
+
 ## Latest: FND-0060 / INFRA-088 — the cert-manager failure is leader election, not scheduling (2026-09-26)
 
 - Forensic re-analysis of the frozen Attempt 10 bundle (no new live run) refuted the run's own first reading: the ~9½-minute interval was cert-manager's `check api --wait=10m` window (122 webhook TLS handshake failures, every ~5s, 15:17:28 → 15:27:29), not a container-start delay. **FND-0060 is `FALSIFIED`** and `INFRA-087` is withdrawn.

@@ -14,6 +14,12 @@
 # while the check was still polling and reporting `x509: certificate signed by unknown
 # authority` (FND-0010; Attempts 4, 5, 8, 9).
 #
+# FND-0060 added the second half of the same contract: leader election has to happen in
+# cert-manager's own namespace. The chart's default (`global.leaderElection.namespace:
+# kube-system`) is what the components used in Attempt 10, and GKE Autopilot denies it -- so
+# the controller and cainjector never led, cainjector never injected the webhook caBundle,
+# and the check could not pass no matter how long its budget was.
+#
 # This guard is deliberately structural: it runs no terraform beyond `fmt -check` (which
 # parses the HCL), and it pins the *contract* the live failure violated --
 #   the check is enabled,
@@ -44,6 +50,18 @@ set_value() {
     inblock && /name[[:space:]]*=/    { name = $0;  sub(/.*=[[:space:]]*"/, "", name);  sub(/".*/, "", name) }
     inblock && /value[[:space:]]*=/   { value = $0; sub(/.*=[[:space:]]*"/, "", value); sub(/".*/, "", value) }
     inblock && /^[[:space:]]*\}/      { if (name == key) print value; inblock = 0 }
+  '
+}
+
+# The raw right-hand side of `set { name = "<key>" ... value = <rhs> }`, quoted or not. The
+# leader-election value is a *reference* to the namespace resource rather than a string, so
+# set_value (which strips quotes) cannot see it.
+raw_set_value() {
+  printf '%s\n' "$block" | awk -v key="$1" '
+    /set \{/                        { inblock = 1; name = ""; value = ""; next }
+    inblock && /name[[:space:]]*=/   { name = $0; sub(/.*=[[:space:]]*"/, "", name); sub(/".*/, "", name) }
+    inblock && /value[[:space:]]*=/  { value = $0; sub(/.*=[[:space:]]*/, "", value); sub(/[[:space:]]*$/, "", value) }
+    inblock && /^[[:space:]]*\}/     { if (name == key) print value; inblock = 0 }
   '
 }
 
@@ -107,9 +125,27 @@ fi
 wait_value="$(scalar_value wait)"
 [ "${wait_value:-true}" = "true" ] || fail "the release must wait for its resources (wait = true)"
 
+# 7. FND-0060: leader election must be declared, and it must be cert-manager's own namespace.
+leader_election="$(raw_set_value global.leaderElection.namespace)"
+[ -n "$leader_election" ] || fail "global.leaderElection.namespace must be declared: the chart default is kube-system, which GKE Autopilot manages and denies, so cert-manager never leads and its post-install check cannot pass (FND-0060 / Attempt 10)"
+case "$leader_election" in
+  *kube-system*)
+    fail "global.leaderElection.namespace must not be kube-system (found '$leader_election'): Autopilot denies workloads the create verb in that namespace, so leader election can never succeed there"
+    ;;
+esac
+expected_ref='kubernetes_namespace.cert_manager.metadata[0].name'
+[ "$leader_election" = "$expected_ref" ] || fail "global.leaderElection.namespace must be $expected_ref (found '$leader_election'): a literal, another namespace, or another resource would be a second source of truth for the namespace cert-manager is installed into"
+
+# 8. ...and that reference must resolve, in this file, to cert-manager's namespace.
+namespace_block="$(awk '/^resource "kubernetes_namespace" "cert_manager" \{/,/^\}/' "$main_tf")"
+[ -n "$namespace_block" ] || fail "the leader-election namespace references kubernetes_namespace.cert_manager, which $main_tf does not define"
+namespace_name="$(printf '%s\n' "$namespace_block" | awk -F'"' '/name[[:space:]]*=/ { print $2; exit }')"
+[ "$namespace_name" = "cert-manager" ] || fail "kubernetes_namespace.cert_manager names '$namespace_name', so the leader-election namespace does not resolve to cert-manager"
+[ "$namespace_name" != "kube-system" ] || fail "cert-manager's own namespace must not be kube-system"
+
 # The HCL must also still parse.
 if command -v terraform >/dev/null 2>&1; then
   terraform fmt -check "$main_tf" >/dev/null 2>&1 || fail "$main_tf is not terraform-fmt clean"
 fi
 
-echo "cert-manager readiness: check enabled, ${per_attempt}s per attempt x $((backoff_raw + 1)) attempt(s) <= ${release_timeout}s release wait; wait = true, CRDs from the chart."
+echo "cert-manager readiness: check enabled, ${per_attempt}s per attempt x $((backoff_raw + 1)) attempt(s) <= ${release_timeout}s release wait; wait = true, CRDs from the chart; leader election in ${namespace_name} (by reference), never kube-system."

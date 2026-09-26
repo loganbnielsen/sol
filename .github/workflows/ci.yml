@@ -52,38 +52,9 @@ jobs:
           echo "kind=$kind" >> "$GITHUB_OUTPUT"
           echo "Classification for ${{ github.event_name }}: $kind"
 
-  # One support-package snapshot per workflow run: every job that builds pins
-  # exactly these commits, so one run tests one dependency set. Deliberately
-  # NOT continue-on-error: if any package cannot be resolved, every building job
-  # fails at its pin step with a pointer here, rather than floating on #main.
-  # Skipped for docs-only changes, which build nothing; always() keeps a failed
-  # classification (empty kind) on the full-run path.
-  support-refs:
-    needs: classify
-    if: always() && needs.classify.outputs.kind != 'docs-only'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    outputs:
-      refs: ${{ steps.resolve.outputs.refs }}
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Resolve support-package commits
-        id: resolve
-        run: |
-          refs="$(internal/ci/resolve-support-packages.sh)"
-          printf '%s\n' "$refs"
-          {
-            echo "refs<<SUPPORT_REFS"
-            printf '%s\n' "$refs"
-            echo "SUPPORT_REFS"
-          } >> "$GITHUB_OUTPUT"
-
   test:
     runs-on: ubuntu-22.04
-    needs: [classify, support-refs]
+    needs: classify
     # always(): a `needs` edge would otherwise SKIP this job whenever the
     # classify job fails, and a skipped required check blocks the PR forever.
     if: always()
@@ -129,15 +100,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.opam/download-cache
-          key: opam-download-${{ runner.os }}-${{ hashFiles('.github/actions/pin-opam-packages/action.yml', '.github/actions/pin-opam-packages/packages.txt', 'dune-project', 'sol.opam') }}
+          key: opam-download-${{ runner.os }}-${{ hashFiles('.github/actions/pin-opam-packages/action.yml', 'support-refs.txt', 'dune-project', 'sol.opam') }}
           restore-keys: |
             opam-download-${{ runner.os }}-
 
       - name: Pin extracted opam packages
         if: needs.classify.outputs.kind != 'docs-only'
         uses: ./.github/actions/pin-opam-packages
-        with:
-          refs: ${{ needs.support-refs.outputs.refs }}
 
       - name: Install OCaml dependencies
         if: needs.classify.outputs.kind != 'docs-only'
@@ -261,8 +230,11 @@ jobs:
         # would not be visible in a normal review of the diff.
         run: bash internal/ci/test_classify_changes.sh
 
-      - name: Support-package snapshot resolver
-        run: bash internal/ci/test_resolve_support_packages.sh
+      - name: Support-library revisions are declared, never floating (BUG-059)
+        run: bash internal/ci/check_support_refs.sh
+
+      - name: Support-refs guard mutation test
+        run: bash internal/ci/test_support_refs.sh
 
       - name: Ticket-state transition guard
         if: needs.classify.outputs.kind != 'docs-only'
@@ -460,7 +432,7 @@ jobs:
     #
     # RULE: a job with this condition must never be added to the required status
     # checks without revisiting the design above.
-    needs: [classify, support-refs]
+    needs: classify
     if: always() && needs.classify.outputs.kind != 'docs-only'
     runs-on: ubuntu-22.04
     # Outer safety net only — per-step timeouts below do the real fail-fast
@@ -485,15 +457,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.opam/download-cache
-          key: opam-download-${{ runner.os }}-${{ hashFiles('.github/actions/pin-opam-packages/action.yml', '.github/actions/pin-opam-packages/packages.txt', 'dune-project', 'sol.opam') }}
+          key: opam-download-${{ runner.os }}-${{ hashFiles('.github/actions/pin-opam-packages/action.yml', 'support-refs.txt', 'dune-project', 'sol.opam') }}
           restore-keys: |
             opam-download-${{ runner.os }}-
 
       - name: Pin extracted opam packages
         timeout-minutes: 10
         uses: ./.github/actions/pin-opam-packages
-        with:
-          refs: ${{ needs.support-refs.outputs.refs }}
 
       - name: Install OCaml dependencies
         timeout-minutes: 20
@@ -1083,7 +1053,7 @@ jobs:
   # precedent) -- get it stable first, then decide separately whether it
   # should gate merges.
   golden-path-smoke-ts:
-    needs: [classify, support-refs]
+    needs: classify
     if: always() && needs.classify.outputs.kind != 'docs-only'
     runs-on: ubuntu-22.04
     timeout-minutes: 45
@@ -1102,15 +1072,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.opam/download-cache
-          key: opam-download-${{ runner.os }}-${{ hashFiles('.github/actions/pin-opam-packages/action.yml', '.github/actions/pin-opam-packages/packages.txt', 'dune-project', 'sol.opam') }}
+          key: opam-download-${{ runner.os }}-${{ hashFiles('.github/actions/pin-opam-packages/action.yml', 'support-refs.txt', 'dune-project', 'sol.opam') }}
           restore-keys: |
             opam-download-${{ runner.os }}-
 
       - name: Pin extracted opam packages
         timeout-minutes: 10
         uses: ./.github/actions/pin-opam-packages
-        with:
-          refs: ${{ needs.support-refs.outputs.refs }}
 
       - name: Install OCaml dependencies
         timeout-minutes: 20

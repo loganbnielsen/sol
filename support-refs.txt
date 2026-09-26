@@ -1,0 +1,24 @@
+# BUG-059: the exact support-library revisions this Sol revision builds against.
+#
+# One line per package: <package> <git url> <40-hex commit>. Order is pin order:
+# https-eio must stay first, because obs-loki-eio, obs-prometheus-eio and aws-eio
+# depend on it and each pin installs immediately.
+#
+# Every consumer reads this file and nothing else: CI (the pin-opam-packages
+# action), release builds, the source-built migration runner, and a developer
+# switch (internal/ci/pin-support-packages.sh). Changing a revision is a reviewed
+# diff: run internal/tooling/scripts/bump-support-refs.sh [package...].
+# internal/ci/check_support_refs.sh fails if a consumer floats on a branch again.
+#
+# RELEASE-005 (support packages published to opam with versions) may replace this.
+https-eio https://github.com/loganbnielsen/https-eio.git e548f47cd8cc607e4781638fa3f4aec996b60d60
+kafka-eio https://github.com/loganbnielsen/kafka-eio.git 784bf37c32e141406cf6a1837150d38d2cb2919e
+obs-eio https://github.com/loganbnielsen/obs-eio.git b425c55eba8b1bc65378d7fc7d6c77a573001fb4
+obs-loki-eio https://github.com/loganbnielsen/obs-loki-eio.git 148a970651b299114b881bb382d3590caf8d38fa
+obs-prometheus-eio https://github.com/loganbnielsen/obs-prometheus-eio.git 5f443342fd20a36551336f27f7dbb93ab90e73bb
+obs-tempo-eio https://github.com/loganbnielsen/obs-tempo-eio.git e117aece43bd498ea4b2af62a4572f2f3c8fc93a
+pg-eio https://github.com/loganbnielsen/pg-eio.git 3ef3a20f6d9a81ce2d8e3a439e5f5f8862fba3bb
+aws-eio https://github.com/loganbnielsen/aws-eio.git 0243fcfb019c33c31237610047a0cfc47e532110
+s3-eio https://github.com/loganbnielsen/s3-eio.git 2ab4882a3cf4acf54829f8a764c4d1196dd4dd77
+dynamodb-eio https://github.com/loganbnielsen/dynamodb-eio.git 770f16f954bcdd0f7587046f48313ebc7fc3acaa
+lambda-eio https://github.com/loganbnielsen/lambda-eio.git c07c367b0f8919ae6efb9c3af2cd39d9061b1fdd
