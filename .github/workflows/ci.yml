@@ -231,6 +231,18 @@ jobs:
         if: needs.classify.outputs.kind != 'docs-only'
         run: internal/ci/check_platform_component_drift.sh
 
+      - name: cert-manager readiness contract (FND-0010)
+        # Every GCP attempt failed the platform apply on cert-manager's post-install
+        # readiness check, because the Helm provider's default 300s `timeout` bounded a
+        # hook cert-manager designed to keep polling. The guard pins the contract that
+        # failure violated: the check stays enabled, its per-attempt budget is real, and
+        # the release wait is strictly longer than the check's worst case. Its mutation
+        # self-test includes the pre-fix configuration, which must be rejected.
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: |
+          internal/ci/check_cert_manager_readiness.sh .
+          internal/ci/test_cert_manager_readiness_check.sh
+
       - name: gcloud interface and install-authority guard
         # Attempt 2 lost a live run to `gcloud container clusters get-credentials
         # --kubeconfig`, a flag that does not exist: the offline harness could not
