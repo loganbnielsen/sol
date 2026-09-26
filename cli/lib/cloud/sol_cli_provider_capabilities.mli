@@ -21,6 +21,17 @@ type t =
   ; cluster_access_role_arn : Sol_cli_config.target -> (string option, string) result
     (** The role a caller assumes to reach the cluster, where the provider has one. *)
   ; platform_storage : platform_storage
+  ; disk_quota :
+      (outputs_json:string
+       -> region:string
+       -> (Sol_cli_disk_quota.observation, string) result)
+        option
+    (** The provider's own reading of the disk quota that governs the storage class the
+        platform asks for (INFRA-090). [Some] means the provider observes it; [None] is a
+        declared answer -- this provider has no such quota to read, or none that means the same
+        thing -- and is never the same as "there is room". Sol compares the observation against
+        its own declared minimum; it does not model how much of the quota the provider's own
+        nodes will consume. *)
   ; own_vars :
       Sol_cli_config.target
       -> workspace:string

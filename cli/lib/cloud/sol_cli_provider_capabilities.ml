@@ -27,6 +27,11 @@ type t =
       -> (string list, string) result
   ; cluster_access_role_arn : Sol_cli_config.target -> (string option, string) result
   ; platform_storage : platform_storage
+  ; disk_quota :
+      (outputs_json:string
+       -> region:string
+       -> (Sol_cli_disk_quota.observation, string) result)
+        option
   ; own_vars :
       Sol_cli_config.target
       -> workspace:string
@@ -102,6 +107,11 @@ let aws =
              (Sol_cli_config.provider_field target "cluster_access_role_arn")))
   ; (* EKS ships no default StorageClass, so Sol creates one. *)
     platform_storage = { storage_class = "gp3"; csi_driver = "ebs.csi.aws.com" }
+  ; (* AWS's block storage is EBS, whose limits are per-volume size and attachment count
+       rather than one regional GB allowance Sol could compare against a declared minimum the
+       way GCP's SSD_TOTAL_GB can. Declaring [None] says exactly that: the observation is not
+       implemented here, and the check reports "not observed" rather than "sufficient". *)
+    disk_quota = None
   ; own_vars =
       (fun (target : Sol_cli_config.target) ~workspace shared ->
         shared
@@ -214,6 +224,14 @@ let gcp =
        rather than creating a second default class. *)
     platform_storage =
       { storage_class = "standard-rwo"; csi_driver = "pd.csi.storage.gke.io" }
+  ; (* FND-0062: `standard-rwo` is `pd-balanced`, and Compute counts balanced disks against
+       the region's SSD_TOTAL_GB -- the quota the provider named when it refused Attempt 12's
+       volumes. The region is the scope: that quota is per region, so a zonal reading would be
+       the wrong number. *)
+    disk_quota =
+      Some
+        (fun ~outputs_json ~region ->
+          Sol_cli_gcp_cluster.disk_quota ~outputs_json ~region)
   ; own_vars =
       (fun (target : Sol_cli_config.target) ~workspace:_ shared ->
         (* The impersonation grant is GCP's, and only GCP's: the AWS equivalent is

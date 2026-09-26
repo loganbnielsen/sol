@@ -886,6 +886,20 @@ let apply_deps
           Result.map Option.some (window.observe ())
         | No_role_declared | Closed_by_platform_root -> Ok None)
   ; platform_vars = (fun cluster -> platform_vars_of_result ~cloud_target ~cluster ())
+  ; observe_disk_quota =
+      (fun (_ : Sol_cli_cluster.t) ->
+        match (Sol_cli_provider_capabilities.capabilities_of provider).disk_quota with
+        | None -> Ok None
+        | Some observe ->
+          (match Sol_cli_terraform.output_json ~chdir:infra_dir () with
+           | Error _ ->
+             Error
+               "could not read the cloud root's outputs to scope the disk-quota \
+                observation"
+           | Ok outputs ->
+             Result.map
+               Option.some
+               (observe ~outputs_json:outputs.stdout ~region:target_cfg.region)))
   ; cloud_ready =
       (fun (cluster : Sol_cli_cluster.t) ->
         if cluster.ready ()

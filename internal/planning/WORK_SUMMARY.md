@@ -1,8 +1,9 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: GCP Attempt 12 — the RBAC collision is gone, the SSD quota is the new frontier (2026-09-26)
+## Latest: INFRA-090 — the disk-quota precondition, checked where it means something (2026-09-26)
 
-- Ran a fresh target at `main @ cf43aaee` (cluster `sol-qual-gcp-12`, its own state key). **FND-0061 is `QUALIFIED` live**: `platform-prerequisites-apply` and the full `platform-apply` both passed the boundary that failed Attempt 11, with no `already exists` anywhere, and the install continued into its Helm releases for 22 minutes.
-- The new blocker is the environment, not the lifecycle: the observability PVCs (`storage-loki-0` 10Gi, `prometheus-server` 8Gi, `alertmanager` 2Gi) never bind — `CreateVolume failed … (QUOTA_EXCEEDED): Quota 'SSD…'` — because `SSD_TOTAL_GB` reads **limit 500 / usage 500** with five Autopilot nodes at 100 GiB boot disks each, and **usage 0** after teardown. Filed as **FND-0062 / INFRA-090** (BACKLOG).
-- The preflight said the quota was fine: its probe measures the cluster's Autopilot CPU/memory budget, not regional disk quota. INFRA-090 adds that probe so the next run refuses in five seconds instead of failing in 43 minutes.
-- Supported destruction from the failed install ran clean again: `platform-destroy ok (135.4s)`, substrate `346.6s`, both roots empty, provider inventory absent, durable prerequisites intact, no manual action.
+- The invariant is the operator's, and the code follows it exactly: **observation** (provider's regional `SSD_TOTAL_GB` limit/usage, read after the cloud infrastructure exists), **declaration** (`Sol_cli_platform_storage`: 20 GiB across prometheus server, alertmanager and loki), **policy** (`Sol_cli_disk_quota.sufficient`, in the apply sequence right after `cloud_ready`), and **no model of Autopilot's node behaviour** — the footprint is whatever the cluster has already made, which is why Attempt 12's pre-cloud 0/500 reading was useless.
+- Placement is the lesson of Attempt 12: too early reads 0 usage, too late means the volumes are already asked for. The check sits between them, and an unreadable quota fails closed.
+- The harness records the same quota independently and now classifies a provider `CreateVolume … QUOTA_EXCEEDED` refusal as `PROVIDER_DISK_QUOTA_EXCEEDED`, ahead of ambient pod symptoms. A successful install also captures the provisioner bindings, closing FND-0061's last inference.
+- `check_platform_storage_requirement.sh` keeps the declaration honest against the module (its first catch was this ticket's author claiming a size Sol does not set — `prometheus_persistent_storage` is a bool).
+- **Qualification project: `SSD_TOTAL_GB` 500 → 1000 GiB, confirmed effective.** FND-0062 is `FIXED_UNQUALIFIED`; the next live run is the discriminator.

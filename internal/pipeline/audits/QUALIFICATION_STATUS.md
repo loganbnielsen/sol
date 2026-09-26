@@ -760,3 +760,20 @@ Full record: `internal/qualification/records/2026-09-26-gcp-attempt12-fnd0061-qu
 provisioned because the project's `SSD_TOTAL_GB` quota (500 GiB) is fully consumed by the Autopilot
 nodes' own 100 GiB boot disks, while the platform asks for 20 GiB. Environment precondition, not a
 lifecycle defect; the harness preflight missed it because it reads no disk quota.
+
+## INFRA-090 landed — disk-quota precondition, offline only (2026-09-26)
+
+`FND-0062` is `FIXED_UNQUALIFIED`. The lifecycle observes the provider's regional `SSD_TOTAL_GB`
+after the cloud infrastructure exists and before the platform asks for a volume, compares it with
+`Sol_cli_platform_storage.minimum_gb` (20 GiB, from the platform's own declarations), refuses with
+the numbers when it does not fit, and fails closed on an unreadable read. The provider's node
+behaviour is not modelled — the observation carries whatever footprint the cluster has already made.
+
+**Qualification project state: `SSD_TOTAL_GB` raised 500 → 1000 GiB and confirmed effective**
+(`gcloud compute regions describe us-central1` reports `limit=1000.0`). Nothing else about the
+project changed; both durable prerequisites remain, both Terraform roots are empty of target state.
+
+The next authorized live run is a fresh target whose discriminator is: the quota check passes with
+the numbers printed, the observability PVCs bind, loki and the monitoring stack become ready, and the
+install continues toward `Ready` and Ready-state destruction. The run also captures the provisioner
+bindings on success, closing FND-0061's last inference.
