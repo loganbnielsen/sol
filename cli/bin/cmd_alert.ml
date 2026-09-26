@@ -12,127 +12,76 @@
    a delivered-and-acknowledged test is the only thing that satisfies the
    guarantee, and a CLI invocation alone cannot assert someone was paged. *)
 
-let timestamp_now () = Sol_cli_time.rfc3339 (Unix.gettimeofday ())
+let ( let* ) = Result.bind
 
-(* The synthetic alert deliberately carries no workspace/domain/service labels:
-   the goal is to prove the route regardless of which workload would have fired,
-   and a fabricated taxonomy label would be indistinguishable from a real alert
-   in the receiver's history. `synthetic` makes that explicit to whoever is on
-   call. *)
-let synthetic_alert ~owner ~runbook_url =
-  `List
-    [ `Assoc
-        [ ( "labels"
-          , `Assoc
-              [ "alertname", `String "SolSyntheticAlert"
-              ; "severity", `String "warning"
-              ; "synthetic", `String "true"
-              ; "owner", `String owner
-              ] )
-        ; ( "annotations"
-          , `Assoc
-              [ ( "summary"
-                , `String
-                    "Synthetic Sol alert: confirms the production alert route reaches \
-                     its named owner" )
-              ; ( "description"
-                , `String
-                    "Sent by `sol alert test`. No real incident occurred. Use this to \
-                     prove the configured alert-delivery route end to end; HARDEN-002 \
-                     records the delivered-and-acknowledged result." )
-              ; "runbook_url", `String runbook_url
-              ] )
-        ; "startsAt", `String (timestamp_now ())
-        ]
-    ]
+(* What the send said, for the operator. Kept apart from sending it. *)
+let report_outcome : Sol_cli_alert_test.outcome -> (unit, Sol_cli_exit.failure) result =
+  function
+  | Accepted ->
+    Printf.printf
+      "Alertmanager accepted the synthetic alert.\n\n\
+       This proves the route is configured and reachable. Confirm the named owner \
+       received and acknowledged it: that delivered-and-acknowledged result is the \
+       HARDEN-002 evidence, not this command's exit status.\n";
+    Ok ()
+  | Rejected { exit_code; stderr } ->
+    Error
+      (Sol_cli_exit.error
+         (Printf.sprintf
+            "Alertmanager rejected the synthetic alert (curl exit %d).\n\
+             %s\n\
+             Is the port-forward up? e.g. `kubectl -n monitoring port-forward \
+             svc/prometheus-alertmanager 9093:9093`."
+            exit_code
+            stderr))
+  | Unreachable reason -> Error (Sol_cli_exit.error ("could not run curl: " ^ reason))
 ;;
 
-let run_test target_opt alertmanager_url dry_run () =
-  let target =
-    match target_opt with
-    | Some t -> t
-    | None ->
-      Printf.eprintf
-        "error: `sol alert test` needs a target — pass --target \
-         <env>/<provider>/<region>, the file that declares the receiver/owner/runbook \
-         contract.\n";
-      exit 1
+let run_test target alertmanager_url dry_run =
+  let* cfg =
+    Sol_cli_config.load_for_target ~target
+    |> Result.map_error (fun e -> Sol_cli_exit.failure (Sol_cli_config.error_to_string e))
   in
-  match Sol_cli_config.load_for_target ~target with
-  | Error e ->
-    Printf.eprintf "%s\n" (Sol_cli_config.error_to_string e);
-    exit 1
-  | Ok cfg ->
-    let target_cfg = cfg.Sol_cli_config.target in
-    (match
-       Sol_cli_alerting.validate
-         ~receiver_type:target_cfg.Sol_cli_config.alert_receiver_type
-         ~receiver_url:target_cfg.Sol_cli_config.alert_receiver_url
-         ~owner:target_cfg.Sol_cli_config.alert_owner
-         ~runbook_url:target_cfg.Sol_cli_config.alert_runbook_url
-     with
-     | Error reason ->
-       Printf.eprintf
-         "error: target %s does not satisfy the alert-delivery contract: %s\n"
-         target
-         reason;
-       exit 2
-     | Ok () ->
-       let owner = Option.value target_cfg.alert_owner ~default:"" in
-       let runbook_url = Option.value target_cfg.alert_runbook_url ~default:"" in
-       let body = Yojson.Safe.to_string (synthetic_alert ~owner ~runbook_url) in
-       let url = String.trim alertmanager_url ^ "/api/v2/alerts" in
-       if dry_run
-       then (
-         Printf.printf "Would POST to %s:\n%s\n" url body;
-         Printf.printf
-           "\n\
-            (dry run: nothing was sent; delivered-and-acknowledged evidence is \
-            HARDEN-002's)\n")
-       else (
-         Printf.printf "Sending a synthetic alert through %s ...\n%!" url;
-         match
-           Sol_cli_process.run_success
-             (Sol_cli_process.cmd
-                [ "curl"
-                ; "-sS"
-                ; "-f"
-                ; "-X"
-                ; "POST"
-                ; "-H"
-                ; "Content-Type: application/json"
-                ; "--data"
-                ; body
-                ; url
-                ])
-         with
-         | Ok _ ->
-           Printf.printf
-             "Alertmanager accepted the synthetic alert.\n\n\
-              This proves the route is configured and reachable. Confirm the named owner \
-              received and acknowledged it: that delivered-and-acknowledged result is \
-              the HARDEN-002 evidence, not this command's exit status.\n"
-         | Error (Sol_cli_process.Non_zero r) ->
-           Printf.eprintf
-             "error: Alertmanager rejected the synthetic alert (curl exit %d).\n%s\n"
-             r.exit_code
-             (String.trim r.stderr);
-           Printf.eprintf
-             "Is the port-forward up? e.g. `kubectl -n monitoring port-forward \
-              svc/prometheus-alertmanager 9093:9093`.\n";
-           exit 1
-         | Error e ->
-           Printf.eprintf
-             "error: could not run curl: %s\n"
-             (Sol_cli_process.error_to_string e);
-           exit 1))
+  let target_cfg = cfg.Sol_cli_config.target in
+  let* () =
+    Sol_cli_alerting.validate
+      ~receiver_type:target_cfg.alert_receiver_type
+      ~receiver_url:target_cfg.alert_receiver_url
+      ~owner:target_cfg.alert_owner
+      ~runbook_url:target_cfg.alert_runbook_url
+    |> Result.map_error (fun reason ->
+      Sol_cli_exit.error
+        ~code:2
+        (Printf.sprintf
+           "target %s does not satisfy the alert-delivery contract: %s"
+           target
+           reason))
+  in
+  let body =
+    Sol_cli_alert_test.synthetic_alert
+      ~owner:(Option.value target_cfg.alert_owner ~default:"")
+      ~runbook_url:(Option.value target_cfg.alert_runbook_url ~default:"")
+      ~now:(Unix.gettimeofday ())
+    |> Yojson.Safe.to_string
+  in
+  let url = Sol_cli_alert_test.endpoint alertmanager_url in
+  if dry_run
+  then (
+    Printf.printf "Would POST to %s:\n%s\n" url body;
+    Printf.printf
+      "\n\
+       (dry run: nothing was sent; delivered-and-acknowledged evidence is HARDEN-002's)\n";
+    Ok ())
+  else (
+    Printf.printf "Sending a synthetic alert through %s ...\n%!" url;
+    Sol_cli_alert_test.send ~url ~body |> report_outcome)
 ;;
 
 open Cmdliner
 
 let target_arg =
   Arg.(
-    value
+    required
     & opt (some string) None
     & info
         [ "target" ]
@@ -178,7 +127,11 @@ let test_cmd =
   in
   Cmd.v
     (Cmd.info "test" ~doc ~man)
-    Term.(const run_test $ target_arg $ alertmanager_url_arg $ dry_run_arg $ const ())
+    Term.(
+      const (fun target url dry_run -> Sol_cli_exit.exit_on (run_test target url dry_run))
+      $ target_arg
+      $ alertmanager_url_arg
+      $ dry_run_arg)
 ;;
 
 let cmd =
