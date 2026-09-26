@@ -5,48 +5,18 @@
    *diagnosing* an unreachable cluster: a command that blocks on a timeout
    before printing anything is least useful exactly when it is most needed. *)
 
+(* FEAT-100: the declared targets, read from sol/environments.yml (and the local
+   file) at the workspace root, so `sol target show` lists the same targets from
+   any descendant directory (DEC-024). *)
 let available_target_paths () =
-  let open Sol_cli_fs_walk in
-  let join = Filename.concat in
-  (* DEC-024: target discovery reads the workspace root's sol/, not the
-     invocation cwd, so `sol target show` lists the same targets from any
-     descendant directory. *)
-  let root =
-    match Sol_cli_workspace.find_root ~dir:(Sys.getcwd ()) with
-    | Some root -> root
-    | None -> "."
-  in
-  let sol_dir = join root "sol" in
-  match dirs sol_dir with
+  match Sol_cli_config.discover_target_paths () with
+  | Ok paths -> paths
   | Error _ -> []
-  | Ok envs ->
-    envs
-    |> List.concat_map (fun env ->
-      let env_dir = join sol_dir env in
-      match dirs env_dir with
-      | Error _ -> []
-      | Ok providers ->
-        providers
-        |> List.concat_map (fun provider ->
-          match files (join env_dir provider) with
-          | Error _ -> []
-          | Ok files ->
-            files
-            |> List.filter_map (fun file ->
-              match Filename.check_suffix file ".yml" with
-              | true ->
-                Some
-                  (Printf.sprintf
-                     "%s/%s/%s"
-                     env
-                     provider
-                     (Filename.chop_suffix file ".yml"))
-              | false -> None)))
 ;;
 
 let print_available () =
   match available_target_paths () with
-  | [] -> Printf.eprintf "no targets found: expected sol/<env>/<provider>/<region>.yml\n"
+  | [] -> Printf.eprintf "no targets found: declare them in sol/environments.yml\n"
   | paths -> Printf.eprintf "available targets:\n  %s\n" (String.concat "\n  " paths)
 ;;
 
@@ -138,15 +108,15 @@ let show target verbose json check =
           (* DEC-024: sol.yml is always present now, so its existence alone can
              no longer be what makes a target real. `sol target show` is an
              inspection of a *declared* target, so a well-shaped path with no
-             sol/<env>/<provider>/<region>.yml overlay fails closed and lists
+             sol/environments.yml declaration fails closed and lists
              what does exist. ([load_for_target] stays permissive by design;
-             cmd_deploy enforces the same file for its mutating guarantee.) *)
-          if not (Sys.file_exists (Sol_cli_config.target_file target_config))
+             cmd_deploy enforces the same declaration for its mutating guarantee.) *)
+          if not (Sol_cli_config.target_declared target_config)
           then (
             Printf.eprintf
-              "target %s is not declared (no %s)\\n\\n"
+              "target %s is not declared (expected in %s)\n\n"
               target
-              (Sol_cli_config.target_file target_config);
+              (Sol_cli_config.target_source target_config);
             print_available ();
             exit 1);
           let status = kubernetes_status ~check target_config in

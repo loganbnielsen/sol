@@ -257,11 +257,10 @@ let tpl_github_ci =
 # Required GitHub repo variable (Settings -> Secrets and variables -> Actions ->
 # Variables -- not a secret, this is just a path):
 #   SOL_TARGET         deployment target, <env>/<provider>/<region>, e.g.
-#                      prod/aws/us-east-1. Requires a matching
-#                      sol/<env>/<provider>/<region>.yml file committed in
-#                      this repo -- this workspace ships a placeholder at
-#                      sol/prod/aws/us-east-1.yml; rename it to match your
-#                      real target if it isn't prod/aws/us-east-1.
+#                      prod/aws/us-east-1. Must be declared in
+#                      sol/environments.yml (<env>: targets: <provider>/<region>)
+#                      -- this workspace ships a placeholder prod/aws/us-east-1;
+#                      rename it to match your real target.
 #
 # Optional (GitOps push step):
 #   GITOPS_TOKEN       GitHub token with repo-write access to commit manifests/.
@@ -475,10 +474,9 @@ let tpl_github_deploy =
 # Required repo variable (Settings → Secrets and variables → Actions → Variables —
 # not a secret, this is just a path):
 #   SOL_TARGET       deployment target, <env>/<provider>/<region>, e.g. prod/aws/us-east-1.
-#                    Requires a matching sol/<env>/<provider>/<region>.yml file
-#                    committed in this repo -- this workspace ships a placeholder
-#                    at sol/prod/aws/us-east-1.yml; rename it to match your real
-#                    target if it isn't prod/aws/us-east-1.
+#                    Must be declared in sol/environments.yml -- this workspace
+#                    ships a placeholder prod/aws/us-east-1; rename it to match
+#                    your real target.
 #
 # For ECR add AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION and
 # uncomment the ECR login step below.
@@ -617,20 +615,34 @@ let tpl_dockerignore =
 |tpl}
 ;;
 
-(* sol deploy deliberately refuses to run against a target with no
-   sol/<env>/<provider>/<region>.yml file, even an empty one -- otherwise a
-   typo'd target would silently inherit sol.yml's shared defaults and
-   deploy anyway. This placeholder exists so a freshly scaffolded workspace
-   has a real first target instead of failing before its first deploy;
-   rename/move it (and update SOL_TARGET below) to your actual target. *)
-let tpl_deploy_target =
-  {tpl|# Placeholder target for `sol deploy prod/aws/us-east-1`.
-# Rename this file's path (sol/<env>/<provider>/<region>.yml) to your real
-# deployment target, and set the SOL_TARGET repository variable in GitHub
-# (used by .github/workflows/deploy.yml) to match.
+(* sol deploy deliberately refuses a target that sol/environments.yml does not
+   declare, even as an empty body -- otherwise a typo'd target would silently
+   inherit sol.yml's shared defaults and deploy anyway. This placeholder exists
+   so a freshly scaffolded workspace has a real first target instead of failing
+   before its first deploy; rename it (and update SOL_TARGET) to your actual
+   target. *)
+let tpl_environments =
+  {tpl|# Deployment environments (DEC-047). Each environment sets its policy once, and
+# its targets say where it runs: `sol deploy prod/aws/us-east-1` resolves
+# sol.yml -> prod -> aws/us-east-1, a lower layer overriding a higher one.
 #
-# target:
-#   registry: <your-registry-url>
+# This is a placeholder: rename the environment and target to your real ones,
+# and set the SOL_TARGET repository variable in GitHub (used by
+# .github/workflows/deploy.yml) to match.
+#
+# Account-specific values you would rather not commit (a registry, role ARNs) go
+# in sol/environments.local.yml, which .gitignore excludes. That file has the
+# same shape and may only add keys this file leaves unset.
+prod:
+  targets:
+    aws/us-east-1:
+      # registry: <your-registry-url>
+|tpl}
+;;
+
+let tpl_gitignore =
+  {tpl|_build/
+sol/environments.local.yml
 |tpl}
 ;;
 

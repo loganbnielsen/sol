@@ -1,0 +1,89 @@
+# Pluto's deployment environments (DEC-047). Each environment sets its policy
+# once; its targets say where it runs. `sol deploy prod/aws/us-east-1` resolves
+# sol.yml -> prod -> aws/us-east-1, a lower layer overriding a higher one.
+#
+# Account-specific values you would rather not commit go in
+# sol/environments.local.yml (gitignored), which may only add keys this file
+# leaves unset.
+
+# The production environment, without the production profile: an environment's
+# name never selects one (see pilot).
+prod:
+  base_domain: pluto.example.com
+  letsencrypt_email: ops@pluto.example.com
+  # AUDIT-080: one spare node's capacity per node-failure-tolerant workload, so
+  # a lost node's replicas can be restored inside DEC-026 §3's bound.
+  node_failure_headroom_nodes: 1
+  resources:
+    app_db:
+      size: small
+  services:
+    charge_svc:
+      scale:
+        min: 1
+        max: 2
+    notify_worker:
+      scale:
+        min: 1
+        max: 2
+  targets:
+    aws/us-east-1:
+      cluster_name: pluto-prod
+
+# Selects the production-single-region profile explicitly.
+#
+# `sol deploy pilot/aws/us-east-1 --dry-run --image-tag <tag>` runs the profile
+# preflight, which refuses until this target establishes every guarantee the
+# profile requires, listing each unmet guarantee and who must act.
+#
+# The alert-delivery contract (OBS-043): a provider-neutral receiver, an
+# accountable owner and a first-response runbook. `sol alert test --target
+# pilot/aws/us-east-1` sends a synthetic alert through this route. The URL below
+# is a placeholder — replace it with your real receiver endpoint (never commit
+# routing credentials; put them in the receiver URL behind your secret store).
+pilot:
+  profile: production-single-region
+  base_domain: pluto.example.com
+  letsencrypt_email: ops@pluto.example.com
+  alert_receiver_type: webhook
+  alert_receiver_url: https://alerts.example.com/sol/webhook
+  alert_owner: pluto-oncall
+  alert_runbook_url: https://runbooks.example.com/sol
+  # AUDIT-080: notify_worker declares node-failure-tolerant, so this must be >= 1.
+  node_failure_headroom_nodes: 1
+  targets:
+    aws/us-east-1:
+      cluster_name: pluto-pilot
+      kube_context: pluto-pilot
+      registry: 123456789012.dkr.ecr.us-east-1.amazonaws.com
+
+# A low-cost development environment: Postgres, Kafka and the services that
+# need them are omitted, so `sol cloud apply dev/aws/us-east-1` provisions the
+# cluster and the platform only. Replace the domain and contact address.
+dev:
+  base_domain: dev.pluto.example.com
+  cluster_issuer: letsencrypt-staging
+  letsencrypt_email: ops@pluto.example.com
+  resources:
+    app_db:
+      omit: true
+    events:
+      omit: true
+  services:
+    charge_svc:
+      omit: true
+    notify_worker:
+      omit: true
+  targets:
+    aws/us-east-1:
+      cluster_name: pluto-dev
+
+# The customer-cloud environment the tutorial deploys to (docs/guides/TUTORIAL.md,
+# "Ingress"). Replace the domain and contact address with your own; pass
+# `--registry` to `sol deploy`, or add `registry:` to the target.
+customer_cloud:
+  base_domain: customer.pluto.example.com
+  letsencrypt_email: ops@pluto.example.com
+  targets:
+    aws/us-east-1:
+      cluster_name: pluto-customer

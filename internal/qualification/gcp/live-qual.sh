@@ -88,9 +88,12 @@ SOL="${SOL:-$ROOT/_build/default/cli/bin/main.exe}"
 WORKSPACE="${WORKSPACE:-$ROOT/examples/pluto}"
 TFVARS="$ROOT/internal/qualification/gcp/qual-gcp.tfvars"
 
-# The qualification target is generated, not committed: check_no_account_artifacts.sh
-# refuses a tracked `sol/qual/` path, which is the repository's way of saying a
-# provisioned-target definition is scratch. It is removed on exit.
+# The qualification target is generated, not committed (FEAT-100): it is written as a
+# whole environment into the workspace's gitignored sol/environments.local.yml, and
+# check_no_account_artifacts.sh refuses that file tracked -- the repository's way of
+# saying a provisioned-target definition, with its real identities, is scratch. The
+# harness owns the file only when it wrote it (the first line says so), refuses to
+# overwrite one it did not write, and removes only its own.
 #
 # Overridable like CLUSTER, and for the same reason: the target names the Terraform
 # state objects (`sol/<target>/<layer>.tfstate`), so two attempts that share a key
@@ -101,7 +104,10 @@ TFVARS="$ROOT/internal/qualification/gcp/qual-gcp.tfvars"
 # specimen (INFRA-082 owns that stale state; it must not be overwritten).
 # Give each attempt its own key: TARGET=qual9/gcp/us-central1 ...
 TARGET="${TARGET:-qual/gcp/us-central1}"
-TARGET_FILE="$WORKSPACE/sol/$TARGET.yml"
+TARGET_ENV="${TARGET%%/*}"
+TARGET_KEY="${TARGET#*/}"
+TARGET_FILE="$WORKSPACE/sol/environments.local.yml"
+TARGET_MARK="# Written by internal/qualification/gcp/live-qual.sh for $TARGET; removed after a verified teardown."
 
 PROJECT="${PROJECT:-sol-qualification}"
 REGION="${REGION:-us-central1}"
@@ -241,60 +247,73 @@ run() {
   say "ok: $name"
 }
 
+# The harness owns sol/environments.local.yml only when it wrote it.
+owns_target_file() {
+  [ -f "$TARGET_FILE" ] && head -1 "$TARGET_FILE" | grep -qF "live-qual.sh"
+}
+
+remove_target() {
+  if owns_target_file; then rm -f "$TARGET_FILE"; fi
+}
+
 write_target() {
   mkdir -p "$(dirname "$TARGET_FILE")"
+  if [ -f "$TARGET_FILE" ] && ! owns_target_file; then
+    say "REFUSING: $TARGET_FILE exists and was not written by this harness; move it aside first."
+    exit 2
+  fi
   cat >"$TARGET_FILE" <<YAML
-target:
-  cluster_name: $CLUSTER
-  base_domain: $BASE_DOMAIN
-  profile: $PROFILE_NAME
-  # NO cluster_issuer, deliberately (H1 of the HARDEN-006 attempt-8 re-scope). Installing a GCP
-  # platform through the shared definition is still refused while its ClusterIssuers are
-  # Route 53-only (FND-0007), and that refusal is correct and stays: it stops Sol
-  # provisioning a platform that looks TLS-wired and cannot issue. INFRA-067 made
-  # *destruction* stop evaluating it; installation must keep refusing. This run is not
-  # asking the TLS question -- its job is to reach the cert-manager boundary and capture
-  # FND-0010's discriminator -- so it asks for a platform without an issuer rather than
-  # for one it cannot have. The reason this change sat parked (the recovery work came
-  # first) is gone: INFRA-067 landed in #445 and the fix survives in
-  # Sol_cli_gcp_cluster.platform_vars' Install/Destruction context.
-  letsencrypt_email: $LE_EMAIL
-  terraform_var_file: ../../../../../internal/qualification/gcp/qual-gcp.tfvars
+$TARGET_MARK
+$TARGET_ENV:
+  targets:
+    $TARGET_KEY:
+      cluster_name: $CLUSTER
+      base_domain: $BASE_DOMAIN
+      profile: $PROFILE_NAME
+      # NO cluster_issuer, deliberately (H1 of the HARDEN-006 attempt-8 re-scope). Installing a
+      # GCP platform through the shared definition is still refused while its ClusterIssuers
+      # are Route 53-only (FND-0007), and that refusal is correct and stays: it stops Sol
+      # provisioning a platform that looks TLS-wired and cannot issue. INFRA-067 made
+      # *destruction* stop evaluating it; installation must keep refusing. This run is not
+      # asking the TLS question -- its job is to reach the cert-manager boundary and capture
+      # FND-0010's discriminator -- so it asks for a platform without an issuer rather than
+      # for one it cannot have.
+      letsencrypt_email: $LE_EMAIL
+      # Absolute, so it does not depend on how relative paths resolve (BUG-057: from the
+      # workspace root).
+      terraform_var_file: $TFVARS
 
-  # The durable state backend: provisioned once by ensure_state_bucket() and merely
-  # CONSUMED here. state_lock_table is deliberately absent -- GCS serializes state
-  # natively, and Sol's own backend_config sends a GCP target only bucket= and
-  # prefix=sol/<cloud|platform>/<target>.tfstate.
-  state_bucket: $STATE_BUCKET
+      # The durable state backend: provisioned once by ensure_state_bucket() and merely
+      # CONSUMED here. state_lock_table is deliberately absent -- GCS serializes state
+      # natively, and Sol's own backend_config sends a GCP target only bucket= and
+      # prefix=sol/<cloud|platform>/<target>.tfstate.
+      state_bucket: $STATE_BUCKET
 
-  # GCP's identity declaration. Same capability as AWS's provisioner role (who may
-  # enter the install window), provider-native mechanism: an impersonation grant
-  # rather than a role ARN. Declared, never inferred, so that "no caller named"
-  # cannot come to mean "grant whoever is running Sol". Provider-owned, so it
-  # lives in the target's gcp block (REFAC-098).
-  gcp:
-    provisioner_impersonator: $IMPERSONATOR
+      # GCP's identity declaration: who may enter the install window, by impersonation.
+      # Declared, never inferred, so that "no caller named" cannot come to mean "grant
+      # whoever is running Sol". Provider-owned, so it lives in the gcp block (REFAC-098).
+      gcp:
+        provisioner_impersonator: $IMPERSONATOR
 
-  # A disposable qualification target: the postcondition is Absent with nothing
-  # billable retained (DEC-033).
-  destroy_retention: none
+      # A disposable qualification target: the postcondition is Absent with nothing
+      # billable retained (DEC-033).
+      destroy_retention: none
 
-# The platform layer is what this attempt is about. Application resources and
-# services are omitted so the attempt is cheap and the failure it is looking for
-# cannot be confused with a workload failure.
-resources:
-  app_db:
-    omit: true
-  events:
-    omit: true
-
-services:
-  charge_svc:
-    omit: true
-  notify_worker:
-    omit: true
+      # The platform layer is what this attempt is about. Application resources and
+      # services are omitted so the attempt is cheap and the failure it is looking for
+      # cannot be confused with a workload failure.
+      resources:
+        app_db:
+          omit: true
+        events:
+          omit: true
+      services:
+        charge_svc:
+          omit: true
+        notify_worker:
+          omit: true
 YAML
-  say "wrote target $TARGET_FILE"
+  say "wrote target $TARGET ($TARGET_FILE)"
 }
 
 # No create_dns_zone here: the durable root owns the zone (DEC-043) and the var-file says so.
@@ -913,7 +932,7 @@ cleanup() {
   # A plan-only run applied nothing, so there is no teardown verdict to require --
   # demanding one made PLAN_ONLY structurally unable to exit 0.
   if plan_only; then
-    rm -f "$TARGET_FILE"
+    remove_target
     return "$rc"
   fi
   # The target file is what makes a destroy possible at all. Remove it only once
@@ -921,9 +940,9 @@ cleanup() {
   # deleting it is exactly what turned this harness's "unconditional teardown" into no
   # teardown at all during Attempt 5.
   if [ "$TEARDOWN_OK" = "1" ]; then
-    rm -f "$TARGET_FILE"
+    remove_target
   elif [ "$CLOUD_APPLIED" = "0" ]; then
-    rm -f "$TARGET_FILE"
+    remove_target
   else
     say "KEEPING $TARGET_FILE — teardown was not verified, and destroy requires this file."
   fi

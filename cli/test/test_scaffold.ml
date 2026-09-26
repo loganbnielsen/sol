@@ -267,7 +267,8 @@ let test_existing_files_still_generated () =
     ; "testapp/app/comms/notify_worker/bin/main.ml"
     ; "testapp/app/comms/notify_worker/sol.toml"
     ; "testapp/db/migrations/0001_notifications.sql"
-    ; "testapp/sol/prod/aws/us-east-1.yml"
+    ; "testapp/sol/environments.yml"
+    ; "testapp/.gitignore"
     ]
   in
   List.iter
@@ -290,9 +291,9 @@ let test_existing_files_still_generated () =
   check_bool "at least 21 files generated" true (!count >= 21)
 ;;
 
-(* FEAT-026 follow-up: `sol deploy` refuses to run against a target with no
-   sol/<env>/<provider>/<region>.yml file, even an empty one (see
-   cmd_deploy.ml's strict target-file check) -- a freshly scaffolded
+(* FEAT-026 follow-up: `sol deploy` refuses a target that sol/environments.yml
+   does not declare, even with an empty body (see cmd_deploy.ml's strict
+   declaration check) -- a freshly scaffolded
    workspace must ship one so the acceptance criteria's own
    `sol deploy prod/aws/us-east-1 --dry-run` works with zero manual setup. *)
 let test_scaffolded_workspace_has_a_real_deploy_target () =
@@ -308,9 +309,9 @@ let test_scaffolded_workspace_has_a_real_deploy_target () =
      | None -> Alcotest.fail "expected a resolved target"
      | Some target ->
        check_bool
-         "sol/prod/aws/us-east-1.yml exists"
+         "prod/aws/us-east-1 is declared"
          true
-         (Sys.file_exists (Sol_cli_config.target_file target)))
+         (Sol_cli_config.target_declared target))
 ;;
 
 let test_workspace_has_dune_project () =

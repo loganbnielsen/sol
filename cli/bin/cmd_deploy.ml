@@ -759,18 +759,18 @@ let run (req : Sol_cli_command_request.deploy_request) =
      permissive-overlay contract is fine for it) it needs the stronger
      guarantee that this target was deliberately declared, not just
      shaped like <env>/<provider>/<region>. A typo'd region
-     (prod/aws/us-east-2 when only .../us-east-1.yml exists) would
+     (prod/aws/us-east-2 when only aws/us-east-1 is declared) would
      otherwise silently inherit sol.yml's shared defaults and apply
      anyway. sol cloud apply/destroy carry the same check for their own
      mutating action, in cmd_cloud_tf.ml's config_vars ~strict. *)
-  if not (Sys.file_exists (Sol_cli_config.target_file target_cfg))
+  if not (Sol_cli_config.target_declared target_cfg)
   then (
     Printf.eprintf
-      "error: no %s for target %S -- sol deploy requires an explicit target file, even \
-       an empty one, so a typo'd or unintended target can't silently inherit sol.yml's \
-       shared defaults and deploy anyway.\n"
-      (Sol_cli_config.target_file target_cfg)
-      req.target;
+      "error: target %S is not declared in %s -- sol deploy requires an explicit target, \
+       even an empty one, so a typo'd or unintended target can't silently inherit \
+       sol.yml's shared defaults and deploy anyway.\n"
+      req.target
+      (Sol_cli_config.target_source target_cfg);
     exit 1);
   (* No hardcoded local-registry fallback here, deliberately: sol deploy is
      always a customer-cluster path (it never constructs
@@ -933,8 +933,8 @@ let target_arg =
         ~docv:"TARGET"
         ~doc:
           "Deployment target path: <env>/<provider>/<region>, e.g. dev/aws/us-east-1 — \
-           same convention as 'sol plan'. Resolves sol.yml + \
-           sol/<env>/<provider>/<region>.yml for registry/env defaults. Unlike 'sol up' \
+           same convention as 'sol plan'. Resolves sol.yml, then the environment and \
+           target in sol/environments.yml, for registry/env defaults. Unlike 'sol up' \
            (local-only, no target concept), this is required.")
 ;;
 
@@ -1017,8 +1017,8 @@ let registry_arg =
         ~docv:"URL"
         ~doc:
           "Container registry prefix, e.g. 123456789.dkr.ecr.us-east-1.amazonaws.com. \
-           Omit to fall back to the resolved target's own registry \
-           (sol/<env>/<provider>/<region>.yml); required if neither is set.")
+           Omit to fall back to the resolved target's own registry (its registry in \
+           sol/environments.yml); required if neither is set.")
 ;;
 
 let secret_backend_arg =

@@ -55,9 +55,9 @@ Cert-manager uses the configured cluster issuer for TLS.
 
 ## Production profile
 
-`sol/pilot/aws/us-east-1.yml` selects the `production-single-region` profile;
-`sol/prod/aws/us-east-1.yml` deliberately does not, because an environment's name
-never makes a production claim.
+In `sol/environments.yml`, the `pilot` environment selects the
+`production-single-region` profile; `prod` deliberately does not, because an
+environment's name never makes a production claim.
 
 A production target deploys immutable artifacts, not mutable tags. Pin each
 workload to the digest the build pushed:
