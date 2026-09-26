@@ -13,7 +13,7 @@
 - **Provider:** GCP (Terraform `google` provider)
 - **Derived ticket:** none
 - **Related invariant:** `INV-DESTROY-3`, `INV-DESTROY-4`
-- **Evidence:** `docs/qualification/gcp-bootstrap-inventory.md` §"The
+- **Evidence:** `internal/qualification/gcp/gcp-bootstrap-inventory.md` §"The
   service-networking destruction failure", §"Attempt 2", §"Attempt 3", §"Attempt 4"
 
 ## Sol claim at stake

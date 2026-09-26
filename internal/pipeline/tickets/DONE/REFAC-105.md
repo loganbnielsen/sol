@@ -8,7 +8,7 @@ source: internal/pipeline/audits/2026-09-25_organization_proposal.md, rule 1
 
 **Depends on:** None.
 
-**Premise verified (2026-09-25):** `examples/pluto/sol/dev/aws/us-east-1.yml` and `examples/pluto/sol/customer_cloud/aws/us-east-1.yml` set `terraform_var_file: ../../../../../internal/qualification/aws/smoke-test.tfvars`, and `docs/guides/TUTORIAL.md:441` tells users to run `sol deploy customer_cloud/aws/us-east-1`. Qualification docs also direct operators to write an untracked `examples/pluto/sol/qual/aws/us-east-1.yml` (`docs/qualification/run8-aws-target.example.yml`), so internal qualification uses the example as its workspace.
+**Premise verified (2026-09-25):** `examples/pluto/sol/dev/aws/us-east-1.yml` and `examples/pluto/sol/customer_cloud/aws/us-east-1.yml` set `terraform_var_file: ../../../../../internal/qualification/aws/smoke-test.tfvars`, and `docs/guides/TUTORIAL.md:441` tells users to run `sol deploy customer_cloud/aws/us-east-1`. Qualification docs also direct operators to write an untracked `examples/pluto/sol/qual/aws/us-east-1.yml` (`internal/qualification/aws/run8-aws-target.example.yml`), so internal qualification uses the example as its workspace.
 
 ## Remediation
 
@@ -24,7 +24,7 @@ source: internal/pipeline/audits/2026-09-25_organization_proposal.md, rule 1
 ## Completion notes (required)
 
 - Language parity (DEC-022): no application-facing impact — state it.
-- Update `docs/planning/WORK_SUMMARY.md`.
+- Update `internal/planning/WORK_SUMMARY.md`.
 
 ## Completion notes
 

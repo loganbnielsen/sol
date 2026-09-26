@@ -31,9 +31,9 @@ A bare 12-digit account id in prose therefore passes. One tracked file already
 carries one, in exactly that form:
 
 ```text
-docs/qualification/2026-09-18-aws-run5-attempt1.md:9
+internal/qualification/records/2026-09-18-aws-run5-attempt1.md:9
   `production-single-region/v1`, <id> / us-east-1).
-docs/qualification/2026-09-19-aws-run5-attempt2.md:7
+internal/qualification/records/2026-09-19-aws-run5-attempt2.md:7
   Fresh disposable target `sol-qual6-…` (same target path, <id> / us-east-1),
 ```
 
@@ -77,6 +77,6 @@ target, so `internal/pipeline/audits/README.md`'s working rules should name
 ## Sources
 
 - `internal/ci/check_no_account_artifacts.sh` (rules and rationale)
-- `docs/qualification/2026-09-18-aws-run5-attempt1.md:9`, `docs/qualification/2026-09-19-aws-run5-attempt2.md:7`
+- `internal/qualification/records/2026-09-18-aws-run5-attempt1.md:9`, `internal/qualification/records/2026-09-19-aws-run5-attempt2.md:7`
   (originally cited as `HARDEN-002.md:538,631`; those sections moved verbatim on 2026-09-24)
 - The Run 8 findings commit, and the CI failure on PR #387

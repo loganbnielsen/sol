@@ -14,7 +14,7 @@ source: internal/pipeline/audits/2026-09-24_cloud_lifecycle_simplification_plan.
 
 ## Remediation
 
-Add dated correction/supersession notes to the Attempt 5 and Attempt 6 records, FND-0030, FND-0055, FND-0056, DEC-044, and INV-DESTROY-1/4 in `docs/qualification/gcp-production-single-region-v1-matrix.tsv`. Preserve history: never silently rewrite a conclusion. Record the points listed in the plan's § S3, in particular:
+Add dated correction/supersession notes to the Attempt 5 and Attempt 6 records, FND-0030, FND-0055, FND-0056, DEC-044, and INV-DESTROY-1/4 in `internal/qualification/gcp/gcp-production-single-region-v1-matrix.tsv`. Preserve history: never silently rewrite a conclusion. Record the points listed in the plan's § S3, in particular:
 
 - Attempt 5: the operator ran `terraform state rm` on the zone. Attempt 6: the operator force-unlocked a lock held by a live apply, then SIGTERM'd Terraform and its provider plugin (Attempt 6 transcript `cc1eb286…` lines 613–615; `~/sol-attempt6-evidence/`).
 - The SIGPIPE-on-Sol-death route: **reproduced locally, fix pending (INFRA-076)**. Not "fixed".
@@ -30,15 +30,15 @@ Add dated correction/supersession notes to the Attempt 5 and Attempt 6 records, 
 
 - Demo/example: not applicable (cloud lifecycle internals) — state it.
 - Language parity (DEC-022): no application-facing impact — state it.
-- Update `docs/planning/WORK_SUMMARY.md`, and any finding/decision whose status this changes.
+- Update `internal/planning/WORK_SUMMARY.md`, and any finding/decision whose status this changes.
 
 ## Completion notes (2026-09-25)
 
 Dated correction sections were appended; no earlier text was deleted or rewritten:
 
-- `docs/qualification/2026-09-22-gcp-attempt5.md`: the zone divergence came from the operator's
+- `internal/qualification/records/2026-09-22-gcp-attempt5.md`: the zone divergence came from the operator's
   `state rm`; the SIGKILL came from the agent's interrupted monitoring call.
-- `docs/qualification/2026-09-23-gcp-attempt6.md`: the "orphaned apply produced the divergence" claim
+- `internal/qualification/records/2026-09-23-gcp-attempt6.md`: the "orphaned apply produced the divergence" claim
   and the "no Terraform process remained" claim are falsified, citing the transcript
   (`cc1eb286…`, lines 606–621) and `~/sol-attempt6-evidence/`. SIGPIPE on Sol's death is the separate
   Sol-caused route; this note says "fix pending (INFRA-076)" because INFRA-076 was still an open PR

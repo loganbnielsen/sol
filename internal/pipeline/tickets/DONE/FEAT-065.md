@@ -98,7 +98,7 @@ built binary.
 
 **Demo/example coverage:** the CLI surface changed (positionals → `--scope` /
 `--domain`), so the runnable command reference in `docs/guides/TUTORIAL.md`,
-plus example invocations in `docs/planning/ROADMAP.md` and
+plus example invocations in `docs/ROADMAP.md` and
 `docs/deployment/observability-backends.md`, were updated in this ticket. No
 `examples/` script invoked a positional selector, so no example Dockerfile or CI
 smoke-matrix entry changed.

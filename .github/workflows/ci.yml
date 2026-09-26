@@ -178,7 +178,7 @@ jobs:
       # INFRA-035: the unit-test step below runs cli/test's runtest rule that
       # validates the readiness checks' kubectl argv against a real kubectl (*), so
       # kubectl has to exist. Pinned to the version the dogfood job installs
-      # (docs/dogfood/DOGFOOD.md), because whether an argv is accepted is a property
+      # (internal/pipeline/dogfood/DOGFOOD.md), because whether an argv is accepted is a property
       # of a kubectl version — a check is only as strong as the version it ran on.
       #
       # (*) The lifecycle harness cannot cover this. Its fake kubectl accepts any
@@ -427,7 +427,7 @@ jobs:
   # assuming Docker is still there.
   #
   # Version pins (k3d/helm/kubectl below) must stay in sync with
-  # docs/dogfood/DOGFOOD.md's "Kubernetes toolchain" table — that doc
+  # internal/pipeline/dogfood/DOGFOOD.md's "Kubernetes toolchain" table — that doc
   # explains *why* k3d is pinned to this exact version (chart-value
   # compatibility). No automated drift check between the two files exists
   # yet; update both by hand on any bump.
@@ -512,7 +512,7 @@ jobs:
         timeout-minutes: 5
         run: opam exec -- dune build cli/bin/main.exe
 
-      - name: Install k3d/kubectl/helm (pinned versions — docs/dogfood/DOGFOOD.md)
+      - name: Install k3d/kubectl/helm (pinned versions — internal/pipeline/dogfood/DOGFOOD.md)
         timeout-minutes: 5
         run: |
           # Direct pinned-release binary downloads, not `curl | bash` —
@@ -1117,7 +1117,7 @@ jobs:
         timeout-minutes: 5
         run: opam exec -- dune build cli/bin/main.exe
 
-      - name: Install k3d/kubectl/helm (pinned versions — docs/dogfood/DOGFOOD.md)
+      - name: Install k3d/kubectl/helm (pinned versions — internal/pipeline/dogfood/DOGFOOD.md)
         timeout-minutes: 5
         run: |
           curl -fsSL -o k3d "https://github.com/k3d-io/k3d/releases/download/v5.6.0/k3d-linux-amd64"

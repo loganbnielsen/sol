@@ -26,7 +26,7 @@ Replace `Sol_cli_cloud_lifecycle.cloud_outputs` (17 dispatch sites in `cmd_cloud
 
 - Demo/example: not applicable (cloud lifecycle internals) — state it.
 - Language parity (DEC-022): no application-facing impact — state it.
-- Update `docs/planning/WORK_SUMMARY.md`, and any finding/decision whose status this changes.
+- Update `internal/planning/WORK_SUMMARY.md`, and any finding/decision whose status this changes.
 
 ## Completion notes
 

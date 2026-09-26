@@ -2,7 +2,7 @@
 id: FEAT-028
 type: feature
 severity: medium
-source: docs/planning/LIVE_DEV_DEPLOY_ROADMAP.md
+source: internal/planning/LIVE_DEV_DEPLOY_ROADMAP.md
 ---
 
 `Sun_cli_config`: model per-index DynamoDB keys and `aws:`/`gcp:` provider-boxed target fields.

@@ -135,4 +135,4 @@ on.
 
 - Demo/example: not applicable (cloud lifecycle internals); the diagnostic is unchanged.
 - Language parity (DEC-022): no application-facing impact.
-- Update `docs/planning/WORK_SUMMARY.md`.
+- Update `internal/planning/WORK_SUMMARY.md`.

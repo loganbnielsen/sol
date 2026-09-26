@@ -9,7 +9,7 @@ source: FND-0010's established cause (the platform apply cut cert-manager's own 
 **Depends on:** None.
 
 **Related:** `FND-0010`, `HARDEN-006` (Attempt 9, DONE), `INFRA-080`, `FND-0058`,
-`docs/qualification/README.md`, `internal/qualification/gcp/live-qual.sh`.
+`internal/qualification/README.md`, `internal/qualification/gcp/live-qual.sh`.
 
 ## Goal
 
@@ -62,7 +62,7 @@ attempt has reached.
 
 ## Acceptance criteria
 
-- the run record exists in `docs/qualification/`, with the startupapicheck outcome, the
+- the run record exists in `internal/qualification/`, with the startupapicheck outcome, the
   release's elapsed time, and (if reached) the `Ready` evidence;
 - `FND-0010` moves to `QUALIFIED` **only if** the check passed and the install continued;
 - any further failure is filed as its own finding with the widened discriminator attached;

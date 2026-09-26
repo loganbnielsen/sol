@@ -3,7 +3,7 @@ id: CODEX_STYLE_AUDIT-071
 branch: CODEX_STYLE_AUDIT-071/ci-workflow-contract
 type: refactor
 severity: medium
-source: docs/audits/STYLE_AUDIT.md
+source: internal/pipeline/audits/STYLE_AUDIT.md
 ---
 
 Make generated CI workflows use the same typed deployment contract as the CLI.

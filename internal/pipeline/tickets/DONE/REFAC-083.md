@@ -25,7 +25,7 @@ One thing to record so nobody "fixes" this the wrong way later: **there is no `-
 
 **2. Reserve `local`.** Config validation must reject `local` as a target's env name, with a message that explains the reason and points at what to do instead: `local` is Sol's ephemeral substrate, not an environment; a cluster you run yourself is still a cluster, so name the target for it (`dev`, `staging`, …). Without this reservation the rename merely moves which word can collide — onto a word that must never be a valid environment.
 
-**3. Update the callers and the docs.** The golden-path smoke invokes the command (`.github/workflows/ci.yml`), and the tutorial and `docs/dogfood/DOGFOOD.md` reference it. Rename them in the same change — the smoke is the reason this cannot be done piecemeal.
+**3. Update the callers and the docs.** The golden-path smoke invokes the command (`.github/workflows/ci.yml`), and the tutorial and `internal/pipeline/dogfood/DOGFOOD.md` reference it. Rename them in the same change — the smoke is the reason this cannot be done piecemeal.
 
 **4. DEC-016's vocabulary is already amended** — the rule that `local` is not an environment, is reserved, and that no `--env` flag is to be added, is recorded there as of 2026-09-11, along with the note that this ticket renames `sol dev up`. Nothing further is needed on that front; this ticket is the rename and the guard.
 

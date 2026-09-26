@@ -23,7 +23,7 @@ Neither `platform/local/` (scripts + k8s manifests that `sol dev up` shells out 
 - `git mv platform <target>`.
 - Update every `Sys.command`/`Filename.concat`/hardcoded path in `cli/sol/lib/` and `cli/sol/bin/` that references `platform/local/scripts/*`, `platform/infra/*`, or `platform/local/k8s/*`.
 - Update `platform/infra/ci/github-actions-*.yml` reference workflows' own internal paths if they reference sibling `platform/` paths.
-- Update `docs/deployment/*.md`, `docs/guides/TUTORIAL.md`, `README.md`, `.claude/CLAUDE.md`'s repo layout section, and `docs/planning/ROADMAP.md`/`WORK_SUMMARY.md`.
+- Update `docs/deployment/*.md`, `docs/guides/TUTORIAL.md`, `README.md`, `.claude/CLAUDE.md`'s repo layout section, and `docs/ROADMAP.md`/`WORK_SUMMARY.md`.
 - Update the `ensure-*.sh` scripts and any script-to-script relative references inside `platform/local/scripts/`.
 - Grep the whole repo for `platform/local`, `platform/infra`, and bare `platform/` to catch anything missed — this is the widest-blast-radius move of the four, expect many hits across CLI source, docs, and CI.
 - Run the full local test suite before submitting. Additionally, manually exercise at least one real `sol dev up` cycle (or the closest available integration test) to confirm the CLI's shell-out paths still resolve correctly post-move — a broken path here fails silently at runtime, not at build time.

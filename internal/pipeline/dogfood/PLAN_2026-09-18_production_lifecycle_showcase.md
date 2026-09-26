@@ -100,7 +100,7 @@ approval" any further than that split).
     path (publish → deploy) and confirm the release record advances.
 11. **[P] Rollback.** Deliberately deploy a broken revision, then `sol
     rollback`. Confirm the pointer behavior matches B4/B5 in
-    `docs/qualification/production-single-region-v1-matrix.md` — this
+    `internal/qualification/aws/production-single-region-v1-matrix.md` — this
     journey step and that qualification row are the same action seen from
     two purposes (product experience vs. conformance evidence); don't
     duplicate effort collecting the same evidence twice.

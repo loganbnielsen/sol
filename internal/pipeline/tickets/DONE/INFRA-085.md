@@ -9,7 +9,7 @@ source: measured golden-path CI timings — the first scaffolded OCaml app image
 **Depends on:** None.
 
 **Related:** `.github/workflows/ci.yml` (golden-path jobs), `Sol_cli_docker`,
-`platform/local/scripts/*` (no), `docs/planning/WORK_SUMMARY.md`.
+`platform/local/scripts/*` (no), `internal/planning/WORK_SUMMARY.md`.
 
 ## The measured problem
 

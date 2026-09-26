@@ -2,7 +2,7 @@
 id: FEAT-025
 type: feature
 severity: high
-source: docs/planning/LIVE_DEV_DEPLOY_ROADMAP.md
+source: internal/planning/LIVE_DEV_DEPLOY_ROADMAP.md
 ---
 
 Harden `Sun_cli_config` core parsing: `.mli`, fail-loud on malformed/ambiguous input, fix silent corruption.

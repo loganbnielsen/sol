@@ -514,7 +514,7 @@ Routine implementation friction is not a stop condition.
 - **Formatting.** `internal/ci/check_ocamlformat.sh --staged` before every push.
 - **Completion notes.** Demo/example: not applicable (cloud lifecycle internals) — say so.
   Language parity (DEC-022): no application-facing impact — say so.
-- **Docs.** Update `docs/planning/WORK_SUMMARY.md` per stage; update findings/decisions whenever
+- **Docs.** Update `internal/planning/WORK_SUMMARY.md` per stage; update findings/decisions whenever
   their status changes.
 
 ### Per-stage discipline

@@ -13,7 +13,7 @@ Automate the scaffold-to-running-app e2e path; current coverage relies on dogfoo
 **Description:** The repo has strong unit coverage and several integration tests, but the product-critical user journey is not represented as an automated e2e test:
 
 - `platform/local/scripts/run_tests.sh` has an `e2e` suite, but it runs `examples/local-demo/bin/demo.exe` against pre-existing localhost infra.
-- `docs/dogfood/DOGFOOD.md` documents the true release-user path manually: build the current `sun`, create a fresh workspace, run `sun dev up`, `sun up`, `sun migrate`, `sun status`, exercise `/health`, post a charge, and verify the worker wrote the notification.
+- `internal/pipeline/dogfood/DOGFOOD.md` documents the true release-user path manually: build the current `sun`, create a fresh workspace, run `sun dev up`, `sun up`, `sun migrate`, `sun status`, exercise `/health`, post a charge, and verify the worker wrote the notification.
 - The dogfood reports in `project/dogfood/` show this path repeatedly finds regressions, but those checks are not committed as a repeatable test with setup, assertions, cleanup, and CI/runtime gating.
 
 **Impact:** Regressions in the highest-value path can land even when `dune runtest` and `platform/local/scripts/run_tests.sh e2e` pass. Examples include scaffold output drifting from the actual CLI, missing migrations, broken generated Dockerfiles, stale port-forward behavior, and deploy/migrate/status sequencing bugs. These are exactly the issues that cost new users time because they happen after the code has already compiled.

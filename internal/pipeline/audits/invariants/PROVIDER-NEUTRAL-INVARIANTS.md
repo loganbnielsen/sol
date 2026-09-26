@@ -326,7 +326,7 @@ references a CRD-backed resource whose CRD is absent is destroyed through
 emergency-path deletion.
 
 **Correction (2026-09-24, DOCS-022).** "Provider-verified `Absent`" in this invariant's matrix
-row (`docs/qualification/gcp-production-single-region-v1-matrix.tsv`) means verified by
+row (`internal/qualification/gcp/gcp-production-single-region-v1-matrix.tsv`) means verified by
 *qualification's* independent inventory. It is not a product-runtime duty to re-query every resource
 Terraform manages (DEC-045).
 

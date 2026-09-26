@@ -1,6 +1,6 @@
 # Sun Scaffold Quality Audit — 2026-06-12
 
-**Template:** `docs/audits/SCAFFOLD_AUDIT.md`  
+**Template:** `internal/pipeline/audits/SCAFFOLD_AUDIT.md`  
 **Workspace:** `/tmp/sun-audit-2026-06-12/scaffold_audit`
 
 ## Executable Run

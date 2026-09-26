@@ -113,7 +113,7 @@ accordingly; no behavior change for `terraform plan`/`apply` themselves.
   respectively) and were checked — no findings.
 - **`examples/local-demo/bin/demo.ml`** (511 lines) — recently passed a
   dedicated `/demo-review` persona-based pass as part of FEAT-030
-  (2026-09-05, see `docs/planning/WORK_SUMMARY.md`); not re-audited here.
+  (2026-09-05, see `internal/planning/WORK_SUMMARY.md`); not re-audited here.
 - **Duplicate small helpers** (`read_file`, `mkdir_p`-style utilities
   across `cli/sun/lib` and `tools/sundev/lib`) — each has at most two
   tiny call sites and no shared package dependency would be justified by

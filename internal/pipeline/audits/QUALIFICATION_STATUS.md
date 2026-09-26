@@ -19,8 +19,8 @@ authoritative detail; it does not duplicate it. Detail lives in:
 - findings → `findings/FND-*.md`
 - reports → `2026-09-19_provider_contract_verification.md`
 - source material → `research/`
-- the executable contract → `docs/qualification/production-single-region-v1-matrix.md` (AWS)
-- the GCP lifecycle proposal → `docs/qualification/gcp-bootstrap-inventory.md`
+- the executable contract → `internal/qualification/aws/production-single-region-v1-matrix.md` (AWS)
+- the GCP lifecycle proposal → `internal/qualification/gcp/gcp-bootstrap-inventory.md`
 
 Findings carry two orthogonal axes (see `README.md`): **Classification** (what it
 is) and **State** (where it stands: `OPEN`, `FIXED_UNQUALIFIED`, `QUALIFIED`,
@@ -120,8 +120,8 @@ Full realization and sources: `invariants/PROVIDER-NEUTRAL-INVARIANTS.md`.
 
 ## AWS campaign status (from the matrix and HARDEN-002)
 
-Runs 1–7 are recorded in `docs/qualification/` (one record per run; index in
-`docs/qualification/README.md` — moved verbatim from the HARDEN-002 ticket on 2026-09-24).
+Runs 1–7 are recorded in `internal/qualification/` (one record per run; index in
+`internal/qualification/README.md` — moved verbatim from the HARDEN-002 ticket on 2026-09-24).
 **Runs 3 and 4's bundles are not in the tree and may not be cited as
 qualification evidence** (they are defect-discovery history only).
 
@@ -188,7 +188,7 @@ operator. Code, docs and contract work proceed in parallel.
 | 5 | T3 GCP platform | Root-cause the `helm_release.cert_manager` post-install failure | `HARDEN-004` / FND-0010 | 10 (the probe runs in that attempt) | **with #10** | prepared; probe defined in FND-0010 | the check's own container log is captured and the cause branch is settled (FND-0010's probe list) |
 | 6 | T4 coverage | Absence verifier: EIP / NAT / EBS | `INFRA-047` | — | no | **LANDED #376**; live residual assertion outstanding | `verify_aws_destroy` covers all three, mutation-tested both directions |
 | 7 | T4 contract | GCP matrix expressed against the provider-neutral invariants | `HARDEN-004` | — | no | **LANDED #376** (exists, not run) | rows exist for the invariants; the inventory becomes a contract a run can fail |
-| 8 | T1 AWS app | Run 8: matrix B/C/D (deploy, rollback, availability) | `HARDEN-002` | 1 (**now clear**) | **yes** | **authorized 2026-09-20, blocked at operator preflight** (target absent, no AWS credentials, runtime inputs unset) — not run evidence; see `docs/qualification/2026-09-20-run8-aws.md` §"Preflight" | run record with its identity; B/C/D rows pass or are recorded |
+| 8 | T1 AWS app | Run 8: matrix B/C/D (deploy, rollback, availability) | `HARDEN-002` | 1 (**now clear**) | **yes** | **authorized 2026-09-20, blocked at operator preflight** (target absent, no AWS credentials, runtime inputs unset) — not run evidence; see `internal/qualification/records/2026-09-20-run8-aws.md` §"Preflight" | run record with its identity; B/C/D rows pass or are recorded |
 | 9 | T2 authority | Steady-state authority probe | FND-0003 | 2, 3 (**both landed**) and a `Ready` target | **yes** | waiting on a `Ready` target | positives/negatives as the recorded identity, plus a denial in a non-`default` namespace |
 | 10 | T3 GCP platform | Attempt 5 → `Ready`, then the success-path probe | `HARDEN-004` | 5 | **yes** | waiting on the run | phase lines, window open/close, readiness; then the FND-0001/0003/0007/FND-0010 probes |
 | 11 | T2 contract | ABANDON vs `REMOVE_PEERING` | FND-0005 → `DEC-035` | — | no (decision) | **DECIDED 2026-09-20: keep `ABANDON`** | the four constraints are in `DEC-035`; revisit when `google >= 8.1` is itself qualified, or immediately if a run observes the documented failure |
@@ -206,7 +206,7 @@ With item 11 decided, the remaining qualification frontier is **AWS Run 8 (#8,
 which also carries item 9's probe) and GCP Attempt 5 (#10)**. Everything else on
 this board is either landed or waiting on one of those two runs.
 
-Both runs complete `docs/qualification/run-record-template.md` (copied once per
+Both runs complete `internal/qualification/run-record-template.md` (copied once per
 run), so the evidence arrives in the shape this board reads instead of being
 reconstructed from terminal history afterwards.
 
@@ -371,7 +371,7 @@ piece of INFRA-061, exposed by the teardown itself.
 `main @ 2775d5b1`. The tables above stop at FND-0027 and have not tracked the destroy-path
 findings (FND-0030/FND-0044–0048/FND-0055–0056); this section brings the one frontier this
 session touched current rather than reconstructing the whole index. Detail:
-`HARDEN-004-handoff.md` (last section), `docs/qualification/2026-09-24-gcp-attempt7-prelive-falsification.md`.
+`HARDEN-004-handoff.md` (last section), `internal/qualification/records/2026-09-24-gcp-attempt7-prelive-falsification.md`.
 
 The HARDEN-004 destroy-path programme landed its steps 2–5 between 2026-09-23 and 2026-09-24:
 a typed destroy execution core with one state inventory, plan-and-assert on every destroy-path
@@ -433,7 +433,7 @@ stays `OPEN`, and Attempt 7 stays closed.
 
 - **The HARDEN epics are closed as tickets.** HARDEN-002 (AWS) and HARDEN-004 (GCP) were standing
   goals that could never finish, and read as actionable to `/work`. Their run history moved verbatim
-  into `docs/qualification/` (index and operating rules: `docs/qualification/README.md`); the goals
+  into `internal/qualification/` (index and operating rules: `internal/qualification/README.md`); the goals
   and acceptance criteria stay in the closed tickets and the matrices. The next live runs are their
   own authorization-gated tickets in `BACKLOG`: **HARDEN-007** (AWS Run 9, §B3 onward) and
   **HARDEN-006** (GCP Attempt 8, past cert-manager's `startupapicheck`, FND-0010).
@@ -511,7 +511,7 @@ provider classes came back `UNKNOWN`, which is one of the run's stop conditions.
 mutated, nothing was created, no Terraform state was touched**, and the authorized
 live-infrastructure attempt is **not** consumed by it.
 
-Record: `docs/qualification/2026-09-25-gcp-attempt8-phase0-stop.md`. Ticket: **`INFRA-078`**.
+Record: `internal/qualification/records/2026-09-25-gcp-attempt8-phase0-stop.md`. Ticket: **`INFRA-078`**.
 
 Two harness defects, both found by running the merged harness against the real provider rather than by
 reasoning about it:
@@ -526,8 +526,8 @@ Nothing in this ledger advances because of it: no matrix row, no finding state, 
 
 ## GCP Attempt 8 (2026-09-25) — the FND-0010 cause, and a degraded teardown
 
-`main @ dae9540d` (run record: `docs/qualification/2026-09-25-gcp-attempt8.md`; the pre-live stop
-that preceded it: `docs/qualification/2026-09-25-gcp-attempt8-phase0-stop.md`). Live infrastructure
+`main @ dae9540d` (run record: `internal/qualification/records/2026-09-25-gcp-attempt8.md`; the pre-live stop
+that preceded it: `internal/qualification/records/2026-09-25-gcp-attempt8-phase0-stop.md`). Live infrastructure
 22:01:03Z → 22:26:22Z. **No billable residue**; durable prerequisites intact and the delegation
 still resolving; `main`'s canonical checkout untouched throughout.
 
@@ -575,7 +575,7 @@ prerequisites intact; delegation resolving.
 
 | Item | State after the run |
 |---|---|
-| `FND-0058` | **`QUALIFIED`** — a target in failed `PlatformInstalling` was destroyed by `sol cloud destroy` alone: the instance-qualified authority `CREATE` was permitted and applied (`Resources: 1 added, 0 changed, 0 destroyed`), the platform teardown ran (`platform-destroy ok, 77.2 s`, where Attempt 8 skipped it), the authority was removed, the substrate was destroyed, and **both roots ended empty** (cloud 0/16, platform 0/5). Record: `docs/qualification/2026-09-26-gcp-fnd0058-live-qualification.md` |
+| `FND-0058` | **`QUALIFIED`** — a target in failed `PlatformInstalling` was destroyed by `sol cloud destroy` alone: the instance-qualified authority `CREATE` was permitted and applied (`Resources: 1 added, 0 changed, 0 destroyed`), the platform teardown ran (`platform-destroy ok, 77.2 s`, where Attempt 8 skipped it), the authority was removed, the substrate was destroyed, and **both roots ended empty** (cloud 0/16, platform 0/5). Record: `internal/qualification/records/2026-09-26-gcp-fnd0058-live-qualification.md` |
 | `INV-DESTROY-1` | the **failed-`PlatformInstalling` case is satisfied**; `CloudBootstrap`, `Ready` and interrupted-destruction cases remain unobserved |
 | `INV-DESTROY-4` | the failed-install case now ends with both roots empty plus an independent class-by-class sweep; the `Ready` case is not observed |
 | `INV-AUTH-3` | window closure on the install-failure path observed again (10.6 s, before the failure was reported) |

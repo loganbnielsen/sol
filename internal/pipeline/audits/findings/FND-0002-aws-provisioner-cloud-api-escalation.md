@@ -24,7 +24,7 @@ authority than it holds:
   powerful identity.**"
 - `docs/deployment/production-bootstrap.md:127-128`: "the steady-state provisioner
   never holds `escalate`/`bind` and cannot manufacture a more powerful identity."
-- `docs/qualification/production-single-region-v1-matrix.md` (row I3): "the
+- `internal/qualification/aws/production-single-region-v1-matrix.md` (row I3): "the
   boundary is that the provisioner cannot manufacture an identity more powerful
   than itself".
 

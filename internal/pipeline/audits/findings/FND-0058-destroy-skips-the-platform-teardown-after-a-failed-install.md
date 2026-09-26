@@ -4,7 +4,7 @@
   reported the degradation itself, and the platform state snapshot agrees), against
   DEC-045's destroy-authority contract and `INV-DESTROY-1`'s failed-`PlatformInstalling` case
 - **State:** `QUALIFIED` (live, 2026-09-26 — see the live qualification at the end)
-- **First identified:** 2026-09-25, GCP Attempt 8 (`docs/qualification/2026-09-25-gcp-attempt8.md`)
+- **First identified:** 2026-09-25, GCP Attempt 8 (`internal/qualification/records/2026-09-25-gcp-attempt8.md`)
 - **Provider:** GCP (mechanism is provider-neutral; observed on GCP)
 - **Derived ticket:** `INFRA-079`
 - **Evidence class:** `BEHAVIORAL`. Observed live; the bundle is
@@ -146,6 +146,6 @@ the pre-recorded `INFRA-080` verdict refinements, reproduced exactly (deleted-SA
 for the provisioner account and its binding; `deleted: true` for the soft-deleted custom role); none
 is billable and no new interpretation was improvised for them.
 
-Record: `docs/qualification/2026-09-26-gcp-fnd0058-live-qualification.md`; bundle
+Record: `internal/qualification/records/2026-09-26-gcp-fnd0058-live-qualification.md`; bundle
 `/tmp/sol-gcp-qual-9-attempt`. This qualifies the failed-`PlatformInstalling` case of
 `INV-DESTROY-1`. It does **not** qualify destruction from `Ready` or from any other state.

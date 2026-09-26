@@ -9,7 +9,7 @@ source: pipeline/dogfood/RUN_2026-09-13.md
 
 Kubernetes toolchain install instructions assume root; k3d's installer falls back to sudo despite `K3D_INSTALL_DIR`
 
-**Description:** `docs/dogfood/DOGFOOD.md`'s tool install steps all assume a writable `/usr/local/bin` or root:
+**Description:** `internal/pipeline/dogfood/DOGFOOD.md`'s tool install steps all assume a writable `/usr/local/bin` or root:
 - k3d: `curl -s .../install.sh | TAG=v5.6.0 bash` — no install dir; targets `/usr/local/bin`.
 - helm: the official `get-helm-3` script likewise defaults to `/usr/local/bin`.
 - kubectl: the version table names v1.29.0 but gives no install command at all.
@@ -24,5 +24,5 @@ Related: FRIC-017 (k3d version choice), FRIC-009 (version sync with CI).
 
 ## Completion notes
 
-- Replaced the root-requiring k3d/helm one-liners in `docs/dogfood/DOGFOOD.md` with user-local release-binary installs for k3d, helm, and kubectl (previously kubectl had no install command at all), and documented the observed k3d `K3D_INSTALL_DIR` → sudo fallback plus the docker-group requirement.
+- Replaced the root-requiring k3d/helm one-liners in `internal/pipeline/dogfood/DOGFOOD.md` with user-local release-binary installs for k3d, helm, and kubectl (previously kubectl had no install command at all), and documented the observed k3d `K3D_INSTALL_DIR` → sudo fallback plus the docker-group requirement.
 - Doc-only; no generated/manifest surface, so no example/demo update applies.

@@ -10,7 +10,7 @@
 - **Derived ticket:** none — `DEC-043` decides the stage that owns these prerequisites
 - **Related:** `HARDEN-004`, `DEC-042`, `ADR 0002` (Sol owns the cloud-target
   lifecycle), `ADR 0003` (phases determine authority and desired-state policy),
-  `cli/platform/infra/bootstrap/`, `docs/qualification/gcp-bootstrap-inventory.md`
+  `cli/platform/infra/bootstrap/`, `internal/qualification/gcp/gcp-bootstrap-inventory.md`
 
 ## The gap
 
@@ -41,10 +41,10 @@ Three observations, established while building the GCP attempt harness:
 |---|---|
 | `apply` requires `state_bucket` and fails closed without it | a `PLAN_ONLY` run of the GCP harness against the real CLI; the refusal is explicit and names the field |
 | The repository has no GCP backend path | `cli/platform/infra/bootstrap/` is AWS-only: `provider "aws"`, `aws_s3_bucket`, `aws_dynamodb_table` |
-| AWS's equivalent is an operator-known out-of-band root | the same directory, and `docs/qualification/run8-aws-target.example.yml`, which instructs the operator to apply it by hand and then record the bucket in the untracked target |
+| AWS's equivalent is an operator-known out-of-band root | the same directory, and `internal/qualification/aws/run8-aws-target.example.yml`, which instructs the operator to apply it by hand and then record the bucket in the untracked target |
 | The prerequisite knowledge is not reproducible from the tree | attempts 1–4 evidently created the GCP state bucket outside the repository; nothing tracked creates or names it |
 | Money-relevant checks were performed by hand, into a document | the GCP inventory's quota correction now carries the commands for billing, enabled APIs, quota limits and usage — knowledge in prose, which nothing executes and nothing verifies |
-| A qualification target needs ~15 fields before Sol will plan | `docs/qualification/run8-aws-target.example.yml` |
+| A qualification target needs ~15 fields before Sol will plan | `internal/qualification/aws/run8-aws-target.example.yml` |
 
 ## What is established
 

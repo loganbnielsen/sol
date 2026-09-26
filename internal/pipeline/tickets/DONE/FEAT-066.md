@@ -236,7 +236,7 @@ of independently green commits on `FEAT-066/rollback-recorded-boundary`:
   digest-pinned, until it lands).
 
 Docs updated to match: `docs/guides/TUTORIAL.md`,
-`docs/architecture/devops-pipeline.md`, `docs/planning/ROADMAP.md`.
+`docs/architecture/devops-pipeline.md`, `docs/ROADMAP.md`.
 
 `dune fmt` / `dune build` / `dune test` all green on every commit; pre-commit
 hook (build + full unit suite, plus kafka integration when the broker is up)

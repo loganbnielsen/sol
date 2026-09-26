@@ -25,7 +25,7 @@ Move `dashboards/` and `alloy/` from the platform module to `platform/shared/obs
 
 - Demo/example: not applicable (repository layout; no change to what an app author writes) — state it.
 - Language parity (DEC-022): no application-facing impact — state it.
-- Update `docs/planning/WORK_SUMMARY.md`.
+- Update `internal/planning/WORK_SUMMARY.md`.
 
 ## Completion notes
 

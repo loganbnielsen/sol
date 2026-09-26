@@ -24,6 +24,6 @@ Related: FRIC-014 (Dockerfile template drift), FRIC-018 (buildx prerequisite for
 
 ## Completion notes
 
-- Took remediation (b): the claim is now stated honestly rather than re-engineered. `docs/dogfood/DOGFOOD.md`'s product claim carries a cold-image-build caveat; the dogfood skill's "Evaluate the two-minute claim" section now says "with the image build cache warm" and requires reporting the cold number too, with the measured 5m34s vs 26s; the scaffold's printed next-steps say `sol up` is ~5 min on a cold image cache.
+- Took remediation (b): the claim is now stated honestly rather than re-engineered. `internal/pipeline/dogfood/DOGFOOD.md`'s product claim carries a cold-image-build caveat; the dogfood skill's "Evaluate the two-minute claim" section now says "with the image build cache warm" and requires reporting the cold number too, with the measured 5m34s vs 26s; the scaffold's printed next-steps say `sol up` is ~5 min on a cold image cache.
 - Remediation (a), a prebuilt/published base image so a first workspace only compiles app code, remains open as the real fix — this ticket's docs change only stops the claim from overstating; it does not make the first build fast. Worth a follow-up FEAT/infra ticket if we want the claim to hold cold.
 - Doc/generated-artifact change; verified via a throwaway scaffold, full `dune build` clean.

@@ -16,7 +16,7 @@ ERRO Failed Cluster Preparation: failed to create cluster network: docker failed
   Error response from daemon: client version 1.43 is too old. Minimum supported API version is 1.44
 ```
 
-Docker Engine 29.0 removed support for API versions below 1.44; k3d v5.6.0's vendored Docker client caps at 1.43 and does not negotiate up. `docs/dogfood/DOGFOOD.md`'s version table lists "Docker 29.x" and "k3d v5.6.0" as a tested pair, and k3d v5.6.0 is additionally pinned in `.github/workflows/ci.yml:171`.
+Docker Engine 29.0 removed support for API versions below 1.44; k3d v5.6.0's vendored Docker client caps at 1.43 and does not negotiate up. `internal/pipeline/dogfood/DOGFOOD.md`'s version table lists "Docker 29.x" and "k3d v5.6.0" as a tested pair, and k3d v5.6.0 is additionally pinned in `.github/workflows/ci.yml:171`.
 
 **Impact:** Blocks substrate provisioning entirely on any host with Docker ≥ 29 — which is what current `jammy-updates` ships (`docker.io 29.1.3`). The failure is immediate and the message is accurate but doesn't suggest a fix.
 

@@ -30,7 +30,7 @@ An `internal/ci/` check in the style of the existing guards:
 
 - Demo/example: not applicable (cloud lifecycle internals) — state it.
 - Language parity (DEC-022): no application-facing impact — state it.
-- Update `docs/planning/WORK_SUMMARY.md`, and any finding/decision whose status this changes.
+- Update `internal/planning/WORK_SUMMARY.md`, and any finding/decision whose status this changes.
 
 ## Completion notes (2026-09-24)
 

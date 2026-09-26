@@ -2,7 +2,7 @@
 id: CODEX_STYLE_AUDIT-073
 type: refactor
 severity: medium
-source: docs/audits/STYLE_AUDIT.md
+source: internal/pipeline/audits/STYLE_AUDIT.md
 branch: CODEX_STYLE_AUDIT-073/explicit-config-parse
 ---
 
@@ -20,7 +20,7 @@ typed `Result` values and unknown values fail closed.
 
 **Acceptance criteria:**
 
-- Add a short policy to `docs/audits/STYLE_AUDIT.md` or architecture docs.
+- Add a short policy to `internal/pipeline/audits/STYLE_AUDIT.md` or architecture docs.
 - Convert high-risk mode/backend/security parsers first.
 - Add tests showing unknown values produce errors rather than defaulting.
 - Keep intentional defaults only for omitted values with documented defaults.

@@ -4,7 +4,7 @@
 > destroy-path programme this handoff describes is superseded by
 > `internal/pipeline/audits/2026-09-24_cloud_lifecycle_simplification_plan.md` and its tickets.
 > Two later investigations found that the provider/state divergences behind FND-0030 were
-> operator-created (see `docs/qualification/README.md` § Lessons learned). Kept as the record of
+> operator-created (see `internal/qualification/README.md` § Lessons learned). Kept as the record of
 > what was done and why.
 
 **Read this first.** It says what merged, what is open, what is next, and what was verified
@@ -112,7 +112,7 @@ inspection.
   by a debug run into a commit.
 - Evidence: Attempt-6 raw logs frozen at `~/sol-attempt6-evidence/` (outside the repo — they
   carry project identifiers); the readable chronology is
-  `docs/qualification/2026-09-23-gcp-attempt6.md`.
+  `internal/qualification/records/2026-09-23-gcp-attempt6.md`.
 
 ---
 
@@ -681,7 +681,7 @@ writing: `2775d5b1`. The authorization was explicit, and it was used for Phase 0
 baseline) and Phase 1 (offline preflight) only; Phase 2 was reached as a *decision*, not as a
 fixture.
 
-The canonical record is `docs/qualification/2026-09-24-gcp-attempt7-prelive-falsification.md`
+The canonical record is `internal/qualification/records/2026-09-24-gcp-attempt7-prelive-falsification.md`
 (run identity, baseline, probes, evidence-bundle location). The reusable analysis is **FND-0056**
 (the qualification gap), **FND-0055** (the verification defect it exposed) and updated **FND-0030**
 (ownership). Raw probes are frozen at `~/sol-attempt7-evidence/`, outside the repository.

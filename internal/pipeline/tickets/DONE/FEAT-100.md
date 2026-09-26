@@ -14,7 +14,7 @@ source: DEC-047, internal/pipeline/audits/2026-09-25_organization_proposal.md §
 
 Implement DEC-047 as decided **and as amended on 2026-09-26** (an optional gitignored `sol/environments.local.yml`, keys disjoint from the tracked file, which may add whole environments/targets but never change tracked ones; `check_no_account_artifacts.sh` refuses it tracked; the qualification harnesses write it instead of `sol/qual*/` target files): `sol/environments.yml`, sticky `omit`, existing flat key names, and **DEC-047's key-placement and merge table as the spec**. Parse the environments file, merge `sol.yml` → environment → target with lower layers winning, and remove per-target file discovery (`discover_target_paths`, `relative_target_file` in `Sol_cli_config`). Pre-alpha, so no compat shim: an old `sol/<env>/<provider>/<region>.yml` layout is refused with a message naming the new file.
 
-Also update `sol new` scaffolding and `sol.yml`/target references in `contract/substrate.md` (or `docs/reference/` after DOCS-023), `docs/guides/TUTORIAL.md`, `docs/deployment/` and the scaffold templates.
+Also update `sol new` scaffolding and `sol.yml`/target references in `docs/reference/substrate.md` (or `docs/reference/` after DOCS-023), `docs/guides/TUTORIAL.md`, `docs/deployment/` and the scaffold templates.
 
 ## Acceptance criteria
 
@@ -26,7 +26,7 @@ Also update `sol new` scaffolding and `sol.yml`/target references in `contract/s
 ## Completion notes (required)
 
 - Language parity (DEC-022): state "no language-parity impact" and why.
-- Update `docs/planning/WORK_SUMMARY.md`.
+- Update `internal/planning/WORK_SUMMARY.md`.
 
 ## Completion notes
 

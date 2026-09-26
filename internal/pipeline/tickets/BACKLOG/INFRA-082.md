@@ -10,7 +10,7 @@ source: GCP Attempt 8's preserved stale platform state, via the INFRA-079 decisi
 
 **Related:** FND-0058 / `INFRA-079` (the cause of the stale state, fixed), DEC-048 (the authority
 rule this is deliberately *not* part of), FND-0055, DEC-045,
-`docs/qualification/2026-09-25-gcp-attempt8.md`.
+`internal/qualification/records/2026-09-25-gcp-attempt8.md`.
 
 ## Context
 

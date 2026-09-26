@@ -9,7 +9,7 @@ source: pipeline/dogfood/RUN_2026-09-13.md
 
 Building the CLI from source is undocumented: OCaml ≥ 5.4, `opam update`, `dune` in the new switch, and 11 external `*-eio` packages
 
-**Description:** `README.md` / `docs/dogfood/DOGFOOD.md` say `eval $(opam env) && dune build`, but a fresh machine cannot follow that:
+**Description:** `README.md` / `internal/pipeline/dogfood/DOGFOOD.md` say `eval $(opam env) && dune build`, but a fresh machine cannot follow that:
 - `dune-project` requires `ocaml >= 5.4.0`; the only switch was 5.1.1.
 - The opam index was stale enough that `opam show ocaml.5.4.1` returned "No package matching" until `opam update`.
 - A newly created 5.4.1 switch has no `dune`.
@@ -25,5 +25,5 @@ Related: the scaffolded workspace's own `README.md` already names `librdkafka-de
 
 ## Completion notes
 
-- Added a "Building from source (contributors)" section to `README.md` and a "Building the CLI from source" section to `docs/dogfood/DOGFOOD.md`, both with the verified sequence: `opam update`, `opam switch create 5.4.1`, `opam install dune`, pin the eleven external `*-eio` packages from GitHub, `opam install --deps-only --with-test .`, then `dune build cli/sol/bin/main.exe`.
+- Added a "Building from source (contributors)" section to `README.md` and a "Building the CLI from source" section to `internal/pipeline/dogfood/DOGFOOD.md`, both with the verified sequence: `opam update`, `opam switch create 5.4.1`, `opam install dune`, pin the eleven external `*-eio` packages from GitHub, `opam install --deps-only --with-test .`, then `dune build cli/sol/bin/main.exe`.
 - Doc-only change; no generated/manifest surface, so no example/demo update applies.

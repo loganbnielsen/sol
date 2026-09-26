@@ -8,7 +8,7 @@ set -euo pipefail
 # tripped it would be the wrong kind of irony.
 
 repo="${1:-$(git rev-parse --show-toplevel)}"
-scrub="$repo/internal/pipeline/qualification/scrub-whoami-capture.sh"
+scrub="$repo/internal/qualification/scrub-whoami-capture.sh"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

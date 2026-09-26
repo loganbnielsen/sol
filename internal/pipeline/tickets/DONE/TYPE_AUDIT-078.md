@@ -2,12 +2,12 @@
 id: TYPE_AUDIT-078
 type: refactor
 severity: low
-source: docs/audits/TYPE_AUDIT.md first pass, 2026-09-14 — caught in the FEAT-071 review
+source: internal/pipeline/audits/TYPE_AUDIT.md first pass, 2026-09-14 — caught in the FEAT-071 review
 ---
 
 **Depends on:** None.
 
-**Related:** `docs/audits/TYPE_AUDIT.md` (the audit this came from), FEAT-071.
+**Related:** `internal/pipeline/audits/TYPE_AUDIT.md` (the audit this came from), FEAT-071.
 
 Keep `Deployment_id.t` typed one layer longer in the deploy-marker path.
 
@@ -54,4 +54,4 @@ Fixed.
 - `test_deploy_event` builds the fixture with `of_string`-validated ids; the
   logfmt field values (`release`, `deployment_id`) are unchanged, so the marker
   bytes are identical.
-- The audit's first finding is marked fixed in `docs/audits/TYPE_AUDIT.md`.
+- The audit's first finding is marked fixed in `internal/pipeline/audits/TYPE_AUDIT.md`.
