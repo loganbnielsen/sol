@@ -106,17 +106,23 @@ let running_binary_dir () =
 ;;
 
 (* An installed bundle root: share/sol/<version>/ holding VERSION and platform/. *)
+(* The first line of [path], trimmed; [None] if it is missing, empty or unreadable. *)
+let first_line path =
+  match open_in path with
+  | exception Sys_error _ -> None
+  | ic ->
+    Fun.protect
+      ~finally:(fun () -> close_in_noerr ic)
+      (fun () ->
+         match String.trim (input_line ic) with
+         | "" -> None
+         | line -> Some line
+         | exception End_of_file -> None)
+;;
+
 let bundle_version dir =
-  let version_file = Filename.concat dir "VERSION" in
-  if
-    Sys.file_exists version_file
-    && Sys.file_exists (Filename.concat dir "platform/shared/components.json")
-  then (
-    let ic = open_in version_file in
-    let v =
-      Fun.protect ~finally:(fun () -> close_in_noerr ic) (fun () -> input_line ic)
-    in
-    Some (String.trim v))
+  if Sys.file_exists (Filename.concat dir "platform/shared/components.json")
+  then first_line (Filename.concat dir "VERSION")
   else None
 ;;
 
@@ -223,21 +229,16 @@ let migration_runner t =
   | Checkout -> Ok (Build_from_source { context = t.dir })
   | Installed { version } ->
     let path = runner_image_file t in
-    if not (Sys.file_exists path)
-    then Error (Printf.sprintf "release %s's bundle has no %s" version path)
-    else (
-      let ic = open_in path in
-      let ref_ =
-        Fun.protect ~finally:(fun () -> close_in_noerr ic) (fun () -> input_line ic)
-        |> String.trim
-      in
-      if is_digest_ref ref_
-      then Ok (Published ref_)
-      else
-        Error
-          (Printf.sprintf
-             "release %s's migration runner %S is not a digest reference \
-              (<image>@sha256:<64 hex>)"
-             version
-             ref_))
+    (match first_line path with
+     | None ->
+       Error
+         (Printf.sprintf "release %s's bundle has no runner reference in %s" version path)
+     | Some ref_ when is_digest_ref ref_ -> Ok (Published ref_)
+     | Some ref_ ->
+       Error
+         (Printf.sprintf
+            "release %s's migration runner %S is not a digest reference \
+             (<image>@sha256:<64 hex>)"
+            version
+            ref_))
 ;;

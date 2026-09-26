@@ -59,7 +59,7 @@ Positive controls:
 
 A local run passed all of these; the CI run is on the PR.
 
-**Precedence tests** (`test_platform_assets.ml`, 13 cases): SOL_HOME beats installed; installed beats discovery, with the install inside a checkout; a release never discovers a checkout; a development build discovers and never uses a bundle; a SOL_HOME bundle must match the binary's release; an invalid SOL_HOME never falls through; an empty SOL_HOME counts as unset; the installed runner is the bundle's digest, while a tag or a missing file is refused.
+**Precedence tests** (`test_platform_assets.ml`, 14 cases): SOL_HOME beats installed; installed beats discovery, with the install inside a checkout; a release never discovers a checkout; a development build discovers and never uses a bundle; a SOL_HOME bundle must match the binary's release; an invalid SOL_HOME never falls through; an empty SOL_HOME counts as unset; the installed runner is the bundle's digest, while a tag, an empty file or a missing file is refused; an empty `VERSION` is not a bundle. (Self-review found the first version reading these files with a bare `input_line`, which raised `End_of_file` on an empty file instead of returning an error. Both now go through `first_line`.)
 
 **Stopped, per DEC-049's stop conditions:**
 - **DEC-050** (filed in BACKLOG): Terraform runs *in* the platform roots (`-chdir`) and writes `.terraform/` and `errored.tfstate` there. So a bundle serves `sol cloud` only from a user-writable install, which the README and tutorial now say. A read-only system install needs a decision.

@@ -256,9 +256,29 @@ let test_installed_runner_is_published_by_digest () =
   (match installed_runner ~file:(Some "ghcr.io/o/sol-migration-runner:latest\n") with
    | Error _ -> ()
    | Ok _ -> Alcotest.fail "a floating tag was accepted as the runner");
-  match installed_runner ~file:None with
+  (match installed_runner ~file:None with
+   | Error _ -> ()
+   | Ok _ -> Alcotest.fail "a bundle without a runner reference was accepted");
+  match installed_runner ~file:(Some "") with
   | Error _ -> ()
-  | Ok _ -> Alcotest.fail "a bundle without a runner reference was accepted"
+  | Ok _ -> Alcotest.fail "an empty runner reference was accepted"
+;;
+
+(* An empty VERSION is not a bundle: an error, not an exception. *)
+let test_empty_version_is_not_a_bundle () =
+  with_layout (fun ~root:_ ~bin ~bundle ->
+    write (Filename.concat bundle "VERSION") "";
+    check_form
+      "empty VERSION"
+      "missing-bundle"
+      (A.resolve_from ~sol_home:None ~exe_dir:bin ~release_version:(Some "v1.2.3"));
+    check_form
+      "empty VERSION via SOL_HOME"
+      "invalid-sol-home"
+      (A.resolve_from
+         ~sol_home:(Some bundle)
+         ~exe_dir:bin
+         ~release_version:(Some "v1.2.3")))
 ;;
 
 let () =
@@ -313,6 +333,10 @@ let () =
             "installed runner is published by digest"
             `Quick
             test_installed_runner_is_published_by_digest
+        ; Alcotest.test_case
+            "empty VERSION is not a bundle"
+            `Quick
+            test_empty_version_is_not_a_bundle
         ] )
     ]
 ;;
