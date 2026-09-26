@@ -1992,6 +1992,7 @@ let () =
             "yaml: syntax error names its line"
             `Quick
             test_yaml_syntax_error_names_its_line
+        ; Alcotest.test_case
             "terraform vars: var file resolution (BUG-057)"
             `Quick
             test_var_file_resolution
