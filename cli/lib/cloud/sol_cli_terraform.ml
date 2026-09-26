@@ -57,9 +57,7 @@ let supervised ~chdir c =
   result
 ;;
 
-let which_check () =
-  Result.is_ok (Sol_cli_process.check (run (cmd [ "which"; "terraform" ])))
-;;
+let which_check () = Result.is_ok (Sol_cli_process.run_ok (cmd [ "which"; "terraform" ]))
 
 type scope =
   | Whole_root

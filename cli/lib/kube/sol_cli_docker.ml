@@ -1,9 +1,8 @@
 let run_ok = Sol_cli_process.run_ok
-let run = Sol_cli_process.run
 let cmd = Sol_cli_process.cmd
 
 let buildx_available () =
-  Result.is_ok (Sol_cli_process.check (run (cmd [ "docker"; "buildx"; "version" ])))
+  Result.is_ok (Sol_cli_process.run_ok (cmd [ "docker"; "buildx"; "version" ]))
 ;;
 
 let build ~tag ~dockerfile ~context =
@@ -50,7 +49,7 @@ let push ~image_ref = run_ok (cmd [ "docker"; "push"; image_ref ])
    result as fail-closed. *)
 let manifest_exists ~image_ref =
   Result.is_ok
-    (Sol_cli_process.check (run (cmd [ "docker"; "manifest"; "inspect"; image_ref ])))
+    (Sol_cli_process.run_ok (cmd [ "docker"; "manifest"; "inspect"; image_ref ]))
 ;;
 
 let inspect_digest ~image_ref =
