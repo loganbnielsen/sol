@@ -86,3 +86,14 @@ Landed with the matcher fix, `DEC-048`, `FND-0059`/`INFRA-081` and `INFRA-082`. 
 applicable (cloud lifecycle internals). Language parity (DEC-022): no application-facing impact. The
 preserved Attempt 8 Terraform state, worktree and target were not modified, and no cloud resource was
 touched.
+
+## Live qualification landed (2026-09-26)
+
+The acceptance criterion that awaited live evidence is met. On `main @ 67bdef8e`, a fresh target
+(`qual9/gcp/us-central1`) taken to failed `PlatformInstalling` was destroyed by `sol cloud destroy`
+alone: the instance-qualified authority was created and it was the only resource the acquisition
+actioned (`Apply complete! Resources: 1 added, 0 changed, 0 destroyed`), the platform teardown ran
+(`platform-destroy ok, 77.2 s`), the authority was removed, the substrate was destroyed, and both
+roots ended empty (cloud 0, platform 0). `FND-0058` is now `QUALIFIED`; `INV-DESTROY-1`'s
+failed-`PlatformInstalling` case is satisfied. Record:
+`docs/qualification/2026-09-26-gcp-fnd0058-live-qualification.md`.

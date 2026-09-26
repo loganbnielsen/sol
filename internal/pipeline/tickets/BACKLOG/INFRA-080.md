@@ -64,3 +64,14 @@ suite because `destroy_vars` carries no comment.
   target-derived variables it relies on — the impersonator arrives from the target, so the
   harness asserts *behaviour*, not the presence of its own duplicate).
 - No product code changes.
+
+## Live corroboration (2026-09-26)
+
+The FND-0058 qualification run reproduced all three items exactly as filed, on a clean teardown of a
+fresh target (`qual9/gcp/us-central1`): `service-account-provisioner` and `impersonator-binding` read
+**UNKNOWN** (GCP answers `PERMISSION_DENIED … (or it may not exist)` for a deleted service account,
+and the probe refuses to call that absence — fail-closed by design), `custom-role` read **PRESENT**
+with `deleted: true` (GCP's undelete window; non-billable), and `cloud_vars` still printed
+`--var=provisioner_impersonators=[…]: command not found` while Sol passed the variable from the target.
+So every successful teardown ends "teardown NOT verified" until these are fixed. Record:
+`docs/qualification/2026-09-26-gcp-fnd0058-live-qualification.md`.

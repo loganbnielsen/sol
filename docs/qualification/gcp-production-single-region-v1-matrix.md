@@ -128,3 +128,17 @@ signal that the webhook is reachable, which certificate issuance depends on.
   chart (cert-manager's own pods were healthy).
 - Record FND-0007 (external TLS) as blocked, not passed, while no hostname is
   delegated to the target.
+
+## Case coverage so far (2026-09-26)
+
+This document is still a contract, not evidence; the rows below are the cases actually observed, each
+from the run named. Nothing else is pre-filled from them.
+
+| Row | Case | State |
+|---|---|---|
+| `INV-DESTROY-1` | destroy from **failed `PlatformInstalling`** | **satisfied live** (2026-09-26, `qual9/gcp/us-central1`: authority reacquired and removed, platform teardown ran, both roots empty). See `2026-09-26-gcp-fnd0058-live-qualification.md` |
+| `INV-DESTROY-1` | destroy from `CloudBootstrap`, from `Ready`, and from interrupted destruction | **not observed** |
+| `INV-DESTROY-4` | both destroys return success, then every class queried | **partially**: the failed-install case now ends with both roots empty and an independent class-by-class sweep; the `Ready` case is not observed |
+| `INV-RET-1` | `retention: none` | observed (2026-09-26 and Attempt 8) |
+| `INV-AUTH-3` | window closed on the install-failure path | observed (2026-09-26) |
+| `INV-SUBSTRATE-*`, `INV-IDENT-1` | a running platform | **not reached** — no attempt has installed the platform to `Ready` |

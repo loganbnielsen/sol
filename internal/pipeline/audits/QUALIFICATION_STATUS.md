@@ -565,3 +565,23 @@ unaffected (its matcher is `Type`, instance-insensitive).
 
 Nothing here is `QUALIFIED`. The preserved Attempt 8 Terraform state, worktree and target were not
 modified, and no cloud resource was touched.
+
+## GCP FND-0058 qualified live (2026-09-26)
+
+`main @ 67bdef8e`, fresh target `qual9/gcp/us-central1` (cluster `sol-qual-gcp-9`) — its own target key,
+never Attempt 8's (`INFRA-084`), so the specimen was produced fresh and the preserved state was neither
+inherited nor overwritten. Live 01:39:58Z → 02:06:44Z (26 m 46 s); zero billable residue; durable
+prerequisites intact; delegation resolving.
+
+| Item | State after the run |
+|---|---|
+| `FND-0058` | **`QUALIFIED`** — a target in failed `PlatformInstalling` was destroyed by `sol cloud destroy` alone: the instance-qualified authority `CREATE` was permitted and applied (`Resources: 1 added, 0 changed, 0 destroyed`), the platform teardown ran (`platform-destroy ok, 77.2 s`, where Attempt 8 skipped it), the authority was removed, the substrate was destroyed, and **both roots ended empty** (cloud 0/16, platform 0/5). Record: `docs/qualification/2026-09-26-gcp-fnd0058-live-qualification.md` |
+| `INV-DESTROY-1` | the **failed-`PlatformInstalling` case is satisfied**; `CloudBootstrap`, `Ready` and interrupted-destruction cases remain unobserved |
+| `INV-DESTROY-4` | the failed-install case now ends with both roots empty plus an independent class-by-class sweep; the `Ready` case is not observed |
+| `INV-AUTH-3` | window closure on the install-failure path observed again (10.6 s, before the failure was reported) |
+| `FND-0010` | unchanged and `OPEN` — reproduced as `TLS_CA_OR_CERTIFICATE`, used only as the cheapest way to produce the specimen; no remediation attempted |
+| `FND-0059` / `INFRA-081`, `INFRA-082`, `INFRA-083` | unchanged; `INFRA-080` gained the live corroboration of all three verdict refinements |
+| Attempt 8 evidence | untouched: platform state 11 resources / serial 4, worktree, target and bundle as they were |
+
+Nothing about `Ready`-state destruction is claimed: the destroy began from a failed install, not from a
+healthy platform.

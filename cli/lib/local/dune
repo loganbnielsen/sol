@@ -1,0 +1,8 @@
+; REFAC-104: local-development helpers: platform component values, dev observability.
+; Domains form a DAG (base <- kube <- workspace <- cloud <- deploy; local -> workspace),
+; so a module can only use another domain listed in (libraries) below.
+
+(library
+ (name sol_cli_local)
+ (wrapped false)
+ (libraries sol_cli_base sol_cli_workspace unix yojson))

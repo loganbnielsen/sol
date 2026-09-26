@@ -299,7 +299,7 @@ derived from the workspace directory name. Override with `--table`.
 ### `sol rollback` (FEAT-066, DEC-018)
 
 **Module:** `cli/bin/cmd_rollback.ml` → `run`  
-**Library:** `cli/lib/sol_cli_rollback.ml`, `sol_cli_release_store.ml`,
+**Library:** `cli/lib/deploy/sol_cli_rollback.ml`, `sol_cli_release_store.ml`,
 `sol_cli_migration_disposition.ml`
 
 Takes a `RELEASE_ID` positional (`sol rollback <release-id>`, found via
@@ -416,7 +416,7 @@ and refuses a release recorded as GitOps-owned.
 
 ### Release retention (FEAT-072, DEC-018)
 
-**Module:** `cli/lib/sol_cli_release_retention.ml`
+**Module:** `cli/lib/deploy/sol_cli_release_retention.ml`
 
 A successful `sol up`/`sol deploy` bounds the workspace's release history to the
 last `--keep-releases N` distinct release records (default 20, DEC-018). The
@@ -588,7 +588,7 @@ before the YAML is written to disk.
 
 1. Add the security context blocks (`runAsNonRoot`, `allowPrivilegeEscalation`,
    `readOnlyRootFilesystem`) to the new YAML template in
-   `cli/lib/sol_cli_manifest_yaml.ml`.
+   `cli/lib/workspace/sol_cli_manifest_yaml.ml`.
 2. Add a corresponding test case to the `artifact_invariants` suite in
    `cli/test/test_manifest_render.ml` that calls `assert_k8s_invariants` on
    the rendered output.
