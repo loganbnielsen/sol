@@ -145,6 +145,15 @@ operation's own log first and classifies a Terraform `already exists` resource c
 `SCHEDULING_AMBIENT`, because a half-installed cluster always has a pod waiting to be scheduled.
 Two new harness assertions pin both directions (133 total).
 
+**A bounce worth recording (CI, exit 126).** The first CI run of this change failed at the new
+guard step with exit code 126: the mutation self-test was committed `100644` while the workflow
+invokes it directly, and every local run had used `bash <script>`, which does not need the bit —
+so the local sweep could not see it. Two things came out of that: the mode is fixed (matching the
+72 other executable scripts in `internal/`), and `check_workflow_paths.sh` now also refuses a
+script the workflow invokes as a command without the executable bit, with three mutation cases
+(a directly invoked script at 644 fails, at 755 passes, and a `bash <script>` invocation needs no
+bit at all).
+
 **Demo/example coverage:** not applicable — platform installation RBAC, with no `sol.toml` field,
 CLI surface, framework primitive or generated manifest for an app author to read or run; the
 observable behaviour is a fresh target's platform apply completing, which the next live run shows.
