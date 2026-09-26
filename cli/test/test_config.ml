@@ -1624,6 +1624,32 @@ target:
          assert (String.length message > 0 && message <> "")))
 ;;
 
+(* BUG-057: the flag is relative to the shell, a target's var file to the workspace
+   root; the flag wins; absolute paths pass through. *)
+let test_var_file_resolution () =
+  let resolve =
+    Sol_cli_terraform_vars.var_file ~cwd:"/ws/app/deep" ~workspace_root:"/ws"
+  in
+  let check name want got = Alcotest.(check (option string)) name want got in
+  check
+    "a target's relative path is from the workspace root"
+    (Some "/ws/vars/x.tfvars")
+    (resolve ~flag:None ~target:(Some "vars/x.tfvars"));
+  check
+    "a relative flag is from the shell's directory"
+    (Some "/ws/app/deep/f.tfvars")
+    (resolve ~flag:(Some "f.tfvars") ~target:None);
+  check
+    "the flag wins over the target"
+    (Some "/ws/app/deep/f.tfvars")
+    (resolve ~flag:(Some "f.tfvars") ~target:(Some "vars/x.tfvars"));
+  check
+    "an absolute target path is used as written"
+    (Some "/abs/x.tfvars")
+    (resolve ~flag:None ~target:(Some "/abs/x.tfvars"));
+  check "no var file" None (resolve ~flag:None ~target:None)
+;;
+
 let () =
   Alcotest.run
     "config"
@@ -1885,6 +1911,10 @@ let () =
             "example pluto prod target parses"
             `Quick
             test_example_pluto_prod_target_parses
+        ; Alcotest.test_case
+            "terraform vars: var file resolution (BUG-057)"
+            `Quick
+            test_var_file_resolution
         ] )
     ]
 ;;

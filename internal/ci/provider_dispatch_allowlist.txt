@@ -3,4 +3,4 @@
 # Format: <kind> <path> <count> [reason]
 #   dispatch  occurrences of Sol_cli_provider.Aws|Gcp and Aws_outputs|Gcp_outputs
 #   wildcard  `| _` arms in a match whose other arms are provider constructors
-dispatch cli/lib/sol_cli_config.ml 1 target_empty's placeholder provider for a partial, not-yet-resolved target record; resolved_target always overwrites it with the provider named by the target path
+dispatch cli/lib/workspace/sol_cli_config.ml 1 target_empty's placeholder provider for a partial, not-yet-resolved target record; resolved_target always overwrites it with the provider named by the target path

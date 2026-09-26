@@ -77,3 +77,19 @@ let of_config ~workspace cfg =
          ~production_postgres
          ~ecr_repositories:Sol_cli_config.ecr_repositories_var)
 ;;
+
+(* BUG-057: which var file a cloud command passes to Terraform, and relative to
+   what. A `--var-file` typed on the command line is relative to the shell's
+   directory, as any path argument is. A target's `terraform_var_file` is config,
+   and config paths resolve from the workspace root (DEC-024 clause 4), so the same
+   target means the same file from any directory. The flag wins when both are
+   given; an absolute path is used as written. *)
+let var_file ~cwd ~workspace_root ~flag ~target =
+  let absolute base path =
+    if Filename.is_relative path then Filename.concat base path else path
+  in
+  match flag, target with
+  | Some path, _ -> Some (absolute cwd path)
+  | None, Some path -> Some (absolute workspace_root path)
+  | None, None -> None
+;;

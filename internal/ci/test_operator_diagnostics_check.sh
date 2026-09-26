@@ -19,12 +19,12 @@ files=(
   platform/cloud/modules/platform/platform_operator_rbac.tf
   platform/cloud/aws/cluster/main.tf
   platform/cloud/aws/cluster/variables.tf
-  cli/lib/sol_cli_manifest_yaml.ml
-  cli/lib/sol_cli_substrate.ml
-  cli/lib/sol_cli_rollout_diagnosis.ml
+  cli/lib/workspace/sol_cli_manifest_yaml.ml
+  cli/lib/deploy/sol_cli_substrate.ml
+  cli/lib/kube/sol_cli_rollout_diagnosis.ml
   cli/bin/cmd_status.ml
   cli/bin/cmd_logs.ml
-  cli/lib/sol_cli_provider_capabilities.ml
+  cli/lib/cloud/sol_cli_provider_capabilities.ml
   platform/cloud/modules/platform/platform_deploy_rbac.tf
 )
 
@@ -102,7 +102,7 @@ expect_fail "a managed access policy on the operator entry"
 # ── the binding is never applied ────────────────────────────────────────────
 seed
 sed -i 's/operator_role_binding_doc ~ns/operator_role_binding_doc_DISABLED ~ns/g' \
-  "$work/root/cli/lib/sol_cli_substrate.ml"
+  "$work/root/cli/lib/deploy/sol_cli_substrate.ml"
 expect_fail "a ClusterRole that is never bound"
 
 # ── the diagnostic path reads something the grant does not cover ────────────
@@ -123,7 +123,7 @@ expect_fail "a new read the operator cannot perform"
 # ── the declared ARN never reaches the provider root ────────────────────────
 seed
 sed -i 's/(Sol_cli_config.provider_field target "operator_role_arn")/None/' \
-  "$work/root/cli/lib/sol_cli_provider_capabilities.ml"
+  "$work/root/cli/lib/cloud/sol_cli_provider_capabilities.ml"
 expect_fail "an ARN that never reaches the provider root"
 
 # ── the substrate identity cannot bind what the substrate creates ───────────
@@ -145,7 +145,7 @@ expect_fail "an operator RoleBinding the substrate identity cannot bind"
 # The failure mode this guards: "simplifying" it to reuse the substrate path, which
 # also writes runtime Secrets.
 seed
-python3 - "$work/root/cli/lib/sol_cli_substrate.ml" <<'PY'
+python3 - "$work/root/cli/lib/deploy/sol_cli_substrate.ml" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p).read()

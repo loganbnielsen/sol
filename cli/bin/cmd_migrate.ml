@@ -217,7 +217,7 @@ let fatal msg =
 
 let fatal_p fmt = Printf.ksprintf fatal fmt
 
-(* Same opam-pin/base-image block cli/lib/sol_cli_scaffold_templates.ml's
+(* Same opam-pin/base-image block cli/lib/base/sol_cli_scaffold_templates.ml's
    tpl_dockerfile and the example workspace Dockerfiles use, trimmed to just
    what cli/bin/main.exe itself links (see cli/bin/dune) -- kept in
    sync by hand, same as every other place this block is duplicated. *)

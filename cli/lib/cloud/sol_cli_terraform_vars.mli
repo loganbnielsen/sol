@@ -11,3 +11,15 @@ val of_config
   :  workspace:string
   -> Sol_cli_config.t
   -> ((string * string) list, string) result
+
+(** [var_file ~cwd ~workspace_root ~flag ~target] is the var file a cloud command
+    passes to Terraform, as an absolute path (BUG-057). The [--var-file] [flag] wins
+    and is relative to [cwd]; otherwise the target's [terraform_var_file] is relative
+    to [workspace_root], so a target resolves the same file from any directory. An
+    absolute path is returned unchanged. *)
+val var_file
+  :  cwd:string
+  -> workspace_root:string
+  -> flag:string option
+  -> target:string option
+  -> string option

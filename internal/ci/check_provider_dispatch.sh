@@ -65,7 +65,7 @@ identity_declarations='^[[:space:]]*type[[:space:]]+(whoami_identity|credential_
 # check_destroy_completeness.sh reads its target roots (HARDEN-005), rather than written out
 # here: a provider added later must be admitted without anyone remembering to edit this
 # guard, and a provider list that cannot be read is a refusal rather than an empty one.
-provider_module="$root/cli/lib/sol_cli_provider.ml"
+provider_module="$root/cli/lib/base/sol_cli_provider.ml"
 providers="$(sed -n '/^let to_string/,/^;;/p' "$provider_module" 2>/dev/null | grep -oE '"[a-z0-9-]+"' | tr -d '"')"
 if [ -z "$providers" ]; then
   echo "check_provider_dispatch: could not read the provider list from $provider_module -- refusing to decide the boundary from an empty list." >&2
