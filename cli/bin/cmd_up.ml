@@ -194,10 +194,18 @@ let record_plan run_log plan =
     (Format.asprintf "%a" Sol_cli_deployment_plan.pp_summary plan)
 ;;
 
-let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~services =
-  print_header ~workspace ~sha ~dry_run:true;
+(* REFAC-112: the preamble both modes share, so neither can drift from the other. *)
+let prepare_plan ~run_log ~dry_run ~requested_scope ~workspace ~sha ~services =
+  print_header ~workspace ~sha ~dry_run;
   let plan = build_plan ~requested_scope ~workspace ~sha ~services in
   record_plan run_log plan;
+  plan
+;;
+
+let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~services =
+  let plan =
+    prepare_plan ~run_log ~dry_run:true ~requested_scope ~workspace ~sha ~services
+  in
   match
     Sol_cli_run_log.run_task run_log ~name:"dry-run" (fun () ->
       try
@@ -358,10 +366,10 @@ let run_apply
   =
   check_contract ~services;
   ensure_postgres_url ();
-  print_header ~workspace ~sha ~dry_run:false;
-  let plan = build_plan ~requested_scope ~workspace ~sha ~services in
+  let plan =
+    prepare_plan ~run_log ~dry_run:false ~requested_scope ~workspace ~sha ~services
+  in
   check_consumer_group_changes ~workspace ~confirm_group_change plan;
-  record_plan run_log plan;
   let pf_failed = ref false in
   let result =
     Sol_cli_boundary_lease.with_boundary_lease
