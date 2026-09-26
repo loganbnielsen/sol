@@ -51,17 +51,7 @@ let outcome_of_string = function
 ;;
 
 (* UTC, second precision, lexicographically sortable. *)
-let rfc3339_utc (now : float) : string =
-  let tm = Unix.gmtime now in
-  Printf.sprintf
-    "%04d-%02d-%02dT%02d:%02d:%02dZ"
-    (tm.Unix.tm_year + 1900)
-    (tm.Unix.tm_mon + 1)
-    tm.Unix.tm_mday
-    tm.Unix.tm_hour
-    tm.Unix.tm_min
-    tm.Unix.tm_sec
-;;
+let rfc3339_utc (now : float) : string = Sol_cli_time.rfc3339 now
 
 let deployment_mode_to_string (m : Sol_cli_deployment_plan.deployment_mode) =
   match m with

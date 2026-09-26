@@ -103,15 +103,7 @@ let status_to_string = function
       "running: terraform pid %d on %s, started %s (record: %s)"
       pid
       host
-      (let t = Unix.gmtime started_at in
-       Printf.sprintf
-         "%04d-%02d-%02dT%02d:%02d:%02dZ"
-         (t.tm_year + 1900)
-         (t.tm_mon + 1)
-         t.tm_mday
-         t.tm_hour
-         t.tm_min
-         t.tm_sec)
+      (Sol_cli_time.rfc3339 started_at)
       dir
   | Resolved { outcome; dir } ->
     Printf.sprintf "resolved: terraform %s (record: %s)" (outcome_to_string outcome) dir
@@ -340,16 +332,10 @@ let operation_counter = ref 0
 let new_operation_dir ~key =
   incr operation_counter;
   let base = operations_dir ~key in
-  let t = Unix.gmtime (Unix.gettimeofday ()) in
   let name =
     Printf.sprintf
-      "%04d%02d%02dT%02d%02d%02dZ-%d-%d"
-      (t.tm_year + 1900)
-      (t.tm_mon + 1)
-      t.tm_mday
-      t.tm_hour
-      t.tm_min
-      t.tm_sec
+      "%s-%d-%d"
+      (Sol_cli_time.compact (Unix.gettimeofday ()))
       (Unix.getpid ())
       !operation_counter
   in
