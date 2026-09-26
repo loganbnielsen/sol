@@ -1540,7 +1540,7 @@ let ecr_repositories_var () =
   (* INFRA-074: a discovery failure is an error, never "no repositories". The
      list drives [for_each] over repositories with [force_delete], so an empty
      list is an instruction to delete every image the target holds. *)
-  match Sol_cli_manifest.discover_services_result () with
+  match Sol_cli_manifest.discover_services () with
   (* The workspace resolved and has no [app/]: an infra-first workspace with no
      workloads yet, so no repositories. The plan guard in [cloud apply] still
      refuses a plan that would delete existing ones. *)

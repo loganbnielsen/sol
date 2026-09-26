@@ -18,6 +18,8 @@ let failure ?(code = 1) text = { text; code }
 let exit_on = function
   | Ok () -> ()
   | Error { text; code } ->
+    (* What the command printed comes before why it failed. *)
+    flush stdout;
     Printf.eprintf "%s\n%!" text;
     exit code
 ;;

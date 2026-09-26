@@ -206,3 +206,15 @@
  (action
   (bash
    "set -u\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\ncd \"$tmp\"\ntouch sol.yml\nmkdir sol\nexpect() { want=$1; shift; if \"$sol\" \"$@\" >out 2>&1; then got=0; else got=$?; fi; if [ \"$got\" != \"$want\" ]; then echo \"sol $*: expected exit $want, got $got\" >&2; cat out >&2; exit 1; fi; }\nexpect 124 alert test\ngrep -F -- '--target' out >/dev/null\nprintf 'prod:\\n  targets:\\n    aws/us-east-1:\\n' > sol/environments.yml\nexpect 2 alert test --target prod/aws/us-east-1\ngrep -F 'does not satisfy the alert-delivery contract' out >/dev/null\nprintf 'prod:\\n  targets:\\n    aws/us-east-1:\\n      alert_receiver_type: webhook\\n      alert_receiver_url: https://hooks.example.test/x\\n      alert_owner: ops@example.test\\n      alert_runbook_url: https://runbooks.example.test/x\\n' > sol/environments.yml\nexpect 0 alert test --target prod/aws/us-east-1 --dry-run\ngrep -F '\"alertname\":\"SolSyntheticAlert\"' out >/dev/null\ngrep -F '/api/v2/alerts' out >/dev/null")))
+
+; REFAC-115: `sol assets` runs every check and reports every failure, then fails
+; once -- here with two assets broken in a copy of the platform tree.
+
+(rule
+ (alias runtest)
+ (deps
+  ../bin/main.exe
+  (source_tree ../../platform))
+ (action
+  (bash
+   "set -u\nsol=$(pwd)/../bin/main.exe\nplatform=$(pwd)/../../platform\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nmkdir -p \"$tmp/home/framework/ocaml/sol-svc/lib\" \"$tmp/home/framework/ocaml/kafka-eio-service/lib\"\ntouch \"$tmp/home/framework/ocaml/sol-svc/lib/dune\" \"$tmp/home/framework/ocaml/kafka-eio-service/lib/dune\"\ncp -r \"$platform\" \"$tmp/home/platform\"\nchmod -R u+w \"$tmp/home\"\nrm -rf \"$tmp/home/platform/shared/observability/dashboards\" \"$tmp/home/platform/cloud/aws/cluster\"\nif SOL_HOME=\"$tmp/home\" \"$sol\" assets >\"$tmp/out\" 2>&1; then\n  echo 'sol assets passed with two assets broken' >&2; cat \"$tmp/out\" >&2; exit 1\nfi\nfailed=$(grep -c '^  FAIL ' \"$tmp/out\" || true)\nif [ \"$failed\" -lt 2 ]; then\n  echo \"sol assets reported $failed failure(s), expected both\" >&2; cat \"$tmp/out\" >&2; exit 1\nfi\ngrep -F 'FAIL  terraform' \"$tmp/out\" >/dev/null\ngrep -F 'FAIL  dashboards' \"$tmp/out\" >/dev/null\ngrep -F 'ok  terraform  platform/cloud/gcp/cluster' \"$tmp/out\" >/dev/null\ngrep -F 'asset checks failed' \"$tmp/out\" >/dev/null")))

@@ -409,22 +409,23 @@ let aws_orphan_sweep ~pre_destroy ~region ~cluster =
    unparseable value is refused loudly rather than silently replaced. *)
 let final_snapshot_attempts = 12
 
-let final_snapshot_interval_s =
+(* REFAC-115: read when a destroy needs it, and refused there. As a top-level
+   value it was evaluated at program start, so a malformed setting made every `sol`
+   command -- `sol --version` included -- exit 2. *)
+let final_snapshot_interval_s () =
   match Sys.getenv_opt "SOL_DESTROY_SNAPSHOT_INTERVAL_S" with
-  | None -> 10.
+  | None -> Ok 10.
   | Some raw ->
     (match float_of_string_opt raw with
-     | Some seconds when seconds >= 0. -> seconds
+     | Some seconds when seconds >= 0. -> Ok seconds
      | _ ->
-       Printf.eprintf
-         "error: SOL_DESTROY_SNAPSHOT_INTERVAL_S=%S is not a non-negative number of \
-          seconds.\n\
-          %!"
-         raw;
-       exit 2)
+       Error
+         (Printf.sprintf
+            "SOL_DESTROY_SNAPSHOT_INTERVAL_S=%S is not a non-negative number of seconds"
+            raw))
 ;;
 
-let rec observe_final_snapshot ~declared ~snapshot_id ~region ~attempts =
+let rec observe_final_snapshot ~interval ~declared ~snapshot_id ~region ~attempts =
   let lookup = run_provider_query (final_snapshot_query ~snapshot_id ~region) in
   match classify_final_snapshot ~declared ~snapshot_id lookup with
   | Settled retention -> retention
@@ -437,8 +438,13 @@ let rec observe_final_snapshot ~declared ~snapshot_id ~region ~attempts =
             available"
            message)
     else (
-      Unix.sleepf final_snapshot_interval_s;
-      observe_final_snapshot ~declared ~snapshot_id ~region ~attempts:(attempts - 1))
+      Unix.sleepf interval;
+      observe_final_snapshot
+        ~interval
+        ~declared
+        ~snapshot_id
+        ~region
+        ~attempts:(attempts - 1))
 ;;
 
 let rds_target = Sol_cli_terraform.targets "aws_db_instance.postgres" []
@@ -676,11 +682,17 @@ let observe_retention ~region ~retention ~pre_destroy ~preparation =
      | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
        (match region with
         | Some region ->
-          observe_final_snapshot
-            ~declared:retention
-            ~snapshot_id
-            ~region
-            ~attempts:final_snapshot_attempts
+          (match final_snapshot_interval_s () with
+           | Ok interval ->
+             observe_final_snapshot
+               ~interval
+               ~declared:retention
+               ~snapshot_id
+               ~region
+               ~attempts:final_snapshot_attempts
+           | Error reason ->
+             (* [prepare] refuses this before destroying; kept total, not trusted. *)
+             Retention_unknown reason)
         | None ->
           Retention_unknown
             (Printf.sprintf
@@ -710,25 +722,42 @@ let prepare { run_log; infra_dir; var_files; vars; _ } ~retention ~cluster_name 
   (* The verification is part of the preparation: a snapshot identity that could
      not be confirmed is not a preparation, and it fails with the same
      consequence the preparation would have (final-snapshot blocks). *)
-  match
-    prepare_destroy_result run_log infra_dir var_files vars ~cluster_name ~retention state
-  with
-  | Sol_cli_cloud_lifecycle.Prepared snapshot_id ->
+  match retention, final_snapshot_interval_s () with
+  | Sol_cli_cloud_lifecycle.Retain_final_snapshot, Error reason ->
+    (* The interval polls for the promised final snapshot: refuse before anything
+       is destroyed rather than after. *)
+    Sol_cli_cloud_lifecycle.Preparation_failed
+      { reason; policy = Sol_cli_cloud_lifecycle.Block_destroy }
+  | _ ->
     (match
-       verify_destroy_preparation_result infra_dir ~retention ~prepared:(Some snapshot_id)
+       prepare_destroy_result
+         run_log
+         infra_dir
+         var_files
+         vars
+         ~cluster_name
+         ~retention
+         state
      with
-     | Ok () ->
-       Sol_cli_cloud_lifecycle.Prepared
-         (Sol_cli_cloud_destroy.Prepared { retained = Some snapshot_id })
-     | Error reason ->
-       Sol_cli_cloud_lifecycle.Preparation_failed
-         { reason = aws_preparation_reason ~retention reason
-         ; policy = aws_preparation_policy ~retention
-         })
-  | Sol_cli_cloud_lifecycle.Nothing_to_prepare ->
-    Sol_cli_cloud_lifecycle.Nothing_to_prepare
-  | Sol_cli_cloud_lifecycle.Preparation_failed failure ->
-    Sol_cli_cloud_lifecycle.Preparation_failed failure
+     | Sol_cli_cloud_lifecycle.Prepared snapshot_id ->
+       (match
+          verify_destroy_preparation_result
+            infra_dir
+            ~retention
+            ~prepared:(Some snapshot_id)
+        with
+        | Ok () ->
+          Sol_cli_cloud_lifecycle.Prepared
+            (Sol_cli_cloud_destroy.Prepared { retained = Some snapshot_id })
+        | Error reason ->
+          Sol_cli_cloud_lifecycle.Preparation_failed
+            { reason = aws_preparation_reason ~retention reason
+            ; policy = aws_preparation_policy ~retention
+            })
+     | Sol_cli_cloud_lifecycle.Nothing_to_prepare ->
+       Sol_cli_cloud_lifecycle.Nothing_to_prepare
+     | Sol_cli_cloud_lifecycle.Preparation_failed failure ->
+       Sol_cli_cloud_lifecycle.Preparation_failed failure)
 ;;
 
 (* The platform destroy removes the ingress Service; AWS deprovisions its load
