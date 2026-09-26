@@ -531,39 +531,9 @@ jobs:
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/kubectl
 
-      - name: Buildx builder (cache-capable driver)
-        # Docker's *default* driver cannot export cache on this runner --
-        # measured, not assumed: the first attempt at this failed the smoke test in
-        # 0.6s with "ERROR: failed to build: Cache export is not supported for the
-        # docker driver. Switch to a different driver, or turn on the containerd
-        # image store". A container-driver builder can export, and `sol up` passes
-        # `--load`, so the image still lands in the local store for `docker push`.
-        # Sol treats the failure as a fallback (it rebuilds without the cache), so
-        # this step is what turns the cache from possible into used.
-        uses: docker/setup-buildx-action@v3
-
-      - name: Application image build cache
-        # Sol's build-cache capability (SOL_BUILD_CACHE_DIR) plus CI's job of
-        # persisting it between runners -- the boundary is deliberate: Sol knows a
-        # cache location, CI knows how a cache survives a run.
-        #
-        # BuildKit keys every layer on its inputs, so a stale or incompatible
-        # entry can only cost a miss, never a wrong build: the measured behaviour
-        # (buildx 0.30.1, docker driver) is that a changed dependency file
-        # re-runs the dependency layer while everything before it is reused.
-        # Keyed per run so the entry refreshes, with a prefix restore so the
-        # previous run's cache is what gets imported.
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/sol-build-cache
-          key: sol-build-cache-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: |
-            sol-build-cache-${{ runner.os }}-
-
       - name: Golden-path smoke test
         env:
           SOL_FRAMEWORK_REF: ${{ github.event.pull_request.head.sha || github.sha }}
-          SOL_BUILD_CACHE_DIR: ${{ runner.temp }}/sol-build-cache
         # Measured across the first 3 real runs on this branch: 11m43s,
         # 8m20s, 10m59s -- a ~40% swing with no code change touching this
         # step's actual work (cluster boot, chart install, health-wait,

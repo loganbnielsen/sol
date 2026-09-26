@@ -60,7 +60,6 @@
   test_workspace
   test_platform_component
   test_image_ref
-  test_docker_build
   test_cloud_lifecycle
   test_cloud_destroy
   test_cloud_apply

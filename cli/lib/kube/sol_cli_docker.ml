@@ -8,112 +8,7 @@ let buildx_available () =
   | Error _ -> false
 ;;
 
-(* Application image builds may reuse BuildKit cache.
-
-   Why this is a capability here and not CI policy: the expensive part of a
-   scaffolded app's image is the dependency layer (`COPY *.opam` then
-   `opam install --deps-only .`), and a fresh CI runner has no BuildKit cache of
-   its own -- measured on the OCaml golden path: the first image of the run cost
-   297s while the three that followed reused its layers in seconds. Sol supplies
-   the ability to import/export cache; whoever runs the build decides whether a
-   cache survives between runs (CI persists this directory in its own cache;
-   a developer who wants one points this at a directory they keep).
-
-   Correctness never depends on the cache: with no cache configured the argv is
-   exactly what it was before, a cache that is missing or stale only means a
-   normal rebuild (BuildKit keys every layer on its inputs, so a changed
-   Dockerfile or `.opam` invalidates the dependency layer by construction), and
-   an environment without the buildx plugin builds exactly as it did before. *)
-type cache = Local_dir of string
-
-let cache_dir_env = "SOL_BUILD_CACHE_DIR"
-
-let cache_of_env ?(lookup = Sys.getenv_opt) () =
-  match lookup cache_dir_env with
-  | Some dir when String.trim dir <> "" -> Some (Local_dir (String.trim dir))
-  | Some _ | None -> None
-;;
-
-(* BuildKit's attestation flags: see [build] below for why they exist. *)
-let attestation_flags = [ "--provenance=false"; "--sbom=false" ]
-
-(* [build_argv] is pure so the shapes can be pinned without docker: the exact
-   argv is what a wrong cache flag would break, and a wrong cache flag is the
-   difference between "reused the dependency layer" and "silently deployed
-   different dependencies". *)
-let build_argv ~buildx ~cache ~cache_present ~tag ~dockerfile ~context =
-  match cache with
-  | Some (Local_dir dir) when buildx ->
-    (* `--load` matters: `docker buildx build` does not put the image into the
-       local image store by default, and `sol up` pushes it with `docker push`
-       immediately afterwards. Verified against the docker driver (buildx
-       0.30.1): `--load`, `--cache-from type=local,src=...` and
-       `--cache-to type=local,dest=...,mode=max` all work there, and a build on
-       a pruned builder reuses the dependency layer while rebuilding the layers
-       that copy application sources.
-
-       `mode=max` is required, not cosmetic: the dependency install happens in
-       the Dockerfile's build stage, and `mode=min` would export only the final
-       image's layers -- the expensive ones are intermediates.
-
-       `--cache-from` is omitted when the directory does not exist yet (the
-       first run on a machine), because an import from a missing directory is an
-       error, not a cache miss. The export still runs, so that run seeds it. *)
-    let import =
-      if cache_present then [ "--cache-from"; "type=local,src=" ^ dir ] else []
-    in
-    [ "docker"; "buildx"; "build"; "--load" ]
-    @ attestation_flags
-    @ import
-    @ [ "--cache-to"; "type=local,dest=" ^ dir ^ ",mode=max" ]
-    @ [ "-t"; tag; "-f"; dockerfile; context ]
-  | Some (Local_dir _) | None ->
-    (* No cache, or no buildx: byte-identical to the argv this module has always
-       produced. The legacy builder (FRIC-018) rejects the attestation flags, so
-       they are omitted there too -- it never attaches an attestation. *)
-    [ "docker"; "build" ]
-    @ (if buildx then attestation_flags else [])
-    @ [ "-t"; tag; "-f"; dockerfile; context ]
-;;
-
-let contains ~needle haystack =
-  let n = String.length needle
-  and h = String.length haystack in
-  let rec go i =
-    i + n <= h && (String.equal (String.sub haystack i n) needle || go (i + 1))
-  in
-  n > 0 && go 0
-;;
-
-(* Not every docker driver can export cache. Captured from CI (docker's default
-   driver without the containerd image store):
-
-     ERROR: failed to build: Cache export is not supported for the docker driver.
-
-   A cache is an optimization, so that message must never be the reason a deploy
-   cannot happen: the build is retried once with no cache flags at all, and the
-   warning names the cause and the two ways to get the cache back. Only that
-   failure is retried -- a build that failed for its own reasons (a compile
-   error, a missing file) must be reported, not silently rebuilt. *)
-let cache_export_unsupported = function
-  | Sol_cli_process.Non_zero { stderr; _ } ->
-    contains ~needle:"Cache export is not supported" stderr
-  | Sol_cli_process.Spawn_failed _ | Sol_cli_process.Timeout _ -> false
-;;
-
-(* The decision, kept pure so the captured message can be a fixture: with a cache
-   configured and that specific failure, retry without one; otherwise report. *)
-type cache_failure =
-  | Retry_without_cache
-  | Report
-
-let cache_failure_disposition cache error =
-  match cache with
-  | Some _ when cache_export_unsupported error -> Retry_without_cache
-  | Some _ | None -> Report
-;;
-
-let build ?cache ~tag ~dockerfile ~context () =
+let build ~tag ~dockerfile ~context =
   (* --provenance=false --sbom=false: BuildKit attaches a provenance/SBOM
      attestation sub-manifest to the image index by default since Docker 23+.
      Confirmed live (DOGFOOD-011) that EKS's containerd fails to pull an
@@ -130,46 +25,21 @@ let build ?cache ~tag ~dockerfile ~context () =
      legacy builder never attaches an attestation in the first place, so omit
      the flags in that case -- `sol up` then works on a stock Docker install,
      and the EKS fix is preserved wherever BuildKit is actually in use. *)
-  let buildx = buildx_available () in
-  if not buildx
-  then
-    Printf.eprintf
-      "warning: docker buildx plugin not found; using the legacy builder (install \
-       docker-buildx for BuildKit builds).\n\
-       %!";
-  let cache =
-    match cache with
-    | Some c -> Some c
-    | None -> cache_of_env ()
+  let provenance_flags =
+    if buildx_available ()
+    then [ "--provenance=false"; "--sbom=false" ]
+    else (
+      Printf.eprintf
+        "warning: docker buildx plugin not found; using the legacy builder (install \
+         docker-buildx for BuildKit builds).\n\
+         %!";
+      [])
   in
-  (match cache, buildx with
-   | Some (Local_dir _), false ->
-     Printf.eprintf
-       "warning: %s is set but the buildx plugin is missing; building without a \
-        persistent build cache.\n\
-        %!"
-       cache_dir_env
-   | Some (Local_dir _), true | None, _ -> ());
-  let cache_present =
-    match cache with
-    | Some (Local_dir dir) -> Sys.file_exists dir
-    | None -> false
-  in
-  let run argv = run_ok (cmd argv) in
-  match run (build_argv ~buildx ~cache ~cache_present ~tag ~dockerfile ~context) with
-  | Ok () -> Ok ()
-  | Error e ->
-    (match cache_failure_disposition cache e with
-     | Report -> Error e
-     | Retry_without_cache ->
-       Printf.eprintf
-         "warning: this docker driver cannot export the configured build cache (%s); \
-          rebuilding without a cache. Use a container-driver builder (`docker buildx \
-          create --driver docker-container`) or enable docker's containerd image store \
-          to keep it.\n\
-          %!"
-         (Sol_cli_process.error_to_string e);
-       run (build_argv ~buildx ~cache:None ~cache_present:false ~tag ~dockerfile ~context))
+  run_ok
+    (cmd
+       ([ "docker"; "build" ]
+        @ provenance_flags
+        @ [ "-t"; tag; "-f"; dockerfile; context ]))
 ;;
 
 let push ~image_ref = run_ok (cmd [ "docker"; "push"; image_ref ])

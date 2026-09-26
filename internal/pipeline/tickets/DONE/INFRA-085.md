@@ -73,40 +73,50 @@ building the PR's framework is what the smoke test proves. This is why the measu
 improvement is bounded by the stable prefix, and the number from CI (not a theory) is
 recorded below.
 
-## Measured on CI (what the numbers actually say)
+## Result: measured, and **not landed**
 
-The first attempt at this **failed** the smoke test in 0.6s, which is why the
-implementation is not what the first draft described:
+Warm run (cache restored; a fifth commit pushed to get a fresh run id, which is
+what a normal PR flow does):
 
-```
-ERROR: failed to build: Cache export is not supported for the docker driver.
-Switch to a different driver, or turn on the containerd image store, and try again.
-```
+| Run | `golden-path-smoke` | `golden-path-smoke-ts` | `test` |
+|---|---|---|---|
+| baseline (`main`, before this work) | 16m26s | 11m10s | — |
+| cold (cache saved, nothing restored) | 18m15s | 12m0s | 7m44s |
+| warm (1215MB cache restored) | **17m47s** | 11m48s | 9m49s |
 
-The verification that had said "works on the docker driver" was run on this
-machine, whose docker has the containerd image store enabled; the runner's plain
-docker driver cannot export cache. Two changes followed: a container-driver
-builder in CI (`docker/setup-buildx-action`, which can export — re-verified
-locally on a `docker-container` builder), and a fallback in Sol so a cache can
-never be the reason a deploy cannot happen (an export-unsupported failure retries
-once without a cache; any other failure is reported unchanged).
+**28 seconds of "improvement" from cold to warm, against a baseline it is 81s
+slower than.** The cache does not pay for itself on these runners.
 
-Cold run of the branch (cache saved at the end, nothing restored):
+That is consistent with the layer analysis, and the analysis is why: the
+scaffolded `.opam` pins the framework to the PR's commit, so the dependency
+install (the 297s) is *supposed* to re-run — building the PR's framework is what
+the smoke proves. Only the stable prefix (base image, apt, opam index) is
+cacheable, and reaching it costs a container-driver builder plus `--load`, which
+is the same order as the pull it replaces. The measured failure mode also cost a
+cycle: this machine's docker has the containerd image store enabled, so "verified
+against the real docker driver" was verified against a *different* driver
+configuration than the runner's, which is why the first CI run failed in 0.6s.
 
-| Job | Duration |
-|---|---|
-| `golden-path-smoke` | 18m15s (baseline 16m26s) |
-| `golden-path-smoke-ts` | 12m0s |
-| `test` | 7m44s |
+So the change was reverted rather than landed: no `SOL_BUILD_CACHE_DIR`, no
+buildx step, no 1.2GB cache entry per run, nothing dead in `Sol_cli_docker`. What
+this ticket keeps is the measurement, the driver lesson, and the layer model —
+the next person who reaches for an image-build cache here starts from numbers
+instead of hope.
 
-Cache entry written: `sol-build-cache-Linux-…`, **1215 MB**, save step 7s. The
-cold run therefore cost ~+109s against the baseline (builder setup, a container
-BuildKit store, and the cache export), which is the number the warm run has to
-beat. The warm measurement follows below.
+## What the numbers say the remaining cost is
 
-## Stop rule applied to this unit
+Both golden paths are now dominated by the same two things, neither of which is
+the application image build:
 
-The PR wall clock is the *slowest* job, and `golden-path-smoke-ts` sits at ~12m.
-Once the OCaml job is at or below that, it is no longer the bottleneck and the
-cache has done its job — the remaining cost in both jobs is `sol local infra up`
-(~290s of Helm), which is a different change.
+| Phase | OCaml job | TS job |
+|---|---|---|
+| Setup (toolchain, opam pins, framework deps, `sol build`, k3d/kubectl/helm) | ~350s | ~330s |
+| `sol local infra up` (seven Helm releases, sequential, `--wait`) | ~290s | ~290s |
+| Application work | ~330s (mostly the per-PR dependency build, inherent) | ~40s |
+
+The platform bring-up is the largest *shared*, *avoidable* item: seven
+independent releases (Redpanda, PostgreSQL, Loki, Grafana, Tempo, Prometheus,
+ingress-nginx) installed one after another, each blocking on its own pods. Their
+install-time dependencies are only on the cluster and on the Helm repositories;
+Grafana's datasource ConfigMaps come after them, and the port-forwards after
+that. That is the next unit's subject, not this one's.
