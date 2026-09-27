@@ -16,9 +16,9 @@ and owns the run's sequence. This module owns the stateful, structured parts -- 
 kubeconfig, running a bounded capture, and accounting for what each read did -- and it is
 written so that a failing read is recorded rather than fatal.
 
-Every capture read is declared as an argv vector rather than a command string. The two
-jsonpath expressions contain spaces and braces, and are meant to arrive as ONE argv word;
-building the vector at a call site by string interpolation is how 15g split them.
+Every capture read is declared as an argv vector rather than a command string. The jsonpath
+expressions contain spaces and braces, and are meant to arrive as ONE argv word; building the
+vector at a call site by string interpolation is how 15g split them.
 
 `capture` exits 0 whenever the capture ran and accounted for every read. A read that
 failed on the cluster is data, not a process failure: exiting non-zero there is what ended
@@ -55,17 +55,32 @@ JSONPATH_POD_STATES = (
 JSONPATH_NODE_CAPACITY = (
     "jsonpath={range .items[*]}{.metadata.name}"
     '\tallocatable={.status.allocatable.cpu}/{.status.allocatable.memory}\t'
-    '{range .status.conditions[*]}{.type}={.status} {end}{"\\n"}{end}'
+    '{range .status.conditions[*]}{.type}={.status}({.reason}) {end}{"\\n"}{end}'
+)
+
+JSONPATH_POD_DEMAND = (
+    "jsonpath={range .items[*]}{.metadata.namespace}/{.metadata.name}"
+    '\t{.status.phase}\t{.spec.nodeName}'
+    '\trequests={.spec.containers[*].resources.requests}'
+    '\tlimits={.spec.containers[*].resources.limits}'
+    '\t{range .status.conditions[*]}{.type}={.status}({.reason}) {end}'
+    '{"\\n"}{end}'
+)
+
+JSONPATH_NODE_TAINTS = (
+    "jsonpath={range .items[*]}{.metadata.name}\t{.spec.taints}{\"\\n\"}{end}"
 )
 
 CAPTURE_READS: list[tuple[str, list[str]]] = [
     ("pods", ["get", "pods", "-A", "-o", "wide"]),
     ("pod-states", ["get", "pods", "-A", "-o", JSONPATH_POD_STATES]),
+    ("pod-demand", ["get", "pods", "-A", "-o", JSONPATH_POD_DEMAND]),
     ("events", ["get", "events", "-A", "--sort-by=.lastTimestamp"]),
     ("pvc", ["get", "pvc", "-A", "-o", "wide"]),
     ("pv", ["get", "pv", "-o", "wide"]),
     ("nodes", ["get", "nodes", "-o", "wide"]),
     ("node-capacity", ["get", "nodes", "-o", JSONPATH_NODE_CAPACITY]),
+    ("node-taints", ["get", "nodes", "-o", JSONPATH_NODE_TAINTS]),
     (
         "helm-release-secrets",
         [

@@ -252,6 +252,10 @@ case "$*" in
     printf 'platform/redpanda-0\tPending\t\tredpanda=waiting{reason=ContainerCreating} restarts=0 \n'
     printf 'monitoring/loki-0\tPending\t\tloki=waiting{reason=ContainerCreating} restarts=0 \n'
     exit 0 ;;
+  *jsonpath*resources.requests*)
+    printf 'platform/redpanda-0\tPending\t<none>\trequests=map[cpu:1 memory:2Gi]\tlimits=map[cpu:1 memory:2Gi]\tPodScheduled=False(Unschedulable) \n'
+    printf 'monitoring/loki-0\tPending\t<none>\trequests=map[cpu:1 memory:1Gi]\tlimits=map[cpu:1 memory:1Gi]\tPodScheduled=False(Unschedulable) \n'
+    exit 0 ;;
   "get events -A"*)
     printf 'platform   Warning   FailedScheduling   pod/redpanda-0  0/3 nodes are available: 3 Insufficient cpu.\n'
     exit 0 ;;
@@ -268,7 +272,10 @@ case "$*" in
     printf 'gke-sol-qual-gcp-15f-nodes-abc  Ready    <none>   12m   v1.29\n'
     exit 0 ;;
   *jsonpath*allocatable*)
-    printf 'gke-sol-qual-gcp-15f-nodes-abc\tallocatable=2/8Gi\tReady=True \n'
+    printf 'gke-sol-qual-gcp-15f-nodes-abc\tallocatable=2/8Gi\tReady=True(KubeletReady) \n'
+    exit 0 ;;
+  *jsonpath*spec.taints*)
+    printf 'gke-sol-qual-gcp-15f-nodes-abc\tmap[effect:NoSchedule key:node.kubernetes.io/not-ready]\n'
     exit 0 ;;
   *"get secrets -A -l owner=helm"*)
     printf 'NS          NAME                             TYPE\n'
@@ -776,9 +783,20 @@ lacks "the bundle is complete on the failure path" "the evidence bundle is INCOM
   "$TMP/e2e-credentials.out"
 
 lacks "no capture command was malformed" "unknown command" "$TMP/e2e-credentials.out"
-for artifact in pods pod-states events pvc pv nodes node-capacity helm-release-secrets; do
+for artifact in pods pod-states pod-demand events pvc pv nodes node-capacity node-taints \
+    helm-release-secrets; do
   present "$TMP/e2e-credentials.logs/platform-failure/$artifact.log" "the failure capture produced $artifact"
 done
+for artifact in pod-demand node-taints; do
+  has "the capture summary accounts for $artifact" "$artifact" \
+    "$TMP/e2e-credentials.logs/platform-failure/capture-summary.txt"
+done
+has "the pod demand capture keeps the requests an unschedulable pod asked for" \
+  "requests=map[cpu:1 memory:2Gi]" "$TMP/e2e-credentials.logs/platform-failure/pod-demand.log"
+has "and the scheduler's own verdict on it" "PodScheduled=False(Unschedulable)" \
+  "$TMP/e2e-credentials.logs/platform-failure/pod-demand.log"
+has "the node taint capture keeps a taint that can keep a pod off a node" "effect:NoSchedule" \
+  "$TMP/e2e-credentials.logs/platform-failure/node-taints.log"
 
 probe_case neverready 136.115.125.189 STUB_GET_CREDENTIALS_RC=1 STUB_APPLY_RC=1 \
   STUB_CLUSTER_EXISTS=1

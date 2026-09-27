@@ -124,7 +124,7 @@ def main() -> int:
     print("observer: capture")
     with tempfile.TemporaryDirectory() as scratch:
         directory = pathlib.Path(scratch)
-        argv_log = write_stub(directory, fail_reads="owner=helm")
+        write_stub(directory, fail_reads="owner=helm")
         captured = directory / "capture"
         environment = dict(os.environ, PATH=f"{directory}:{os.environ['PATH']}")
         result = subprocess.run(
@@ -133,11 +133,15 @@ def main() -> int:
             capture_output=True, text=True, env=environment,
         )
         summary = json.loads((captured / "capture-summary.json").read_text())
+        designed = [
+            "pods", "pod-states", "pod-demand", "events", "pvc", "pv",
+            "nodes", "node-capacity", "node-taints", "helm-release-secrets",
+        ]
         check("the capture exits 0 so a caller cannot truncate it", result.returncode == 0)
-        check("every read is attempted independently", summary["attempted"] == 8)
+        check("every read is attempted independently", summary["attempted"] == len(designed))
         check("a failing read is recorded as failed", summary["failed"] == 1)
-        check("and the others still succeeded", summary["succeeded"] == 7)
-        check("the summary lists all eight artifacts", len(summary["reads"]) == 8)
+        check("and the others still succeeded", summary["succeeded"] == len(designed) - 1)
+        check("the summary lists every designed artifact", len(summary["reads"]) == len(designed))
         check("the human summary is written too", (captured / "capture-summary.txt").is_file())
         check("a successful artifact keeps its content",
               "stub-pod-1" in (captured / "pods.log").read_text())
@@ -145,8 +149,10 @@ def main() -> int:
               "exited 1" in (captured / "helm-release-secrets.log").read_text())
         check("credentials are reported present for a real kubeconfig", summary["credentials"] == "yes")
         reads_by_name = {r["artifact"]: r for r in summary["reads"]}
-        check("events are attempted by name", "events" in reads_by_name)
-        check("node capacity is attempted by name", "node-capacity" in reads_by_name)
+        check("the designed read set is exactly what the summary reports",
+              sorted(reads_by_name) == sorted(designed))
+        check("pod demand is attempted by name", "pod-demand" in reads_by_name)
+        check("node taints are attempted by name", "node-taints" in reads_by_name)
         records: list[list[str]] = []
         current: list[str] = []
         for line in (directory / "kubectl-argv.bin").read_text().splitlines():
