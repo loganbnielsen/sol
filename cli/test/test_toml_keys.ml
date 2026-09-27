@@ -12,6 +12,25 @@ let load contents =
   result
 ;;
 
+(* REFAC-128: the scaffold's sol.toml files are templates under
+   platform/shared/templates/<kind>/; read them from there rather than from an
+   OCaml value. The check is the same: what `sol new` writes must load. *)
+let tpl ~kind rel =
+  match Sol_cli_platform_assets.resolve () with
+  | Error error ->
+    Alcotest.fail
+      ("no scaffold templates: " ^ Sol_cli_platform_assets.error_to_string error)
+  | Ok assets ->
+    (match
+       Sol_cli_scaffold_tree.text
+         ~root:(Sol_cli_platform_assets.templates_root assets)
+         ~kind
+         ~rel
+     with
+     | Ok text -> text
+     | Error message -> Alcotest.fail message)
+;;
+
 let rejects name contents ~names =
   Alcotest.test_case name `Quick (fun () ->
     match load contents with
@@ -112,9 +131,9 @@ let () =
     ; ( "documented and generated files still load"
       , [ accepts "every documented key" every_documented_key
         ; accepts "empty file" ""
-        ; accepts "scaffold sol.toml" Sol_cli_scaffold_templates.tpl_sol_toml
-        ; accepts "scaffold -fn sol.toml" Sol_cli_scaffold_templates.tpl_fn_sol_toml
-        ; accepts "scaffold event sol.toml" Sol_cli_scaffold_templates.tpl_event_sol_toml
+        ; accepts "scaffold sol.toml" (tpl ~kind:"svc" "sol.toml")
+        ; accepts "scaffold -fn sol.toml" (tpl ~kind:"fn" "sol.toml")
+        ; accepts "scaffold event sol.toml" (tpl ~kind:"event" "events/{{team}}/sol.toml")
         ] )
     ]
 ;;

@@ -21,6 +21,23 @@ let read_file path =
   s
 ;;
 
+(* REFAC-128: the templates are files under platform/shared/templates/<kind>/,
+   resolved as Sol assets. The expectations below are the same bytes they always
+   were; only where they are read from changed. *)
+let template_root () =
+  match Sol_cli_platform_assets.resolve () with
+  | Ok assets -> Sol_cli_platform_assets.templates_root assets
+  | Error error ->
+    Alcotest.fail
+      ("no scaffold templates: " ^ Sol_cli_platform_assets.error_to_string error)
+;;
+
+let tpl ~kind rel =
+  match Sol_cli_scaffold_tree.text ~root:(template_root ()) ~kind ~rel with
+  | Ok text -> text
+  | Error message -> Alcotest.fail message
+;;
+
 (* Run [f] inside a fresh temp directory, then restore cwd and delete the tree. *)
 let in_temp_dir f =
   let orig_cwd = Sys.getcwd () in
@@ -727,7 +744,7 @@ let test_golden_ci_workflow () =
   let expected =
     Sol_cli_scaffold.subst
       [ "name", "testapp"; "Name", "Testapp" ]
-      Sol_cli_scaffold_templates.tpl_github_ci
+      (tpl ~kind:"workspace" ".github/workflows/sol-ci.yml")
   in
   Alcotest.(check string) "sol-ci.yml golden" expected actual
 ;;
@@ -746,7 +763,7 @@ let test_golden_dockerfile () =
       ; "repo_dir", "app/payments/charge_svc"
       ; "binary", "testapp-charge-svc"
       ]
-      Sol_cli_scaffold_templates.tpl_dockerfile
+      (tpl ~kind:"workspace" "app/payments/charge_svc/Dockerfile")
   in
   Alcotest.(check string) "Dockerfile golden" expected actual
 ;;
@@ -760,7 +777,7 @@ let test_golden_svc_bin_ml () =
   let expected =
     Sol_cli_scaffold.subst
       [ "name", "testapp"; "Name", "Testapp" ]
-      Sol_cli_scaffold_templates.ws_svc_bin_ml
+      (tpl ~kind:"workspace" "app/payments/charge_svc/bin/main.ml")
   in
   Alcotest.(check string) "svc bin/main.ml golden" expected actual
 ;;
@@ -774,7 +791,7 @@ let test_golden_worker_bin_ml () =
   let expected =
     Sol_cli_scaffold.subst
       [ "name", "testapp"; "Name", "Testapp" ]
-      Sol_cli_scaffold_templates.ws_worker_bin_ml
+      (tpl ~kind:"workspace" "app/comms/notify_worker/bin/main.ml")
   in
   Alcotest.(check string) "worker bin/main.ml golden" expected actual
 ;;
@@ -789,7 +806,7 @@ let test_golden_test_dune () =
   let expected =
     Sol_cli_scaffold.subst
       [ "name", "testapp"; "Name", "Testapp" ]
-      Sol_cli_scaffold_templates.ws_test_dune
+      (tpl ~kind:"workspace" "test/dune")
   in
   Alcotest.(check string) "test/dune golden" expected actual
 ;;
@@ -822,27 +839,27 @@ let test_golden_new_svc_files () =
   check_generated_file
     "svc handler"
     "app/comms/notify_svc/lib/handler.ml"
-    Sol_cli_scaffold_templates.svc_handler_ml;
+    (tpl ~kind:"svc" "lib/handler.ml");
   check_generated_file
     "svc lib dune"
     "app/comms/notify_svc/lib/dune"
-    (Sol_cli_scaffold.subst v Sol_cli_scaffold_templates.svc_lib_dune);
+    (Sol_cli_scaffold.subst v (tpl ~kind:"svc" "lib/dune"));
   check_generated_file
     "svc bin main"
     "app/comms/notify_svc/bin/main.ml"
-    (Sol_cli_scaffold.subst v Sol_cli_scaffold_templates.svc_bin_ml);
+    (Sol_cli_scaffold.subst v (tpl ~kind:"svc" "bin/main.ml"));
   check_generated_file
     "svc bin dune"
     "app/comms/notify_svc/bin/dune"
-    (Sol_cli_scaffold.subst v Sol_cli_scaffold_templates.svc_bin_dune);
+    (Sol_cli_scaffold.subst v (tpl ~kind:"svc" "bin/dune"));
   check_generated_file
     "svc sol.toml"
     "app/comms/notify_svc/sol.toml"
-    Sol_cli_scaffold_templates.tpl_sol_toml;
+    (tpl ~kind:"svc" "sol.toml");
   check_generated_file
     "svc Dockerfile"
     "app/comms/notify_svc/Dockerfile"
-    (Sol_cli_scaffold.subst v Sol_cli_scaffold_templates.tpl_dockerfile)
+    (Sol_cli_scaffold.subst v (tpl ~kind:"svc" "Dockerfile"))
 ;;
 
 let test_golden_new_worker_files () =
@@ -853,27 +870,27 @@ let test_golden_new_worker_files () =
   check_generated_file
     "worker lib"
     "app/comms/notify_worker/lib/notify_worker.ml"
-    (Sol_cli_scaffold.subst v Sol_cli_scaffold_templates.worker_lib_ml);
+    (Sol_cli_scaffold.subst v (tpl ~kind:"worker" "lib/{{name}}_worker.ml"));
   check_generated_file
     "worker lib dune"
     "app/comms/notify_worker/lib/dune"
-    (Sol_cli_scaffold.subst v Sol_cli_scaffold_templates.worker_lib_dune);
+    (Sol_cli_scaffold.subst v (tpl ~kind:"worker" "lib/dune"));
   check_generated_file
     "worker bin main"
     "app/comms/notify_worker/bin/main.ml"
-    (Sol_cli_scaffold.subst v Sol_cli_scaffold_templates.worker_bin_ml);
+    (Sol_cli_scaffold.subst v (tpl ~kind:"worker" "bin/main.ml"));
   check_generated_file
     "worker bin dune"
     "app/comms/notify_worker/bin/dune"
-    (Sol_cli_scaffold.subst v Sol_cli_scaffold_templates.worker_bin_dune);
+    (Sol_cli_scaffold.subst v (tpl ~kind:"worker" "bin/dune"));
   check_generated_file
     "worker sol.toml"
     "app/comms/notify_worker/sol.toml"
-    Sol_cli_scaffold_templates.tpl_sol_toml;
+    (tpl ~kind:"worker" "sol.toml");
   check_generated_file
     "worker Dockerfile"
     "app/comms/notify_worker/Dockerfile"
-    (Sol_cli_scaffold.subst v Sol_cli_scaffold_templates.tpl_dockerfile)
+    (Sol_cli_scaffold.subst v (tpl ~kind:"worker" "Dockerfile"))
 ;;
 
 let test_golden_new_fn_files () =
@@ -884,27 +901,27 @@ let test_golden_new_fn_files () =
   check_generated_file
     "fn lib"
     "app/comms/notify_fn/lib/notify_fn.ml"
-    (Sol_cli_scaffold.subst v Sol_cli_scaffold_templates.fn_lib_ml);
+    (Sol_cli_scaffold.subst v (tpl ~kind:"fn" "lib/{{name}}_fn.ml"));
   check_generated_file
     "fn lib dune"
     "app/comms/notify_fn/lib/dune"
-    (Sol_cli_scaffold.subst v Sol_cli_scaffold_templates.fn_lib_dune);
+    (Sol_cli_scaffold.subst v (tpl ~kind:"fn" "lib/dune"));
   check_generated_file
     "fn bin main"
     "app/comms/notify_fn/bin/main.ml"
-    (Sol_cli_scaffold.subst v Sol_cli_scaffold_templates.fn_bin_ml);
+    (Sol_cli_scaffold.subst v (tpl ~kind:"fn" "bin/main.ml"));
   check_generated_file
     "fn bin dune"
     "app/comms/notify_fn/bin/dune"
-    (Sol_cli_scaffold.subst v Sol_cli_scaffold_templates.fn_bin_dune);
+    (Sol_cli_scaffold.subst v (tpl ~kind:"fn" "bin/dune"));
   check_generated_file
     "fn sol.toml"
     "app/comms/notify_fn/sol.toml"
-    Sol_cli_scaffold_templates.tpl_fn_sol_toml;
+    (tpl ~kind:"fn" "sol.toml");
   check_generated_file
     "fn Dockerfile"
     "app/comms/notify_fn/Dockerfile"
-    (Sol_cli_scaffold.subst v Sol_cli_scaffold_templates.tpl_dockerfile)
+    (Sol_cli_scaffold.subst v (tpl ~kind:"fn" "Dockerfile"))
 ;;
 
 (* ── entry point ─────────────────────────────────────────────────────────── *)

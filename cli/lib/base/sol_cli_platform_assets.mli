@@ -84,6 +84,10 @@ val terraform_trees : string list
 (** [platform/shared/components.json]: the platform components' Helm values. *)
 val components_json : t -> string
 
+(** [platform/shared/templates]: the scaffold template trees `sol new` copies,
+    one directory per kind ([Sol_cli_scaffold_tree.kinds]). *)
+val templates_root : t -> string
+
 (** A Grafana dashboard under [platform/shared/observability/dashboards/]. *)
 val dashboard : t -> string -> string
 

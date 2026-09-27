@@ -1,0 +1,5 @@
+(library
+ (name {{lib}})
+ (wrapped false)
+ (modules {{Mod}})
+ (libraries sol-worker kafka-eio-service yojson))

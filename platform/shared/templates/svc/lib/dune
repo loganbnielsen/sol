@@ -1,0 +1,5 @@
+(library
+ (name {{lib}})
+ (wrapped false)
+ (modules Handler)
+ (libraries sol-svc))

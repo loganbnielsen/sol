@@ -1,0 +1,6 @@
+(executable
+ (name main)
+ (libraries
+  {{name}}_comms_notify sol-worker kafka-eio-service sol-obs
+  pg-eio caqti-eio caqti-eio.unix caqti-driver-postgresql
+  eio_main))

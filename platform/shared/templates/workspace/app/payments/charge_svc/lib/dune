@@ -1,0 +1,5 @@
+(library
+ (name {{name}}_payments_charge_svc)
+ (wrapped false)
+ (modules Handler)
+ (libraries {{name}}_storage {{name}}_payments_events sol-svc sol-obs yojson))

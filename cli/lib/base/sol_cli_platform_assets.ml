@@ -188,6 +188,11 @@ let cloud_root t provider role = under t (cloud_root_rel provider role)
 let terraform_trees = [ "platform/cloud"; "platform/shared" ]
 let components_json t = under t "platform/shared/components.json"
 
+(* REFAC-128: the scaffold template trees. Sol-owned files `sol new` copies, so
+   they resolve here like every other asset (DEC-049), and a release bundle
+   carries them because it carries the tracked files under platform/. *)
+let templates_root t = under t "platform/shared/templates"
+
 let dashboard t name =
   under t (Filename.concat "platform/shared/observability/dashboards" name)
 ;;
