@@ -20,60 +20,61 @@ let state_of_dir = function
 
 let all_states = [ Backlog; Ready_for_engineering; Done ]
 
-let parse_frontmatter content =
+(* REFAC-137: frontmatter is YAML, and is read with the yaml library (as
+   REFAC-106 did for sol.yml) rather than split on the first ':' of each line. The
+   hand-split read quoted values with their quotes and left YAML escapes
+   un-decoded, so a probe written `"\\("` ran with doubled backslashes and matched
+   nothing. Values are the scalars' own text, trimmed; a blank or null value is
+   absent, so no caller asks again whether a field is empty. *)
+let frontmatter_block content =
   match String.split_on_char '\n' content with
   | "---" :: rest ->
-    let rec collect acc = function
-      | [] | "---" :: _ -> acc
-      | line :: rest ->
-        (match String.index_opt line ':' with
-         | Some i ->
-           let key = String.trim (String.sub line 0 i) in
-           let value =
-             String.trim (String.sub line (i + 1) (String.length line - i - 1))
-           in
-           collect ((key, value) :: acc) rest
-         | None -> collect acc rest)
+    let rec take acc = function
+      | [] | "---" :: _ -> List.rev acc
+      | line :: rest -> take (line :: acc) rest
     in
-    collect [] rest
-  | _ -> []
-;;
-
-let fm_get fields key =
-  match List.assoc_opt key fields with
-  | Some v when v <> "" -> Some v
+    Some (String.concat "\n" (take [] rest))
   | _ -> None
 ;;
+
+let frontmatter content =
+  let scalar_text = function
+    | `Scalar { Yaml.value; _ } -> Some (String.trim value)
+    | _ -> None
+  in
+  match frontmatter_block content with
+  | None -> Ok []
+  | Some block when String.trim block = "" -> Ok []
+  | Some block ->
+    (match Yaml.yaml_of_string block with
+     | Error (`Msg message) -> Error ("frontmatter is not valid YAML: " ^ message)
+     | Ok (`O { Yaml.m_members; _ }) ->
+       m_members
+       |> List.fold_left
+            (fun acc (key, value) ->
+               match acc, scalar_text key, value with
+               | (Error _ as e), _, _ -> e
+               | Ok fields, Some key, `Scalar { Yaml.value; style; _ } ->
+                 let value = String.trim value in
+                 (* An unquoted "~"/"null", or nothing at all, is YAML's null. *)
+                 let null = style = `Plain && List.mem value [ ""; "~"; "null" ] in
+                 if null || value = "" then Ok fields else Ok ((key, value) :: fields)
+               | Ok _, Some key, _ ->
+                 Error (Printf.sprintf "frontmatter field %s must be a single value" key)
+               | Ok _, None, _ -> Error "frontmatter keys must be plain names")
+            (Ok [])
+       |> Result.map List.rev
+     | Ok _ -> Error "frontmatter must be a mapping of fields")
+;;
+
+(* For the readers that only want a field: an invalid block reads as having none.
+   [pipeline ls] and [check] call [frontmatter] themselves and report the error. *)
+let fields content = Result.value (frontmatter content) ~default:[]
+let fm_get fields key = List.assoc_opt key fields
 
 let starts_with ~prefix s =
   let lp = String.length prefix in
   String.length s >= lp && String.sub s 0 lp = prefix
-;;
-
-(* Add or overwrite a `key: value` line inside the frontmatter block, leaving
-   the rest of the ticket body untouched. Appends the field if not already
-   present. Returns [content] unchanged if it has no frontmatter block. *)
-let set_frontmatter_field content key value =
-  match String.split_on_char '\n' content with
-  | "---" :: rest ->
-    let rec split_fm acc = function
-      | "---" :: after -> Some (List.rev acc, after)
-      | line :: after -> split_fm (line :: acc) after
-      | [] -> None
-    in
-    (match split_fm [] rest with
-     | None -> content
-     | Some (fm_lines, body) ->
-       let prefix = key ^ ":" in
-       let is_field l = starts_with ~prefix l in
-       let new_line = Printf.sprintf "%s: %s" key value in
-       let fm_lines =
-         if List.exists is_field fm_lines
-         then List.map (fun l -> if is_field l then new_line else l) fm_lines
-         else fm_lines @ [ new_line ]
-       in
-       String.concat "\n" (("---" :: fm_lines) @ ("---" :: body)))
-  | _ -> content
 ;;
 
 let contains_substring ~needle s =
@@ -314,32 +315,13 @@ type premise_verdict =
   | Premise_stale
   | Premise_unverified of string
 
-let premise_of content =
-  match fm_get (parse_frontmatter content) "premise" with
-  | None -> None
-  | Some probe ->
-    (* The convention quotes a probe containing a colon or quote character, so
-       accept both forms rather than documenting one and parsing the other. *)
-    let probe = String.trim probe in
-    let n = String.length probe in
-    let unquoted =
-      if
-        n >= 2
-        && ((probe.[0] = '"' && probe.[n - 1] = '"')
-            || (probe.[0] = '\'' && probe.[n - 1] = '\''))
-      then String.trim (String.sub probe 1 (n - 2))
-      else probe
-    in
-    if unquoted = "" then None else Some unquoted
-;;
+let premise_of content = fm_get (fields content) "premise"
 
 (* [exit_code] is passed in rather than obtained here, so the classification is
    testable without executing anything. A probe that cannot be run at all is
    "unverified" rather than "holds": failing open in the useful direction. *)
-let premise_verdict ~probe ~exit_code =
-  if String.trim probe = ""
-  then Premise_unverified "the ticket declares an empty probe"
-  else if exit_code = 0
+let premise_verdict ~exit_code =
+  if exit_code = 0
   then Premise_stale
   else if exit_code = 127
   then Premise_unverified "the probe command was not found (exit 127)"
@@ -352,9 +334,9 @@ let ticket_title content =
   (* An explicit title wins, always. Intent stated beats intent inferred, and it
      survives editing the body — every other rule here is a guess about which
      line the author meant. *)
-  match fm_get (parse_frontmatter content) "title" with
-  | Some title when String.trim title <> "" -> String.trim title
-  | _ ->
+  match fm_get (fields content) "title" with
+  | Some title -> title
+  | None ->
     let lines = String.split_on_char '\n' content in
     let after_frontmatter = function
       | "---" :: rest ->

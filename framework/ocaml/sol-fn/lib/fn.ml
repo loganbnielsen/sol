@@ -27,12 +27,6 @@ end
 (* ── Make functor ───────────────────────────────────────────────────────── *)
 
 module Make (F : FN) = struct
-  let env_nonempty name =
-    match Sys.getenv_opt name with
-    | Some v when String.trim v <> "" -> Some (String.trim v)
-    | _ -> None
-  ;;
-
   (* BUG-048: the job label is the workload's identity (rendered as
      SOL_PUSHGATEWAY_JOB), never the schedule. *)
   let default_job = function
@@ -42,7 +36,7 @@ module Make (F : FN) = struct
 
   let run ~(env : (_, _, _, _) Sol_env.timed) ?pushgateway_url ?job ?ot ?stop () =
     let job =
-      match job, env_nonempty "SOL_PUSHGATEWAY_JOB" with
+      match job, Sol_runtime.setting "SOL_PUSHGATEWAY_JOB" with
       | Some job, _ | None, Some job -> job
       | None, None -> default_job F.trigger
     in
@@ -51,7 +45,7 @@ module Make (F : FN) = struct
     let pushgateway_url =
       match pushgateway_url with
       | Some _ as url -> url
-      | None -> env_nonempty "PUSHGATEWAY_URL"
+      | None -> Sol_runtime.setting "PUSHGATEWAY_URL"
     in
     (* OBS-048: Loki/Tempo export is asynchronous; [flush_logs] sends what is
        queued. A cron job exits right after [run], and a Lambda sandbox is frozen

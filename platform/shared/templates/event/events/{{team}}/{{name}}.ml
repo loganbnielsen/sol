@@ -25,7 +25,7 @@ let required_string fields name =
   | Some _              -> Error (name ^ " must be a string")
   | None                -> Error (name ^ " is required")
 
-let ( let* ) = Result.bind
+open Result.Syntax
 
 let decode = function
   | `Assoc fields ->

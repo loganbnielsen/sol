@@ -25,8 +25,27 @@ import { makeDb } from "./db.js";
 // addresses are stated, never defaulted to localhost. In a pod nothing listens
 // there, so a missing one must fail at startup naming the variable. `sol local
 // run` and Sol-rendered manifests set them.
-function requiredEnv(name: string): string {
+// DEC-022 parity with Sol_runtime.setting (REFAC-137): a setting is trimmed,
+// and a blank one reads as unset, so " " means what unset means everywhere.
+function setting(name: string): string | undefined {
   const value = process.env[name]?.trim();
+  return value ? value : undefined;
+}
+
+// Parity with sol-svc's PORT rule (BUG-046): a value that is set but is not a
+// number is a configuration error naming it, not a silent fallback.
+function intEnv(name: string, fallback: number): number {
+  const raw = setting(name);
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n)) {
+    throw new Error(`${name}=${JSON.stringify(raw)} is not a number`);
+  }
+  return n;
+}
+
+function requiredEnv(name: string): string {
+  const value = setting(name);
   if (!value) {
     throw new Error(`${name} is not set: state the Kafka substrate addresses explicitly`);
   }
@@ -34,22 +53,13 @@ function requiredEnv(name: string): string {
 }
 
 const KAFKA_BROKERS = requiredEnv("KAFKA_BROKERS").split(",");
-const TOPIC_NAME = process.env.ORDERS_TOPIC ?? "sol-demo-ts-orders";
+const TOPIC_NAME = setting("ORDERS_TOPIC") ?? "sol-demo-ts-orders";
 const GROUP_ID = "sol-demo-ts-fulfillment-worker";
-// Same defensive fallback as order_svc/src/index.ts's intEnv — a malformed
-// value should fall back to the default, not silently become NaN and
-// crash the metrics server's .listen() at startup.
-function intEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined) return fallback;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : fallback;
-}
 
 const METRICS_PORT = intEnv("METRICS_PORT", 9090);
-const LOKI_URL = process.env.LOKI_URL;
-const TEMPO_URL = process.env.TEMPO_URL;
-const POSTGRES_URL = process.env.POSTGRES_URL;
+const LOKI_URL = setting("LOKI_URL");
+const TEMPO_URL = setting("TEMPO_URL");
+const POSTGRES_URL = setting("POSTGRES_URL");
 
 // Application *policy*, not Kafka mechanics: a DB failure is retryable, and
 // the retry budget is a product decision. How `Retry` is routed, what the
@@ -180,7 +190,7 @@ async function main() {
     handler: ({ message, traceContext, attempt }) => handleOrder(message, traceContext, attempt),
   });
 
-  const pushgatewayUrl = process.env.PUSHGATEWAY_URL;
+  const pushgatewayUrl = setting("PUSHGATEWAY_URL");
   const pushInterval = pushgatewayUrl
     ? setInterval(() => {
         new Pushgateway(pushgatewayUrl, {}, metricsRegister)

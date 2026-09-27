@@ -13,10 +13,16 @@ type t =
   ; flushers : (float -> unit) list
   }
 
-let env_nonempty name =
+(* REFAC-137: the same rule as [Sol_runtime.setting] -- trimmed, blank is unset.
+   A copy rather than a call, because sol-obs is its own package and does not
+   depend on sol-runtime. *)
+let setting name =
   match Sys.getenv_opt name with
-  | Some value when value <> "" -> Some value
-  | _ -> None
+  | None -> None
+  | Some value ->
+    (match String.trim value with
+     | "" -> None
+     | trimmed -> Some trimmed)
 ;;
 
 (* OBS-048 / FND-0051: log lines always reach stdout, Loki or not. With Loki as
@@ -34,7 +40,7 @@ let stdout_logs =
    [flush]: lines still queued when the process exits are lost unless it runs. *)
 let of_env ~sw ~net ~clock ~mono_clock ~service ?(context = []) () =
   let log_backend, loki_flush =
-    match env_nonempty "LOKI_URL" with
+    match setting "LOKI_URL" with
     | None -> Obs_eio.stdout, []
     | Some url ->
       let label_names = List.map (fun (k, _) -> Obs_loki.stream_label_exn k) context in
@@ -45,7 +51,7 @@ let of_env ~sw ~net ~clock ~mono_clock ~service ?(context = []) () =
   let prom_backend, renderer = Obs_prometheus.create () in
   let backend = Obs_eio.compose log_backend prom_backend in
   let backend, tempo_flush =
-    match env_nonempty "TEMPO_URL" with
+    match setting "TEMPO_URL" with
     | None -> backend, []
     | Some url ->
       let tempo = Obs_tempo.create ~sw ~net ~clock ~url () in

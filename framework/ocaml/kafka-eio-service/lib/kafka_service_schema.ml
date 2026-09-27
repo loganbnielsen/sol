@@ -7,7 +7,7 @@ let decode_json ~parse_error resp_body =
 ;;
 
 let decode_compatibility_response resp_body =
-  let ( let* ) = Result.bind in
+  let open Result.Syntax in
   let* json =
     decode_json
       ~parse_error:(fun body -> "json parse error in registry response: " ^ body)
@@ -22,7 +22,7 @@ let decode_compatibility_response resp_body =
 ;;
 
 let decode_registration_response resp_body =
-  let ( let* ) = Result.bind in
+  let open Result.Syntax in
   let* json =
     decode_json
       ~parse_error:(fun body -> "schema registry: json parse error in: " ^ body)
@@ -174,7 +174,7 @@ let encode_wire ~schema_id json = Confluent_wire.encode ~schema_id json
 let decode_wire bytes = Confluent_wire.decode bytes
 
 let decode_message topic raw_msg =
-  let ( let* ) = Result.bind in
+  let open Result.Syntax in
   let raw_bytes = raw_msg.Kafka.Consumer.value in
   let string_headers =
     List.filter_map
