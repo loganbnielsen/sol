@@ -174,7 +174,7 @@ let apply ~ctx (ns_yaml, workload_yaml) ~dry_run =
   let step what = Result.map_error (fun e -> what ^ Sol_cli_process.error_to_string e) in
   if dry_run
   then (
-    Printf.printf "%s\n%s\n" ns_yaml workload_yaml;
+    Sol_cli_report.app "%s\n%s" ns_yaml workload_yaml;
     Ok ())
   else
     let* () =

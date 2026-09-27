@@ -261,7 +261,7 @@ let acknowledge ~key =
 
 let supervise ~dir = function
   | [] ->
-    prerr_endline "sol __supervise: no command";
+    Sol_cli_report.err "sol __supervise: no command";
     exit 2
   | prog :: _ as argv ->
     let open_out name =
@@ -315,7 +315,7 @@ let dispatch_if_supervisor () =
   | _ :: "__supervise" :: dir :: argv ->
     (try supervise ~dir argv with
      | e ->
-       Printf.eprintf "sol __supervise: %s\n%!" (Printexc.to_string e);
+       Sol_cli_report.err "sol __supervise: %s" (Printexc.to_string e);
        exit 125)
   | _ -> ()
 ;;
@@ -421,21 +421,19 @@ let run
               | Unix.Unix_error _ -> ());
              if !forwarded = 1
              then
-               Printf.eprintf
+               Sol_cli_report.err
                  "\n\
                   interrupt: sent one SIGINT to terraform (pid %d) only; it is stopping \
                   itself safely (persisting state, releasing the lock). Waiting for it. \
                   Interrupt again to ask Terraform to cancel immediately -- Terraform \
-                  warns that this may lose data.\n\
-                  %!"
+                  warns that this may lose data."
                  pid
              else
-               Printf.eprintf
+               Sol_cli_report.err
                  "\n\
                   interrupt: sent a second SIGINT to terraform (pid %d): Terraform will \
                   cancel immediately and data loss may occur. Still waiting for it to \
-                  exit.\n\
-                  %!"
+                  exit."
                  pid;
              forward ())
        in

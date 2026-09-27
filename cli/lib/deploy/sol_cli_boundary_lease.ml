@@ -362,7 +362,7 @@ let acquire_raw ~ctx ~workspace ~holder ~run_id ~ttl ~wait_s =
                   workspace
                   (describe existing))
            else (
-             Printf.eprintf "warning: %s\n%!" reason;
+             Sol_cli_report.warn "warning: %s" reason;
              let aborted = with_abort_requested existing ~reason in
              match replace_object ~ctx aborted ~resource_version with
              | Error Conflict -> go (attempts - 1)
@@ -463,7 +463,7 @@ let release (h : held) = release_raw ~ctx:h.ctx h.lease
 let release_with_warning h =
   release h
   |> Result.iter_error (fun msg ->
-    Printf.eprintf "warning: could not release the boundary lease: %s\n%!" msg)
+    Sol_cli_report.warn "warning: could not release the boundary lease: %s" msg)
 ;;
 
 (* [f] returns a result rather than calling [exit], so [Fun.protect] releases the

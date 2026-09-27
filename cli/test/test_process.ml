@@ -17,27 +17,6 @@ let err_result = function
   | Ok _ -> Alcotest.fail "expected error but got Ok"
 ;;
 
-(* Capture stdout written by [f] into a string. *)
-let capture_stdout f =
-  let pipe_r, pipe_w = Unix.pipe () in
-  let saved = Unix.dup Unix.stdout in
-  Unix.dup2 pipe_w Unix.stdout;
-  Unix.close pipe_w;
-  (try f () with
-   | exn ->
-     Unix.dup2 saved Unix.stdout;
-     Unix.close saved;
-     Unix.close pipe_r;
-     raise exn);
-  Unix.dup2 saved Unix.stdout;
-  Unix.close saved;
-  let ic = Unix.in_channel_of_descr pipe_r in
-  let s = In_channel.input_all ic in
-  (try Unix.close pipe_r with
-   | _ -> ());
-  s
-;;
-
 (* ── tests ───────────────────────────────────────────────────────────────── *)
 
 let test_successful_run () =
@@ -95,13 +74,15 @@ let test_chdir_failed () =
 
 let test_redaction_in_echo () =
   let secret = "s3cr3t-p4ss" in
-  let output =
-    capture_stdout (fun () ->
+  (* REFAC-135: the echo is reported, not printed; assert on what was reported. *)
+  let (), reported =
+    Sol_cli_report.collect (fun () ->
       ignore
         (Sol_cli_process.run
            ~echo:true
            (Sol_cli_process.cmd ~redact:[ secret ] [ "echo"; secret ])))
   in
+  let output = reported |> List.map snd |> String.concat "\n" in
   check_bool "secret not in echo" false (Sol_cli_string.contains output ~needle:secret);
   check_bool
     "redaction marker present"

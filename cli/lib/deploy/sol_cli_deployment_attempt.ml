@@ -36,6 +36,6 @@ let record ~ctx ~target plan (t : t) outcome =
   with
   | Ok () -> true
   | Error msg ->
-    Printf.eprintf "warning: could not record deployment: %s\n%!" msg;
+    Sol_cli_report.warn "warning: could not record deployment: %s" msg;
     false
 ;;

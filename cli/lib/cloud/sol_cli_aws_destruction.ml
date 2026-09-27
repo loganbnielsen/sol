@@ -310,10 +310,9 @@ let aws_load_balancer_probe ~region ~cluster_name =
 let rec wait_for_load_balancers_gone ~region ~cluster_name attempts =
   if attempts = 0
   then
-    Printf.printf
+    Sol_cli_report.app
       "  (warning: load balancer(s) may still be deprovisioning; proceeding to cloud \
-       destroy and retaining the final absence check)\n\
-       %!"
+       destroy and retaining the final absence check)"
   else (
     match load_balancers_gone ~region ~cluster_name with
     | Some true -> ()
@@ -522,12 +521,12 @@ let prepare_destroy_result run_log infra_dir var_files vars ~cluster_name ~reten
   match rds_of_state state with
   | Error message -> failed message
   | Ok None ->
-    Printf.printf "  prepare: no RDS instance for this target, nothing to prepare.\n%!";
+    Sol_cli_report.app "  prepare: no RDS instance for this target, nothing to prepare.";
     Sol_cli_cloud_lifecycle.Nothing_to_prepare
   | Ok (Some _) ->
     let snapshot_id = unique_rds_snapshot_id cluster_name in
-    Printf.printf
-      "  prepare: disabling RDS deletion protection%s...\n%!"
+    Sol_cli_report.app
+      "  prepare: disabling RDS deletion protection%s..."
       (match retention with
        | Sol_cli_cloud_lifecycle.Retain_final_snapshot ->
          ", final snapshot " ^ snapshot_id
@@ -573,7 +572,7 @@ let prepare_destroy_result run_log infra_dir var_files vars ~cluster_name ~reten
 let verify_destroy_preparation_result infra_dir ~retention ~prepared =
   match prepared with
   | None ->
-    Printf.printf "  verify preparation: nothing was prepared.\n%!";
+    Sol_cli_report.app "  verify preparation: nothing was prepared.";
     Ok ()
   | Some snapshot_id ->
     let* state = read_cloud_state infra_dir in
@@ -622,10 +621,9 @@ let verify_destroy_preparation_result infra_dir ~retention ~prepared =
                 "cannot establish that snapshot creation is disabled: \
                  skip_final_snapshot is absent from state")
        in
-       Printf.printf
+       Sol_cli_report.app
          "  verify preparation: RDS deletion protection disabled, final snapshot %s \
-          (target destroy_retention = %s)\n\
-          %!"
+          (target destroy_retention = %s)"
          (match retention with
           | Sol_cli_cloud_lifecycle.Retain_final_snapshot -> snapshot_id ^ " confirmed"
           | Sol_cli_cloud_lifecycle.Retain_nothing ->

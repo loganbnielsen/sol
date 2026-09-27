@@ -331,6 +331,12 @@ jobs:
       - name: Manifest-values mutation test
         run: bash internal/ci/test_manifests_are_values.sh
 
+      - name: Library code does not print (REFAC-135)
+        run: bash internal/ci/check_library_output.sh
+
+      - name: Library-output mutation test
+        run: bash internal/ci/test_library_output.sh
+
       - name: let* is Result.Syntax, repository-wide (REFAC-137)
         run: bash internal/ci/check_result_syntax.sh
 

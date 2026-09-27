@@ -45,13 +45,12 @@ let supervised ~chdir c =
      let errored = Filename.concat chdir "errored.tfstate" in
      if Sys.file_exists errored
      then
-       Printf.eprintf
+       Sol_cli_report.err
          "\n\
           error: Terraform could not persist state to its backend and wrote it to %s.\n\
          \  That file is now the only record of what this run changed. Inspect it and \
           push it deliberately (terraform state push); Sol never pushes it for you, and \
-          the next constructive command is refused until it is resolved.\n\
-          %!"
+          the next constructive command is refused until it is resolved."
          errored
    | _ -> ());
   result

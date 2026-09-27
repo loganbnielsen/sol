@@ -51,7 +51,8 @@ let spawn ~index install =
       match install.run () with
       | Ok () -> 0
       | Error msg ->
-        prerr_endline msg;
+        (* The child's stderr is its log file (dup2 above). *)
+        Sol_cli_report.err "%s" msg;
         1
     in
     (try flush stdout with
@@ -96,7 +97,7 @@ let run_bounded ?(max_in_flight = max_in_flight_default) installs =
       let child = spawn ~index install in
       running := child :: !running;
       logs := child.child_log :: !logs;
-      Printf.printf "  %-14s installing...\n%!" install.label;
+      Sol_cli_report.app "  %-14s installing..." install.label;
       true
   in
   let rec pump () =
@@ -122,13 +123,13 @@ let run_bounded ?(max_in_flight = max_in_flight_default) installs =
         running := others;
         decr started;
         (match status with
-         | Unix.WEXITED 0 -> Printf.printf "  %-14s ok\n%!" child.child_label
+         | Unix.WEXITED 0 -> Sol_cli_report.app "  %-14s ok" child.child_label
          | Unix.WEXITED n ->
-           Printf.printf "  %-14s FAILED (exit %d)\n%!" child.child_label n;
+           Sol_cli_report.app "  %-14s FAILED (exit %d)" child.child_label n;
            failures
            := (child.child_label, child.child_log, child.child_index) :: !failures
          | Unix.WSIGNALED n | Unix.WSTOPPED n ->
-           Printf.printf "  %-14s FAILED (signal %d)\n%!" child.child_label n;
+           Sol_cli_report.app "  %-14s FAILED (signal %d)" child.child_label n;
            failures
            := (child.child_label, child.child_log, child.child_index) :: !failures);
         pump ())
@@ -140,8 +141,8 @@ let run_bounded ?(max_in_flight = max_in_flight_default) installs =
   |> List.iter (fun (label, log, _) ->
     let output = read_file log in
     if output <> ""
-    then Printf.eprintf "\n--- %s output ---\n%s%!" label output
-    else Printf.eprintf "\n--- %s failed with no output ---\n%!" label);
+    then Sol_cli_report.err_block (Printf.sprintf "\n--- %s output ---\n%s" label output)
+    else Sol_cli_report.err "\n--- %s failed with no output ---" label);
   (* Every log is temporary: the failing ones have just been printed, and the
      successful ones said all they had to say in their progress line. *)
   List.iter remove_quietly !logs;
