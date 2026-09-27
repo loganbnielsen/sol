@@ -87,6 +87,10 @@
   test_cloud_cli
   test_migration_job
   test_cloud_command)
+  test_local_platform
+  test_deploy_selection
+  test_migration_job
+  test_migration_gate)
  (libraries sol_cli sol_cli_test_support alcotest unix yojson str yaml logs))
 
 (executable
