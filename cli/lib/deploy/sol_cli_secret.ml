@@ -171,13 +171,16 @@ let apply_manifest ~ctx yaml =
    parse -- is an error. [set] writes what it read back into the Secret, so reading
    "could not ask" as "nothing there" would rewrite it without its other keys. *)
 let get_named_secret_json ~ctx ~name namespace =
-  match Sol_cli_kubectl.get ~ctx ~resource:"secret" ~name ~namespace ~output:"json" with
-  | Ok r ->
-    (try Ok (Some (Yojson.Safe.from_string r.Sol_cli_process.stdout)) with
+  match
+    Sol_cli_kubectl.get_if_present
+      ~ctx
+      ~args:[ "get"; "secret"; name; "-n"; namespace; "-o"; "json" ]
+  with
+  | Ok None -> Ok None
+  | Ok (Some json) ->
+    (try Ok (Some (Yojson.Safe.from_string json)) with
      | Yojson.Json_error message ->
        Error (Printf.sprintf "could not parse Secret %s/%s: %s" namespace name message))
-  | Error (Sol_cli_process.Non_zero { stderr; _ })
-    when Sol_cli_string.contains ~needle:"NotFound" stderr -> Ok None
   | Error e ->
     Error
       (Printf.sprintf
@@ -283,8 +286,7 @@ let list_live_workloads ~ctx ~kind ~namespace =
   match
     Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; kind; "-n"; namespace; "-o"; "name" ]
   with
-  | Error (Sol_cli_process.Non_zero r) when Sol_cli_kubectl.resource_type_absent r.stderr
-    -> Ok []
+  | Error e when Sol_cli_kubectl.classify e = No_resource_type -> Ok []
   | result ->
     listed_names ~what:(Printf.sprintf "%ss in namespace %s" kind namespace) result
 ;;

@@ -154,10 +154,8 @@ let kubectl_apply ~ctx tmp =
 let create_idempotent ~ctx ~file =
   match Sol_cli_kubectl.create ~ctx ~file with
   | Ok _ -> Ok ()
-  | Error (Sol_cli_process.Non_zero r) ->
-    let detail = Sol_cli_process.failure_message r in
-    if Sol_cli_string.contains ~needle:"AlreadyExists" detail then Ok () else Error detail
-  | Error err -> Error (Sol_cli_process.error_to_string err)
+  | Error e when Sol_cli_kubectl.classify e = Already_exists -> Ok ()
+  | Error e -> Error e
 ;;
 
 let create_idempotent_yaml ~ctx yaml =
@@ -175,7 +173,10 @@ let apply ~ctx (ns_yaml, workload_yaml) ~dry_run =
   else (
     (match create_idempotent_yaml ~ctx ns_yaml with
      | Ok () -> ()
-     | Error detail -> raise (Deploy_failed ("kubectl create (namespace): " ^ detail)));
+     | Error e ->
+       raise
+         (Deploy_failed
+            ("kubectl create (namespace): " ^ Sol_cli_process.error_to_string e)));
     let tmp = write_tmp workload_yaml in
     (try
        (match Sol_cli_kubectl.apply_dry_run ~ctx ~file:tmp with

@@ -516,17 +516,17 @@ let fetch_cronjob_status ~ctx ~ns ~k8s_name : cronjob_fetch_result =
     (match parse_cronjob_status r.Sol_cli_process.stdout with
      | Ok status -> Found status
      | Error why -> Unavailable why)
-  | Error (Sol_cli_process.Non_zero r) ->
-    if Sol_cli_string.contains ~needle:"NotFound" r.stderr
-    then Missing
-    else
-      Unavailable
-        (kubectl_read_failure
-           ~what:"the CronJob"
-           ~exit_code:r.exit_code
-           ~stdout:r.stdout
-           ~stderr:r.stderr)
-  | Error e -> Unavailable (Sol_cli_process.error_to_string e)
+  | Error e ->
+    (match Sol_cli_kubectl.classify e, e with
+     | Not_found, _ -> Missing
+     | _, Sol_cli_process.Non_zero r ->
+       Unavailable
+         (kubectl_read_failure
+            ~what:"the CronJob"
+            ~exit_code:r.exit_code
+            ~stdout:r.stdout
+            ~stderr:r.stderr)
+     | _, e -> Unavailable (Sol_cli_process.error_to_string e))
 ;;
 
 (* FEAT-063: diagnosis is cluster IO, so the destination-side context reaches

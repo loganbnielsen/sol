@@ -141,6 +141,15 @@ let test_error_to_string_nonzero () =
   check_bool "Sol_cli_string.contains 5" true (Sol_cli_string.contains s ~needle:"5")
 ;;
 
+(* A tool that reports its failure on stdout is not silenced. *)
+let test_error_to_string_keeps_stdout () =
+  let s =
+    Sol_cli_process.error_to_string
+      (Sol_cli_process.Non_zero { exit_code = 1; stdout = "said on stdout"; stderr = "" })
+  in
+  check_bool "stdout kept" true (Sol_cli_string.contains s ~needle:"said on stdout")
+;;
+
 (* ── suite ───────────────────────────────────────────────────────────────── *)
 
 (* REFAC-116 / REFAC-124: Ok means the command succeeded, carrying its output. *)
@@ -187,6 +196,10 @@ let () =
             test_run_is_success
         ; Alcotest.test_case "completed shares run's contract" `Quick test_completed
         ; Alcotest.test_case "failure_message" `Quick test_failure_message
+        ; Alcotest.test_case
+            "error_to_string keeps stdout"
+            `Quick
+            test_error_to_string_keeps_stdout
         ; Alcotest.test_case "captured stderr" `Quick test_captured_stderr
         ; Alcotest.test_case
             "stdout stderr separate"
