@@ -47,7 +47,7 @@ let with_workspace files f =
   Fun.protect
     ~finally:(fun () ->
       Sys.chdir cwd;
-      ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote dir))))
+      ignore (Sol_cli_fs.remove_tree dir))
     (fun () ->
        Sys.chdir dir;
        f ())
