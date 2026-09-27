@@ -16,10 +16,9 @@ resources:
   events:
     type: kafka
 
-# FEAT-104: every workload declares its language, and nothing infers it. The two
-# units this template ships, and any unit `sol new` adds, are recorded here; a
-# command that needs the language (the local dev loop) refuses a workload that
-# has not declared one rather than guessing.
+# Every workload declares what it is implemented in, and nothing infers it from
+# a package.json, a dune file or a directory name. `sol new` records this for
+# each unit it creates; the two below are the units this workspace ships with.
 services:
   charge_svc:
     language: ocaml
