@@ -1,12 +1,1 @@
-; REFAC-128: the scaffold templates are data, not part of this Dune project.
-;
-; They are laid out exactly as `sol new` generates them, which means the tree
-; contains files NAMED `dune` whose content is a template
-; (`(library (name {{lib}}) ...)`) and cannot be parsed as Dune. Dune reads
-; every `dune` file in the project, so without this stanza a `dune build` fails
-; on the templates rather than on anything real.
-;
-; `data_only_dirs` keeps them out of the build while leaving them on disk for
-; `sol new` to copy, and `(source_tree)` rules can still name them.
-
 (data_only_dirs event fn svc worker workspace)

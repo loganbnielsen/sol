@@ -1,5 +1,3 @@
-; Exercise the private auth validator source without exporting it from Auth.mli.
-
 (rule
  (target test_auth_internal.ml)
  (deps ../lib/auth_internal.ml)

@@ -138,6 +138,21 @@ sol local status  # show running pods and endpoints
 sol local migrate # apply database migrations
 ```
 
+## Container images
+
+The OCaml units use the same two-stage Dockerfile a scaffolded workspace gets: a
+glibc-pinned builder that installs this workspace's dependencies from
+`pluto.opam`, then a minimal `ubuntu:24.04` runtime. The build context is the
+workspace root -- this directory -- and the images run as uid 65534 to match the
+`securityContext` Sol renders into the manifests. To build one by hand:
+
+```bash
+docker build -f app/payments/charge_svc/Dockerfile -t pluto-charge-svc .
+```
+
+The TypeScript pair has its own story -- npm workspaces, and a runtime stage that
+ships only the unit it serves: see `app/demo_ts/README.md`.
+
 ## Project layout
 
 ```
