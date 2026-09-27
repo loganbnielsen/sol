@@ -53,7 +53,7 @@ branch → push → pull request → required checks green → review → merge
 ```
 
 `main` is protected with required status check `test`, one approving review,
-strict (branch must be up to date), and admin enforcement enabled — so the rule
+and admin enforcement enabled — so the rule
 binds maintainers and administrators too, not only contributors. Direct pushes
 to `main` are rejected by GitHub:
 
