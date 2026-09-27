@@ -41,7 +41,7 @@ identity can silently authenticate as another.
 - Any verb added to provisioner, publisher, deploy or operator to make a test
   easier.
 
-`internal/ci/check_qualification_transport.sh` asserts all of that, and
+`internal/ci/check_qualification_transport.py` asserts all of that, and
 `internal/ci/test_qualification_transport_check.sh` proves the guard can fail.
 
 ## Evidence rule

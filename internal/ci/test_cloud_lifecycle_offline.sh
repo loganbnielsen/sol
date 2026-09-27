@@ -101,7 +101,7 @@ case "$*" in
         # stub used to serve `{"project_id":{"value":...}}`, and the parser accepted exactly that,
         # so the stub and the product were wrong together: this scenario stayed green while every
         # real run stopped at the parser. The fixture is checked by
-        # internal/ci/check_terraform_output_fixture.sh, which also forbids the invented shape
+        # internal/ci/check_terraform_output_fixture.py, which also forbids the invented shape
         # from reappearing in this file.
         if [ "${OUTPUT_NO_PROJECT:-}" = 1 ]; then
           # Terraform's record shape, minus project_id: an output set that does not carry it.
