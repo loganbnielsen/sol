@@ -11,7 +11,8 @@
 - **REFAC-134:** every subprocess goes through `Sol_cli_process` (with `spawn` for background processes) and every filesystem chore through `Sol_cli_fs`; the build-context `rsync` became `copy_tree`, and `sol migrate`/`sol deploy`'s two hand-rolled port-forwards became `Sol_cli_kubectl.temporary_port_forward`. `check_single_runner.sh` holds it.
 - **REFAC-135:** library code reports through `Logs` (`Sol_cli_report`), and `main.ml` installs the terminal reporter; output is byte-identical. `check_library_output.sh` holds it.
 - **REFAC-136:** one classifier per cloud CLI (`Sol_cli_gcloud`, `Sol_cli_aws`); merging gcloud's two absence lists removed "could not fetch resource", which read a 403 as an absent cluster.
-- **Remaining:** REFAC-139 (thin `cli/bin`), now unblocked.
+- **REFAC-139:** `cli/bin` parses, calls the library and renders. The migration Job, the migration gate, deploy selection and apply, the cloud lifecycle wiring (with INFRA-076/INFRA-042 as tested rules), and the local cluster/releases/endpoints moved into `cli/lib`, and each moved decision has a unit test. `cmd_cloud_tf` 1,839→593, `cmd_deploy` 1,180→688, `cmd_migrate` 1,022→416, `cmd_local` 1,042→519. The publisher/deployer guard now covers the library; a pre-existing crossing (checkout-mode `sol deploy` builds the migration runner) is filed as SEC-011. `.gitattributes` no longer union-merges dune files.
+- **Remaining:** none of REFAC-131..139. Open from it: SEC-011 (BACKLOG, needs a decision on ADR 0002's deployer row).
 
 ## Latest: INFRA-093 + INFRA-092 — GKE Standard is the supported GCP substrate (2026-09-26)
 
