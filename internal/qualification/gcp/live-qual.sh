@@ -868,6 +868,18 @@ bundle_manifest() {
     printf 'platform failure evidence: platform-failure/ (%s files)\n' \
       "$(ls "$LOG_DIR/platform-failure" 2>/dev/null | wc -l)"
   fi
+  if [ -s "$LOG_DIR/kubeconfig-waiter.tsv" ]; then
+    printf 'run kubeconfig waiter: kubeconfig-waiter.tsv (%s polls; every transition and exit)\n' \
+      "$(($(wc -l <"$LOG_DIR/kubeconfig-waiter.tsv") - 1))"
+  fi
+  if [ -s "$RUN_KUBECONFIG" ]; then
+    printf 'run credentials: run-kubeconfig.yaml\n'
+  else
+    printf 'run credentials: NOT ESTABLISHED\n'
+  fi
+  if [ -s "$LOG_DIR/platform-failure/capture-summary.txt" ]; then
+    printf 'platform failure capture: platform-failure/capture-summary.txt\n'
+  fi
   if [ -s "$LOG_DIR/api-readiness.tsv" ]; then
     printf 'api readiness: api-readiness.tsv (%s samples across the platform apply)\n' \
       "$(($(wc -l <"$LOG_DIR/api-readiness.tsv") - 1))"
@@ -944,12 +956,19 @@ verify_bundle() {
   return "$missing"
 }
 
+# Freezing captures and indexes. Judging completeness is deliberately NOT here: verification must
+# happen once, after every capture has had its chance, or it reports the bundle incomplete for
+# captures that simply had not run yet -- which is what the reordered failure path exposed.
 freeze_evidence() {
   say "freezing the evidence bundle (before any teardown)"
   BUNDLE_ATTEMPTED=1
   capture_terraform_state
   capture_sol_runs "$(sol_data_dir)"
   bundle_manifest
+}
+
+# The single verdict, at the point where nothing else will be captured.
+finalise_bundle() {
   verify_bundle || true
 }
 
@@ -1072,10 +1091,16 @@ phase_cloud() {
     # deploy is not a platform install, so a failure there would say nothing about
     # FND-0010).
     say "cloud apply failed -- capturing the discriminator before any teardown"
-    capture_platform_failure_evidence
-    capture_fnd0010
+    # Order matters, and Attempt 15f is why. The provider inventory and the Terraform state are the
+    # evidence teardown destroys; the Kubernetes reads are bounded but slower. Capturing the heavy
+    # reads first means a slow or hanging read can strand the captures that cannot be repeated --
+    # which is exactly what happened: the run's manifest was produced after teardown, with the state
+    # already gone, and the bundle was incomplete.
     capture_pre_teardown_inventory
     freeze_evidence
+    capture_platform_failure_evidence
+    capture_fnd0010
+    finalise_bundle
     return 1
   fi
 
@@ -1089,6 +1114,7 @@ phase_cloud() {
     say "could not read the zone's nameservers — the delegation half cannot proceed"
     capture_pre_teardown_inventory
     freeze_evidence
+    finalise_bundle
     return 1
   fi
   say "authoritative nameservers for $BASE_DOMAIN (paste these at Squarespace as NS records named 'qual-gcp'):"
@@ -1099,6 +1125,7 @@ phase_cloud() {
   # evidence, and `destroy` freezes it again (idempotently) before it tears anything down.
   capture_pre_teardown_inventory
   freeze_evidence
+  finalise_bundle
 
   # Wait — bounded — for the delegation to become visible. The zone is already delegated
   # (DEC-042), so this resolves on the first iteration in practice; it stays bounded because
@@ -1139,7 +1166,9 @@ cluster_describable() {
 
 kube_capture() { # kube_capture <name> <command...>
   local name="$1"; shift
-  "$@" >"$LOG_DIR/$name.log" 2>&1 || true
+  # Bounded for the same reason as the failure capture: against an unreachable API an unbounded read
+  # waits rather than failing, and waiting is what strands a run.
+  timeout "${KUBE_CAPTURE_TIMEOUT_S:-30}" "$@" >"$LOG_DIR/$name.log" 2>&1 || true
   say "  captured $name.log ($(wc -l <"$LOG_DIR/$name.log" | tr -d ' ') lines)"
 }
 
@@ -1172,7 +1201,7 @@ api_probe_sample() {
   configured="${configured#http://}"
   configured="${configured%%/*}"
   configured="${configured%%:*}"
-  if detail="$(kubectl get --raw /readyz --request-timeout=5s 2>&1)"; then
+  if detail="$(timeout "${KUBE_CAPTURE_TIMEOUT_S:-30}" kubectl get --raw /readyz --request-timeout=5s 2>&1)"; then
     verdict=REACHABLE
   else
     verdict=UNREACHABLE
@@ -1257,25 +1286,58 @@ PY
 # not at the first failure, which is where Attempt 15e needed them and did not have them. The
 # waiter is a child of this run and exits when it has done its job or when the run is gone.
 cluster_kubeconfig_waiter() {
-  local parent=$$ status
+  local parent=$$ status polls=0
+  local journal="$LOG_DIR/kubeconfig-waiter.tsv"
+  local deadline
+  deadline=$(( $(date +%s) + ${CLUSTER_WAIT_TIMEOUT_S:-1800} ))
+  printf 'timestamp\tpoll\tcluster_status\taction\toutcome\n' >"$journal" 2>/dev/null || true
+  note() {
+    printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$polls" "$1" "$2" "$3" \
+      >>"$journal" 2>/dev/null || true
+  }
   while :; do
+    polls=$((polls + 1))
+    # Every way this exits is recorded, including the ways that are not success. An observer that
+    # stops without saying so is indistinguishable from one that is still watching, which is the
+    # failure this whole lifecycle exists to make impossible.
     if ! kill -0 "$parent" 2>/dev/null; then
+      note "-" "parent-gone" "the run ended before credentials existed"
+      exit 0
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      note "-" "timeout" "no credentials after ${CLUSTER_WAIT_TIMEOUT_S:-1800}s"
+      say "run kubeconfig waiter: TIMEOUT after ${CLUSTER_WAIT_TIMEOUT_S:-1800}s ($journal)"
       exit 0
     fi
     if kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
+      note "-" "established" "credentials for $CLUSTER exist"
       say "run kubeconfig: ready ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
       exit 0
     fi
+    # The transitional states are expected, not errors: before the cluster exists the read fails,
+    # while it provisions it answers PROVISIONING, and RUNNING arrives later still. This read is
+    # guarded because an unguarded one under `set -e` killed this waiter on its *first* poll and,
+    # being a child, it died silently -- the observer equivalent of "I cannot tell" being read as
+    # "there was nothing there".
     status="$(gcloud container clusters describe "$CLUSTER" --region "$REGION" --project "$PROJECT" \
-      --format='value(status)' 2>/dev/null | tr -d '\r')"
-    if [ "$status" = "RUNNING" ]; then
-      kubeconfig_for_cluster
-      if kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
-        say "run kubeconfig: established while the cluster became RUNNING ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
-        exit 0
-      fi
-      say "run kubeconfig: generation did not produce this run's cluster yet — will retry"
-    fi
+      --format='value(status)' 2>/dev/null | tr -d '\r' || true)"
+    case "$status" in
+      RUNNING)
+        kubeconfig_for_cluster || true
+        if kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
+          note "$status" "credentials-established" "context pinned to $CLUSTER"
+          say "run kubeconfig: established while the cluster became RUNNING ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+          exit 0
+        fi
+        note "$status" "generation-incomplete" "will retry"
+        ;;
+      "")
+        note "unreadable" "poll-failed" "no status yet: cluster absent, or the read failed"
+        ;;
+      *)
+        note "$status" "waiting" "cluster not RUNNING yet"
+        ;;
+    esac
     sleep "${CLUSTER_KUBECONFIG_POLL_S:-10}"
   done
 }
@@ -1290,6 +1352,16 @@ stop_cluster_kubeconfig_waiter() {
   if [ -n "${KUBECONFIG_WAITER_PID:-}" ] && kill -0 "$KUBECONFIG_WAITER_PID" 2>/dev/null; then
     kill -TERM "$KUBECONFIG_WAITER_PID" 2>/dev/null || true
     wait "$KUBECONFIG_WAITER_PID" 2>/dev/null || true
+    # The parent writes this because a TERM takes the child before it can write its own last line --
+    # otherwise "the observer was still running when the run ended" would be invisible, and an
+    # observer that stopped without saying so is indistinguishable from one that never started.
+    if [ -s "$RUN_KUBECONFIG" ] && kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
+      printf '%s\t-\t-\tstopped-by-run\tcredentials existed; the run ended\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$LOG_DIR/kubeconfig-waiter.tsv" 2>/dev/null || true
+    else
+      printf '%s\t-\t-\tSTOPPED-WITHOUT-CREDENTIALS\tthe run ended before credentials existed\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$LOG_DIR/kubeconfig-waiter.tsv" 2>/dev/null || true
+    fi
   fi
   KUBECONFIG_WAITER_PID=""
 }
@@ -1302,7 +1374,9 @@ kube_capture_evidence() { # <dir> <name> <kubectl args...>
   local dir="$1" name="$2"
   shift 2
   local out="$dir/$name.log" rc
-  kubectl "$@" >"$out" 2>&1
+  # Bounded on purpose. An unbounded read against a cluster whose API is unreachable does not fail,
+  # it waits -- and a capture that waits is a capture that strands the run behind it.
+  timeout "${KUBE_CAPTURE_TIMEOUT_S:-30}" kubectl "$@" >"$out" 2>&1
   rc=$?
   if [ "$rc" -eq 0 ]; then
     say "  $name: $(wc -l <"$out") lines"
@@ -1319,7 +1393,25 @@ capture_platform_failure_evidence() {
     say "  platform-failure evidence: DISABLED (cannot create $dir) — the run continues unobserved"
     return 0
   fi
-  say "capturing read-only Kubernetes evidence for the platform-apply failure"
+  # This runs before the other capture paths, so it cannot assume any of them established
+  # credentials: Attempt 15f's capture produced a single file for exactly that reason. Establish
+  # them here, and if they cannot be established, say so *in the evidence* -- a read that fell back
+  # to a default context proves nothing about this cluster and must not look like one that did.
+  if ! kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
+    kubeconfig_for_cluster || true
+  fi
+  local credentials=yes
+  if ! kubeconfig_has_cluster "$RUN_KUBECONFIG" "$CLUSTER"; then
+    credentials=no
+    {
+      printf 'Qualification capture could not establish credentials for cluster %s.\n' "$CLUSTER"
+      printf 'Every Kubernetes read below ran without a context for this run and proves nothing about\n'
+      printf 'this cluster; they are recorded because a capture failure must be visible, not because\n'
+      printf 'their content is evidence.\n'
+    } >"$dir/NO-KUBECONFIG.txt"
+    say "  platform-failure evidence: NO CREDENTIALS for $CLUSTER — recorded in NO-KUBECONFIG.txt"
+  fi
+  say "capturing read-only Kubernetes evidence for the platform-apply failure (credentials: $credentials)"
   kube_capture_evidence "$dir" pods get pods -A -o wide
   kube_capture_evidence "$dir" pod-states get pods -A -o jsonpath={range .items[*]}{.metadata.namespace}/{.metadata.name}\t{.status.phase}\t{.spec.nodeName}\t{range .status.containerStatuses[*]}{.name}={.state}{.lastState} restarts={.restartCount} {end}{\"\n\"}{end}
   kube_capture_evidence "$dir" events get events -A --sort-by=.lastTimestamp
@@ -1328,7 +1420,18 @@ capture_platform_failure_evidence() {
   kube_capture_evidence "$dir" nodes get nodes -o wide
   kube_capture_evidence "$dir" node-capacity get nodes -o jsonpath={range .items[*]}{.metadata.name}\tallocatable={.status.allocatable.cpu}/{.status.allocatable.memory}\t{range .status.conditions[*]}{.type}={.status} {end}{\"\n\"}{end}
   kube_capture_evidence "$dir" helm-release-secrets get secrets -A -l owner=helm -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,TYPE:.type
-  say "  platform-failure evidence: $dir"
+  # What was captured, in one place: empty and missing are different facts, and neither is silence.
+  {
+    printf 'credentials for %s: %s\n' "$CLUSTER" "$credentials"
+    for artifact in pods pod-states events pvc pv nodes node-capacity helm-release-secrets; do
+      if [ -s "$dir/$artifact.log" ]; then
+        printf '%-22s %s lines\n' "$artifact" "$(wc -l <"$dir/$artifact.log")"
+      else
+        printf '%-22s MISSING OR EMPTY\n' "$artifact"
+      fi
+    done
+  } >"$dir/capture-summary.txt"
+  say "  platform-failure evidence: $dir ($(ls "$dir" 2>/dev/null | wc -l) files, summary in capture-summary.txt)"
 }
 
 kubeconfig_for_cluster() {
@@ -1551,6 +1654,7 @@ phase_destroy() {
   # again keeps the pre-teardown inventory as close to the teardown as it can be.
   capture_pre_teardown_inventory
   freeze_evidence
+  finalise_bundle
   destroy
 }
 

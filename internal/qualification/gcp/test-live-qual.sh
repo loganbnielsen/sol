@@ -182,8 +182,6 @@ case "$*" in
       "${STUB_SSD_LIMIT:-500}" "${STUB_SSD_USAGE:-100}"
     exit 0 ;;
   # The endpoint the probe compares against the kubeconfig's; a case can make them diverge.
-  *"value(status)"*) printf "%s\n" "${STUB_CLUSTER_STATUS:-RUNNING}"; exit 0 ;;
-  *"value(endpoint)"*) printf "%s\n" "${STUB_ENDPOINT_REPORTED:-136.115.125.189}"; exit 0 ;;
   *"dns managed-zones describe"*) printf "qual-gcp-sol-fab-dev\n"; exit 0 ;;
   *"dns managed-zones"*)        printf "qual-gcp-sol-fab-dev\n"; exit 0 ;;
   # Real gcloud warns on stderr when a filtered list is empty; its stdout stays empty. The
@@ -249,11 +247,31 @@ esac
 # discriminator probes have something to read) without claiming the target still exists.
 if [ "${STUB_CLUSTER_EXISTS:-0}" = "1" ]; then
   case "$*" in
+  *"value(status)"*)
+    # The cluster is absent for the first N polls. This is the real transition -- Attempt 15f's waiter
+    # died on exactly this read, under `set -e`, and said nothing.
+    if [ -n "${STUB_STATUS_FAILS_N:-}" ]; then
+      cnt_file="$TMP/status-polls"
+      n="$(cat "$cnt_file" 2>/dev/null || echo 0)"
+      n=$((n + 1))
+      echo "$n" >"$cnt_file"
+      if [ "$n" -le "$STUB_STATUS_FAILS_N" ]; then
+        printf 'ERROR: (gcloud.container.clusters.describe) NOT_FOUND: Resource not found\n' >&2
+        exit 1
+      fi
+    fi
+    printf "%s\n" "${STUB_CLUSTER_STATUS:-RUNNING}"
+    exit 0 ;;
+  *"value(endpoint)"*) printf "%s\n" "${STUB_ENDPOINT_REPORTED:-136.115.125.189}"; exit 0 ;;
     *"container clusters describe"*) printf "test-cluster\n"; exit 0 ;;
     # get-credentials generates an entry; it does NOT necessarily switch the current context, which
     # is what Attempt 15d measured. The generated file therefore looks like the one that misled it:
     # a *deleted* cluster's context first and still current, this run's cluster second.
     *"container clusters get-credentials"*)
+      if [ -n "${STUB_GET_CREDENTIALS_RC:-}" ]; then
+        printf 'ERROR: (gcloud.container.clusters.get-credentials) ResponseError: code=403, message=credential generation refused\n' >&2
+        exit "$STUB_GET_CREDENTIALS_RC"
+      fi
       kc="${KUBECONFIG:-$HOME/.kube/config}"
       {
         printf 'apiVersion: v1\nkind: Config\n'
@@ -309,6 +327,16 @@ case "${1:-}" in
     exit 1
     ;;
 esac
+# Every read can be made to fail, the way a real API read fails: the capture must then record a
+# capture failure rather than an artifact that merely looks empty.
+if [ -n "${STUB_KUBE_READ_RC:-}" ]; then
+  case " $* " in
+    *" get "*)
+      printf 'Error from server (Timeout): the server was unable to return a response in the time allotted\n' >&2
+      exit "$STUB_KUBE_READ_RC"
+      ;;
+  esac
+fi
 kubectl_log_to="$ARGV_LOG"
 case " $* " in *"get --raw /readyz"*) kubectl_log_to="${API_PROBE_LOG:-$ARGV_LOG}" ;; esac
 printf 'kubectl %s [kubeconfig=%s]\n' "$*" "${KUBECONFIG:-none}" >>"$kubectl_log_to"
@@ -433,6 +461,7 @@ run_case() { # run_case <name> <subcommand> [VAR=VALUE ...]
   local name="$1" sub="$2"
   shift 2
   export ARGV_LOG="$TMP/$name.argv"
+  export TMP
   export API_PROBE_LOG="$TMP/$name.probe.argv"
   CURRENT_CASE="$name"
   export LOG_DIR="$TMP/$name.logs"
@@ -849,8 +878,15 @@ amb="$TMP/ambient-kubeconfig.yaml"
   printf 'users:\n- name: u\n  user:\n    token: x\n'
 } >"$amb"
 
-run_case "e2e-credentials" cloud KUBECONFIG="$amb" API_PROBE_INTERVAL_S=1 STUB_SOL_SLEEP=4 \
-  STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1
+run_case "e2e-credentials" cloud KUBECONFIG="$amb" API_PROBE_INTERVAL_S=1 STUB_SOL_SLEEP=6 \
+  CLUSTER_KUBECONFIG_POLL_S=1 STUB_STATUS_FAILS_N=3 STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1
+
+# The transitional state must not kill the observer, and the observer must record that it happened.
+has "the waiter recorded a poll that found no cluster" "poll-failed" \
+  "$TMP/e2e-credentials.logs/kubeconfig-waiter.tsv"
+has "and then an establishment on the RUNNING path" "credentials-established" \
+  "$TMP/e2e-credentials.logs/kubeconfig-waiter.tsv"
+lacks "the waiter did not exit on the absent cluster" "parent-gone" "$TMP/e2e-credentials.logs/kubeconfig-waiter.tsv"
 
 # 1. credentials are established before the observation window, not by the failure
 est="$(grep -n 'run kubeconfig: established' "$TMP/e2e-credentials.out" | head -1 | cut -d: -f1)"
@@ -886,11 +922,46 @@ else
     "$(grep -m1 kubectl "$TMP/e2e-credentials.argv" 2>/dev/null | cut -c1-90)"
 fi
 
+# 4a. the bundle-critical captures precede the heavy Kubernetes reads, and the teardown
+freeze_line="$(grep -n 'freezing the evidence bundle' "$TMP/e2e-credentials.out" | head -1 | cut -d: -f1)"
+kube_line="$(grep -n 'capturing read-only Kubernetes evidence' "$TMP/e2e-credentials.out" | head -1 | cut -d: -f1)"
+teardown_line="$(grep -n 'teardown: sol cloud destroy' "$TMP/e2e-credentials.out" | head -1 | cut -d: -f1)"
+if [ -n "$freeze_line" ] && [ -n "$kube_line" ] && [ "$freeze_line" -lt "$kube_line" ]; then
+  ok "the bundle is frozen before the heavy Kubernetes reads (line $freeze_line < $kube_line)"
+else
+  no "the bundle is frozen before the heavy Kubernetes reads" "freeze before the kube capture" \
+    "freeze at ${freeze_line:-never}, kube capture at ${kube_line:-never}"
+fi
+if [ -n "$teardown_line" ] && [ -n "$freeze_line" ] && [ "$freeze_line" -lt "$teardown_line" ]; then
+  ok "and before the teardown (line $freeze_line < $teardown_line)"
+else
+  no "and before the teardown" "freeze before teardown" \
+    "freeze at ${freeze_line:-never}, teardown at ${teardown_line:-never}"
+fi
+lacks "the bundle is complete on the failure path" "the evidence bundle is INCOMPLETE" \
+  "$TMP/e2e-credentials.out"
+
 # 4. the capture ran, and produced evidence rather than a silent failure
 lacks "no capture command was malformed" "unknown command" "$TMP/e2e-credentials.out"
 for artifact in pods pod-states events pvc pv nodes node-capacity helm-release-secrets; do
   present "$TMP/e2e-credentials.logs/platform-failure/$artifact.log" "the failure capture produced $artifact"
 done
+
+probe_case neverready 136.115.125.189 STUB_GET_CREDENTIALS_RC=1 STUB_APPLY_RC=1 \
+  STUB_CLUSTER_EXISTS=1
+has "a capture that could not get credentials says so" "could not establish credentials" \
+  "$TMP/probe-neverready.logs/platform-failure/NO-KUBECONFIG.txt"
+has "and the summary records the credential state" "credentials for test-cluster: no" \
+  "$TMP/probe-neverready.logs/platform-failure/capture-summary.txt"
+has "the summary lists every artifact it attempted" "helm-release-secrets" \
+  "$TMP/probe-neverready.logs/platform-failure/capture-summary.txt"
+
+probe_case readfails 136.115.125.189 STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_READ_RC=1
+# A read that failed is recorded with the failure itself, not left as a file that merely looks empty.
+has "a failed capture read records the failure in the artifact" "Error from server" \
+  "$TMP/probe-readfails.logs/platform-failure/pods.log"
+# The summary's presence is asserted in the neverready and e2e cases; here the point is that the
+# failure itself is in the artifact.
 
 printf '\nscenario: a stop before the platform is a complete bundle\n'
 run_case bundle-pre-platform cloud STUB_APPLY_RC=1 STUB_APPLY_FAILS_AT=bootstrap
