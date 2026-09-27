@@ -43,22 +43,11 @@ let with_temp_json json (f : string -> 'a) : 'a =
      Moving it outside that lease would reintroduce a lost-update window. *)
 
 let metadata_string json key =
-  match json with
-  | `Assoc fields ->
-    (match List.assoc_opt "metadata" fields with
-     | Some (`Assoc meta) ->
-       (match List.assoc_opt key meta with
-        | Some (`String value) -> Some value
-        | _ -> None)
-     | _ -> None)
-  | _ -> None
+  Sol_cli_json.field [ "metadata"; key ] json |> Sol_cli_json.string
 ;;
 
-let data_of_json json =
-  match json with
-  | `Assoc fields -> List.assoc_opt "data" fields
-  | _ -> None
-;;
+(* [`Null] when the object carries no [data]; compared, never trusted. *)
+let data_of_json json = Sol_cli_json.field [ "data" ] json
 
 (* The live object's [data] and [resourceVersion], or [None] when it does not
    exist. A read that fails for any *other* reason is an error: a permission
@@ -71,12 +60,11 @@ let fetch_live ~ctx ~name ~namespace =
   with
   | Ok None -> Ok None
   | Ok (Some body) ->
-    (try
-       let json = Yojson.Safe.from_string body in
-       Ok (Some (data_of_json json, metadata_string json "resourceVersion"))
-     with
-     | _ ->
-       Error (Printf.sprintf "could not parse the live ConfigMap %s/%s" namespace name))
+    Sol_cli_json.decode
+      ~what:(Printf.sprintf "the live ConfigMap %s/%s" namespace name)
+      body
+    |> Result.map (fun json ->
+      Some (data_of_json json, metadata_string json "resourceVersion"))
   | Error e ->
     Error
       (Printf.sprintf
@@ -87,22 +75,16 @@ let fetch_live ~ctx ~name ~namespace =
 
 let with_resource_version json (resource_version : string option) =
   match resource_version, json with
-  | None, _ | _, `Assoc _ ->
-    (match json with
-     | `Assoc fields ->
-       let meta =
-         match List.assoc_opt "metadata" fields with
-         | Some (`Assoc meta) -> meta
-         | _ -> []
-       in
-       let meta =
-         match resource_version with
-         | None -> meta
-         | Some rv ->
-           ("resourceVersion", `String rv) :: List.remove_assoc "resourceVersion" meta
-       in
-       `Assoc (("metadata", `Assoc meta) :: List.remove_assoc "metadata" fields)
-     | other -> other)
+  | Some rv, `Assoc fields ->
+    let meta =
+      Sol_cli_json.field [ "metadata" ] json
+      |> Sol_cli_json.assoc
+      |> Option.value ~default:[]
+    in
+    let meta =
+      ("resourceVersion", `String rv) :: List.remove_assoc "resourceVersion" meta
+    in
+    `Assoc (("metadata", `Assoc meta) :: List.remove_assoc "metadata" fields)
   | _ -> json
 ;;
 
@@ -139,22 +121,14 @@ let write_json ~ctx json =
      | Ok None -> write_one ~ctx ~verb:`Create ~name json)
 ;;
 
-let parse_configmap json =
-  try Ok (Yojson.Safe.from_string json) with
-  | _ -> Error "release ConfigMap is not valid JSON"
-;;
+let parse_configmap json = Sol_cli_json.decode ~what:"release ConfigMap" json
 
 let record ~ctx (t : Sol_cli_release.t) : (unit, string) result =
-  match parse_configmap (Sol_cli_release.to_configmap_json t) with
-  | Error e -> Error e
-  | Ok json ->
-    (match write_json ~ctx json with
-     | Error e -> Error e
-     | Ok () ->
-       parse_configmap (Sol_cli_release.to_current_configmap_json t)
-       |> (function
-        | Error e -> Error e
-        | Ok json -> write_json ~ctx json))
+  let open Result.Syntax in
+  let* record = parse_configmap (Sol_cli_release.to_configmap_json t) in
+  let* () = write_json ~ctx record in
+  let* current = parse_configmap (Sol_cli_release.to_current_configmap_json t) in
+  write_json ~ctx current
 ;;
 
 (* FEAT-069: the record is content-addressed, so it is built from the plan's
@@ -189,11 +163,8 @@ let list_with_creation ~ctx ~(workspace : string)
     Error (Printf.sprintf "kubectl get configmap failed: %s" (String.trim detail))
   | Error e -> Error (Sol_cli_process.error_to_string e)
   | Ok r ->
-    (try
-       Sol_cli_release.parse_kubectl_list_with_creation (Yojson.Safe.from_string r.stdout)
-     with
-     | Yojson.Json_error msg ->
-       Error (Printf.sprintf "could not parse kubectl output: %s" msg))
+    Sol_cli_json.decode ~what:"kubectl output" r.stdout
+    |> Fun.flip Result.bind Sol_cli_release.parse_kubectl_list_with_creation
 ;;
 
 let list ~ctx ~(workspace : string) : (Sol_cli_release.t list, string) result =
@@ -220,12 +191,7 @@ let get ~ctx ~(workspace : string) ~(release_id : string)
             "kubectl get configmap failed: %s"
             (Sol_cli_process.error_to_string e))
      | Ok (Some body) ->
-       (match
-          match Yojson.Safe.from_string body with
-          | json -> Ok json
-          | exception Yojson.Json_error msg ->
-            Error (Printf.sprintf "could not parse kubectl output: %s" msg)
-        with
+       (match Sol_cli_json.decode ~what:"kubectl output" body with
         | Error e -> Error e
         | Ok json ->
           (match Sol_cli_release.of_kubectl_item json with

@@ -2,8 +2,6 @@
    pattern this CLI already uses for kubectl/docker/helm/terraform — rather
    than pulling in an HTTP library for one blocking GET. *)
 
-module U = Yojson.Safe.Util
-
 type credentials =
   { username : string
   ; password : string
@@ -64,36 +62,31 @@ let split_body_and_status (raw : string) : string * int option =
     body, int_of_string_opt (String.trim code_str)
 ;;
 
+(* REFAC-132: a response without the structure a query result has is an error,
+   not "no log lines": before, a missing [data.result] read as no streams and a
+   malformed stream or value pair was dropped, so `sol logs` said nothing was
+   logged when it could not read what was. *)
 let parse_query_range_body (body : string) : (line list, string) result =
-  try
-    let json = Yojson.Safe.from_string body in
-    match U.member "status" json |> U.to_string_option with
-    | Some "success" ->
-      let streams =
-        try U.member "data" json |> U.member "result" |> U.to_list with
-        | _ -> []
-      in
-      let lines =
-        streams
-        |> List.concat_map (fun stream ->
-          try
-            U.member "values" stream
-            |> U.to_list
-            |> List.filter_map (fun v ->
-              match v with
-              | `List [ `String ts_ns; `String text ] -> Some { ts_ns; text }
-              | _ -> None)
-          with
-          | _ -> [])
-      in
-      Ok (List.sort (fun a b -> compare a.ts_ns b.ts_ns) lines)
-    | Some other -> Error (Printf.sprintf "Loki returned status %S" other)
-    | None -> Error "Loki response had no status field"
-  with
-  | Yojson.Json_error msg ->
-    Error (Printf.sprintf "could not parse Loki response: %s" msg)
-  | exn ->
-    Error (Printf.sprintf "could not parse Loki response: %s" (Printexc.to_string exn))
+  let open Result.Syntax in
+  let what = "Loki response" in
+  let line = function
+    | `List [ `String ts_ns; `String text ] -> Ok { ts_ns; text }
+    | _ -> Error (what ^ ": a value is not a [timestamp, line] pair")
+  in
+  let stream_lines stream =
+    let* values = Sol_cli_json.require ~what [ "values" ] Sol_cli_json.list stream in
+    Sol_cli_result.map_list line values
+  in
+  let* json = Sol_cli_json.decode ~what body in
+  match Sol_cli_json.field [ "status" ] json |> Sol_cli_json.string with
+  | Some "success" ->
+    let* streams =
+      Sol_cli_json.require ~what [ "data"; "result" ] Sol_cli_json.list json
+    in
+    let* lines = Sol_cli_result.map_list stream_lines streams in
+    Ok (List.concat lines |> List.sort (fun a b -> compare a.ts_ns b.ts_ns))
+  | Some other -> Error (Printf.sprintf "Loki returned status %S" other)
+  | None -> Error "Loki response had no status field"
 ;;
 
 type fetch_error =

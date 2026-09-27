@@ -161,9 +161,8 @@ let get_named_secret_json ~ctx ~name namespace =
   with
   | Ok None -> Ok None
   | Ok (Some json) ->
-    (try Ok (Some (Yojson.Safe.from_string json)) with
-     | Yojson.Json_error message ->
-       Error (Printf.sprintf "could not parse Secret %s/%s: %s" namespace name message))
+    Sol_cli_json.decode ~what:(Printf.sprintf "Secret %s/%s" namespace name) json
+    |> Result.map Option.some
   | Error e ->
     Error
       (Printf.sprintf

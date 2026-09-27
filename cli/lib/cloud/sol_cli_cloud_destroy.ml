@@ -69,25 +69,24 @@ type substrate_presence =
 open Result.Syntax
 
 let string_attr name values =
-  match Yojson.Safe.Util.member name values with
+  match Sol_cli_json.field [ name ] values with
   | `String s when s <> "" -> Some s
   | _ -> None
 ;;
 
 let bool_attr name values =
-  match Yojson.Safe.Util.member name values with
+  match Sol_cli_json.field [ name ] values with
   | `Bool b -> Ok (Some b)
   | `Null -> Ok None
   | _ -> Error (Printf.sprintf "attribute %s is not a boolean" name)
 ;;
 
 let resource_of_json json =
-  let open Yojson.Safe.Util in
-  let address = member "address" json |> to_string_option in
-  let kind = member "type" json |> to_string_option in
+  let address = Sol_cli_json.field [ "address" ] json |> Sol_cli_json.string in
+  let kind = Sol_cli_json.field [ "type" ] json |> Sol_cli_json.string in
   match address, kind with
   | Some address, Some kind ->
-    let values = member "values" json in
+    let values = Sol_cli_json.field [ "values" ] json in
     let* deletion_protection = bool_attr "deletion_protection" values in
     let* skip_final_snapshot = bool_attr "skip_final_snapshot" values in
     Ok
@@ -110,9 +109,8 @@ let resource_of_json json =
    declared and represented inside a child module keeps its real address rather
    than disappearing because only the root module was searched (FND-0048). *)
 let rec resources_of_module json : (resource list, string) result =
-  let open Yojson.Safe.Util in
   let* own =
-    match member "resources" json with
+    match Sol_cli_json.field [ "resources" ] json with
     | `Null -> Ok []
     | `List items ->
       List.fold_left
@@ -126,7 +124,7 @@ let rec resources_of_module json : (resource list, string) result =
     | _ -> Error "a module's `resources` is not a list"
   in
   let* children =
-    match member "child_modules" json with
+    match Sol_cli_json.field [ "child_modules" ] json with
     | `Null -> Ok []
     | `List items ->
       List.fold_left
@@ -146,26 +144,22 @@ let rec resources_of_module json : (resource list, string) result =
    missing `values` is that (FND-0048), not a failure. Anything the parser cannot
    make sense of is [State_unreadable] -- UNKNOWN. *)
 let inventory_of_show_json json =
-  try
-    let document = Yojson.Safe.from_string json in
-    let open Yojson.Safe.Util in
-    match member "values" document with
-    | `Null -> State_empty
-    | `Assoc _ as values ->
-      (match member "root_module" values with
-       | `Null -> State_empty
-       | root_module ->
-         (match resources_of_module root_module with
-          | Ok [] -> State_empty
-          | Ok resources -> State_represented resources
-          | Error message -> State_unreadable message))
-    | _ ->
-      State_unreadable "unexpected `terraform show -json` shape: values is not an object"
-  with
-  | Yojson.Json_error message ->
+  match Yojson.Safe.from_string json with
+  | exception Yojson.Json_error message ->
     State_unreadable ("invalid `terraform show -json`: " ^ message)
-  | Yojson.Safe.Util.Type_error (message, _) ->
-    State_unreadable ("unexpected `terraform show -json` shape: " ^ message)
+  | document ->
+    (match Sol_cli_json.field [ "values" ] document with
+     | `Null -> State_empty
+     | `Assoc _ as values ->
+       (match Sol_cli_json.field [ "root_module" ] values with
+        | `Null -> State_empty
+        | root_module ->
+          (match resources_of_module root_module with
+           | Ok [] -> State_empty
+           | Ok resources -> State_represented resources
+           | Error message -> State_unreadable message))
+     | _ ->
+       State_unreadable "unexpected `terraform show -json` shape: values is not an object")
 ;;
 
 let resources = function

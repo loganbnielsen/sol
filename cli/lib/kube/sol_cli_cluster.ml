@@ -82,13 +82,15 @@ let provisioner_kube_env path =
    output still fails closed with a named error instead of crashing the
    lifecycle.) *)
 let outputs_reader ~provider text =
-  let open Yojson.Safe.Util in
-  let json = Yojson.Safe.from_string text in
-  let value name =
-    match json |> member name with
-    | `Null -> `Null
-    | output -> output |> member "value"
+  let open Result.Syntax in
+  (* REFAC-132: text that is not JSON is this reader's [Error], not an exception
+     each caller has to know to catch. *)
+  let* json =
+    Sol_cli_json.decode
+      ~what:(Printf.sprintf "invalid %s Terraform output JSON" provider)
+      text
   in
+  let value name = Sol_cli_json.field [ name; "value" ] json in
   let string name =
     match value name with
     | `String s when not (Sol_cli_string.is_blank s) -> Ok s
@@ -104,7 +106,7 @@ let outputs_reader ~provider text =
       Error
         (Printf.sprintf "%s Terraform output %S is not a string or null" provider name)
   in
-  value, string, optional_string
+  Ok (value, string, optional_string)
 ;;
 
 let process_ok ?(env = []) argv =

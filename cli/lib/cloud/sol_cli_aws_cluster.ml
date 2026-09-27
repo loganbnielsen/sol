@@ -22,38 +22,33 @@ type aws_outputs =
   }
 
 let aws_outputs_of_json text =
-  try
-    let value, string, optional_string =
-      Sol_cli_cluster.outputs_reader ~provider:"AWS" text
-    in
-    let open Result.Syntax in
-    let* cluster_name = string "cluster_name" in
-    let* cluster_access_role_arn = string "cluster_access_role_arn" in
-    let* cert_manager_irsa_role_arn = string "cert_manager_irsa_arn" in
-    let* loki_s3_bucket = optional_string "loki_s3_bucket" in
-    let* loki_irsa_role_arn = optional_string "loki_irsa_arn" in
-    let* thanos_s3_bucket = optional_string "thanos_s3_bucket" in
-    let* thanos_irsa_role_arn = optional_string "thanos_irsa_arn" in
-    let* grafana_irsa_role_arn = optional_string "grafana_irsa_arn" in
-    let managed_resource_dashboards = value "managed_resource_dashboards" in
-    match managed_resource_dashboards with
-    | `Assoc _ ->
-      Ok
-        { cluster_name
-        ; cluster_access_role_arn
-        ; cert_manager_irsa_role_arn
-        ; loki_s3_bucket
-        ; loki_irsa_role_arn
-        ; thanos_s3_bucket
-        ; thanos_irsa_role_arn
-        ; grafana_irsa_role_arn
-        ; managed_resource_dashboards
-        }
-    | _ -> Error "AWS Terraform output \"managed_resource_dashboards\" is not an object"
-  with
-  | Yojson.Json_error message -> Error ("invalid AWS Terraform output JSON: " ^ message)
-  | Yojson.Safe.Util.Type_error (message, _) ->
-    Error ("invalid AWS Terraform outputs: " ^ message)
+  let open Result.Syntax in
+  let* value, string, optional_string =
+    Sol_cli_cluster.outputs_reader ~provider:"AWS" text
+  in
+  let* cluster_name = string "cluster_name" in
+  let* cluster_access_role_arn = string "cluster_access_role_arn" in
+  let* cert_manager_irsa_role_arn = string "cert_manager_irsa_arn" in
+  let* loki_s3_bucket = optional_string "loki_s3_bucket" in
+  let* loki_irsa_role_arn = optional_string "loki_irsa_arn" in
+  let* thanos_s3_bucket = optional_string "thanos_s3_bucket" in
+  let* thanos_irsa_role_arn = optional_string "thanos_irsa_arn" in
+  let* grafana_irsa_role_arn = optional_string "grafana_irsa_arn" in
+  let managed_resource_dashboards = value "managed_resource_dashboards" in
+  match managed_resource_dashboards with
+  | `Assoc _ ->
+    Ok
+      { cluster_name
+      ; cluster_access_role_arn
+      ; cert_manager_irsa_role_arn
+      ; loki_s3_bucket
+      ; loki_irsa_role_arn
+      ; thanos_s3_bucket
+      ; thanos_irsa_role_arn
+      ; grafana_irsa_role_arn
+      ; managed_resource_dashboards
+      }
+  | _ -> Error "AWS Terraform output \"managed_resource_dashboards\" is not an object"
 ;;
 
 let cluster_access_role_arn (outputs : aws_outputs) = outputs.cluster_access_role_arn
@@ -210,21 +205,12 @@ let single_string_of_json ~what = function
 
 let whoami_identity_of_json json : (whoami_identity, string) result =
   match Yojson.Safe.from_string json with
-  | exception _ -> Error "the whoami response was not JSON"
+  | exception Yojson.Json_error _ -> Error "the whoami response was not JSON"
   | json ->
-    (* Non-raising on purpose: Yojson's member raises when its parent is null, and a
-       response with no `extra` at all (any non-EKS authenticator, or a stub) would then
-       crash the probe instead of degrading to a stated reason. The fixtures caught
-       exactly that. *)
-    let member_opt key = function
-      | `Assoc fields -> List.assoc_opt key fields
-      | _ -> None
-    in
-    let sub key j =
-      match member_opt key j with
-      | Some v -> v
-      | None -> `Null
-    in
+    (* Total field access on purpose: a response with no `extra` at all (any non-EKS
+       authenticator, or a stub) degrades to a stated reason instead of crashing the
+       probe. The fixtures caught exactly that. *)
+    let sub key j = Sol_cli_json.field [ key ] j in
     let status = sub "status" json in
     let user = sub "userInfo" status in
     let extra = sub "extra" user in

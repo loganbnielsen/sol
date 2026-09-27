@@ -2,8 +2,6 @@
    to explain a failed rollout directly from Kubernetes state. This is the
    layer that works even when the app never started and Loki has nothing. *)
 
-module J = Yojson.Safe.Util
-
 type container_state =
   | Waiting of
       { reason : string
@@ -36,54 +34,11 @@ type event =
   ; involved_name : string
   }
 
-(* REFAC-127: field access is total -- an absent field, or a path through a
-   non-object, is [`Null] -- so nothing below the decode boundary can raise, and
-   there is no catch-all turning a malformed read into "nothing there". *)
-let rec field path (j : Yojson.Safe.t) : Yojson.Safe.t =
-  match path, j with
-  | [], j -> j
-  | key :: rest, `Assoc fields ->
-    field rest (Option.value (List.assoc_opt key fields) ~default:`Null)
-  | _ :: _, _ -> `Null
-;;
-
-let to_string_opt = function
-  | `String s -> Some s
-  | _ -> None
-;;
-
-let to_int_opt = function
-  | `Int i -> Some i
-  | _ -> None
-;;
-
-let to_bool_opt = function
-  | `Bool b -> Some b
-  | _ -> None
-;;
-
-let string_field path j = field path j |> to_string_opt
-
-(* The decode boundary: the text is JSON, and a list resource's [items] is a list
-   of objects. Anything else is an error that names what was being read. *)
-let decode ~what s =
-  match Yojson.Safe.from_string s with
-  | json -> Ok json
-  | exception Yojson.Json_error msg -> Error (Printf.sprintf "%s: not JSON (%s)" what msg)
-;;
-
-let items ~what s =
-  let open Result.Syntax in
-  let* json = decode ~what s in
-  match field [ "items" ] json with
-  | `List items ->
-    Sol_cli_result.map_list
-      (function
-        | `Assoc _ as item -> Ok item
-        | _ -> Error (Printf.sprintf "%s: an item is not an object" what))
-      items
-  | _ -> Error (Printf.sprintf "%s: the response has no items list" what)
-;;
+(* REFAC-127 built this module's decode boundary; REFAC-132 made it the shared
+   one (Sol_cli_json), so field access is total and a malformed read is an error
+   here exactly as it is everywhere else. *)
+let field = Sol_cli_json.field
+let string_field path j = field path j |> Sol_cli_json.string
 
 let parse_container_state (c : Yojson.Safe.t) : container_state =
   let reason j = string_field [ "reason" ] j |> Option.value ~default:"Unknown" in
@@ -94,7 +49,9 @@ let parse_container_state (c : Yojson.Safe.t) : container_state =
   | _ ->
     (match field [ "state"; "terminated" ] c with
      | `Assoc _ as t ->
-       let exit_code = field [ "exitCode" ] t |> to_int_opt |> Option.value ~default:0 in
+       let exit_code =
+         field [ "exitCode" ] t |> Sol_cli_json.int |> Option.value ~default:0
+       in
        Terminated { reason = reason t; exit_code; message = message t }
      | _ -> Unknown_state)
 ;;
@@ -114,8 +71,8 @@ let parse_pod (item : Yojson.Safe.t) : pod_status =
   | `List (c :: _) ->
     { name
     ; phase
-    ; ready = field [ "ready" ] c |> to_bool_opt |> Option.value ~default:false
-    ; restarts = field [ "restartCount" ] c |> to_int_opt |> Option.value ~default:0
+    ; ready = field [ "ready" ] c |> Sol_cli_json.bool |> Option.value ~default:false
+    ; restarts = field [ "restartCount" ] c |> Sol_cli_json.int |> Option.value ~default:0
     ; image = string_field [ "image" ] c
     ; state = parse_container_state c
     ; last_terminated_reason = parse_last_terminated_reason c
@@ -134,14 +91,14 @@ let parse_pod (item : Yojson.Safe.t) : pod_status =
 
 (* [Ok []] only when the API answered with an empty list. *)
 let parse_pods_json (s : string) : (pod_status list, string) result =
-  items ~what:"pods" s |> Result.map (List.map parse_pod)
+  Sol_cli_json.items ~what:"pods" s |> Result.map (List.map parse_pod)
 ;;
 
 let parse_event (item : Yojson.Safe.t) : event =
   { ev_type = string_field [ "type" ] item |> Option.value ~default:"Normal"
   ; reason = string_field [ "reason" ] item |> Option.value ~default:""
   ; message = string_field [ "message" ] item |> Option.value ~default:""
-  ; count = field [ "count" ] item |> to_int_opt |> Option.value ~default:1
+  ; count = field [ "count" ] item |> Sol_cli_json.int |> Option.value ~default:1
   ; last_timestamp = string_field [ "lastTimestamp" ] item
   ; involved_name =
       string_field [ "involvedObject"; "name" ] item |> Option.value ~default:""
@@ -149,7 +106,7 @@ let parse_event (item : Yojson.Safe.t) : event =
 ;;
 
 let parse_events_json (s : string) : (event list, string) result =
-  items ~what:"events" s |> Result.map (List.map parse_event)
+  Sol_cli_json.items ~what:"events" s |> Result.map (List.map parse_event)
 ;;
 
 let events_for_pod ?(limit = 5) ~pod_name (events : event list) : event list =
@@ -339,7 +296,7 @@ type cronjob_status =
 
 let parse_cronjob_status (s : string) : (cronjob_status, string) result =
   let open Result.Syntax in
-  let* j = decode ~what:"the CronJob" s in
+  let* j = Sol_cli_json.decode ~what:"the CronJob" s in
   let status = field [ "status" ] j in
   let* active_job_names =
     match field [ "active" ] status with

@@ -896,6 +896,7 @@ let test_workload_rows_of_payload_deployment () =
       ~kind:Sol_cli_rollback.Live_deployment
       ~workspace:"myapp"
       deployment_payload
+    |> Result.get_ok
   in
   Alcotest.(check int) "only the workspace-matching item" 1 (List.length rows);
   let identity, release = List.hd rows in
@@ -913,6 +914,7 @@ let test_workload_rows_of_payload_cronjob_path () =
       ~kind:Sol_cli_rollback.Live_cronjob
       ~workspace:"myapp"
       deployment_payload
+    |> Result.get_ok
   in
   Alcotest.(check int)
     "deployment payload has no cronjob pod template"
@@ -923,6 +925,28 @@ let test_workload_rows_of_payload_cronjob_path () =
 (* The renderer writes `workspace` through sanitize_label_value, so the raw
    workspace passed to the lister must be matched the same way -- otherwise a
    mixed-case workspace matches nothing and every workload looks missing. *)
+(* REFAC-132: a payload with no items list is unreadable, never "no live
+   workloads" -- the empty list is the answer only when kubectl said so. *)
+let test_workload_rows_of_payload_requires_items () =
+  (match
+     Sol_cli_rollback.workload_rows_of_payload
+       ~kind:Sol_cli_rollback.Live_deployment
+       ~workspace:"myapp"
+       (`Assoc [ "kind", `String "List" ])
+   with
+   | Ok _ -> Alcotest.fail "a payload without items read as an answer"
+   | Error _ -> ());
+  Alcotest.(check int)
+    "an empty items list is the empty answer"
+    0
+    (Sol_cli_rollback.workload_rows_of_payload
+       ~kind:Sol_cli_rollback.Live_deployment
+       ~workspace:"myapp"
+       (`Assoc [ "items", `List [] ])
+     |> Result.get_ok
+     |> List.length)
+;;
+
 let test_workload_rows_of_payload_sanitizes_workspace () =
   let payload =
     `Assoc
@@ -957,6 +981,7 @@ let test_workload_rows_of_payload_sanitizes_workspace () =
       ~kind:Sol_cli_rollback.Live_deployment
       ~workspace:"My_App"
       payload
+    |> Result.get_ok
   in
   Alcotest.(check int) "matches the sanitized workspace label" 1 (List.length rows)
 ;;
@@ -1001,6 +1026,7 @@ let test_workload_rows_of_payload_cronjob () =
       ~kind:Sol_cli_rollback.Live_cronjob
       ~workspace:"myapp"
       payload
+    |> Result.get_ok
   in
   Alcotest.(check int) "one cronjob row" 1 (List.length rows);
   let identity, release = List.hd rows in
@@ -1569,6 +1595,10 @@ let () =
             "wire path: workspace label is sanitized"
             `Quick
             test_workload_rows_of_payload_sanitizes_workspace
+        ; Alcotest.test_case
+            "a payload without items is an error"
+            `Quick
+            test_workload_rows_of_payload_requires_items
         ; Alcotest.test_case
             "Fn is reconstructed and verified as a CronJob, not skipped"
             `Quick

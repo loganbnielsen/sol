@@ -269,13 +269,9 @@ let fetch ~ctx ~workspace =
   | Ok None -> Ok None
   | Error e -> Error (Sol_cli_process.error_to_string e)
   | Ok (Some body) ->
-    (match Yojson.Safe.from_string body with
-     | exception Yojson.Json_error msg ->
-       Error (Printf.sprintf "could not parse boundary lease: %s" msg)
-     | json ->
-       (match of_configmap_item json with
-        | Error msg -> Error msg
-        | Ok (t, resource_version) -> Ok (Some (t, resource_version))))
+    Sol_cli_json.decode ~what:"boundary lease" body
+    |> Fun.flip Result.bind of_configmap_item
+    |> Result.map Option.some
 ;;
 
 let remove ~ctx ~workspace =

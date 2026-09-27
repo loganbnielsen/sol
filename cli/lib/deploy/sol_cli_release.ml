@@ -386,13 +386,13 @@ let workload_of_json (json : Yojson.Safe.t) : workload =
   ; availability =
       (* Records written before AUDIT-080 have no availability; they were
          rendered as [single]. *)
-      (match Yojson.Safe.Util.member "availability" json with
+      (match Sol_cli_json.field [ "availability" ] json with
        | `String s -> s
        | _ -> "single")
   ; consumes_kafka =
       (* Records written before AUDIT-080 were rendered without consumer probes;
          a missing field means "not a declared consumer". *)
-      (match Yojson.Safe.Util.member "consumes_kafka" json with
+      (match Sol_cli_json.field [ "consumes_kafka" ] json with
        | `Bool b -> b
        | _ -> false)
   ; cpu = str "cpu" json
@@ -514,10 +514,12 @@ let item_name item =
    retention orders records by the cluster-assigned [metadata.creationTimestamp]
    instead. It is object metadata, not part of the record body, so it stays out
    of [t]/[to_json]/[record_digest] and the content-addressed identity. *)
-let creation_timestamp_of_item item =
-  match mem "metadata" item with
-  | Some metadata -> str "creationTimestamp" metadata
-  | None -> ""
+let creation_timestamp_of_item ~label item =
+  Sol_cli_json.require
+    ~what:label
+    [ "metadata"; "creationTimestamp" ]
+    Sol_cli_json.string
+    item
 ;;
 
 (* One release ConfigMap ([kubectl get configmap ... -o json] on a single
@@ -545,9 +547,9 @@ let of_kubectl_item (item : Yojson.Safe.t) : (t, string) result =
           if not (String.equal (Digest.to_hex (Digest.string record)) stored)
           then Error (Printf.sprintf "%s failed integrity validation" label)
           else (
-            match Yojson.Safe.from_string record with
-            | exception _ -> Error (Printf.sprintf "%s: data.record is not JSON" label)
-            | parsed ->
+            match Sol_cli_json.decode ~what:(label ^ ": data.record") record with
+            | Error msg -> Error msg
+            | Ok parsed ->
               (match of_json parsed with
                | Error msg -> Error (Printf.sprintf "%s: %s" label msg)
                | Ok r ->
@@ -567,23 +569,37 @@ let of_kubectl_item (item : Yojson.Safe.t) : (t, string) result =
    it). Fails closed (FEAT-071): the store is authoritative release history, so a
    matching record that is absent, unparseable, or does not [validate] is
    corruption and returns an [Error] naming it — dropping it would print a
-   partial list as if it were the whole one. *)
+   partial list as if it were the whole one. REFAC-132: the same holds one level
+   up -- a response with no [items] list is unreadable, not an empty history, and
+   an item with no creation time cannot be ordered, so it is an error rather
+   than sorting first as [""]. *)
+let list_items json =
+  Sol_cli_json.require ~what:"release list" [ "items" ] Sol_cli_json.list json
+;;
+
+let record_of_item item =
+  of_kubectl_item item
+  |> Result.map_error (Printf.sprintf "release history contains an invalid record: %s")
+;;
+
 let parse_kubectl_list_with_creation (json : Yojson.Safe.t)
   : ((t * string) list, string) result
   =
-  let rec go acc = function
-    | [] -> Ok (List.rev acc)
-    | item :: rest ->
-      (match of_kubectl_item item with
-       | Error msg ->
-         Error (Printf.sprintf "release history contains an invalid record: %s" msg)
-       | Ok r -> go ((r, creation_timestamp_of_item item) :: acc) rest)
+  let open Result.Syntax in
+  let with_creation item =
+    let* record = record_of_item item in
+    let* created = creation_timestamp_of_item ~label:(item_name item) item in
+    Ok (record, created)
   in
-  go [] (list "items" json)
+  let* items = list_items json in
+  Sol_cli_result.map_list with_creation items
 ;;
 
+(* The records alone: only retention needs the creation time. *)
 let parse_kubectl_list json =
-  parse_kubectl_list_with_creation json |> Result.map (List.map fst)
+  let open Result.Syntax in
+  let* items = list_items json in
+  Sol_cli_result.map_list record_of_item items
 ;;
 
 let format_table (records : t list) : string =

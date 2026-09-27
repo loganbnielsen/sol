@@ -117,7 +117,7 @@ val workload_rows_of_payload
   :  kind:live_kind
   -> workspace:string
   -> Yojson.Safe.t
-  -> (workload_identity * string) list
+  -> ((workload_identity * string) list, string) result
 
 (** One workload whose live `release` label does not match the restored release. *)
 type workload_mismatch =

@@ -31,7 +31,11 @@ let test_unreadable () =
   (match O.displayable "{not json" with
    | Error _ -> ()
    | Ok _ -> Alcotest.fail "malformed JSON was read");
-  Alcotest.(check (list string)) "a non-object shows nothing" [] (shown "[]")
+  (* REFAC-132: a document that is not an object of outputs is unreadable, not
+     "no outputs". *)
+  match O.displayable "[]" with
+  | Error _ -> ()
+  | Ok _ -> Alcotest.fail "a non-object read as no outputs"
 ;;
 
 let () =

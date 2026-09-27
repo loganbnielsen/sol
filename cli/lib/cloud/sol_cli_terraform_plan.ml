@@ -98,53 +98,34 @@ let action_to_string = function
   | Unknown raw -> "unrecognised action [" ^ String.concat "," raw ^ "]"
 ;;
 
-open Result.Syntax
-
 (* Parse `terraform show -json <saved plan>` into the resource changes it holds.
    A plan that does not carry a `resource_changes` array is not a plan we can
    assert on, so it is an error -- and the caller refuses. *)
 let changes_of_plan_json json : (change list, string) result =
-  try
-    let open Yojson.Safe.Util in
-    let document = Yojson.Safe.from_string json in
-    match member "resource_changes" document with
-    | `List items ->
-      List.fold_left
-        (fun acc item ->
-           let* acc = acc in
-           let address = member "address" item |> to_string_option in
-           let resource_type = member "type" item |> to_string_option in
-           let mode = member "mode" item |> to_string_option in
-           let raw_actions =
-             match member "change" item with
-             | `Assoc _ as change ->
-               (match member "actions" change with
-                | `List raw ->
-                  List.filter_map
-                    (function
-                      | `String s -> Some s
-                      | _ -> None)
-                    raw
-                | _ -> [])
-             | _ -> []
-           in
-           match address, resource_type, mode with
-           | Some address, Some resource_type, Some mode ->
-             Ok
-               ({ address; resource_type; mode; action = action_of_raw raw_actions }
-                :: acc)
-           | _ ->
-             Error
-               "a resource change in the plan has no address, type or mode, so it cannot \
-                be asserted")
-        (Ok [])
-        items
-      |> Result.map List.rev
-    | _ -> Error "the plan JSON carries no `resource_changes` array"
-  with
-  | Yojson.Json_error message -> Error ("invalid plan JSON: " ^ message)
-  | Yojson.Safe.Util.Type_error (message, _) ->
-    Error ("unexpected plan JSON shape: " ^ message)
+  let text path item = Sol_cli_json.field path item |> Sol_cli_json.string in
+  let change item =
+    (* A change with no readable actions is [Unknown []], which the plan policy
+       refuses -- never a no-op. *)
+    let raw_actions =
+      Sol_cli_json.field [ "change"; "actions" ] item
+      |> Sol_cli_json.list
+      |> Option.value ~default:[]
+      |> List.filter_map Sol_cli_json.string
+    in
+    match text [ "address" ] item, text [ "type" ] item, text [ "mode" ] item with
+    | Some address, Some resource_type, Some mode ->
+      Ok { address; resource_type; mode; action = action_of_raw raw_actions }
+    | _ ->
+      Error
+        "a resource change in the plan has no address, type or mode, so it cannot be \
+         asserted"
+  in
+  match Yojson.Safe.from_string json with
+  | exception Yojson.Json_error message -> Error ("invalid plan JSON: " ^ message)
+  | document ->
+    (match Sol_cli_json.field [ "resource_changes" ] document with
+     | `List items -> Sol_cli_result.map_list change items
+     | _ -> Error "the plan JSON carries no `resource_changes` array")
 ;;
 
 (* The address with one trailing Terraform instance key removed, if it has one.

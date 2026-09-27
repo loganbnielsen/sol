@@ -11,15 +11,22 @@ let read_components path =
 ;;
 
 (* A component with nothing to say for a layer (tempo's empty profiles, or a
-   component the file does not name) contributes an empty object, not an error. *)
-let layer components ~component ~name =
+   component the file does not name) contributes an empty object, not an error.
+   REFAC-132: something that is there but is not an object is an error -- a
+   malformed components.json must not install every component with no values. *)
+let layer ~path components ~component ~name =
+  let what = Printf.sprintf "%s: %s.%s" path component name in
   match components with
   | `Assoc fields ->
     (match List.assoc_opt component fields with
+     | None -> Ok (`Assoc [])
      | Some (`Assoc layers) ->
-       Option.value (List.assoc_opt name layers) ~default:(`Assoc [])
-     | _ -> `Assoc [])
-  | _ -> `Assoc []
+       (match List.assoc_opt name layers with
+        | None -> Ok (`Assoc [])
+        | Some (`Assoc _ as values) -> Ok values
+        | Some _ -> Error (what ^ " is not an object"))
+     | Some _ -> Error (Printf.sprintf "%s: %s is not an object" path component))
+  | _ -> Error (path ^ " is not a JSON object")
 ;;
 
 (* Deep merge: [override]'s object keys win over [base]'s on conflict, with
@@ -46,9 +53,10 @@ let rec deep_merge (base : Yojson.Safe.t) (over : Yojson.Safe.t) : Yojson.Safe.t
 ;;
 
 let merged_values_yaml ~assets ~component ~profile =
-  read_components (Sol_cli_platform_assets.components_json assets)
-  |> Result.map (fun components ->
-    let common = layer components ~component ~name:"common" in
-    let profile_json = layer components ~component ~name:profile in
-    Yojson.Safe.pretty_to_string (deep_merge common profile_json))
+  let open Result.Syntax in
+  let path = Sol_cli_platform_assets.components_json assets in
+  let* components = read_components path in
+  let* common = layer ~path components ~component ~name:"common" in
+  let* profile_json = layer ~path components ~component ~name:profile in
+  Ok (Yojson.Safe.pretty_to_string (deep_merge common profile_json))
 ;;
