@@ -285,6 +285,23 @@ let test_one_bad_unit_refuses_the_whole_plan () =
   |> expect_error ~needle:"ledger_worker declares no language"
 ;;
 
+(* REFAC-139 part F: the shell lines the loop runs. *)
+let test_shell_lines () =
+  let command argv cwd = { Sol_cli_local_run.argv; cwd } in
+  Alcotest.(check string)
+    "a root build, under the opam env"
+    "eval $(opam env 2>/dev/null) 2>/dev/null; 'dune' 'build' './a b.exe'"
+    (Sol_cli_local_run.build_line (command [ "dune"; "build"; "./a b.exe" ] ""));
+  Alcotest.(check string)
+    "a build in its npm project"
+    "eval $(opam env 2>/dev/null) 2>/dev/null; cd 'app/x' && 'npm' 'run' 'build'"
+    (Sol_cli_local_run.build_line (command [ "npm"; "run"; "build" ] "app/x"));
+  Alcotest.(check string)
+    "a launch"
+    "'node' 'dist/main.js'"
+    (Sol_cli_local_run.launch_line (command [ "node"; "dist/main.js" ] "."))
+;;
+
 let () =
   Alcotest.run
     "sol_cli_local_run"
@@ -306,6 +323,7 @@ let () =
             `Quick
             test_a_mixed_selection_uses_both_adapters
         ] )
+    ; "shell lines", [ Alcotest.test_case "build and launch" `Quick test_shell_lines ]
     ; ( "refusals"
       , [ Alcotest.test_case
             "an undeclared workload"

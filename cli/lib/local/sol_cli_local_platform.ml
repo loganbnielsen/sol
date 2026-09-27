@@ -315,3 +315,131 @@ let releases ~(req : Sol_cli_workspace.infra_requirements) ~assets =
       ]
     ]
 ;;
+
+(* REFAC-139, part F: what `sol local infra up` exposes on the host -- one entry
+   per port-forward, with the summary line that reports it, so the forwards
+   started and the endpoints reported cannot disagree. *)
+type endpoint =
+  { forward : Sol_cli_port_forward.spec
+  ; summary : string
+  }
+
+(* FEAT-042: the host port the local ingress-nginx controller is forwarded to.
+   Deliberately not 8080 -- that is where `sol up` forwards a service, so the two
+   would collide. *)
+let ingress_local_port = 8088
+
+let endpoints ~(req : Sol_cli_workspace.infra_requirements) =
+  let endpoint name ~namespace ~target ~local_port ~remote_port summary =
+    { forward = { Sol_cli_port_forward.name; namespace; target; local_port; remote_port }
+    ; summary
+    }
+  in
+  let grafana = needs_grafana req in
+  List.concat
+    [ (if req.kafka
+       then
+         [ (* Target the pod, not svc: the headless service only exposes the
+              internal port 9093, and the external listener on 9094 is pod-only. *)
+           endpoint
+             "kafka"
+             ~namespace:"redpanda"
+             ~target:"pod/redpanda-0"
+             ~local_port:9092
+             ~remote_port:9094
+             "  kafka        ✓  localhost:9092  (port-forwarded)"
+         ; endpoint
+             "schema-registry"
+             ~namespace:"redpanda"
+             ~target:"svc/redpanda"
+             ~local_port:8081
+             ~remote_port:8081
+             "  schema-reg   ✓  http://localhost:8081"
+         ]
+       else [])
+    ; (if req.postgres
+       then
+         [ endpoint
+             "postgres"
+             ~namespace:"postgresql"
+             ~target:"svc/postgresql"
+             ~local_port:5432
+             ~remote_port:5432
+             "  postgres     ✓  postgresql://postgres:dev@localhost:5432/dev  \
+              (port-forwarded)"
+         ]
+       else [])
+    ; (if grafana
+       then
+         [ endpoint
+             "loki"
+             ~namespace:"monitoring"
+             ~target:"svc/loki"
+             ~local_port:3100
+             ~remote_port:3100
+             "  loki         ✓  http://localhost:3100  (port-forwarded)"
+         ; endpoint
+             "grafana"
+             ~namespace:"monitoring"
+             ~target:"svc/grafana"
+             ~local_port:3000
+             ~remote_port:80
+             "  grafana      ✓  http://localhost:3000  (port-forwarded)"
+         ]
+       else [])
+    ; (if req.prometheus
+       then
+         [ endpoint
+             "prometheus"
+             ~namespace:"monitoring"
+             ~target:"svc/prometheus-server"
+             ~local_port:9090
+             ~remote_port:80
+             "  prometheus   ✓  http://localhost:9090  (port-forwarded)"
+         ; endpoint
+             "pushgateway"
+             ~namespace:"monitoring"
+             ~target:"svc/prometheus-prometheus-pushgateway"
+             ~local_port:9091
+             ~remote_port:9091
+             "  pushgateway  ✓  http://localhost:9091  (port-forwarded)"
+         ]
+       else [])
+    ; (if req.tempo
+       then
+         [ (* Two forwards, matching prometheus/pushgateway's split: OTLP/HTTP
+              ingestion (obs-tempo-eio's TEMPO_URL, what -svc pushes spans to)
+              and the query API (what Grafana's Tempo datasource and a
+              developer's own curl/Explore session read from) are different ports
+              on the same Service. *)
+           endpoint
+             "tempo"
+             ~namespace:"monitoring"
+             ~target:"svc/tempo"
+             ~local_port:4318
+             ~remote_port:4318
+             "  tempo        ✓  http://localhost:4318  (OTLP, port-forwarded)"
+         ; endpoint
+             "tempo-query"
+             ~namespace:"monitoring"
+             ~target:"svc/tempo"
+             ~local_port:3200
+             ~remote_port:3200
+             "  tempo-query  ✓  http://localhost:3200  (port-forwarded)"
+         ]
+       else [])
+    ; [ (* FEAT-042: the controller install is unconditional, so is this forward
+           -- a workspace Ingress can only be reached from the host through it.
+           Remote port 80 is ingress-nginx's controller Service `http` port. *)
+        endpoint
+          "ingress"
+          ~namespace:"ingress-nginx"
+          ~target:"svc/ingress-nginx-controller"
+          ~local_port:ingress_local_port
+          ~remote_port:80
+          (Printf.sprintf
+             "  ingress      ✓  http://localhost:%d  (ingress-nginx, port-forwarded)"
+             ingress_local_port)
+      ]
+    ]
+;;

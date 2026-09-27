@@ -76,6 +76,63 @@ let test_values_come_from_the_assets () =
     (find "Redpanda").version
 ;;
 
+(* REFAC-139 part F: the forwards started and the endpoints reported are one
+   list, so they cannot disagree. *)
+let forwards req =
+  Sol_cli_local_platform.endpoints ~req
+  |> List.map (fun (e : Sol_cli_local_platform.endpoint) -> e.forward.name)
+;;
+
+let test_endpoints_nothing_declared () =
+  Alcotest.(check (list string)) "ingress only" [ "ingress" ] (forwards (req ()))
+;;
+
+let test_endpoints_everything () =
+  Alcotest.(check (list string))
+    "every forward, in the summary's order"
+    [ "kafka"
+    ; "schema-registry"
+    ; "postgres"
+    ; "loki"
+    ; "grafana"
+    ; "prometheus"
+    ; "pushgateway"
+    ; "tempo"
+    ; "tempo-query"
+    ; "ingress"
+    ]
+    (forwards (req ~kafka:true ~postgres:true ~observability:true ()))
+;;
+
+let test_endpoint_ports_are_distinct () =
+  let ports =
+    Sol_cli_local_platform.endpoints
+      ~req:(req ~kafka:true ~postgres:true ~observability:true ())
+    |> List.map (fun (e : Sol_cli_local_platform.endpoint) -> e.forward.local_port)
+  in
+  Alcotest.(check int)
+    "no two forwards share a host port"
+    (List.length ports)
+    (List.length (List.sort_uniq compare ports));
+  Alcotest.(check bool) "not sol up's 8080" false (List.mem 8080 ports)
+;;
+
+(* FRIC-017: DOCKER_API_VERSION for k3d, never below its own 1.43 floor. *)
+let test_k3d_api_version () =
+  let env daemon_min = Sol_cli_local_cluster.api_version_env ~daemon_min in
+  Alcotest.(check (list (pair string string)))
+    "Docker 29's floor"
+    [ "DOCKER_API_VERSION", "1.44" ]
+    (env "1.44\n");
+  Alcotest.(check (list (pair string string))) "an older daemon" [] (env "1.24");
+  Alcotest.(check (list (pair string string))) "the floor itself" [] (env "1.43");
+  Alcotest.(check (list (pair string string))) "unreadable" [] (env "");
+  Alcotest.(check bool)
+    "numeric, not lexical"
+    true
+    (Sol_cli_local_cluster.version_gt "1.100" "1.43")
+;;
+
 let () =
   Alcotest.run
     "local platform"
@@ -87,6 +144,15 @@ let () =
             "values from the assets"
             `Quick
             test_values_come_from_the_assets
+        ] )
+    ; ( "REFAC-139 part F"
+      , [ Alcotest.test_case
+            "no endpoints declared"
+            `Quick
+            test_endpoints_nothing_declared
+        ; Alcotest.test_case "every endpoint" `Quick test_endpoints_everything
+        ; Alcotest.test_case "distinct host ports" `Quick test_endpoint_ports_are_distinct
+        ; Alcotest.test_case "k3d API version" `Quick test_k3d_api_version
         ] )
     ]
 ;;
