@@ -1142,8 +1142,13 @@ kube_capture() { # kube_capture <name> <command...>
 # file is best-effort, and the loop is a child that dies with its parent.
 api_probe_sample() {
   local out="$1" reported configured verdict detail
-  reported="$(gcloud container clusters describe "$CLUSTER" --region "$REGION" --project "$PROJECT" \
-    --format='value(endpoint)' 2>/dev/null | tr -d '\r')"
+  # Every expansion is defaulted: this runs under `set -u` in an environment that may not carry the
+  # harness's own variables (the test harness sets some of them, CI's does not set all), and an
+  # unbound variable here would abort the sample silently -- which is exactly how a probe ends up
+  # recording nothing while looking installed. A sample must always leave a row.
+  reported="$(gcloud container clusters describe "${CLUSTER:-}" --region "${REGION:-}" \
+    --project "${PROJECT:-}" --format='value(endpoint)' 2>/dev/null | tr -d '\r' \
+    || printf '')"
   configured="$(awk '/^[[:space:]]*server:/{print $2; exit}' \
     "${KUBECONFIG:-$HOME/.kube/config}" 2>/dev/null | tr -d '\r')"
   # Normalised to the host, because the comparison this row exists for is "does the configured
@@ -1165,6 +1170,16 @@ api_probe_sample() {
     >>"$out" 2>/dev/null || true
 }
 
+# A sample that cannot even measure still leaves a row, so "the probe ran and recorded nothing" is
+# distinguishable from "the probe never ran" -- the difference that cost a CI cycle here.
+api_probe_sample_or_record() {
+  local out="$1"
+  if ! api_probe_sample "$out" 2>/dev/null; then
+    printf '%s\t-\t-\tPROBE_FAILED\tapi_probe_sample exited non-zero\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$out" 2>/dev/null || true
+  fi
+}
+
 api_probe_loop() {
   local out="$1" parent=$$
   while :; do
@@ -1173,7 +1188,7 @@ api_probe_loop() {
     if ! kill -0 "$parent" 2>/dev/null; then
       exit 0
     fi
-    api_probe_sample "$out"
+    api_probe_sample_or_record "$out"
     sleep "${API_PROBE_INTERVAL_S:-15}"
   done
 }
@@ -1193,7 +1208,7 @@ api_readiness_probe_start() {
   fi
   printf 'timestamp\tserver_reported\tserver_configured\tverdict\tdetail\n' >>"$out" || true
   # Synchronously, before backgrounding: a phase that dies immediately still leaves one sample.
-  api_probe_sample "$out"
+  api_probe_sample_or_record "$out"
   api_probe_loop "$out" &
   API_PROBE_PID=$!
   say "api readiness probe: every ${API_PROBE_INTERVAL_S:-15}s -> $out (pid $API_PROBE_PID)"
