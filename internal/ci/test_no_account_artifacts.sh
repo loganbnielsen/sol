@@ -68,4 +68,12 @@ mkdir -p "$tmp/examples/app/sol"
 printf 'prod:\n  targets:\n    aws/us-east-1:\n' >"$tmp/examples/app/sol/environments.yml"
 git -C "$tmp" add -A
 "$guard" "$tmp" >/dev/null
+empty="$tmp/untracked"
+mkdir -p "$empty"
+git -C "$empty" init -q
+printf 'The example account is 123456789012.\n' >"$empty/notes.md"
+if "$guard" "$empty" >/dev/null 2>&1; then
+  echo "account-artifact guard accepted a tree with nothing tracked" >&2
+  exit 1
+fi
 echo "account-artifact guard mutation test: ok"

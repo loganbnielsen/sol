@@ -1,9 +1,3 @@
-; INFRA-075: every action in this directory -- unit tests and the rules that run the real
-; `sol` binary -- gets a data home inside the build tree. Sol keeps run logs and state under
-; $XDG_DATA_HOME/sol (else ~/.local/share/sol), pruned to the latest 20 across all commands,
-; so a test that inherited the operator's environment deleted real qualification runs.
-; Relative on purpose: it resolves inside whichever build or temp directory the action runs in.
-
 (env
  (_
   (env-vars
@@ -102,11 +96,6 @@
  (name print_providers)
  (libraries sol_cli))
 
-; INFRA-035: the readiness checks' kubectl argv, validated against a real
-; kubectl. The lifecycle harness below cannot cover this: its fake kubectl
-; accepts any argv, which is how `rollout status … --all` — a flag kubectl does
-; not have — made every platform report `Unmet` on a real target.
-
 (rule
  (alias runtest)
  (deps
@@ -164,8 +153,6 @@
   (bash
    "set -eu\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nmkdir -p \"$tmp/sol\"\ncat > \"$tmp/sol/environments.yml\" <<'EOF'\nprod:\n  targets:\n    aws/us-east-1:\n      kube_context: no-such-context-xyz\nEOF\ncd \"$tmp\"\ntouch \"$tmp/sol.yml\"\nout=$(\"$sol\" target show --target prod/aws/us-east-1 --check)\necho \"$out\" | grep -F 'unreachable' >/dev/null\nif echo \"$out\" | grep -F 'no-such-context-xyz' >/dev/null; then\n  echo 'sol target show --check leaked the kube-context in the default output' >&2\n  exit 1\nfi\n\"$sol\" target show --target prod/aws/us-east-1 --check --verbose | grep -F 'no-such-context-xyz' >/dev/null\nif command -v kubectl >/dev/null 2>&1; then\n  \"$sol\" target show --target prod/aws/us-east-1 --check --verbose | grep -F 'does not exist' >/dev/null\nfi")))
 
-; FEAT-089: a profile target is refused before any cluster call or emitted file.
-
 (rule
  (alias runtest)
  (deps ../bin/main.exe)
@@ -173,21 +160,11 @@
   (bash
    "set -eu\nsol=$(pwd)/%{deps}\nroot=$(mktemp -d)\ntrap 'rm -rf \"$root\"' EXIT\ntmp=\"$root/pluto\"\nmkdir -p \"$tmp/app/payments/charge_svc\" \"$tmp/sol\"\necho 'FROM scratch' > \"$tmp/app/payments/charge_svc/Dockerfile\"\ntouch \"$tmp/app/payments/charge_svc/sol.toml\"\necho 'project: pluto' > \"$tmp/sol.yml\"\nprintf 'prod:\\n  targets:\\n    aws/us-east-1:\\n      profile: production-single-region\\n      registry: registry.example.com\\n      kube_context: feat089-no-such-context\\n' > \"$tmp/sol/environments.yml\"\ncd \"$tmp\"\nif \"$sol\" deploy prod/aws/us-east-1 --emit-to out --image-tag abc >\"$tmp/emit.out\" 2>&1; then\n  echo 'profile target unexpectedly emitted a GitOps bundle' >&2\n  exit 1\nfi\ngrep -F 'Nothing was changed' \"$tmp/emit.out\" >/dev/null\ngrep -F 'direct apply reconciliation authority is not established' \"$tmp/emit.out\" >/dev/null\ntest ! -e out\nif POSTGRES_URL=postgres://unused \"$sol\" deploy prod/aws/us-east-1 --image-tag abc >\"$tmp/apply.out\" 2>&1; then\n  echo 'profile target unexpectedly deployed' >&2\n  exit 1\nfi\ngrep -F 'preflight found' \"$tmp/apply.out\" >/dev/null\nif grep -F 'feat089-no-such-context' \"$tmp/apply.out\" >/dev/null; then\n  echo 'preflight ran after a cluster call' >&2\n  exit 1\nfi")))
 
-; The qualification-artifact guard is internal/ci/check_no_account_artifacts.sh
-; and runs as a CI step, not here: it checks what git tracks, and dune can only
-; offer it `_build/default`, where `git ls-files` is empty and it would pass on
-; any tree at all.
-
-; INFRA-075 guard: the isolation above must stay in force, and must not point at the
-; operator's real data home.
-
 (rule
  (alias runtest)
  (action
   (bash
    "set -eu\ncase \"${XDG_DATA_HOME:-}\" in\n  '') echo 'INFRA-075: XDG_DATA_HOME is unset for cli/test actions; sol would write runs into the real ~/.local/share/sol' >&2; exit 1 ;;\nesac\nif [ -n \"${HOME:-}\" ] && [ \"$(cd \"$(dirname \"$XDG_DATA_HOME\")\" 2>/dev/null && pwd -P)/$(basename \"$XDG_DATA_HOME\")\" = \"$HOME/.local/share\" ]; then\n  echo 'INFRA-075: XDG_DATA_HOME points at the real data home' >&2; exit 1\nfi")))
-
-; SEC-010: the sensitive-variable guard reads the real roots, so they are deps.
 
 (test
  (name test_sensitive_vars)
@@ -196,17 +173,10 @@
   (source_tree ../../platform/cloud))
  (libraries sol_cli alcotest str))
 
-; INFRA-076: Terraform supervision, with a fake terraform and a fake provider
-; plugin. The test binary is its own supervisor (it answers __supervise).
-
 (test
  (name test_supervised)
  (modules test_supervised)
  (libraries sol_cli alcotest unix str))
-
-; REFAC-117: `sol alert test` -- --target is required at the command line (a
-; usage error, exit 124), a target failing the alert contract exits 2, and a dry
-; run prints the synthetic alert without sending it.
 
 (rule
  (alias runtest)
@@ -214,9 +184,6 @@
  (action
   (bash
    "set -u\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\ncd \"$tmp\"\ntouch sol.yml\nmkdir sol\nexpect() { want=$1; shift; if \"$sol\" \"$@\" >out 2>&1; then got=0; else got=$?; fi; if [ \"$got\" != \"$want\" ]; then echo \"sol $*: expected exit $want, got $got\" >&2; cat out >&2; exit 1; fi; }\nexpect 124 alert test\ngrep -F -- '--target' out >/dev/null\nprintf 'prod:\\n  targets:\\n    aws/us-east-1:\\n' > sol/environments.yml\nexpect 2 alert test --target prod/aws/us-east-1\ngrep -F 'does not satisfy the alert-delivery contract' out >/dev/null\nprintf 'prod:\\n  targets:\\n    aws/us-east-1:\\n      alert_receiver_type: webhook\\n      alert_receiver_url: https://hooks.example.test/x\\n      alert_owner: ops@example.test\\n      alert_runbook_url: https://runbooks.example.test/x\\n' > sol/environments.yml\nexpect 0 alert test --target prod/aws/us-east-1 --dry-run\ngrep -F '\"alertname\":\"SolSyntheticAlert\"' out >/dev/null\ngrep -F '/api/v2/alerts' out >/dev/null")))
-
-; REFAC-115: `sol assets` runs every check and reports every failure, then fails
-; once -- here with two assets broken in a copy of the platform tree.
 
 (rule
  (alias runtest)
@@ -227,19 +194,12 @@
   (bash
    "set -u\nsol=$(pwd)/../bin/main.exe\nplatform=$(pwd)/../../platform\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nmkdir -p \"$tmp/home/framework/ocaml/sol-svc/lib\" \"$tmp/home/framework/ocaml/kafka-eio-service/lib\"\ntouch \"$tmp/home/framework/ocaml/sol-svc/lib/dune\" \"$tmp/home/framework/ocaml/kafka-eio-service/lib/dune\"\ncp -r \"$platform\" \"$tmp/home/platform\"\nchmod -R u+w \"$tmp/home\"\nrm -rf \"$tmp/home/platform/shared/observability/dashboards\" \"$tmp/home/platform/cloud/aws/cluster\"\nif SOL_HOME=\"$tmp/home\" \"$sol\" assets >\"$tmp/out\" 2>&1; then\n  echo 'sol assets passed with two assets broken' >&2; cat \"$tmp/out\" >&2; exit 1\nfi\nfailed=$(grep -c '^  FAIL ' \"$tmp/out\" || true)\nif [ \"$failed\" -lt 2 ]; then\n  echo \"sol assets reported $failed failure(s), expected both\" >&2; cat \"$tmp/out\" >&2; exit 1\nfi\ngrep -F 'FAIL  terraform' \"$tmp/out\" >/dev/null\ngrep -F 'FAIL  dashboards' \"$tmp/out\" >/dev/null\ngrep -F 'ok  terraform  platform/cloud/gcp/cluster' \"$tmp/out\" >/dev/null\ngrep -F 'asset checks failed' \"$tmp/out\" >/dev/null")))
 
-; REFAC-115 (part B): commands return their failure and exit once, at the term,
-; with the same text and exit code as before. Usage errors (an unknown
-; observability backend, --follow with --no-follow) are the parser's, so 124.
-
 (rule
  (alias runtest)
  (deps ../bin/main.exe)
  (action
   (bash
    "set -eu\nsol=$(pwd)/../bin/main.exe\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nexpect() {\n  want=$1; shift\n  if \"$@\" >\"$tmp/out\" 2>\"$tmp/err\"; then got=0; else got=$?; fi\n  if [ \"$got\" != \"$want\" ]; then\n    echo \"expected exit $want, got $got: $*\" >&2; cat \"$tmp/err\" >&2; exit 1\n  fi\n}\nmkdir -p \"$tmp/outside\" \"$tmp/ws/app/payments/charge_svc\"\ncd \"$tmp/outside\"\nexpect 1 \"$sol\" check\ngrep -F 'sol: not inside a Sol workspace' \"$tmp/err\" >/dev/null\ncd \"$tmp/ws\"\ntouch sol.yml\nexpect 1 \"$sol\" check\ngrep -F 'Dockerfile is missing' \"$tmp/err\" >/dev/null\nif [ -n \"$(tail -n 1 \"$tmp/err\")\" ]; then :; else echo 'sol check printed a blank line after its findings' >&2; exit 1; fi\nexpect 124 \"$sol\" open logs --links --observability-backend bogus\ngrep -F 'bogus' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" local rollback\ngrep -Fx 'error: pass a release id, or --commit <sha>.' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" plan nope\ngrep -Fx 'error: nope: target must look like <env>/<provider>/<region>' \"$tmp/err\" >/dev/null\nmkdir -p app/billing/invoice_svc\necho 'FROM scratch' > app/billing/invoice_svc/Dockerfile\nexpect 1 \"$sol\" local fn run billing/invoice_svc\ngrep -F \"is a svc, not a -fn; 'sol fn run' only invokes -fn workloads.\" \"$tmp/err\" >/dev/null\nexpect 124 \"$sol\" local logs --scope billing/invoice_svc --follow --no-follow\ngrep -F -- '--follow and --no-follow are mutually exclusive' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" local logs\ngrep -Fx 'error: pass --scope DOMAIN/UNIT (or --release <id>)' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" local logs --scope billing\ngrep -F 'error: sol logs addresses exactly one unit' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" deploy prod/aws/us-east-1 --dry-run --image-tag t1\ngrep -F 'error: target \"prod/aws/us-east-1\" is not declared in' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" local migrate --dry-run --dir nope\ngrep -Fx 'error: cannot read migrations dir: nope: No such file or directory' \"$tmp/err\" >/dev/null\nmkdir -p m && touch m/001_a.sql m/001_b.sql\nexpect 1 \"$sol\" local migrate --dry-run --dir m\ngrep -F 'error: migrations 001_a.sql and 001_b.sql in m share version 1' \"$tmp/err\" >/dev/null\nif command -v terraform >/dev/null 2>&1; then\n  expect 1 \"$sol\" cloud plan nope\n  grep -Fx 'error: target must look like <env>/<provider>/<region>.' \"$tmp/err\" >/dev/null\n  expect 1 \"$sol\" cloud plan prod/zzz/us-east-1\n  grep -Fx 'error: unsupported provider \"zzz\" in target \"prod/zzz/us-east-1\".' \"$tmp/err\" >/dev/null\nfi\nexpect 1 \"$sol\" new svc bad\ngrep -Fx 'error: expected domain/name (e.g. payments/charge), got \"bad\"' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" new workspace sol.yml\ngrep -Fx 'error: \"sol.yml\" already exists' \"$tmp/err\" >/dev/null\nexpect 124 \"$sol\" local rollback --commit \"\"\ngrep -F 'must not be blank' \"$tmp/err\" >/dev/null\nexpect 124 \"$sol\" open logs --links --observability-backend self_hosted_durable --base-domain \"  \"\ngrep -F 'must not be blank' \"$tmp/err\" >/dev/null\n")))
-
-; INFRA-091: the parser test reads the payload Terraform produced, so the fixture is a declared
-; dependency and lands beside the executable.
 
 (test
  (name test_gcp_outputs)

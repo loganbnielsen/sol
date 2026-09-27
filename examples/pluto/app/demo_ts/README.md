@@ -87,5 +87,13 @@ docker build -f app/demo_ts/order_svc/Dockerfile -t order-svc .
 docker build -f app/demo_ts/fulfillment_worker/Dockerfile -t fulfillment-worker .
 ```
 
+The build splits in two so the npm install stays cached against the manifests
+rather than the source: both units' `package.json`/`package-lock.json` are copied
+and `npm ci` runs before any source is copied.
+
+The runtime stage ships the workspace's single shared install plus **only this
+unit's** tree. The sibling's workspace symlink inside `node_modules` then points
+at nothing, which is inert because nothing resolves it at runtime.
+
 Running the images needs the same environment variables as the local walkthrough
 above, pointed at reachable infrastructure.

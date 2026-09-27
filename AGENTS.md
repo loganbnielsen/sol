@@ -114,7 +114,6 @@ The discipline, since relying on remembering the current directory has now faile
 
 ## Core design principles every engineer must know
 
-**No code comments.** Names carry the meaning: if code needs a comment to be understood, rename or restructure it. An invariant ("keep in sync with", "callers must", "never") belongs in the code — a type, a single shared definition, a test or a guard — not in prose that can be worked around. A file that wants section banners wants splitting. The reason a line exists lives in its ticket and commit, not in the source. `internal/ci/check_no_comments.sh` holds this for OCaml, shell, Terraform, TypeScript and Python; tool directives (`#!`, `# shellcheck`, `// @ts-…`, `# noqa`, `# type:`) are not comments.
 
 **Security on Day 1.** `Kafka_security.t` is a first-class field in every producer, consumer, and service config. `config_of_env()` reads `KAFKA_SECURITY_PROTOCOL`, `KAFKA_SSL_CA_LOCATION`, `KAFKA_SASL_*` from the environment, and **`KAFKA_SECURITY_PROTOCOL` is required** (SEC-007): an absent value is an error, never a default. Sol-rendered manifests set it; a local process sets `KAFKA_SECURITY_PROTOCOL=plaintext`. The declared posture today is in-cluster plaintext with no SASL, in every profile; TLS/SASL for production is FEAT-093. Do not add Kafka config anywhere that lacks a `security` field.
 
@@ -277,6 +276,41 @@ You must maintain and consult the project's source-of-truth markdown files:
 3. **At Task Completion / Session End**:
    - Update `internal/planning/WORK_SUMMARY.md` to accurately reflect what was accomplished, what is currently "In Progress", and any new implementation hurdles or blockers discovered.
    - If a major milestone is hit, update the status checklist in `docs/ROADMAP.md`.
+
+## Comments: none in covered formats
+
+Covered source and config formats carry **no comments**: `.ml`/`.mli`, shell
+(including the extensionless git hooks),
+Terraform, TypeScript and Python (REFAC-142), and dune files and Dockerfiles
+(REFAC-143). `internal/ci/check_no_comments.sh` enforces every one of them, reading
+shell through `shfmt`'s parser and Python through `tokenize`. A directive a tool
+genuinely needs is the one exception: `#!`, `# shellcheck`, `// @ts-…`,
+`/// <reference`, `# noqa`, `# type:`, and a Dockerfile's leading `# syntax=`.
+
+Write the code so it explains itself, and put what is left where a reader finds
+it:
+
+- an **executable invariant** belongs in a type, a shared definition, a guard or a
+  test, never in a comment beside it;
+- **durable rationale** — why this exists, what it replaced, what it protects —
+  belongs in `docs/`, `internal/`, or the ticket or decision record that owns it;
+- **user-facing explanation** belongs in the documentation that ships with the
+  generated artifact (a scaffolded `README.md`, the tutorial), so a workspace
+  never loses context because its Dockerfile stopped explaining itself.
+
+Deliberately not covered, and not to be swept opportunistically: workflow, Helm
+and scaffold/example YAML, the `.tftpl` templates (no semantic-equivalence check
+for rendered River config), and `internal/qualification/**` (live-run records).
+
+**CI tooling: shell orchestrates, programs parse.** A guard that inspects
+Terraform, YAML or JSON reads it structurally — Terraform through
+`internal/ci/lib/tfconfig.py` (python-hcl2), YAML through PyYAML, both pinned in
+`internal/ci/requirements.txt` — never by grepping its text, whose verdict then
+depends on formatting. Such a guard is a `.py` file, not Python embedded in a shell
+heredoc. Shell stays for what shell is for: running processes, git plumbing,
+installation and live qualification. A guard's mutation test must fail the guard
+for the reason under test, so a mutation that breaks something else cannot pass
+as caught.
 
 ## Verifying claims before you report them
 

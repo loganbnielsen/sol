@@ -1,5 +1,18 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
+## Latest: UX-003 — sol new workspace names the README it generated (2026-09-27)
+
+- The scaffold's next-steps report gave the commands, the framework dependency and the CI/CD notes, but never named `README.md` — the file it had just written, and (since REFAC-143) the only place the generated Dockerfile's rationale lives. Two lines now name it after the command list.
+- The test asserts the report names README.md *and* that the file exists in the generated workspace, so the pointer cannot dangle.
+- Local note: running `test_scaffold.exe` directly (outside dune) fails two `existing_files` build cases because this switch lacks the framework packages; under dune they pass, and CI installs them. `test_destroy_completeness_check.sh` needs `python-hcl2`, which is not installed here — both are this machine, not the branch.
+
+## Latest: REFAC-143 — no comments in dune files or Dockerfiles (2026-09-27)
+
+- The policy is now written down: `AGENTS.md` gains a *Comments: none in covered formats* section — covered formats, tool directives as the only exception, invariants to types/shared definitions/guards/tests, durable rationale to the docs or the record that owns it, user-facing explanation to the documentation that ships with the artifact, and the categories deliberately left uncovered. Finding this by failing CI (as happened on BUG-063) was the weakest possible discovery path for an agent writing code here.
+- dune files: 97 comment lines across 13 files removed; the facts they carried are in `AGENTS.md`, DONE/REFAC-104.md, DONE/REFAC-128.md and DONE/DEC-025.md, and in the rules' own failure text. Two `cli/test/dune` notes stay on purpose: they explain why two CI guards are not dune rules, and that reasoning belongs with the guards, which the CI and tooling work owns.
+- Dockerfiles: 180 comment lines across 12 files removed, and the explanation *moved* rather than deleted — a Container images section in the scaffolded workspace README (verified in a real `sol new workspace` run), sections or extensions in the pluto and demo_ts READMEs, and a pointer in the tutorial. The uid-65534 invariant that a comment asserted is now a test comparing each template's `USER` with the rendered `runAsUser`/`runAsGroup`.
+- Proven comment-only: for every Dockerfile the non-comment lines are byte-identical to `origin/main`'s. `docker build` of the demo_ts service from the example workspace succeeds against the stripped file. CLI suite 84/84, `dune build`/`dune fmt` clean, and the OCaml half of the no-comments check run directly (shfmt is absent locally): 427 files, none with a comment.
+
 ## Latest: BUG-063 — `pipeline ls` asks git for commits, not shas (2026-09-27)
 
 - `worktree_snapshot_of_entry` reported "unpushed commits" whenever HEAD differed from the branch's upstream sha (or from `origin/main` when it has none), which is equally true of a worktree that is merely *behind* -- the ordinary state of one created before the last few merges. Found while resolving BUG-056, whose spent worktree was annotated that way while holding 0 commits ahead of main.
