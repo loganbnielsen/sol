@@ -38,18 +38,18 @@ Calls like `List.iter (fun … -> <many lines>) Sol_cli_provider.all` put the da
 
   | | origin/main | this branch |
   |---|---|---|
-  | multi-line lambda before its data (`List.iter\n (fun …) xs`) | 296 | 86 |
-  | annotated lambda parameters | 115 | 88 |
-  | module-qualified field accesses (`r.M.field`) | 460 | 73 |
+  | multi-line lambda before its data (`List.iter\n (fun …) xs`) | 294 | 87 |
+  | annotated lambda parameters | 119 | 88 |
+  | module-qualified field accesses (`r.M.field`) | 452 | 73 |
   | two-arm no-op matches | 32 | 9 |
 
 - **What remains, and why:**
-  - **Pipelines.** The 86 were skipped on purpose: calls with a non-lambda first argument, several data arguments, or an infix operator after the call, where `|>`'s low precedence would change the parse.
+  - **Pipelines.** The 87 were skipped on purpose: calls with a non-lambda first argument, several data arguments, or an infix operator after the call, where `|>`'s low precedence would change the parse.
   - **Annotations and qualifiers.** These passes removed every one, rebuilt, and restored only those the compiler then required: 50 annotated-lambda lines and 383 qualified accesses are gone. What remains is needed, typically because a record constructed before its use fixes the type, or because an opened module shares the field name (`cmd_deploy`'s `open Sol_cli_manifest`).
   - **No-op arms.** The 9 have guards, more than two arms, or no unambiguous extent.
 - **Two-job functions:**
   - `cmd_deploy.print_service_urls`, which your review named, is now `http_services` (resolves) and `print_service_urls` (prints).
   - `cmd_status.print_signal_line` is now `signal_line` (returns the line), printed by its caller.
   - Along the way, `Sol_cli_status.Unreachable` now carries the probe's own reason ("unreachable (HTTP 503)") instead of discarding it. That is the keep-the-original-text rule.
-- **Verification:** 67 CLI suites pass; format is clean; the offline lifecycle harness passes.
+- **Verification:** 68 CLI suites pass; format is clean; the offline lifecycle harness passes.
 - **Demo/example:** not applicable (internal). **Language parity:** no impact.
