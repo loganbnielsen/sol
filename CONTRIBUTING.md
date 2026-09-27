@@ -38,7 +38,22 @@ dune build && dune test && dune fmt --preview
 ```
 
 A pre-commit hook runs the build and unit suites; install it with
-`bash internal/tooling/scripts/install-hooks.sh`. It also validates ticket
+`bash internal/tooling/scripts/install-hooks.sh`.
+
+The repository guards under `internal/ci/` are the same checks CI runs, and some
+of them need their own tooling: the structural Terraform and YAML guards read
+through pinned Python modules (`internal/ci/requirements.txt`), and the comment
+guard parses shell with a pinned `shfmt`. One script provides both, the same one
+CI runs:
+
+```bash
+bash internal/tooling/scripts/prepare-guard-tools.sh
+```
+
+It is idempotent, and on a distribution whose Python refuses a user install
+(PEP 668) it installs the same pinned set into the user site and says so. Without
+it a structural guard fails with the command to run, rather than a verdict about
+the tree. It also validates ticket
 state transitions: ticket creation and correction happen on ordinary PR
 branches, while deletion is only allowed as a same-ID state move.
 

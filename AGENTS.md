@@ -305,7 +305,8 @@ for rendered River config), and `internal/qualification/**` (live-run records).
 **CI tooling: shell orchestrates, programs parse.** A guard that inspects
 Terraform, YAML or JSON reads it structurally — Terraform through
 `internal/ci/lib/tfconfig.py` (python-hcl2), YAML through PyYAML, both pinned in
-`internal/ci/requirements.txt` — never by grepping its text, whose verdict then
+`internal/ci/requirements.txt` and installed for CI and for a developer by
+`internal/tooling/scripts/prepare-guard-tools.sh` — never by grepping its text, whose verdict then
 depends on formatting. Such a guard is a `.py` file, not Python embedded in a shell
 heredoc. Shell stays for what shell is for: running processes, git plumbing,
 installation and live qualification. A guard's mutation test must fail the guard
