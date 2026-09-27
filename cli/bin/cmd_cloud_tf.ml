@@ -61,21 +61,11 @@ let resolve_assets () =
 ;;
 
 (* DEC-050: the Terraform roots in Sol's assets are immutable and only read here,
-   for the variables a root declares. Terraform itself runs in a per-state working
-   directory (Sol_cli_terraform_workdir) keyed by the backend it works on, which
-   every init first materializes from those assets. *)
+   for the variables a root declares; Terraform runs in a per-state working
+   directory materialized from them (Sol_cli_cloud_wiring.init). *)
 let asset_root ~assets provider role =
   let dir = Sol_cli_platform_assets.cloud_root assets provider role in
   if Sys.file_exists dir then Ok dir else refuse ("Terraform module not found: " ^ dir)
-;;
-
-let workdir provider role ~backend_config =
-  Sol_cli_terraform_workdir.chdir ~provider ~role ~backend_config
-;;
-
-let materialize_workdir ~assets provider role ~backend_config =
-  Sol_cli_terraform_workdir.materialize ~assets ~provider ~role ~backend_config
-  |> Result.map ignore
 ;;
 
 type action =
@@ -90,36 +80,6 @@ let action_of_flags plan apply =
   | true, true -> `Error (false, "--plan and --apply are mutually exclusive")
 ;;
 
-(* Full stdout/stderr already went to this run's phase log via
-   Sol_cli_run_log.run_phase, which also printed the compact status line and,
-   on failure, the log path and its tail. Nothing left to print here. *)
-(* Live attempt 1's destruction failure was diagnosed only by reconstructing it
-   by hand: this exited non-zero and printed nothing, and the failure's terraform
-   output was recorded only if the call happened to sit inside a run phase. An
-   operation that fails must say why -- the run log is the record, but the reason
-   is not something an operator should have to go looking for. *)
-let terraform_outcome = Sol_cli_terraform_steps.terraform_outcome
-
-let require_terraform_success r =
-  terraform_outcome r |> Result.map_error (fun m -> Sol_cli_exit.failure ("\n" ^ m))
-;;
-
-let terraform_stdout = Sol_cli_terraform_steps.terraform_stdout
-let apply_asserted = Sol_cli_terraform_steps.apply_asserted
-
-(* The bootstrap-access mechanism's Terraform identity and scope, and the
-   reconciliation apply's scope -- the bootstrap mechanism plus the guarded
-   resources the inventory represents, never the whole root, so a configured-but-
-   unrepresented cluster is not even planned. Per provider, in
-   [Sol_cli_provider_capabilities] (REFAC-095). *)
-let capabilities = Sol_cli_provider_capabilities.capabilities_of
-let bootstrap_matchers provider = (capabilities provider).bootstrap_matchers
-let bootstrap_scope provider = (capabilities provider).bootstrap_scope
-
-let reconciliation_scope provider guarded =
-  (capabilities provider).reconciliation_scope guarded
-;;
-
 (* BUG-057: the flag is relative to the shell, a target's var file to the
    workspace root. *)
 let resolve_var_file ~flag ~target =
@@ -128,513 +88,43 @@ let resolve_var_file ~flag ~target =
   Sol_cli_terraform_vars.var_file ~cwd ~workspace_root ~flag ~target
 ;;
 
-let trim_quotes s =
-  let s = String.trim s in
-  let len = String.length s in
-  if len >= 2 && s.[0] = '"' && s.[len - 1] = '"' then String.sub s 1 (len - 2) else s
+(* The target's own variables, and the target. [strict] for the commands that
+   mutate infrastructure (see [Sol_cli_terraform_vars.of_target]). *)
+let target_vars ~strict target =
+  Sol_cli_terraform_vars.of_target
+    ~strict
+    ~workspace:(Sol_cli_workspace.current_name ())
+    target
+  |> Result.map (fun (vars, target_cfg) -> Sol_cli_terraform.kv_args vars, target_cfg)
+  |> Sol_cli_exit.of_msg
 ;;
 
-let var_value key vars =
-  List.rev vars
-  |> List.find_map (fun v ->
-    match String.index_opt v '=' with
-    | None -> None
-    | Some i ->
-      if String.sub v 0 i |> String.trim = key
-      then Some (String.sub v (i + 1) (String.length v - i - 1) |> trim_quotes)
-      else None)
-;;
-
-let var_file_value key path =
-  try
-    let ic = open_in path in
-    Fun.protect
-      ~finally:(fun () -> close_in_noerr ic)
-      (fun () ->
-         let rec loop () =
-           match input_line ic with
-           | line ->
-             let line = String.trim line in
-             if line = "" || line.[0] = '#'
-             then loop ()
-             else (
-               match String.index_opt line '=' with
-               | None -> loop ()
-               | Some i ->
-                 if String.sub line 0 i |> String.trim = key
-                 then
-                   Some
-                     (String.sub line (i + 1) (String.length line - i - 1) |> trim_quotes)
-                 else loop ())
-           | exception End_of_file -> None
-         in
-         loop ())
-  with
-  | _ -> None
-;;
-
-let resolved_var key ~var_files ~vars ~default =
-  match var_value key vars with
-  | Some _ as v -> v
-  | None ->
-    (match List.find_map (var_file_value key) var_files with
-     | Some _ as v -> v
-     | None -> default)
-;;
-
-(* DEC-024: the workspace name comes from the resolved root, so it is the same
-   from any descendant directory. *)
-let workspace_name = Sol_cli_workspace.current_name
-
-(* The independent postcondition: a fresh read of *this root's* own state. The root
-   is [infra_dir], the disposable cloud root -- DEC-043's durable GCP prerequisites
-   live in `platform/cloud/gcp/bootstrap`, a different root, so they are not
-   residue and are never asserted about here. *)
-let post_destroy_state ~infra_dir =
-  Sol_cli_destroy_verification.state_evidence
-    (match Sol_cli_terraform.show_json ~chdir:infra_dir () with
-     | Ok result ->
-       (match Sol_cli_cloud_destroy.inventory_of_show_json result.stdout with
-        | Sol_cli_cloud_destroy.State_empty -> Ok []
-        | Sol_cli_cloud_destroy.State_represented _ as state ->
-          Ok (Sol_cli_cloud_destroy.addresses state)
-        | Sol_cli_cloud_destroy.State_unreadable reason -> Error reason)
-     | Error (Sol_cli_process.Non_zero result) ->
-       Error (Printf.sprintf "terraform show exited %d" result.exit_code)
-     | Error error ->
-       Error ("terraform show could not be run: " ^ Sol_cli_process.error_to_string error))
-;;
-
-(* Step 5's one observation, narrowed by DEC-045 / REFAC-094. Terraform's destroy
-   plus the empty-state check is the authority for everything Terraform manages,
-   so the provider is asked only about what Terraform does not own (residue) and
-   what the target promised to keep or not keep (retention). *)
-let verification_observation
-      ~(destruction : Sol_cli_destruction.t)
-      ~infra_dir
-      ~cluster
-      ~retention
-      ~pre_destroy
-      ~preparation
-  =
-  let open Sol_cli_destroy_verification in
-  (* The postcondition first, then the derived legs -- stated, not left to the
-     unspecified evaluation order of record fields. *)
-  let state = post_destroy_state ~infra_dir in
-  let sweep = destruction.residue ~pre_destroy ~cluster in
-  { state; sweep; retention = destruction.retention ~retention ~pre_destroy ~preparation }
-;;
-
-let report_verification observation =
-  Printf.printf "%s%!" (Sol_cli_destroy_verification.report observation)
-;;
-
-let terraform_init run_log infra_dir backend_config =
-  Sol_cli_run_log.run_phase run_log ~name:"terraform-init" (fun () ->
-    Sol_cli_terraform.init ~chdir:infra_dir ~backend_config ())
-;;
-
-(* DEC-050: every Terraform use of a state begins with init, so init is where its
-   working directory is materialized from the authoritative assets. *)
-let run_terraform_init ~assets run_log ~provider ~role backend_config =
-  let* () =
-    materialize_workdir ~assets provider role ~backend_config |> Sol_cli_exit.of_msg
-  in
-  require_terraform_success
-    (terraform_init run_log (workdir provider role ~backend_config) backend_config)
-;;
-
-(* REFAC-091: the form for the destroy sequence, which carries an init failure in
-   its typed outcome as a message. *)
-let run_terraform_init_result ~assets run_log ~provider ~role backend_config =
-  let* () = materialize_workdir ~assets provider role ~backend_config in
-  terraform_outcome
-    (terraform_init run_log (workdir provider role ~backend_config) backend_config)
-;;
-
-(* INFRA-076: before touching a Terraform state, look at the last operation
-   against it. Running: never race it and never unlock it -- say so and stop.
-   Unresolved (Terraform did not finish its own protocol, or left
-   errored.tfstate): a constructive command must not proceed as though nothing
-   happened, unless the operator reconciled it and says so; a plan or a destroy
-   proceeds with the warning, because neither can construct from the gap. A
-   graceful Ctrl-C is Resolved, not suspicious. *)
 let guard_previous_operation ~constructive ~accept_unresolved ~chdir ~backend_config =
-  match Sol_cli_terraform.previous_operation ~chdir ~backend_config with
-  | Sol_cli_supervised.No_previous | Sol_cli_supervised.Resolved _ -> Ok ()
-  | Sol_cli_supervised.Running _ as status ->
-    refuse
-      (Printf.sprintf
-         "a previous Terraform operation against this state is still running and holds \
-          its lock. Wait for it to finish; do not unlock it.\n\
-         \  %s"
-         (Sol_cli_supervised.status_to_string status))
-  | Sol_cli_supervised.Unresolved _ as status when not constructive ->
-    Printf.eprintf
-      "warning: the previous Terraform operation against this state is %s\n%!"
-      (Sol_cli_supervised.status_to_string status);
-    Ok ()
-  | Sol_cli_supervised.Unresolved _ as status when accept_unresolved ->
-    Sol_cli_terraform.acknowledge_previous_operation ~chdir ~backend_config;
-    Printf.eprintf
-      "warning: proceeding past an unresolved previous operation, as --accept-unresolved \
-       asks: %s\n\
-       %!"
-      (Sol_cli_supervised.status_to_string status);
-    Ok ()
-  | Sol_cli_supervised.Unresolved _ as status ->
-    refuse
-      (Printf.sprintf
-         "refusing to apply: the previous Terraform operation against this state is %s\n\
-         \  Terraform may have changed the provider without recording it. Reconcile \
-          first (inspect the provider and the state; import or remove what diverged, \
-          push any errored.tfstate), then re-run with --accept-unresolved. Nothing was \
-          changed."
-         (Sol_cli_supervised.status_to_string status))
+  Sol_cli_state_guard.check ~constructive ~accept_unresolved ~chdir ~backend_config
+  |> Sol_cli_exit.of_msg
 ;;
 
-let established_target = function
-  | Some target -> Ok target
-  | None -> refuse "cloud lifecycle requires a resolved target"
-;;
-
-(* The cluster the cloud root produced, built by its provider's module
-   (REFAC-096); [None] when the root has no outputs yet. *)
-let cluster_of ~(target_cfg : Sol_cli_config.target) provider infra_dir =
-  Sol_cli_provider_registry.of_root provider ~target:target_cfg ~chdir:infra_dir
-;;
-
-let process_ok = Sol_cli_cluster.process_ok
-let process_output = Sol_cli_cluster.process_output
-
-(* One place that turns a cloud root's outputs into the platform definition's
-   variables, so the four lifecycle stages cannot disagree about the mapping, and
-   so the day a second provider's access path lands there is one call site to
-   widen rather than four. *)
-let platform_vars_of_result
-      ?(context = Sol_cli_cloud_lifecycle.Install)
-      ~cloud_target
-      ~cluster
-      ()
-  : (string list, string) result
-  =
-  let* inputs = Sol_cli_cloud_lifecycle.platform_inputs cloud_target cluster in
-  Sol_cli_cloud_lifecycle.platform_terraform_vars ~context inputs
-;;
-
-(* The access itself fails with a string, mapped by [refused]; the callback keeps
-   its own typed failure, so a Terraform failure inside is still reported as one. *)
-let with_cluster_access (cluster : Sol_cli_cluster.t) ~refused f =
-  match cluster.with_access (fun ~env -> Ok (f env)) with
-  | Ok result -> result
-  | Error message -> Error (refused message)
-;;
-
-(* The result-returning cluster access: no [on_error] threading, because the
-   elevated-access removal is bracketed structurally around the operation rather
-   than handed to each failure branch (FND-0047 / REFAC-091). *)
-let with_cluster_access_result
-      (cluster : Sol_cli_cluster.t)
-      (f : env:(string * string) list -> (unit, string) result)
-  : (unit, string) result
-  =
-  cluster.with_access f
-;;
-
-(* INFRA-039: resolve provider credentials for this operation, report the principal
-   they belong to, and fail closed if they cannot be resolved. Sol used to inherit
-   the ambient environment and assume it still worked: on HARDEN-002 Run 5 Attempt 5
-   the SSO session expired mid-run, the CLI still answered for the profile while
-   terraform could not refresh, and `sol cloud destroy` could not authenticate
-   against a billable target. [leaves_target_standing] says the part that matters —
-   a destroy that cannot authenticate leaves infrastructure running and disables the
-   only supported path to remove it. *)
-(* INFRA-039 resolved credentials per mutating stage, because a platform stage runs
-   many minutes after the cloud stage and a run can lose its session in between.
-   GCP's credential is Application Default Credentials and the reasoning is
-   identical -- including the part that matters most: a destroy that cannot
-   authenticate leaves billable infrastructure standing *and* disables the only
-   supported path to remove it. So the same guarantee is made through the
-   provider's own mechanism rather than assumed on GCP because it was implemented
-   on AWS. The token itself is never printed. *)
-let credentials_result ~provider ~operation ~leaves_target_standing
-  : (unit, string) result
-  =
+(* INFRA-039: resolve provider credentials for this operation, report the
+   principal they belong to, and fail closed if they cannot be resolved -- per
+   mutating stage, because a platform stage runs many minutes after the cloud
+   stage and a run can lose its session in between. [leaves_target_standing] says
+   the part that matters: a destroy that cannot authenticate leaves billable
+   infrastructure running and disables the only supported path to remove it. The
+   token itself is never printed. *)
+let require_credentials ~provider ~operation ~leaves_target_standing =
   Sol_cli_provider_registry.credentials provider ~operation ~leaves_target_standing
+  |> Sol_cli_exit.of_msg
 ;;
 
-(* What that check means, in the words its failure is reported with. *)
-let cloud_ready_expectation provider = (capabilities provider).cloud_ready_expectation
-
-let crds_established env =
-  process_ok
-    ~env
-    [ "kubectl"
-    ; "wait"
-    ; "--for=condition=Established"
-    ; "crd/certificates.cert-manager.io"
-    ; "crd/clusterissuers.cert-manager.io"
-    ; "--timeout=5s"
-    ]
-;;
-
-let provisioner_rbac_established env =
-  Sol_cli_cloud_lifecycle.provisioner_authorization_established ~can_i:(fun args ->
-    process_ok ~env ([ "kubectl"; "auth"; "can-i" ] @ args))
-;;
-
-(* Staged through the shared platform definition, which every provider's root
-   calls as `module.platform`, so every address goes through that prefix rather
-   than being written bare. *)
-let platform_prerequisite_targets =
-  let address = Sol_cli_cloud_lifecycle.platform_address in
-  Sol_cli_terraform.targets
-    (address "kubernetes_namespace.cert_manager")
-    (List.map
-       address
-       [ "kubernetes_namespace.ingress_nginx"
-       ; "kubernetes_namespace.argocd"
-       ; "kubernetes_namespace.redpanda"
-       ; "kubernetes_namespace.monitoring"
-       ; "kubernetes_cluster_role.platform_provisioner_namespaced"
-       ; "kubernetes_role_binding.platform_provisioner"
-       ; "kubernetes_cluster_role.platform_provisioner_cluster"
-       ; "kubernetes_cluster_role_binding.platform_provisioner_cluster"
-         (* The deploy identity's RBAC (sol_deploy / sol_deploy_bootstrap) is
-            created by the full platform apply, which ADR 0003 keeps inside the
-            privileged PlatformInstalling authority -- so it is not staged here.
-            (HARDEN-002 run 4 finding 13's interim staging is superseded by that
-            model.) *)
-       ; "helm_release.cert_manager"
-       ])
-;;
-
-(* The GCP counterpart of [rds_state]: what this root's state represents.
-
-   Two resources carry a deletion guard on GCP, by two different mechanisms: Cloud
-   SQL's is the provider's attribute *and* an API-level setting, and the GKE
-   cluster's is the provider's own attribute, which defaults to true. Live attempt
-   1 found the second only after Cloud SQL had been lifted -- the teardown then
-   refused with "Cannot destroy cluster because deletion_protection is set to
-   true", so a target Sol had provisioned could not be destroyed through Sol at
-   all. Both are read, and both are lifted.
-
-   FND-0048: the read is the shared typed inventory ([read_cloud_state]), which
-   walks the root module and every child module and keeps Terraform's own
-   addresses. There is no type-to-fixed-address mapping here, no single-instance
-   assumption, and a benign null guard is [None] rather than a read failure. *)
-
-(* Deletion protection is not retention, and the distinction is the whole point of
-   DEC-033: this transition makes the target *destructible*, it does not decide what
-   survives. Both of GCP's guards are Terraform/provider attributes, and a destroy
-   plan carries only deletes, so the provider is handed prior state and a `-var` on
-   the destroy never reaches it -- lifting them is therefore its own targeted applied
-   transition, verified from state afterwards rather than assumed. Doing nothing here
-   does not skip a preparation, it makes the destroy impossible and the target
-   billable. *)
-(* The guarded resources, once: their real declared addresses. The state side of
-   the intersection comes from the inventory, which walks child modules and keeps
-   Terraform's own addresses -- so nothing is discovered by type and mapped back
-   onto a fixed address (FND-0048), and a second instance of a type is a different
-   address rather than a mis-attributed first one.
-
-   The preparation below lowers deletion guards so that destruction can proceed. It is NOT
-   a retention mechanism: deletion protection and "keep the final snapshot" are different
-   promises, and only the second one is a destruction precondition (DEC-033). *)
-(* The guarded resources the Step-2 inventory actually represents, by declared
-   address. This is the state side of the scope decision: a configured-but-
-   unrepresented resource is not targeted (FND-0030), and the plan assertion
-   catches anything a `-target` pulls in anyway. *)
-let guarded_addresses_of provider state =
-  Sol_cli_cloud_lifecycle.preparations_eligible
-    ~state:(Sol_cli_cloud_destroy.addresses state)
-    ~desired:(capabilities provider).guarded_addresses
-;;
-
-(* What destruction preparation did. The providers differ in what there is to carry
-   forward -- AWS's prepared final-snapshot identity has no GCP counterpart, because
-   Cloud SQL destroys its backups with the instance -- so the difference is named in
-   the type rather than flattened into an option that would have to mean two
-   things. The type lives in [Sol_cli_cloud_destroy], because the execution core
-   carries it in its typed outcome. *)
-
-(* The Destroy policy's overrides for this provider, given what preparation found.
-   Appended after the caller's own variables so the phase policy wins (ADR 0003 /
-   HARDEN-002 finding 15). *)
-let destroy_policy_vars ~provider ~phase ~retention ~prepared =
-  match prepared with
-  | Sol_cli_cloud_destroy.Nothing_prepared -> []
-  | Sol_cli_cloud_destroy.Prepared { retained } ->
-    Sol_cli_cloud_lifecycle.policy_vars
-      ~provider
-      ~phase
-      ~destroy_snapshot_id:(Option.value retained ~default:"")
-      ~retention
-;;
-
-(* The install window, opened on the cloud root of *both* providers and closed
-   before an install is reported. What differs is the object -- an EKS access entry
-   on AWS, an in-cluster ClusterRoleBinding created under the operator's
-   credentials on GCP -- and both are created by the cloud apply for the same
-   reason: the platform apply runs *as* the provisioner, so it cannot be the thing
-   that grants the provisioner the authority it is authenticated with. A binding
-   created by the apply that needs it is a chicken-and-egg, which is exactly what
-   the first draft of this got wrong.
-   
-   So there is no provider branch here and no provider argument: the variable is
-   declared by both cloud roots, and the invariant -- authority exists only for the
-   window -- is what is shared. *)
-
-let bootstrap_access_vars ~enabled =
-  [ ("provisioner_bootstrap_admin", if enabled then "true" else "false") ]
-;;
-
-(* ── INFRA-042: a partially installed platform must still be destroyable ──────
- *
- * Attempt 3 reached PlatformInstalling and failed there (a host prerequisite),
- * and Sol's documented destroy then could not finish:
- *
- *     [platform-destroy] FAILED (38.0s)
- *         Error: API did not recognize GroupVersionKind from manifest
- *                (CRD may not be installed)
- *
- * The platform root's state referenced CRD-backed resources -- the two
- * cert-manager ClusterIssuers, which the definition declares as
- * `kubernetes_manifest` -- whose CRDs were never installed, because the install
- * never got that far. The provider cannot delete a resource whose API does not
- * exist, so the destroy failed and the cloud layer behind it stayed billable.
- *
- * This is ADR 0004's invariant reached through a *third* mechanism. The first two
- * have guards (`prevent_destroy`, and a provider deletion default); this one is a
- * resource whose API does not exist, and it only appears in the state a target is
- * most likely to be in -- a failed install.
- *
- * The recovery has to be narrow in a specific way, because the obvious version of
- * it is a bug: "remove whatever Terraform cannot delete" would silently ignore
- * real resources. So a resource is forgotten only when it is *provably* absent,
- * and the proof is the cluster's own discovery:
- *
- *   * only `kubernetes_manifest`, whose stored manifest states its kind verbatim.
- *     Native `kubernetes_*` resources are deliberately not handled: deriving their
- *     kind means mapping a Terraform type to a Kubernetes kind by convention, and
- *     a mapping that is wrong in the wrong direction forgets a resource that
- *     exists. A native resource that will not delete stays a failure.
- *   * and only when the cluster does not serve that kind with the `delete` verb. A
- *     kind the cluster serves is a resource that may exist, so it is never
- *     forgotten -- the destroy is retried and, if it fails again, fails closed.
- *
- * Nothing here reimplements the resource graph: the destroy is attempted first, in
- * full, with Terraform's own ordering and ownership, and this only runs after it
- * has actually failed. *)
-let served_api_kinds env =
-  match
-    Sol_cli_process.run
-      (Sol_cli_process.cmd
-         ~env
-         [ "kubectl"; "api-resources"; "--verbs=delete"; "--no-headers" ])
-  with
-  | Ok result ->
-    Ok
-      (String.split_on_char '\n' result.stdout
-       |> List.filter_map (fun line ->
-         (* The last column is KIND; SHORTNAMES is often empty, so the split is on
-            runs of whitespace rather than on single spaces. *)
-         match
-           String.split_on_char ' ' (String.trim line)
-           |> List.filter (fun field -> field <> "")
-           |> List.rev
-         with
-         | kind :: _ :: _ -> Some kind
-         | _ -> None)
-       |> List.sort_uniq compare)
-  | Error (Sol_cli_process.Non_zero result) ->
-    Error
-      (Printf.sprintf
-         "kubectl api-resources exited %d: %s"
-         result.exit_code
-         (String.trim result.stderr))
-  | Error error -> Error (Sol_cli_process.error_to_string error)
-;;
-
-(* The resources whose kind the cluster does not serve, each with the kind that
-   proves it -- the proof travels with the decision. *)
-let unserved_manifest_resources ~served ~chdir =
-  match Sol_cli_terraform.show_json ~chdir () with
-  | Ok result ->
-    let text path json =
-      Sol_cli_json.field path json
-      |> Sol_cli_json.string
-      |> Fun.flip Option.bind Sol_cli_string.non_blank
-    in
-    let unserved resource =
-      if text [ "type" ] resource <> Some "kubernetes_manifest"
-      then None
-      else (
-        let kind =
-          match text [ "values"; "manifest"; "kind" ] resource with
-          | Some _ as kind -> kind
-          | None -> text [ "values"; "object"; "kind" ] resource
-        in
-        match kind, text [ "address" ] resource with
-        | Some kind, Some address when not (List.mem kind served) -> Some (address, kind)
-        | _ -> None)
-    in
-    (match Yojson.Safe.from_string result.stdout with
-     | exception Yojson.Json_error message ->
-       Error ("invalid `terraform show -json`: " ^ message)
-     | json ->
-       Sol_cli_json.require
-         ~what:"unexpected `terraform show -json` shape"
-         [ "values"; "root_module"; "resources" ]
-         Sol_cli_json.list
-         json
-       |> Result.map (List.filter_map unserved))
-  | Error (Sol_cli_process.Non_zero result) ->
-    Error (Printf.sprintf "terraform show exited %d" result.exit_code)
-  | Error error -> Error (Sol_cli_process.error_to_string error)
-;;
-
-let platform_absent env =
-  [ "cert-manager"; "ingress-nginx"; "argocd"; "redpanda"; "monitoring"; "postgresql" ]
-  |> List.for_all (fun namespace ->
-    not (process_ok ~env [ "kubectl"; "get"; "namespace"; namespace ]))
-;;
-
-let config_vars ~strict target =
-  match target with
-  | None -> Ok ([], None, None)
-  | Some target_path ->
-    let* cfg =
-      Sol_cli_config.load_for_target ~target:target_path
-      |> Sol_cli_exit.of_error Sol_cli_config.error_to_string
-    in
-    let resolved_target = cfg.target in
-    (* Only Apply/destroy mutate real infrastructure; Plan and
-           plan-destroy are previews, matching sol plan's own permissive
-           contract. Same reasoning as cmd_deploy.ml's check: a typo'd or
-           unintended target must not silently inherit sol.yml's shared
-           defaults and terraform apply/destroy anyway. *)
-    let* () =
-      if strict && not (Sol_cli_config.target_declared resolved_target)
-      then
-        refuse
-          (Printf.sprintf
-             "target %S is not declared in %s -- terraform apply/destroy require an \
-              explicit target, even an empty one, so a typo'd or unintended target can't \
-              silently inherit sol.yml's shared defaults and mutate infrastructure \
-              anyway."
-             target_path
-             (Sol_cli_config.target_source resolved_target))
-      else Ok ()
-    in
-    let* vars =
-      Sol_cli_terraform_vars.of_config ~workspace:(workspace_name ()) cfg
-      |> Sol_cli_exit.of_msg
-    in
-    Ok
-      ( Sol_cli_terraform.kv_args vars
-      , resolved_target.terraform_var_file
-      , Some resolved_target )
+(* Sol's refusal is [error: <message>]; Terraform's failure is its own
+   classification, printed as given. *)
+let of_apply_failure r =
+  Result.map_error
+    (function
+      | Sol_cli_cloud_apply.Terraform_failed message ->
+        Sol_cli_exit.failure ("\n" ^ message)
+      | Sol_cli_cloud_apply.Refused message -> Sol_cli_exit.error message)
+    r
 ;;
 
 (* SEC-010: before terraform runs at all, refuse any variable the root declares
@@ -666,288 +156,12 @@ let report_cleanup_evidence = function
     ()
 ;;
 
-(* REFAC-091: the concrete dependencies of [Sol_cli_cloud_apply.execute] for one
-   target. Provider-specific steps come from the target's cluster (REFAC-096): on
-   AWS the whoami gate, window control and de-escalation check are the cluster's
-   bootstrap window; GCP's window lives in the platform root, so its cluster has
-   none to observe. Nothing here selects a provider for them. *)
-let terraform_failure r =
-  terraform_outcome r
-  |> Result.map_error (fun message -> Sol_cli_cloud_apply.Terraform_failed message)
+let report_verification observation =
+  Printf.printf "%s%!" (Sol_cli_destroy_verification.report observation)
 ;;
 
-let with_cluster_access_apply cluster f =
-  with_cluster_access cluster ~refused:(fun m -> Sol_cli_cloud_apply.Refused m) f
-;;
-
-(* INFRA-034: the install must not be judged on one sample taken the instant the
-   apply returns. Helm reporting a release as deployed says the objects were
-   created, not that the controllers behind them are serving: on a fresh install
-   every native readiness endpoint is still starting, so a single sample reports a
-   healthy platform as Unmet. So wait, bounded, and say what is still unmet while
-   waiting -- the wait is evidence, and it must not hide a genuine failure. *)
-let await_platform_readiness ~provider ~env =
-  let sample () =
-    Sol_cli_cloud_lifecycle.readiness ~provider ~run:(fun args ->
-      process_output ~env ("kubectl" :: args))
-  in
-  let unmet_count checks =
-    List.length
-      (checks
-       |> List.filter (fun (_, state) ->
-         match state with
-         | Sol_cli_cloud_lifecycle.Established -> false
-         | Sol_cli_cloud_lifecycle.Unmet _ -> true))
-  in
-  let deadline_s =
-    (* Generous because a fresh install's controllers need minutes. Overridable so
-       a harness can bound the wait rather than wait it out. *)
-    match Sol_cli_string.env "SOL_PLATFORM_READINESS_TIMEOUT_S" with
-    | Some raw ->
-      (match float_of_string_opt raw with
-       | Some seconds when seconds >= 0. -> seconds
-       | _ -> 900.)
-    | None -> 900.
-  in
-  let poll_s = 15. in
-  let deadline = Unix.gettimeofday () +. deadline_s in
-  let waiting_since = Unix.gettimeofday () in
-  let rec await () =
-    let checks = sample () in
-    let unmet = unmet_count checks in
-    if unmet = 0 || Unix.gettimeofday () >= deadline
-    then checks
-    else (
-      Printf.printf
-        "  awaiting platform readiness: %d check(s) unmet, %.0fs elapsed\n%!"
-        unmet
-        (Unix.gettimeofday () -. waiting_since);
-      Unix.sleepf poll_s;
-      await ())
-  in
-  await ()
-;;
-
-(* The flag that confirms a guarded removal (INFRA-074), named once: the refusal is
-   built in the generic apply sequence, which must not carry a provider's product name
-   (AUDIT-POST-002). *)
-let confirm_guarded_removal_flag = "confirm-ecr-removal"
-
-let apply_deps
-      ~assets
-      ~confirm_ecr_removal
-      ~provider
-      ~pname
-      ~run_log
-      ~infra_dir
-      ~platform_dir
-      ~platform_backend
-      ~var_files
-      ~vars
-      ~cloud_target
-      ~(target_cfg : Sol_cli_config.target)
-  =
-  (* INFRA-074 / FND-0043: the cloud apply runs from a saved plan that is read
-     first, and what is applied is the plan that was read. *)
-  let plan_file = Filename.temp_file "sol-cloud-apply-" ".tfplan" in
-  let discard_plan () =
-    List.iter Sol_cli_fs.remove_reporting [ plan_file; plan_file ^ ".args" ]
-  in
-  (* An interrupt still ends the process through [exit]; the sequence's own
-     bracket covers every other path. *)
-  at_exit discard_plan;
-  let platform_apply ~name ~scope env platform_vars =
-    terraform_failure
-      (Sol_cli_run_log.run_phase run_log ~name (fun () ->
-         Sol_cli_terraform.apply
-           ~env
-           ~scope
-           ~chdir:platform_dir
-           ~var_files:[]
-           ~vars:platform_vars
-           ()))
-  in
-  { Sol_cli_cloud_apply.substrate_exists =
-      (fun () -> cluster_of ~target_cfg provider infra_dir |> Result.map Option.is_some)
-  ; plan =
-      (fun () ->
-        let* () =
-          terraform_failure
-            (Sol_cli_run_log.run_phase run_log ~name:"terraform-plan" (fun () ->
-               Sol_cli_terraform.plan_saved
-                 ~scope:Sol_cli_terraform.whole_root
-                 ~chdir:infra_dir
-                 ~var_files
-                 ~vars:
-                   (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:true) @ vars)
-                 ~out:plan_file
-                 ()))
-        in
-        (* The plan JSON carries sensitive values in plain text (e.g. db_password),
-           so it never passes through [run_phase]; only the classified changes are
-           logged (SEC-008). *)
-        match
-          Sol_cli_terraform.show_saved_plan
-            ~run_log
-            ~phase:"terraform-plan-show"
-            ~chdir:infra_dir
-            ~plan_file
-            ()
-        with
-        | Ok (_, changes) -> Ok changes
-        | Error message ->
-          Error
-            (Sol_cli_cloud_apply.Refused ("could not read the cloud plan: " ^ message)))
-  ; guarded_removals = (capabilities provider).guarded_removals
-  ; confirm_guarded_removal = confirm_ecr_removal
-  ; confirmation_flag = "--" ^ confirm_guarded_removal_flag
-  ; apply_plan =
-      (fun () ->
-        terraform_failure
-          (Sol_cli_run_log.run_phase run_log ~name:"terraform-apply" (fun () ->
-             Sol_cli_terraform.apply_saved ~chdir:infra_dir ~plan_file ())))
-  ; discard_plan
-  ; outputs = (fun () -> cluster_of ~target_cfg provider infra_dir)
-  ; (* DEC-040. The gate first: it fires at the moment a fresh endpoint is least
-       likely to answer, so it must not be preceded by anything else that needs a
-       working cluster. Then the control, which must observe a bootstrap-only
-       capability *permitted*, because a later denial is not a transition unless
-       the capability was shown to work first. *)
-    open_window =
-      (fun cluster ->
-        match cluster.bootstrap_window with
-        | Verified window ->
-          let* () = window.gate () in
-          Result.map Option.some (window.observe ())
-        | No_role_declared | Closed_by_platform_root -> Ok None)
-  ; platform_vars = (fun cluster -> platform_vars_of_result ~cloud_target ~cluster ())
-  ; substrate_supported =
-      (fun () ->
-        match
-          (Sol_cli_provider_capabilities.capabilities_of provider).cluster_substrate
-        with
-        | None -> Ok ()
-        | Some observe ->
-          (match cluster_of ~target_cfg provider infra_dir with
-           | Ok None ->
-             (* No cluster yet: a fresh target, which is exactly what Sol is about to provision
-                Standard into. *)
-             Ok ()
-           | Ok (Some cluster) ->
-             (* The project is named from the root's own outputs, as the quota read does. *)
-             let outputs_json =
-               match Sol_cli_terraform.output_json ~chdir:infra_dir () with
-               | Ok result -> result.Sol_cli_process.stdout
-               | Error _ -> ""
-             in
-             (match
-                Result.bind
-                  (observe
-                     ~outputs_json
-                     ~region:target_cfg.region
-                     ~cluster_name:cluster.Sol_cli_cluster.name)
-                  Sol_cli_cluster_substrate.acceptable
-              with
-              | Ok () -> Ok ()
-              | Error message -> Error (Sol_cli_cloud_apply.Refused message))
-           | Error _ ->
-             (* An unreadable cloud root is `substrate_exists`'s refusal to make, and that runs
-                first, so there is no cluster here for this check to reconcile with. *)
-             Ok ()))
-  ; observe_disk_quota =
-      (fun _ ->
-        match (Sol_cli_provider_capabilities.capabilities_of provider).disk_quota with
-        | None -> Ok None
-        | Some observe ->
-          (match Sol_cli_terraform.output_json ~chdir:infra_dir () with
-           | Error _ ->
-             Error
-               "could not read the cloud root's outputs to scope the disk-quota \
-                observation"
-           | Ok outputs ->
-             Result.map
-               Option.some
-               (observe ~outputs_json:outputs.stdout ~region:target_cfg.region)))
-  ; cloud_ready =
-      (fun cluster ->
-        if cluster.ready ()
-        then Ok ()
-        else
-          Error
-            (Printf.sprintf
-               "%s cloud substrate is not Ready: %s"
-               pname
-               (cloud_ready_expectation provider)))
-  ; with_cluster_access = with_cluster_access_apply
-  ; platform_init =
-      (fun () ->
-        match
-          materialize_workdir
-            ~assets
-            provider
-            Sol_cli_platform_assets.Platform
-            ~backend_config:platform_backend
-        with
-        | Error message -> Error (Sol_cli_cloud_apply.Refused message)
-        | Ok () ->
-          terraform_failure (terraform_init run_log platform_dir platform_backend))
-  ; platform_installed = crds_established
-  ; apply_prerequisites =
-      platform_apply
-        ~name:"platform-prerequisites-apply"
-        ~scope:platform_prerequisite_targets
-  ; await_crds =
-      (fun env ->
-        process_ok
-          ~env
-          [ "kubectl"
-          ; "wait"
-          ; "--for=condition=Established"
-          ; "crd/certificates.cert-manager.io"
-          ; "crd/clusterissuers.cert-manager.io"
-          ; "--timeout=180s"
-          ])
-  ; apply_platform =
-      platform_apply ~name:"platform-apply" ~scope:Sol_cli_terraform.whole_root
-  ; await_readiness = (fun env -> await_platform_readiness ~provider ~env)
-  ; remove_bootstrap_access =
-      (fun () ->
-        terraform_failure
-          (Sol_cli_run_log.run_phase
-             run_log
-             ~name:"provisioner-bootstrap-access-remove"
-             (fun () ->
-                Sol_cli_terraform.apply
-                  ~scope:Sol_cli_terraform.whole_root
-                  ~chdir:infra_dir
-                  ~var_files
-                  ~vars:
-                    (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:false)
-                     @ vars)
-                  ())))
-  ; (* DEC-040 applies to the AWS bootstrap access, which Sol revokes itself. GCP's
-       window lives in the platform root and is closed by applying that root, so
-       there is no Sol-side revocation to verify. *)
-    verify_deescalation =
-      (fun cluster _control ->
-        match cluster.bootstrap_window with
-        | Verified window ->
-          (match window.deescalated () with
-           | Ok () ->
-             Printf.printf "  de-escalation verified as %s\n%!" window.principal;
-             Ok ()
-           | Error verdict -> Error ("de-escalation could not be established: " ^ verdict))
-        | No_role_declared ->
-          (* A target that declares no provisioner role had nothing elevated. Said out
-             loud rather than skipped: a silently skipped verification is the
-             false-pass shape DEC-040 exists to remove. *)
-          Printf.printf
-            "  no provisioner role declared: no bootstrap elevation to verify\n%!";
-          Ok ()
-        | Closed_by_platform_root -> Ok ())
-  ; provisioner_effective = provisioner_rbac_established
-  ; report = (fun line -> Printf.printf "%s\n%!" line)
-  }
+let workdir provider role ~backend_config =
+  Sol_cli_terraform_workdir.chdir ~provider ~role ~backend_config
 ;;
 
 let cloud_init
@@ -968,20 +182,14 @@ let cloud_init
   (* Check the target before terraform-init, same order cloud_destroy
      already uses -- a typo'd target should fail fast, not after a
      terraform init that does nothing wrong but wastes the run. *)
-  let* config_vars, config_var_file, target_cfg =
-    config_vars ~strict:(action = Apply) (Some target)
-  in
-  let var_file = resolve_var_file ~flag:var_file ~target:config_var_file in
+  let* config_vars, target_cfg = target_vars ~strict:(action = Apply) target in
+  let var_file = resolve_var_file ~flag:var_file ~target:target_cfg.terraform_var_file in
   let vars =
     Sol_cli_config.vars_with_profile_precedence
-      ~has_profile:
-        (match target_cfg with
-         | Some { Sol_cli_config.profile = Some _; _ } -> true
-         | _ -> false)
+      ~has_profile:(Option.is_some target_cfg.profile)
       ~cli_vars:vars
       ~config_vars
   in
-  let* target_cfg = established_target target_cfg in
   let* cloud_target =
     Sol_cli_cloud_lifecycle.cloud_target target_cfg |> Sol_cli_exit.of_msg
   in
@@ -997,17 +205,12 @@ let cloud_init
   let var_files = Option.to_list var_file in
   let* () = refuse_sensitive_vars ~infra_dir:cluster_assets ~vars in
   Printf.printf "\nInitializing cloud infrastructure (%s)...\n%!" pname;
-  (* INFRA-039: credentials are resolved again here, per mutating stage,
-       rather than assumed from process start -- a platform stage runs many
-       minutes after the cloud stage. *)
-  let require_credentials () =
+  let* () =
     match action with
     | Plan -> Ok ()
     | Apply ->
-      credentials_result ~provider ~operation:"applying" ~leaves_target_standing:false
-      |> Sol_cli_exit.of_msg
+      require_credentials ~provider ~operation:"applying" ~leaves_target_standing:false
   in
-  let* () = require_credentials () in
   let* () =
     guard_previous_operation
       ~constructive:(action = Apply)
@@ -1026,119 +229,29 @@ let cloud_init
     else Ok ()
   in
   let* () =
-    run_terraform_init
+    Sol_cli_cloud_wiring.init
       ~assets
       run_log
       ~provider
       ~role:Sol_cli_platform_assets.Cluster
       cloud_backend
+    |> of_apply_failure
   in
   match action with
   | Plan ->
     let* () =
-      require_terraform_success
-        (Sol_cli_run_log.run_phase run_log ~name:"terraform-plan" (fun () ->
-           Sol_cli_terraform.plan
-             ~scope:Sol_cli_terraform.whole_root
-             ~chdir:infra_dir
-             ~var_files
-             ~vars
-             ()))
-    in
-    let report_phase name = function
-      | Sol_cli_cloud_lifecycle.Plannable -> Printf.printf "\n%s\n  PLANNED\n%!" name
-      | Sol_cli_cloud_lifecycle.Deferred reason ->
-        Printf.printf "\n%s\n  DEFERRED — %s\n%!" name reason
-    in
-    let* () =
-      match cluster_of ~target_cfg provider infra_dir with
-      | Ok None ->
-        report_phase
-          "Platform prerequisites"
-          (Sol_cli_cloud_lifecycle.Deferred "requires cloud substrate to exist");
-        report_phase
-          "Platform substrate"
-          (Sol_cli_cloud_lifecycle.Deferred "requires cloud substrate to exist");
-        Ok ()
-      | Error message -> refuse message
-      | Ok (Some cluster) ->
-        let* platform_vars =
-          platform_vars_of_result ~cloud_target ~cluster () |> Sol_cli_exit.of_msg
-        in
-        (* An unavailable cluster credential is not a deferred phase: it is an
-          unavailable lifecycle prerequisite, so plan exits non-zero. Deferral is
-          reserved for phases whose concrete prerequisite is simply not
-          established yet and whose establishment would itself be a mutation. *)
-        with_cluster_access cluster ~refused:Sol_cli_exit.error (fun env ->
-          (* [can-i --list] needs authentication only, so it succeeds with an empty
-            rule set when the provisioner's RBAC is simply not established yet, and
-            fails when the cluster credential is unavailable. Deferral is honest
-            only in the former case: the plan exit-status contract makes an
-            unavailable credential a non-zero result, not a deferred phase. The
-            default [can-i] checks cannot tell the two apart -- both return 1. *)
-          let* () =
-            if process_ok ~env [ "kubectl"; "auth"; "can-i"; "--list" ]
-            then Ok ()
-            else
-              refuse
-                "could not authenticate to the cluster as the platform provisioner; \
-                 refusing to report an unavailable cluster credential as a deferred \
-                 phase"
-          in
-          let rbac_established = provisioner_rbac_established env in
-          let crds_established = rbac_established && crds_established env in
-          let prerequisites, substrate =
-            Sol_cli_cloud_lifecycle.platform_plan_phases
-              ~cluster_exists:true
-              ~rbac_established
-              ~crds_established
-          in
-          let* () =
-            match prerequisites with
-            | Sol_cli_cloud_lifecycle.Plannable ->
-              (* INFRA-039: credentials are resolved again here, per mutating stage,
-               rather than assumed from process start -- a platform stage runs many
-               minutes after the cloud stage. *)
-              let* () = require_credentials () in
-              let* () =
-                run_terraform_init
-                  ~assets
-                  run_log
-                  ~provider
-                  ~role:Sol_cli_platform_assets.Platform
-                  platform_backend
-              in
-              require_terraform_success
-                (Sol_cli_run_log.run_phase
-                   run_log
-                   ~name:"platform-prerequisites-plan"
-                   (fun () ->
-                      Sol_cli_terraform.plan
-                        ~env
-                        ~scope:platform_prerequisite_targets
-                        ~chdir:platform_dir
-                        ~var_files:[]
-                        ~vars:platform_vars
-                        ()))
-            | Sol_cli_cloud_lifecycle.Deferred _ -> Ok ()
-          in
-          let* () =
-            match substrate with
-            | Sol_cli_cloud_lifecycle.Plannable ->
-              require_terraform_success
-                (Sol_cli_run_log.run_phase run_log ~name:"platform-plan" (fun () ->
-                   Sol_cli_terraform.plan
-                     ~env
-                     ~scope:Sol_cli_terraform.whole_root
-                     ~chdir:platform_dir
-                     ~var_files:[]
-                     ~vars:platform_vars
-                     ()))
-            | Sol_cli_cloud_lifecycle.Deferred _ -> Ok ()
-          in
-          report_phase "Platform prerequisites" prerequisites;
-          report_phase "Platform substrate" substrate;
-          Ok ())
+      Sol_cli_cloud_wiring.plan
+        ~assets
+        ~run_log
+        ~provider
+        ~cloud_target
+        ~target_cfg
+        ~infra_dir
+        ~platform_dir
+        ~platform_backend
+        ~var_files
+        ~vars
+      |> of_apply_failure
     in
     Printf.printf "\nDone. Re-run with 'sol cloud apply' to change cloud resources.\n%!";
     Ok ()
@@ -1146,7 +259,7 @@ let cloud_init
     let outcome =
       Sol_cli_cloud_apply.execute
         ~deps:
-          (apply_deps
+          (Sol_cli_cloud_wiring.apply_deps
              ~assets
              ~confirm_ecr_removal
              ~provider
@@ -1171,10 +284,7 @@ let cloud_init
        Ok ()
      | Sol_cli_cloud_apply.Apply_failed { failure; cleanup } ->
        report_cleanup_evidence cleanup;
-       (match failure with
-        | Sol_cli_cloud_apply.Terraform_failed message ->
-          Error (Sol_cli_exit.failure ("\n" ^ message))
-        | Sol_cli_cloud_apply.Refused message -> refuse message))
+       Error failure |> of_apply_failure)
 ;;
 
 (* A preparation that failed but permitted destruction does not change the exit
@@ -1199,13 +309,10 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
   let* assets = resolve_assets () in
   let* cluster_assets = asset_root ~assets provider Sol_cli_platform_assets.Cluster in
   let run_log = Sol_cli_run_log.create ~prefix:"cloud-destroy" () in
-  let* config_vars, config_var_file, target_cfg =
-    config_vars ~strict:(action = Apply) (Some target)
-  in
-  let var_file = resolve_var_file ~flag:var_file ~target:config_var_file in
+  let* config_vars, target_cfg = target_vars ~strict:(action = Apply) target in
+  let var_file = resolve_var_file ~flag:var_file ~target:target_cfg.terraform_var_file in
   let vars = config_vars @ vars in
   let* () = refuse_sensitive_vars ~infra_dir:cluster_assets ~vars in
-  let* target_cfg = established_target target_cfg in
   (* DEC-033: what this destroy deliberately keeps, named by the target. Absent
      means the production default -- retain the final snapshot -- so a
      qualification target opting out never changes what destroy promises by
@@ -1250,17 +357,14 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
       ~backend_config:(Sol_cli_cloud_lifecycle.platform_backend cloud_target)
   in
   let var_files = Option.to_list var_file in
-  (* REFAC-097: the provider's retention and residue steps for this destroy. *)
   let destruction =
-    Sol_cli_provider_registry.destruction
-      provider
-      { Sol_cli_destruction.run_log
-      ; infra_dir
-      ; var_files
-      ; vars
-      ; target = target_cfg
-      ; resolved_var = (fun key -> resolved_var key ~var_files ~vars ~default:None)
-      }
+    Sol_cli_cloud_wiring.destruction
+      ~run_log
+      ~provider
+      ~target_cfg
+      ~infra_dir
+      ~var_files
+      ~vars
   in
   Printf.printf "\nDestroying cloud infrastructure (%s)...\n%!" pname;
   (* The command edge: the destroy sequence itself lives in
@@ -1269,384 +373,34 @@ let cloud_destroy ~target ~var_file ~vars ~action () =
      REFAC-091 / HARDEN-004 step 2. *)
   match action with
   | Plan ->
-    (* A read-only preview. B / FND-0044 point 2 applies here too: unusable
-       install outputs defer the *wiring*, they do not decide that the substrate
-       is absent. *)
-    let preview () : (unit, string) result =
-      let* () =
-        match cluster_of ~target_cfg provider infra_dir with
-        | Ok (Some cluster) ->
-          let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
-          let platform_dir =
-            workdir
-              provider
-              Sol_cli_platform_assets.Platform
-              ~backend_config:platform_backend
-          in
-          let* platform_vars =
-            platform_vars_of_result
-              ~context:Sol_cli_cloud_lifecycle.Destruction
-              ~cloud_target
-              ~cluster
-              ()
-          in
-          with_cluster_access_result cluster (fun ~env ->
-            let* () =
-              run_terraform_init_result
-                ~assets
-                run_log
-                ~provider
-                ~role:Sol_cli_platform_assets.Platform
-                platform_backend
-            in
-            terraform_outcome
-              (Sol_cli_run_log.run_phase run_log ~name:"platform-plan-destroy" (fun () ->
-                 Sol_cli_terraform.plan_destroy
-                   ~env
-                   ~chdir:platform_dir
-                   ~var_files:[]
-                   ~vars:platform_vars
-                   ())))
-        | Ok None ->
-          Printf.printf
-            "  Platform destroy DEFERRED — no install outputs are published, so the \
-             platform teardown cannot be wired.\n\
-             %!";
-          Ok ()
-        | Error reason ->
-          Printf.printf
-            "  Platform destroy DEFERRED — install outputs are unavailable (%s), so the \
-             platform teardown cannot be wired.\n\
-             %!"
-            reason;
-          Ok ()
-      in
-      let* () =
-        terraform_outcome
-          (Sol_cli_run_log.run_phase run_log ~name:"terraform-plan-destroy" (fun () ->
-             Sol_cli_terraform.plan_destroy ~chdir:infra_dir ~var_files ~vars ()))
-      in
-      Printf.printf "\nDone. Re-run with --apply to destroy cloud resources.\n%!";
-      Ok ()
+    let* () =
+      Sol_cli_cloud_wiring.destroy_preview
+        ~assets
+        ~run_log
+        ~provider
+        ~cloud_target
+        ~target_cfg
+        ~infra_dir
+        ~var_files
+        ~vars
+      |> Sol_cli_exit.of_msg
     in
-    preview () |> Sol_cli_exit.of_msg
+    Printf.printf "\nDone. Re-run with --apply to destroy cloud resources.\n%!";
+    Ok ()
   | Apply ->
-    (* The one state observation, captured at the edge so the policy vars the
-       edge computes can use it; the library classifies it and owns the
-       decisions. Substrate existence comes from this inventory, never from the
-       install-time outputs contract (B / FND-0044 point 2). *)
-    let state_ref = ref Sol_cli_cloud_destroy.State_empty in
-    let prepared_ref = ref Sol_cli_cloud_destroy.Nothing_prepared in
-    let cluster_ref = ref None in
-    let observed_window = ref None in
-    let destroy_phase () =
-      let substrate = Sol_cli_cloud_destroy.substrate_presence !state_ref in
-      let cloud_exists = substrate <> Sol_cli_cloud_destroy.Substrate_absent in
-      Sol_cli_cloud_lifecycle.enter_destruction
-        ~from:
-          (Sol_cli_cloud_lifecycle.observed_phase ~cloud_exists ~platform_installed:true)
-    in
-    (* ADR 0003 / HARDEN-002 run 4 finding 15: from [Preparing_destroy] on, the
-       Destroy policy governs the desired state. Its overrides are appended AFTER
-       `vars`, so the Production/Ready invariant terraform_vars injects
-       (rds_deletion_protection=true -- BUG-039, still correct in Ready) cannot be
-       restored by the bootstrap-admin reconciliation that necessarily precedes
-       the destroy. *)
-    let destroy_apply_vars () =
-      vars
-      @ Sol_cli_terraform.kv_args
-          (destroy_policy_vars
-             ~provider
-             ~phase:(destroy_phase ())
-             ~retention
-             ~prepared:!prepared_ref)
-    in
-    (* The cluster name the RDS final-snapshot identity is derived from: the
-       install outputs when they are usable, otherwise the target's own
-       declaration, so a half-built output-less target is still preparable (B). *)
-    let prepare_cluster_name () =
-      match !cluster_ref with
-      | Some (cluster : Sol_cli_cluster.t) -> cluster.name
-      | None ->
-        (match resolved_var "cluster_name" ~var_files ~vars ~default:None with
-         | Some name -> name
-         | None -> workspace_name ())
-    in
-    (* The platform teardown, result-returning. The elevated bootstrap access is
-       opened by the bracket ([reconcile_and_enable]) and removed by its cleanup,
-       so this never threads an [on_error]: a failure returns, and the removal
-       happens structurally (FND-0047). *)
-    let destroy_platform_result ~cluster () : (unit, string) result =
-      let platform_backend = Sol_cli_cloud_lifecycle.platform_backend cloud_target in
-      let platform_dir =
-        workdir provider Sol_cli_platform_assets.Platform ~backend_config:platform_backend
-      in
-      let* platform_vars =
-        platform_vars_of_result
-          ~context:Sol_cli_cloud_lifecycle.Destruction
-          ~cloud_target
-          ~cluster
-          ()
-      in
-      with_cluster_access_result cluster (fun ~env ->
-        let* () =
-          run_terraform_init_result
-            ~assets
-            run_log
-            ~provider
-            ~role:Sol_cli_platform_assets.Platform
-            platform_backend
-        in
-        let destroy_once () =
-          Sol_cli_terraform.destroy
-            ~env
-            ~chdir:platform_dir
-            ~var_files:[]
-            ~vars:platform_vars
-            ()
-        in
-        let destroy =
-          Sol_cli_run_log.run_phase run_log ~name:"platform-destroy" destroy_once
-        in
-        let verify_absent () =
-          if not (platform_absent env)
-          then Error "platform absence verification failed after destroy"
-          else Ok ()
-        in
-        match destroy with
-        | Ok _ -> verify_absent ()
-        | _ ->
-          (* INFRA-042. Terraform's destroy has been attempted first, in full, with
-             its own ordering and ownership -- this is recovery, not a different
-             strategy. Only resources whose kind the cluster demonstrably does not
-             serve are forgotten, and each one is named. If nothing qualifies, the
-             original failure stands. *)
-          (match served_api_kinds env with
-           | Error message ->
-             Printf.eprintf
-               "error: the platform destroy failed, and the recovery step could not \
-                determine which kinds the cluster serves: %s\n\
-                %!"
-               message;
-             terraform_outcome destroy
-           | Ok served ->
-             (match unserved_manifest_resources ~served ~chdir:platform_dir with
-              | Error message ->
-                Printf.eprintf
-                  "error: the platform destroy failed, and the recovery step could not \
-                   read the platform state: %s\n\
-                   %!"
-                  message;
-                terraform_outcome destroy
-              | Ok [] -> terraform_outcome destroy
-              | Ok unserved ->
-                Printf.printf
-                  "\n\
-                  \  platform destroy could not delete %d resource(s) whose kind this \
-                   cluster does not serve, so they cannot exist;\n\
-                  \  forgetting them in state (the objects, not the objects' absence, is \
-                   what Terraform cannot address):\n\
-                   %!"
-                  (List.length unserved);
-                let* () =
-                  List.fold_left
-                    (fun acc (address, kind) ->
-                       let* () = acc in
-                       Printf.printf
-                         "    %s (%s is not served by this cluster)\n%!"
-                         address
-                         kind;
-                       terraform_outcome
-                         (Sol_cli_run_log.run_phase
-                            run_log
-                            ~name:"platform-destroy-forget-unserved"
-                            (fun () ->
-                               Sol_cli_terraform.state_rm
-                                 ~env
-                                 ~chdir:platform_dir
-                                 ~address
-                                 ())))
-                    (Ok ())
-                    unserved
-                in
-                (* Once, and then the failure is the failure. A second pass that also
-                   fails means something is genuinely undeletable, which is the case
-                   this recovery must not paper over. *)
-                let retry =
-                  Sol_cli_run_log.run_phase
-                    run_log
-                    ~name:"platform-destroy-retry"
-                    destroy_once
-                in
-                (match retry with
-                 | Ok _ -> verify_absent ()
-                 | _ -> terraform_outcome retry))))
-    in
-    let deps : Sol_cli_cloud_destroy.deps =
-      { require_credentials =
-          (* INFRA-039: credentials are resolved again here, per mutating stage,
-             rather than assumed from process start -- a platform stage runs many
-             minutes after the cloud stage. *)
-          (fun () ->
-            credentials_result
-              ~provider
-              ~operation:"destroying"
-              ~leaves_target_standing:true)
-      ; terraform_init =
-          (fun () ->
-            run_terraform_init_result
-              ~assets
-              run_log
-              ~provider
-              ~role:Sol_cli_platform_assets.Cluster
-              cloud_backend)
-      ; observe_state =
-          (fun () ->
-            match Sol_cli_terraform.show_json ~chdir:infra_dir () with
-            | Ok result ->
-              state_ref := Sol_cli_cloud_destroy.inventory_of_show_json result.stdout;
-              Ok result.stdout
-            | Error (Sol_cli_process.Non_zero result) ->
-              Error (Printf.sprintf "terraform show failed with exit %d" result.exit_code)
-            | Error error ->
-              Error
-                ("could not read terraform state: "
-                 ^ Sol_cli_process.error_to_string error))
-      ; cloud_outputs =
-          (fun () ->
-            match cluster_of ~target_cfg provider infra_dir with
-            | Ok (Some cluster) ->
-              cluster_ref := Some cluster;
-              Sol_cli_cloud_destroy.Outputs_available
-            | Ok None ->
-              Sol_cli_cloud_destroy.Outputs_unavailable "no install outputs are published"
-            | Error reason -> Sol_cli_cloud_destroy.Outputs_unavailable reason)
-      ; prepare =
-          (fun ~state ->
-            (* The edge answers with the typed preparation; the core decides the
-               consequence. Only a successful preparation updates [prepared_ref],
-               which is what the Destroy policy's variables are computed from --
-               a failed preparation must never look like a finished one. *)
-            let outcome =
-              destruction.prepare
-                ~retention
-                ~cluster_name:(prepare_cluster_name ())
-                ~state
-            in
-            (match outcome with
-             | Sol_cli_cloud_lifecycle.Prepared preparation -> prepared_ref := preparation
-             | Sol_cli_cloud_lifecycle.Nothing_to_prepare
-             | Sol_cli_cloud_lifecycle.Preparation_failed _ -> ());
-            outcome)
-      ; reconcile_and_enable =
-          (fun () ->
-            (* Scope is bootstrap + the guarded resources the inventory represents,
-               and the plan is asserted: a missing cluster the `-target` pulls in
-               plans a create and is refused (HARDEN-004 step 3). *)
-            let guarded = guarded_addresses_of provider !state_ref in
-            apply_asserted
-              ~run_log
-              ~phase_name:"destroy-reconciliation-apply"
-              ~policy:
-                (Sol_cli_cloud_destroy.reconciliation_policy
-                   ~bootstrap:(bootstrap_matchers provider)
-                   ~guarded)
-              ~scope:(reconciliation_scope provider guarded)
-              ~chdir:infra_dir
-              ~var_files
-              ~vars:
-                (Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:true)
-                 @ destroy_apply_vars ())
-              ())
-      ; destroy_platform =
-          (fun () ->
-            match !cluster_ref with
-            | Some cluster -> destroy_platform_result ~cluster ()
-            | None ->
-              Error
-                "the platform teardown requires install outputs, which are unavailable")
-      ; remove_elevated_access =
-          (fun () ->
-            (* The removal is asserted like any other apply: "cleanup" is a name,
-               not a safety property. If its plan is not permitted, the apply does
-               not run and the outcome records that the access may remain --
-               [with_elevated_access] carries the cleanup failure as evidence. *)
-            apply_asserted
-              ~run_log
-              ~phase_name:"provisioner-bootstrap-access-remove"
-              ~policy:
-                (Sol_cli_cloud_destroy.bootstrap_removal_policy
-                   ~bootstrap:(bootstrap_matchers provider))
-              ~scope:(bootstrap_scope provider)
-              ~chdir:infra_dir
-              ~var_files
-              ~vars:
-                (vars @ Sol_cli_terraform.kv_args (bootstrap_access_vars ~enabled:false))
-              ())
-      ; observe_window_before =
-          (fun () ->
-            (* DEC-040 acceptance: the destroy path revokes the same bootstrap access
-               the install path does, so it owes the same evidence. The observation
-               is best-effort: a probe that can fail must not block teardown (ADR
-               0003 invariant 6). It runs while this run's window is open; the
-               verification runs after the removal, through the bracket. *)
-            match !cluster_ref with
-            | Some { Sol_cli_cluster.bootstrap_window = Verified window; _ } ->
-              let* () = window.observe () in
-              observed_window := Some window;
-              Ok ()
-            | Some { bootstrap_window = No_role_declared; _ } ->
-              (* A target that declares no provisioner role elevated nothing; said out
-                 loud rather than skipped, the same as on the install path. *)
-              Printf.printf
-                "  no provisioner role declared: no bootstrap elevation to verify\n%!";
-              Ok ()
-            | Some { bootstrap_window = Closed_by_platform_root; _ } -> Ok ()
-            | None ->
-              Printf.printf
-                "  bootstrap window: not observed (no install outputs to reach the \
-                 cluster with)\n\
-                 %!";
-              Ok ())
-      ; verify_window_after =
-          (fun () ->
-            match !observed_window with
-            | None -> Ok ()
-            | Some window ->
-              (match window.deescalated () with
-               | Ok () -> Ok ()
-               | Error verdict ->
-                 Error
-                   (Printf.sprintf
-                      "the bootstrap access was removed but its effective removal could \
-                       not be verified (%s). Proceeding: destroying the substrate \
-                       removes the access with it, and teardown is not blocked by a \
-                       probe that can fail (ADR 0003 invariant 6)."
-                      verdict)))
-      ; destroy_substrate =
-          (fun () ->
-            (* Provider glue that must run before the substrate destroy that needs
-               it: on AWS, waiting for the ingress load balancer to drain. *)
-            destruction.before_substrate_destroy ();
-            terraform_outcome
-              (Sol_cli_run_log.run_phase run_log ~name:"terraform-destroy" (fun () ->
-                 Sol_cli_terraform.destroy
-                   ~chdir:infra_dir
-                   ~var_files
-                   ~vars:(destroy_apply_vars ())
-                   ())))
-      ; verify_destruction =
-          (fun ~pre_destroy ~preparation ->
-            verification_observation
-              ~destruction
-              ~infra_dir
-              ~cluster:!cluster_ref
-              ~retention
-              ~pre_destroy
-              ~preparation)
-      ; report = (fun message -> Printf.printf "%s\n%!" message)
-      ; warn = (fun message -> Printf.eprintf "%s\n%!" message)
-      }
+    let deps =
+      Sol_cli_cloud_wiring.destroy_deps
+        ~assets
+        ~run_log
+        ~provider
+        ~cloud_target
+        ~target_cfg
+        ~infra_dir
+        ~cloud_backend
+        ~var_files
+        ~vars
+        ~retention
+        ~destruction
     in
     (* One place maps the typed outcome to a process exit: 0 when absence was
        reached and verified (a degraded preparation is the warning above, not a
@@ -1745,7 +499,7 @@ let confirm_ecr_removal_flag =
     value
     & flag
     & info
-        [ confirm_guarded_removal_flag ]
+        [ Sol_cli_cloud_wiring.confirm_guarded_removal_flag ]
         ~doc:
           "Allow an apply whose plan deletes a resource the provider declares guarded \
            (AWS: ECR repositories, and every image in them). Without it such an apply is \
