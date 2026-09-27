@@ -10,6 +10,12 @@ if [ ! -f "$guard" ]; then
   exit 1
 fi
 
+python3 -c 'import hcl2' 2>/dev/null || {
+  echo "test_destroy_completeness_check: the guard cannot run without its dependencies," >&2
+  echo "  which would read as a rejection. Run: bash internal/tooling/scripts/prepare-guard-tools.sh" >&2
+  exit 1
+}
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
