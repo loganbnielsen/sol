@@ -8,6 +8,10 @@
 - **REFAC-132:** JSON is read through one boundary (`Sol_cli_json`); a failed read is an error, never an empty answer -- fixed for Loki results, the GCP disk quota, migration status, release/deployment history, rollback's live workloads, Terraform outputs and component values.
 - **REFAC-138:** the pinned `*-eio` libraries use `Result.Syntax`, and aws-eio returns malformed responses as errors in their own words; six library PRs merged and `support-refs.txt` bumped.
 - **REFAC-133:** no exceptions for control flow in the CLI: `Deploy_failed` and every `failwith`-on-`Error` are results; what may still raise is a named invariant in `check_no_exception_control_flow.sh`.
+- **REFAC-134:** every subprocess goes through `Sol_cli_process` (with `spawn` for background processes) and every filesystem chore through `Sol_cli_fs`; the build-context `rsync` became `copy_tree`, and `sol migrate`/`sol deploy`'s two hand-rolled port-forwards became `Sol_cli_kubectl.temporary_port_forward`. `check_single_runner.sh` holds it.
+- **REFAC-135:** library code reports through `Logs` (`Sol_cli_report`), and `main.ml` installs the terminal reporter; output is byte-identical. `check_library_output.sh` holds it.
+- **REFAC-136:** one classifier per cloud CLI (`Sol_cli_gcloud`, `Sol_cli_aws`); merging gcloud's two absence lists removed "could not fetch resource", which read a 403 as an absent cluster.
+- **Remaining:** REFAC-139 (thin `cli/bin`), now unblocked.
 
 ## Latest: INFRA-093 + INFRA-092 — GKE Standard is the supported GCP substrate (2026-09-26)
 
