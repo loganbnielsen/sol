@@ -6,6 +6,14 @@
     is required, a call site cannot compile without saying which cluster it
     reaches. *)
 
+(** [run ?timeout_s ~ctx args]: one kubectl call against [ctx], for the
+    invocations no named function below covers. [Ok] only on exit 0. *)
+val run
+  :  ?timeout_s:float
+  -> ctx:Sol_cli_kube_destination.context
+  -> string list
+  -> (Sol_cli_process.output, Sol_cli_process.error) result
+
 val apply
   :  ctx:Sol_cli_kube_destination.context
   -> file:string
