@@ -295,6 +295,19 @@ several wrong conclusions in this repo came from an agent's search, not the code
   verbatim command and its observed output in the finding/ticket, so the reader
   can re-run it instead of trusting the summary.
 
+## Calibration: rapid development with reasonable assurance
+
+Sol is pre-alpha, and the goal is to get the architecture built and qualified quickly. Rigor goes where it buys information, not everywhere at once. The standard depends on the kind of work (operator, 2026-09-27):
+
+| Work | Standard |
+|---|---|
+| Ordinary development | Fast iteration: compile, format, the targeted tests for the change, then the full required CI on the PR's own head. Keep moving through ordinary engineering friction; do not stop to ask. |
+| Architectural decision | Stop for the operator. |
+| Live qualification | Strict evidence, no in-run remediation (the qualification ledger's rules). |
+| Destructive action, or security ambiguity | Stop. |
+
+The assurance stack for code is: compile, format and targeted tests locally; full required CI on the PR head; post-merge CI on `main` as the backstop for rare cross-PR interactions. A PR need not be retested solely because `main` advanced (see the protection bullet below).
+
 ## Shepherding PRs to merge
 
 Merge readiness is a **PR comment**, not a review state (`gh` is always the PR's
@@ -315,12 +328,18 @@ own author here). The mechanics that are easy to get wrong:
   for several independent items, and the ticket-move guard reads *every* id in the
   name, so they all must move), but **check the marker landed** before merging, or
   post it by hand; do not read "merged" as "the marker step ran".
-- **Protection is `strict` + `enforce_admins`.** `--admin` bypasses the 1-approval
-  requirement but **not** required checks, and a branch **behind `main`** cannot
-  merge ("Required status check is expected"). So each merge makes the next branch
-  behind: **one CI cycle per item, serially** — update from `main`, wait for green,
-  re-marker, merge. (An integration branch with one CI run is cheaper for a batch
-  of independent, non-overlapping items.)
+- **Protection requires `test` on the PR's head, with `enforce_admins`, but not
+  an up-to-date branch** (`strict` off since 2026-09-27). `--admin` bypasses the
+  1-approval requirement but **not** required checks. A PR whose own head is green
+  may merge even though `main` has moved on; **do not update it and re-run CI just
+  because another PR landed first**, since that re-buys evidence you already have.
+  Update and reconcile before merging only when it matters: git reports a merge
+  conflict, or the commits that landed materially overlap the PR's files or
+  contracts (both change `Sol_cli_provider_capabilities`, say; a DEC markdown
+  file landing does not count). Post-merge CI on `main` catches the rare
+  interaction; if it goes red, fix forward or revert that squash commit.
+- **Do not re-run the full local suite before pushing a branch update.** After
+  merging `main`, run the build and the format check (seconds); CI runs the rest.
 - **Merge dependent PRs by hand, in order.** `soldev pipeline merge` (no argument)
   sweeps in branch-label order (`[audit]`, `[dec]`, …), which can invert a
   dependency — e.g. merging a decision PR before the finding it cites.
