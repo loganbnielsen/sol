@@ -50,7 +50,9 @@ let wait () =
 
 let test_unstartable_fails_fast () =
   with_fake_kubectl
-    (fake ~succeeded:"" ~waiting:{|CreateContainerConfigError|secret "sol-secrets" not found|})
+    (fake
+       ~succeeded:""
+       ~waiting:{|CreateContainerConfigError|secret "sol-secrets" not found|})
     (fun () ->
        match wait () with
        | Unstartable { reason; detail } ->
@@ -88,7 +90,8 @@ let test_namespace_and_repository () =
     (Sol_cli_migration_job.namespace_and_repository
        ~workspace:"pluto"
        ~services:[ service "payments" "charge_svc"; service "checkout" "checkout_svc" ]
-     |> Result.map (fun (ns, name) -> ns, Sol_cli_kubernetes_name.k8s_name_to_string name));
+     |> Result.map (fun (ns, name) -> ns, Sol_cli_kubernetes_name.k8s_name_to_string name)
+    );
   Alcotest.(check bool)
     "no services is an error"
     true
@@ -106,7 +109,10 @@ let () =
             "a transient wait runs to its bound"
             `Quick
             test_times_out_on_a_transient_wait
-        ; Alcotest.test_case "namespace and repository" `Quick test_namespace_and_repository
+        ; Alcotest.test_case
+            "namespace and repository"
+            `Quick
+            test_namespace_and_repository
         ] )
     ]
 ;;
