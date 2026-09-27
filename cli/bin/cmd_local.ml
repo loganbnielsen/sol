@@ -18,51 +18,6 @@ let require_tools () =
   check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/"
 ;;
 
-(* FRIC-017: k3d v5.6.0's embedded Docker client pins API 1.43, but Docker
-   Engine 29 removed every API below 1.44, so any k3d invocation fails with
-   "client version 1.43 is too old" on a current host. Ask the daemon for the
-   oldest API it still accepts and hand that to k3d via DOCKER_API_VERSION --
-   but never below k3d's own 1.43 floor, so older daemons keep working too. *)
-let k3d_client_api_floor = "1.43"
-
-let version_gt a b =
-  let parts s = String.split_on_char '.' s |> List.filter_map int_of_string_opt in
-  let rec cmp x y =
-    match x, y with
-    | [], [] -> 0
-    | x :: xs, y :: ys -> if x <> y then compare x y else cmp xs ys
-    | x :: _, [] -> compare x 0
-    | [], y :: _ -> compare 0 y
-  in
-  cmp (parts a) (parts b) > 0
-;;
-
-let k3d_env () =
-  match
-    Sol_cli_process.run
-      (Sol_cli_process.cmd
-         [ "docker"; "version"; "--format"; "{{.Server.MinAPIVersion}}" ])
-  with
-  | Ok r ->
-    let daemon_min = String.trim r.stdout in
-    if daemon_min <> "" && version_gt daemon_min k3d_client_api_floor
-    then [ "DOCKER_API_VERSION", daemon_min ]
-    else []
-  | _ -> []
-;;
-
-let k3d args = Sol_cli_process.cmd ~env:(k3d_env ()) ("k3d" :: args)
-
-(* ── State file ─────────────────────────────────────────────────────────── *)
-
-let cluster_name = "sol-local"
-let registry_port = 5000
-
-(* FEAT-042: host port the local ingress-nginx controller is port-forwarded
-   to. Deliberately not 8080 -- that is where `sol up` forwards a service, so
-   the two would collide. Nothing else in `sol local infra up` uses 8088. *)
-let ingress_local_port = 8088
-
 (* ── Helm helpers ────────────────────────────────────────────────────────── *)
 
 (* FRIC-006: same discard-on-failure bug as the cluster-creation/docker/
@@ -145,76 +100,6 @@ let install_local_grafana_config ~dashboards ~prometheus ~tempo =
 
 (* ── dev up ──────────────────────────────────────────────────────────────── *)
 
-(* Sol's local cluster, created unless it already exists. *)
-let provision_cluster () =
-  let cluster_exists =
-    Result.is_ok (Sol_cli_process.run (k3d [ "cluster"; "get"; cluster_name ]))
-  in
-  if cluster_exists
-  then (
-    Printf.printf "  cluster %s already exists, skipping\n%!" cluster_name;
-    Ok ())
-  else (
-    (* ponytail: FRIC-008, one-time Sun->Sol migration check -- delete this
-       block once nobody plausibly still has a 'sun-local' cluster around.
-       A pre-rename 'sun-local' cluster's inline registry binds the same
-       host port this cluster's registry needs, causing a silent k3d
-       port-bind conflict with no indication of the real cause. Blocks
-       unconditionally on 'sun-local' existing at all (not just on a
-       verified port-5000 conflict) -- deliberately simple for a shim
-       meant to be deleted, not a permanent feature worth the extra
-       port-probe logic to narrow. *)
-    let pre_rename_cluster_name = "sun-local" in
-    let pre_rename_cluster_exists =
-      Result.is_ok
-        (Sol_cli_process.run (k3d [ "cluster"; "get"; pre_rename_cluster_name ]))
-    in
-    let* () =
-      if pre_rename_cluster_exists
-      then
-        Error
-          (Sol_cli_exit.error
-             (Printf.sprintf
-                "found a pre-rename '%s' k3d cluster.\n\
-                \  Sol's local cluster is now named '%s', and its registry would try\n\
-                \  to bind the same host port (%d) that '%s'/'sun-registry' would also \
-                 use.\n\
-                \  Remove the old cluster first:\n\
-                \    k3d cluster delete %s\n\
-                \  (rename or keep it yourself first if you still need it for something \
-                 else)"
-                pre_rename_cluster_name
-                cluster_name
-                registry_port
-                pre_rename_cluster_name
-                pre_rename_cluster_name))
-      else Ok ()
-    in
-    let create_result =
-      Sol_cli_process.run
-        ~echo:true
-        (k3d
-           [ "cluster"
-           ; "create"
-           ; cluster_name
-           ; "--registry-create"
-           ; Printf.sprintf "sol-registry:%d" registry_port
-           ])
-    in
-    (* FRIC-006: k3d's own output is the actual diagnosis (e.g. "port is already
-       allocated") -- surface it instead of leaving the user to re-run k3d by hand
-       to find out why. *)
-    create_result
-    |> Result.map (fun _ -> ())
-    |> Result.map_error (fun failure ->
-      let detail =
-        match failure with
-        | Sol_cli_process.Non_zero r -> "\n" ^ Sol_cli_process.failure_message r
-        | e -> "\n" ^ Sol_cli_process.error_to_string e
-      in
-      Sol_cli_exit.error ("cluster creation failed" ^ detail)))
-;;
-
 (* REFAC-107: what the workspace declares, read from sol.yml at the workspace
    root, not inferred from build files, so it is the same from any subdirectory
    and for OCaml and TypeScript units alike. *)
@@ -270,139 +155,26 @@ let deploy_infra ~(req : Sol_cli_workspace.infra_requirements) ~local =
 let start_port_forwards ~(req : Sol_cli_workspace.infra_requirements) =
   Unix.sleepf 2.;
   (* brief pause for service endpoints to settle *)
-  let pf pf_spec =
+  Sol_cli_local_platform.endpoints ~req
+  |> List.iter (fun { Sol_cli_local_platform.forward = pf; _ } ->
     Printf.printf
       "  port-forward  %-14s localhost:%d → %s/%s:%d\n%!"
-      pf_spec.Sol_cli_port_forward.name
-      pf_spec.local_port
-      pf_spec.namespace
-      pf_spec.target
-      pf_spec.remote_port;
-    Sol_cli_port_forward.start ~ctx:Sol_cli_kube_destination.local_context pf_spec
+      pf.name
+      pf.local_port
+      pf.namespace
+      pf.target
+      pf.remote_port;
+    Sol_cli_port_forward.start ~ctx:Sol_cli_kube_destination.local_context pf
     |> Result.iter_error
-         (Printf.eprintf "  warning: port-forward %s not started: %s\n%!" pf_spec.name)
-  in
-  if req.kafka
-  then (
-    (* Target the pod, not svc: the headless service only exposes the internal
-       port 9093, and the external listener on 9094 is pod-only. *)
-    pf
-      { name = "kafka"
-      ; namespace = "redpanda"
-      ; target = "pod/redpanda-0"
-      ; local_port = 9092
-      ; remote_port = 9094
-      };
-    pf
-      { name = "schema-registry"
-      ; namespace = "redpanda"
-      ; target = "svc/redpanda"
-      ; local_port = 8081
-      ; remote_port = 8081
-      });
-  if req.postgres
-  then
-    pf
-      { name = "postgres"
-      ; namespace = "postgresql"
-      ; target = "svc/postgresql"
-      ; local_port = 5432
-      ; remote_port = 5432
-      };
-  if Sol_cli_local_platform.needs_grafana req
-  then
-    pf
-      { name = "loki"
-      ; namespace = "monitoring"
-      ; target = "svc/loki"
-      ; local_port = 3100
-      ; remote_port = 3100
-      };
-  if Sol_cli_local_platform.needs_grafana req
-  then
-    pf
-      { name = "grafana"
-      ; namespace = "monitoring"
-      ; target = "svc/grafana"
-      ; local_port = 3000
-      ; remote_port = 80
-      };
-  if req.prometheus
-  then
-    pf
-      { name = "prometheus"
-      ; namespace = "monitoring"
-      ; target = "svc/prometheus-server"
-      ; local_port = 9090
-      ; remote_port = 80
-      };
-  if req.prometheus
-  then
-    pf
-      { name = "pushgateway"
-      ; namespace = "monitoring"
-      ; target = "svc/prometheus-prometheus-pushgateway"
-      ; local_port = 9091
-      ; remote_port = 9091
-      };
-  if req.tempo
-  then (
-    (* Two forwards, matching prometheus/pushgateway's split above: OTLP/HTTP
-       ingestion (obs-tempo-eio's TEMPO_URL, what -svc pushes spans to) and
-       the query API (what Grafana's Tempo datasource and a developer's own
-       curl/Explore session read from) are different ports on the same
-       Service. *)
-    pf
-      { name = "tempo"
-      ; namespace = "monitoring"
-      ; target = "svc/tempo"
-      ; local_port = 4318
-      ; remote_port = 4318
-      };
-    pf
-      { name = "tempo-query"
-      ; namespace = "monitoring"
-      ; target = "svc/tempo"
-      ; local_port = 3200
-      ; remote_port = 3200
-      });
-  (* FEAT-042: the controller install above is unconditional, so is this
-     forward -- a workspace Ingress can only be reached from the host through
-     it. Remote port 80 is ingress-nginx's controller Service `http` port. *)
-  pf
-    { name = "ingress"
-    ; namespace = "ingress-nginx"
-    ; target = "svc/ingress-nginx-controller"
-    ; local_port = ingress_local_port
-    ; remote_port = 80
-    }
+         (Printf.eprintf "  warning: port-forward %s not started: %s\n%!" pf.name))
 ;;
 
 let print_summary ~(req : Sol_cli_workspace.infra_requirements) =
   Printf.printf "\n";
-  Printf.printf "  cluster      ✓  %s\n" cluster_name;
-  Printf.printf "  registry     ✓  localhost:%d\n" registry_port;
-  if req.kafka then Printf.printf "  kafka        ✓  localhost:9092  (port-forwarded)\n";
-  if req.kafka then Printf.printf "  schema-reg   ✓  http://localhost:8081\n";
-  if req.postgres
-  then
-    Printf.printf
-      "  postgres     ✓  postgresql://postgres:dev@localhost:5432/dev  (port-forwarded)\n";
-  if Sol_cli_local_platform.needs_grafana req
-  then Printf.printf "  loki         ✓  http://localhost:3100  (port-forwarded)\n";
-  if Sol_cli_local_platform.needs_grafana req
-  then Printf.printf "  grafana      ✓  http://localhost:3000  (port-forwarded)\n";
-  if req.prometheus
-  then Printf.printf "  prometheus   ✓  http://localhost:9090  (port-forwarded)\n";
-  if req.prometheus
-  then Printf.printf "  pushgateway  ✓  http://localhost:9091  (port-forwarded)\n";
-  if req.tempo
-  then Printf.printf "  tempo        ✓  http://localhost:4318  (OTLP, port-forwarded)\n";
-  if req.tempo
-  then Printf.printf "  tempo-query  ✓  http://localhost:3200  (port-forwarded)\n";
-  Printf.printf
-    "  ingress      ✓  http://localhost:%d  (ingress-nginx, port-forwarded)\n"
-    ingress_local_port;
+  Printf.printf "  cluster      ✓  %s\n" Sol_cli_local_cluster.name;
+  Printf.printf "  registry     ✓  localhost:%d\n" Sol_cli_local_cluster.registry_port;
+  Sol_cli_local_platform.endpoints ~req
+  |> List.iter (fun (e : Sol_cli_local_platform.endpoint) -> print_endline e.summary);
   Printf.printf "\n"
 ;;
 
@@ -413,7 +185,7 @@ let dev_up () =
      crash silently fails to bind ports while reporting success. *)
   Sol_cli_port_forward.stop_all ();
   Printf.printf "\n[1/4] Provisioning cluster...\n%!";
-  let* () = provision_cluster () in
+  let* () = Sol_cli_local_cluster.provision () |> Result.map_error Sol_cli_exit.error in
   Printf.printf "\n[2/4] Reading the workspace's declared resources...\n%!";
   let* req = declared_resources () in
   Printf.printf
@@ -441,11 +213,13 @@ let dev_down delete_cluster =
   if delete_cluster
   then (
     let* () = check_tool "k3d" "https://k3d.io/" in
-    Printf.printf "Deleting cluster %s...\n%!" cluster_name;
-    ignore (Sol_cli_process.run (k3d [ "cluster"; "delete"; cluster_name ]));
+    Printf.printf "Deleting cluster %s...\n%!" Sol_cli_local_cluster.name;
+    Sol_cli_local_cluster.delete ();
     Ok ())
   else (
-    Printf.printf "Port-forwards stopped. Cluster %s is still running.\n" cluster_name;
+    Printf.printf
+      "Port-forwards stopped. Cluster %s is still running.\n"
+      Sol_cli_local_cluster.name;
     Ok ())
 ;;
 
@@ -453,12 +227,10 @@ let dev_down delete_cluster =
 
 let dev_status () =
   let* () = check_tool "kubectl" "https://kubernetes.io/docs/tasks/tools/" in
-  let cluster_running =
-    Result.is_ok (Sol_cli_process.run (k3d [ "cluster"; "get"; cluster_name ]))
-  in
+  let cluster_running = Sol_cli_local_cluster.exists () in
   Printf.printf
     "\nCluster:  %s  %s\n"
-    cluster_name
+    Sol_cli_local_cluster.name
     (if cluster_running then "✓ running" else "✗ not found");
   if cluster_running
   then (
@@ -492,21 +264,6 @@ let dev_status () =
 ;;
 
 (* ── dev run ─────────────────────────────────────────────────────────────── *)
-
-(** Dev-local addresses matching the port-forwards from [sol local infra up], mirroring
-    the cluster-internal addresses [sol up] injects but rewritten to localhost.
-*)
-let dev_env_vars =
-  [ "KAFKA_BROKERS", "localhost:9092"
-  ; "SCHEMA_REGISTRY_URL", "http://localhost:8081"
-  ; "REDPANDA_ADMIN_URL", "http://localhost:9644"
-  ; "POSTGRES_URL", "postgresql://postgres:dev@localhost:5432/dev"
-  ; "LOKI_URL", "http://localhost:3100"
-  ; "PUSHGATEWAY_URL", "http://localhost:9091"
-  ; "TEMPO_URL", "http://localhost:4318"
-  ; "KAFKA_SECURITY_PROTOCOL", "plaintext"
-  ]
-;;
 
 (** Read lines from [fd] and write them to stdout, prefixed with [label].
     Returns when EOF is reached (the child process closed the pipe end). *)
@@ -583,7 +340,6 @@ let dev_run workspace_dir scope =
   Printf.printf "  Building...\n%!";
   (* The OCaml units are one dune invocation (concurrent dune calls fight over
      the build lock); each TypeScript unit builds in its own npm project. *)
-  let opam_eval = "eval $(opam env 2>/dev/null) 2>/dev/null; " in
   let* () =
     plan.builds
     |> List.fold_left
@@ -591,19 +347,7 @@ let dev_run workspace_dir scope =
             match acc with
             | Error _ as e -> e
             | Ok () ->
-              let in_dir =
-                match build.cwd with
-                | "" | "." -> ""
-                | cwd -> "cd " ^ Filename.quote cwd ^ " && "
-              in
-              let cmd =
-                Printf.sprintf
-                  "%s%s%s"
-                  opam_eval
-                  in_dir
-                  (String.concat " " (List.map Filename.quote build.argv))
-              in
-              Sol_cli_process.run_shell cmd
+              Sol_cli_process.run_shell (Sol_cli_local_run.build_line build)
               |> Result.map ignore
               |> Result.map_error (fun e ->
                 Sol_cli_exit.error
@@ -621,22 +365,14 @@ let dev_run workspace_dir scope =
     plan.launches
     |> List.filter_map (fun (recipe : Sol_cli_local_run.recipe) ->
       let label = recipe.label in
-      let cmd_str =
-        match recipe.launch.cwd with
-        | "" | "." -> String.concat " " (List.map Filename.quote recipe.launch.argv)
-        | cwd ->
-          Printf.sprintf
-            "cd %s && %s"
-            (Filename.quote cwd)
-            (String.concat " " (List.map Filename.quote recipe.launch.argv))
-      in
+      let cmd_str = Sol_cli_local_run.launch_line recipe.launch in
       let pipe_read, pipe_write = Unix.pipe () in
       (* REFAC-134: spawned through Sol_cli_process, with the dev settings merged
          over the environment. *)
       let spawned =
         Sol_cli_process.spawn
           ~output:pipe_write
-          (Sol_cli_process.cmd ~env:dev_env_vars [ "sh"; "-c"; cmd_str ])
+          (Sol_cli_process.cmd ~env:Sol_cli_local_run.dev_env [ "sh"; "-c"; cmd_str ])
       in
       Unix.close pipe_write;
       match spawned with

@@ -276,3 +276,34 @@ let plan ~root ~facts services =
     let unit_builds = List.filter_map (fun r -> r.build) recipes in
     Ok { builds = ocaml_build @ unit_builds; launches = recipes }
 ;;
+
+(* REFAC-139, part F: the shell line that runs a command in its directory. A
+   build is prefixed with the opam environment, since the loop may run outside
+   an activated switch. *)
+let shell_line ?(prefix = "") (command : command) =
+  let in_dir =
+    match command.cwd with
+    | "" | "." -> ""
+    | cwd -> "cd " ^ Filename.quote cwd ^ " && "
+  in
+  prefix ^ in_dir ^ String.concat " " (List.map Filename.quote command.argv)
+;;
+
+let opam_env_prefix = "eval $(opam env 2>/dev/null) 2>/dev/null; "
+let build_line command = shell_line ~prefix:opam_env_prefix command
+let launch_line command = shell_line command
+
+(* Dev-local addresses matching the port-forwards from `sol local infra up`,
+   mirroring the cluster-internal addresses `sol up` injects but rewritten to
+   localhost. *)
+let dev_env =
+  [ "KAFKA_BROKERS", "localhost:9092"
+  ; "SCHEMA_REGISTRY_URL", "http://localhost:8081"
+  ; "REDPANDA_ADMIN_URL", "http://localhost:9644"
+  ; "POSTGRES_URL", "postgresql://postgres:dev@localhost:5432/dev"
+  ; "LOKI_URL", "http://localhost:3100"
+  ; "PUSHGATEWAY_URL", "http://localhost:9091"
+  ; "TEMPO_URL", "http://localhost:4318"
+  ; "KAFKA_SECURITY_PROTOCOL", "plaintext"
+  ]
+;;

@@ -60,3 +60,15 @@ val plan
 
 (** [label (domain, name)] is how the loop names a workload in its output. *)
 val label : Sol_cli_manifest.service -> string
+
+(** [build_line command]: the shell line for a build step, run in its [cwd]
+    under the opam environment. *)
+val build_line : command -> string
+
+(** [launch_line command]: the shell line that starts a built unit in its
+    [cwd]. *)
+val launch_line : command -> string
+
+(** The environment a unit runs with locally: the addresses [sol local infra
+    up] forwards to localhost, and [KAFKA_SECURITY_PROTOCOL=plaintext]. *)
+val dev_env : (string * string) list
