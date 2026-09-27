@@ -15,3 +15,13 @@ resources:
     type: postgres
   events:
     type: kafka
+
+# FEAT-104: every workload declares its language, and nothing infers it. The two
+# units this template ships, and any unit `sol new` adds, are recorded here; a
+# command that needs the language (the local dev loop) refuses a workload that
+# has not declared one rather than guessing.
+services:
+  charge_svc:
+    language: ocaml
+  notify_worker:
+    language: ocaml

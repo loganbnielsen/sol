@@ -21,6 +21,12 @@ let read_file path =
   s
 ;;
 
+let write_file path content =
+  let oc = open_out path in
+  output_string oc content;
+  close_out oc
+;;
+
 (* REFAC-128: the templates are files under platform/shared/templates/<kind>/,
    resolved as Sol assets. The expectations below are the same bytes they always
    were; only where they are read from changed. *)
@@ -50,6 +56,17 @@ let in_temp_dir f =
       Sys.chdir orig_cwd;
       ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote tmpdir))))
     f
+;;
+
+(* FEAT-104: `sol new svc|worker|fn` records the generated unit in the workspace
+   manifest -- which is what makes "every workload has a declared language" true
+   for a workspace Sol created -- so creating a unit needs a workspace. These
+   tests used to scaffold a bare unit in an empty directory. *)
+let in_workspace f =
+  in_temp_dir
+  @@ fun () ->
+  write_file "sol.yml" "";
+  f ()
 ;;
 
 (* ── mkdir_p ──────────────────────────────────────────────────────────────── *)
@@ -649,7 +666,7 @@ let test_ancestor_walk_skips_build_context () =
 (* The framework acknowledges automatically after handle returns Worker.Ack; a
    generated worker must have no ~ack param to call, misorder, or forget. *)
 let test_worker_has_no_ack_param () =
-  in_temp_dir
+  in_workspace
   @@ fun () ->
   Sol_cli_cmd_new.new_worker "comms/notify" |> Result.get_ok;
   let lib = read_file "app/comms/notify_worker/lib/notify_worker.ml" in
@@ -853,7 +870,7 @@ let check_generated_file label path expected =
 ;;
 
 let test_golden_new_svc_files () =
-  in_temp_dir
+  in_workspace
   @@ fun () ->
   Sol_cli_cmd_new.new_svc "comms/notify" |> Result.get_ok;
   let v = component_vars ~suffix:"svc" ~mod_:"Handler" in
@@ -884,7 +901,7 @@ let test_golden_new_svc_files () =
 ;;
 
 let test_golden_new_worker_files () =
-  in_temp_dir
+  in_workspace
   @@ fun () ->
   Sol_cli_cmd_new.new_worker "comms/notify" |> Result.get_ok;
   let v = component_vars ~suffix:"worker" ~mod_:"Notify_worker" in
@@ -915,7 +932,7 @@ let test_golden_new_worker_files () =
 ;;
 
 let test_golden_new_fn_files () =
-  in_temp_dir
+  in_workspace
   @@ fun () ->
   Sol_cli_cmd_new.new_fn "comms/notify" |> Result.get_ok;
   let v = component_vars ~suffix:"fn" ~mod_:"Notify_fn" in
@@ -946,6 +963,50 @@ let test_golden_new_fn_files () =
 ;;
 
 (* ── entry point ─────────────────────────────────────────────────────────── *)
+
+(* FEAT-104: a generated workload declares its language, and Sol knows it because
+   it wrote the unit. The manifest is hand-maintained, so this is also the
+   end-to-end proof that the editor lands the declaration in a real generated
+   workspace -- and that a scaffolded workspace is check-clean, with every
+   workload declared. *)
+let test_generated_workload_declares_its_language () =
+  in_temp_dir
+  @@ fun () ->
+  Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
+  Sys.chdir "testapp";
+  Sol_cli_cmd_new.new_svc "payments/charge" |> Result.get_ok;
+  let after_first = read_file "sol.yml" in
+  assert_contains "declares the workload" after_first "charge_svc:";
+  assert_contains "declares the language" after_first "language: ocaml";
+  (match Sol_cli_config.sol_yml_services ~root:"." with
+   | Error e -> Alcotest.fail (Sol_cli_config.error_to_string e)
+   | Ok services ->
+     let svc =
+       List.find
+         (fun (s : Sol_cli_config.service) -> String.equal s.name "charge_svc")
+         services
+     in
+     Alcotest.(check (option string))
+       "the reader sees the declaration"
+       (Some "ocaml")
+       (Option.map Sol_cli_compat.to_string svc.language));
+  (* The scaffolded workspace is check-clean: no undeclared workload, nothing to
+     fix by hand. *)
+  (match Sol_cli_workspace_model.load ~root:"." with
+   | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
+   | Ok facts ->
+     let findings = Sol_cli_check.run ~facts in
+     Alcotest.(check bool)
+       "a scaffolded workspace is check-clean"
+       true
+       (List.length findings = 0));
+  (* Re-running is idempotent: the unit is rewritten, the manifest is not. *)
+  Sol_cli_cmd_new.new_svc "payments/charge" |> Result.get_ok;
+  Alcotest.(check string)
+    "sol.yml is untouched by the second run"
+    after_first
+    (read_file "sol.yml")
+;;
 
 let () =
   Alcotest.run
@@ -989,6 +1050,12 @@ let () =
             "build-images has TODO(sol-build)"
             `Quick
             test_ci_build_images_has_todo_sol_build
+        ] )
+    ; ( "generated_workloads_declare_their_language"
+      , [ Alcotest.test_case
+            "sol new records the workload's declared language"
+            `Quick
+            test_generated_workload_declares_its_language
         ] )
     ; ( "existing_files"
       , [ Alcotest.test_case

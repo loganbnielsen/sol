@@ -690,6 +690,11 @@ let load path =
 (* REFAC-130: the sol.yml layer on its own, for callers that need a declaration
    sol.yml makes without resolving an environment or a target. The workspace
    model reads each workload's declared language this way. *)
+let sol_yml_services_of_string ~path text =
+  let* layer = load_string ~path text in
+  Ok layer.services
+;;
+
 let sol_yml_services ~root =
   let* layer = load (Filename.concat root "sol.yml") in
   Ok layer.services

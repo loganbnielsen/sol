@@ -78,6 +78,7 @@
   test_substrate
   test_migration
   test_workspace_model
+  test_sol_yml
   test_yaml)
  (libraries sol_cli sol_cli_test_support alcotest unix yojson str yaml))
 

@@ -392,7 +392,9 @@ later rollback — uses, so a moved tag cannot change what a recorded release
 runs.
 
 The qualified version set is a declared framework language per workload.
-Declare `language: ocaml` (or `typescript`) in the service's `sol.yml` entry;
+Declare `language: ocaml` (or `typescript`) in the service's `sol.yml` entry —
+`sol new` records it for every unit it generates, since it knows what it wrote,
+and `sol check` warns about a workload in your workspace that declares none;
 the profile's initial compatibility matrix qualifies OCaml only, so a
 TypeScript workload fails preflight with that reason. The exact supported CLI,
 language, Kubernetes, provider-module and chart versions are published in
