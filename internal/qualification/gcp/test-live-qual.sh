@@ -63,10 +63,16 @@ suite_environment() {
 
 dump_case_output() {
   local case_name="${CURRENT_CASE:-}"
-  case "${DUMPED:-} ${case_name}" in
-    *" $case_name"*) return 0 ;;
-  esac
-  DUMPED="${DUMPED:-} $case_name"
+  # The marker is checked only when there IS one: matching `"$DUMPED $case_name"` against
+  # `*" $case_name"*` matched on the very first call (DUMPED empty, so the string was just the
+  # name) and returned before printing anything -- a guard that silently disabled the thing it
+  # guards, which is the same failure mode this dump exists to catch in the harness.
+  if [ -n "${DUMPED:-}" ]; then
+    case "$DUMPED" in
+      *" $case_name "*) return 0 ;;
+    esac
+  fi
+  DUMPED="${DUMPED:-} $case_name "
   if [ -z "$case_name" ]; then
     return 0
   fi
