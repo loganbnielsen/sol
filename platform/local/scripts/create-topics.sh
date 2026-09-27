@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Create the topics used by sol tests and demo.
 set -euo pipefail
 
 BROKERS="${KAFKA_BROKERS:-localhost:9092}"

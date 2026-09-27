@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# Mutations for check_gcp_standard_substrate.sh (INFRA-093). Each case breaks one tie the guard
-# holds; every mutation asserts that it actually applied, because a mutation that silently no-ops
-# is an accepted tree wearing a rejected case's name.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -22,9 +19,6 @@ reject() {
   root="$(mkcase "$name")"
   mutfile="$scratch/$name.py"
   cat >"$mutfile"
-  # A mutation that does not change the tree is an accepted tree wearing a rejected case's name,
-  # which is how two of these cases first "passed". The digests make that impossible to miss, for
-  # every case, whatever its own assertions say.
   before="$(find "$root" -type f -exec cat {} + | cksum)"
   python3 "$mutfile" "$root"
   after="$(find "$root" -type f -exec cat {} + | cksum)"

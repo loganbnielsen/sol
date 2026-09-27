@@ -12,16 +12,11 @@ source "${SCRIPT_DIR}/lib/port-preflight.sh"
 
 check_port_forward_conflict "$GRAFANA_PORT" grafana
 
-# ------------------------------------------------------------------ #
-# Shared Docker network                                               #
-# ------------------------------------------------------------------ #
-
 if ! docker network inspect "$NETWORK" > /dev/null 2>&1; then
   echo "Creating Docker network: $NETWORK"
   docker network create "$NETWORK"
 fi
 
-# Connect Loki to the shared network if it's running but not yet on it.
 if docker ps --format '{{.Names}}' | grep -q '^loki$'; then
   if ! docker network inspect "$NETWORK" \
        --format '{{range .Containers}}{{.Name}} {{end}}' \
@@ -43,10 +38,6 @@ if docker ps --format '{{.Names}}' | grep -q '^tempo$'; then
 else
   echo "WARNING: Tempo container is not running — run ensure-tempo.sh first for trace lookup" >&2
 fi
-
-# ------------------------------------------------------------------ #
-# Grafana                                                             #
-# ------------------------------------------------------------------ #
 
 if docker ps --format '{{.Names}}' | grep -q '^grafana$'; then
   echo "Grafana already running at http://localhost:${GRAFANA_PORT}"
@@ -79,10 +70,6 @@ else
   done
   echo ""
 fi
-
-# ------------------------------------------------------------------ #
-# Provision datasources (idempotent)                                  #
-# ------------------------------------------------------------------ #
 
 upsert_datasource () {
   local name="$1"

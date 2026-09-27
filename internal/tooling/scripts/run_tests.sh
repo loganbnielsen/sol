@@ -1,18 +1,4 @@
 #!/usr/bin/env bash
-# Sol test runner — executes all test suites, enforces per-suite timeouts,
-# and fails on performance regressions against a committed baseline.
-#
-# Usage:
-#   ./internal/tooling/scripts/run_tests.sh                    # full run
-#   ./internal/tooling/scripts/run_tests.sh --update-baseline  # run and record timings as new baseline
-#   ./internal/tooling/scripts/run_tests.sh --no-infra         # skip infra setup (already running)
-#   ./internal/tooling/scripts/run_tests.sh --reset-infra      # recreate Sol-owned local infra first
-#   ./internal/tooling/scripts/run_tests.sh unit kafka         # run specific suites only
-#
-# Exit codes:
-#   0  all suites passed, no regression
-#   1  one or more suites failed or timed out
-#   2  performance regression (exceeded per-suite threshold)
 
 set -euo pipefail
 
@@ -21,32 +7,24 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 export REPO_ROOT
 BASELINE="$REPO_ROOT/internal/tooling/perf/perf_baseline.json"
 
-# ── Colours ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
 pass()  { echo -e "${GREEN}✓${NC} $*"; }
 fail()  { echo -e "${RED}✗${NC} $*"; }
 info()  { echo -e "${DIM}→${NC} $*"; }
 header(){ echo -e "\n${BOLD}$*${NC}"; }
 
-# ── Per-suite timeouts (seconds) ──────────────────────────────────────────────
 declare -A TIMEOUTS=(
   [unit]=60
   [kafka]=120
   [e2e]=180
 )
 
-# ── Per-suite regression thresholds ──────────────────────────────────────────
-# unit/e2e: 1.5× — pure OCaml or sequential workflow; only GC/scheduler noise.
-# kafka: 1.4× — I/O-bound; more variance is expected.
-# These replace the old single FAIL_RATIO=1.2 which produced false positives
-# when infra containers ran concurrently with the unit suite.
 declare -A FAIL_RATIOS=(
   [unit]=1.5
   [kafka]=1.4
   [e2e]=1.5
 )
 
-# ── Flags ────────────────────────────────────────────────────────────────────
 UPDATE_BASELINE=0
 SKIP_INFRA=0
 RESET_INFRA=0
@@ -65,21 +43,17 @@ done
 ALL_SUITES=(unit kafka e2e)
 SUITES=("${REQUESTED_SUITES[@]:-${ALL_SUITES[@]}}")
 
-# ── Timing ────────────────────────────────────────────────────────────────────
 now_ms()    { date +%s%3N; }
 elapsed_s() { awk "BEGIN { printf \"%.3f\", ($2 - $1) / 1000 }"; }
 
-# ── Baseline I/O (requires jq) ────────────────────────────────────────────────
 HAS_JQ=0
 command -v jq &>/dev/null && HAS_JQ=1
 
-# Returns the duration_s from the most recent baseline:true entry, or "null".
 baseline_get() {
   [ $HAS_JQ -eq 0 ] && echo "null" && return
   jq -r ".suites.$1.history | map(select(.baseline == true)) | last | .duration_s // \"null\"" "$BASELINE"
 }
 
-# Appends an entry to the history array. Pass baseline=true when --update-baseline.
 baseline_append() {
   local suite=$1 duration_s=$2 is_baseline=$3
   [ $HAS_JQ -eq 0 ] && return
@@ -96,12 +70,10 @@ baseline_append() {
   mv "$tmp" "$BASELINE"
 }
 
-# ── Regression check ──────────────────────────────────────────────────────────
-# Pure predicate, no output — callers decide what to do with a breach.
 is_regression() {
   local suite=$1 actual_s=$2
   local base; base=$(baseline_get "$suite")
-  [ "$base" = "null" ] && return 1   # no baseline yet
+  [ "$base" = "null" ] && return 1
 
   local ratio=${FAIL_RATIOS[$suite]}
   local threshold
@@ -117,13 +89,9 @@ report_regression() {
   fail "$suite: ${actual_s}s vs baseline ${base}s (${actual_ratio}× — regression, threshold ${ratio}×)"
 }
 
-# ── Suite runners ─────────────────────────────────────────────────────────────
 run_unit() {
   info "Primitives unit tests (no infrastructure required)"
   eval $(opam env)
-  # framework/ocaml/kafka-eio-service/ is excluded here — its test/dune also
-  # builds a broker-requiring integration suite; run_kafka() below covers
-  # it explicitly with KAFKA_BROKERS set.
   dune test --root "$REPO_ROOT" framework/ocaml/sol-env/ framework/ocaml/sol-fn/ framework/ocaml/sol-obs/ framework/ocaml/sol-svc/ framework/ocaml/sol-worker/ cli/test/ --force 2>&1
 }
 
@@ -146,7 +114,6 @@ run_e2e() {
     dune test --root "$REPO_ROOT" internal/fixtures/local-demo/test/ --force 2>&1
 }
 
-# ── Infrastructure setup ──────────────────────────────────────────────────────
 ensure_infra() {
   header "Infrastructure"
   local needs_kafka=0 needs_loki=0 needs_postgres=0
@@ -176,9 +143,8 @@ reset_infra() {
   fi
 }
 
-# ── Result tracking ───────────────────────────────────────────────────────────
-declare -A RESULTS   # suite → pass|fail|timeout
-declare -A TIMINGS   # suite → elapsed seconds
+declare -A RESULTS
+declare -A TIMINGS
 REGRESSION_FAIL=0
 
 echo -e "\n${BOLD}Sol test runner${NC}"
@@ -186,8 +152,6 @@ echo "Suites: ${SUITES[*]}"
 [ $UPDATE_BASELINE -eq 1 ] && echo "Mode: --update-baseline"
 [ $HAS_JQ -eq 0 ] && echo -e "${DIM}jq not found — regression checks disabled${NC}"
 
-# Runs one attempt of $1, printing its output directly (not captured).
-# Sets RUN_ONE_ELAPSED and returns the suite's exit code.
 run_one() {
   local suite=$1
   local timeout_s=${TIMEOUTS[$suite]}
@@ -208,10 +172,6 @@ run_suite() {
   local timeout_s=${TIMEOUTS[$suite]}
 
   local elapsed exit_code
-  # `run_one` restores `set -e` before it returns, so calling it as a bare
-  # statement (`run_one ...; exit_code=$?`) would abort this whole script on
-  # a non-zero return instead of letting us handle it below — wrap it as an
-  # `if` condition, which bash always exempts from errexit.
   if run_one "$suite"; then exit_code=0; else exit_code=$?; fi
   elapsed=$RUN_ONE_ELAPSED
   TIMINGS[$suite]=$elapsed
@@ -229,12 +189,6 @@ run_suite() {
   RESULTS[$suite]=pass
   pass "${suite}: passed (${elapsed}s)"
 
-  # A single slow run can be transient contention (concurrent dune builds,
-  # infra containers, etc.) rather than a real regression — see
-  # CODE_LAYER-011, where this fired 4 times in one session and every time
-  # an immediate manual re-run came back at baseline. Confirm with one
-  # in-place re-run before flagging, the same recovery step a human
-  # currently does by hand.
   if is_regression "$suite" "$elapsed"; then
     info "${suite}: ${elapsed}s exceeded threshold on first run — confirming with a re-run before flagging a regression"
     local confirm_exit
@@ -260,15 +214,11 @@ run_suite() {
     fi
   fi
 
-  # REFAC-078: only persist history/baseline entries when explicitly updating
-  # them. Ordinary test runs (pre-commit, local debugging) must leave
-  # perf_baseline.json untouched so code PRs never carry perf-run diffs.
   if [ $UPDATE_BASELINE -eq 1 ]; then
     baseline_append "$suite" "$elapsed" "true"
   fi
 }
 
-# Run unit in isolation before starting any infrastructure.
 INFRA_SUITES=()
 UNIT_REQUESTED=0
 for suite in "${SUITES[@]}"; do
@@ -284,9 +234,7 @@ if [ $UNIT_REQUESTED -eq 1 ]; then
   run_suite unit
 fi
 
-# Start infrastructure only if non-unit suites are requested.
 if [ ${#INFRA_SUITES[@]} -gt 0 ] && [ $SKIP_INFRA -eq 0 ]; then
-  # Temporarily set SUITES to only infra suites for ensure_infra's needs check.
   SUITES=("${INFRA_SUITES[@]}")
   if [ $RESET_INFRA -eq 1 ]; then
     reset_infra
@@ -302,7 +250,6 @@ if [ ${#INFRA_SUITES[@]} -gt 0 ]; then
   done
 fi
 
-# ── Summary table ─────────────────────────────────────────────────────────────
 header "Summary"
 printf "  %-18s %-10s %-10s %-12s %-8s\n" "Suite" "Result" "Time" "Baseline" "Threshold"
 printf "  %-18s %-10s %-10s %-12s %-8s\n" "─────────────────" "──────────" "─────────" "────────────" "─────────"
@@ -337,7 +284,6 @@ if [ $UPDATE_BASELINE -eq 1 ]; then
   pass "Baseline entries recorded in $BASELINE"
 fi
 
-# ── Exit ──────────────────────────────────────────────────────────────────────
 echo ""
 if [ $ALL_PASSED -eq 0 ]; then
   fail "One or more suites failed."

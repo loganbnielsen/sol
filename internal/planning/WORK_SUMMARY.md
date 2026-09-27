@@ -23,6 +23,7 @@
 ## Latest: no code comments (2026-09-27)
 
 - Every comment is gone from the OCaml tree (426 files, about 14,500 lines): names carry the meaning, and an invariant belongs in the code. `check_no_comments.sh` holds it, and AGENTS.md states the rule. The code is token-identical to before, verified by stripping comments from both trees.
+- **REFAC-142:** the same for shell, Terraform and TypeScript (4,607 comment lines), each verified by its own parser. The two comment-based guard mechanisms became code: DEC-045 residue ownership is a registry in `Sol_cli_gcp_destruction`, and the unused `same-object-owner` exception is gone. `check_no_comments.sh` covers all four languages (shell through `shfmt`).
 - What the comments had been holding up is filed: **BUG-062** (`sol migrate` and `sol deploy` name the migrations table differently from a subdirectory), **REFAC-141** (14 prose-only invariants to enforce in code), **REFAC-140** (split the 75 files that used section banners), **REFAC-142** (the same removal for shell, Terraform and TypeScript).
 
 ## Latest: refactoring-pattern audit, REFAC-131..139 (2026-09-27)

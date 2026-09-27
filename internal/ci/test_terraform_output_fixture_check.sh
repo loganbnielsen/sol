@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# Mutations for check_terraform_output_fixture.sh (INFRA-091).
-#
-# Each case breaks one of the three ties the guard holds: the fixture stops being Terraform's
-# record shape, the harness stops rendering it, or the product goes back to a private shape.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -50,7 +46,7 @@ accept() {
 
 echo "check_terraform_output_fixture.sh mutations"
 
-mutate_fixture() { # mutate_fixture <case> <json-python-expression>
+mutate_fixture() {
   local case="$1" expr="$2"
   reject "$case" <<PY
 import json, pathlib, sys
@@ -61,16 +57,11 @@ p.write_text(json.dumps(d, indent=2))
 PY
 }
 
-# 1. a fixture that stops carrying terraform's own fields
 mutate_fixture no-type "del d['project_id']['type']"
-# 2. a fixture whose project_id is no longer a string
 mutate_fixture project-is-not-a-string "d['project_id']['value'] = 42"
-# 3. a fixture missing the output the parser needs
 mutate_fixture no-project-id "del d['project_id']"
-# 4. a fixture whose sensitive flag is not a boolean
 mutate_fixture sensitive-not-a-bool "d['project_id']['sensitive'] = 'false'"
 
-# 5. the harness stops rendering the fixture and writes its own payload again
 reject harness-declares-its-own-shape <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]) / 'internal/ci/test_cloud_lifecycle_offline.sh'
@@ -93,7 +84,6 @@ assert invented in s, 'the mutation did not apply'
 p.write_text(s)
 PY
 
-# 6. the product goes back to a private idea of the shape
 reject parser-reads-a-private-shape <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]) / 'cli/lib/cloud/sol_cli_gcp_cluster.ml'

@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Validate `git diff --cached --name-status` rows for internal/pipeline/tickets/.
-# Ticket files may be created or edited on any PR branch. Deletion is only
-# valid as one half of a same-ID state transition.
 awk -F'\t' '
   function split_ticket(path, out,    rest, slash) {
     rest = path

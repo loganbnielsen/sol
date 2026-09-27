@@ -1,19 +1,8 @@
 #!/usr/bin/env bash
-# REFAC-133: a runtime failure in the CLI is a returned [Error], never an exception
-# that a caller has to know to catch (REFAC-115's rule, one level down). What may
-# still raise is a *programmer* error on a static value -- a violated invariant --
-# and each one is named below with its reason. Re-raising cancellation and fatal
-# runtime exceptions (`... as exn -> raise exn`) is allowed anywhere.
-#
-# Flags `failwith`, `invalid_arg`, `raise (`, `raise <Constructor>` in cli/bin and
-# cli/lib (tests are out of scope).
-#
-# Usage: check_no_exception_control_flow.sh [repo-root]
 set -euo pipefail
 
 root="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 
-# <path>|<fragment of the allowed line>|<why it is an invariant>
 allowed=(
   "cli/lib/base/sol_cli_time.ml|is not a representable time|a float that Ptime cannot represent: the clock, not input"
   "cli/lib/base/sol_cli_yaml.ml|NUL character|the boundaries (sol.toml, migration files) refuse a NUL first"

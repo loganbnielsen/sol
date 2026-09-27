@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Mutation test for check_provider_roots.sh (DEC-046 rule 4, REFAC-100).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -7,7 +6,6 @@ CHECK="$ROOT/internal/ci/check_provider_roots.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-# A fake repository: aws and gcp with every role, plus the shared directories.
 mkrepo() {
   rm -rf "$tmp/repo"
   for p in aws gcp; do
@@ -64,6 +62,5 @@ if env -u SOL_PROVIDERS "$CHECK" "$tmp/repo" >/dev/null 2>&1; then
 fi
 echo "  [OK]   an unreadable provider list fails closed"
 
-# The real repository must pass as it stands (reads the built printer).
 "$CHECK" "$ROOT" >/dev/null
 echo "  [OK]   the repository's own providers"

@@ -21,19 +21,11 @@ import { initTracing, startChildSpan } from "./tracing.js";
 import { makeWorkerMetrics } from "./metrics.js";
 import { makeDb } from "./db.js";
 
-// BUG-055 (DEC-022 parity with OCaml's config_of_env): the Kafka substrate
-// addresses are stated, never defaulted to localhost. In a pod nothing listens
-// there, so a missing one must fail at startup naming the variable. `sol local
-// run` and Sol-rendered manifests set them.
-// DEC-022 parity with Sol_runtime.setting (REFAC-137): a setting is trimmed,
-// and a blank one reads as unset, so " " means what unset means everywhere.
 function setting(name: string): string | undefined {
   const value = process.env[name]?.trim();
   return value ? value : undefined;
 }
 
-// Parity with sol-svc's PORT rule (BUG-046): a value that is set but is not a
-// number is a configuration error naming it, not a silent fallback.
 function intEnv(name: string, fallback: number): number {
   const raw = setting(name);
   if (raw === undefined) return fallback;
@@ -61,10 +53,6 @@ const LOKI_URL = setting("LOKI_URL");
 const TEMPO_URL = setting("TEMPO_URL");
 const POSTGRES_URL = setting("POSTGRES_URL");
 
-// Application *policy*, not Kafka mechanics: a DB failure is retryable, and
-// the retry budget is a product decision. How `Retry` is routed, what the
-// retry/DLQ topics are called, and when an offset may commit are @sol-fab/kafka's
-// job — the demo never names a header or a topic here.
 const RETRY_STRATEGY: RetryStrategy = {
   kind: "retry-topics",
   policy: { baseDelayS: 1, maxDelayS: 60, maxAttempts: 5, jitterRatio: 0.1 },
@@ -74,9 +62,6 @@ const log = makeLokiPusher(LOKI_URL, "fulfillment-worker-ts");
 const { tracer, shutdown: shutdownTracing } = initTracing("fulfillment-worker-ts", TEMPO_URL);
 const { register: metricsRegister, messagesTotal, decodeErrorsTotal, messageDuration } = makeWorkerMetrics();
 
-// The application handler, shared by the source path and the retry path: it
-// returns Sol outcomes and knows nothing about retry topics, headers, or
-// offset transfer.
 async function handleOrder(
   order: ReturnType<typeof decodeOrderPlaced>,
   traceContext: SpanContext | undefined,
@@ -96,9 +81,6 @@ async function handleOrder(
       try {
         await db.insertFulfilled(order);
       } catch (err) {
-        // A downstream DB failure is retryable on an otherwise-valid message.
-        // "retry" is worker.ml's vocabulary for exactly this; decode failures
-        // are the separate counter wired below.
         messagesTotal.inc({ status: "retry" });
         return retryOutcome(`db: ${String(err)}`);
       }
@@ -121,18 +103,12 @@ async function main() {
 
   const kafka = new Kafka({ clientId: "fulfillment-worker-ts", brokers: KAFKA_BROKERS });
 
-  // The relay owns the retry topology: the demo *asks* for retry-topic delivery
-  // and @sol-fab/kafka provisions, publishes, and consumes the retry/DLQ topics.
   const producer = kafka.producer();
   await producer.connect();
   const relay = kafkaRetryRelay(producer);
   await provisionRelayTopics({ kafka, sourceTopic: TOPIC_NAME, groupId: GROUP_ID });
 
   const consumer = kafka.consumer({ groupId: GROUP_ID });
-  // @sol-fab/kafka's wireCrashListener encodes Sol's exit policy: kafkajs already
-  // self-heals from retriable errors (payload.restart=true, rescheduling
-  // start() itself after a backoff) -- only exit when kafkajs itself has given
-  // up, so k8s restarts the pod instead of it quietly stopping progress.
   wireCrashListener(consumer, {
     onCrash: (error) => console.error(`[fulfillment-worker-ts] consumer crashed: ${String(error)}`),
   });
@@ -159,15 +135,11 @@ async function main() {
     log("error", "undecodable message, dead-lettered", { error: String(err) });
   };
 
-  // Source path: decode + handle, expressing retry via the configured strategy.
   await consumer.run({
     eachMessage: wrapEachRetryableMessage({
       decode: decodeOrderPlaced,
       decodeErrorCounter: decodeErrorsTotal,
       onDecodeError,
-      // FEAT-098: an undecodable record goes, raw, to <topic>.<group>.dlq (the
-      // retry-topics default, parity with the OCaml worker); "ack-and-drop" is
-      // the explicit opt-in to count it and commit past it.
       decodeErrorPolicy: "route-to-dlq",
       retryStrategy: RETRY_STRATEGY,
       groupId: GROUP_ID,
@@ -177,8 +149,6 @@ async function main() {
     }),
   });
 
-  // Retry path: the same application handler, re-run when a retry record comes
-  // due. @sol-fab/kafka owns the delayed consumption and the offset transfer.
   const relayConsumer = await runRetryRelayConsumer({
     kafka,
     sourceTopic: TOPIC_NAME,
@@ -199,10 +169,6 @@ async function main() {
       }, 3000)
     : undefined;
 
-  // @sol-fab/worker owns the lifecycle contract (idempotent SIGTERM/SIGINT,
-  // an unbounded drain -- sol-worker's worker.mli has no drain_timeout_s,
-  // unlike sol-svc) that framework/ocaml/sol-worker/lib/worker.ml defines; this
-  // app only supplies what to drain and what to close afterwards.
   runWorker({
     drain: async () => {
       await consumer.disconnect();

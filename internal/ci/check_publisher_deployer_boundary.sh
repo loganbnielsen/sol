@@ -1,18 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ADR 0002 / INFRA-022 identity table: provisioner may reconcile substrate but
-# must not publish or replace application artifacts; deployer consumes an
-# already-published, immutable digest and must not build or push. For a
-# single CLI binary with no separate runtime privilege boundary, the call
-# graph *is* the effective permission -- a capability that is never invoked
-# from a code path cannot be exercised from it, so grepping for the call
-# itself is real evidence here, not policy-text grep.
-
 root="${1:-$(git rev-parse --show-toplevel)}"
 
-# The provisioner is the `sol cloud` commands and the cloud library they drive
-# (REFAC-139 moved the lifecycle wiring into cli/lib/cloud).
 if grep -Eq 'Sol_cli_docker\.(build|push)' \
   "$root/cli/bin/cmd_cloud.ml" "$root/cli/bin/cmd_cloud_tf.ml" "$root"/cli/lib/cloud/*.ml
 then
@@ -21,7 +11,6 @@ then
   exit 1
 fi
 
-# The deployer is `sol deploy` and the modules REFAC-139 moved its decisions into.
 if grep -Eq 'Sol_cli_docker\.(build|push)' "$root/cli/bin/cmd_deploy.ml" \
   "$root/cli/lib/deploy/sol_cli_deploy_selection.ml" \
   "$root/cli/lib/deploy/sol_cli_deploy_run.ml"

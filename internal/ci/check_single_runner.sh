@@ -1,16 +1,4 @@
 #!/usr/bin/env bash
-# REFAC-134: every subprocess goes through Sol_cli_process (so redaction,
-# timeouts and error text are uniform), and every file removal through Sol_cli_fs
-# (so absence is success and any other failure is reported, never swallowed).
-#
-# Flags, in cli/ (bin, lib and test):
-#   Sys.command, Unix.system, Unix.open_process*, Unix.create_process*
-#     outside cli/lib/base/sol_cli_process.ml and cli/lib/cloud/sol_cli_supervised.ml
-#     (Terraform's supervisor, which manages its own child and sessions);
-# and, in cli/bin and cli/lib:
-#   Sys.remove, Unix.unlink, Unix.rmdir outside cli/lib/base/sol_cli_fs.ml.
-#
-# Usage: check_single_runner.sh [repo-root]
 set -euo pipefail
 
 root="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"

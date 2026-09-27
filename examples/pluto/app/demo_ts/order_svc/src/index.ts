@@ -10,15 +10,11 @@ import { runService } from "@sol-fab/svc";
 import { initTracing, SpanKind } from "./tracing.js";
 import { makeSvcMetrics } from "./metrics.js";
 
-// DEC-022 parity with Sol_runtime.setting (REFAC-137): a setting is trimmed,
-// and a blank one reads as unset, so " " means what unset means everywhere.
 function setting(name: string): string | undefined {
   const value = process.env[name]?.trim();
   return value ? value : undefined;
 }
 
-// Parity with sol-svc's PORT rule (BUG-046): a value that is set but is not a
-// number is a configuration error naming it, not a silent fallback.
 function intEnv(name: string, fallback: number): number {
   const raw = setting(name);
   if (raw === undefined) return fallback;
@@ -30,10 +26,6 @@ function intEnv(name: string, fallback: number): number {
 }
 
 const PORT = intEnv("PORT", 8080);
-// BUG-055 (DEC-022 parity with OCaml's config_of_env): the Kafka substrate
-// addresses are stated, never defaulted to localhost. In a pod nothing listens
-// there, so a missing one must fail at startup naming the variable. `sol local
-// run` and Sol-rendered manifests set them.
 function requiredEnv(name: string): string {
   const value = setting(name);
   if (!value) {
@@ -68,12 +60,6 @@ async function main() {
 
   const kafka = new Kafka({ clientId: "order-svc-ts", brokers: KAFKA_BROKERS });
 
-  // @sol-fab/kafka's registerTopic is the single entry point for provisioning
-  // the topic and registering its schema in Sol's exact order/fatality
-  // policy (provision -> register schema, fatal -> set compatibility,
-  // non-fatal) -- see @sol-fab/kafka's src/register.ts
-  // (github.com/loganbnielsen/sol-kafka) for why this is
-  // one function rather than three independently-callable steps.
   const { schemaId } = await registerTopic({
     kafka,
     registryUrl: SCHEMA_REGISTRY_URL,
@@ -87,27 +73,13 @@ async function main() {
 
   const app = Fastify({ logger: false });
 
-  // Sol convention: every request gets a metric, success or failure — mirrors
-  // framework/ocaml/sol-svc/lib/service.ml's dispatch wrapper, which records
-  // metrics for every response generically rather than leaving it to each
-  // handler to remember. A hook is the correct place for this in Fastify;
-  // recording inline in the handler (an earlier version of this file did)
-  // silently drops metrics for any request that throws.
   app.addHook("onResponse", async (req, reply) => {
-    // routeLabel/statusClassOf are @sol-fab/obs's exact port of service.ml's
-    // label derivation, including the fixed "unmatched" default for any
-    // request that never matched a route -- an unbounded, caller-controlled
-    // path as a label value is a Prometheus cardinality bomb under real
-    // internet traffic (scanners, retries with varying paths).
     const route = routeLabel(req.routeOptions?.url);
     const statusClass = statusClassOf(reply.statusCode);
     requestsTotal.inc({ method: req.method, route, status_class: statusClass });
     requestDuration.observe({ method: req.method, route }, reply.elapsedTime / 1000);
   });
 
-  // Internal error details (a Kafka publish failure, a stack trace) must
-  // never reach an external caller verbatim — Fastify's default handler
-  // serializes error.message straight into the response body otherwise.
   app.setErrorHandler((err, _req, reply) => {
     console.error(`[order-svc-ts] request error: ${String(err)}`);
     const status = (err as { statusCode?: number }).statusCode ?? 500;
@@ -127,10 +99,6 @@ async function main() {
   app.post(
     "/orders",
     {
-      // Fastify's built-in AJV validation (ecosystem-covered, not a Sol
-      // convention) — a malformed body (missing/wrong-typed fields) is
-      // rejected with 400 before the handler ever runs, instead of being
-      // silently coerced via `?? ""`/`?? 0` and published anyway.
       schema: {
         body: {
           type: "object",
@@ -169,11 +137,6 @@ async function main() {
       };
       const wire = encodeWire(schemaId, message);
 
-      // Unlike internal/fixtures/local-demo/bin/demo.ml (which logs a Kafka publish
-      // error but still returns 202), a publish failure here is allowed to
-      // propagate and return 500 — telling the client an order succeeded
-      // when the event never reached Kafka is a worse contract than the
-      // demo script's convenience shortcut.
       await producer.send({
         topic: TOPIC_NAME,
         messages: [{ value: wire, headers: { traceparent } }],
@@ -194,12 +157,6 @@ async function main() {
   await app.listen({ port: PORT, host: "0.0.0.0" });
   console.log(`[order-svc-ts] listening on :${PORT}`);
 
-  // The local Prometheus container in this repo is configured to scrape
-  // Pushgateway only (see platform/local/config/prometheus.yml) — matching
-  // internal/fixtures/local-demo's own local-run model, not the k8s-native path
-  // where prometheus.io/scrape annotations hit /metrics directly. Push
-  // periodically since, unlike the OCaml demo, this is a long-running
-  // service rather than a one-shot binary.
   const pushgatewayUrl = setting("PUSHGATEWAY_URL");
   const pushInterval = pushgatewayUrl
     ? setInterval(() => {
@@ -209,9 +166,6 @@ async function main() {
       }, 3000)
     : undefined;
 
-  // @sol-fab/svc owns the lifecycle contract (idempotent SIGTERM/SIGINT, the
-  // drain bound, forced cancellation) that sol-svc's service.ml defines --
-  // this app only supplies what to drain and what to close afterwards.
   runService({
     drain: () => app.close(),
     onDrainStart: () => {

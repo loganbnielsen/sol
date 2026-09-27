@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Mutation test for check_json_decode_boundary.sh (REFAC-132).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -13,7 +12,6 @@ mkrepo() {
   git -C "$tmp/repo" init -q
   printf 'let n j = Sol_cli_json.field [ "metadata"; "name" ] j |> Sol_cli_json.string\n' \
     >"$tmp/repo/cli/lib/deploy/a.ml"
-  # Tests may use Util to build or inspect fixtures.
   printf 'let x j = Yojson.Safe.Util.member "a" j\n' >"$tmp/repo/cli/test/test_x.ml"
 }
 

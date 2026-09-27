@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Mutation test for check_examples_self_contained.sh (REFAC-105).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -7,7 +6,6 @@ CHECK="$ROOT/internal/ci/check_examples_self_contained.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-# A throwaway repository with one example target and one README.
 mkrepo() {
   rm -rf "$tmp/repo"
   mkdir -p "$tmp/repo/examples/app/sol/dev/aws"
@@ -57,6 +55,5 @@ printf 'target:\n  kubeconfig: ~/.kube/sol-internal/config\n' \
 commit
 expect pass "a path segment merely ending in 'internal' is not internal/"
 
-# The real repository must pass as it stands.
 "$CHECK" "$ROOT" >/dev/null
 echo "  [OK]   the repository's own examples"

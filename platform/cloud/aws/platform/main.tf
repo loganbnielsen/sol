@@ -1,15 +1,6 @@
-# platform/cloud/aws/platform — the AWS platform root (REFAC-100). The platform
-# *definition* is the shared module `platform/cloud/modules/platform`; this root
-# supplies what only a root can -- the state backend -- exactly as the GCP root
-# does. Every module variable is passed through unchanged: this root exists to
-# reach the definition from AWS, not to narrow it.
-
 terraform {
   required_version = ">= 1.6"
 
-  # S3 has no native state locking, so `sol cloud` supplies bucket=, key=,
-  # region=, dynamodb_table= and encrypt=true from the target's declared state
-  # bucket and aws.state_lock_table.
   backend "s3" {}
 
   required_providers {
@@ -24,7 +15,6 @@ terraform {
   }
 }
 
-# The shared platform definition. Providers are inherited from this root.
 module "platform" {
   source                               = "../../modules/platform"
   base_domain                          = var.base_domain
@@ -72,11 +62,6 @@ module "platform" {
   letsencrypt_email                    = var.letsencrypt_email
   cert_manager_irsa_role_arn           = var.cert_manager_irsa_role_arn
 }
-
-# REFAC-100: until this change the AWS root *was* the definition, so an existing
-# AWS platform state holds every resource at the top level. These blocks move each
-# one under module.platform, so such a state plans with no destroy and no create.
-# They are safe to keep: on a fresh state there is nothing to move.
 
 moved {
   from = kubernetes_manifest.letsencrypt_staging

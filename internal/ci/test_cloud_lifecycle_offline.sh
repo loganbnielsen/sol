@@ -1,23 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# HARDEN-003: assertions must be able to fail. These refuse to pass on a missing
-# or empty target, which is the vacuous-assertion failure mode: an assertion that
-# greps a path the run never wrote cannot fail, and so looks like coverage.
 # shellcheck source=qualification_assertions.sh
 . "$(cd "$(dirname "$0")" && pwd)/qualification_assertions.sh"
 
 root="$(git rev-parse --show-toplevel)"
-# The stubs run as subprocesses, so the fixture's location has to be in their environment: the
-# fake terraform renders Terraform's own output payload from it (INFRA-091).
 export REPO_ROOT="$root"
 sol="$(realpath "${1:-$root/_build/default/cli/bin/main.exe}")"
 tmp="$(mktemp -d)"
-# DEC-040: a green exit code must not be able to mean a fixture is corrupt. If a splice
-# swallows a heredoc terminator the generated stub runs to end-of-file, and this harness
-# still passes -- bash's "delimited by end-of-file" warning is the only sign. Assert the
-# invariant directly: every generator heredoc is closed. Checked here rather than trusted to
-# memory, and it is the check that would have caught the splice that produced a false green.
 heredocs_open=$(grep -cE "^cat >.*<<'EOF'" "$0")
 heredocs_close=$(grep -cE '^EOF$' "$0")
 if [ "$heredocs_open" != "$heredocs_close" ]; then
@@ -28,24 +18,12 @@ fi
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/work/sol" "$tmp/markers"
 
-# ADR 0003: a postgres resource plus the production profile is what makes
-# terraform_vars force the Ready/Production invariant rds_deletion_protection=true.
-# Its type is app shape, so sol.yml declares it (DEC-047); a target only sizes it.
 cat >"$tmp/work/sol.yml" <<'EOF'
 project: lifecycle-test
 resources:
   app_db:
     type: postgres
 EOF
-# FEAT-100: both targets live in sol/environments.yml under the prod environment.
-#
-# The GCP target carries no `profile` (the production profile asserts the AWS
-# substrate, matrix A5) and it states its retention, which DEC-033 requires of a
-# target that destroys. `none` is not decoration here: Sol cannot retain anything on
-# GCP yet -- Cloud SQL deletes its backups with the instance -- so the default
-# `final-snapshot` is refused rather than quietly discarded, and a disposable
-# qualification target says out loud that it keeps nothing. It omits app_db, as its
-# own target file used to by not declaring one.
 cat >"$tmp/work/sol/environments.yml" <<'EOF'
 prod:
   targets:
@@ -689,9 +667,6 @@ fi
 : >"$path"
 EOF
 
-# The GCP mechanisms Sol drives: the credential check, cluster credentials, the two
-# readiness facts, and absence. One mock flipped by DESTROYING, like the AWS one,
-# rather than every case carrying both directions.
 cat >"$tmp/bin/gcloud" <<'EOF'
 #!/usr/bin/env bash
 set -eu
@@ -830,10 +805,6 @@ esac
 exit 90
 EOF
 
-# DEC-040: check the generated stubs parse before anything runs. A syntax error in a stub
-# surfaces as a plausible-looking product failure -- an "eks update-kubeconfig failed" message
-# that took several rounds to trace back to the stub itself. Cheap assertion, loud failure, so
-# this harness cannot fail for a reason that looks like a bug in sol.
 for generated in "$tmp/bin/aws" "$tmp/bin/terraform" "$tmp/bin/kubectl" "$tmp/bin/gcloud"; do
   [ -e "$generated" ] || continue
   if ! bash -n "$generated" 2>/dev/null; then
@@ -843,9 +814,6 @@ for generated in "$tmp/bin/aws" "$tmp/bin/terraform" "$tmp/bin/kubectl" "$tmp/bi
   fi
 done
 
-# The platform stage's host prerequisite (Attempt 3): the kubeconfig gcloud writes
-# names this as its exec credential plugin, so every Kubernetes call needs it on
-# PATH. Failing without it is free; failing inside the platform apply is not.
 cat >"$tmp/bin/gke-gcloud-auth-plugin" <<'EOF'
 #!/usr/bin/env bash
 # NO_AUTH_PLUGIN models a host without the plugin, which is how Attempt 3 failed:
@@ -1044,14 +1012,10 @@ chmod +x "$tmp/bin/terraform" "$tmp/bin/aws" "$tmp/bin/kubectl" "$tmp/bin/gcloud
 
 export PATH="$tmp/bin:$PATH"
 export SOL_HOME="$root"
-# INFRA-075: Sol's run logs and state live under $XDG_DATA_HOME/sol (else ~/.local/share/sol),
-# not under SOL_HOME. Without this, every scenario below wrote a run into the operator's real
-# Sol home, and the shared keep-20 pruning deleted real qualification evidence to make room.
 export XDG_DATA_HOME="$tmp/xdg-data"
 export TF_VAR_db_password=offline-only
 export KUBECONFIG=/ambient/forbidden
 export FAIL_MARKER_DIR="$tmp/markers"
-# DEC-040: exercise the gate's retry without sleeping through it.
 export SOL_WHOAMI_RETRY_INTERVAL_S=0
 export KUBECONFIG_LOG="$tmp/kubeconfigs"
 export RDS_PREPARED_FILE="$tmp/markers/rds-prepared"
@@ -1069,30 +1033,14 @@ run_destroy() {
     >"$1.out" 2>&1
 }
 
-# INFRA-034: `readiness` is deliberately NOT in this list. It is a converging
-# condition, not a step that either passes or fails, so a single unmet sample must
-# be waited out rather than failing the install. The two scenarios below assert
-# both ends of that: a transient unmet sample is survived, and a platform that
-# never converges still fails.
 for phase in cloud outputs cloud-verify access platform-init prerequisites crds deescalate rbac platform; do
   rm -f "$tmp/markers/$phase"
-  # INFRA-061 A: clear the window marker so the assertion below cannot pass vacuously on a
-  # value left behind by an earlier run.
   if [ "$phase" = access ]; then rm -f "$FAIL_MARKER_DIR/bootstrap-window"; fi
   log="$tmp/$phase.log"
-  # The access phase is persistent here: an injected access failure that never clears must
-  # still be fatal, or the retry would quietly turn a hard failure into a pass.
   if (export FAIL_ON="$phase"; export ACCESS_FAIL=always; run_apply "$log"); then
     echo "cloud apply unexpectedly survived injected $phase failure" >&2
     exit 1
   fi
-  # FND-0010: cert-manager's readiness gate is a gate, not a warning. `prerequisites` is
-  # the targeted platform apply that installs cert-manager (and whose own post-install
-  # readiness check must pass); `crds` is the wait for cert-manager's API surface to be
-  # Established. If either fails, nothing after cert-manager can work -- the webhook's CA
-  # bundle is what every certificate-bearing component depends on -- so the install must
-  # stop. A regression that demoted that failure to a warning would show up here as an
-  # untargeted platform apply in the argv log.
   if [ "$phase" = prerequisites ] || [ "$phase" = crds ]; then
     if grep -F 'terraform ' "$log" | grep 'cloud/[a-z]*/platform.* apply ' | grep -v -- '-target=' >/dev/null; then
       echo "FND-0010: a failed cert-manager gate ($phase) still ran the full platform apply:" >&2
@@ -1105,11 +1053,6 @@ for phase in cloud outputs cloud-verify access platform-init prerequisites crds 
   echo "INFRA-039: the apply did not report the principal its credentials belong to" >&2
   exit 1
 }
-# INFRA-061 A: the whoami gate runs *after* the bootstrap window is open, so a gate
-# failure must remove that access before the run stops. Assert both that the removal apply
-# ran and that the emulated window reads closed -- otherwise the run exits with
-# provisioner_bootstrap_admin=true still applied on a cluster it just decided it cannot
-# verify, which is the wrong end state for a least-privilege change.
 if [ "$phase" = access ]; then
   if ! grep -qF 'provisioner_bootstrap_admin=false' "$log"; then
     echo "INFRA-061 A: a failed whoami gate never removed the bootstrap access:" >&2
@@ -1122,13 +1065,6 @@ if [ "$phase" = access ]; then
     exit 1
   fi
 fi
-# DEC-040 discriminator: the base identity is valid but the provisioning role cannot be
-# assumed. A cluster refusal then must NOT be read as de-escalation -- the run has to come
-# back Undetermined and fail, or a broken credential passes as a verified removal. This is
-# the end-to-end counterpart of the unit case, and it fails if the identity check is skipped.
-# The positive pairing -- a refusal with a *working* identity counting as the removal -- is
-# covered by the unit case (refusal_is_deescalation with Credential_assumable), because the
-# emulated cluster's window bookkeeping does not line up for it end to end here.
 sts_log="$tmp/sts-unassumable.log"
 if (export FAIL_ON=""; export WHOAMI_REFUSE=1; export STS_ASSUME_FAIL=1; run_apply "$sts_log"); then
   echo "a refusal with an unassumable role was accepted as de-escalation:" >&2
@@ -1141,11 +1077,6 @@ grep -qF 'could not be assumed' "$sts_log.out" || {
   exit 1
 }
 
-# DEC-040 transient: the same injected access failure, but it clears after the first
-# attempt. The bounded retry must ride through it and the install must survive -- and the
-# log must show the retry, because otherwise "survived" is indistinguishable from "the
-# injection never happened", which is how a one-shot injection turns a fatal case into a
-# false pass.
 transient_log="$tmp/access-transient.log"
 rm -f "$tmp/markers/access"
 if ! (export FAIL_ON=access; export ACCESS_FAIL=once; run_apply "$transient_log"); then
@@ -1168,11 +1099,6 @@ if ! (export FAIL_ON=""; run_apply "$log"); then
   fi
 done
 
-# DEC-040 tri-state. After de-escalation the capability probe must obtain a *usable*
-# answer. A `kubectl auth can-i` that exits non-zero for a non-authorization reason -- an
-# unreachable API here -- is not a denial, and reading it as one would declare the removal
-# verified while the surface was never established. This is the fail-open the tri-state
-# closes; it fails if the answer is classified by exit code instead of by stdout.
 can_i_log="$tmp/can-i-indeterminate.log"
 rm -f "$FAIL_MARKER_DIR/bootstrap-window"
 if (export FAIL_ON=""; export CAN_I_FAIL=1; run_apply "$can_i_log"); then
@@ -1186,11 +1112,6 @@ grep -qF 'no usable answer' "$can_i_log.out" || {
   exit 1
 }
 
-# INFRA-061 control strictness. One capability is indeterminate *inside the window* while
-# the others are permitted. An indeterminate capability makes the later transition
-# Undetermined regardless, so a control that accepts "any capability permitted" spends the
-# platform install only to fail at de-escalation. The control must refuse the window, name
-# the indeterminate probe, and stop before the platform install.
 indeterminate_window_log="$tmp/window-indeterminate.log"
 rm -f "$FAIL_MARKER_DIR/bootstrap-window"
 if (export FAIL_ON=""; export CAN_I_INDETERMINATE_WHEN_OPEN=1; run_apply "$indeterminate_window_log"); then
@@ -1214,9 +1135,6 @@ if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" != "false"
   exit 1
 fi
 
-# INFRA-034: a transient unmet readiness sample must be waited out, not fatal. This
-# is the defect a real target hit: every component is still starting the moment the
-# platform apply returns, so a one-shot check failed a healthy install.
 rm -f "$tmp/markers/readiness"
 log="$tmp/readiness-transient.log"
 if ! (export FAIL_ON=readiness; run_apply "$log"); then
@@ -1235,8 +1153,6 @@ grep -F 'lifecycle phase: Ready' "$log.out" >/dev/null || {
   exit 1
 }
 
-# ...and the other end: a platform that never converges must still fail closed,
-# within the bounded deadline (which is overridable so this stays fast).
 log="$tmp/readiness-persistent.log"
 if (export FAIL_READINESS_ALWAYS=1 SOL_PLATFORM_READINESS_TIMEOUT_S=0; run_apply "$log"); then
   echo "cloud apply succeeded although the platform never became ready" >&2
@@ -1248,12 +1164,6 @@ grep -F 'platform readiness Unmet' "$log.out" >/dev/null || {
   exit 1
 }
 
-# The default StorageClass is the one readiness predicate that is the cloud
-# provider's rather than Sol's -- which class is default, and which CSI driver
-# backs it. A wrong answer must fail the install closed with that reason, rather
-# than being inferred from the target's configuration (the class name appears in
-# both the Terraform root and the readiness check, so "config says gp3" is not
-# evidence that the cluster's default is gp3).
 log="$tmp/storage-class-wrong.log"
 if (export STORAGE_CLASS_WRONG=1 SOL_PLATFORM_READINESS_TIMEOUT_S=0; run_apply "$log"); then
   echo "cloud apply reached Ready although the default StorageClass was not the platform's" >&2
@@ -1270,8 +1180,6 @@ grep -F 'ebs.csi.aws.com' "$log.out" >/dev/null || {
   cat "$log.out" >&2
   exit 1
 }
-# The install must not de-escalate into Ready on the way out: the same fail-closed
-# rule as any other unmet readiness check.
 if grep -F 'lifecycle phase: Ready' "$log.out" >/dev/null; then
   echo "a wrong default StorageClass still reported Ready:" >&2
   cat "$log.out" >&2
@@ -1284,18 +1192,9 @@ grep -F 'key=sol/prod/aws/us-east-1/cloud.tfstate' "$log" >/dev/null
 grep -F 'key=sol/prod/aws/us-east-1/platform.tfstate' "$log" >/dev/null
 grep -F -- '-target=module.platform.helm_release.cert_manager' "$log" >/dev/null
 grep -F 'terraform ' "$log" | grep 'cloud/[a-z]*/platform.* apply ' | grep -v -- '-target=' >/dev/null
-# HARDEN-002 run 3, finding 11: the target's deploy_role_arn must be routed to
-# the provider root (the AWS root declares it and uses it to create the deploy
-# EKS access entry INFRA-025 added).
 grep -F -- '-var=deploy_role_arn=arn:aws:iam::111122223333:role/sol-deploy' "$log" >/dev/null
-# HARDEN-002 run 4, finding 12: the platform Terraform must be handed the
-# ephemeral provisioner kubeconfig under the names the providers actually read.
 grep -F 'env KUBE_CONFIG_PATH=' "$log" >/dev/null
 grep -F 'env KUBE_CONFIG_PATHS=' "$log" >/dev/null
-# ADR 0003 (findings 13/14): installing the platform is privileged platform
-# establishment, so the full platform apply (the non-targeted base apply) must
-# run while the temporary PlatformInstalling authority is still open -- i.e.
-# before provisioner-bootstrap-access-remove -- and only then is it revoked.
 full_apply_line="$(grep -nF 'terraform ' "$log" | grep 'cloud/[a-z]*/platform.* apply ' | grep -v -- '-target=' | head -1 | cut -d: -f1 || true)"
 deescalate_line="$(grep -nF -- 'provisioner_bootstrap_admin=false' "$log" | head -1 | cut -d: -f1 || true)"
 if [ -z "$full_apply_line" ] || [ -z "$deescalate_line" ] || [ "$full_apply_line" -ge "$deescalate_line" ]; then
@@ -1304,12 +1203,6 @@ if [ -z "$full_apply_line" ] || [ -z "$deescalate_line" ] || [ "$full_apply_line
 fi
 while IFS= read -r kubeconfig; do test ! -e "$kubeconfig"; done <"$tmp/kubeconfigs"
 
-# ADR 0003 invariants 3 and 5: the phase a run enters is recomputed from
-# observation, and a run may only leave it along an edge the transition relation
-# admits. A first install enters PlatformInstalling; a re-apply of an
-# already-installed target is the explicit privileged re-entry PlatformUpdating,
-# never a silent return to PlatformInstalling -- which the relation rejects, so
-# classifying it that way would have made the model and the operation disagree.
 fresh_log="$tmp/phase-fresh.log"
 rm -f "$PLATFORM_INSTALLED_FILE"
 if ! (export FAIL_ON=""; export FRESH_TARGET=1; run_apply "$fresh_log"); then
@@ -1323,9 +1216,6 @@ grep -F 'lifecycle phase: PlatformInstalling' "$fresh_log.out" >/dev/null || {
   cat "$fresh_log.out" >&2
   exit 1
 }
-# INFRA-031: the run ends in Ready only after readiness is verified AND the
-# privileged association is revoked AND the bounded provisioner is re-verified,
-# so the phase an operator reads is the state the target is actually left in.
 grep -F 'lifecycle phase: Ready' "$fresh_log.out" >/dev/null || {
   echo "a completed install did not report Ready:" >&2
   cat "$fresh_log.out" >&2
@@ -1349,12 +1239,6 @@ grep -F 'lifecycle phase: PlatformInstalling' "$update_log.out" >/dev/null && {
   exit 1
 }
 
-# INFRA-031: a target whose cloud substrate does not exist yet reports
-# CloudBootstrap *before* the privileged apply that creates it, rather than that
-# first phase being visible only as the absence of output. The fixture models
-# "no substrate yet" with OUTPUT_ABSENT=1, which also makes the run fail closed
-# afterwards (an apply with no lifecycle outputs cannot continue) — so the phase
-# is asserted against a run that does not silently appear to succeed.
 bootstrap_log="$tmp/phase-bootstrap.log"
 if (export OUTPUT_ABSENT=1; run_apply "$bootstrap_log"); then
   echo "an apply with no cloud substrate reported success and must not" >&2
@@ -1373,8 +1257,6 @@ plan() {
     >"$log.out" 2>&1
 }
 
-# A plan may read state and the cluster, but it must never mutate anything to
-# make a later phase plannable.
 no_plan_mutation() {
   local log="$1"
   if grep -Eq 'terraform .*( apply | destroy )|kubectl (apply|delete|create|patch|replace|scale|annotate|label|set )|aws .*( create-| delete-| modify-| put-| terminate-| run-)' "$log"; then
@@ -1384,7 +1266,6 @@ no_plan_mutation() {
   fi
 }
 
-# Absent target: both platform phases Deferred, exit zero, nothing mutated.
 log="$tmp/plan-absent.log"
 if ! plan "$log" OUTPUT_ABSENT=1; then
   cat "$log.out" >&2
@@ -1394,8 +1275,6 @@ fi
 grep -F 'requires cloud substrate to exist' "$log.out" >/dev/null
 no_plan_mutation "$log"
 
-# Cluster exists but the provisioner's platform RBAC is not yet established:
-# both platform phases Deferred because granting bootstrap access would mutate.
 log="$tmp/plan-rbac.log"
 if ! plan "$log" RBAC_ABSENT=1; then
   cat "$log.out" >&2
@@ -1409,8 +1288,6 @@ if grep -F 'terraform ' "$log" | grep 'cloud/[a-z]*/platform.* plan ' >/dev/null
 fi
 no_plan_mutation "$log"
 
-# The provisioner cannot authenticate to the cluster at all: unavailable
-# authentication is non-zero, not a Deferred phase (same exit-1 from can-i).
 log="$tmp/plan-auth.log"
 if plan "$log" AUTH_ABSENT=1; then
   cat "$log.out" >&2
@@ -1420,8 +1297,6 @@ fi
 grep -F 'could not authenticate to the cluster as the platform provisioner' "$log.out" >/dev/null
 no_plan_mutation "$log"
 
-# Cluster and RBAC established, CRDs not yet: prerequisites are plannable and
-# the CRD-dependent substrate stays Deferred.
 log="$tmp/plan-prereq.log"
 if ! plan "$log" CRDS_ABSENT=1; then
   cat "$log.out" >&2
@@ -1436,7 +1311,6 @@ if grep -F 'terraform ' "$log" | grep 'cloud/[a-z]*/platform.* plan ' | grep -v 
 fi
 no_plan_mutation "$log"
 
-# Fully established: both phases planned, nothing Deferred.
 log="$tmp/plan-full.log"
 if ! plan "$log"; then
   cat "$log.out" >&2
@@ -1451,14 +1325,9 @@ if grep -F 'DEFERRED' "$log.out" >/dev/null; then
 fi
 no_plan_mutation "$log"
 
-# A plannable-phase failure is non-zero, not silently Deferred.
 log="$tmp/plan-fail.log"
 rm -f "$tmp/markers/plan"
 
-# INFRA-039: credentials that cannot be resolved must stop the operation before it
-# mutates anything, and say so in terms an operator can act on. The direction of
-# the failure is the point: an operation that cannot authenticate must not be
-# discovered half-way through, and a destroy must say the target is still standing.
 cred_log="$tmp/credentials.log"
 if (export FAIL_CREDENTIALS=1; run_apply "$cred_log"); then
   echo "credential failure: apply survived unresolvable credentials" >&2
@@ -1487,15 +1356,8 @@ if plan "$log" FAIL_ON=plan; then
   exit 1
 fi
 
-# Every ephemeral kubeconfig, including the plan runs', is removed.
 while IFS= read -r kubeconfig; do test ! -e "$kubeconfig"; done <"$tmp/kubeconfigs"
 
-# ── GCP ─────────────────────────────────────────────────────────────────────
-#
-# Sol used to refuse this at a provider gate. It now runs the same phases on GCP
-# through the provider's own mechanisms, and what is assertable offline is the
-# *orchestration*: which commands Sol issues, in what order, carrying which policy.
-# Whether GKE or Cloud SQL honour them is what a live target answers.
 gcp_log="$tmp/gcp-plan.log"
 rm -f "$tmp/markers/gcp-prepare" "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE"
 if ! (cd "$tmp/work" && LIFECYCLE_LOG="$gcp_log" "$sol" cloud plan prod/gcp/us-central1) \
@@ -1505,8 +1367,6 @@ then
   echo "cloud plan on GCP failed" >&2
   exit 1
 fi
-# The cluster credential is the provider's mechanism, into a file of Sol's own
-# choosing -- never the ambient kubeconfig.
 grep -F 'gcloud container clusters get-credentials sol-qual --region us-central1' "$gcp_log" \
   >/dev/null || {
   echo "GCP plan did not obtain cluster credentials through gcloud:" >&2
@@ -1514,20 +1374,12 @@ grep -F 'gcloud container clusters get-credentials sol-qual --region us-central1
   exit 1
 }
 while IFS= read -r kubeconfig; do test ! -e "$kubeconfig"; done <"$tmp/kubeconfigs"
-# The platform definition is reached through the GCP root and told which provider
-# it is building for: an AWS variable there is an undeclared-variable error, not a
-# no-op, so seeing one means the provider-shaped mapping regressed.
-# The caller the target named must reach the root: Attempt 2's first live failure was
-# that nothing granted the bootstrap caller the ability to impersonate the provisioner,
-# because nothing declared one at all.
 grep -F -- '-var=provisioner_impersonators=["user:qualification-operator@example.test"]' \
   "$gcp_log" >/dev/null || {
   echo "the target's declared provisioner_impersonator did not reach the GCP root:" >&2
   grep -F 'provisioner_impersonators' "$gcp_log" >&2
   exit 1
 }
-# ...and it is *only* the declared one: an inferred member would satisfy "impersonation
-# works" while granting authority to whoever ran Sol.
 if grep -F -- '-var=provisioner_impersonators=[' "$gcp_log" | grep -vF 'qualification-operator@example.test' >/dev/null; then
   echo "the impersonation grant named a member the target did not declare:" >&2
   grep -F 'provisioner_impersonators' "$gcp_log" >&2
@@ -1546,10 +1398,6 @@ for aws_only in aws_region= cert_manager_irsa_role_arn= loki_s3_bucket= \
   fi
 done
 
-# Destroy on GCP. Both deletion guards are lifted by an applied transition on the
-# guarded resources (never by a `-var` on the destroy, which is inert against prior
-# state), must stay lifted for the reconciliation apply that precedes the teardown,
-# and the teardown is then verified absent through the provider's own API.
 gcp_destroy_log="$tmp/gcp-destroy.log"
 if ! (cd "$tmp/work" && DESTROYING=1 LIFECYCLE_LOG="$gcp_destroy_log" \
         "$sol" cloud destroy prod/gcp/us-central1 --apply) \
@@ -1581,15 +1429,6 @@ for override in sql_deletion_protection=false gke_deletion_protection=false; do
     exit 1
   }
 done
-# FND-0058 / INFRA-079: the authority mechanism's plan change is instance-qualified
-# (above), the acquisition is plan-asserted and permitted, and the order is the one
-# the destroy policy describes -- acquire, protect, release, then the substrate. The
-# fixture carrying `[0]` is what makes this a regression test: with an
-# instance-blind declaration the reconciliation is refused and the protected step
-# never runs, so the line-order assertions below cannot all hold.
-# `|| true` on each: the point of the checks below is to say *which* phase never
-# ran, and a pipeline under `set -o pipefail` would otherwise abort the suite
-# silently the moment a grep found nothing.
 authority_line="$(grep -n -- '-var=provisioner_bootstrap_admin=true' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
 platform_destroy_line="$(grep -nE -- '^terraform -chdir=[^ ]*cloud/gcp/platform destroy ' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
 release_line="$(grep -n -- '-var=provisioner_bootstrap_admin=false' "$gcp_destroy_log" | head -1 | cut -d: -f1 || true)"
@@ -1623,16 +1462,10 @@ if grep -F 'a preparation degraded and destruction continued' "$gcp_destroy_log.
   exit 1
 fi
 
-# HARDEN-004 step 5, narrowed by DEC-045 / REFAC-094: Terraform's destroy plus an
-# empty state is the authority for what Terraform manages, so the report states the
-# state postcondition and the residue Terraform does not own -- and the provider is
-# not asked, resource by resource, about what Terraform just destroyed.
 assert_contains "the GCP destroy read its own state postcondition" "$gcp_destroy_log.out" \
   'terraform state (disposable root): empty -- Terraform destroyed every resource it manages' || exit 1
 assert_contains "the GCP residue check ran and found nothing" "$gcp_destroy_log.out" \
   'residue Terraform does not own (controller load balancers, PVC volumes, abandoned peering): none found' || exit 1
-# Positive control for the negative below: the peering residue query is recorded in
-# the same log.
 grep -F 'gcloud services vpc-peerings list' "$gcp_destroy_log" >/dev/null || {
   echo "REFAC-094: the GCP residue (peering) query is missing from the destroy log" >&2
   exit 1
@@ -1650,9 +1483,6 @@ grep -F 'retention: none' "$gcp_destroy_log.out" >/dev/null || {
   cat "$gcp_destroy_log.out" >&2
   exit 1
 }
-# FND-0046: the old report claimed "no residual billable artifacts" from the policy
-# alone. GCP has no snapshot surface to observe, and the report has to say that
-# rather than assert an absence nothing checked.
 assert_contains "the GCP retention claim names what was actually checked" "$gcp_destroy_log.out" \
   'there is no GCP snapshot surface to observe' || exit 1
 assert_contains "INFRA-077: the GCP none claim names the soft-delete setting" "$gcp_destroy_log.out" \
@@ -1662,8 +1492,6 @@ if grep -F 'no residual billable artifacts' "$gcp_destroy_log.out" >/dev/null; t
   cat "$gcp_destroy_log.out" >&2
   exit 1
 fi
-# INFRA-039's guarantee applies to GCP too, through GCP's own credential: a mutating
-# stage resolves it rather than assuming it inherited a working environment.
 grep -F 'gcloud auth application-default print-access-token' "$gcp_destroy_log" >/dev/null || {
   echo "GCP did not resolve its credentials through the provider's mechanism:" >&2
   grep -F 'gcloud ' "$gcp_destroy_log" >&2
@@ -1676,13 +1504,6 @@ grep -F 'credentials: Google Application Default Credentials resolved' \
   exit 1
 }
 
-# HARDEN-004 steps 3 + 4, the governing invariant end to end: a reconciliation plan
-# that would reconstruct the missing cluster (a target-owned CREATE) is refused
-# *before* its apply -- and the refusal is an outcome, not a refusal of the destroy.
-# Step 4: the protected platform teardown cannot run without the authority, so it is
-# skipped, but the substrate destroy does run -- stranding a half-built target is the
-# failure this whole path exists to remove. The run reaches absence, says what
-# degraded, and exits 0 (REFAC-094: the degradation is a warning, not an exit code).
 refuse_log="$tmp/gcp-refuse.log"
 rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/bootstrap-window"
 refuse_rc=0
@@ -1704,8 +1525,6 @@ grep -F 'a preparation degraded and destruction continued' "$refuse_log.out" >/d
   cat "$refuse_log.out" >&2
   exit 1
 }
-# The refused apply never ran (the stub exits 99 if it did), and the substrate destroy
-# -- the step that removes billable infrastructure -- did.
 if ! grep -E -- '-chdir=[^ ]*cloud/gcp/cluster ' "$refuse_log" | grep -F ' destroy ' >/dev/null; then
   echo "the substrate destroy did not run after a refused reconciliation:" >&2
   cat "$refuse_log" >&2
@@ -1717,11 +1536,6 @@ if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null)" != "false" ]; then
   exit 1
 fi
 
-# INFRA-070 / FND-0047: on GCP a failed `get-credentials` exits the lifecycle. It used to
-# do so without running the caller's cleanup (`with_cluster_access` ignored `on_error` on
-# GCP), which left the provisioner elevated after the destroy's reconciliation apply had
-# opened the bootstrap window. The window must be closed -- an apply with
-# provisioner_bootstrap_admin=false after the failed get-credentials -- before exit.
 gcp_access_log="$tmp/gcp-access-failure.log"
 rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE" "$FAIL_MARKER_DIR/access" \
   "$FAIL_MARKER_DIR/bootstrap-window"
@@ -1739,10 +1553,6 @@ grep -F 'could not establish ephemeral cluster access' "$gcp_access_log.out" >/d
   exit 1
 }
 access_line="$(grep -nF 'get-credentials' "$gcp_access_log" | tail -1 | cut -d: -f1 || true)"
-# HARDEN-004 step 3: the window is closed by a planned, asserted apply, so the
-# variable is on the plan line and the apply is the saved plan. The stub writes
-# the window marker on the apply, so asserting it proves the closing apply ran --
-# not merely that it was planned.
 close_plan_line="$(grep -nE -- '-chdir=[^ ]*cloud/gcp/cluster plan ' "$gcp_access_log" \
   | grep -F -- 'provisioner_bootstrap_admin=false' | tail -1 | cut -d: -f1 || true)"
 if [ -z "$access_line" ] || [ -z "$close_plan_line" ] || [ "$close_plan_line" -le "$access_line" ]; then
@@ -1756,9 +1566,6 @@ if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null)" != "false" ]; then
   exit 1
 fi
 
-# INFRA-093 / FND-0064: a target whose cluster is Autopilot is refused *before a plan exists*.
-# That ordering is the whole point: the refusal is not allowed to cost a Terraform run, let alone a
-# cluster, and the harness proves it from the log rather than from the exit status.
 autopilot_log="$tmp/gcp-autopilot.log"
 rm -f "$FAIL_MARKER_DIR/access" "$FAIL_MARKER_DIR/bootstrap-window"
 if (cd "$tmp/work" && STUB_AUTOPILOT=1 LIFECYCLE_LOG="$autopilot_log" \
@@ -1780,9 +1587,6 @@ if grep -qE -- 'terraform.* plan |terraform.* apply ' "$autopilot_log"; then
   exit 1
 fi
 
-# INFRA-091 / FND-0063: the parser boundary is crossed before the quota is read, so an output
-# set that does not carry project_id in Terraform's shape must refuse *there* -- not silently
-# proceed with an unknown project, and not reach the provider at all.
 no_project_log="$tmp/gcp-no-project.log"
 rm -f "$FAIL_MARKER_DIR/access" "$FAIL_MARKER_DIR/bootstrap-window"
 if (cd "$tmp/work" && OUTPUT_NO_PROJECT=1 LIFECYCLE_LOG="$no_project_log" \
@@ -1804,10 +1608,6 @@ if grep -qF 'compute regions describe' "$no_project_log"; then
   exit 1
 fi
 
-# INFRA-090 / FND-0062: an exhausted disk quota is a refusal, and it happens after the
-# substrate is ready and before anything is installed -- no cluster access is even attempted,
-# because nothing needs it to know that the platform's volumes cannot exist. Attempt 12
-# reached the volumes instead: five Autopilot nodes' boot disks had spent the whole quota.
 quota_log="$tmp/gcp-disk-quota.log"
 rm -f "$FAIL_MARKER_DIR/access" "$FAIL_MARKER_DIR/bootstrap-window"
 if (cd "$tmp/work" && STUB_SSD_USAGE=500 LIFECYCLE_LOG="$quota_log" \
@@ -1817,9 +1617,6 @@ then
   echo "GCP apply succeeded although the region's disk quota was exhausted" >&2
   exit 1
 fi
-# The refusal can only be reached through the parser: `terraform output` -> project_id parsed ->
-# the region read -> the policy. If the stub's payload and the parser disagreed, this scenario
-# would stop earlier with "the cloud root published no project_id" and fail here instead.
 if grep -qF 'is missing or not a string' "$quota_log.out"; then
   echo "the quota scenario never crossed the parser: the stub's payload was not accepted" >&2
   cat "$quota_log.out" >&2
@@ -1845,24 +1642,17 @@ if grep -qF 'get-credentials' "$quota_log"; then
   grep -nF 'get-credentials' "$quota_log" >&2
   exit 1
 fi
-# Anything may *read* the platform roots' state before the check (Sol reads backend and
-# provider facts first); what must not happen is an install. So the assertion is about apply,
-# not about the path appearing at all.
 if grep -qE -- 'chdir=[^ ]*/platform/cloud/[a-z]+/platform[^ ]* apply' "$quota_log"; then
   echo "the disk-quota refusal happened after a platform apply had begun:" >&2
   grep -nE -- 'chdir=[^ ]*' "$quota_log" >&2
   exit 1
 fi
-# The window the cloud apply opened must be closed on the way out, exactly as it is for every
-# other failure in it: the refusal is not an excuse to leave elevated access standing.
 if ! grep -qF -- 'provisioner_bootstrap_admin=false' "$quota_log"; then
   echo "the disk-quota refusal left the bootstrap window open:" >&2
   grep -nE 'provisioner_bootstrap_admin|disk quota' "$quota_log" >&2 || true
   exit 1
 fi
 
-# The install path hands the same cleanup to the same helper (`cloud apply` opens the
-# bootstrap window before it needs cluster access), so it gets the same assertion.
 gcp_apply_access_log="$tmp/gcp-apply-access-failure.log"
 rm -f "$FAIL_MARKER_DIR/access"
 if (cd "$tmp/work" && FAIL_ON=access LIFECYCLE_LOG="$gcp_apply_access_log" \
@@ -1888,10 +1678,6 @@ if [ -z "$access_line" ] || [ -z "$close_line" ] || [ "$close_line" -le "$access
   exit 1
 fi
 
-# INFRA-074 / FND-0043: `sol cloud apply` plans to a file and reads it first. A plan
-# that deletes an ECR repository (and with it every image) is refused before
-# anything changes, unless --confirm-ecr-removal is given. What is applied is the
-# plan that was read.
 ecr_log="$tmp/ecr-removal.log"
 rm -f "$FAIL_MARKER_DIR/bootstrap-window"
 if (export FAIL_ON=""; export ECR_REMOVAL=1; run_apply "$ecr_log"); then
@@ -1939,9 +1725,6 @@ grep -E -- '-chdir=[^ ]*cloud/aws/cluster apply .*\.tfplan' "$ecr_confirmed_log"
   exit 1
 }
 
-# Attempt 3 spent a billable apply before discovering that the host lacked the
-# plugin the platform stage needs. It must be refused up front instead -- the check
-# costs nothing and the alternative costs an apply.
 gcp_toolchain_log="$tmp/gcp-toolchain.log"
 rm -f "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE"
 if (cd "$tmp/work" && NO_AUTH_PLUGIN=1 DESTROYING=1 LIFECYCLE_LOG="$gcp_toolchain_log" \
@@ -1961,30 +1744,16 @@ if grep -F 'platform-destroy' "$gcp_toolchain_log" >/dev/null; then
   exit 1
 fi
 
-# ── INFRA-042: a partially installed platform must still be destroyable ─────
-#
-# Attempt 3's install failed partway, leaving the platform root's state holding
-# CRD-backed resources (the two cert-manager ClusterIssuers) whose CRDs were never
-# installed. Terraform cannot delete a resource whose API does not exist, so the
-# documented destroy failed and the cloud layer stayed billable.
-#
-# This reproduces that and pins the intended recovery -- and, just as importantly,
-# its limit: a resource whose kind the cluster *does* serve is never forgotten.
 partial_log="$tmp/gcp-partial.log"
 rm -f "$STATE_RM_FILE" "$GCP_SQL_PREPARED_FILE" "$GKE_PREPARED_FILE"
 if ! (cd "$tmp/work" && PARTIAL_INSTALL=1 DESTROYING=1 LIFECYCLE_LOG="$partial_log" \
         "$sol" cloud destroy prod/gcp/us-central1 --apply) \
   >"$partial_log.out" 2>&1
 then
-  # The first platform destroy fails (that is the reproduction); the recovery must
-  # then have made the destroy succeed, so reaching here at all is a failure --
-  # unless the CRD turned out to be served, which the negative case below covers.
   cat "$partial_log.out" >&2
   echo "INFRA-042: a partially installed platform was not destroyable" >&2
   exit 1
 fi
-# The failure was reached and observed, not skipped: the platform destroy really did
-# run and really did fail before the recovery.
 grep -F 'platform-destroy' "$partial_log.out" >/dev/null || {
   echo "INFRA-042: the platform destroy stage never ran" >&2
   exit 1
@@ -1993,7 +1762,6 @@ grep -F 'platform-destroy-retry' "$partial_log.out" >/dev/null || {
   echo "INFRA-042: the destroy was not retried after the recovery" >&2
   exit 1
 }
-# Exactly the unserved resource was forgotten -- by address, and only it.
 grep -F 'state-rm module.platform.kubernetes_manifest.letsencrypt_prod' "$partial_log" \
   >/dev/null || {
   echo "INFRA-042: the unserved resource was not the one forgotten:" >&2
@@ -2010,7 +1778,6 @@ grep -F 'ClusterIssuer is not served by this cluster' "$partial_log.out" >/dev/n
   cat "$partial_log.out" >&2
   exit 1
 }
-# ...and the lifecycle still ends where it must.
 assert_contains "INFRA-042: the destroy completed after the recovery" "$partial_log.out" \
   'terraform state (disposable root): empty' || {
   echo "INFRA-042: the destroy did not complete after the recovery:" >&2
@@ -2018,9 +1785,6 @@ assert_contains "INFRA-042: the destroy completed after the recovery" "$partial_
   exit 1
 }
 
-# The limit: when the cluster *does* serve the kind, the resource may exist, so
-# nothing is forgotten and the failure stands. This is the case that separates the
-# recovery from "delete whatever Terraform cannot handle".
 served_log="$tmp/gcp-partial-served.log"
 rm -f "$STATE_RM_FILE"
 if (cd "$tmp/work" && PARTIAL_INSTALL=1 CRD_SERVED=1 DESTROYING=1 \
@@ -2039,9 +1803,6 @@ grep -F 'Could not remove Service Networking Connection\|API did not recognize' 
   "$served_log.out" >/dev/null || true
 rm -f "$STATE_RM_FILE"
 
-# ...and when they cannot be resolved, it fails closed and says the part that
-# matters, rather than proceeding to mutate infrastructure it cannot authenticate
-# against. This is the GCP half of INFRA-039's scenario.
 gcp_nocred_log="$tmp/gcp-nocred.log"
 if (cd "$tmp/work" && DESTROYING=1 FAIL_CREDENTIALS=1 LIFECYCLE_LOG="$gcp_nocred_log" \
       "$sol" cloud destroy prod/gcp/us-central1 --apply) \
@@ -2061,10 +1822,6 @@ if grep -F 'cloud/gcp/cluster' "$gcp_nocred_log" | grep -F ' destroy ' >/dev/nul
 fi
 while IFS= read -r kubeconfig; do test ! -e "$kubeconfig"; done <"$tmp/kubeconfigs"
 
-# HARDEN-002 finding 9b: destroy must disable RDS deletion protection through
-# a real applied transition (a targeted apply on just the RDS resource), with
-# a snapshot identity unique to this attempt -- never by passing `-var` to
-# `terraform destroy`, which is inert against a resource's prior state.
 rm -f "$RDS_PREPARED_FILE"
 log="$tmp/destroy-established.log"
 if ! run_destroy "$log"; then
@@ -2085,14 +1842,7 @@ case "$snapshot_id" in
 esac
 grep -F 'verify preparation: RDS deletion protection disabled' "$log.out" >/dev/null
 grep -F "final snapshot $snapshot_id confirmed" "$log.out" >/dev/null
-# INFRA-047 / REFAC-093: the sweep queries what Terraform does not own -- EBS
-# volumes created for PersistentVolumeClaims (and controller load balancers) --
-# and a missing check cannot pass merely because the mock defaults to empty output.
 grep -F 'aws ec2 describe-volumes' "$log" >/dev/null
-# DEC-045: elastic IPs, NAT gateways and ECR repositories are Terraform-managed, so
-# the destroy plus the empty-state check is their authority and the sweep must not
-# query them. The describe-volumes line above is the positive control that this log
-# records the sweep's queries at all.
 for gone in 'aws ec2 describe-addresses' 'aws ec2 describe-nat-gateways' 'aws ecr describe-repositories'; do
   if grep -F "$gone" "$log" >/dev/null; then
     echo "REFAC-093: the destroy sweep still queries a Terraform-managed kind: $gone" >&2
@@ -2100,8 +1850,6 @@ for gone in 'aws ec2 describe-addresses' 'aws ec2 describe-nat-gateways' 'aws ec
   fi
 done
 
-# Mutation direction: a positive result must fail the public destroy command and
-# identify the residual class.
 for residual in ebs; do
   residual_log="$tmp/destroy-residual-$residual.log"
   if (export AWS_RESIDUAL_KIND="$residual"; run_destroy "$residual_log"); then
@@ -2117,7 +1865,6 @@ for residual in ebs; do
     exit 1
   }
 done
-# Preparation happens before the actual destroy, not folded into it.
 prepare_line_no="$(grep -n -- '-target=aws_db_instance.postgres' "$log" | head -1 | cut -d: -f1)"
 destroy_line_no="$(grep -n 'cloud/aws/cluster.* destroy ' "$log" | head -1 | cut -d: -f1)"
 if [ -z "$destroy_line_no" ] || [ "$prepare_line_no" -ge "$destroy_line_no" ]; then
@@ -2126,15 +1873,6 @@ if [ -z "$destroy_line_no" ] || [ "$prepare_line_no" -ge "$destroy_line_no" ]; t
   exit 1
 fi
 
-# ADR 0003 / HARDEN-002 run 4 finding 15: after a verified PrepareDestroy the
-# Destroy policy governs. The bootstrap-admin reconciliation that necessarily
-# precedes the actual destroy must therefore still carry the destroy overrides,
-# and they must be appended AFTER the production profile's
-# rds_deletion_protection=true (injected by terraform_vars) so the Destroy policy
-# wins rather than Ready policy silently re-enabling protection.
-#
-# HARDEN-004 step 3: the variables are carried by the *plan* the reconciliation is
-# asserted from, and the apply is that saved plan.
 admin_plan_line="$(grep 'cloud/aws/cluster.* plan ' "$log" | grep -F 'provisioner_bootstrap_admin=true' | head -1 || true)"
 case "$admin_plan_line" in
   *'rds_deletion_protection=false'*) : ;;
@@ -2151,9 +1889,6 @@ if [ "$last_protection" != "rds_deletion_protection=false" ]; then
   exit 1
 fi
 
-# A second destroy attempt (e.g. retried after a prior failure elsewhere in
-# the lifecycle) must mint a different snapshot identity, not reuse the
-# cluster-derived constant HARDEN-002 finding 9b replaced.
 log2="$tmp/destroy-established-2.log"
 if ! run_destroy "$log2"; then
   cat "$log2.out" >&2
@@ -2167,10 +1902,6 @@ if [ "$snapshot_id" = "$snapshot_id2" ]; then
   exit 1
 fi
 
-# DEC-033 / INFRA-041: retention is whatever the target says, and the destroy
-# reports it. This crosses parse -> merge -> destroy -> phase policy -> prepare ->
-# post-prepare verification, which is the boundary the original DEC-033 tests did
-# not cross: they exercised the model, and `merge_target` discarded the setting.
 log_retain="$tmp/destroy-retention-default.log"
 if ! run_destroy "$log_retain"; then
   cat "$log_retain.out" >&2
@@ -2187,9 +1918,6 @@ case "$retain_line" in
 esac
 assert_contains "the default destroy reports what it retained" "$log_retain.out" \
   'retention: final snapshot' || exit 1
-# HARDEN-004 step 5 / FND-0046: the retention claim is now an observation. The
-# report has to name the identifier the preparation established *before* destroy and
-# the state the provider says it reached -- not just the policy that was configured.
 retained_id="$(printf '%s\n' "$retain_line" | grep -oE 'rds_final_snapshot_identifier=[^ ]+' | cut -d= -f2)"
 if [ -z "$retained_id" ]; then
   echo "the default destroy did not name a final snapshot identifier:" >&2
@@ -2200,16 +1928,11 @@ assert_contains "the retained snapshot was observed, not assumed" "$log_retain.o
   "final snapshot $retained_id observed available" || exit 1
 assert_contains "the retention observation names how to remove it" "$log_retain.out" \
   'delete-db-snapshot' || exit 1
-# DEC-045 / REFAC-094: the database and cluster Terraform destroyed are not re-queried;
-# the retained final snapshot is (above), because Terraform does not own it.
 assert_not_contains "the destroy does not re-query the Terraform-managed database" "$log_retain.out" \
   'aws rds describe-db-instances' || exit 1
 assert_not_contains "the destroy does not re-query the Terraform-managed cluster" "$log_retain.out" \
   'aws eks describe-cluster' || exit 1
 
-# HARDEN-004 step 5 / INFRA-072: retention is observed, so each way the observation
-# can fail must fail the command. Separate runs, so short-circuiting one into
-# another is observable rather than inferred.
 missing_snapshot_log="$tmp/destroy-retention-missing.log"
 rm -f "$RDS_PREPARED_FILE"
 if (export RDS_SNAPSHOT_MISSING=1; run_destroy "$missing_snapshot_log"); then
@@ -2234,10 +1957,6 @@ fi
 assert_contains "a snapshot still creating is not a met guarantee" "$pending_snapshot_log.out" \
   'the retention guarantee is not established while it has not reached available' || exit 1
 
-# ...and the opposite direction: a snapshot the provider first reports as still being
-# created and then as available must be *observed*, not abandoned. The fake says
-# `creating` on the first read only, so a retry that did not happen would report
-# UNKNOWN and fail this scenario.
 creating_log="$tmp/destroy-retention-creating.log"
 rm -f "$RDS_PREPARED_FILE" "$FAIL_MARKER_DIR/snapshot-creating"
 if ! (export RDS_SNAPSHOT_CREATING_ONCE=1 SOL_DESTROY_SNAPSHOT_INTERVAL_S=0; \
@@ -2258,9 +1977,6 @@ fi
 assert_contains "an unparseable interval is refused, naming the variable" \
   "$invalid_interval_log.out" 'SOL_DESTROY_SNAPSHOT_INTERVAL_S' || exit 1
 
-# The production guarantee must not be weakened by the new mode: a target that
-# retains its snapshot still fails closed when the provider's record disagrees with
-# what was prepared. The fake makes them disagree.
 mismatch_log="$tmp/destroy-snapshot-mismatch.log"
 if (cd "$tmp/work" && DESTROYING=1 RDS_SNAPSHOT_MISMATCH=1 \
       LIFECYCLE_LOG="$mismatch_log" "$sol" cloud destroy prod/aws/us-east-1 --apply) \
@@ -2271,11 +1987,6 @@ if (cd "$tmp/work" && DESTROYING=1 RDS_SNAPSHOT_MISMATCH=1 \
 fi
 assert_contains "the snapshot mismatch was reported" "$mismatch_log.out" \
   'final snapshot identifier is' || exit 1
-# HARDEN-004 step 4: this failure stands for the target's own declared retention
-# guarantee, so it carries Block_destroy -- the target is left standing, the guarantee
-# is named as the blocker, and the substrate destroy (the step that removes billable
-# infrastructure) is never invoked. "The destroy failed" and "the target remains
-# because its retention could not be established" are not the same claim.
 assert_contains "the retention guarantee is named as the blocker" "$mismatch_log.out" \
   'destruction is blocked' || exit 1
 assert_contains "the guarantee is identified" "$mismatch_log.out" \
@@ -2286,9 +1997,6 @@ if grep -E -- '-chdir=[^ ]*cloud/aws/cluster ' "$mismatch_log" | grep -F ' destr
   exit 1
 fi
 
-# The disposable case, named by the target. The field is inserted directly under
-# the AWS target's key, at that body's indentation (FEAT-100: the target lives in
-# sol/environments.yml as prod.targets.aws/us-east-1).
 envs_file="$tmp/work/sol/environments.yml"
 awk '{ print } /^    aws\/us-east-1:[[:space:]]*$/ { print "      destroy_retention: none" }' \
   "$envs_file" >"$tmp/work/envs.with-retention.yml"
@@ -2323,14 +2031,10 @@ case "$none_line" in
     exit 1
     ;;
 esac
-# The verification must agree about what "prepared" means for this mode, and say so.
 assert_contains "preparation established that the snapshot will be skipped" "$log_none.out" \
   'final snapshot skipped (skip_final_snapshot=true)' || exit 1
 assert_contains "the disposable destroy reports retaining nothing" "$log_none.out" \
   'retention: none' || exit 1
-# FND-0046 again: the old report said "no residual billable artifacts" because the
-# policy said `none`. The claim now has to name what was actually checked, which is
-# the captured database's own manual and automated snapshots.
 assert_contains "the disposable destroy names what it checked for residue" "$log_none.out" \
   "no manual or automated snapshot for this target's database" || exit 1
 if grep -F 'no residual billable artifacts' "$log_none.out" >/dev/null; then
@@ -2351,9 +2055,6 @@ assert_contains "the residual snapshot was reported by name" "$residue_log.out" 
 assert_contains "the residue failure names how many remain" "$residue_log.out" \
   'retain-nothing NOT observed' || exit 1
 
-# DEC-045 / REFAC-094: the AWS destroy does not re-query what Terraform manages (the
-# EKS cluster, the RDS instance); the EBS residue query in the same log is the
-# positive control that the log records the destroy's provider queries at all.
 managed_log="$tmp/destroy-no-managed-queries.log"
 rm -f "$RDS_PREPARED_FILE"
 if ! run_destroy "$managed_log"; then
@@ -2372,8 +2073,6 @@ for managed in 'aws eks describe-cluster' 'aws eks describe-addon' 'aws rds desc
   fi
 done
 
-# The independent state postcondition: a destroy that leaves something represented in
-# this root's state is a residue, whatever the provider answers.
 residue_state_log="$tmp/destroy-state-residue.log"
 rm -f "$RDS_PREPARED_FILE"
 if (export STATE_RESIDUE_AFTER_DESTROY=1; run_destroy "$residue_state_log"); then
@@ -2384,12 +2083,6 @@ fi
 assert_contains "the state residue was reported, by address" "$residue_state_log.out" \
   'STILL REPRESENTS module.eks.aws_eks_cluster.this[0], aws_db_instance.postgres' || exit 1
 
-# DEC-040 acceptance on the destroy path, and the decision it makes: the destroy revokes
-# the bootstrap access too, so it must observe the window and check the effective surface,
-# but that check is advisory. A probe that can fail must not block teardown (ADR 0003
-# invariant 6) or strand billable infrastructure (HARDEN-004's cost rule), and a destroy's
-# terminal state is the substrate's absence, which is stronger evidence anyway. So an
-# indeterminate post-removal probe must be *reported* and the teardown must still complete.
 destroy_tri_log="$tmp/destroy-can-i-indeterminate.log"
 rm -f "$FAIL_MARKER_DIR/bootstrap-window"
 if ! (cd "$tmp/work" && DESTROYING=1 CAN_I_FAIL=1 LIFECYCLE_LOG="$destroy_tri_log" \
@@ -2409,8 +2102,6 @@ grep -qF 'no usable answer' "$destroy_tri_log.out" || {
   exit 1
 }
 
-# An absent target (cloud substrate never applied) has nothing to prepare and
-# must not attempt the targeted apply.
 rm -f "$RDS_PREPARED_FILE"
 log="$tmp/destroy-absent.log"
 if ! (export OUTPUT_ABSENT=1; run_destroy "$log"); then
@@ -2424,9 +2115,6 @@ if grep -F -- '-target=aws_db_instance.postgres' "$log" >/dev/null; then
   exit 1
 fi
 
-# Cloud substrate exists but this target never created an RDS instance:
-# distinct from the wholly-absent case above (cloud_destroy still has real
-# outputs and reaches prepare_destroy), and must also skip the targeted apply.
 rm -f "$RDS_PREPARED_FILE"
 log="$tmp/destroy-no-rds.log"
 if ! (export RDS_ABSENT=1; run_destroy "$log"); then
@@ -2440,21 +2128,6 @@ if grep -F -- '-target=aws_db_instance.postgres' "$log" >/dev/null; then
   exit 1
 fi
 
-# ADR 0003 invariant 6 (HARDEN-002 run 5): destruction is an abort edge, not a
-# forward transition. A failed or partially installed target must remain
-# destructible through the public lifecycle, because lifecycle enforcement must
-# never strand infrastructure.
-#
-# This is the case the model and the operation used to disagree about: the
-# forward relation rejects `PlatformInstalling -> PreparingDestroy` (correctly --
-# it describes progressive establishment), so routing destroy through `enter`
-# would refuse to tear down a half-built target and leave the operator with no
-# exit but manual surgery on live cloud resources.
-#
-# The marker is removed so the target reads as "substrate exists, platform never
-# fully installed"; a future implementation that consults the phase here, or that
-# gates teardown on a probe which can fail, fails this scenario. Nothing follows
-# this scenario, so the harness state is not restored.
 rm -f "$RDS_PREPARED_FILE"
 rm -f "$PLATFORM_INSTALLED_FILE"
 log="$tmp/destroy-partial-install.log"
@@ -2468,18 +2141,12 @@ grep -F 'lifecycle phase: PreparingDestroy' "$log.out" >/dev/null || {
   cat "$log.out" >&2
   exit 1
 }
-# INFRA-031: the substrate teardown itself is Destroying, reported where the
-# lifecycle actually enters it (preparation verified, platform already gone).
 grep -F 'lifecycle phase: Destroying' "$log.out" >/dev/null || {
   echo "destroy did not report Destroying while tearing the cloud substrate down:" >&2
   cat "$log.out" >&2
   exit 1
 }
 
-# DEC-040 canary. The bootstrap-access-removal phase is where the de-escalation transition
-# is verified, and it is the point of the install path. If this harness never enters it,
-# the transition coverage is absent while every assertion here still passes -- so assert
-# that the harness actually reached it, and fail loudly rather than passing vacuously.
 if ! grep -lF 'provisioner-bootstrap-access-remove' "$tmp"/*.out >/dev/null 2>&1 &&
    ! grep -lF 'provisioner-bootstrap-access-remove' ./*.out >/dev/null 2>&1; then
   echo "DEC-040 canary: this harness never entered the bootstrap-access-removal phase," >&2
@@ -2488,10 +2155,6 @@ if ! grep -lF 'provisioner-bootstrap-access-remove' "$tmp"/*.out >/dev/null 2>&1
   exit 1
 fi
 
-# DEC-040 shape gate. The fixtures encode a shape recalled from the API; the gate is what
-# compares that against an answer. Assert it ran and did not reject the shape, so the
-# coverage cannot quietly go absent -- and so a shape the parser cannot read fails here
-# rather than at the end of a live bootstrap.
 if ! grep -lF 'whoami shape: parsed' "$tmp"/*.out >/dev/null 2>&1; then
   echo "DEC-040 canary: the whoami shape gate never reported a parsed response, so either it" >&2
   echo "did not run or it rejected the emulated shape -- the fixtures would be going" >&2
@@ -2499,9 +2162,6 @@ if ! grep -lF 'whoami shape: parsed' "$tmp"/*.out >/dev/null 2>&1; then
   exit 1
 fi
 
-# INFRA-076: the previous Terraform operation against a state decides whether an apply
-# may proceed. Every lock-taking terraform call above ran under Sol's supervisor, which
-# left an operation record per state under $XDG_DATA_HOME/sol/operations.
 ops="$XDG_DATA_HOME/sol/operations"
 pre_log="$tmp/infra076-pre.log"
 if ! (export FAIL_ON=""; run_apply "$pre_log"); then
@@ -2518,8 +2178,6 @@ fi
 latest="$ops/$aws_key/$(cat "$ops/$aws_key/latest")"
 assert_contains "INFRA-076: the supervisor recorded terraform's outcome" "$latest/exit" 'exited 0' || exit 1
 
-# Unresolved: Terraform was killed before finishing its own protocol. An apply must not
-# proceed as though nothing happened.
 printf 'signaled 9\n' >"$latest/exit"
 unresolved_log="$tmp/infra076-unresolved.log"
 if (export FAIL_ON=""; run_apply "$unresolved_log"); then
@@ -2531,7 +2189,6 @@ assert_contains "INFRA-076: the unresolved operation is named" "$unresolved_log.
   'refusing to apply: the previous Terraform operation against this state is unresolved' || exit 1
 assert_not_contains "INFRA-076: no terraform apply ran" "$unresolved_log.out" '[terraform-apply]' || exit 1
 
-# ...and proceeds once the operator says it is reconciled, recording that.
 accept_log="$tmp/infra076-accept.log"
 if ! (cd "$tmp/work" && FAIL_ON="" LIFECYCLE_LOG="$accept_log" \
         "$sol" cloud apply prod/aws/us-east-1 --accept-unresolved) >"$accept_log.out" 2>&1; then
@@ -2544,7 +2201,6 @@ fi
   exit 1
 }
 
-# Running: a live supervisor holds this state. Never race it, never unlock it.
 sleep 60 &
 live_pid=$!
 running="$ops/$aws_key/99999999T000000Z-running"
@@ -2564,21 +2220,11 @@ wait "$live_pid" 2>/dev/null || true
 assert_contains "INFRA-076: the running operation is reported" "$running_log.out" \
   'is still running and holds its lock' || exit 1
 
-# AUDIT-POST-004: destroy works in the platform root too (init, the destroy preview,
-# the platform teardown), so the platform root's own previous operation decides
-# whether it may proceed -- exactly as the cloud root's does on apply. The cloud
-# root's record is left Resolved first, so a refusal below can only have come from
-# the platform root, not from a leftover cloud-root record.
 printf 'exited 0\n' >"$latest/exit"
-# Which key is the AWS platform root's? Its own record says so: `root=` in the
-# operation meta is the Terraform working directory, and the GCP platform root's
-# records carry a different one. Selecting by that (most recent first) is
-# unambiguous, where a name prefix alone need not be.
 platform_key=""
 while IFS= read -r candidate; do
   [ -n "$candidate" ] || continue
   dir="$ops/$candidate/$(cat "$ops/$candidate/latest" 2>/dev/null || true)"
-  # DEC-050: that working directory is the state's own, under Sol's state directory.
   if [ -f "$dir/meta" ] &&
      grep -qxE "root=$XDG_DATA_HOME/sol/terraform/aws-platform-[0-9a-f]{16}/platform/cloud/aws/platform" "$dir/meta"; then
     platform_key="$candidate"
@@ -2591,7 +2237,6 @@ if [ -z "$platform_key" ] || [ ! -s "$ops/$platform_key/latest" ]; then
   exit 1
 fi
 
-# Running: never start conflicting platform work.
 sleep 60 &
 platform_live_pid=$!
 platform_running="$ops/$platform_key/99999999T000000Z-platform-running"
@@ -2619,9 +2264,6 @@ if [ -e "$platform_running_log" ] && grep -q 'terraform' "$platform_running_log"
   exit 1
 fi
 
-# Unresolved: named, and destruction proceeds. A destroy constructs nothing from the
-# gap, so the established policy for a non-constructive command is to report it
-# rather than refuse it -- the answer the cloud root gets today.
 printf 'signaled 9\n' >"$platform_running/exit"
 printf '%s\n' "$(basename "$platform_running")" >"$ops/$platform_key/latest"
 platform_unresolved_log="$tmp/infra076-platform-unresolved.log"
@@ -2635,7 +2277,6 @@ assert_contains "AUDIT-POST-004: the unresolved platform operation is reported" 
   "$platform_unresolved_log.out" \
   'the previous Terraform operation against this state is unresolved' || exit 1
 
-# Resolved: destruction proceeds with no such report.
 printf 'exited 0\n' >"$platform_running/exit"
 printf '%s\n' "$(basename "$platform_running")" >"$ops/$platform_key/latest"
 platform_resolved_log="$tmp/infra076-platform-resolved.log"
@@ -2651,10 +2292,6 @@ if grep -qF 'the previous Terraform operation against this state is unresolved' 
   exit 1
 fi
 
-# BUG-057: a target's relative terraform_var_file resolves from the workspace root, so
-# the same target names the same file from any directory; a relative --var-file flag
-# resolves from the shell's directory. Both run from a subdirectory of the workspace,
-# which is where the old cwd-relative rule went wrong.
 target_file="$tmp/work/sol/environments.yml"
 cp "$target_file" "$tmp/work/target.before-bug057.yml"
 mkdir -p "$tmp/work/vars" "$tmp/work/app/deep"
@@ -2684,9 +2321,6 @@ if grep -F -- "bug057.tfvars" "$flog" >/dev/null; then
 fi
 mv "$tmp/work/target.before-bug057.yml" "$target_file"
 
-# ── DEC-050: Terraform runs in a per-state working directory ───────────────────
-# The roots in Sol's assets are immutable; every Terraform invocation above ran in a
-# working directory under Sol's state, materialized from them.
 workdirs="$XDG_DATA_HOME/sol/terraform"
 for role in aws-cluster aws-platform gcp-cluster gcp-platform; do
   if ! ls -d "$workdirs/$role"-* >/dev/null 2>&1; then
@@ -2705,7 +2339,6 @@ while IFS= read -r d; do
 done <<<"$chdirs"
 echo "DEC-050: every terraform -chdir was a working directory ($(wc -l <<<"$chdirs") distinct)"
 
-# Nothing was written into the assets: no Terraform directory, no state, no errored state.
 if find "$root/platform" -newer "$tmp/bin/terraform" \( -name .terraform -o -name '*.tfstate' -o -name errored.tfstate \) | grep -q .; then
   echo "DEC-050: a Terraform run wrote into Sol's assets:" >&2
   find "$root/platform" -newer "$tmp/bin/terraform" \( -name .terraform -o -name '*.tfstate' \) >&2
@@ -2719,8 +2352,6 @@ esac
 wd_base="${aws_wd%/platform/cloud/aws/cluster}"
 [ -e "$aws_wd/.terraform/fake-init" ] || { echo "DEC-050: init did not run in $aws_wd" >&2; exit 1; }
 
-# Each provider's cluster root has its own working directory (per-target isolation is
-# the unit test's: cli/test/test_terraform_workdir.ml, `identity isolates states`).
 if [ "$(ls -d "$workdirs"/*-cluster-* | wc -l)" -lt 2 ]; then
   echo "DEC-050: expected a cluster working directory per provider" >&2; ls "$workdirs" >&2; exit 1
 fi
@@ -2729,9 +2360,6 @@ run_plan_aws() {
   (cd "$tmp/work" && FAIL_ON="" LIFECYCLE_LOG="$1" "$sol" cloud plan prod/aws/us-east-1) >"$1.out" 2>&1
 }
 
-# Every invocation starts from the authoritative assets: a tampered source file is
-# restored, a source file Sol wrote that the assets no longer have is removed, and
-# anything Sol did not write stays.
 printf 'tampered\n' >"$aws_wd/main.tf"
 : >"$aws_wd/stale-from-an-older-release.tf"
 printf 'platform/cloud/aws/cluster/stale-from-an-older-release.tf\n' >>"$wd_base/.sol-materialized"
@@ -2748,9 +2376,6 @@ cmp -s "$aws_wd/main.tf" "$root/platform/cloud/aws/cluster/main.tf" ||
   { echo "DEC-050: Terraform's own directory was removed" >&2; exit 1; }
 echo "DEC-050: re-materialization restores sources, drops stale ones, keeps what Sol did not write"
 
-# errored.tfstate: the only record of a run whose state push failed. It must be
-# reported, refuse a constructive command, and survive every later invocation --
-# including the ones that re-materialize the working directory around it.
 printf '{"version":4,"serial":7,"lineage":"dec050"}\n' >"$aws_wd/errored.tfstate"
 cp "$aws_wd/errored.tfstate" "$tmp/errored.expected"
 errored_log="$tmp/dec050-errored.log"
@@ -2774,7 +2399,6 @@ cmp -s "$aws_wd/errored.tfstate" "$tmp/errored.expected" ||
 rm -f "$aws_wd/errored.tfstate"
 echo "DEC-050: errored.tfstate is reported, refuses apply, and survives re-materialization"
 
-# Read-only assets: Sol never needs to write them.
 ro_home="$tmp/ro-sol-home"
 mkdir -p "$ro_home/framework/ocaml/sol-svc/lib" "$ro_home/framework/ocaml/kafka-eio-service/lib"
 : >"$ro_home/framework/ocaml/sol-svc/lib/dune"
@@ -2794,17 +2418,11 @@ chmod -R u+w "$ro_home"
 grep -q -- "-chdir=$workdirs/" "$ro_log" || { echo "DEC-050: read-only run did not use a working directory" >&2; exit 1; }
 echo "DEC-050: sol cloud plan runs against read-only assets"
 
-# REFAC-115: SOL_DESTROY_SNAPSHOT_INTERVAL_S is read when a destroy needs it. A
-# malformed value used to be evaluated at program start, so every command exited 2.
-# Now an unrelated command is unaffected, and a destroy that retains a final
-# snapshot (the default) refuses in preparation -- before anything is destroyed.
 if ! SOL_DESTROY_SNAPSHOT_INTERVAL_S=abc "$sol" --version >/dev/null 2>&1; then
   echo "REFAC-115: a malformed SOL_DESTROY_SNAPSHOT_INTERVAL_S broke an unrelated command" >&2
   exit 1
 fi
 interval_log="$tmp/refac115-interval.log"
-# The AWS target retains its final snapshot (the default) for this scenario: drop
-# the destroy_retention: none an earlier scenario inserted under it, and restore it.
 cp "$tmp/work/sol/environments.yml" "$tmp/work/envs.before-refac115.yml"
 awk '/^    aws\/us-east-1:[[:space:]]*$/ { in_aws = 1; print; next }
      /^    [^ ]/ { in_aws = 0 }
@@ -2830,11 +2448,6 @@ fi
 mv "$tmp/work/envs.before-refac115.yml" "$tmp/work/sol/environments.yml"
 echo "REFAC-115: a malformed snapshot interval refuses the destroy, and only the destroy"
 
-# INFRA-075 canary. The scenarios above ran the real `sol cloud` commands; their run logs must
-# have landed in the isolated data home. If none did, Sol is writing somewhere else -- most
-# likely the operator's real ~/.local/share/sol, where the keep-20 pruning deletes real runs.
-# (Any `cloud-*` run proves it: Sol keeps only the latest 20, so the earlier apply runs are
-# pruned by the later destroys inside the isolated home too.)
 if ! ls -d "$XDG_DATA_HOME"/sol/runs/cloud-* >/dev/null 2>&1; then
   echo "INFRA-075 canary: no cloud-* run logs under the isolated" >&2
   echo "XDG_DATA_HOME ($XDG_DATA_HOME), so this harness wrote its runs somewhere else --" >&2

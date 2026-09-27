@@ -1,28 +1,4 @@
 #!/usr/bin/env bash
-# Provisions the IAM identity used to run `terraform apply`/`destroy` against
-# platform/cloud/aws/cluster/main.tf (typically with internal/qualification/aws/smoke-test.tfvars). Creates a
-# scoped IAM policy from smoke-test-iam-policy.json, a new IAM user, attaches
-# the policy, and writes a new profile to your local ~/.aws/credentials —
-# never prints the secret access key to stdout.
-#
-# Run once with an AWS CLI profile that has IAM admin rights (create
-# user/policy, attach policy, create access key) — NOT the
-# sts-smoke-test-user/sts-smoke-test-provisioner profiles used by s3-eio's
-# live test; those stay scoped to that test only.
-#
-#   PROFILE=my-admin-profile ./scripts/setup-provisioner.sh
-#
-# Not idempotent — re-running against an already-existing user/policy will
-# fail; run teardown-provisioner.sh first if you need to recreate it.
-#
-# smoke-test-iam-policy.json is minified with terse Sids on purpose: AWS
-# managed policies have a hard 6144-byte document limit, and this policy
-# (covering VPC/EKS/RDS/ECR/KMS/IAM-for-IRSA end to end) sits close enough
-# to that ceiling that pretty-printing alone would exceed it. Don't
-# reformat it "for readability" without checking the resulting byte count
-# (`python3 -c "import json;print(len(open('smoke-test-iam-policy.json').read()))"`)
-# — verified against a real DOGFOOD-011 apply+destroy cycle at this size;
-# see internal/pipeline/dogfood/ for the run that shaped every statement in it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

@@ -1,38 +1,4 @@
 #!/usr/bin/env bash
-# classify-changes.sh -- the single definition of "docs-only" for Sol.
-#
-# Both the local pre-commit hook and CI call this, so the two cannot drift
-# into disagreeing about what counts as a bookkeeping change. It answers one
-# question: is every changed path in the explicitly safe allowlist?
-#
-#   docs-only   every path is safe -> the expensive suite is not required
-#   source      anything else, any mixed diff, or any inability to resolve
-#               the requested range
-#
-# FAIL CLOSED. Uncertainty always resolves to `source`: an unclassifiable diff
-# costs compute, never correctness. In particular:
-#   - an empty change list is `source` (it also covers "the diff command
-#     silently produced nothing because it failed")
-#   - an unresolvable range is `source`
-#   - an unknown argument is `source`
-# This script therefore exits 0 in every case; the classification is data, not
-# a status. Callers branch on the printed token.
-#
-# The allowlist, deliberately small and explicit:
-#   docs/**                                   documentation tree
-#   internal/pipeline/tickets/**              pipeline bookkeeping
-#   **/*.md  EXCEPT .github/**                markdown anywhere else
-#   internal/tooling/perf/perf_baseline.json  the perf baseline
-#
-# `.github/**` is source-like for CI classification REGARDLESS OF EXTENSION.
-# A workflow or action edit can change the gate itself, so it must never ride
-# along on a docs-only path -- and a .md file under .github buys us nothing
-# worth the extra case to reason about.
-#
-# Usage:
-#   classify-changes.sh --staged                 # staged paths (pre-commit)
-#   classify-changes.sh --range A...B            # git diff --name-only A...B
-#   classify-changes.sh --files-from FILE        # newline-separated paths
 
 set -uo pipefail
 
@@ -77,15 +43,12 @@ case "$MODE" in
     ;;
 esac
 
-# `seen` guards the empty case: an empty (or whitespace-only) list must not
-# fall through to the docs-only exit below.
 seen=0
 while IFS= read -r p; do
   [ -n "$p" ] || continue
   seen=1
   case "$p" in
     .github/*)
-      # Checked first, and before the *.md rule, so .github/**/*.md is source.
       emit source ;;
     docs/*)                            continue ;;
     internal/pipeline/tickets/*)                continue ;;

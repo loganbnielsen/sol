@@ -25,7 +25,6 @@ fi
 echo "Waiting for port ${PORT} ready."
 wait_for_port "${PORT}" 30 0.5 || exit 1
 
-# Wait for Postgres to accept connections
 for i in $(seq 1 20); do
   if docker exec "${CONTAINER}" pg_isready -q 2>/dev/null; then break; fi
   sleep 0.5

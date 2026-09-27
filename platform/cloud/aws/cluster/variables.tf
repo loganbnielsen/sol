@@ -25,7 +25,6 @@ variable "kubernetes_version" {
   default     = "1.36"
 }
 
-# VPC
 variable "vpc_cidr" {
   description = "CIDR block for the VPC"
   type        = string
@@ -38,7 +37,6 @@ variable "ha_nat_gateway" {
   default     = false
 }
 
-# Node group
 variable "node_instance_types" {
   description = "EC2 instance types for the EKS managed node group"
   type        = list(string)
@@ -60,14 +58,12 @@ variable "node_desired_size" {
   default = 3
 }
 
-# ECR
 variable "ecr_repositories" {
   description = "List of service names to create ECR repositories for, e.g. [\"charge-svc\", \"notify-worker\"]"
   type        = list(string)
   default     = []
 }
 
-# RDS
 variable "create_rds" {
   description = "Create an RDS PostgreSQL instance. Disable for low-cost substrate smoke tests."
   type        = bool
@@ -117,20 +113,17 @@ variable "rds_multi_az" {
   default     = false
 }
 
-# Route53
 variable "create_route53_zone" {
   description = "Create a new Route53 hosted zone for base_domain. Set false if the zone already exists."
   type        = bool
   default     = true
 }
 
-# Tags applied to all resources
 variable "tags" {
   type    = map(string)
   default = {}
 }
 
-# Durable observability (OBS-006/OBS-007)
 variable "enable_durable_observability" {
   description = "Provision S3 buckets + IRSA roles for durable Loki (OBS-006) and Thanos-backed Prometheus (OBS-007) storage. Pair with platform/cloud/modules/platform's observability_backend = \"self_hosted_durable\"."
   type        = bool
@@ -147,10 +140,6 @@ variable "loki_retention_days" {
   }
 }
 
-# ── Alerting (OBS-043) ──────────────────────────────────────────────────────
-# Consumed by platform/cloud/modules/platform (the Alertmanager route), declared here
-# too so a target passing the alert_* contract through `sol cloud tf` does not
-# fail on an undeclared variable in this layer. This layer ignores them.
 variable "alert_receiver_type" {
   type    = string
   default = ""
@@ -170,8 +159,6 @@ variable "alert_runbook_url" {
   type    = string
   default = ""
 }
-
-# ── AUDIT-072: recoverable state and scoped identities ──────────────────────
 
 variable "cluster_endpoint_cidr" {
   description = "The single CIDR allowed to reach the public Kubernetes API endpoint. Empty leaves the module default (0.0.0.0/0) for non-production clusters; a production-single-region target must set a specific value (enforced by sol deploy's preflight)."

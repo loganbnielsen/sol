@@ -1,19 +1,4 @@
 #!/usr/bin/env bash
-# Pins the hook install path (REFAC-090).
-#
-# Why this exists: the local gate can be silently inert. In the session that
-# produced REFAC-090, `.git/hooks/pre-commit` was a symlink to
-# `<repo>/devtools/hooks/pre-commit`, a path that no longer existed, so an
-# entirely ungated commit landed on another engineer's branch. Nothing in the
-# repository noticed, and no test exercised the installer.
-#
-# This runs the documented installer in a *scratch* repository laid out the same
-# way as this one, seeds exactly that dangling-symlink failure, and asserts the
-# installer repairs it and leaves every hook source installed, resolving and
-# executable. It fails if the hooks directory is moved without the installer
-# following, because the installer's own chmod/link step then fails.
-#
-# It never touches this repository's .git/hooks.
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
@@ -36,7 +21,6 @@ git init -q -b main "$scratch"
 source_count="$(find "$scratch/internal/tooling/hooks" -maxdepth 1 -type f | wc -l | tr -d ' ')"
 [ "$source_count" -gt 0 ] || fail "no hook sources found to install"
 
-# The exact field failure: a hook left pointing at a path that no longer exists.
 ln -sf "$tmp/devtools/hooks/pre-commit" "$scratch/.git/hooks/pre-commit"
 
 (cd "$scratch" && bash internal/tooling/scripts/install-hooks.sh >/dev/null) \
@@ -60,13 +44,11 @@ done
 [ "$installed" -eq "$source_count" ] \
   || fail "installed $installed hooks but $source_count sources exist"
 
-# The dangling symlink must be gone, not merely shadowed.
 case "$(readlink -f "$scratch/.git/hooks/pre-commit")" in
   *devtools*) fail "the dangling install was not repaired" ;;
 esac
 pass "a pre-existing dangling hook symlink is repaired"
 
-# Re-running is safe and must not leave anything worse behind.
 (cd "$scratch" && bash internal/tooling/scripts/install-hooks.sh >/dev/null) \
   || fail "re-running install-hooks.sh failed"
 readlink -f "$scratch/.git/hooks/pre-commit" >/dev/null \

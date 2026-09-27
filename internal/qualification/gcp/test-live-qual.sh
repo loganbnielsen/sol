@@ -1,30 +1,7 @@
 #!/usr/bin/env bash
-# Offline state-machine test for live-qual.sh. Spends nothing: the external commands are
-# stubs, so this asserts the HARNESS's behaviour — the sequence it drives, the arguments it
-# renders, the evidence it captures, and what it does with the target file at each ending.
 #
-# Why this exists (Attempt 6): three harness defects were found by running it in anger, and
-# one of them — `destroy_vars` deleted by a refactor — silently removed every variable from
-# the teardown invocation while the code still read as correct. A refactor invalidates the
-# evidence of a past green run; only an executable test of the affected path does not.
 #
-# argv assertions are the point, not a nicety: the harness constructs part of the effective
-# configuration handed to Sol/Terraform. `create_dns_zone` was rendered `true` by an
-# explicit override while the var-file said `false`, and each source looked reasonable in
-# isolation. Asserting exit codes alone would have missed it entirely.
 #
-# It also pins the attempt-8 re-scope's properties, because each of them is the kind of thing
-# that silently regresses when someone edits the harness:
-#   H1  the generated target asks for no TLS issuer (or the run stops before cert-manager);
-#   H2  a failed `sol cloud apply` captures the discriminator BEFORE any teardown — asserted
-#       by argv ORDER, so "capture moved after the destroy" fails rather than passes;
-#   H3  both Terraform state snapshots are in the bundle;
-#   H4  Sol's own run artifacts are copied out of its pruning window;
-#   H5  the inventory is tri-state, covers the classes the contract names, and a failed read
-#       is UNKNOWN — never ABSENT;
-#   H6  a pre-teardown provider inventory is captured before anything is destroyed;
-#   and the process discipline: identity-based stopping only, no pattern kills, no
-#       force-unlock, durable resources never handed to the disposable destroy.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -38,22 +15,15 @@ mkdir -p "$SCRATCH_WS/sol"
 printf 'project: scratch\n' >"$SCRATCH_WS/sol.yml"
 cleanup() {
   rm -f "$TARGET_FILE"
-  # The harness creates the target's directory; removing the file alone leaves it behind and
-  # the suite then reports the checkout dirty for a directory it made.
   rmdir "$(dirname "$TARGET_FILE")" 2>/dev/null || true
   [ "${KEEP_TMP:-0}" = "1" ] && { echo "kept: $TMP"; return; }
   rm -rf "$TMP"
 }
 trap cleanup EXIT
 
-
 pass=0
 fail=0
 ok() { printf '  [OK]   %s\n' "$1"; pass=$((pass + 1)); }
-# On the first failure in a case, show the harness's own output for it. Every case's output is
-# captured to $TMP/<name>.out and was never printed, so a failing case in CI reported only that it
-# failed -- which is how a one-line refusal message cost a whole debugging round trip.
-# Printed once, at the top: if a CI run behaves differently, this says which environment it was.
 suite_environment() {
   printf 'suite: bash %s, cwd %s, scratch %s\n' "${BASH_VERSION:-?}" "$PWD" "$TMP"
   printf 'suite: stubs %s, harness %s\n' \
@@ -63,10 +33,6 @@ suite_environment() {
 
 dump_case_output() {
   local case_name="${CURRENT_CASE:-}"
-  # The marker is checked only when there IS one: matching `"$DUMPED $case_name"` against
-  # `*" $case_name"*` matched on the very first call (DUMPED empty, so the string was just the
-  # name) and returned before printing anything -- a guard that silently disabled the thing it
-  # guards, which is the same failure mode this dump exists to catch in the harness.
   if [ -n "${DUMPED:-}" ]; then
     case "$DUMPED" in
       *" $case_name "*) return 0 ;;
@@ -76,8 +42,6 @@ dump_case_output() {
   if [ -z "$case_name" ]; then
     return 0
   fi
-  # rc first, and always: a case that exits non-zero while producing no output at all is the most
-  # confusing shape there is, and it must say so rather than silently showing nothing.
   printf '           --- %s: rc %s, %s bytes of output ---\n' "$case_name" \
     "$(cat "$TMP/$case_name.rc" 2>/dev/null || echo '?')" \
     "$(wc -c <"$TMP/$case_name.out" 2>/dev/null || echo 0)"
@@ -99,7 +63,6 @@ present() { if [ -s "$1" ]; then ok "$2"; else no "$2" "present and non-empty" "
 
 suite_environment
 
-# ── stubs ────────────────────────────────────────────────────────────────────
 mkdir -p "$TMP/bin"
 
 cat >"$TMP/bin/sol" <<'STUB'
@@ -248,8 +211,6 @@ esac
 if [ "${STUB_CLUSTER_EXISTS:-0}" = "1" ]; then
   case "$*" in
   *"value(status)"*)
-    # The cluster is absent for the first N polls. This is the real transition -- Attempt 15f's waiter
-    # died on exactly this read, under `set -e`, and said nothing.
     if [ -n "${STUB_STATUS_FAILS_N:-}" ]; then
       cnt_file="$TMP/status-polls"
       n="$(cat "$cnt_file" 2>/dev/null || echo 0)"
@@ -327,8 +288,6 @@ case "${1:-}" in
     exit 1
     ;;
 esac
-# Every read can be made to fail, the way a real API read fails: the capture must then record a
-# capture failure rather than an artifact that merely looks empty.
 if [ -n "${STUB_KUBE_READ_RC:-}" ]; then
   case " $* " in
     *" get "*)
@@ -447,16 +406,12 @@ STUB
 
 chmod +x "$TMP"/bin/*
 
-# A fake Sol data directory: copying this out is what proves the bundle does not depend on
-# Sol's own 20-run pruning window. It also makes the suite unable to touch the operator's real
-# ~/.local/share/sol (INFRA-075's isolation lesson).
 SOL_DATA="$TMP/data/sol"
 mkdir -p "$SOL_DATA/runs/cloud-apply-20260925T000000Z-1234"
 printf 'lifecycle phase: CloudBootstrap\n' >"$SOL_DATA/runs/cloud-apply-20260925T000000Z-1234/phase.log"
 printf 'root=platform/cloud/gcp/cluster\n' >"$SOL_DATA/runs/cloud-apply-20260925T000000Z-1234/meta"
 printf 'exited 0\n' >"$SOL_DATA/runs/cloud-apply-20260925T000000Z-1234/exit"
 
-# ── the runner ───────────────────────────────────────────────────────────────
 run_case() { # run_case <name> <subcommand> [VAR=VALUE ...]
   local name="$1" sub="$2"
   shift 2
@@ -465,17 +420,12 @@ run_case() { # run_case <name> <subcommand> [VAR=VALUE ...]
   export API_PROBE_LOG="$TMP/$name.probe.argv"
   CURRENT_CASE="$name"
   export LOG_DIR="$TMP/$name.logs"
-  # Scratch workspace: the harness writes the target file into it, so the repository is never
-  # touched and "nothing was left behind" is an assertion about scratch, not a hope.
   export WORKSPACE="$SCRATCH_WS"
   export XDG_DATA_HOME="$TMP/data"
-  # The identity the harness will ask about: CLUSTER at the harness's default project.
   export STUB_PROVISIONER_SA="test-cluster-provisioner@sol-qualification.iam.gserviceaccount.com"
   : >"$ARGV_LOG"
   : >"$API_PROBE_LOG"
   rm -f "$TARGET_FILE"
-  # The `verify` invariant needs a target file to exist: with one present, the old code
-  # would actually have reached `sol cloud destroy`.
   if [ "${PRESEED_TARGET:-0}" = "1" ]; then
     printf '# Written by internal/qualification/gcp/live-qual.sh (test preseed)\nqual:\n  targets:\n    gcp/us-central1:\n      cluster_name: test-cluster\n      base_domain: qual-gcp.sol-fab.dev\n' >"$TARGET_FILE"
   fi
@@ -489,14 +439,12 @@ run_case() { # run_case <name> <subcommand> [VAR=VALUE ...]
   sed -i 's/ //' "$TMP/$name.rc"
 }
 
-# ── 1. a successful cloud run keeps the target; teardown is a separate, deliberate act ──
 printf '\nscenario: cloud succeeds\n'
 run_case cloud-ok cloud
 is "exit 0" "$(cat "$TMP/cloud-ok.rc")" "0"
 lacks "no destroy on the success path (the delegation boundary keeps the substrate)" "cloud destroy" "$TMP/cloud-ok.argv"
 lacks "the cloud phase never runs an application deploy" "sol deploy" "$TMP/cloud-ok.argv"
 has "the target is written for the run" "cluster_name" "$TARGET_FILE"
-# H1: the generated target must not ask for an issuer Sol refuses to install on GCP.
 lacks "the generated target declares no cluster_issuer (H1)" "cluster_issuer:" "$TARGET_FILE"
 present "$TMP/cloud-ok.logs/state/cloud.tfstate" "the cloud state snapshot is in the bundle (H3)"
 present "$TMP/cloud-ok.logs/state/platform.tfstate" "the platform state snapshot is in the bundle (H3)"
@@ -507,12 +455,7 @@ else
 fi
 present "$TMP/cloud-ok.logs/inventory-pre.tsv" "a pre-teardown provider inventory is captured (H6)"
 present "$TMP/cloud-ok.logs/ready-phases.txt" "the Ready-path phase lines are captured"
-# INFRA-090 closing FND-0061's gap: a successful install captures the provisioner bindings, so
-# "both subjects on one object" is observed rather than inferred. The cluster has to exist for
-# there to be any binding to read, so this is its own case.
 run_case ready-bindings cloud STUB_CLUSTER_EXISTS=1
-# The capture is asserted through the arguments it ran with: the kubectl stub records argv and
-# answers nothing, so an empty file would prove only that a file was touched.
 if grep -qF 'get clusterrolebinding sol-platform-provisioner-cluster -o json' \
     "$TMP/ready-bindings.argv" 2>/dev/null; then
   ok "a successful install reads the cluster-scoped provisioner binding"
@@ -525,7 +468,6 @@ if grep -qF 'get rolebinding -A --field-selector metadata.name=sol-platform-prov
 else
   no "and reads the namespaced bindings" "the kubectl call" "none"
 fi
-# And the run records the provider's own disk-quota reading, independently of Sol.
 if grep -q 'disk-quota' "$TMP/ready-bindings.logs/inventory-pre.tsv" 2>/dev/null; then
   ok "the inventory records the provider's disk quota"
 else
@@ -533,7 +475,6 @@ else
 fi
 has "the bundle manifest names the state snapshot" "terraform state (cloud)" "$TMP/cloud-ok.logs/evidence-manifest.txt"
 
-# ── 2. teardown: exactly once, correct variables, target removed only after verification ──
 printf '\nscenario: destroy\n'
 run_case destroy-ok destroy
 is "exit 0" "$(cat "$TMP/destroy-ok.rc")" "0"
@@ -542,24 +483,19 @@ is "teardown is invoked exactly once" "$(grep -c 'cloud destroy' "$TMP/destroy-o
 has "destroy carries the cluster" "--var=cluster_name=test-cluster" "$TMP/destroy-ok.argv"
 has "destroy carries the base domain" "--var=base_domain=" "$TMP/destroy-ok.argv"
 has "destroy carries the impersonator" "provisioner_impersonators" "$TMP/destroy-ok.argv"
-# The DEC-043 assertion: the durable zone is never handed to the disposable destroy.
 lacks "the durable zone is not passed as disposable intent" "--var=create_dns_zone=true" "$TMP/destroy-ok.argv"
 has "the durable zone is explicitly excluded" "--var=create_dns_zone=false" "$TMP/destroy-ok.argv"
-# The bundle must be complete before the teardown starts, and the post-teardown inventory must
-# land in it too.
 present "$TMP/destroy-ok.logs/inventory-pre.tsv" "the pre-teardown inventory precedes teardown"
 present "$TMP/destroy-ok.logs/inventory-post.tsv" "the post-teardown inventory is captured"
 present "$TMP/destroy-ok.logs/state/cloud.tfstate" "the state snapshot is frozen before teardown (H3)"
 if [ -f "$TARGET_FILE" ]; then no "the target is removed after verified teardown" "removed" "still present"; else ok "the target is removed after verified teardown"; fi
 
-# ── 3. verification failure retains the target and exits non-zero ────────────
 printf '\nscenario: verification finds a leftover\n'
 run_case destroy-leftover destroy STUB_TARGET_PRESENT=1
 if [ "$(cat "$TMP/destroy-leftover.rc")" = "0" ]; then no "non-zero exit when resources remain" "non-zero" "0"; else ok "non-zero exit when resources remain"; fi
 if [ -f "$TARGET_FILE" ]; then ok "the target is retained when teardown is unverified"; else no "the target is retained when teardown is unverified" "present" "removed"; fi
 has "the leftover names a class the contract requires (artifact registry)" "artifact-registry still exists" "$TMP/destroy-leftover.out"
 
-# ── 4. H2: a failed apply captures the discriminator BEFORE the teardown ─────
 printf '\nscenario: apply fails at the platform boundary\n'
 run_case cloud-fail cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNATURE=dial
 has "a failed apply still tears down" "cloud destroy" "$TMP/cloud-fail.argv"
@@ -570,11 +506,6 @@ if grep -qF 'cloud apply failed -- capturing the discriminator before any teardo
 else
   no "the failure path announces the discriminator capture" "announced" "silent"
 fi
-# FND-0010 follow-up: the discriminator must be able to answer "why was the CA bundle never
-# injected?" -- the CA the webhook pod writes, the injector's view, and the cert-manager API
-# objects. Asserted here so a future edit cannot quietly drop them again.
-# Existence, not content: the stub emits nothing for these, and `kube_capture` writes the
-# file either way (`|| true`) -- what matters is that the capture happens at all.
 for member in fnd0010-ca-secret fnd0010-tls-secret fnd0010-cainjector-logs fnd0010-controller-logs fnd0010-webhook-logs fnd0010-certificates; do
   if [ -f "$TMP/cloud-fail.logs/$member.log" ]; then
     ok "the discriminator captures $member (FND-0010 follow-up)"
@@ -604,9 +535,6 @@ else
   no "Sol's run artifacts are captured on the failure path (H4)" "copied" "missing"
 fi
 
-# ── 5. the classification is evidence-driven, not a default ──────────────────
-# Mutation direction: a classifier that always answers WEBHOOK_REACHABILITY (or always
-# UNKNOWN) fails at least one of these three.
 printf '\nscenario: classification follows the captured evidence\n'
 run_case class-x509 cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNATURE=x509
 has "an x509 signature classifies as TLS_CA_OR_CERTIFICATE (not reachability)" \
@@ -620,8 +548,6 @@ has "a dial-timeout signature classifies as WEBHOOK_REACHABILITY" \
 run_case class-empty cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1
 has "no usable evidence classifies as UNKNOWN (never reachability by default)" \
   "classification: UNKNOWN" "$TMP/class-empty.logs/fnd0010-classification.txt"
-# Attempt 10's actual cause, and the reason it needs priority: the components' own leader-election
-# denial is upstream of an un-injected caBundle, so when both appear the denial is the cause.
 run_case class-leader cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_COMPONENT_SIGNATURE=leader
 has "a leader-election denial classifies as LEADER_ELECTION_DENIED" \
   "classification: LEADER_ELECTION_DENIED" "$TMP/class-leader.logs/fnd0010-classification.txt"
@@ -630,22 +556,15 @@ run_case class-leader-x509 cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 \
 has "and it wins over the x509 symptom it causes" \
   "classification: LEADER_ELECTION_DENIED" "$TMP/class-leader-x509.logs/fnd0010-classification.txt"
 
-# The direct failed-operation signature must beat ambient cluster symptoms. A half-installed
-# platform always has pods waiting to be scheduled, so before this ordering existed the FND-0061
-# failure was labelled SCHEDULING by evidence about something else entirely.
 run_case class-exists cloud STUB_APPLY_RC=1 STUB_APPLY_ERROR=already-exists STUB_CLUSTER_EXISTS=1 \
   STUB_KUBE_SIGNATURE=stale-scheduling
 has "a Terraform already-exists failure classifies as TERRAFORM_ALREADY_EXISTS, not scheduling" \
   "classification: TERRAFORM_ALREADY_EXISTS" "$TMP/class-exists.logs/fnd0010-classification.txt"
-# INFRA-092: an admission denial is a direct provider refusal, and must outrank the ambient
-# scheduling symptoms that happen to be present in a partially installed cluster -- Attempt 14's
-# failure was classified SCHEDULING_AMBIENT for exactly that reason.
 run_case class-warden cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_APPLY_ERROR=warden \
   STUB_KUBE_SIGNATURE=stale-scheduling
 has "an admission denial outranks ambient scheduling symptoms" \
   "classification: ADMISSION_DENIED" "$TMP/class-warden.logs/fnd0010-classification.txt"
 
-# The provider's own refusal names the cause; pod symptoms are downstream of it.
 run_case class-quota cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIGNATURE=quota
 has "a provider CreateVolume quota refusal classifies as PROVIDER_DISK_QUOTA_EXCEEDED" \
   "classification: PROVIDER_DISK_QUOTA_EXCEEDED" "$TMP/class-quota.logs/fnd0010-classification.txt"
@@ -658,7 +577,6 @@ run_case class-ambient cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_SIG
 has "with no direct signature, ambient scheduling evidence is labelled as ambient" \
   "classification: SCHEDULING_AMBIENT" "$TMP/class-ambient.logs/fnd0010-classification.txt"
 
-# ── 5b. what the Attempt 10 re-analysis had to reconstruct is now captured ────
 for probe in fnd0010-startupapicheck-pod fnd0010-rbac-cert-manager fnd0010-rbac-kube-system \
              fnd0010-leases-cert-manager fnd0010-leases-kube-system; do
   if [ -f "$TMP/cloud-fail.logs/$probe.log" ]; then
@@ -668,12 +586,6 @@ for probe in fnd0010-startupapicheck-pod fnd0010-rbac-cert-manager fnd0010-rbac-
   fi
 done
 
-# ── 6. UNKNOWN is not absence: both shapes pinned, separately ────────────────
-# Mandatory evidence for the tri-state fix. Only explicit provider not-found evidence
-# establishes absence; pinning one unreadable shape and not the other invites the
-# implementation to drift into an allowlist of errors that get called absence.
-# The provider's own explicit not-found forms are ABSENT -- both the underscore form (the one
-# this suite missed) and the compute "was not found" phrasing.
 printf '\nscenario: the provider says NOT_FOUND\n'
 run_case notfound-underscore destroy STUB_PROBE_MODE=notfound
 is "the provider's own NOT_FOUND (underscore) reads as ABSENT" "$(cat "$TMP/notfound-underscore.rc")" "0"
@@ -694,8 +606,6 @@ for mode in permission transport invalid; do
   else
     no "it names the failure to determine absence ($mode)" "named" "unmentioned"
   fi
-  # The new classes must be tri-state too: a permission failure on the artifact registry is
-  # UNKNOWN, not "the registry is gone".
   if grep -q 'artifact-registry: UNKNOWN' "$TMP/probe-$mode.out"; then
     ok "a newly-covered class is UNKNOWN when it cannot be read ($mode)"
   else
@@ -708,7 +618,6 @@ for mode in permission transport invalid; do
   fi
 done
 
-# ── 7. one authoritative input for create_dns_zone, across every invocation ──
 printf '\nscenario: no contradictory configuration is ever rendered\n'
 if cat "$TMP"/*.argv | grep -qE 'create_dns_zone=true'; then
   no "no invocation asks for the durable zone to be created" "no create_dns_zone=true" "rendered somewhere"
@@ -716,7 +625,6 @@ else
   ok "no invocation asks for the durable zone to be created"
 fi
 
-# ── 8. a destructive durable reconcile stops the run before anything is created ──
 printf '\nscenario: the durable root would be replaced\n'
 run_case durable-refusal cloud STUB_PLAN_DESTROYS=1
 if [ "$(cat "$TMP/durable-refusal.rc")" = "0" ]; then
@@ -727,17 +635,13 @@ fi
 has "the refusal names the durable risk" "REFUSED" "$TMP/durable-refusal.out"
 lacks "no cloud apply runs after a refused durable reconcile" "cloud apply" "$TMP/durable-refusal.argv"
 
-# ── 9. the platform phase is refused, because `sol cloud apply` is the install ──
 printf '\nscenario: platform subcommand\n'
 run_case platform-refused platform
 is "exit 2" "$(cat "$TMP/platform-refused.rc")" "2"
 has "the refusal points at the invocation that installs the platform" "sol cloud apply" "$TMP/platform-refused.out"
 lacks "the refused phase runs nothing" "cloud apply" "$TMP/platform-refused.argv"
 
-# ── 10. process discipline, pinned as source properties ─────────────────────
 printf '\nscenario: process discipline\n'
-# Code only: the header is *supposed* to name these practices (it explains why they are
-# forbidden), so the check strips comments before looking for them.
 grep -vE '^[[:space:]]*#' "$HARNESS" >"$TMP/harness-code.sh"
 for forbidden in 'pkill' 'killall' 'force-unlock' 'kill -9' 'kill -KILL' 'kill -s KILL'; do
   if grep -qF -- "$forbidden" "$TMP/harness-code.sh"; then
@@ -757,9 +661,6 @@ else
   no "the run records its own process-group identity" "run.pgid" "missing"
 fi
 
-# ── 11. the quota verdict follows the numbers, in both directions ────────────
-# The old check had no positive control: an all-zero read and a busy account were never
-# distinguished by a test, so a pattern that always says "busy" (or never) passed.
 printf '\nscenario: quota verdict\n'
 has "an all-zero usage read is ABSENT, not a violation" "quota: ABSENT" "$TMP/destroy-ok.out"
 run_case quota-busy destroy STUB_QUOTA_BUSY=1
@@ -777,14 +678,7 @@ else
   ok "an unparsable usage read fails the verification"
 fi
 
-# ── 11b. phase-aware bundle completeness (INFRA-091) ──
 #
-# Attempt 13 stopped before the platform root was ever initialised, and its bundle was reported
-# INCOMPLETE because the platform state -- which could not exist -- was demanded. A bundle is
-# judged against the phases the run reached, and no weaker for a phase it did reach.
-# INFRA-092: the provisioner bindings exist from the prerequisites phase onward, so a run that
-# fails later must still carry them -- Attempt 14's prerequisites succeeded and its platform apply
-# did not, and the objects went unrecorded because the read was attached to success.
 if grep -qF 'get clusterrolebinding sol-platform-provisioner-cluster -o json' \
     "$TMP/class-warden.argv" 2>/dev/null; then
   ok "a failed install still reads the provisioner bindings it had established"
@@ -792,9 +686,6 @@ else
   no "a failed install still reads the provisioner bindings it had established" "the kubectl read" "none"
 fi
 
-# The API-reachability observer (the Attempt 15c follow-up). Two properties: it observes, and it
-# does not perturb. The channel assertions are the second -- they would fail if a single probe read
-# reached the lifecycle channel, and they cannot be satisfied by filtering downstream.
 probe_case() { # probe_case <name> <configured-endpoint> [VAR=VALUE ...]
   local name="$1" configured="$2"
   shift 2
@@ -808,10 +699,6 @@ probe_col() { awk -F'\t' -v c="$2" 'NR==2{print $c}' "$TMP/probe-$1.logs/api-rea
 probe_case sampling 136.115.125.189 STUB_CLUSTER_EXISTS=1
 has "the probe records a sample" "REACHABLE" "$TMP/probe-sampling.logs/api-readiness.tsv"
 is "the sample carries the provider-reported endpoint" "$(probe_col sampling 2)" "136.115.125.189"
-# The run owns its kubeconfig, and it is the misleading shape Attempt 15d met: a *deleted*
-# cluster first and still current. Resolution is by name, so the stale entry can never be read
-# as the configured endpoint. (A stub case this short samples only before credentials exist, so
-# the configured column is legitimately `-` here; what is asserted is the invariant.)
 has "the run kubeconfig carries that stale cluster first, as the fixture intends" "sol-qual-gcp-15c" \
   "$TMP/probe-sampling.logs/run-kubeconfig.yaml"
 if grep -qF "136.65.210.170" "$TMP/probe-sampling.logs/api-readiness.tsv"; then
@@ -845,8 +732,6 @@ has "an unreachable API is recorded as a probe failure" "UNREACHABLE" \
   "$TMP/probe-unreachable.logs/api-readiness.tsv"
 has "with the dial detail kept" "i/o timeout" "$TMP/probe-unreachable.logs/api-readiness.tsv"
 
-# Non-perturbation: the same run with the probe failing on every sample, and with no probe at all,
-# must exit identically -- and the disabled probe must write no samples at all.
 probe_case perturb 136.115.125.189 STUB_CLUSTER_EXISTS=1 STUB_API_UNREACHABLE=1
 run_case "probe-off" cloud API_READINESS_PROBE=0 STUB_CLUSTER_EXISTS=1
 is "a failing probe does not change the phase's exit status" \
@@ -857,7 +742,6 @@ else
   ok "the switch really disables the observer"
 fi
 
-# Cleanup: the probe is a child of the run, and its own recorded pid must be gone afterwards.
 probe_pid="$(sed -n 's/.*api readiness probe:.*(pid \([0-9]*\)).*/\1/p' "$TMP/probe-sampling.out" 2>/dev/null | tail -1)"
 if [ -n "$probe_pid" ] && kill -0 "$probe_pid" 2>/dev/null; then
   no "the probe leaves no orphan process" "no process $probe_pid" "still running"
@@ -865,9 +749,6 @@ else
   ok "the probe leaves no orphan process (recorded pid ${probe_pid:-none} is gone)"
 fi
 
-# The temporal invariant, end to end through the real harness flow, with an ambient kubeconfig that
-# is exactly what the live machine had: unrelated and stale clusters, and the wrong context current.
-# None of it may influence the run.
 amb="$TMP/ambient-kubeconfig.yaml"
 {
   printf 'apiVersion: v1\nkind: Config\ncurrent-context: eks-stale\n'
@@ -881,14 +762,12 @@ amb="$TMP/ambient-kubeconfig.yaml"
 run_case "e2e-credentials" cloud KUBECONFIG="$amb" API_PROBE_INTERVAL_S=1 STUB_SOL_SLEEP=6 \
   CLUSTER_KUBECONFIG_POLL_S=1 STUB_STATUS_FAILS_N=3 STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1
 
-# The transitional state must not kill the observer, and the observer must record that it happened.
 has "the waiter recorded a poll that found no cluster" "poll-failed" \
   "$TMP/e2e-credentials.logs/kubeconfig-waiter.tsv"
 has "and then an establishment on the RUNNING path" "credentials-established" \
   "$TMP/e2e-credentials.logs/kubeconfig-waiter.tsv"
 lacks "the waiter did not exit on the absent cluster" "parent-gone" "$TMP/e2e-credentials.logs/kubeconfig-waiter.tsv"
 
-# 1. credentials are established before the observation window, not by the failure
 est="$(grep -n 'run kubeconfig: established' "$TMP/e2e-credentials.out" | head -1 | cut -d: -f1)"
 fail_line="$(grep -n 'cloud apply failed' "$TMP/e2e-credentials.out" | head -1 | cut -d: -f1)"
 if [ -n "$est" ] && [ -n "$fail_line" ] && [ "$est" -lt "$fail_line" ]; then
@@ -900,7 +779,6 @@ fi
 has "the run kubeconfig exists and names this run's cluster" "test-cluster" \
   "$TMP/e2e-credentials.logs/run-kubeconfig.yaml"
 
-# 2. the probe resolved THIS run's cluster, and the ambient file left no trace
 is "the probe resolves this run's configured endpoint" \
   "$(awk -F'\t' 'NR>1{v=$3} END{print v}' "$TMP/e2e-credentials.logs/api-readiness.tsv")" "136.115.125.189"
 if grep -qF '9F5AAA970F948E45A7AE0807DA893DCE' "$TMP/e2e-credentials.logs/api-readiness.tsv" 2>/dev/null; then
@@ -914,7 +792,6 @@ else
   ok "kubectl never falls back to localhost:8080"
 fi
 
-# 3. every Kubernetes read used the run's own kubeconfig
 if grep -qF "kubeconfig=$TMP/e2e-credentials.logs/run-kubeconfig.yaml" "$TMP/e2e-credentials.argv"; then
   ok "every kubectl read is bound to the run's kubeconfig"
 else
@@ -922,7 +799,6 @@ else
     "$(grep -m1 kubectl "$TMP/e2e-credentials.argv" 2>/dev/null | cut -c1-90)"
 fi
 
-# 4a. the bundle-critical captures precede the heavy Kubernetes reads, and the teardown
 freeze_line="$(grep -n 'freezing the evidence bundle' "$TMP/e2e-credentials.out" | head -1 | cut -d: -f1)"
 kube_line="$(grep -n 'capturing read-only Kubernetes evidence' "$TMP/e2e-credentials.out" | head -1 | cut -d: -f1)"
 teardown_line="$(grep -n 'teardown: sol cloud destroy' "$TMP/e2e-credentials.out" | head -1 | cut -d: -f1)"
@@ -941,7 +817,6 @@ fi
 lacks "the bundle is complete on the failure path" "the evidence bundle is INCOMPLETE" \
   "$TMP/e2e-credentials.out"
 
-# 4. the capture ran, and produced evidence rather than a silent failure
 lacks "no capture command was malformed" "unknown command" "$TMP/e2e-credentials.out"
 for artifact in pods pod-states events pvc pv nodes node-capacity helm-release-secrets; do
   present "$TMP/e2e-credentials.logs/platform-failure/$artifact.log" "the failure capture produced $artifact"
@@ -957,17 +832,11 @@ has "the summary lists every artifact it attempted" "helm-release-secrets" \
   "$TMP/probe-neverready.logs/platform-failure/capture-summary.txt"
 
 probe_case readfails 136.115.125.189 STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_KUBE_READ_RC=1
-# A read that failed is recorded with the failure itself, not left as a file that merely looks empty.
 has "a failed capture read records the failure in the artifact" "Error from server" \
   "$TMP/probe-readfails.logs/platform-failure/pods.log"
-# The summary's presence is asserted in the neverready and e2e cases; here the point is that the
-# failure itself is in the artifact.
 
 printf '\nscenario: a stop before the platform is a complete bundle\n'
 run_case bundle-pre-platform cloud STUB_APPLY_RC=1 STUB_APPLY_FAILS_AT=bootstrap
-# The requirement is what is phase-aware, not the capture: the harness reads whatever it can, but
-# it must not *demand* the platform root's state of a run that never initialised that root. That is
-# the whole of INFRA-091's bundle rule, stated as the thing it is.
 lacks "a root the run never reached is not demanded of the bundle" \
   "bundle member missing or empty: state/platform.tfstate" "$TMP/bundle-pre-platform.out"
 present "$TMP/bundle-pre-platform.logs/state/cloud.tfstate" \
@@ -982,9 +851,6 @@ run_case bundle-platform-reached cloud STUB_APPLY_RC=1 STUB_APPLY_ERROR=already-
 has "a bundle whose platform state could not be captured is incomplete" \
   "bundle member missing or empty: state/platform.tfstate" "$TMP/bundle-platform-reached.out"
 
-# ── 12. the bundle check has teeth: a member that could not be read fails the run ──
-# The state read failing is the interesting shape: the file exists but is empty, which is
-# exactly how an unreadable state would look if nobody checked.
 printf '\nscenario: an unreadable bundle member\n'
 lacks "a complete bundle is not reported as incomplete" "evidence bundle is INCOMPLETE" "$TMP/cloud-fail.out"
 run_case bundle-unreadable cloud STUB_APPLY_RC=1 STUB_CLUSTER_EXISTS=1 STUB_STATE_UNREADABLE=1
@@ -998,9 +864,6 @@ else
   ok "an incomplete bundle fails the run"
 fi
 
-# ── 13. a warning on stderr is not an answer ─────────────────────────────────
-# Found by running the probe against the live project: an empty filtered list writes a warning
-# to stderr, and a probe that merges the streams reads it as PRESENT. Absence stays absence.
 printf '\nscenario: a filtered list that warns\n'
 run_case filter-warning destroy STUB_FILTER_WARNING=1
 has "an empty filtered list is ABSENT even when gcloud warns on stderr" "quota: ABSENT" "$TMP/filter-warning.out"
@@ -1011,11 +874,6 @@ else
 fi
 is "the warned verification still passes" "$(cat "$TMP/filter-warning.rc")" "0"
 
-# ── 14. `verify` is observational, on both paths ─────────────────────────────
-# The invariant is about behaviour, not about where a flag is set: with a target file present,
-# a failing verification must still invoke no destroy. (Before the fix this case reached
-# `sol cloud destroy` -- the stop recorded in
-# internal/qualification/records/2026-09-25-gcp-attempt8-phase0-stop.md.)
 printf '\nscenario: verify is read-only even when it fails\n'
 PRESEED_TARGET=1 run_case verify-fail verify STUB_TARGET_PRESENT=1
 if [ "$(cat "$TMP/verify-fail.rc")" = "0" ]; then
@@ -1035,10 +893,6 @@ else
     "NOT_FOUND: Unknown service account" "absent"
 fi
 
-# ── 15. the attempt's target key is its own ──────────────────────────────────
-# The key names the Terraform state objects, so a shared key means a shared state:
-# Attempt 8's failed install left platform state behind at its key, and an attempt
-# that reuses the key inherits it instead of producing its own specimen.
 printf '\nscenario: the target key is overridable\n'
 TARGET=qual9/gcp/us-central1 run_case target-override destroy
 has "the override reaches sol" "cloud destroy qual9/gcp/us-central1" "$TMP/target-override.argv"
@@ -1049,13 +903,6 @@ else
   ok "the default key is not silently used as well"
 fi
 
-# ── 16. postconditions a describe cannot answer (INFRA-080) ───────────────────
-# The shape Attempt 9's bundle recorded, replayed offline: the disposable infrastructure is
-# gone, the provisioner identity is provider-deleted (so its describe answers
-# PERMISSION_DENIED, which establishes nothing), the impersonation grant is unusable because
-# the identity it was attached to is not active, the custom role is provider-deleted into
-# GCP's undelete window, and the durable prerequisites are present. Teardown must VERIFY —
-# and it must say, per class, which evidence established what.
 printf '\nscenario: Attempt-9-shaped teardown verifies\n'
 run_case attempt9-verified destroy
 is "a clean teardown with a provider-deleted identity and role verifies" "$(cat "$TMP/attempt9-verified.rc")" "0"
@@ -1074,7 +921,6 @@ else
   ok "nothing is left UNKNOWN in this shape"
 fi
 
-# The mutations: each one makes a security-sensitive fact true, and verification must not pass.
 printf '\nscenario: the identity is still active\n'
 run_case mutation-sa-active destroy STUB_SA_ACTIVE_PROVISIONER=1 STUB_SA_POLICY=empty
 if [ "$(cat "$TMP/mutation-sa-active.rc")" = "0" ]; then
@@ -1102,8 +948,6 @@ else
 fi
 has "and is reported PRESENT" "custom-role: PRESENT" "$TMP/mutation-role-active.out"
 
-# Ambiguous evidence stays ambiguous, per class: an active identity whose policy read is
-# denied must not become "the binding is gone".
 printf '\nscenario: the policy read is denied while the identity is active\n'
 run_case mutation-policy-denied destroy STUB_SA_ACTIVE_PROVISIONER=1
 has "the binding class is UNKNOWN when its read is ambiguous" "impersonator-binding: UNKNOWN" "$TMP/mutation-policy-denied.out"
@@ -1129,10 +973,6 @@ is "a not-found role verifies" "$(cat "$TMP/role-notfound.rc")" "0"
 run_case role-unreadable destroy STUB_ROLE_STATE=error
 has "an unreadable role is UNKNOWN" "custom-role: UNKNOWN" "$TMP/role-unreadable.out"
 
-# ── 17. the harness's own argument list (INFRA-080 C) ─────────────────────────
-# The generated target is the single source for the impersonator: Sol routes it from the
-# target's `gcp` block. The harness must not pass a second copy behind a comment that ends
-# its own printf -- which is what printed `command not found` while dropping the argument.
 printf '\nscenario: the harness passes no dead argument\n'
 run_case cloud-vars cloud
 lacks "no command-not-found diagnostic" "command not found" "$TMP/cloud-vars.out"
@@ -1141,9 +981,6 @@ lacks "and the cloud path passes no second copy of it" "-var=provisioner_imperso
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = "0" ] || exit 1
-# Only leftovers matter: the harness writes the target file and its directory, and the
-# person running this suite is usually mid-edit on the scripts themselves. Flagging those
-# would make the suite fail for the developer's own working state.
 dirty="$(git -C "$REPO" status --porcelain --untracked-files=all -- examples/pluto/)"
 if [ -n "$dirty" ]; then
   printf '[FAIL] the suite left the checkout dirty:\n%s\n' "$dirty"; exit 1

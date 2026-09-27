@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Mutation test for check_library_output.sh (REFAC-135).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -12,7 +11,6 @@ mkrepo() {
   mkdir -p "$tmp/repo/cli/lib/base" "$tmp/repo/cli/lib/cloud" "$tmp/repo/cli/bin"
   git -C "$tmp/repo" init -q
   printf 'let f () = Sol_cli_report.app "  prepare: %%s" "x"\n' >"$tmp/repo/cli/lib/cloud/a.ml"
-  # The edge may print; so may a command.
   printf 'let terminal s = output_string stdout s\n' >"$tmp/repo/cli/lib/base/sol_cli_report.ml"
   printf 'let exit_on m = Printf.eprintf "%%s" m\n' >"$tmp/repo/cli/lib/base/sol_cli_exit.ml"
   printf 'let () = Printf.printf "done\\n"\n' >"$tmp/repo/cli/bin/cmd_ok.ml"

@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Self-check for check_port_forward_conflict's port-matching logic.
-# Not part of the normal ensure-*.sh run path -- run directly to verify.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

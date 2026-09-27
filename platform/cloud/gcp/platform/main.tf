@@ -1,17 +1,6 @@
-# platform/cloud/gcp/platform — the GCP platform root. See variables.tf for why
-# this root exists at all, and which parts of the shared definition are not yet
-# GCP-shaped.
-#
-# The shared module declares no backend (REFAC-100): a backend belongs to a root,
-# and supplying GCP's is the whole reason this file exists.
-
 terraform {
   required_version = ">= 1.6"
 
-  # GCS, with GCS's native state locking -- there is no lock resource to name,
-  # which is why a GCP target declares no state_lock_table. `sol cloud` supplies
-  # bucket= and prefix=sol/<target>/platform.tfstate from the target's declared
-  # state bucket.
   backend "gcs" {}
 
   required_providers {
@@ -26,9 +15,6 @@ terraform {
   }
 }
 
-# The shared platform definition. Providers are inherited from this root, so the
-# same KUBE_CONFIG_PATH/KUBE_CONFIG_PATHS contract `sol cloud` establishes for the
-# ephemeral provisioner kubeconfig applies unchanged.
 module "platform" {
   source = "../../modules/platform"
 

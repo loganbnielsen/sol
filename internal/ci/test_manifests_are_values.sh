@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Mutation test for check_manifests_are_values.sh (REFAC-131).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -11,11 +10,9 @@ mkrepo() {
   rm -rf "$tmp/repo"
   mkdir -p "$tmp/repo/cli/lib/workspace" "$tmp/repo/cli/bin" "$tmp/repo/cli/test"
   git -C "$tmp/repo" init -q
-  # The value forms are what the check exists to allow.
   printf 'let d = Sol_cli_yaml.(map [ "apiVersion", string "v1" ])\n' \
     >"$tmp/repo/cli/lib/workspace/sol_cli_manifest_yaml.ml"
   printf 'let j = `Assoc [ "apiVersion", `String "v1" ]\n' >"$tmp/repo/cli/bin/cmd_ok.ml"
-  # Tests may hold manifest text as a fixture.
   printf 'let fixture = "apiVersion: apps/v1\\nkind: Deployment\\n"\n' \
     >"$tmp/repo/cli/test/test_x.ml"
 }

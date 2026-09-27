@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# Tears down everything setup-provisioner.sh creates: access key(s), the
-# user, the policy attachment, and the policy itself. Best-effort (|| true
-# throughout) — safe to re-run if a previous teardown partially failed.
-#
-#   PROFILE=my-admin-profile ./scripts/teardown-provisioner.sh
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -26,11 +21,6 @@ echo "==> Deleting user ${USER_NAME}..."
 aws iam delete-user --user-name "$USER_NAME" --profile "$PROFILE" || true
 
 echo "==> Deleting non-default policy versions for ${POLICY_NAME}..."
-# IAM refuses to delete a policy that has more than one version -- the
-# default version is deleted along with the policy itself, but any
-# others (accumulated by iterating on the policy with create-policy-version
-# during a real dogfood run, DOGFOOD-011) must go first, or delete-policy
-# below fails with DeleteConflict.
 for v in $(aws iam list-policy-versions --policy-arn "$POLICY_ARN" --profile "$PROFILE" \
   --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text 2>/dev/null); do
   aws iam delete-policy-version --policy-arn "$POLICY_ARN" --version-id "$v" --profile "$PROFILE" || true

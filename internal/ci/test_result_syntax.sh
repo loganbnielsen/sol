@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Mutation test for check_result_syntax.sh (REFAC-137).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"

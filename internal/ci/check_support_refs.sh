@@ -1,20 +1,4 @@
 #!/usr/bin/env bash
-# BUG-059: a Sol revision declares the exact support-library revisions it builds
-# against, in support-refs.txt, and nothing consumes a floating branch instead.
-#
-#   1. support-refs.txt is well-formed: "<package> <git url> <40-hex commit>",
-#      one package per line, no duplicates.
-#   2. Outside the pin and bump scripts, no tracked file references a support
-#      package's repository without an exact commit (#<40 hex>) -- which catches
-#      "#main", a bare URL, and a loop over "$p.git" alike -- runs
-#      `opam pin add <support package>`, or resolves `refs/heads/main`.
-#   3. The framework packages' own pin-depends (hand-written .opam files, which
-#      opam needs for their consumers) name the same commits as support-refs.txt.
-#
-# Historical records (tickets, audits, dated dogfood runs, qualification records,
-# internal/planning/) describe the past and are out of scope.
-#
-# Usage: check_support_refs.sh [repo-root]
 set -uo pipefail
 
 root="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
@@ -45,7 +29,6 @@ files="$(git -C "$root" ls-files |
 
 while IFS= read -r f; do
   [ -f "$root/$f" ] || continue
-  # A support repository (by name, or a shell loop variable) without an exact commit.
   hits="$(grep -nE "loganbnielsen/(${names}|\\\$[A-Za-z_{][A-Za-z_}]*)\.git([^#0-9A-Za-z_-]|$|#(\$|[^0-9a-f]|[0-9a-f]{0,39}([^0-9a-f]|$)))" "$root/$f" || true)"
   [ -n "$hits" ] && while IFS= read -r h; do err "$f:$h -- support repository without an exact commit"; done <<<"$hits"
   hits="$(grep -nE "opam pin add( -y)? +\"?(${names})\b" "$root/$f" || true)"
@@ -54,7 +37,6 @@ while IFS= read -r f; do
   [ -n "$hits" ] && while IFS= read -r h; do err "$f:$h -- resolves a branch; support revisions come from support-refs.txt"; done <<<"$hits"
 done <<<"$files"
 
-# pin-depends must agree with the declaration.
 while IFS= read -r opam; do
   while read -r pkg sha; do
     want="${commit_of[$pkg]:-}"
