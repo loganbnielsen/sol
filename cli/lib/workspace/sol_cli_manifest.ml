@@ -130,20 +130,12 @@ let discover_services ?root () =
 
 (* ── Apply / emit helpers ────────────────────────────────────────────────── *)
 
-exception Deploy_failed of string
-
 let write_tmp content =
   let tmp = Filename.temp_file "sol-manifest-" ".yaml" in
   let oc = open_out tmp in
   output_string oc content;
   close_out oc;
   tmp
-;;
-
-let kubectl_apply ~ctx tmp =
-  Sol_cli_kubectl.apply ~ctx ~file:tmp
-  |> Result.iter_error (fun e ->
-    raise (Deploy_failed ("kubectl apply failed: " ^ Sol_cli_process.error_to_string e)))
 ;;
 
 (* INFRA-048 / FND-0011: a namespace Sol created is established with [create],
@@ -175,28 +167,30 @@ let create_idempotent_yaml ~ctx yaml =
     (fun () -> create_idempotent ~ctx ~file:tmp)
 ;;
 
+(* REFAC-133: each step's failure is returned with kubectl's own words behind a
+   prefix naming the step, and nothing is raised. *)
 let apply ~ctx (ns_yaml, workload_yaml) ~dry_run =
+  let open Result.Syntax in
+  let step what = Result.map_error (fun e -> what ^ Sol_cli_process.error_to_string e) in
   if dry_run
-  then Printf.printf "%s\n%s\n" ns_yaml workload_yaml
-  else (
-    create_idempotent_yaml ~ctx ns_yaml
-    |> Result.iter_error (fun e ->
-      raise
-        (Deploy_failed ("kubectl create (namespace): " ^ Sol_cli_process.error_to_string e)));
+  then (
+    Printf.printf "%s\n%s\n" ns_yaml workload_yaml;
+    Ok ())
+  else
+    let* () =
+      create_idempotent_yaml ~ctx ns_yaml |> step "kubectl create (namespace): "
+    in
     let tmp = write_tmp workload_yaml in
-    (try
-       Sol_cli_kubectl.apply_dry_run ~ctx ~file:tmp
-       |> Result.iter_error (fun e ->
-         raise
-           (Deploy_failed
-              ("kubectl server-side dry-run failed: " ^ Sol_cli_process.error_to_string e)));
-       kubectl_apply ~ctx tmp
-     with
-     | e ->
-       (try Sys.remove tmp with
-        | _ -> ());
-       raise e);
-    Sys.remove tmp)
+    Fun.protect
+      ~finally:(fun () ->
+        try Sys.remove tmp with
+        | Sys_error _ -> ())
+      (fun () ->
+         let* () =
+           Sol_cli_kubectl.apply_dry_run ~ctx ~file:tmp
+           |> step "kubectl server-side dry-run failed: "
+         in
+         Sol_cli_kubectl.apply ~ctx ~file:tmp |> step "kubectl apply failed: ")
 ;;
 
 (* Write YAML for one service to <dir>/<ns>-<name>.yaml.

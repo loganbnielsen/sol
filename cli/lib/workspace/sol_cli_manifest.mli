@@ -272,8 +272,6 @@ val migration_job_doc
   -> configmap_name:string
   -> Sol_cli_yaml.document
 
-exception Deploy_failed of string
-
 val write_tmp : string -> string
 
 (** INFRA-048: establishes an object with [kubectl create], treating
@@ -291,6 +289,6 @@ val apply
   :  ctx:Sol_cli_kube_destination.context
   -> string * string
   -> dry_run:bool
-  -> unit
+  -> (unit, string) result
 
 val emit_to_dir : string -> string * string -> ns:string -> name:string -> string

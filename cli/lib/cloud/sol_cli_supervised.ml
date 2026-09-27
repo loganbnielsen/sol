@@ -410,10 +410,11 @@ let run
           plugins, never the process group, never SIGKILL. *)
        let interrupts = ref 0 in
        let forwarded = ref 0 in
-       let forward () =
-         while !forwarded < min !interrupts 2 do
+       let rec forward () =
+         if !forwarded < min !interrupts 2
+         then (
            match tf_pid_of dir with
-           | None -> raise Exit
+           | None -> ()
            | Some pid ->
              incr forwarded;
              (try Unix.kill pid Sys.sigint with
@@ -435,12 +436,8 @@ let run
                   cancel immediately and data loss may occur. Still waiting for it to \
                   exit.\n\
                   %!"
-                 pid
-         done
-       in
-       let forward () =
-         try forward () with
-         | Exit -> ()
+                 pid;
+             forward ())
        in
        let handler = Sys.Signal_handle (fun _ -> incr interrupts) in
        let previous =

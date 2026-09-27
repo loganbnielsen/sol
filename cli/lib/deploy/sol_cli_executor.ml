@@ -27,16 +27,19 @@ let make_result (spec : Sol_cli_deployment_plan.service_spec) =
 ;;
 
 let dispatch_rendered ~ctx ~mode spec yaml =
-  (match mode with
-   | Dry_run -> Sol_cli_manifest.apply ~ctx yaml ~dry_run:true
-   | Apply -> Sol_cli_manifest.apply ~ctx yaml ~dry_run:false
-   | Emit_to dir ->
-     let ns =
-       Sol_cli_deployment_plan.namespace_to_string spec.Sol_cli_deployment_plan.namespace
-     in
-     let name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name in
-     ignore (Sol_cli_manifest.emit_to_dir dir yaml ~ns ~name));
-  make_result spec
+  let dispatched =
+    match mode with
+    | Dry_run -> Sol_cli_manifest.apply ~ctx yaml ~dry_run:true
+    | Apply -> Sol_cli_manifest.apply ~ctx yaml ~dry_run:false
+    | Emit_to dir ->
+      let ns =
+        Sol_cli_deployment_plan.namespace_to_string spec.Sol_cli_deployment_plan.namespace
+      in
+      let name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name in
+      ignore (Sol_cli_manifest.emit_to_dir dir yaml ~ns ~name);
+      Ok ()
+  in
+  Result.map (fun () -> make_result spec) dispatched
 ;;
 
 (* ── executors ───────────────────────────────────────────────────────────── *)
@@ -51,9 +54,9 @@ let local_development_spec (spec : Sol_cli_deployment_plan.service_spec) =
 
 let local ~ctx ~workspace ~release_id ~dry_run spec =
   let spec = local_development_spec spec in
-  match Sol_cli_deployment_render.render_spec ~workspace ~release_id spec with
-  | Error msg -> failwith msg
-  | Ok yaml -> dispatch_rendered ~ctx ~mode:(if dry_run then Dry_run else Apply) spec yaml
+  Sol_cli_deployment_render.render_spec ~workspace ~release_id spec
+  |> Fun.flip Result.bind (fun yaml ->
+    dispatch_rendered ~ctx ~mode:(if dry_run then Dry_run else Apply) spec yaml)
 ;;
 
 let gitops
@@ -64,11 +67,8 @@ let gitops
       ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder)
       spec
   =
-  match
-    Sol_cli_deployment_render.render_spec ~workspace ~release_id ~secret_backend spec
-  with
-  | Error msg -> failwith msg
-  | Ok yaml -> dispatch_rendered ~ctx ~mode:(Emit_to dir) spec yaml
+  Sol_cli_deployment_render.render_spec ~workspace ~release_id ~secret_backend spec
+  |> Fun.flip Result.bind (dispatch_rendered ~ctx ~mode:(Emit_to dir) spec)
 ;;
 
 (* FEAT-069: the emitted bundle carries the release artifact — the immutable
@@ -110,61 +110,48 @@ let run_plan
     | Emit_to _ -> Sol_cli_manifest.Kubernetes_placeholder
     | Dry_run | Apply -> secret_backend
   in
+  let open Result.Syntax in
   (* Render all specs upfront; surface the first error before any side effect. *)
-  let rendered =
-    services
-    |> List.map (fun spec ->
-      match
-        Sol_cli_deployment_render.render_spec
-          ~workspace
-          ?env
-          ~release_id:plan.release_id
-          ~secret_backend:backend
-          spec
-      with
-      | Error msg -> Error (spec, msg)
-      | Ok yaml -> Ok (spec, yaml))
+  let render spec =
+    Sol_cli_deployment_render.render_spec
+      ~workspace
+      ?env
+      ~release_id:plan.release_id
+      ~secret_backend:backend
+      spec
+    |> Result.map (fun yaml -> spec, yaml)
   in
-  match
-    List.find_opt
-      (function
-        | Error _ -> true
-        | Ok _ -> false)
-      rendered
-  with
-  | Some (Error (_, msg)) -> Error msg
-  | _ ->
-    let pairs =
-      List.filter_map
-        (function
-          | Ok x -> Some x
-          | Error _ -> None)
-        rendered
-    in
-    (* FEAT-072: [before_apply] runs between rendered workloads so a caller can
+  let* pairs =
+    services
+    |> List.fold_left
+         (fun acc spec ->
+            let* rendered = acc in
+            let* pair = render spec in
+            Ok (pair :: rendered))
+         (Ok [])
+    |> Result.map List.rev
+  in
+  (* FEAT-072: [before_apply] runs between rendered workloads so a caller can
        refresh or lose a coordination lease before the next mutation; its error
        stops the run before that service is applied. *)
-    let before_apply_result (spec : Sol_cli_deployment_plan.service_spec) =
-      match mode with
-      | Dry_run | Emit_to _ -> Ok ()
-      | Apply ->
-        (match before_apply with
-         | None -> Ok ()
-         | Some f -> f spec)
-    in
-    let rec execute acc = function
-      | [] -> Ok (List.rev acc)
-      | ((spec : Sol_cli_deployment_plan.service_spec), yaml) :: rest ->
-        (match before_apply_result spec with
-         | Error msg -> Error msg
-         | Ok () ->
-           execute (dispatch_rendered ~ctx:execution.cluster ~mode spec yaml :: acc) rest)
-    in
-    (match execute [] pairs with
-     | Error msg -> Error msg
-     | Ok results ->
-       (match mode with
-        | Emit_to dir -> write_release_bundle ~dir ~apply_mode:Sol_cli_release.Gitops plan
-        | Dry_run | Apply -> ());
-       Ok results)
+  let before_apply_result (spec : Sol_cli_deployment_plan.service_spec) =
+    match mode with
+    | Dry_run | Emit_to _ -> Ok ()
+    | Apply ->
+      (match before_apply with
+       | None -> Ok ()
+       | Some f -> f spec)
+  in
+  let rec execute acc = function
+    | [] -> Ok (List.rev acc)
+    | ((spec : Sol_cli_deployment_plan.service_spec), yaml) :: rest ->
+      let* () = before_apply_result spec in
+      let* result = dispatch_rendered ~ctx:execution.cluster ~mode spec yaml in
+      execute (result :: acc) rest
+  in
+  let* results = execute [] pairs in
+  (match mode with
+   | Emit_to dir -> write_release_bundle ~dir ~apply_mode:Sol_cli_release.Gitops plan
+   | Dry_run | Apply -> ());
+  Ok results
 ;;

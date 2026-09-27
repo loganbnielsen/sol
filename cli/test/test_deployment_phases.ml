@@ -9,6 +9,12 @@ let release_id_of_test =
 
 (* ── shared helpers ──────────────────────────────────────────────────────── *)
 
+(* REFAC-133: the executors return their failure instead of raising it. *)
+let ok = function
+  | Ok r -> r
+  | Error e -> Alcotest.fail e
+;;
+
 let k8s_name value =
   match Sol_cli_deployment_plan.k8s_name_result value with
   | Ok name -> name
@@ -16,7 +22,9 @@ let k8s_name value =
 ;;
 
 let namespace ~workspace ~domain =
-  Sol_cli_deployment_plan.namespace_of_exn ~workspace ~domain
+  match Sol_cli_deployment_plan.namespace_result ~workspace ~domain with
+  | Ok namespace -> namespace
+  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 let cpu s =
@@ -826,6 +834,7 @@ let test_local_executor_result_fields () =
       ~release_id:release_id_of_test
       ~dry_run:true
       svc_spec
+    |> ok
   in
   Alcotest.(check string) "local namespace" "myapp-payments" r.namespace;
   Alcotest.(check string) "local name" "charge-svc" r.name;
@@ -843,6 +852,7 @@ let test_direct_executor_result_fields () =
       ~release_id:release_id_of_test
       ~dry_run:true
       svc_spec
+    |> ok
   in
   Alcotest.(check string) "direct namespace" "myapp-payments" r.namespace;
   Alcotest.(check string) "direct name" "charge-svc" r.name;
@@ -861,6 +871,7 @@ let test_gitops_executor_result_fields () =
         ~release_id:release_id_of_test
         ~dir
         svc_spec
+      |> ok
     in
     Alcotest.(check string) "gitops namespace" "myapp-payments" r.namespace;
     Alcotest.(check string) "gitops name" "charge-svc" r.name;
@@ -878,6 +889,7 @@ let test_local_worker_executor_result_fields () =
       ~release_id:release_id_of_test
       ~dry_run:true
       worker_spec
+    |> ok
   in
   Alcotest.(check string) "local worker namespace" "myapp-comms" r.namespace;
   Alcotest.(check string) "local worker name" "notify-worker" r.name
@@ -891,6 +903,7 @@ let test_direct_fn_executor_result_fields () =
       ~release_id:release_id_of_test
       ~dry_run:true
       fn_spec
+    |> ok
   in
   Alcotest.(check string) "direct fn namespace" "myapp-billing" r.namespace;
   Alcotest.(check string) "direct fn name" "invoice-fn" r.name
@@ -967,6 +980,7 @@ let test_local_and_direct_share_plan_type () =
          ~release_id:plan.release_id
          ~dry_run:true)
       plan.services
+    |> List.map ok
   in
   let direct_results =
     List.map
@@ -976,6 +990,7 @@ let test_local_and_direct_share_plan_type () =
          ~release_id:plan.release_id
          ~dry_run:true)
       plan.services
+    |> List.map ok
   in
   Alcotest.(check int)
     "same result count"
@@ -999,6 +1014,7 @@ let test_gitops_shares_plan_type () =
            ~release_id:plan.release_id
            ~dir)
         plan.services
+      |> List.map ok
     in
     let direct_results =
       List.map
@@ -1008,6 +1024,7 @@ let test_gitops_shares_plan_type () =
            ~release_id:plan.release_id
            ~dry_run:true)
         plan.services
+      |> List.map ok
     in
     let gr = List.hd gitops_results
     and dr = List.hd direct_results in

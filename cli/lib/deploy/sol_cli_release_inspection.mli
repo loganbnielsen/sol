@@ -111,7 +111,9 @@ val release_summary
 
 (** Render inspectable manifest facts from the deployment plan. The YAML is a
     read-only diagnostic artifact. *)
-val rendered_manifests_of_plan : Sol_cli_deployment_plan.t -> rendered_manifest list
+val rendered_manifests_of_plan
+  :  Sol_cli_deployment_plan.t
+  -> (rendered_manifest list, string) result
 
 val diagnostics
   :  ?rendered_manifests:rendered_manifest list

@@ -941,9 +941,3 @@ let load_result path =
   with
   | Otoml.Type_error message -> Error (Validation { path; message })
 ;;
-
-let load path =
-  match load_result path with
-  | Ok t -> t
-  | Error err -> failwith (parse_error_to_string err)
-;;

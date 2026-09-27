@@ -42,31 +42,32 @@ let wait_s = Sol_cli_boundary_lease.rollback_wait_s
    key names, never values. GitOps-mode rollback (content and pointer
    travelling in one emitted commit) is not this pass's concern. *)
 let apply_specs ~ctx ~local ~release ~release_id_t specs =
-  try
-    specs
-    |> List.iter (fun spec ->
-      (* SEC-006: a local rollback re-renders what `sol up` recorded, which
-            does not carry the local-only Unverified_dev_only opt-in (only
-            [Sol_cli_executor.local] adds it); restore it here, locally only. *)
-      let spec = if local then Sol_cli_executor.local_development_spec spec else spec in
-      match
-        Sol_cli_deployment_render.render_spec
-          ~workspace:release.Sol_cli_release.workspace
-          ?env:release.environment
-          ~release_id:release_id_t
-          ~secret_backend:Sol_cli_manifest.Kubernetes_live
-          spec
-      with
-      | Error msg -> raise (Sol_cli_manifest.Deploy_failed msg)
-      | Ok yaml ->
-        Sol_cli_manifest.apply ~ctx yaml ~dry_run:false;
-        Printf.printf
-          "  applied %s/%s\n%!"
-          (Sol_cli_deployment_plan.namespace_to_string spec.namespace)
-          (Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name));
+  let apply_spec spec =
+    (* SEC-006: a local rollback re-renders what `sol up` recorded, which does not
+       carry the local-only Unverified_dev_only opt-in (only
+       [Sol_cli_executor.local] adds it); restore it here, locally only. *)
+    let spec = if local then Sol_cli_executor.local_development_spec spec else spec in
+    let* yaml =
+      Sol_cli_deployment_render.render_spec
+        ~workspace:release.Sol_cli_release.workspace
+        ?env:release.environment
+        ~release_id:release_id_t
+        ~secret_backend:Sol_cli_manifest.Kubernetes_live
+        spec
+    in
+    let* () = Sol_cli_manifest.apply ~ctx yaml ~dry_run:false in
+    Printf.printf
+      "  applied %s/%s\n%!"
+      (Sol_cli_deployment_plan.namespace_to_string spec.namespace)
+      (Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name);
     Ok ()
-  with
-  | Sol_cli_manifest.Deploy_failed msg -> Error msg
+  in
+  specs
+  |> List.fold_left
+       (fun acc spec ->
+          let* () = acc in
+          apply_spec spec)
+       (Ok ())
 ;;
 
 let run_locked ~ctx ~local ~workspace ~facts release_id : (unit, string) result =

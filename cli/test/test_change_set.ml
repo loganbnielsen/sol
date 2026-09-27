@@ -14,7 +14,9 @@ let k8s_name value =
 ;;
 
 let namespace ~workspace ~domain =
-  Sol_cli_deployment_plan.namespace_of_exn ~workspace ~domain
+  match Sol_cli_deployment_plan.namespace_result ~workspace ~domain with
+  | Ok namespace -> namespace
+  | Error err -> Alcotest.fail (Sol_cli_deployment_plan.plan_error_to_string err)
 ;;
 
 let cpu s =

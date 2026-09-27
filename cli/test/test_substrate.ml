@@ -257,18 +257,16 @@ let test_namespace_is_created_not_applied () =
     let workload_yaml =
       "---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: checkout-svc\n"
     in
-    (* Before the fix this raises Deploy_failed carrying the live Forbidden
-       error: the namespace is applied rather than created. *)
-    (try
-       Sol_cli_manifest.apply
-         ~ctx:Sol_cli_kube_destination.local_context
-         (ns_yaml, workload_yaml)
-         ~dry_run:false
-     with
-     | Sol_cli_manifest.Deploy_failed msg ->
-       Alcotest.failf
-         "the namespace was applied instead of created; live error was: %s"
-         msg);
+    (* Before the fix this failed with the live Forbidden error: the namespace
+       was applied rather than created. *)
+    Sol_cli_manifest.apply
+      ~ctx:Sol_cli_kube_destination.local_context
+      (ns_yaml, workload_yaml)
+      ~dry_run:false
+    |> Result.iter_error (fun msg ->
+      Alcotest.failf
+        "the namespace was applied instead of created; live error was: %s"
+        msg);
     let calls = String.split_on_char '\n' (read_file log) in
     let call verb kind =
       List.exists (fun line -> String.equal (String.trim line) (verb ^ " " ^ kind)) calls

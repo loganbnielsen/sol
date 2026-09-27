@@ -211,27 +211,24 @@ let replace_all ~pattern ~replacement s =
 
 (* Splits [content] into the text before [marker_start], the text strictly
    between the two markers, and the text after [marker_end] (both markers
-   themselves excluded from all three parts). Raises if either marker is
-   missing or out of order -- a malformed/changed .tftpl should fail
-   loudly at render time, not silently produce wrong River config. *)
+   themselves excluded from all three parts). A missing or out-of-order marker
+   is an [Error] -- a malformed/changed .tftpl must fail loudly at render time,
+   not silently produce wrong River config (REFAC-133: returned, not raised). *)
 let slice_between ~marker_start ~marker_end content =
   match find_substring ~needle:marker_start content with
-  | None ->
-    invalid_arg (Printf.sprintf "alloy template: marker not found: %S" marker_start)
+  | None -> Error (Printf.sprintf "alloy template: marker not found: %S" marker_start)
   | Some s ->
     let inner_start = s + String.length marker_start in
     (match find_substring ~needle:marker_end content with
-     | None ->
-       invalid_arg (Printf.sprintf "alloy template: marker not found: %S" marker_end)
+     | None -> Error (Printf.sprintf "alloy template: marker not found: %S" marker_end)
      | Some e when e < inner_start ->
-       invalid_arg
-         (Printf.sprintf "alloy template: %S found before %S" marker_end marker_start)
+       Error (Printf.sprintf "alloy template: %S found before %S" marker_end marker_start)
      | Some e ->
        let before = String.sub content 0 s in
        let inner = String.sub content inner_start (e - inner_start) in
        let after_start = e + String.length marker_end in
        let after = String.sub content after_start (String.length content - after_start) in
-       before, inner, after)
+       Ok (before, inner, after))
 ;;
 
 let basic_auth_if_start =
@@ -249,7 +246,7 @@ let render_alloy_config
       ~loki_push_basic_auth_password
   =
   let* content = read_asset (Sol_cli_platform_assets.alloy_template assets) in
-  let before, loop_body, after =
+  let* before, loop_body, after =
     slice_between
       ~marker_start:"%{ for label in taxonomy_labels ~}\n"
       ~marker_end:"%{ endfor ~}\n"
@@ -262,7 +259,7 @@ let render_alloy_config
     |> String.concat ""
   in
   let content = before ^ expanded_loop ^ after in
-  let before, inner, after =
+  let* before, inner, after =
     slice_between ~marker_start:basic_auth_if_start ~marker_end:basic_auth_if_end content
   in
   let content =

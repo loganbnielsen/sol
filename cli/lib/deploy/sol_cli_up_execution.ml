@@ -110,8 +110,7 @@ let push_image exec =
 ;;
 
 let apply_service_manifest ~ctx ~workspace ~release_id ~dry_run spec =
-  try Ok (Sol_cli_executor.local ~ctx ~workspace ~release_id ~dry_run spec) with
-  | Failure msg -> Error msg
+  Sol_cli_executor.local ~ctx ~workspace ~release_id ~dry_run spec
 ;;
 
 (* FEAT-063: the rollout is watched in the cluster the target names, so the
