@@ -12,7 +12,7 @@
 open Sol_cli_destroy_verification
 
 (* REFAC-097: the provider-evidence classifiers live with their providers. *)
-let gcp_absence_message = Sol_cli_gcp_destruction.gcp_absence_message
+let gcp_absence_message = Sol_cli_gcloud.says_not_found
 let classify_final_snapshot = Sol_cli_aws_destruction.classify_final_snapshot
 let classify_instance_snapshots = Sol_cli_aws_destruction.classify_instance_snapshots
 let contains needle haystack = Sol_cli_string.contains ~needle haystack

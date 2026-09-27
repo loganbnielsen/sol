@@ -62,7 +62,7 @@ let test_absence_wording () =
        Alcotest.(check bool)
          (Printf.sprintf "%S reads as absent" wording)
          true
-         (absent_wording wording))
+         (Sol_cli_gcloud.says_not_found wording))
     [ "NOT_FOUND: Resource was not found"
     ; "ERROR: (gcloud.container.clusters.describe) ResponseError: code=404, message=Not \
        found: projects/p/locations/r/clusters/c."
@@ -74,8 +74,14 @@ let test_absence_wording () =
        Alcotest.(check bool)
          (Printf.sprintf "%S is not absence" wording)
          false
-         (absent_wording wording))
+         (Sol_cli_gcloud.says_not_found wording))
     [ "PERMISSION_DENIED: caller does not have permission"
+    ; (* REFAC-136: gcloud's generic API-failure prefix on a 403. The substrate's own
+         list used to match "could not fetch resource", reading a permission
+         failure as an absent cluster -- a fresh target. *)
+      "ERROR: (gcloud.container.clusters.describe) Could not fetch resource:\n\
+      \ - Required 'container.clusters.get' permission for \
+       'projects/p/locations/r/clusters/c'."
     ; "Throttling: rate exceeded"
     ; "There was a problem refreshing your current auth tokens"
     ]
