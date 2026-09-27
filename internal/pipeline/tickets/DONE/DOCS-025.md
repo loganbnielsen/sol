@@ -92,3 +92,26 @@ passes.
 **Language parity: no impact on code**; the section now states the per-language
 verdict it was missing, which is the convention DEC-022 asks for.
 
+## Resolved: the blocker was BUG-064, and the run now proves the composition
+
+This PR was the case that exposed the docs-only composition defect: the required
+`test` check skipped the product build and the ticket-validation guard, which runs
+unconditionally by design, failed with "soldev is not built". BUG-064 fixed that
+by giving the unconditional guards their tooling without the conditional build.
+
+Re-run on this branch after BUG-064 landed (`test` job, run `36353084946`):
+
+```text
+  3  Install the CI guards' tooling: success
+  4  Docs-only change -- full suite deliberately not run: success
+ 11  Build: skipped                                   ← the product build, still conditional
+ 12  Tooling for the unconditional guards (BUG-064): success
+ 13  Install pinned kubectl (readiness-probe argument validation): success
+ 32  Pipeline ticket validation guard (BUG-060): success   ← previously the failure
+ 33  Unconditional guards can run (BUG-064): success       ← the composition, asserted in CI
+```
+
+The merge also took main's `AGENTS.md` comment-policy text and dropped this
+branch's clause recording the enforcement gap: `check_no_comments.sh` now covers
+dune files and Dockerfiles too, so the gap that clause described no longer exists.
+
