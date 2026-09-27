@@ -5,6 +5,7 @@
 - An audit of where the REFAC-104..130 rules had not reached filed REFAC-131..139 (#593): text-built manifests, ad-hoc JSON decoding, exceptions as control flow, spawns outside `Sol_cli_process`, library printing, per-tool error classifiers, `framework/` + soldev, the pinned `*-eio` libraries, and thin `cli/bin`.
 - **REFAC-131:** every manifest Sol writes is a `Sol_cli_yaml` value rendered by libyaml; a hostile `sol.toml` value that broke the old ConfigMap now round-trips exactly, and pluto's 37 documents parse to identical values before and after. `check_manifests_are_values.sh` holds it.
 - **REFAC-137:** `let*` is `Result.Syntax` repository-wide (framework, fixtures, examples, scaffold templates), held by `check_result_syntax.sh`; the framework reads settings through `Sol_runtime.setting` (trimmed, blank is unset); soldev returns results and exits once, and reads ticket frontmatter with the yaml library -- every ticket's frontmatter must now be valid YAML.
+- **REFAC-138:** the pinned `*-eio` libraries use `Result.Syntax`, and aws-eio returns malformed responses as errors in their own words; six library PRs merged and `support-refs.txt` bumped.
 - **REFAC-133:** no exceptions for control flow in the CLI: `Deploy_failed` and every `failwith`-on-`Error` are results; what may still raise is a named invariant in `check_no_exception_control_flow.sh`.
 
 ## Latest: INFRA-093 + INFRA-092 — GKE Standard is the supported GCP substrate (2026-09-26)

@@ -159,9 +159,33 @@ let new_component kind ~label arg =
   let* domain, name = parse_domain_name arg in
   let suffix = component_suffix kind in
   let dir = Printf.sprintf "app/%s/%s_%s" domain name suffix in
+  (* FEAT-104: a generated workload declares its language, and Sol knows it
+     because it is writing the unit. Planning the manifest edit first means a
+     sol.yml that cannot record the declaration refuses before any file is
+     created; committing it last means the declaration only lands once the
+     workload it describes is on disk. *)
+  let* root =
+    Sol_cli_workspace.resolve_validated ~dir:(Sys.getcwd ())
+    |> Result.map_error Sol_cli_workspace.workspace_error_to_string
+  in
+  (* The manifest keys a service by the name discovery reports, which is the
+     unit directory's basename (`charge_svc` for `sol new svc payments/charge`),
+     not the argument the user typed. *)
+  let unit_name = Filename.basename dir in
+  let* declaration =
+    Sol_cli_sol_yml.plan ~root ~name:unit_name ~dir ~language:Sol_cli_compat.Ocaml
+  in
   Printf.printf "\nScaffolding %s %s/%s_%s ...\n\n" label domain name suffix;
   let vars = component_vars kind ~ws ~domain ~name in
   let* _ = copy ~kind:suffix ~dest:dir ~vars:(fun _ -> vars) ~rule:always_write in
+  let* outcome = Sol_cli_sol_yml.commit declaration in
+  (match outcome with
+   | Sol_cli_sol_yml.Declared ->
+     Printf.printf "  sol.yml: added %s, declared language: ocaml\n" unit_name
+   | Sol_cli_sol_yml.Language_added ->
+     Printf.printf "  sol.yml: declared language: ocaml for %s\n" unit_name
+   | Sol_cli_sol_yml.Already_declared ->
+     Printf.printf "  sol.yml: %s already declares language: ocaml\n" unit_name);
   Ok dir
 ;;
 

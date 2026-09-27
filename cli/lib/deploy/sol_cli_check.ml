@@ -41,10 +41,26 @@ let unexpected_finding ((_domain, _name, dir) : Sol_cli_manifest.unexpected) =
 
 (* The workload's own files. [paths] stay workspace-root relative, which is what
    the command's cwd has been since [Sol_cli_workspace.enter_cwd]. *)
-let check_workload (workload : Sol_cli_workspace_model.workload) =
+let check_workload ~manifest (workload : Sol_cli_workspace_model.workload) =
   let svc = workload.Sol_cli_workspace_model.service in
   let findings = ref [] in
   let add severity path message = findings := { severity; path; message } :: !findings in
+  (* FEAT-104: every workload has a declared language, and Sol never guesses one.
+     A workload without one is a warning rather than an error -- the workspace
+     still loads, and a command that needs a language (the local dev loop)
+     refuses it itself -- and the line to add is named, so the fix is one copy
+     away. *)
+  (match workload.Sol_cli_workspace_model.language with
+   | Some _ -> ()
+   | None ->
+     add
+       Severity.Warning
+       manifest
+       (Printf.sprintf
+          "%s declares no language; add `language: ocaml` (or typescript) under \
+           services.%s in sol.yml"
+          svc.Sol_cli_manifest.name
+          svc.Sol_cli_manifest.name));
   let dockerfile = Filename.concat svc.Sol_cli_manifest.dir "Dockerfile" in
   if not workload.has_dockerfile
   then add Severity.Error dockerfile "Dockerfile is missing";
@@ -86,7 +102,7 @@ let run_services ~facts services =
   facts.Sol_cli_workspace_model.workloads
   |> List.filter (fun (w : Sol_cli_workspace_model.workload) ->
     List.exists (fun svc -> same_unit svc w.Sol_cli_workspace_model.service) services)
-  |> List.concat_map check_workload
+  |> List.concat_map (check_workload ~manifest:"sol.yml")
 ;;
 
 (* The whole-workspace check: report unexpected directories as warnings, and fail
@@ -103,7 +119,9 @@ let run ~facts =
     ]
   | Some _ ->
     let warnings = List.map unexpected_finding facts.unexpected in
-    let workload_findings = List.concat_map check_workload facts.workloads in
+    let workload_findings =
+      List.concat_map (check_workload ~manifest:"sol.yml") facts.workloads
+    in
     (match facts.workloads with
      | [] ->
        warnings
