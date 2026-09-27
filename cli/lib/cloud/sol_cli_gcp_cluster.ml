@@ -299,17 +299,37 @@ let credentials ~operation ~leaves_target_standing : (unit, string) result =
 (* INFRA-090: the project the cloud root published, so the quota is read from the project Sol
    actually deployed into rather than from whatever gcloud happens to have active. A missing
    field is an error: an unknown project is not a project with room. *)
+(* INFRA-091 / FND-0063: the contract Sol consumes is `terraform output -json`, and every entry
+   it publishes is an object carrying the value under `value`, beside Terraform's own `type` and
+   `sensitive` fields:
+
+     {"project_id": {"sensitive": false, "type": "string", "value": "sol-qualification"}}
+
+   Attempt 13 read a bare string or a single-field [{"value": ...}] object -- neither of which
+   Terraform emits -- so it refused every real run while its own test, fed the same invented shape,
+   agreed with it. This parser is deliberately narrow rather than permissive: it accepts exactly
+   that object, and anything else is an error, because the alternative to refusing is comparing a
+   quota against a project nobody named. *)
+(* INFRA-091 / FND-0063: `terraform output -json` publishes every output as a record carrying
+   the value under `value`, beside Terraform's own `type` and `sensitive` fields:
+
+     {"project_id": {"sensitive": false, "type": "string", "value": "sol-qualification"}}
+
+   Attempt 13 read a bare string or a single-field [{"value": ...}] object instead -- neither of
+   which Terraform emits -- so it refused every real run, while its own test, fed the same invented
+   shape, agreed with it. Sol already has the reader for this contract, and has had it all along:
+   [Sol_cli_cluster.outputs_reader] unwraps `value`, tolerates an absent *optional* output as a
+   null, and fails closed with a named error for an absent or non-string required one. It is what
+   the cluster readers use, and what Qualification Attempts 11 and 12 went through to reach Ready,
+   so the fix is to consume it rather than keep a second, private idea of Terraform's output shape.
+
+   Reading it through this module also keeps the error a *provider* error, naming GCP, which is
+   what an operator sees when the cloud root's outputs are not what they should be. *)
 let project_id_of_outputs_json text : (string, string) result =
-  let open Yojson.Safe.Util in
-  match Yojson.Safe.from_string text with
+  match Sol_cli_cluster.outputs_reader ~provider:"GCP" text with
   | exception Yojson.Json_error message ->
     Error (Printf.sprintf "invalid outputs JSON: %s" message)
-  | json ->
-    (match json |> member "project_id" with
-     | `String value when String.trim value <> "" -> Ok (String.trim value)
-     | `Assoc [ ("value", `String value) ] when String.trim value <> "" ->
-       Ok (String.trim value)
-     | _ -> Error "the cloud root published no project_id")
+  | _raw, string, _optional_string -> string "project_id"
 ;;
 
 (* INFRA-090: the region's own disk-quota reading, for the lifecycle check that runs after the

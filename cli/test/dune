@@ -244,3 +244,10 @@
  (action
   (bash
    "set -u\nif found=$(grep -rnF --include='*.ml' 'let ( let* ) = Result.bind' ../bin ../lib | grep -v 'sol_cli_scaffold_templates.ml'); then\n  echo \"hand-written let*; use Result.Syntax instead:\" >&2; echo \"$found\" >&2; exit 1\nfi")))
+; INFRA-091: the parser test reads the payload Terraform produced, so the fixture is a declared
+; dependency and lands beside the executable.
+
+(test
+ (name test_gcp_outputs)
+ (libraries sol_cli alcotest yojson)
+ (deps fixtures/terraform-output-gcp-cloud.json))
