@@ -18,8 +18,13 @@ then
   exit 1
 fi
 
-if grep -Eq 'Sol_cli_docker\.(build|push)' "$root/cli/bin/cmd_deploy.ml"; then
-  echo "cmd_deploy.ml (deployer) must not call Sol_cli_docker.build/push -- it may" \
+# The deployer is `sol deploy` and the modules REFAC-139 moved its decisions into.
+if grep -Eq 'Sol_cli_docker\.(build|push)' "$root/cli/bin/cmd_deploy.ml" \
+  "$root/cli/lib/deploy/sol_cli_deploy_selection.ml" \
+  "$root/cli/lib/deploy/sol_cli_deploy_run.ml"
+then
+  echo "the deployer (cmd_deploy.ml, sol_cli_deploy_{selection,run}.ml) must not call" \
+    "Sol_cli_docker.build/push -- it may" \
     "only inspect/resolve a digest via manifest_exists/inspect_digest" >&2
   exit 1
 fi

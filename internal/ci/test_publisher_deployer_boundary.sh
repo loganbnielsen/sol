@@ -9,7 +9,8 @@ guard="$root/internal/ci/check_publisher_deployer_boundary.sh"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-mkdir -p "$tmp/cli/bin"
+mkdir -p "$tmp/cli/bin" "$tmp/cli/lib/deploy"
+cp "$root"/cli/lib/deploy/sol_cli_deploy_{selection,run}.ml "$tmp/cli/lib/deploy/"
 cp "$root/cli/bin/cmd_deploy.ml" "$root/cli/bin/cmd_cloud.ml" \
   "$root/cli/bin/cmd_cloud_tf.ml" "$tmp/cli/bin/"
 
@@ -26,5 +27,12 @@ cp "$root/cli/bin/cmd_deploy.ml" "$tmp/cli/bin/cmd_deploy.ml"
 printf '\nlet _ = Sol_cli_docker.build\n' >>"$tmp/cli/bin/cmd_cloud_tf.ml"
 if "$guard" "$tmp" >/dev/null 2>&1; then
   echo "guard accepted a provisioner (cmd_cloud_tf.ml) that can build images" >&2
+  exit 1
+fi
+
+# The same, from the deployer's library.
+printf '\nlet _ = Sol_cli_docker.push\n' >>"$tmp/cli/lib/deploy/sol_cli_deploy_run.ml"
+if "$guard" "$tmp" >/dev/null 2>&1; then
+  echo "guard accepted a deployer library (sol_cli_deploy_run.ml) that can push images" >&2
   exit 1
 fi
