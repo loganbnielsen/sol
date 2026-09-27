@@ -7,6 +7,13 @@ source: GCP qualification Attempt 13 (2026-09-26), revision d44c85d6
 
 # The GCP disk-quota check cannot read the project from Terraform's outputs
 
+**State:** `FIXED_UNQUALIFIED` — fixed 2026-09-26 in `INFRA-091`. `project_id_of_outputs_json` now
+reads the project through `Sol_cli_cluster.outputs_reader`, the reader Sol already uses for every
+output (and the one Attempts 11 and 12 went through to reach `Ready`), with the captured payload as
+the regression fixture, the lifecycle harness rendering that same payload, and a guard plus six
+mutations holding the three consumers to it. **Not qualified:** no live run has yet crossed the
+fixed parser; the next GCP attempt is the discriminator.
+
 **Depends on:** None.
 
 Found live by qualification Attempt 13, minutes after `INFRA-090` merged: the run stopped at the new
