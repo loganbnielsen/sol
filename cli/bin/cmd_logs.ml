@@ -7,13 +7,12 @@ open Result.Syntax
    whole-workspace request does not project into "one pod's logs"; rather than
    silently narrowing it, this command refuses and points at [sol open logs],
    whose addressing model does support those scopes (FEAT-065's invariant). *)
-let resolve_unit ~scope =
-  let* services =
-    Sol_cli_manifest.discover_services ()
-    |> Sol_cli_exit.of_error Sol_cli_manifest.discover_error_to_string
-  in
+let resolve_unit ~facts ~scope =
   let* selected =
-    Sol_cli_workload_selection.resolve ~what:"--scope" (Some scope) services
+    Sol_cli_workload_selection.resolve
+      ~what:"--scope"
+      (Some scope)
+      (Sol_cli_workspace_model.services facts)
     |> Sol_cli_exit.of_msg
   in
   match selected.request, selected.services with
@@ -149,8 +148,9 @@ let backend_and_base_domain ~target (observability : observability_options) =
 
 let run_unit ~ctx ~target (options : log_options) scope =
   let { follow; tail; observability; _ } = options in
-  let* { name = workspace; _ } = Sol_cli_workspace.enter_cwd () in
-  let* svc = resolve_unit ~scope in
+  let* { root; name = workspace } = Sol_cli_workspace.enter_cwd () in
+  let* facts = Sol_cli_workspace_model.load ~root |> Sol_cli_exit.of_msg in
+  let* svc = resolve_unit ~facts ~scope in
   let name = svc.name in
   let primitive = svc.primitive in
   let* ns, k8s_name = unit_names ~workspace svc in
@@ -255,13 +255,16 @@ let release_unknown ~release_id ~target records =
 
 let run_release ~ctx ~target (options : log_options) release =
   let { tail; observability; _ } = options in
-  let* { name = workspace; _ } = Sol_cli_workspace.enter_cwd () in
+  let* { root; name = workspace } = Sol_cli_workspace.enter_cwd () in
   let target_name = Option.value target ~default:"local" in
   let* scope =
     match options.scope with
     | None -> Ok None
     | Some scope ->
-      let* svc = resolve_unit ~scope in
+      (* The workspace is read only when a scope has to be resolved: a
+         workspace-wide release read needs no inventory. *)
+      let* facts = Sol_cli_workspace_model.load ~root |> Sol_cli_exit.of_msg in
+      let* svc = resolve_unit ~facts ~scope in
       let* names = unit_names ~workspace svc in
       Ok (Some names)
   in

@@ -241,12 +241,9 @@ let operator_binding_docs ~workspace (services : Sol_cli_manifest.service list)
   |> List.map (fun ns -> Sol_cli_manifest.operator_role_binding_doc ~ns)
 ;;
 
-let reconcile_operator_bindings ~ctx ~workspace : (unit, string) result =
-  let open Result.Syntax in
-  let* services =
-    Sol_cli_manifest.discover_services ()
-    |> Result.map_error Sol_cli_manifest.discover_error_to_string
-  in
+(* REFAC-130: the inventory comes from the workspace the caller already read,
+   rather than discovering it a second time inside this step. *)
+let reconcile_operator_bindings ~ctx ~workspace ~services : (unit, string) result =
   let namespaces =
     services
     |> List.filter_map (fun s ->

@@ -816,12 +816,10 @@ let dev_run workspace_dir scope =
     | Some d -> d
     | None -> "."
   in
-  (* Change to workspace dir if given explicitly so discover_services works *)
+  (* Change to workspace dir if given explicitly so the workspace resolves *)
   workspace_dir |> Option.iter Unix.chdir;
-  let* inventory =
-    Sol_cli_manifest.discover_services ()
-    |> Sol_cli_exit.of_error Sol_cli_manifest.discover_error_to_string
-  in
+  let* facts = Sol_cli_workspace_model.load_cwd () |> Sol_cli_exit.of_msg in
+  let inventory = Sol_cli_workspace_model.services facts in
   let* { services; _ } =
     Sol_cli_workload_selection.resolve_nonempty
       ~none:

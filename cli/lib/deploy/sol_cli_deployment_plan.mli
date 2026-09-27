@@ -129,27 +129,6 @@ type plan_error =
       ; message : string
       }
 
-(** Scan [events/] subdirectories for [sol.toml] files with topic arrays.
-    Returns [Ok] validated {!Sol_cli_plan_ids.Topic_name.t} values, sorted and
-    deduplicated. Invalid names are skipped with a warning. Returns [Ok []] when
-    the [events/] directory does not exist. [Error] when an event [sol.toml] is
-    malformed or has an unknown key (BUG-042); a missing one declares no topics. *)
-val discover_topics
-  :  unit
-  -> (Sol_cli_plan_ids.Topic_name.t list, Sol_cli_toml.parse_error) result
-
-(** Scan [db/migrations/*.sql] in the current directory and return validated
-    {!Sol_cli_plan_ids.Migration_file.t} values, sorted by filename. Returns
-    [[]] when [db/migrations/] does not exist. *)
-val discover_migrations : unit -> Sol_cli_plan_ids.Migration_file.t list
-
-(** Scan [events/<domain>/*.ml] for event contract files and derive schema
-    subject names as ["<domain>.<EventName>"]. Top-level [events/<event>.ml]
-    files are returned without a domain prefix. Returns validated
-    {!Sol_cli_plan_ids.Schema_subject.t} values, sorted and deduplicated.
-    Returns [[]] when the [events/] directory does not exist. *)
-val discover_schema_subjects : unit -> Sol_cli_plan_ids.Schema_subject.t list
-
 (** [derive_consumer_groups ~resolved_config workspace services] returns validated
     {!Sol_cli_plan_ids.Consumer_group.t} values for [Worker] entries that
     declare use of a Kafka resource, sorted and deduplicated. Convention:
@@ -238,6 +217,7 @@ val image_ref
 val of_services
   :  workspace:string
   -> env:env_config
+  -> facts:Sol_cli_workspace_model.t
   -> ?requested_scope:string
   -> ?resolved_config:Sol_cli_config.t
   -> Sol_cli_manifest.service list
@@ -246,6 +226,13 @@ val of_services
 (** Build a deployment plan from a discovered service list and an environment
     config. Returns a typed error when a Kubernetes artifact name is invalid or
     a service [sol.toml] cannot be parsed or validated.
+
+    REFAC-130: [facts] is the workspace the command already read once. Its
+    workspace-level inputs -- topics, migrations, schema subjects -- and each
+    unit's [sol.toml] come from there, so building a plan reads no workspace
+    file the command has not already read. A unit that is not part of [facts]
+    (a synthetic list, a hosted-mode caller) falls back to reading its own
+    [sol.toml].
 
     [requested_scope] records what the user asked for (default ["workspace"]),
     alongside the resolved [services] (FEAT-065).
@@ -263,6 +250,7 @@ val of_services
 val of_services_result
   :  workspace:string
   -> env:env_config
+  -> facts:Sol_cli_workspace_model.t
   -> ?requested_scope:string
   -> ?resolved_config:Sol_cli_config.t
   -> ?image_refs:(string * string) list

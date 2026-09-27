@@ -19,6 +19,7 @@ val local_plan
   :  requested_scope:string
   -> workspace:string
   -> sha:string
+  -> facts:Sol_cli_workspace_model.t
   -> Sol_cli_manifest.service list
   -> (Sol_cli_deployment_plan.t, Sol_cli_deployment_plan.plan_error) result
 
@@ -57,7 +58,13 @@ val wait_for_service_rollout
   -> service_execution
   -> (unit, string) result
 
-val post_deploy_summary : cwd:string -> Sol_cli_deployment_plan.t -> post_deploy_summary
+(** REFAC-130: the pending-migration count is a projection of the workspace the
+    command already read ([Sol_cli_workspace_model.count_unapplied_migrations]),
+    not a second walk of [db/migrations]. *)
+val post_deploy_summary
+  :  facts:Sol_cli_workspace_model.t
+  -> Sol_cli_deployment_plan.t
+  -> post_deploy_summary
 
 val record_applied
   :  ctx:Sol_cli_kube_destination.context

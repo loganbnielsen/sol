@@ -26,13 +26,18 @@ type finding =
 
 val finding_to_string : finding -> string
 
-(** Check the whole workspace: scan it, warn about unexpected directories, and
-    error when no deployable workload exists. *)
-val run : unit -> finding list
+(** Check the whole workspace: warn about unexpected directories, and error when
+    there is no workload directory at all. Reads nothing: the findings are a
+    projection of [facts] (REFAC-130). *)
+val run : facts:Sol_cli_workspace_model.t -> finding list
 
-(** Check exactly the given workloads, without rescanning the workspace. Commands
-    that resolved a [--scope] pass the resolved set here so the contract check
-    covers the same set they are about to mutate. *)
-val run_services : Sol_cli_manifest.service list -> finding list
+(** Check exactly the given workloads. Commands that resolved a [--scope] pass
+    the resolved set here so the contract check covers the same set they are
+    about to mutate; the set is a selection out of [facts], so this filters the
+    model rather than reading the workspace again. *)
+val run_services
+  :  facts:Sol_cli_workspace_model.t
+  -> Sol_cli_manifest.service list
+  -> finding list
 
 val has_errors : finding list -> bool

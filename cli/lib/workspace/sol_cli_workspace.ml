@@ -175,19 +175,3 @@ let enter_cwd () =
   | Ok root -> Ok { root; name = workspace_name ~root }
   | Error e -> Error (Sol_cli_exit.failure ("sol: " ^ workspace_error_to_string e))
 ;;
-
-(** Count .sql files in [dir]/db/migrations. Returns 0 if the directory does not
-    exist. Used by [sol up] to warn users about unapplied migrations. *)
-let pending_migration_count ~dir =
-  let mig_dir = Filename.concat dir "db/migrations" in
-  if Sys.file_exists mig_dir && Sys.is_directory mig_dir
-  then
-    Array.fold_left
-      (fun acc f ->
-         if Filename.check_suffix f ".sql" && not (Filename.check_suffix f ".down.sql")
-         then acc + 1
-         else acc)
-      0
-      (Sys.readdir mig_dir)
-  else 0
-;;

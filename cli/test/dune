@@ -76,7 +76,8 @@
   test_destroy_verification
   test_terraform_plan
   test_substrate
-  test_migration)
+  test_migration
+  test_workspace_model)
  (libraries sol_cli sol_cli_test_support alcotest unix yojson str))
 
 (executable

@@ -461,10 +461,6 @@ let pp_summary fmt t =
       (String.concat ", " (List.map Sol_cli_plan_ids.Consumer_group.to_string cgs))
 ;;
 
-let discover_schema_subjects = Sol_cli_workspace_scan.discover_schema_subjects
-let discover_topics = Sol_cli_workspace_scan.discover_topics
-let discover_migrations = Sol_cli_workspace_scan.discover_migrations
-
 let resource_name_of_ref ref =
   match String.split_on_char '/' ref |> List.filter (( <> ) "") |> List.rev with
   | name :: _ -> Some name
@@ -771,6 +767,7 @@ let profile_claim ~resolved_config ~services ~topics ~migrations ~whole_workspac
 let of_services_result
       ~workspace
       ~env
+      ~facts
       ?(requested_scope = "workspace")
       ?resolved_config
       ?(image_refs = [])
@@ -786,7 +783,11 @@ let of_services_result
      the inventory is an error, not an empty URL.
 
      [inventory] defaults to [services], which leaves every existing caller (and
-     test) on the previous behaviour until it passes the discovered set. *)
+     test) on the previous behaviour until it passes the discovered set.
+
+     REFAC-130: [facts] is the workspace the command already read. The plan takes
+     its workspace-level inputs (topics, migrations, schema subjects) and each
+     unit's [sol.toml] from it rather than reading the disk again. *)
   let resolution_units =
     match inventory with
     | None -> services
@@ -808,12 +809,27 @@ let of_services_result
   let loaded =
     resolution_units
     |> List.map (fun svc ->
-      (* DEC-024: [svc.dir] is workspace-root relative; join it to the
-            resolved root so this read is correct even when the command was
-            invoked from a descendant directory (and `sol deploy` keeps the
-            invocation cwd for relative --emit-to paths). *)
-      Sol_cli_toml.load_result
-        (Sol_cli_workspace.at_root (Filename.concat svc.Sol_cli_manifest.dir "sol.toml"))
+      (* REFAC-130: a unit this workspace contains already carries its parsed
+            [sol.toml] on the model, so the workspace is read once. A unit the
+            caller supplied that is *not* part of this workspace -- a synthetic
+            list, a hosted-mode caller assembling one -- has no model entry and
+            is read here, through [at_root] so the read is correct even when the
+            command was invoked from a descendant directory (DEC-024). *)
+      let config =
+        match
+          List.find_opt
+            (fun (w : Sol_cli_workspace_model.workload) ->
+               String.equal w.service.Sol_cli_manifest.domain svc.Sol_cli_manifest.domain
+               && String.equal w.service.Sol_cli_manifest.name svc.Sol_cli_manifest.name)
+            facts.Sol_cli_workspace_model.workloads
+        with
+        | Some w -> w.config
+        | None ->
+          Sol_cli_toml.load_result
+            (Sol_cli_workspace.at_root
+               (Filename.concat svc.Sol_cli_manifest.dir "sol.toml"))
+      in
+      config
       |> Result.map_error (fun err -> Toml_error err)
       |> Result.map (fun toml -> svc, toml))
   in
@@ -1044,9 +1060,9 @@ let of_services_result
       ; workloads = List.map release_workload_of_spec resolved_services
       }
   in
-  let* topics = discover_topics () |> Result.map_error (fun err -> Toml_error err) in
-  let migrations = discover_migrations () in
-  let schema_subjects = discover_schema_subjects () in
+  let topics = facts.Sol_cli_workspace_model.topics in
+  let migrations = Sol_cli_workspace_model.migration_files facts in
+  let schema_subjects = facts.schema_subjects in
   Ok
     { workspace
     ; release_id
@@ -1073,8 +1089,10 @@ let of_services_result
     }
 ;;
 
-let of_services ~workspace ~env ?requested_scope ?resolved_config services =
-  match of_services_result ~workspace ~env ?requested_scope ?resolved_config services with
+let of_services ~workspace ~env ~facts ?requested_scope ?resolved_config services =
+  match
+    of_services_result ~workspace ~env ~facts ?requested_scope ?resolved_config services
+  with
   | Ok plan -> plan
   | Error err -> failwith (plan_error_to_string err)
 ;;

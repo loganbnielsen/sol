@@ -1,4 +1,20 @@
-(* Fold over entries in [dir]. Absence yields [init] quietly — a workspace with
+(* The workspace's non-workload facts: topics, schema subjects and migrations.
+
+   REFAC-130: each reader takes the workspace [root] it reads under, so
+   [Sol_cli_workspace_model.load] can read a workspace that is not the current
+   directory -- and so a caller that only has a root (a fixture under test) need
+   not chdir the process. Without [~root] the readers keep their original
+   behaviour: paths are cwd relative and spelled exactly as before, so existing
+   callers and diagnostics are unchanged.
+
+   These scans and [Sol_cli_manifest.scan_workspace] are the only readers of
+   their respective facts; [Sol_cli_workspace_model] is their only caller. *)
+
+(* The path of [path] inside [root]. [root = ""] is the current directory, and
+   keeps the legacy spelling ("events/sol.toml", not "./events/sol.toml"). *)
+let in_root root path = if root = "" then path else Filename.concat root path
+
+(* Fold over entries in [dir]. Absence yields [init] quietly -- a workspace with
    no [events/] simply has no topics. A directory that *exists but cannot be
    read* is different, and is reported rather than silently producing "no
    facts": the traversal no longer decides that policy, so it is stated here. *)
@@ -24,13 +40,14 @@ let filter_validated ~kind of_string strings =
       None)
 ;;
 
-(** Scan [events/<domain>/] subdirectories for [*.ml] files and derive schema
-    subject names as ["<domain>.<EventName>"]. Also handles top-level
-    [events/<event>.ml] files (no domain prefix). Returns a sorted, deduplicated
-    list. *)
-let discover_schema_subjects () =
+(** Scan [root/events/<domain>/] subdirectories for [*.ml] files and derive
+    schema subject names as ["<domain>.<EventName>"]. Also handles top-level
+    [root/events/<event>.ml] files (no domain prefix). Returns a sorted,
+    deduplicated list. *)
+let discover_schema_subjects ?root () =
+  let root = Option.value root ~default:"" in
   let subjects =
-    fold_dir "events" ~init:[] ~f:(fun acc entry path ->
+    fold_dir (in_root root "events") ~init:[] ~f:(fun acc entry path ->
       if entry.[0] = '.'
       then acc
       else if Sys.is_directory path
@@ -50,7 +67,8 @@ let discover_schema_subjects () =
 ;;
 
 (** Derive consumer group identifiers for worker identities. Convention:
-    ["<workspace>.<domain>.<worker_name>"]. *)
+    ["<workspace>.<domain>.<worker_name>"]. Not a filesystem read: it names the
+    groups a plan's already-resolved workers share. *)
 let derive_consumer_groups workspace workers =
   let strings =
     List.map
@@ -73,13 +91,15 @@ let topics_of_toml path =
 ;;
 
 (** Discover topics from [sol.toml]'s [[service] topics = [...]] array in
-    [events/] subdirectories and [events/sol.toml]; sorted, deduplicated. Never
-    scans [*.ml] source, to avoid false positives from string literals. *)
-let discover_topics () =
+    [root/events/] subdirectories and [root/events/sol.toml]; sorted,
+    deduplicated. Never scans [*.ml] source, to avoid false positives from string
+    literals. *)
+let discover_topics ?root () =
+  let root = Option.value root ~default:"" in
   let open Result.Syntax in
-  let* top_level = topics_of_toml "events/sol.toml" in
+  let* top_level = topics_of_toml (in_root root "events/sol.toml") in
   let* sub_topics =
-    fold_dir "events" ~init:(Ok []) ~f:(fun acc entry path ->
+    fold_dir (in_root root "events") ~init:(Ok []) ~f:(fun acc entry path ->
       let* acc = acc in
       if entry.[0] = '.'
       then Ok acc
@@ -93,10 +113,11 @@ let discover_topics () =
   Ok (filter_validated ~kind:"topic name" Sol_cli_plan_ids.Topic_name.of_string sorted)
 ;;
 
-(** Scan [db/migrations/] for SQL files, sorted by filename. *)
-let discover_migrations () =
+(** Scan [root/db/migrations/] for SQL files, sorted by filename. *)
+let discover_migrations ?root () =
+  let root = Option.value root ~default:"" in
   let files =
-    fold_dir "db/migrations" ~init:[] ~f:(fun acc f _path ->
+    fold_dir (in_root root "db/migrations") ~init:[] ~f:(fun acc f _path ->
       if Filename.check_suffix f ".sql" then f :: acc else acc)
   in
   let sorted = List.sort String.compare files in

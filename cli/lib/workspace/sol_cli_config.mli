@@ -103,12 +103,21 @@ val target_declared : target -> bool
     [<root>/sol/environments.yml (<env>.targets.<provider>/<region>)]. *)
 val target_source : target -> string
 
-(** Every declared target, as [<env>/<provider>/<region>], sorted. *)
-val discover_target_paths : unit -> (string list, error) result
+(** Every declared target, as [<env>/<provider>/<region>], sorted. [~root]
+    names the workspace to read; without it the root is resolved from the
+    current directory. *)
+val discover_target_paths : ?root:string -> unit -> (string list, error) result
 
 val resources : t -> resource list
 val services : t -> service list
 val format_use_ref : string -> string
+
+(** The services [sol.yml] itself declares, read without resolving an
+    environment or a target, together with the language each one declares
+    (FEAT-088). This is what [Sol_cli_workspace_model] uses to attach a
+    declared language to each discovered workload; a malformed [sol.yml] is an
+    error naming it. *)
+val sol_yml_services : root:string -> (service list, error) result
 
 (** [is_omitted_service cfg ~name] is [true] when this target declares a service
     with that name and [omit: true] (DEC-041).
@@ -125,11 +134,6 @@ val is_omitted_service : t -> name:string -> bool
     where provider-native configuration lives: the AWS state-locking table and the
     AUDIT-072 / DEC-034 role ARNs, and the GCP provisioner impersonator. *)
 val provider_field : target -> string -> string option
-
-(** The workspace's ECR repositories as a Terraform list literal, derived from
-    every service under [app/]; ["[]"] when the workspace has no [app/]. A
-    discovery failure is an error, never "no repositories" (INFRA-074). *)
-val ecr_repositories_var : unit -> (string, string) result
 
 (** Merges a target's profile-derived Terraform vars (e.g. [rds_multi_az],
     [rds_deletion_protection]) with the caller's own `-var`/var-file values,

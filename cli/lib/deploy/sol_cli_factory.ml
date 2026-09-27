@@ -20,6 +20,7 @@ type execution =
 let plan_of_services
       ~workspace
       ~env
+      ~facts
       ?requested_scope
       ?resolved_config
       ?image_refs
@@ -29,6 +30,7 @@ let plan_of_services
   Sol_cli_deployment_plan.of_services_result
     ~workspace
     ~env
+    ~facts
     ?requested_scope
     ?resolved_config
     ?image_refs
@@ -58,11 +60,12 @@ type request =
   ; resolved_config : Sol_cli_config.t option
   }
 
-let run execution ~(request : request) ~mode services =
+let run execution ~(request : request) ~mode ~facts services =
   match
     plan_of_services
       ~workspace:execution.Sol_cli_execution.workspace
       ~env:request.env
+      ~facts
       ?requested_scope:request.requested_scope
       ?resolved_config:request.resolved_config
       services

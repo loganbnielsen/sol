@@ -17,14 +17,10 @@ open Result.Syntax
    never produce a namespace target -- but the command owns that derivation.
    A [--domain] that matches no workload fails closed and names the domains that
    exist, rather than silently touching no namespace. *)
-let discover_namespaces ~domain =
+let discover_namespaces ~facts ~domain =
   let workspace = workspace_name () in
-  let* services =
-    Sol_cli_manifest.discover_services ()
-    |> Sol_cli_exit.of_error Sol_cli_manifest.discover_error_to_string
-  in
   let domains =
-    services
+    Sol_cli_workspace_model.services facts
     |> List.map (fun (s : Sol_cli_manifest.service) -> s.domain)
     |> List.sort_uniq compare
   in
@@ -59,24 +55,31 @@ let print_result result =
   Ok ()
 ;;
 
+(* REFAC-130: [sol secret] keeps the invocation cwd (it addresses namespaces,
+   not paths), so the workspace is resolved rather than entered. *)
+let load_facts () = Sol_cli_workspace_model.load_cwd () |> Sol_cli_exit.of_msg
+
 let run_set ~ctx env value key domain =
   let value =
     match value with
     | Some v -> v
     | None -> read_stdin ()
   in
-  let* namespaces = discover_namespaces ~domain in
+  let* facts = load_facts () in
+  let* namespaces = discover_namespaces ~facts ~domain in
   Sol_cli_secret.set ~ctx ~env ~workspace:(workspace_name ()) ~namespaces ~key ~value
   |> print_result
 ;;
 
 let run_list ~ctx env domain =
-  let* namespaces = discover_namespaces ~domain in
+  let* facts = load_facts () in
+  let* namespaces = discover_namespaces ~facts ~domain in
   Sol_cli_secret.list ~ctx ~env ~workspace:(workspace_name ()) ~namespaces |> print_result
 ;;
 
 let run_delete ~ctx env key domain =
-  let* namespaces = discover_namespaces ~domain in
+  let* facts = load_facts () in
+  let* namespaces = discover_namespaces ~facts ~domain in
   Sol_cli_secret.delete ~ctx ~env ~workspace:(workspace_name ()) ~namespaces ~key
   |> print_result
 ;;

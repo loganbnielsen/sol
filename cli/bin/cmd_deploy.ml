@@ -56,8 +56,8 @@ let print_service_urls names =
   names |> List.iter (Printf.printf "  →  http://localhost:8080  (%s)\n%!")
 ;;
 
-let check_contract ~services =
-  let findings = Sol_cli_check.run_services services in
+let check_contract ~facts ~services =
+  let findings = Sol_cli_check.run_services ~facts services in
   findings
   |> List.iter (fun f -> Printf.eprintf "%s\n" (Sol_cli_check.finding_to_string f));
   if Sol_cli_check.has_errors findings then Error (Sol_cli_exit.reported ()) else Ok ()
@@ -89,8 +89,8 @@ let check_consumer_group_changes ~ctx ~workspace ~confirm_group_change plan =
   | Error msg -> Error (Sol_cli_exit.failure msg)
 ;;
 
-let check_apply_environment ~services =
-  let* () = check_contract ~services in
+let check_apply_environment ~facts ~services =
+  let* () = check_contract ~facts ~services in
   ensure_postgres_url ()
 ;;
 
@@ -120,6 +120,10 @@ type deploy_context =
   { execution : Sol_cli_execution.context
   ; sha : string
   ; registry : string
+  ; facts : Sol_cli_workspace_model.t
+    (** REFAC-130: the workspace, read once in [run]. Everything this deploy
+        needs about the workspace -- the inventory, each unit's [sol.toml], its
+        topics, migrations and schema subjects -- is a projection of it. *)
   ; secret_backend : Sol_cli_manifest.secret_backend
     (** INFRA-050: already resolved -- the operator's explicit choice, else the
           destination's default. Resolved once in [run], so every path (dry-run,
@@ -189,6 +193,7 @@ let build_plan ctx ~emit_to =
     Sol_cli_factory.plan_of_services
       ~workspace:ctx.execution.workspace
       ~env
+      ~facts:ctx.facts
       ~requested_scope:ctx.requested_scope
       ~resolved_config:ctx.resolved_config
       ~image_refs:ctx.image_refs
@@ -300,7 +305,14 @@ let check_migration_prerequisite ~ctx ~plan ~live =
   match plan.Sol_cli_deployment_plan.profile with
   | None -> Ok ()
   | Some _ ->
-    let dir = Sol_cli_migration.default_dir in
+    (* REFAC-130: the workspace's migrations, at the workspace root -- not
+       "db/migrations" relative to whatever directory the deploy was invoked
+       from. [sol deploy] keeps the invocation cwd, so a cwd-relative read found
+       nothing from a descendant directory and the gate silently reported "no
+       migrations" for a workspace that has them. *)
+    let dir =
+      Filename.concat ctx.facts.Sol_cli_workspace_model.root Sol_cli_migration.default_dir
+    in
     if not live
     then (
       (* Side-effect free: report honestly instead of creating anything. *)
@@ -328,13 +340,15 @@ let check_migration_prerequisite ~ctx ~plan ~live =
       in
       Cmd_migrate.reconcile_operator_bindings_warn
         ~ctx:ctx.execution.cluster
-        ~workspace:ctx.execution.workspace;
+        ~workspace:ctx.execution.workspace
+        ~services:ctx.inventory;
       (match
          Cmd_migrate.verify_migration_prerequisite
            ~ctx:ctx.execution.cluster
            ~target:ctx.target_name
            ~workspace:ctx.execution.workspace
            ~dir
+           ~services:ctx.inventory
        with
        | Cmd_migrate.No_migrations -> Ok ()
        | Cmd_migrate.Satisfied applied ->
@@ -601,7 +615,7 @@ let execute_deployment_attempt ctx ~before_apply ~loki_push_url plan =
    command edge turns an [Error] into the exit, so nothing here needs [exit] (or
    the [at_exit] that used to compensate for it). *)
 let run_apply ctx ~confirm_group_change ~loki_push_url =
-  let* () = check_apply_environment ~services:ctx.services in
+  let* () = check_apply_environment ~facts:ctx.facts ~services:ctx.services in
   let* () = verify_image_refs_exist ~image_refs:ctx.image_refs in
   print_header ~workspace:ctx.execution.workspace ~sha:ctx.sha ();
   let* plan = build_plan ctx ~emit_to:None in
@@ -668,11 +682,14 @@ let run (req : Sol_cli_command_request.deploy_request) =
   (* DEC-036: discovery once, then two different things from it. [inventory] is
      everything that exists -- what a call reference may name. [services] is the
      selection -- what this invocation deploys. They are deliberately not the same
-     list, and the selection is never widened to close a call graph. *)
-  let* inventory =
-    Sol_cli_manifest.discover_services ()
-    |> Sol_cli_exit.of_error Sol_cli_manifest.discover_error_to_string
-  in
+     list, and the selection is never widened to close a call graph.
+
+     REFAC-130: that one read is the workspace model, loaded here at the
+     command's edge and threaded through as [ctx.facts]. [sol deploy] keeps the
+     invocation cwd (its [--emit-to] paths are relative to it), so the root is
+     resolved rather than assumed. *)
+  let* facts = Sol_cli_workspace_model.load_cwd () |> Sol_cli_exit.of_msg in
+  let inventory = Sol_cli_workspace_model.services facts in
   let* selected =
     Sol_cli_workload_selection.resolve_nonempty
       ~none:"no services found in app/ with a Dockerfile"
@@ -831,6 +848,7 @@ let run (req : Sol_cli_command_request.deploy_request) =
           ()
     ; sha
     ; registry
+    ; facts
     ; secret_backend
     ; emit_plan_to = req.emit_plan_to
     ; target_cfg

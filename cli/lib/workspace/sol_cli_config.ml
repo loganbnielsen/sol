@@ -687,6 +687,14 @@ let load path =
   else load_string ~path (In_channel.with_open_bin path In_channel.input_all)
 ;;
 
+(* REFAC-130: the sol.yml layer on its own, for callers that need a declaration
+   sol.yml makes without resolving an environment or a target. The workspace
+   model reads each workload's declared language this way. *)
+let sol_yml_services ~root =
+  let* layer = load (Filename.concat root "sol.yml") in
+  Ok layer.services
+;;
+
 let prefer a b =
   match b with
   | Some _ -> b
@@ -1229,8 +1237,11 @@ let discover_targets envs =
   |> List.sort String.compare
 ;;
 
-let discover_target_paths () =
-  let* envs = load_environments ~root:(workspace_root ()) in
+(* REFAC-130: [~root] names the workspace to read; without it the root is
+   resolved from the current directory, as every caller did before. *)
+let discover_target_paths ?root () =
+  let root = Option.value root ~default:(workspace_root ()) in
+  let* envs = load_environments ~root in
   Ok (discover_targets envs)
 ;;
 
@@ -1535,42 +1546,6 @@ let services (cfg : t) = List.filter (fun s -> not s.omit) cfg.services
    unit it reached by another route, to decide whether this target omits it. *)
 let is_omitted_service (cfg : t) ~name =
   List.exists (fun s -> s.omit && String.equal s.name name) cfg.services
-;;
-
-(* Every service in the workspace gets an ECR repository, regardless of
-   which target is currently being planned/applied -- a service omitted
-   from one target may still be deployed to another and needs its own
-   repository either way.
-
-   discover_services resolves the workspace boundary and exits the process
-   when there is none -- appropriate for the top-level CLI commands it was
-   written for, but terraform_vars must stay callable (e.g. from tests, or any
-   future caller) without a workspace in cwd, so this uses the result-returning
-   form and degrades to "no auto-detected repositories" instead of inheriting
-   that exit. *)
-let ecr_repositories_var () =
-  (* INFRA-074: a discovery failure is an error, never "no repositories". The
-     list drives [for_each] over repositories with [force_delete], so an empty
-     list is an instruction to delete every image the target holds. *)
-  match Sol_cli_manifest.discover_services () with
-  (* The workspace resolved and has no [app/]: an infra-first workspace with no
-     workloads yet, so no repositories. The plan guard in [cloud apply] still
-     refuses a plan that would delete existing ones. *)
-  | Error Sol_cli_manifest.Missing_app_dir -> Ok "[]"
-  | Error e ->
-    Error
-      ("cannot determine the workspace's ECR repositories: "
-       ^ Sol_cli_manifest.discover_error_to_string e)
-  | Ok services ->
-    Ok
-      (services
-       |> List.filter_map (fun s ->
-         match Sol_cli_kubernetes_name.k8s_name_of_source s.Sol_cli_manifest.name with
-         | Ok name -> Some (Sol_cli_kubernetes_name.k8s_name_to_string name)
-         | Error _ -> None)
-       |> List.map (Printf.sprintf "%S")
-       |> String.concat ","
-       |> Printf.sprintf "[%s]")
 ;;
 
 let vars_with_profile_precedence ~has_profile ~cli_vars ~config_vars =

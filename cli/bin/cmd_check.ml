@@ -12,22 +12,24 @@ let fail message = Sol_cli_exit.failure ~code:2 ("sol check: " ^ message)
    "maybe one, maybe the other" is exactly what made selection unpredictable.
    Resolving a scope needs discovery, because the kind of a unit comes from what
    is on disk rather than from what the user typed -- and it goes through the
-   same [Sol_cli_workload_selection] every other command uses (FEAT-065). *)
-let findings_for = function
-  | None -> Ok (Sol_cli_check.run ())
+   same [Sol_cli_workload_selection] every other command uses (FEAT-065).
+
+   REFAC-130: the workspace is read once, here at the command's edge, and both
+   the whole-workspace check and the scoped one are projections of it. *)
+let findings_for ~facts = function
+  | None -> Ok (Sol_cli_check.run ~facts)
   | Some requested ->
-    let* services =
-      Sol_cli_manifest.discover_services ()
-      |> Result.map_error (fun e -> fail (Sol_cli_manifest.discover_error_to_string e))
-    in
     let* selected =
-      Sol_cli_workload_selection.resolve ~what:"--scope" (Some requested) services
+      Sol_cli_workload_selection.resolve
+        ~what:"--scope"
+        (Some requested)
+        (Sol_cli_workspace_model.services facts)
       |> Result.map_error fail
     in
     (* Reading is allowed to find nothing: an empty workspace is an answer, not
        a failure. The mutating commands decide the opposite, which is why
        emptiness is reported by the resolver rather than judged by it. *)
-    Ok (Sol_cli_check.run_services selected.services)
+    Ok (Sol_cli_check.run_services ~facts selected.services)
 ;;
 
 let run scope =
@@ -35,8 +37,12 @@ let run scope =
      check` acts on the workspace from any descendant directory (discovery and
      the per-unit file checks are all workspace-root relative). The root is the
      cwd from here on; nothing below needs it by name. *)
-  let* _ = Sol_cli_workspace.enter_cwd () in
-  let* findings = findings_for scope in
+  let* workspace = Sol_cli_workspace.enter_cwd () in
+  let* facts =
+    Sol_cli_workspace_model.load ~root:workspace.Sol_cli_workspace.root
+    |> Sol_cli_exit.of_msg
+  in
+  let* findings = findings_for ~facts scope in
   findings
   |> List.iter (fun f -> Printf.eprintf "%s\n" (Sol_cli_check.finding_to_string f));
   if Sol_cli_check.has_errors findings
