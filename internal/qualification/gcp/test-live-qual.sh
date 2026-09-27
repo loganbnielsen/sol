@@ -303,8 +303,8 @@ case "$*" in
       x509)      printf 'error: x509: certificate signed by unknown authority\n' ;;
       discovery) printf 'error: no matches for kind "Certificate" in version "cert-manager.io/v1"\n' ;;
       dial)      printf 'error: context deadline exceeded: dial tcp 10.0.0.1:10250: i/o timeout\n' ;;
-      quota)     : ;;  # delivered through the events capture below, as the provider delivers it
-      warden)    : ;;  # ditto: an admission denial arrives in the apply log, not from kubectl
+      quota)     : ;;
+      warden)    : ;;
       *)         : ;;
     esac
     ;;
@@ -361,7 +361,7 @@ printf 'lifecycle phase: CloudBootstrap\n' >"$SOL_DATA/runs/cloud-apply-20260925
 printf 'root=platform/cloud/gcp/cluster\n' >"$SOL_DATA/runs/cloud-apply-20260925T000000Z-1234/meta"
 printf 'exited 0\n' >"$SOL_DATA/runs/cloud-apply-20260925T000000Z-1234/exit"
 
-run_case() { # run_case <name> <subcommand> [VAR=VALUE ...]
+run_case() {
   local name="$1" sub="$2"
   shift 2
   export ARGV_LOG="$TMP/$name.argv"
@@ -634,7 +634,7 @@ else
   no "a failed install still reads the provisioner bindings it had established" "the kubectl read" "none"
 fi
 
-probe_case() { # probe_case <name> <configured-endpoint> [VAR=VALUE ...]
+probe_case() {
   local name="$1" configured="$2"
   shift 2
   local kc="$TMP/kc-$name.yaml"
