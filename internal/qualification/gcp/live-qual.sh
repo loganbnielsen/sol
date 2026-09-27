@@ -115,6 +115,13 @@ BASE_DOMAIN="${BASE_DOMAIN:-qual-gcp.sol-fab.dev}"
 PHASE_TIMEOUT="${PHASE_TIMEOUT:-1200}"
 DELEGATION_WAIT_MINUTES="${DELEGATION_WAIT_MINUTES:-25}"
 LOG_DIR="${LOG_DIR:-/tmp/sol-gcp-qual-$(date +%Y%m%d-%H%M%S)}"
+# Every Kubernetes observation this harness makes targets THIS run's cluster, by construction: the
+# harness owns a kubeconfig for the run and exports it, so nothing depends on the operator's ambient
+# file, on which context happens to be current in it, or on a provider CLI's side effects.
+# Attempt 15d's capture read a *deleted* cluster because the ambient kubeconfig's current context
+# was another run's and its first `server:` entry belonged to an unrelated EKS cluster.
+RUN_KUBECONFIG="$LOG_DIR/run-kubeconfig.yaml"
+export KUBECONFIG="$RUN_KUBECONFIG"
 STATE_BUCKET="${STATE_BUCKET:-sol-qualification-tfstate}"
 PROFILE_NAME="${PROFILE_NAME:-production-single-region}"
 BOOTSTRAP_ROOT="$ROOT/platform/cloud/gcp/bootstrap"
@@ -857,6 +864,10 @@ bundle_phase_note() {
 
 bundle_manifest() {
   local m="$LOG_DIR/evidence-manifest.txt" f
+  if [ -d "$LOG_DIR/platform-failure" ]; then
+    printf 'platform failure evidence: platform-failure/ (%s files)\n' \
+      "$(ls "$LOG_DIR/platform-failure" 2>/dev/null | wc -l)"
+  fi
   if [ -s "$LOG_DIR/api-readiness.tsv" ]; then
     printf 'api readiness: api-readiness.tsv (%s samples across the platform apply)\n' \
       "$(($(wc -l <"$LOG_DIR/api-readiness.tsv") - 1))"
@@ -1059,6 +1070,7 @@ phase_cloud() {
     # deploy is not a platform install, so a failure there would say nothing about
     # FND-0010).
     say "cloud apply failed -- capturing the discriminator before any teardown"
+    capture_platform_failure_evidence
     capture_fnd0010
     capture_pre_teardown_inventory
     freeze_evidence
@@ -1149,8 +1161,8 @@ api_probe_sample() {
   reported="$(gcloud container clusters describe "${CLUSTER:-}" --region "${REGION:-}" \
     --project "${PROJECT:-}" --format='value(endpoint)' 2>/dev/null | tr -d '\r' \
     || printf '')"
-  configured="$(awk '/^[[:space:]]*server:/{print $2; exit}' \
-    "${KUBECONFIG:-$HOME/.kube/config}" 2>/dev/null | tr -d '\r')"
+  configured="$(kubeconfig_server_for_cluster "${KUBECONFIG:-$HOME/.kube/config}" "${CLUSTER:-}" \
+    | tr -d '\r')"
   # Normalised to the host, because the comparison this row exists for is "does the configured
   # endpoint match what the provider reports": the kubeconfig says `https://host`, the provider says
   # `host`, and leaving the scheme on would make every row look like a divergence.
@@ -1224,9 +1236,79 @@ api_readiness_probe_stop() {
   API_PROBE_PID=""
 }
 
+# Read-only Kubernetes evidence for the first unexpected platform-apply failure. The kubeconfig is
+# the run's own (exported above), so these reads target the run's cluster by construction. Bounded
+# evidence collection only: nothing here interprets, classifies or recovers, and a failed read is
+# recorded as a failed read -- "no evidence" must never look like "no problem".
+kube_capture_evidence() { # <dir> <name> <kubectl args...>
+  local dir="$1" name="$2"
+  shift 2
+  local out="$dir/$name.log" rc
+  kubectl "$@" >"$out" 2>&1
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    say "  $name: $(wc -l <"$out") lines"
+  else
+    say "  $name: CAPTURE FAILED (rc $rc) — recorded, not interpreted"
+    printf '\n[qualification capture: `kubectl %s` exited %s]\n' "$*" "$rc" >>"$out"
+  fi
+  return 0
+}
+
+capture_platform_failure_evidence() {
+  local dir="$LOG_DIR/platform-failure"
+  if ! mkdir -p "$dir" 2>/dev/null; then
+    say "  platform-failure evidence: DISABLED (cannot create $dir) — the run continues unobserved"
+    return 0
+  fi
+  say "capturing read-only Kubernetes evidence for the platform-apply failure"
+  kube_capture_evidence "$dir" pods "get pods -A -o wide"
+  kube_capture_evidence "$dir" pod-states "get pods -A -o jsonpath={range .items[*]}{.metadata.namespace}/{.metadata.name}\t{.status.phase}\t{.spec.nodeName}\t{range .status.containerStatuses[*]}{.name}={.state}{.lastState} restarts={.restartCount} {end}{\"\n\"}{end}"
+  kube_capture_evidence "$dir" events "get events -A --sort-by=.lastTimestamp"
+  kube_capture_evidence "$dir" pvc "get pvc -A -o wide"
+  kube_capture_evidence "$dir" pv "get pv -o wide"
+  kube_capture_evidence "$dir" nodes "get nodes -o wide"
+  kube_capture_evidence "$dir" node-capacity "get nodes -o jsonpath={range .items[*]}{.metadata.name}\tallocatable={.status.allocatable.cpu}/{.status.allocatable.memory}\t{range .status.conditions[*]}{.type}={.status} {end}{\"\n\"}{end}"
+  kube_capture_evidence "$dir" helm-release-secrets "get secrets -A -l owner=helm -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,TYPE:.type"
+  say "  platform-failure evidence: $dir"
+}
+
 kubeconfig_for_cluster() {
   gcloud container clusters get-credentials "$CLUSTER" --region "$REGION" --project "$PROJECT" \
     >"$LOG_DIR/kubeconfig.log" 2>&1 || true
+  # `get-credentials` generates an entry in $KUBECONFIG; whether it also *switches the current
+  # context* is the provider CLI's business, and Attempt 15d measured it not doing so. Pin the
+  # context by name here instead, so no observation depends on that side effect.
+  local context
+  context="$(kubectl config get-contexts -o name 2>/dev/null | grep -F -- "$CLUSTER" | head -1 || true)"
+  if [ -n "$context" ]; then
+    kubectl config use-context "$context" >>"$LOG_DIR/kubeconfig.log" 2>&1 || true
+    say "  kubeconfig: using context $context (pinned to this run's cluster)"
+  else
+    say "  kubeconfig: no context matching $CLUSTER is present — observations may not target it"
+  fi
+}
+
+# The configured server for THIS run's cluster. By name, never by position: the first `server:` entry
+# in a kubeconfig belongs to whatever cluster was added first, which in the machine that ran 15d was
+# an unrelated EKS cluster.
+kubeconfig_server_for_cluster() {
+  python3 - "$1" "$2" <<'PY' 2>/dev/null || printf -- '-\n'
+import re, sys
+path, cluster = sys.argv[1], sys.argv[2]
+try:
+    text = open(path).read()
+except OSError:
+    print('-')
+    raise SystemExit
+for name, body in re.findall(r'-\s*name:\s*(\S+)\s*\n\s*cluster:\n((?:\s+\S+:.*\n)+)', text):
+    if cluster in name:
+        server = re.search(r'server:\s*(\S+)', body)
+        if server:
+            print(server.group(1))
+            raise SystemExit
+print('-')
+PY
 }
 
 capture_fnd0010() {
