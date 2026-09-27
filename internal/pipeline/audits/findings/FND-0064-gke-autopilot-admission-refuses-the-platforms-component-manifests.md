@@ -9,6 +9,12 @@ source: GCP qualification Attempt 14 (2026-09-26), revision ae47d777
 
 **Depends on:** None.
 
+**State:** `FIXED_UNQUALIFIED` — decided and implemented 2026-09-26 in `DEC-049` / `INFRA-093`: the
+GCP driver provisions GKE Standard, and an existing Autopilot cluster is refused before any plan
+exists, with the refusal describing the profile's requirement rather than today's component list.
+**Not qualified:** no live run has installed on a Standard cluster yet; Attempt 15 is the
+discriminator.
+
 Live discovery, GCP qualification Attempt 14: `sol cloud apply` on a fresh GKE **Autopilot** cluster
 applied the cloud root and the platform prerequisites, then the platform's Helm releases were
 refused by the cluster's own admission webhook — three errors, two components, two policies:

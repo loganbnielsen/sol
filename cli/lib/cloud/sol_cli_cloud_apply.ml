@@ -30,6 +30,7 @@ type outcome =
 
 type ('outputs, 'env, 'control) deps =
   { substrate_exists : unit -> (bool, string) result
+  ; substrate_supported : unit -> (unit, failure) result
   ; plan : unit -> (Sol_cli_terraform_plan.change list, failure) result
   ; guarded_removals : string list
   ; confirm_guarded_removal : bool
@@ -227,6 +228,11 @@ let execute ~deps =
   let cloud_stage () =
     let* exists = deps.substrate_exists () |> refused in
     if not exists then report_phase deps Sol_cli_cloud_lifecycle.Cloud_bootstrap;
+    (* INFRA-093 / FND-0064: before a plan exists to apply, reconcile with the cluster that is
+       actually there. The profile provisions and supports GKE Standard; a cluster whose mode is
+       Autopilot is refused here, and a cluster Sol cannot read is refused too -- proceeding would
+       mean touching something it never identified. *)
+    let* () = deps.substrate_supported () in
     let* changes = deps.plan () in
     let* () = check_guarded_removals deps changes in
     deps.apply_plan ()

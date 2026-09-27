@@ -1,0 +1,53 @@
+---
+id: DEC-049
+type: feature
+severity: high
+source: GCP qualification Attempt 14 (FND-0064)
+---
+
+# DEC-049 — GKE Standard is the supported GCP substrate for the standard Sol platform profile
+
+**Depends on:** None.
+
+## Decision
+
+1. **The standard Sol platform profile runs on GKE Standard.** The GCP driver provisions Standard,
+   and Autopilot is not a supported substrate for the profile.
+2. **Sol refuses an Autopilot substrate before it plans anything.** For a Sol-managed target the
+   driver's own configuration is Standard, so this refusal is *defensive reconciliation*: it exists
+   for the case where a cluster already exists and its mode can be observed, so Sol never asks
+   Terraform to touch — or replace — a cluster Autopilot would then refuse to host. A cluster Sol
+   cannot read is refused too: never read as absence.
+3. **The reason is the profile's requirement, not a component list.** The profile requires a
+   substrate that permits the node-level capabilities its components declare; Autopilot's admission
+   policies restrict host networking, host process access and `SYS_RESOURCE` among them. Naming
+   today's two offending manifests would make yesterday's component list the definition of GCP
+   support.
+4. **Node sizing is a driver-owned default, not target configuration.** `3 x e2-standard-2` with
+   100 GiB `pd-balanced` disks in one zone is the initial supported topology, recorded as the
+   driver's variable defaults. The target contract does not grow a node count, machine type or disk
+   size: what should control sizing is a design decision of its own, and not one to infer from a
+   qualification requirement.
+
+## Evidence
+
+GCP qualification Attempt 14 (`internal/qualification/records/2026-09-26-gcp-attempt14-autopilot-admission-blocker.md`):
+on Autopilot the cloud root and the platform prerequisites applied, then three Warden denials stopped
+the platform apply — about ten minutes and one billable cluster in, with no path to `Ready`.
+
+## What this decision does not cover
+
+- **Regional HA topology and node sizing profiles.** The control plane stays regional because every
+  call site resolves it that way; a genuinely zonal control plane, larger pools or an HA topology are
+  separate decisions with their own evidence.
+- **An Autopilot-compatible platform profile.** Disabling the components that need node-level
+  capabilities would change the platform's host-observability and Kafka-tuning contracts, each of
+  which would need its own qualification.
+- **Other providers**, which have no equivalent managed mode to refuse.
+
+## Preserved invariants
+
+- Destroy semantics, the authority bracket and DEC-045 are untouched.
+- The disk-quota check (INFRA-090) and the Terraform output contract (INFRA-091) are untouched.
+- No generic restricted-Kubernetes capability model: the substrate is a property of the GCP driver
+  and a typed refusal in the profile.

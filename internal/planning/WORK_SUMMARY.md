@@ -1,10 +1,10 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: GCP Qualification Attempt 14 — past the storage boundary, Autopilot admission is the frontier (2026-09-26)
+## Latest: INFRA-093 + INFRA-092 — GKE Standard is the supported GCP substrate (2026-09-26)
 
-- Ran from `ae47d777` (main, CI green; `d301426f` and all required ancestors present) on a fresh target `qual14/gcp/us-central1` → cluster `sol-qual-gcp-14`.
-- **FND-0063 qualified live**: the real Terraform output was parsed, the project established and the quota observed — the lifecycle continued *past* the parser boundary, which is what INFRA-091 existed to make possible.
-- **FND-0062's check qualified live**: `SSD_TOTAL_GB 100/1000 GiB used (900 GiB free)` against the declared 20 GiB; policy passed; `platform-prerequisites-apply ok (145.7s)` — past Attempt 12's stopping point. The nodes then took usage to 500 GiB, the exact wall Attempt 12 hit, with headroom left. The PVC-binding claim is *not* qualified (those components never applied).
-- **First new blocker (FND-0064)**: GKE Autopilot's admission webhook refuses `helm_release.prometheus` (`hostNetwork`/`hostPID`) and `helm_release.redpanda` (`linux capability 'SYS_RESOURCE' on container 'tuning'`). A provider policy meeting Sol's platform defaults — a support-boundary decision, not a code defect, and nothing was repaired in-run.
-- Evidence frozen before teardown; supported destruction from a *partially installed* platform (262 KiB of state → `platform-destroy ok (136.7s)` → disposable roots empty) with the authority bracket used once each way. Independent verification: no residue, `SSD_TOTAL_GB 0/1000`, durables standing.
-- `INFRA-092` files the two harness gaps this exposed: an admission-denial classification ahead of ambient symptoms, and capturing the provisioner bindings after the prerequisites phase rather than only on the success path.
+- Attempt 14 measured the mismatch: on Autopilot the cloud root and prerequisites applied, then GKE's admission webhook refused `helm_release.prometheus` (hostNetwork/hostPID) and `helm_release.redpanda` (SYS_RESOURCE) — ten minutes and a billable cluster in, no path to `Ready` (FND-0064).
+- `DEC-049`: the GCP driver provisions **GKE Standard**; Autopilot is not a supported substrate for the standard profile. The refusal is *defensive reconciliation* — for a Sol-managed target the driver's own configuration is Standard — and it happens read-only, **before any plan exists**, with a message about the profile's requirement rather than today's component list.
+- Sizing is a **driver-owned default**: 3 x e2-standard-2, 100 GiB pd-balanced, one zone, regional control plane. No target keys, no sizing profile, no generic restricted-Kubernetes capability model.
+- `check_gcp_standard_substrate.sh` + six mutations hold the contract by *ownership*, never the numbers, so a deliberate sizing change is not a guard failure. Two of its own checks were repaired while building it (a control-plane check a sibling resource could satisfy; a declaration check whose nested quoting matched nothing).
+- INFRA-092: `ADMISSION_DENIED` classifies ahead of ambient scheduling symptoms, and the provisioner bindings are captured on the failure path too. `test-live-qual` → 144 assertions, 0 failures.
+- FND-0064 → `FIXED_UNQUALIFIED`. Attempt 15 on a Standard cluster is the discriminator: install → `Ready` → supported Ready-state destruction.

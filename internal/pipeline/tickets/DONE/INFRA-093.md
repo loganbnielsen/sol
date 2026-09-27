@@ -42,3 +42,31 @@ profile, and node sizing is a driver-owned default rather than target configurat
 - `test_cluster_substrate` covers the contract and the tri-state observation; `test_cloud_apply`
   covers the refusal before the plan.
 - A live attempt installs the platform on a Standard cluster and reaches `Ready` (Attempt 15).
+
+## Completion notes (2026-09-26)
+
+Landed as `DEC-049`. The driver produces Standard (`enable_autopilot = false`, no knob, no leftover
+default pool) with a pool Sol owns, sized from driver-declared variable defaults — `3 x
+e2-standard-2`, 100 GiB `pd-balanced`, pinned to one zone while the control plane stays regional.
+
+`Sol_cli_cluster_substrate` is the contract: Standard and a fresh target are acceptable; Autopilot is
+refused with the *profile* message (Autopilot's restrictions as the reason, never the current
+manifests as the definition); an unreadable cluster is `Unknown` and refused rather than read as
+absence. The GCP observation is a read-only `clusters describe` naming the project from the cloud
+root's own outputs, and `Sol_cli_cloud_apply` refuses **before the plan**, so an unsupported
+substrate costs no Terraform run.
+
+Evidence: `check_gcp_standard_substrate.sh` with six mutations (Autopilot requested, Autopilot as a
+knob, pool removed, machine type hard-coded, sizing moved into the target contract, control plane
+made zonal) — all rejected, unmutated tree accepted. The guard asserts ownership and never the
+numbers, so a deliberate sizing change is not a guard failure. `test_cluster_substrate` (5 cases),
+`test_cloud_apply` (16 cases, including the refusal with **no plan made**), the offline lifecycle
+harness (an Autopilot target refuses with no `terraform plan` in the log, rc 0). Two of the guard's
+own checks were repaired while building it: a control-plane check that a sibling resource could
+satisfy, and a declaration check whose nested quoting made it match nothing.
+
+**Demo/example coverage:** not applicable — a substrate decision in the driver and a typed refusal;
+no `sol.toml` field, CLI surface or generated manifest changes for an app author.
+**Language parity (DEC-022):** no application-facing impact.
+**Live acceptance:** Attempt 15 — a Standard cluster, the platform install, `Ready`, and Ready-state
+destruction.

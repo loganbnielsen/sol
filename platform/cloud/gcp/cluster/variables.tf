@@ -167,3 +167,28 @@ variable "gcs_soft_delete_retention_seconds" {
   }
 }
 
+
+# ── The Standard substrate's initial topology (DEC-049) ───────────────────── #
+#
+# Driver-owned defaults, deliberately not target keys: the profile needs a supported Standard
+# substrate, and this is the shape Sol intends to qualify. If a real need for different sizing
+# appears, the abstraction for it is a decision of its own -- not something inferred from a
+# qualification run.
+
+variable "node_count" {
+  description = "Nodes in the platform's node pool. Three gives the platform's observability and Kafka components room, and keeps the node footprint well inside the project's disk quota."
+  type        = number
+  default     = 3
+}
+
+variable "node_machine_type" {
+  description = "Machine type for the platform's nodes."
+  type        = string
+  default     = "e2-standard-2"
+}
+
+variable "node_disk_gb" {
+  description = "Boot disk size for each node, in GiB. pd-balanced disks count against the region's SSD_TOTAL_GB quota, which the lifecycle checks before the platform asks for a volume."
+  type        = number
+  default     = 100
+}

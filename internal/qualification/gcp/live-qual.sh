@@ -1129,6 +1129,11 @@ kubeconfig_for_cluster() {
 }
 
 capture_fnd0010() {
+  # INFRA-092: these objects exist from the prerequisites phase onward, so a run that fails later
+  # has them too -- Attempt 14's prerequisites succeeded and its platform apply did not, and the
+  # bindings went uncaptured because the read was attached to success. Collect the evidence that
+  # already exists where it exists, not where the run happens to end.
+  capture_provisioner_bindings
   say "capturing FND-0010 discriminator evidence (no remediation)"
   if ! cluster_describable; then
     say "  cluster is not describable — the platform stage cannot have run; nothing to probe"
@@ -1201,6 +1206,13 @@ classify_fnd0010() {
     if grep -qiE 'Error: .*already exists|already exists$' \
         "$LOG_DIR/cloud-apply.log" "$LOG_DIR/destroy.log" 2>/dev/null; then
       printf 'TERRAFORM_ALREADY_EXISTS\n'
+    elif grep -qiE 'warden-validating|GKE Warden rejected|autogke-' \
+        "$LOG_DIR/cloud-apply.log" "$LOG_DIR/destroy.log" "$LOG_DIR/fnd0010-events.log" 2>/dev/null; then
+      # INFRA-092: the cluster's own admission webhook refusing a manifest. Attempt 14's failure was
+      # classified SCHEDULING_AMBIENT because there was no rule for this signature and ambient
+      # symptoms were there to fall through to -- a *direct* provider refusal read as a scheduling
+      # problem. It is quoted, so it outranks them.
+      printf 'ADMISSION_DENIED\n'
     elif grep -qiE 'QUOTA_EXCEEDED|CreateVolume failed|failed to insert .*disk' \
         "$LOG_DIR/fnd0010-events.log" "$LOG_DIR/cloud-apply.log" 2>/dev/null; then
       # The provider's own refusal, quoted by its CSI driver: authoritative about why the
@@ -1234,7 +1246,7 @@ classify_fnd0010() {
       printf 'UNKNOWN\n'
     fi
     printf '\n-- why (matching lines; empty means the signature was not in the captured evidence) --\n'
-    grep -hiE 'Error: .*already exists|already exists$|QUOTA_EXCEEDED|CreateVolume failed|managed-namespaces-limitation|leader election record|cannot create resource "leases"|x509|unknown authority|certificate signed by unknown|tls: failed to verify|no matches for kind|could not find the requested resource|failed to discover|forbidden|cannot create resource|context deadline exceeded|dial tcp|i/o timeout|connection refused|no route to host|FailedScheduling|Unschedulable|Insufficient (cpu|memory)' \
+    grep -hiE 'Error: .*already exists|already exists$|warden-validating|GKE Warden rejected|autogke-|QUOTA_EXCEEDED|CreateVolume failed|managed-namespaces-limitation|leader election record|cannot create resource "leases"|x509|unknown authority|certificate signed by unknown|tls: failed to verify|no matches for kind|could not find the requested resource|failed to discover|forbidden|cannot create resource|context deadline exceeded|dial tcp|i/o timeout|connection refused|no route to host|FailedScheduling|Unschedulable|Insufficient (cpu|memory)' \
       "$check_log" "$job_log" "$events" "$LOG_DIR/fnd0010-pods.log" \
       "$LOG_DIR/cloud-apply.log" "$LOG_DIR/destroy.log" \
       "$LOG_DIR/fnd0010-controller-logs.log" "$LOG_DIR/fnd0010-cainjector-logs.log" 2>/dev/null | head -20 || true

@@ -813,3 +813,19 @@ platform (262 KiB of platform state, `platform-destroy ok (136.7s)`, disposable 
 authority bracket used exactly once each way. Independent verification: no clusters, SQL, disks,
 registries, addresses or `sol-qual-gcp-14` service accounts; `SSD_TOTAL_GB 0/1000`; both durable
 prerequisites standing. **No `Ready`, so no Ready-state destruction**: that claim is untouched.
+
+## INFRA-093 landed — GKE Standard is the supported GCP substrate (2026-09-26)
+
+`DEC-049` / `FND-0064` → `FIXED_UNQUALIFIED`. The GCP driver provisions Standard
+(`enable_autopilot = false`, a pool Sol owns, sizing from driver variable defaults: 3 x
+e2-standard-2, 100 GiB pd-balanced, one zone, regional control plane). The profile refuses an
+existing Autopilot cluster read-only **before any plan exists**, describing the profile's
+requirement rather than today's manifests, and refuses an unreadable cluster rather than reading it
+as absence.
+
+`INFRA-092` also landed: the classifier answers `ADMISSION_DENIED` for the cluster's own admission
+webhook ahead of ambient scheduling symptoms, and the provisioner bindings are captured on the
+failure path too.
+
+**Nothing here is QUALIFIED.** No live run has installed on Standard. Attempt 15 is the
+discriminator, and it is the first attempt that would exercise `Ready` and Ready-state destruction.

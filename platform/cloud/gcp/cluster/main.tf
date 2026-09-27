@@ -84,7 +84,19 @@ resource "google_compute_router_nat" "main" {
   source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
 }
 
-# ── GKE Autopilot ─────────────────────────────────────────────────────────── #
+# ── GKE Standard ──────────────────────────────────────────────────────────── #
+#
+# The GCP driver provisions **GKE Standard**. Autopilot is not a supported substrate for the
+# standard Sol platform profile: Autopilot's admission policies refuse `hostNetwork`/`hostPID`
+# (which the platform's node-exporter manifest requires) and the `SYS_RESOURCE` capability (which
+# Redpanda's `tuning` container requires). GCP qualification Attempt 14 measured exactly that --
+# three Warden denials during the platform apply, ten minutes and a cluster after the run started,
+# with no path to `Ready` (FND-0064).
+#
+# The requested provisioning mode is Sol's own configuration, so this is settled statically here
+# rather than discovered by provisioning a cluster Autopilot would then refuse to host: the driver
+# asks for Standard, and the substrate is a property of the driver rather than a user knob.
+# `internal/ci/check_gcp_standard_substrate.sh` keeps it that way.
 
 resource "google_container_cluster" "main" {
   name     = var.cluster_name
@@ -101,8 +113,11 @@ resource "google_container_cluster" "main" {
   # lifts it.
   deletion_protection = var.gke_deletion_protection
 
-  # Autopilot: Google manages nodes, scaling, and security hardening
-  enable_autopilot = true
+  # Standard: Sol owns the node pool below, because the platform needs node-level capabilities
+  # Autopilot denies.
+  enable_autopilot         = false
+  remove_default_node_pool = true
+  initial_node_count       = 1
 
   network    = google_compute_network.main.id
   subnetwork = google_compute_subnetwork.main.id
@@ -121,6 +136,50 @@ resource "google_container_cluster" "main" {
 
   release_channel {
     channel = "REGULAR"
+  }
+}
+
+# ── The node pool ─────────────────────────────────────────────────────────── #
+#
+# `3 x e2-standard-2` with 100 GiB `pd-balanced` boot disks, in one zone. This is the driver's
+# initial supported Standard substrate, not a user-facing sizing contract: the target format does
+# not grow a node count or a machine type, because we do not yet know what the right abstraction
+# for that would be, and designing it from a qualification requirement would leak GKE mechanics
+# into the target contract (DEC-049).
+#
+# One zone on purpose. The cluster's control plane stays regional -- every call site resolves it
+# with `--region` -- but a pool that spans a regional cluster's three zones would create nine
+# nodes and ~900 GiB of boot disks, which would couple "does Standard work?" to "does the disk
+# quota survive this topology?" and cost three times as much per attempt.
+resource "google_container_node_pool" "main" {
+  name     = "${var.cluster_name}-nodes"
+  cluster  = google_container_cluster.main.id
+  location = var.region
+
+  node_locations = ["${var.region}-a"]
+  node_count     = var.node_count
+
+  node_config {
+    machine_type = var.node_machine_type
+    disk_size_gb = var.node_disk_gb
+    disk_type    = "pd-balanced"
+    image_type   = "COS_CONTAINERD"
+
+    # The platform reaches the cluster through short-lived impersonated credentials, not through
+    # the nodes' identity, so the nodes need only what the platform's own pods require.
+    oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+
+    # Private cluster: the nodes already have no public IPs; this keeps them off the public
+    # internet for outbound traffic too, through Cloud NAT.
+    shielded_instance_config {
+      enable_secure_boot          = true
+      enable_integrity_monitoring = true
+    }
+  }
+
+  management {
+    auto_repair  = true
+    auto_upgrade = true
   }
 }
 
@@ -143,10 +202,14 @@ data "google_compute_default_service_account" "default" {
 }
 
 locals {
+  # On Standard the nodes' service account lives on the node pool; an Autopilot cluster reports it
+  # on the cluster instead, which is why this read used to be there. A pool that does not name one
+  # gets the project's default, and that is what the pool's `node_config` reads back as the
+  # literal shorthand "default" -- which the IAM API rejects as `serviceAccount:default`.
   gke_node_service_account = (
-    google_container_cluster.main.node_config[0].service_account == "default"
+    google_container_node_pool.main.node_config[0].service_account == "default"
     ? data.google_compute_default_service_account.default.email
-    : google_container_cluster.main.node_config[0].service_account
+    : google_container_node_pool.main.node_config[0].service_account
   )
 }
 
