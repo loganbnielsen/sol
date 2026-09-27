@@ -535,12 +535,14 @@ let live_workloads ~(ctx : Sol_cli_kube_destination.context) ~(workspace : strin
        (* A cluster without the Rollouts CRD has no Rollout objects -- an empty set,
           not a failure. Any other failure fails closed: quietly treating an
           uncountable kind as empty could hide a stale workload. *)
-       | Error (Sol_cli_process.Non_zero r) ->
-         let output = Sol_cli_process.failure_message r in
-         if kind = Live_rollout && Sol_cli_kubectl.resource_type_absent output
-         then go acc rest
-         else Error (Printf.sprintf "kubectl get %s failed: %s" resource output)
-       | Error e -> Error (Sol_cli_process.error_to_string e))
+       | Error e when kind = Live_rollout && Sol_cli_kubectl.classify e = No_resource_type
+         -> go acc rest
+       | Error e ->
+         Error
+           (Printf.sprintf
+              "kubectl get %s failed: %s"
+              resource
+              (Sol_cli_process.error_to_string e)))
   in
   go [] [ Live_deployment; Live_rollout; Live_cronjob ]
 ;;

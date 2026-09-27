@@ -33,9 +33,69 @@ let get ~ctx ~resource ~name ~namespace ~output =
 
 let get_raw ~ctx ~args = kubectl ~ctx args
 
-let resource_type_absent output =
-  Sol_cli_string.contains ~needle:"doesn't have a resource type" output
-  || Sol_cli_string.contains ~needle:"could not find the requested resource" output
+(* REFAC-125: what kind of failure a kubectl error is, for the callers that act on
+   it. A view onto the error, not a replacement for it: the error itself travels
+   on unchanged and every message is rendered from it, in kubectl's own words.
+
+   kubectl prints an API error as "Error from server (<Reason>): ...", where
+   <Reason> is the API server's status reason; that token, not the prose after
+   it, is what is read. A missing resource *type* (no CRD) and an unauthenticated
+   client are client-side messages with no reason token, so their wording is
+   named here -- the one place kubectl's wording is known. *)
+type reason =
+  | Not_found
+  | Already_exists
+  | Conflict
+  | No_resource_type
+  | Refused
+  | Other
+
+let status_reason text =
+  let prefix = "Error from server (" in
+  let n = String.length prefix in
+  let rec find i =
+    if i + n > String.length text
+    then None
+    else if String.sub text i n = prefix
+    then (
+      match String.index_from_opt text (i + n) ')' with
+      | Some j -> Some (String.sub text (i + n) (j - i - n))
+      | None -> None)
+    else find (i + 1)
+  in
+  find 0
+;;
+
+let classify (error : Sol_cli_process.error) =
+  match error with
+  | Non_zero f ->
+    let text = f.stderr ^ "\n" ^ f.stdout in
+    let says needle = Sol_cli_string.contains ~needle text in
+    if says "doesn't have a resource type" || says "could not find the requested resource"
+    then No_resource_type
+    else if
+      says "You must be logged in"
+      || says "the server has asked for the client to provide credentials"
+    then Refused
+    else (
+      match status_reason text with
+      | Some "NotFound" -> Not_found
+      | Some "AlreadyExists" -> Already_exists
+      | Some "Conflict" -> Conflict
+      | Some ("Unauthorized" | "Forbidden") -> Refused
+      | _ -> Other)
+  | Spawn_failed _ | Timeout _ -> Other
+;;
+
+(* REFAC-125: [get] for an object that may not exist -- [Ok None] when kubectl
+   answers NotFound. Absence is read from the API's status reason, the same
+   mechanism [classify] uses for every verb, rather than a second one
+   ([--ignore-not-found] exists only for get and delete). *)
+let get_if_present ~ctx ~args =
+  match kubectl ~ctx args with
+  | Ok (o : Sol_cli_process.output) -> Ok (Some o.stdout)
+  | Error e when classify e = Not_found -> Ok None
+  | Error e -> Error e
 ;;
 
 let logs ~ctx ~pod ~namespace ~container =

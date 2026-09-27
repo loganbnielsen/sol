@@ -247,11 +247,7 @@ let create_object ~ctx t =
   with_temp_json (to_configmap_json t) (fun path ->
     match Sol_cli_kubectl.create ~ctx ~file:path with
     | Ok _ -> Ok ()
-    | Error (Sol_cli_process.Non_zero r) ->
-      let detail = Sol_cli_process.failure_message r in
-      if Sol_cli_string.contains ~needle:"AlreadyExists" detail
-      then Error Already_exists
-      else Error (Other detail)
+    | Error e when Sol_cli_kubectl.classify e = Already_exists -> Error Already_exists
     | Error e -> Error (Other (Sol_cli_process.error_to_string e)))
 ;;
 
@@ -259,33 +255,21 @@ let replace_object ~ctx t ~resource_version =
   with_temp_json (to_configmap_json ~resource_version t) (fun path ->
     match Sol_cli_kubectl.replace ~ctx ~file:path with
     | Ok _ -> Ok ()
-    | Error (Sol_cli_process.Non_zero r) ->
-      let detail = Sol_cli_process.failure_message r in
-      if
-        Sol_cli_string.contains ~needle:"the object has been modified" detail
-        || Sol_cli_string.contains ~needle:"Operation cannot be fulfilled" detail
-        || Sol_cli_string.contains ~needle:"please apply your changes" detail
-      then Error Conflict
-      else Error (Other detail)
+    | Error e when Sol_cli_kubectl.classify e = Conflict -> Error Conflict
     | Error e -> Error (Other (Sol_cli_process.error_to_string e)))
 ;;
 
 let fetch ~ctx ~workspace =
   let name = configmap_name ~workspace in
   match
-    Sol_cli_kubectl.get
+    Sol_cli_kubectl.get_if_present
       ~ctx
-      ~resource:"configmap"
-      ~name
-      ~namespace:"default"
-      ~output:"json"
+      ~args:[ "get"; "configmap"; name; "-n"; "default"; "-o"; "json" ]
   with
-  | Error (Sol_cli_process.Non_zero { stderr; _ })
-    when Sol_cli_string.contains ~needle:"NotFound" stderr
-         || Sol_cli_string.contains ~needle:"not found" stderr -> Ok None
+  | Ok None -> Ok None
   | Error e -> Error (Sol_cli_process.error_to_string e)
-  | Ok r ->
-    (match Yojson.Safe.from_string r.Sol_cli_process.stdout with
+  | Ok (Some body) ->
+    (match Yojson.Safe.from_string body with
      | exception Yojson.Json_error msg ->
        Error (Printf.sprintf "could not parse boundary lease: %s" msg)
      | json ->

@@ -1,10 +1,10 @@
 # Work Summary — Self-hosted refocus complete (2026-06-22)
 
-## Latest: INFRA-091 — one idea of Terraform's output contract (2026-09-26)
+## Latest: GCP Qualification Attempt 14 — past the storage boundary, Autopilot admission is the frontier (2026-09-26)
 
-- Attempt 13 stopped minutes after INFRA-090 merged, at `error: the cloud root published no project_id`: the new check's parser accepted a bare string or a single-field `{"value": …}` object, while Terraform publishes `{"sensitive": …, "type": …, "value": …}`.
-- The fix is reuse, not another parser: `Sol_cli_cluster.outputs_reader` already unwraps `value`, tolerates absent optional outputs and fails closed on absent or non-string required ones — it is what Attempts 11 and 12 went through to reach `Ready`.
-- The regression fixture is a real payload: the eight outputs Attempt 13's captured state recorded, rendered by terraform 1.9.8. The lifecycle harness renders *that fixture* rather than declaring a shape of its own, and the quota scenario proves it crosses the parser before it may assert the refusal.
-- `check_terraform_output_fixture.sh` + six mutations tie fixture, harness and parser to the one payload. Two vacuous-check traps were found and fixed while building it: a `pipefail` + `grep -q` pipeline that could never fire, and mutations whose anchors a formatter or a comment had already satisfied.
-- `verify_bundle` is phase-aware: it requires the evidence of the roots the run actually entered, derived from Sol's echoed invocations. Attempt 13's pre-platform stop is a complete bundle; a run that reaches the platform still requires its state.
-- FND-0063 is `FIXED_UNQUALIFIED`. The next GCP attempt is the discriminator — and would be the first to test `Ready` and Ready-state destruction.
+- Ran from `ae47d777` (main, CI green; `d301426f` and all required ancestors present) on a fresh target `qual14/gcp/us-central1` → cluster `sol-qual-gcp-14`.
+- **FND-0063 qualified live**: the real Terraform output was parsed, the project established and the quota observed — the lifecycle continued *past* the parser boundary, which is what INFRA-091 existed to make possible.
+- **FND-0062's check qualified live**: `SSD_TOTAL_GB 100/1000 GiB used (900 GiB free)` against the declared 20 GiB; policy passed; `platform-prerequisites-apply ok (145.7s)` — past Attempt 12's stopping point. The nodes then took usage to 500 GiB, the exact wall Attempt 12 hit, with headroom left. The PVC-binding claim is *not* qualified (those components never applied).
+- **First new blocker (FND-0064)**: GKE Autopilot's admission webhook refuses `helm_release.prometheus` (`hostNetwork`/`hostPID`) and `helm_release.redpanda` (`linux capability 'SYS_RESOURCE' on container 'tuning'`). A provider policy meeting Sol's platform defaults — a support-boundary decision, not a code defect, and nothing was repaired in-run.
+- Evidence frozen before teardown; supported destruction from a *partially installed* platform (262 KiB of state → `platform-destroy ok (136.7s)` → disposable roots empty) with the authority bracket used once each way. Independent verification: no residue, `SSD_TOTAL_GB 0/1000`, durables standing.
+- `INFRA-092` files the two harness gaps this exposed: an admission-denial classification ahead of ambient symptoms, and capturing the provisioner bindings after the prerequisites phase rather than only on the success path.
