@@ -168,11 +168,10 @@ let gcp_prepare_destroy_result ~guarded run_log infra_dir var_files vars state
     match unrepresented with
     | [] -> ()
     | addresses ->
-      Printf.printf
+      Sol_cli_report.app
         "  WARNING: %d resource(s) this target declares are ABSENT from its state and \
          will therefore NOT be destroyed: %s\n\
-        \  They may still exist in the provider and remain billable (FND-0030).\n\
-         %!"
+        \  They may still exist in the provider and remain billable (FND-0030)."
         (List.length addresses)
         (String.concat ", " addresses)
   in
@@ -182,7 +181,7 @@ let gcp_prepare_destroy_result ~guarded run_log infra_dir var_files vars state
        represented. That is a preparation that could not run -- deliberately
        distinct from "there was nothing to prepare" -- and it permits destruction
        to continue; UNKNOWN is never read as absence. *)
-    Printf.printf "  prepare: could not read this target's state; preparing nothing.\n%!";
+    Sol_cli_report.app "  prepare: could not read this target's state; preparing nothing.";
     failed
       "the target's Terraform state could not be read, so no deletion guard could be \
        lowered"
@@ -193,12 +192,12 @@ let gcp_prepare_destroy_result ~guarded run_log infra_dir var_files vars state
       (Sol_cli_cloud_lifecycle.preparations_unrepresented ~state:represented ~desired);
     (match Sol_cli_cloud_lifecycle.preparations_eligible ~state:represented ~desired with
      | [] ->
-       Printf.printf
-         "  prepare: no guarded resource in this target's state, nothing is targeted.\n%!";
+       Sol_cli_report.app
+         "  prepare: no guarded resource in this target's state, nothing is targeted.";
        Nothing_to_prepare
      | first :: rest ->
-       Printf.printf
-         "  prepare: disabling the deletion guards on %s...\n%!"
+       Sol_cli_report.app
+         "  prepare: disabling the deletion guards on %s..."
          (String.concat ", " (first :: rest));
        (match
           apply_asserted
@@ -242,8 +241,8 @@ let verify_gcp_destroy_preparation_result infra_dir =
       | Some true -> Error "GKE deletion protection is still enabled after preparation"
       | Some false | None -> Ok ()
     in
-    Printf.printf
-      "  verify preparation: Cloud SQL and GKE deletion protection disabled.\n%!";
+    Sol_cli_report.app
+      "  verify preparation: Cloud SQL and GKE deletion protection disabled.";
     Ok ()
 ;;
 

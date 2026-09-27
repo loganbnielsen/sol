@@ -128,11 +128,10 @@ let removed_consumer_groups ~prev ~next =
 let check_removed_groups ~ctx ~workspace ~confirm_group_change ~next =
   match load_deployed_groups ~ctx workspace with
   | Error msg when confirm_group_change ->
-    Printf.eprintf
+    Sol_cli_report.warn
       "warning: %s\n\
        The consumer-group removal check could not run; proceeding because \
-       --confirm-group-change was passed.\n\
-       %!"
+       --confirm-group-change was passed."
       msg;
     Ok ()
   | Error msg ->

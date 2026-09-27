@@ -81,14 +81,14 @@ let write_file ~path ~content =
   let oc = open_out path in
   output_string oc content;
   close_out oc;
-  Printf.printf "  created  %s\n%!" path
+  Sol_cli_report.app "  created  %s" path
 ;;
 
 let link_dir ~path ~target =
   mkdir_p (Filename.dirname path);
   (try Unix.symlink target path with
    | Unix.Unix_error (Unix.EEXIST, _, _) -> ());
-  Printf.printf "  linked   %s -> %s\n%!" path target
+  Sol_cli_report.app "  linked   %s -> %s" path target
 ;;
 
 let normalize s =

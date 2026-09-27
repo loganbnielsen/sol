@@ -70,7 +70,7 @@ let apply_redactions redact s =
 
 let echo_cmd argv redact =
   let display = String.concat " " (List.map Filename.quote argv) in
-  Printf.printf "  $ %s\n%!" (apply_redactions redact display)
+  Sol_cli_report.app "  $ %s" (apply_redactions redact display)
 ;;
 
 let merge_env extras =
@@ -246,7 +246,7 @@ let failure_message { exit_code; stdout; stderr } =
 ;;
 
 let run_shell ?(echo = false) cmd_str =
-  if echo then Printf.printf "  $ %s\n%!" cmd_str;
+  if echo then Sol_cli_report.app "  $ %s" cmd_str;
   try
     let ic, oc, ec = Unix.open_process_full cmd_str (Unix.environment ()) in
     close_out oc;

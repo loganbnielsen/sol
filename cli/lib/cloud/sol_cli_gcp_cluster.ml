@@ -284,7 +284,7 @@ let credentials ~operation ~leaves_target_standing : (unit, string) result =
       [ "gcloud"; "auth"; "application-default"; "print-access-token" ]
   with
   | Some _ ->
-    Printf.printf "  credentials: Google Application Default Credentials resolved\n%!";
+    Sol_cli_report.app "  credentials: Google Application Default Credentials resolved";
     Ok ()
   | None ->
     Error

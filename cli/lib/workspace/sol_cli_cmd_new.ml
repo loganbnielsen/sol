@@ -60,21 +60,21 @@ let new_workspace name =
     then Error (Printf.sprintf "%S already exists" name)
     else Ok ()
   in
-  Printf.printf "\nScaffolding workspace %S ...\n\n" name;
+  Sol_cli_report.app "\nScaffolding workspace %S ...\n" name;
   if name <> raw_name
   then (
     let k8s_name = String.map (fun c -> if c = '_' then '-' else c) name in
-    Printf.printf
+    Sol_cli_report.app
       "note: %S is not a valid OCaml/SQL identifier, so it is normalized to %S\n\
        (lowercased, '-' -> '_'). Kubernetes namespaces use the hyphenated form\n\
-       again, e.g. %s-payments.\n\n"
+       again, e.g. %s-payments.\n"
       raw_name
       name
       k8s_name);
   let* written =
     copy ~kind:"workspace" ~dest:name ~vars:(workspace_vars ~name) ~rule:always_write
   in
-  Printf.printf
+  Sol_cli_report.app
     {|
 Done. %d files generated.
 
@@ -97,8 +97,7 @@ Done. %d files generated.
          push to main — .github/workflows/sol-ci.yml handles build/test/deploy.
          sol/environments.yml declares a placeholder prod/aws/us-east-1 target —
          rename it to your real <env> and <provider>/<region>, and set the
-         SOL_TARGET repository variable to match, before your first 'sol deploy'.
-|}
+         SOL_TARGET repository variable to match, before your first 'sol deploy'.|}
     (List.length written)
     name
     name
@@ -159,7 +158,7 @@ let new_component kind ~label arg =
   let* domain, name = parse_domain_name arg in
   let suffix = component_suffix kind in
   let dir = Printf.sprintf "app/%s/%s_%s" domain name suffix in
-  Printf.printf "\nScaffolding %s %s/%s_%s ...\n\n" label domain name suffix;
+  Sol_cli_report.app "\nScaffolding %s %s/%s_%s ...\n" label domain name suffix;
   let vars = component_vars kind ~ws ~domain ~name in
   let* _ = copy ~kind:suffix ~dest:dir ~vars:(fun _ -> vars) ~rule:always_write in
   Ok dir
@@ -167,20 +166,21 @@ let new_component kind ~label arg =
 
 let new_svc arg =
   let* dir = new_component Service ~label:"svc" arg in
-  Printf.printf "\nDone.  Build: dune build %s/bin/main.exe\n" dir;
+  Sol_cli_report.app "\nDone.  Build: dune build %s/bin/main.exe" dir;
   Ok ()
 ;;
 
 let new_worker arg =
   let* dir = new_component Worker ~label:"worker" arg in
-  Printf.printf "\nDone.  Replace the stub Message module with your event module, then:\n";
-  Printf.printf "  dune build %s/bin/main.exe\n" dir;
+  Sol_cli_report.app
+    "\nDone.  Replace the stub Message module with your event module, then:";
+  Sol_cli_report.app "  dune build %s/bin/main.exe" dir;
   Ok ()
 ;;
 
 let new_fn arg =
   let* dir = new_component Function ~label:"fn" arg in
-  Printf.printf "\nDone.  Build: dune build %s/bin/main.exe\n" dir;
+  Sol_cli_report.app "\nDone.  Build: dune build %s/bin/main.exe" dir;
   Ok ()
 ;;
 
@@ -204,7 +204,7 @@ let new_event arg =
   let* team, name = parse_domain_name arg in
   let file = Printf.sprintf "events/%s/%s.ml" team name in
   let lib = ws ^ "_" ^ team ^ "_events" in
-  Printf.printf "\nScaffolding event %s/%s ...\n\n" team name;
+  Sol_cli_report.app "\nScaffolding event %s/%s ...\n" team name;
   let* () =
     if Sys.file_exists file
     then Error (Printf.sprintf "%S already exists" file)
@@ -214,7 +214,7 @@ let new_event arg =
   let* _ =
     copy ~kind:"event" ~dest:"." ~vars:(fun _ -> vars) ~rule:(event_rule (cap name))
   in
-  Printf.printf "\nDone.  Consumers add (libraries %s) to their dune files.\n" lib;
+  Sol_cli_report.app "\nDone.  Consumers add (libraries %s) to their dune files." lib;
   Ok ()
 ;;
 

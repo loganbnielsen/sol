@@ -1,4 +1,7 @@
 let () =
+  (* REFAC-135: library code reports through Logs; this is where it reaches the
+     terminal. First, so the supervisor child reports the same way. *)
+  Sol_cli_report.install_terminal ();
   (* INFRA-076: this binary is also Terraform's supervisor. *)
   Sol_cli_supervised.dispatch_if_supervisor ();
   (* Root-discovery chdir (OBS-013) is scoped to sol status/logs/open's own

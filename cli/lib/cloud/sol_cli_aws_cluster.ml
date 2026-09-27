@@ -70,7 +70,7 @@ let provisioner_kubeconfig ?role_arn ~region outputs f =
      [at_exit] as well; it is idempotent. *)
   at_exit cleanup;
   Fun.protect ~finally:cleanup (fun () ->
-    Printf.printf "  cluster access identity: %s\n%!" (cluster_access_role_arn outputs);
+    Sol_cli_report.app "  cluster access identity: %s" (cluster_access_role_arn outputs);
     (* Finding 12: the base providers resolve the kubeconfig from
        KUBE_CONFIG_PATH/KUBE_CONFIG_PATHS, not KUBECONFIG. *)
     let env = Sol_cli_cluster.provisioner_kube_env path in
@@ -525,8 +525,8 @@ let whoami_capture_path ~run_id =
 let persist_whoami_capture ~run_id json =
   match whoami_capture_path ~run_id with
   | None ->
-    Printf.printf
-      "  whoami capture: no writable path (set HOME or SOL_QUALIFICATION_CAPTURE_DIR)\n%!"
+    Sol_cli_report.app
+      "  whoami capture: no writable path (set HOME or SOL_QUALIFICATION_CAPTURE_DIR)"
   | Some path ->
     (try
        let dir = Filename.dirname path in
@@ -541,12 +541,11 @@ let persist_whoami_capture ~run_id json =
        close_out oc;
        (try Unix.chmod path 0o600 with
         | _ -> ());
-       Printf.printf "  whoami capture: %s\n%!" path
+       Sol_cli_report.app "  whoami capture: %s" path
      with
      | _ ->
-       Printf.printf
-         "  whoami capture: could not write %s -- the raw response is in this log above\n\
-          %!"
+       Sol_cli_report.app
+         "  whoami capture: could not write %s -- the raw response is in this log above"
          path)
 ;;
 
@@ -603,7 +602,7 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
               json)
        | Ok identity ->
          let source = identity.source in
-         Printf.printf "  whoami shape: parsed (identity source: %s)\n%!" source;
+         Sol_cli_report.app "  whoami shape: parsed (identity source: %s)" source;
          let matched = principal_matches ~expected identity in
          let named =
            match identity.canonical_arn, identity.arn with
@@ -655,8 +654,8 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
               de-escalation."
              why)
       else (
-        Printf.printf
-          "  whoami shape: not reachable yet (%s); retrying in %.0fs\n%!"
+        Sol_cli_report.app
+          "  whoami shape: not reachable yet (%s); retrying in %.0fs"
           why
           interval_s;
         Unix.sleepf interval_s;
@@ -690,8 +689,8 @@ let await_deescalation ~region ~outputs ~provisioner_role_arn ~before =
     | Sol_cli_cloud_lifecycle.Deescalated -> verdict
     | _ when remaining <= 1 -> verdict
     | verdict ->
-      Printf.printf
-        "  awaiting effective de-escalation: %s\n%!"
+      Sol_cli_report.app
+        "  awaiting effective de-escalation: %s"
         (Sol_cli_cloud_lifecycle.deescalation_verdict_to_string verdict);
       Unix.sleepf interval_s;
       loop (remaining - 1)
@@ -759,8 +758,8 @@ let observe_bootstrap_window_result ~region ~outputs ~provisioner_role_arn () =
     in
     match permitted, indeterminate with
     | true, [] ->
-      Printf.printf
-        "  bootstrap window control: principal=%s; %s\n%!"
+      Sol_cli_report.app
+        "  bootstrap window control: principal=%s; %s"
         (deescalation_principal_to_string principal)
         (probes
          |> List.map (fun (capability, answer) ->
@@ -774,8 +773,8 @@ let observe_bootstrap_window_result ~region ~outputs ~provisioner_role_arn () =
       if remaining <= 1
       then Error (window_control_failure ~permitted indeterminate)
       else (
-        Printf.printf
-          "  bootstrap window control: not yet permitted; retrying in %.0fs\n%!"
+        Sol_cli_report.app
+          "  bootstrap window control: not yet permitted; retrying in %.0fs"
           interval_s;
         Unix.sleepf interval_s;
         attempt (remaining - 1))
@@ -912,6 +911,6 @@ let credentials ~operation ~leaves_target_standing : (unit, string) result =
          ~detail)
   | Ok credentials ->
     Sol_cli_aws_credentials.install credentials;
-    Printf.printf "  credentials: %s\n%!" credentials.principal;
+    Sol_cli_report.app "  credentials: %s" credentials.principal;
     Ok ()
 ;;

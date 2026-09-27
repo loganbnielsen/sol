@@ -78,8 +78,9 @@
   test_substrate
   test_migration
   test_workspace_model
-  test_yaml)
- (libraries sol_cli sol_cli_test_support alcotest unix yojson str yaml))
+  test_yaml
+  test_report)
+ (libraries sol_cli sol_cli_test_support alcotest unix yojson str yaml logs))
 
 (executable
  (name print_readiness_invocations)

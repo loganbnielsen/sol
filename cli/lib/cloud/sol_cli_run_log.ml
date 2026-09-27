@@ -155,11 +155,10 @@ let write_file path contents =
 let finish_phase t ~name ~elapsed_s ~ok ~contents =
   let log_path = phase_log_path t ~phase:name in
   write_file log_path contents;
-  Printf.printf "%s\n%!" (format_phase_line ~name ~elapsed_s ~ok);
+  Sol_cli_report.app "%s" (format_phase_line ~name ~elapsed_s ~ok);
   if not ok
   then
-    Printf.printf
-      "%s%!"
+    Sol_cli_report.app_block
       (format_failure_report ~run_id:t.run_id ~log_path ~tail:(tail_lines ~n:40 contents))
 ;;
 

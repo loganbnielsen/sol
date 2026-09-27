@@ -177,7 +177,7 @@ let create_idempotent_yaml ~ctx yaml =
 
 let apply ~ctx (ns_yaml, workload_yaml) ~dry_run =
   if dry_run
-  then Printf.printf "%s\n%s\n" ns_yaml workload_yaml
+  then Sol_cli_report.app "%s\n%s" ns_yaml workload_yaml
   else (
     create_idempotent_yaml ~ctx ns_yaml
     |> Result.iter_error (fun e ->

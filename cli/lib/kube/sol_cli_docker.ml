@@ -25,10 +25,9 @@ let build ~tag ~dockerfile ~context =
     if buildx_available ()
     then [ "--provenance=false"; "--sbom=false" ]
     else (
-      Printf.eprintf
+      Sol_cli_report.warn
         "warning: docker buildx plugin not found; using the legacy builder (install \
-         docker-buildx for BuildKit builds).\n\
-         %!";
+         docker-buildx for BuildKit builds).";
       [])
   in
   Sol_cli_process.run
