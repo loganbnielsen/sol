@@ -94,3 +94,12 @@ let install_signal_handler ~sw resolver =
     ignore (Eio.Promise.try_resolve resolver ());
     `Stop_daemon)
 ;;
+
+let setting name =
+  match Sys.getenv_opt name with
+  | None -> None
+  | Some value ->
+    (match String.trim value with
+     | "" -> None
+     | trimmed -> Some trimmed)
+;;

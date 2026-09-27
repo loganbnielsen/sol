@@ -2,9 +2,7 @@
 id: INFRA-015
 type: feature
 severity: low
-source: architecture discussion 2026-09-14 (spun off FEAT-079: -fn resource
-  consumption made explicit, but isolated execution capacity deliberately
-  deferred as a separate concern)
+source: "architecture discussion 2026-09-14 (spun off FEAT-079: -fn resource consumption made explicit, but isolated execution capacity deliberately deferred as a separate concern)"
 ---
 
 **Depends on:** FEAT-079 (resource requests/limits must be explicit and

@@ -239,8 +239,9 @@ let run_check_reverts () =
            else None))
   in
   if flagged = []
-  then
-    Printf.printf "check-reverts: clean — no DONE ticket has a matching revert commit.\n"
+  then (
+    Printf.printf "check-reverts: clean — no DONE ticket has a matching revert commit.\n";
+    Ok ())
   else (
     Printf.printf
       "check-reverts: %d ticket(s) marked DONE have a merge that was later reverted:\n"
@@ -254,7 +255,7 @@ let run_check_reverts () =
            hash
            path)
       flagged;
-    exit 1)
+    Soldev_exit.reported ())
 ;;
 
 (* ── pipeline submit ──────────────────────────────────────────────────────── *)
@@ -266,29 +267,40 @@ let run_check_reverts () =
    It never touches `internal/pipeline/tickets/` on `main` — there is nothing to move
    there until the PR actually merges. *)
 let run_submit ticket_id =
+  let open Result.Syntax in
   let done_path = Printf.sprintf "%s/%s.md" (ticket_dir Soldev_ticket.Done) ticket_id in
-  if not (Sys.file_exists done_path)
-  then (
-    Printf.eprintf
-      "error: %s not found. Run this from the ticket's worktree, after your final commit \
-       has already moved the ticket file to DONE/ on this branch.\n"
-      done_path;
-    exit 1);
+  let* () =
+    if Sys.file_exists done_path
+    then Ok ()
+    else
+      Soldev_exit.error
+        (Printf.sprintf
+           "error: %s not found. Run this from the ticket's worktree, after your final \
+            commit has already moved the ticket file to DONE/ on this branch."
+           done_path)
+  in
   let branch = current_branch () in
-  if branch = "main" || branch = ""
-  then (
-    Printf.eprintf "error: not on a ticket branch (currently on %s)\n" branch;
-    exit 1);
+  let* () =
+    if branch = "main" || branch = ""
+    then
+      Soldev_exit.error
+        (Printf.sprintf "error: not on a ticket branch (currently on %s)" branch)
+    else Ok ()
+  in
   Printf.printf "[%s] pushing %s...\n%!" ticket_id branch;
-  if
-    Soldev_shell.run_cmd (Printf.sprintf "git push -u origin %s" (Filename.quote branch))
-    <> 0
-  then (
-    Printf.eprintf "error: git push failed for %s\n" branch;
-    exit 1);
+  let* () =
+    if
+      Soldev_shell.run_cmd
+        (Printf.sprintf "git push -u origin %s" (Filename.quote branch))
+      = 0
+    then Ok ()
+    else Soldev_exit.error (Printf.sprintf "error: git push failed for %s" branch)
+  in
   let content = read_file done_path in
   match find_pr_for_ticket ticket_id with
-  | Some p -> Printf.printf "[%s] PR already exists: %s\n%!" ticket_id p.pr_url
+  | Some p ->
+    Printf.printf "[%s] PR already exists: %s\n%!" ticket_id p.pr_url;
+    Ok ()
   | None ->
     Printf.printf "[%s] opening PR...\n%!" ticket_id;
     let title = Printf.sprintf "%s: %s" ticket_id (Soldev_ticket.ticket_title content) in
@@ -310,11 +322,11 @@ let run_submit ticket_id =
            (Filename.quote title)
            (Filename.quote body))
     in
-    if not (Sol_process.succeeded r)
+    if Sol_process.succeeded r
     then (
-      Printf.eprintf "error: gh pr create failed:\n%s\n" r.Sol_process.stderr;
-      exit 1);
-    Printf.printf "[%s] → %s\n%!" ticket_id (String.trim r.Sol_process.stdout)
+      Printf.printf "[%s] → %s\n%!" ticket_id (String.trim r.Sol_process.stdout);
+      Ok ())
+    else Soldev_exit.error ("error: gh pr create failed:\n" ^ r.Sol_process.stderr)
 ;;
 
 (* ── pipeline review ──────────────────────────────────────────────────────── *)
@@ -329,18 +341,8 @@ type violation =
   ; vmessage : string
   }
 
-let parse_result json_str =
+let result_fields status j =
   let open Yojson.Basic.Util in
-  let j = Yojson.Basic.from_string json_str in
-  let status_raw = j |> member "status" |> to_string in
-  let status =
-    match status_raw with
-    | "pass" -> Pass
-    | "fail" -> Fail
-    | _ ->
-      Printf.eprintf "error: unknown status %S\n" status_raw;
-      exit 1
-  in
   let summary = j |> member "summary" |> to_string_option |> Option.value ~default:"" in
   let violations =
     (match j |> member "violations" with
@@ -348,13 +350,30 @@ let parse_result json_str =
      | v -> to_list v)
     |> List.map (fun v ->
       { vfile = v |> member "file" |> to_string
-      ; vline =
-          (try Some (v |> member "line" |> to_int) with
-           | _ -> None)
+      ; vline = v |> member "line" |> to_int_option
       ; vmessage = v |> member "message" |> to_string
       })
   in
-  status, summary, violations
+  Ok (status, summary, violations)
+;;
+
+(* A result that is not the expected JSON is a failure to report, not an
+   exception out of the command. *)
+let parse_result json_str =
+  let open Yojson.Basic.Util in
+  let decode j =
+    match j |> member "status" |> to_string with
+    | "pass" -> result_fields Pass j
+    | "fail" -> result_fields Fail j
+    | other -> Soldev_exit.error (Printf.sprintf "error: unknown status %S" other)
+  in
+  match Yojson.Basic.from_string json_str with
+  | exception Yojson.Json_error message ->
+    Soldev_exit.error ("error: the review result is not JSON: " ^ message)
+  | j ->
+    (try decode j with
+     | Type_error (message, _) ->
+       Soldev_exit.error ("error: unexpected review result shape: " ^ message))
 ;;
 
 let format_violations vs =
@@ -376,13 +395,14 @@ let format_violations vs =
    commit (this repo's established convention), not a ticket-directory
    round trip. *)
 let run_review ticket_id result_file =
+  let open Result.Syntax in
   match find_pr_for_ticket ticket_id with
   | None ->
-    Printf.eprintf
-      "error: no open PR found for %s (branch prefix %s/)\n"
-      ticket_id
-      ticket_id;
-    exit 1
+    Soldev_exit.error
+      (Printf.sprintf
+         "error: no open PR found for %s (branch prefix %s/)"
+         ticket_id
+         ticket_id)
   | Some p ->
     let json_str =
       match result_file with
@@ -397,7 +417,7 @@ let run_review ticket_id result_file =
          | End_of_file -> ());
         Buffer.contents buf
     in
-    let status, summary, violations = parse_result (String.trim json_str) in
+    let* status, summary, violations = parse_result (String.trim json_str) in
     (match status with
      | Pass ->
        (* Embed the PR's current head sha (from GitHub, not the local
@@ -419,10 +439,12 @@ let run_review ticket_id result_file =
               (Filename.quote body))
        in
        if rc <> 0
-       then (
-         Printf.eprintf "error: failed to post review-pass comment on %s\n" p.pr_url;
-         exit 1);
-       Printf.printf "[%s] %s → approved\n" ticket_id p.pr_url
+       then
+         Soldev_exit.error
+           (Printf.sprintf "error: failed to post review-pass comment on %s" p.pr_url)
+       else (
+         Printf.printf "[%s] %s → approved\n" ticket_id p.pr_url;
+         Ok ())
      | Fail ->
        let body =
          Printf.sprintf
@@ -439,14 +461,16 @@ let run_review ticket_id result_file =
               (Filename.quote body))
        in
        if rc <> 0
-       then (
-         Printf.eprintf "error: failed to post review-fail comment on %s\n" p.pr_url;
-         exit 1);
-       Printf.printf
-         "[%s] %s → changes requested (%d violation(s))\n"
-         ticket_id
-         p.pr_url
-         (List.length violations))
+       then
+         Soldev_exit.error
+           (Printf.sprintf "error: failed to post review-fail comment on %s" p.pr_url)
+       else (
+         Printf.printf
+           "[%s] %s → changes requested (%d violation(s))\n"
+           ticket_id
+           p.pr_url
+           (List.length violations);
+         Ok ()))
 ;;
 
 (* ── pipeline merge-finish (internal — spawned by `merge`, never call directly) ──
@@ -490,20 +514,19 @@ let run_merge_finish ~ticket_id ~merge_sha =
   let perf_rc = Soldev_shell.run_cmd "./internal/tooling/scripts/run_tests.sh" in
   match post_merge_action_of_rc perf_rc with
   | Report_local_failure rc ->
-    Printf.eprintf
-      "  local post-merge suite failed (rc=%d) — %s is NOT reverted.\n\
-      \  The merge is on origin/main (the required checks verified it before it landed) \
-       and the ticket's DONE move travelled with it: nothing is rolled back, here or \
-       there.\n\
-      \  This run reflects this machine — missing kafka/e2e infra is the usual cause — \
-       not the code CI already verified.\n\
-      \  If this is a real regression, revert it deliberately on the remote:\n\
-      \    git revert %s && git push origin main\n\
-       %!"
-      rc
-      ticket_id
-      merge_sha;
-    exit 1
+    Soldev_exit.error
+      (Printf.sprintf
+         "  local post-merge suite failed (rc=%d) — %s is NOT reverted.\n\
+         \  The merge is on origin/main (the required checks verified it before it \
+          landed) and the ticket's DONE move travelled with it: nothing is rolled back, \
+          here or there.\n\
+         \  This run reflects this machine — missing kafka/e2e infra is the usual cause \
+          — not the code CI already verified.\n\
+         \  If this is a real regression, revert it deliberately on the remote:\n\
+         \    git revert %s && git push origin main"
+         rc
+         ticket_id
+         merge_sha)
   | Record_baseline | Record_baseline_after_perf_regression ->
     (* Perf-ratio regressions (rc = 2) are informational only: record the new
        baseline so history reflects the merged commit, but never revert. *)
@@ -532,7 +555,7 @@ let run_merge_finish ~ticket_id ~merge_sha =
             "git add internal/tooling/perf/perf_baseline.json && git commit -m %s"
             (Filename.quote message)));
     Printf.printf "  ✓  merged\n%!";
-    exit 0
+    Ok ()
 ;;
 
 (* Path to the binary `dune build` just refreshed. Invoked directly rather
@@ -540,34 +563,9 @@ let run_merge_finish ~ticket_id ~merge_sha =
    ~/.local/bin/soldev being symlinked at all. *)
 let freshly_built_soldev = "_build/default/internal/tooling/soldev/bin/main.exe"
 
-(* ── pipeline merge ──────────────────────────────────────────────────────── *)
-
-(* Merges via `gh pr merge` — GitHub branch protection and required checks
-   gate the actual merge, not local logic. A ticket is candidate for merging
-   the moment it has an open PR with an approved review and green checks;
-   there is no local READY_TO_MERGE directory to enumerate any more (see
-   REFAC-077) — `merge` asks GitHub directly. Pass a ticket ID to merge one;
-   omit to sweep every open PR whose branch looks like `<TICKET-ID>/...`. *)
-let run_merge ~dry_run ~ticket_filter =
-  let candidates =
-    match ticket_filter with
-    | Some id ->
-      (match find_pr_for_ticket id with
-       | Some p -> [ id, p ]
-       | None ->
-         Printf.eprintf "error: no open PR found for %s\n" id;
-         exit 1)
-    | None -> open_prs () |> List.map (fun p -> ticket_id_of_branch p.pr_branch, p)
-  in
-  if candidates = []
-  then (
-    Printf.printf "No open PRs to merge.\n";
-    exit 0);
-  let branch = current_branch () in
-  if branch <> "main"
-  then (
-    Printf.eprintf "error: must be on main to merge (currently on %s).\n" branch;
-    exit 1);
+(* Merges each approved, green candidate in turn; a failure on one is counted
+   and reported, and the sweep carries on. *)
+let merge_candidates ~dry_run candidates =
   let errors = ref 0 in
   let merged = ref [] in
   List.iter
@@ -667,7 +665,38 @@ let run_merge ~dry_run ~ticket_filter =
   if (not dry_run) && !merged <> []
   then
     Printf.printf "\nLocal main has new commits — remember to `git push origin main`.\n";
-  Printf.printf "\nDone. %d merged.\n" (List.length !merged)
+  Printf.printf "\nDone. %d merged.\n" (List.length !merged);
+  Ok ()
+;;
+
+(* ── pipeline merge ──────────────────────────────────────────────────────── *)
+
+(* Merges via `gh pr merge` — GitHub branch protection and required checks
+   gate the actual merge, not local logic. A ticket is candidate for merging
+   the moment it has an open PR with an approved review and green checks;
+   there is no local READY_TO_MERGE directory to enumerate any more (see
+   REFAC-077) — `merge` asks GitHub directly. Pass a ticket ID to merge one;
+   omit to sweep every open PR whose branch looks like `<TICKET-ID>/...`. *)
+let run_merge ~dry_run ~ticket_filter =
+  let open Result.Syntax in
+  let* candidates =
+    match ticket_filter with
+    | Some id ->
+      (match find_pr_for_ticket id with
+       | Some p -> Ok [ id, p ]
+       | None -> Soldev_exit.error (Printf.sprintf "error: no open PR found for %s" id))
+    | None -> Ok (open_prs () |> List.map (fun p -> ticket_id_of_branch p.pr_branch, p))
+  in
+  let branch = current_branch () in
+  if candidates = []
+  then (
+    Printf.printf "No open PRs to merge.\n";
+    Ok ())
+  else if branch <> "main"
+  then
+    Soldev_exit.error
+      (Printf.sprintf "error: must be on main to merge (currently on %s)." branch)
+  else merge_candidates ~dry_run candidates
 ;;
 
 (* ── worktree annotations for pipeline ls/check (FEAT-040) ───────────────
@@ -803,7 +832,7 @@ let run_ls include_done =
              (fun filename ->
                 let id = Filename.chop_suffix filename ".md" in
                 let content = read_file (Filename.concat state_dir filename) in
-                let fields = Soldev_ticket.parse_frontmatter content in
+                let fields = Soldev_ticket.fields content in
                 let typ =
                   Soldev_ticket.fm_get fields "type" |> Option.value ~default:"-"
                 in
@@ -814,6 +843,13 @@ let run_ls include_done =
                   Soldev_ticket.parse_depends content |> Soldev_ticket.dependency_summary
                 in
                 let ready = Soldev_ticket.readiness_label ~ticket_id:id state content in
+                (* REFAC-137: a frontmatter that is not valid YAML is named in the
+                   listing, never read as a ticket with no fields. *)
+                let ready =
+                  match Soldev_ticket.frontmatter content with
+                  | Ok _ -> ready
+                  | Error message -> "invalid-frontmatter: " ^ message
+                in
                 (* INFRA-010: a stale premise must not read as actionable, and the
                    listing is exactly where it silently did. Echo is off here
                    because `ls` is a summary; `check` is where the probe is shown
@@ -824,7 +860,6 @@ let run_ls include_done =
                   | Some probe ->
                     (match
                        Soldev_ticket.premise_verdict
-                         ~probe
                          ~exit_code:(Soldev_shell.run_cmd ~echo:false probe)
                      with
                      | Soldev_ticket.Premise_holds -> ready
@@ -857,18 +892,23 @@ let run_ls include_done =
                   title)
              files)))
     states;
-  if not !any then Printf.printf "No tickets found.\n"
+  if not !any then Printf.printf "No tickets found.\n";
+  Ok ()
 ;;
 
 (* ── pipeline check ──────────────────────────────────────────────────────── *)
 
 let run_check ticket_id =
+  let open Result.Syntax in
   match Soldev_ticket.find_ticket ticket_id with
-  | None ->
-    Printf.eprintf "unknown ticket: %s\n" ticket_id;
-    exit 2
+  | None -> Soldev_exit.error ~code:2 (Printf.sprintf "unknown ticket: %s" ticket_id)
   | Some (state, path) ->
     let content = read_file path in
+    let* _fields =
+      Soldev_ticket.frontmatter content
+      |> Result.map_error (fun message ->
+        { Soldev_exit.message = Some (Printf.sprintf "%s: %s" path message); code = 1 })
+    in
     let deps = Soldev_ticket.parse_depends content in
     Printf.printf "%s  state: %s\n" ticket_id (dir state);
     Printf.printf "depends on: %s\n" (Soldev_ticket.dependency_summary deps);
@@ -882,47 +922,54 @@ let run_check ticket_id =
        still exists at all. A stale ticket is indistinguishable from real work
        from the outside, and this is the cheapest place to find out. The probe is
        echoed, so it is visible what is about to run. *)
-    (match Soldev_ticket.premise_of content with
-     | None -> ()
-     | Some probe ->
-       (match
-          Soldev_ticket.premise_verdict ~probe ~exit_code:(Soldev_shell.run_cmd probe)
-        with
-        | Soldev_ticket.Premise_holds -> Printf.printf "premise: holds\n"
-        | Soldev_ticket.Premise_stale ->
-          Printf.printf
-            "premise stale: the probe succeeded, so the work this ticket describes may \
-             already be done. Re-read the ticket and either close it with evidence or \
-             fix the probe.\n";
-          Printf.printf "status: premise-stale\n";
-          exit 1
-        | Soldev_ticket.Premise_unverified reason ->
-          Printf.printf
-            "premise unverified: %s. Confirm the premise by hand before starting, then \
-             fix or remove the probe.\n"
-            reason;
-          Printf.printf "status: premise-unverified\n";
-          exit 1));
-    if Soldev_ticket.has_human_decision_gate content
-    then (
-      let details = Soldev_ticket.human_decision_details content in
-      if String.trim details <> "" then Printf.printf "\n%s\n\n" details;
-      Printf.printf "status: blocked-for-human-decision\n";
-      exit 1);
+    let* () =
+      match Soldev_ticket.premise_of content with
+      | None -> Ok ()
+      | Some probe ->
+        (match Soldev_ticket.premise_verdict ~exit_code:(Soldev_shell.run_cmd probe) with
+         | Soldev_ticket.Premise_holds ->
+           Printf.printf "premise: holds\n";
+           Ok ()
+         | Soldev_ticket.Premise_stale ->
+           Printf.printf
+             "premise stale: the probe succeeded, so the work this ticket describes may \
+              already be done. Re-read the ticket and either close it with evidence or \
+              fix the probe.\n";
+           Printf.printf "status: premise-stale\n";
+           Soldev_exit.reported ()
+         | Soldev_ticket.Premise_unverified reason ->
+           Printf.printf
+             "premise unverified: %s. Confirm the premise by hand before starting, then \
+              fix or remove the probe.\n"
+             reason;
+           Printf.printf "status: premise-unverified\n";
+           Soldev_exit.reported ())
+    in
+    let* () =
+      if Soldev_ticket.has_human_decision_gate content
+      then (
+        let details = Soldev_ticket.human_decision_details content in
+        if String.trim details <> "" then Printf.printf "\n%s\n\n" details;
+        Printf.printf "status: blocked-for-human-decision\n";
+        Soldev_exit.reported ())
+      else Ok ()
+    in
     (* A cycle is reported before the ordinary dependency list, because "blocked
        by dependency" is exactly what a deadlock looks like from the outside:
        every member is waiting on another, so the queue reads as busy rather than
        broken. *)
-    (match Soldev_ticket.find_dependency_cycle ticket_id with
-     | Some cycle when Soldev_ticket.cycle_blocks cycle ->
-       Printf.printf "dependency cycle: %s\n" (String.concat " -> " cycle);
-       Printf.printf
-         "  every member waits on the next, so none of them can start. Check each \
-          `Depends on:` line in the cycle: an id mentioned as prose (`Implemented by X`, \
-          `Related: X`) is read as a dependency.\n";
-       Printf.printf "status: blocked-by-dependency-cycle\n";
-       exit 1
-     | _ -> ());
+    let* () =
+      match Soldev_ticket.find_dependency_cycle ticket_id with
+      | Some cycle when Soldev_ticket.cycle_blocks cycle ->
+        Printf.printf "dependency cycle: %s\n" (String.concat " -> " cycle);
+        Printf.printf
+          "  every member waits on the next, so none of them can start. Check each \
+           `Depends on:` line in the cycle: an id mentioned as prose (`Implemented by \
+           X`, `Related: X`) is read as a dependency.\n";
+        Printf.printf "status: blocked-by-dependency-cycle\n";
+        Soldev_exit.reported ()
+      | _ -> Ok ()
+    in
     let blocked =
       deps
       |> List.filter_map (fun dep ->
@@ -937,10 +984,12 @@ let run_check ticket_id =
         (fun (dep, state) -> Printf.printf "blocked by dependency: %s in %s\n" dep state)
         blocked;
       Printf.printf "status: blocked-by-dependency\n";
-      exit 1);
-    if state = Soldev_ticket.Ready_for_engineering
-    then Printf.printf "status: actionable\n"
+      Soldev_exit.reported ())
+    else if state = Soldev_ticket.Ready_for_engineering
+    then (
+      Printf.printf "status: actionable\n";
+      Ok ())
     else (
       Printf.printf "status: not-ready-state\n";
-      exit 1)
+      Soldev_exit.reported ())
 ;;

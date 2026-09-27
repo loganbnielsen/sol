@@ -2,7 +2,7 @@
 id: HARDEN-008
 type: verification
 severity: high
-title: GCP attempt 10 — confirm the FND-0010 fix: cert-manager's readiness check passes and the install continues (Ready if it does)
+title: "GCP attempt 10 — confirm the FND-0010 fix: cert-manager's readiness check passes and the install continues (Ready if it does)"
 source: FND-0010's established cause (the platform apply cut cert-manager's own readiness check short) and its fix in the shared platform module
 ---
 
