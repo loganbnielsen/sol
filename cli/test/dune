@@ -80,7 +80,9 @@
   test_workspace_model
   test_yaml
   test_fs
-  test_report)
+  test_report
+  test_sol_yml
+  test_local_run)
  (libraries sol_cli sol_cli_test_support alcotest unix yojson str yaml logs))
 
 (executable

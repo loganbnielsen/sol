@@ -87,6 +87,14 @@ Pushgateway     localhost:9091
 
 These port-forwards are managed by Sol in the background (PIDs recorded in `~/.local/share/sol/`). `sol local infra down` tears everything down. Running `sol local infra up` again clears any stale port-forwards first, so repeat runs are safe.
 
+### Workloads declare their language
+
+`sol.yml`'s `services:` block is where a workload says what it is implemented in. `sol new` records `language: ocaml` for the unit it just generated — it knows what it wrote — and nothing infers a language from a `package.json`, a `dune` file or a directory name (DEC-022 §7). A unit you authored by hand declares it once; `sol check` warns when one has not:
+
+```text
+warning: sol.yml: ledger_worker declares no language; add `language: ocaml` (or typescript) under services.ledger_worker in sol.yml
+```
+
 ### Local iteration with `sol local run`
 
 Once the cluster is up and you have a workspace (see Part 2), use `sol local run` for rapid code-change iteration:
@@ -95,7 +103,7 @@ Once the cluster is up and you have a workspace (see Part 2), use `sol local run
 sol local run
 ```
 
-`sol local run` discovers every service in `app/<domain>/<name>/` that has a `Dockerfile`, runs a single `dune build` across all of them, then spawns each compiled binary as a **native process** — no Docker image rebuild required. Each service's stdout and stderr are prefixed with `[domain/name]` so you can follow multiple services in one terminal. Ctrl-C cleanly kills all child processes.
+`sol local run` discovers every service in `app/<domain>/<name>/` that has a `Dockerfile` and runs each one as a **native process** — no Docker image rebuild required. The workload's declared language (above) picks how it is built and launched: an OCaml unit is built with a single `dune build` across all of them and its compiled binary is spawned; a TypeScript unit is built with `npm run build` in its npm project and its built entry is run with `node`. Both are started by Sol itself, so Ctrl-C cleanly kills everything. Each service's stdout and stderr is prefixed with `[domain/name]`, so you can follow several in one terminal.
 
 The environment variables your services expect are inherited directly from the shell (set by `sol local infra up`'s port-forwards):
 
@@ -112,8 +120,8 @@ The environment variables your services expect are inherited directly from the s
 
 | | `sol local run` | `sol up` |
 |---|---|---|
-| How services run | Native OCaml binaries | Docker containers in k3d |
-| On code change | `dune build` + re-run (~seconds) | `docker build` + redeploy (~minutes) |
+| How services run | Native processes — the compiled binary (OCaml) or `node` on the built entry (TypeScript) | Docker containers in k3d |
+| On code change | Rebuild + re-run (~seconds) | `docker build` + redeploy (~minutes) |
 | Uses k3d infra | Yes (via port-forwards from `sol local infra up`) | Yes |
 | Good for | Fast edit-compile-run loop | Final smoke test before CI |
 
@@ -136,7 +144,8 @@ This generates 29 files. Here is what was created and why:
 
 ```
 pluto/
-  sol.yml                         ← workspace manifest (identifies this directory as a Sol workspace)
+  sol.yml                         ← workspace manifest (identifies this directory as a Sol workspace,
+                                     and declares each workload's language)
   dune-project                    ← root dune project (required)
   .ocamlformat                    ← OCaml formatter config
   .dockerignore                   ← excludes _build/ and .git/ from Docker build context

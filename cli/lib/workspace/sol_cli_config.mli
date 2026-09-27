@@ -84,6 +84,14 @@ type error =
   }
 
 val error_to_string : error -> string
+
+(** [sol_yml_services_of_string ~path text] is {!sol_yml_services} for text in
+    hand rather than a file: the services [sol.yml] declares, with the language
+    each one declares (FEAT-104: the manifest editor re-parses what it is about
+    to write, and refuses rather than write a file that would not say what it
+    intended). *)
+val sol_yml_services_of_string : path:string -> string -> (service list, error) result
+
 val load_for_target : target:string -> (t, error) result
 
 (** [parse_target address] is the bare target an [<env>/<provider>/<region>]

@@ -1,0 +1,331 @@
+(* FEAT-103: which adapter `sol local run` picks for each workload, and what it
+   runs. [Sol_cli_local_run.plan] decides and starts nothing, so every case here
+   is a plain fixture on disk -- no cluster, no process, no npm. *)
+
+let check_bool = Alcotest.(check bool)
+let check_string = Alcotest.(check string)
+let check_strings = Alcotest.(check (list string))
+
+let write_file path content =
+  let rec mkdirs path =
+    let parent = Filename.dirname path in
+    if parent <> path && not (Sys.file_exists parent)
+    then (
+      mkdirs parent;
+      Unix.mkdir parent 0o755)
+  in
+  mkdirs path;
+  let oc = open_out path in
+  output_string oc content;
+  close_out oc
+;;
+
+(* A workspace with the given files, cleaned up afterwards. *)
+let with_workspace files f =
+  let root = Filename.temp_file "sol-local-run-test-" "" in
+  Sys.remove root;
+  Unix.mkdir root 0o755;
+  write_file (Filename.concat root "sol.yml") "";
+  List.iter (fun (rel, content) -> write_file (Filename.concat root rel) content) files;
+  Fun.protect
+    ~finally:(fun () ->
+      ignore (Sol_cli_fs.remove_tree root))
+    (fun () -> f root)
+;;
+
+let facts_of root =
+  match Sol_cli_workspace_model.load ~root with
+  | Ok facts -> facts
+  | Error e -> Alcotest.fail ("workspace model failed to load: " ^ e)
+;;
+
+let services_of facts = Sol_cli_workspace_model.services facts
+
+(* A declared language is what the adapter reads. *)
+let sol_yml ~services = services
+let dockerfile = "FROM scratch\n"
+
+(* ── the OCaml adapter ───────────────────────────────────────────────────── *)
+
+let test_ocaml_unit_builds_with_dune_and_runs_the_binary () =
+  with_workspace
+    [ "sol.yml", sol_yml ~services:"services:\n  charge_svc:\n    language: ocaml\n"
+    ; "app/payments/charge_svc/Dockerfile", dockerfile
+    ; "app/payments/charge_svc/sol.toml", ""
+    ; "app/payments/charge_svc/bin/dune", "(executable (name main))\n"
+    ]
+  @@ fun root ->
+  let facts = facts_of root in
+  match Sol_cli_local_run.plan ~root ~facts (services_of facts) with
+  | Error errors ->
+    Alcotest.fail
+      ("plan failed: " ^ String.concat "; " (List.map (fun (l, m) -> l ^ " " ^ m) errors))
+  | Ok plan ->
+    (match plan.builds with
+     | [ build ] ->
+       check_strings
+         "one merged dune build"
+         [ "dune"; "build"; "app/payments/charge_svc/bin/main.exe" ]
+         build.argv;
+       check_string "in the workspace root" "" build.cwd
+     | builds ->
+       Alcotest.fail (Printf.sprintf "expected one build, got %d" (List.length builds)));
+    (match plan.launches with
+     | [ launch ] ->
+       check_strings
+         "launches the compiled binary"
+         [ "_build/default/app/payments/charge_svc/bin/main.exe" ]
+         launch.launch.argv;
+       check_string "artifact" "app/payments/charge_svc/bin/main.exe" launch.artifact;
+       check_bool "declared OCaml" true (launch.language = Sol_cli_compat.Ocaml)
+     | launches ->
+       Alcotest.fail (Printf.sprintf "expected one launch, got %d" (List.length launches)))
+;;
+
+(* ── the TypeScript adapter ──────────────────────────────────────────────── *)
+
+let typescript_unit =
+  [ ( "app/demo_ts/package.json"
+    , {|{"name": "demo-ts", "private": true, "workspaces": ["order_svc", "fulfillment_worker"]}|}
+    )
+  ; "app/demo_ts/node_modules/.keep", ""
+  ; ( "app/demo_ts/order_svc/package.json"
+    , {|{"name": "order-svc", "scripts": {"build": "tsc", "start": "node dist/index.js"}}|}
+    )
+  ; ( "app/demo_ts/order_svc/tsconfig.json"
+    , {|{"compilerOptions": {"outDir": "dist", "rootDir": "src"}}|} )
+  ; "app/demo_ts/order_svc/Dockerfile", dockerfile
+  ; "app/demo_ts/order_svc/sol.toml", ""
+  ]
+;;
+
+let ts_workspace =
+  ("sol.yml", "services:\n  order_svc:\n    language: typescript\n") :: typescript_unit
+;;
+
+let test_typescript_unit_builds_through_npm_and_runs_node () =
+  with_workspace ts_workspace
+  @@ fun root ->
+  let facts = facts_of root in
+  match Sol_cli_local_run.plan ~root ~facts (services_of facts) with
+  | Error errors ->
+    Alcotest.fail
+      ("plan failed: " ^ String.concat "; " (List.map (fun (l, m) -> l ^ " " ^ m) errors))
+  | Ok plan ->
+    (* The package name is `order-svc` while the directory is `order_svc`, and
+       the npm project root is the directory above the unit. *)
+    (match plan.builds with
+     | [ build ] ->
+       check_strings
+         "builds the npm workspace by package name"
+         [ "npm"; "run"; "build"; "--workspace"; "order-svc" ]
+         build.argv;
+       check_string "in the npm project root" "app/demo_ts" build.cwd
+     | builds ->
+       Alcotest.fail (Printf.sprintf "expected one build, got %d" (List.length builds)));
+    (match plan.launches with
+     | [ launch ] ->
+       check_strings
+         "runs the built entry directly with node"
+         [ "node"; "order_svc/dist/index.js" ]
+         launch.launch.argv;
+       check_string "in the npm project root" "app/demo_ts" launch.launch.cwd;
+       check_string "artifact" "app/demo_ts/order_svc/dist/index.js" launch.artifact;
+       check_bool "declared TypeScript" true (launch.language = Sol_cli_compat.Typescript)
+     | launches ->
+       Alcotest.fail (Printf.sprintf "expected one launch, got %d" (List.length launches)))
+;;
+
+let test_a_standalone_typescript_unit_is_its_own_project () =
+  with_workspace
+    [ "sol.yml", "services:\n  api_svc:\n    language: typescript\n"
+    ; "app/api/api_svc/package.json", {|{"name": "api", "scripts": {"build": "tsc"}}|}
+    ; "app/api/api_svc/tsconfig.json", {|{"compilerOptions": {"outDir": "build"}}|}
+    ; "app/api/api_svc/node_modules/.keep", ""
+    ; "app/api/api_svc/Dockerfile", dockerfile
+    ; "app/api/api_svc/sol.toml", ""
+    ]
+  @@ fun root ->
+  let facts = facts_of root in
+  match Sol_cli_local_run.plan ~root ~facts (services_of facts) with
+  | Error errors ->
+    Alcotest.fail
+      ("plan failed: " ^ String.concat "; " (List.map (fun (l, m) -> l ^ " " ^ m) errors))
+  | Ok plan ->
+    (match plan.builds with
+     | [ build ] ->
+       check_strings "no workspace selector" [ "npm"; "run"; "build" ] build.argv;
+       check_string "built in the unit" "app/api/api_svc" build.cwd
+     | builds ->
+       Alcotest.fail (Printf.sprintf "expected one build, got %d" (List.length builds)));
+    (match plan.launches with
+     | [ launch ] ->
+       check_strings
+         "the tsconfig outDir is honoured"
+         [ "node"; "build/index.js" ]
+         launch.launch.argv
+     | launches ->
+       Alcotest.fail (Printf.sprintf "expected one launch, got %d" (List.length launches)))
+;;
+
+(* ── mixed selections ────────────────────────────────────────────────────── *)
+
+let test_a_mixed_selection_uses_both_adapters () =
+  let files =
+    [ ( "sol.yml"
+      , "services:\n\
+        \  charge_svc:\n\
+        \    language: ocaml\n\
+        \  order_svc:\n\
+        \    language: typescript\n" )
+    ; "app/payments/charge_svc/Dockerfile", dockerfile
+    ; "app/payments/charge_svc/sol.toml", ""
+    ]
+    @ typescript_unit
+  in
+  with_workspace files
+  @@ fun root ->
+  let facts = facts_of root in
+  match Sol_cli_local_run.plan ~root ~facts (services_of facts) with
+  | Error errors ->
+    Alcotest.fail
+      ("plan failed: " ^ String.concat "; " (List.map (fun (l, m) -> l ^ " " ^ m) errors))
+  | Ok plan ->
+    check_bool "two units" true (List.length plan.launches = 2);
+    (match plan.builds with
+     | [ dune_build; npm_build ] ->
+       check_strings
+         "the dune build covers only the OCaml unit"
+         [ "dune"; "build"; "app/payments/charge_svc/bin/main.exe" ]
+         dune_build.argv;
+       check_strings
+         "the TypeScript unit builds with npm"
+         [ "npm"; "run"; "build"; "--workspace"; "order-svc" ]
+         npm_build.argv
+     | builds ->
+       Alcotest.fail (Printf.sprintf "expected two builds, got %d" (List.length builds)));
+    (* The launches follow the selection: however discovery ordered the two,
+       every selected unit is launched, in that same order. *)
+    let services = services_of facts in
+    check_strings
+      "both units are launched, in selection order"
+      (List.map Sol_cli_local_run.label services)
+      (List.map (fun (r : Sol_cli_local_run.recipe) -> r.label) plan.launches)
+;;
+
+(* ── refusals ────────────────────────────────────────────────────────────── *)
+
+let expect_error ~needle = function
+  | Ok _ -> Alcotest.fail "expected the plan to refuse"
+  | Error errors ->
+    let messages = List.map (fun (label, message) -> label ^ " " ^ message) errors in
+    check_bool
+      (Printf.sprintf "names %S in %s" needle (String.concat "; " messages))
+      true
+      (List.exists (fun message -> Sol_cli_string.contains ~needle message) messages)
+;;
+
+let test_an_undeclared_workload_is_refused () =
+  with_workspace
+    [ "sol.yml", ""
+    ; "app/payments/charge_svc/Dockerfile", dockerfile
+    ; "app/payments/charge_svc/sol.toml", ""
+    ]
+  @@ fun root ->
+  let facts = facts_of root in
+  Sol_cli_local_run.plan ~root ~facts (services_of facts)
+  |> expect_error ~needle:"declares no language"
+;;
+
+let test_a_typescript_unit_without_a_package_is_refused () =
+  with_workspace
+    [ "sol.yml", "services:\n  charge_svc:\n    language: typescript\n"
+    ; "app/payments/charge_svc/Dockerfile", dockerfile
+    ; "app/payments/charge_svc/sol.toml", ""
+    ]
+  @@ fun root ->
+  let facts = facts_of root in
+  Sol_cli_local_run.plan ~root ~facts (services_of facts)
+  |> expect_error ~needle:"package.json could not be read"
+;;
+
+let test_typescript_dependencies_that_are_not_installed_are_refused () =
+  let files =
+    List.filter
+      (fun (rel, _) -> not (String.equal rel "app/demo_ts/node_modules/.keep"))
+      ts_workspace
+  in
+  with_workspace files
+  @@ fun root ->
+  let facts = facts_of root in
+  Sol_cli_local_run.plan ~root ~facts (services_of facts)
+  |> expect_error ~needle:"run `npm ci` in app/demo_ts"
+;;
+
+(* The plan refuses as a whole: a loop that started half a selection would leave
+   the user looking at a partially running system. *)
+let test_one_bad_unit_refuses_the_whole_plan () =
+  with_workspace
+    [ ( "sol.yml"
+      , "services:\n\
+        \  charge_svc:\n\
+        \    language: ocaml\n\
+        \  ledger_worker:\n\
+        \    language: ocaml\n" )
+    ; "app/payments/charge_svc/Dockerfile", dockerfile
+    ; "app/payments/charge_svc/sol.toml", ""
+    ; "app/comms/ledger_worker/Dockerfile", dockerfile
+    ; "app/comms/ledger_worker/sol.toml", ""
+    ]
+  @@ fun root ->
+  (* Drop one unit's declaration, so it cannot be driven, and read the model as
+     it then stands. *)
+  write_file
+    (Filename.concat root "sol.yml")
+    "services:\n  charge_svc:\n    language: ocaml\n";
+  let facts = facts_of root in
+  Sol_cli_local_run.plan ~root ~facts (services_of facts)
+  |> expect_error ~needle:"ledger_worker declares no language"
+;;
+
+let () =
+  Alcotest.run
+    "sol_cli_local_run"
+    [ ( "adapters"
+      , [ Alcotest.test_case
+            "an OCaml unit builds with dune and runs the binary"
+            `Quick
+            test_ocaml_unit_builds_with_dune_and_runs_the_binary
+        ; Alcotest.test_case
+            "a TypeScript unit builds through npm and runs node"
+            `Quick
+            test_typescript_unit_builds_through_npm_and_runs_node
+        ; Alcotest.test_case
+            "a standalone TypeScript unit is its own project"
+            `Quick
+            test_a_standalone_typescript_unit_is_its_own_project
+        ; Alcotest.test_case
+            "a mixed selection uses both adapters"
+            `Quick
+            test_a_mixed_selection_uses_both_adapters
+        ] )
+    ; ( "refusals"
+      , [ Alcotest.test_case
+            "an undeclared workload"
+            `Quick
+            test_an_undeclared_workload_is_refused
+        ; Alcotest.test_case
+            "a TypeScript unit with no package.json"
+            `Quick
+            test_a_typescript_unit_without_a_package_is_refused
+        ; Alcotest.test_case
+            "TypeScript dependencies that are not installed"
+            `Quick
+            test_typescript_dependencies_that_are_not_installed_are_refused
+        ; Alcotest.test_case
+            "one undrivable unit refuses the whole plan"
+            `Quick
+            test_one_bad_unit_refuses_the_whole_plan
+        ] )
+    ]
+;;
