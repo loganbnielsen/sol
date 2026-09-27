@@ -1,0 +1,42 @@
+{
+  "artifact_registry": {
+    "sensitive": false,
+    "type": "string",
+    "value": "us-central1-docker.pkg.dev/sol-qualification/sol-qual-gcp-13"
+  },
+  "cluster_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "sol-qual-gcp-13"
+  },
+  "docker_auth_command": {
+    "sensitive": false,
+    "type": "string",
+    "value": "gcloud auth configure-docker us-central1-docker.pkg.dev"
+  },
+  "kube_context": {
+    "sensitive": false,
+    "type": "string",
+    "value": "gke_sol-qualification_us-central1_sol-qual-gcp-13"
+  },
+  "kubeconfig_command": {
+    "sensitive": false,
+    "type": "string",
+    "value": "gcloud container clusters get-credentials sol-qual-gcp-13 --region us-central1 --project sol-qualification"
+  },
+  "project_id": {
+    "sensitive": false,
+    "type": "string",
+    "value": "sol-qualification"
+  },
+  "provisioner_service_account": {
+    "sensitive": false,
+    "type": "string",
+    "value": "sol-qual-gcp-13-provisioner@sol-qualification.iam.gserviceaccount.com"
+  },
+  "region": {
+    "sensitive": false,
+    "type": "string",
+    "value": "us-central1"
+  }
+}

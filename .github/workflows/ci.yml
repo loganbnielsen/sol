@@ -233,6 +233,16 @@ jobs:
           internal/ci/check_platform_storage_requirement.sh .
           internal/ci/test_platform_storage_requirement_check.sh
 
+      - name: Terraform output contract (INFRA-091)
+        # FND-0063: the product, the fixture and the lifecycle harness must all hold one idea of
+        # what `terraform output -json` publishes. Attempt 13's defect was two artefacts agreeing
+        # with each other and with neither Terraform nor reality, so this ties them to one payload
+        # Terraform itself produced and forbids the invented shape from returning.
+        if: needs.classify.outputs.kind != 'docs-only'
+        run: |
+          internal/ci/check_terraform_output_fixture.sh .
+          internal/ci/test_terraform_output_fixture_check.sh
+
       - name: gcloud interface and install-authority guard
         # Attempt 2 lost a live run to `gcloud container clusters get-credentials
         # --kubeconfig`, a flag that does not exist: the offline harness could not
