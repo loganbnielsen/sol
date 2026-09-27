@@ -1,27 +1,4 @@
 #!/usr/bin/env bash
-# INFRA-093 / FND-0064: the GCP driver provisions GKE Standard, and the profile refuses Autopilot.
-#
-# Two things this guard is careful *not* to do, because both would fossilize a qualification
-# default into the architectural definition of GCP support:
-#
-#   - it does not assert today's numbers. `3 x e2-standard-2` with 100 GiB disks is the driver's
-#     initial supported topology (DEC-049), recorded as the variables' defaults, and changing it
-#     deliberately must not trip this check. What it asserts is *ownership*: those values come from
-#     variables in the driver, not from the target contract and not hard-coded in the resource.
-#   - it does not assert that the pool is pinned to one zone as an architectural fact. It asserts
-#     the cluster's control plane stays regional -- every call site resolves it with `--region`,
-#     and churning that is not what the substrate switch is about -- and leaves the pool's zone
-#     placement to the driver's own configuration, where it is a cost decision.
-#
-# What it does assert is the product contract:
-#
-#   1. the driver does not request Autopilot, and nothing in the driver can turn it back on;
-#   2. a Standard cluster has a node pool Sol owns, and no default pool left behind;
-#   3. the pool's sizing comes from driver-owned variables that declare defaults, and appears
-#      nowhere in the target contract;
-#   4. the control plane stays at `var.region`.
-#
-# Usage: internal/ci/check_gcp_standard_substrate.sh [repo-root]
 set -euo pipefail
 
 root="${1:-.}"
@@ -42,9 +19,6 @@ fail() {
 
 code_only() { grep -vE '^[[:space:]]*#' "$1"; }
 
-# 1. what the *cluster resource itself* declares. Scoped to the block on purpose: a sibling
-#    resource with `location = var.region` would otherwise satisfy a control-plane check on its
-#    own, which is how this check first passed a mutation that made the cluster zonal.
 python3 - "$cluster" <<'PY'
 import pathlib, re, sys
 text = pathlib.Path(sys.argv[1]).read_text()
@@ -80,13 +54,11 @@ for problem in problems:
 sys.exit(1 if problems else 0)
 PY
 
-# 2. Standard needs a pool Sol owns, and no leftover default pool
 code_only "$cluster" | grep -qE '^resource[[:space:]]+"google_container_node_pool"' \
   || fail "a Standard cluster needs a node pool, and the driver must own it"
 code_only "$cluster" | grep -qE 'remove_default_node_pool[[:space:]]*=[[:space:]]*true' \
   || fail "the cluster's default node pool must be removed: Sol owns the pool it runs on"
 
-# 3. ownership: the pool's sizing comes from variables, and the target contract has no such keys
 for attribute in machine_type disk_size_gb; do
   code_only "$cluster" | grep -qE "^[[:space:]]*${attribute}[[:space:]]*=[[:space:]]*var\." \
     || fail "the node pool's ${attribute} must come from a driver variable, not a literal and not the target"
@@ -95,8 +67,6 @@ code_only "$cluster" | grep -qE '^[[:space:]]*node_count[[:space:]]*=[[:space:]]
   || fail "the node pool's count must come from a driver variable"
 
 for name in node_count node_machine_type node_disk_gb; do
-  # Built as one string rather than nested in the pattern: quoting a quoted pattern is how this
-  # check first matched nothing and reported a falsified failure.
   declared="variable \"${name}\""
   grep -qF "$declared" "$variables" \
     || fail "${name} must be declared in the driver's variables"

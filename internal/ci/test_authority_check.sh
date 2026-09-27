@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
-# Pins the REFAC-090 authority preflight (internal/ci/check_authority.sh) and its
-# wiring into the pre-commit hook. Uses scratch repositories only: it never
-# touches this repository's own hooks or branch state.
-#
-# The semantics under test are the split that makes the check non-brittle:
-# a declared context is enforced, an undeclared one is advisory, a branch
-# without an upstream is fine, and a merge commit is never blocked.
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
@@ -30,14 +23,12 @@ mkrepo() {
   git -C "$dir" commit -qm "one"
 }
 
-# run_check <dir> [VAR=value ...] — run the preflight inside <dir>.
 run_check() {
   local dir="$1"
   shift
   (cd "$dir" && env "$@" bash "$check")
 }
 
-# ── Standalone preflight ──────────────────────────────────────────────────────
 repo="$tmp/plain"
 mkrepo "$repo"
 
@@ -59,7 +50,6 @@ if run_check "$repo" "SOL_AUTHORITY_BRANCH=not-this-branch" >/dev/null 2>&1; the
 fi
 pass "declared branch mismatch is refused"
 
-# A base that is not an ancestor: a second, unrelated root commit.
 git -C "$repo" checkout -q --orphan unrelated
 git -C "$repo" commit -qm "unrelated root"
 other="$(git -C "$repo" rev-parse HEAD)"
@@ -81,7 +71,6 @@ git -C "$repo" checkout -q -b feature-no-upstream
 run_check "$repo" >/dev/null || fail "a branch with no upstream must not be refused"
 pass "a branch with no upstream is not refused"
 
-# Detached HEAD with staged changes: warned, not refused.
 echo two >"$repo/f"
 git -C "$repo" add f
 git -C "$repo" checkout -q --detach
@@ -93,9 +82,6 @@ case "$out" in
 esac
 pass "detached HEAD with staged changes warns but proceeds"
 
-# The canonical-checkout warning is reserved for the concurrent-actor shape:
-# it must not fire in a single-worktree clone, and must fire once another
-# worktree exists.
 git -C "$repo" checkout -q main
 git -C "$repo" worktree add -q --detach "$tmp/second" main >/dev/null 2>&1
 out="$(run_check "$repo")"
@@ -105,7 +91,6 @@ case "$out" in
 esac
 pass "canonical-checkout warning fires only when other worktrees exist"
 
-# ── Hook wiring ───────────────────────────────────────────────────────────────
 hookrepo="$tmp/hookrepo"
 mkrepo "$hookrepo"
 mkdir -p "$hookrepo/internal/ci" "$hookrepo/internal/tooling/hooks"
@@ -119,8 +104,6 @@ if (cd "$hookrepo" && SOL_AUTHORITY_BRANCH=not-this-branch \
 fi
 pass "the pre-commit hook refuses a mismatched declared context"
 
-# A merge commit is legitimate and must not be blocked — the hook returns before
-# it reaches the test runner, and the preflight does not inspect merge state.
 : >"$hookrepo/.git/MERGE_HEAD"
 (cd "$hookrepo" && bash internal/tooling/hooks/pre-commit >/dev/null 2>&1) \
   || fail "a merge commit must not be blocked"

@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# Installs Sol git hooks into .git/hooks/ as symlinks.
-# Re-running is safe — existing symlinks are updated, existing non-symlink hooks
-# are backed up first.
-#
-# Usage: bash internal/tooling/scripts/install-hooks.sh
 
 set -euo pipefail
 

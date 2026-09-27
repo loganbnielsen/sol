@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
-# REFAC-120 / REFAC-137: OCaml 5.4's stdlib ships Result.Syntax, so `let*` over
-# results is `open Result.Syntax` (or `let open Result.Syntax in`), never a
-# hand-written `let ( let* ) = Result.bind`. The rule covers every OCaml file in
-# the repository -- the CLI, the framework, the tooling, and what users copy:
-# the examples, the fixtures and the scaffold templates `sol new` writes.
-#
-# Usage: check_result_syntax.sh [repo-root]
 set -euo pipefail
 
 root="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"

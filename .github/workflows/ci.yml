@@ -355,7 +355,16 @@ jobs:
       - name: Library-output mutation test
         run: bash internal/ci/test_library_output.sh
 
-      - name: No code comments in OCaml
+      - name: Install shfmt (the shell parser the comment check uses)
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o "$HOME/.local/bin/shfmt" \
+            https://github.com/mvdan/sh/releases/download/v3.12.0/shfmt_v3.12.0_linux_amd64
+          chmod +x "$HOME/.local/bin/shfmt"
+          echo "$HOME/.local/bin" >>"$GITHUB_PATH"
+          "$HOME/.local/bin/shfmt" --version
+
+      - name: No code comments (OCaml, shell, Terraform, TypeScript)
         run: bash internal/ci/check_no_comments.sh
 
       - name: No-comments mutation test

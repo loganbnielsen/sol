@@ -1,25 +1,10 @@
 #!/usr/bin/env bash
-# DEC-046 rule 4 (REFAC-100): cloud providers mirror each other by role, and the
-# directory is the marker.
-#
-#   - A registered provider with no platform/cloud/<provider>/ directory is on
-#     paper. That is allowed: registering a provider to measure its change surface
-#     (the S11 Azure-on-paper test) must stay legal.
-#   - A registered provider that has the directory has every role.
-#   - Every directory under platform/cloud/ other than modules/ and delivery/ is a
-#     registered provider.
-#
-# Whether a provider is *usable* is the capability layer's question, not this one.
-#
-# Usage: check_provider_roots.sh [repo-root]
 set -euo pipefail
 
 root="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 cloud="$root/platform/cloud"
 
-# The roles every provider with a directory must have, in one place.
 roles="bootstrap cluster platform"
-# Directories under platform/cloud/ that are not providers.
 shared="modules delivery"
 
 # shellcheck source=providers.sh

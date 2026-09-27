@@ -1,13 +1,4 @@
 #!/usr/bin/env bash
-# Tests for classify-changes.sh.
-#
-# This classifier IS part of the CI gate: it decides whether the expensive
-# suite runs. A future refactor that silently turned "skip expensive CI" into
-# "skip CI for something important" would be invisible in a normal PR review,
-# so its semantics are pinned here rather than left to inspection.
-#
-# Run: bash internal/ci/test_classify_changes.sh
-# Exits non-zero on the first failing expectation.
 
 set -uo pipefail
 
@@ -19,7 +10,6 @@ TOTAL=0
 TMPDIR_TEST="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_TEST"' EXIT
 
-# check <expected> <path>...
 check() {
   local expected="$1"; shift
   local list="$TMPDIR_TEST/list"
@@ -37,9 +27,6 @@ check() {
   fi
 }
 
-# expect_failure_of <label> <expected-token> -- command...
-# Used for the range plumbing, where the point is that a broken input still
-# produces a decision rather than an error or an empty answer.
 check_range() {
   local expected="$1" range="$2" label="$3"
   local got
@@ -103,7 +90,6 @@ check_range source "" "empty range argument"
 
 echo
 echo "classify-changes: range mode resolves a real range"
-# A scratch repository, so this does not depend on the host repo's history.
 SCRATCH="$TMPDIR_TEST/scratch"
 mkdir -p "$SCRATCH"
 (

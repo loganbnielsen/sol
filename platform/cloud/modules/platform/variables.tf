@@ -15,23 +15,6 @@ variable "ingress_service_type" {
   default     = "LoadBalancer"
 }
 
-# HARDEN-002 run 2, finding 7: the qualified substrate provided no storage, so a
-# persistent Redpanda (the profile's RF>=3 durability requirement) and every
-# admitted workload volume stayed Pending. The driver is the cloud substrate's
-# job (platform/cloud/aws/cluster installs the EBS CSI addon and its scoped IRSA
-# role); the StorageClass is the platform substrate's, because it is a cluster
-# object.
-#
-# This is platform storage, not an application workload volume declaration: it
-# makes persistence physically possible without changing what a workload is
-# allowed to declare, and it does not interact with the `single`-tier
-# restriction DEC-026 §3 puts on workload-declared volumes.
-#
-# AWS only, because only AWS needs it: EKS ships no default StorageClass, so Sol
-# creates one. GKE ships `standard-rwo` (`pd.csi.storage.gke.io`) as its default,
-# so on GCP the platform adopts the provider's class rather than creating a second
-# default (see the resource in main.tf). `Ready` asserts the resulting cluster
-# state for either provider.
 variable "create_storage_class" {
   description = "Create the platform's default StorageClass (AWS only; the EBS CSI driver must be installed). On GCP, GKE's own default class is adopted instead."
   type        = bool
@@ -54,7 +37,6 @@ variable "cloud_provider" {
   }
 }
 
-# Redpanda
 variable "redpanda_replicas" {
   description = "Number of Redpanda broker replicas."
   type        = number
@@ -79,11 +61,6 @@ variable "redpanda_persistent_storage" {
   default     = true
 }
 
-# PostgreSQL (in-cluster)
-# The GCP platform provisioner's identity, empty on AWS (where the provisioner is
-# a named IAM role reached through an EKS access entry). Empty means "do not bind
-# a Google identity"; the provider's own binding mechanism differs, and this is
-# the data that says which identity to bind.
 variable "gcp_provisioner_service_account" {
   description = "Google service account that acts as the platform provisioner on GCP, bound to the same ClusterRoles the AWS provisioner's group receives. Empty on AWS."
   type        = string
@@ -109,7 +86,6 @@ variable "postgres_persistent_storage" {
   default     = true
 }
 
-# Grafana
 variable "grafana_admin_password" {
   description = "Grafana admin password."
   type        = string
@@ -128,12 +104,6 @@ variable "prometheus_persistent_storage" {
   type        = bool
   default     = true
 }
-
-# ── Observability backend profile (OBS-005/006/007) ──────────────────────── #
-#
-# "local" is for dev/throwaway clusters. "external" points at infrastructure
-# the user already has. "self_hosted_durable" is the production self-host path:
-# Loki/Prometheus backed by S3 via platform/cloud/aws/cluster (AWS only for now).
 
 variable "observability_backend" {
   description = <<-EOT
@@ -193,11 +163,6 @@ variable "external_prometheus_password" {
   sensitive   = true
 }
 
-# ── self_hosted_durable (AWS only) — from platform/cloud/aws/cluster's outputs ──── #
-# platform/cloud/aws/cluster and platform/cloud/modules/platform are separate Terraform states
-# with no automatic remote-state link (same pattern already used for
-# cert_manager_irsa_role_arn) — pass these by hand from `terraform output`.
-
 variable "aws_region" {
   description = "AWS region the S3 buckets live in (self_hosted_durable profile)."
   type        = string
@@ -227,16 +192,6 @@ variable "thanos_irsa_role_arn" {
   type        = string
   default     = ""
 }
-
-# ── self_hosted_durable (GCP) — from platform/cloud/gcp/cluster's outputs ──────── #
-# INFRA-005: GCP counterpart to the AWS block above. Same manual cross-state
-# wiring (no automatic remote-state link between infra/gcp and infra/base).
-# Workload Identity supplies credentials the same ambient way IRSA does on
-# AWS -- no access keys ever flow through these variables or into Kubernetes
-# config. Plumbing only: the precondition below still requires
-# cloud_provider == "aws" for self_hosted_durable, so these variables are
-# accepted and wired but the GCP path cannot actually be selected until a
-# live GCP cluster validates it and that precondition is relaxed.
 
 variable "loki_gcs_bucket" {
   description = "GCS bucket for durable Loki storage. From platform/cloud/gcp/cluster's loki_gcs_bucket output."
@@ -292,11 +247,6 @@ variable "thanos_retention_1h_days" {
   }
 }
 
-# ── Managed resource dashboards (AWS only) — OBS-044 ──────────────────────── #
-# From platform/cloud/aws/cluster's outputs, same manual cross-state wiring pattern
-# as loki_s3_bucket/thanos_irsa_role_arn above -- no automatic remote-state
-# link between these two states.
-
 variable "grafana_irsa_role_arn" {
   description = "IAM role ARN for Grafana's CloudWatch read access (managed-resource dashboards, OBS-044). From platform/cloud/aws/cluster's grafana_irsa_arn output. Required when managed_resource_dashboards is non-empty and cloud_provider = \"aws\"."
   type        = string
@@ -325,13 +275,6 @@ variable "managed_resource_dashboards" {
   }))
   default = {}
 }
-
-# ── Alerting (OBS-043) ──────────────────────────────────────────────────────
-# The provider-neutral alert-delivery contract. A production target declares
-# these in its target file; `sol deploy`'s preflight validates them and
-# `sol alert test` sends a synthetic alert through the configured receiver.
-# Apply base with the same values so the Alertmanager route matches what the
-# target claims. Empty values keep the deliberate dev null receiver (OBS-040).
 
 variable "alert_receiver_type" {
   description = "Alert receiver adapter. \"webhook\" is the maturity-A reference mechanism; empty keeps the dev null receiver."

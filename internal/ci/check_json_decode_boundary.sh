@@ -1,12 +1,4 @@
 #!/usr/bin/env bash
-# REFAC-132: CLI code reads JSON through Sol_cli_json, whose field access is total
-# and whose decoders return an Error for malformed input. Yojson's Util accessors
-# raise on a missing field or a wrong type, which is how "the read failed" kept
-# turning into "nothing there" behind a catch-all.
-#
-# Flags `Yojson.Safe.Util` / `Yojson.Basic.Util` in cli/bin and cli/lib.
-#
-# Usage: check_json_decode_boundary.sh [repo-root]
 set -euo pipefail
 
 root="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"

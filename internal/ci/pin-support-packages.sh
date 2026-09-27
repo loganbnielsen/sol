@@ -1,13 +1,4 @@
 #!/usr/bin/env bash
-# BUG-059: pin every support package at the commit support-refs.txt declares.
-# The one pin implementation: the CI action, release builds, the source-built
-# migration runner and a developer switch all run this.
-#
-# INFRA-008: a pin installs immediately, so it can fetch a transitive source from
-# a non-GitHub host. Retry each pin a bounded number of times, and on final
-# failure name the unreachable host.
-#
-# Usage: pin-support-packages.sh [support-refs.txt]
 set -uo pipefail
 
 refs="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/support-refs.txt}"
@@ -34,7 +25,6 @@ retry_pin() {
   done
 }
 
-# fd 3, so nothing inside the loop can consume the list from stdin.
 while read -r -u 3 pkg url commit extra; do
   case "$pkg" in '' | '#'*) continue ;; esac
   if [ -n "${extra:-}" ] || ! [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then

@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# INFRA-045: GKE falls back from RBAC to IAM, so the provisioner's IAM role must
-# contain only cluster discovery/credential access, never Kubernetes objects.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -36,8 +34,6 @@ if grep -qE '"container\.(deployments|pods|namespaces|jobs|secrets|configMaps|cl
   fail "custom role grants Kubernetes-object authority"
 fi
 
-# No extra container permissions may arrive under an innocent-looking resource
-# name; keep the complete allowlist visible and reviewable here.
 permission_count="$(grep -cE '^[[:space:]]*"container\.[A-Za-z.]+' <<<"$section")"
 [[ "$permission_count" -eq 4 ]] \
   || fail "custom role contains a container permission outside the four-item allowlist"

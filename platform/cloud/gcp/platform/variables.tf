@@ -1,21 +1,3 @@
-# platform/cloud/gcp/platform — the GCP platform root
-#
-# The platform *definition* is the shared module `platform/cloud/modules/platform`,
-# which declares no backend; this root supplies what only a root can: the state
-# backend, and therefore the backend type. Terraform fixes a backend's type in the
-# root's own configuration -- `-backend-config` sets attributes, never the type --
-# so each provider has its own thin root (REFAC-100; the AWS one is
-# platform/cloud/aws/platform).
-#
-# Every variable below is a pass-through, including ones a provider does not use
-# yet: this root exists so the shared definition is reachable from GCP, not to
-# narrow it. `cli/test/check_production_infra.sh` fails if the module gains a
-# variable this root does not mirror and pass.
-#
-# Not yet qualified on GCP: the shared definition's cert-manager ClusterIssuers
-# are hard-wired to the Route 53 DNS-01 solver, so a GCP install cannot yet issue
-# a certificate. That is a separate change; the state backend is this one.
-
 variable "base_domain" {
   description = "Base domain for Ingress resources, e.g. mycompany.com. Subdomains argocd.*, grafana.* are created."
   type        = string

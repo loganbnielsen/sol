@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Mutation test for check_single_runner.sh (REFAC-134).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -17,7 +16,6 @@ mkrepo() {
   printf 'let tf p = Unix.create_process p [||] Unix.stdin Unix.stdout Unix.stderr\n' \
     >"$tmp/repo/cli/lib/cloud/sol_cli_supervised.ml"
   printf 'let ok = Sol_cli_process.run (Sol_cli_process.cmd [ "true" ])\n' >"$tmp/repo/cli/bin/cmd_ok.ml"
-  # Tests may remove their own files.
   printf 'let () = Sys.remove "x"\n' >"$tmp/repo/cli/test/test_x.ml"
 }
 

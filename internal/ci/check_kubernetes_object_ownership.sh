@@ -1,24 +1,4 @@
 #!/usr/bin/env bash
-# One Kubernetes object has one Terraform owner (FND-0061).
-#
-# Two Terraform resources may not resolve to the same (kind, namespace, name): whichever applies
-# second fails with `already exists`, and the object's ownership becomes whatever Terraform state
-# happens to hold. FND-0061 was exactly that -- two `kubernetes_role_binding` resources writing
-# `sol-platform-provisioner`, and a second pair writing `sol-platform-provisioner-cluster` -- so
-# the GCP provisioner's authority could never be created on a fresh target.
-#
-# The check is static and structural. It does not read a plan or a cluster: it compares what the
-# configuration *declares*. Two resources are treated as the same object when their Kubernetes
-# kind matches and their `metadata.name` and namespace expressions are the same text (an
-# expression like `each.key` is the same instance set when it is the same expression). Names it
-# cannot resolve statically are recorded, not guessed at.
-#
-# The invariant's only exception is an object two resources are *intentionally* both managing;
-# that must be said out loud, on both blocks:
-#
-#   # same-object-owner: <why two Terraform resources own one object here>
-#
-# Usage: internal/ci/check_kubernetes_object_ownership.sh [repo-root]
 set -euo pipefail
 
 root="${1:-.}"
@@ -108,12 +88,11 @@ for path in files:
         if name is None:
             # `generate_name` or a computed name: identity is not knowable statically.
             objects.append(dict(path=path, rtype=rtype, rname=rname, kind=kind,
-                                name=None, namespace=namespace, deliberate=False,
+                                name=None, namespace=namespace,
                                 line=text[:m.start()].count('\n') + 1))
             continue
-        deliberate = 'same-object-owner:' in block
         objects.append(dict(path=path, rtype=rtype, rname=rname, kind=kind,
-                            name=name, namespace=namespace, deliberate=deliberate,
+                            name=name, namespace=namespace,
                             line=text[:m.start()].count('\n') + 1))
 
 named = [o for o in objects if o['name'] is not None]
@@ -128,8 +107,6 @@ for o in named:
 collisions = []
 for key, group in sorted(buckets.items()):
     if len(group) < 2:
-        continue
-    if all(o['deliberate'] for o in group):
         continue
     collisions.append((key, group))
 

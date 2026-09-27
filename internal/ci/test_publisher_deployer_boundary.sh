@@ -4,7 +4,6 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 guard="$root/internal/ci/check_publisher_deployer_boundary.sh"
 
-# Today's repo must pass.
 "$guard" "$root"
 
 tmp="$(mktemp -d)"
@@ -15,8 +14,6 @@ cp "$root/cli/bin/cmd_deploy.ml" "$root/cli/bin/cmd_cloud.ml" \
   "$root/cli/bin/cmd_cloud_tf.ml" "$tmp/cli/bin/"
 cp "$root"/cli/lib/cloud/*.ml "$tmp/cli/lib/cloud/"
 
-# A deployer that could push would let deploying an existing digest also
-# replace it.
 printf '\nlet _ = Sol_cli_docker.push\n' >>"$tmp/cli/bin/cmd_deploy.ml"
 if "$guard" "$tmp" >/dev/null 2>&1; then
   echo "guard accepted a deployer (cmd_deploy.ml) that can push images" >&2
@@ -24,7 +21,6 @@ if "$guard" "$tmp" >/dev/null 2>&1; then
 fi
 cp "$root/cli/bin/cmd_deploy.ml" "$tmp/cli/bin/cmd_deploy.ml"
 
-# A provisioner that could build/push would subsume the publisher.
 printf '\nlet _ = Sol_cli_docker.build\n' >>"$tmp/cli/bin/cmd_cloud_tf.ml"
 if "$guard" "$tmp" >/dev/null 2>&1; then
   echo "guard accepted a provisioner (cmd_cloud_tf.ml) that can build images" >&2
@@ -32,7 +28,6 @@ if "$guard" "$tmp" >/dev/null 2>&1; then
 fi
 cp "$root/cli/bin/cmd_cloud_tf.ml" "$tmp/cli/bin/cmd_cloud_tf.ml"
 
-# The same, from the cloud library the command drives.
 printf '\nlet _ = Sol_cli_docker.push\n' >>"$tmp/cli/lib/cloud/sol_cli_cloud_wiring.ml"
 if "$guard" "$tmp" >/dev/null 2>&1; then
   echo "guard accepted a provisioner library (sol_cli_cloud_wiring.ml) that can push images" >&2
@@ -40,7 +35,6 @@ if "$guard" "$tmp" >/dev/null 2>&1; then
 fi
 cp "$root/cli/lib/cloud/sol_cli_cloud_wiring.ml" "$tmp/cli/lib/cloud/sol_cli_cloud_wiring.ml"
 
-# The same, from the deployer's library.
 printf '\nlet _ = Sol_cli_docker.push\n' >>"$tmp/cli/lib/deploy/sol_cli_deploy_run.ml"
 if "$guard" "$tmp" >/dev/null 2>&1; then
   echo "guard accepted a deployer library (sol_cli_deploy_run.ml) that can push images" >&2

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# INFRA-046: pin the AWS cloud-provisioning / steady-state cluster-access split.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"

@@ -1,20 +1,3 @@
-# platform/cloud/gcp/cluster — GCP cluster provisioning for Sol workspaces
-#
-# Provisions:
-#   VPC                — custom VPC with secondary ranges for GKE pods/services
-#   GKE                — Autopilot cluster (no node management, scales to zero)
-#   Artifact Registry  — container image registry (one per workspace)
-#   Cloud SQL          — managed PostgreSQL (replaces in-cluster postgres)
-#   Cloud DNS zone     — base domain for Ingress / cert-manager
-#
-# After apply: `sol cloud apply` installs the platform through
-# platform/cloud/gcp/platform (the shared module platform/cloud/modules/platform).
-#
-# Usage:
-#   terraform init
-#   terraform apply -var="project_id=my-project" -var="cluster_name=acme-prod" \
-#     -var="base_domain=acme.com"
-
 terraform {
   required_version = ">= 1.6"
 
@@ -33,10 +16,6 @@ terraform {
     }
   }
 
-  # GCS, with GCS's native state locking. `sol cloud` supplies bucket= and
-  # prefix=sol/<target>/cloud.tfstate from the target's declared state bucket;
-  # there is no lock resource to name, which is why a GCP target declares no
-  # state_lock_table.
   backend "gcs" {}
 }
 
@@ -44,8 +23,6 @@ provider "google" {
   project = var.project_id
   region  = var.region
 }
-
-# ── VPC ───────────────────────────────────────────────────────────────────── #
 
 resource "google_compute_network" "main" {
   name                    = var.cluster_name
@@ -84,43 +61,12 @@ resource "google_compute_router_nat" "main" {
   source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
 }
 
-# ── GKE Standard ──────────────────────────────────────────────────────────── #
-#
-# The GCP driver provisions **GKE Standard**. Autopilot is not a supported substrate for the
-# standard Sol platform profile: Autopilot's admission policies refuse `hostNetwork`/`hostPID`
-# (which the platform's node-exporter manifest requires) and the `SYS_RESOURCE` capability (which
-# Redpanda's `tuning` container requires). GCP qualification Attempt 14 measured exactly that --
-# three Warden denials during the platform apply, ten minutes and a cluster after the run started,
-# with no path to `Ready` (FND-0064).
-#
-# The requested provisioning mode is Sol's own configuration, so this is settled statically here
-# rather than discovered by provisioning a cluster Autopilot would then refuse to host: the driver
-# asks for Standard, and the substrate is a property of the driver rather than a user knob.
-# `internal/ci/check_gcp_standard_substrate.sh` keeps it that way.
-
 resource "google_container_cluster" "main" {
   name     = var.cluster_name
   location = var.region
 
-  # The provider defaults this to true, so a root that never mentions it still
-  # produces a cluster Sol cannot destroy: live attempt 1 lifted Cloud SQL's guard,
-  # deleted everything else, and was then refused with "Cannot destroy cluster
-  # because deletion_protection is set to true". That is ADR 0004's invariant
-  # reached through a provider *default* rather than through `prevent_destroy`,
-  # which is why a search for suspicious configuration found nothing -- there was
-  # no attribute to find, only an attribute's absence. Routing it through a
-  # variable is what makes the default explicit, and the Destroy policy is what
-  # lifts it.
   deletion_protection = var.gke_deletion_protection
 
-  # Standard, stated by *not* requesting Autopilot. The google provider refuses
-  # `remove_default_node_pool` alongside an `enable_autopilot` attribute at all -- not merely
-  # alongside `true` -- which GCP qualification Attempt 15 hit as a plan-time error:
-  #
-  #   "remove_default_node_pool": conflicts with enable_autopilot
-  #
-  # `enable_autopilot` defaults to false, so omitting it is the same request without the conflict,
-  # and the more honest statement: Sol does not ask for Autopilot.
   remove_default_node_pool = true
   initial_node_count       = 1
 
@@ -132,7 +78,6 @@ resource "google_container_cluster" "main" {
     services_secondary_range_name = "services"
   }
 
-  # Private cluster: nodes have no public IPs
   private_cluster_config {
     enable_private_nodes    = true
     enable_private_endpoint = false
@@ -144,18 +89,6 @@ resource "google_container_cluster" "main" {
   }
 }
 
-# ── The node pool ─────────────────────────────────────────────────────────── #
-#
-# `3 x e2-standard-2` with 100 GiB `pd-balanced` boot disks, in one zone. This is the driver's
-# initial supported Standard substrate, not a user-facing sizing contract: the target format does
-# not grow a node count or a machine type, because we do not yet know what the right abstraction
-# for that would be, and designing it from a qualification requirement would leak GKE mechanics
-# into the target contract (DEC-049).
-#
-# One zone on purpose. The cluster's control plane stays regional -- every call site resolves it
-# with `--region` -- but a pool that spans a regional cluster's three zones would create nine
-# nodes and ~900 GiB of boot disks, which would couple "does Standard work?" to "does the disk
-# quota survive this topology?" and cost three times as much per attempt.
 resource "google_container_node_pool" "main" {
   name     = "${var.cluster_name}-nodes"
   cluster  = google_container_cluster.main.id
@@ -170,12 +103,8 @@ resource "google_container_node_pool" "main" {
     disk_type    = "pd-balanced"
     image_type   = "COS_CONTAINERD"
 
-    # The platform reaches the cluster through short-lived impersonated credentials, not through
-    # the nodes' identity, so the nodes need only what the platform's own pods require.
     oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
 
-    # Private cluster: the nodes already have no public IPs; this keeps them off the public
-    # internet for outbound traffic too, through Cloud NAT.
     shielded_instance_config {
       enable_secure_boot          = true
       enable_integrity_monitoring = true
@@ -188,8 +117,6 @@ resource "google_container_node_pool" "main" {
   }
 }
 
-# ── Artifact Registry ─────────────────────────────────────────────────────── #
-
 resource "google_artifact_registry_repository" "images" {
   location      = var.region
   repository_id = var.cluster_name
@@ -197,20 +124,11 @@ resource "google_artifact_registry_repository" "images" {
   description   = "Container images for ${var.cluster_name} Sol workspace"
 }
 
-# Autopilot reports its node service account as the literal shorthand "default",
-# and the IAM API rejects `serviceAccount:default` ("Error 400: Invalid service
-# account (default)") -- which is where live attempt 1's apply died, after the
-# cluster and the database had already been created. "default" means the project's
-# Compute Engine default service account, so that is what it is resolved to.
 data "google_compute_default_service_account" "default" {
   project = var.project_id
 }
 
 locals {
-  # On Standard the nodes' service account lives on the node pool; an Autopilot cluster reports it
-  # on the cluster instead, which is why this read used to be there. A pool that does not name one
-  # gets the project's default, and that is what the pool's `node_config` reads back as the
-  # literal shorthand "default" -- which the IAM API rejects as `serviceAccount:default`.
   gke_node_service_account = (
     google_container_node_pool.main.node_config[0].service_account == "default"
     ? data.google_compute_default_service_account.default.email
@@ -218,15 +136,12 @@ locals {
   )
 }
 
-# Grant GKE SA read access to pull images
 resource "google_artifact_registry_repository_iam_member" "gke_pull" {
   location   = google_artifact_registry_repository.images.location
   repository = google_artifact_registry_repository.images.name
   role       = "roles/artifactregistry.reader"
   member     = "serviceAccount:${local.gke_node_service_account}"
 }
-
-# ── Cloud SQL PostgreSQL ──────────────────────────────────────────────────── #
 
 resource "google_sql_database_instance" "postgres" {
   name                = "${var.cluster_name}-postgres"
@@ -271,7 +186,6 @@ resource "google_sql_user" "postgres" {
   password = var.db_password
 }
 
-# Private service connection for Cloud SQL
 resource "google_compute_global_address" "sql_peering" {
   name          = "${var.cluster_name}-sql-peering"
   purpose       = "VPC_PEERING"
@@ -280,72 +194,14 @@ resource "google_compute_global_address" "sql_peering" {
   network       = google_compute_network.main.id
 }
 
-# Attempt 1 could not delete this peering at all, and Attempt 2 showed the obvious
-# reading of that -- "the graph is right, so what is missing must be a wait" -- to be
-# wrong. Five minutes of explicit waiting (`time_sleep`) did not help, and neither did
-# twenty minutes of manual retries: GCP keeps reporting that a producer still uses the
-# connection, and what actually releases it is deleting the *network*, which this root
-# owns and the same destroy deletes.
-#
-# So the connection is abandoned rather than deleted. Asking GCP to delete an object it
-# will not delete while a producer is registered is what failed; the timing was never
-# the problem, and raising a sleep to a larger guessed number would have been a change
-# that only looks like a fix.
-#
-# What this gives up is Terraform's own confirmation that the peering is gone, which is
-# why `verify_gcp_destroy` asks the provider for the peering *and* the network after the
-# destroy instead of trusting this apply's exit status. Abandonment is only defensible
-# against a check that can see the thing that was abandoned.
 resource "google_service_networking_connection" "sql" {
   network                 = google_compute_network.main.id
   service                 = "servicenetworking.googleapis.com"
   reserved_peering_ranges = [google_compute_global_address.sql_peering.name]
 
-  # residue: the peering outlives this resource; deleting the network releases it, and
-  # the destroy's residue check asks the provider for it (gcp_peering_probe). DEC-045.
   deletion_policy = "ABANDON"
 }
 
-# ── The platform provisioner ──────────────────────────────────────────────── #
-#
-# The identity that installs and maintains the platform. Live attempt 1 installed
-# as the operator's own Owner account, which the review named correctly: that is
-# not an authority model, it is a coincidence of who ran the command.
-#
-# The invariant to preserve is the one AWS's bootstrap window preserves:
-# *the authority required to install privileged platform components exists only
-# during the lifecycle stage that requires it; steady-state identities do not
-# retain it.* GCP realizes that differently, and the difference is real rather
-# than cosmetic:
-#
-#   * the identity is a Google service account, not an IAM role, so callers
-#     impersonate it and Google issues short-lived tokens -- there is never a
-#     static key in a file (the same reason the Loki/Thanos identities below are
-#     service accounts rather than keys);
-#   * GKE authorization is RBAC-first with Google IAM as a fallback. The custom
-#     IAM role below therefore contains only cluster discovery, credential
-#     retrieval, and control-plane connection permissions -- never Kubernetes
-#     object permissions. Scoped in-cluster authority comes from RBAC;
-#   * the install window's privilege is therefore a Kubernetes RBAC binding,
-#     created for that window and removed at the end of it, because GKE has no
-#     access-entry equivalent that maps a cloud identity to in-cluster rights.
-#
-# The steady-state binding to the shared definition's provisioner ClusterRole is
-# created by the platform root (where that ClusterRole lives), not here.
-# The install window's privilege. It is created *here*, in the cloud root, and
-# that placement is the whole point rather than a convenience:
-#
-#   * the platform applies run as the provisioner, which by construction has no
-#     in-cluster rights until the platform root creates them -- so a binding that
-#     grants those rights cannot be created by the apply that needs them. The
-#     escalation has to be created by a caller that already has authority, and the
-#     cloud root is applied with the operator's credentials.
-#   * this is exactly where AWS puts it: an EKS access entry associated by the
-#     cloud apply, opened before the first platform apply and associated away
-#     afterwards. Same object lifecycle, different object.
-#
-# `provisioner_bootstrap_admin` is therefore declared by both provider *cloud*
-# roots, and Sol opens and closes it with the same variable on both.
 data "google_client_config" "default" {}
 
 provider "kubernetes" {
@@ -377,19 +233,6 @@ resource "google_service_account" "provisioner" {
   project      = var.project_id
 }
 
-# The cloud-side prerequisite, and only that: enough to obtain credentials for and
-# read this cluster. Deliberately not `roles/container.admin` -- the authority to
-# *change* the cluster is not the authority to install into it.
-#
-# This is not the provisioner's install authority, and the two are auditable
-# separately on purpose:
-#
-#   can this identity do too much in GCP?  -> IAM, answered by this binding
-#   can this identity do too much in the cluster? -> Kubernetes RBAC, answered by
-#       the ClusterRoles the platform definition binds it to
-#
-# A single answer covering both is how "the provisioner needs to install charts"
-# becomes "the provisioner is an administrator".
 resource "google_project_iam_custom_role" "provisioner_cluster_access" {
   project     = var.project_id
   role_id     = "sol_${replace(var.cluster_name, "-", "_")}_cluster_access"
@@ -409,28 +252,6 @@ resource "google_project_iam_member" "provisioner_cluster_access" {
   member  = "serviceAccount:${google_service_account.provisioner.email}"
 }
 
-# Attempt 2's first finding: creating the identity is not the same as letting
-# anyone *use* it. Sol reaches the cluster by impersonating the provisioner, and
-# impersonation needs `iam.serviceAccounts.getAccessToken` on that identity --
-# which nothing granted, so the first attempt to enter the window failed with
-# "Failed to impersonate ... Permission 'iam.serviceAccounts.getAccessToken'
-# denied" and never reached Kubernetes at all.
-#
-# This is the GCP half of what `sts:AssumeRole` covers on AWS, and the shape is
-# deliberately narrow in two directions at once:
-#
-#   * the role is `roles/iam.serviceAccountTokenCreator` on *this one* service
-#     account, not a project-level role -- the authority to act as the provisioner
-#     is the authority to act as the provisioner, and nothing else;
-#   * the members are named by the target (`provisioner_impersonator`), not
-#     inferred from whoever happens to run Sol. Inferring it would recreate exactly
-#     the ambient-authority escape hatch this whole change exists to remove: "no
-#     caller declared" must mean "no impersonation", not "grant the caller".
-#
-# Note what this is *not*: it is not the install authority. It is the authority to
-# enter the window. What the provisioner may then do in the cluster is decided by
-# the ClusterRoles the platform definition binds it to, and the temporary
-# cluster-admin is the window's own object below.
 resource "google_service_account_iam_member" "provisioner_impersonators" {
   for_each = toset(var.provisioner_impersonators)
 
@@ -439,36 +260,12 @@ resource "google_service_account_iam_member" "provisioner_impersonators" {
   member             = each.value
 }
 
-# ── Cloud DNS ─────────────────────────────────────────────────────────────── #
-
 resource "google_dns_managed_zone" "main" {
   count       = var.create_dns_zone ? 1 : 0
   name        = replace(var.base_domain, ".", "-")
   dns_name    = "${var.base_domain}."
   description = "Sol workspace zone for ${var.cluster_name}"
 }
-
-# ── Durable observability storage (OBS-006 logs, OBS-007 metrics) ─────────── #
-#
-# GCP side of platform/cloud/aws/cluster's S3+IRSA pair (INFRA-003) -- GCS buckets +
-# Workload Identity service accounts, mirroring aws/'s shape and output
-# names 1:1 (loki_s3_bucket -> loki_gcs_bucket, loki_irsa_arn ->
-# loki_workload_identity_sa_email, etc.) so platform/cloud/modules/platform can be wired
-# up to consume either provider's outputs through the same kind of plain
-# variables it already uses for AWS. GKE Autopilot clusters (module.main
-# above) have Workload Identity enabled by default -- no cluster-level
-# opt-in needed, unlike standard GKE.
-#
-# Layer 1 only: this module does not wire these outputs into
-# platform/cloud/modules/platform, and does not lift the module's `cloud_provider == "aws"`
-# gate on observability_backend = "self_hosted_durable" (see
-# platform/cloud/modules/platform/main.tf's observability_backend_validation). That
-# gate also controls provider-specific Helm values baked into
-# platform/shared/components.json (loki.durable) (storage.type = "s3",
-# object_store = "s3") -- wiring GCS through there needs a live GCP cluster
-# to validate against and is real, separate follow-up scope, not bundled
-# into this ticket's Layer 1 module per its own "no abstraction ahead of a
-# concrete second implementation" scope note.
 
 resource "google_storage_bucket" "loki" {
   count                       = var.enable_durable_observability ? 1 : 0
@@ -478,8 +275,6 @@ resource "google_storage_bucket" "loki" {
   uniform_bucket_level_access = true
   force_destroy               = true
 
-  # INFRA-077: routed from the target's destroy_retention (0 for `none`), never the
-  # provider default -- see variables.tf.
   soft_delete_policy {
     retention_duration_seconds = var.gcs_soft_delete_retention_seconds
   }
@@ -492,10 +287,6 @@ resource "google_storage_bucket" "loki" {
       type = "Delete"
     }
   }
-  # INFRA-037: same invariant as AWS (ADR 0004) -- these buckets are populated by
-  # running the platform, so [force_destroy = false] together with
-  # [prevent_destroy] left a durable-observability target undeletable through
-  # `sol cloud destroy`.
 }
 
 resource "google_service_account" "loki" {
@@ -512,9 +303,6 @@ resource "google_storage_bucket_iam_member" "loki" {
   member = "serviceAccount:${google_service_account.loki[0].email}"
 }
 
-# Binds the GCP service account to the "monitoring/loki" Kubernetes service
-# account via Workload Identity -- same single namespace:service-account
-# pair as aws/'s module.loki_irsa oidc_providers binding.
 resource "google_service_account_iam_member" "loki_workload_identity" {
   count              = var.enable_durable_observability ? 1 : 0
   service_account_id = google_service_account.loki[0].name
@@ -530,15 +318,9 @@ resource "google_storage_bucket" "thanos" {
   uniform_bucket_level_access = true
   force_destroy               = true
 
-  # INFRA-077: routed from the target's destroy_retention (0 for `none`), never the
-  # provider default -- see variables.tf.
   soft_delete_policy {
     retention_duration_seconds = var.gcs_soft_delete_retention_seconds
   }
-  # INFRA-037: same invariant as AWS (ADR 0004) -- these buckets are populated by
-  # running the platform, so [force_destroy = false] together with
-  # [prevent_destroy] left a durable-observability target undeletable through
-  # `sol cloud destroy`.
 }
 
 resource "google_service_account" "thanos" {
@@ -555,10 +337,6 @@ resource "google_storage_bucket_iam_member" "thanos" {
   member = "serviceAccount:${google_service_account.thanos[0].email}"
 }
 
-# aws/'s module.thanos_irsa binds one IAM role to three Kubernetes service
-# accounts in a single oidc_providers block; Workload Identity binds one
-# GCP SA to one Kubernetes SA per google_service_account_iam_member, so the
-# same three-way binding takes a for_each here instead.
 resource "google_service_account_iam_member" "thanos_workload_identity" {
   for_each = var.enable_durable_observability ? toset([
     "monitoring/prometheus-server",

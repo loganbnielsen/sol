@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Mutation test for the INFRA-046 offline guard.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"

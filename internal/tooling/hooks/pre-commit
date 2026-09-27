@@ -1,30 +1,13 @@
 #!/usr/bin/env bash
-# Blocks the commit if tests fail or a performance regression is detected.
-# Runs unit tests always; other suites when their infra is up.
-#
-# Install: bash internal/tooling/scripts/install-hooks.sh
-# Skip once: SOL_SKIP_HOOKS=1 git commit ...
 
 [ "${SOL_SKIP_HOOKS:-0}" = "1" ] && exit 0
 
-# ── Authority preflight (REFAC-090) ───────────────────────────────────────────
-# Resolve and verify the actor's context before anything else, because the
-# failure this exists for is a commit landing in the wrong worktree/branch —
-# where every later check (ticket transitions, tests) passes while the commit is
-# in the wrong place. Advisory unless a context is declared; see
-# internal/ci/check_authority.sh and CONTRIBUTING.md § Isolation and ownership.
 if ! "$(git rev-parse --show-toplevel)/internal/ci/check_authority.sh"; then
   exit 1
 fi
 
-# ── Ticket state guard ────────────────────────────────────────────────────────
-# Every repository change goes through a PR, including audit reports and new
-# tickets. Validate ticket state transitions independently of checkout/branch:
-# creation and correction are allowed; deletion is only valid as a same-ID move.
 STAGED_TICKETS="$(git diff --cached --name-only | grep -E '^(internal/)?pipeline/tickets/' || true)"
 if [ -n "$STAGED_TICKETS" ]; then
-  # Both roots are named so a one-time root move is still seen as a rename of
-  # each ticket (same id, same state), not as a fresh add in DONE.
   TICKET_STATUS="$(git diff --cached --name-status -M10% -- pipeline/tickets/ internal/pipeline/tickets/)"
   if ! REFUSAL="$(printf '%s\n' "$TICKET_STATUS" | "$(git rev-parse --show-toplevel)/internal/ci/check_ticket_transitions.sh")"; then
     echo ""
@@ -34,9 +17,6 @@ if [ -n "$STAGED_TICKETS" ]; then
   fi
 fi
 
-# ── Merge commit: skip test run ───────────────────────────────────────────────
-# The pipeline verifies tests explicitly before and after every merge.
-# Running them again here on the merge commit is redundant.
 GIT_DIR="$(git rev-parse --git-dir)"
 if [ -f "$GIT_DIR/MERGE_HEAD" ]; then
   echo ""
@@ -44,16 +24,6 @@ if [ -f "$GIT_DIR/MERGE_HEAD" ]; then
   exit 0
 fi
 
-# ── Bookkeeping commit: skip test run ─────────────────────────────────────────
-# CI makes the same decision from the same definition: this hook and
-# .github/workflows/ci.yml both call internal/ci/classify-changes.sh, so there is
-# one definition of "docs/tickets only" rather than two path lists that drift
-# apart. Its pinned semantics live in internal/ci/test_classify_changes.sh.
-#
-# Fail-closed: a mixed diff, an unrecognised path, or a classifier that cannot
-# run at all all yield something other than `docs-only`, and the suite runs. The
-# command substitution is empty if the script is missing, which is not
-# `docs-only` either — so the failure mode is "run the tests", never "skip".
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 if [ "$("$REPO_ROOT/internal/ci/classify-changes.sh" --staged)" = "docs-only" ]; then
   echo ""
@@ -69,17 +39,10 @@ fi
 
 eval "$(opam env)"
 
-# ── Infra detection ────────────────────────────────────────────────────────────
 BROKER_UP=0;   rpk cluster info &>/dev/null 2>&1            && BROKER_UP=1
 LOKI_UP=0;     curl -sf http://localhost:3100/ready &>/dev/null && LOKI_UP=1
 POSTGRES_UP=0; bash -c 'echo > /dev/tcp/localhost/5432' &>/dev/null && POSTGRES_UP=1
 
-# ── Format ─────────────────────────────────────────────────────────────────────
-# CI's Format check runs `dune fmt --preview` over the whole project, so an
-# unformatted commit is a guaranteed CI bounce that costs a full run to discover.
-# Catch it here, on the staged files only: a worktree often carries unrelated
-# work in progress, and a whole-project check would block this commit for
-# formatting elsewhere. One definition, shared with CI: check_ocamlformat.sh.
 echo ""
 echo "▶ pre-commit: ocamlformat"
 if ! "$REPO_ROOT/internal/ci/check_ocamlformat.sh" --staged; then
@@ -88,7 +51,6 @@ if ! "$REPO_ROOT/internal/ci/check_ocamlformat.sh" --staged; then
   exit 1
 fi
 
-# ── Build ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "▶ pre-commit: build"
 if ! dune build --root "$REPO_ROOT" 2>&1; then
@@ -96,7 +58,6 @@ if ! dune build --root "$REPO_ROOT" 2>&1; then
   exit 1
 fi
 
-# ── Helper: run a suite and exit on failure ────────────────────────────────────
 run_suite() {
   local name="$1"
   echo ""
@@ -117,10 +78,8 @@ run_suite() {
   fi
 }
 
-# ── Unit (always) ─────────────────────────────────────────────────────────────
 run_suite unit
 
-# ── Kafka (broker-conditional) ────────────────────────────────────────────────
 if [ $BROKER_UP -eq 1 ]; then
   run_suite kafka
 else
@@ -129,7 +88,6 @@ else
   exit 0
 fi
 
-# ── E2e (all infra required) ──────────────────────────────────────────────────
 if [ $LOKI_UP -eq 1 ] && [ $POSTGRES_UP -eq 1 ]; then
   run_suite e2e
 else

@@ -1,21 +1,4 @@
 #!/usr/bin/env bash
-# INFRA-090 / FND-0062: Sol's declared minimum persistent-disk requirement must still match the
-# platform declarations it comes from.
-#
-# The lifecycle compares a *provider observation* against Sol's *own declaration*
-# (`Sol_cli_platform_storage`). A declaration that has drifted from the Terraform it describes
-# is worse than no check at all, because it reads as a guarantee: it would let a run start with
-# a floor that is too low, which is exactly the false pass FND-0062's finding was about.
-#
-# What this can check, it checks:
-#   - the prometheus part is the Terraform variable's default, to the GiB;
-#   - the components whose persistence Sol enables still have it enabled, so a part cannot go
-#     stale because the volume disappeared rather than because the size changed;
-#   - every part says where its number came from -- including the ones (loki, alertmanager)
-#     whose size is the chart's default, which Sol does not own and therefore cannot be
-#     cross-checked here, only declared honestly.
-#
-# Usage: internal/ci/check_platform_storage_requirement.sh [repo-root]
 set -euo pipefail
 
 root="${1:-.}"

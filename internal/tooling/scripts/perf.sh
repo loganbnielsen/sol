@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
-# Sol performance baseline tool.
-#
-# Usage:
-#   internal/tooling/scripts/perf.sh status                  # all suites at a glance
-#   internal/tooling/scripts/perf.sh history [suite]         # run history per suite
-#   internal/tooling/scripts/perf.sh set-baseline [suite|all] # mark latest run as new baseline
-#   internal/tooling/scripts/perf.sh clear [suite|all]        # wipe history
 
 set -euo pipefail
 
@@ -15,7 +8,6 @@ BASELINE="$REPO_ROOT/internal/tooling/perf/perf_baseline.json"
 
 ALL_SUITES=(unit kafka observability storage e2e)
 
-# ── Per-suite regression thresholds (mirrors run_tests.sh) ───────────────────
 declare -A FAIL_RATIOS=(
   [unit]=1.5
   [kafka]=1.4
@@ -24,15 +16,10 @@ declare -A FAIL_RATIOS=(
   [e2e]=1.5
 )
 
-# ── Colours ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
 
 command -v jq &>/dev/null || { echo "perf.sh requires jq (sudo apt-get install jq)"; exit 1; }
 
-# ── Data accessors ────────────────────────────────────────────────────────────
-# `history` can be absent/null for suites that have never been recorded in
-# perf_baseline.json (e.g. observability/storage before their first run).
-# `// []` keeps every accessor total even when a suite key is missing.
 suite_baseline() { jq -r "(.suites.$1.history // []) | map(select(.baseline==true)) | last | .duration_s // \"null\"" "$BASELINE"; }
 suite_latest()   { jq -r "(.suites.$1.history // []) | last | .duration_s // \"null\"" "$BASELINE"; }
 suite_count()    { jq -r "(.suites.$1.history // []) | length" "$BASELINE"; }
@@ -50,18 +37,10 @@ is_regression() {
   awk "BEGIN { exit !($val / $base >= $ratio) }"
 }
 
-# ── status ────────────────────────────────────────────────────────────────────
-# Renders the status table. With [--regressions-only] it prints nothing unless a
-# suite has crossed its threshold — the post-commit hook uses that mode, because
-# a signal that fires on every commit is noise, and the gate that actually fails
-# a breached suite lives in pre-commit (REFAC-085). Called without a flag, the
-# output is unchanged.
 cmd_status() {
   local regressions_only=0
   [ "${1:-}" = "--regressions-only" ] && regressions_only=1
 
-  # Rows are collected rather than printed, because "say nothing when clean" can
-  # only be decided once every suite has been measured.
   local rows=() breached=0
   local header_main header_rule
   header_main="$(
@@ -90,8 +69,6 @@ cmd_status() {
     else
       drift_cell="$drift"
     fi
-    # Same printf sequence as before, built into one string so the column
-    # alignment is untouched by the refactor.
     rows+=(
       "$(
         printf "  %-16s %-11s %-11s " "$suite" "$base_s" "$latest_s"
@@ -111,7 +88,6 @@ cmd_status() {
   echo ""
 }
 
-# ── history ───────────────────────────────────────────────────────────────────
 cmd_history() {
   local target="${1:-}"
   local suites=("${ALL_SUITES[@]}")
@@ -152,7 +128,6 @@ cmd_history() {
   echo ""
 }
 
-# ── set-baseline ──────────────────────────────────────────────────────────────
 cmd_set_baseline() {
   local target="${1:-all}"
   local suites=("${ALL_SUITES[@]}")
@@ -166,7 +141,6 @@ cmd_set_baseline() {
     fi
 
     local tmp; tmp=$(mktemp)
-    # Remove baseline flag from all entries, then mark the last one.
     jq ".suites.${suite}.history |= (map(del(.baseline)) | .[-1].baseline = true)" \
       "$BASELINE" > "$tmp"
     mv "$tmp" "$BASELINE"
@@ -176,7 +150,6 @@ cmd_set_baseline() {
   done
 }
 
-# ── clear ─────────────────────────────────────────────────────────────────────
 cmd_clear() {
   local target="${1:-}"
   if [ -z "$target" ]; then
@@ -195,7 +168,6 @@ cmd_clear() {
   done
 }
 
-# ── dispatch ──────────────────────────────────────────────────────────────────
 cmd="${1:-status}"
 shift || true
 
