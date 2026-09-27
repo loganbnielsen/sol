@@ -115,7 +115,13 @@ STUB
 
 cat >"$TMP/bin/gcloud" <<'STUB'
 #!/usr/bin/env bash
-printf "gcloud %s" "$*" >>"$ARGV_LOG"; printf "\n" >>"$ARGV_LOG"
+# Two observation channels. Lifecycle calls log to $ARGV_LOG, which the lifecycle assertions
+# inspect; the readiness probe's own reads log to $API_PROBE_LOG, so the probe can never contaminate
+# an assertion about what Sol did. This is routing at the source -- filtering it back out of
+# $ARGV_LOG downstream would make every lifecycle assertion quietly conditional on the probe.
+gcloud_log_to="$ARGV_LOG"
+case " $* " in *"value(endpoint)"*) gcloud_log_to="${API_PROBE_LOG:-$ARGV_LOG}" ;; esac
+printf "gcloud %s" "$*" >>"$gcloud_log_to"; printf "\n" >>"$gcloud_log_to"
 case "$*" in
   *"storage buckets describe"*) printf "sol-qualification-tfstate\n"; exit 0 ;;
   *"storage cat"*)
@@ -130,6 +136,8 @@ case "$*" in
     printf '{"metric":"SSD_TOTAL_GB","limit":%s,"usage":%s}]}\n' \
       "${STUB_SSD_LIMIT:-500}" "${STUB_SSD_USAGE:-100}"
     exit 0 ;;
+  # The endpoint the probe compares against the kubeconfig's; a case can make them diverge.
+  *"value(endpoint)"*) printf "%s\n" "${STUB_ENDPOINT_REPORTED:-136.115.125.189}"; exit 0 ;;
   *"dns managed-zones describe"*) printf "qual-gcp-sol-fab-dev\n"; exit 0 ;;
   *"dns managed-zones"*)        printf "qual-gcp-sol-fab-dev\n"; exit 0 ;;
   # Real gcloud warns on stderr when a filtered list is empty; its stdout stays empty. The
@@ -228,8 +236,20 @@ STUB
 
 cat >"$TMP/bin/kubectl" <<'STUB'
 #!/usr/bin/env bash
-printf 'kubectl %s\n' "$*" >>"$ARGV_LOG"
+kubectl_log_to="$ARGV_LOG"
+case " $* " in *"get --raw /readyz"*) kubectl_log_to="${API_PROBE_LOG:-$ARGV_LOG}" ;; esac
+printf 'kubectl %s\n' "$*" >>"$kubectl_log_to"
 case "$*" in
+  # The readiness probe's read. Its own alternative of this case, placed here rather than nested
+  # inside another branch's body (which orphaned that branch's terminator once already).
+  *"get --raw /readyz"*)
+    if [ "${STUB_API_UNREACHABLE:-0}" = "1" ]; then
+      printf 'Unable to connect to the server: dial tcp 136.65.210.170:443: i/o timeout\n' >&2
+      exit 1
+    fi
+    printf 'ok\n'
+    exit 0
+    ;;
   *"logs job/cert-manager-startupapicheck"*)
     case "${STUB_KUBE_SIGNATURE:-none}" in
       x509)      printf 'error: x509: certificate signed by unknown authority\n' ;;
@@ -301,6 +321,7 @@ run_case() { # run_case <name> <subcommand> [VAR=VALUE ...]
   local name="$1" sub="$2"
   shift 2
   export ARGV_LOG="$TMP/$name.argv"
+  export API_PROBE_LOG="$TMP/$name.probe.argv"
   export LOG_DIR="$TMP/$name.logs"
   # Scratch workspace: the harness writes the target file into it, so the repository is never
   # touched and "nothing was left behind" is an assertion about scratch, not a hope.
@@ -309,6 +330,7 @@ run_case() { # run_case <name> <subcommand> [VAR=VALUE ...]
   # The identity the harness will ask about: CLUSTER at the harness's default project.
   export STUB_PROVISIONER_SA="test-cluster-provisioner@sol-qualification.iam.gserviceaccount.com"
   : >"$ARGV_LOG"
+  : >"$API_PROBE_LOG"
   rm -f "$TARGET_FILE"
   # The `verify` invariant needs a target file to exist: with one present, the old code
   # would actually have reached `sol cloud destroy`.
@@ -625,6 +647,61 @@ if grep -qF 'get clusterrolebinding sol-platform-provisioner-cluster -o json' \
   ok "a failed install still reads the provisioner bindings it had established"
 else
   no "a failed install still reads the provisioner bindings it had established" "the kubectl read" "none"
+fi
+
+# The API-reachability observer (the Attempt 15c follow-up). Two properties: it observes, and it
+# does not perturb. The channel assertions are the second -- they would fail if a single probe read
+# reached the lifecycle channel, and they cannot be satisfied by filtering downstream.
+probe_case() { # probe_case <name> <configured-endpoint> [VAR=VALUE ...]
+  local name="$1" configured="$2"
+  shift 2
+  local kc="$TMP/kc-$name.yaml"
+  printf 'apiVersion: v1\nclusters:\n- cluster:\n    server: https://%s\n  name: c\n' \
+    "$configured" >"$kc"
+  run_case "probe-$name" cloud KUBECONFIG="$kc" API_PROBE_INTERVAL_S=1 "$@"
+}
+probe_col() { awk -F'\t' -v c="$2" 'NR==2{print $c}' "$TMP/probe-$1.logs/api-readiness.tsv"; }
+
+probe_case sampling 136.115.125.189 STUB_CLUSTER_EXISTS=1
+has "the probe records a sample" "REACHABLE" "$TMP/probe-sampling.logs/api-readiness.tsv"
+is "the sample carries the provider-reported endpoint" "$(probe_col sampling 2)" "136.115.125.189"
+is "and the kubeconfig-configured endpoint" "$(probe_col sampling 3)" "136.115.125.189"
+has "the probe's gcloud endpoint read is on the probe channel" "value(endpoint)" "$TMP/probe-sampling.probe.argv"
+has "the probe's kubectl readiness read is on the probe channel" "get --raw /readyz" "$TMP/probe-sampling.probe.argv"
+if grep -qE '/readyz|value\(endpoint\)' "$TMP/probe-sampling.argv" 2>/dev/null; then
+  no "the lifecycle channel sees no probe traffic" "no probe traffic" \
+    "$(grep -m1 -E '/readyz|value\(endpoint\)' "$TMP/probe-sampling.argv")"
+else
+  ok "the lifecycle channel sees no probe traffic"
+fi
+
+probe_case divergence 136.65.210.170 STUB_CLUSTER_EXISTS=1
+is "a divergent kubeconfig endpoint is recorded as configured" "$(probe_col divergence 3)" "136.65.210.170"
+is "with the provider's reported endpoint recorded separately" "$(probe_col divergence 2)" "136.115.125.189"
+
+probe_case unreachable 136.115.125.189 STUB_CLUSTER_EXISTS=1 STUB_API_UNREACHABLE=1
+has "an unreachable API is recorded as a probe failure" "UNREACHABLE" \
+  "$TMP/probe-unreachable.logs/api-readiness.tsv"
+has "with the dial detail kept" "i/o timeout" "$TMP/probe-unreachable.logs/api-readiness.tsv"
+
+# Non-perturbation: the same run with the probe failing on every sample, and with no probe at all,
+# must exit identically -- and the disabled probe must write no samples at all.
+probe_case perturb 136.115.125.189 STUB_CLUSTER_EXISTS=1 STUB_API_UNREACHABLE=1
+run_case "probe-off" cloud API_READINESS_PROBE=0 STUB_CLUSTER_EXISTS=1
+is "a failing probe does not change the phase's exit status" \
+  "$(cat "$TMP/probe-perturb.rc")" "$(cat "$TMP/probe-off.rc")"
+if [ -s "$TMP/probe-off.logs/api-readiness.tsv" ]; then
+  no "the switch really disables the observer" "no samples" "$(wc -l <"$TMP/probe-off.logs/api-readiness.tsv") lines"
+else
+  ok "the switch really disables the observer"
+fi
+
+# Cleanup: the probe is a child of the run, and its own recorded pid must be gone afterwards.
+probe_pid="$(sed -n 's/.*api readiness probe:.*(pid \([0-9]*\)).*/\1/p' "$TMP/probe-sampling.out" 2>/dev/null | tail -1)"
+if [ -n "$probe_pid" ] && kill -0 "$probe_pid" 2>/dev/null; then
+  no "the probe leaves no orphan process" "no process $probe_pid" "still running"
+else
+  ok "the probe leaves no orphan process (recorded pid ${probe_pid:-none} is gone)"
 fi
 
 printf '\nscenario: a stop before the platform is a complete bundle\n'
