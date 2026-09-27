@@ -145,6 +145,30 @@ Two consequences of reading once, stated rather than discovered later:
   with no workloads, and `ecr_repositories_var` still answers `[]` for it
   (INFRA-074 keeps a *failure* an error, never "no repositories").
 
+**One same-family fix.** Making `sol deploy` read the workspace from its root
+exposed that its migration gate did not: `check_migration_prerequisite` used
+`dir = Sol_cli_migration.default_dir`, i.e. `"db/migrations"` relative to the
+*invocation cwd*. `sol deploy` deliberately keeps that cwd (DEC-024), so a
+deploy run from a descendant directory found no migrations and the gate
+silently reported "no migrations" for a workspace that has them — while the
+same command discovered the workspace's services from that descendant
+correctly. The gate now joins the workspace root from `ctx.facts`. Reproduced
+with the same machinery, verbatim, from `examples/pluto`:
+
+```
+$ sol migrate apply --dry-run          # run at examples/pluto
+  ... the whole of db/migrations/0001_notifications.sql ...
+$ sol migrate apply --dry-run          # run at examples/pluto/app/payments
+error: cannot read migrations dir: db/migrations: No such file or directory
+```
+
+The root invocation is the positive control: the same command, with a
+cwd-relative default, sees the migrations at the root and none from the
+descendant. `sol migrate`'s own `--dir` default (and its
+`Filename.basename (Sys.getcwd ())` workspace name) are the same shape but a
+separate command with its own ticket-shaped gap; left alone deliberately, and
+recorded here so it is not lost.
+
 **Demo/example: not applicable (internal) — no user-facing surface changed.**
 Generated manifests, `sol.toml`/`sol.yml` fields, CLI grammar and command output
 are unchanged; the scanners' own messages keep their spelling (a `~root`-less

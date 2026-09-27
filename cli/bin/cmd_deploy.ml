@@ -305,7 +305,14 @@ let check_migration_prerequisite ~ctx ~plan ~live =
   match plan.Sol_cli_deployment_plan.profile with
   | None -> Ok ()
   | Some _ ->
-    let dir = Sol_cli_migration.default_dir in
+    (* REFAC-130: the workspace's migrations, at the workspace root -- not
+       "db/migrations" relative to whatever directory the deploy was invoked
+       from. [sol deploy] keeps the invocation cwd, so a cwd-relative read found
+       nothing from a descendant directory and the gate silently reported "no
+       migrations" for a workspace that has them. *)
+    let dir =
+      Filename.concat ctx.facts.Sol_cli_workspace_model.root Sol_cli_migration.default_dir
+    in
     if not live
     then (
       (* Side-effect free: report honestly instead of creating anything. *)
@@ -341,6 +348,7 @@ let check_migration_prerequisite ~ctx ~plan ~live =
            ~target:ctx.target_name
            ~workspace:ctx.execution.workspace
            ~dir
+           ~services:ctx.inventory
        with
        | Cmd_migrate.No_migrations -> Ok ()
        | Cmd_migrate.Satisfied applied ->

@@ -742,7 +742,9 @@ type migration_verification =
    reads schema_migrations. Any failure to run the Job or read the table is an
    [Error] the caller treats as [Unavailable] -- never a reason to assume the
    schema is compatible. *)
-let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table =
+(* REFAC-130: [services] is the workspace inventory the caller already read, so
+   this does not read the workspace again to pick a namespace. *)
+let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table ~services =
   match Sol_cli_config.load_for_target ~target with
   | Error e -> Error (Sol_cli_config.error_to_string e)
   | Ok cfg ->
@@ -757,12 +759,7 @@ let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table =
     (match runner_source () with
      | Error _ as e -> e
      | Ok runner ->
-       let* facts = Sol_cli_workspace_model.load_cwd () in
-       let* namespace, k8s_name =
-         pick_namespace_and_service
-           ~workspace
-           ~services:(Sol_cli_workspace_model.services facts)
-       in
+       let* namespace, k8s_name = pick_namespace_and_service ~workspace ~services in
        (* HARDEN-002 run 2, finding 8: the Job below runs in this namespace and reads
           the runtime Secret, so establish both before submitting it. Doing it here
           is what makes a fresh target's first `sol migrate apply` possible. *)
@@ -942,14 +939,15 @@ let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table =
 ;;
 
 (* The prerequisite check the deploy path runs after the static preflight and
-   before any workload mutation. *)
-let verify_migration_prerequisite ~ctx ~target ~workspace ~dir =
+   before any workload mutation. [services] is the workspace inventory the
+   deploying command already read (REFAC-130). *)
+let verify_migration_prerequisite ~ctx ~target ~workspace ~dir ~services =
   match Sol_cli_migration.required ~dir with
   | Error e -> Unavailable e
   | Ok [] -> No_migrations
   | Ok required ->
     let table = Sol_cli_migration.table_name ~workspace in
-    (match read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table with
+    (match read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table ~services with
      | Error e -> Unavailable e
      | Ok applied ->
        (match Sol_cli_migration.unsatisfied ~required ~applied with

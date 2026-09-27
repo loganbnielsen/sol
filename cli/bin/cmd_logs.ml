@@ -256,12 +256,14 @@ let release_unknown ~release_id ~target records =
 let run_release ~ctx ~target (options : log_options) release =
   let { tail; observability; _ } = options in
   let* { root; name = workspace } = Sol_cli_workspace.enter_cwd () in
-  let* facts = Sol_cli_workspace_model.load ~root |> Sol_cli_exit.of_msg in
   let target_name = Option.value target ~default:"local" in
   let* scope =
     match options.scope with
     | None -> Ok None
     | Some scope ->
+      (* The workspace is read only when a scope has to be resolved: a
+         workspace-wide release read needs no inventory. *)
+      let* facts = Sol_cli_workspace_model.load ~root |> Sol_cli_exit.of_msg in
       let* svc = resolve_unit ~facts ~scope in
       let* names = unit_names ~workspace svc in
       Ok (Some names)
