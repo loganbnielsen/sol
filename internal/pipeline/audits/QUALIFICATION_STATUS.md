@@ -829,3 +829,33 @@ failure path too.
 
 **Nothing here is QUALIFIED.** No live run has installed on Standard. Attempt 15 is the
 discriminator, and it is the first attempt that would exercise `Ready` and Ready-state destruction.
+
+## GCP Attempt 16 (2026-09-27, `c6d8a460`) — the observer works live; the platform's requests exceed one node
+
+Full record: `internal/qualification/records/2026-09-27-gcp-attempt16-platform-requests-exceed-a-node.md`
+(bundle `/tmp/sol-gcp-qual-16`). Fresh target `qual16/gcp/us-central1`, cluster `sol-qual-gcp-16`, the
+first live run of the merged qualification observer (`#634`).
+
+| Boundary | Result |
+|---|---|
+| Observer: run credentials | **established live** — the waiter journal went `unreadable` → `PROVISIONING` → `RECONCILING` → `RUNNING / credentials-established` (poll 61). Attempt 15g never left `generation-incomplete` |
+| Observer: configured endpoint | **populated** — 93 samples, `-` before establishment and `23.236.57.130` after it, equal to the provider-reported endpoint. 15g reported `-` in all 88 of its samples, 51 of them reachable |
+| Observer: failure capture | **10 of 10 reads** produced output, summary written, the run continued into `capture_fnd0010` (23 files). 15g produced 2 artifacts and stopped there |
+| CloudBootstrap / CloudReady | created — GKE `RUNNING`, Cloud SQL `RUNNABLE` |
+| Platform prerequisites | **ok (52.4s)** — `FND-0060`, `FND-0010`, `FND-0061` boundaries crossed again |
+| Full `platform-apply` | **failed (695.0s)** — `helm_release.redpanda` and `helm_release.loki[0]` only, `context deadline exceeded` |
+| `FND-0066` (new) | the platform's pod requests exceed a single node's allocatable capacity |
+| `PlatformInstalling → Ready` | **not reached** |
+| Ready-state destruction | **not observed** |
+| Failed-install destruction + authority bracket | reproduced: `platform-destroy ok (106.0s)`, substrate destroyed; both roots empty |
+| Independent verification | `teardown verified: absent`; 19 disposable classes ABSENT, quota 0, both durables PRESENT; no billable residue |
+| Manual/emergency action | none |
+
+**New frontier:** `FND-0066` / `DEC-054` (BACKLOG, decision required). Two of the four pending pods
+ask for more than one node holds — each `redpanda-*` requests `2000m` CPU against `1930m` allocatable,
+and `loki-chunks-cache-0` requests `9830Mi` memory against `6026Mi` — so no node count and no
+autoscaler can schedule them. The `redpanda_*` requests are Sol's own platform defaults; the loki cache
+request is the upstream chart's default that the profile never overrides; the substrate is the GCP
+driver's own defaults (3 x `e2-standard-2`). The failure presents as two Helm timeouts, which invites
+the wrong remedy — the arithmetic is the finding. Storage, disk quota, taints and admission are each
+recorded as *not* the cause.
