@@ -1,0 +1,328 @@
+#!/usr/bin/env bash
+set -eu
+printf 'terraform %s\n' "$*" >>"$LIFECYCLE_LOG"
+for arg in "$@"; do
+  case "$arg" in -chdir=*) tf_chdir="${arg#-chdir=}" ;; esac
+done
+case " $* " in
+  *" init "*) mkdir -p "${tf_chdir:-.}/.terraform" && : >"${tf_chdir:-.}/.terraform/fake-init" ;;
+esac
+[ -n "${KUBE_CONFIG_PATH:-}" ] && printf 'env KUBE_CONFIG_PATH=%s\n' "$KUBE_CONFIG_PATH" >>"$LIFECYCLE_LOG"
+[ -n "${KUBE_CONFIG_PATHS:-}" ] && printf 'env KUBE_CONFIG_PATHS=%s\n' "$KUBE_CONFIG_PATHS" >>"$LIFECYCLE_LOG"
+fail_once() {
+  [ "${FAIL_ON:-}" = "$1" ] || return 1
+  marker="$FAIL_MARKER_DIR/$1"
+  [ ! -e "$marker" ] || return 1
+  : >"$marker"
+  return 0
+}
+case "$*" in
+  *" init "*|*" init")
+    case "$*" in *-backend-config=*) : ;; *) exit 91 ;; esac
+    case "$*" in *cloud/aws/platform* | *cloud/gcp/platform*) if fail_once platform-init; then exit 20; fi ;; esac
+    ;;
+  *" output -json"*)
+    if [ "${OUTPUT_ABSENT:-}" = 1 ]; then printf '{}\n'; exit 0; fi
+    case " $* " in
+      *cloud/gcp/cluster*)
+        if [ "${OUTPUT_NO_PROJECT:-}" = 1 ]; then
+          printf '{"cluster_name":{"sensitive":false,"type":"string","value":"sol-qual"}}\n'
+          exit 0
+        fi
+        sed -e 's#sol-qual-gcp-13#sol-qual#g' \
+          "$REPO_ROOT/cli/test/fixtures/terraform-output-gcp-cloud.json"
+        exit 0
+        ;;
+    esac
+    if fail_once outputs; then exit 20; fi
+    cat <<'JSON'
+{"cluster_name":{"value":"lifecycle-test"},"cluster_access_role_arn":{"value":"arn:aws:iam::111122223333:role/sol-cluster-access"},"cert_manager_irsa_arn":{"value":"arn:aws:iam::111122223333:role/cert-manager"},"grafana_irsa_arn":{"value":null},"managed_resource_dashboards":{"value":{}}}
+JSON
+    ;;
+  *" plan "*)
+    if fail_once plan; then exit 20; fi
+    case " $* " in
+      *" -out="*)
+        plan_file=""
+        for arg in "$@"; do
+          case "$arg" in
+            -out=*) plan_file="${arg#-out=}" ;;
+          esac
+        done
+        [ -n "$plan_file" ] || {
+          echo "plan without a -out path" >&2
+          exit 92
+        }
+        case " $* " in
+          *" -target=google_sql_database_instance.postgres "*)
+            case " $* " in
+              *" -var=sql_deletion_protection=false "*) : ;;
+              *) exit 95 ;;
+            esac
+            case " $* " in
+              *" -target=google_container_cluster.main "*) : ;;
+              *) exit 96 ;;
+            esac
+            case " $* " in
+              *" -var=gke_deletion_protection=false "*) : ;;
+              *) exit 97 ;;
+            esac
+            ;;
+        esac
+        : >"$plan_file"
+        printf '%s\n' "$*" >"$plan_file.args"
+        ;;
+    esac
+    ;;
+  *" show -json"*)
+    case "${!#}" in
+      *.tfplan)
+        plan_args="$(cat "${!#}.args")"
+        changes=""
+        add_change() {
+          [ -z "$changes" ] || changes="$changes,"
+          changes="$changes{\"address\":\"$1\",\"type\":\"$2\",\"mode\":\"managed\",\"change\":{\"actions\":[\"$3\"]}}"
+        }
+        case " $plan_args " in
+          *" -target=aws_db_instance.postgres "*)
+            add_change "aws_db_instance.postgres" "aws_db_instance" "update"
+            ;;
+        esac
+        case " $plan_args " in
+          *" -target=google_sql_database_instance.postgres "*)
+            add_change "google_sql_database_instance.postgres" "google_sql_database_instance" "update"
+            ;;
+        esac
+        case " $plan_args " in
+          *" -target=google_container_cluster.main "*)
+            add_change "google_container_cluster.main" "google_container_cluster" "update"
+            ;;
+        esac
+        case " $plan_args " in
+          *" -var=provisioner_bootstrap_admin=true "*)
+            case " $plan_args " in
+              *" -target=kubernetes_cluster_role_binding.provisioner_bootstrap_admin "*)
+                add_change "kubernetes_cluster_role_binding.provisioner_bootstrap_admin[0]" "kubernetes_cluster_role_binding" "create"
+                ;;
+              *" -target=module.eks "*)
+                add_change "module.eks.aws_eks_access_policy_association.this" "aws_eks_access_policy_association" "create"
+                ;;
+            esac
+            ;;
+          *" -var=provisioner_bootstrap_admin=false "*)
+            case " $plan_args " in
+              *" -target=kubernetes_cluster_role_binding.provisioner_bootstrap_admin "*)
+                add_change "kubernetes_cluster_role_binding.provisioner_bootstrap_admin" "kubernetes_cluster_role_binding" "delete"
+                ;;
+              *" -target=module.eks "*)
+                add_change "module.eks.aws_eks_access_policy_association.this" "aws_eks_access_policy_association" "delete"
+                ;;
+            esac
+            ;;
+        esac
+        if [ "${ECR_REMOVAL:-}" = 1 ]; then
+          case " $plan_args " in
+            *" -target="*) : ;;
+            *cloud/aws/cluster*)
+              add_change 'aws_ecr_repository.services[\"old-svc\"]' "aws_ecr_repository" "delete"
+              ;;
+          esac
+        fi
+        if [ "${PLAN_CREATES_MISSING_CLUSTER:-}" = 1 ]; then
+          case " $plan_args " in
+            *" -var=provisioner_bootstrap_admin=true "*)
+              add_change "google_container_cluster.main" "google_container_cluster" "create"
+              ;;
+          esac
+        fi
+        declared=""
+        add_declared() {
+          [ -z "$declared" ] || declared="$declared,"
+          declared="$declared$1"
+        }
+        case " $plan_args " in
+          *cloud/gcp/cluster*)
+            add_declared '{"address":"google_compute_network.main","mode":"managed","type":"google_compute_network","values":{"name":"sol-qual","project":"sol-qualification"}}'
+            add_declared '{"address":"google_artifact_registry_repository.images","mode":"managed","type":"google_artifact_registry_repository","values":{"repository_id":"sol-qual","location":"us-central1","project":"sol-qualification"}}'
+            add_declared '{"address":"google_compute_global_address.sql_peering","mode":"managed","type":"google_compute_global_address","values":{"name":"sol-qual-sql-peering","project":"sol-qualification"}}'
+            add_declared '{"address":"google_sql_database_instance.postgres","mode":"managed","type":"google_sql_database_instance","values":{"name":"sol-qual-postgres","region":"us-central1","project":"sol-qualification"}}'
+            add_declared '{"address":"google_container_cluster.main","mode":"managed","type":"google_container_cluster","values":{"name":"sol-qual","location":"us-central1","project":"sol-qualification"}}'
+            add_declared '{"address":"google_project_iam_member.provisioner_cluster_access","mode":"managed","type":"google_project_iam_member","values":{"project":"sol-qualification"}}'
+            if [ "${DECLARED_ORPHAN:-}" = 1 ]; then
+              add_declared '{"address":"google_compute_network.orphan","mode":"managed","type":"google_compute_network","values":{"name":"sol-orphan","project":"sol-qualification"}}'
+            fi
+            ;;
+          *cloud/aws/cluster*)
+            add_declared '{"address":"module.eks.aws_eks_cluster.this[0]","mode":"managed","type":"aws_eks_cluster","values":{"name":"lifecycle-test"}}'
+            add_declared '{"address":"aws_db_instance.postgres","mode":"managed","type":"aws_db_instance","values":{"identifier":"lifecycle-test-postgres"}}'
+            ;;
+        esac
+        printf '{"resource_changes":[%s],"planned_values":{"root_module":{"resources":[%s]}}}\n' \
+          "$changes" "$declared"
+        exit 0
+        ;;
+    esac
+    if [ "${OUTPUT_ABSENT:-}" = 1 ]; then
+      printf '{"values":{"root_module":{"resources":[]}}}\n'
+      exit 0
+    fi
+    case " $* " in
+      *cloud/gcp/platform*|*cloud/aws/platform*)
+        if [ "${PARTIAL_INSTALL:-}" = 1 ]; then
+          if [ "${CRD_SERVED:-}" = 1 ]; then
+            kind="ClusterIssuer"
+          else
+            kind="ClusterIssuer"
+          fi
+          printf '{"values":{"root_module":{"resources":[{"type":"kubernetes_manifest","address":"module.platform.kubernetes_manifest.letsencrypt_prod","values":{"manifest":{"kind":"%s"}}},{"type":"kubernetes_namespace","address":"module.platform.kubernetes_namespace.cert_manager","values":{"metadata":[{"name":"cert-manager"}]}}]}}}\n' \
+            "$kind"
+        else
+          printf '{"values":{"root_module":{"resources":[]}}}\n'
+        fi
+        exit 0
+        ;;
+      *cloud/gcp/cluster*)
+        if [ -e "${LIFECYCLE_LOG}.destroyed" ] \
+          && [ "${STATE_RESIDUE_AFTER_DESTROY:-}" != 1 ]; then
+          printf '{"values":{"root_module":{"resources":[]}}}\n'
+          exit 0
+        fi
+        sql_guard=true
+        gke_guard=true
+        [ -e "${GCP_SQL_PREPARED_FILE:-/nonexistent}" ] && sql_guard=false
+        [ -e "${GKE_PREPARED_FILE:-/nonexistent}" ] && gke_guard=false
+        printf '{"values":{"root_module":{"resources":[
+          {"address":"google_compute_network.main","type":"google_compute_network","values":{"self_link":"https://www.googleapis.com/compute/v1/projects/sol-qualification/global/networks/sol-qual","project":"sol-qualification","name":"sol-qual"}},
+          {"address":"google_artifact_registry_repository.images","type":"google_artifact_registry_repository","values":{"id":"projects/sol-qualification/locations/us-central1/repositories/sol-qual","project":"sol-qualification","location":"us-central1","name":"sol-qual"}},
+          {"address":"google_compute_global_address.sql_peering","type":"google_compute_global_address","values":{"self_link":"https://www.googleapis.com/compute/v1/projects/sol-qualification/global/addresses/sol-qual-sql-peering","project":"sol-qualification","name":"sol-qual-sql-peering"}},
+          {"address":"google_sql_database_instance.postgres","type":"google_sql_database_instance","values":{"deletion_protection":%s,"self_link":"https://sqladmin.googleapis.com/sql/v1beta4/projects/sol-qualification/instances/sol-qual-postgres","project":"sol-qualification","region":"us-central1"}},
+          {"address":"google_container_cluster.main","type":"google_container_cluster","values":{"deletion_protection":%s,"self_link":"https://container.googleapis.com/v1/projects/sol-qualification/locations/us-central1/clusters/sol-qual","project":"sol-qualification","location":"us-central1"}},
+          {"address":"google_project_iam_member.provisioner_cluster_access","type":"google_project_iam_member","values":{"project":"sol-qualification","role":"projects/sol-qualification/roles/solProvisionerClusterAccess"}}
+        ]}}}\n' \
+          "$sql_guard" "$gke_guard"
+        exit 0
+        ;;
+    esac
+    if [ -e "${LIFECYCLE_LOG}.destroyed" ] \
+      && [ "${STATE_RESIDUE_AFTER_DESTROY:-}" != 1 ]; then
+      printf '{"values":{"root_module":{"resources":[]}}}\n'
+      exit 0
+    fi
+    eks_resource='{"address":"module.eks.aws_eks_cluster.this[0]","type":"aws_eks_cluster","values":{"id":"lifecycle-test","arn":"arn:aws:eks:us-east-1:111122223333:cluster/lifecycle-test"}}'
+    if [ "${RDS_ABSENT:-}" = 1 ]; then
+      printf '{"values":{"root_module":{"resources":[%s]}}}\n' "$eks_resource"
+    elif [ -e "$RDS_PREPARED_FILE" ]; then
+      prepared_value="$(cat "$RDS_PREPARED_FILE")"
+      if [ "$prepared_value" = "skip" ]; then
+        printf '{"values":{"root_module":{"resources":[%s,{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":true,"final_snapshot_identifier":null,"identifier":"lifecycle-test-postgres","id":"db-LIFECYCLETEST","arn":"arn:aws:rds:us-east-1:111122223333:db:lifecycle-test-postgres"}}]}}}\n' \
+          "$eks_resource"
+      else
+        printf \
+          '{"values":{"root_module":{"resources":[%s,{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":false,"skip_final_snapshot":false,"final_snapshot_identifier":"%s","identifier":"lifecycle-test-postgres","id":"db-LIFECYCLETEST","arn":"arn:aws:rds:us-east-1:111122223333:db:lifecycle-test-postgres"}}]}}}\n' \
+          "$eks_resource" "${prepared_value}${RDS_SNAPSHOT_MISMATCH:+-other}"
+      fi
+    else
+      printf \
+        '{"values":{"root_module":{"resources":[%s,{"address":"aws_db_instance.postgres","type":"aws_db_instance","values":{"deletion_protection":true,"skip_final_snapshot":false,"final_snapshot_identifier":null,"identifier":"lifecycle-test-postgres","id":"db-LIFECYCLETEST","arn":"arn:aws:rds:us-east-1:111122223333:db:lifecycle-test-postgres"}}]}}}\n' \
+        "$eks_resource"
+    fi
+    ;;
+  *" apply "*".tfplan")
+    plan_args="$(cat "${!#}.args")"
+    if [ "${PLAN_CREATES_MISSING_CLUSTER:-}" = 1 ]; then
+      case " $plan_args " in
+        *" -var=provisioner_bootstrap_admin=true "*) exit 99 ;;
+      esac
+    fi
+    case " $plan_args " in
+      *" -target=aws_db_instance.postgres "*)
+        if fail_once rds-prepare; then exit 20; fi
+        for arg in $plan_args; do
+          case "$arg" in
+            -var=rds_final_snapshot_identifier=*)
+              printf '%s' "${arg#-var=rds_final_snapshot_identifier=}" >"$RDS_PREPARED_FILE"
+              ;;
+            -var=rds_skip_final_snapshot=true)
+              printf 'skip' >"$RDS_PREPARED_FILE"
+              ;;
+          esac
+        done
+        ;;
+    esac
+    case " $plan_args " in
+      *" -target=google_sql_database_instance.postgres "*)
+        if fail_once gcp-prepare; then exit 20; fi
+        : >"$GCP_SQL_PREPARED_FILE"
+        : >"$GKE_PREPARED_FILE"
+        ;;
+    esac
+    case " $plan_args " in
+      *" -var=provisioner_bootstrap_admin=true "*)
+        printf 'true\n' >"$FAIL_MARKER_DIR/bootstrap-window"
+        if fail_once cloud; then exit 20; fi
+        ;;
+      *" -var=provisioner_bootstrap_admin=false "*)
+        printf 'false\n' >"$FAIL_MARKER_DIR/bootstrap-window"
+        if fail_once deescalate; then exit 20; fi
+        ;;
+    esac
+    ;;
+  *cloud/aws/cluster*" apply "*"-target=aws_db_instance.postgres"*)
+    if fail_once rds-prepare; then exit 20; fi
+    for arg in "$@"; do
+      case "$arg" in
+        -var=rds_final_snapshot_identifier=*)
+          printf '%s' "${arg#-var=rds_final_snapshot_identifier=}" >"$RDS_PREPARED_FILE"
+          ;;
+        -var=rds_skip_final_snapshot=true)
+          printf 'skip' >"$RDS_PREPARED_FILE"
+          ;;
+      esac
+    done
+    ;;
+  *" state rm "*)
+    printf 'state-rm %s\n' "${!#}" >>"$LIFECYCLE_LOG"
+    : >"$STATE_RM_FILE"
+    ;;
+  *cloud/gcp/platform*" destroy "*|*cloud/aws/platform*" destroy "*)
+    if [ "${PARTIAL_INSTALL:-}" = 1 ] && [ ! -e "${STATE_RM_FILE:-/nonexistent}" ]; then
+      printf 'Error: API did not recognize GroupVersionKind from manifest (CRD may not be installed)\n' >&2
+      exit 1
+    fi
+    ;;
+  *cloud/gcp/cluster*" destroy "*|*cloud/aws/cluster*" destroy "*)
+    [ "${STATE_RESIDUE_AFTER_DESTROY:-}" = 1 ] || : >"${LIFECYCLE_LOG}.destroyed"
+    ;;
+  *cloud/gcp/cluster*" apply "*"-target=google_sql_database_instance.postgres"*)
+    if fail_once gcp-prepare; then exit 20; fi
+    case " $* " in
+      *" -var=sql_deletion_protection=false "*) : ;;
+      *) exit 95 ;;
+    esac
+    case " $* " in
+      *" -target=google_container_cluster.main "*) : ;;
+      *) exit 96 ;;
+    esac
+    case " $* " in
+      *" -var=gke_deletion_protection=false "*) : ;;
+      *) exit 97 ;;
+    esac
+    : >"$GCP_SQL_PREPARED_FILE"
+    : >"$GKE_PREPARED_FILE"
+    ;;
+  *cloud/aws/cluster*" apply "*"provisioner_bootstrap_admin=true"*)
+    printf 'true\n' >"$FAIL_MARKER_DIR/bootstrap-window"
+    if fail_once cloud; then exit 20; fi
+    ;;
+  *cloud/aws/cluster*" apply "*"provisioner_bootstrap_admin=false"*)
+    printf 'false\n' >"$FAIL_MARKER_DIR/bootstrap-window"
+    if fail_once deescalate; then exit 20; fi
+    ;;
+  *cloud/aws/platform*" apply "*"-target="*|*cloud/gcp/platform*" apply "*"-target="*)
+    if fail_once prerequisites; then exit 20; fi
+    [ -n "${PLATFORM_INSTALLED_FILE:-}" ] && : >"$PLATFORM_INSTALLED_FILE"
+    ;;
+  *cloud/aws/platform*" apply "*|*cloud/gcp/platform*" apply "*)
+    if fail_once platform; then exit 20; fi
+    ;;
+esac

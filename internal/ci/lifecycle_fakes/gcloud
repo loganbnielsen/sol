@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+set -eu
+printf 'gcloud %s\n' "$*" >>"$LIFECYCLE_LOG"
+case "$1 $2" in
+  "auth application-default") : ;;
+  *)
+    case " $* " in
+      *" --project sol-qualification "*|*" --project=sol-qualification "*) : ;;
+      *) exit 91 ;;
+    esac
+    ;;
+esac
+case "$1 $2" in
+  "compute regions")
+    printf '{"name":"us-central1","quotas":[{"metric":"CPUS","limit":200.0,"usage":22.0},'
+    printf '{"metric":"DISKS_TOTAL_GB","limit":4096.0,"usage":0.0},'
+    printf '{"metric":"SSD_TOTAL_GB","limit":%s,"usage":%s}]}\n' \
+      "${STUB_SSD_LIMIT:-500}" "${STUB_SSD_USAGE:-100}"
+    exit 0
+    ;;
+  "auth application-default")
+    if [ "${FAIL_CREDENTIALS:-}" = 1 ]; then
+      printf 'ERROR: (gcloud.auth.application-default.print-access-token) There was a problem refreshing your current auth tokens\n' >&2
+      exit 254
+    fi
+    printf 'ya29.harness-token\n'
+    exit 0
+    ;;
+  "container clusters")
+    case " $* " in
+      *autopilot.enabled*)
+        if [ "${STUB_AUTOPILOT:-0}" = "1" ]; then
+          printf '{"autopilot":{"enabled":true}}\n'
+        else
+          printf '{"autopilot":{"enabled":false}}\n'
+        fi
+        exit 0
+        ;;
+    esac
+    case " $* " in
+      *" get-credentials "*)
+        case " $* " in
+          *" --kubeconfig "*) exit 93 ;;
+        esac
+        path="${KUBECONFIG:-}"
+        [ -n "$path" ] || exit 92
+        printf '%s\n' "$path" >>"$KUBECONFIG_LOG"
+        if [ "${FAIL_ON:-}" = access ] && [ ! -e "$FAIL_MARKER_DIR/access" ]; then
+          : >"$FAIL_MARKER_DIR/access"; exit 20
+        fi
+        : >"$path"
+        exit 0
+        ;;
+      *" describe "*)
+        if [ "${DESTROYING:-}" = 1 ]; then
+          echo "ERROR: (gcloud.container.clusters.describe) ResponseError: code=404, message=Not found: projects/sol-qualification/locations/us-central1/clusters/sol-qual." >&2
+          exit 1
+        fi
+        printf 'RUNNING\n'; exit 0
+        ;;
+    esac
+    ;;
+  "sql instances")
+    if [ "${DESTROYING:-}" = 1 ]; then
+      echo "ERROR: (gcloud.sql.instances.describe) HTTPError 404: The Cloud SQL instance does not exist." >&2
+      exit 1
+    fi
+    printf 'RUNNABLE\n'; exit 0
+    ;;
+  "services vpc-peerings")
+    if [ "${DESTROYING:-}" = 1 ]; then
+      echo "ERROR: (gcloud.services.vpc-peerings.list) NOT_FOUND: The network was not found" >&2
+      exit 1
+    fi
+    printf 'servicenetworking-googleapis-com\n'
+    exit 0
+    ;;
+  "compute networks")
+    case " $* " in
+      *" describe sol-orphan "*)
+        if [ "${DECLARED_ORPHAN_PRESENT:-}" = 1 ]; then
+          printf 'name: sol-orphan\nselfLink: https://www.googleapis.com/compute/v1/projects/sol-qualification/global/networks/sol-orphan\n'
+          exit 0
+        fi
+        if [ "${DECLARED_ORPHAN_UNKNOWN:-}" = 1 ]; then
+          echo "ERROR: (gcloud.compute.networks.describe) Throttling: rate exceeded" >&2
+          exit 1
+        fi
+        echo "ERROR: (gcloud.compute.networks.describe) Could not fetch resource: - The resource 'projects/sol-qualification/global/networks/sol-orphan' was not found" >&2
+        exit 1
+        ;;
+    esac
+    if [ "${DESTROYING:-}" = 1 ]; then
+      echo "ERROR: (gcloud.compute.networks.describe) Could not fetch resource: - The resource 'projects/sol-qualification/global/networks/sol-qual' was not found" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  "artifacts repositories"|"compute addresses")
+    if [ "${DESTROYING:-}" = 1 ]; then
+      echo "ERROR: (gcloud.$1.$2.describe) NOT_FOUND: Resource was not found" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+esac
+exit 90

@@ -9,6 +9,7 @@ REPO = Path(__file__).resolve().parents[2]
 GUARD = REPO / "internal/ci/check_terraform_output_fixture.py"
 FIXTURE = "cli/test/fixtures/terraform-output-gcp-cloud.json"
 HARNESS = "internal/ci/test_cloud_lifecycle_offline.sh"
+STUB = "internal/ci/lifecycle_fakes/terraform"
 PARSER = "cli/lib/cloud/sol_cli_gcp_cluster.ml"
 
 
@@ -31,12 +32,12 @@ def replace(path, old, new, every=False):
 
 
 def invent_old_shape(root):
-    path = root / HARNESS
+    path = root / STUB
     text = path.read_text()
     anchor = "sed -e 's#sol-qual-gcp-13#sol-qual#g'"
     lines = [line for line in text.splitlines() if anchor in line]
     if not lines:
-        sys.exit(f"FAIL: a mutation's anchor no longer matches {HARNESS}: {anchor!r}")
+        sys.exit(f"FAIL: a mutation's anchor no longer matches {STUB}: {anchor!r}")
     invented = "printf '{\"project_id\":{\"value\"}}'"
     path.write_text(text.replace(lines[0], invented + "\n" + lines[0], 1))
 
@@ -46,15 +47,17 @@ CASES = [
     ("project-is-not-a-string", edit_fixture(lambda d: d["project_id"].__setitem__("value", 42))),
     ("no-project-id", edit_fixture(lambda d: d.pop("project_id"))),
     ("sensitive-not-a-bool", edit_fixture(lambda d: d["project_id"].__setitem__("sensitive", "false"))),
-    ("harness-declares-its-own-shape", replace(HARNESS, f'"$REPO_ROOT/{FIXTURE}"', '"$tmp/gcp-outputs.json"')),
-    ("harness-invents-the-old-shape", invent_old_shape),
+    ("stub-declares-its-own-shape", replace(STUB, f'"$REPO_ROOT/{FIXTURE}"', '"$tmp/gcp-outputs.json"')),
+    ("stub-invents-the-old-shape", invent_old_shape),
+    ("harness-invents-the-old-shape", lambda root: (root / HARNESS).write_text(
+        (root / HARNESS).read_text() + "\nprintf '{\"project_id\":{\"value\"}}'\n")),
     ("parser-reads-a-private-shape", replace(PARSER, "Sol_cli_cluster.outputs_reader", "Sol_cli_gcp_private_reader", every=True)),
 ]
 
 
 def tree(scratch, name):
     root = scratch / name
-    for rel in (FIXTURE, HARNESS, PARSER):
+    for rel in (FIXTURE, HARNESS, STUB, PARSER):
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(REPO / rel, root / rel)
     return root

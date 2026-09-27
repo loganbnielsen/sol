@@ -243,7 +243,7 @@ def language(path):
     name = os.path.basename(path)
     if path.endswith((".ml", ".mli")):
         return ocaml
-    if path.endswith((".sh", ".bash")) or name in ("pre-commit", "post-commit"):
+    if path.endswith((".sh", ".bash")) or name in ("pre-commit", "post-commit") or path.startswith("internal/ci/lifecycle_fakes/"):
         return "shell"
     if path.endswith((".tf", ".tfvars")):
         return terraform

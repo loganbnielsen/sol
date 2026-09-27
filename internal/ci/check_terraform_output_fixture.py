@@ -37,8 +37,9 @@ def main():
     root = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
     fixture = root / FIXTURE
     harness = root / "internal/ci/test_cloud_lifecycle_offline.sh"
+    stub = root / "internal/ci/lifecycle_fakes/terraform"
     parser = root / "cli/lib/cloud/sol_cli_gcp_cluster.ml"
-    for path in (fixture, harness, parser):
+    for path in (fixture, harness, stub, parser):
         if not path.is_file():
             fail(f"FAIL: missing {path}")
     try:
@@ -48,15 +49,15 @@ def main():
     problems = fixture_problems(payload)
     if problems:
         fail(*(f"FAIL: {p}" for p in problems))
-    harness_text = harness.read_text()
-    if FIXTURE not in harness_text:
+    if FIXTURE not in stub.read_text():
         fail(
-            "FAIL: the lifecycle harness does not serve the captured fixture, so its outputs payload is",
-            "      a second, hand-written idea of terraform's shape (this is what hid FND-0063).",
+            "FAIL: the lifecycle harness's terraform stub does not serve the captured fixture, so its outputs",
+            "      payload is a second, hand-written idea of terraform's shape (this is what hid FND-0063).",
         )
-    harness_code = "\n".join(l for l in harness_text.splitlines() if not l.lstrip().startswith("#"))
-    if '"project_id":{"value"' in harness_code:
-        fail("FAIL: the invented single-field output shape is back in the lifecycle harness.")
+    fakes = [harness] + sorted((root / "internal/ci/lifecycle_fakes").glob("*"))
+    for path in fakes:
+        if '"project_id":{"value"' in path.read_text():
+            fail(f"FAIL: the invented single-field output shape is back in {path.relative_to(root)}.")
     if "Sol_cli_cluster.outputs_reader" not in parser.read_text():
         fail(
             "FAIL: project_id_of_outputs_json does not read through Sol_cli_cluster.outputs_reader,",

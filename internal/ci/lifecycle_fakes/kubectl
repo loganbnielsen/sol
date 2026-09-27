@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -eu
+printf 'kubectl %s\n' "$*" >>"$LIFECYCLE_LOG"
+case " $* " in
+  *" auth whoami "*)
+    case "$(cat "$FAIL_MARKER_DIR/kubeconfig-role" 2>/dev/null || true)" in
+      sol-provisioner)
+        if [ "${WHOAMI_REFUSE:-}" = 1 ] &&
+          [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "false" ]; then
+          printf 'error: You must be logged in to the server (Unauthorized)\n' >&2
+          exit 1
+        fi
+        if [ ! -e "${LIFECYCLE_LOG}.whoami-401-seen" ]; then
+          : >"${LIFECYCLE_LOG}.whoami-401-seen"
+          printf 'error: You must be logged in to the server (Unauthorized)\n' >&2
+          exit 1
+        fi
+        printf '{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview","metadata":{"creationTimestamp":null},"status":{"userInfo":{"username":"arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth","uid":"aws-iam-authenticator:111122223333:AROA","groups":["system:authenticated","sol:platform-provisioners"],"extra":{"arn":["arn:aws:sts::111122223333:assumed-role/sol-provisioner/EKSGetTokenAuth"],"canonicalArn":["arn:aws:iam::111122223333:role/sol-provisioner"],"sessionName":["EKSGetTokenAuth"]}}}}\n'
+        ;;
+      sol-cluster-access)
+        printf '{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview","status":{"userInfo":{"username":"arn:aws:sts::111122223333:assumed-role/sol-cluster-access/EKSGetTokenAuth","extra":{"arn":["arn:aws:sts::111122223333:assumed-role/sol-cluster-access/EKSGetTokenAuth"],"canonicalArn":["arn:aws:iam::111122223333:role/sol-cluster-access"]}}}}\n'
+        ;;
+      *) printf '{"status":{"userInfo":{}}}\n' ;;
+    esac
+    exit 0
+    ;;
+  *" auth can-i "*" clusterroles "*|*" auth can-i "*" clusterrolebindings "*)
+    if [ "$(cat "$FAIL_MARKER_DIR/kubeconfig-role" 2>/dev/null || true)" != "sol-provisioner" ]; then
+      printf 'error: the authorizer was asked about the wrong principal\n' >&2
+      exit 90
+    fi
+    if [ "${CAN_I_FAIL:-}" = 1 ] &&
+      [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "false" ]; then
+      printf 'error: unable to connect to the server: dial tcp: i/o timeout\n' >&2
+      exit 1
+    fi
+    if [ "${CAN_I_INDETERMINATE_WHEN_OPEN:-}" = 1 ] &&
+      [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "true" ]; then
+      case " $* " in
+        *" auth can-i create clusterroles "*)
+          printf 'maybe\n'
+          exit 0
+          ;;
+      esac
+    fi
+    if [ "$(cat "$FAIL_MARKER_DIR/bootstrap-window" 2>/dev/null || true)" = "true" ]; then
+      printf 'yes\n'
+      exit 0
+    fi
+    printf 'no - no RBAC policy matched\n'
+    exit 1
+    ;;
+esac
+case " $* " in
+  *" api-resources "*)
+    printf 'NAME        SHORTNAMES   APIVERSION   NAMESPACED   KIND\n'
+    printf 'namespaces  ns           v1           false        Namespace\n'
+    printf 'clusterroles             rbac.authorization.k8s.io/v1  false  ClusterRole\n'
+    if [ "${CRD_SERVED:-}" = 1 ]; then
+      printf 'clusterissuers           cert-manager.io/v1  false  ClusterIssuer\n'
+    fi
+    exit 0
+    ;;
+esac
+
+set -eu
+printf 'kubectl %s\n' "$*" >>"$LIFECYCLE_LOG"
+[ "$KUBECONFIG" != /ambient/forbidden ] || exit 93
+if [ "${DESTROYING:-}" = 1 ]; then
+  case "$*" in "get namespace "*) exit 1 ;; esac
+fi
+if [ "${AUTH_ABSENT:-}" = 1 ]; then
+  case "$*" in "auth can-i "*) exit 94 ;; esac
+fi
+if [ "${RBAC_ABSENT:-}" = 1 ]; then
+  case "$*" in
+    "auth can-i --list") : ;;
+    "auth can-i "*) exit 1 ;;
+  esac
+fi
+if [ "${CRDS_ABSENT:-}" = 1 ]; then
+  case "$*" in *"--for=condition=Established"*) exit 1 ;; esac
+fi
+if [ "${FRESH_TARGET:-}" = 1 ] && [ ! -e "${PLATFORM_INSTALLED_FILE:-/nonexistent}" ]; then
+  case "$*" in *"--for=condition=Established"*) exit 1 ;; esac
+fi
+if [ "${FAIL_ON:-}" = crds ] && [ ! -e "$FAIL_MARKER_DIR/crds" ] &&
+   case "$*" in *"--timeout=180s"*) true;; *) false;; esac; then
+  : >"$FAIL_MARKER_DIR/crds"; exit 20
+fi
+if [ "${FAIL_ON:-}" = rbac ] && [ ! -e "$FAIL_MARKER_DIR/rbac" ] &&
+   case "$*" in "auth can-i create namespaces") true;; *) false;; esac; then
+  : >"$FAIL_MARKER_DIR/rbac"; exit 20
+fi
+if [ "${FAIL_READINESS_ALWAYS:-}" = 1 ] &&
+   case "$*" in *"csidriver/ebs.csi.aws.com"*) true;; *) false;; esac; then
+  exit 20
+fi
+case "$*" in
+  "auth can-i "*" -n default") exit 1 ;;
+  "auth can-i bind "*|"auth can-i escalate "*) exit 1 ;;
+  "get storageclass -o jsonpath="*)
+    if [ "${STORAGE_CLASS_WRONG:-}" = 1 ]; then
+      printf 'gp3|pd.csi.storage.gke.io|true '
+    else
+      printf 'gp3|ebs.csi.aws.com|true '
+    fi
+    ;;
+  *"service/ingress-nginx-controller"*) printf 'lb.example.test' ;;
+  *"get daemonset -n monitoring -o jsonpath="*) printf '4/4 4/4 ' ;;
+  *"get statefulset -n monitoring -o jsonpath="*) printf '1/1 1/1 1/1 ' ;;
+  *"get statefulset -n redpanda -o jsonpath="*) printf '3/3 ' ;;
+  *"get pvc -n monitoring -o jsonpath="*) printf 'Bound Bound ' ;;
+  *"get pvc -n redpanda -o jsonpath="*) printf 'Bound Bound ' ;;
+  *"get nodes -o jsonpath="*) printf 'True True True True ' ;;
+esac
+if [ "${FAIL_ON:-}" = readiness ] && [ ! -e "$FAIL_MARKER_DIR/readiness" ] &&
+   case "$*" in *"csidriver/ebs.csi.aws.com"*) true;; *) false;; esac; then
+  : >"$FAIL_MARKER_DIR/readiness"; exit 20
+fi
