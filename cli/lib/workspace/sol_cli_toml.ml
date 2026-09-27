@@ -719,6 +719,32 @@ let check_known_keys path doc =
 
 (* ── Loader ──────────────────────────────────────────────────────────────── *)
 
+(* REFAC-131: every value decoded here can end up in a manifest, and YAML (like
+   the C library that writes it) cannot carry a NUL character. TOML can, as
+   [\u0000]; refuse it here, naming where, rather than let it truncate a value
+   downstream. *)
+let refuse_nul path doc =
+  let has_nul s = String.contains s '\000' in
+  let rec find keys = function
+    | Otoml.TomlString s when has_nul s -> Some (List.rev keys)
+    | Otoml.TomlArray items | Otoml.TomlTableArray items ->
+      List.find_map (find keys) items
+    | Otoml.TomlTable members | Otoml.TomlInlineTable members ->
+      members
+      |> List.find_map (fun (key, value) ->
+        if has_nul key then Some (List.rev (key :: keys)) else find (key :: keys) value)
+    | _ -> None
+  in
+  match find [] doc with
+  | None -> Ok ()
+  | Some keys ->
+    validation_error
+      path
+      (Printf.sprintf
+         "%s contains a NUL character, which cannot be written into a manifest"
+         (String.concat "." keys))
+;;
+
 let load_result path =
   try
     if not (Sys.file_exists path)
@@ -731,6 +757,7 @@ let load_result path =
           Error (Toml_syntax { path; message = Printf.sprintf "sol.toml: %s" msg })
       in
       let* () = check_known_keys path doc in
+      let* () = refuse_nul path doc in
       (* [infra.scale] *)
       let replicas =
         Otoml.Helpers.find_integer_opt doc [ "infra"; "scale"; "replicas" ]

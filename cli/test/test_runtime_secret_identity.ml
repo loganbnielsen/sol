@@ -40,6 +40,7 @@ let test_substrate_secret_carries_the_runtime_identity () =
       ~ns:namespace
       ~name:Sol_cli_manifest.runtime_secret_name
       ()
+    |> fun doc -> Sol_cli_yaml.render [ doc ]
   in
   Alcotest.(check string)
     "one runtime identity, defined once"
@@ -68,18 +69,63 @@ let test_workload_secrets_keep_their_own_convention () =
     (Sol_cli_manifest.workload_secret_name "charge-svc");
   assert_contains
     "and rendering it produces exactly that name"
-    (Sol_cli_manifest.secret_doc
-       ~ns:namespace
-       ~name:(Sol_cli_manifest.workload_secret_name "charge-svc")
-       ())
+    (Sol_cli_yaml.render
+       [ Sol_cli_manifest.secret_doc
+           ~ns:namespace
+           ~name:(Sol_cli_manifest.workload_secret_name "charge-svc")
+           ()
+       ])
     "  name: charge-svc-secrets\n";
   assert_absent
     "a workload Secret is not suffixed twice either"
-    (Sol_cli_manifest.secret_doc
-       ~ns:namespace
-       ~name:(Sol_cli_manifest.workload_secret_name "charge-svc")
-       ())
+    (Sol_cli_yaml.render
+       [ Sol_cli_manifest.secret_doc
+           ~ns:namespace
+           ~name:(Sol_cli_manifest.workload_secret_name "charge-svc")
+           ()
+       ])
     "charge-svc-secrets-secrets"
+;;
+
+(* The consumer half, rendered: the migration Job reads the Secret by the same
+   identity the substrate creates (REFAC-131 moved its builder into the library,
+   so this is now a rendered assertion rather than a source grep). *)
+let test_migration_job_reads_the_runtime_identity () =
+  let job =
+    Sol_cli_yaml.render
+      [ Sol_cli_manifest.migration_job_doc
+          ~name:"sol-migrate-x"
+          ~namespace
+          ~image:"runner:1"
+          ~args:[ "migrate"; "up" ]
+          ~configmap_name:"sol-migrate-files-x"
+      ]
+  in
+  let secret_ref =
+    match Yaml.of_string (String.sub job 4 (String.length job - 4)) with
+    | Ok (`O fields) ->
+      (match List.assoc_opt "spec" fields with
+       | Some (`O spec) ->
+         (match List.assoc_opt "template" spec with
+          | Some (`O template) ->
+            (match List.assoc_opt "spec" template with
+             | Some (`O pod) ->
+               (match List.assoc_opt "containers" pod with
+                | Some (`A [ `O container ]) ->
+                  (match List.assoc_opt "envFrom" container with
+                   | Some (`A [ `O [ ("secretRef", `O [ ("name", `String name) ]) ] ]) ->
+                     Some name
+                   | _ -> None)
+                | _ -> None)
+             | _ -> None)
+          | _ -> None)
+       | _ -> None)
+    | _ -> None
+  in
+  Alcotest.(check (option string))
+    "the Job's secretRef is the runtime Secret"
+    (Some Sol_cli_manifest.runtime_secret_name)
+    secret_ref
 ;;
 
 let () =
@@ -94,6 +140,10 @@ let () =
             "workload Secrets keep their own convention"
             `Quick
             test_workload_secrets_keep_their_own_convention
+        ; Alcotest.test_case
+            "the migration Job reads the runtime identity"
+            `Quick
+            test_migration_job_reads_the_runtime_identity
         ] )
     ]
 ;;

@@ -90,33 +90,35 @@ val config_hash : (string * string) list -> string
 *)
 val sanitize_label_value : string -> string
 
-(** Low-level YAML document builders used by
-    [Sol_cli_deployment_render.render_spec]. *)
-val namespace_doc : ns:string -> string
+(** Manifest builders used by [Sol_cli_deployment_render.render_spec] and
+    [Sol_cli_substrate]. Each returns a [Sol_cli_yaml] document; the caller
+    renders the documents it applies once, with [Sol_cli_yaml.render]
+    (REFAC-131). *)
+val namespace_doc : ns:string -> Sol_cli_yaml.document
 
 (** INFRA-025: binds the deploy identity's Kubernetes group to the
     `sol-deploy` ClusterRole inside [ns]. Used by {!Sol_cli_substrate.ensure}
     to scope the deploy identity to application namespaces only. *)
-val deploy_role_binding_doc : ns:string -> string
+val deploy_role_binding_doc : ns:string -> Sol_cli_yaml.document
 
 (** DEC-038: the operator's read-only diagnostic RoleBinding for one application
     namespace. Binds the [sol-operator-diagnostics] ClusterRole to the
     [sol:operators] group; grants observation only, never mutation. *)
-val operator_role_binding_doc : ns:string -> string
+val operator_role_binding_doc : ns:string -> Sol_cli_yaml.document
 
-val service_account_doc : ns:string -> name:string -> string
+val service_account_doc : ns:string -> name:string -> Sol_cli_yaml.document
 
 (** AUDIT-080: the voluntary-disruption budget rendered for a
     node-failure-tolerant workload, so a node drain cannot evict every ready
     replica at once. *)
-val pdb_doc : ns:string -> name:string -> replicas:int -> string
+val pdb_doc : ns:string -> name:string -> replicas:int -> Sol_cli_yaml.document
 
 val configmap_doc
   :  ?extra_env:(string * string) list
   -> ns:string
   -> name:string
   -> unit
-  -> string
+  -> Sol_cli_yaml.document
 
 (** [name] is the *final* Secret name -- this applies no naming convention. Pass
     [runtime_secret_name] for the shared runtime Secret, or
@@ -128,7 +130,7 @@ val secret_doc
   -> ns:string
   -> name:string
   -> unit
-  -> string
+  -> Sol_cli_yaml.document
 
 val external_secret_doc
   :  store_ref:string
@@ -138,7 +140,7 @@ val external_secret_doc
   -> secret_keys:string list
   -> ns:string
   -> name:string
-  -> string
+  -> Sol_cli_yaml.document
 
 type workload_shape =
   | Http_service
@@ -154,10 +156,10 @@ val deployment_doc
   -> ?secret_keys:string list
   -> ?volumes:Sol_cli_toml.volume list
   -> ?env:string
-  -> ?config_hash:string
   -> ?availability:Sol_cli_availability.t
   -> ?consumes_kafka:bool
   -> ?readiness_path:string
+  -> config_hash:string
   -> shape:workload_shape
   -> replicas:int
   -> cpu:string
@@ -170,7 +172,7 @@ val deployment_doc
   -> primitive:string
   -> release_id:Sol_cli_release_id.t
   -> unit
-  -> string
+  -> Sol_cli_yaml.document
 
 (** [rollout_doc] renders an Argo Rollout resource instead of a Deployment.
     Requires Argo Rollouts installed in the cluster. [pd] must be [Canary _] or
@@ -179,11 +181,11 @@ val rollout_doc
   :  ?extra_labels:(string * string) list
   -> ?secret_keys:string list
   -> ?volumes:Sol_cli_toml.volume list
-  -> ?config_hash:string
   -> ?env:string
   -> ?availability:Sol_cli_availability.t
   -> ?consumes_kafka:bool
   -> ?readiness_path:string
+  -> config_hash:string
   -> shape:workload_shape
   -> replicas:int
   -> cpu:string
@@ -197,20 +199,26 @@ val rollout_doc
   -> primitive:string
   -> release_id:Sol_cli_release_id.t
   -> unit
-  -> string
+  -> Sol_cli_yaml.document
 
 (** [pvc_docs ~ns ~name volumes] renders one PersistentVolumeClaim per declared
     volume. [storage] is emitted as-is; StorageClass and backup policy are out
     of scope. *)
-val pvc_docs : ns:string -> name:string -> Sol_cli_toml.volume list -> string
+val pvc_docs
+  :  ns:string
+  -> name:string
+  -> Sol_cli_toml.volume list
+  -> Sol_cli_yaml.document list
 
 (** [blue_green_service_docs ~ns ~name] renders two ClusterIP Services
     ([<name>-active] and [<name>-preview]) required by the blue-green strategy.
 *)
-val blue_green_service_docs : ns:string -> name:string -> string
+val blue_green_service_docs : ns:string -> name:string -> Sol_cli_yaml.document list
 
-val service_doc : ns:string -> name:string -> string
+val service_doc : ns:string -> name:string -> Sol_cli_yaml.document
 
+(** Without [ingress_host], the rule is HTTP-only on a per-service dev host
+    ([<name>.<ns>.localhost]); with one, cert-manager TLS and an ssl-redirect. *)
 val ingress_doc
   :  ?ingress_host:string
   -> ?ingress_path:string
@@ -219,7 +227,7 @@ val ingress_doc
   -> ns:string
   -> name:string
   -> unit
-  -> string
+  -> Sol_cli_yaml.document
 
 val network_policy_doc
   :  ?egress_to:(string * string) list
@@ -227,7 +235,7 @@ val network_policy_doc
   -> ns:string
   -> name:string
   -> unit
-  -> string
+  -> Sol_cli_yaml.document
 
 val cronjob_doc
   :  ?secret_keys:string list
@@ -244,7 +252,25 @@ val cronjob_doc
   -> domain:string
   -> release_id:Sol_cli_release_id.t
   -> unit
-  -> string
+  -> Sol_cli_yaml.document
+
+(** The ConfigMap carrying a migration run's SQL files, one key per file. *)
+val migration_configmap_doc
+  :  name:string
+  -> namespace:string
+  -> (string * string) list
+  -> Sol_cli_yaml.document
+
+(** The migration runner Job. It reads the workspace's shared runtime Secret
+    ([runtime_secret_name], INFRA-040) and mounts [configmap_name] at
+    [/migrations]; [args] are the runner's arguments. *)
+val migration_job_doc
+  :  name:string
+  -> namespace:string
+  -> image:string
+  -> args:string list
+  -> configmap_name:string
+  -> Sol_cli_yaml.document
 
 exception Deploy_failed of string
 

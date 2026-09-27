@@ -221,21 +221,21 @@ let render
                in
                (match pd with
                 | Sol_cli_toml.Blue_green ->
-                  [ rollout
-                  ; blue_green_service_docs ~ns ~name
-                  ; (if shape = Http_service
-                     then
-                       ingress_doc
-                         ~ingress_host
-                         ~ingress_path
-                         ~cluster_issuer
-                         ~tls_secret_name:(name ^ "-tls")
-                         ~ns
-                         ~name:(name ^ "-active")
-                         ()
-                     else "")
-                  ]
-                  |> List.filter (fun s -> s <> "")
+                  let ingress =
+                    if shape = Http_service
+                    then
+                      [ ingress_doc
+                          ?ingress_host
+                          ~ingress_path
+                          ~cluster_issuer
+                          ~tls_secret_name:(name ^ "-tls")
+                          ~ns
+                          ~name:(name ^ "-active")
+                          ()
+                      ]
+                    else []
+                  in
+                  (rollout :: blue_green_service_docs ~ns ~name) @ ingress
                 | Sol_cli_toml.Canary _ ->
                   let svc =
                     if shape = Http_service then [ service_doc ~ns ~name ] else []
@@ -244,7 +244,7 @@ let render
                     if shape = Http_service
                     then
                       [ ingress_doc
-                          ~ingress_host
+                          ?ingress_host
                           ~ingress_path
                           ~cluster_issuer
                           ~ns
@@ -290,17 +290,13 @@ let render
              then [ Sol_cli_manifest_yaml.pdb_doc ~ns ~name ~replicas ]
              else []
            in
-           let pvcs = if volumes = [] then [] else [ pvc_docs ~ns ~name volumes ] in
+           let pvcs = pvc_docs ~ns ~name volumes in
            pvcs @ pdb @ workload_resources
          in
          let resources =
            match workload with
            | Render_svc { deployment; ingress_host; ingress_path; cluster_issuer } ->
-             let ingress_host =
-               match ingress_host with
-               | Some host -> Sol_cli_toml.hostname_to_string host
-               | None -> ""
-             in
+             let ingress_host = Option.map Sol_cli_toml.hostname_to_string ingress_host in
              let ingress_path =
                match ingress_path with
                | Some path -> Sol_cli_toml.ingress_path_to_string path
@@ -319,12 +315,12 @@ let render
               | None ->
                 resources
                 @ [ service_doc ~ns ~name
-                  ; ingress_doc ~ingress_host ~ingress_path ~cluster_issuer ~ns ~name ()
+                  ; ingress_doc ?ingress_host ~ingress_path ~cluster_issuer ~ns ~name ()
                   ])
            | Render_worker { deployment } ->
              deployment_resources
                ~shape:Background_worker
-               ~ingress_host:""
+               ~ingress_host:None
                ~ingress_path:"/"
                ~cluster_issuer:"letsencrypt-prod"
                ~deployment
@@ -352,7 +348,8 @@ let render
                  ()
              ]
          in
-         ns_yaml, String.concat "\n" (common_resources @ resources))
+         ( Sol_cli_yaml.render [ ns_yaml ]
+         , Sol_cli_yaml.render (common_resources @ resources) ))
       secret_resource_result)
 ;;
 

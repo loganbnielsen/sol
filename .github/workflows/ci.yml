@@ -324,6 +324,13 @@ jobs:
       - name: Platform-assets ownership mutation test
         run: bash internal/ci/test_platform_assets_owner.sh
 
+      - name: Manifests are built as values (REFAC-131)
+        # Unconditional: a manifest written as text puts values into it unescaped.
+        run: bash internal/ci/check_manifests_are_values.sh
+
+      - name: Manifest-values mutation test
+        run: bash internal/ci/test_manifests_are_values.sh
+
       - name: let* is Result.Syntax, repository-wide (REFAC-137)
         run: bash internal/ci/check_result_syntax.sh
 
