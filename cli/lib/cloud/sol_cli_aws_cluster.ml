@@ -75,7 +75,7 @@ let provisioner_kubeconfig ?role_arn ~region outputs f =
        KUBE_CONFIG_PATH/KUBE_CONFIG_PATHS, not KUBECONFIG. *)
     let env = Sol_cli_cluster.provisioner_kube_env path in
     match
-      Sol_cli_process.run_ok
+      Sol_cli_process.run
         (Sol_cli_process.cmd
            ~env
            [ "aws"
@@ -95,8 +95,8 @@ let provisioner_kubeconfig ?role_arn ~region outputs f =
            ; path
            ])
     with
-    | Ok () -> Ok (f env)
-    | _ -> Error "could not establish ephemeral provisioner cluster access")
+    | Ok _ -> Ok (f env)
+    | Error _ -> Error "could not establish ephemeral provisioner cluster access")
 ;;
 
 (* DEC-040 / FND-0021: de-escalation is not complete because a control plane said so.
@@ -127,11 +127,11 @@ let capability_answer_of_can_i ~env { Sol_cli_cloud_lifecycle.verb; resource } =
     Sol_cli_process.run
       (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "can-i"; verb; resource ])
   with
-  | Ok r ->
-    Sol_cli_cloud_lifecycle.capability_answer_of_can_i_output
-      ~exit_code:r.Sol_cli_process.exit_code
-      ~stdout:r.Sol_cli_process.stdout
-      ~stderr:r.Sol_cli_process.stderr
+  (* can-i answers "no" with exit 1, so both exits are answers. *)
+  | Ok { stdout; stderr } ->
+    Sol_cli_cloud_lifecycle.capability_answer_of_can_i_output ~exit_code:0 ~stdout ~stderr
+  | Error (Sol_cli_process.Non_zero { exit_code; stdout; stderr }) ->
+    Sol_cli_cloud_lifecycle.capability_answer_of_can_i_output ~exit_code ~stdout ~stderr
   | Error e -> Sol_cli_cloud_lifecycle.Indeterminate (Sol_cli_process.error_to_string e)
 ;;
 
@@ -414,7 +414,7 @@ let refusal_is_deescalation assumption detail =
    comparison (account plus normalised role) as the follow-up that makes it exact. *)
 let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
   match
-    Sol_cli_process.run_success
+    Sol_cli_process.run
       (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ])
   with
   | Ok r ->
@@ -446,7 +446,7 @@ let deescalation_principal_check ~expected_arn ~provisioner_role_arn env =
          not the path-free form the comparison wants, because this is an IAM call. *)
       let assumption =
         match
-          Sol_cli_process.run_success
+          Sol_cli_process.run
             (Sol_cli_process.cmd
                ~env
                [ "aws"
@@ -580,11 +580,23 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
   let rec attempt remaining =
     let outcome =
       provisioner_kubeconfig ~role_arn:provisioner_role_arn ~region outputs (fun env ->
-        Sol_cli_process.run_success
+        Sol_cli_process.run
           (Sol_cli_process.cmd ~env [ "kubectl"; "auth"; "whoami"; "-o"; "json" ]))
     in
+    let outcome =
+      match outcome with
+      | Ok (Ok r) -> Ok r
+      | Ok (Error (Sol_cli_process.Non_zero r)) ->
+        Error
+          (Printf.sprintf
+             "kubectl exited %d (%s)"
+             r.exit_code
+             (String.trim (r.stderr ^ " " ^ r.stdout)))
+      | Ok (Error e) -> Error (Sol_cli_process.error_to_string e)
+      | Error e -> Error e
+    in
     match outcome with
-    | Ok (Ok r) ->
+    | Ok r ->
       let json = String.trim r.Sol_cli_process.stdout in
       (* Persisted before anything is asserted, on every attempt: the run that fails on a
          shape mismatch is the one whose capture matters most, and writing afterwards would
@@ -632,17 +644,7 @@ let verify_whoami_shape ~region ~outputs ~provisioner_role_arn =
                    source
                    json)
             else Ok ()))
-    | unreachable ->
-      let why =
-        match unreachable with
-        | Ok (Ok r) ->
-          Printf.sprintf
-            "kubectl exited %d (%s)"
-            r.Sol_cli_process.exit_code
-            (String.trim (r.Sol_cli_process.stderr ^ " " ^ r.Sol_cli_process.stdout))
-        | Ok (Error e) -> Sol_cli_process.error_to_string e
-        | Error e -> e
-      in
+    | Error why ->
       (* Retried, not treated as terminal. A 401 or an authentication failure immediately
          after cluster creation is usually access-entry or aws-auth propagation lag for the
          *correct* principal, and connection errors are the endpoint not being ready -- both

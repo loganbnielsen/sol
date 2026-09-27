@@ -189,8 +189,8 @@ let get_named_secret_json ~ctx ~name namespace =
 
 (* The names a listing printed, or why it could not be read. A listing that
    failed is never an empty one (BUG-040). *)
-let listed_names ~what (result : (Sol_cli_process.result, Sol_cli_process.error) result) =
-  match Sol_cli_process.check result with
+let listed_names ~what (result : (Sol_cli_process.output, Sol_cli_process.error) result) =
+  match result with
   | Ok r ->
     Ok
       (String.split_on_char '\n' r.Sol_cli_process.stdout
@@ -281,8 +281,7 @@ let fold_namespaces namespaces ~init ~f =
    healthy is an error, not a silent success. *)
 let list_live_workloads ~ctx ~kind ~namespace =
   match
-    Sol_cli_process.check
-      (Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; kind; "-n"; namespace; "-o"; "name" ])
+    Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; kind; "-n"; namespace; "-o"; "name" ]
   with
   | Error (Sol_cli_process.Non_zero r) when Sol_cli_kubectl.resource_type_absent r.stderr
     -> Ok []
@@ -334,10 +333,7 @@ let restart_workloads ~ctx ~namespace names =
   let* () =
     iter_namespaces names ~f:(fun name ->
       let* () =
-        match
-          Sol_cli_process.check
-            (Sol_cli_kubectl.rollout_restart ~ctx ~kind:name ~namespace)
-        with
+        match Sol_cli_kubectl.rollout_restart ~ctx ~kind:name ~namespace with
         | Ok _ -> Ok ()
         | Error (Sol_cli_process.Non_zero r) ->
           Error
@@ -349,12 +345,11 @@ let restart_workloads ~ctx ~namespace names =
         | Error e -> Error (Sol_cli_process.error_to_string e)
       in
       match
-        Sol_cli_process.check
-          (Sol_cli_kubectl.rollout_status_with_timeout
-             ~ctx
-             ~kind_name:name
-             ~namespace
-             ~timeout_s:120)
+        Sol_cli_kubectl.rollout_status_with_timeout
+          ~ctx
+          ~kind_name:name
+          ~namespace
+          ~timeout_s:120
       with
       | Ok _ -> Ok ()
       | Error (Sol_cli_process.Non_zero r) ->
@@ -419,14 +414,13 @@ let delete ~ctx ~env ~workspace:_ ~namespaces ~key =
   let patch = Printf.sprintf "[{\"op\":\"remove\",\"path\":\"/data/%s\"}]" key in
   let remove_from namespace name =
     match
-      Sol_cli_process.check
-        (Sol_cli_kubectl.patch
-           ~ctx
-           ~resource:"secret"
-           ~name
-           ~namespace
-           ~patch_type:"json"
-           ~patch)
+      Sol_cli_kubectl.patch
+        ~ctx
+        ~resource:"secret"
+        ~name
+        ~namespace
+        ~patch_type:"json"
+        ~patch
     with
     | Ok _ -> Ok ()
     | Error (Sol_cli_process.Non_zero result) ->

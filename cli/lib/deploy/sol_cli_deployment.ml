@@ -97,7 +97,7 @@ let of_plan
 (* Provenance is best-effort: outside a Git checkout these are [""] and clean,
    not a failure to deploy. *)
 let run_git args =
-  match Sol_cli_process.run_success (Sol_cli_process.cmd ("git" :: args)) with
+  match Sol_cli_process.run (Sol_cli_process.cmd ("git" :: args)) with
   | Ok r -> String.trim r.Sol_cli_process.stdout
   | _ -> ""
 ;;

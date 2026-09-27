@@ -410,13 +410,7 @@ let live_kind_of_service (s : Sol_cli_deployment_plan.service_spec) =
 
 let read_jsonpath ~ctx ~resource ~name ~namespace ~jsonpath =
   match
-    Sol_cli_process.check
-      (Sol_cli_kubectl.get
-         ~ctx
-         ~resource
-         ~name
-         ~namespace
-         ~output:("jsonpath=" ^ jsonpath))
+    Sol_cli_kubectl.get ~ctx ~resource ~name ~namespace ~output:("jsonpath=" ^ jsonpath)
   with
   | Ok r -> String.trim r.Sol_cli_process.stdout
   | _ -> ""
@@ -528,8 +522,7 @@ let live_workloads ~(ctx : Sol_cli_kube_destination.context) ~(workspace : strin
     | kind :: rest ->
       let resource, _ = live_kind_path kind in
       (match
-         Sol_cli_process.check
-           (Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; resource; "-A"; "-o"; "json" ])
+         Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; resource; "-A"; "-o"; "json" ]
        with
        | Ok r ->
          (match Yojson.Safe.from_string r.Sol_cli_process.stdout with

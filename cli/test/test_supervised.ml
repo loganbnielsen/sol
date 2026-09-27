@@ -104,7 +104,8 @@ let spawn_sol ?(mode = "") ?(ticks = 30) c =
        in
        let line =
          match result with
-         | Ok r -> Printf.sprintf "exit %d" r.Sol_cli_process.exit_code
+         | Ok _ -> "exit 0"
+         | Error (Sol_cli_process.Non_zero r) -> Printf.sprintf "exit %d" r.exit_code
          | Error e -> "error " ^ Sol_cli_process.error_to_string e
        in
        Out_channel.with_open_bin (Filename.concat c.mark "sol.result") (fun oc ->

@@ -35,7 +35,7 @@ let builder provider ~(target : Sol_cli_config.target) =
    root has no outputs yet: no substrate. *)
 let of_root provider ~target ~chdir =
   let { label; build } = builder provider ~target in
-  match Sol_cli_process.check (Sol_cli_terraform.output_json ~chdir ()) with
+  match Sol_cli_terraform.output_json ~chdir () with
   | Ok result ->
     (match Yojson.Safe.from_string result.stdout with
      | `Assoc [] -> Ok None

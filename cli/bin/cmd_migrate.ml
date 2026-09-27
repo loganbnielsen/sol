@@ -19,13 +19,12 @@ let default_table_name =
 
 let cluster_pg_exists ~ctx () =
   Result.is_ok
-    (Sol_cli_process.check
-       (Sol_cli_kubectl.get
-          ~ctx
-          ~resource:"svc"
-          ~name:"postgresql"
-          ~namespace:"postgresql"
-          ~output:"name"))
+    (Sol_cli_kubectl.get
+       ~ctx
+       ~resource:"svc"
+       ~name:"postgresql"
+       ~namespace:"postgresql"
+       ~output:"name")
 ;;
 
 (* Start a background port-forward to cluster postgres and return the local URL.
@@ -268,7 +267,7 @@ let run_kubectl ~ctx ?(timeout_s = 30.) argv =
    that already applied successfully if the following Job apply then fails, so a
    half-created migration attempt doesn't leave stray cluster objects. *)
 let kubectl_apply ~ctx ~what ?(on_fail = fun () -> ()) argv =
-  match Sol_cli_process.check (run_kubectl ~ctx argv) with
+  match run_kubectl ~ctx argv with
   | Ok _ -> Ok ()
   | Error (Sol_cli_process.Non_zero r) ->
     on_fail ();
@@ -300,11 +299,10 @@ let container_waiting_status ~ctx ~namespace ~job_name () =
      .items[*]}{.status.containerStatuses[*].state.waiting.reason}\"|\"{.status.containerStatuses[*].state.waiting.message}{\"\\n\"}{end}"
   in
   match
-    Sol_cli_process.check
-      (run_kubectl
-         ~ctx
-         ~timeout_s:15.
-         [ "get"; "pods"; "-n"; namespace; "-l"; "job-name=" ^ job_name; "-o"; jsonpath ])
+    run_kubectl
+      ~ctx
+      ~timeout_s:15.
+      [ "get"; "pods"; "-n"; namespace; "-l"; "job-name=" ^ job_name; "-o"; jsonpath ]
   with
   | Ok r ->
     (match String.split_on_char '|' (String.trim r.Sol_cli_process.stdout) with
@@ -336,11 +334,10 @@ let terminal_waiting_reasons =
 let status_job_evidence ~ctx ~namespace ~job_name () =
   let logs =
     match
-      Sol_cli_process.check
-        (run_kubectl
-           ~ctx
-           ~timeout_s:20.
-           [ "logs"; Printf.sprintf "job/%s" job_name; "-n"; namespace; "--tail=200" ])
+      run_kubectl
+        ~ctx
+        ~timeout_s:20.
+        [ "logs"; Printf.sprintf "job/%s" job_name; "-n"; namespace; "--tail=200" ]
     with
     | Ok r -> String.trim r.Sol_cli_process.stdout
     | Error (Sol_cli_process.Non_zero r) ->
@@ -808,13 +805,9 @@ let read_applied_in_cluster ~ctx ~target ~workspace ~dir ~table =
               (render_status_job ~name:job_name ~namespace ~image ~table ~configmap_name)
           in
           let applied =
-            match
-              Sol_cli_process.check (run_kubectl ~ctx [ "apply"; "-f"; configmap_yaml ])
-            with
+            match run_kubectl ~ctx [ "apply"; "-f"; configmap_yaml ] with
             | Ok _ ->
-              (match
-                 Sol_cli_process.check (run_kubectl ~ctx [ "apply"; "-f"; job_yaml ])
-               with
+              (match run_kubectl ~ctx [ "apply"; "-f"; job_yaml ] with
                | Ok _ -> Ok ()
                | Error (Sol_cli_process.Non_zero r) ->
                  Error

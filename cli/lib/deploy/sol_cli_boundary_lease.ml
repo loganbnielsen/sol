@@ -245,7 +245,7 @@ type write_error =
 
 let create_object ~ctx t =
   with_temp_json (to_configmap_json t) (fun path ->
-    match Sol_cli_process.check (Sol_cli_kubectl.create ~ctx ~file:path) with
+    match Sol_cli_kubectl.create ~ctx ~file:path with
     | Ok _ -> Ok ()
     | Error (Sol_cli_process.Non_zero r) ->
       let detail = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in
@@ -257,7 +257,7 @@ let create_object ~ctx t =
 
 let replace_object ~ctx t ~resource_version =
   with_temp_json (to_configmap_json ~resource_version t) (fun path ->
-    match Sol_cli_process.check (Sol_cli_kubectl.replace ~ctx ~file:path) with
+    match Sol_cli_kubectl.replace ~ctx ~file:path with
     | Ok _ -> Ok ()
     | Error (Sol_cli_process.Non_zero r) ->
       let detail = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in

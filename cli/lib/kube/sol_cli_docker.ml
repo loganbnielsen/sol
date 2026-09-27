@@ -1,8 +1,7 @@
-let run_ok = Sol_cli_process.run_ok
 let cmd = Sol_cli_process.cmd
 
 let buildx_available () =
-  Result.is_ok (Sol_cli_process.run_ok (cmd [ "docker"; "buildx"; "version" ]))
+  Result.is_ok (Sol_cli_process.run (cmd [ "docker"; "buildx"; "version" ]))
 ;;
 
 let build ~tag ~dockerfile ~context =
@@ -32,14 +31,17 @@ let build ~tag ~dockerfile ~context =
          %!";
       [])
   in
-  run_ok
+  Sol_cli_process.run
     (cmd
        ([ "docker"; "build" ]
         @ provenance_flags
         @ [ "-t"; tag; "-f"; dockerfile; context ]))
+  |> Result.map ignore
 ;;
 
-let push ~image_ref = run_ok (cmd [ "docker"; "push"; image_ref ])
+let push ~image_ref =
+  Sol_cli_process.run (cmd [ "docker"; "push"; image_ref ]) |> Result.map ignore
+;;
 
 (* FEAT-050: confirm a supplied digest reference actually exists in its
    registry before anything is applied. [docker manifest inspect] resolves the
@@ -48,15 +50,14 @@ let push ~image_ref = run_ok (cmd [ "docker"; "push"; image_ref ])
    exist is a caller error, not a transient one, so the caller treats a false
    result as fail-closed. *)
 let manifest_exists ~image_ref =
-  Result.is_ok
-    (Sol_cli_process.run_ok (cmd [ "docker"; "manifest"; "inspect"; image_ref ]))
+  Result.is_ok (Sol_cli_process.run (cmd [ "docker"; "manifest"; "inspect"; image_ref ]))
 ;;
 
 let inspect_digest ~image_ref =
   match
-    Sol_cli_process.output
+    Sol_cli_process.run
       (cmd [ "docker"; "inspect"; "--format"; "{{index .RepoDigests 0}}"; image_ref ])
   with
-  | Ok digest when digest <> "" && digest <> "<no value>" -> digest
+  | Ok { stdout = digest; _ } when digest <> "" && digest <> "<no value>" -> digest
   | _ -> image_ref
 ;;

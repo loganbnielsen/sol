@@ -33,10 +33,9 @@ let print_service_urls ~ctx (results : Sol_cli_executor.result list) =
     (fun ns ->
        let jsonpath = "{.items[?(@.spec.type==\"ClusterIP\")].metadata.name}" in
        match
-         Sol_cli_process.check
-           (Sol_cli_kubectl.get_raw
-              ~ctx
-              ~args:[ "get"; "svc"; "-n"; ns; "-o"; "jsonpath=" ^ jsonpath ])
+         Sol_cli_kubectl.get_raw
+           ~ctx
+           ~args:[ "get"; "svc"; "-n"; ns; "-o"; "jsonpath=" ^ jsonpath ]
        with
        | Ok r when r.Sol_cli_process.stdout <> "" ->
          let port80_jsonpath = "{.spec.ports[?(@.port==80)].port}" in

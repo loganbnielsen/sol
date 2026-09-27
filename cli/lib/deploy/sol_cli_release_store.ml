@@ -65,10 +65,9 @@ let data_of_json json =
    failure must never be mistaken for absence and answered with a create. *)
 let fetch_live ~ctx ~name ~namespace =
   match
-    Sol_cli_process.check
-      (Sol_cli_kubectl.get_raw
-         ~ctx
-         ~args:[ "get"; "configmap"; name; "-n"; namespace; "-o"; "json" ])
+    Sol_cli_kubectl.get_raw
+      ~ctx
+      ~args:[ "get"; "configmap"; name; "-n"; namespace; "-o"; "json" ]
   with
   | Ok r ->
     (try
@@ -124,7 +123,7 @@ let write_one ~ctx ~verb ~name json =
       | `Create -> Sol_cli_kubectl.create ~ctx ~file:path
       | `Replace -> Sol_cli_kubectl.replace ~ctx ~file:path
     in
-    match Sol_cli_process.check result with
+    match result with
     | Ok _ -> Ok ()
     | Error (Sol_cli_process.Non_zero r) ->
       Error
@@ -191,10 +190,9 @@ let list_with_creation ~ctx ~(workspace : string)
       (Sol_cli_release.sanitize_label workspace)
   in
   match
-    Sol_cli_process.check
-      (Sol_cli_kubectl.get_raw
-         ~ctx
-         ~args:[ "get"; "configmap"; "-n"; "default"; "-l"; selector; "-o"; "json" ])
+    Sol_cli_kubectl.get_raw
+      ~ctx
+      ~args:[ "get"; "configmap"; "-n"; "default"; "-l"; selector; "-o"; "json" ]
   with
   | Error (Sol_cli_process.Non_zero r) ->
     let detail = Sol_cli_process.failure_output ~stdout:r.stdout ~stderr:r.stderr in

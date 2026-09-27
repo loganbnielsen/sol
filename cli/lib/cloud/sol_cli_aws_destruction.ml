@@ -270,7 +270,7 @@ let classify_instance_snapshots lookup =
 let load_balancers_gone ~region ~cluster_name =
   let tag_key = Printf.sprintf "kubernetes.io/cluster/%s" cluster_name in
   match
-    Sol_cli_process.run_success
+    Sol_cli_process.run
       (Sol_cli_process.cmd
          [ "aws"
          ; "resourcegroupstaggingapi"
@@ -327,11 +327,10 @@ let rec wait_for_load_balancers_gone ~region ~cluster_name attempts =
    created indirectly by the VPC module or by Kubernetes. *)
 let aws_list_probe ~region ~kind ~argv =
   match
-    Sol_cli_process.output
-      (Sol_cli_process.cmd (("aws" :: argv) @ [ "--region"; region ]))
+    Sol_cli_process.run (Sol_cli_process.cmd (("aws" :: argv) @ [ "--region"; region ]))
   with
-  | Ok listed when Sol_cli_string.is_blank listed -> Probe_gone
-  | Ok listed ->
+  | Ok { stdout = listed; _ } when Sol_cli_string.is_blank listed -> Probe_gone
+  | Ok { stdout = listed; _ } ->
     Probe_found
       (Printf.sprintf "AWS %s still exist after destroy: %s" kind (String.trim listed))
   | Error (Sol_cli_process.Non_zero r) ->

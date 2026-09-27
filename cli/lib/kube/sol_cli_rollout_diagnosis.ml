@@ -451,8 +451,7 @@ let format_cronjob_diagnosis ~service_name (result : cronjob_fetch_result) : dia
 
 let fetch_namespace_events ~ctx ~ns : events_fetch_result =
   match
-    Sol_cli_process.check
-      (Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; "events"; "-n"; ns; "-o"; "json" ])
+    Sol_cli_kubectl.get_raw ~ctx ~args:[ "get"; "events"; "-n"; ns; "-o"; "json" ]
   with
   | Ok r -> Events (parse_events_json r.Sol_cli_process.stdout)
   | Error (Sol_cli_process.Non_zero r) ->
@@ -478,10 +477,9 @@ let kubectl_read_failure ~what ~exit_code ~stdout ~stderr =
 
 let fetch_pod_statuses ~ctx ~ns ~k8s_name : (pod_status list, string) result =
   match
-    Sol_cli_process.check
-      (Sol_cli_kubectl.get_raw
-         ~ctx
-         ~args:[ "get"; "pods"; "-n"; ns; "-l"; "app=" ^ k8s_name; "-o"; "json" ])
+    Sol_cli_kubectl.get_raw
+      ~ctx
+      ~args:[ "get"; "pods"; "-n"; ns; "-l"; "app=" ^ k8s_name; "-o"; "json" ]
   with
   | Ok r -> Ok (parse_pods_json r.Sol_cli_process.stdout)
   | Error (Sol_cli_process.Non_zero r) ->
@@ -496,10 +494,9 @@ let fetch_pod_statuses ~ctx ~ns ~k8s_name : (pod_status list, string) result =
 
 let fetch_job_pod_statuses ~ctx ~ns ~job_name : (pod_status list, string) result =
   match
-    Sol_cli_process.check
-      (Sol_cli_kubectl.get_raw
-         ~ctx
-         ~args:[ "get"; "pods"; "-n"; ns; "-l"; "job-name=" ^ job_name; "-o"; "json" ])
+    Sol_cli_kubectl.get_raw
+      ~ctx
+      ~args:[ "get"; "pods"; "-n"; ns; "-l"; "job-name=" ^ job_name; "-o"; "json" ]
   with
   | Ok r -> Ok (parse_pods_json r.Sol_cli_process.stdout)
   | Error (Sol_cli_process.Non_zero r) ->
@@ -541,10 +538,9 @@ let fetch_active_cronjob_pods ~ctx ~ns job_names : (pod_status list, string) res
 
 let fetch_cronjob_status ~ctx ~ns ~k8s_name : cronjob_fetch_result =
   match
-    Sol_cli_process.check
-      (Sol_cli_kubectl.get_raw
-         ~ctx
-         ~args:[ "get"; "cronjob"; k8s_name; "-n"; ns; "-o"; "json" ])
+    Sol_cli_kubectl.get_raw
+      ~ctx
+      ~args:[ "get"; "cronjob"; k8s_name; "-n"; ns; "-o"; "json" ]
   with
   | Ok r ->
     (match parse_cronjob_status r.Sol_cli_process.stdout with

@@ -26,7 +26,7 @@ val init
   -> chdir:string
   -> backend_config:string list
   -> unit
-  -> (Sol_cli_process.result, Sol_cli_process.error) result
+  -> (Sol_cli_process.output, Sol_cli_process.error) result
 
 (** ["key=value"] Terraform CLI syntax for a list of neutral key/value pairs —
     e.g. {!Sol_cli_terraform_vars.of_config}'s result, before it's combined with
@@ -41,7 +41,7 @@ val plan
   -> var_files:string list
   -> vars:string list
   -> unit
-  -> (Sol_cli_process.result, Sol_cli_process.error) result
+  -> (Sol_cli_process.output, Sol_cli_process.error) result
 
 (** [plan] saved to a file, so the plan that is asserted is the plan that is
     applied (HARDEN-004 step 3). *)
@@ -53,7 +53,7 @@ val plan_saved
   -> vars:string list
   -> out:string
   -> unit
-  -> (Sol_cli_process.result, Sol_cli_process.error) result
+  -> (Sol_cli_process.output, Sol_cli_process.error) result
 
 (** Read a saved plan (`terraform show -json <plan_file>`) and classify it. Only
     the classified changes are appended to [phase]'s run log (see
@@ -76,7 +76,7 @@ val apply_saved
   -> chdir:string
   -> plan_file:string
   -> unit
-  -> (Sol_cli_process.result, Sol_cli_process.error) result
+  -> (Sol_cli_process.output, Sol_cli_process.error) result
 
 val plan_destroy
   :  ?env:(string * string) list
@@ -84,7 +84,7 @@ val plan_destroy
   -> var_files:string list
   -> vars:string list
   -> unit
-  -> (Sol_cli_process.result, Sol_cli_process.error) result
+  -> (Sol_cli_process.output, Sol_cli_process.error) result
 
 val apply
   :  ?env:(string * string) list
@@ -93,7 +93,7 @@ val apply
   -> var_files:string list
   -> vars:string list
   -> unit
-  -> (Sol_cli_process.result, Sol_cli_process.error) result
+  -> (Sol_cli_process.output, Sol_cli_process.error) result
 
 val destroy
   :  ?env:(string * string) list
@@ -101,7 +101,7 @@ val destroy
   -> var_files:string list
   -> vars:string list
   -> unit
-  -> (Sol_cli_process.result, Sol_cli_process.error) result
+  -> (Sol_cli_process.output, Sol_cli_process.error) result
 
 (** [terraform state rm <address>] — forget the resource *without* touching the
     object. Only legitimate where the object provably cannot exist: a resource
@@ -113,13 +113,13 @@ val state_rm
   -> chdir:string
   -> address:string
   -> unit
-  -> (Sol_cli_process.result, Sol_cli_process.error) result
+  -> (Sol_cli_process.output, Sol_cli_process.error) result
 
 val output_json
   :  ?env:(string * string) list
   -> chdir:string
   -> unit
-  -> (Sol_cli_process.result, Sol_cli_process.error) result
+  -> (Sol_cli_process.output, Sol_cli_process.error) result
 
 (** ["terraform show -json"] — the applied state of every resource, not just
     named outputs. For a destroy-preparation self-check on this root's own
@@ -129,4 +129,4 @@ val show_json
   :  ?env:(string * string) list
   -> chdir:string
   -> unit
-  -> (Sol_cli_process.result, Sol_cli_process.error) result
+  -> (Sol_cli_process.output, Sol_cli_process.error) result

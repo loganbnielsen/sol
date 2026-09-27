@@ -83,8 +83,8 @@ val append_phase_log : t -> phase:string -> string -> unit
 val run_phase
   :  t
   -> name:string
-  -> (unit -> (Sol_cli_process.result, Sol_cli_process.error) result)
-  -> (Sol_cli_process.result, Sol_cli_process.error) result
+  -> (unit -> (Sol_cli_process.output, Sol_cli_process.error) result)
+  -> (Sol_cli_process.output, Sol_cli_process.error) result
 
 (** [run_task t ~name thunk] is [run_phase] for a phase that is not one
     subprocess: [thunk] returns [Ok v] or [Error msg], and [msg] becomes the

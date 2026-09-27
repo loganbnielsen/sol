@@ -44,9 +44,9 @@ type deploy_request =
    error carries git's own reason; there is no sentinel tag. *)
 let git_sha () =
   match
-    Sol_cli_process.output (Sol_cli_process.cmd [ "git"; "rev-parse"; "--short"; "HEAD" ])
+    Sol_cli_process.run (Sol_cli_process.cmd [ "git"; "rev-parse"; "--short"; "HEAD" ])
   with
-  | Ok sha ->
+  | Ok { stdout = sha; _ } ->
     Option.to_result
       ~none:"git rev-parse printed no commit"
       (Sol_cli_string.non_blank sha)

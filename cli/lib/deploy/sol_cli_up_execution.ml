@@ -116,11 +116,10 @@ let wait_for_service_rollout ~ctx spec exec =
   | Sol_cli_deployment_plan.Fn -> Ok ()
   | Sol_cli_deployment_plan.Svc | Sol_cli_deployment_plan.Worker ->
     (match
-       Sol_cli_process.check
-         (Sol_cli_kubectl.rollout_status
-            ~ctx
-            ~kind_name:("deployment/" ^ exec.k8s_name)
-            ~namespace:exec.namespace)
+       Sol_cli_kubectl.rollout_status
+         ~ctx
+         ~kind_name:("deployment/" ^ exec.k8s_name)
+         ~namespace:exec.namespace
      with
      | Ok _ -> Ok ()
      | _ ->

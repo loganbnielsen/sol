@@ -6,9 +6,9 @@ type cmd =
   ; redact : string list
   }
 
-type result =
-  { exit_code : int
-  ; stdout : string
+(** What a successful command printed, trimmed. *)
+type output =
+  { stdout : string
   ; stderr : string
   }
 
@@ -29,31 +29,23 @@ val cmd
   -> string list
   -> cmd
 
-(** [run c] is [Ok] whenever the command ran, whatever its exit status. Use it
-    only when a specific non-zero exit means something to the caller (for
-    example kubectl's "not found"); otherwise use {!run_success}. *)
-val run : ?echo:bool -> cmd -> (result, error) Result.t
+(** [run c] is [Ok] only when [c] exited 0 (REFAC-124). Any other exit is
+    [Error (Non_zero _)] carrying the code and both streams, so a caller for which
+    a particular exit means something -- kubectl's "not found" -- matches that
+    branch. *)
+val run : ?echo:bool -> cmd -> (output, error) result
 
-(** [check r] turns a [run] result into a success result: [Ok] only for exit 0,
-    and [Error (Non_zero _)], carrying the exit code and both streams, for any
-    other exit (REFAC-116). *)
-val check : (result, error) Result.t -> (result, error) Result.t
+(** [run_shell s] is {!run} for a shell command line. *)
+val run_shell : ?echo:bool -> string -> (output, error) result
 
-(** [run_success c] is [check (run c)]: [Ok] only when the command succeeded. *)
-val run_success : ?echo:bool -> cmd -> (result, error) Result.t
-
-(** [output c] is the stdout of a successful [c]. *)
-val output : ?echo:bool -> cmd -> (string, error) Result.t
+(** [completed ~exit_code ~stdout ~stderr] is the {!run} result for a process
+    that exited with [exit_code]: for runners that wait on a process themselves. *)
+val completed : exit_code:int -> stdout:string -> stderr:string -> (output, error) result
 
 (** What a failed command said: its trimmed stderr, or its trimmed stdout when
-    stderr is empty ("" when both are). For the [Non_zero] branch of a checked
-    result. *)
+    stderr is empty ("" when both are). For the [Non_zero] branch. *)
 val failure_output : stdout:string -> stderr:string -> string
 
-(** [run_ok c] is [run_success c] without its output. *)
-val run_ok : ?echo:bool -> cmd -> (unit, error) Result.t
-
-val run_shell : ?echo:bool -> string -> (result, error) Result.t
 val error_to_string : error -> string
 
 (** Print [argv] as the command line Sol is about to run, with each of [redact]

@@ -6,9 +6,9 @@ type set_val =
 val repo_add
   :  name:string
   -> url:string
-  -> (Sol_cli_process.result, Sol_cli_process.error) result
+  -> (Sol_cli_process.output, Sol_cli_process.error) result
 
-val repo_update : unit -> (Sol_cli_process.result, Sol_cli_process.error) result
+val repo_update : unit -> (Sol_cli_process.output, Sol_cli_process.error) result
 
 (** [?values_yaml] is raw YAML content written to a temp file and passed via
     [-f] -- needed for values a flat [--set]/[--set-string] can't express, such
@@ -24,4 +24,4 @@ val upgrade_install
   -> ?values:(string * set_val) list
   -> ?values_yaml:string
   -> unit
-  -> (Sol_cli_process.result, Sol_cli_process.error) result
+  -> (Sol_cli_process.output, Sol_cli_process.error) result

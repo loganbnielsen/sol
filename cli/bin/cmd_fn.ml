@@ -91,12 +91,7 @@ let run ~ctx selector =
      typing a command") was the assumption that turned out to be false. *)
   let job_name = Sol_cli_manual_job_name.mint ~k8s_name in
   let* _ =
-    Sol_cli_process.check
-      (Sol_cli_kubectl.create_job_from_cronjob
-         ~ctx
-         ~cronjob:k8s_name
-         ~job_name
-         ~namespace:ns)
+    Sol_cli_kubectl.create_job_from_cronjob ~ctx ~cronjob:k8s_name ~job_name ~namespace:ns
     |> Result.map_error (function
       | Sol_cli_process.Non_zero r ->
         Sol_cli_exit.error ("kubectl create job failed:\n" ^ String.trim r.stderr)

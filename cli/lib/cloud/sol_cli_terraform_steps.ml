@@ -5,10 +5,10 @@
 (* REFAC-091: the same classification [require_terraform_success] makes, returned
    as a value rather than exiting, so the destroy execution sequence can carry a
    terraform failure in its typed outcome. *)
-let terraform_outcome (r : (Sol_cli_process.result, Sol_cli_process.error) result)
+let terraform_outcome (r : (Sol_cli_process.output, Sol_cli_process.error) result)
   : (unit, string) result
   =
-  match Sol_cli_process.check r with
+  match r with
   | Ok _ -> Ok ()
   | Error (Sol_cli_process.Non_zero r) ->
     let detail = String.trim r.stderr in
@@ -26,10 +26,10 @@ let terraform_outcome (r : (Sol_cli_process.result, Sol_cli_process.error) resul
 
 (* Like [terraform_outcome], but keeps the command's stdout -- [terraform show
    -json <plan>] is read, not just checked. *)
-let terraform_stdout (r : (Sol_cli_process.result, Sol_cli_process.error) result)
+let terraform_stdout (r : (Sol_cli_process.output, Sol_cli_process.error) result)
   : (string, string) result
   =
-  match Sol_cli_process.check r with
+  match r with
   | Ok r -> Ok r.Sol_cli_process.stdout
   | Error (Sol_cli_process.Non_zero r) ->
     let detail = String.trim r.stderr in

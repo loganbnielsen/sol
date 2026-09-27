@@ -42,30 +42,28 @@ let capture_stdout f =
 
 let test_successful_run () =
   let r = ok_result (Sol_cli_process.run (Sol_cli_process.cmd [ "echo"; "hello" ])) in
-  check "exit code" 0 r.Sol_cli_process.exit_code;
-  check_str "stdout" "hello" r.Sol_cli_process.stdout
+  check_str "stdout" "hello" r.stdout
 ;;
 
+(* REFAC-124: a non-zero exit is an [Error], never an [Ok] with a code in it. *)
 let test_non_zero_exit () =
-  let r = ok_result (Sol_cli_process.run (Sol_cli_process.cmd [ "false" ])) in
-  check_bool "non-zero" true (r.Sol_cli_process.exit_code <> 0)
-;;
-
-let test_non_zero_via_run_ok () =
-  match Sol_cli_process.run_ok (Sol_cli_process.cmd [ "false" ]) with
-  | Error (Sol_cli_process.Non_zero { exit_code; _ }) ->
+  match err_result (Sol_cli_process.run (Sol_cli_process.cmd [ "false" ])) with
+  | Sol_cli_process.Non_zero { exit_code; _ } ->
     check_bool "exit_code non-zero" true (exit_code <> 0)
-  | Error e -> Alcotest.fail ("wrong error: " ^ Sol_cli_process.error_to_string e)
-  | Ok () -> Alcotest.fail "expected Non_zero error"
+  | e -> Alcotest.fail ("wrong error: " ^ Sol_cli_process.error_to_string e)
 ;;
 
 let test_captured_stderr () =
-  let r =
-    ok_result
-      (Sol_cli_process.run (Sol_cli_process.cmd [ "sh"; "-c"; "echo oops >&2; exit 1" ]))
-  in
-  check_str "stderr captured" "oops" r.Sol_cli_process.stderr;
-  check "exit code" 1 r.Sol_cli_process.exit_code
+  match
+    err_result
+      (Sol_cli_process.run
+         (Sol_cli_process.cmd [ "sh"; "-c"; "echo out; echo oops >&2; exit 3" ]))
+  with
+  | Sol_cli_process.Non_zero { exit_code; stdout; stderr } ->
+    check "exit code" 3 exit_code;
+    check_str "stdout kept" "out" stdout;
+    check_str "stderr captured" "oops" stderr
+  | e -> Alcotest.fail ("wrong error: " ^ Sol_cli_process.error_to_string e)
 ;;
 
 let test_stdout_and_stderr_separate () =
@@ -118,13 +116,13 @@ let test_no_shell_expansion () =
 
 let test_run_shell_success () =
   let r = ok_result (Sol_cli_process.run_shell "echo hello-shell") in
-  check_str "shell stdout" "hello-shell" r.Sol_cli_process.stdout;
-  check "shell exit" 0 r.Sol_cli_process.exit_code
+  check_str "shell stdout" "hello-shell" r.stdout
 ;;
 
 let test_run_shell_nonzero () =
-  let r = ok_result (Sol_cli_process.run_shell "exit 42") in
-  check "shell exit 42" 42 r.Sol_cli_process.exit_code
+  match err_result (Sol_cli_process.run_shell "exit 42") with
+  | Sol_cli_process.Non_zero { exit_code; _ } -> check "shell exit 42" 42 exit_code
+  | e -> Alcotest.fail ("wrong error: " ^ Sol_cli_process.error_to_string e)
 ;;
 
 let test_error_to_string_spawn () =
@@ -145,29 +143,26 @@ let test_error_to_string_nonzero () =
 
 (* ── suite ───────────────────────────────────────────────────────────────── *)
 
-(* REFAC-116: Ok means the command succeeded. *)
-let test_run_success_and_output () =
+(* REFAC-116 / REFAC-124: Ok means the command succeeded, carrying its output. *)
+let test_run_is_success () =
   let open Sol_cli_process in
-  (match output (cmd [ "sh"; "-c"; "echo hi" ]) with
-   | Ok s -> Alcotest.(check string) "stdout (trimmed, as run does)" "hi" s
+  (match run (cmd [ "sh"; "-c"; "echo hi" ]) with
+   | Ok { stdout; _ } -> Alcotest.(check string) "stdout (trimmed)" "hi" stdout
    | Error e -> Alcotest.fail (error_to_string e));
-  (match run_success (cmd [ "sh"; "-c"; "echo out; echo err >&2; exit 3" ]) with
-   | Error (Non_zero r) ->
-     Alcotest.(check int) "exit code" 3 r.exit_code;
-     Alcotest.(check string) "stdout kept" "out" r.stdout;
-     Alcotest.(check string) "stderr kept" "err" r.stderr
-   | Ok _ -> Alcotest.fail "a failing command was Ok"
-   | Error e -> Alcotest.fail (error_to_string e));
-  match output (cmd [ "/nonexistent-zxqw" ]) with
+  match run (cmd [ "/nonexistent-zxqw" ]) with
   | Error (Spawn_failed _) -> ()
   | _ -> Alcotest.fail "a missing binary is Spawn_failed"
 ;;
 
-let test_check_is_idempotent () =
+(* The runners that wait on a process themselves share [run]'s contract. *)
+let test_completed () =
   let open Sol_cli_process in
-  let r = run (cmd [ "sh"; "-c"; "exit 2" ]) in
-  Alcotest.(check bool) "check (check r) = check r" true (check (check r) = check r);
-  Alcotest.(check bool) "run itself is Ok for a non-zero exit" true (Result.is_ok r)
+  (match completed ~exit_code:0 ~stdout:"o" ~stderr:"e" with
+   | Ok { stdout = "o"; stderr = "e" } -> ()
+   | _ -> Alcotest.fail "exit 0 is Ok with both streams");
+  match completed ~exit_code:2 ~stdout:"o" ~stderr:"e" with
+  | Error (Non_zero { exit_code = 2; stdout = "o"; stderr = "e" }) -> ()
+  | _ -> Alcotest.fail "exit 2 is Non_zero with the code and both streams"
 ;;
 
 let test_failure_output () =
@@ -186,12 +181,11 @@ let () =
     [ ( "run"
       , [ Alcotest.test_case "successful run" `Quick test_successful_run
         ; Alcotest.test_case "non-zero exit" `Quick test_non_zero_exit
-        ; Alcotest.test_case "run_ok non-zero" `Quick test_non_zero_via_run_ok
         ; Alcotest.test_case
-            "run_success and output (REFAC-116)"
+            "run is Ok only on success (REFAC-124)"
             `Quick
-            test_run_success_and_output
-        ; Alcotest.test_case "check is idempotent" `Quick test_check_is_idempotent
+            test_run_is_success
+        ; Alcotest.test_case "completed shares run's contract" `Quick test_completed
         ; Alcotest.test_case "failure_output" `Quick test_failure_output
         ; Alcotest.test_case "captured stderr" `Quick test_captured_stderr
         ; Alcotest.test_case

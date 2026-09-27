@@ -17,18 +17,21 @@ let invocation ?timeout_s ~ctx args =
     ([ "kubectl" ] @ Sol_cli_kube_destination.kubectl_context_args ctx @ args)
 ;;
 
-let apply ~ctx ~file = Sol_cli_process.run_ok (invocation ~ctx [ "apply"; "-f"; file ])
+(* REFAC-124: every call below is one [kubectl] run, [Ok] only on exit 0; a caller
+   for which a particular failure means something matches [Non_zero]. *)
+let kubectl ?timeout_s ~ctx args = Sol_cli_process.run (invocation ?timeout_s ~ctx args)
+let succeeded r = Result.map ignore r
+let apply ~ctx ~file = kubectl ~ctx [ "apply"; "-f"; file ] |> succeeded
 
 let apply_dry_run ~ctx ~file =
-  Sol_cli_process.run_ok (invocation ~ctx [ "apply"; "-f"; file; "--dry-run=server" ])
+  kubectl ~ctx [ "apply"; "-f"; file; "--dry-run=server" ] |> succeeded
 ;;
 
 let get ~ctx ~resource ~name ~namespace ~output =
-  Sol_cli_process.run_success
-    (invocation ~ctx [ "get"; resource; name; "-n"; namespace; "-o"; output ])
+  kubectl ~ctx [ "get"; resource; name; "-n"; namespace; "-o"; output ]
 ;;
 
-let get_raw ~ctx ~args = Sol_cli_process.run (invocation ~ctx args)
+let get_raw ~ctx ~args = kubectl ~ctx args
 
 let resource_type_absent output =
   Sol_cli_string.contains ~needle:"doesn't have a resource type" output
@@ -36,66 +39,54 @@ let resource_type_absent output =
 ;;
 
 let logs ~ctx ~pod ~namespace ~container =
-  let container_args =
-    match container with
-    | None -> []
-    | Some c -> [ "-c"; c ]
-  in
-  Sol_cli_process.run
-    (invocation ~ctx ([ "logs"; pod; "-n"; namespace ] @ container_args))
+  let container_args = Option.fold container ~none:[] ~some:(fun c -> [ "-c"; c ]) in
+  kubectl ~ctx ([ "logs"; pod; "-n"; namespace ] @ container_args)
 ;;
 
 let rollout_status ~ctx ~kind_name ~namespace =
-  Sol_cli_process.run
-    (invocation ~ctx [ "rollout"; "status"; kind_name; "-n"; namespace ])
+  kubectl ~ctx [ "rollout"; "status"; kind_name; "-n"; namespace ]
 ;;
 
 let rollout_status_with_timeout ~ctx ~kind_name ~namespace ~timeout_s =
-  Sol_cli_process.run
-    (invocation
-       ~ctx
-       [ "rollout"
-       ; "status"
-       ; kind_name
-       ; "-n"
-       ; namespace
-       ; Printf.sprintf "--timeout=%ds" timeout_s
-       ])
+  kubectl
+    ~ctx
+    [ "rollout"
+    ; "status"
+    ; kind_name
+    ; "-n"
+    ; namespace
+    ; Printf.sprintf "--timeout=%ds" timeout_s
+    ]
 ;;
 
 let rollout_restart ~ctx ~kind ~namespace =
-  Sol_cli_process.run (invocation ~ctx [ "rollout"; "restart"; kind; "-n"; namespace ])
+  kubectl ~ctx [ "rollout"; "restart"; kind; "-n"; namespace ]
 ;;
 
 let patch ~ctx ~resource ~name ~namespace ~patch_type ~patch =
-  Sol_cli_process.run
-    (invocation
-       ~ctx
-       [ "patch"; resource; name; "-n"; namespace; "--type"; patch_type; "-p"; patch ])
+  kubectl
+    ~ctx
+    [ "patch"; resource; name; "-n"; namespace; "--type"; patch_type; "-p"; patch ]
 ;;
 
-(* FEAT-072: [create] accepts the raw result rather than folding a non-zero exit
-   into an error, because "AlreadyExists" is the atomic-acquire signal the
-   boundary lease relies on and is not a failure of the call itself. *)
-let create ~ctx ~file = Sol_cli_process.run (invocation ~ctx [ "create"; "-f"; file ])
+(* FEAT-072: "AlreadyExists" is the atomic-acquire signal the boundary lease relies
+   on, so the caller reads it from the [Non_zero] branch. *)
+let create ~ctx ~file = kubectl ~ctx [ "create"; "-f"; file ]
 
-(* FEAT-072: [replace] returns the raw result so a conflict is visible to the
-   caller. Optimistic concurrency travels *in the object*: when [file] carries
-   [metadata.resourceVersion], the API server rejects a stale write. There is
-   deliberately no [--resource-version] flag — it is not present in every
-   kubectl (the CI runner's does not have it). *)
-let replace ~ctx ~file = Sol_cli_process.run (invocation ~ctx [ "replace"; "-f"; file ])
+(* FEAT-072: optimistic concurrency travels *in the object*: when [file] carries
+   [metadata.resourceVersion], the API server rejects a stale write, and the
+   caller sees the conflict in the [Non_zero] branch. There is deliberately no
+   [--resource-version] flag — it is not present in every kubectl (the CI runner's
+   does not have it). *)
+let replace ~ctx ~file = kubectl ~ctx [ "replace"; "-f"; file ]
 
 let create_job_from_cronjob ~ctx ~cronjob ~job_name ~namespace =
-  Sol_cli_process.run
-    (invocation
-       ~ctx
-       [ "create"; "job"; job_name; "--from=cronjob/" ^ cronjob; "-n"; namespace ])
+  kubectl ~ctx [ "create"; "job"; job_name; "--from=cronjob/" ^ cronjob; "-n"; namespace ]
 ;;
 
 let delete ~ctx ~resource ~name ~namespace =
-  Sol_cli_process.run_ok
-    (invocation ~ctx [ "delete"; resource; name; "-n"; namespace; "--ignore-not-found" ])
+  kubectl ~ctx [ "delete"; resource; name; "-n"; namespace; "--ignore-not-found" ]
+  |> succeeded
 ;;
 
 (* A probe answers "is it reachable", and now also "and if not, what did kubectl
@@ -113,13 +104,11 @@ let probe_timeout_s = 15.0
    wrote any, else stdout, trimmed. An [Error] means kubectl could not be run at
    all — distinct from running and failing. *)
 let probe_result ~ctx ~args =
-  match Sol_cli_process.run (invocation ~ctx ~timeout_s:probe_timeout_s args) with
-  | Error _ -> Error "kubectl could not be run"
-  | Ok r ->
-    let reason =
-      Sol_cli_process.failure_output ~stdout:r.Sol_cli_process.stdout ~stderr:r.stderr
-    in
-    Ok (r.Sol_cli_process.exit_code, reason)
+  match kubectl ~timeout_s:probe_timeout_s ~ctx args with
+  | Ok { stdout; stderr } -> Ok (0, Sol_cli_process.failure_output ~stdout ~stderr)
+  | Error (Sol_cli_process.Non_zero { exit_code; stdout; stderr }) ->
+    Ok (exit_code, Sol_cli_process.failure_output ~stdout ~stderr)
+  | Error e -> Error ("kubectl could not be run: " ^ Sol_cli_process.error_to_string e)
 ;;
 
 (* A boolean probe cannot say the third thing: "kubectl could not be run" and
