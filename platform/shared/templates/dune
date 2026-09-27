@@ -8,4 +8,5 @@
 ;
 ; `data_only_dirs` keeps them out of the build while leaving them on disk for
 ; `sol new` to copy, and `(source_tree)` rules can still name them.
+
 (data_only_dirs event fn svc worker workspace)

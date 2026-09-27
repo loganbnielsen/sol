@@ -1,11 +1,16 @@
 open Cmdliner
-open Sol_cli_scaffold_templates
 
-let subst = Sol_cli_scaffold.subst
-let write = Sol_cli_scaffold.write_file
+(* REFAC-128: the files `sol new` generates live in
+   platform/shared/templates/<kind>/, laid out exactly as they are generated,
+   and are resolved as Sol assets (DEC-049). This module keeps the orchestration
+   -- which kind, where it goes, and which variables it carries -- and no
+   content: adding a generated file is adding a file to the tree. *)
+
 let norm = Sol_cli_scaffold.normalize
 let cap = Sol_cli_scaffold.capitalize_name
 
+module Tree = Sol_cli_scaffold_tree
+module Assets = Sol_cli_platform_assets
 open Result.Syntax
 
 (* DEC-025: `sol new` used to symlink the framework source into the generated
@@ -17,7 +22,35 @@ open Result.Syntax
    instead, and the switch provides it. See
    platform/local/scripts/prepare-framework-deps.sh. *)
 
-(* ── Command implementations ─────────────────────────────────────────────── *)
+let always_write _ = Tree.Write
+
+let template_root () =
+  let* assets =
+    Assets.resolve () |> Result.map_error (fun error -> Assets.error_to_string error)
+  in
+  Ok (Assets.templates_root assets)
+;;
+
+let copy ~kind ~dest ~vars ~rule =
+  let* root = template_root () in
+  Tree.copy ~root ~kind ~dest ~vars ~rule
+;;
+
+(* ── `sol new workspace` ──────────────────────────────────────────────────── *)
+
+(* The workspace tree is one tree with two units in it, so the variables are
+   per file: the two Dockerfiles name their own registry repository and binary,
+   and the payments event names the team that owns it. *)
+let workspace_vars ~name rel =
+  let v = [ "name", name; "Name", cap name; "basename", Filename.basename name ] in
+  match rel with
+  | "events/payments/sol.toml" -> ("team", "payments") :: v
+  | "app/payments/charge_svc/Dockerfile" ->
+    ("repo_dir", "app/payments/charge_svc") :: ("binary", name ^ "-charge-svc") :: v
+  | "app/comms/notify_worker/Dockerfile" ->
+    ("repo_dir", "app/comms/notify_worker") :: ("binary", name ^ "-notify-worker") :: v
+  | _ -> v
+;;
 
 let new_workspace name =
   let raw_name = name in
@@ -38,89 +71,12 @@ let new_workspace name =
       raw_name
       name
       k8s_name);
-  let v = [ "name", name; "Name", cap name; "basename", Filename.basename name ] in
-  (* root files *)
-  write ~path:(name ^ "/.ocamlformat") ~content:tpl_ocamlformat;
-  write ~path:(name ^ "/dune-project") ~content:tpl_dune_project;
-  (* DEC-024: the workspace boundary. Presence alone makes this a Sol
-     workspace; no name or settings are required for the file to be valid. *)
-  write ~path:(name ^ "/sol.yml") ~content:tpl_sol_yml;
-  write ~path:(name ^ "/README.md") ~content:(subst v tpl_readme);
-  write
-    ~path:(name ^ "/.github/workflows/deploy.yml")
-    ~content:(subst v tpl_github_deploy);
-  write ~path:(name ^ "/.github/workflows/sol-ci.yml") ~content:(subst v tpl_github_ci);
-  (* events — also emit sol.toml so topics are discoverable without ML scanning *)
-  write ~path:(name ^ "/events/payments/charged.ml") ~content:(subst v ws_charged_ml);
-  write ~path:(name ^ "/events/payments/dune") ~content:(subst v ws_events_dune);
-  write
-    ~path:(name ^ "/events/payments/sol.toml")
-    ~content:
-      (subst
-         (v @ [ "team", "payments"; "name", name ^ "-payments-charges" ])
-         tpl_event_sol_toml);
-  (* shared storage lib — Notification module used by svc and worker *)
-  write ~path:(name ^ "/lib/notification.ml") ~content:(subst v ws_notification_ml);
-  write ~path:(name ^ "/lib/dune") ~content:(subst v ws_storage_dune);
-  (* charge-svc *)
-  write
-    ~path:(name ^ "/app/payments/charge_svc/lib/handler.ml")
-    ~content:(subst v ws_svc_handler_ml);
-  write
-    ~path:(name ^ "/app/payments/charge_svc/lib/dune")
-    ~content:(subst v ws_svc_lib_dune);
-  write
-    ~path:(name ^ "/app/payments/charge_svc/bin/main.ml")
-    ~content:(subst v ws_svc_bin_ml);
-  write
-    ~path:(name ^ "/app/payments/charge_svc/bin/dune")
-    ~content:(subst v ws_svc_bin_dune);
-  write ~path:(name ^ "/app/payments/charge_svc/sol.toml") ~content:tpl_sol_toml;
-  write
-    ~path:(name ^ "/app/payments/charge_svc/Dockerfile")
-    ~content:
-      (subst
-         (v @ [ "repo_dir", "app/payments/charge_svc"; "binary", name ^ "-charge-svc" ])
-         tpl_dockerfile);
-  (* notify-worker *)
-  write
-    ~path:(name ^ "/app/comms/notify_worker/lib/notify_worker.ml")
-    ~content:(subst v ws_worker_ml);
-  write
-    ~path:(name ^ "/app/comms/notify_worker/lib/dune")
-    ~content:(subst v ws_worker_lib_dune);
-  write
-    ~path:(name ^ "/app/comms/notify_worker/bin/main.ml")
-    ~content:(subst v ws_worker_bin_ml);
-  write
-    ~path:(name ^ "/app/comms/notify_worker/bin/dune")
-    ~content:(subst v ws_worker_bin_dune);
-  write ~path:(name ^ "/app/comms/notify_worker/sol.toml") ~content:tpl_sol_toml;
-  write
-    ~path:(name ^ "/app/comms/notify_worker/Dockerfile")
-    ~content:
-      (subst
-         (v @ [ "repo_dir", "app/comms/notify_worker"; "binary", name ^ "-notify-worker" ])
-         tpl_dockerfile);
-  write ~path:(name ^ "/.dockerignore") ~content:tpl_dockerignore;
-  (* deploy environments -- sol deploy refuses an undeclared target (FEAT-100) *)
-  write ~path:(name ^ "/sol/environments.yml") ~content:tpl_environments;
-  write ~path:(name ^ "/.gitignore") ~content:tpl_gitignore;
-  (* db *)
-  write
-    ~path:(name ^ "/db/migrations/0001_notifications.sql")
-    ~content:(subst v ws_migration_sql);
-  write
-    ~path:(name ^ "/db/migrations/0001_notifications.down.sql")
-    ~content:(subst v ws_migration_down_sql);
-  (* schema compatibility test *)
-  write ~path:(name ^ "/test/test_schemas.ml") ~content:(subst v ws_test_schemas_ml);
-  write ~path:(name ^ "/test/dune") ~content:(subst v ws_test_dune);
-  (* DEC-025: the workspace owns its framework dependency. *)
-  write ~path:(name ^ "/" ^ Filename.basename name ^ ".opam") ~content:(subst v ws_opam);
+  let* written =
+    copy ~kind:"workspace" ~dest:name ~vars:(workspace_vars ~name) ~rule:always_write
+  in
   Printf.printf
     {|
-Done. 31 files generated.
+Done. %d files generated.
 
   cd %s
   eval $(opam env) && dune build   # verify the scaffold compiles
@@ -143,11 +99,14 @@ Done. 31 files generated.
          rename it to your real <env> and <provider>/<region>, and set the
          SOL_TARGET repository variable to match, before your first 'sol deploy'.
 |}
+    (List.length written)
     name
     name
     name;
   Ok ()
 ;;
+
+(* ── `sol new svc|worker|fn` ──────────────────────────────────────────────── *)
 
 let parse_domain_name arg =
   match String.split_on_char '/' arg with
@@ -162,15 +121,6 @@ type component_kind =
   | Worker
   | Function
 
-type component_scaffold =
-  { kind_label : string
-  ; dir : string
-  ; lib : string
-  ; mod_ : string
-  ; binary : string
-  ; files : (string * string) list
-  }
-
 let component_suffix = function
   | Service -> "svc"
   | Worker -> "worker"
@@ -184,169 +134,86 @@ let component_module kind name =
   | Function -> cap name ^ "_fn"
 ;;
 
-let component_scaffold kind ~ws ~domain ~name =
+(* The template kind is the suffix: platform/shared/templates/svc, .../worker,
+   .../fn. *)
+let component_vars kind ~ws ~domain ~name =
   let suffix = component_suffix kind in
   let dir = Printf.sprintf "app/%s/%s_%s" domain name suffix in
   let lib = Printf.sprintf "%s_%s_%s_%s" ws domain name suffix in
-  let mod_ = component_module kind name in
-  let binary = name ^ "-" ^ suffix in
-  let v =
-    [ "lib", lib
-    ; "dir", dir
-    ; "repo_dir", dir
-    ; "name", name
-    ; "domain", domain
-    ; "Mod", mod_
-    ; "binary", binary
-      (* DEC-025: the workspace's dependency declaration is <workspace>.opam at the
+  [ "lib", lib
+  ; "dir", dir
+  ; "repo_dir", dir
+  ; "name", name
+  ; "domain", domain
+  ; "Mod", component_module kind name
+  ; "binary", name ^ "-" ^ suffix
+    (* DEC-025: the workspace's dependency declaration is <workspace>.opam at the
        workspace root, which is the Docker build context. `ws` may be a path, so
        the basename is what names the file. *)
-    ; "basename", Filename.basename ws
-    ]
-  in
-  let files =
-    match kind with
-    | Service ->
-      [ "lib/handler.ml", svc_handler_ml
-      ; "lib/dune", subst v svc_lib_dune
-      ; "bin/main.ml", subst v svc_bin_ml
-      ; "bin/dune", subst v svc_bin_dune
-      ; "sol.toml", tpl_sol_toml
-      ; "Dockerfile", subst v tpl_dockerfile
-      ]
-    | Worker ->
-      [ "lib/" ^ name ^ "_worker.ml", subst v worker_lib_ml
-      ; "lib/dune", subst v worker_lib_dune
-      ; "bin/main.ml", subst v worker_bin_ml
-      ; "bin/dune", subst v worker_bin_dune
-      ; "sol.toml", tpl_sol_toml
-      ; "Dockerfile", subst v tpl_dockerfile
-      ]
-    | Function ->
-      [ "lib/" ^ name ^ "_fn.ml", subst v fn_lib_ml
-      ; "lib/dune", subst v fn_lib_dune
-      ; "bin/main.ml", subst v fn_bin_ml
-      ; "bin/dune", subst v fn_bin_dune
-      ; "sol.toml", tpl_fn_sol_toml
-      ; "Dockerfile", subst v tpl_dockerfile
-      ]
-  in
-  { kind_label = suffix; dir; lib; mod_; binary; files }
+  ; "basename", Filename.basename ws
+  ]
 ;;
 
-let write_component scaffold =
-  scaffold.files
-  |> List.iter (fun (rel_path, content) ->
-    write ~path:(Filename.concat scaffold.dir rel_path) ~content)
+let new_component kind ~label arg =
+  let ws = ws_of_cwd () in
+  let* domain, name = parse_domain_name arg in
+  let suffix = component_suffix kind in
+  let dir = Printf.sprintf "app/%s/%s_%s" domain name suffix in
+  Printf.printf "\nScaffolding %s %s/%s_%s ...\n\n" label domain name suffix;
+  let vars = component_vars kind ~ws ~domain ~name in
+  let* _ = copy ~kind:suffix ~dest:dir ~vars:(fun _ -> vars) ~rule:always_write in
+  Ok dir
 ;;
 
 let new_svc arg =
-  let ws = ws_of_cwd () in
-  let* domain, name = parse_domain_name arg in
-  let scaffold = component_scaffold Service ~ws ~domain ~name in
-  Printf.printf "\nScaffolding svc %s/%s_svc ...\n\n" domain name;
-  write_component scaffold;
-  Printf.printf "\nDone.  Build: dune build %s/bin/main.exe\n" scaffold.dir;
+  let* dir = new_component Service ~label:"svc" arg in
+  Printf.printf "\nDone.  Build: dune build %s/bin/main.exe\n" dir;
   Ok ()
 ;;
 
 let new_worker arg =
-  let ws = ws_of_cwd () in
-  let* domain, name = parse_domain_name arg in
-  let scaffold = component_scaffold Worker ~ws ~domain ~name in
-  Printf.printf "\nScaffolding worker %s/%s_worker ...\n\n" domain name;
-  write_component scaffold;
+  let* dir = new_component Worker ~label:"worker" arg in
   Printf.printf "\nDone.  Replace the stub Message module with your event module, then:\n";
-  Printf.printf "  dune build %s/bin/main.exe\n" scaffold.dir;
+  Printf.printf "  dune build %s/bin/main.exe\n" dir;
   Ok ()
 ;;
 
 let new_fn arg =
-  let ws = ws_of_cwd () in
-  let* domain, name = parse_domain_name arg in
-  let scaffold = component_scaffold Function ~ws ~domain ~name in
-  Printf.printf "\nScaffolding fn %s/%s_fn ...\n\n" domain name;
-  write_component scaffold;
-  Printf.printf "\nDone.  Build: dune build %s/bin/main.exe\n" scaffold.dir;
+  let* dir = new_component Function ~label:"fn" arg in
+  Printf.printf "\nDone.  Build: dune build %s/bin/main.exe\n" dir;
   Ok ()
 ;;
 
-(* Append [new_mod] to the "(modules ...)" stanza in [path].
-   Handles the standard single-line form "(modules Foo Bar)". *)
-let patch_modules_stanza path new_mod =
-  let ic = open_in path in
-  let content = In_channel.input_all ic in
-  close_in ic;
-  let prefix = "(modules " in
-  let plen = String.length prefix in
-  let clen = String.length content in
-  let rec find_prefix i =
-    if i > clen - plen
-    then None
-    else if String.sub content i plen = prefix
-    then Some (i + plen)
-    else find_prefix (i + 1)
-  in
-  match find_prefix 0 with
-  | None ->
-    Printf.printf
-      "  note: could not locate (modules ...) in %s — add %s manually\n"
-      path
-      new_mod
-  | Some pos ->
-    let rec find_close i depth =
-      if i >= clen
-      then clen
-      else (
-        match content.[i] with
-        | '(' -> find_close (i + 1) (depth + 1)
-        | ')' -> if depth = 0 then i else find_close (i + 1) (depth - 1)
-        | _ -> find_close (i + 1) depth)
-    in
-    let close = find_close pos 0 in
-    let updated =
-      String.sub content 0 close ^ " " ^ new_mod ^ String.sub content close (clen - close)
-    in
-    let oc = open_out path in
-    output_string oc updated;
-    close_out oc;
-    Printf.printf "  updated %s\n" path
+(* ── `sol new event` ──────────────────────────────────────────────────────── *)
+
+let event_vars ~ws ~team ~name =
+  [ "team", team; "name", name; "Mod", cap name; "lib", ws ^ "_" ^ team ^ "_events" ]
+;;
+
+(* An event joins a team's events library: its dune gains the module rather than
+   being replaced, and an existing sol.toml stays as it is -- it may list topics
+   the operator added. *)
+let event_rule module_ = function
+  | "events/{{team}}/dune" -> Tree.Patch_modules module_
+  | "events/{{team}}/sol.toml" -> Tree.Skip_if_exists
+  | _ -> Tree.Write
 ;;
 
 let new_event arg =
   let ws = ws_of_cwd () in
   let* team, name = parse_domain_name arg in
   let file = Printf.sprintf "events/%s/%s.ml" team name in
-  let dune_f = Printf.sprintf "events/%s/dune" team in
-  let toml_f = Printf.sprintf "events/%s/sol.toml" team in
-  let mod_ = cap name in
   let lib = ws ^ "_" ^ team ^ "_events" in
-  let v = [ "team", team; "name", name; "Mod", mod_; "lib", lib ] in
   Printf.printf "\nScaffolding event %s/%s ...\n\n" team name;
   let* () =
     if Sys.file_exists file
     then Error (Printf.sprintf "%S already exists" file)
     else Ok ()
   in
-  write ~path:file ~content:(subst v event_ml);
-  if Sys.file_exists dune_f
-  then patch_modules_stanza dune_f mod_
-  else
-    write
-      ~path:dune_f
-      ~content:
-        (subst
-           v
-           {tpl|(library
- (name {{lib}})
- (wrapped false)
- (modules {{Mod}})
- (libraries kafka-eio-service yojson))
-|tpl});
-  (* Leave an existing sol.toml intact (operator may have added more topics);
-     a new one lists just this event's default topic. *)
-  if not (Sys.file_exists toml_f)
-  then write ~path:toml_f ~content:(subst v tpl_event_sol_toml);
+  let vars = event_vars ~ws ~team ~name in
+  let* _ =
+    copy ~kind:"event" ~dest:"." ~vars:(fun _ -> vars) ~rule:(event_rule (cap name))
+  in
   Printf.printf "\nDone.  Consumers add (libraries %s) to their dune files.\n" lib;
   Ok ()
 ;;

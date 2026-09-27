@@ -78,6 +78,22 @@ let runner_check () =
        | A.Build_from_source { context } -> "built from " ^ context))
 ;;
 
+(* REFAC-128: the scaffold template trees `sol new` copies (DEC-046 rule 2:
+   platform/ holds what the CLI drives). The check runs the same walk the command
+   runs, so a missing or empty kind fails here rather than at scaffold time. *)
+let template_checks assets =
+  let root = A.templates_root assets in
+  Sol_cli_scaffold_tree.kinds
+  |> List.map (fun kind ->
+    check
+      (Printf.sprintf "templates %s" kind)
+      (match Sol_cli_scaffold_tree.plan ~root ~kind with
+       | Error message -> Error message
+       | Ok [] ->
+         Error (Printf.sprintf "no templates under %s" (Filename.concat root kind))
+       | Ok rels -> Ok (Printf.sprintf "%d files" (List.length rels))))
+;;
+
 (* Every check the commands' own code would make, run through that code. *)
 let checks assets =
   List.concat
@@ -85,6 +101,7 @@ let checks assets =
       |> List.concat_map (fun provider ->
         [ A.Cluster; A.Platform ] |> List.map (terraform_root assets provider))
     ; component_checks assets
+    ; template_checks assets
     ; [ check
           "dashboards"
           (Sol_cli_dev_observability.dashboard_configmap_yaml
