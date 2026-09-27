@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+if [ "${NO_AUTH_PLUGIN:-}" = 1 ]; then exit 1; fi
+printf 'Kubernetes v0.1.0-harness\n'
+exit 0

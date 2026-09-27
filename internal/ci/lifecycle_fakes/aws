@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+set -eu
+printf 'aws %s\n' "$*" >>"$LIFECYCLE_LOG"
+  case "$1 $2" in
+    "configure export-credentials")
+      if [ "${FAIL_CREDENTIALS:-}" = 1 ]; then
+        printf 'Error: could not resolve credentials, session has expired\n' >&2
+        exit 254
+      fi
+      printf 'export AWS_ACCESS_KEY_ID=AKIAHARNESS\n'
+      printf 'export AWS_SECRET_ACCESS_KEY=harness-secret\n'
+      printf 'export AWS_SESSION_TOKEN=harness-token\n'
+      exit 0
+      ;;
+    "sts get-caller-identity")
+      printf 'arn:aws:iam::111122223333:role/harness-qualification\n'
+      exit 0
+      ;;
+  esac
+if [ "${DESTROYING:-}" = 1 ]; then
+  case "$1 $2" in
+    "eks describe-cluster"|"eks describe-addon"|"rds describe-db-instances")
+      if [ "${AWS_VERIFY_UNKNOWN:-}" = 1 ]; then
+        echo "An error occurred (Throttling) when calling the operation" >&2
+        exit 254
+      fi
+      if [ "${DESTROYED_RESOURCE_PRESENT:-}" = 1 ]; then
+        printf '{"resource":"still here"}\n'
+        exit 0
+      fi
+      case "$1 $2" in
+        "rds describe-db-instances")
+          echo "An error occurred (DBInstanceNotFound) when calling the operation" >&2
+          ;;
+        *)
+          echo "An error occurred (ResourceNotFoundException) when calling the operation" >&2
+          ;;
+      esac
+      exit 254
+      ;;
+    "rds describe-db-snapshots")
+      snapshot_id=""
+      want_id=0
+      for arg in "$@"; do
+        if [ "$want_id" = 1 ]; then snapshot_id="$arg"; want_id=0; continue; fi
+        [ "$arg" = "--db-snapshot-identifier" ] && want_id=1
+      done
+      if [ -n "$snapshot_id" ]; then
+        if [ "${RDS_SNAPSHOT_MISSING:-}" = 1 ]; then
+          echo "An error occurred (DBSnapshotNotFound) when calling the DescribeDBSnapshots operation" >&2
+          exit 254
+        fi
+        status=available
+        [ "${RDS_SNAPSHOT_PENDING:-}" = 1 ] && status=creating
+        if [ "${RDS_SNAPSHOT_CREATING_ONCE:-}" = 1 ] \
+          && [ ! -e "$FAIL_MARKER_DIR/snapshot-creating" ]; then
+          : >"$FAIL_MARKER_DIR/snapshot-creating"
+          status=creating
+        fi
+        printf '{"DBSnapshots":[{"DBSnapshotIdentifier":"%s","SnapshotType":"manual","Status":"%s"}]}\n' \
+          "$snapshot_id" "$status"
+        exit 0
+      fi
+      if [ "${RDS_SNAPSHOT_RESIDUE:-}" = 1 ]; then
+        printf '{"DBSnapshots":[{"DBSnapshotIdentifier":"leaked-manual","SnapshotType":"manual","Status":"available"}]}\n'
+      else
+        printf '{"DBSnapshots":[]}\n'
+      fi
+      exit 0
+      ;;
+    "ecr describe-repositories") printf '\n'; exit 0 ;;
+    "resourcegroupstaggingapi get-resources") printf '\n'; exit 0 ;;
+    "ec2 describe-addresses")
+      [ "${AWS_RESIDUAL_KIND:-}" = eip ] && printf 'eipalloc-residual\n' || printf '\n'
+      exit 0
+      ;;
+    "ec2 describe-nat-gateways")
+      [ "${AWS_RESIDUAL_KIND:-}" = nat ] && printf 'nat-residual\n' || printf '\n'
+      exit 0
+      ;;
+    "ec2 describe-volumes")
+      [ "${AWS_RESIDUAL_KIND:-}" = ebs ] && printf 'vol-residual\n' || printf '\n'
+      exit 0
+      ;;
+  esac
+fi
+if [ "$1 $2" = "eks describe-cluster" ] || [ "$1 $2" = "eks describe-addon" ]; then
+  if [ "${FAIL_ON:-}" = cloud-verify ] && [ ! -e "$FAIL_MARKER_DIR/cloud-verify" ]; then
+    : >"$FAIL_MARKER_DIR/cloud-verify"; exit 20
+  fi
+  printf 'ACTIVE\n'; exit 0
+fi
+case " $* " in
+  *" sts assume-role "*)
+    if [ "${STS_ASSUME_FAIL:-}" = 1 ]; then
+      printf 'An error occurred (AccessDenied) when calling the AssumeRole operation\n' >&2
+      exit 255
+    fi
+    printf '{"Credentials":{"AccessKeyId":"ASIAEXAMPLE"}}\n'
+    exit 0
+    ;;
+esac
+[ "$1 $2" = "eks update-kubeconfig" ] || exit 90
+case " $* " in
+  *" --role-arn arn:aws:iam::111122223333:role/sol-cluster-access "*)
+    printf 'sol-cluster-access\n' >"$FAIL_MARKER_DIR/kubeconfig-role"
+    ;;
+  *" --role-arn arn:aws:iam::111122223333:role/sol-provisioner "*)
+    printf 'sol-provisioner\n' >"$FAIL_MARKER_DIR/kubeconfig-role"
+    ;;
+  *) exit 91 ;;
+esac
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --kubeconfig ]; then shift; path="$1"; break; fi
+  shift
+done
+[ -n "${path:-}" ] && [ "$KUBECONFIG" = "$path" ] || exit 92
+printf '%s\n' "$path" >>"$KUBECONFIG_LOG"
+if [ "${FAIL_ON:-}" = access ] && { [ "${ACCESS_FAIL:-once}" = always ] || [ ! -e "$FAIL_MARKER_DIR/access" ]; }; then
+  : >"$FAIL_MARKER_DIR/access"; exit 20
+fi
+: >"$path"

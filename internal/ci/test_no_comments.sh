@@ -89,3 +89,6 @@ run fail "Dockerfile: a comment" app/Dockerfile 'FROM scratch
 USER 65534'
 run fail "Dockerfile: a named Dockerfile" tools/runner.Dockerfile '# why
 FROM scratch'
+run fail "shell: a lifecycle fake without an extension" internal/ci/lifecycle_fakes/terraform '#!/usr/bin/env bash
+# why
+exit 0'
