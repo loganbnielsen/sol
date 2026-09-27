@@ -41,13 +41,12 @@ let parse_env_format output =
   let value key =
     let prefix = "export " ^ key ^ "=" in
     let prefix_length = String.length prefix in
-    List.find_map
-      (fun line ->
-         let line = String.trim line in
-         if String.length line > prefix_length && String.sub line 0 prefix_length = prefix
-         then Some (String.sub line prefix_length (String.length line - prefix_length))
-         else None)
-      lines
+    lines
+    |> List.find_map (fun line ->
+      let line = String.trim line in
+      if String.length line > prefix_length && String.sub line 0 prefix_length = prefix
+      then Some (String.sub line prefix_length (String.length line - prefix_length))
+      else None)
   in
   match value "AWS_ACCESS_KEY_ID", value "AWS_SECRET_ACCESS_KEY" with
   | Some access_key_id, Some secret_access_key ->

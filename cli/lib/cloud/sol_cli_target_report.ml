@@ -101,7 +101,6 @@ let rows ?platform ~verbose (target : Sol_cli_config.target) kubernetes =
 
 let to_json ?platform ~verbose target kubernetes =
   `Assoc
-    (List.map
-       (fun (key, value) -> key, `String value)
-       (rows ?platform ~verbose target kubernetes))
+    (rows ?platform ~verbose target kubernetes
+     |> List.map (fun (key, value) -> key, `String value))
 ;;

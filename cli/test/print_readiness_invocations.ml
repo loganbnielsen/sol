@@ -24,10 +24,9 @@ let () =
     Sol_cli_cloud_lifecycle.readiness_invocations ~provider
     |> List.iter (fun (name, argv) ->
       print_string (Sol_cli_provider.to_string provider ^ " " ^ name);
-      List.iter
-        (fun arg ->
-           print_char '\t';
-           print_string arg)
-        argv;
+      argv
+      |> List.iter (fun arg ->
+        print_char '\t';
+        print_string arg);
       print_newline ()))
 ;;

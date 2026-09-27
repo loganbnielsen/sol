@@ -70,13 +70,12 @@ type t =
    text is preserved in the record body, this is only for lookup. *)
 let sanitize_label (s : string) : string =
   let buf = Buffer.create (String.length s) in
-  String.iter
-    (fun c ->
-       match c with
-       | 'a' .. 'z' | '0' .. '9' | '-' | '_' | '.' -> Buffer.add_char buf c
-       | 'A' .. 'Z' -> Buffer.add_char buf (Char.lowercase_ascii c)
-       | _ -> Buffer.add_char buf '-')
-    s;
+  s
+  |> String.iter (fun c ->
+    match c with
+    | 'a' .. 'z' | '0' .. '9' | '-' | '_' | '.' -> Buffer.add_char buf c
+    | 'A' .. 'Z' -> Buffer.add_char buf (Char.lowercase_ascii c)
+    | _ -> Buffer.add_char buf '-');
   let out = Buffer.contents buf in
   let out = if String.length out > 63 then String.sub out 0 63 else out in
   (* Trim leading/trailing separators so the label stays valid. *)
@@ -172,11 +171,10 @@ let validate ~(name : string) (t : t) : (unit, string) result =
    entries with the same key would fall back on [List.sort]'s stability, which
    OCaml does not guarantee -- a canonical form must not depend on that. *)
 let sorted_pairs pairs =
-  List.sort
-    (fun (a, av) (b, bv) ->
-       let by_key = String.compare a b in
-       if by_key <> 0 then by_key else String.compare av bv)
-    pairs
+  pairs
+  |> List.sort (fun (a, av) (b, bv) ->
+    let by_key = String.compare a b in
+    if by_key <> 0 then by_key else String.compare av bv)
 ;;
 
 let pairs_to_assoc pairs =
@@ -210,9 +208,9 @@ let compare_row4 (a1, a2, a3, a4) (b1, b2, b3, b4) =
 
 let rows_to_json rows =
   `List
-    (List.map
-       (fun (a, b, c, d) -> `List [ `String a; `String b; `String c; `String d ])
-       (List.sort compare_row4 rows))
+    (List.sort compare_row4 rows
+     |> List.map (fun (a, b, c, d) ->
+       `List [ `String a; `String b; `String c; `String d ]))
 ;;
 
 let workload_to_json (w : workload) : Yojson.Safe.t =
@@ -344,13 +342,12 @@ let string_option key json =
 let pairs key json =
   match mem key json with
   | Some (`Assoc kvs) ->
-    List.map
-      (fun (k, v) ->
-         ( k
-         , match v with
-           | `String s -> s
-           | _ -> "" ))
-      kvs
+    kvs
+    |> List.map (fun (k, v) ->
+      ( k
+      , match v with
+        | `String s -> s
+        | _ -> "" ))
   | _ -> []
 ;;
 
@@ -594,25 +591,23 @@ let format_table (records : t list) : string =
     List.sort (fun (a : t) (b : t) -> String.compare a.release_id b.release_id) records
   in
   let rows =
-    List.map
-      (fun (r : t) ->
-         [ r.release_id
-         ; (match r.environment with
-            | None -> "-"
-            | Some e -> e)
-         ; string_of_int (List.length r.workloads)
-         ])
-      sorted
+    sorted
+    |> List.map (fun (r : t) ->
+      [ r.release_id
+      ; (match r.environment with
+         | None -> "-"
+         | Some e -> e)
+      ; string_of_int (List.length r.workloads)
+      ])
   in
   let headers = [ "ID"; "ENV"; "WORKLOADS" ] in
   let widths =
-    List.mapi
-      (fun i h ->
-         List.fold_left
-           (fun acc row -> max acc (String.length (List.nth row i)))
-           (String.length h)
-           rows)
-      headers
+    headers
+    |> List.mapi (fun i h ->
+      List.fold_left
+        (fun acc row -> max acc (String.length (List.nth row i)))
+        (String.length h)
+        rows)
   in
   let render_row row =
     List.mapi (fun i cell -> Printf.sprintf "%-*s" (List.nth widths i) cell) row

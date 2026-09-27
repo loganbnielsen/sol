@@ -32,9 +32,9 @@ let with_tmp f =
 ;;
 
 let has_msg needle findings =
-  List.exists
-    (fun (f : Sol_cli_check.finding) -> Sol_cli_string.contains ~needle f.message)
-    findings
+  findings
+  |> List.exists (fun (f : Sol_cli_check.finding) ->
+    Sol_cli_string.contains ~needle f.message)
 ;;
 
 let test_missing_app_result () =

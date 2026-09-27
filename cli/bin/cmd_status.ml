@@ -8,11 +8,10 @@ let discover_domains () =
   else (
     let domains = ref [] in
     (try
-       Array.iter
-         (fun entry ->
-            let path = Filename.concat app_dir entry in
-            if entry.[0] <> '.' && Sys.is_directory path then domains := entry :: !domains)
-         (Sys.readdir app_dir)
+       Sys.readdir app_dir
+       |> Array.iter (fun entry ->
+         let path = Filename.concat app_dir entry in
+         if entry.[0] <> '.' && Sys.is_directory path then domains := entry :: !domains)
      with
      | _ -> ());
     List.rev !domains)
@@ -299,28 +298,26 @@ let print_raw_diagnostics ~ctx ~ns ~domain ~services ~only_k8s_name =
       in
       let port80_jsonpath = "{.spec.ports[?(@.port==80)].port}" in
       let http_svcs =
-        List.filter
-          (fun name ->
-             (not (is_internal name))
-             && (match only_k8s_name with
-                 | Some only -> name = only
-                 | None -> true)
-             &&
-             match
-               Sol_cli_kubectl.get
-                 ~ctx
-                 ~resource:"svc"
-                 ~name
-                 ~namespace:ns
-                 ~output:("jsonpath=" ^ port80_jsonpath)
-             with
-             | Ok r -> r.Sol_cli_process.stdout <> ""
-             | _ -> false)
-          names
+        names
+        |> List.filter (fun name ->
+          (not (is_internal name))
+          && (match only_k8s_name with
+              | Some only -> name = only
+              | None -> true)
+          &&
+          match
+            Sol_cli_kubectl.get
+              ~ctx
+              ~resource:"svc"
+              ~name
+              ~namespace:ns
+              ~output:("jsonpath=" ^ port80_jsonpath)
+          with
+          | Ok r -> r.Sol_cli_process.stdout <> ""
+          | _ -> false)
       in
-      List.iter
-        (fun name -> Printf.printf "  →  http://localhost:8080  (%s)\n%!" name)
-        http_svcs))
+      http_svcs
+      |> List.iter (fun name -> Printf.printf "  →  http://localhost:8080  (%s)\n%!" name)))
   else Printf.printf "  (not deployed — run 'sol up')\n%!";
   Printf.printf "\n%!"
 ;;
@@ -395,16 +392,15 @@ let print_domain_status
   if named = []
   then Printf.printf "  (none)\n"
   else
-    List.iter
-      (fun (k8s_name, diagnosis) ->
-         let service_status =
-           Sol_cli_status.rollup_domain_status ~ns_presence:Ns_present [ diagnosis ]
-         in
-         Printf.printf
-           "  %-12s %s\n"
-           k8s_name
-           (Sol_cli_status.domain_status_to_string service_status))
-      named;
+    named
+    |> List.iter (fun (k8s_name, diagnosis) ->
+      let service_status =
+        Sol_cli_status.rollup_domain_status ~ns_presence:Ns_present [ diagnosis ]
+      in
+      Printf.printf
+        "  %-12s %s\n"
+        k8s_name
+        (Sol_cli_status.domain_status_to_string service_status));
   print_observability_block
     ~backend
     ~base_domain

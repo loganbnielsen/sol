@@ -109,9 +109,8 @@ let extract_kind_block yaml kind_marker =
   done;
   blocks := String.sub yaml !start (yl - !start) :: !blocks;
   let result = ref "" in
-  List.iter
-    (fun b -> if !result = "" && contains b kind_marker then result := b)
-    (List.rev !blocks);
+  List.rev !blocks
+  |> List.iter (fun b -> if !result = "" && contains b kind_marker then result := b);
   !result
 ;;
 

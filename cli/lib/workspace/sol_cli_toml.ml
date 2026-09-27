@@ -248,9 +248,8 @@ let memory_quantity_of_string s =
         (fun suffix ->
            let slen = String.length suffix in
            slen <= len && String.sub s (len - slen) slen = suffix)
-        (List.sort
-           (fun a b -> compare (String.length b) (String.length a))
-           memory_suffixes)
+        (memory_suffixes
+         |> List.sort (fun a b -> compare (String.length b) (String.length a)))
     in
     match suffix with
     | None ->

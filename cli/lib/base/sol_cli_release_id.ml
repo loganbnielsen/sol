@@ -88,11 +88,10 @@ let enc_option enc b = function
 let enc_pairs b pairs =
   let pairs = List.sort (fun (a, _) (b, _) -> String.compare a b) pairs in
   enc_int b (List.length pairs);
-  List.iter
-    (fun (k, v) ->
-       enc_string b k;
-       enc_string b v)
-    pairs
+  pairs
+  |> List.iter (fun (k, v) ->
+    enc_string b k;
+    enc_string b v)
 ;;
 
 (* A *table* canonicalises a set of rows (volumes, calls): row order is not
@@ -113,11 +112,10 @@ let compare4 (a1, a2, a3, a4) (b1, b2, b3, b4) =
 
 let enc_table b rows =
   enc_int b (List.length rows);
-  List.iter
-    (fun row ->
-       enc_int b (List.length row);
-       List.iter (enc_string b) row)
-    rows
+  rows
+  |> List.iter (fun row ->
+    enc_int b (List.length row);
+    List.iter (enc_string b) row)
 ;;
 
 let canonical_string (content : content) =
@@ -128,43 +126,41 @@ let canonical_string (content : content) =
   (* Workload *ordering* is likewise not semantic (discovery order must not
      change the identity), so sort before encoding. *)
   let workloads =
-    List.sort
-      (fun (a : workload) (c : workload) ->
-         let by_domain = String.compare a.domain c.domain in
-         if by_domain <> 0
-         then by_domain
-         else (
-           let by_name = String.compare a.name c.name in
-           if by_name <> 0 then by_name else String.compare a.primitive c.primitive))
-      content.workloads
+    content.workloads
+    |> List.sort (fun (a : workload) (c : workload) ->
+      let by_domain = String.compare a.domain c.domain in
+      if by_domain <> 0
+      then by_domain
+      else (
+        let by_name = String.compare a.name c.name in
+        if by_name <> 0 then by_name else String.compare a.primitive c.primitive))
   in
   enc_int b (List.length workloads);
-  List.iter
-    (fun (w : workload) ->
-       enc_string b w.domain;
-       enc_string b w.name;
-       enc_string b w.primitive;
-       enc_string b w.image;
-       enc_pairs b w.config;
-       enc_pairs b w.secrets;
-       enc_option enc_string b w.schedule;
-       enc_int b w.replicas;
-       enc_string b w.availability;
-       enc_int b (if w.consumes_kafka then 1 else 0);
-       enc_string b w.cpu;
-       enc_string b w.memory;
-       enc_pairs b w.extra_labels;
-       enc_table
-         b
-         (List.map (fun (n, m, s, a) -> [ n; m; s; a ]) (List.sort compare4 w.volumes));
-       enc_string b w.rollout;
-       enc_option enc_string b w.ingress_host;
-       enc_option enc_string b w.ingress_path;
-       enc_string b w.cluster_issuer;
-       enc_table
-         b
-         (List.map (fun (e, d, n, ns) -> [ e; d; n; ns ]) (List.sort compare4 w.calls)))
-    workloads;
+  workloads
+  |> List.iter (fun (w : workload) ->
+    enc_string b w.domain;
+    enc_string b w.name;
+    enc_string b w.primitive;
+    enc_string b w.image;
+    enc_pairs b w.config;
+    enc_pairs b w.secrets;
+    enc_option enc_string b w.schedule;
+    enc_int b w.replicas;
+    enc_string b w.availability;
+    enc_int b (if w.consumes_kafka then 1 else 0);
+    enc_string b w.cpu;
+    enc_string b w.memory;
+    enc_pairs b w.extra_labels;
+    enc_table
+      b
+      (List.map (fun (n, m, s, a) -> [ n; m; s; a ]) (List.sort compare4 w.volumes));
+    enc_string b w.rollout;
+    enc_option enc_string b w.ingress_host;
+    enc_option enc_string b w.ingress_path;
+    enc_string b w.cluster_issuer;
+    enc_table
+      b
+      (List.map (fun (e, d, n, ns) -> [ e; d; n; ns ]) (List.sort compare4 w.calls)));
   Buffer.contents b
 ;;
 

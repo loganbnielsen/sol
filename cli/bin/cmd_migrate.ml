@@ -6,14 +6,13 @@ open Result.Syntax
 let default_table_name =
   let cwd_name = Filename.basename (Sys.getcwd ()) in
   let buf = Buffer.create (String.length cwd_name) in
-  String.iter
-    (fun c ->
-       if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
-       then Buffer.add_char buf c
-       else if c >= 'A' && c <= 'Z'
-       then Buffer.add_char buf (Char.lowercase_ascii c)
-       else Buffer.add_char buf '_')
-    cwd_name;
+  cwd_name
+  |> String.iter (fun c ->
+    if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+    then Buffer.add_char buf c
+    else if c >= 'A' && c <= 'Z'
+    then Buffer.add_char buf (Char.lowercase_ascii c)
+    else Buffer.add_char buf '_');
   Printf.sprintf "sol_%s_schema_migrations" (Buffer.contents buf)
 ;;
 
@@ -973,20 +972,19 @@ let run_status ~ctx ?(json = false) dir table () =
          print_endline
            (Sol_cli_migration.status_json
               ~table
-              (List.map
-                 (fun (s : Migration.status) -> s.version, s.name, s.applied_at)
-                 rows))
+              (rows
+               |> List.map (fun (s : Migration.status) -> s.version, s.name, s.applied_at)
+              ))
        else (
          Printf.printf "%-6s  %-30s  %s\n" "VER" "NAME" "APPLIED AT";
          Printf.printf "%s\n" (String.make 60 '-');
-         List.iter
-           (fun (s : Migration.status) ->
-              Printf.printf
-                "%-6d  %-30s  %s\n"
-                s.version
-                s.name
-                (Option.value ~default:"(pending)" s.applied_at))
-           rows)))
+         rows
+         |> List.iter (fun (s : Migration.status) ->
+           Printf.printf
+             "%-6d  %-30s  %s\n"
+             s.version
+             s.name
+             (Option.value ~default:"(pending)" s.applied_at)))))
 ;;
 
 (* ── rollback ────────────────────────────────────────────────────────────── *)

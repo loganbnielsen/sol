@@ -411,12 +411,11 @@ let with_migrations_dir files f =
       List.iter (fun (name, _) -> Sys.remove (Filename.concat dir name)) files;
       Unix.rmdir dir)
     (fun () ->
-       List.iter
-         (fun (name, content) ->
-            let oc = open_out (Filename.concat dir name) in
-            output_string oc content;
-            close_out oc)
-         files;
+       files
+       |> List.iter (fun (name, content) ->
+         let oc = open_out (Filename.concat dir name) in
+         output_string oc content;
+         close_out oc);
        f dir)
 ;;
 
@@ -571,12 +570,11 @@ let live_kind_cases =
 ;;
 
 let test_live_kind_of_service_table () =
-  List.iter
-    (fun (label, primitive, progressive_delivery, expected) ->
-       let spec = { ledger_spec with primitive; progressive_delivery } in
-       let got = Sol_cli_rollback.live_kind_of_service spec in
-       Alcotest.(check bool) label true (got = expected))
-    live_kind_cases
+  live_kind_cases
+  |> List.iter (fun (label, primitive, progressive_delivery, expected) ->
+    let spec = { ledger_spec with primitive; progressive_delivery } in
+    let got = Sol_cli_rollback.live_kind_of_service spec in
+    Alcotest.(check bool) label true (got = expected))
 ;;
 
 let live_kind_label = function

@@ -112,11 +112,10 @@ let remove_files name =
 let stop name =
   if is_running name
   then
-    Option.iter
-      (fun pid ->
-         try Unix.kill (-pid) Sys.sigterm with
-         | Unix.Unix_error _ -> ())
-      (read_pid name);
+    read_pid name
+    |> Option.iter (fun pid ->
+      try Unix.kill (-pid) Sys.sigterm with
+      | Unix.Unix_error _ -> ());
   remove_files name
 ;;
 

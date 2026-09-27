@@ -46,17 +46,16 @@ let check_service (svc : Sol_cli_manifest.service) =
   (match Sol_cli_toml.load_result toml_path with
    | Error err -> add Severity.Error toml_path (Sol_cli_toml.parse_error_to_string err)
    | Ok toml ->
-     List.iter
-       (fun key ->
-          if not (valid_env_key key)
-          then
-            add
-              Severity.Error
-              toml_path
-              (Printf.sprintf
-                 "invalid secret key %S; use uppercase letters, digits, and underscores"
-                 key))
-       toml.Sol_cli_toml.secret_keys;
+     toml.Sol_cli_toml.secret_keys
+     |> List.iter (fun key ->
+       if not (valid_env_key key)
+       then
+         add
+           Severity.Error
+           toml_path
+           (Printf.sprintf
+              "invalid secret key %S; use uppercase letters, digits, and underscores"
+              key));
      (match svc.primitive, toml.schedule with
       | Sol_cli_manifest.Fn, _ -> ()
       | (Svc | Worker), Some _ ->
@@ -94,9 +93,9 @@ let run () =
   | Ok scan ->
     let warnings = List.map unexpected_finding scan.unexpected in
     let workload_findings =
-      List.concat_map
-        (fun w -> check_service (Sol_cli_manifest.workload_fact_to_service w))
-        scan.workloads
+      scan.workloads
+      |> List.concat_map (fun w ->
+        check_service (Sol_cli_manifest.workload_fact_to_service w))
     in
     warnings @ workload_findings
 ;;

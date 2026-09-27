@@ -8,24 +8,23 @@
    output stays readable. *)
 let url_encode_logql s =
   let buf = Buffer.create (String.length s * 2) in
-  String.iter
-    (fun c ->
-       Buffer.add_string
-         buf
-         (match c with
-          | '{' -> "%7B"
-          | '}' -> "%7D"
-          | '"' -> "%22"
-          | ',' -> "%2C"
-          | '=' -> "%3D"
-          | ' ' -> "%20"
-          | '%' -> "%25"
-          | '+' -> "%2B"
-          | '&' -> "%26"
-          | '?' -> "%3F"
-          | '#' -> "%23"
-          | c -> String.make 1 c))
-    s;
+  s
+  |> String.iter (fun c ->
+    Buffer.add_string
+      buf
+      (match c with
+       | '{' -> "%7B"
+       | '}' -> "%7D"
+       | '"' -> "%22"
+       | ',' -> "%2C"
+       | '=' -> "%3D"
+       | ' ' -> "%20"
+       | '%' -> "%25"
+       | '+' -> "%2B"
+       | '&' -> "%26"
+       | '?' -> "%3F"
+       | '#' -> "%23"
+       | c -> String.make 1 c));
   Buffer.contents buf
 ;;
 

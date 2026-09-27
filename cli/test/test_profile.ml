@@ -191,11 +191,10 @@ let charge_svc = unit ~domain:"payments" ~name:"charge_svc" Sol_cli_manifest.Svc
 let checkout_svc = unit ~domain:"checkout" ~name:"checkout_svc" Sol_cli_manifest.Svc
 
 let plan_for ?(services = [ charge_svc ]) ?(image_refs = []) ?scope target =
-  List.iter
-    (fun (s : Sol_cli_manifest.service) ->
-       mkdir_p s.dir;
-       write (Filename.concat s.dir "sol.toml") "")
-    services;
+  services
+  |> List.iter (fun (s : Sol_cli_manifest.service) ->
+    mkdir_p s.dir;
+    write (Filename.concat s.dir "sol.toml") "");
   match
     Sol_cli_deployment_plan.of_services_result
       ~workspace:"pluto"
@@ -548,14 +547,13 @@ let test_unestablished_guarantees_fail_closed () =
       "Sol-owned guarantees are attributed to Sol; the artifact and version guarantees \
        to the application; alert, state and identity to the target"
       true
-      (List.for_all
-         (fun (f : Pre.finding) ->
-            match f.capability with
-            | P.Alert_delivery | P.Remote_state | P.Scoped_operator_identities ->
-              f.side = Pre.Target
-            | P.Immutable_artifacts | P.Qualified_versions -> f.side = Pre.Application
-            | _ -> f.side = Pre.Platform)
-         fs))
+      (fs
+       |> List.for_all (fun (f : Pre.finding) ->
+         match f.capability with
+         | P.Alert_delivery | P.Remote_state | P.Scoped_operator_identities ->
+           f.side = Pre.Target
+         | P.Immutable_artifacts | P.Qualified_versions -> f.side = Pre.Application
+         | _ -> f.side = Pre.Platform)))
 ;;
 
 let test_remote_state_requires_a_backend () =
@@ -599,9 +597,9 @@ let test_scoped_identities_require_roles_and_cidr () =
       findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
     in
     match
-      List.find_opt
-        (fun (f : Pre.finding) -> f.capability = P.Scoped_operator_identities)
-        fs
+      fs
+      |> List.find_opt (fun (f : Pre.finding) ->
+        f.capability = P.Scoped_operator_identities)
     with
     | None -> Alcotest.fail "expected a scoped-identity finding"
     | Some f ->
@@ -628,9 +626,9 @@ let test_world_reachable_endpoint_is_rejected () =
       findings (preflight ~apply_mode:Sol_cli_release.Direct "prod/aws/us-east-1")
     in
     match
-      List.find_opt
-        (fun (f : Pre.finding) -> f.capability = P.Scoped_operator_identities)
-        fs
+      fs
+      |> List.find_opt (fun (f : Pre.finding) ->
+        f.capability = P.Scoped_operator_identities)
     with
     | None -> Alcotest.fail "expected a scoped-identity finding for 0.0.0.0/0"
     | Some f ->
@@ -658,9 +656,9 @@ let test_scoped_identities_established () =
     check_bool
       "named identities and a restricted CIDR establish the identity guarantee"
       false
-      (List.exists
-         (fun (f : Pre.finding) -> f.capability = P.Scoped_operator_identities)
-         fs))
+      (fs
+       |> List.exists (fun (f : Pre.finding) ->
+         f.capability = P.Scoped_operator_identities)))
 ;;
 
 let test_mutable_tag_is_an_application_finding () =
@@ -839,13 +837,12 @@ let test_unqualified_provider_is_a_target_finding () =
 let kafka_consumer_plan plan =
   { plan with
     Sol_cli_deployment_plan.services =
-      List.map
-        (fun (s : Sol_cli_deployment_plan.service_spec) ->
-           { s with
-             consumes_kafka = true
-           ; config = ("SOL_KAFKA_DURABILITY", "single-broker-loss") :: s.config
-           })
-        plan.Sol_cli_deployment_plan.services
+      plan.Sol_cli_deployment_plan.services
+      |> List.map (fun (s : Sol_cli_deployment_plan.service_spec) ->
+        { s with
+          consumes_kafka = true
+        ; config = ("SOL_KAFKA_DURABILITY", "single-broker-loss") :: s.config
+        })
   }
 ;;
 
@@ -1009,10 +1006,9 @@ let test_emit_to_rejected_for_profile () =
     check_bool
       "direct apply authority unmet"
       true
-      (List.exists
-         (fun (f : Pre.finding) ->
-            f.capability = P.Direct_apply_authority && f.side = Pre.Target)
-         fs))
+      (fs
+       |> List.exists (fun (f : Pre.finding) ->
+         f.capability = P.Direct_apply_authority && f.side = Pre.Target)))
 ;;
 
 let test_declared_kafka_resource_is_a_target_requirement () =
@@ -1034,10 +1030,9 @@ let test_declared_kafka_resource_is_a_target_requirement () =
       "no workload acquires a Kafka requirement from the target's capability"
       true
       (not
-         (List.exists
-            (fun (f : Pre.finding) ->
-               f.capability = P.Kafka_durability && f.side = Pre.Application)
-            fs)))
+         (fs
+          |> List.exists (fun (f : Pre.finding) ->
+            f.capability = P.Kafka_durability && f.side = Pre.Application))))
 ;;
 
 let test_postgres_resource_declaration_required () =
@@ -1132,10 +1127,9 @@ let with_profile_field value =
     | `Assoc kvs ->
       Sol_cli_deployment.of_json
         (`Assoc
-            (List.filter_map
-               (fun (k, v) ->
-                  if k <> "profile" then Some (k, v) else Option.map (fun v -> k, v) value)
-               kvs))
+            (kvs
+             |> List.filter_map (fun (k, v) ->
+               if k <> "profile" then Some (k, v) else Option.map (fun v -> k, v) value)))
     | _ -> Alcotest.fail "expected an object")
 ;;
 

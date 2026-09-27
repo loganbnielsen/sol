@@ -15,14 +15,13 @@ let fold_dir dir ~init ~f =
 (** Convert a string through a newtype constructor, printing a warning and
     returning [None] when validation fails. *)
 let filter_validated ~kind of_string strings =
-  List.filter_map
-    (fun s ->
-       match of_string s with
-       | Ok v -> Some v
-       | Error e ->
-         Printf.eprintf "sol: warning: skipping invalid %s %S: %s\n%!" kind s e;
-         None)
-    strings
+  strings
+  |> List.filter_map (fun s ->
+    match of_string s with
+    | Ok v -> Some v
+    | Error e ->
+      Printf.eprintf "sol: warning: skipping invalid %s %S: %s\n%!" kind s e;
+      None)
 ;;
 
 (** Scan [events/<domain>/] subdirectories for [*.ml] files and derive schema

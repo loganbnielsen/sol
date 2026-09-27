@@ -25,11 +25,10 @@ let selected path keep =
   | Error e -> Error e
   | Ok names ->
     Ok
-      (List.filter
-         (fun name ->
-            let entry = Filename.concat path name in
-            Sys.file_exists entry && keep (Sys.is_directory entry))
-         names)
+      (names
+       |> List.filter (fun name ->
+         let entry = Filename.concat path name in
+         Sys.file_exists entry && keep (Sys.is_directory entry)))
 ;;
 
 let dirs path = selected path (fun is_dir -> is_dir)

@@ -394,9 +394,9 @@ let test_apply_mode_unknown_fails_closed () =
     match R.to_json sample_record with
     | `Assoc kvs ->
       `Assoc
-        (List.map
-           (fun (k, v) -> if k = "apply_mode" then k, `String "sideways" else k, v)
-           kvs)
+        (kvs
+         |> List.map (fun (k, v) ->
+           if k = "apply_mode" then k, `String "sideways" else k, v))
     | other -> other
   in
   match R.of_json json with

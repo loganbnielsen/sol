@@ -125,22 +125,21 @@ let declared_in_one ~file contents =
     else if Sol_cli_string.contains ~needle:sensitive_prefix squeezed
     then unreadable name line_no
   in
-  List.iteri
-    (fun index line ->
-       let line_no = index + 1 in
-       match !current with
-       | Some name ->
-         if String.equal (drop_trailing_cr line) "}"
-         then current := None
-         else classify name line_no line
-       | None ->
-         (match variable_header line with
-          | None -> ()
-          | Some (name, body) ->
-            if String.contains body '}'
-            then classify_inline name line_no body
-            else current := Some name))
-    lines;
+  lines
+  |> List.iteri (fun index line ->
+    let line_no = index + 1 in
+    match !current with
+    | Some name ->
+      if String.equal (drop_trailing_cr line) "}"
+      then current := None
+      else classify name line_no line
+    | None ->
+      (match variable_header line with
+       | None -> ()
+       | Some (name, body) ->
+         if String.contains body '}'
+         then classify_inline name line_no body
+         else current := Some name));
   match !failure with
   | Some message -> Error message
   | None -> Ok (List.sort_uniq String.compare !sensitive)
@@ -171,11 +170,10 @@ let declared ~root =
     let files =
       try
         Ok
-          (List.map
-             (fun name ->
-                let path = Filename.concat root name in
-                name, In_channel.with_open_bin path In_channel.input_all)
-             tf)
+          (tf
+           |> List.map (fun name ->
+             let path = Filename.concat root name in
+             name, In_channel.with_open_bin path In_channel.input_all))
       with
       | Sys_error message ->
         Error (Printf.sprintf "cannot read the Terraform root %s: %s" root message)

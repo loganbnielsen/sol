@@ -217,36 +217,35 @@ let decode_workload ~release_id ~workspace (w : Sol_cli_release.workload) =
    most of the call graph while silently changing NetworkPolicy output
    (FEAT-066 finding). *)
 let with_called_by (specs : Sol_cli_deployment_plan.service_spec list) =
-  List.map
-    (fun (spec : Sol_cli_deployment_plan.service_spec) ->
-       let called_by =
-         List.filter_map
-           (fun (caller : Sol_cli_deployment_plan.service_spec) ->
-              if
-                List.exists
-                  (fun (c : Sol_cli_deployment_plan.service_call) ->
-                     Sol_cli_kubernetes_name.namespace_to_string c.target_namespace
-                     = Sol_cli_kubernetes_name.namespace_to_string spec.namespace
-                     && Sol_cli_kubernetes_name.k8s_name_to_string c.target_name
-                        = Sol_cli_kubernetes_name.k8s_name_to_string spec.k8s_name)
-                  caller.calls
-              then
-                Some
-                  { Sol_cli_deployment_plan.env_var =
-                      Sol_cli_kubernetes_name.call_env_var caller.source_name
-                  ; url =
-                      Sol_cli_kubernetes_name.service_url
-                        ~namespace:caller.namespace
-                        ~k8s_name:caller.k8s_name
-                  ; target_domain = caller.domain
-                  ; target_name = caller.k8s_name
-                  ; target_namespace = caller.namespace
-                  }
-              else None)
-           specs
-       in
-       { spec with called_by })
-    specs
+  specs
+  |> List.map (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+    let called_by =
+      List.filter_map
+        (fun (caller : Sol_cli_deployment_plan.service_spec) ->
+           if
+             List.exists
+               (fun (c : Sol_cli_deployment_plan.service_call) ->
+                  Sol_cli_kubernetes_name.namespace_to_string c.target_namespace
+                  = Sol_cli_kubernetes_name.namespace_to_string spec.namespace
+                  && Sol_cli_kubernetes_name.k8s_name_to_string c.target_name
+                     = Sol_cli_kubernetes_name.k8s_name_to_string spec.k8s_name)
+               caller.calls
+           then
+             Some
+               { Sol_cli_deployment_plan.env_var =
+                   Sol_cli_kubernetes_name.call_env_var caller.source_name
+               ; url =
+                   Sol_cli_kubernetes_name.service_url
+                     ~namespace:caller.namespace
+                     ~k8s_name:caller.k8s_name
+               ; target_domain = caller.domain
+               ; target_name = caller.k8s_name
+               ; target_namespace = caller.namespace
+               }
+           else None)
+        specs
+    in
+    { spec with called_by })
 ;;
 
 let service_specs_of_release (release : Sol_cli_release.t) =
@@ -471,12 +470,11 @@ let string_at path json =
 let pod_template_labels kind item =
   match json_at (snd (live_kind_path kind)) item with
   | `Assoc kvs ->
-    List.filter_map
-      (fun (k, v) ->
-         match v with
-         | `String s -> Some (k, s)
-         | _ -> None)
-      kvs
+    kvs
+    |> List.filter_map (fun (k, v) ->
+      match v with
+      | `String s -> Some (k, s)
+      | _ -> None)
   | _ -> []
 ;;
 
@@ -494,20 +492,19 @@ let workload_rows_of_payload ~kind ~workspace (payload : Yojson.Safe.t) =
     | `List l -> l
     | _ -> []
   in
-  List.filter_map
-    (fun item ->
-       let labels = pod_template_labels kind item in
-       match List.assoc_opt "workspace" labels with
-       | Some w when String.equal w wanted ->
-         let identity =
-           { kind
-           ; namespace = string_at [ "metadata"; "namespace" ] item
-           ; name = string_at [ "metadata"; "name" ] item
-           }
-         in
-         Some (identity, Option.value (List.assoc_opt "release" labels) ~default:"")
-       | _ -> None)
-    items
+  items
+  |> List.filter_map (fun item ->
+    let labels = pod_template_labels kind item in
+    match List.assoc_opt "workspace" labels with
+    | Some w when String.equal w wanted ->
+      let identity =
+        { kind
+        ; namespace = string_at [ "metadata"; "namespace" ] item
+        ; name = string_at [ "metadata"; "name" ] item
+        }
+      in
+      Some (identity, Option.value (List.assoc_opt "release" labels) ~default:"")
+    | _ -> None)
 ;;
 
 (* List the live (identity, release-label) pairs for every Sol-owned workload in
@@ -629,25 +626,24 @@ let prune_workloads ~(ctx : Sol_cli_kube_destination.context) surplus
   : (unit, string) result
   =
   let errors =
-    List.filter_map
-      (fun ((id : workload_identity), _actual) ->
-         match
-           Sol_cli_kubectl.delete
-             ~ctx
-             ~resource:(kind_resource id.kind)
-             ~name:id.name
-             ~namespace:id.namespace
-         with
-         | Ok () -> None
-         | Error e ->
-           Some
-             (Printf.sprintf
-                "%s %s/%s: %s"
-                (kind_resource id.kind)
-                id.namespace
-                id.name
-                (Sol_cli_process.error_to_string e)))
-      surplus
+    surplus
+    |> List.filter_map (fun ((id : workload_identity), _actual) ->
+      match
+        Sol_cli_kubectl.delete
+          ~ctx
+          ~resource:(kind_resource id.kind)
+          ~name:id.name
+          ~namespace:id.namespace
+      with
+      | Ok () -> None
+      | Error e ->
+        Some
+          (Printf.sprintf
+             "%s %s/%s: %s"
+             (kind_resource id.kind)
+             id.namespace
+             id.name
+             (Sol_cli_process.error_to_string e)))
   in
   match errors with
   | [] -> Ok ()
@@ -663,39 +659,35 @@ let workload_report_to_string ~(release : Sol_cli_release.t) (r : workload_repor
   : string
   =
   let mismatch_lines =
-    List.map
-      (fun (m : workload_mismatch) ->
-         Printf.sprintf
-           "workload state mismatch: %s %s/%s carries release %s, expected %s"
-           (kind_resource m.kind)
-           m.namespace
-           m.name
-           (display_actual m.actual)
-           release.Sol_cli_release.release_id)
-      r.mismatched
+    r.mismatched
+    |> List.map (fun (m : workload_mismatch) ->
+      Printf.sprintf
+        "workload state mismatch: %s %s/%s carries release %s, expected %s"
+        (kind_resource m.kind)
+        m.namespace
+        m.name
+        (display_actual m.actual)
+        release.Sol_cli_release.release_id)
   in
   let missing_lines =
-    List.map
-      (fun (i : workload_identity) ->
-         Printf.sprintf
-           "workload missing: %s %s/%s is not present in the cluster"
-           (kind_resource i.kind)
-           i.namespace
-           i.name)
-      r.missing
+    r.missing
+    |> List.map (fun (i : workload_identity) ->
+      Printf.sprintf
+        "workload missing: %s %s/%s is not present in the cluster"
+        (kind_resource i.kind)
+        i.namespace
+        i.name)
   in
   let unexpected_lines =
-    List.map
-      (fun ((i : workload_identity), actual) ->
-         Printf.sprintf
-           "unexpected workload: %s %s/%s carries release %s but is not part of release \
-            %s"
-           (kind_resource i.kind)
-           i.namespace
-           i.name
-           (display_actual actual)
-           release.Sol_cli_release.release_id)
-      r.unexpected
+    r.unexpected
+    |> List.map (fun ((i : workload_identity), actual) ->
+      Printf.sprintf
+        "unexpected workload: %s %s/%s carries release %s but is not part of release %s"
+        (kind_resource i.kind)
+        i.namespace
+        i.name
+        (display_actual actual)
+        release.Sol_cli_release.release_id)
   in
   String.concat "\n" (mismatch_lines @ missing_lines @ unexpected_lines)
 ;;
@@ -850,30 +842,28 @@ let resolve_matches ~commit ~target ~scope_string (events : Sol_cli_deployment.t
   : commit_resolution
   =
   let matches =
-    List.filter
-      (fun (e : Sol_cli_deployment.t) ->
-         (match e.outcome with
-          | Applied -> true
-          | Apply_failed -> false)
-         && commit_matches ~commit e.git_commit
-         && (match e.target with
-             | Some t -> String.equal t target
-             | None -> false)
-         &&
-         match scope_string with
-         | None -> true
-         | Some wanted -> String.equal e.requested_scope wanted)
-      events
+    events
+    |> List.filter (fun (e : Sol_cli_deployment.t) ->
+      (match e.outcome with
+       | Applied -> true
+       | Apply_failed -> false)
+      && commit_matches ~commit e.git_commit
+      && (match e.target with
+          | Some t -> String.equal t target
+          | None -> false)
+      &&
+      match scope_string with
+      | None -> true
+      | Some wanted -> String.equal e.requested_scope wanted)
   in
   (* Dedup by release_id: retried/repeated deploys of the same commit to the
      same scope name one release id more than once. *)
   let by_release_id = Hashtbl.create 8 in
-  List.iter
-    (fun (e : Sol_cli_deployment.t) ->
-       let release_id = Sol_cli_release_id.to_string e.release_id in
-       if not (Hashtbl.mem by_release_id release_id)
-       then Hashtbl.add by_release_id release_id e.requested_scope)
-    matches;
+  matches
+  |> List.iter (fun (e : Sol_cli_deployment.t) ->
+    let release_id = Sol_cli_release_id.to_string e.release_id in
+    if not (Hashtbl.mem by_release_id release_id)
+    then Hashtbl.add by_release_id release_id e.requested_scope);
   match Hashtbl.fold (fun k v acc -> (k, v) :: acc) by_release_id [] with
   | [] -> Commit_no_match
   | [ (release_id, _) ] -> Commit_resolved release_id
@@ -885,9 +875,9 @@ let resolve_commit ~commit ?scope ~target (events : Sol_cli_deployment.t list)
   : commit_resolution
   =
   let parsed_scope =
-    Option.map
-      (fun s -> Sol_cli_deployment_scope.parse_request ~what:"--scope" (Some s))
-      scope
+    scope
+    |> Option.map (fun s ->
+      Sol_cli_deployment_scope.parse_request ~what:"--scope" (Some s))
   in
   match parsed_scope with
   | Some (Error msg) -> Commit_invalid msg
@@ -919,10 +909,9 @@ let commit_resolution_to_string ~commit ~target ?scope resolution =
       where
       (String.concat
          "\n"
-         (List.map
-            (fun (release_id, requested_scope) ->
-               Printf.sprintf "  %s  (requested scope: %s)" release_id requested_scope)
-            candidates))
+         (candidates
+          |> List.map (fun (release_id, requested_scope) ->
+            Printf.sprintf "  %s  (requested scope: %s)" release_id requested_scope)))
   | Commit_resolved release_id ->
     Printf.sprintf "resolved %s to release %s" where release_id
 ;;

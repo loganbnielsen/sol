@@ -18,22 +18,20 @@ let upgrade_install ~release ~chart ~namespace ?version ?(values = []) ?values_y
       | Str s -> [ "--set-string"; Printf.sprintf "%s=%s" k s ])
   in
   let values_file =
-    Option.map
-      (fun content ->
-         let tmp = Filename.temp_file "sol-helm-values-" ".yaml" in
-         let oc = open_out tmp in
-         output_string oc content;
-         close_out oc;
-         tmp)
-      values_yaml
+    values_yaml
+    |> Option.map (fun content ->
+      let tmp = Filename.temp_file "sol-helm-values-" ".yaml" in
+      let oc = open_out tmp in
+      output_string oc content;
+      close_out oc;
+      tmp)
   in
   Fun.protect
     ~finally:(fun () ->
-      Option.iter
-        (fun tmp ->
-           try Sys.remove tmp with
-           | _ -> ())
-        values_file)
+      values_file
+      |> Option.iter (fun tmp ->
+        try Sys.remove tmp with
+        | _ -> ()))
     (fun () ->
        let file_flags =
          match values_file with

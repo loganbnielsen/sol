@@ -68,10 +68,9 @@ let orphan_sweep ?(gaps = []) probes : Sol_cli_destroy_verification.sweep =
    a peering is on -- and take that name from state rather than rebuilding it from
    a naming convention. *)
 let state_name pre_destroy kind =
-  List.find_map
-    (fun (resource : Sol_cli_cloud_destroy.resource) ->
-       if String.equal resource.kind kind then resource.name else None)
-    (Sol_cli_cloud_destroy.resources pre_destroy)
+  Sol_cli_cloud_destroy.resources pre_destroy
+  |> List.find_map (fun (resource : Sol_cli_cloud_destroy.resource) ->
+    if String.equal resource.kind kind then resource.name else None)
 ;;
 
 (* ── HARDEN-004 step 5: the observation ────────────────────────────────────── *)

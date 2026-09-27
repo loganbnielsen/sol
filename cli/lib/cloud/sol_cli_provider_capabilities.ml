@@ -236,9 +236,8 @@ let gcp =
         shared
         |> add_opt
              "provisioner_impersonators"
-             (Option.map
-                (fun member -> Printf.sprintf "[%S]" member)
-                (Sol_cli_config.provider_field target "provisioner_impersonator"))
+             (Sol_cli_config.provider_field target "provisioner_impersonator"
+              |> Option.map (fun member -> Printf.sprintf "[%S]" member))
         (* INFRA-077 / FND-0057: Cloud Storage soft-deletes and bills deleted objects
            for 7 days by default, so a `destroy_retention: none` destroy would leave
            the observability data billed. `none` creates the buckets with soft delete

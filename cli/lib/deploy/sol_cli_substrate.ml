@@ -66,12 +66,11 @@ let value_from_env key =
    refusal. *)
 let secret_docs ?(secrets = Sol_cli_manifest.default_secrets) namespaces =
   let missing =
-    List.filter_map
-      (fun (key, _) ->
-         match Sys.getenv_opt key with
-         | Some _ -> None
-         | None -> Some key)
-      secrets
+    secrets
+    |> List.filter_map (fun (key, _) ->
+      match Sys.getenv_opt key with
+      | Some _ -> None
+      | None -> Some key)
   in
   match missing with
   | first :: _ ->
@@ -83,14 +82,13 @@ let secret_docs ?(secrets = Sol_cli_manifest.default_secrets) namespaces =
          first)
   | [] ->
     Ok
-      (List.map
-         (fun ns ->
-            Sol_cli_manifest.secret_doc
-              ~base_secrets:(List.map (fun (k, _) -> k, value_from_env k) secrets)
-              ~ns
-              ~name:Sol_cli_manifest.runtime_secret_name
-              ())
-         namespaces)
+      (namespaces
+       |> List.map (fun ns ->
+         Sol_cli_manifest.secret_doc
+           ~base_secrets:(List.map (fun (k, _) -> k, value_from_env k) secrets)
+           ~ns
+           ~name:Sol_cli_manifest.runtime_secret_name
+           ()))
 ;;
 
 (** The YAML documents that establish the workspace substrate for [namespaces],
@@ -273,13 +271,12 @@ let reconcile_operator_bindings ~ctx ~workspace : (unit, string) result =
      a diagnostic grant that quietly did not appear is the failure mode this whole
      line of work exists to remove. *)
   let failures =
-    List.filter_map
-      (fun ns ->
-         match create_doc ~ctx (Sol_cli_manifest.operator_role_binding_doc ~ns) with
-         | Ok () -> None
-         | Error e when Sol_cli_kubectl.classify e = Not_found -> None
-         | Error e -> Some (Printf.sprintf "%s: %s" ns (create_failure e)))
-      namespaces
+    namespaces
+    |> List.filter_map (fun ns ->
+      match create_doc ~ctx (Sol_cli_manifest.operator_role_binding_doc ~ns) with
+      | Ok () -> None
+      | Error e when Sol_cli_kubectl.classify e = Not_found -> None
+      | Error e -> Some (Printf.sprintf "%s: %s" ns (create_failure e)))
   in
   match failures with
   | [] -> Ok ()

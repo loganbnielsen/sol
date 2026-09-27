@@ -478,9 +478,9 @@ let deescalation_probe ~region ~outputs ~provisioner_role_arn () =
           (* Never interrogate another principal's capabilities and call it evidence. *)
           []
         | _ ->
-          List.map
-            (fun capability -> capability, capability_answer_of_can_i ~env capability)
-            bootstrap_only_capabilities
+          bootstrap_only_capabilities
+          |> List.map (fun capability ->
+            capability, capability_answer_of_can_i ~env capability)
       in
       principal, probes)
   with
@@ -750,9 +750,9 @@ let observe_bootstrap_window_result ~region ~outputs ~provisioner_role_arn () =
     let control = deescalation_probe ~region ~outputs ~provisioner_role_arn () in
     let principal, probes = control in
     let permitted =
-      List.exists
-        (fun (_, answer) -> Sol_cli_cloud_lifecycle.answer_is_permitted answer)
-        probes
+      probes
+      |> List.exists (fun (_, answer) ->
+        Sol_cli_cloud_lifecycle.answer_is_permitted answer)
     in
     let indeterminate =
       List.filter_map Sol_cli_cloud_lifecycle.indeterminate_reason probes

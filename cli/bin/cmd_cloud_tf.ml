@@ -135,15 +135,14 @@ let trim_quotes s =
 ;;
 
 let var_value key vars =
-  List.find_map
-    (fun v ->
-       match String.index_opt v '=' with
-       | None -> None
-       | Some i ->
-         if String.sub v 0 i |> String.trim = key
-         then Some (String.sub v (i + 1) (String.length v - i - 1) |> trim_quotes)
-         else None)
-    (List.rev vars)
+  List.rev vars
+  |> List.find_map (fun v ->
+    match String.index_opt v '=' with
+    | None -> None
+    | Some i ->
+      if String.sub v 0 i |> String.trim = key
+      then Some (String.sub v (i + 1) (String.length v - i - 1) |> trim_quotes)
+      else None)
 ;;
 
 let var_file_value key path =
@@ -695,12 +694,11 @@ let await_platform_readiness ~provider ~env =
   in
   let unmet_count checks =
     List.length
-      (List.filter
-         (fun (_, state) ->
-            match state with
-            | Sol_cli_cloud_lifecycle.Established -> false
-            | Sol_cli_cloud_lifecycle.Unmet _ -> true)
-         checks)
+      (checks
+       |> List.filter (fun (_, state) ->
+         match state with
+         | Sol_cli_cloud_lifecycle.Established -> false
+         | Sol_cli_cloud_lifecycle.Unmet _ -> true))
   in
   let deadline_s =
     (* Generous because a fresh install's controllers need minutes. Overridable so
@@ -1156,12 +1154,11 @@ let cloud_init
 let report_degradations = function
   | [] -> ()
   | degradations ->
-    List.iter
-      (fun message ->
-         Printf.eprintf
-           "warning: a preparation degraded and destruction continued -- %s\n%!"
-           message)
-      degradations;
+    degradations
+    |> List.iter (fun message ->
+      Printf.eprintf
+        "warning: a preparation degraded and destruction continued -- %s\n%!"
+        message);
     Printf.eprintf
       "warning: destruction reached absence with %d degraded preparation(s)\n%!"
       (List.length degradations)

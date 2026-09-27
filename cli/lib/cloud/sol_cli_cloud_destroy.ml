@@ -527,9 +527,8 @@ let execute ~deps =
            (match teardown ~deps ~substrate with
             | Error (failure, cleanup) -> fail ~cleanup failure
             | Ok (cleanup, teardown_degradations) ->
-              List.iter
-                (fun message -> degradations := message :: !degradations)
-                teardown_degradations;
+              teardown_degradations
+              |> List.iter (fun message -> degradations := message :: !degradations);
               (* A removal failure on the otherwise-successful path is fatal, the
                  same as the old `require_terraform_success (deescalate ())`; it
                  is carried as the failure rather than dropped. *)

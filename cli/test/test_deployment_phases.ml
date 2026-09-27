@@ -570,9 +570,8 @@ let test_plan_service_count () =
 let test_plan_service_primitives () =
   let plan = make_plan [ svc_spec; worker_spec; fn_spec ] in
   let primitives =
-    List.map
-      (fun s -> s.Sol_cli_deployment_plan.primitive)
-      plan.Sol_cli_deployment_plan.services
+    plan.Sol_cli_deployment_plan.services
+    |> List.map (fun s -> s.Sol_cli_deployment_plan.primitive)
   in
   Alcotest.(check bool)
     "Svc present"
@@ -722,11 +721,10 @@ let with_temp_dir f =
     (fun () -> f dir)
     ~finally:(fun () ->
       (try
-         Array.iter
-           (fun name ->
-              try Sys.remove (Filename.concat dir name) with
-              | _ -> ())
-           (Sys.readdir dir)
+         Sys.readdir dir
+         |> Array.iter (fun name ->
+           try Sys.remove (Filename.concat dir name) with
+           | _ -> ())
        with
        | _ -> ());
       try Unix.rmdir dir with

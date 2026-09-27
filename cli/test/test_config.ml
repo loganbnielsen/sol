@@ -1818,9 +1818,8 @@ let test_omit_is_sticky () =
     Alcotest.(check bool)
       "a target cannot bring back what its environment omitted"
       false
-      (List.exists
-         (fun (s : Sol_cli_config.service) -> s.name = "api")
-         (Sol_cli_config.services cfg)))
+      (Sol_cli_config.services cfg
+       |> List.exists (fun (s : Sol_cli_config.service) -> s.name = "api")))
 ;;
 
 (* REFAC-123: blank is decided in the decoder, quoted or not. A blank value is a

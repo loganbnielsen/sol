@@ -18,24 +18,23 @@ let indent_of line =
 let body_of_target_file text =
   let lines = String.split_on_char '\n' text in
   let in_target = ref false in
-  List.filter_map
-    (fun line ->
-       let trimmed = String.trim line in
-       let ind = indent_of line in
-       if trimmed = "target:" && ind = 0
-       then (
-         in_target := true;
-         None)
-       else if trimmed = "" || (String.length trimmed > 0 && trimmed.[0] = '#')
-       then Some line
-       else if ind = 0
-       then (
-         in_target := false;
-         Some line)
-       else if !in_target && ind >= 2
-       then Some (String.sub line 2 (String.length line - 2))
-       else Some line)
-    lines
+  lines
+  |> List.filter_map (fun line ->
+    let trimmed = String.trim line in
+    let ind = indent_of line in
+    if trimmed = "target:" && ind = 0
+    then (
+      in_target := true;
+      None)
+    else if trimmed = "" || (String.length trimmed > 0 && trimmed.[0] = '#')
+    then Some line
+    else if ind = 0
+    then (
+      in_target := false;
+      Some line)
+    else if !in_target && ind >= 2
+    then Some (String.sub line 2 (String.length line - 2))
+    else Some line)
 ;;
 
 let mkdir_p path =
@@ -59,22 +58,21 @@ let render entries =
       entries
   in
   let buf = Buffer.create 512 in
-  List.iter
-    (fun env ->
-       Buffer.add_string buf (env ^ ":\n  targets:\n");
-       List.iter
-         (fun (target, text) ->
-            match String.split_on_char '/' target with
-            | [ e; provider; region ] when e = env ->
-              Buffer.add_string buf (Printf.sprintf "    %s/%s:\n" provider region);
-              List.iter
-                (fun line ->
-                   if String.trim line <> ""
-                   then Buffer.add_string buf ("      " ^ line ^ "\n"))
-                (body_of_target_file text)
-            | _ -> ())
-         entries)
-    envs;
+  envs
+  |> List.iter (fun env ->
+    Buffer.add_string buf (env ^ ":\n  targets:\n");
+    List.iter
+      (fun (target, text) ->
+         match String.split_on_char '/' target with
+         | [ e; provider; region ] when e = env ->
+           Buffer.add_string buf (Printf.sprintf "    %s/%s:\n" provider region);
+           List.iter
+             (fun line ->
+                if String.trim line <> ""
+                then Buffer.add_string buf ("      " ^ line ^ "\n"))
+             (body_of_target_file text)
+         | _ -> ())
+      entries);
   Buffer.contents buf
 ;;
 

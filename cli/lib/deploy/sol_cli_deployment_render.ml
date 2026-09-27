@@ -102,12 +102,11 @@ let render
           | None -> ""
         in
         let missing_keys =
-          List.filter_map
-            (fun (k, _) ->
-               match Sys.getenv_opt k with
-               | Some _ -> None
-               | None -> Some k)
-            secrets
+          secrets
+          |> List.filter_map (fun (k, _) ->
+            match Sys.getenv_opt k with
+            | Some _ -> None
+            | None -> Some k)
         in
         (match missing_keys with
          | _ :: _ ->
@@ -156,17 +155,15 @@ let render
            ; secret_resource
            ; network_policy_doc
                ~egress_to:
-                 (List.map
-                    (fun (c : Sol_cli_deployment_plan.service_call) ->
-                       ( Sol_cli_kubernetes_name.namespace_to_string c.target_namespace
-                       , Sol_cli_kubernetes_name.k8s_name_to_string c.target_name ))
-                    calls)
+                 (calls
+                  |> List.map (fun (c : Sol_cli_deployment_plan.service_call) ->
+                    ( Sol_cli_kubernetes_name.namespace_to_string c.target_namespace
+                    , Sol_cli_kubernetes_name.k8s_name_to_string c.target_name )))
                ~ingress_from:
-                 (List.map
-                    (fun (c : Sol_cli_deployment_plan.service_call) ->
-                       ( Sol_cli_kubernetes_name.namespace_to_string c.target_namespace
-                       , Sol_cli_kubernetes_name.k8s_name_to_string c.target_name ))
-                    called_by)
+                 (called_by
+                  |> List.map (fun (c : Sol_cli_deployment_plan.service_call) ->
+                    ( Sol_cli_kubernetes_name.namespace_to_string c.target_namespace
+                    , Sol_cli_kubernetes_name.k8s_name_to_string c.target_name )))
                ~ns
                ~name
                ()

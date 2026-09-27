@@ -101,13 +101,12 @@ let test_selected_and_excluded_partition_the_selection () =
          (names resolved.services)
          (names (o.selected @ o.excluded));
        let selected_names = names o.selected in
-       List.iter
-         (fun name ->
-            Alcotest.(check bool)
-              (Printf.sprintf "included %s is also selected" name)
-              true
-              (List.mem name selected_names))
-         (names o.included))
+       names o.included
+       |> List.iter (fun name ->
+         Alcotest.(check bool)
+           (Printf.sprintf "included %s is also selected" name)
+           true
+           (List.mem name selected_names)))
     [ None; Some "payments"; Some "payments/charge_svc" ]
 ;;
 

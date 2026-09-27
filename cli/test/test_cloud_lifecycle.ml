@@ -39,12 +39,11 @@ let target : Sol_cli_config.target =
 let without_aws_field key (t : Sol_cli_config.target) =
   { t with
     provider_fields =
-      List.map
-        (fun (provider, fields) ->
-           if provider = "aws"
-           then provider, List.remove_assoc key fields
-           else provider, fields)
-        t.provider_fields
+      t.provider_fields
+      |> List.map (fun (provider, fields) ->
+        if provider = "aws"
+        then provider, List.remove_assoc key fields
+        else provider, fields)
   }
 ;;
 
@@ -855,31 +854,30 @@ let converged_cluster provider =
 ;;
 
 let test_readiness_fails_each_predicate () =
-  List.iter
-    (fun p ->
-       let succeeds = converged_cluster p in
-       let all = L.readiness ~provider:p ~run:succeeds in
-       Alcotest.(check string)
-         (Printf.sprintf "baseline (%s)" (Sol_cli_provider.to_string p))
-         "Ready"
-         (L.readiness_summary all);
-       List.iteri
-         (fun failed _ ->
-            let index = ref (-1) in
-            let checks =
-              L.readiness ~provider:p ~run:(fun argv ->
-                incr index;
-                if !index = failed then None else succeeds argv)
-            in
-            Alcotest.(check bool)
-              (Printf.sprintf
-                 "predicate %d fails closed (%s)"
-                 failed
-                 (Sol_cli_provider.to_string p))
-              true
-              (L.readiness_summary checks <> "Ready"))
-         all)
-    Sol_cli_provider.all
+  Sol_cli_provider.all
+  |> List.iter (fun p ->
+    let succeeds = converged_cluster p in
+    let all = L.readiness ~provider:p ~run:succeeds in
+    Alcotest.(check string)
+      (Printf.sprintf "baseline (%s)" (Sol_cli_provider.to_string p))
+      "Ready"
+      (L.readiness_summary all);
+    List.iteri
+      (fun failed _ ->
+         let index = ref (-1) in
+         let checks =
+           L.readiness ~provider:p ~run:(fun argv ->
+             incr index;
+             if !index = failed then None else succeeds argv)
+         in
+         Alcotest.(check bool)
+           (Printf.sprintf
+              "predicate %d fails closed (%s)"
+              failed
+              (Sol_cli_provider.to_string p))
+           true
+           (L.readiness_summary checks <> "Ready"))
+      all)
 ;;
 
 let readiness_with_storage ~provider storage_output =
@@ -1650,14 +1648,13 @@ let test_effective_authorization () =
     "declared boundary"
     true
     (provisioner_authorization_established ~can_i);
-  List.iter
-    (fun (_, failed) ->
-       Alcotest.(check bool)
-         (String.concat " " failed)
-         false
-         (provisioner_authorization_established ~can_i:(fun args ->
-            if args = failed then not (can_i args) else can_i args)))
-    expected
+  expected
+  |> List.iter (fun (_, failed) ->
+    Alcotest.(check bool)
+      (String.concat " " failed)
+      false
+      (provisioner_authorization_established ~can_i:(fun args ->
+         if args = failed then not (can_i args) else can_i args)))
 ;;
 
 let test_terraform_scope () =

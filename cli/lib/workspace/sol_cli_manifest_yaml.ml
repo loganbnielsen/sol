@@ -218,16 +218,15 @@ let external_secret_doc
   let remote_refs =
     String.concat
       "\n"
-      (List.map
-         (fun key ->
-            f
-              {|  - secretKey: %s
+      (secret_keys
+       |> List.map (fun key ->
+         f
+           {|  - secretKey: %s
     remoteRef:
       key: %s%s|}
-              key
-              key_prefix
-              key)
-         secret_keys)
+           key
+           key_prefix
+           key))
   in
   f
     {|---
@@ -262,18 +261,17 @@ let render_secret_key_refs ~name secret_keys =
     "\n        env:\n"
     ^ String.concat
         "\n"
-        (List.map
-           (fun key ->
-              f
-                {|        - name: %s
+        (keys
+         |> List.map (fun key ->
+           f
+             {|        - name: %s
           valueFrom:
             secretKeyRef:
               name: %s-secrets
               key: %s|}
-                key
-                name
-                key)
-           keys)
+             key
+             name
+             key))
 ;;
 
 let render_extra_labels labels =
@@ -353,10 +351,9 @@ let render_volume_mounts volumes =
     "        volumeMounts:\n"
     ^ String.concat
         ""
-        (List.map
-           (fun (v : Sol_cli_toml.volume) ->
-              f "        - name: %s\n          mountPath: %s\n" v.name v.mount_path)
-           volumes)
+        (volumes
+         |> List.map (fun (v : Sol_cli_toml.volume) ->
+           f "        - name: %s\n          mountPath: %s\n" v.name v.mount_path))
 ;;
 
 let render_pod_volumes ~name volumes =
@@ -366,24 +363,21 @@ let render_pod_volumes ~name volumes =
     "      volumes:\n"
     ^ String.concat
         ""
-        (List.map
-           (fun (v : Sol_cli_toml.volume) ->
-              f
-                "      - name: %s\n\
-                \        persistentVolumeClaim:\n\
-                \          claimName: %s\n"
-                v.name
-                (volume_claim_name ~name ~volume_name:v.name))
-           volumes)
+        (volumes
+         |> List.map (fun (v : Sol_cli_toml.volume) ->
+           f
+             "      - name: %s\n        persistentVolumeClaim:\n          claimName: %s\n"
+             v.name
+             (volume_claim_name ~name ~volume_name:v.name)))
 ;;
 
 let pvc_docs ~ns ~name volumes =
   String.concat
     "\n"
-    (List.map
-       (fun (v : Sol_cli_toml.volume) ->
-          f
-            {|---
+    (volumes
+     |> List.map (fun (v : Sol_cli_toml.volume) ->
+       f
+         {|---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -396,11 +390,10 @@ spec:
     requests:
       storage: %s
 |}
-            (volume_claim_name ~name ~volume_name:v.name)
-            ns
-            (Sol_cli_toml.volume_access_mode_to_string v.access_mode)
-            v.size)
-       volumes)
+         (volume_claim_name ~name ~volume_name:v.name)
+         ns
+         (Sol_cli_toml.volume_access_mode_to_string v.access_mode)
+         v.size))
 ;;
 
 (* AUDIT-080: the framework drain timeout is 30s (sol-svc/sol-worker), and

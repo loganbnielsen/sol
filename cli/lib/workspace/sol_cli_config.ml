@@ -947,17 +947,16 @@ let app_shape_keys (l : layer) =
          ; "indexes", r.indexes <> []
          ])
     l.resources
-  @ List.concat_map
-      (fun (sv : service) ->
-         List.filter_map
-           (fun (name, set) ->
-              if set then Some (Printf.sprintf "services.%s.%s" sv.name name) else None)
-           [ "type", sv.typ <> None
-           ; "path", sv.path <> None
-           ; "language", sv.language <> None
-           ; "uses", sv.uses <> []
-           ])
-      l.services
+  @ (l.services
+     |> List.concat_map (fun (sv : service) ->
+       List.filter_map
+         (fun (name, set) ->
+            if set then Some (Printf.sprintf "services.%s.%s" sv.name name) else None)
+         [ "type", sv.typ <> None
+         ; "path", sv.path <> None
+         ; "language", sv.language <> None
+         ; "uses", sv.uses <> []
+         ]))
 ;;
 
 let check_placement ~path (e : environment) =
@@ -1072,9 +1071,9 @@ let layer_keys (l : layer) =
         ; opt "node_failure_headroom_nodes" t.node_failure_headroom_nodes
         ; opt "profile" t.profile
         ]
-      @ List.concat_map
-          (fun (provider, fields) -> List.map (fun (k, _) -> provider ^ "." ^ k) fields)
-          t.provider_fields
+      @ (t.provider_fields
+         |> List.concat_map (fun (provider, fields) ->
+           List.map (fun (k, _) -> provider ^ "." ^ k) fields))
   in
   target_keys
   @ List.concat_map
@@ -1082,13 +1081,12 @@ let layer_keys (l : layer) =
          let p = "resources." ^ r.name ^ "." in
          opt (p ^ "size") r.size @ if r.omit then [ p ^ "omit" ] else [])
       l.resources
-  @ List.concat_map
-      (fun (sv : service) ->
-         let p = "services." ^ sv.name ^ "." in
-         opt (p ^ "scale.min") sv.scale_min
-         @ opt (p ^ "scale.max") sv.scale_max
-         @ if sv.omit then [ p ^ "omit" ] else [])
-      l.services
+  @ (l.services
+     |> List.concat_map (fun (sv : service) ->
+       let p = "services." ^ sv.name ^ "." in
+       opt (p ^ "scale.min") sv.scale_min
+       @ opt (p ^ "scale.max") sv.scale_max
+       @ if sv.omit then [ p ^ "omit" ] else []))
 ;;
 
 let disjoint ~path ~context tracked local =
@@ -1126,9 +1124,9 @@ let union_environments ~local_path ~tracked ~local =
                   let context = l.env_name ^ ".targets." ^ key in
                   let* () = disjoint ~path:local_path ~context tt lt in
                   Ok
-                    (List.map
-                       (fun (k, v) -> if k = key then k, merge tt lt else k, v)
-                       targets))
+                    (targets
+                     |> List.map (fun (k, v) -> if k = key then k, merge tt lt else k, v)
+                    ))
              e.targets
              l.targets
          in
@@ -1347,16 +1345,14 @@ let resolve ~base ~envs (target : target) =
   let env_layer, target_layer = find_target envs target in
   let undeclared context (layer : layer) =
     let unknown_resource =
-      List.find_opt
-        (fun (r : resource) ->
-           not (List.exists (fun (b : resource) -> b.name = r.name) base.resources))
-        layer.resources
+      layer.resources
+      |> List.find_opt (fun (r : resource) ->
+        not (List.exists (fun (b : resource) -> b.name = r.name) base.resources))
     in
     let unknown_service =
-      List.find_opt
-        (fun (sv : service) ->
-           not (List.exists (fun (b : service) -> b.name = sv.name) base.services))
-        layer.services
+      layer.services
+      |> List.find_opt (fun (sv : service) ->
+        not (List.exists (fun (b : service) -> b.name = sv.name) base.services))
     in
     let fail kind name =
       Error

@@ -109,11 +109,10 @@ let create ?(base = base_dir) ?(keep = 20) ~prefix () : t =
     (fun stale_id ->
        let stale_dir = Filename.concat base_dir stale_id in
        try
-         Array.iter
-           (fun f ->
-              try Sys.remove (Filename.concat stale_dir f) with
-              | _ -> ())
-           (Sys.readdir stale_dir);
+         Sys.readdir stale_dir
+         |> Array.iter (fun f ->
+           try Sys.remove (Filename.concat stale_dir f) with
+           | _ -> ());
          Unix.rmdir stale_dir
        with
        | _ -> ())

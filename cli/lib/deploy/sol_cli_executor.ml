@@ -81,14 +81,13 @@ let gitops
 let write_release_bundle ~dir ~(apply_mode : Sol_cli_release.apply_mode) plan =
   (try Unix.mkdir dir 0o755 with
    | Unix.Unix_error (Unix.EEXIST, _, _) -> ());
-  List.iter
-    (fun (name, contents) ->
-       let path = Filename.concat dir name in
-       let oc = open_out path in
-       Fun.protect
-         ~finally:(fun () -> close_out_noerr oc)
-         (fun () -> output_string oc contents))
-    (Sol_cli_release.bundle_files (Sol_cli_release.of_plan ~apply_mode plan))
+  Sol_cli_release.bundle_files (Sol_cli_release.of_plan ~apply_mode plan)
+  |> List.iter (fun (name, contents) ->
+    let path = Filename.concat dir name in
+    let oc = open_out path in
+    Fun.protect
+      ~finally:(fun () -> close_out_noerr oc)
+      (fun () -> output_string oc contents))
 ;;
 
 (* ── plan-level executor ─────────────────────────────────────────────────── *)
@@ -115,19 +114,18 @@ let run_plan
   in
   (* Render all specs upfront; surface the first error before any side effect. *)
   let rendered =
-    List.map
-      (fun spec ->
-         match
-           Sol_cli_deployment_render.render_spec
-             ~workspace
-             ?env
-             ~release_id:plan.Sol_cli_deployment_plan.release_id
-             ~secret_backend:backend
-             spec
-         with
-         | Error msg -> Error (spec, msg)
-         | Ok yaml -> Ok (spec, yaml))
-      services
+    services
+    |> List.map (fun spec ->
+      match
+        Sol_cli_deployment_render.render_spec
+          ~workspace
+          ?env
+          ~release_id:plan.Sol_cli_deployment_plan.release_id
+          ~secret_backend:backend
+          spec
+      with
+      | Error msg -> Error (spec, msg)
+      | Ok yaml -> Ok (spec, yaml))
   in
   match
     List.find_opt

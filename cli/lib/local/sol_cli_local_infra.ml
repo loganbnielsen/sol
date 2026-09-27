@@ -136,13 +136,12 @@ let run_bounded ?(max_in_flight = max_in_flight_default) installs =
   pump ();
   let not_started = List.map (fun (_, install) -> install.label) !queue in
   let failures = List.sort (fun (_, _, a) (_, _, b) -> compare a b) !failures in
-  List.iter
-    (fun (label, log, _) ->
-       let output = read_file log in
-       if output <> ""
-       then Printf.eprintf "\n--- %s output ---\n%s%!" label output
-       else Printf.eprintf "\n--- %s failed with no output ---\n%!" label)
-    failures;
+  failures
+  |> List.iter (fun (label, log, _) ->
+    let output = read_file log in
+    if output <> ""
+    then Printf.eprintf "\n--- %s output ---\n%s%!" label output
+    else Printf.eprintf "\n--- %s failed with no output ---\n%!" label);
   (* Every log is temporary: the failing ones have just been printed, and the
      successful ones said all they had to say in their progress line. *)
   List.iter remove_quietly !logs;

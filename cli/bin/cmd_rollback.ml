@@ -43,30 +43,27 @@ let wait_s = Sol_cli_boundary_lease.rollback_wait_s
    travelling in one emitted commit) is not this pass's concern. *)
 let apply_specs ~ctx ~local ~release ~release_id_t specs =
   try
-    List.iter
-      (fun (spec : Sol_cli_deployment_plan.service_spec) ->
-         (* SEC-006: a local rollback re-renders what `sol up` recorded, which
+    specs
+    |> List.iter (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+      (* SEC-006: a local rollback re-renders what `sol up` recorded, which
             does not carry the local-only Unverified_dev_only opt-in (only
             [Sol_cli_executor.local] adds it); restore it here, locally only. *)
-         let spec =
-           if local then Sol_cli_executor.local_development_spec spec else spec
-         in
-         match
-           Sol_cli_deployment_render.render_spec
-             ~workspace:release.Sol_cli_release.workspace
-             ?env:release.Sol_cli_release.environment
-             ~release_id:release_id_t
-             ~secret_backend:Sol_cli_manifest.Kubernetes_live
-             spec
-         with
-         | Error msg -> raise (Sol_cli_manifest.Deploy_failed msg)
-         | Ok yaml ->
-           Sol_cli_manifest.apply ~ctx yaml ~dry_run:false;
-           Printf.printf
-             "  applied %s/%s\n%!"
-             (Sol_cli_deployment_plan.namespace_to_string spec.namespace)
-             (Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name))
-      specs;
+      let spec = if local then Sol_cli_executor.local_development_spec spec else spec in
+      match
+        Sol_cli_deployment_render.render_spec
+          ~workspace:release.Sol_cli_release.workspace
+          ?env:release.Sol_cli_release.environment
+          ~release_id:release_id_t
+          ~secret_backend:Sol_cli_manifest.Kubernetes_live
+          spec
+      with
+      | Error msg -> raise (Sol_cli_manifest.Deploy_failed msg)
+      | Ok yaml ->
+        Sol_cli_manifest.apply ~ctx yaml ~dry_run:false;
+        Printf.printf
+          "  applied %s/%s\n%!"
+          (Sol_cli_deployment_plan.namespace_to_string spec.namespace)
+          (Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name));
     Ok ()
   with
   | Sol_cli_manifest.Deploy_failed msg -> Error msg

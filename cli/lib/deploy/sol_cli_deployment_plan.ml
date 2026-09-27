@@ -231,25 +231,23 @@ let release_workload_of_spec (spec : service_spec) : Sol_cli_release_id.workload
   ; memory = Sol_cli_toml.memory_quantity_to_string spec.memory
   ; extra_labels = spec.extra_labels
   ; volumes =
-      List.map
-        (fun (v : Sol_cli_toml.volume) ->
-           ( v.name
-           , v.mount_path
-           , v.size
-           , Sol_cli_toml.volume_access_mode_to_string v.access_mode ))
-        spec.volumes
+      spec.volumes
+      |> List.map (fun (v : Sol_cli_toml.volume) ->
+        ( v.name
+        , v.mount_path
+        , v.size
+        , Sol_cli_toml.volume_access_mode_to_string v.access_mode ))
   ; rollout = release_rollout_to_string spec
   ; ingress_host = Option.map Sol_cli_toml.hostname_to_string spec.ingress_host
   ; ingress_path = Option.map Sol_cli_toml.ingress_path_to_string spec.ingress_path
   ; cluster_issuer = spec.cluster_issuer
   ; calls =
-      List.map
-        (fun (c : service_call) ->
-           ( c.env_var
-           , c.target_domain
-           , k8s_name_to_string c.target_name
-           , namespace_to_string c.target_namespace ))
-        spec.calls
+      spec.calls
+      |> List.map (fun (c : service_call) ->
+        ( c.env_var
+        , c.target_domain
+        , k8s_name_to_string c.target_name
+        , namespace_to_string c.target_namespace ))
   }
 ;;
 
@@ -318,18 +316,17 @@ let to_json t =
       ; "secret_keys", `List (List.map (fun (k, _) -> `String k) s.secrets)
       ; ( "volumes"
         , `List
-            (List.map
-               (fun (v : Sol_cli_toml.volume) ->
-                  `Assoc
-                    [ "name", `String v.Sol_cli_toml.name
-                    ; "mount_path", `String v.Sol_cli_toml.mount_path
-                    ; "size", `String v.Sol_cli_toml.size
-                    ; ( "access_mode"
-                      , `String
-                          (Sol_cli_toml.volume_access_mode_to_string
-                             v.Sol_cli_toml.access_mode) )
-                    ])
-               s.volumes) )
+            (s.volumes
+             |> List.map (fun (v : Sol_cli_toml.volume) ->
+               `Assoc
+                 [ "name", `String v.Sol_cli_toml.name
+                 ; "mount_path", `String v.Sol_cli_toml.mount_path
+                 ; "size", `String v.Sol_cli_toml.size
+                 ; ( "access_mode"
+                   , `String
+                       (Sol_cli_toml.volume_access_mode_to_string
+                          v.Sol_cli_toml.access_mode) )
+                 ])) )
       ; "schedule", opt_string s.schedule
       ; "replicas", `Int s.replicas
       ; "cpu", `String (Sol_cli_toml.cpu_quantity_to_string s.cpu)
@@ -338,16 +335,15 @@ let to_json t =
       ; "ingress", ingress_json s
       ; ( "calls"
         , `List
-            (List.map
-               (fun c ->
-                  `Assoc
-                    [ "env", `String c.env_var
-                    ; "url", `String c.url
-                    ; "target_domain", `String c.target_domain
-                    ; "target_name", `String (k8s_name_to_string c.target_name)
-                    ; "target_namespace", `String (namespace_to_string c.target_namespace)
-                    ])
-               s.calls) )
+            (s.calls
+             |> List.map (fun c ->
+               `Assoc
+                 [ "env", `String c.env_var
+                 ; "url", `String c.url
+                 ; "target_domain", `String c.target_domain
+                 ; "target_name", `String (k8s_name_to_string c.target_name)
+                 ; "target_namespace", `String (namespace_to_string c.target_namespace)
+                 ])) )
       ; "progressive_delivery", progressive_delivery_to_json s.progressive_delivery
       ]
   in
@@ -371,10 +367,9 @@ let to_json t =
     ; "requested_scope", `String t.requested_scope
     ; ( "resolved_workloads"
       , `List
-          (List.map
-             (fun (s : service_spec) ->
-                `Assoc [ "domain", `String s.domain; "name", `String s.source_name ])
-             t.services) )
+          (t.services
+           |> List.map (fun (s : service_spec) ->
+             `Assoc [ "domain", `String s.domain; "name", `String s.source_name ])) )
     ; "services", `List (List.map service_to_json t.services)
     ; ( "topics"
       , `List
@@ -382,19 +377,16 @@ let to_json t =
       )
     ; ( "migrations"
       , `List
-          (List.map
-             (fun s -> `String (Sol_cli_plan_ids.Migration_file.to_string s))
-             t.migrations) )
+          (t.migrations
+           |> List.map (fun s -> `String (Sol_cli_plan_ids.Migration_file.to_string s))) )
     ; ( "schema_subjects"
       , `List
-          (List.map
-             (fun s -> `String (Sol_cli_plan_ids.Schema_subject.to_string s))
-             t.schema_subjects) )
+          (t.schema_subjects
+           |> List.map (fun s -> `String (Sol_cli_plan_ids.Schema_subject.to_string s))) )
     ; ( "consumer_groups"
       , `List
-          (List.map
-             (fun s -> `String (Sol_cli_plan_ids.Consumer_group.to_string s))
-             t.consumer_groups) )
+          (t.consumer_groups
+           |> List.map (fun s -> `String (Sol_cli_plan_ids.Consumer_group.to_string s))) )
     ; ( "profile"
       , match t.profile with
         | None -> `Null
@@ -403,9 +395,9 @@ let to_json t =
             [ "id", `String (Sol_cli_profile.to_string claim.profile)
             ; ( "evidence_requirements"
               , `List
-                  (List.map
-                     (fun c -> `String (Sol_cli_profile.capability_to_string c))
-                     claim.requirements) )
+                  (claim.requirements
+                   |> List.map (fun c -> `String (Sol_cli_profile.capability_to_string c))
+                  ) )
             ] )
     ]
 ;;
@@ -417,26 +409,24 @@ let pp_summary fmt t =
   Format.fprintf fmt "environment: %s (%s)@\n" env.name (mode_to_string env.mode);
   Format.fprintf fmt "registry:    %s@\n" env.registry;
   Format.fprintf fmt "tag:         %s@\n" env.image_tag;
-  Option.iter
-    (fun (claim : profile_claim) ->
-       Format.fprintf fmt "profile:     %s@\n" (Sol_cli_profile.to_string claim.profile))
-    t.profile;
+  t.profile
+  |> Option.iter (fun (claim : profile_claim) ->
+    Format.fprintf fmt "profile:     %s@\n" (Sol_cli_profile.to_string claim.profile));
   Format.fprintf fmt "@\n";
   Format.fprintf fmt "services:@\n";
-  List.iter
-    (fun (s : service_spec) ->
-       let rollout_strategy =
-         s |> effective_rollout_strategy |> effective_rollout_strategy_to_string
-       in
-       Format.fprintf
-         fmt
-         "  [%s] %s/%s    rollout=%s -> %s@\n"
-         (primitive_to_string s.primitive)
-         s.domain
-         s.source_name
-         rollout_strategy
-         s.image)
-    t.services;
+  t.services
+  |> List.iter (fun (s : service_spec) ->
+    let rollout_strategy =
+      s |> effective_rollout_strategy |> effective_rollout_strategy_to_string
+    in
+    Format.fprintf
+      fmt
+      "  [%s] %s/%s    rollout=%s -> %s@\n"
+      (primitive_to_string s.primitive)
+      s.domain
+      s.source_name
+      rollout_strategy
+      s.image);
   (match t.topics with
    | [] -> ()
    | topics ->
@@ -487,22 +477,21 @@ let service_uses_resource_type resolved_config service_name typ =
   | Some cfg ->
     let resources = Sol_cli_config.resources cfg in
     (match
-       List.find_opt
-         (fun (service : Sol_cli_config.service) -> service.name = service_name)
-         (Sol_cli_config.services cfg)
+       Sol_cli_config.services cfg
+       |> List.find_opt (fun (service : Sol_cli_config.service) ->
+         service.name = service_name)
      with
      | None -> false
      | Some service ->
-       List.exists
-         (fun ref ->
-            match resource_name_of_ref ref with
-            | None -> false
-            | Some name ->
-              List.exists
-                (fun (resource : Sol_cli_config.resource) ->
-                   resource.name = name && resource.typ = Some typ)
-                resources)
-         service.uses)
+       service.uses
+       |> List.exists (fun ref ->
+         match resource_name_of_ref ref with
+         | None -> false
+         | Some name ->
+           List.exists
+             (fun (resource : Sol_cli_config.resource) ->
+                resource.name = name && resource.typ = Some typ)
+             resources))
 ;;
 
 let derive_consumer_groups ?resolved_config workspace services =
@@ -669,9 +658,9 @@ let sol_yml_replicas_override ~resolved_config ~service_name =
   | None -> None
   | Some cfg ->
     (match
-       List.find_opt
-         (fun (s : Sol_cli_config.service) -> s.Sol_cli_config.name = service_name)
-         cfg.Sol_cli_config.services
+       cfg.Sol_cli_config.services
+       |> List.find_opt (fun (s : Sol_cli_config.service) ->
+         s.Sol_cli_config.name = service_name)
      with
      | None -> None
      | Some { Sol_cli_config.scale_max = Some _ as scale_max; _ } -> scale_max
@@ -685,9 +674,9 @@ let sol_yml_language ~resolved_config ~service_name =
   | None -> None
   | Some cfg ->
     (match
-       List.find_opt
-         (fun (s : Sol_cli_config.service) -> s.Sol_cli_config.name = service_name)
-         cfg.Sol_cli_config.services
+       cfg.Sol_cli_config.services
+       |> List.find_opt (fun (s : Sol_cli_config.service) ->
+         s.Sol_cli_config.name = service_name)
      with
      | None -> None
      | Some s -> s.Sol_cli_config.language)
@@ -702,17 +691,15 @@ let workload_capabilities ~resolved_config ~services ~topics ~migrations =
     match resolved_config with
     | None -> false
     | Some cfg ->
-      List.exists
-        (fun (r : Sol_cli_config.resource) -> r.typ = Some typ)
-        (Sol_cli_config.resources cfg)
+      Sol_cli_config.resources cfg
+      |> List.exists (fun (r : Sol_cli_config.resource) -> r.typ = Some typ)
   in
   let long_running =
-    List.exists
-      (fun (s : service_spec) ->
-         match s.primitive with
-         | Svc | Worker -> true
-         | Fn -> false)
-      services
+    services
+    |> List.exists (fun (s : service_spec) ->
+      match s.primitive with
+      | Svc | Worker -> true
+      | Fn -> false)
   in
   List.filter_map
     (fun (used, capability) -> if used then Some capability else None)
@@ -726,39 +713,39 @@ let profile_claim ~resolved_config ~services ~topics ~migrations ~whole_workspac
   match Option.map (fun (cfg : Sol_cli_config.t) -> cfg.target) resolved_config with
   | None -> None
   | Some target ->
-    Option.map
-      (fun profile ->
-         let requirements =
-           Sol_cli_profile.requirements
-             profile
-             (workload_capabilities ~resolved_config ~services ~topics ~migrations)
-         in
-         let declares typ =
-           match resolved_config with
-           | None -> false
-           | Some cfg ->
-             List.exists
-               (fun (resource : Sol_cli_config.resource) -> resource.typ = Some typ)
-               (Sol_cli_config.resources cfg)
-         in
-         let service_uses typ =
-           List.exists
-             (fun (service : service_spec) ->
-                service_uses_resource_type resolved_config service.source_name typ)
-             services
-         in
-         { profile
-         ; requirements
-         ; application_findings =
-             List.filter_map
-               (fun (missing, capability, reason) ->
-                  if missing && List.mem capability requirements
-                  then Some (capability, reason)
-                  else None)
-               [ ( not (declares "postgres")
-                 , Sol_cli_profile.Postgres_durability
-                 , "declare a postgres resource for database migrations" )
-               ; (* INFRA-038: a Service acquires a Kafka/event requirement by
+    target.Sol_cli_config.profile
+    |> Option.map (fun profile ->
+      let requirements =
+        Sol_cli_profile.requirements
+          profile
+          (workload_capabilities ~resolved_config ~services ~topics ~migrations)
+      in
+      let declares typ =
+        match resolved_config with
+        | None -> false
+        | Some cfg ->
+          List.exists
+            (fun (resource : Sol_cli_config.resource) -> resource.typ = Some typ)
+            (Sol_cli_config.resources cfg)
+      in
+      let service_uses typ =
+        List.exists
+          (fun (service : service_spec) ->
+             service_uses_resource_type resolved_config service.source_name typ)
+          services
+      in
+      { profile
+      ; requirements
+      ; application_findings =
+          List.filter_map
+            (fun (missing, capability, reason) ->
+               if missing && List.mem capability requirements
+               then Some (capability, reason)
+               else None)
+            [ ( not (declares "postgres")
+              , Sol_cli_profile.Postgres_durability
+              , "declare a postgres resource for database migrations" )
+            ; (* INFRA-038: a Service acquires a Kafka/event requirement by
                     *declaring* one, and not otherwise. The predicate below used to be
                     [not (service_uses "kafka")], which asked whether *any* selected
                     Service declared Kafka -- so a service that uses nothing, like the
@@ -777,13 +764,12 @@ let profile_claim ~resolved_config ~services ~topics ~migrations ~whole_workspac
                     Kafka requirement, and a Service that declares one still gets the
                     durability contract through [requirements] above, which is the
                     target-side question and is checked separately. *)
-                 ( whole_workspace && topics <> [] && not (service_uses "kafka")
-                 , Sol_cli_profile.Kafka_durability
-                 , "this workspace declares Kafka topics, so the Service that handles \
-                    them must declare uses: [<kafka resource>]" )
-               ]
-         })
-      target.Sol_cli_config.profile
+              ( whole_workspace && topics <> [] && not (service_uses "kafka")
+              , Sol_cli_profile.Kafka_durability
+              , "this workspace declares Kafka topics, so the Service that handles them \
+                 must declare uses: [<kafka resource>]" )
+            ]
+      })
 ;;
 
 let of_services_result
@@ -824,18 +810,16 @@ let of_services_result
         (services @ units)
   in
   let loaded =
-    List.map
-      (fun svc ->
-         (* DEC-024: [svc.dir] is workspace-root relative; join it to the
+    resolution_units
+    |> List.map (fun svc ->
+      (* DEC-024: [svc.dir] is workspace-root relative; join it to the
             resolved root so this read is correct even when the command was
             invoked from a descendant directory (and `sol deploy` keeps the
             invocation cwd for relative --emit-to paths). *)
-         Sol_cli_toml.load_result
-           (Sol_cli_workspace.at_root
-              (Filename.concat svc.Sol_cli_manifest.dir "sol.toml"))
-         |> Result.map_error (fun err -> Toml_error err)
-         |> Result.map (fun toml -> svc, toml))
-      resolution_units
+      Sol_cli_toml.load_result
+        (Sol_cli_workspace.at_root (Filename.concat svc.Sol_cli_manifest.dir "sol.toml"))
+      |> Result.map_error (fun err -> Toml_error err)
+      |> Result.map (fun toml -> svc, toml))
   in
   let rec collect_loaded acc = function
     | [] -> Ok (List.rev acc)
@@ -857,12 +841,11 @@ let of_services_result
     match String.split_on_char '/' ref with
     | [ domain; source_name ] when domain <> "" && source_name <> "" ->
       (match
-         List.find_opt
-           (fun (svc, _) ->
-              svc.Sol_cli_manifest.domain = domain
-              && svc.Sol_cli_manifest.name = source_name
-              && svc.Sol_cli_manifest.primitive = Sol_cli_manifest.Svc)
-           loaded
+         loaded
+         |> List.find_opt (fun (svc, _) ->
+           svc.Sol_cli_manifest.domain = domain
+           && svc.Sol_cli_manifest.name = source_name
+           && svc.Sol_cli_manifest.primitive = Sol_cli_manifest.Svc)
        with
        | None ->
          Error
@@ -924,9 +907,8 @@ let of_services_result
     in
     let* () =
       match
-        List.find_opt
-          (fun (key, _) -> List.exists (fun c -> c.env_var = key) calls)
-          toml.Sol_cli_toml.env_config
+        toml.Sol_cli_toml.env_config
+        |> List.find_opt (fun (key, _) -> List.exists (fun c -> c.env_var = key) calls)
       with
       | None -> Ok ()
       | Some (key, _) ->
@@ -1053,36 +1035,34 @@ let of_services_result
   in
   let* resolved_services = collect [] deployable in
   let resolved_services =
-    List.map
-      (fun (svc : service_spec) ->
-         let called_by =
-           List.filter_map
-             (fun (caller : service_spec) ->
-                if
-                  List.exists
-                    (fun c ->
-                       namespace_to_string c.target_namespace
-                       = namespace_to_string svc.namespace
-                       && k8s_name_to_string c.target_name
-                          = k8s_name_to_string svc.k8s_name)
-                    caller.calls
-                then
-                  Some
-                    { env_var = call_env_var caller.source_name
-                    ; url =
-                        service_url
-                          ~workspace
-                          ~domain:caller.domain
-                          ~k8s_name:caller.k8s_name
-                    ; target_domain = caller.domain
-                    ; target_name = caller.k8s_name
-                    ; target_namespace = caller.namespace
-                    }
-                else None)
-             resolved_services
-         in
-         { svc with called_by })
-      resolved_services
+    resolved_services
+    |> List.map (fun (svc : service_spec) ->
+      let called_by =
+        List.filter_map
+          (fun (caller : service_spec) ->
+             if
+               List.exists
+                 (fun c ->
+                    namespace_to_string c.target_namespace
+                    = namespace_to_string svc.namespace
+                    && k8s_name_to_string c.target_name = k8s_name_to_string svc.k8s_name)
+                 caller.calls
+             then
+               Some
+                 { env_var = call_env_var caller.source_name
+                 ; url =
+                     service_url
+                       ~workspace
+                       ~domain:caller.domain
+                       ~k8s_name:caller.k8s_name
+                 ; target_domain = caller.domain
+                 ; target_name = caller.k8s_name
+                 ; target_namespace = caller.namespace
+                 }
+             else None)
+          resolved_services
+      in
+      { svc with called_by })
   in
   (* FEAT-069: release identity is computed here because this is the first point
      at which all release-defining service inputs have been resolved. It is

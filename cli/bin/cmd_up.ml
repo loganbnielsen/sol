@@ -286,19 +286,18 @@ let apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
     | Error msg -> Error msg
     | Ok ctx_dir ->
       (try
-         List.iter
-           (fun (spec : Sol_cli_deployment_plan.service_spec) ->
-              (match Sol_cli_boundary_lease.ensure_held lease with
-               | Ok () -> ()
-               | Error msg -> raise (Deploy_failed msg));
-              apply_service
-                ~workspace
-                ~ctx_dir
-                ~sha
-                ~pf_failed
-                ~release_id:plan.Sol_cli_deployment_plan.release_id
-                spec)
-           plan.Sol_cli_deployment_plan.services;
+         plan.Sol_cli_deployment_plan.services
+         |> List.iter (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+           (match Sol_cli_boundary_lease.ensure_held lease with
+            | Ok () -> ()
+            | Error msg -> raise (Deploy_failed msg));
+           apply_service
+             ~workspace
+             ~ctx_dir
+             ~sha
+             ~pf_failed
+             ~release_id:plan.Sol_cli_deployment_plan.release_id
+             spec);
          Sol_cli_up_execution.remove_build_context ~ctx_dir;
          Ok ()
        with
@@ -326,14 +325,13 @@ let report_surplus_workloads ~workspace (plan : Sol_cli_deployment_plan.t) =
         Printf.printf
           "\nNote: %d live workload(s) in this workspace are not part of this deploy:\n"
           (List.length surplus);
-        List.iter
-          (fun ((id : Sol_cli_rollback.workload_identity), _) ->
-             Printf.printf
-               "  %s %s/%s\n"
-               (Sol_cli_rollback.kind_resource id.kind)
-               id.namespace
-               id.name)
-          surplus;
+        surplus
+        |> List.iter (fun ((id : Sol_cli_rollback.workload_identity), _) ->
+          Printf.printf
+            "  %s %s/%s\n"
+            (Sol_cli_rollback.kind_resource id.kind)
+            id.namespace
+            id.name);
         Printf.printf
           "These may be stale from a removed/renamed service. 'sol rollback' prunes them \
            automatically when restoring a recorded release; delete them by hand if you \

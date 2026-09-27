@@ -257,21 +257,20 @@ let test_existing_files_still_generated () =
     ; "testapp/.gitignore"
     ]
   in
-  List.iter
-    (fun path -> check_bool (Printf.sprintf "%s exists" path) true (Sys.file_exists path))
-    expected;
+  expected
+  |> List.iter (fun path ->
+    check_bool (Printf.sprintf "%s exists" path) true (Sys.file_exists path));
   (* quick count: at least 21 files *)
   let count = ref 0 in
   let rec walk dir =
-    Array.iter
-      (fun entry ->
-         let full = Filename.concat dir entry in
-         if full = "testapp/vendor"
-         then ()
-         else if Sys.is_directory full
-         then walk full
-         else incr count)
-      (Sys.readdir dir)
+    Sys.readdir dir
+    |> Array.iter (fun entry ->
+      let full = Filename.concat dir entry in
+      if full = "testapp/vendor"
+      then ()
+      else if Sys.is_directory full
+      then walk full
+      else incr count)
   in
   walk "testapp";
   check_bool "at least 21 files generated" true (!count >= 21)

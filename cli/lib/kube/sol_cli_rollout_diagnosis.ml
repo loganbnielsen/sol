@@ -219,9 +219,9 @@ let format_pod_diagnosis (p : pod_status) (events : events_fetch_result) : strin
    | Events [] -> Buffer.add_string buf "No events recorded for this pod.\n"
    | Events l ->
      Buffer.add_string buf "Last events:\n";
-     List.iter
-       (fun e -> Buffer.add_string buf (Printf.sprintf "  %s: %s\n" e.reason e.message))
-       l
+     l
+     |> List.iter (fun e ->
+       Buffer.add_string buf (Printf.sprintf "  %s: %s\n" e.reason e.message))
    | Events_unavailable why ->
      (* Named, never silent: this is the difference between "nothing happened"
         and "I was not allowed to look". *)
@@ -245,13 +245,12 @@ let render_unhealthy_pods
   =
   let buf = Buffer.create 512 in
   Buffer.add_string buf (Printf.sprintf "%s rollout failed\n\n" service_name);
-  List.iter
-    (fun p ->
-       Buffer.add_string
-         buf
-         (format_pod_diagnosis p (events_for_pod_result ~pod_name:p.name events));
-       Buffer.add_char buf '\n')
-    pods;
+  pods
+  |> List.iter (fun p ->
+    Buffer.add_string
+      buf
+      (format_pod_diagnosis p (events_for_pod_result ~pod_name:p.name events));
+    Buffer.add_char buf '\n');
   Buffer.contents buf
 ;;
 
@@ -306,9 +305,9 @@ let is_active_run_pod_ok ~(events : events_fetch_result) (p : pod_status) : bool
           | Events_unavailable _ -> false
           | Events l ->
             not
-              (List.exists
-                 (fun e -> e.involved_name = p.name && e.reason = "FailedScheduling")
-                 l))
+              (l
+               |> List.exists (fun e ->
+                 e.involved_name = p.name && e.reason = "FailedScheduling")))
       &&
       match p.state with
       | Waiting { reason; _ } ->

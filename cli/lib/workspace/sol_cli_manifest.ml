@@ -84,28 +84,27 @@ let scan_workspace () =
     else (
       let workloads = ref [] in
       let unexpected = ref [] in
-      Array.iter
-        (fun domain ->
-           let dp = Filename.concat app_dir domain in
-           if domain.[0] <> '.' && Sys.is_directory dp
-           then
-             Array.iter
-               (fun name ->
-                  let full = Filename.concat dp name in
-                  if name.[0] <> '.' && Sys.is_directory full
-                  then (
-                    (* [dir] stays workspace-root relative: it becomes the
+      Sys.readdir app_dir
+      |> Array.iter (fun domain ->
+        let dp = Filename.concat app_dir domain in
+        if domain.[0] <> '.' && Sys.is_directory dp
+        then
+          Array.iter
+            (fun name ->
+               let full = Filename.concat dp name in
+               if name.[0] <> '.' && Sys.is_directory full
+               then (
+                 (* [dir] stays workspace-root relative: it becomes the
                        plan's [source_dir], which is always combined with the
                        build context (itself derived from the root), never with
                        the invocation cwd. *)
-                    let dir = Filename.concat "app" (Filename.concat domain name) in
-                    match primitive_of_suffix name with
-                    | Some primitive ->
-                      let svc = { domain; name; primitive; dir } in
-                      workloads := (svc, has_dockerfile full) :: !workloads
-                    | None -> unexpected := (domain, name, dir) :: !unexpected))
-               (Sys.readdir dp))
-        (Sys.readdir app_dir);
+                 let dir = Filename.concat "app" (Filename.concat domain name) in
+                 match primitive_of_suffix name with
+                 | Some primitive ->
+                   let svc = { domain; name; primitive; dir } in
+                   workloads := (svc, has_dockerfile full) :: !workloads
+                 | None -> unexpected := (domain, name, dir) :: !unexpected))
+            (Sys.readdir dp));
       Ok { workloads = List.rev !workloads; unexpected = List.rev !unexpected })
 ;;
 

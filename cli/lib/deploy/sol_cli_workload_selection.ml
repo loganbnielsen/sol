@@ -40,11 +40,10 @@ let service_is_selected
       (selected : Sol_cli_deployment_scope.named list)
       (svc : Sol_cli_manifest.service)
   =
-  List.exists
-    (fun (unit_ : Sol_cli_deployment_scope.named) ->
-       Sol_cli_deployment_scope.equal_name svc.Sol_cli_manifest.domain unit_.domain
-       && Sol_cli_deployment_scope.equal_name svc.Sol_cli_manifest.name unit_.name)
-    selected
+  selected
+  |> List.exists (fun (unit_ : Sol_cli_deployment_scope.named) ->
+    Sol_cli_deployment_scope.equal_name svc.Sol_cli_manifest.domain unit_.domain
+    && Sol_cli_deployment_scope.equal_name svc.Sol_cli_manifest.name unit_.name)
 ;;
 
 let services_of_selection services selected =

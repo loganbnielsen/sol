@@ -87,13 +87,10 @@ let test_default_summary_never_names_the_context () =
     ; Unreachable ("prod-us-east-1", "connection refused")
     ]
   in
-  List.iter
-    (fun status ->
-       let text =
-         all_text (Sol_cli_target_report.rows ~verbose:false (target ()) status)
-       in
-       assert (not (Sol_cli_string.contains ~needle:"prod-us-east-1" text)))
-    statuses
+  statuses
+  |> List.iter (fun status ->
+    let text = all_text (Sol_cli_target_report.rows ~verbose:false (target ()) status) in
+    assert (not (Sol_cli_string.contains ~needle:"prod-us-east-1" text)))
 ;;
 
 let test_rows_describe_the_target_not_a_cluster () =
@@ -136,12 +133,11 @@ let test_json_matches_rows () =
   let from_json =
     match json with
     | `Assoc fields ->
-      List.map
-        (fun (key, value) ->
-           match value with
-           | `String value -> key, value
-           | _ -> Alcotest.fail "expected string values")
-        fields
+      fields
+      |> List.map (fun (key, value) ->
+        match value with
+        | `String value -> key, value
+        | _ -> Alcotest.fail "expected string values")
     | _ -> Alcotest.fail "expected an object"
   in
   Alcotest.(check (list (pair string string))) "same rows" rows from_json

@@ -163,9 +163,8 @@ let with_fake_sol_home f =
       let _ = Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote root)) in
       ())
     (fun () ->
-       List.iter
-         (fun marker -> write_file (Filename.concat root marker) "")
-         sol_home_markers;
+       sol_home_markers
+       |> List.iter (fun marker -> write_file (Filename.concat root marker) "");
        write_file
          (Filename.concat root "platform/shared/observability/alloy/logs.alloy.tftpl")
          fake_template;
@@ -286,18 +285,17 @@ let test_alloy_values_yaml_is_valid_block_scalar_shape () =
   let rec check = function
     | [] -> ()
     | line :: rest when line == key_line ->
-      List.iter
-        (fun body_line ->
-           if String.trim body_line <> ""
-           then
-             check_bool
-               (Printf.sprintf
-                  "body line more indented than key (key=%d): %S"
-                  key_indent
-                  body_line)
-               true
-               (leading_spaces body_line > key_indent))
-        rest
+      rest
+      |> List.iter (fun body_line ->
+        if String.trim body_line <> ""
+        then
+          check_bool
+            (Printf.sprintf
+               "body line more indented than key (key=%d): %S"
+               key_indent
+               body_line)
+            true
+            (leading_spaces body_line > key_indent))
     | _ :: rest -> check rest
   in
   check lines

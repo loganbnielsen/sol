@@ -71,13 +71,12 @@ let snapshots_of_json stdout =
       (match Yojson.Safe.Util.member "DBSnapshots" document with
        | `List items ->
          Ok
-           (List.map
-              (fun item ->
-                 let open Yojson.Safe.Util in
-                 ( member "DBSnapshotIdentifier" item |> to_string_option
-                 , member "SnapshotType" item |> to_string_option
-                 , member "Status" item |> to_string_option ))
-              items)
+           (items
+            |> List.map (fun item ->
+              let open Yojson.Safe.Util in
+              ( member "DBSnapshotIdentifier" item |> to_string_option
+              , member "SnapshotType" item |> to_string_option
+              , member "Status" item |> to_string_option )))
        | _ -> Error "the provider's answer carries no `DBSnapshots` array")
     | _ -> Error "the provider's answer is not a JSON object"
   with
@@ -651,10 +650,9 @@ let observe_retention ~region ~retention ~pre_destroy ~preparation =
      `identifier` is what a retain-nothing target must leave no snapshot of. The
      region is the target's declared one, which the AWS root is configured in. *)
   let database =
-    List.find_opt
-      (fun (resource : Sol_cli_cloud_destroy.resource) ->
-         String.equal resource.kind "aws_db_instance")
-      (Sol_cli_cloud_destroy.resources pre_destroy)
+    Sol_cli_cloud_destroy.resources pre_destroy
+    |> List.find_opt (fun (resource : Sol_cli_cloud_destroy.resource) ->
+      String.equal resource.kind "aws_db_instance")
   in
   match preparation with
   | Sol_cli_cloud_destroy.Nothing_prepared ->

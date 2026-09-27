@@ -308,12 +308,11 @@ let provisioner_authorization_checks =
 ;;
 
 let provisioner_authorization_established ~can_i =
-  List.for_all
-    (fun (expected, args) ->
-       match expected with
-       | Required -> can_i args
-       | Forbidden -> not (can_i args))
-    provisioner_authorization_checks
+  provisioner_authorization_checks
+  |> List.for_all (fun (expected, args) ->
+    match expected with
+    | Required -> can_i args
+    | Forbidden -> not (can_i args))
 ;;
 
 type readiness =
@@ -424,16 +423,15 @@ let replicas_converged ?(require_desired = true) output =
     String.split_on_char ' ' (String.trim output) |> List.filter (fun part -> part <> "")
   in
   pairs <> []
-  && List.for_all
-       (fun pair ->
-          match String.split_on_char '/' pair with
-          | [ ready; desired ] ->
-            (match int_of_string_opt ready, int_of_string_opt desired with
-             | Some ready, Some desired ->
-               ready = desired && (desired > 0 || not require_desired)
-             | None, _ | _, None -> false)
-          | _ -> false)
-       pairs
+  && pairs
+     |> List.for_all (fun pair ->
+       match String.split_on_char '/' pair with
+       | [ ready; desired ] ->
+         (match int_of_string_opt ready, int_of_string_opt desired with
+          | Some ready, Some desired ->
+            ready = desired && (desired > 0 || not require_desired)
+          | None, _ | _, None -> false)
+       | _ -> false)
 ;;
 
 let daemonsets_converged output = replicas_converged output
@@ -638,13 +636,12 @@ let readiness_checks ~provider =
    [accept]: a command that exits zero while saying nothing useful is not
    evidence. *)
 let readiness ~provider ~run =
-  List.map
-    (fun check ->
-       ( check.name
-       , match run check.argv with
-         | Some output when check.accept (String.trim output) -> Established
-         | _ -> Unmet check.reason ))
-    (readiness_checks ~provider)
+  readiness_checks ~provider
+  |> List.map (fun check ->
+    ( check.name
+    , match run check.argv with
+      | Some output when check.accept (String.trim output) -> Established
+      | _ -> Unmet check.reason ))
 ;;
 
 (* The kubectl invocations the checks above run, exposed so CI can validate them
@@ -661,12 +658,11 @@ let readiness_invocations ~provider =
 
 let readiness_summary checks =
   match
-    List.filter_map
-      (fun (name, result) ->
-         match result with
-         | Established -> None
-         | Unmet reason -> Some (name ^ ": " ^ reason))
-      checks
+    checks
+    |> List.filter_map (fun (name, result) ->
+      match result with
+      | Established -> None
+      | Unmet reason -> Some (name ^ ": " ^ reason))
   with
   | [] -> "Ready"
   | unmet -> "Unmet — " ^ String.concat "; " unmet
@@ -1014,10 +1010,9 @@ let indeterminate_reason (capability, answer) =
 ;;
 
 let permitted_capabilities probes =
-  List.filter_map
-    (fun (capability, answer) ->
-       if answer_is_permitted answer then Some capability else None)
-    probes
+  probes
+  |> List.filter_map (fun (capability, answer) ->
+    if answer_is_permitted answer then Some capability else None)
 ;;
 
 let still_permitted probes = List.map capability_label (permitted_capabilities probes)
@@ -1096,9 +1091,8 @@ let deescalation_transition
       | None ->
         let before_permitted = permitted_capabilities before in
         let uncovered =
-          List.filter
-            (fun capability -> not (List.mem_assoc capability after))
-            before_permitted
+          before_permitted
+          |> List.filter (fun capability -> not (List.mem_assoc capability after))
         in
         (* A capability observed permitted in the window must still be *covered* by the
            after-probe. Its absence from the after list is not its removal. *)

@@ -174,43 +174,40 @@ let permitted policy change =
   | No_op -> true
   | Read when change.mode = "data" -> true
   | action ->
-    List.exists
-      (fun rule ->
-         List.exists (fun matcher -> matches matcher change) rule.matches
-         && List.mem action rule.allows)
-      policy.rules
+    policy.rules
+    |> List.exists (fun rule ->
+      List.exists (fun matcher -> matches matcher change) rule.matches
+      && List.mem action rule.allows)
 ;;
 
 let violations policy changes =
-  List.filter_map
-    (fun change ->
-       if permitted policy change
-       then None
-       else (
-         let action = action_to_string change.action in
-         let in_scope =
-           List.exists
-             (fun rule ->
-                List.exists (fun matcher -> matches matcher change) rule.matches)
-             policy.rules
-         in
-         Some
-           (if in_scope
-            then
-              Printf.sprintf
-                "%s phase: %s on %s (%s) is not an action this phase permits"
-                policy.phase
-                action
-                change.address
-                change.resource_type
-            else
-              Printf.sprintf
-                "%s phase: %s on %s (%s) is outside this phase's scope"
-                policy.phase
-                action
-                change.address
-                change.resource_type)))
-    changes
+  changes
+  |> List.filter_map (fun change ->
+    if permitted policy change
+    then None
+    else (
+      let action = action_to_string change.action in
+      let in_scope =
+        List.exists
+          (fun rule -> List.exists (fun matcher -> matches matcher change) rule.matches)
+          policy.rules
+      in
+      Some
+        (if in_scope
+         then
+           Printf.sprintf
+             "%s phase: %s on %s (%s) is not an action this phase permits"
+             policy.phase
+             action
+             change.address
+             change.resource_type
+         else
+           Printf.sprintf
+             "%s phase: %s on %s (%s) is outside this phase's scope"
+             policy.phase
+             action
+             change.address
+             change.resource_type)))
 ;;
 
 type apply_failure =
@@ -263,13 +260,11 @@ let guarded_apply ~policy ~plan ~show_plan ~apply_plan () =
    replace destroys the resource first, so for a repository it loses the images
    as surely as a delete does. *)
 let removed_of_type ~resource_type changes =
-  List.filter_map
-    (fun c ->
-       match c.action with
-       | (Delete | Replace) when String.equal c.resource_type resource_type ->
-         Some c.address
-       | _ -> None)
-    changes
+  changes
+  |> List.filter_map (fun c ->
+    match c.action with
+    | (Delete | Replace) when String.equal c.resource_type resource_type -> Some c.address
+    | _ -> None)
 ;;
 
 (* SEC-008: `terraform show -json <plan>` carries sensitive values (e.g. a
@@ -288,8 +283,8 @@ let show_and_record ~run_log ~phase ~show =
          ~phase
          (String.concat
             ""
-            (List.map
-               (fun c -> Printf.sprintf "%s %s\n" (action_to_string c.action) c.address)
-               changes));
+            (changes
+             |> List.map (fun c ->
+               Printf.sprintf "%s %s\n" (action_to_string c.action) c.address)));
        Ok (json, changes))
 ;;

@@ -762,18 +762,17 @@ let kafka_config service_names : Sol_cli_config.t =
         }
       ]
   ; services =
-      List.map
-        (fun name ->
-           { Sol_cli_config.name
-           ; typ = None
-           ; path = None
-           ; uses = [ "events" ]
-           ; scale_min = None
-           ; scale_max = None
-           ; language = None
-           ; omit = false
-           })
-        service_names
+      service_names
+      |> List.map (fun name ->
+        { Sol_cli_config.name
+        ; typ = None
+        ; path = None
+        ; uses = [ "events" ]
+        ; scale_min = None
+        ; scale_max = None
+        ; language = None
+        ; omit = false
+        })
   }
 ;;
 
@@ -1312,9 +1311,8 @@ let test_fn_schedule_comes_from_sol_toml () =
     Alcotest.(check (list (option string)))
       "schedule from sol.toml"
       [ Some "30 6 * * 1" ]
-      (List.map
-         (fun (s : Sol_cli_deployment_plan.service_spec) -> s.schedule)
-         plan.Sol_cli_deployment_plan.services)
+      (plan.Sol_cli_deployment_plan.services
+       |> List.map (fun (s : Sol_cli_deployment_plan.service_spec) -> s.schedule))
 ;;
 
 (* The old behaviour: a -fn with no schedule (no sol.toml, or no key) deployed
