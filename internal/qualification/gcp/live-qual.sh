@@ -857,6 +857,10 @@ bundle_phase_note() {
 
 bundle_manifest() {
   local m="$LOG_DIR/evidence-manifest.txt" f
+  if [ -s "$LOG_DIR/api-readiness.tsv" ]; then
+    printf 'api readiness: api-readiness.tsv (%s samples across the platform apply)\n' \
+      "$(($(wc -l <"$LOG_DIR/api-readiness.tsv") - 1))"
+  fi
   {
     printf 'evidence bundle: %s\n' "$LOG_DIR"
     printf 'target: %s  project: %s  region: %s  revision: %s\n' \
@@ -981,6 +985,7 @@ destroy() {
 
 cleanup() {
   local rc=$?
+  api_readiness_probe_stop
   if [ "$KEEP" = "1" ]; then
     say "not tearing down: ${KEEP_REASON:-the delegation boundary is deliberate, not a leak}"
     say "logs: $LOG_DIR"
@@ -1043,6 +1048,7 @@ phase_cloud() {
   CLOUD_APPLIED=1
   INSTALL_STATE=succeeded
   start_ns_watcher
+  api_readiness_probe_start
   if ! run cloud-apply "$SOL" cloud apply "$TARGET" "${vars[@]}"; then
     INSTALL_STATE=failed
     # H2: `sol cloud apply` is the invocation that installs the cloud root *and* the
@@ -1121,6 +1127,101 @@ kube_capture() { # kube_capture <name> <command...>
   local name="$1"; shift
   "$@" >"$LOG_DIR/$name.log" 2>&1 || true
   say "  captured $name.log ($(wc -l <"$LOG_DIR/$name.log" | tr -d ' ') lines)"
+}
+
+# Qualification instrumentation (the Attempt 15c follow-up). The platform apply failed with a Helm
+# `context deadline exceeded` while the prerequisites had succeeded minutes earlier, and the
+# operator's later reads dialed a different endpoint (136.65.210.170) than the finalized state
+# recorded (136.115.125.189), with no authorized-network restriction configured. Two readings fit:
+# the API stayed reachable and the release failed readiness, or the API became unreachable before
+# the timeout. This records which, with timestamps.
+#
+# Every row carries BOTH endpoints -- the one the provider reports now, and the one the kubeconfig
+# is configured with -- because their divergence is exactly what a Helm timeout would be a symptom
+# of. Nothing here can change the run it observes: every read is captured into a row, the sample
+# file is best-effort, and the loop is a child that dies with its parent.
+api_probe_sample() {
+  local out="$1" reported configured verdict detail
+  # Every expansion is defaulted: this runs under `set -u` in an environment that may not carry the
+  # harness's own variables (the test harness sets some of them, CI's does not set all), and an
+  # unbound variable here would abort the sample silently -- which is exactly how a probe ends up
+  # recording nothing while looking installed. A sample must always leave a row.
+  reported="$(gcloud container clusters describe "${CLUSTER:-}" --region "${REGION:-}" \
+    --project "${PROJECT:-}" --format='value(endpoint)' 2>/dev/null | tr -d '\r' \
+    || printf '')"
+  configured="$(awk '/^[[:space:]]*server:/{print $2; exit}' \
+    "${KUBECONFIG:-$HOME/.kube/config}" 2>/dev/null | tr -d '\r')"
+  # Normalised to the host, because the comparison this row exists for is "does the configured
+  # endpoint match what the provider reports": the kubeconfig says `https://host`, the provider says
+  # `host`, and leaving the scheme on would make every row look like a divergence.
+  configured="${configured#https://}"
+  configured="${configured#http://}"
+  configured="${configured%%/*}"
+  configured="${configured%%:*}"
+  if detail="$(kubectl get --raw /readyz --request-timeout=5s 2>&1)"; then
+    verdict=REACHABLE
+  else
+    verdict=UNREACHABLE
+  fi
+  # Deliberately best-effort: a sample that cannot be written is a probe failure, never a failure of
+  # the run being observed.
+  printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${reported:--}" \
+    "${configured:--}" "$verdict" "$(printf '%s' "$detail" | tr '\n' ' ' | cut -c1-120)" \
+    >>"$out" 2>/dev/null || true
+}
+
+# A sample that cannot even measure still leaves a row, so "the probe ran and recorded nothing" is
+# distinguishable from "the probe never ran" -- the difference that cost a CI cycle here.
+api_probe_sample_or_record() {
+  local out="$1"
+  if ! api_probe_sample "$out" 2>/dev/null; then
+    printf '%s\t-\t-\tPROBE_FAILED\tapi_probe_sample exited non-zero\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$out" 2>/dev/null || true
+  fi
+}
+
+api_probe_loop() {
+  local out="$1" parent=$$
+  while :; do
+    # No orphans: if the run this observes is gone, this is gone. A SIGKILLed harness would
+    # otherwise leave a loop sampling a cluster nobody is watching.
+    if ! kill -0 "$parent" 2>/dev/null; then
+      exit 0
+    fi
+    api_probe_sample_or_record "$out"
+    sleep "${API_PROBE_INTERVAL_S:-15}"
+  done
+}
+
+api_readiness_probe_start() {
+  local out="$LOG_DIR/api-readiness.tsv"
+  if [ "${API_READINESS_PROBE:-1}" != "1" ]; then
+    say "api readiness probe: DISABLED by API_READINESS_PROBE"
+    return 0
+  fi
+  # Best-effort and explicitly so: an instrument that can fail the thing it measures is worse than
+  # no instrument, and a phase failing because a sample file was unwritable says nothing about the
+  # lifecycle.
+  if ! : >"$out"; then
+    say "api readiness probe: DISABLED (cannot write $out) — the run continues unobserved"
+    return 0
+  fi
+  printf 'timestamp\tserver_reported\tserver_configured\tverdict\tdetail\n' >>"$out" || true
+  # Synchronously, before backgrounding: a phase that dies immediately still leaves one sample.
+  api_probe_sample_or_record "$out"
+  api_probe_loop "$out" &
+  API_PROBE_PID=$!
+  say "api readiness probe: every ${API_PROBE_INTERVAL_S:-15}s -> $out (pid $API_PROBE_PID)"
+}
+
+# Recorded identity, TERM only, never by name.
+api_readiness_probe_stop() {
+  if [ -n "${API_PROBE_PID:-}" ] && kill -0 "$API_PROBE_PID" 2>/dev/null; then
+    kill -TERM "$API_PROBE_PID" 2>/dev/null || true
+    wait "$API_PROBE_PID" 2>/dev/null || true
+    say "api readiness probe stopped ($(wc -l <"$LOG_DIR/api-readiness.tsv" 2>/dev/null || echo 0) lines)"
+  fi
+  API_PROBE_PID=""
 }
 
 kubeconfig_for_cluster() {
