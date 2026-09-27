@@ -68,8 +68,46 @@ let frontmatter content =
 ;;
 
 (* For the readers that only want a field: an invalid block reads as having none.
-   [pipeline ls] and [check] call [frontmatter] themselves and report the error. *)
+   [pipeline ls] and [check] call [unreadable] themselves and report it. *)
 let fields content = Result.value (frontmatter content) ~default:[]
+
+(* BUG-060: what makes a ticket *unreadable* to this pipeline, in one place.
+
+   The failure this exists for is a ticket that is not refused but degraded: a
+   frontmatter that does not parse used to be listed as if it had no fields, and
+   a ticket with no frontmatter block at all reads as id-, type- and
+   severity-less while [`check`] still reported a status. Nothing said the
+   metadata was missing, so a worker saw a queue entry it could not act on and
+   CI stayed green.
+
+   The rule is deliberately about *reading the metadata* — the block exists, it
+   parses with [frontmatter] above (the same parser every other command uses),
+   and the fields the pipeline reads are there. It does not police ticket
+   content: the body, the dependency prose and any extra fields are the
+   author's. *)
+let required_fields = [ "id"; "type"; "severity"; "source" ]
+
+let unreadable ~path content =
+  match frontmatter_block content with
+  | None ->
+    Some
+      (Printf.sprintf
+         "%s: no frontmatter block; a ticket opens with `---` and names at least %s"
+         path
+         (String.concat ", " required_fields))
+  | Some _ ->
+    (match frontmatter content with
+     | Error message -> Some (Printf.sprintf "%s: %s" path message)
+     | Ok fields ->
+       (match
+          List.find_opt (fun field -> List.assoc_opt field fields = None) required_fields
+        with
+        | Some field ->
+          Some
+            (Printf.sprintf "%s: frontmatter field `%s` is missing or blank" path field)
+        | None -> None))
+;;
+
 let fm_get fields key = List.assoc_opt key fields
 
 let starts_with ~prefix s =

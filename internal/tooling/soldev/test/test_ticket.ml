@@ -319,8 +319,11 @@ let test_invalid_frontmatter_is_an_error () =
     check_bool "names YAML" true (contains_substring ~needle:"not valid YAML" message)
 ;;
 
-(* Every ticket in the repository has a frontmatter soldev can read. *)
-let test_every_ticket_parses () =
+(* Every ticket in the repository is readable by the pipeline (BUG-060): a
+   frontmatter block that parses, and the fields the pipeline reads. This is the
+   unit-level form of `soldev pipeline validate`, over the complete tree -- DONE
+   included, which is where the ticket that motivated it lived. *)
+let test_every_ticket_is_readable () =
   let root = "../../../pipeline/tickets" in
   let failures =
     [ "BACKLOG"; "READY_FOR_ENGINEERING"; "DONE" ]
@@ -331,11 +334,115 @@ let test_every_ticket_parses () =
       |> List.map (fun f -> Filename.concat (Filename.concat root state) f))
     |> List.filter_map (fun path ->
       let content = In_channel.with_open_bin path In_channel.input_all in
-      match Soldev_ticket.frontmatter content with
-      | Ok _ -> None
-      | Error message -> Some (path ^ ": " ^ message))
+      Soldev_ticket.unreadable ~path content)
   in
-  Alcotest.(check (list string)) "every ticket's frontmatter is valid YAML" [] failures
+  Alcotest.(check (list string))
+    "every ticket in the pipeline tree is readable"
+    []
+    failures
+;;
+
+(* ── unreadable (BUG-060) ────────────────────────────────────────────────── *)
+
+let readable_ticket =
+  {|---
+id: BUG-999
+type: bug
+severity: low
+source: a test
+premise: "rg -q 'x' y.ml"
+---
+
+Body.
+|}
+;;
+
+let test_readable () =
+  check_option_string
+    "a complete ticket is readable"
+    None
+    (Soldev_ticket.unreadable
+       ~path:"internal/pipeline/tickets/BACKLOG/BUG-999.md"
+       readable_ticket)
+;;
+
+let test_readable_extra_fields () =
+  (* Extra fields are the author's business: `premise:` above, and whatever a
+     later convention adds, must not make a ticket unreadable. *)
+  let content = readable_ticket ^ "\nowning_stream: qualification\n" in
+  check_option_string
+    "extra fields are not policed"
+    None
+    (Soldev_ticket.unreadable
+       ~path:"internal/pipeline/tickets/BACKLOG/BUG-999.md"
+       content)
+;;
+
+let test_no_frontmatter_block_is_unreadable () =
+  let path = "internal/pipeline/tickets/DONE/INFRA-042.md" in
+  match
+    Soldev_ticket.unreadable ~path "# INFRA-042 - a ticket with no frontmatter\n\nBody.\n"
+  with
+  | None -> Alcotest.fail "a ticket with no frontmatter block was accepted"
+  | Some reason ->
+    check_bool "names the file" true (contains_substring ~needle:path reason);
+    check_bool
+      "says what is missing"
+      true
+      (contains_substring ~needle:"no frontmatter block" reason)
+;;
+
+let test_invalid_yaml_is_unreadable () =
+  let path = "internal/pipeline/tickets/READY_FOR_ENGINEERING/FEAT-103.md" in
+  let content =
+    "---\n\
+     id: FEAT-103\n\
+     type: feature\n\
+     severity: medium\n\
+     source: review - \"a colon: in a plain scalar\"\n\
+     ---\n\n\
+     Body.\n"
+  in
+  match Soldev_ticket.unreadable ~path content with
+  | None -> Alcotest.fail "an invalid frontmatter was accepted"
+  | Some reason ->
+    check_bool "names the file" true (contains_substring ~needle:path reason);
+    check_bool "names YAML" true (contains_substring ~needle:"not valid YAML" reason)
+;;
+
+let test_missing_field_is_unreadable () =
+  (* The parser reads a blank or null value as absent, so this covers both
+     `severity:` with nothing after it and dropping the line. *)
+  let path = "internal/pipeline/tickets/BACKLOG/BUG-998.md" in
+  let content =
+    "---\nid: BUG-998\ntype: bug\nseverity:\nsource: a test\n---\n\nBody.\n"
+  in
+  match Soldev_ticket.unreadable ~path content with
+  | None -> Alcotest.fail "a blank required field was accepted"
+  | Some reason ->
+    check_bool "names the file" true (contains_substring ~needle:path reason);
+    check_bool "names the field" true (contains_substring ~needle:"`severity`" reason)
+;;
+
+let test_each_required_field () =
+  List.iter
+    (fun field ->
+       let lines =
+         [ "id: BUG-997"; "type: bug"; "severity: low"; "source: a test" ]
+         |> List.filter (fun line ->
+           not
+             (String.length line >= String.length field
+              && String.sub line 0 (String.length field) = field))
+       in
+       let content = "---\n" ^ String.concat "\n" lines ^ "\n---\n\nBody.\n" in
+       match Soldev_ticket.unreadable ~path:"x.md" content with
+       | None -> Alcotest.fail (Printf.sprintf "a ticket without `%s` was accepted" field)
+       | Some reason ->
+         check_bool
+           (Printf.sprintf "names `%s`" field)
+           true
+           (contains_substring ~needle:("`" ^ field ^ "`") reason))
+    [ "id"; "type"; "severity"; "source" ]
 ;;
 
 let () =
@@ -407,7 +514,18 @@ let () =
             "invalid frontmatter is an error"
             `Quick
             test_invalid_frontmatter_is_an_error
-        ; Alcotest.test_case "every ticket parses" `Quick test_every_ticket_parses
+        ; Alcotest.test_case "every ticket parses" `Quick test_every_ticket_is_readable
+        ] )
+    ; ( "unreadable tickets fail closed (BUG-060)"
+      , [ Alcotest.test_case "a complete ticket" `Quick test_readable
+        ; Alcotest.test_case "extra fields are fine" `Quick test_readable_extra_fields
+        ; Alcotest.test_case
+            "no frontmatter block"
+            `Quick
+            test_no_frontmatter_block_is_unreadable
+        ; Alcotest.test_case "invalid YAML" `Quick test_invalid_yaml_is_unreadable
+        ; Alcotest.test_case "a blank field" `Quick test_missing_field_is_unreadable
+        ; Alcotest.test_case "each required field" `Quick test_each_required_field
         ] )
     ; ( "dependency cycles"
       , [ (* The walk takes [deps_of] injected, so these need no ticket files —

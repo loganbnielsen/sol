@@ -126,6 +126,20 @@ let check_cmd =
     Term.(const (fun id -> Soldev_merge.run_check id |> exit_on) $ ticket_arg)
 ;;
 
+let validate_cmd =
+  Cmd.v
+    (Cmd.info
+       "validate"
+       ~doc:
+         "Validate every ticket in the pipeline tree — BACKLOG, READY_FOR_ENGINEERING \
+          and DONE — with the parser the other commands read tickets with. An unreadable \
+          ticket (no frontmatter block, invalid YAML, or a missing \
+          id/type/severity/source) is an error naming the file, never an omitted or \
+          empty-columned ticket; exits 1 if any is unreadable. CI runs this over the \
+          complete tree.")
+    Term.(const (fun () -> Soldev_merge.run_validate () |> exit_on) $ const ())
+;;
+
 let check_reverts_cmd =
   Cmd.v
     (Cmd.info
@@ -146,6 +160,7 @@ let cmd =
           status")
     [ ls_cmd
     ; check_cmd
+    ; validate_cmd
     ; submit_cmd
     ; merge_cmd
     ; merge_finish_cmd
